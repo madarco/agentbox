@@ -36,6 +36,18 @@ export {
 } from './state.js';
 export { OverlayError, type OverlayCheck } from './overlay.js';
 export {
+  attachedContainerUri,
+  buildVscodeMounts,
+  containerHex,
+  ensureAgentboxTasksFile,
+  ensureVscodeVolumes,
+  SHARED_VSCODE_EXTENSIONS_VOLUME,
+  vscodeServerVolumeName,
+  type EnsureTasksFileResult,
+  type ServiceTailHint,
+  type VscodeMounts,
+} from './vscode.js';
+export {
   BOXES_ROOT,
   boxRunDirFor,
   CONTAINER_EXPORT_MERGED,

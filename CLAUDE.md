@@ -56,7 +56,10 @@ Internal deps are wired via `workspace:*`. Build order is enforced by Turborepo 
 
 ## In-box supervisor (`@agentbox/ctl`)
 
-- Reads `/workspace/agentbox.yaml`; runs declared services, restarts crashed ones with exponential backoff, captures logs to `/var/log/agentbox/<svc>.log`.
+- Reads `/workspace/agentbox.yaml`; runs declared **tasks** (one-shot) and **services** (long-running) under a DAG scheduler. Tasks transition `pending → waiting → running → done | failed | skipped`; services transition `pending → waiting → starting → running → ready | unhealthy | crashed | backoff | stopped`. `waiting` is distinct from `starting` so `blockedOn` can surface in `agentbox status`. Restarts crashed services with exponential backoff and captures logs to `/var/log/agentbox/<svc>.log`.
+- `needs:` on any unit forms a DAG (cycles + unknown refs rejected at config load). Independent units launch in parallel.
+- `ready_when:` declares a readiness probe per service: `port` (TCP connect to `127.0.0.1:<port>` by default), `log_match` (regex over stdout/stderr), or `http` (GET; expects 2xx by default). Probe lives in `packages/ctl/src/probe.ts`. `on_timeout: kill` (default) re-enters the restart policy; `on_timeout: mark_unhealthy` leaves the process running but flags the service — the escape hatch for legitimately slow cold starts.
+- Wire ops: `status` returns `{ services, tasks }`; `task-status` returns task list; `wait-ready { timeoutMs?, units? }` blocks daemon-side until all autostart units reach their satisfying state, then resolves `{ ready: true }` or `{ ready: false, timedOut, failed }`; `run-task { name, force? }` resets a task back to pending so the scheduler reruns it.
 - Listens on `/run/agentbox/ctl.sock` (UNIX socket, newline-delimited JSON). Both the in-box `agentbox-ctl` client and host commands talk to the same socket — but the **host commands shell in via `docker exec`**, not the bind-mounted socket: Docker Desktop / OrbStack's VM boundary breaks `connect()` from the mac side, even though the file is visible.
 - Launched by `launchCtlDaemon()` in `sandbox-docker/src/ctl.ts` (best-effort; missing/empty `agentbox.yaml` is fine and doesn't fail `create`). Same call is repeated in `startBox()` because the daemon dies with the container — same lifecycle as `mountOverlay()`.
 - The bin is built as **CJS** (`dist/bin.cjs`) with all deps bundled — esbuild's ESM output poisons `require()` from CJS deps like commander. Library entry (`dist/index.js`) stays ESM.
@@ -73,15 +76,17 @@ Full local-Docker lifecycle:
 - `agentbox list` / `inspect` — read from `~/.agentbox/state.json` and cross-reference `docker inspect` for live state (`running` / `paused` / `stopped` / `missing`). `inspect` surfaces the claude tmux session status (running / not running) when the container is up.
 - `agentbox pause` / `unpause` — `docker pause` / `docker unpause`.
 - `agentbox stop` / `start` — `docker stop` / `docker start`. **`start` re-runs `mountOverlay()` and re-launches `agentbox-ctl daemon`** because both processes die with the container.
-- `agentbox status` / `logs` — proxy into the in-box `agentbox-ctl` via `docker exec` (see "In-box supervisor" below). `status` also reports the claude tmux session state (via the `claude-session` wire op).
-- `agentbox destroy` — force-removes container + volumes + snapshot dir + per-box run dir (`~/.agentbox/boxes/<id>/`) + state record (prompts unless `-y`). Per-box claude-config volumes are removed too; the shared volume is preserved.
-- `agentbox prune` — drops `missing` state records; `--all` also reaps orphan `agentbox-*` containers / volumes / snapshot dirs (allowlists `agentbox-claude-config` and any per-box `agentbox-claude-config-<id>` that belongs to a surviving box).
+- `agentbox status` / `logs` — proxy into the in-box `agentbox-ctl` via `docker exec` (see "In-box supervisor" below). `status` renders `TASKS` + `SERVICES` sections (the service row has a `BLOCKED ON` column for `waiting` services) and reports the claude tmux session state (via the `claude-session` wire op).
+- `agentbox wait <box>` — blocks until all autostart tasks + services are ready. Thin wrapper over the daemon's `wait-ready` op; useful for scripted readiness gates.
+- `agentbox code <box>` — opens VS Code Desktop against the box via the Dev Containers extension. Auto-unpauses paused boxes and starts stopped ones (re-running `mountOverlay()` + `launchCtlDaemon()`). Waits for `wait-ready` (default 120s) unless `--no-wait`, then writes `/workspace/.vscode/tasks.json` (sentinel-protected; `--regen-tasks` to overwrite a user-owned file) so VS Code auto-opens terminal panels tailing each service's log. Launches `open vscode://vscode-remote/attached-container+<hex>/workspace` (`--print` returns the URL instead). First attach to a fresh box downloads the VS Code Server (~70MB) into `agentbox-vscode-server-<id>`; subsequent attaches reuse it. Downloaded extensions live in the shared `agentbox-vscode-extensions` volume across all boxes.
+- `agentbox destroy` — force-removes container + volumes + snapshot dir + per-box run dir (`~/.agentbox/boxes/<id>/`) + state record (prompts unless `-y`). Per-box claude-config and `agentbox-vscode-server-<id>` volumes are removed too; the shared `agentbox-claude-config` + `agentbox-vscode-extensions` volumes are preserved.
+- `agentbox prune` — drops `missing` state records; `--all` also reaps orphan `agentbox-*` containers / volumes / snapshot dirs (allowlists both shared volumes — `agentbox-claude-config`, `agentbox-vscode-extensions` — and per-box variants of either that belong to a surviving box).
 
 ## What's not built yet (don't claim it works)
 
 - Background rsync `/host-src → /snapshot` + atomic remount (the second half of the boot sequence in `architecture.md`).
-- Codex / vscode-server / browser tooling installation inside the box (only Claude Code + tmux are baked into the image today).
-- VS Code Dev Containers attach automation.
+- Codex / browser tooling installation inside the box (Claude Code + tmux baked into the image; VS Code Server is downloaded on first attach).
+- Pre-warming the VS Code Server in the image (server version is keyed to host's VS Code Desktop version, so first attach to a fresh box still pays the ~70MB download; subsequent attaches to the same box are instant).
 - Auto-pause-on-idle / auto-stop policy.
 - Auto-refresh of the merged host export (inotify-driven `agentbox open` keeps `~/.agentbox/boxes/<id>/workspace` in sync without manual refresh). Today refresh is on-demand only.
 - Exporting the upper volume on destroy (`--export <path>` flag). The live exports under `~/.agentbox/boxes/<id>/` are wiped with the box.
@@ -109,6 +114,9 @@ node apps/cli/dist/index.js stop smoke && node apps/cli/dist/index.js start smok
 node apps/cli/dist/index.js open smoke           # rsync /workspace -> host export + open Finder
 node apps/cli/dist/index.js open smoke --upper   # writes-layer only (live on OrbStack, rsync on Docker Desktop)
 node apps/cli/dist/index.js path smoke --refresh # same rsync as `open`, but just prints the host path
+node apps/cli/dist/index.js wait smoke            # block until autostart units (tasks + services) ready
+node apps/cli/dist/index.js code smoke            # auto-unpause/start + wait + write .vscode/tasks.json + open VS Code
+node apps/cli/dist/index.js code smoke --print    # just print the vscode:// URL (after the warm-up)
 node apps/cli/dist/index.js destroy smoke -y
 ```
 

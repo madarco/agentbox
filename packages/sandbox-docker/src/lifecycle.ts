@@ -3,6 +3,7 @@ import { readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BoxState } from '@agentbox/core';
 import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './claude.js';
+import { SHARED_VSCODE_EXTENSIONS_VOLUME } from './vscode.js';
 import {
   BOXES_ROOT,
   boxRunDirFor,
@@ -237,6 +238,12 @@ export async function destroyBox(
     await removeVolume(box.claudeConfigVolume);
     removedVolumes.push(box.claudeConfigVolume);
   }
+  // Per-box `.vscode-server` volume. The shared SHARED_VSCODE_EXTENSIONS_VOLUME
+  // is never auto-removed (parallel reasoning to the shared claude volume).
+  if (box.vscodeServerVolume) {
+    await removeVolume(box.vscodeServerVolume);
+    removedVolumes.push(box.vscodeServerVolume);
+  }
 
   let removedSnapshot: string | null = null;
   if (box.snapshotDir && !opts.keepSnapshot) {
@@ -325,9 +332,14 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
       ...survivingBoxes
         .map((b) => b.claudeConfigVolume)
         .filter((v): v is string => typeof v === 'string'),
+      ...survivingBoxes
+        .map((b) => b.vscodeServerVolume)
+        .filter((v): v is string => typeof v === 'string'),
       // The shared claude-config volume holds user identity across every box;
       // never reap it via prune even if no surviving box currently references it.
       SHARED_CLAUDE_VOLUME,
+      // Shared across boxes: downloaded VS Code extensions. Same reasoning.
+      SHARED_VSCODE_EXTENSIONS_VOLUME,
     ]);
     const expectedSnapshots = new Set(
       survivingBoxes

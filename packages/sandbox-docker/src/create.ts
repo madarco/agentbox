@@ -11,6 +11,7 @@ import { mountOverlay, verifyOverlay, type OverlayCheck } from './overlay.js';
 import { recordBox, type BoxRecord } from './state.js';
 import { createSnapshot, snapshotPathFor } from './snapshot.js';
 import { launchCtlDaemon } from './ctl.js';
+import { buildVscodeMounts, ensureVscodeVolumes, vscodeServerVolumeName } from './vscode.js';
 
 export interface CreateBoxOptions {
   workspacePath: string;
@@ -137,7 +138,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   const nodeModulesVolume = `agentbox-nm-${id}`;
   await ensureVolume(upperVolume);
   await ensureVolume(nodeModulesVolume);
-  log(`prepared volumes ${upperVolume}, ${nodeModulesVolume}`);
+  await ensureVscodeVolumes(id);
+  log(`prepared volumes ${upperVolume}, ${nodeModulesVolume}, ${vscodeServerVolumeName(id)}`);
+  const vscode = buildVscodeMounts(id);
 
   // Claude Code config volume. Shared by default so users sign in once across
   // every box; --isolate-claude-config opts into a per-box volume. Either way,
@@ -188,6 +191,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
 
   const extraVolumes = await buildIdentityMounts();
   extraVolumes.push(...claudeMounts.extraVolumes);
+  extraVolumes.push(...vscode.extraVolumes);
   extraVolumes.push(`${socketDir}:/run/agentbox`);
   extraVolumes.push(`${mergedExportDir}:${CONTAINER_EXPORT_MERGED}`);
   extraVolumes.push(`${upperExportDir}:${CONTAINER_EXPORT_UPPER}`);
@@ -240,6 +244,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     snapshotDir,
     socketPath,
     claudeConfigVolume: claudeSpec.volume,
+    vscodeServerVolume: vscodeServerVolumeName(id),
     createdAt: new Date().toISOString(),
   };
   await recordBox(record);

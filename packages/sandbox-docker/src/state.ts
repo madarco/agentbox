@@ -28,6 +28,13 @@ export interface BoxRecord {
    * created before this field existed.
    */
   claudeConfigVolume?: string;
+  /**
+   * Per-box volume holding `.vscode-server` (server binary + TS cache).
+   * The shared `agentbox-vscode-extensions` volume layers over the `extensions`
+   * subdir at run time and isn't recorded here (never auto-removed). Absent
+   * for boxes created before this field existed.
+   */
+  vscodeServerVolume?: string;
   createdAt: string; // ISO-8601
 }
 
