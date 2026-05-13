@@ -4,8 +4,8 @@ import { Command } from 'commander';
 import type { StatusReply, WaitReadyReply } from '@agentbox/ctl';
 import {
   AmbiguousBoxError,
-  attachedContainerUri,
   BoxNotFoundError,
+  containerHex,
   ensureAgentboxTasksFile,
   execInBox,
   findBox,
@@ -90,18 +90,18 @@ export const codeCommand = new Command('code')
         }
       }
 
-      const url = attachedContainerUri(box.container, '/workspace');
+      const folderUri = `vscode-remote://attached-container+${containerHex(box.container)}/workspace`;
       if (opts.print) {
-        process.stdout.write(url + '\n');
+        process.stdout.write(folderUri + '\n');
         return;
       }
-      const code = await spawnOpen(url);
-      if (code !== 0) {
-        log.error(`failed to launch VS Code (exit ${String(code)})`);
-        process.stdout.write(url + '\n');
+      const exit = await launchVscode(folderUri);
+      if (exit.code !== 0) {
+        log.error(`failed to launch VS Code via ${exit.via} (exit ${String(exit.code)})`);
+        process.stdout.write(folderUri + '\n');
         process.exit(1);
       }
-      log.success(`opening ${box.container} in VS Code`);
+      log.success(`opening ${box.container} in VS Code (${exit.via})`);
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -123,11 +123,30 @@ async function runWaitReady(container: string, timeoutMs: string): Promise<WaitR
   }
 }
 
-function spawnOpen(url: string): Promise<number> {
-  // macOS `open` dispatches the vscode:// URL handler. Linux fallback (xdg-open)
-  // can be added later when remote providers land.
+interface LaunchResult {
+  code: number;
+  via: 'code-cli' | 'open';
+}
+
+/**
+ * Prefer the `code` CLI: passing the URI directly avoids the macOS URL
+ * handler hop that percent-encodes the `+` authority separator into `%2B`,
+ * which the Dev Containers extension then refuses to resolve. Fall back to
+ * `open vscode://...` only if `code` isn't in PATH.
+ */
+async function launchVscode(folderUri: string): Promise<LaunchResult> {
+  const cliCode = await spawnCommand('code', ['--folder-uri', folderUri]);
+  if (cliCode !== 127) return { code: cliCode, via: 'code-cli' };
+  // `code` not in PATH. Use the vscode:// protocol handler as a last resort.
+  // The %2B bug means this path may fail on attach — surface it.
+  const vscodeUrl = `vscode://${folderUri.replace(/^vscode-remote:\/\//, 'vscode-remote/')}`;
+  const fallback = await spawnCommand('open', [vscodeUrl]);
+  return { code: fallback, via: 'open' };
+}
+
+function spawnCommand(cmd: string, args: string[]): Promise<number> {
   return new Promise((resolve) => {
-    const child = spawn('open', [url], { stdio: 'ignore' });
+    const child = spawn(cmd, args, { stdio: 'ignore' });
     child.once('error', () => resolve(127));
     child.once('exit', (code) => resolve(code ?? -1));
   });

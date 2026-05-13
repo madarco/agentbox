@@ -49,8 +49,16 @@ export function containerHex(containerName: string): string {
   return Buffer.from(containerName, 'utf8').toString('hex');
 }
 
+/**
+ * Resource URI for an attached container. Consumed by `code --folder-uri`.
+ *
+ * Note: the `vscode://vscode-remote/...` protocol-handler form looks similar
+ * but goes through macOS `open`, which percent-encodes the `+` authority
+ * separator into `%2B` and the Dev Containers extension then fails to
+ * resolve it. Use `code --folder-uri <this>` to bypass that.
+ */
 export function attachedContainerUri(containerName: string, workspacePath = '/workspace'): string {
-  return `vscode://vscode-remote/attached-container+${containerHex(containerName)}${workspacePath}`;
+  return `vscode-remote://attached-container+${containerHex(containerName)}${workspacePath}`;
 }
 
 /**
