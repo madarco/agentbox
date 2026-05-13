@@ -9,6 +9,7 @@ import {
   type ServiceSpec,
   type TaskSpec,
 } from './config.js';
+import { startProbe, type ProbeHandle } from './probe.js';
 import type {
   LogEvent,
   ServiceState,
@@ -78,6 +79,7 @@ export class ServiceRunner extends EventEmitter<ServiceRunnerEvents> implements 
   private logStream: WriteStream | null = null;
   private readonly ring = new Ring<LogEvent>(RING_SIZE);
   private wantRunning = false;
+  private currentProbe: ProbeHandle | null = null;
   private readonly spawnFn: typeof spawn;
   private readonly setTimer: (fn: () => void, ms: number) => NodeJS.Timeout;
   private readonly clearTimer: (h: NodeJS.Timeout) => void;
@@ -117,6 +119,7 @@ export class ServiceRunner extends EventEmitter<ServiceRunnerEvents> implements 
 
   async stop(): Promise<void> {
     this.wantRunning = false;
+    this.abortProbe();
     if (this.retryTimer) {
       this.clearTimer(this.retryTimer);
       this.retryTimer = null;
@@ -219,6 +222,60 @@ export class ServiceRunner extends EventEmitter<ServiceRunnerEvents> implements 
     child.on('error', (err) => {
       this.appendEvent('stderr', `[ctl] child error: ${err.message}`);
     });
+
+    if (this.spec.readyWhen) this.beginProbe();
+  }
+
+  private beginProbe(): void {
+    this.abortProbe();
+    const probe = this.spec.readyWhen;
+    if (!probe) return;
+    const handle = startProbe(probe, {
+      subscribeLogs:
+        probe.kind === 'log_match'
+          ? (cb) => {
+              this.on('log', cb);
+              return () => this.off('log', cb);
+            }
+          : undefined,
+    });
+    this.currentProbe = handle;
+    handle.result
+      .then((res) => {
+        if (handle !== this.currentProbe) return;
+        if (res === 'aborted') return;
+        if (res === 'ready') {
+          this.currentProbe = null;
+          this.setState('ready');
+          return;
+        }
+        // timed_out
+        this.currentProbe = null;
+        if (probe.onTimeout === 'kill') {
+          this.appendEvent(
+            'stderr',
+            `[ctl] readiness probe timed out after ${String(probe.timeoutMs)}ms; killing process`,
+          );
+          this.child?.kill('SIGTERM');
+        } else {
+          this.appendEvent(
+            'stderr',
+            `[ctl] readiness probe timed out after ${String(probe.timeoutMs)}ms; marking unhealthy`,
+          );
+          this.setState('unhealthy');
+        }
+      })
+      .catch(() => {
+        // Probe shouldn't throw, but be defensive.
+        if (handle === this.currentProbe) this.currentProbe = null;
+      });
+  }
+
+  private abortProbe(): void {
+    if (this.currentProbe) {
+      this.currentProbe.abort();
+      this.currentProbe = null;
+    }
   }
 
   private appendEvent(stream: 'stdout' | 'stderr', line: string): void {
@@ -236,6 +293,7 @@ export class ServiceRunner extends EventEmitter<ServiceRunnerEvents> implements 
   private onExit(code: number | null, signal: NodeJS.Signals | null): void {
     this.lastExitCode = code;
     this.child = null;
+    this.abortProbe();
     this.appendEvent('stderr', `[ctl] exited code=${String(code)} signal=${signal ?? 'none'}`);
 
     if (!this.wantRunning) {
@@ -587,10 +645,12 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
   }
 
   private onServiceState(name: string, state: ServiceState): void {
-    // PR 3: services without ready_when count as satisfied once they reach
-    // 'running'. PR 4 will gate this on 'ready' for services that declare a
-    // readiness probe.
-    if (state === 'running' || state === 'ready') {
+    const unit = this.units.get(name);
+    if (unit?.kind !== 'service') return;
+    const service = unit as ServiceRunner;
+    const satisfiedState: ServiceState = service.spec.readyWhen ? 'ready' : 'running';
+
+    if (state === satisfiedState) {
       if (!this.satisfied.has(name)) {
         this.satisfied.add(name);
         this.schedule();

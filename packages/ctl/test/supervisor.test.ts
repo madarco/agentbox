@@ -247,6 +247,111 @@ describe('Supervisor', () => {
     expect(after.lastExitCode).toBeNull();
   });
 
+  it('service with port probe transitions running → ready and unblocks dependents', async () => {
+    const sup = new Supervisor({ workspace: dir, logDir: dir });
+    // Pick an unlikely-to-be-used high port.
+    const port = 23000 + Math.floor(Math.random() * 2000);
+    await sup.init(
+      cfg([
+        spec({
+          name: 'api',
+          command: [
+            NODE,
+            '-e',
+            `setTimeout(() => require('http').createServer((_,r)=>r.end('ok')).listen(${String(port)}), 100)`,
+          ],
+          readyWhen: {
+            kind: 'port',
+            port,
+            host: '127.0.0.1',
+            intervalMs: 30,
+            initialDelayMs: 0,
+            timeoutMs: 3000,
+            onTimeout: 'kill',
+          },
+        }),
+        spec({
+          name: 'downstream',
+          command: [NODE, '-e', 'setInterval(()=>{},1000)'],
+          needs: ['api'],
+        }),
+      ]),
+    );
+
+    const ready = await waitFor(() => {
+      const s = sup.list().find((x) => x.name === 'api');
+      return s && s.state === 'ready' ? s : null;
+    }, 5000);
+    expect(ready.state).toBe('ready');
+
+    const dsRunning = await waitFor(() => {
+      const s = sup.list().find((x) => x.name === 'downstream');
+      return s && s.state === 'running' ? s : null;
+    }, 3000);
+    expect(dsRunning.state).toBe('running');
+
+    await sup.stopAll();
+  });
+
+  it('service is killed when probe times out with on_timeout: kill (restart=never)', async () => {
+    const sup = new Supervisor({ workspace: dir, logDir: dir });
+    const port = 24000 + Math.floor(Math.random() * 2000);
+    await sup.init(
+      cfg([
+        spec({
+          name: 'never-ready',
+          // Process stays alive but never opens the port.
+          command: [NODE, '-e', 'setInterval(()=>{},1000)'],
+          restart: 'never',
+          readyWhen: {
+            kind: 'port',
+            port,
+            host: '127.0.0.1',
+            intervalMs: 30,
+            initialDelayMs: 0,
+            timeoutMs: 200,
+            onTimeout: 'kill',
+          },
+        }),
+      ]),
+    );
+    const final = await waitFor(() => {
+      const s = sup.list()[0]!;
+      // Probe timed out → SIGTERM → exit non-zero → crashed (restart=never).
+      return s.state === 'crashed' ? s : null;
+    }, 3000);
+    expect(final.state).toBe('crashed');
+  });
+
+  it('service is marked unhealthy when probe times out with on_timeout: mark_unhealthy', async () => {
+    const sup = new Supervisor({ workspace: dir, logDir: dir });
+    const port = 26000 + Math.floor(Math.random() * 2000);
+    await sup.init(
+      cfg([
+        spec({
+          name: 'slow-warmup',
+          command: [NODE, '-e', 'setInterval(()=>{},1000)'],
+          restart: 'never',
+          readyWhen: {
+            kind: 'port',
+            port,
+            host: '127.0.0.1',
+            intervalMs: 30,
+            initialDelayMs: 0,
+            timeoutMs: 200,
+            onTimeout: 'mark_unhealthy',
+          },
+        }),
+      ]),
+    );
+    const final = await waitFor(() => {
+      const s = sup.list()[0]!;
+      return s.state === 'unhealthy' ? s : null;
+    }, 3000);
+    expect(final.state).toBe('unhealthy');
+    await sup.stopAll();
+  });
+
   it('concurrent independent tasks run in parallel', async () => {
     const sup = new Supervisor({ workspace: dir, logDir: dir });
     const start = Date.now();
