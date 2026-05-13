@@ -122,6 +122,7 @@ apps/cli/                 → published as `agentbox` (the npm bin, commander-ba
 packages/core/            → @agentbox/core — sandbox provider interface, types
 packages/sandbox-docker/  → @agentbox/sandbox-docker — local Docker provider
 packages/ctl/             → @agentbox/ctl — in-box supervisor daemon (`agentbox-ctl`)
+packages/relay/           → @agentbox/relay — host-side HTTP relay (`agentbox-relay`) for box→host push & RPCs
 docs/architecture.md      → the FUSE-overlay design + lifecycle rationale
 ```
 
@@ -167,6 +168,54 @@ agentbox-ctl logs worker -f
 ```
 
 Per-service log files live at `/var/log/agentbox/<service>.log` inside the container. The supervisor's control socket is at `/run/agentbox/ctl.sock` (also bind-mounted to `~/.agentbox/boxes/<id>/run/ctl.sock` on the host for diagnostics). Host-side `agentbox status` and `agentbox logs` reach the daemon by shelling into the container — connecting to the bind-mounted socket directly doesn't work across Docker Desktop / OrbStack's VM boundary.
+
+## Box → host push & RPCs (`agentbox-relay`)
+
+The supervisor's control socket is one-directional: the host opens connections, the box answers. For the other direction — boxes pushing notifications to the host, or asking the host to perform something the box doesn't have credentials for (e.g. `git push` over SSH) — there's a small HTTP service called the **relay**.
+
+The relay runs as its own Docker container (`agentbox-relay`) on a user-defined network (`agentbox-net`). It's a singleton: lazily started on the first `agentbox create` / `agentbox claude`, reused by every subsequent box, and preserved by `agentbox destroy` / `agentbox prune --all` (like the shared `agentbox-claude-config` volume).
+
+Each box is attached to `agentbox-net` and gets two env vars:
+
+- `AGENTBOX_RELAY_URL` — `http://agentbox-relay:8787` (resolved via docker DNS)
+- `AGENTBOX_RELAY_TOKEN` — a 32-byte per-box bearer token generated at create time
+
+The token is registered with the relay before the box starts, so the in-box supervisor can post events immediately on boot.
+
+### Wire protocol
+
+| Endpoint | Auth | Purpose |
+|----------|------|---------|
+| `POST /events` | Bearer (box token) | Append a `{type, ts?, payload?}` event to the relay's in-memory ring buffer (1000 entries). Returns `202 {id}`. |
+| `POST /rpc`    | Bearer | Submit `{method, params?}`. **PoC: returns `501`** with the method echoed back. The framework is in place — a host-side executor for things like `git.push` is the next step. |
+| `GET /healthz` | none | Liveness probe. |
+| `POST /admin/register-box` | network-internal | Called by the host CLI via `docker exec agentbox-relay agentbox-relay register …`. |
+| `POST /admin/forget-box`   | network-internal | Called on `agentbox destroy`. |
+| `GET /admin/events`        | network-internal | Tail the ring buffer; query: `box`, `since`. |
+| `GET /admin/registry`      | network-internal | List registered boxes (tokens redacted). |
+
+Admin endpoints have no auth because they're only reachable from inside `agentbox-net` — the relay doesn't publish a host port. To inspect from the host, shell in: `docker exec agentbox-relay agentbox-relay tail [--box <id>]`.
+
+### Posting from inside a box
+
+The in-box `agentbox-ctl` supervisor automatically POSTs `service-state` and `task-state` events on transitions like `ready` / `crashed` / `backoff` / `unhealthy` / `done` / `failed`. Agents and user code in the box can post their own:
+
+```sh
+# inside the box
+curl -sS -H "Authorization: Bearer $AGENTBOX_RELAY_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"type":"notify","payload":{"text":"long job finished"}}' \
+     "$AGENTBOX_RELAY_URL/events"
+# → HTTP 202, {"id":N}
+```
+
+### Restart resilience
+
+The relay's registry and event buffer live in process memory. If the relay container restarts (host reboot, `docker restart agentbox-relay`, image rebuild), the registry is empty until each box re-registers — and existing boxes' tokens are no longer valid. To self-heal, `agentbox create` rehydrates the relay from `~/.agentbox/state.json` (every box's `relayToken` field) on every invocation. Idempotent and cheap.
+
+### Roadmap
+
+`/rpc` is the channel; the host-side executor isn't built yet. The intended first RPC is `git.push` — boxes don't carry SSH keys / git credentials by design, so they POST `{method: "git.push", params: {ref, remote}}` and a host-side worker (subscribing to relay events) runs the push using the host's identity. Designs for the executor (long-poll subscription vs. shared-volume queue) are tracked separately.
 
 ### Editor support (autocomplete + validation)
 
@@ -253,6 +302,8 @@ If something goes really sideways and `agentbox` itself can't reach a clean stat
 ```sh
 docker rm -f $(docker ps -aq --filter "name=agentbox-")
 docker volume ls -q | grep "^agentbox-" | xargs -r docker volume rm
+docker network rm agentbox-net 2>/dev/null || true
+docker rmi agentbox/relay:dev 2>/dev/null || true
 rm -rf ~/.agentbox/snapshots/*
 echo '{"version":1,"boxes":[]}' > ~/.agentbox/state.json
 ```
