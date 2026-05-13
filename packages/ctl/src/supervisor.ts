@@ -41,7 +41,21 @@ interface RunnerEvents {
   state: [ServiceState];
 }
 
-export class ServiceRunner extends EventEmitter<RunnerEvents> {
+/**
+ * Common shape for anything the Supervisor schedules. Tasks (PR 3) and
+ * services share a name-space; the `kind` discriminator lets callers narrow.
+ */
+export interface Unit {
+  readonly kind: 'task' | 'service';
+  readonly name: string;
+}
+
+export class ServiceRunner extends EventEmitter<RunnerEvents> implements Unit {
+  readonly kind = 'service' as const;
+  get name(): string {
+    return this.spec.name;
+  }
+
   private state: ServiceState = 'stopped';
   private child: ChildProcess | null = null;
   private restarts = 0;
@@ -249,7 +263,7 @@ interface SupervisorEvents {
 }
 
 export class Supervisor extends EventEmitter<SupervisorEvents> {
-  private runners = new Map<string, ServiceRunner>();
+  private units = new Map<string, Unit>();
 
   constructor(private readonly opts: SupervisorOptions) {
     super();
@@ -257,33 +271,44 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
 
   async init(specs: ServiceSpec[]): Promise<void> {
     await mkdir(this.opts.logDir, { recursive: true });
-    for (const spec of specs) this.addRunner(spec);
-    for (const r of this.runners.values()) {
-      if (r.spec.autostart) r.start();
+    for (const spec of specs) this.addServiceUnit(spec);
+    for (const u of this.units.values()) {
+      if (u.kind === 'service' && (u as ServiceRunner).spec.autostart) {
+        (u as ServiceRunner).start();
+      }
     }
   }
 
-  private addRunner(spec: ServiceSpec): ServiceRunner {
+  private addServiceUnit(spec: ServiceSpec): ServiceRunner {
     const runner = new ServiceRunner(spec, {
       logDir: this.opts.logDir,
       cwd: this.opts.workspace,
       spawn: this.opts.spawn,
     });
     runner.on('log', (ev) => this.emit('log', ev));
-    this.runners.set(spec.name, runner);
+    this.units.set(spec.name, runner);
     return runner;
   }
 
   list(): ServiceStatus[] {
-    return [...this.runners.values()].map((r) => r.getStatus());
+    const out: ServiceStatus[] = [];
+    for (const u of this.units.values()) {
+      if (u.kind === 'service') out.push((u as ServiceRunner).getStatus());
+    }
+    return out;
   }
 
   get(name: string): ServiceRunner | undefined {
-    return this.runners.get(name);
+    const u = this.units.get(name);
+    return u && u.kind === 'service' ? (u as ServiceRunner) : undefined;
   }
 
   async stopAll(): Promise<void> {
-    await Promise.all([...this.runners.values()].map((r) => r.stop()));
+    const services: ServiceRunner[] = [];
+    for (const u of this.units.values()) {
+      if (u.kind === 'service') services.push(u as ServiceRunner);
+    }
+    await Promise.all(services.map((r) => r.stop()));
   }
 
   /**
@@ -299,26 +324,29 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     const removed: string[] = [];
     const changed: string[] = [];
 
-    for (const [name, runner] of this.runners) {
+    for (const [name, unit] of this.units) {
+      if (unit.kind !== 'service') continue;
       if (!nextByName.has(name)) {
-        await runner.stop();
-        this.runners.delete(name);
+        await (unit as ServiceRunner).stop();
+        this.units.delete(name);
         removed.push(name);
       }
     }
 
     for (const spec of next) {
-      const existing = this.runners.get(spec.name);
+      const existing = this.units.get(spec.name);
       if (!existing) {
-        const runner = this.addRunner(spec);
+        const runner = this.addServiceUnit(spec);
         if (spec.autostart) runner.start();
         added.push(spec.name);
         continue;
       }
-      if (!specsEqual(existing.spec, spec)) {
-        await existing.stop();
-        this.runners.delete(spec.name);
-        const runner = this.addRunner(spec);
+      if (existing.kind !== 'service') continue;
+      const existingRunner = existing as ServiceRunner;
+      if (!specsEqual(existingRunner.spec, spec)) {
+        await existingRunner.stop();
+        this.units.delete(spec.name);
+        const runner = this.addServiceUnit(spec);
         if (spec.autostart) runner.start();
         changed.push(spec.name);
       }
