@@ -2,6 +2,7 @@ import { confirm, intro, isCancel, log, outro, spinner } from '@clack/prompts';
 import { createBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
+import { clampSpinnerLine } from '../spinner-line.js';
 
 interface CreateOptions {
   workspace: string;
@@ -58,7 +59,7 @@ export const createCommand = new Command('create')
         name: opts.name,
         useSnapshot,
         image: opts.image,
-        onLog: (line) => s.message(line),
+        onLog: (line) => s.message(clampSpinnerLine(line)),
       });
       s.stop(`box ${result.record.container} ready`);
 

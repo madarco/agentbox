@@ -22,6 +22,7 @@ import {
   writeAuthFile,
   type ResolvedClaudeAuth,
 } from '../auth.js';
+import { clampSpinnerLine } from '../spinner-line.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface ClaudeCreateOptions {
@@ -129,7 +130,7 @@ export const claudeCommand = new Command('claude')
         image: opts.image,
         claudeConfig: { isolate: !!opts.isolateClaudeConfig },
         claudeEnv: resolved.env,
-        onLog: (line) => s.message(line),
+        onLog: (line) => s.message(clampSpinnerLine(line)),
       });
       containerName = result.record.container;
       s.stop(`box ${result.record.container} ready`);
