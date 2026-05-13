@@ -11,7 +11,12 @@ import { mountOverlay, verifyOverlay, type OverlayCheck } from './overlay.js';
 import { recordBox, type BoxRecord } from './state.js';
 import { createSnapshot, snapshotPathFor } from './snapshot.js';
 import { launchCtlDaemon } from './ctl.js';
-import { buildVscodeMounts, ensureVscodeVolumes, vscodeServerVolumeName } from './vscode.js';
+import {
+  buildVscodeMounts,
+  ensureVscodeVolumes,
+  repairVscodeServerOwnership,
+  vscodeServerVolumeName,
+} from './vscode.js';
 
 export interface CreateBoxOptions {
   workspacePath: string;
@@ -227,6 +232,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     throw new Error(`overlay verification failed:\n${detail}`);
   }
   log('overlay verified');
+
+  await repairVscodeServerOwnership(containerName);
+  log('.vscode-server ownership verified');
 
   const ctl = await launchCtlDaemon(containerName, socketPath);
   if (ctl.up) log('agentbox-ctl daemon up');

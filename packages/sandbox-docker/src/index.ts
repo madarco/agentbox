@@ -41,6 +41,7 @@ export {
   containerHex,
   ensureAgentboxTasksFile,
   ensureVscodeVolumes,
+  repairVscodeServerOwnership,
   SHARED_VSCODE_EXTENSIONS_VOLUME,
   vscodeServerVolumeName,
   type EnsureTasksFileResult,

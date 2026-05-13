@@ -88,6 +88,16 @@ RUN mkdir -p /home/vscode/.claude \
     && ln -s /home/vscode/.claude/_claude.json /home/vscode/.claude.json \
     && chown -h vscode:vscode /home/vscode/.claude.json
 
+# Prepare /home/vscode/.vscode-server (+ its extensions subdir) so the named
+# volumes mounted at runtime — per-box `agentbox-vscode-server-<id>` over
+# .vscode-server, then shared `agentbox-vscode-extensions` over the extensions
+# subdir — come up owned by vscode. Same load-bearing reason as the .claude
+# block above: empty named volumes inherit the mount point's perms on first
+# mount; without these chowns, the Dev Containers extension fails to mkdir
+# .vscode-server/bin/<commit>/ during server install ("Permission denied").
+RUN mkdir -p /home/vscode/.vscode-server/extensions \
+    && chown -R vscode:vscode /home/vscode/.vscode-server
+
 # Claude Code via Anthropic's native installer — the recommended path per
 # code.claude.com/docs/en/setup (npm-global is under "Advanced installation"
 # now, with a warning against `sudo npm install -g`). Pinned to the `stable`

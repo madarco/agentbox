@@ -41,6 +41,24 @@ export async function ensureVscodeVolumes(boxId: string): Promise<void> {
 }
 
 /**
+ * Belt-and-suspenders chown of the .vscode-server tree after the named
+ * volumes are mounted. The Dockerfile pre-creates these dirs so first-mount
+ * inherits vscode:vscode ownership, but the shared `agentbox-vscode-extensions`
+ * volume might already exist from a box created against an older image where
+ * the dirs weren't seeded — in that case the volume is root-owned and the
+ * Dev Containers extension fails with "mkdir: cannot create directory
+ * '/home/vscode/.vscode-server/bin': Permission denied". One docker exec
+ * fixes it idempotently.
+ */
+export async function repairVscodeServerOwnership(container: string): Promise<void> {
+  await execInBox(
+    container,
+    ['chown', '-R', 'vscode:vscode', '/home/vscode/.vscode-server'],
+    { user: 'root' },
+  );
+}
+
+/**
  * VS Code's `vscode://vscode-remote/attached-container+<hex>/...` URL takes
  * the *container name* hex-encoded. This is what the Dev Containers extension
  * dispatches on.
