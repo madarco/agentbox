@@ -1,8 +1,17 @@
 import { execa } from 'execa';
 import { readdir, rm, stat } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import type { BoxState } from '@agentbox/core';
 import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './claude.js';
+import {
+  BOXES_ROOT,
+  boxRunDirFor,
+  getHostPaths,
+  openInFinder,
+  type HostPaths,
+  type OpenOptions,
+  type OpenResult,
+} from './host-export.js';
 import {
   inspectContainer,
   inspectContainerStatus,
@@ -109,6 +118,24 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
   return { record: box, overlayChecks };
 }
 
+export interface OpenedBox extends OpenResult {
+  record: BoxRecord;
+}
+
+export async function openBoxInFinder(idOrName: string, opts: OpenOptions): Promise<OpenedBox> {
+  const box = await resolveBox(idOrName);
+  const result = await openInFinder(box, opts);
+  return { ...result, record: box };
+}
+
+export async function getBoxHostPaths(
+  idOrName: string,
+): Promise<{ record: BoxRecord; paths: HostPaths }> {
+  const box = await resolveBox(idOrName);
+  const paths = await getHostPaths(box);
+  return { record: box, paths };
+}
+
 export interface InspectedBox {
   record: BoxRecord;
   state: BoxState;
@@ -118,6 +145,8 @@ export interface InspectedBox {
   dockerInspect: unknown;
   /** Null when the container isn't running; otherwise best-effort probe of the tmux 'claude' session. */
   claudeSession: ClaudeSessionInfo | null;
+  /** Host paths for `agentbox open` / `agentbox path`. */
+  hostPaths: HostPaths;
 }
 
 async function dirSizeBytes(path: string): Promise<number | null> {
@@ -158,6 +187,8 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
     }
   }
 
+  const hostPaths = await getHostPaths(record);
+
   return {
     record,
     state,
@@ -166,6 +197,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
     overlayMounted,
     dockerInspect: dockerJson,
     claudeSession,
+    hostPaths,
   };
 }
 
@@ -216,16 +248,13 @@ export async function destroyBox(
     }
   }
 
-  if (box.socketPath) {
-    // The per-box runtime dir holds the ctl socket; clean it up alongside
-    // volumes so destroy leaves no residue under ~/.agentbox/boxes/.
-    const boxRunDir = dirname(box.socketPath);
-    const boxRoot = dirname(boxRunDir);
-    try {
-      await rm(boxRoot, { recursive: true, force: true });
-    } catch {
-      // best-effort
-    }
+  // The per-box runtime dir holds the ctl socket plus the workspace/upper
+  // export dirs used by `agentbox open`. Wipe the whole thing so destroy
+  // leaves no residue under ~/.agentbox/boxes/.
+  try {
+    await rm(boxRunDirFor(box.id), { recursive: true, force: true });
+  } catch {
+    // best-effort
   }
 
   await removeBoxRecord(box.id);
@@ -243,6 +272,7 @@ export interface PruneResult {
   removedContainers: string[];
   removedVolumes: string[];
   removedSnapshotDirs: string[];
+  removedBoxDirs: string[];
   dryRun: boolean;
 }
 
@@ -250,6 +280,15 @@ async function listSnapshotDirs(): Promise<string[]> {
   try {
     const entries = await readdir(SNAPSHOTS_ROOT, { withFileTypes: true });
     return entries.filter((e) => e.isDirectory()).map((e) => join(SNAPSHOTS_ROOT, e.name));
+  } catch {
+    return [];
+  }
+}
+
+async function listBoxDirs(): Promise<string[]> {
+  try {
+    const entries = await readdir(BOXES_ROOT, { withFileTypes: true });
+    return entries.filter((e) => e.isDirectory()).map((e) => join(BOXES_ROOT, e.name));
   } catch {
     return [];
   }
@@ -267,15 +306,17 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
   );
   const missingRecords = stateChecks.filter((c) => c.status === 'missing').map((c) => c.box);
 
-  // Step 2 (only with --all): orphan docker containers / volumes / snapshot dirs.
+  // Step 2 (only with --all): orphan docker containers / volumes / snapshot dirs / per-box dirs.
   let orphanContainers: string[] = [];
   let orphanVolumes: string[] = [];
   let orphanSnapshots: string[] = [];
+  let orphanBoxDirs: string[] = [];
 
   if (all) {
     const liveContainers = await listAgentboxContainers();
     const liveVolumes = await listAgentboxVolumes();
     const liveSnapshotDirs = await listSnapshotDirs();
+    const liveBoxDirs = await listBoxDirs();
     // The state we'd have AFTER step 1 runs: missing-state records gone.
     const survivingBoxes = boxes.filter((b) => !missingRecords.some((m) => m.id === b.id));
     const expectedContainers = new Set(survivingBoxes.map((b) => b.container));
@@ -293,9 +334,11 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
         .filter((b): b is BoxRecord & { snapshotDir: string } => b.snapshotDir !== null)
         .map((b) => b.snapshotDir),
     );
+    const expectedBoxDirs = new Set(survivingBoxes.map((b) => boxRunDirFor(b.id)));
     orphanContainers = liveContainers.filter((c) => !expectedContainers.has(c));
     orphanVolumes = liveVolumes.filter((v) => !expectedVolumes.has(v));
     orphanSnapshots = liveSnapshotDirs.filter((d) => !expectedSnapshots.has(d));
+    orphanBoxDirs = liveBoxDirs.filter((d) => !expectedBoxDirs.has(d));
   }
 
   if (dryRun) {
@@ -304,6 +347,7 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
       removedContainers: orphanContainers,
       removedVolumes: orphanVolumes,
       removedSnapshotDirs: orphanSnapshots,
+      removedBoxDirs: orphanBoxDirs,
       dryRun: true,
     };
   }
@@ -318,12 +362,20 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
       // best-effort
     }
   }
+  for (const d of orphanBoxDirs) {
+    try {
+      await rm(d, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+  }
 
   return {
     removedRecords: missingRecords.map((b) => b.id),
     removedContainers: orphanContainers,
     removedVolumes: orphanVolumes,
     removedSnapshotDirs: orphanSnapshots,
+    removedBoxDirs: orphanBoxDirs,
     dryRun: false,
   };
 }

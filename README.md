@@ -58,6 +58,10 @@ agentbox pause <box>                # docker pause — 0 CPU, RAM stays mapped
 agentbox unpause <box>              # docker unpause — sub-second resume
 agentbox stop <box>                 # docker stop — preserves upper + node_modules volumes
 agentbox start <box>                # docker start + re-mount the FUSE overlay + relaunch ctl daemon
+agentbox open <box> [--upper] [--no-refresh] [--include-node-modules] [--print]
+                                    # open the box's workspace in Finder (refreshes via rsync first)
+agentbox path <box> [--upper] [--refresh] [--include-node-modules]
+                                    # print the host path; --refresh runs the same rsync as `open`
 agentbox destroy <box> [-y] [--keep-snapshot]   # alias: rm — discards upper volume
 agentbox prune [--dry-run] [--all] [-y]         # default: drops "missing" state records
 ```
@@ -77,6 +81,23 @@ agentbox start alpha              # restart + re-mount the overlay
 agentbox destroy alpha            # nuke it (prompts to confirm — `-y` to skip)
 agentbox prune --all              # clean up any orphan containers/volumes/snapshots
 ```
+
+### Browsing what the agent did (`open` / `path`)
+
+The box's `/workspace` is a **FUSE-overlay filesystem that only exists inside the container** — it composes the read-only lower (your snapshot) with the writable upper (a named Docker volume) on the fly. That means the merged view can't be browsed live from macOS: there's nothing on the host side for the in-container FUSE mount to point at. `agentbox open` works around this by rsyncing the merged view into a per-box host directory you can open in Finder.
+
+```sh
+agentbox open mybox                       # rsync /workspace → ~/.agentbox/boxes/<id>/workspace, then Finder
+agentbox open mybox --upper               # the writes layer only (see live note below)
+agentbox open mybox --no-refresh          # open whatever's already on disk; skip the rsync
+agentbox open mybox --include-node-modules# include /workspace/node_modules (off by default — it's big)
+agentbox open mybox --print               # still refreshes; prints the host path instead of launching Finder
+agentbox path mybox [--upper] [--refresh] # just the host path — pipe it into your editor / scripts
+```
+
+The merged export lives at `~/.agentbox/boxes/<id>/workspace`, the upper-only export at `~/.agentbox/boxes/<id>/upper`. The rsync runs inside the box (`docker exec rsync`) targeting a virtiofs bind-mount, so a refresh is a single mostly-zero-copy operation.
+
+**OrbStack only — live upper layer.** OrbStack exposes every Docker volume at `~/OrbStack/docker/volumes/<name>/`, so the writes layer (`agentbox-upper-<id>/upper/`) is **already** browsable live on macOS without any refresh. `agentbox open --upper` returns that path directly when OrbStack is detected and falls back to an rsync of `/upper/upper` into `~/.agentbox/boxes/<id>/upper/` on Docker Desktop or any other engine. The merged view still requires a refresh on both engines — the FUSE composition only exists inside the container.
 
 ### Running Claude Code in a box
 

@@ -15,6 +15,9 @@ function fmtBytes(n: number | null): string {
 }
 
 function renderText(i: InspectedBox): string {
+  const upperHost = i.hostPaths.upperLiveOnHost
+    ? `${i.hostPaths.upperLiveOnHost}  (live)`
+    : `${i.hostPaths.upperExport}  (run \`agentbox open --upper\` to refresh)`;
   const lines: string[] = [
     `id            ${i.record.id}`,
     `name          ${i.record.name}`,
@@ -30,6 +33,8 @@ function renderText(i: InspectedBox): string {
     `claude session ${renderClaudeSession(i)}`,
     `snapshot dir  ${i.record.snapshotDir ?? '(none — live workspace mount)'}`,
     `snapshot size ${fmtBytes(i.snapshotSizeBytes)}`,
+    `host export   ${i.hostPaths.mergedExport}  (run \`agentbox open\` to refresh)`,
+    `upper host    ${upperHost}`,
     `created       ${i.record.createdAt}`,
   ];
   return lines.join('\n');

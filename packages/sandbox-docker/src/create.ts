@@ -5,6 +5,7 @@ import { basename, join, resolve } from 'node:path';
 import { ConfigError, loadConfig } from '@agentbox/ctl';
 import { buildClaudeMounts, ensureClaudeVolume, resolveClaudeVolume } from './claude.js';
 import { containerExists, dockerInfo, ensureVolume, runBox } from './docker.js';
+import { CONTAINER_EXPORT_MERGED, CONTAINER_EXPORT_UPPER, boxRunDirFor } from './host-export.js';
 import { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
 import { mountOverlay, verifyOverlay, type OverlayCheck } from './overlay.js';
 import { recordBox, type BoxRecord } from './state.js';
@@ -173,13 +174,23 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   }
   const claudeMounts = buildClaudeMounts(claudeSpec, process.env);
 
-  const socketDir = join(homedir(), '.agentbox', 'boxes', id, 'run');
+  const boxDir = boxRunDirFor(id);
+  const socketDir = join(boxDir, 'run');
   const socketPath = join(socketDir, 'ctl.sock');
+  // Per-box host dirs that `agentbox open` / `agentbox path` refresh into.
+  // We bind these in at create time so a later `docker exec rsync` can write
+  // straight to the host filesystem — no container restart needed.
+  const mergedExportDir = join(boxDir, 'workspace');
+  const upperExportDir = join(boxDir, 'upper');
   await mkdir(socketDir, { recursive: true });
+  await mkdir(mergedExportDir, { recursive: true });
+  await mkdir(upperExportDir, { recursive: true });
 
   const extraVolumes = await buildIdentityMounts();
   extraVolumes.push(...claudeMounts.extraVolumes);
   extraVolumes.push(`${socketDir}:/run/agentbox`);
+  extraVolumes.push(`${mergedExportDir}:${CONTAINER_EXPORT_MERGED}`);
+  extraVolumes.push(`${upperExportDir}:${CONTAINER_EXPORT_UPPER}`);
   for (const v of extraVolumes) log(`mounting agent dir: ${v}`);
 
   await runBox({

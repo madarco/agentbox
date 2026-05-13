@@ -14,7 +14,8 @@ function totalRemovals(r: PruneResult): number {
     r.removedRecords.length +
     r.removedContainers.length +
     r.removedVolumes.length +
-    r.removedSnapshotDirs.length
+    r.removedSnapshotDirs.length +
+    r.removedBoxDirs.length
   );
 }
 
@@ -38,6 +39,11 @@ function summary(r: PruneResult): string {
   if (r.removedSnapshotDirs.length > 0) {
     lines.push(
       `  snapshot dirs (${String(r.removedSnapshotDirs.length)}): ${r.removedSnapshotDirs.join(', ')}`,
+    );
+  }
+  if (r.removedBoxDirs.length > 0) {
+    lines.push(
+      `  box dirs      (${String(r.removedBoxDirs.length)}): ${r.removedBoxDirs.join(', ')}`,
     );
   }
   return lines.length > 0 ? lines.join('\n') : '  (nothing to remove)';
