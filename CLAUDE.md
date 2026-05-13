@@ -130,7 +130,11 @@ node apps/cli/dist/index.js inspect cc       # shows "claude session: running (.
 node apps/cli/dist/index.js destroy cc -y
 ```
 
-After Dockerfile changes (e.g. updating Claude Code), wipe the cached image so the next create rebuilds:
+After **any** change that bakes into the box image, wipe the cached image so the next `create` rebuilds. The image is pinned to `agentbox/box:dev` and reused across creates — without an explicit rmi, you'll keep the stale copy. Watch out for:
+
+- `packages/sandbox-docker/Dockerfile.box` (obvious)
+- `packages/ctl/src/**` — the Dockerfile copies `packages/ctl/dist/bin.cjs` into `/usr/local/bin/agentbox-ctl`, so new wire ops / subcommands need a rebuild. The same goes for any change to `packages/ctl/tsup.config.ts` or the bundled bin.cjs output.
+- Updates to the Claude Code installer (the `curl claude.ai/install.sh` step in the Dockerfile).
 
 ```sh
 docker rmi agentbox/box:dev
