@@ -25,6 +25,13 @@ export interface RunBoxSpec {
   nodeModulesVolume: string;
   extraVolumes?: string[];
   env?: Record<string, string>;
+  /**
+   * docker `-p` mappings to forward host ports into the container. `hostPort: 0`
+   * lets Docker pick a free ephemeral port; resolve it back with
+   * {@link publishedHostPort}. `hostIp` defaults to all interfaces — pin it to
+   * `127.0.0.1` for loopback-only exposure.
+   */
+  portMappings?: Array<{ hostPort: number; containerPort: number; hostIp?: string }>;
 }
 
 export async function runBox(spec: RunBoxSpec): Promise<string> {
@@ -52,6 +59,10 @@ export async function runBox(spec: RunBoxSpec): Promise<string> {
   ];
   for (const v of spec.extraVolumes ?? []) {
     args.push('-v', v);
+  }
+  for (const pm of spec.portMappings ?? []) {
+    const host = pm.hostIp ? `${pm.hostIp}:${String(pm.hostPort)}` : String(pm.hostPort);
+    args.push('-p', `${host}:${String(pm.containerPort)}`);
   }
   for (const [k, val] of Object.entries(spec.env ?? {})) {
     args.push('-e', `${k}=${val}`);
@@ -192,6 +203,26 @@ export async function listAgentboxContainers(): Promise<string[]> {
     .split('\n')
     .map((s) => s.trim())
     .filter((s) => s.startsWith(AGENTBOX_PREFIX));
+}
+
+/**
+ * Resolve the host port Docker assigned to a `-p hostPort:containerPort` mapping
+ * that used `hostPort=0`. Returns null when the port isn't published or the
+ * container is gone. `docker port <name> 6080/tcp` prints e.g.
+ * `127.0.0.1:54321` (one line per binding); we take the first.
+ */
+export async function publishedHostPort(
+  container: string,
+  containerPort: number,
+): Promise<number | null> {
+  const result = await execa('docker', ['port', container, `${String(containerPort)}/tcp`], {
+    reject: false,
+  });
+  if (result.exitCode !== 0) return null;
+  const first = (result.stdout ?? '').split('\n')[0]?.trim();
+  if (!first) return null;
+  const m = /:(\d+)$/.exec(first);
+  return m ? Number(m[1]) : null;
 }
 
 export async function listAgentboxVolumes(): Promise<string[]> {

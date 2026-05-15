@@ -119,6 +119,84 @@ USER vscode
 RUN curl -fsSL https://claude.ai/install.sh | bash -s stable
 USER root
 
+# Browser support for in-box agents: Vercel's agent-browser drives Chrome via
+# CDP. Two things have to happen here:
+#
+#  1. Install Chrome's runtime libs (the well-known set Playwright's
+#     `install-deps` installs). Package names are pinned to Ubuntu 24.04
+#     (Noble) — the t64 suffix marks libs that flipped to 64-bit time_t in
+#     the noble transition. If the base image moves back to jammy these will
+#     need the un-suffixed names.
+#
+#  2. Get an actual Chromium binary. `agent-browser install` would normally
+#     download Chrome for Testing, but Chrome for Testing has no Linux ARM64
+#     build (Apple Silicon hosts run linux/arm64 containers) and Noble's
+#     `chromium-browser` apt package is a snap stub that won't run inside a
+#     container. The reliable cross-arch source is Playwright's bundled
+#     Chromium, so we install playwright globally just for its
+#     `playwright install chromium` downloader, then point agent-browser at
+#     the resulting binary via AGENT_BROWSER_EXECUTABLE_PATH. agent-browser
+#     honours that env var (priority: CLI flag > env > config file >
+#     built-in default; see agent-browser's README).
+#
+# Runtime state (sessions, auth cookies under ~/.agent-browser/) lives in the
+# container's writable layer, preserved across pause/unpause/stop/start and
+# wiped on `agentbox destroy`.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
+        libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+        libgbm1 libdrm2 libpango-1.0-0 libcairo2 libasound2t64 \
+        fonts-liberation xdg-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g agent-browser playwright
+
+# Download Chromium as `vscode` so the ms-playwright cache lands in vscode's
+# home (the user agent-browser runs as). The downloaded binary lives at
+# `chromium-XXXX/chrome-linux/chrome`, where XXXX is a Playwright-internal
+# revision number that changes between releases — we resolve it once here and
+# write the result to a stable symlink so AGENT_BROWSER_EXECUTABLE_PATH can
+# point at something predictable.
+USER vscode
+RUN playwright install chromium \
+    && ln -sf "$(ls /home/vscode/.cache/ms-playwright/chromium-*/chrome-linux/chrome | sort | tail -1)" /tmp/chromium-link \
+    && test -x "$(readlink /tmp/chromium-link)"
+USER root
+RUN mv /tmp/chromium-link /usr/local/bin/chromium
+
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chromium
+
+# VNC: Xvnc (TigerVNC, X server + RFB in one binary), noVNC (HTML5 client),
+# websockify (the WS<->RFB proxy noVNC needs). No window manager: a Chromium
+# launched with DISPLAY=:1 fills the screen, and agents drive tabs through the
+# browser itself. Adding a WM would cost another ~10MB and complicate the
+# lifecycle for no win.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        tigervnc-standalone-server tigervnc-common tigervnc-tools \
+        novnc websockify \
+    && rm -rf /var/lib/apt/lists/*
+
+# DISPLAY is image-baked so every `docker exec` (the claude tmux session,
+# `agentbox shell`, any agent subprocess) inherits it. Anything launched
+# without an explicit DISPLAY override renders to the VNC session.
+ENV DISPLAY=:1
+
+# EXPOSE 6080 is load-bearing for OrbStack. OrbStack maps
+# `<container-name>.orb.local` to the container's single EXPOSE'd port; without
+# this, the auto-DNS responds but nothing is routed. (Docker Desktop doesn't
+# use EXPOSE for routing — it just needs the `-p` flag passed at `docker run`.)
+EXPOSE 6080
+
+# Pre-create the per-user .vnc dir so it's writable from the runtime user. The
+# password file itself is written at container start by agentbox-vnc-start
+# (derived from AGENTBOX_VNC_PASSWORD).
+RUN mkdir -p /home/vscode/.vnc \
+    && chown -R vscode:vscode /home/vscode/.vnc
+COPY packages/sandbox-docker/scripts/agentbox-vnc-start /usr/local/bin/agentbox-vnc-start
+RUN chmod +x /usr/local/bin/agentbox-vnc-start
+
 # tmux config so Claude's true-color output and OSC 8 hyperlinks survive the
 # in-container tmux. `terminal-features` is a no-op on tmux < 3.4. Without
 # this, claude renders without 24-bit color (logo invisible) and hyperlinks

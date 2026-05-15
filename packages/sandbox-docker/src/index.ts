@@ -133,6 +133,14 @@ export {
   type PruneResult,
   type StartedBox,
 } from './lifecycle.js';
+export {
+  buildVncUrls,
+  generateVncPassword,
+  launchVncDaemon,
+  VNC_CONTAINER_PORT,
+  type VncLaunchResult,
+  type VncUrls,
+} from './vnc.js';
 
 const notYet = (op: string): never => {
   throw new Error(`@agentbox/sandbox-docker: ${op} is not yet implemented`);

@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { browserCommand } from './commands/browser.js';
 import { claudeCommand } from './commands/claude.js';
 import { codeCommand } from './commands/code.js';
 import { createCommand } from './commands/create.js';
@@ -28,6 +29,7 @@ program.addCommand(shellCommand);
 program.addCommand(listCommand);
 program.addCommand(inspectCommand);
 program.addCommand(openCommand);
+program.addCommand(browserCommand);
 program.addCommand(pathCommand);
 program.addCommand(statusCommand);
 program.addCommand(waitCommand);

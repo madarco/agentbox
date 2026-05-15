@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Start the per-box VNC stack: Xvnc on :1 (loopback inside container) +
+# websockify on 0.0.0.0:6080 serving noVNC's HTML5 client and proxying RFB.
+# Launched by the host via `docker exec -d --user vscode` after the container
+# is up. Idempotent — re-running while the daemons are alive is a no-op, so
+# `agentbox start` can blindly call us again.
+
+set -euo pipefail
+
+PASS="${AGENTBOX_VNC_PASSWORD:-}"
+if [[ -z "$PASS" ]]; then
+  echo "agentbox-vnc-start: AGENTBOX_VNC_PASSWORD is not set" >&2
+  exit 64
+fi
+
+if pgrep -u "$(id -u)" -x Xvnc >/dev/null \
+   && pgrep -u "$(id -u)" -f "websockify.*6080" >/dev/null; then
+  exit 0
+fi
+
+mkdir -p "$HOME/.vnc"
+# vncpasswd's -f mode reads plaintext on stdin, writes the DES blob to stdout.
+# VncAuth truncates >8 chars at compare time, which is fine — the host writes
+# an 8-char password. Write to a temp file + rename so a failure (e.g.,
+# vncpasswd missing) doesn't leave an empty file that Xvnc would then reject.
+TMP_PASSWD="$(mktemp "$HOME/.vnc/passwd.XXXXXX")"
+printf '%s\n' "$PASS" | vncpasswd -f > "$TMP_PASSWD"
+chmod 600 "$TMP_PASSWD"
+mv "$TMP_PASSWD" "$HOME/.vnc/passwd"
+
+mkdir -p /var/log/agentbox 2>/dev/null || true
+
+# Xvnc on display :1, loopback-only (websockify is the only public ingress).
+# 1280x800x24 is a sensible laptop-browser viewport.
+Xvnc :1 \
+  -localhost \
+  -SecurityTypes VncAuth \
+  -PasswordFile "$HOME/.vnc/passwd" \
+  -geometry 1280x800 \
+  -depth 24 \
+  -AlwaysShared \
+  >/var/log/agentbox/xvnc.log 2>&1 &
+
+# Wait for Xvnc's RFB socket (5901). bash's /dev/tcp pseudo-device makes the
+# probe a one-liner without needing netcat in the image.
+for _ in $(seq 1 50); do
+  if (echo > /dev/tcp/127.0.0.1/5901) 2>/dev/null; then break; fi
+  sleep 0.1
+done
+
+# websockify serves noVNC at /vnc.html (--web) and tunnels WS frames to Xvnc's
+# RFB. Bind 0.0.0.0:6080 so both Docker `-p` mappings and OrbStack's
+# <name>.orb.local routing reach it.
+websockify \
+  --web=/usr/share/novnc \
+  0.0.0.0:6080 \
+  127.0.0.1:5901 \
+  >/var/log/agentbox/websockify.log 2>&1 &
+
+disown -a

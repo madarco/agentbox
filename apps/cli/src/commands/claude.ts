@@ -33,6 +33,8 @@ interface ClaudeCreateOptions {
   image?: string;
   yes?: boolean;
   isolateClaudeConfig?: boolean;
+  withPlaywright?: boolean;
+  vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
   sessionName: string;
 }
 
@@ -97,6 +99,8 @@ export const claudeCommand = new Command('claude')
     '--isolate-claude-config',
     'use a per-box ~/.claude volume instead of the shared agentbox-claude-config',
   )
+  .option('--with-playwright', 'also install @playwright/cli@latest globally inside the box')
+  .option('--no-vnc', 'disable the per-box Xvnc + noVNC web client (on by default)')
   .option('--session-name <name>', 'tmux session name', DEFAULT_CLAUDE_SESSION)
   .argument(
     '[claude-args...]',
@@ -131,6 +135,8 @@ export const claudeCommand = new Command('claude')
         image: opts.image,
         claudeConfig: { isolate: !!opts.isolateClaudeConfig },
         claudeEnv: resolved.env,
+        withPlaywright: !!opts.withPlaywright,
+        vnc: { enabled: opts.vnc !== false },
         onLog: (line) => s.message(clampSpinnerLine(line)),
       });
       containerName = result.record.container;

@@ -11,6 +11,8 @@ interface CreateOptions {
   image?: string;
   attach?: boolean;
   yes?: boolean;
+  withPlaywright?: boolean;
+  vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
 }
 
 async function resolveUseSnapshot(opts: CreateOptions): Promise<boolean> {
@@ -45,6 +47,8 @@ export const createCommand = new Command('create')
   .option('--no-snapshot', 'bind the live workspace directly (host edits leak into reads)')
   .option('--image <ref>', 'override the box image', undefined)
   .option('--attach', 'drop into a shell inside the box after it is ready')
+  .option('--with-playwright', 'also install @playwright/cli@latest globally inside the box')
+  .option('--no-vnc', 'disable the per-box Xvnc + noVNC web client (on by default)')
   .option('-y, --yes', 'skip prompts, accept defaults (snapshot=on)')
   .action(async (opts: CreateOptions) => {
     intro('agentbox create');
@@ -59,6 +63,8 @@ export const createCommand = new Command('create')
         name: opts.name,
         useSnapshot,
         image: opts.image,
+        withPlaywright: !!opts.withPlaywright,
+        vnc: { enabled: opts.vnc !== false },
         onLog: (line) => s.message(clampSpinnerLine(line)),
       });
       s.stop(`box ${result.record.container} ready`);

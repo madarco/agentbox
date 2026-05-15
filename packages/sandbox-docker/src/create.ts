@@ -2,9 +2,17 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
+import { execa } from 'execa';
 import { ConfigError, loadConfig } from '@agentbox/ctl';
 import { buildClaudeMounts, ensureClaudeVolume, resolveClaudeVolume } from './claude.js';
-import { containerExists, dockerInfo, ensureVolume, runBox } from './docker.js';
+import {
+  containerExists,
+  dockerInfo,
+  ensureVolume,
+  publishedHostPort,
+  runBox,
+} from './docker.js';
+import { generateVncPassword, launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
 import { createBoxWorktree, detectGitRepos } from './git-worktree.js';
 import { CONTAINER_EXPORT_MERGED, CONTAINER_EXPORT_UPPER, boxRunDirFor } from './host-export.js';
 import { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
@@ -45,6 +53,19 @@ export interface CreateBoxOptions {
   claudeConfig?: { isolate: boolean };
   /** Extra env vars forwarded to the container (merged on top of claude env forwarding). */
   claudeEnv?: Record<string, string>;
+  /**
+   * When true, run `npm install -g @playwright/cli@latest` inside the box after
+   * the overlay is mounted. agent-browser is always installed in the image; this
+   * flag adds the Playwright CLI on top for boxes that need it.
+   */
+  withPlaywright?: boolean;
+  /**
+   * VNC stack (Xvnc on :1 + websockify serving noVNC on container :6080).
+   * Defaults to enabled. The CLI exposes `--no-vnc` for opt-out. Disabling
+   * skips port mapping + password generation + the in-container supervisor
+   * launch; the apt-installed binaries stay in the image but are unused.
+   */
+  vnc?: { enabled: boolean };
 }
 
 export interface CreatedBox {
@@ -328,6 +349,19 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       }
     : {};
 
+  // VNC stack defaults on; the CLI surfaces `--no-vnc` for opt-out. Generate
+  // the password and the port mapping up front so they're baked into the
+  // container's env + `-p` flags before `docker run` — both must be set at
+  // create time (env survives stop/start; port mappings are immutable).
+  const vncEnabled = opts.vnc?.enabled !== false;
+  const vncPassword = vncEnabled ? generateVncPassword() : undefined;
+  const vncEnv: Record<string, string> = vncEnabled && vncPassword
+    ? { AGENTBOX_VNC_PASSWORD: vncPassword }
+    : {};
+  const vncPortMappings = vncEnabled
+    ? [{ hostPort: 0, containerPort: VNC_CONTAINER_PORT, hostIp: '127.0.0.1' }]
+    : [];
+
   await runBox({
     name: containerName,
     image: imageRef,
@@ -335,10 +369,12 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     upperVolume,
     nodeModulesVolume,
     extraVolumes,
+    portMappings: vncPortMappings,
     env: {
       AGENTBOX_BOX_ID: id,
       ...claudeMounts.env,
       ...relayEnv,
+      ...vncEnv,
       ...(opts.claudeEnv ?? {}),
     },
   });
@@ -370,6 +406,49 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   if (ctl.up) log('agentbox-ctl daemon up');
   else log(`agentbox-ctl daemon did not become reachable: ${ctl.reason}`);
 
+  if (opts.withPlaywright) {
+    log('installing @playwright/cli@latest (--with-playwright)');
+    // npm-global writes to /usr/lib/node_modules/, so we need root. The
+    // resulting binary lives in /usr/bin and persists in the container's
+    // writable layer across pause/stop/start — no need to reinstall on start.
+    const result = await execa(
+      'docker',
+      [
+        'exec',
+        '--user',
+        'root',
+        containerName,
+        'bash',
+        '-lc',
+        'npm install -g @playwright/cli@latest 2>&1',
+      ],
+      { reject: false },
+    );
+    for (const line of (result.stdout ?? '').split('\n')) {
+      if (line.trim().length > 0) log(`[playwright] ${line}`);
+    }
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `failed to install @playwright/cli (exit ${String(result.exitCode)}): ${(result.stderr ?? '').toString().slice(0, 400)}`,
+      );
+    }
+    log('@playwright/cli installed');
+  }
+
+  // VNC daemon (Xvnc + websockify). Best-effort, like launchCtlDaemon. The
+  // host port mapping was wired into runBox above (hostPort=0 → random); we
+  // resolve the assigned port here for storage. If the daemon fails to come
+  // up we still record vncEnabled so `agentbox start` will retry the launch
+  // — the failure is usually transient (apt-running, fs slow).
+  let vncHostPort: number | null = null;
+  if (vncEnabled) {
+    const vnc = await launchVncDaemon(containerName);
+    if (vnc.up) log('vnc stack up (Xvnc + websockify + noVNC)');
+    else log(`vnc stack did not become reachable: ${vnc.reason}`);
+    vncHostPort = await publishedHostPort(containerName, VNC_CONTAINER_PORT);
+    if (vncHostPort) log(`vnc web on host 127.0.0.1:${String(vncHostPort)}`);
+  }
+
   const record: BoxRecord = {
     id,
     name,
@@ -386,6 +465,11 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     cursorServerVolume: cursorServerVolumeName(id),
     relayToken: relayUp ? relayToken : undefined,
     gitWorktrees: gitWorktreeRecords.length > 0 ? gitWorktreeRecords : undefined,
+    withPlaywright: opts.withPlaywright ? true : undefined,
+    vncEnabled: vncEnabled ? true : undefined,
+    vncContainerPort: vncEnabled ? VNC_CONTAINER_PORT : undefined,
+    vncHostPort: vncHostPort ?? undefined,
+    vncPassword: vncPassword,
     createdAt: new Date().toISOString(),
   };
   await recordBox(record);

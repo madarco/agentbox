@@ -13,6 +13,7 @@ import {
 import {
   BOXES_ROOT,
   boxRunDirFor,
+  detectEngine,
   getHostPaths,
   openInFinder,
   type HostPaths,
@@ -26,6 +27,7 @@ import {
   listAgentboxContainers,
   listAgentboxVolumes,
   pauseContainer,
+  publishedHostPort,
   removeContainer,
   removeNetwork,
   removeVolume,
@@ -40,6 +42,7 @@ import {
   type OverlayCheck,
 } from './overlay.js';
 import { launchCtlDaemon } from './ctl.js';
+import { buildVncUrls, launchVncDaemon, VNC_CONTAINER_PORT, type VncUrls } from './vnc.js';
 import {
   ensureRelay,
   forgetBoxFromRelay,
@@ -52,6 +55,7 @@ import { SNAPSHOTS_ROOT } from './snapshot.js';
 import {
   findBox,
   readState,
+  recordBox,
   removeBoxRecord,
   type BoxRecord,
   type FindBoxResult,
@@ -166,6 +170,21 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
     // resumption of the box itself.
     await launchCtlDaemon(box.container, box.socketPath);
   }
+  if (box.vncEnabled) {
+    // Xvnc + websockify both die with the container. The password is already
+    // in the container env (set at `docker run` time and preserved across
+    // start/stop), so we don't need to forward it here.
+    await launchVncDaemon(box.container);
+    // Docker re-allocates an ephemeral host port for `-p 0:6080` on every
+    // `start`, so the loopback URL from create time is stale. Re-resolve and
+    // persist; the orb.local URL is name-based and unaffected. Best-effort —
+    // a failed resolve just leaves the record as-is.
+    const freshHostPort = await publishedHostPort(box.container, VNC_CONTAINER_PORT);
+    if (freshHostPort && freshHostPort !== box.vncHostPort) {
+      box.vncHostPort = freshHostPort;
+      await recordBox(box);
+    }
+  }
   // Relay's in-memory registry may have been lost if the relay restarted
   // between create and now (or this is the first start after a host reboot).
   // Re-ensure + re-register so outbound push from the box keeps working.
@@ -214,6 +233,8 @@ export interface InspectedBox {
   claudeSession: ClaudeSessionInfo | null;
   /** Host paths for `agentbox open` / `agentbox path`. */
   hostPaths: HostPaths;
+  /** noVNC URLs (orb.local + loopback). Empty object when VNC is off for this box. */
+  vnc: VncUrls;
 }
 
 async function dirSizeBytes(path: string): Promise<number | null> {
@@ -255,6 +276,8 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
   }
 
   const hostPaths = await getHostPaths(record);
+  const engine = await detectEngine();
+  const vnc = buildVncUrls(record, engine);
 
   return {
     record,
@@ -265,6 +288,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
     dockerInspect: dockerJson,
     claudeSession,
     hostPaths,
+    vnc,
   };
 }
 

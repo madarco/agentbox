@@ -56,6 +56,24 @@ export interface BoxRecord {
    * the FUSE overlay is mounted.
    */
   gitWorktrees?: GitWorktreeRecord[];
+  /**
+   * True when the box was created with --with-playwright. The install happens
+   * once at create time (npm install -g @playwright/cli@latest inside the
+   * container); we record the choice for `agentbox inspect` visibility. Absent
+   * on boxes created before this field existed (treated as false).
+   */
+  withPlaywright?: boolean;
+  /**
+   * VNC stack (Xvnc + websockify + noVNC) is enabled for this box. Absent on
+   * boxes created before VNC support landed → treated as disabled.
+   */
+  vncEnabled?: boolean;
+  /** Container-side noVNC web port. Fixed to 6080 today; here for future-proofing. */
+  vncContainerPort?: number;
+  /** Random host port Docker assigned to the noVNC web server (resolved via `docker port`). */
+  vncHostPort?: number;
+  /** Per-box password baked into Xvnc's PasswordFile and embedded in the auto-connect URL. */
+  vncPassword?: string;
   createdAt: string; // ISO-8601
 }
 

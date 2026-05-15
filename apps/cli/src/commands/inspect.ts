@@ -31,6 +31,8 @@ function renderText(i: InspectedBox): string {
     `node_modules  ${i.record.nodeModulesVolume}`,
     `claude config ${i.record.claudeConfigVolume ?? '(none)'}`,
     `claude session ${renderClaudeSession(i)}`,
+    `playwright    ${i.record.withPlaywright ? 'yes' : 'no'}`,
+    ...renderVnc(i),
     `snapshot dir  ${i.record.snapshotDir ?? '(none — live workspace mount)'}`,
     `snapshot size ${fmtBytes(i.snapshotSizeBytes)}`,
     `host export   ${i.hostPaths.mergedExport}  (run \`agentbox open\` to refresh)`,
@@ -45,6 +47,17 @@ function renderClaudeSession(i: InspectedBox): string {
   if (!i.claudeSession.running) return `not running ("${i.claudeSession.sessionName}")`;
   const since = i.claudeSession.startedAt ? ` since ${i.claudeSession.startedAt}` : '';
   return `running ("${i.claudeSession.sessionName}")${since}`;
+}
+
+function renderVnc(i: InspectedBox): string[] {
+  if (!i.record.vncEnabled) return [`vnc           off`];
+  const lines: string[] = [];
+  if (i.vnc.orbUrl) lines.push(`vnc           ${i.vnc.orbUrl}`);
+  if (i.vnc.loopbackUrl) {
+    lines.push(`${i.vnc.orbUrl ? 'vnc (loopback) ' : 'vnc           '}${i.vnc.loopbackUrl}`);
+  }
+  if (lines.length === 0) lines.push(`vnc           enabled (URL unavailable — daemon may not be up)`);
+  return lines;
 }
 
 export const inspectCommand = new Command('inspect')
