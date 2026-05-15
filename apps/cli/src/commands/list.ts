@@ -1,9 +1,11 @@
+import { log } from '@clack/prompts';
 import { listBoxes, type ListedBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { pathToFileURL } from 'node:url';
 import { hyperlink } from '../hyperlink.js';
+import { withWatchOptions, watchRender, type WatchableOptions } from '../watch.js';
 
-interface ListOptions {
+interface ListOptions extends WatchableOptions {
   json?: boolean;
 }
 
@@ -111,19 +113,30 @@ function renderTable(boxes: ListedBox[], stream: NodeJS.WriteStream): string {
     .join('\n');
 }
 
-export const listCommand = new Command('list')
-  .alias('ls')
-  .description('List all known agent boxes')
-  .option('-j, --json', 'machine-readable JSON output')
-  .action(async (opts: ListOptions) => {
+async function buildListText(): Promise<string> {
+  const boxes = await listBoxes();
+  if (boxes.length === 0) return 'no boxes — run `agentbox create` to make one';
+  return renderTable(boxes, process.stdout);
+}
+
+export const listCommand = withWatchOptions(
+  new Command('list')
+    .alias('ls')
+    .description('List all known agent boxes')
+    .option('-j, --json', 'machine-readable JSON output'),
+).action(async (opts: ListOptions) => {
+  if (opts.json && opts.watch) {
+    log.error('cannot combine --json with --watch');
+    process.exit(2);
+  }
+  if (opts.watch) {
+    await watchRender(buildListText, opts.interval);
+    return;
+  }
+  if (opts.json) {
     const boxes = await listBoxes();
-    if (opts.json) {
-      process.stdout.write(JSON.stringify(boxes, null, 2) + '\n');
-      return;
-    }
-    if (boxes.length === 0) {
-      process.stdout.write('no boxes — run `agentbox create` to make one\n');
-      return;
-    }
-    process.stdout.write(renderTable(boxes, process.stdout) + '\n');
-  });
+    process.stdout.write(JSON.stringify(boxes, null, 2) + '\n');
+    return;
+  }
+  process.stdout.write((await buildListText()) + '\n');
+});

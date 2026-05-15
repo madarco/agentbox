@@ -1,3 +1,4 @@
+import { log } from '@clack/prompts';
 import { Command } from 'commander';
 import {
   renderStatusTable,
@@ -8,90 +9,107 @@ import {
 import { execInBox, inspectBox, type InspectedBox } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { renderEndpointLines } from '../endpoints-render.js';
+import { withWatchOptions, watchRender, type WatchableOptions } from '../watch.js';
 import { handleLifecycleError } from './_errors.js';
 
-interface StatusOptions {
+interface StatusOptions extends WatchableOptions {
   json?: boolean;
 }
 
-export const statusCommand = new Command('status')
-  .description("Show service + task status from a box's agentbox-ctl daemon")
-  .argument(
-    '[box]',
-    'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
-  )
-  .option('-j, --json', 'machine-readable JSON output')
-  .action(async (idOrName: string | undefined, opts: StatusOptions) => {
-    try {
-      const box = await resolveBoxOrExit(idOrName);
-      const inspected = await inspectBox(box.id);
-      const { state, endpoints, persistedStatus } = inspected;
-
-      // Live path: only a running container is reachable via `docker exec`
-      // (macOS can see the socket file but can't connect to it). When the box
-      // is paused/stopped — or the exec fails — we fall back to the snapshot
-      // the relay persisted to ~/.agentbox/boxes/<id>/status.json.
-      let live: StatusReply | null = null;
-      if (state === 'running') {
-        const proc = await execInBox(box.container, ['agentbox-ctl', 'status', '--json'], {
-          user: 'vscode',
-        });
-        if (proc.exitCode === 0) {
-          try {
-            live = JSON.parse(proc.stdout) as StatusReply;
-          } catch {
-            live = null;
-          }
-        }
-      }
-
-      if (opts.json) {
-        process.stdout.write(
-          JSON.stringify(
-            {
-              state,
-              source: live ? 'live' : 'persisted',
-              ...(live ?? {}),
-              claudeSession: inspected.claudeSession,
-              persisted: persistedStatus,
-              endpoints,
-            },
-            null,
-            2,
-          ) + '\n',
-        );
-        return;
-      }
-
-      const epLines = renderEndpointLines(endpoints, process.stdout);
-      if (epLines.length > 0) {
-        process.stdout.write('ENDPOINTS\n');
-        process.stdout.write(epLines.join('\n') + '\n\n');
-      }
-      process.stdout.write(renderClaudeLine(inspected, persistedStatus) + '\n');
-
-      if (live) {
-        if (live.tasks.length > 0) {
-          process.stdout.write('TASKS\n');
-          process.stdout.write(renderTaskTable(live.tasks) + '\n\n');
-        }
-        process.stdout.write('SERVICES\n');
-        process.stdout.write(renderStatusTable(live.services) + '\n');
-        return;
-      }
-
-      if (!persistedStatus) {
-        process.stdout.write(
-          `box is ${state}; no persisted status ` +
-            `(box predates this feature, or the relay never received a snapshot)\n`,
-        );
-        return;
-      }
-      process.stdout.write(renderPersisted(persistedStatus, state) + '\n');
-    } catch (err) {
-      handleLifecycleError(err);
+export const statusCommand = withWatchOptions(
+  new Command('status')
+    .description("Show service + task status from a box's agentbox-ctl daemon")
+    .argument(
+      '[box]',
+      'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
+    )
+    .option('-j, --json', 'machine-readable JSON output'),
+).action(async (idOrName: string | undefined, opts: StatusOptions) => {
+  try {
+    if (opts.json && opts.watch) {
+      log.error('cannot combine --json with --watch');
+      process.exit(2);
     }
+    const box = await resolveBoxOrExit(idOrName);
+
+    if (opts.watch) {
+      await watchRender(() => buildStatusText(box.id, box.container), opts.interval);
+      return;
+    }
+
+    if (opts.json) {
+      const inspected = await inspectBox(box.id);
+      const live = await fetchLive(inspected.state, box.container);
+      process.stdout.write(
+        JSON.stringify(
+          {
+            state: inspected.state,
+            source: live ? 'live' : 'persisted',
+            ...(live ?? {}),
+            claudeSession: inspected.claudeSession,
+            persisted: inspected.persistedStatus,
+            endpoints: inspected.endpoints,
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+      return;
+    }
+
+    process.stdout.write((await buildStatusText(box.id, box.container)) + '\n');
+  } catch (err) {
+    handleLifecycleError(err);
+  }
+});
+
+async function fetchLive(state: string, container: string): Promise<StatusReply | null> {
+  // Only a running container is reachable via `docker exec` (macOS can see the
+  // socket file but can't connect to it). Paused/stopped — or a failed exec —
+  // falls back to the snapshot the relay persisted to disk.
+  if (state !== 'running') return null;
+  const proc = await execInBox(container, ['agentbox-ctl', 'status', '--json'], {
+    user: 'vscode',
   });
+  if (proc.exitCode !== 0) return null;
+  try {
+    return JSON.parse(proc.stdout) as StatusReply;
+  } catch {
+    return null;
+  }
+}
+
+async function buildStatusText(id: string, container: string): Promise<string> {
+  const inspected = await inspectBox(id);
+  const { state, endpoints, persistedStatus } = inspected;
+  const live = await fetchLive(state, container);
+
+  const out: string[] = [];
+  const epLines = renderEndpointLines(endpoints, process.stdout);
+  if (epLines.length > 0) {
+    out.push('ENDPOINTS', epLines.join('\n'), '');
+  }
+  out.push(renderClaudeLine(inspected, persistedStatus));
+
+  if (live) {
+    if (live.tasks.length > 0) {
+      out.push('', 'TASKS', renderTaskTable(live.tasks));
+    }
+    out.push('', 'SERVICES', renderStatusTable(live.services));
+    return out.join('\n');
+  }
+
+  if (!persistedStatus) {
+    out.push(
+      '',
+      `box is ${state}; no persisted status ` +
+        `(box predates this feature, or the relay never received a snapshot)`,
+    );
+    return out.join('\n');
+  }
+  out.push('', renderPersisted(persistedStatus, state));
+  return out.join('\n');
+}
 
 function renderClaudeLine(i: InspectedBox, persisted: BoxStatus | null): string {
   const s = i.claudeSession;
@@ -129,9 +147,7 @@ function renderPersisted(s: BoxStatus, state: string): string {
   if (s.ports.length === 0) {
     out.push('  (none listening)');
   } else {
-    out.push(
-      ...s.ports.map((p) => `  :${String(p.port)}${p.service ? `  (${p.service})` : ''}`),
-    );
+    out.push(...s.ports.map((p) => `  :${String(p.port)}${p.service ? `  (${p.service})` : ''}`));
   }
   return out.join('\n');
 }
