@@ -1,12 +1,11 @@
-import { log } from '@clack/prompts';
 import { Command } from 'commander';
 import {
   renderStatusTable,
   renderTaskTable,
-  type ClaudeSessionStatus,
+  type BoxStatus,
   type StatusReply,
 } from '@agentbox/ctl';
-import { execInBox, inspectBox } from '@agentbox/sandbox-docker';
+import { execInBox, inspectBox, type InspectedBox } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { renderEndpointLines } from '../endpoints-render.js';
 import { handleLifecycleError } from './_errors.js';
@@ -25,60 +24,114 @@ export const statusCommand = new Command('status')
   .action(async (idOrName: string | undefined, opts: StatusOptions) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
+      const inspected = await inspectBox(box.id);
+      const { state, endpoints, persistedStatus } = inspected;
 
-      // Cross the docker boundary via `docker exec`: macOS hosts can see the
-      // socket file in the bind mount but can't actually connect to it. The
-      // daemon is reachable from the container itself, so we shell in.
-      const proc = await execInBox(box.container, ['agentbox-ctl', 'status', '--json'], {
-        user: 'vscode',
-      });
-      if (proc.exitCode !== 0) {
-        log.error(`agentbox-ctl status failed: ${proc.stderr || proc.stdout}`);
-        process.exit(1);
+      // Live path: only a running container is reachable via `docker exec`
+      // (macOS can see the socket file but can't connect to it). When the box
+      // is paused/stopped — or the exec fails — we fall back to the snapshot
+      // the relay persisted to ~/.agentbox/boxes/<id>/status.json.
+      let live: StatusReply | null = null;
+      if (state === 'running') {
+        const proc = await execInBox(box.container, ['agentbox-ctl', 'status', '--json'], {
+          user: 'vscode',
+        });
+        if (proc.exitCode === 0) {
+          try {
+            live = JSON.parse(proc.stdout) as StatusReply;
+          } catch {
+            live = null;
+          }
+        }
       }
-      const reply = JSON.parse(proc.stdout) as StatusReply;
-      const claude = await fetchClaudeSession(box.container);
-      const { endpoints } = await inspectBox(box.id);
 
       if (opts.json) {
         process.stdout.write(
-          JSON.stringify({ ...reply, claudeSession: claude, endpoints }, null, 2) + '\n',
+          JSON.stringify(
+            {
+              state,
+              source: live ? 'live' : 'persisted',
+              ...(live ?? {}),
+              claudeSession: inspected.claudeSession,
+              persisted: persistedStatus,
+              endpoints,
+            },
+            null,
+            2,
+          ) + '\n',
         );
-      } else {
-        const epLines = renderEndpointLines(endpoints, process.stdout);
-        if (epLines.length > 0) {
-          process.stdout.write('ENDPOINTS\n');
-          process.stdout.write(epLines.join('\n') + '\n\n');
-        }
-        if (claude !== null) {
-          process.stdout.write(`${renderClaudeLine(claude)}\n`);
-        }
-        if (reply.tasks.length > 0) {
+        return;
+      }
+
+      const epLines = renderEndpointLines(endpoints, process.stdout);
+      if (epLines.length > 0) {
+        process.stdout.write('ENDPOINTS\n');
+        process.stdout.write(epLines.join('\n') + '\n\n');
+      }
+      process.stdout.write(renderClaudeLine(inspected, persistedStatus) + '\n');
+
+      if (live) {
+        if (live.tasks.length > 0) {
           process.stdout.write('TASKS\n');
-          process.stdout.write(renderTaskTable(reply.tasks) + '\n\n');
+          process.stdout.write(renderTaskTable(live.tasks) + '\n\n');
         }
         process.stdout.write('SERVICES\n');
-        process.stdout.write(renderStatusTable(reply.services) + '\n');
+        process.stdout.write(renderStatusTable(live.services) + '\n');
+        return;
       }
+
+      if (!persistedStatus) {
+        process.stdout.write(
+          `box is ${state}; no persisted status ` +
+            `(box predates this feature, or the relay never received a snapshot)\n`,
+        );
+        return;
+      }
+      process.stdout.write(renderPersisted(persistedStatus, state) + '\n');
     } catch (err) {
       handleLifecycleError(err);
     }
   });
 
-async function fetchClaudeSession(container: string): Promise<ClaudeSessionStatus | null> {
-  const proc = await execInBox(container, ['agentbox-ctl', 'claude-session', '--json'], {
-    user: 'vscode',
-  });
-  if (proc.exitCode !== 0) return null;
-  try {
-    return JSON.parse(proc.stdout) as ClaudeSessionStatus;
-  } catch {
-    return null;
-  }
+function renderClaudeLine(i: InspectedBox, persisted: BoxStatus | null): string {
+  const s = i.claudeSession;
+  const sessionLine =
+    s === null
+      ? `claude session: (n/a — box not running)`
+      : s.running
+        ? `claude session: running ("${s.sessionName}")${s.startedAt ? ` since ${s.startedAt}` : ''}`
+        : `claude session: not running ("${s.sessionName}")`;
+  if (!persisted) return sessionLine;
+  const c = persisted.claude;
+  const updated = c.updatedAt ? ` (updated ${c.updatedAt})` : '';
+  return `${sessionLine}\nclaude activity: ${c.state}${updated}`;
 }
 
-function renderClaudeLine(s: ClaudeSessionStatus): string {
-  if (!s.running) return `claude session: not running ("${s.sessionName}")`;
-  const since = s.startedAt ? ` since ${s.startedAt}` : '';
-  return `claude session: running ("${s.sessionName}")${since}`;
+function renderPersisted(s: BoxStatus, state: string): string {
+  const out: string[] = [`(persisted snapshot from ${s.timestamp}; box is ${state})`, ''];
+  if (s.tasks.length > 0) {
+    out.push('TASKS');
+    out.push(...s.tasks.map((t) => `  ${t.name}  ${t.state}`));
+    out.push('');
+  }
+  out.push('SERVICES');
+  if (s.services.length === 0) {
+    out.push('  (none)');
+  } else {
+    out.push(
+      ...s.services.map(
+        (svc) => `  ${svc.name}  ${svc.state}${svc.port !== null ? `  :${String(svc.port)}` : ''}`,
+      ),
+    );
+  }
+  out.push('');
+  out.push('PORTS');
+  if (s.ports.length === 0) {
+    out.push('  (none listening)');
+  } else {
+    out.push(
+      ...s.ports.map((p) => `  :${String(p.port)}${p.service ? `  (${p.service})` : ''}`),
+    );
+  }
+  return out.join('\n');
 }

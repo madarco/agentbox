@@ -98,6 +98,8 @@ export {
 export {
   BOXES_ROOT,
   boxRunDirFor,
+  boxStatusPathFor,
+  readBoxStatus,
   CONTAINER_EXPORT_MERGED,
   CONTAINER_EXPORT_UPPER,
   DEFAULT_ENV_PATTERNS,

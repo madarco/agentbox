@@ -1,7 +1,8 @@
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
+import type { BoxStatus } from '@agentbox/ctl';
 import { execInBox, inspectVolumeMountpoint } from './docker.js';
 import type { BoxRecord } from './state.js';
 
@@ -69,6 +70,32 @@ export const BOXES_ROOT = join(homedir(), '.agentbox', 'boxes');
 
 export function boxRunDirFor(id: string): string {
   return join(BOXES_ROOT, id);
+}
+
+/**
+ * Per-box durable status file. The host relay writes it (atomic tmp+rename)
+ * when the in-box daemon pushes a `box-status` snapshot; it persists here on
+ * the host fs even while the box is paused/stopped. Path must stay in sync
+ * with `boxStatusPathFor` in @agentbox/relay's status-store.
+ */
+export function boxStatusPathFor(id: string): string {
+  return join(boxRunDirFor(id), 'status.json');
+}
+
+/**
+ * Read the persisted box status, or null when there is none (box predates the
+ * feature, relay never received a push, corrupt JSON, or a future-incompatible
+ * schema). Never throws — callers fall back to live/“unknown”.
+ */
+export async function readBoxStatus(id: string): Promise<BoxStatus | null> {
+  try {
+    const raw = await readFile(boxStatusPathFor(id), 'utf8');
+    const parsed = JSON.parse(raw) as BoxStatus;
+    if (parsed.schema !== 1) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 async function pathExists(p: string): Promise<boolean> {

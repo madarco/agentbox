@@ -16,6 +16,7 @@ export type {
   RelayEvent,
 } from './types.js';
 export { BoxRegistry, EventBuffer } from './registry.js';
+export { BoxStatusStore, isValidBoxStatus, type BoxStatusSnapshot } from './status-store.js';
 export {
   createRelayServer,
   startRelayServer,

@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { claudeSessionCommand } from './commands/claude-session.js';
+import { claudeStateCommand } from './commands/claude-state.js';
 import { daemonCommand } from './commands/daemon.js';
 import { gitCommand } from './commands/git.js';
 import { statusCommand } from './commands/status.js';
@@ -30,6 +31,7 @@ program.addCommand(stopServiceCommand);
 program.addCommand(startServiceCommand);
 program.addCommand(reloadCommand);
 program.addCommand(claudeSessionCommand);
+program.addCommand(claudeStateCommand);
 program.addCommand(waitReadyCommand);
 program.addCommand(runTaskCommand);
 program.addCommand(gitCommand);

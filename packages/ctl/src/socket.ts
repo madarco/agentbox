@@ -1,11 +1,12 @@
 import { createServer, type Server, type Socket } from 'node:net';
 import { chmod, mkdir, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { spawn } from 'node:child_process';
 import { readLogFile, type Supervisor } from './supervisor.js';
+import type { StatusReporter } from './status-reporter.js';
+import { probeClaudeSession } from './tmux.js';
 import {
+  CLAUDE_ACTIVITY_STATES,
   DEFAULT_CLAUDE_SESSION_NAME,
-  type ClaudeSessionStatus,
   type CtlRequest,
   type CtlResponse,
   type LogEvent,
@@ -17,6 +18,8 @@ export interface ServerOptions {
   supervisor: Supervisor;
   logDir: string;
   configPath: string;
+  /** Optional — present when the daemon runs the status reporter. */
+  reporter?: StatusReporter;
 }
 
 export async function startServer(opts: ServerOptions): Promise<Server> {
@@ -146,50 +149,21 @@ async function handleConnection(sock: Socket, opts: ServerOptions): Promise<void
       sock.end();
       return;
     }
+    case 'claude-state': {
+      if (!CLAUDE_ACTIVITY_STATES.includes(req.state)) {
+        writeLine(sock, { ok: false, error: `invalid claude state: ${String(req.state)}` });
+      } else {
+        opts.reporter?.setClaudeState(req.state);
+        writeLine(sock, { ok: true, data: 'ok' });
+      }
+      sock.end();
+      return;
+    }
     default: {
       writeLine(sock, { ok: false, error: `unknown op` });
       sock.end();
     }
   }
-}
-
-async function probeClaudeSession(sessionName: string): Promise<ClaudeSessionStatus> {
-  // The daemon runs as `vscode` inside the box, the same user that owns the
-  // tmux server socket under /tmp/tmux-1000/. A missing tmux server, missing
-  // session, or tmux-not-installed all surface uniformly as `running: false`.
-  const has = await runTool('tmux', ['has-session', '-t', sessionName]);
-  if (has.exitCode !== 0) return { running: false, sessionName, startedAt: null };
-  const ts = await runTool('tmux', [
-    'display-message',
-    '-p',
-    '-t',
-    sessionName,
-    '#{session_created}',
-  ]);
-  let startedAt: string | null = null;
-  if (ts.exitCode === 0) {
-    const secs = Number.parseInt(ts.stdout.trim(), 10);
-    if (Number.isFinite(secs) && secs > 0) startedAt = new Date(secs * 1000).toISOString();
-  }
-  return { running: true, sessionName, startedAt };
-}
-
-interface ToolResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
-
-function runTool(cmd: string, args: string[]): Promise<ToolResult> {
-  return new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (b: Buffer) => (stdout += b.toString('utf8')));
-    child.stderr.on('data', (b: Buffer) => (stderr += b.toString('utf8')));
-    child.on('error', () => resolve({ exitCode: 127, stdout, stderr }));
-    child.on('close', (code) => resolve({ exitCode: code ?? -1, stdout, stderr }));
-  });
 }
 
 async function handleLogs(

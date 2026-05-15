@@ -271,6 +271,14 @@ RUN mkdir -p /etc/claude-code \
         > /etc/claude-code/CLAUDE.md \
     && chmod 0644 /etc/claude-code/CLAUDE.md
 
+# Enterprise-managed Claude Code settings: activity-reporting hooks. Highest
+# precedence and NOT synced from the host ~/.claude, so the host-hook filter
+# never touches it; hook arrays merge across settings sources, so the user's
+# own hooks still run. Drives `agentbox status/list/inspect` claude activity.
+# (Build context is the monorepo root — see BUILD_CONTEXT_DIR in image.ts.)
+COPY packages/sandbox-docker/scripts/claude-managed-settings.json /etc/claude-code/managed-settings.json
+RUN chmod 0644 /etc/claude-code/managed-settings.json
+
 # /etc/agentbox/ holds runtime-injected box.env (written by `agentbox create`
 # via docker exec). Pre-created here so the writable layer starts with the
 # right perms; the file itself appears at create time.

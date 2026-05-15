@@ -2,7 +2,13 @@ import { Command } from 'commander';
 import { loadConfig } from '../config.js';
 import { Supervisor } from '../supervisor.js';
 import { startServer } from '../socket.js';
-import { DEFAULT_CONFIG_PATH, DEFAULT_LOG_DIR, DEFAULT_SOCKET_PATH } from '../types.js';
+import { StatusReporter } from '../status-reporter.js';
+import {
+  DEFAULT_CLAUDE_SESSION_NAME,
+  DEFAULT_CONFIG_PATH,
+  DEFAULT_LOG_DIR,
+  DEFAULT_SOCKET_PATH,
+} from '../types.js';
 
 interface DaemonOptions {
   socket: string;
@@ -21,11 +27,19 @@ export const daemonCommand = new Command('daemon')
     const cfg = await loadConfig(opts.config);
     const sup = new Supervisor({ workspace: opts.workspace, logDir: opts.logDir });
     await sup.init(cfg);
+    const reporter = new StatusReporter({
+      supervisor: sup,
+      relay: sup.relayClient,
+      boxId: process.env.AGENTBOX_BOX_ID ?? '',
+      sessionName: DEFAULT_CLAUDE_SESSION_NAME,
+    });
+    reporter.start();
     const server = await startServer({
       socketPath: opts.socket,
       supervisor: sup,
       logDir: opts.logDir,
       configPath: opts.config,
+      reporter,
     });
 
     process.stdout.write(`agentbox-ctl: listening on ${opts.socket}\n`);
@@ -35,6 +49,8 @@ export const daemonCommand = new Command('daemon')
 
     const shutdown = async (signal: string): Promise<void> => {
       process.stdout.write(`agentbox-ctl: ${signal} — shutting down\n`);
+      reporter.stop();
+      reporter.flush();
       server.close();
       await sup.stopAll();
       process.exit(0);

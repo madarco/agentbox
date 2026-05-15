@@ -35,6 +35,8 @@ function renderText(i: InspectedBox): string {
     `node_modules  ${i.record.nodeModulesVolume}`,
     `claude config ${i.record.claudeConfigVolume ?? '(none)'}`,
     `claude session ${renderClaudeSession(i)}`,
+    `claude activity ${renderClaudeActivity(i)}`,
+    `persisted     ${renderPersisted(i)}`,
     `playwright    ${i.record.withPlaywright ? 'yes' : 'no'}`,
     'endpoints',
     ...renderEndpoints(i),
@@ -52,6 +54,21 @@ function renderClaudeSession(i: InspectedBox): string {
   if (!i.claudeSession.running) return `not running ("${i.claudeSession.sessionName}")`;
   const since = i.claudeSession.startedAt ? ` since ${i.claudeSession.startedAt}` : '';
   return `running ("${i.claudeSession.sessionName}")${since}`;
+}
+
+function renderClaudeActivity(i: InspectedBox): string {
+  const c = i.persistedStatus?.claude;
+  if (!c) return '(none)';
+  return `${c.state}${c.updatedAt ? ` (updated ${c.updatedAt})` : ''}`;
+}
+
+function renderPersisted(i: InspectedBox): string {
+  const s = i.persistedStatus;
+  if (!s) return '(none)';
+  return (
+    `${s.timestamp} ` +
+    `(${String(s.services.length)} svc, ${String(s.tasks.length)} tasks, ${String(s.ports.length)} ports)`
+  );
 }
 
 function renderEndpoints(i: InspectedBox): string[] {

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { BoxRegistry, EventBuffer } from './registry.js';
+import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
 import type {
   BoxRegistration,
   BoxWorktree,
@@ -23,9 +24,13 @@ export interface RelayServerHandle {
   server: Server;
   registry: BoxRegistry;
   events: EventBuffer;
+  statusStore: BoxStatusStore;
   url: string;
   close: () => Promise<void>;
 }
+
+/** Event type whose payload is a durable BoxStatus snapshot (persisted, not ringed). */
+const BOX_STATUS_EVENT = 'box-status';
 
 const MAX_BODY_BYTES = 1024 * 1024; // 1 MiB hard cap; relay is for control-plane traffic, not payloads.
 const GIT_RPC_TIMEOUT_MS = 120_000; // git push/pull can be slow on big repos.
@@ -99,6 +104,7 @@ function isLoopbackAddress(addr: string | undefined): boolean {
  *   POST /rpc                   — bearer auth; dispatches git.pull / git.push on the host.
  *   POST /admin/register-box    — loopback only.
  *   POST /admin/forget-box      — loopback only.
+ *   GET  /admin/box-status      — loopback only; query `box`; latest snapshot.
  *   GET  /admin/events          — loopback only; query `box`, `since`.
  *   GET  /admin/registry        — loopback only; list registered boxes (token redacted).
  *   GET  /healthz               — liveness probe (no auth).
@@ -107,6 +113,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const log = opts.logger ?? (() => {});
   const registry = new BoxRegistry();
   const events = new EventBuffer();
+  const statusStore = new BoxStatusStore();
   const host = opts.host ?? '0.0.0.0';
 
   const server = createServer((req, res) => {
@@ -144,6 +151,19 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       const body = await readJsonBody<PostEventBody>(req);
       if (!body || typeof body.type !== 'string' || body.type.length === 0) {
         send(res, 400, { error: 'missing "type" string' });
+        return;
+      }
+      // box-status is durable state, not an event: persist the latest snapshot
+      // per box and skip the ring buffer (a 15s heartbeat per box would
+      // otherwise evict the useful git/service events from the 1000-cap ring).
+      if (body.type === BOX_STATUS_EVENT) {
+        if (!isValidBoxStatus(body.payload)) {
+          send(res, 400, { error: 'invalid box-status payload' });
+          return;
+        }
+        await statusStore.set(reg.boxId, body.payload);
+        log(`box-status box=${reg.boxId}`);
+        send(res, 202, { ok: true });
         return;
       }
       const ev = events.append({
@@ -218,8 +238,20 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         return;
       }
       const existed = registry.forget(body.boxId);
+      statusStore.delete(body.boxId);
       log(`forgot box ${body.boxId} (existed=${String(existed)})`);
       send(res, 204, null);
+      return;
+    }
+
+    if (route === 'GET /admin/box-status') {
+      const box = url.searchParams.get('box') ?? '';
+      const status = box ? statusStore.get(box) : undefined;
+      if (!status) {
+        send(res, 404, { error: 'no status for box', box });
+        return;
+      }
+      send(res, 200, status);
       return;
     }
 
@@ -269,6 +301,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     server,
     registry,
     events,
+    statusStore,
     url: `http://${host}:${String(opts.port)}`,
     close: () =>
       new Promise<void>((resolve, reject) => {

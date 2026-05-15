@@ -529,6 +529,27 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     this.relay = new RelayClient();
   }
 
+  /** The relay client the supervisor pushes state events on. Shared with the
+   * status reporter so both use the same fire-and-forget channel. */
+  get relayClient(): RelayClient {
+    return this.relay;
+  }
+
+  /**
+   * Map of service name -> configured `ready_when` port, for services that
+   * declare a port probe. Used by the status reporter to label discovered
+   * listening ports with their owning service.
+   */
+  serviceProbePorts(): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const u of this.units.values()) {
+      if (u.kind !== 'service') continue;
+      const probe = (u as ServiceRunner).spec.readyWhen;
+      if (probe && probe.kind === 'port') out.set(u.name, probe.port);
+    }
+    return out;
+  }
+
   async init(cfg: CtlConfig): Promise<void> {
     await mkdir(this.opts.logDir, { recursive: true });
     for (const t of cfg.tasks) this.addTaskUnit(t);

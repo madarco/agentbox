@@ -1,4 +1,10 @@
 export type {
+  BoxStatus,
+  BoxStatusClaude,
+  BoxStatusPort,
+  BoxStatusServiceEntry,
+  BoxStatusTaskEntry,
+  ClaudeActivityState,
   ClaudeSessionStatus,
   CtlRequest,
   CtlResponse,
@@ -13,6 +19,9 @@ export type {
   WaitReadyReply,
 } from './types.js';
 export {
+  BOX_STATUS_EVENT,
+  BOX_STATUS_SCHEMA,
+  CLAUDE_ACTIVITY_STATES,
   DEFAULT_CLAUDE_SESSION_NAME,
   DEFAULT_CONFIG_PATH,
   DEFAULT_LOG_DIR,
@@ -20,6 +29,7 @@ export {
 } from './types.js';
 export {
   claudeSession,
+  claudeState,
   ping,
   status,
   taskStatus,

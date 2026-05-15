@@ -1,0 +1,179 @@
+import { spawn } from 'node:child_process';
+import type { RelayClient } from './relay-client.js';
+import type { Supervisor } from './supervisor.js';
+import { probeClaudeSession } from './tmux.js';
+import {
+  BOX_STATUS_EVENT,
+  BOX_STATUS_SCHEMA,
+  type BoxStatus,
+  type BoxStatusPort,
+  type ClaudeActivityState,
+} from './types.js';
+
+export interface StatusReporterOptions {
+  supervisor: Supervisor;
+  /** The same RelayClient the supervisor already pushes service-state on. */
+  relay: RelayClient;
+  boxId: string;
+  sessionName: string;
+  /** Coalesce bursty supervisor 'change' events. Default 300ms. */
+  debounceMs?: number;
+  /** Liveness heartbeat so the host file stays fresh while idle. Default 15000ms. */
+  periodicMs?: number;
+}
+
+/**
+ * Aggregates the box's runtime status (services, tasks, listening ports, claude
+ * activity) and pushes it to the host relay, which persists it to disk so the
+ * host CLI can read it even when the box is paused/stopped. The daemon is the
+ * single aggregator and the relay the single writer — no second channel, no
+ * races.
+ */
+export class StatusReporter {
+  private readonly supervisor: Supervisor;
+  private readonly relay: RelayClient;
+  private readonly boxId: string;
+  private readonly sessionName: string;
+  private readonly debounceMs: number;
+  private readonly periodicMs: number;
+  private claudeState: ClaudeActivityState = 'unknown';
+  private claudeUpdatedAt: string | null = null;
+  private debounceTimer: NodeJS.Timeout | null = null;
+  private periodicTimer: NodeJS.Timeout | null = null;
+  private readonly onChange = (): void => this.schedulePush();
+
+  constructor(opts: StatusReporterOptions) {
+    this.supervisor = opts.supervisor;
+    this.relay = opts.relay;
+    this.boxId = opts.boxId;
+    this.sessionName = opts.sessionName;
+    this.debounceMs = opts.debounceMs ?? 300;
+    this.periodicMs = opts.periodicMs ?? 15_000;
+  }
+
+  start(): void {
+    this.supervisor.on('change', this.onChange);
+    this.periodicTimer = setInterval(() => void this.push(), this.periodicMs);
+    this.periodicTimer.unref();
+    void this.push();
+  }
+
+  stop(): void {
+    this.supervisor.off('change', this.onChange);
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    if (this.periodicTimer) {
+      clearInterval(this.periodicTimer);
+      this.periodicTimer = null;
+    }
+  }
+
+  setClaudeState(state: ClaudeActivityState): void {
+    this.claudeState = state;
+    this.claudeUpdatedAt = new Date().toISOString();
+    this.schedulePush();
+  }
+
+  /** Forced immediate push (used on shutdown). */
+  flush(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    void this.push();
+  }
+
+  private schedulePush(): void {
+    if (this.debounceTimer) return;
+    this.debounceTimer = setTimeout(() => {
+      this.debounceTimer = null;
+      void this.push();
+    }, this.debounceMs);
+    this.debounceTimer.unref();
+  }
+
+  private async push(): Promise<void> {
+    if (!this.relay.enabled) return;
+    try {
+      const snapshot = await this.snapshot();
+      this.relay.post(BOX_STATUS_EVENT, snapshot);
+    } catch {
+      // Best-effort, exactly like the relay client itself — a status push
+      // failure must never disturb the supervisor.
+    }
+  }
+
+  private async snapshot(): Promise<BoxStatus> {
+    const probePorts = this.supervisor.serviceProbePorts(); // serviceName -> port
+    const services = this.supervisor.list().map((s) => ({
+      name: s.name,
+      state: s.state,
+      port: probePorts.get(s.name) ?? null,
+    }));
+    const tasks = this.supervisor.listTasks().map((t) => ({ name: t.name, state: t.state }));
+
+    const portToService = new Map<number, string>();
+    for (const [name, port] of probePorts) {
+      if (!portToService.has(port)) portToService.set(port, name);
+    }
+    const ports: BoxStatusPort[] = (await discoverListeningPorts()).map((port) => ({
+      port,
+      service: portToService.get(port) ?? null,
+    }));
+
+    const session = await probeClaudeSession(this.sessionName);
+
+    return {
+      schema: BOX_STATUS_SCHEMA,
+      boxId: this.boxId,
+      timestamp: new Date().toISOString(),
+      services,
+      tasks,
+      ports,
+      claude: {
+        state: this.claudeState,
+        updatedAt: this.claudeUpdatedAt,
+        sessionRunning: session.running,
+      },
+    };
+  }
+}
+
+function run(cmd: string, args: string[]): Promise<{ exitCode: number; stdout: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'] });
+    let stdout = '';
+    child.stdout.on('data', (b: Buffer) => (stdout += b.toString('utf8')));
+    child.on('error', () => resolve({ exitCode: 127, stdout }));
+    child.on('close', (code) => resolve({ exitCode: code ?? -1, stdout }));
+  });
+}
+
+/**
+ * Live-discover listening TCP ports inside the box. `ss -ltnH` (iproute2, in
+ * the base image) prints headerless rows whose 4th column is the local
+ * `addr:port`; we take the part after the last colon. Falls back to
+ * `netstat -ltn` if `ss` is unavailable. Returns a sorted, de-duplicated list.
+ */
+export async function discoverListeningPorts(): Promise<number[]> {
+  let out = await run('ss', ['-ltnH']);
+  let localCol = 3; // ss -H rows: State Recv-Q Send-Q Local Peer
+  if (out.exitCode !== 0) {
+    out = await run('netstat', ['-ltn']);
+    localCol = 3; // netstat rows: Proto Recv-Q Send-Q Local Foreign State
+    if (out.exitCode !== 0) return [];
+  }
+  const ports = new Set<number>();
+  for (const line of out.stdout.split('\n')) {
+    const cols = line.trim().split(/\s+/);
+    const local = cols[localCol];
+    if (!local) continue;
+    const colon = local.lastIndexOf(':');
+    if (colon === -1) continue;
+    const port = Number.parseInt(local.slice(colon + 1), 10);
+    if (Number.isInteger(port) && port > 0 && port <= 65535) ports.add(port);
+  }
+  return [...ports].sort((a, b) => a - b);
+}

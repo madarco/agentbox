@@ -1,5 +1,6 @@
 import { createConnection, type Socket } from 'node:net';
 import type {
+  ClaudeActivityState,
   ClaudeSessionStatus,
   CtlRequest,
   CtlResponse,
@@ -116,6 +117,13 @@ export async function claudeSession(
     op: 'claude-session',
     sessionName: opts.sessionName,
   });
+}
+
+export async function claudeState(
+  opts: ConnectOptions,
+  state: ClaudeActivityState,
+): Promise<'ok'> {
+  return sendOneShot<'ok'>(opts, { op: 'claude-state', state });
 }
 
 export interface LogsResult {

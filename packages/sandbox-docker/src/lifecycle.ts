@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BoxState } from '@agentbox/core';
+import type { BoxStatus, ClaudeActivityState } from '@agentbox/ctl';
 import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './claude.js';
 import { removeBoxWorktree } from './git-worktree.js';
 import {
@@ -16,6 +17,7 @@ import {
   detectEngine,
   getHostPaths,
   openInFinder,
+  readBoxStatus,
   type HostPaths,
   type OpenOptions,
   type OpenResult,
@@ -66,6 +68,8 @@ import {
 export interface ListedBox extends BoxRecord {
   state: BoxState;
   endpoints: BoxEndpoints;
+  /** From the persisted status file; undefined for pre-feature/never-pushed boxes. */
+  claudeActivity?: ClaudeActivityState;
 }
 
 export async function listBoxes(): Promise<ListedBox[]> {
@@ -75,7 +79,8 @@ export async function listBoxes(): Promise<ListedBox[]> {
     boxes.map(async (b): Promise<ListedBox> => {
       const state = await inspectContainerStatus(b.container);
       const endpoints = await getBoxEndpoints(b, engine);
-      return { ...b, state, endpoints };
+      const persisted = await readBoxStatus(b.id);
+      return { ...b, state, endpoints, claudeActivity: persisted?.claude.state };
     }),
   );
 }
@@ -243,6 +248,8 @@ export interface InspectedBox {
   dockerInspect: unknown;
   /** Null when the container isn't running; otherwise best-effort probe of the tmux 'claude' session. */
   claudeSession: ClaudeSessionInfo | null;
+  /** Persisted status snapshot (services/tasks/ports/claude); null when none. */
+  persistedStatus: BoxStatus | null;
   /** Host paths for `agentbox open` / `agentbox path`. */
   hostPaths: HostPaths;
   /** Box network surface: domain + VNC + service ports. */
@@ -290,6 +297,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
   const hostPaths = await getHostPaths(record);
   const engine = await detectEngine();
   const endpoints = await getBoxEndpoints(record, engine);
+  const persistedStatus = await readBoxStatus(record.id);
 
   return {
     record,
@@ -299,6 +307,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
     overlayMounted,
     dockerInspect: dockerJson,
     claudeSession,
+    persistedStatus,
     hostPaths,
     endpoints,
   };

@@ -1,0 +1,54 @@
+{
+  "$comment": "AgentBox enterprise-managed Claude Code settings, baked into the box image at /etc/claude-code/managed-settings.json. Highest precedence and NOT synced from the host ~/.claude, so claude-hooks-filter.ts never touches it; per Claude Code, hook arrays MERGE across settings sources, so the user's own hooks still run. These hooks report Claude's activity to the box supervisor (agentbox-ctl claude-state -> ctl socket -> relay -> ~/.agentbox/boxes/<id>/status.json) so `agentbox status/list/inspect` can show it even when the box is paused. Each command is exit-0 fast and shell-backgrounded so a hook can never block or fail a Claude turn.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state working >/dev/null 2>&1 &", "timeout": 3 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state working >/dev/null 2>&1 &", "timeout": 3 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state idle >/dev/null 2>&1 &", "timeout": 3 }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state waiting >/dev/null 2>&1 &", "timeout": 3 }
+        ]
+      },
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state idle >/dev/null 2>&1 &", "timeout": 3 }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state idle >/dev/null 2>&1 &", "timeout": 3 }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state idle >/dev/null 2>&1 &", "timeout": 3 }
+        ]
+      }
+    ]
+  }
+}
