@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,7 +11,9 @@ import { parse as parseYaml } from 'yaml';
 let tmpCwd: string;
 
 beforeEach(async () => {
-  tmpCwd = await mkdtemp(join(tmpdir(), 'agentbox-cfg-rt-'));
+  // realpath so the test's expected projectConfigFile(tmpCwd) matches the
+  // canonical path that setConfigValue → findProjectRoot resolves to.
+  tmpCwd = await realpath(await mkdtemp(join(tmpdir(), 'agentbox-cfg-rt-')));
 });
 
 afterEach(async () => {

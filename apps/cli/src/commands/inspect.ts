@@ -1,5 +1,6 @@
 import { inspectBox, type InspectedBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
+import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface InspectOptions {
@@ -26,6 +27,8 @@ function renderText(i: InspectedBox): string {
     `state         ${i.state}`,
     `overlay       ${i.overlayMounted ? 'mounted at /workspace' : 'not mounted'}`,
     `workspace     ${i.record.workspacePath}`,
+    `project       ${i.record.projectRoot ?? '(unset — pre-feature box)'}`,
+    `n             ${typeof i.record.projectIndex === 'number' ? String(i.record.projectIndex) : '(none)'}`,
     `lower         ${i.record.lowerPath}`,
     `upper volume  ${i.upperVolume.name}${i.upperVolume.mountpoint ? `  (${i.upperVolume.mountpoint})` : ''}`,
     `node_modules  ${i.record.nodeModulesVolume}`,
@@ -62,11 +65,15 @@ function renderVnc(i: InspectedBox): string[] {
 
 export const inspectCommand = new Command('inspect')
   .description('Show detailed information about a single box')
-  .argument('<box>', 'box id, id prefix, name, or container name')
+  .argument(
+    '[box]',
+    'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
+  )
   .option('-j, --json', 'machine-readable JSON output')
-  .action(async (idOrName: string, opts: InspectOptions) => {
+  .action(async (idOrName: string | undefined, opts: InspectOptions) => {
     try {
-      const result = await inspectBox(idOrName);
+      const box = await resolveBoxOrExit(idOrName);
+      const result = await inspectBox(box.id);
       if (opts.json) {
         process.stdout.write(JSON.stringify(result, null, 2) + '\n');
       } else {

@@ -1,13 +1,8 @@
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
 import type { WaitReadyReply } from '@agentbox/ctl';
-import {
-  AmbiguousBoxError,
-  BoxNotFoundError,
-  execInBox,
-  findBox,
-  readState,
-} from '@agentbox/sandbox-docker';
+import { execInBox } from '@agentbox/sandbox-docker';
+import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface WaitOptions {
@@ -18,17 +13,16 @@ interface WaitOptions {
 
 export const waitCommand = new Command('wait')
   .description('Block until the box reports all autostart units ready')
-  .argument('<box>', 'box id, id prefix, name, or container name')
+  .argument(
+    '[box]',
+    'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
+  )
   .option('--timeout <ms>', 'overall timeout in milliseconds', '120000')
   .option('--units <names...>', 'restrict to the named units')
   .option('-j, --json', 'machine-readable JSON output')
-  .action(async (idOrName: string, opts: WaitOptions) => {
+  .action(async (idOrName: string | undefined, opts: WaitOptions) => {
     try {
-      const state = await readState();
-      const result = findBox(idOrName, state);
-      if (result.kind === 'none') throw new BoxNotFoundError(idOrName);
-      if (result.kind === 'ambiguous') throw new AmbiguousBoxError(idOrName, result.matches);
-      const box = result.box;
+      const box = await resolveBoxOrExit(idOrName);
 
       const ctlArgs = ['agentbox-ctl', 'wait-ready', '--json', '--timeout', opts.timeout];
       if (opts.units && opts.units.length > 0) {

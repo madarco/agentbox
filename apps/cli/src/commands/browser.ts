@@ -2,16 +2,13 @@ import { spawnSync } from 'node:child_process';
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
 import {
-  AmbiguousBoxError,
-  BoxNotFoundError,
   buildVncUrls,
   detectEngine,
-  findBox,
   inspectBox,
-  readState,
   startBox,
   unpauseBox,
 } from '@agentbox/sandbox-docker';
+import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface BrowserOptions {
@@ -21,16 +18,15 @@ interface BrowserOptions {
 
 export const browserCommand = new Command('browser')
   .description("Open a box's VNC URL in the host's default browser (auto-unpause/start)")
-  .argument('<box>', 'box id, id prefix, name, or container name')
+  .argument(
+    '[box]',
+    'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
+  )
   .option('--print', 'print the URL to stdout instead of launching the browser')
   .option('--loopback', 'use the 127.0.0.1 URL instead of the OrbStack .orb.local URL')
-  .action(async (idOrName: string, opts: BrowserOptions) => {
+  .action(async (idOrName: string | undefined, opts: BrowserOptions) => {
     try {
-      const state = await readState();
-      const r = findBox(idOrName, state);
-      if (r.kind === 'none') throw new BoxNotFoundError(idOrName);
-      if (r.kind === 'ambiguous') throw new AmbiguousBoxError(idOrName, r.matches);
-      const box = r.box;
+      const box = await resolveBoxOrExit(idOrName);
 
       if (!box.vncEnabled) {
         throw new Error(`VNC is disabled for box ${box.name} — recreate without \`--no-vnc\``);

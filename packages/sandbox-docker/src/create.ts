@@ -12,6 +12,7 @@ import {
   publishedHostPort,
   runBox,
 } from './docker.js';
+import { dockerVolumeName, launchDockerdDaemon } from './dockerd.js';
 import { generateVncPassword, launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
 import { createBoxWorktree, detectGitRepos } from './git-worktree.js';
 import { CONTAINER_EXPORT_MERGED, CONTAINER_EXPORT_UPPER, boxRunDirFor } from './host-export.js';
@@ -22,7 +23,13 @@ import {
   type NestedWorktreeBind,
   type OverlayCheck,
 } from './overlay.js';
-import { readState, recordBox, type BoxRecord, type GitWorktreeRecord } from './state.js';
+import {
+  allocateProjectIndex,
+  readState,
+  recordBox,
+  type BoxRecord,
+  type GitWorktreeRecord,
+} from './state.js';
 import { createSnapshot, snapshotPathFor } from './snapshot.js';
 import { launchCtlDaemon } from './ctl.js';
 import {
@@ -66,6 +73,22 @@ export interface CreateBoxOptions {
    * launch; the apt-installed binaries stay in the image but are unused.
    */
   vnc?: { enabled: boolean };
+  /**
+   * Docker-in-Docker. Always-on (the in-box dockerd is part of the box
+   * surface). When `sharedCache` is true the per-box `agentbox-docker-<id>`
+   * volume is replaced with the shared `agentbox-docker-cache` volume — image
+   * layers persist across boxes (and `destroy`/`prune` won't remove it).
+   */
+  docker?: { sharedCache: boolean };
+  /**
+   * Absolute host path of the cwd's project at create time. When provided,
+   * `createBox` stamps `projectRoot` + an allocated `projectIndex` on the
+   * BoxRecord so the CLI can auto-pick / resolve by index. The CLI computes
+   * this via `findProjectRoot(workspacePath)` from `@agentbox/config`; this
+   * package stays free of the config dep. Omit for unowned boxes created
+   * directly via the programmatic API.
+   */
+  projectRoot?: string;
 }
 
 export interface CreatedBox {
@@ -247,8 +270,11 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   await ensureVolume(upperVolume);
   await ensureVolume(nodeModulesVolume);
   await ensureIdeVolumes(id);
+  const dockerCacheShared = opts.docker?.sharedCache === true;
+  const dockerVolume = dockerVolumeName(id, dockerCacheShared);
+  await ensureVolume(dockerVolume);
   log(
-    `prepared volumes ${upperVolume}, ${nodeModulesVolume}, ${vscodeServerVolumeName(id)}, ${cursorServerVolumeName(id)}`,
+    `prepared volumes ${upperVolume}, ${nodeModulesVolume}, ${vscodeServerVolumeName(id)}, ${cursorServerVolumeName(id)}, ${dockerVolume}`,
   );
   const ide = buildIdeMounts(id);
 
@@ -305,6 +331,10 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   extraVolumes.push(`${socketDir}:/run/agentbox`);
   extraVolumes.push(`${mergedExportDir}:${CONTAINER_EXPORT_MERGED}`);
   extraVolumes.push(`${upperExportDir}:${CONTAINER_EXPORT_UPPER}`);
+  // In-box dockerd's data root. Per-box (`agentbox-docker-<id>`, wiped on
+  // destroy) by default; shared (`agentbox-docker-cache`, preserved) when
+  // `box.dockerCacheShared` is set.
+  extraVolumes.push(`${dockerVolume}:/var/lib/docker`);
   // Bind-mount each main repo's `.git/` at its identical absolute host path,
   // RW. Worktree pointer files (`<worktree>/.git`) and the back-reference at
   // `<main>/.git/worktrees/<name>/gitdir` contain absolute paths; both must
@@ -406,6 +436,17 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   if (ctl.up) log('agentbox-ctl daemon up');
   else log(`agentbox-ctl daemon did not become reachable: ${ctl.reason}`);
 
+  // dockerd: always-on, mirrors launchVncDaemon. Best-effort — a slow start
+  // shouldn't fail box creation; `agentbox start` will relaunch on restart
+  // (the daemon dies with the container). Storage driver is fuse-overlayfs,
+  // pinned in /etc/docker/daemon.json baked into the image.
+  const dockerd = await launchDockerdDaemon(containerName);
+  if (dockerd.up) {
+    log(`dockerd up (storage-driver=fuse-overlayfs, data root=${dockerVolume})`);
+  } else {
+    log(`dockerd did not become ready: ${dockerd.reason}`);
+  }
+
   if (opts.withPlaywright) {
     log('installing @playwright/cli@latest (--with-playwright)');
     // npm-global writes to /usr/lib/node_modules/, so we need root. The
@@ -449,6 +490,15 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     if (vncHostPort) log(`vnc web on host 127.0.0.1:${String(vncHostPort)}`);
   }
 
+  // Allocate the per-project monotonic index just before recordBox. We re-read
+  // state here so concurrent creates from the same project see each other's
+  // assignments (last-write-wins is fine — `recordBox` upserts by id, and
+  // index collisions are harmless since each box's id is unique).
+  let projectIndex: number | undefined;
+  if (opts.projectRoot) {
+    projectIndex = allocateProjectIndex(await readState(), opts.projectRoot);
+  }
+
   const record: BoxRecord = {
     id,
     name,
@@ -470,6 +520,10 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     vncContainerPort: vncEnabled ? VNC_CONTAINER_PORT : undefined,
     vncHostPort: vncHostPort ?? undefined,
     vncPassword: vncPassword,
+    dockerVolume,
+    dockerCacheShared: dockerCacheShared || undefined,
+    projectRoot: opts.projectRoot,
+    projectIndex,
     createdAt: new Date().toISOString(),
   };
   await recordBox(record);

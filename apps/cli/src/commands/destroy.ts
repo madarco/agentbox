@@ -1,12 +1,7 @@
 import { confirm, isCancel, log } from '@clack/prompts';
-import {
-  destroyBox,
-  findBox,
-  readState,
-  type BoxRecord,
-  type FindBoxResult,
-} from '@agentbox/sandbox-docker';
+import { destroyBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
+import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface DestroyOptions {
@@ -14,27 +9,18 @@ interface DestroyOptions {
   keepSnapshot?: boolean;
 }
 
-async function resolveOrExit(idOrName: string): Promise<BoxRecord> {
-  const state = await readState();
-  const r: FindBoxResult = findBox(idOrName, state);
-  if (r.kind === 'ok') return r.box;
-  if (r.kind === 'none') {
-    log.error(`no agentbox matches "${idOrName}"`);
-    process.exit(2);
-  }
-  log.error(`"${idOrName}" matches multiple boxes: ${r.matches.map((m) => m.id).join(', ')}`);
-  process.exit(2);
-}
-
 export const destroyCommand = new Command('destroy')
   .alias('rm')
   .description('Destroy a box and discard its upper volume')
-  .argument('<box>', 'box id, id prefix, name, or container name')
+  .argument(
+    '[box]',
+    'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
+  )
   .option('-y, --yes', 'skip the confirmation prompt')
   .option('--keep-snapshot', "don't delete the snapshot dir under ~/.agentbox/snapshots/")
-  .action(async (idOrName: string, opts: DestroyOptions) => {
+  .action(async (idOrName: string | undefined, opts: DestroyOptions) => {
     try {
-      const box = await resolveOrExit(idOrName);
+      const box = await resolveBoxOrExit(idOrName);
 
       if (!opts.yes) {
         log.warn(`This will discard the upper volume — agent work-in-progress is lost.`);
@@ -54,7 +40,7 @@ export const destroyCommand = new Command('destroy')
         }
       }
 
-      const result = await destroyBox(idOrName, { keepSnapshot: opts.keepSnapshot });
+      const result = await destroyBox(box.id, { keepSnapshot: opts.keepSnapshot });
       const out: string[] = [`destroyed ${result.record.container}`];
       if (result.removedContainer) out.push('  ✓ container removed');
       out.push(`  ✓ volumes removed: ${result.removedVolumes.join(', ')}`);

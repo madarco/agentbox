@@ -19,6 +19,7 @@ export interface UserConfig {
     vnc?: boolean;
     isolateClaudeConfig?: boolean;
     image?: string;
+    dockerCacheShared?: boolean;
   };
   claude?: {
     sessionName?: string;
@@ -61,6 +62,7 @@ export interface EffectiveConfig {
     vnc: boolean;
     isolateClaudeConfig: boolean;
     image: string;
+    dockerCacheShared: boolean;
   };
   claude: {
     sessionName: string;
@@ -123,6 +125,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     vnc: true,
     isolateClaudeConfig: false,
     image: 'agentbox/box:dev',
+    dockerCacheShared: false,
   },
   claude: {
     sessionName: 'claude',
@@ -195,6 +198,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'string',
     description: 'Box image ref (advanced).',
     advanced: true,
+  },
+  {
+    key: 'box.dockerCacheShared',
+    type: 'bool',
+    description:
+      "Share the in-box docker image cache across boxes via the 'agentbox-docker-cache' volume (preserved on destroy/prune; only one box can run at a time when set).",
   },
   {
     key: 'claude.sessionName',

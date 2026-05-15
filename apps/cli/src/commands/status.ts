@@ -6,13 +6,8 @@ import {
   type ClaudeSessionStatus,
   type StatusReply,
 } from '@agentbox/ctl';
-import {
-  AmbiguousBoxError,
-  BoxNotFoundError,
-  execInBox,
-  findBox,
-  readState,
-} from '@agentbox/sandbox-docker';
+import { execInBox } from '@agentbox/sandbox-docker';
+import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface StatusOptions {
@@ -21,15 +16,14 @@ interface StatusOptions {
 
 export const statusCommand = new Command('status')
   .description("Show service + task status from a box's agentbox-ctl daemon")
-  .argument('<box>', 'box id, id prefix, name, or container name')
+  .argument(
+    '[box]',
+    'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
+  )
   .option('-j, --json', 'machine-readable JSON output')
-  .action(async (idOrName: string, opts: StatusOptions) => {
+  .action(async (idOrName: string | undefined, opts: StatusOptions) => {
     try {
-      const state = await readState();
-      const result = findBox(idOrName, state);
-      if (result.kind === 'none') throw new BoxNotFoundError(idOrName);
-      if (result.kind === 'ambiguous') throw new AmbiguousBoxError(idOrName, result.matches);
-      const box = result.box;
+      const box = await resolveBoxOrExit(idOrName);
 
       // Cross the docker boundary via `docker exec`: macOS hosts can see the
       // socket file in the bind mount but can't actually connect to it. The

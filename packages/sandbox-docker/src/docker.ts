@@ -43,8 +43,23 @@ export async function runBox(spec: RunBoxSpec): Promise<string> {
     '--hostname',
     spec.name,
     '--cap-add=SYS_ADMIN',
+    // dockerd inside the box (always-on, see launchDockerdDaemon) needs
+    // NET_ADMIN to set up its bridge + iptables NAT for inner containers.
+    // seccomp:unconfined is required because the default profile blocks
+    // syscalls (notably keyctl, clone3 in some kernels) that nested containers
+    // need. Both are scoped to the outer box's namespaces — inner containers
+    // can't escape it. We still avoid --privileged for cloud portability.
+    '--cap-add=NET_ADMIN',
     '--device=/dev/fuse',
     '--security-opt=apparmor:unconfined',
+    '--security-opt=seccomp=unconfined',
+    // cgroup v2 + DinD: with --cgroupns=host (the OrbStack default) the
+    // outer container sees the host's read-only cgroup hierarchy at
+    // /sys/fs/cgroup, so the inner dockerd can't `mkdir /sys/fs/cgroup/docker`
+    // for its own slice and inner `docker run` fails with "read-only file
+    // system". Private gives the box its own writable cgroup namespace; runc
+    // creates the docker slice there and inner containers nest under it.
+    '--cgroupns=private',
     // Make the host reachable from inside the container at the well-known DNS
     // name host.docker.internal. Docker Desktop / OrbStack ship this alias by
     // default; on Linux native Docker it requires this explicit flag (no-op

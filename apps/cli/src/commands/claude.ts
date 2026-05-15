@@ -1,18 +1,13 @@
 import { confirm, intro, isCancel, log, outro, password, spinner } from '@clack/prompts';
-import { loadEffectiveConfig, type UserConfig } from '@agentbox/config';
+import { findProjectRoot, loadEffectiveConfig, type UserConfig } from '@agentbox/config';
 import {
-  AmbiguousBoxError,
   attachClaudeSession,
-  BoxNotFoundError,
   ClaudeSessionError,
   claudeSessionInfo,
   createBox,
   DEFAULT_CLAUDE_SESSION,
-  findBox,
-  readState,
   rebuildPluginNativeDeps,
   startClaudeSession,
-  type FindBoxResult,
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import {
@@ -24,6 +19,7 @@ import {
   writeAuthFile,
   type ResolvedClaudeAuth,
 } from '../auth.js';
+import { resolveBoxOrExit } from '../box-ref.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -36,6 +32,7 @@ interface ClaudeCreateOptions {
   isolateClaudeConfig?: boolean;
   withPlaywright?: boolean;
   vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
+  sharedDockerCache?: boolean;
   sessionName?: string;
 }
 
@@ -46,6 +43,7 @@ function buildClaudeCliOverrides(opts: ClaudeCreateOptions): Partial<UserConfig>
   if (opts.withPlaywright === true) box.withPlaywright = true;
   if (opts.vnc === false) box.vnc = false;
   if (opts.isolateClaudeConfig === true) box.isolateClaudeConfig = true;
+  if (opts.sharedDockerCache === true) box.dockerCacheShared = true;
   const claude: NonNullable<UserConfig['claude']> = {};
   if (opts.sessionName !== undefined) claude.sessionName = opts.sessionName;
   const out: Partial<UserConfig> = {};
@@ -117,6 +115,10 @@ export const claudeCommand = new Command('claude')
   )
   .option('--with-playwright', 'also install @playwright/cli@latest globally inside the box')
   .option('--no-vnc', 'disable the per-box Xvnc + noVNC web client (on by default)')
+  .option(
+    '--shared-docker-cache',
+    "use the shared 'agentbox-docker-cache' volume for in-box docker images (preserved on destroy; only one box can run at a time when set)",
+  )
   .option('--session-name <name>', 'tmux session name (default from config; built-in: claude)')
   .argument(
     '[claude-args...]',
@@ -128,6 +130,7 @@ export const claudeCommand = new Command('claude')
     const cfg = await loadEffectiveConfig(opts.workspace, {
       cliOverrides: buildClaudeCliOverrides(opts),
     });
+    const projectRoot = (await findProjectRoot(opts.workspace)).root;
 
     // For the create-and-launch verb the default is snapshot=on; explicit
     // --no-snapshot still wins. Config can also flip the default.
@@ -166,12 +169,17 @@ export const claudeCommand = new Command('claude')
         claudeEnv: resolved.env,
         withPlaywright,
         vnc: { enabled: cfg.effective.box.vnc },
+        docker: { sharedCache: cfg.effective.box.dockerCacheShared },
+        projectRoot,
         onLog: (line) => s.message(clampSpinnerLine(line)),
       });
       containerName = result.record.container;
       s.stop(`box ${result.record.container} ready`);
 
       log.info(`id:        ${result.record.id}`);
+      if (typeof result.record.projectIndex === 'number') {
+        log.info(`n:         ${String(result.record.projectIndex)}   (in ${projectRoot})`);
+      }
       log.info(`container: ${result.record.container}`);
       log.info(`claude volume: ${result.record.claudeConfigVolume ?? '(none)'}`);
 
@@ -219,22 +227,22 @@ export const claudeCommand = new Command('claude')
 
 const claudeAttachCommand = new Command('attach')
   .description('Reattach to a running Claude Code tmux session in a box')
-  .argument('<box>', 'box id, id prefix, name, or container name')
+  .argument(
+    '[box]',
+    'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
+  )
   .option('--session-name <name>', 'tmux session name', DEFAULT_CLAUDE_SESSION)
-  .action(async (idOrName: string, opts: ClaudeAttachOptions) => {
+  .action(async (idOrName: string | undefined, opts: ClaudeAttachOptions) => {
     try {
-      const state = await readState();
-      const r: FindBoxResult = findBox(idOrName, state);
-      if (r.kind === 'none') throw new BoxNotFoundError(idOrName);
-      if (r.kind === 'ambiguous') throw new AmbiguousBoxError(idOrName, r.matches);
+      const box = await resolveBoxOrExit(idOrName);
 
-      const info = await claudeSessionInfo(r.box.container, opts.sessionName);
+      const info = await claudeSessionInfo(box.container, opts.sessionName);
       if (!info.running) {
-        log.error(`no tmux session "${opts.sessionName}" in ${r.box.container}`);
-        log.info(`Start one with: agentbox claude -n ${r.box.name}`);
+        log.error(`no tmux session "${opts.sessionName}" in ${box.container}`);
+        log.info(`Start one with: agentbox claude -n ${box.name}`);
         process.exit(2);
       }
-      attachClaudeSession(r.box.container, opts.sessionName);
+      attachClaudeSession(box.container, opts.sessionName);
     } catch (err) {
       handleLifecycleError(err);
     }

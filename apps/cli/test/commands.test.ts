@@ -70,13 +70,28 @@ describe('lifecycle CLI surface', () => {
     expect(attach!.options.map((o) => o.long)).toContain('--session-name');
   });
 
-  it('shell takes <box> + variadic [cmd...] and exposes --user / --no-login', () => {
+  it('shell takes [box] + variadic [cmd...] and exposes --user / --no-login', () => {
     expect(shellCommand.name()).toBe('shell');
     const longs = shellCommand.options.map((o) => o.long);
     expect(longs).toEqual(expect.arrayContaining(['--user', '--no-login']));
-    // Two positionals: required <box>, variadic [cmd...].
+    // Two positionals: optional [box] (was required before auto-pick landed),
+    // variadic [cmd...].
     expect(shellCommand.registeredArguments).toHaveLength(2);
-    expect(shellCommand.registeredArguments[0]!.required).toBe(true);
+    expect(shellCommand.registeredArguments[0]!.required).toBe(false);
     expect(shellCommand.registeredArguments[1]!.variadic).toBe(true);
+  });
+
+  it('all box-arg commands now accept [box] (optional) for auto-pick', () => {
+    const optionalBoxCmds = [
+      inspectCommand,
+      pauseCommand,
+      unpauseCommand,
+      stopCommand,
+      startCommand,
+      destroyCommand,
+    ];
+    for (const cmd of optionalBoxCmds) {
+      expect(cmd.registeredArguments[0]!.required, `${cmd.name()}: [box]`).toBe(false);
+    }
   });
 });

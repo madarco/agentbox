@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +9,9 @@ import { listProjectsConfigured, setConfigValue, unsetConfigValue } from '../src
 let tmpCwd: string;
 
 beforeEach(async () => {
-  tmpCwd = await mkdtemp(join(tmpdir(), 'agentbox-cfg-meta-'));
+  // realpath so projectMetaFile(tmpCwd) hashes the same canonical path that
+  // setConfigValue → findProjectRoot resolves to.
+  tmpCwd = await realpath(await mkdtemp(join(tmpdir(), 'agentbox-cfg-meta-')));
 });
 
 afterEach(async () => {

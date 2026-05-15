@@ -24,6 +24,7 @@ function truncate(s: string, n: number): string {
 
 function renderTable(boxes: ListedBox[]): string {
   const rows = boxes.map((b) => [
+    typeof b.projectIndex === 'number' ? String(b.projectIndex) : '',
     b.id,
     b.name,
     b.state,
@@ -31,7 +32,7 @@ function renderTable(boxes: ListedBox[]): string {
     relativeTime(b.createdAt),
     truncate(b.workspacePath, 50),
   ]);
-  const header = ['ID', 'NAME', 'STATE', 'IMAGE', 'CREATED', 'WORKSPACE'];
+  const header = ['N', 'ID', 'NAME', 'STATE', 'IMAGE', 'CREATED', 'WORKSPACE'];
   const all = [header, ...rows];
   const widths = header.map((_, col) => Math.max(...all.map((r) => (r[col] ?? '').length)));
   return all

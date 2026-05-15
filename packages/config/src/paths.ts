@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { stat } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { ConfigScope } from './types.js';
@@ -19,10 +19,14 @@ export interface ProjectRoot {
  * Walk up from `cwd` until we find an `agentbox.yaml`. That dir is the
  * "project". If no ancestor has one, we fall back to `cwd` (per spec) so
  * `agentbox config` still does something sane in dirs without a workspace
- * file. The returned path is always absolute and normalised.
+ * file. The returned path is always absolute and **symlink-canonicalised**
+ * via `realpath` — without this, macOS's `/tmp` symlink to `/private/tmp`
+ * makes `findProjectRoot('/tmp/x')` (at create time, --workspace) and
+ * `findProjectRoot(process.cwd())` (at resolve time, the same dir) return
+ * different roots, breaking the per-project box index match.
  */
 export async function findProjectRoot(cwd: string): Promise<ProjectRoot> {
-  const start = resolve(cwd);
+  const start = await canonicalize(cwd);
   let dir = start;
   // Defensive cap on iterations: filesystem roots end with `dirname(x) === x`.
   for (let i = 0; i < 64; i++) {
@@ -34,6 +38,18 @@ export async function findProjectRoot(cwd: string): Promise<ProjectRoot> {
     dir = parent;
   }
   return { root: start, hasAgentboxYaml: false };
+}
+
+async function canonicalize(p: string): Promise<string> {
+  const abs = resolve(p);
+  // realpath only works for paths that exist. cwd and create-time
+  // workspaces always do; fall back to the resolved (non-canonicalised)
+  // path for anything else (e.g. config get from a deleted dir).
+  try {
+    return await realpath(abs);
+  } catch {
+    return abs;
+  }
 }
 
 async function fileExists(p: string): Promise<boolean> {

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Start the in-box dockerd. Launched by the host via
+# `docker exec -d --user root` after the FUSE overlay is up. Idempotent — safe
+# to call again on `agentbox start`. Storage driver is fuse-overlayfs (set in
+# /etc/docker/daemon.json baked into the image) so the inner daemon doesn't
+# need the kernel `overlay` driver, which an unprivileged container can't load.
+
+set -euo pipefail
+
+if pgrep -x dockerd >/dev/null; then
+  exit 0
+fi
+
+mkdir -p /var/lib/docker /var/run /var/log/agentbox
+
+# /var/run lives in the container's writable layer (not a volume), so files
+# written by the previous dockerd run survive `docker stop`/`start`. dockerd
+# refuses to start if `/var/run/docker.pid` exists with a PID in /proc — and
+# after restart, that PID number has been reassigned to (probably) the new
+# `sleep infinity`. Wipe both the pidfile and the stale socket here; pgrep
+# above already confirmed no real dockerd is running.
+rm -f /var/run/docker.pid /var/run/docker.sock
+
+# Cgroup v2 + unprivileged DinD on OrbStack/Docker Desktop: the outer
+# container has /sys/fs/cgroup and /proc/sys bind-mounted RO from the host
+# (Docker's standard hardening). We need both writable for dockerd to:
+#   * mkdir /sys/fs/cgroup/docker (its own cgroup slice for child containers)
+#   * write /proc/sys/net/ipv6/conf/<veth>/disable_ipv6 (default bridge setup)
+# Without these, `docker run` fails with EROFS or "failed to disable IPv6".
+# SYS_ADMIN + the private cgroup namespace let us remount these RW; the
+# writes only affect the box's own namespaces (not the host). Failure is
+# tolerable — some hosts already mount these RW.
+mount -o remount,rw /sys/fs/cgroup 2>/dev/null || true
+mount -o remount,rw /proc/sys 2>/dev/null || true
+
+# nohup + & + disown lets us survive the `docker exec -d` returning. dockerd
+# reads /etc/docker/daemon.json on its own; no flags here keeps the start path
+# debuggable from inside the container (just edit the file and restart).
+nohup dockerd >/var/log/agentbox/dockerd.log 2>&1 &
+
+# Wait for the socket to become accept()-able. Bound by ~30s — first start has
+# to initialize iptables chains and the fuse-overlayfs graphdriver, which is
+# noticeably slower than overlay2.
+for _ in $(seq 1 300); do
+  if [ -S /var/run/docker.sock ] \
+     && docker -H unix:///var/run/docker.sock info >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.1
+done
+
+disown -a

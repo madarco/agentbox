@@ -1,5 +1,5 @@
 import { confirm, intro, isCancel, log, outro, spinner } from '@clack/prompts';
-import { loadEffectiveConfig, type UserConfig } from '@agentbox/config';
+import { findProjectRoot, loadEffectiveConfig, type UserConfig } from '@agentbox/config';
 import { createBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
@@ -14,6 +14,7 @@ interface CreateOptions {
   yes?: boolean;
   withPlaywright?: boolean;
   vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
+  sharedDockerCache?: boolean;
 }
 
 function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
@@ -22,6 +23,7 @@ function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
   if (opts.image !== undefined) box.image = opts.image;
   if (opts.withPlaywright === true) box.withPlaywright = true;
   if (opts.vnc === false) box.vnc = false;
+  if (opts.sharedDockerCache === true) box.dockerCacheShared = true;
   return Object.keys(box).length > 0 ? { box } : {};
 }
 
@@ -63,6 +65,10 @@ export const createCommand = new Command('create')
   .option('--attach', 'drop into a shell inside the box after it is ready')
   .option('--with-playwright', 'also install @playwright/cli@latest globally inside the box')
   .option('--no-vnc', 'disable the per-box Xvnc + noVNC web client (on by default)')
+  .option(
+    '--shared-docker-cache',
+    "use the shared 'agentbox-docker-cache' volume for in-box docker images (preserved on destroy; only one box can run at a time when set)",
+  )
   .option('-y, --yes', 'skip prompts, accept defaults (snapshot=on)')
   .action(async (opts: CreateOptions) => {
     intro('agentbox create');
@@ -70,6 +76,7 @@ export const createCommand = new Command('create')
     const cfg = await loadEffectiveConfig(opts.workspace, {
       cliOverrides: buildCliOverrides(opts),
     });
+    const projectRoot = (await findProjectRoot(opts.workspace)).root;
 
     const useSnapshot = await resolveUseSnapshot(opts, cfg.effective.box.snapshot);
 
@@ -87,11 +94,16 @@ export const createCommand = new Command('create')
         image: cfg.effective.box.image,
         withPlaywright,
         vnc: { enabled: cfg.effective.box.vnc },
+        docker: { sharedCache: cfg.effective.box.dockerCacheShared },
+        projectRoot,
         onLog: (line) => s.message(clampSpinnerLine(line)),
       });
       s.stop(`box ${result.record.container} ready`);
 
       log.info(`id:        ${result.record.id}`);
+      if (typeof result.record.projectIndex === 'number') {
+        log.info(`n:         ${String(result.record.projectIndex)}   (in ${projectRoot})`);
+      }
       log.info(`container: ${result.record.container}`);
       log.info(`image:     ${result.record.image}${result.imageBuilt ? ' (built just now)' : ''}`);
       log.info(`lower:     ${result.record.lowerPath}`);

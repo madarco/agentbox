@@ -14,7 +14,8 @@
         "withPlaywright": { "type": "boolean" },
         "vnc": { "type": "boolean" },
         "isolateClaudeConfig": { "type": "boolean" },
-        "image": { "type": "string", "minLength": 1 }
+        "image": { "type": "string", "minLength": 1 },
+        "dockerCacheShared": { "type": "boolean" }
       }
     },
     "claude": {

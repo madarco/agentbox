@@ -4,19 +4,16 @@ import { Command, InvalidArgumentError } from 'commander';
 import type { StatusReply, WaitReadyReply } from '@agentbox/ctl';
 import { loadEffectiveConfig, type IdeFlavor as ConfigIdeFlavor, type UserConfig } from '@agentbox/config';
 import {
-  AmbiguousBoxError,
-  BoxNotFoundError,
   containerHex,
   ensureAgentboxTasksFile,
   execInBox,
-  findBox,
   ideProfile,
   inspectBox,
-  readState,
   startBox,
   unpauseBox,
   type IdeFlavor,
 } from '@agentbox/sandbox-docker';
+import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface CodeOptions {
@@ -47,7 +44,10 @@ function parseIdeFlavor(value: string): IdeFlavor {
 
 export const codeCommand = new Command('code')
   .description('Open a box in VS Code or Cursor via the Dev Containers extension')
-  .argument('<box>', 'box id, id prefix, name, or container name')
+  .argument(
+    '[box]',
+    'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
+  )
   .option('--no-wait', "don't block on agentbox-ctl wait-ready before opening")
   .option('--timeout <ms>', 'wait-ready timeout in milliseconds (default from config; built-in: 120000)')
   .option('--no-auto-terminals', "don't generate /workspace/.vscode/tasks.json")
@@ -61,13 +61,9 @@ export const codeCommand = new Command('code')
     '--print',
     'print the folder URI instead of launching the IDE (still refreshes/waits)',
   )
-  .action(async (idOrName: string, opts: CodeOptions) => {
+  .action(async (idOrName: string | undefined, opts: CodeOptions) => {
     try {
-      const state = await readState();
-      const result = findBox(idOrName, state);
-      if (result.kind === 'none') throw new BoxNotFoundError(idOrName);
-      if (result.kind === 'ambiguous') throw new AmbiguousBoxError(idOrName, result.matches);
-      const box = result.box;
+      const box = await resolveBoxOrExit(idOrName);
 
       // Layered config: workspace = the box's host workspace, not cwd, so
       // per-project defaults follow the box even if you run `agentbox code`

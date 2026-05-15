@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -8,7 +8,9 @@ import { GLOBAL_CONFIG_FILE, projectConfigFile } from '../src/paths.js';
 let tmpCwd: string;
 
 beforeEach(async () => {
-  tmpCwd = await mkdtemp(join(tmpdir(), 'agentbox-cfg-merge-'));
+  // realpath so projectConfigFile(tmpCwd) hashes the same canonical path that
+  // loadEffectiveConfig → findProjectRoot resolves to.
+  tmpCwd = await realpath(await mkdtemp(join(tmpdir(), 'agentbox-cfg-merge-')));
 });
 
 afterEach(async () => {

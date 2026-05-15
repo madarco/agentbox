@@ -42,6 +42,7 @@ import {
   type OverlayCheck,
 } from './overlay.js';
 import { launchCtlDaemon } from './ctl.js';
+import { launchDockerdDaemon, SHARED_DOCKER_CACHE_VOLUME } from './dockerd.js';
 import { buildVncUrls, launchVncDaemon, VNC_CONTAINER_PORT, type VncUrls } from './vnc.js';
 import {
   ensureRelay,
@@ -169,6 +170,13 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
     // create.ts — a missing config or other startup issue shouldn't block
     // resumption of the box itself.
     await launchCtlDaemon(box.container, box.socketPath);
+  }
+  // dockerd dies with the container too; relaunch it. Records from before
+  // DinD landed have no `dockerVolume`, so we skip them — those boxes were
+  // created without the in-box dockerd and don't have the launch script
+  // baked in either (image rebuild is required to pick it up).
+  if (box.dockerVolume) {
+    await launchDockerdDaemon(box.container);
   }
   if (box.vncEnabled) {
     // Xvnc + websockify both die with the container. The password is already
@@ -359,6 +367,13 @@ export async function destroyBox(
     await removeVolume(v);
     removedVolumes.push(v);
   }
+  // Per-box dockerd data root. Skip when this box used the shared cache —
+  // wiping it would also remove image layers other boxes (or future ones)
+  // depend on. The shared volume is allowlisted in `pruneBoxes --all` too.
+  if (box.dockerVolume && !box.dockerCacheShared) {
+    await removeVolume(box.dockerVolume);
+    removedVolumes.push(box.dockerVolume);
+  }
 
   let removedSnapshot: string | null = null;
   if (box.snapshotDir && !opts.keepSnapshot) {
@@ -458,12 +473,18 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
       ...survivingBoxes
         .map((b) => b.cursorServerVolume)
         .filter((v): v is string => typeof v === 'string'),
+      ...survivingBoxes
+        .map((b) => b.dockerVolume)
+        .filter((v): v is string => typeof v === 'string'),
       // The shared claude-config volume holds user identity across every box;
       // never reap it via prune even if no surviving box currently references it.
       SHARED_CLAUDE_VOLUME,
       // Shared across boxes: downloaded IDE extensions. Same reasoning.
       SHARED_VSCODE_EXTENSIONS_VOLUME,
       SHARED_CURSOR_EXTENSIONS_VOLUME,
+      // Shared in-box docker image cache — opt-in via `box.dockerCacheShared`,
+      // never auto-removed (image layers may be reused by future boxes).
+      SHARED_DOCKER_CACHE_VOLUME,
     ]);
     const expectedSnapshots = new Set(
       survivingBoxes

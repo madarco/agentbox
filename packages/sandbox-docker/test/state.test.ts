@@ -106,6 +106,27 @@ describe('state.ts', () => {
     expect(reloaded.boxes).toEqual([box]);
   });
 
+  it('round-trips projectRoot + projectIndex', async () => {
+    const box: BoxRecord = {
+      id: 'p1234567',
+      name: 'p-demo',
+      container: 'agentbox-p-demo',
+      image: 'agentbox/box:dev',
+      workspacePath: '/Users/x/repo',
+      lowerPath: '/Users/x/repo',
+      upperVolume: 'agentbox-upper-p1234567',
+      nodeModulesVolume: 'agentbox-nm-p1234567',
+      snapshotDir: null,
+      projectRoot: '/Users/x/repo',
+      projectIndex: 3,
+      createdAt: '2026-05-14T12:00:00.000Z',
+    };
+    await recordBox(box, file);
+    const reloaded = await readState(file);
+    expect(reloaded.boxes[0]?.projectRoot).toBe('/Users/x/repo');
+    expect(reloaded.boxes[0]?.projectIndex).toBe(3);
+  });
+
   it('removeBoxRecord removes by id and reports whether anything matched', async () => {
     const a: BoxRecord = {
       id: 'aaaaaaaa',

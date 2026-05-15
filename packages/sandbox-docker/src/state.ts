@@ -74,6 +74,35 @@ export interface BoxRecord {
   vncHostPort?: number;
   /** Per-box password baked into Xvnc's PasswordFile and embedded in the auto-connect URL. */
   vncPassword?: string;
+  /**
+   * Volume mounted at /var/lib/docker for the in-box dockerd. Per-box
+   * (`agentbox-docker-<id>`) by default; the shared `agentbox-docker-cache`
+   * volume when `dockerCacheShared` is true. Absent on boxes created before
+   * DinD landed — those boxes have no in-box dockerd at all.
+   */
+  dockerVolume?: string;
+  /**
+   * True when this box's `dockerVolume` is the shared cache. Tells `destroyBox`
+   * to skip removal (the shared volume holds image layers other boxes may
+   * reuse) and `pruneBoxes --all` to allowlist it.
+   */
+  dockerCacheShared?: boolean;
+  /**
+   * Absolute host path of the project this box belongs to. Set by `createBox`
+   * from the CLI-supplied `findProjectRoot(workspacePath)` (nearest ancestor
+   * dir holding `agentbox.yaml`, else workspacePath itself). Used by
+   * `resolveBoxRef` + `autoPickProjectBox` to scope numeric refs and auto-pick
+   * to the cwd's project. Absent on boxes created before this field existed —
+   * those boxes are never auto-picked or matched by numeric index.
+   */
+  projectRoot?: string;
+  /**
+   * Monotonic 1-based index within `projectRoot`. Allocated once at create via
+   * `allocateProjectIndex` and never recycled — destroying box #2 leaves a gap
+   * (next new box is #3, not #2). Lets `agentbox open 3` mean the same box for
+   * that box's whole lifetime.
+   */
+  projectIndex?: number;
   createdAt: string; // ISO-8601
 }
 
@@ -175,4 +204,64 @@ export function findBox(idOrName: string, state: StateFile): FindBoxResult {
   if (byContainer) return { kind: 'ok', box: byContainer };
 
   return { kind: 'none' };
+}
+
+/**
+ * Next monotonic 1-based index for the given project. Reads only `state.boxes`
+ * — caller is responsible for persisting the assignment. Boxes without
+ * `projectRoot` are ignored (legacy records); boxes in *other* projects are
+ * also ignored. Indices are never recycled, so a destroyed #2 leaves a gap.
+ */
+export function allocateProjectIndex(state: StateFile, projectRoot: string): number {
+  let max = 0;
+  for (const b of state.boxes) {
+    if (b.projectRoot !== projectRoot) continue;
+    if (typeof b.projectIndex === 'number' && b.projectIndex > max) {
+      max = b.projectIndex;
+    }
+  }
+  return max + 1;
+}
+
+/**
+ * Auto-pick when a command's `[box]` argument is omitted. Returns the unique
+ * box for `projectRoot`, an `ambiguous` carrying all candidates so the CLI can
+ * print a chooser, or `none`.
+ */
+export function autoPickProjectBox(state: StateFile, projectRoot: string): FindBoxResult {
+  const matches = state.boxes.filter((b) => b.projectRoot === projectRoot);
+  if (matches.length === 0) return { kind: 'none' };
+  if (matches.length === 1) return { kind: 'ok', box: matches[0]! };
+  return { kind: 'ambiguous', matches };
+}
+
+/**
+ * Top-level resolver every CLI command goes through. Combines numeric-index
+ * lookup with the legacy `findBox` matcher:
+ *
+ *   - `ref === undefined` and `projectRoot` known → autoPickProjectBox.
+ *   - `ref` is a pure positive integer and `projectRoot` known → resolve as
+ *     project index. **Never** falls through to `findBox` on miss, so
+ *     `agentbox open 3` is reserved for the index and won't accidentally
+ *     match a hex id like `3abc…`.
+ *   - Otherwise → `findBox` (id → prefix → name → container).
+ */
+export function resolveBoxRef(
+  ref: string | undefined,
+  state: StateFile,
+  projectRoot: string | undefined,
+): FindBoxResult {
+  if (ref === undefined) {
+    if (projectRoot === undefined) return { kind: 'none' };
+    return autoPickProjectBox(state, projectRoot);
+  }
+  const trimmed = ref.trim();
+  if (projectRoot !== undefined && /^[1-9][0-9]*$/.test(trimmed)) {
+    const idx = Number.parseInt(trimmed, 10);
+    const hit = state.boxes.find(
+      (b) => b.projectRoot === projectRoot && b.projectIndex === idx,
+    );
+    return hit ? { kind: 'ok', box: hit } : { kind: 'none' };
+  }
+  return findBox(trimmed, state);
 }

@@ -2,15 +2,8 @@ import { spawnSync } from 'node:child_process';
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
 import { loadEffectiveConfig, type UserConfig } from '@agentbox/config';
-import {
-  AmbiguousBoxError,
-  BoxNotFoundError,
-  findBox,
-  inspectBox,
-  readState,
-  startBox,
-  unpauseBox,
-} from '@agentbox/sandbox-docker';
+import { inspectBox, startBox, unpauseBox } from '@agentbox/sandbox-docker';
+import { resolveBoxOrShift } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface ShellOptions {
@@ -27,20 +20,23 @@ function buildShellCliOverrides(opts: ShellOptions): Partial<UserConfig> {
 
 export const shellCommand = new Command('shell')
   .description('Open an interactive bash shell in a box (auto-unpause/start)')
-  .argument('<box>', 'box id, id prefix, name, or container name')
+  .argument(
+    '[box]',
+    'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
+  )
   .argument(
     '[cmd...]',
     'optional one-shot command to run instead of an interactive shell; place after `--`, e.g. `agentbox shell smoke -- ls /workspace`',
   )
   .option('--user <name>', 'user inside the container (default from config; built-in: vscode)')
   .option('--no-login', 'invoke `bash` instead of `bash -l` (skip login profile)')
-  .action(async (idOrName: string, cmd: string[], opts: ShellOptions) => {
+  .action(async (idOrName: string | undefined, cmd: string[], opts: ShellOptions) => {
     try {
-      const state = await readState();
-      const r = findBox(idOrName, state);
-      if (r.kind === 'none') throw new BoxNotFoundError(idOrName);
-      if (r.kind === 'ambiguous') throw new AmbiguousBoxError(idOrName, r.matches);
-      const box = r.box;
+      // resolveBoxOrShift handles the `agentbox shell -- ls` case: commander
+      // binds "ls" to [box], which doesn't resolve; if auto-pick succeeds we
+      // treat "ls" as the first cmd token instead.
+      const { box, shifted } = await resolveBoxOrShift(idOrName);
+      const effectiveCmd = shifted && idOrName ? [idOrName, ...cmd] : cmd;
 
       const cfg = await loadEffectiveConfig(box.workspacePath, {
         cliOverrides: buildShellCliOverrides(opts),
@@ -64,7 +60,7 @@ export const shellCommand = new Command('shell')
       const term = process.env['TERM'] ?? 'xterm-256color';
       const bashArgs: string[] = [];
       if (login) bashArgs.push('-l');
-      if (cmd.length > 0) bashArgs.push('-c', cmd.join(' '));
+      if (effectiveCmd.length > 0) bashArgs.push('-c', effectiveCmd.join(' '));
 
       // -i always (so stdin pipes / heredocs work). -t only when stdout is a
       // real TTY — `docker exec -t` errors with "cannot attach stdin to a

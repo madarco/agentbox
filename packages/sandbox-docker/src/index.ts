@@ -51,10 +51,13 @@ export { EXCLUDE_DIRS, SNAPSHOTS_ROOT, snapshotPathFor } from './snapshot.js';
 export {
   STATE_DIR,
   STATE_FILE,
+  allocateProjectIndex,
+  autoPickProjectBox,
   findBox,
   readState,
   recordBox,
   removeBoxRecord,
+  resolveBoxRef,
   type BoxRecord,
   type FindBoxResult,
   type GitWorktreeRecord,
@@ -142,6 +145,12 @@ export {
   type VncLaunchResult,
   type VncUrls,
 } from './vnc.js';
+export {
+  dockerVolumeName,
+  launchDockerdDaemon,
+  SHARED_DOCKER_CACHE_VOLUME,
+  type DockerdLaunchResult,
+} from './dockerd.js';
 
 const notYet = (op: string): never => {
   throw new Error(`@agentbox/sandbox-docker: ${op} is not yet implemented`);
