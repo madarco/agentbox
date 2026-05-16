@@ -2,9 +2,10 @@ import { log } from '@clack/prompts';
 import { Command } from 'commander';
 import { findProjectRoot } from '@agentbox/config';
 import {
+  agentboxHomeBytes,
+  allCheckpointVolumesBytes,
   boxResourceStats,
   listBoxes,
-  projectCheckpointVolumeBytes,
   type ListedBox,
 } from '@agentbox/sandbox-docker';
 import type { BoxResourceStats } from '@agentbox/core';
@@ -75,20 +76,19 @@ async function snapshot(
   return { boxes, stats };
 }
 
-async function renderProjectFooters(
-  boxes: ListedBox[],
-  stats: BoxResourceStats[],
-): Promise<string> {
-  // Shared/durable: the per-project checkpoint volume is one volume across all
-  // the project's boxes — count it once here, never summed into a box's DISK
-  // column. Host snapshots ARE per-box, so summing is correct.
-  const footers: string[] = [];
-  const projectRoot = boxes[0]?.projectRoot ?? boxes[0]?.workspacePath ?? process.cwd();
-  const ckpt = await projectCheckpointVolumeBytes(projectRoot);
-  if (ckpt !== null) footers.push(`project checkpoint volume: ${fmtBytes(ckpt)}`);
-  const snapTotal = stats.reduce((a, s) => a + (s.snapshotDiskBytes ?? 0), 0);
-  if (snapTotal > 0) footers.push(`host snapshots: ${fmtBytes(snapTotal)}`);
-  return footers.length > 0 ? `\n\n${footers.join('\n')}` : '';
+async function renderProjectFooters(): Promise<string> {
+  // Two independent disk numbers, no overlap: checkpoint volumes are Docker
+  // named volumes (not under ~/.agentbox); everything else agentbox keeps on
+  // the host — box run dirs, exports, worktrees, host clones — lives inside
+  // ~/.agentbox and is summed there.
+  const parts: string[] = [];
+  const [ckpt, home] = await Promise.all([
+    allCheckpointVolumesBytes(),
+    agentboxHomeBytes(),
+  ]);
+  if (home !== null) parts.push(`~/.agentbox: ${fmtBytes(home)}`);
+  if (ckpt !== null) parts.push(`checkpoints: ${fmtBytes(ckpt)}`);
+  return parts.length > 0 ? `\n\nSYSTEM: ${parts.join(' - ')}` : '';
 }
 
 export const topCommand = new Command('top')
@@ -118,7 +118,7 @@ export const topCommand = new Command('top')
       const produce = async (): Promise<string> => {
         const { boxes, stats } = await snapshot(idOrName, opts);
         const rows = boxes.map((b, i) => row(b.name, b.state, stats[i]!));
-        return renderTable(rows) + (await renderProjectFooters(boxes, stats));
+        return renderTable(rows) + (await renderProjectFooters());
       };
 
       if (opts.once) {

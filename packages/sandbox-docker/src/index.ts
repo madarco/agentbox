@@ -10,6 +10,7 @@ export {
   pullClaudeExtras,
   rebuildPluginNativeDeps,
   resolveClaudeVolume,
+  scanPluginCacheForRebuild,
   SHARED_CLAUDE_VOLUME,
   startClaudeSession,
   type ClaudeConfigSpec,
@@ -24,6 +25,8 @@ export {
 } from './claude.js';
 export { createBox, type CreateBoxOptions, type CreatedBox } from './create.js';
 export {
+  agentboxHomeBytes,
+  allCheckpointVolumesBytes,
   boxResourceStats,
   parseDockerSize,
   projectCheckpointVolumeBytes,

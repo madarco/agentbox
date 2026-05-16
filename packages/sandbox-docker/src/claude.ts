@@ -11,6 +11,7 @@ import {
   SKILL_EXCLUDE_PREFIXES,
 } from './claude-pull.js';
 import { ensureVolume, volumeExists } from './docker.js';
+import { detectEngine, orbstackVolumePath } from './host-export.js';
 
 export const SHARED_CLAUDE_VOLUME = 'agentbox-claude-config';
 export const DEFAULT_CLAUDE_SESSION = 'claude';
@@ -390,6 +391,89 @@ export interface RebuildPluginNativeDepsResult {
   rebuilt: string[];
   /** Plugin cache directories where install failed; non-fatal, claude often still loads. */
   failed: Array<{ dir: string; stderr: string }>;
+  /**
+   * True when the in-box exec was skipped entirely because a host-side scan
+   * proved every package.json-bearing plugin already carries its install
+   * marker. Only possible when the volume is host-visible (OrbStack).
+   */
+  skipped: boolean;
+}
+
+/** Per-plugin sentinel written inside the cache dir after a successful install. */
+const PLUGIN_INSTALLED_MARKER = '.agentbox-installed';
+
+async function isFile(p: string): Promise<boolean> {
+  try {
+    return (await stat(p)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function isDir(p: string): Promise<boolean> {
+  try {
+    return (await stat(p)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Pure host-side scan of a plugin `cache/<m>/<p>/<v>/` tree. Returns true iff
+ * at least one version dir has a `package.json` but no install marker — i.e.
+ * the in-box rebuild would actually do npm work. A missing/empty cache root
+ * means nothing to do (false). Mirrors the in-box script's accept/skip rules
+ * (`packages/sandbox-docker/src/claude.ts` rebuild script) so the host
+ * pre-check and the container never disagree.
+ */
+export async function scanPluginCacheForRebuild(cacheRoot: string): Promise<boolean> {
+  let marketplaces;
+  try {
+    marketplaces = await readdir(cacheRoot, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const m of marketplaces) {
+    if (!m.isDirectory()) continue;
+    const mPath = join(cacheRoot, m.name);
+    let plugins;
+    try {
+      plugins = await readdir(mPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const p of plugins) {
+      if (!p.isDirectory()) continue;
+      const pPath = join(mPath, p.name);
+      let versions;
+      try {
+        versions = await readdir(pPath, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const v of versions) {
+        if (!v.isDirectory()) continue;
+        const vPath = join(pPath, v.name);
+        if (!(await isFile(join(vPath, 'package.json')))) continue;
+        if (await isFile(join(vPath, PLUGIN_INSTALLED_MARKER))) continue;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Host-visible `plugins/cache` dir for a claude-config volume, or null when the
+ * engine doesn't expose volume contents to the host (Docker Desktop / other).
+ * Returns the cache path even if it doesn't exist yet — {@link
+ * scanPluginCacheForRebuild} treats a missing cache as "nothing to do" — but
+ * only once the volume itself is materialized on the host.
+ */
+async function resolveClaudeCacheLiveOnHost(volume: string): Promise<string | null> {
+  if ((await detectEngine()) !== 'orbstack') return null;
+  if (!(await isDir(orbstackVolumePath(volume)))) return null;
+  return orbstackVolumePath(volume, 'plugins', 'cache');
 }
 
 /**
@@ -409,8 +493,23 @@ export interface RebuildPluginNativeDepsResult {
  */
 export async function rebuildPluginNativeDeps(
   container: string,
-  opts: { onProgress?: (line: string) => void } = {},
+  opts: {
+    onProgress?: (line: string) => void;
+    /**
+     * The claude-config volume backing this box. When given and host-visible
+     * (OrbStack), a pure-fs pre-scan skips the `docker exec` entirely if every
+     * package.json plugin already has its install marker — the common case for
+     * every box after the first global install.
+     */
+    volume?: string;
+  } = {},
 ): Promise<RebuildPluginNativeDepsResult> {
+  if (opts.volume) {
+    const cacheRoot = await resolveClaudeCacheLiveOnHost(opts.volume);
+    if (cacheRoot && !(await scanPluginCacheForRebuild(cacheRoot))) {
+      return { rebuilt: [], failed: [], skipped: true };
+    }
+  }
   // Marker (not node_modules) gates re-runs: some plugins have empty
   // dependency lists, so npm install completes successfully without
   // creating node_modules — checking only the directory would loop.
@@ -466,7 +565,7 @@ done
       collectingFail = { dir: line.slice('REBUILD_FAIL '.length), stderr: [] };
     }
   }
-  return { rebuilt, failed };
+  return { rebuilt, failed, skipped: false };
 }
 
 export class ClaudeSessionError extends Error {

@@ -108,14 +108,21 @@ async function pathExists(p: string): Promise<boolean> {
 }
 
 /**
- * Resolve the host-visible path to the upper volume's writes layer for live
- * browsing.
+ * Host path to a subpath inside an OrbStack-managed named volume.
  *
  * OrbStack exposes named volumes at `~/OrbStack/docker/volumes/<name>/` —
- * note: NO `_data` subdir; the volume contents (here: our overlay's `upper/`
- * and `work/`) appear directly. `docker volume inspect` still reports the
- * in-VM `/var/lib/docker/volumes/.../_data` mountpoint, which isn't reachable
- * from macOS, so we ignore it and use the OrbStack-shared path instead.
+ * note: NO `_data` subdir; volume contents appear directly under `<name>/`.
+ * `docker volume inspect` reports the in-VM `/var/lib/docker/...` mountpoint
+ * instead, which isn't reachable from macOS. Returns the path regardless of
+ * whether it exists; callers stat it themselves.
+ */
+export function orbstackVolumePath(volume: string, ...sub: string[]): string {
+  return join(homedir(), 'OrbStack', 'docker', 'volumes', volume, ...sub);
+}
+
+/**
+ * Resolve the host-visible path to the upper volume's writes layer for live
+ * browsing.
  *
  * Docker Desktop has no equivalent host path — returns null.
  */
@@ -126,7 +133,7 @@ export async function resolveUpperLiveOnHost(
   if (engine !== 'orbstack') return null;
   // Primary: OrbStack's documented shared folder. Contents of the volume sit
   // directly under <vol>/ — no _data wrapper.
-  const orbPath = join(homedir(), 'OrbStack', 'docker', 'volumes', upperVolume, 'upper');
+  const orbPath = orbstackVolumePath(upperVolume, 'upper');
   if (await pathExists(orbPath)) return orbPath;
   // Fallback: if docker reports a real-looking host mountpoint (e.g. on Linux
   // hosts or unusual setups), trust it.

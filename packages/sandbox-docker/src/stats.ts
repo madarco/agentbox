@@ -2,11 +2,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import type { BoxResourceLimits, BoxResourceStats } from '@agentbox/core';
-import { checkpointVolumeName } from './checkpoint.js';
+import { CHECKPOINT_VOLUME_PREFIX, checkpointVolumeName } from './checkpoint.js';
 import {
   inspectContainer,
   inspectContainerStatus,
   inspectVolumeMountpoint,
+  listAgentboxVolumes,
 } from './docker.js';
 import { detectEngine } from './host-export.js';
 import type { BoxRecord } from './state.js';
@@ -105,6 +106,26 @@ export async function projectCheckpointVolumeBytes(
   projectRoot: string,
 ): Promise<number | null> {
   return volumeSizeBytes(checkpointVolumeName(projectRoot));
+}
+
+/**
+ * Total on-host bytes of every per-project checkpoint volume (the durable,
+ * cross-box warm-state assets). Null when none exist or no size is reachable
+ * from the host.
+ */
+export async function allCheckpointVolumesBytes(): Promise<number | null> {
+  const vols = (await listAgentboxVolumes()).filter((v) =>
+    v.startsWith(CHECKPOINT_VOLUME_PREFIX),
+  );
+  if (vols.length === 0) return null;
+  const sizes = await Promise.all(vols.map((v) => volumeSizeBytes(v)));
+  const known = sizes.filter((s): s is number => s !== null);
+  return known.length === 0 ? null : known.reduce((a, b) => a + b, 0);
+}
+
+/** On-host byte size of the whole ~/.agentbox state/runtime directory. */
+export async function agentboxHomeBytes(): Promise<number | null> {
+  return duBytes(join(homedir(), '.agentbox'));
 }
 
 function limitsFromRecord(record: BoxRecord): BoxResourceLimits {

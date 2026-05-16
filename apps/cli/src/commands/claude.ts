@@ -241,14 +241,15 @@ export const claudeCommand = new Command('claude')
       // box pays the npm-install cost for each plugin that ships a
       // package.json; subsequent attaches see node_modules already present
       // and exit immediately.
-      s.start('rebuilding plugin native deps (first run for this box)');
+      s.start('checking plugin native deps');
       const rebuild = await rebuildPluginNativeDeps(result.record.container, {
+        volume: result.record.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME,
         onProgress: (line) => s.message(clampSpinnerLine(line)),
       });
-      if (rebuild.rebuilt.length === 0 && rebuild.failed.length === 0) {
-        s.stop('plugins ready (nothing to rebuild)');
-      } else {
+      if (rebuild.rebuilt.length > 0) {
         s.stop(`plugins ready (rebuilt ${String(rebuild.rebuilt.length)})`);
+      } else {
+        s.stop('plugins ready');
       }
       for (const f of rebuild.failed) {
         log.warn(`plugin install failed for ${f.dir}; claude may still load it. stderr:\n${f.stderr.trim()}`);
@@ -397,14 +398,15 @@ const claudeStartCommand = new Command('start')
 
         // Plugin native deps: idempotent — gated by a per-plugin marker. No-op
         // on subsequent starts unless a new plugin was synced just now.
-        s.start('rebuilding plugin native deps');
+        s.start('checking plugin native deps');
         const rebuild = await rebuildPluginNativeDeps(box.container, {
+          volume: box.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME,
           onProgress: (line) => s.message(clampSpinnerLine(line)),
         });
-        if (rebuild.rebuilt.length === 0 && rebuild.failed.length === 0) {
-          s.stop('plugins ready (nothing to rebuild)');
-        } else {
+        if (rebuild.rebuilt.length > 0) {
           s.stop(`plugins ready (rebuilt ${String(rebuild.rebuilt.length)})`);
+        } else {
+          s.stop('plugins ready');
         }
         for (const f of rebuild.failed) {
           log.warn(`plugin install failed for ${f.dir}; claude may still load it. stderr:\n${f.stderr.trim()}`);

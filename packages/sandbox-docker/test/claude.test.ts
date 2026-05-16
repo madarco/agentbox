@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   buildClaudeMounts,
   resolveClaudeVolume,
+  scanPluginCacheForRebuild,
   SHARED_CLAUDE_VOLUME,
 } from '../src/claude.js';
 
@@ -60,5 +64,43 @@ describe('buildClaudeMounts', () => {
       },
     );
     expect(result.env).toEqual({});
+  });
+});
+
+describe('scanPluginCacheForRebuild', () => {
+  let root: string;
+  const versionDir = (m: string, p: string, v: string) =>
+    join(root, m, p, v);
+  const seed = async (m: string, p: string, v: string, files: string[]) => {
+    const d = versionDir(m, p, v);
+    await mkdir(d, { recursive: true });
+    for (const f of files) await writeFile(join(d, f), '{}');
+  };
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'agentbox-cache-'));
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('returns false when the cache root does not exist', async () => {
+    expect(await scanPluginCacheForRebuild(join(root, 'nope'))).toBe(false);
+  });
+
+  it('returns false when every package.json plugin has the install marker', async () => {
+    await seed('mkt', 'plug', '1.0.0', ['package.json', '.agentbox-installed']);
+    expect(await scanPluginCacheForRebuild(root)).toBe(false);
+  });
+
+  it('returns true when a package.json plugin is missing the marker', async () => {
+    await seed('mkt', 'a', '1.0.0', ['package.json', '.agentbox-installed']);
+    await seed('mkt', 'b', '2.1.0', ['package.json']);
+    expect(await scanPluginCacheForRebuild(root)).toBe(true);
+  });
+
+  it('ignores skill-only plugins that ship no package.json', async () => {
+    await seed('mkt', 'skill-only', 'unknown', ['SKILL.md']);
+    expect(await scanPluginCacheForRebuild(root)).toBe(false);
   });
 });
