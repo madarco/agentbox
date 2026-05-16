@@ -64,6 +64,7 @@ agentbox path <box> [--upper] [--refresh] [--include-node-modules]
                                     # print the host path; --refresh runs the same rsync as `open`
 agentbox pull [box] [--with-env] [--dry-run] [-y]   # box -> host pull of /workspace (gitignore-aware)
 agentbox pull env [box] [--dry-run] [-y]            # just gitignored env/config files
+agentbox pull config [box] [--dry-run] [-y]         # just agentbox.yaml (gitignore-bypassing)
 agentbox pull claude [box] [--dry-run] [-y]         # additive box -> host pull of ~/.claude skills/plugins/agents/commands
                                     # reads the claude-config volume (box may be stopped); never overwrites; skips agentbox-* skills
 agentbox destroy <box> [-y] [--keep-snapshot]   # alias: rm — discards upper volume

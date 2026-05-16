@@ -10,6 +10,7 @@ import {
 import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
 import { pullClaudeCommand } from './pull-claude.js';
+import { pullConfigCommand } from './pull-config.js';
 import { pullEnvCommand } from './pull-env.js';
 
 interface PullOpts {
@@ -140,3 +141,7 @@ pullCommand.addCommand(pullEnvCommand);
 // skills/plugins/agents/commands (additive; reads the claude-config volume so
 // the box need not be running).
 pullCommand.addCommand(pullClaudeCommand);
+
+// `agentbox pull config [box]` — box -> host pull of just agentbox.yaml
+// (gitignore-bypassing; for syncing back an in-box-edited/regenerated config).
+pullCommand.addCommand(pullConfigCommand);
