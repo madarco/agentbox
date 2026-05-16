@@ -36,21 +36,41 @@ function middleTruncate(s: string, n: number): string {
 }
 
 /**
- * Compact, clickable URL for the box: the first endpoint with a host-reachable
- * URL (VNC, else the first reachable service). Display is the bare `host:port`
- * (no scheme, no query) so the VNC password in the query string stays out of
- * the table; the OSC-8 target keeps the full URL so a click still works.
+ * Compact, clickable URL for the box: the `expose:`-flagged web endpoint when
+ * present (the box's main app, explicitly declared), else the first reachable
+ * service, followed by a `(VNC)` link to the noVNC URL when VNC is enabled.
+ * Display is the bare `host[:port]` (no scheme, no query) so the VNC password in
+ * the query string stays out of the table; the OSC-8 target keeps the full URL
+ * so a click still works. Falls back to VNC alone when there's no service.
  */
 function urlCell(box: ListedBox, stream: NodeJS.WriteStream): Cell {
-  const ep = box.endpoints.endpoints.find((e) => e.url);
-  if (!ep?.url) return plain('');
+  const eps = box.endpoints.endpoints;
+  const vnc = eps.find((e) => e.kind === 'vnc' && e.url);
+  const primary =
+    eps.find((e) => e.kind === 'web' && e.url) ??
+    eps.find((e) => e.kind === 'service' && e.url) ??
+    vnc;
+  if (!primary?.url) return plain('');
+
   let display: string;
   try {
-    display = new URL(ep.url).host;
+    display = new URL(primary.url).host;
   } catch {
-    display = ep.url;
+    display = primary.url;
   }
-  return { text: hyperlink(display, ep.url, stream), width: display.length };
+
+  const parts: Cell[] = [
+    { text: hyperlink(display, primary.url, stream), width: display.length },
+  ];
+  if (vnc?.url && vnc !== primary) {
+    const label = '(VNC)';
+    parts.push({ text: hyperlink(label, vnc.url, stream), width: label.length });
+  }
+  const sep = ' ';
+  return {
+    text: parts.map((p) => p.text).join(sep),
+    width: parts.reduce((a, p) => a + p.width, 0) + sep.length * (parts.length - 1),
+  };
 }
 
 /** Workspace path truncated to `target` and linked to its `file://` URL. */

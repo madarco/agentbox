@@ -81,6 +81,12 @@ export interface BoxStatusServiceEntry {
   state: ServiceState;
   /** Configured `ready_when` port for this service, else null. */
   port: number | null;
+  /**
+   * The service's `expose:` mapping (container `as` → in-box `port`) when it is
+   * the designated web service, else absent. Additive field — snapshots written
+   * before this existed simply lack it (schema stays 1; treat absent as none).
+   */
+  expose?: { port: number; as: number };
 }
 
 export interface BoxStatusTaskEntry {

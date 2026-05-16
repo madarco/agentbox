@@ -37,6 +37,18 @@ Look at `/workspace`:
 
 Tunables: `interval_ms` (default 500), `initial_delay_ms` (default 0), `timeout_ms` (default 60000), `on_timeout: kill | mark_unhealthy` (default `kill` — re-enters the restart policy).
 
+### Mark the web service with `expose:`
+
+The box's primary web app (the dev server / Next.js / API the user opens in a browser) should declare:
+
+```yaml
+    expose:
+      port: 3000   # the port this service listens on inside the box
+      as: 80        # must be 80 — the container port AgentBox publishes
+```
+
+At most **one** service may set `expose:`. AgentBox forwards container `:80` to `127.0.0.1:<port>` and publishes it on the host, so `agentbox list`/`status` show it as the box's main URL on every engine (no OrbStack dependency). Set this on the same service whose `ready_when:` you just wrote (a DB or worker should **not** get `expose:`).
+
 ## 4. Restart + backoff
 
 Per service:
@@ -89,6 +101,9 @@ services:
     ready_when:
       port: 3000
       timeout_ms: 120000
+    expose:
+      port: 3000
+      as: 80
     restart: on-failure
     backoff:
       initial_ms: 500

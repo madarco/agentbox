@@ -14,6 +14,7 @@ import {
 } from './docker.js';
 import { dockerVolumeName, launchDockerdDaemon } from './dockerd.js';
 import { generateVncPassword, launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
+import { WEB_CONTAINER_PORT } from './web.js';
 import { createBoxWorktree, detectGitRepos } from './git-worktree.js';
 import {
   CONTAINER_EXPORT_MERGED,
@@ -410,6 +411,14 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     ? [{ hostPort: 0, containerPort: VNC_CONTAINER_PORT, hostIp: '127.0.0.1' }]
     : [];
 
+  // Reserve the web port unconditionally: `docker run -p` is immutable, but the
+  // `expose:`-flagged service is usually only known after the in-box wizard
+  // writes agentbox.yaml. The supervisor forwards :80 to it later; here we just
+  // guarantee a published host port exists for whenever that happens.
+  const webPortMappings = [
+    { hostPort: 0, containerPort: WEB_CONTAINER_PORT, hostIp: '127.0.0.1' },
+  ];
+
   // Per-project monotonic index. Allocated *before* runBox so it can be
   // injected as AGENTBOX_PROJECT_INDEX in the container env. Re-reads state
   // each time so concurrent creates from the same project see each other's
@@ -446,7 +455,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     upperVolume,
     nodeModulesVolume,
     extraVolumes,
-    portMappings: vncPortMappings,
+    portMappings: [...vncPortMappings, ...webPortMappings],
     env: {
       AGENTBOX_BOX_ID: id,
       ...agentboxEnv,
@@ -557,6 +566,14 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     if (vncHostPort) log(`vnc web on host 127.0.0.1:${String(vncHostPort)}`);
   }
 
+  const webHostPort = await publishedHostPort(containerName, WEB_CONTAINER_PORT);
+  if (webHostPort) {
+    log(
+      `web port reserved on host 127.0.0.1:${String(webHostPort)} ` +
+        `(forwards to the web service once agentbox.yaml sets a service expose:)`,
+    );
+  }
+
   const record: BoxRecord = {
     id,
     name,
@@ -579,6 +596,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     vncContainerPort: vncEnabled ? VNC_CONTAINER_PORT : undefined,
     vncHostPort: vncHostPort ?? undefined,
     vncPassword: vncPassword,
+    webContainerPort: WEB_CONTAINER_PORT,
+    webHostPort: webHostPort ?? undefined,
     dockerVolume,
     dockerCacheShared: dockerCacheShared || undefined,
     projectRoot: opts.projectRoot,

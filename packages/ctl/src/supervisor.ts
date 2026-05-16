@@ -6,11 +6,13 @@ import { join } from 'node:path';
 import {
   describeCommand,
   type CtlConfig,
+  type ExposeSpec,
   type ServiceSpec,
   type TaskSpec,
 } from './config.js';
 import { startProbe, type ProbeHandle } from './probe.js';
 import { RelayClient } from './relay-client.js';
+import { WebProxy } from './web-proxy.js';
 import type {
   LogEvent,
   ServiceState,
@@ -523,6 +525,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
   private scheduling = false;
   private rescheduleDirty = false;
   private readonly relay: RelayClient;
+  private readonly webProxy = new WebProxy();
 
   constructor(private readonly opts: SupervisorOptions) {
     super();
@@ -550,10 +553,32 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     return out;
   }
 
+  /**
+   * Map of service name -> `expose:` mapping, for the (at most one) service
+   * that declares it. The status reporter surfaces this so the host knows the
+   * web service even when `agentbox.yaml` lives only inside the box.
+   */
+  serviceExposes(): Map<string, ExposeSpec> {
+    const out = new Map<string, ExposeSpec>();
+    for (const u of this.units.values()) {
+      if (u.kind !== 'service') continue;
+      const expose = (u as ServiceRunner).spec.expose;
+      if (expose) out.set(u.name, expose);
+    }
+    return out;
+  }
+
+  /** (Re)point the in-box :80 forwarder at the `expose:`-flagged service. */
+  private applyWebProxy(): void {
+    const [first] = this.serviceExposes().values();
+    this.webProxy.reconfigure(first ? first.port : null);
+  }
+
   async init(cfg: CtlConfig): Promise<void> {
     await mkdir(this.opts.logDir, { recursive: true });
     for (const t of cfg.tasks) this.addTaskUnit(t);
     for (const s of cfg.services) this.addServiceUnit(s);
+    this.applyWebProxy();
     this.schedule();
   }
 
@@ -693,6 +718,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
   }
 
   async stopAll(): Promise<void> {
+    this.webProxy.stop();
     const services: ServiceRunner[] = [];
     for (const u of this.units.values()) {
       if (u.kind === 'service') services.push(u as ServiceRunner);
@@ -757,6 +783,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
       }
     }
 
+    this.applyWebProxy();
     this.schedule();
     return { added, removed, changed };
   }
@@ -883,6 +910,7 @@ function normalizeService(s: ServiceSpec): unknown {
     backoff: s.backoff,
     needs: [...s.needs].sort(),
     readyWhen: serializeProbe(s.readyWhen),
+    expose: s.expose ?? null,
   };
 }
 

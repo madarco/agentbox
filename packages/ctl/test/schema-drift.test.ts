@@ -88,6 +88,29 @@ services:
 `,
   },
   {
+    name: 'service with expose (explicit as: 80)',
+    yaml: `
+services:
+  dev:
+    command: pnpm dev
+    ready_when:
+      port: 3000
+    expose:
+      port: 3000
+      as: 80
+`,
+  },
+  {
+    name: 'service with expose (as defaulted)',
+    yaml: `
+services:
+  dev:
+    command: pnpm dev
+    expose:
+      port: 3000
+`,
+  },
+  {
     name: 'service with port probe + host + intervals',
     yaml: `
 services:
@@ -410,6 +433,54 @@ services:
     ready_when:
       log_match: "ready"
       interval_ms: 250
+`,
+    runtimeOnly: true,
+  },
+  {
+    name: 'expose missing required port',
+    yaml: `
+services:
+  dev:
+    command: pnpm dev
+    expose:
+      as: 80
+`,
+  },
+  {
+    name: 'expose with unknown key',
+    yaml: `
+services:
+  dev:
+    command: pnpm dev
+    expose:
+      port: 3000
+      host: 127.0.0.1
+`,
+  },
+  {
+    name: 'two services with expose (cross-field, validator-only)',
+    yaml: `
+services:
+  web:
+    command: pnpm dev
+    expose:
+      port: 3000
+  api:
+    command: pnpm api
+    expose:
+      port: 4000
+`,
+    runtimeOnly: true,
+  },
+  {
+    name: 'expose.as not 80 (cross-field, validator-only)',
+    yaml: `
+services:
+  dev:
+    command: pnpm dev
+    expose:
+      port: 3000
+      as: 8080
 `,
     runtimeOnly: true,
   },

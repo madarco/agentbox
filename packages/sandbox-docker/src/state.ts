@@ -82,6 +82,15 @@ export interface BoxRecord {
   /** Per-box password baked into Xvnc's PasswordFile and embedded in the auto-connect URL. */
   vncPassword?: string;
   /**
+   * Container port reserved for the web service `expose:` forward. Fixed to 80
+   * today; the `-p` mapping is created unconditionally at `create`. Absent on
+   * boxes created before web-port reservation landed → no web endpoint until
+   * the box is recreated.
+   */
+  webContainerPort?: number;
+  /** Random host port Docker assigned to container :80 (resolved via `docker port`). */
+  webHostPort?: number;
+  /**
    * Volume mounted at /var/lib/docker for the in-box dockerd. Per-box
    * (`agentbox-docker-<id>`) by default; the shared `agentbox-docker-cache`
    * volume when `dockerCacheShared` is true. Absent on boxes created before

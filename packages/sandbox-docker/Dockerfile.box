@@ -59,10 +59,19 @@ RUN apt-get update \
         build-essential \
         git \
         tmux \
+        libcap2-bin \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /workspace /host-src /upper /snapshot /run/agentbox /var/log/agentbox \
     && chmod 755 /workspace /host-src /upper /snapshot \
     && chown vscode:vscode /run/agentbox /var/log/agentbox
+
+# The in-box supervisor (runs as non-root `vscode`) owns a TCP forwarder that
+# binds container :80 -> the `expose:`-flagged service (see WebProxy /
+# agentbox.yaml `expose:`). Binding a port <1024 needs CAP_NET_BIND_SERVICE;
+# grant it to the node binary so the supervisor can listen on :80 without root.
+# Broad (any in-box node can bind low ports) but acceptable for a single-tenant
+# sandbox — strictly narrower than the existing NET_ADMIN/seccomp=unconfined.
+RUN setcap cap_net_bind_service=+ep "$(readlink -f "$(command -v node)")"
 
 # Host repos are bind-mounted in at their identical absolute path (worktree
 # pointer files contain absolute paths to <main>/.git/worktrees/<name>, so both
@@ -217,6 +226,10 @@ ENV DISPLAY=:1
 # this, the auto-DNS responds but nothing is routed. (Docker Desktop doesn't
 # use EXPOSE for routing — it just needs the `-p` flag passed at `docker run`.)
 EXPOSE 6080
+# Web service port. The canonical host-reachable URL is the published loopback
+# port (`-p 127.0.0.1:0:80`, resolved per box); EXPOSE 80 is only an OrbStack
+# bare-domain bonus and is not load-bearing (OrbStack honors a single EXPOSE).
+EXPOSE 80
 
 # Pre-create the per-user .vnc dir so it's writable from the runtime user. The
 # password file itself is written at container start by agentbox-vnc-start

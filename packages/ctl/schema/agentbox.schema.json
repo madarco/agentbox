@@ -82,6 +82,27 @@
         "backoff": { "$ref": "#/$defs/backoff" },
         "needs": { "$ref": "#/$defs/needs" },
         "ready_when": { "$ref": "#/$defs/ready_when" },
+        "expose": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["port"],
+          "description": "Mark this as THE web service. AgentBox forwards container port `as` to `127.0.0.1:port` inside the box and publishes it on the host. At most one service may set this.",
+          "properties": {
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "The port this service listens on inside the box."
+            },
+            "as": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 80,
+              "description": "Container port forwarded to `port`. Must be 80 (the only port AgentBox reserves)."
+            }
+          }
+        },
         "ide": {
           "type": "object",
           "description": "Per-service VS Code hints (read host-side by `agentbox code`). Shape is permissive in this PR.",

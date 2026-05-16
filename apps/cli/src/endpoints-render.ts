@@ -22,6 +22,11 @@ export function renderEndpointLines(
       entries.push({ name: ep.name, value: hyperlink(ep.url, ep.url, stream) });
     } else if (ep.kind === 'vnc') {
       entries.push({ name: ep.name, value: 'enabled (URL unavailable — daemon may not be up)' });
+    } else if (ep.kind === 'web') {
+      entries.push({
+        name: 'web',
+        value: 'reserved (set a service `expose:` in agentbox.yaml)',
+      });
     } else {
       entries.push({
         name: ep.name,

@@ -46,6 +46,7 @@ import {
 import { launchCtlDaemon } from './ctl.js';
 import { launchDockerdDaemon, SHARED_DOCKER_CACHE_VOLUME } from './dockerd.js';
 import { launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
+import { WEB_CONTAINER_PORT } from './web.js';
 import { getBoxEndpoints, type BoxEndpoints } from './endpoints.js';
 import {
   ensureRelay,
@@ -78,8 +79,8 @@ export async function listBoxes(): Promise<ListedBox[]> {
   return Promise.all(
     boxes.map(async (b): Promise<ListedBox> => {
       const state = await inspectContainerStatus(b.container);
-      const endpoints = await getBoxEndpoints(b, engine);
       const persisted = await readBoxStatus(b.id);
+      const endpoints = await getBoxEndpoints(b, engine, persisted);
       return { ...b, state, endpoints, claudeActivity: persisted?.claude.state };
     }),
   );
@@ -202,6 +203,18 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
       await recordBox(box);
     }
   }
+  // Same ephemeral-reallocation story for the reserved web port. Gated on
+  // webContainerPort so pre-feature boxes (no `-p 0:80` mapping) are skipped.
+  if (box.webContainerPort !== undefined) {
+    const freshWebPort = await publishedHostPort(
+      box.container,
+      box.webContainerPort ?? WEB_CONTAINER_PORT,
+    );
+    if (freshWebPort && freshWebPort !== box.webHostPort) {
+      box.webHostPort = freshWebPort;
+      await recordBox(box);
+    }
+  }
   // Relay's in-memory registry may have been lost if the relay restarted
   // between create and now (or this is the first start after a host reboot).
   // Re-ensure + re-register so outbound push from the box keeps working.
@@ -298,8 +311,8 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
 
   const hostPaths = await getHostPaths(record);
   const engine = await detectEngine();
-  const endpoints = await getBoxEndpoints(record, engine);
   const persistedStatus = await readBoxStatus(record.id);
+  const endpoints = await getBoxEndpoints(record, engine, persistedStatus);
 
   return {
     record,

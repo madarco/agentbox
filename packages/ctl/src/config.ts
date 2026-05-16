@@ -39,6 +39,13 @@ export interface HttpProbe {
 
 export type ReadyProbe = PortProbe | LogMatchProbe | HttpProbe;
 
+export interface ExposeSpec {
+  /** The port this service listens on inside the box. */
+  port: number;
+  /** Container port forwarded to it. Only 80 is reserved/published today. */
+  as: number;
+}
+
 export interface TaskSpec {
   name: string;
   command: string | string[];
@@ -57,6 +64,8 @@ export interface ServiceSpec {
   backoff: BackoffSpec;
   needs: string[];
   readyWhen?: ReadyProbe;
+  /** When set, container port `expose.as` forwards to `127.0.0.1:expose.port`. */
+  expose?: ExposeSpec;
 }
 
 export interface CtlConfig {
@@ -324,6 +333,14 @@ function parseReadyWhen(raw: unknown, where: string): ReadyProbe | undefined {
   return { kind: 'http', url, expectStatus, intervalMs, initialDelayMs, timeoutMs, onTimeout };
 }
 
+/**
+ * The only container port AgentBox reserves + publishes for a web service today
+ * (see `WEB_CONTAINER_PORT` host-side in @agentbox/sandbox-docker). A service's
+ * `expose.as` must equal this — any other value would parse fine but be
+ * unreachable from the host, so we reject it loudly.
+ */
+export const RESERVED_WEB_PORT = 80;
+
 const SERVICE_KEYS = new Set([
   'command',
   'cwd',
@@ -333,8 +350,37 @@ const SERVICE_KEYS = new Set([
   'backoff',
   'needs',
   'ready_when',
+  'expose',
   'ide',
 ]);
+
+const EXPOSE_KEYS = new Set(['port', 'as']);
+
+function parseExpose(raw: unknown, where: string): ExposeSpec | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!isPlainObject(raw)) {
+    throw new ConfigError(`${where}.expose must be a mapping`);
+  }
+  rejectUnknownKeys(raw, EXPOSE_KEYS, `${where}.expose`);
+  if (raw.port === undefined) {
+    throw new ConfigError(`${where}.expose.port is required`);
+  }
+  const port = parsePortNumber(raw.port, `${where}.expose.port`);
+  const as = raw.as === undefined ? RESERVED_WEB_PORT : parsePortNumber(raw.as, `${where}.expose.as`);
+  if (as !== RESERVED_WEB_PORT) {
+    throw new ConfigError(
+      `${where}.expose.as must be ${String(RESERVED_WEB_PORT)} (the only container port AgentBox publishes)`,
+    );
+  }
+  return { port, as };
+}
+
+function parsePortNumber(raw: unknown, where: string): number {
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1 || raw > 65535) {
+    throw new ConfigError(`${where} must be an integer between 1 and 65535`);
+  }
+  return raw;
+}
 
 function parseService(name: string, raw: unknown): ServiceSpec {
   const where = `services.${name}`;
@@ -351,7 +397,8 @@ function parseService(name: string, raw: unknown): ServiceSpec {
   const backoff = parseBackoff(raw.backoff, where);
   const needs = parseNeeds(raw.needs, `${where}.needs`);
   const readyWhen = parseReadyWhen(raw.ready_when, where);
-  return { name, command, cwd, env, autostart, restart, backoff, needs, readyWhen };
+  const expose = parseExpose(raw.expose, where);
+  return { name, command, cwd, env, autostart, restart, backoff, needs, readyWhen, expose };
 }
 
 const TASK_KEYS = new Set(['command', 'cwd', 'env', 'needs']);
@@ -498,6 +545,13 @@ export function parseConfig(text: string): CtlConfig {
   }
 
   validateUnitGraph(tasks, services);
+
+  const exposed = services.filter((s) => s.expose);
+  if (exposed.length > 1) {
+    throw new ConfigError(
+      `at most one service may set expose: (got: ${exposed.map((s) => s.name).join(', ')})`,
+    );
+  }
 
   return { services, tasks };
 }
