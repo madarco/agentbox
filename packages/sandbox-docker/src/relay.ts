@@ -183,6 +183,10 @@ export interface RegisterBoxArgs {
   boxId: string;
   token: string;
   name: string;
+  /** Docker container name; lets the relay `docker pause` the box for auto-pause. */
+  containerName?: string;
+  /** ISO-8601 box-creation time (BoxRecord.createdAt); auto-pause tie-break. */
+  createdAt?: string;
   /**
    * Subset of BoxRecord.gitWorktrees the relay needs to dispatch git RPCs.
    * Empty/omitted for boxes without git repos.
@@ -200,6 +204,8 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     boxId: args.boxId,
     token: args.token,
     name: args.name,
+    containerName: args.containerName,
+    createdAt: args.createdAt,
     worktrees,
   });
 }
@@ -254,6 +260,8 @@ async function adminPost(path: string, body: unknown): Promise<void> {
 export interface BoxWithToken {
   id: string;
   name: string;
+  container?: string;
+  createdAt?: string;
   relayToken?: string;
   gitWorktrees?: GitWorktreeRecord[];
 }
@@ -271,6 +279,8 @@ export async function rehydrateRelayRegistry(boxes: BoxWithToken[]): Promise<voi
         boxId: b.id,
         token: b.relayToken,
         name: b.name,
+        containerName: b.container,
+        createdAt: b.createdAt,
         worktrees: b.gitWorktrees,
       });
     } catch {

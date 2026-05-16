@@ -28,6 +28,7 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "@agentbox/config": "workspace:*",
     "commander": "^12.1.0"
   },
   "devDependencies": {

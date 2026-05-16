@@ -46,6 +46,15 @@ export interface UserConfig {
   vnc?: {
     containerPort?: number;
   };
+  autopause?: {
+    enabled?: boolean;
+    maxRunningBoxes?: number;
+    idleMinutes?: number;
+  };
+  maintenance?: {
+    pruneProjectConfigs?: boolean;
+    pruneProjectConfigsEvery?: number;
+  };
 }
 
 /**
@@ -88,6 +97,15 @@ export interface EffectiveConfig {
   };
   vnc: {
     containerPort: number;
+  };
+  autopause: {
+    enabled: boolean;
+    maxRunningBoxes: number;
+    idleMinutes: number;
+  };
+  maintenance: {
+    pruneProjectConfigs: boolean;
+    pruneProjectConfigsEvery: number;
   };
 }
 
@@ -151,6 +169,15 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   vnc: {
     containerPort: 6080,
+  },
+  autopause: {
+    enabled: true,
+    maxRunningBoxes: 5,
+    idleMinutes: 5,
+  },
+  maintenance: {
+    pruneProjectConfigs: true,
+    pruneProjectConfigsEvery: 50,
   },
 };
 
@@ -264,6 +291,35 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description: 'Container-side noVNC port (advanced).',
     advanced: true,
+  },
+  {
+    key: 'autopause.enabled',
+    type: 'bool',
+    description:
+      'Let the host relay periodically pause idle boxes when more than autopause.maxRunningBoxes are running.',
+  },
+  {
+    key: 'autopause.maxRunningBoxes',
+    type: 'int',
+    description:
+      'Target maximum number of simultaneously-running boxes before idle ones get auto-paused.',
+  },
+  {
+    key: 'autopause.idleMinutes',
+    type: 'int',
+    description:
+      'Minutes a box must be continuously idle (claude state) before it is eligible for auto-pause.',
+  },
+  {
+    key: 'maintenance.pruneProjectConfigs',
+    type: 'bool',
+    description:
+      'Periodically delete ~/.agentbox/projects/<hash>/ dirs whose source workspace folder no longer exists.',
+  },
+  {
+    key: 'maintenance.pruneProjectConfigsEvery',
+    type: 'int',
+    description: 'Run the orphan project-config sweep every N successful `agentbox create`.',
   },
 ];
 

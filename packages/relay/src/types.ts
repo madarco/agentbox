@@ -8,7 +8,12 @@ export interface BoxRegistration {
   boxId: string;
   token: string;
   name: string;
+  /** ISO-8601 time the relay received this registration. */
   registeredAt: string;
+  /** Docker container name; the relay needs it to `docker pause` an idle box. */
+  containerName?: string;
+  /** ISO-8601 box-creation time (BoxRecord.createdAt); used as a tie-break in auto-pause ordering. */
+  createdAt?: string;
   /**
    * Container-path → host-worktree-dir mapping the host uses to resolve
    * git.pull/git.push RPCs. Empty when the box has no git repos.
@@ -55,6 +60,8 @@ export interface RegisterBoxBody {
   boxId: string;
   token: string;
   name: string;
+  containerName?: string;
+  createdAt?: string;
   worktrees?: BoxWorktree[];
 }
 

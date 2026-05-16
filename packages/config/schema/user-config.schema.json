@@ -70,6 +70,23 @@
       "properties": {
         "containerPort": { "type": "integer" }
       }
+    },
+    "autopause": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "maxRunningBoxes": { "type": "integer" },
+        "idleMinutes": { "type": "integer" }
+      }
+    },
+    "maintenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pruneProjectConfigs": { "type": "boolean" },
+        "pruneProjectConfigsEvery": { "type": "integer" }
+      }
     }
   }
 }

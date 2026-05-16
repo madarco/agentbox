@@ -220,6 +220,14 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         token: body.token,
         name: body.name,
         registeredAt: new Date().toISOString(),
+        containerName:
+          typeof body.containerName === 'string' && body.containerName.length > 0
+            ? body.containerName
+            : undefined,
+        createdAt:
+          typeof body.createdAt === 'string' && body.createdAt.length > 0
+            ? body.createdAt
+            : undefined,
         worktrees,
       };
       registry.register(reg);
@@ -270,6 +278,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         boxId: r.boxId,
         name: r.name,
         registeredAt: r.registeredAt,
+        containerName: r.containerName,
+        createdAt: r.createdAt,
         worktrees: r.worktrees ?? [],
       }));
       send(res, 200, { boxes: redacted });

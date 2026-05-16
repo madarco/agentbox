@@ -212,6 +212,8 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
         boxId: box.id,
         token: box.relayToken,
         name: box.name,
+        containerName: box.container,
+        createdAt: box.createdAt,
         worktrees: box.gitWorktrees,
       });
     } catch {

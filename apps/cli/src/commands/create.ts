@@ -1,6 +1,12 @@
 import { intro, log, outro, spinner } from '@clack/prompts';
-import { findProjectRoot, loadEffectiveConfig, type UserConfig } from '@agentbox/config';
-import { createBox } from '@agentbox/sandbox-docker';
+import {
+  bumpProjectGcCounter,
+  findProjectRoot,
+  loadEffectiveConfig,
+  pruneOrphanProjectConfigs,
+  type UserConfig,
+} from '@agentbox/config';
+import { createBox, listBoxes } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
 import { clampSpinnerLine } from '../spinner-line.js';
@@ -143,6 +149,31 @@ export const createCommand = new Command('create')
           `  docker volume rm ${result.record.upperVolume} ${result.record.nodeModulesVolume}`,
         ].join('\n'),
       );
+
+      // Periodic best-effort housekeeping: every Nth create, reap per-project
+      // config dirs whose source workspace folder was deleted. Must never fail
+      // or slow down create.
+      const m = cfg.effective.maintenance;
+      if (m.pruneProjectConfigs) {
+        try {
+          const n = await bumpProjectGcCounter();
+          if (n % m.pruneProjectConfigsEvery === 0) {
+            const boxes = await listBoxes();
+            const protectedPaths = boxes
+              .map((b) => b.projectRoot)
+              .filter((p): p is string => typeof p === 'string');
+            const res = await pruneOrphanProjectConfigs({ protectedPaths });
+            if (res.removed.length > 0) {
+              log.info(
+                `cleaned ${String(res.removed.length)} orphan project config dir(s): ` +
+                  res.removed.map((r) => r.originalPath).join(', '),
+              );
+            }
+          }
+        } catch {
+          /* best-effort: project-config GC must never break create */
+        }
+      }
 
       outro('done');
 

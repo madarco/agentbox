@@ -23,3 +23,14 @@ export {
   type RelayServerHandle,
   type RelayServerOptions,
 } from './server.js';
+export {
+  loadAutopauseConfig,
+  selectBoxesToPause,
+  startAutopauseLoop,
+  type AutopauseConfig,
+  type AutopauseLoopDeps,
+  type AutopauseLoopHandle,
+  type BoxScanEntry,
+  type ClaudeState,
+  type ContainerState,
+} from './autopause.js';

@@ -1,5 +1,5 @@
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join } from 'node:path';
 import { stringify as stringifyYaml } from 'yaml';
 import {
   configPathFor,
@@ -126,6 +126,82 @@ export async function listProjectsConfigured(): Promise<ProjectEntry[]> {
   }
   out.sort((a, b) => a.originalPath.localeCompare(b.originalPath));
   return out;
+}
+
+export interface PruneOrphanProjectConfigsOptions {
+  dryRun?: boolean;
+  /** Absolute project roots of live boxes — kept even if the folder is gone. */
+  protectedPaths?: string[];
+}
+
+export interface PruneOrphanProjectConfigsResult {
+  removed: { hash: string; originalPath: string }[];
+  dryRun: boolean;
+}
+
+/**
+ * Delete `~/.agentbox/projects/<hash>/` dirs whose recorded `originalPath`
+ * workspace folder no longer exists on disk. Conservative by construction:
+ * only an ENOENT on `originalPath` counts as orphaned (a transient/permission
+ * error is never treated as "deleted"), and any path in `protectedPaths` (the
+ * project roots of still-live boxes) is left alone. Best-effort and
+ * idempotent — a failed `rm` is swallowed.
+ */
+export async function pruneOrphanProjectConfigs(
+  opts: PruneOrphanProjectConfigsOptions = {},
+): Promise<PruneOrphanProjectConfigsResult> {
+  const dryRun = opts.dryRun ?? false;
+  const keep = new Set(opts.protectedPaths ?? []);
+  const removed: { hash: string; originalPath: string }[] = [];
+  for (const entry of await listProjectsConfigured()) {
+    if (!isAbsolute(entry.originalPath) || keep.has(entry.originalPath)) continue;
+    let missing = false;
+    try {
+      await stat(entry.originalPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') missing = true;
+    }
+    if (!missing) continue;
+    removed.push({ hash: entry.hash, originalPath: entry.originalPath });
+    if (!dryRun) {
+      try {
+        // Remove by the on-disk hash dir name (originalPath is gone, so
+        // recomputing the hash from it would be pointless).
+        await rm(join(PROJECTS_DIR, entry.hash), { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+  return { removed, dryRun };
+}
+
+/**
+ * Sidecar counter for the periodic create-time sweep. Lives inside
+ * `PROJECTS_DIR` but `listProjectsConfigured` only reads 16-hex-named dirs, so
+ * a dotfile here is invisible to it.
+ */
+const PROJECT_GC_COUNTER_FILE = join(PROJECTS_DIR, '.gc.json');
+
+/** Read `{creates}` (0 if missing/corrupt), increment, atomic-write, return new value. */
+export async function bumpProjectGcCounter(): Promise<number> {
+  let prior = 0;
+  try {
+    const parsed = JSON.parse(await readFile(PROJECT_GC_COUNTER_FILE, 'utf8')) as {
+      creates?: unknown;
+    };
+    if (typeof parsed.creates === 'number' && Number.isFinite(parsed.creates)) {
+      prior = parsed.creates;
+    }
+  } catch {
+    /* missing or corrupt -> start from 0 */
+  }
+  const next = prior + 1;
+  await mkdir(PROJECTS_DIR, { recursive: true });
+  const tmp = `${PROJECT_GC_COUNTER_FILE}.tmp-${process.pid.toString()}-${Date.now().toString(36)}`;
+  await writeFile(tmp, JSON.stringify({ creates: next }) + '\n', { encoding: 'utf8', mode: 0o644 });
+  await rename(tmp, PROJECT_GC_COUNTER_FILE);
+  return next;
 }
 
 async function readMeta(

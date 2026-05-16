@@ -198,6 +198,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   const id = generateBoxId();
   const name = opts.name ?? defaultBoxName(workspace, id);
   const containerName = `agentbox-${name}`;
+  const createdAt = new Date().toISOString();
   if (await containerExists(containerName)) {
     throw new Error(`container ${containerName} already exists; remove it first`);
   }
@@ -363,6 +364,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         boxId: id,
         token: relayToken,
         name,
+        containerName,
+        createdAt,
         worktrees: gitWorktreeRecords,
       });
       log(`registered box token with relay`);
@@ -554,7 +557,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     dockerCacheShared: dockerCacheShared || undefined,
     projectRoot: opts.projectRoot,
     projectIndex,
-    createdAt: new Date().toISOString(),
+    createdAt,
   };
   await recordBox(record);
 

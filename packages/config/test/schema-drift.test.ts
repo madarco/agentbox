@@ -48,8 +48,17 @@ relay:
   port: 8787
 vnc:
   containerPort: 6080
+autopause:
+  enabled: false
+  maxRunningBoxes: 4
+  idleMinutes: 30
+maintenance:
+  pruneProjectConfigs: false
+  pruneProjectConfigsEvery: 25
 `,
   },
+  { name: 'autopause only', yaml: 'autopause:\n  enabled: true\n' },
+  { name: 'maintenance only', yaml: 'maintenance:\n  pruneProjectConfigs: true\n' },
 ];
 
 const INVALID: Fixture[] = [
@@ -80,6 +89,22 @@ const INVALID: Fixture[] = [
   {
     name: 'unknown browser value',
     yaml: 'browser:\n  default: firefox\n',
+  },
+  {
+    name: 'autopause wrong type for int',
+    yaml: 'autopause:\n  idleMinutes: "30"\n',
+  },
+  {
+    name: 'autopause unknown leaf',
+    yaml: 'autopause:\n  idleMins: 30\n',
+  },
+  {
+    name: 'maintenance wrong type for int',
+    yaml: 'maintenance:\n  pruneProjectConfigsEvery: "50"\n',
+  },
+  {
+    name: 'maintenance unknown leaf',
+    yaml: 'maintenance:\n  pruneProjectDirs: true\n',
   },
 ];
 

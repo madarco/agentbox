@@ -44,7 +44,11 @@ export {
 } from './load.js';
 
 export {
+  bumpProjectGcCounter,
   listProjectsConfigured,
+  pruneOrphanProjectConfigs,
   setConfigValue,
   unsetConfigValue,
+  type PruneOrphanProjectConfigsOptions,
+  type PruneOrphanProjectConfigsResult,
 } from './write.js';

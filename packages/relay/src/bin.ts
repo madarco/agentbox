@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { request as httpRequest } from 'node:http';
 import { DEFAULT_RELAY_PORT } from './types.js';
 import { startRelayServer } from './server.js';
+import { startAutopauseLoop } from './autopause.js';
 
 const program = new Command();
 
@@ -28,9 +29,19 @@ program
     });
     process.stdout.write(`agentbox-relay: listening on ${opts.host}:${String(port)}\n`);
 
+    const autopause = startAutopauseLoop({
+      registry: handle.registry,
+      statusStore: handle.statusStore,
+      events: handle.events,
+      log: (line) => process.stdout.write(`agentbox-relay: ${line}\n`),
+    });
+
     const shutdown = (signal: string): void => {
       process.stdout.write(`agentbox-relay: ${signal} — shutting down\n`);
-      handle.close().finally(() => process.exit(0));
+      autopause
+        .stop()
+        .finally(() => handle.close())
+        .finally(() => process.exit(0));
     };
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
