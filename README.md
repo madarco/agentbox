@@ -12,7 +12,7 @@ Launch Claude Code, Codex, and other coding agents inside isolated sandboxes —
 - **upper** — a per-box named volume that captures all writes
 - **`/workspace`** — the merged overlay the agent actually sees
 
-Result: the agent can `git commit`, install packages, scribble files — without touching your host. `node_modules` is shadowed by a Linux-native volume so macOS binaries don't leak in. `~/.codex` and `~/.gitconfig` are bind-mounted opportunistically so the agent inherits your identity. **Claude Code state** (auth tokens, skills, plugins, settings, MCP config) lives in a named Docker volume `agentbox-claude-config` mounted at `/home/vscode/.claude`; the host is the authoritative source — every `agentbox create` / `agentbox claude` rsyncs your host's `~/.claude` into the volume so updates on the host (new login, new skills, new MCP servers) flow into the next box you spin up. Sync is additive: files written inside earlier boxes (session history, etc.) are preserved.
+Result: the agent can `git commit`, install packages, scribble files — without touching your host. `node_modules` (and `.next`, `target`, `.venv`, …) lives in the per-box writable overlay layer — isolated per box, captured by `agentbox open --upper`; the generated `agentbox.yaml` install task rebuilds it inside the Linux box so macOS binaries don't leak in. `~/.codex` and `~/.gitconfig` are bind-mounted opportunistically so the agent inherits your identity. **Claude Code state** (auth tokens, skills, plugins, settings, MCP config) lives in a named Docker volume `agentbox-claude-config` mounted at `/home/vscode/.claude`; the host is the authoritative source — every `agentbox create` / `agentbox claude` rsyncs your host's `~/.claude` into the volume so updates on the host (new login, new skills, new MCP servers) flow into the next box you spin up. Sync is additive: files written inside earlier boxes (session history, etc.) are preserved.
 
 ## Quick start
 
@@ -57,7 +57,7 @@ agentbox logs <box> <service> [-f] [-n <tail>]  # tail or stream a service's std
 # inside a box: agentbox-ctl claude-session [--json]   # report tmux 'claude' session state
 agentbox pause <box>                # docker pause — 0 CPU, RAM stays mapped
 agentbox unpause <box>              # docker unpause — sub-second resume
-agentbox stop <box>                 # docker stop — preserves upper + node_modules volumes
+agentbox stop <box>                 # docker stop — preserves the upper volume (node_modules included)
 agentbox start <box>                # docker start + re-mount the FUSE overlay + relaunch ctl daemon
 agentbox open <box> [--upper] [--no-refresh] [--include-node-modules] [--print]
                                     # open the box's workspace in Finder (refreshes via rsync first)
@@ -96,7 +96,7 @@ The box's `/workspace` is a **FUSE-overlay filesystem that only exists inside th
 agentbox open mybox                       # rsync /workspace → ~/.agentbox/boxes/<id>/workspace, then Finder
 agentbox open mybox --upper               # the writes layer only (see live note below)
 agentbox open mybox --no-refresh          # open whatever's already on disk; skip the rsync
-agentbox open mybox --include-node-modules# include /workspace/node_modules (off by default — it's big)
+agentbox open mybox --include-node-modules# merged export: include /workspace/node_modules (off by default — it's big; --upper always carries it)
 agentbox open mybox --print               # still refreshes; prints the host path instead of launching Finder
 agentbox path mybox [--upper] [--refresh] # just the host path — pipe it into your editor / scripts
 ```

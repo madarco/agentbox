@@ -31,7 +31,6 @@ describe('state.ts', () => {
       workspacePath: '/tmp/ws',
       lowerPath: '/tmp/ws',
       upperVolume: 'agentbox-upper-a1b2c3d4',
-      nodeModulesVolume: 'agentbox-nm-a1b2c3d4',
       snapshotDir: null,
       createdAt: '2026-05-12T12:00:00.000Z',
     };
@@ -50,7 +49,6 @@ describe('state.ts', () => {
       workspacePath: '/tmp/ws',
       lowerPath: '/tmp/ws',
       upperVolume: 'agentbox-upper-a1b2c3d4',
-      nodeModulesVolume: 'agentbox-nm-a1b2c3d4',
       snapshotDir: null,
       createdAt: '2026-05-12T12:00:00.000Z',
     };
@@ -79,7 +77,6 @@ describe('state.ts', () => {
       workspacePath: '/tmp/repo',
       lowerPath: '/tmp/repo/.worktree',
       upperVolume: 'agentbox-upper-wt000001',
-      nodeModulesVolume: 'agentbox-nm-wt000001',
       snapshotDir: null,
       gitWorktrees: [
         {
@@ -115,7 +112,6 @@ describe('state.ts', () => {
       workspacePath: '/Users/x/repo',
       lowerPath: '/Users/x/repo',
       upperVolume: 'agentbox-upper-p1234567',
-      nodeModulesVolume: 'agentbox-nm-p1234567',
       snapshotDir: null,
       projectRoot: '/Users/x/repo',
       projectIndex: 3,
@@ -136,7 +132,6 @@ describe('state.ts', () => {
       workspacePath: '/tmp/ws',
       lowerPath: '/tmp/ws',
       upperVolume: 'agentbox-upper-aaaaaaaa',
-      nodeModulesVolume: 'agentbox-nm-aaaaaaaa',
       snapshotDir: null,
       createdAt: '2026-05-12T12:00:00.000Z',
     };

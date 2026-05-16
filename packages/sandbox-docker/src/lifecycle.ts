@@ -372,7 +372,11 @@ export async function destroyBox(
   const removedContainer = beforeContainer !== 'missing' && afterContainer === 'missing';
 
   const removedVolumes: string[] = [];
-  for (const v of [box.upperVolume, box.nodeModulesVolume]) {
+  // The dedicated agentbox-nm-<id> volume was removed (node_modules now lives
+  // in the per-box overlay upper). Boxes created before that change still have
+  // the volume on disk; removeVolume is a no-op for newer boxes that lack it.
+  const legacyNodeModulesVolume = `agentbox-nm-${box.id}`;
+  for (const v of [box.upperVolume, legacyNodeModulesVolume]) {
     await removeVolume(v);
     removedVolumes.push(v);
   }
@@ -491,7 +495,10 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
       // version of agentbox; it will be collected as an orphan below.
     ]);
     const expectedVolumes = new Set<string>([
-      ...survivingBoxes.flatMap((b) => [b.upperVolume, b.nodeModulesVolume]),
+      // agentbox-nm-<id> reconstructed for back-compat: a surviving box
+      // created before the nm volume was removed still mounts it, so it must
+      // stay allowlisted. Inert for newer boxes (no such volume exists).
+      ...survivingBoxes.flatMap((b) => [b.upperVolume, `agentbox-nm-${b.id}`]),
       ...survivingBoxes
         .map((b) => b.claudeConfigVolume)
         .filter((v): v is string => typeof v === 'string'),

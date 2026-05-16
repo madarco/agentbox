@@ -16,7 +16,6 @@ const mkBox = (id: string, container: string): BoxRecord => ({
   workspacePath: '/tmp/ws',
   lowerPath: '/tmp/ws',
   upperVolume: `agentbox-upper-${id}`,
-  nodeModulesVolume: `agentbox-nm-${id}`,
   snapshotDir: null,
   createdAt: '2026-05-12T00:00:00.000Z',
 });
@@ -112,6 +111,10 @@ describe('pruneBoxes', () => {
         listAgentboxContainers: vi.fn(async () => ['agentbox-live', 'agentbox-orphan']),
         listAgentboxVolumes: vi.fn(async () => [
           'agentbox-upper-11111111',
+          // Back-compat guard: the per-box nm volume was removed, but a box
+          // created before that still has agentbox-nm-<id> on disk. The prune
+          // allowlist reconstructs the name for surviving boxes so it is NOT
+          // reaped even though BoxRecord no longer carries the field.
           'agentbox-nm-11111111',
           'agentbox-orphan-vol',
         ]),
@@ -130,5 +133,34 @@ describe('pruneBoxes', () => {
 
     expect(result.removedContainers).toEqual(['agentbox-orphan']);
     expect(result.removedVolumes).toEqual(['agentbox-orphan-vol']);
+  });
+
+  it('with --all, reaps an orphan legacy agentbox-nm volume with no surviving box', async () => {
+    vi.doMock('../src/docker.js', async () => {
+      const actual = await vi.importActual<typeof import('../src/docker.js')>('../src/docker.js');
+      return {
+        ...actual,
+        inspectContainerStatus: vi.fn(async () => 'running'),
+        listAgentboxContainers: vi.fn(async () => ['agentbox-live']),
+        listAgentboxVolumes: vi.fn(async () => [
+          'agentbox-upper-11111111',
+          // No surviving box owns id 99999999, so this legacy nm volume is
+          // not allowlisted and must be reaped by the generic agentbox-* sweep.
+          'agentbox-nm-99999999',
+        ]),
+        removeContainer: vi.fn(async () => undefined),
+        removeVolume: vi.fn(async () => undefined),
+      };
+    });
+
+    await seed({
+      version: 1,
+      boxes: [mkBox('11111111', 'agentbox-live')],
+    });
+
+    const { pruneBoxes } = await import('../src/lifecycle.js');
+    const result = await pruneBoxes({ all: true, dryRun: true });
+
+    expect(result.removedVolumes).toEqual(['agentbox-nm-99999999']);
   });
 });

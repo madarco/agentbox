@@ -13,7 +13,6 @@ export interface BoxRecord {
   workspacePath: string;
   lowerPath: string;
   upperVolume: string;
-  nodeModulesVolume: string;
   snapshotDir: string | null;
   /**
    * Host-side path to the agentbox-ctl unix socket bind-mounted into the

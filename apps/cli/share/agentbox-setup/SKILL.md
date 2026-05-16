@@ -26,6 +26,7 @@ Look at `/workspace`:
 - **Tasks** = one-shot. `pnpm install`, DB migrations, codegen, fixture loaders. Wire dependent services with `needs:` so they wait for the task to finish successfully.
 - Names: must match `[A-Za-z0-9_-]+`. Task names and service names share a namespace — no collisions.
 - No cycles in `needs:`.
+- **Always generate a dependency-install task** and make it the root of the `needs:` graph (every service that needs deps gets `needs: [install, …]`). The box runs on Linux; the host's `node_modules` (and `.next`, `target`, `.venv`) are macOS-native and now live in the box's writable upper layer, so they must be rebuilt **inside** the box. The task must be **idempotent and self-healing**: `agentbox-ctl` re-runs pending tasks on every box stop/start (the daemon dies with the container and is relaunched), so a plain `rm -rf node_modules && install` would wipe + reinstall on every start. Guard the rebuild with a marker file *inside* `node_modules` (the `.agentbox-installed` convention AgentBox uses internally): rebuild only when the marker is absent (fresh box, or a stale host-leaked `node_modules`), and be a fast no-op once it exists. Detect the package manager from the lockfile — never hardcode `pnpm`. See the worked example below.
 
 ## 3. Wire readiness probes (services only)
 
@@ -81,8 +82,32 @@ defaults:
     ide: cursor
 
 tasks:
+  # Idempotent install. node_modules lives in the box's writable upper layer
+  # (per-box, isolated, captured by `agentbox open --upper`). The host's
+  # node_modules is macOS-native, so force a clean Linux build the first time
+  # and self-heal a stale one — but skip on every subsequent box start
+  # (agentbox-ctl re-runs pending tasks after stop/start). Adjust the
+  # lockfile detection to the project's package manager.
   install:
-    command: pnpm install
+    command: |
+      set -e
+      MARKER=node_modules/.agentbox-installed
+      [ -f "$MARKER" ] && { echo "deps installed (marker present) — skip"; exit 0; }
+      rm -rf node_modules
+      if [ -f pnpm-lock.yaml ]; then
+        corepack enable >/dev/null 2>&1 || true
+        pnpm install --frozen-lockfile || pnpm install
+      elif [ -f yarn.lock ]; then
+        corepack enable >/dev/null 2>&1 || true
+        yarn install --frozen-lockfile || yarn install
+      elif [ -f bun.lockb ] || [ -f bun.lock ]; then
+        bun install
+      elif [ -f package-lock.json ]; then
+        npm ci || npm install
+      else
+        npm install
+      fi
+      touch "$MARKER"
 
   migrate:
     command: pnpm db:migrate
@@ -132,3 +157,4 @@ services:
 ## 9. Known issues
 
 - For Nextjs/Vite/Tasnstack projects, makes sure to forward also websocket for hot reload.
+- The `install` task is intentionally a no-op once `node_modules/.agentbox-installed` exists. Do **not** remove the marker guard to "force a fresh install" — that reinstalls on every box start. To force a one-off rebuild, delete `node_modules` (or just the marker) then run `agentbox-ctl reload`.

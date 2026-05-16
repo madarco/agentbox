@@ -29,15 +29,14 @@ Tools: `fuse-overlayfs`, `rsync`. Container needs `/dev/fuse` + `SYS_ADMIN`.
 ```yaml
 volumes:
   - ${LOWER_PATH}:/host-src:ro # frozen base OR live project
-  - upper-${BOX_ID}:/upper # agent writes, COW
+  - upper-${BOX_ID}:/upper # agent writes, COW (node_modules etc. land here)
   - snapshot-${BOX_ID}:/snapshot # background mirror
-  - node_modules-${BOX_ID}:/workspace/node_modules # masks host node_modules (wrong platform)
   - pnpm_store:/root/.local/share/pnpm/store # shared, content-addressable
   - vscode-server-${BOX_ID}:/root/.vscode-server # per-box TS cache, extension state
   - vscode-extensions:/root/.vscode-server/extensions # shared across boxes
 ```
 
-`node_modules` is a Linux-native volume that shadows the host's macOS `node_modules` — avoids platform-mismatch entirely. First boot runs `pnpm install` (fast, hits shared store).
+`node_modules` is **not** a separate volume — it falls through to the per-box overlay upper (`agentbox-upper-<id>`), so it (and `.next`, `target`, `.venv`, …) is isolated per box and captured by per-box upper exports/snapshots. The host's macOS `node_modules` only reaches the box through the read-only overlay *lower*, and only on the raw-host-workspace path: the snapshot path prunes `EXCLUDE_DIRS` (incl. `node_modules`) and the git-worktree path uses `git ls-files --others --exclude-standard`, so gitignored `node_modules` never reaches the lower there. The wizard-generated `agentbox.yaml` install task force-rebuilds Linux-native deps on first box start, guarded by a `node_modules/.agentbox-installed` marker so it self-heals a stale host-leaked tree once but is a no-op on subsequent box starts.
 
 ## VS Code integration
 
@@ -76,7 +75,7 @@ Upper volume is the agent's "diff against base". Persists across pause/stop. Dis
 ## What we explicitly rejected
 
 - **Mount/symlink swapping under a single VS Code window** — causes TS server cache invalidation storms and watcher floods on every switch. Per-box server + pause is strictly better.
-- **COW'ing `node_modules` from host** — platform mismatch (macOS binaries on Linux). Native modules with prebuilt `.node` files won't be fixed by `pnpm install` without `--force` or `rebuild`. Shadow with a Linux volume instead.
+- **Using the host's `node_modules` as-is** — platform mismatch (macOS binaries on Linux). Native modules with prebuilt `.node` files won't be fixed by `pnpm install` without `--force` or `rebuild`. We do **not** shadow it with a separate Linux volume (that splits the box's writable state across two volumes the snapshot/export path has to track); instead `node_modules` lives in the per-box overlay upper and the wizard-generated install task does a clean Linux rebuild on first box start.
 - **Git push/pull between container and host** — slower than rsync, pollutes history, doesn't handle untracked artifacts. Use rsync or direct `docker exec` reads for review.
 
 ## Open questions for implementation

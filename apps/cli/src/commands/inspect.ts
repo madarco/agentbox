@@ -34,7 +34,6 @@ function renderText(i: InspectedBox): string {
     `n             ${typeof i.record.projectIndex === 'number' ? String(i.record.projectIndex) : '(none)'}`,
     `lower         ${i.record.lowerPath}`,
     `upper volume  ${i.upperVolume.name}${i.upperVolume.mountpoint ? `  (${i.upperVolume.mountpoint})` : ''}`,
-    `node_modules  ${i.record.nodeModulesVolume}`,
     `claude config ${i.record.claudeConfigVolume ?? '(none)'}`,
     `claude session ${renderClaudeSession(i)}`,
     `claude activity ${renderClaudeActivity(i)}`,

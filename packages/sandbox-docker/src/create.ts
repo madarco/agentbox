@@ -283,15 +283,13 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   }
 
   const upperVolume = `agentbox-upper-${id}`;
-  const nodeModulesVolume = `agentbox-nm-${id}`;
   await ensureVolume(upperVolume);
-  await ensureVolume(nodeModulesVolume);
   await ensureIdeVolumes(id);
   const dockerCacheShared = opts.docker?.sharedCache === true;
   const dockerVolume = dockerVolumeName(id, dockerCacheShared);
   await ensureVolume(dockerVolume);
   log(
-    `prepared volumes ${upperVolume}, ${nodeModulesVolume}, ${vscodeServerVolumeName(id)}, ${cursorServerVolumeName(id)}, ${dockerVolume}`,
+    `prepared volumes ${upperVolume}, ${vscodeServerVolumeName(id)}, ${cursorServerVolumeName(id)}, ${dockerVolume}`,
   );
   const ide = buildIdeMounts(id);
 
@@ -453,7 +451,6 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     image: imageRef,
     lowerPath,
     upperVolume,
-    nodeModulesVolume,
     extraVolumes,
     portMappings: [...vncPortMappings, ...webPortMappings],
     env: {
@@ -582,7 +579,6 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     workspacePath: workspace,
     lowerPath,
     upperVolume,
-    nodeModulesVolume,
     snapshotDir,
     socketPath,
     claudeConfigVolume: claudeSpec.volume,

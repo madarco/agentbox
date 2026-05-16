@@ -153,7 +153,7 @@ export const createCommand = new Command('create')
           '',
           'Destroy:',
           `  docker rm -f ${result.record.container}`,
-          `  docker volume rm ${result.record.upperVolume} ${result.record.nodeModulesVolume}`,
+          `  docker volume rm ${result.record.upperVolume}`,
         ].join('\n'),
       );
 

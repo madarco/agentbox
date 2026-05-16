@@ -22,7 +22,6 @@ export interface RunBoxSpec {
   image: string;
   lowerPath: string;
   upperVolume: string;
-  nodeModulesVolume: string;
   extraVolumes?: string[];
   env?: Record<string, string>;
   /**
@@ -69,8 +68,6 @@ export async function runBox(spec: RunBoxSpec): Promise<string> {
     `${spec.lowerPath}:/host-src:ro`,
     '-v',
     `${spec.upperVolume}:/upper`,
-    '-v',
-    `${spec.nodeModulesVolume}:/workspace/node_modules`,
   ];
   for (const v of spec.extraVolumes ?? []) {
     args.push('-v', v);
