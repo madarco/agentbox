@@ -19,6 +19,7 @@ import { startCommand } from './commands/start.js';
 import { statusCommand } from './commands/status.js';
 import { stopCommand } from './commands/stop.js';
 import { unpauseCommand } from './commands/unpause.js';
+import { updateCommand } from './commands/update.js';
 import { waitCommand } from './commands/wait.js';
 
 const program = new Command();
@@ -50,6 +51,7 @@ program.addCommand(startCommand);
 program.addCommand(destroyCommand);
 program.addCommand(pruneCommand);
 program.addCommand(configCommand);
+program.addCommand(updateCommand);
 
 await applyEngineOverrideAtStartup();
 

@@ -113,6 +113,23 @@ export async function removeVolume(name: string): Promise<void> {
   await execa('docker', ['volume', 'rm', name], { reject: false });
 }
 
+/**
+ * Best-effort `docker image rm`. Returns true when the image was actually
+ * removed, false when it was already absent (or removal failed). `-f` is
+ * passed by default so a stale tagged image with no live containers goes away
+ * even if other tags point at the same layers.
+ */
+export async function removeImage(
+  ref: string,
+  opts: { force?: boolean } = {},
+): Promise<boolean> {
+  const args = ['image', 'rm'];
+  if (opts.force !== false) args.push('-f');
+  args.push(ref);
+  const result = await execa('docker', args, { reject: false });
+  return result.exitCode === 0;
+}
+
 export async function containerExists(name: string): Promise<boolean> {
   const result = await execa('docker', ['container', 'inspect', '--format', '{{.Id}}', name], {
     reject: false,

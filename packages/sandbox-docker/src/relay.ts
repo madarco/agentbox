@@ -136,6 +136,50 @@ function resolveRelayBin(): string {
   );
 }
 
+export interface StopRelayResult {
+  /** True when a live relay process was signalled (and the pidfile cleared). */
+  stopped: boolean;
+  /** The pid that was found in the pidfile, if any. */
+  pid: number | null;
+}
+
+/**
+ * Stop the host relay process and clear its pidfile. SIGTERM first, then
+ * SIGKILL if it's still alive after a short grace period. Idempotent: a
+ * missing/stale pidfile is not an error (returns `{ stopped: false }`).
+ *
+ * Used by `agentbox update` to reload the relay; the next box command brings
+ * it back via {@link ensureRelay} (running the freshly-installed bin).
+ */
+export async function stopRelay(): Promise<StopRelayResult> {
+  const pid = await readPidFile();
+  if (pid === null) {
+    return { stopped: false, pid: null };
+  }
+  if (!(await processAlive(pid))) {
+    await unlink(PID_FILE).catch(() => {});
+    return { stopped: false, pid };
+  }
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    // already gone between the liveness check and the signal
+  }
+  for (let i = 0; i < 20; i++) {
+    if (!(await processAlive(pid))) break;
+    await delay(100);
+  }
+  if (await processAlive(pid)) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // best-effort
+    }
+  }
+  await unlink(PID_FILE).catch(() => {});
+  return { stopped: true, pid };
+}
+
 function pingHealthz(timeoutMs: number): Promise<boolean> {
   return new Promise<boolean>((resolveP) => {
     const req = httpRequest(

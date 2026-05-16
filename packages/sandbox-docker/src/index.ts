@@ -24,7 +24,7 @@ export {
 } from './claude.js';
 export { createBox, type CreateBoxOptions, type CreatedBox } from './create.js';
 export { getBoxEndpoints, type BoxEndpoint, type BoxEndpoints } from './endpoints.js';
-export { execInBox, type DockerExecResult } from './docker.js';
+export { execInBox, removeImage, type DockerExecResult } from './docker.js';
 export {
   createBoxWorktree,
   detectGitRepos,
@@ -47,9 +47,11 @@ export {
   RELAY_CONTAINER_NAME,
   RELAY_IMAGE_REF,
   RELAY_NETWORK_NAME,
+  stopRelay,
   type EnsureRelayOptions,
   type RegisterBoxArgs,
   type RelayEndpoint,
+  type StopRelayResult,
 } from './relay.js';
 export { EXCLUDE_DIRS, SNAPSHOTS_ROOT, snapshotPathFor } from './snapshot.js';
 export {
