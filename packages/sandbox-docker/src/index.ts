@@ -2,9 +2,11 @@ import type { SandboxProvider } from '@agentbox/core';
 
 export {
   attachClaudeSession,
+  buildClaudeAttachArgv,
   buildClaudeMounts,
   ClaudeSessionError,
   claudeSessionInfo,
+  CONTAINER_USER,
   DEFAULT_CLAUDE_SESSION,
   ensureClaudeVolume,
   pullClaudeExtras,

@@ -16,7 +16,7 @@ import { detectEngine, orbstackVolumePath } from './host-export.js';
 export const SHARED_CLAUDE_VOLUME = 'agentbox-claude-config';
 export const DEFAULT_CLAUDE_SESSION = 'claude';
 const CONTAINER_CLAUDE_DIR = '/home/vscode/.claude';
-const CONTAINER_USER = 'vscode';
+export const CONTAINER_USER = 'vscode';
 /** Workspace is always mounted here inside the box, regardless of host path. */
 const CONTAINER_WORKSPACE = '/workspace';
 
@@ -660,26 +660,33 @@ export async function startClaudeSession(opts: StartClaudeSessionOptions): Promi
  * the outer terminal's true-color and hyperlink capabilities; without it
  * docker exec sets TERM=xterm and Claude renders without RGB.
  */
-export function attachClaudeSession(container: string, sessionName?: string): never {
+/**
+ * The `docker` argv that attaches an interactive terminal to a box's Claude
+ * tmux session. Shared by {@link attachClaudeSession} (which `spawnSync`s it
+ * directly) and the dashboard command (which hands it to `tmux respawn-pane`).
+ */
+export function buildClaudeAttachArgv(container: string, sessionName?: string): string[] {
   const name = sessionName ?? DEFAULT_CLAUDE_SESSION;
   const term = process.env['TERM'] ?? 'xterm-256color';
-  const child = spawnSync(
-    'docker',
-    [
-      'exec',
-      '-it',
-      '-e',
-      `TERM=${term}`,
-      '--user',
-      CONTAINER_USER,
-      container,
-      'tmux',
-      'attach',
-      '-t',
-      name,
-    ],
-    { stdio: 'inherit' },
-  );
+  return [
+    'exec',
+    '-it',
+    '-e',
+    `TERM=${term}`,
+    '--user',
+    CONTAINER_USER,
+    container,
+    'tmux',
+    'attach',
+    '-t',
+    name,
+  ];
+}
+
+export function attachClaudeSession(container: string, sessionName?: string): never {
+  const child = spawnSync('docker', buildClaudeAttachArgv(container, sessionName), {
+    stdio: 'inherit',
+  });
   process.exit(child.status ?? 0);
 }
 
