@@ -1,4 +1,3 @@
-import { log } from '@clack/prompts';
 import { Command } from 'commander';
 import { findProjectRoot } from '@agentbox/config';
 import {
@@ -56,20 +55,11 @@ async function selectBoxes(
   const boxes = await listBoxes();
   if (idOrName === undefined) {
     // Default: every box on the host. --project narrows to the cwd's project.
-    if (!opts.project) {
-      if (boxes.length === 0) {
-        log.error('no boxes');
-        process.exit(2);
-      }
-      return boxes;
-    }
+    // An empty result is not an error here: watch mode stays up and picks up
+    // boxes as they're created. Callers render a placeholder.
+    if (!opts.project) return boxes;
     const project = await findProjectRoot(process.cwd());
-    const scoped = boxes.filter((b) => b.projectRoot === project.root);
-    if (scoped.length === 0) {
-      log.error('no boxes for this project');
-      process.exit(2);
-    }
-    return scoped;
+    return boxes.filter((b) => b.projectRoot === project.root);
   }
   const picked = await resolveBoxOrExit(idOrName);
   return boxes.filter((b) => b.id === picked.id);
@@ -123,17 +113,23 @@ export const topCommand = new Command('top')
         return;
       }
 
-      const produce = async (): Promise<string> => {
+      const produce = async (watching: boolean): Promise<string> => {
         const { boxes, stats } = await snapshot(idOrName, opts);
-        const rows = boxes.map((b, i) => row(b.name, b.state, stats[i]!));
-        return renderTable(rows) + (await renderProjectFooters());
+        const scope = opts.project ? 'no boxes for this project' : 'no boxes';
+        const header =
+          boxes.length === 0
+            ? watching
+              ? `${scope} (waiting...)`
+              : scope
+            : renderTable(boxes.map((b, i) => row(b.name, b.state, stats[i]!)));
+        return header + (await renderProjectFooters());
       };
 
       if (opts.once) {
-        process.stdout.write((await produce()) + '\n');
+        process.stdout.write((await produce(false)) + '\n');
         return;
       }
-      await watchRender(produce, opts.interval);
+      await watchRender(() => produce(true), opts.interval);
     } catch (err) {
       handleLifecycleError(err);
     }
