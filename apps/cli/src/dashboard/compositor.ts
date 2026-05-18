@@ -14,7 +14,6 @@ import {
   menuLines,
   lifecycleMenuLines,
   createMenuLines,
-  SIDEBAR_HEADER_LINES,
   NEW_BOX_ID,
   ADVANCED_HINT_GROUPS,
   BAR_BG,
@@ -71,6 +70,9 @@ export interface CompositorDeps {
 const POLL_MS = 1000;
 const FRAME_MS = 16;
 const RESIZE_DEBOUNCE_MS = 120;
+/** Keep the expanded chord footer visible this long after the Ctrl-a leader
+ *  resolves, so it's actually readable instead of flashing by. */
+const LEADER_LINGER_MS = 1500;
 
 // Synchronized Output (DECSET 2026): the terminal buffers everything between
 // begin/end and presents it in one go — no partial-frame flicker/tearing.
@@ -99,6 +101,9 @@ export class Compositor {
   /** True while the Ctrl-a leader is pending — swaps the footer to the
    *  expanded chord menu (chrome only; never touches the right pane). */
   private leaderActive = false;
+  /** Holds the expanded footer for LEADER_LINGER_MS after the leader resolves
+   *  (so the chord menu doesn't flash by). */
+  private leaderLingerTimer: ReturnType<typeof setTimeout> | null = null;
   /** Set while a destroy confirm is pending in the status bar. */
   private pendingConfirm: { boxId: string; name: string } | null = null;
   private activeMode: 'claude' | 'shell' = 'claude';
@@ -136,7 +141,20 @@ export class Compositor {
     this.parser = new InputParser({
       onEvent: (e) => {
         if (e.type === 'leader') {
-          this.leaderActive = e.active;
+          if (this.leaderLingerTimer) {
+            clearTimeout(this.leaderLingerTimer);
+            this.leaderLingerTimer = null;
+          }
+          if (e.active) {
+            this.leaderActive = true;
+          } else {
+            // Keep the expanded footer up briefly after the chord resolves.
+            this.leaderLingerTimer = setTimeout(() => {
+              this.leaderLingerTimer = null;
+              this.leaderActive = false;
+              this.drawChrome();
+            }, LEADER_LINGER_MS);
+          }
           this.drawChrome();
           return;
         }
@@ -214,7 +232,9 @@ export class Compositor {
   }
 
   private async poll(): Promise<void> {
-    const before = JSON.stringify(this.boxes.map((b) => [b.id, b.state, b.claudeActivity]));
+    const before = JSON.stringify(
+      this.boxes.map((b) => [b.id, b.state, b.claudeActivity, b.sessionTitle]),
+    );
     await this.refreshBoxes();
     if (this.busy) {
       // A start/shell action is mid-flight — don't yank the right pane.
@@ -234,7 +254,11 @@ export class Compositor {
         (this.lifecycleMenu != null && box?.state !== this.lifecycleMenu.state);
       if (reresolve) await this.spawnActive();
     }
-    if (JSON.stringify(this.boxes.map((b) => [b.id, b.state, b.claudeActivity])) !== before) {
+    if (
+      JSON.stringify(
+        this.boxes.map((b) => [b.id, b.state, b.claudeActivity, b.sessionTitle]),
+      ) !== before
+    ) {
       this.drawChrome();
     }
   }
@@ -683,15 +707,26 @@ export class Compositor {
   private drawChrome(): void {
     if (this.tornDown || this.layout.tooSmall) return;
     const { sidebar, sepX, statusY } = this.layout;
-    const lines = sidebarLines(this.boxes, this.selectedId, sidebar.w, sidebar.h);
-    const selIdx = this.boxes.findIndex((b) => b.id === this.selectedId);
-    const selRow = selIdx >= 0 ? SIDEBAR_HEADER_LINES + selIdx : -1;
+    const { lines, rowOwner, headerRows } = sidebarLines(
+      this.boxes,
+      this.selectedId,
+      sidebar.w,
+      sidebar.h,
+    );
     let s = SYNC_BEGIN + '\x1b[0m';
     for (let i = 0; i < lines.length; i++) {
-      const style = i === 0 ? SB_HEADER : i === selRow ? SB_SELECTED : SB_BODY;
+      const style = headerRows[i]
+        ? SB_HEADER
+        : rowOwner[i] === this.selectedId
+          ? SB_SELECTED
+          : SB_BODY;
       s += cursorTo(0, i) + style + lines[i] + SGR_RESET;
     }
-    for (let y = 0; y < sidebar.h; y++) s += cursorTo(sepX, y) + '│';
+    // Rounded top-right corner connecting the sidebar's top border to the
+    // right separator; plain `│` below (no bottom corner — saves a row).
+    // Blue (SB_HEADER) so the whole right border matches the rounded header.
+    for (let y = 0; y < sidebar.h; y++)
+      s += cursorTo(sepX, y) + SB_HEADER + (y === 0 ? '╮' : '│') + SGR_RESET;
     let status: string;
     if (this.pendingConfirm) {
       const w = this.layout.cols;
@@ -746,6 +781,7 @@ export class Compositor {
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     if (this.flashTimer) clearTimeout(this.flashTimer);
+    if (this.leaderLingerTimer) clearTimeout(this.leaderLingerTimer);
     this.parser.dispose();
     this.disposeSession();
     this.inp.off('data', this.onData);

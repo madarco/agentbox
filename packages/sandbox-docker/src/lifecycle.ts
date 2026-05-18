@@ -74,6 +74,8 @@ export interface ListedBox extends BoxRecord {
   endpoints: BoxEndpoints;
   /** From the persisted status file; undefined for pre-feature/never-pushed boxes. */
   claudeActivity?: ClaudeActivityState;
+  /** Sanitized in-box terminal title Claude set; undefined when none. */
+  claudeSessionTitle?: string;
 }
 
 export async function listBoxes(): Promise<ListedBox[]> {
@@ -84,7 +86,13 @@ export async function listBoxes(): Promise<ListedBox[]> {
       const state = await inspectContainerStatus(b.container);
       const persisted = await readBoxStatus(b.id);
       const endpoints = await getBoxEndpoints(b, engine, persisted);
-      return { ...b, state, endpoints, claudeActivity: persisted?.claude.state };
+      return {
+        ...b,
+        state,
+        endpoints,
+        claudeActivity: persisted?.claude.state,
+        claudeSessionTitle: persisted?.claude.sessionTitle,
+      };
     }),
   );
 }

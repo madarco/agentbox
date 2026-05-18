@@ -106,6 +106,12 @@ export interface BoxStatusClaude {
   updatedAt: string | null;
   /** Whether the claude tmux session was present at snapshot time. */
   sessionRunning: boolean;
+  /**
+   * Human-readable title Claude Code set on its terminal (the in-box tmux
+   * pane title), sanitized. Additive field — snapshots written before this
+   * existed simply lack it (schema stays 1; treat absent as no title).
+   */
+  sessionTitle?: string;
 }
 
 /**
@@ -159,6 +165,11 @@ export interface ClaudeSessionStatus {
   sessionName: string;
   /** ISO-8601 timestamp from tmux's `#{session_created}`, or null when not running. */
   startedAt: string | null;
+  /**
+   * Sanitized tmux `#{pane_title}` (the title Claude Code set on its
+   * terminal), or null when not running / no meaningful title.
+   */
+  title: string | null;
 }
 
 export const DEFAULT_SOCKET_PATH = '/run/agentbox/ctl.sock';

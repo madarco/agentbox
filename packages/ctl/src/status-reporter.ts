@@ -131,6 +131,7 @@ export class StatusReporter {
         state: this.claudeState,
         updatedAt: this.claudeUpdatedAt,
         sessionRunning: session.running,
+        ...(session.title ? { sessionTitle: session.title } : {}),
       },
     };
   }

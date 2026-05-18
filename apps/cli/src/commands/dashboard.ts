@@ -51,7 +51,15 @@ function scoped(all: boolean, projectRoot: string, boxes: ListedBox[]): ListedBo
 }
 
 function toSidebar(b: ListedBox): SidebarBox {
-  return { id: b.id, name: b.name, state: b.state, claudeActivity: b.claudeActivity };
+  return {
+    id: b.id,
+    name: b.name,
+    state: b.state,
+    claudeActivity: b.claudeActivity,
+    sessionTitle: b.claudeSessionTitle,
+    index: b.projectIndex,
+    project: b.projectRoot,
+  };
 }
 
 export const dashboardCommand = new Command('dashboard')
