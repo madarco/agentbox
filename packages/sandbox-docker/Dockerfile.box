@@ -59,6 +59,7 @@ RUN apt-get update \
         build-essential \
         git \
         tmux \
+        vim \
         libcap2-bin \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /workspace /host-src /upper /snapshot /run/agentbox /var/log/agentbox \
