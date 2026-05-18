@@ -9,7 +9,12 @@
 #
 # Required runtime flags:
 #     --cap-add=SYS_ADMIN --device=/dev/fuse --security-opt=apparmor:unconfined
-FROM mcr.microsoft.com/devcontainers/base:ubuntu
+#
+# Pinned to ubuntu-24.04 (Noble), NOT the rolling `:ubuntu` tag: that tag now
+# tracks Ubuntu 26.04, which has no Playwright Chromium build for arm64
+# ("Playwright does not support chromium on ubuntu26.04-arm64") and would also
+# break the t64-suffixed Chrome runtime libs below. Bump deliberately.
+FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
 USER root
 
