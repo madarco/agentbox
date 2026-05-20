@@ -5,7 +5,19 @@ description: Generate an agentbox.yaml for the current AgentBox workspace. Invok
 
 # /agentbox-setup
 
-Goal: produce a `/workspace/agentbox.yaml` that captures this project's services, tasks, and box defaults so the in-box supervisor (`agentbox-ctl`) can boot the workspace deterministically.
+## Box layout (what you're configuring against)
+
+`/workspace` is the box's plain writable filesystem — a per-box git worktree on a fresh `agentbox/<box-name>` branch (or a tar-piped copy of the host workspace for non-git projects). Anything you install or build into `/workspace` (incl. `node_modules`, `.next`, `target`, `.venv`) lives in the **container's writable layer** and is captured wholesale by `agentbox checkpoint` (`docker commit`) — so a setup task that runs the install once becomes a warm-start asset for every future box in the project. Everything is wiped on `agentbox destroy`.
+
+Three bind mounts wire the box back to the host:
+
+- **Host main repo's `.git/`** — bind-mounted RW at its identical absolute host path. In-box commits land on the host's branch refs (visible to `git log` on the host immediately); the box itself carries no SSH/git creds, so `git push` goes through the host relay (`agentbox-ctl git push`). The host's **working tree is never written to** — only refs/objects under `.git/`.
+- **`~/.claude`** — a Docker named volume (`agentbox-claude-config`, shared across boxes by default) seeded from the host's `~/.claude` on each create so auth, skills, and plugins persist without leaking the host's home dir.
+- **`agentbox.yaml`** — read by `agentbox-ctl` from `/workspace`. Tasks and services declared here are what the supervisor will run.
+
+## Goal
+
+Produce a `/workspace/agentbox.yaml` that captures this project's services, tasks, and box defaults so the in-box supervisor (`agentbox-ctl`) can boot the workspace deterministically.
 
 `agentbox.yaml` is **declarative**. The supervisor reads it on box start, but you don't have to restart the box: after you write the file, `agentbox-ctl reload` (run from inside the box) makes the already-running supervisor re-read it and immediately run the declared tasks and autostart the services. See step 8.
 
@@ -26,7 +38,7 @@ Look at `/workspace`:
 - **Tasks** = one-shot. `pnpm install`, DB migrations, codegen, fixture loaders. Wire dependent services with `needs:` so they wait for the task to finish successfully.
 - Names: must match `[A-Za-z0-9_-]+`. Task names and service names share a namespace — no collisions.
 - No cycles in `needs:`.
-- **Always generate a dependency-install task** and make it the root of the `needs:` graph (every service that needs deps gets `needs: [install, …]`). The box runs on Linux; the host's `node_modules` (and `.next`, `target`, `.venv`) are macOS-native and now live in the box's writable upper layer, so they must be rebuilt **inside** the box. The task must be **idempotent and self-healing**: `agentbox-ctl` re-runs pending tasks on every box stop/start (the daemon dies with the container and is relaunched), so a plain `rm -rf node_modules && install` would wipe + reinstall on every start. Guard the rebuild with a marker file *inside* `node_modules` (the `.agentbox-installed` convention AgentBox uses internally): rebuild only when the marker is absent (fresh box, or a stale host-leaked `node_modules`), and be a fast no-op once it exists. Detect the package manager from the lockfile — never hardcode `pnpm`. See the worked example below.
+- **Always generate a dependency-install task** and make it the root of the `needs:` graph (every service that needs deps gets `needs: [install, …]`). The filesystem can be then later captured by `agentbox-ctl checkpoint --set-default`. The task must be **idempotent and self-healing**: `agentbox-ctl` re-runs pending tasks on every box stop/start (the daemon dies with the container and is relaunched), so a plain `rm -rf node_modules && install` would wipe + reinstall on every start. Guard the rebuild with a marker file *inside* `node_modules` (the `.agentbox-installed` convention AgentBox uses internally): rebuild only when the marker is absent (fresh box), and be a fast no-op once it exists. Detect the package manager from the lockfile — never hardcode `pnpm`. See the worked example below.
 
 ## 3. Wire readiness probes (services only)
 
@@ -61,7 +73,7 @@ Per service:
 
 Sets per-project defaults for `agentbox create`/`claude`/`code`/`shell` — same shape as `~/.agentbox/config.yaml`. CLI flags still override. Common keys:
 
-- `box.hostSnapshot` (bool) — frozen APFS clone of the *host* workspace as overlay lower (renamed from `box.snapshot`).
+- `box.hostSnapshot` (bool) — APFS-clone the *host* workspace into a per-box scratch dir before seeding `/workspace` (stabilizes the tar-pipe source).
 - `box.defaultCheckpoint` (string) — checkpoint new boxes start from (normally you set this via `agentbox-ctl checkpoint --set-default` at the end of setup — see section 9, not by hand).
 - `box.withPlaywright` (bool) — install `@playwright/cli` globally inside the box.
 - `box.vnc` (bool) — run Xvnc + noVNC on container port 6080.
@@ -83,12 +95,13 @@ defaults:
     ide: cursor
 
 tasks:
-  # Idempotent install. node_modules lives in the box's writable upper layer
-  # (per-box, isolated, captured by `agentbox open --upper`). The host's
-  # node_modules is macOS-native, so force a clean Linux build the first time
-  # and self-heal a stale one — but skip on every subsequent box start
-  # (agentbox-ctl re-runs pending tasks after stop/start). Adjust the
-  # lockfile detection to the project's package manager.
+  # Idempotent install. /workspace is the container's writable filesystem, so
+  # node_modules persists across pause/stop/start and is captured by
+  # `agentbox checkpoint`. The host's node_modules is macOS-native and is
+  # never copied in, so force a clean Linux build the first time — but skip
+  # on every subsequent box start (agentbox-ctl re-runs pending tasks after
+  # stop/start). Adjust the lockfile detection to the project's package
+  # manager.
   install:
     command: |
       set -e
@@ -161,11 +174,6 @@ services:
 ## 9. Known issues
 
 - For Nextjs/Vite/Tasnstack projects, makes sure to forward also websocket for hot reload.
-
-- **Turbo/Nx/Jest and other git-worktree-aware tools may try to write their cache to a read-only host path.** The box runs `/workspace` as a git worktree with the host repo's `.git/` bind-mounted at its absolute host path; tools that derive paths from git (Turbo's cache root = the worktree's git *common dir*) resolve outside `/workspace` and hit `EROFS` on the Mac path. Pin the cache into the writable overlay via the task/service `env:`, e.g. `TURBO_CACHE_DIR: /workspace/.turbo/cache` (or pass `--cache-dir`).
-
-- `.pnpm-store` default location is read only, so you need to point it to a writable location in the box's writable workspace eg: `PNPM_STORE: /workspace/.pnpm-store` or `--store-dir /workspace/.pnpm-store` and add `.pnpm-store/` to the `.gitignore` if the workspace root is git-tracked.
-Make sure to apply the fixt to every task and service that invokes turbo in the agentbox.yaml file.
 
 - The `install` task is intentionally a no-op once `node_modules/.agentbox-installed` exists. Do **not** remove the marker guard to "force a fresh install" — that reinstalls on every box start. To force a one-off rebuild, delete `node_modules` (or just the marker) then run `agentbox-ctl reload`.
 

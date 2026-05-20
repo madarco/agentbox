@@ -21,6 +21,7 @@ interface CreateOpts {
   name?: string;
   merged?: boolean;
   setDefault?: boolean;
+  replace?: boolean;
 }
 
 async function projectRootFor(cwd: string, recordRoot?: string): Promise<string> {
@@ -36,6 +37,10 @@ const createSub = new Command('create')
   .option('--name <name>', 'checkpoint name (default: <box-name>-<next>)')
   .option('--merged', 'flatten lower+upper into one tree instead of a layered delta')
   .option('--set-default', 'mark this checkpoint as the project default for new boxes')
+  .option(
+    '--replace',
+    "if a checkpoint with the same name exists, rm it first (idempotent recapture; safe to retry when the previous run's stdout was lost)",
+  )
   .action(async (idOrName: string | undefined, opts: CreateOpts) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
@@ -45,7 +50,7 @@ const createSub = new Command('create')
         log.info('box is paused; unpausing');
         await unpauseBox(box.id);
       } else if (insp.state === 'stopped') {
-        log.info('box is stopped; starting (remounting overlay)');
+        log.info('box is stopped; starting');
         await startBox(box.id);
       } else if (insp.state === 'missing') {
         throw new Error(`box ${box.name} has no container; was it destroyed?`);
@@ -60,6 +65,7 @@ const createSub = new Command('create')
         name: opts.name,
         merged: opts.merged === true,
         setDefault: opts.setDefault === true,
+        replace: opts.replace === true,
         maxLayers: cfg.effective.checkpoint.maxLayers,
         onLog: (line) => log.info(line),
       });

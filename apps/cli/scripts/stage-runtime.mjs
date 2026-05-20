@@ -35,12 +35,14 @@ const dockerfileSrc = 'packages/sandbox-docker/Dockerfile.box';
 const execBitFiles = new Set([
   'packages/sandbox-docker/scripts/agentbox-vnc-start',
   'packages/sandbox-docker/scripts/agentbox-dockerd-start',
+  'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
 ]);
 const contextFiles = [
   'packages/ctl/dist/bin.cjs',
   'apps/cli/share/agentbox-setup/SKILL.md',
   'packages/sandbox-docker/scripts/agentbox-vnc-start',
   'packages/sandbox-docker/scripts/agentbox-dockerd-start',
+  'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
   'packages/sandbox-docker/scripts/custom-system-CLAUDE.md',
   'packages/sandbox-docker/scripts/claude-managed-settings.json',
 ];

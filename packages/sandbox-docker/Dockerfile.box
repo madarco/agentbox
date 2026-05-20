@@ -2,12 +2,17 @@
 #
 # Layered on Microsoft's devcontainers base:ubuntu (arm64-native — the
 # `universal:2-linux` image is amd64-only, which is a non-starter on Apple
-# Silicon hosts). We add the bits the box needs to mount a FUSE overlay over
-# /host-src + /upper, plus a "universal-ish" set of language runtimes
-# (Node.js 22 from NodeSource, Python 3 from apt). Anything heavier (Go, Java,
-# Ruby, .NET, browser tooling, vscode-server) goes in a later iteration.
+# Silicon hosts). /workspace is a plain dir in the image's writable layer:
+# `agentbox create` populates it via in-container `git worktree add` (or a
+# tar pipe for the no-git case). The old FUSE overlay over /host-src+/upper
+# is gone — but fuse3 + fuse-overlayfs stay because the in-box dockerd uses
+# fuse-overlayfs as its storage driver. Plus the "universal-ish" set of
+# language runtimes (Node.js 22 from NodeSource, Python 3 from apt). Heavier
+# tooling (Go, Java, Ruby, .NET, more browser tooling, vscode-server) goes in
+# a later iteration.
 #
-# Required runtime flags:
+# Required runtime flags (SYS_ADMIN + /dev/fuse + apparmor:unconfined are now
+# load-bearing only for the *inner* dockerd — keep them):
 #     --cap-add=SYS_ADMIN --device=/dev/fuse --security-opt=apparmor:unconfined
 #
 # Pinned to ubuntu-24.04 (Noble), NOT the rolling `:ubuntu` tag: that tag now
@@ -67,9 +72,9 @@ RUN apt-get update \
         vim \
         libcap2-bin \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /workspace /host-src /upper /snapshot /run/agentbox /var/log/agentbox \
-    && chmod 755 /workspace /host-src /upper /snapshot \
-    && chown vscode:vscode /run/agentbox /var/log/agentbox
+    && mkdir -p /workspace /run/agentbox /var/log/agentbox \
+    && chmod 755 /workspace \
+    && chown vscode:vscode /workspace /run/agentbox /var/log/agentbox
 
 # The in-box supervisor (runs as non-root `vscode`) owns a TCP forwarder that
 # binds container :80 -> the `expose:`-flagged service (see WebProxy /
@@ -104,8 +109,9 @@ RUN git config --system --add safe.directory '*'
 # in /etc/docker/daemon.json) lets the agent run `docker build`/`docker run`
 # in its own namespace without exposing the host daemon. fuse-overlayfs is
 # required because the kernel `overlay` driver isn't usable from an
-# unprivileged container — but fuse3 + fuse-overlayfs are already installed
-# above for the /workspace overlay, so docker reuses them. iptables is needed
+# unprivileged container — fuse3 + fuse-overlayfs are installed above
+# specifically for this (the outer /workspace overlay is gone, but the inner
+# dockerd still needs them). iptables is needed
 # for inner-container bridge networking. Adding `vscode` to the `docker` group
 # lets the agent invoke `docker` without sudo once dockerd creates the socket
 # at /var/run/docker.sock at runtime. The matching launch script is COPY'd in
@@ -270,6 +276,14 @@ RUN chmod +x /usr/local/bin/agentbox-vnc-start
 COPY packages/sandbox-docker/scripts/agentbox-dockerd-start /usr/local/bin/agentbox-dockerd-start
 RUN chmod +x /usr/local/bin/agentbox-dockerd-start
 
+# Pre-`docker commit` cleanup for checkpoints. Baked into the image so the host
+# can always reach it via `docker exec --user root <ctr>
+# /usr/local/bin/agentbox-checkpoint-cleanup` regardless of the in-box state
+# (e.g. an agent that swapped its login shell). Best-effort: every step is
+# allowed to fail.
+COPY packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup /usr/local/bin/agentbox-checkpoint-cleanup
+RUN chmod +x /usr/local/bin/agentbox-checkpoint-cleanup
+
 # tmux config so Claude's true-color output and OSC 8 hyperlinks survive the
 # in-container tmux. `terminal-features` is a no-op on tmux < 3.4. Without
 # this, claude renders without 24-bit color (logo invisible) and hyperlinks
@@ -329,8 +343,8 @@ RUN printf '%s\n' \
         > /etc/profile.d/agentbox.sh \
     && chmod 0644 /etc/profile.d/agentbox.sh
 
-# Default to the vscode user (UID 1000) provided by base:ubuntu. The overlay
-# mount itself happens via `docker exec --user root`, so this is just the
-# default identity for interactive shells.
+# Default to the vscode user (UID 1000) provided by base:ubuntu. /workspace is
+# pre-chowned to vscode above so `agentbox create`'s in-container
+# `git worktree add` (run as vscode via docker exec) can write to it.
 USER vscode
 WORKDIR /workspace

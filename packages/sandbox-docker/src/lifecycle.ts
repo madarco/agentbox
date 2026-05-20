@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { BoxState } from '@agentbox/core';
 import type { BoxStatus, ClaudeActivityState } from '@agentbox/ctl';
 import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './claude.js';
-import { removeBoxWorktree } from './git-worktree.js';
+import { bindWorktrees, removeInBoxWorktree } from './in-box-git.js';
 import {
   cursorServerVolumeName,
   SHARED_CURSOR_EXTENSIONS_VOLUME,
@@ -25,27 +25,19 @@ import {
 import {
   inspectContainer,
   inspectContainerStatus,
-  inspectVolumeMountpoint,
   listAgentboxContainers,
   listAgentboxVolumes,
   pauseContainer,
   publishedHostPort,
   removeContainer,
+  removeImage,
   removeNetwork,
   removeVolume,
   startContainer,
   stopContainer,
   unpauseContainer,
-  volumeExists,
 } from './docker.js';
-import {
-  DEFAULT_LOWER_DIRS,
-  mountOverlay,
-  verifyOverlay,
-  type NestedWorktreeBind,
-  type OverlayCheck,
-} from './overlay.js';
-import { CHECKPOINT_VOLUME_PREFIX } from './checkpoint.js';
+import { CHECKPOINT_IMAGE_PREFIX } from './checkpoint.js';
 import { launchCtlDaemon } from './ctl.js';
 import { launchDockerdDaemon, SHARED_DOCKER_CACHE_VOLUME } from './dockerd.js';
 import { launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
@@ -157,55 +149,53 @@ export async function stopBox(idOrName: string): Promise<BoxRecord> {
 
 export interface StartedBox {
   record: BoxRecord;
-  overlayChecks: OverlayCheck[];
 }
 
+/**
+ * Re-start a stopped box.
+ *
+ * /workspace is just the container's writable filesystem now, so there's no
+ * overlay to remount — `docker start` brings everything back. The in-box
+ * supervisor, dockerd, and Xvnc all die with the container, so we relaunch
+ * them via the same exec-d helpers `create` used. Ephemeral host ports for
+ * VNC + web get re-allocated by Docker on `start`, so we re-resolve and
+ * persist those too.
+ */
 export async function startBox(idOrName: string): Promise<StartedBox> {
   const box = await resolveBox(idOrName);
-  // Bind mounts are baked into the container at create time; if a worktree
-  // dir has been deleted out from under us we can't recover by restarting
-  // (Docker just fails the start with an opaque mount error). Surface a clear
-  // message up front so the user knows to recreate the box or restore the
-  // worktree.
+  // .git bind-mounts are baked into the container at create time; if a host
+  // main repo's .git/ has been deleted out from under us, restart fails with
+  // an opaque mount error. Surface it loudly.
   for (const w of box.gitWorktrees ?? []) {
-    if (!(await pathExists(w.hostWorktreeDir))) {
-      throw new Error(`box worktree missing on host: ${w.hostWorktreeDir} (recreate the box)`);
-    }
     if (!(await pathExists(join(w.hostMainRepo, '.git')))) {
       throw new Error(
         `main repo for box worktree missing: ${join(w.hostMainRepo, '.git')} (recreate the box)`,
       );
     }
   }
-  // The per-project checkpoint volume is mounted read-only at create time,
-  // same baked-in story as worktrees — if it was removed we can't recover by
-  // restart, so fail loudly up front. (A removed checkpoint *subdir* instead
-  // surfaces as a loud mountOverlay failure, same as a missing worktree dir.)
-  if (box.checkpointVolume && !(await volumeExists(box.checkpointVolume))) {
-    throw new Error(
-      `box checkpoint volume missing: ${box.checkpointVolume} (recreate the box)`,
+  await startContainer(box.container);
+
+  // /workspace bind mounts don't survive `docker stop` (the mount namespace
+  // is recreated on start). Re-bind each registered worktree before any
+  // daemon comes up — the supervisor and dockerd may resolve paths under
+  // /workspace and would see the image's empty dir without this.
+  if ((box.gitWorktrees ?? []).length > 0) {
+    await bindWorktrees(
+      box.container,
+      (box.gitWorktrees ?? []).map((w) => ({
+        kind: w.kind,
+        containerPath: w.containerPath,
+        gitWorktreePath: w.gitWorktreePath,
+      })),
     );
   }
-  await startContainer(box.container);
-  const nestedWorktrees: NestedWorktreeBind[] = (box.gitWorktrees ?? [])
-    .filter((w) => w.kind === 'nested')
-    .map((w) => ({
-      containerPath: w.containerPath,
-      mountFromPath: `/agentbox-worktrees/${w.relPathFromWorkspace}`,
-    }));
-  const lowerDirs = box.lowerDirs && box.lowerDirs.length > 0 ? box.lowerDirs : undefined;
-  await mountOverlay(box.container, { lowerDirs, nestedWorktrees });
-  const overlayChecks = await verifyOverlay(box.container, lowerDirs ?? DEFAULT_LOWER_DIRS);
+
   if (box.socketPath) {
     // The daemon died with the container; relaunch it. Best-effort, same as
     // create.ts — a missing config or other startup issue shouldn't block
     // resumption of the box itself.
     await launchCtlDaemon(box.container, box.socketPath);
   }
-  // dockerd dies with the container too; relaunch it. Records from before
-  // DinD landed have no `dockerVolume`, so we skip them — those boxes were
-  // created without the in-box dockerd and don't have the launch script
-  // baked in either (image rebuild is required to pick it up).
   if (box.dockerVolume) {
     await launchDockerdDaemon(box.container);
   }
@@ -215,9 +205,8 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
     // start/stop), so we don't need to forward it here.
     await launchVncDaemon(box.container);
     // Docker re-allocates an ephemeral host port for `-p 0:6080` on every
-    // `start`, so the loopback URL from create time is stale. Re-resolve and
-    // persist; the orb.local URL is name-based and unaffected. Best-effort —
-    // a failed resolve just leaves the record as-is.
+    // `start`. Re-resolve and persist; the orb.local URL is name-based and
+    // unaffected. Best-effort — a failed resolve just leaves the record as-is.
     const freshHostPort = await publishedHostPort(box.container, VNC_CONTAINER_PORT);
     if (freshHostPort && freshHostPort !== box.vncHostPort) {
       box.vncHostPort = freshHostPort;
@@ -254,7 +243,7 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
       // best-effort
     }
   }
-  return { record: box, overlayChecks };
+  return { record: box };
 }
 
 export interface OpenedBox extends OpenResult {
@@ -278,15 +267,13 @@ export async function getBoxHostPaths(
 export interface InspectedBox {
   record: BoxRecord;
   state: BoxState;
-  upperVolume: { name: string; mountpoint: string | null };
   snapshotSizeBytes: number | null;
-  overlayMounted: boolean;
   dockerInspect: unknown;
   /** Null when the container isn't running; otherwise best-effort probe of the tmux 'claude' session. */
   claudeSession: ClaudeSessionInfo | null;
   /** Persisted status snapshot (services/tasks/ports/claude); null when none. */
   persistedStatus: BoxStatus | null;
-  /** Host paths for `agentbox open` / `agentbox path`. */
+  /** Host paths for `agentbox open`. */
   hostPaths: HostPaths;
   /** Box network surface: domain + VNC + service ports. */
   endpoints: BoxEndpoints;
@@ -307,19 +294,8 @@ async function dirSizeBytes(path: string): Promise<number | null> {
 export async function inspectBox(idOrName: string): Promise<InspectedBox> {
   const record = await resolveBox(idOrName);
   const state = await inspectContainerStatus(record.container);
-  const upperMountpoint = await inspectVolumeMountpoint(record.upperVolume);
   const snapshotSizeBytes = record.snapshotDir ? await dirSizeBytes(record.snapshotDir) : null;
   const dockerJson = await inspectContainer(record.container);
-
-  let overlayMounted = false;
-  if (state === 'running' || state === 'paused') {
-    const probe = await execa(
-      'docker',
-      ['exec', '--user', 'root', record.container, 'mountpoint', '-q', '/workspace'],
-      { reject: false },
-    );
-    overlayMounted = probe.exitCode === 0;
-  }
 
   let claudeSession: ClaudeSessionInfo | null = null;
   if (state === 'running') {
@@ -338,9 +314,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
   return {
     record,
     state,
-    upperVolume: { name: record.upperVolume, mountpoint: upperMountpoint },
     snapshotSizeBytes,
-    overlayMounted,
     dockerInspect: dockerJson,
     claudeSession,
     persistedStatus,
@@ -375,16 +349,25 @@ export async function destroyBox(
       // best-effort — relay may be down or already wiped the entry
     }
   }
-  // Remove the git worktrees on the host before nuking the container. The
-  // worktree dirs live under the per-box run dir (which is wiped further
-  // down), but we also need to deregister them from the main repo's
-  // .git/worktrees/ so subsequent `git worktree list` on the host doesn't
-  // see stale entries.
-  for (const w of box.gitWorktrees ?? []) {
-    try {
-      await removeBoxWorktree({ hostMainRepo: w.hostMainRepo, worktreeDir: w.hostWorktreeDir });
-    } catch {
-      // best-effort
+  // Deregister each in-container worktree from the host main repo. Skip
+  // when this box was checkpoint-restored: its `gitWorktrees` were inherited
+  // from the source box via the checkpoint manifest, and the same
+  // `gitWorktreePath` may still be in use by the source (or by sibling
+  // restores). Removing the registration here would break those. The
+  // registration is cosmetically `prunable` on the host anyway (the path is
+  // container-only) and can be reaped with `git worktree prune` when the
+  // user is sure no box references it.
+  const ownsWorktrees = !box.checkpointImage;
+  if (ownsWorktrees) {
+    for (const w of box.gitWorktrees ?? []) {
+      try {
+        await removeInBoxWorktree({
+          hostMainRepo: w.hostMainRepo,
+          gitWorktreePath: w.gitWorktreePath,
+        });
+      } catch {
+        // best-effort
+      }
     }
   }
   const beforeContainer = await inspectContainerStatus(box.container);
@@ -393,14 +376,6 @@ export async function destroyBox(
   const removedContainer = beforeContainer !== 'missing' && afterContainer === 'missing';
 
   const removedVolumes: string[] = [];
-  // The dedicated agentbox-nm-<id> volume was removed (node_modules now lives
-  // in the per-box overlay upper). Boxes created before that change still have
-  // the volume on disk; removeVolume is a no-op for newer boxes that lack it.
-  const legacyNodeModulesVolume = `agentbox-nm-${box.id}`;
-  for (const v of [box.upperVolume, legacyNodeModulesVolume]) {
-    await removeVolume(v);
-    removedVolumes.push(v);
-  }
   // Per-box claude config volumes are box-private — safe to remove. The shared
   // SHARED_CLAUDE_VOLUME holds user identity (auth, skills, plugins) across
   // every box, so never auto-remove it; users delete it manually if they want.
@@ -410,8 +385,7 @@ export async function destroyBox(
   }
   // Per-box `.vscode-server` and `.cursor-server` volumes. The shared
   // SHARED_*_EXTENSIONS_VOLUMEs are never auto-removed (parallel reasoning to
-  // the shared claude volume). Volume names default-derived from `box.id` for
-  // boxes created before these fields were recorded.
+  // the shared claude volume).
   const perBoxIdeVolumes = [
     box.vscodeServerVolume ?? vscodeServerVolumeName(box.id),
     box.cursorServerVolume ?? cursorServerVolumeName(box.id),
@@ -438,9 +412,9 @@ export async function destroyBox(
     }
   }
 
-  // The per-box runtime dir holds the ctl socket plus the workspace/upper
-  // export dirs used by `agentbox open`. Wipe the whole thing so destroy
-  // leaves no residue under ~/.agentbox/boxes/.
+  // The per-box runtime dir holds the ctl socket plus the workspace export
+  // dir used by `agentbox open`. Wipe the whole thing so destroy leaves no
+  // residue under ~/.agentbox/boxes/.
   try {
     await rm(boxRunDirFor(box.id), { recursive: true, force: true });
   } catch {
@@ -463,6 +437,7 @@ export interface PruneResult {
   removedVolumes: string[];
   removedSnapshotDirs: string[];
   removedBoxDirs: string[];
+  removedCheckpointImages: string[];
   dryRun: boolean;
 }
 
@@ -484,6 +459,26 @@ async function listBoxDirs(): Promise<string[]> {
   }
 }
 
+/**
+ * Local Docker image *tags* that look like checkpoint images
+ * (`agentbox-ckpt-<projectHash>:<name>`). Used by `prune --all` to reap
+ * checkpoint images whose host-side manifest dir has been deleted (or that
+ * were never tracked in any project's checkpoints dir). Best-effort: returns
+ * empty on docker errors.
+ */
+async function listCheckpointImageTags(): Promise<string[]> {
+  const r = await execa(
+    'docker',
+    ['image', 'ls', '--format', '{{.Repository}}:{{.Tag}}', `${CHECKPOINT_IMAGE_PREFIX}*`],
+    { reject: false },
+  );
+  if (r.exitCode !== 0) return [];
+  return (r.stdout ?? '')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => s.startsWith(CHECKPOINT_IMAGE_PREFIX));
+}
+
 export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> {
   const dryRun = opts.dryRun ?? false;
   const all = opts.all ?? false;
@@ -496,30 +491,28 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
   );
   const missingRecords = stateChecks.filter((c) => c.status === 'missing').map((c) => c.box);
 
-  // Step 2 (only with --all): orphan docker containers / volumes / snapshot dirs / per-box dirs.
+  // Step 2 (only with --all): orphan docker containers / volumes / snapshot
+  // dirs / per-box dirs / unreferenced checkpoint images.
   let orphanContainers: string[] = [];
   let orphanVolumes: string[] = [];
   let orphanSnapshots: string[] = [];
   let orphanBoxDirs: string[] = [];
+  let orphanCheckpointImages: string[] = [];
 
   if (all) {
     const liveContainers = await listAgentboxContainers();
     const liveVolumes = await listAgentboxVolumes();
     const liveSnapshotDirs = await listSnapshotDirs();
     const liveBoxDirs = await listBoxDirs();
+    const liveCheckpointImages = await listCheckpointImageTags();
     // The state we'd have AFTER step 1 runs: missing-state records gone.
     const survivingBoxes = boxes.filter((b) => !missingRecords.some((m) => m.id === b.id));
     const expectedContainers = new Set<string>([
       ...survivingBoxes.map((b) => b.container),
-      // The relay no longer runs as a container (it's a host node process
-      // now). Any agentbox-relay container is a leftover from a previous
-      // version of agentbox; it will be collected as an orphan below.
+      // The relay no longer runs as a container; leftovers are collected
+      // below.
     ]);
     const expectedVolumes = new Set<string>([
-      // agentbox-nm-<id> reconstructed for back-compat: a surviving box
-      // created before the nm volume was removed still mounts it, so it must
-      // stay allowlisted. Inert for newer boxes (no such volume exists).
-      ...survivingBoxes.flatMap((b) => [b.upperVolume, `agentbox-nm-${b.id}`]),
       ...survivingBoxes
         .map((b) => b.claudeConfigVolume)
         .filter((v): v is string => typeof v === 'string'),
@@ -544,20 +537,26 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
     ]);
     const expectedSnapshots = new Set(
       survivingBoxes
-        .filter((b): b is BoxRecord & { snapshotDir: string } => b.snapshotDir !== null)
+        .filter((b): b is BoxRecord & { snapshotDir: string } =>
+          typeof b.snapshotDir === 'string',
+        )
         .map((b) => b.snapshotDir),
     );
     const expectedBoxDirs = new Set(survivingBoxes.map((b) => boxRunDirFor(b.id)));
-    orphanContainers = liveContainers.filter((c) => !expectedContainers.has(c));
-    // Per-project checkpoint volumes (`agentbox-ckpt-<project-hash>`) are
-    // durable project assets — they outlive every box that referenced them
-    // (the whole point of a checkpoint). Same reasoning as SHARED_CLAUDE_VOLUME
-    // but prefix-scoped since there is one per project.
-    orphanVolumes = liveVolumes.filter(
-      (v) => !expectedVolumes.has(v) && !v.startsWith(CHECKPOINT_VOLUME_PREFIX),
+    // Checkpoint images: keep any tag that a surviving box's `checkpointImage`
+    // points at. Everything else under the prefix is fair game.
+    const expectedCheckpointImages = new Set(
+      survivingBoxes
+        .map((b) => b.checkpointImage)
+        .filter((v): v is string => typeof v === 'string'),
     );
+    orphanContainers = liveContainers.filter((c) => !expectedContainers.has(c));
+    orphanVolumes = liveVolumes.filter((v) => !expectedVolumes.has(v));
     orphanSnapshots = liveSnapshotDirs.filter((d) => !expectedSnapshots.has(d));
     orphanBoxDirs = liveBoxDirs.filter((d) => !expectedBoxDirs.has(d));
+    orphanCheckpointImages = liveCheckpointImages.filter(
+      (t) => !expectedCheckpointImages.has(t),
+    );
   }
 
   if (dryRun) {
@@ -567,6 +566,7 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
       removedVolumes: orphanVolumes,
       removedSnapshotDirs: orphanSnapshots,
       removedBoxDirs: orphanBoxDirs,
+      removedCheckpointImages: orphanCheckpointImages,
       dryRun: true,
     };
   }
@@ -587,6 +587,9 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
     } catch {
       // best-effort
     }
+  }
+  for (const img of orphanCheckpointImages) {
+    await removeImage(img, { force: true });
   }
 
   // Migration sweep: the relay used to be a docker container on a dedicated
@@ -618,6 +621,7 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
     removedVolumes: orphanVolumes,
     removedSnapshotDirs: orphanSnapshots,
     removedBoxDirs: orphanBoxDirs,
+    removedCheckpointImages: orphanCheckpointImages,
     dryRun: false,
   };
 }

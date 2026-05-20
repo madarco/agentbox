@@ -42,11 +42,11 @@ export interface BoxResourceStats {
   memLimitBytes: number | null;
   memPercent: number | null;
   pids: number | null;
-  /** PER-BOX writable layers: upper volume + docker data-root volume. */
+  /** PER-BOX writable surface: container writable layer (where /workspace lives) + the in-box dockerd's data-root volume. */
   diskUsedBytes: number | null;
   /** Per-box --host-snapshot APFS clone dir; null when none. */
   snapshotDiskBytes: number | null;
-  /** SHARED per-project agentbox-ckpt-<hash> volume; null when none. */
+  /** Size of the checkpoint image this box was started from; null when the box is not from a checkpoint. */
   checkpointVolumeBytes: number | null;
   netRxBytes: number | null;
   netTxBytes: number | null;

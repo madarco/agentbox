@@ -1,47 +1,51 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CHECKPOINT_VOLUME_PREFIX,
-  checkpointVolumeName,
+  CHECKPOINT_IMAGE_PREFIX,
+  checkpointImageTag,
   computeNextCheckpointName,
 } from '../src/checkpoint.js';
 
-describe('checkpointVolumeName', () => {
-  it('is deterministic, prefixed, and one volume per project', () => {
-    const a = checkpointVolumeName('/Users/x/proj-a');
-    const b = checkpointVolumeName('/Users/x/proj-b');
-    expect(a).toBe(checkpointVolumeName('/Users/x/proj-a')); // deterministic
-    expect(a).not.toBe(b); // scoped per project root
-    expect(a.startsWith(CHECKPOINT_VOLUME_PREFIX)).toBe(true);
+describe('checkpoint helpers', () => {
+  describe('checkpointImageTag', () => {
+    it('builds an image tag from project root + checkpoint name', () => {
+      const tag = checkpointImageTag('/Users/x/proj', 'demo-1');
+      expect(tag.startsWith(CHECKPOINT_IMAGE_PREFIX)).toBe(true);
+      expect(tag).toMatch(/^agentbox-ckpt-[0-9a-f]{16}:demo-1$/);
+    });
+
+    it('is deterministic per project root', () => {
+      const a = checkpointImageTag('/Users/x/proj', 'one');
+      const b = checkpointImageTag('/Users/x/proj', 'one');
+      expect(a).toBe(b);
+    });
+
+    it('different project roots produce different image repos but same tag', () => {
+      const [a, b] = [
+        checkpointImageTag('/Users/x/proj', 'demo'),
+        checkpointImageTag('/Users/x/other', 'demo'),
+      ];
+      const [repoA, nameA] = a.split(':');
+      const [repoB, nameB] = b.split(':');
+      expect(repoA).not.toBe(repoB);
+      expect(nameA).toBe(nameB);
+    });
   });
 
-  it('produces a Docker-volume-name-safe string (no path separators)', () => {
-    const v = checkpointVolumeName('/Users/x/My Project (weird)/sub');
-    expect(v).toMatch(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/);
-  });
-});
+  describe('computeNextCheckpointName', () => {
+    it('starts at -1 when nothing exists for the box name', () => {
+      expect(computeNextCheckpointName([], 'demo')).toBe('demo-1');
+      expect(computeNextCheckpointName(['other-1', 'other-2'], 'demo')).toBe('demo-1');
+    });
 
-describe('computeNextCheckpointName', () => {
-  it('starts at 1 when no checkpoints exist for the box', () => {
-    expect(computeNextCheckpointName([], 'warm')).toBe('warm-1');
-    expect(computeNextCheckpointName(['other-1', 'other-2'], 'warm')).toBe('warm-1');
-  });
+    it('returns max+1 (gaps never recycled)', () => {
+      expect(computeNextCheckpointName(['demo-1', 'demo-2', 'demo-3'], 'demo')).toBe('demo-4');
+      // Gap from a deleted demo-2 still bumps past the surviving max.
+      expect(computeNextCheckpointName(['demo-1', 'demo-3'], 'demo')).toBe('demo-4');
+    });
 
-  it('is max+1, never recycling gaps from deleted checkpoints', () => {
-    expect(computeNextCheckpointName(['warm-1', 'warm-2'], 'warm')).toBe('warm-3');
-    // warm-2 deleted -> still 3, the gap is not reused.
-    expect(computeNextCheckpointName(['warm-1', 'warm-3'], 'warm')).toBe('warm-4');
-  });
-
-  it('scopes the counter to the exact box name', () => {
-    expect(computeNextCheckpointName(['warm-1', 'warmer-9'], 'warm')).toBe('warm-2');
-    expect(computeNextCheckpointName(['warm-1', 'warmer-9'], 'warmer')).toBe('warmer-10');
-  });
-
-  it('treats a box name with regex metacharacters literally', () => {
-    expect(computeNextCheckpointName(['a.b-1', 'aXb-5'], 'a.b')).toBe('a.b-2');
-  });
-
-  it('ignores non-numeric suffixes', () => {
-    expect(computeNextCheckpointName(['warm-foo', 'warm-1'], 'warm')).toBe('warm-2');
+    it('escapes regex metacharacters in the box name', () => {
+      // A box named like `dot.demo` must not accidentally match `dotXdemo-1`.
+      expect(computeNextCheckpointName(['dot.demo-7', 'dotXdemo-9'], 'dot.demo')).toBe('dot.demo-8');
+    });
   });
 });

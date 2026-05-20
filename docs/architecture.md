@@ -6,60 +6,59 @@ Spawn isolated, disposable Linux containers ("boxes") for each Claude agent inst
 
 ## Filesystem layout per box
 
-Three-layer FUSE overlay inside the container:
+`/workspace` is a plain directory in the **container's writable layer** — created by the image (`mkdir /workspace && chown vscode:vscode /workspace` in `Dockerfile.box`), populated at create time, and wiped on `agentbox destroy`. No FUSE overlay, no upper volume, no virtiofs bridge for working-tree reads.
 
-- **lower** — host workspace, bind-mounted read-only via VirtioFS (`/host-src`)
-- **upper** — named volume, captures all agent writes (`/upper`)
-- **snapshot** — named volume, background-rsynced mirror of lower (`/snapshot`)
+How `/workspace` gets populated depends on the source:
 
-Boot sequence: overlay mounts immediately with `lower=/host-src`, container is usable in ~1s. Background job rsyncs `/host-src → /snapshot`, then atomically remounts overlay with `lower=/snapshot`. Host is fully decoupled from that point on.
+- **Git repo (the common case)**: `agentbox create` runs `git worktree add -b agentbox/<box-name> /workspace HEAD` **inside the container** against the host main repo's `.git/`, which is bind-mounted at its identical absolute host path (RW). Branch + uncommitted-state replay (host `git stash create` SHA + `tar`-piped untracked files) are applied in-container as user `vscode`.
+- **No git repo**: a `tar`-pipe from the host workspace (or its `--host-snapshot` APFS clone) into `/workspace`.
+- **Checkpoint restore (`--snapshot <ref>`)**: the box is started with the checkpoint Docker image as its base — `/workspace` is already populated; no `git worktree add`, no tar pipe.
 
-Tools: `fuse-overlayfs`, `rsync`. Container needs `/dev/fuse` + `SYS_ADMIN`.
+The retired FUSE overlay had `lowerdir=/host-src,upperdir=/upper/upper` and reasonable boot speed, but every advantage it had against macOS hosts evaporated once we depended on per-box git worktrees + a bind-mounted `.git` — the worktree path *was* the isolation, the overlay added nothing.
+
+Container needs `/dev/fuse` + `SYS_ADMIN` + `apparmor:unconfined`/`seccomp=unconfined` not for the outer FS but for the **in-box dockerd**'s `fuse-overlayfs` storage driver and cgroup remounts.
 
 ## First-run setup (per host workspace)
 
-1. Build base image with `node`, `pnpm`, `fuse3`, `fuse-overlayfs`, `rsync`, `openssh-server`.
-2. Run one-time "seed box" that executes `pnpm install` against the project, populating a **shared `pnpm_store` named volume** (content-addressable, reused by all future boxes).
-3. Prompt user: _"Create a frozen base snapshot of the workspace? (Recommended — lets you keep editing the host while agents run against a stable copy.)"_
-   - If yes: APFS clone via `cp -c project/ ~/.agentbox/base/<workspace-hash>/` (instant on APFS, CoW). Future boxes bind this path as `/host-src` instead of the live project. Re-snapshot on demand.
-   - If no: boxes bind the live project. Cheaper, but host edits during the rsync window leak into the snapshot.
+1. Build base image with `node`, `pnpm`, `fuse3`, `fuse-overlayfs` (for inner dockerd), `rsync`, `git`, `tmux`, plus Claude Code and agent-browser.
+2. Run the in-box `/agentbox-setup` wizard once: it inspects the workspace, writes `agentbox.yaml` with install + service definitions, and (optionally) takes the first checkpoint.
+3. `--host-snapshot` is the optional "freeze the source bytes" knob: `cp -c` APFS clone of the workspace into `~/.agentbox/snapshots/<id>/` before the tar pipe so host edits during create don't leak in. No-op when a git repo is detected (worktree content comes from `.git`).
 
 ## Per-box volumes
 
 ```yaml
 volumes:
-  - ${LOWER_PATH}:/host-src:ro # frozen base OR live project
-  - upper-${BOX_ID}:/upper # agent writes, COW (node_modules etc. land here)
-  - snapshot-${BOX_ID}:/snapshot # background mirror
-  - pnpm_store:/root/.local/share/pnpm/store # shared, content-addressable
-  - vscode-server-${BOX_ID}:/root/.vscode-server # per-box TS cache, extension state
-  - vscode-extensions:/root/.vscode-server/extensions # shared across boxes
+  # Per-box (wiped on destroy)
+  - <hostMainRepo>/.git:<hostMainRepo>/.git              # identical-path RW so worktree pointers resolve symmetrically
+  - <boxDir>/run:/run/agentbox                            # agentbox-ctl unix socket
+  - <boxDir>/workspace:/host-export                       # rsync target for `agentbox open`
+  - agentbox-docker-<id>:/var/lib/docker                  # in-box dockerd data root
+  - agentbox-vscode-server-<id>:/home/vscode/.vscode-server
+  - agentbox-cursor-server-<id>:/home/vscode/.cursor-server
+
+  # Shared across boxes (allowlisted in `prune --all`, never auto-removed)
+  - agentbox-claude-config:/home/vscode/.claude           # user identity (auth, skills, plugins)
+  - agentbox-vscode-extensions:/home/vscode/.vscode-server/extensions
+  - agentbox-cursor-extensions:/home/vscode/.cursor-server/extensions
 ```
 
-`node_modules` is **not** a separate volume — it falls through to the per-box overlay upper (`agentbox-upper-<id>`), so it (and `.next`, `target`, `.venv`, …) is isolated per box and captured by per-box upper exports/snapshots. The host's macOS `node_modules` only reaches the box through the read-only overlay *lower*, and only on the raw-host-workspace path: the snapshot path prunes `EXCLUDE_DIRS` (incl. `node_modules`) and the git-worktree path uses `git ls-files --others --exclude-standard`, so gitignored `node_modules` never reaches the lower there. The wizard-generated `agentbox.yaml` install task force-rebuilds Linux-native deps on first box start, guarded by a `node_modules/.agentbox-installed` marker so it self-heals a stale host-leaked tree once but is a no-op on subsequent box starts.
+`/workspace` is **not** a volume — it lives in the container's writable layer. `node_modules`, `.next`, `target`, `.venv` land there alongside the rest of the working tree; the wizard-generated `agentbox.yaml` install task rebuilds them on first start (marker-guarded by `node_modules/.agentbox-installed`).
 
 ## VS Code integration
 
-- Each box runs `sshd` on a unique port (or use `Dev Containers: Attach to Running Container`).
-- User opens a box → VS Code attaches, spawns `vscode-server` inside the container, hydrates extensions from the shared volume.
-- TS server, file watchers, language services all live in the container. Cache stays warm across the box's lifetime.
+- Each box exposes container `:80` (web service) + `:6080` (noVNC) via random ephemeral host ports, and is reachable via the Dev Containers extension (`agentbox code <box>`).
+- Per-box `agentbox-{vscode,cursor}-server-<id>` volumes hold the downloaded server binary; shared `agentbox-{vscode,cursor}-extensions` volumes hold installed extensions.
+- TS server, file watchers, language services live in the container. Cache stays warm across the box's lifetime.
 
 ## Pause strategy (the core efficiency trick)
 
 Inactive boxes are **`docker pause`d**, not stopped.
 
-- `docker pause` freezes all processes via cgroup freezer: 0 CPU, RAM stays mapped but pageable, kernel can reclaim under pressure (optionally forced via `memory.reclaim` to zram swap).
-- `docker unpause` resumes instantly. `vscode-server` and its TS server pick up mid-instruction — no cache rehydration, no watcher storms, no re-parse.
+- `docker pause` freezes all processes via cgroup freezer: 0 CPU, RAM stays mapped but pageable.
+- `docker unpause` resumes instantly. `vscode-server` and its TS server pick up mid-instruction — no cache rehydration.
 - Switching boxes: pause the outgoing, unpause the incoming, focus the VS Code window. Sub-second.
 
-Host-side switcher (sketch):
-
-```bash
-agentbox switch <id>
-  → docker pause $(other boxes)
-  → docker unpause <id>
-  → open "vscode://vscode-remote/attached-container+<id>/workspace"
-```
+`docker stop` + `docker start` works too — `/workspace` lives in the container writable layer, so it survives a stop/start natively. `agentbox start` only needs to relaunch ctl/dockerd/Xvnc (they die with the container).
 
 ## Lifecycle
 
@@ -68,33 +67,39 @@ agentbox switch <id>
 | Running, active | User attached             | Full                |
 | Paused          | User switched away        | 0 CPU, RAM pageable |
 | Stopped         | Explicit, or N hours idle | 0                   |
-| Destroyed       | User discards agent       | Volumes purged      |
+| Destroyed       | User discards agent       | Container + volumes purged |
 
-Upper volume is the agent's "diff against base". Persists across pause/stop. Discarded on destroy. Easy to inspect (`git diff` inside the box) or export (`rsync /workspace → host`) for PR review.
+The container's writable layer is the agent's "diff against base image". Persists across pause/stop. Discarded on destroy. Inspectable with `agentbox open` (rsync `/workspace` → host scratch dir → Finder) or exportable via `agentbox checkpoint` (`docker commit`).
 
 ## Checkpoints
 
-A **checkpoint** captures a box's accumulated state (the overlay write delta — which now includes `node_modules`, build caches, in-box `.env` files, since there is no separate node_modules volume) so a *new* box can start warm instead of from bare host code. Primary use: after a setup wizard or a merged PR, `agentbox checkpoint <box> --set-default` makes every future box in the project inherit the warm state.
+A **checkpoint** captures a box's accumulated state — `/workspace` (incl. `node_modules`, build caches, in-box `.env` files) plus everything else the agent wrote into the container's writable layer — so a *new* box can start warm instead of from bare host code. Primary use: after a setup wizard or a merged PR, `agentbox checkpoint <box> --set-default` makes every future box in the project inherit the warm state.
 
-This is why the overlay's `lowerdir` is **multi-layer**, not a single bind:
+- **Cleanup** runs first: `docker exec --user root <ctr> /usr/local/bin/agentbox-checkpoint-cleanup` strips apt cache + `/tmp` + `/var/log` + bash history. Caches under `~/.npm`/`~/.cache` and `/var/lib/docker` are kept (warm state worth carrying).
+- **Layered checkpoint** (default, fast): `docker commit <ctr> agentbox-ckpt-<projectHash>:<name>`. New layer on top of the box's current image; lineage is implicit in Docker image history. The `parents` chain in the manifest tracks refs for display and the auto-flatten threshold.
+- **Flattened checkpoint** (`--merged`, or auto when `chainDepth >= checkpoint.maxLayers`, default 3): `docker commit` → `docker create` → `docker export <tmp> > rootfs.tar` → tiny `FROM scratch` Dockerfile that `ADD`s the rootfs and replays the base image's `Env`/`Cmd`/`Entrypoint`/`WorkingDir`/`User`/`ExposedPorts` (lost by `docker export`) → `docker build`. The resulting image is a single ADD layer; lineage resets.
+- **Restore**: `agentbox create/claude --snapshot <ref>` (or per-project default `box.defaultCheckpoint`) passes the checkpoint image tag to `runBox` as the base image. No mount, no overlay; `/workspace` is already there.
 
-- **Plain box**: `lowerdir=/host-src` (unchanged; byte-identical to pre-checkpoint boxes).
-- **Layered checkpoint** (default, fast): the captured upper delta(s) live in the per-project checkpoint volume, mounted read-only once at `/agentbox-checkpoints`; the overlay stacks its subdirs: `lowerdir=/agentbox-checkpoints/<nN>:…:/agentbox-checkpoints/<n1>:/host-src`. Fresh writes still go to a brand-new upper. The base `/host-src` is a normal fresh git worktree, so tracked code tracks current host HEAD while the checkpoint supplies the expensive non-git artifacts.
-- **Merged checkpoint** (`--merged`, or auto when the chain depth ≥ `checkpoint.maxLayers`, default 3): the box's merged `/workspace` is flattened into one subdir used as the sole lower (code frozen at capture time). Caps lowerdir-chain growth and sidesteps cross-layer whiteout edge cases.
+Storage:
 
-Storage: **one Docker named volume per project**, `agentbox-ckpt-<project-hash>` (ext4, inside the Docker/OrbStack VM), with each checkpoint a `<box-name>-<n>` subdir; only the small `manifest.json` stays host-side at `~/.agentbox/checkpoints/<project-hash>/<name>/`, scoped per project via the same `hashProjectPath` used for per-project config. Capture is volume→volume `cp -a` (layered) / piped `tar` (merged) in a throwaway root container — all VM-local, so it never crosses the virtiofs/gRPC-FUSE host bridge (the dominant cost when the upper is `node_modules`-heavy) and there is no APFS clone; overlay char-device whiteouts are preserved natively (fuse-overlayfs honors them in a lowerdir), so no `.wh.` translation is needed. The volume is a durable project asset — it survives box `destroy`, is mounted read-only by any number of boxes concurrently, and is allowlisted in `prune --all` by the `agentbox-ckpt-` prefix (parallel to the shared claude-config volume); `agentbox checkpoint rm` removes only the subdir. The project default lives in the per-project config key `box.defaultCheckpoint`; `agentbox create --snapshot <ref>` overrides it. Capture/restore is host-side; the in-box agent reaches it through the existing relay (`agentbox-ctl checkpoint` → `/rpc checkpoint.create` → the host CLI), the same channel as `agentbox-ctl git`.
+- Host metadata only: `~/.agentbox/checkpoints/<projectHash>/<name>/manifest.json` (schema 2, references the image tag).
+- Image tags use the deterministic `agentbox-ckpt-<sha1-16(projectRoot)>` repo prefix (parallel to the per-project config-dir hash); `agentbox prune --all` reaps any tag under that prefix not referenced by a surviving `BoxRecord.checkpointImage`.
+- `agentbox checkpoint rm <ref>` deletes the manifest + `docker image rm` the tag.
 
-This is distinct from the host **snapshot** (`--host-snapshot`, formerly `--snapshot`; config `box.hostSnapshot`, formerly `box.snapshot`): a frozen APFS clone of the *host* workspace used as the lower. It deliberately prunes `node_modules`/build dirs and cannot carry box-side state — orthogonal to checkpoints, which exist precisely to carry that state.
+In-box agents trigger capture via the existing relay (`agentbox-ctl checkpoint` → `/rpc checkpoint.create` → host `agentbox checkpoint` CLI). No host creds in the box.
+
+This is distinct from the host **snapshot** (`--host-snapshot`, config `box.hostSnapshot`): a per-box APFS clone of the host workspace used only as a stable source for the create-time `tar` pipe. Orthogonal to checkpoints, which capture box-side state.
 
 ## What we explicitly rejected
 
+- **FUSE overlay with the host workspace as lower** — retired once isolation moved into the per-box git worktree + container fs. With `.git` bind-mounted and a fresh branch per box, the overlay added no isolation and lost the speed argument (linux native deps are rebuilt anyway). See `docs/create-and-checkpoints.md` for the new create flow.
+- **Per-project checkpoint volume** (the previous design) — replaced by `docker commit` images. Layered chain is now native Docker image history; flatten is `docker export` + `FROM scratch` rebuild.
 - **Mount/symlink swapping under a single VS Code window** — causes TS server cache invalidation storms and watcher floods on every switch. Per-box server + pause is strictly better.
-- **Using the host's `node_modules` as-is** — platform mismatch (macOS binaries on Linux). Native modules with prebuilt `.node` files won't be fixed by `pnpm install` without `--force` or `rebuild`. We do **not** shadow it with a separate Linux volume (that splits the box's writable state across two volumes the snapshot/export path has to track); instead `node_modules` lives in the per-box overlay upper and the wizard-generated install task does a clean Linux rebuild on first box start.
-- **Git push/pull between container and host** — slower than rsync, pollutes history, doesn't handle untracked artifacts. Use rsync or direct `docker exec` reads for review.
+- **Using the host's `node_modules` as-is** — platform mismatch (macOS binaries on Linux). The wizard install task force-rebuilds Linux-native deps on first box start.
+- **Git push/pull from inside the container with credential forwarding** — leaks creds. Push goes through the relay (`git -C <hostMainRepo> push origin <branch>` runs on host with user SSH/gitconfig); pull splits into a relay `git.fetch` plus a creds-free in-container merge.
 
 ## Open questions for implementation
 
 - Idle-timeout policy: auto-pause after N minutes of no VS Code activity? Auto-stop after M hours?
-- ~~Snapshot refresh UX: how does the user re-base a running agent on an updated host snapshot?~~ Resolved by **checkpoints** (see above): capture the box's state, then `agentbox create --snapshot <ref>` spawns a fresh box layering that state over current host HEAD.
 - Memory ceiling: cap concurrent unpaused boxes, or rely on swap pressure?
 - Cross-box diff dashboard: single pane showing `git diff --stat` per box with deep-links into the right attached VS Code window.

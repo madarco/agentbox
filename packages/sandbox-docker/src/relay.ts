@@ -279,7 +279,7 @@ export interface RegisterBoxArgs {
 export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void> {
   const worktrees: BoxWorktree[] = (args.worktrees ?? []).map((w) => ({
     containerPath: w.containerPath,
-    hostWorktreeDir: w.hostWorktreeDir,
+    hostMainRepo: w.hostMainRepo,
     branch: w.branch,
   }));
   await adminPost('/admin/register-box', {

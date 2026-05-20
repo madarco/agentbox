@@ -188,7 +188,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         return;
       }
       log(`rpc box=${reg.boxId} method=${body.method}`);
-      if (body.method === 'git.pull' || body.method === 'git.push') {
+      if (body.method === 'git.push' || body.method === 'git.fetch') {
         const result = await handleGitRpc(reg, body.method, body.params as GitRpcParams | undefined);
         const status = result.exitCode === 0 ? 200 : 500;
         send(res, status, result);
@@ -341,12 +341,12 @@ function sanitizeWorktrees(input: BoxWorktree[] | undefined): BoxWorktree[] | un
     if (
       w &&
       typeof w.containerPath === 'string' &&
-      typeof w.hostWorktreeDir === 'string' &&
+      typeof w.hostMainRepo === 'string' &&
       typeof w.branch === 'string'
     ) {
       out.push({
         containerPath: w.containerPath,
-        hostWorktreeDir: w.hostWorktreeDir,
+        hostMainRepo: w.hostMainRepo,
         branch: w.branch,
       });
     }
@@ -355,26 +355,36 @@ function sanitizeWorktrees(input: BoxWorktree[] | undefined): BoxWorktree[] | un
 }
 
 /**
- * Resolve `params.path` (a path inside the container) to the host worktree
- * directory the relay should run git in. `/workspace` always maps to the root
- * worktree; `/workspace/<sub>` maps to a nested worktree when one is
- * registered for that subpath, otherwise falls back to the root.
+ * Resolve `params.path` (a path inside the container) to the registered
+ * worktree whose hostMainRepo + branch the relay should run git in.
+ * `/workspace` maps to the root repo; `/workspace/<sub>` maps to the nested
+ * repo when one is registered (longest prefix wins).
  */
 function resolveWorktree(reg: BoxRegistration, containerPath: string): BoxWorktree | null {
   const trees = reg.worktrees ?? [];
   if (trees.length === 0) return null;
   const exact = trees.find((w) => w.containerPath === containerPath);
   if (exact) return exact;
-  // Longest containerPath prefix wins so /workspace/app/sub picks /workspace/app if registered.
   const prefixMatches = trees
     .filter((w) => containerPath === w.containerPath || containerPath.startsWith(w.containerPath + '/'))
     .sort((a, b) => b.containerPath.length - a.containerPath.length);
   return prefixMatches[0] ?? trees.find((w) => w.containerPath === '/workspace') ?? null;
 }
 
+/**
+ * git.push / git.fetch: run `git -C <hostMainRepo> <op> <remote> <branch>
+ * [args]` on the host with the user's creds. The in-container worktree's
+ * working tree isn't on the host, so we operate on the shared `.git/` from
+ * the main repo dir — refs already point at the in-container commits
+ * (committed there against the bind-mounted .git).
+ *
+ * git.pull is intentionally NOT handled here: a pull merges into the
+ * working tree, which lives inside the container. The in-box
+ * `agentbox-ctl git pull` calls git.fetch via RPC, then runs a local merge.
+ */
 async function handleGitRpc(
   reg: BoxRegistration,
-  method: 'git.pull' | 'git.push',
+  method: 'git.push' | 'git.fetch',
   params: GitRpcParams | undefined,
 ): Promise<GitRpcResult> {
   const containerPath = params?.path ?? '/workspace';
@@ -386,9 +396,9 @@ async function handleGitRpc(
       stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
     };
   }
-  const op = method === 'git.pull' ? 'pull' : 'push';
+  const op = method === 'git.push' ? 'push' : 'fetch';
   const remote = params?.remote ?? 'origin';
-  const argv = ['git', '-C', worktree.hostWorktreeDir, op, remote];
+  const argv = ['git', '-C', worktree.hostMainRepo, op, remote, worktree.branch];
   if (Array.isArray(params?.args)) {
     for (const a of params.args) {
       if (typeof a === 'string') argv.push(a);
@@ -420,6 +430,7 @@ async function handleCheckpointRpc(
   if (params?.name) argv.push('--name', params.name);
   if (params?.merged === true) argv.push('--merged');
   if (params?.setDefault === true) argv.push('--set-default');
+  if (params?.replace === true) argv.push('--replace');
   return runHostCommand(argv, CHECKPOINT_RPC_TIMEOUT_MS);
 }
 

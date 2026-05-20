@@ -1,6 +1,10 @@
 import { log } from '@clack/prompts';
-import { inspectBox, type BoxRecord, type InspectedBox } from '@agentbox/sandbox-docker';
-import { projectCheckpointVolumeBytes } from '@agentbox/sandbox-docker';
+import {
+  inspectBox,
+  projectCheckpointImageBytes,
+  type BoxRecord,
+  type InspectedBox,
+} from '@agentbox/sandbox-docker';
 import { renderEndpointLines } from '../endpoints-render.js';
 import { fmtBytes } from '../fmt.js';
 import { watchRender } from '../watch.js';
@@ -18,23 +22,21 @@ function fmtLimit(n: number | null | undefined, unit: string): string {
 
 async function renderText(i: InspectedBox): Promise<string> {
   const lim = i.record.resourceLimits;
+  // checkpoint image size only when this box was started from one; otherwise
+  // skip the row (no image -> no number to show, and projectCheckpointImageBytes
+  // needs an explicit checkpoint name to resolve).
+  const ckptName = i.record.checkpointSource?.ref;
   const projectRoot = i.record.projectRoot ?? i.record.workspacePath;
-  const ckptBytes = await projectCheckpointVolumeBytes(projectRoot);
-  const upperHost = i.hostPaths.upperLiveOnHost
-    ? `${i.hostPaths.upperLiveOnHost}  (live)`
-    : `${i.hostPaths.upperExport}  (run \`agentbox open --upper\` to refresh)`;
+  const ckptBytes = ckptName ? await projectCheckpointImageBytes(projectRoot, ckptName) : null;
   const lines: string[] = [
     `id            ${i.record.id}`,
     `name          ${i.record.name}`,
     `container     ${i.record.container}`,
     `image         ${i.record.image}`,
     `state         ${i.state}`,
-    `overlay       ${i.overlayMounted ? 'mounted at /workspace' : 'not mounted'}`,
-    `workspace     ${i.record.workspacePath}`,
+    `workspace     ${i.record.workspacePath}  (container fs at /workspace)`,
     `project       ${i.record.projectRoot ?? '(unset — pre-feature box)'}`,
     `n             ${typeof i.record.projectIndex === 'number' ? String(i.record.projectIndex) : '(none)'}`,
-    `lower         ${i.record.lowerPath}`,
-    `upper volume  ${i.upperVolume.name}${i.upperVolume.mountpoint ? `  (${i.upperVolume.mountpoint})` : ''}`,
     `claude config ${i.record.claudeConfigVolume ?? '(none)'}`,
     `claude session ${renderClaudeSession(i)}`,
     `claude activity ${renderClaudeActivity(i)}`,
@@ -47,14 +49,20 @@ async function renderText(i: InspectedBox): Promise<string> {
     `cpu limit     ${fmtLimit(lim?.cpus, '')}`,
     `pids limit    ${fmtLimit(lim?.pidsLimit, '')}`,
     `disk limit    ${lim?.disk ? `${lim.disk} (best-effort; no-op on overlay2/macOS)` : 'unlimited'}`,
-    `snapshot dir  ${i.record.snapshotDir ?? '(none — live workspace mount)'}`,
+    `snapshot dir  ${i.record.snapshotDir ?? '(none)'}`,
     `snapshot size ${fmtBytes(i.snapshotSizeBytes)}`,
-    `checkpoint vol ${ckptBytes === null ? '(none)' : fmtBytes(ckptBytes)}`,
+    `checkpoint    ${renderCheckpoint(i, ckptBytes)}`,
     `host export   ${i.hostPaths.mergedExport}  (run \`agentbox open\` to refresh)`,
-    `upper host    ${upperHost}`,
     `created       ${i.record.createdAt}`,
   ];
   return lines.join('\n');
+}
+
+function renderCheckpoint(i: InspectedBox, sizeBytes: number | null): string {
+  const src = i.record.checkpointSource;
+  if (!src || !i.record.checkpointImage) return '(none)';
+  const sizePart = sizeBytes !== null ? ` ${fmtBytes(sizeBytes)}` : '';
+  return `${src.ref} (${src.type}, chain ${src.chain.length}) → ${i.record.checkpointImage}${sizePart}`;
 }
 
 function renderClaudeSession(i: InspectedBox): string {

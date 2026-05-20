@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { findProjectRoot } from '@agentbox/config';
 import {
   agentboxHomeBytes,
-  allCheckpointVolumesBytes,
+  allCheckpointImagesBytes,
   boxResourceStats,
   listBoxes,
   type ListedBox,
@@ -75,13 +75,13 @@ async function snapshot(
 }
 
 async function renderProjectFooters(): Promise<string> {
-  // Two independent disk numbers, no overlap: checkpoint volumes are Docker
-  // named volumes (not under ~/.agentbox); everything else agentbox keeps on
-  // the host — box run dirs, exports, worktrees, host clones — lives inside
-  // ~/.agentbox and is summed there.
+  // Two independent disk numbers, no overlap: checkpoint *images* live in
+  // Docker's image store (not under ~/.agentbox); everything else agentbox
+  // keeps on the host — box run dirs, exports, host clones — is under
+  // ~/.agentbox and summed there.
   const parts: string[] = [];
   const [ckpt, home] = await Promise.all([
-    allCheckpointVolumesBytes(),
+    allCheckpointImagesBytes(),
     agentboxHomeBytes(),
   ]);
   if (home !== null) parts.push(`~/.agentbox: ${fmtBytes(home)}`);

@@ -1,33 +1,21 @@
-import { mkdir, readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import type { BoxStatus } from '@agentbox/ctl';
-import { execInBox, inspectVolumeMountpoint } from './docker.js';
+import { execInBox } from './docker.js';
 import type { BoxRecord } from './state.js';
 
 export type DockerEngine = 'orbstack' | 'docker-desktop' | 'other';
 
-/** In-container paths bind-mounted to per-box host dirs by createBox. */
+/** In-container path bind-mounted to the per-box host export dir by createBox. */
 export const CONTAINER_EXPORT_MERGED = '/host-export';
-export const CONTAINER_EXPORT_UPPER = '/host-export-upper';
-
-/** Layer the user wants to look at. */
-export type ExportLayer = 'merged' | 'upper';
 
 export interface HostPaths {
   /** Per-box runtime dir on host, e.g. ~/.agentbox/boxes/<id>. */
   boxDir: string;
-  /** Snapshot target for the merged /workspace view. */
+  /** Snapshot target for the merged /workspace view (rsync'd in by `refreshExport`). */
   mergedExport: string;
-  /** Snapshot target for /upper/upper (used on engines without a live host path). */
-  upperExport: string;
-  /**
-   * Native host path to the upper named volume's `upper/` subdir on OrbStack —
-   * a live, zero-copy view of the writes layer. Null on Docker Desktop and any
-   * engine where the volume isn't browsable from the Mac filesystem.
-   */
-  upperLiveOnHost: string | null;
 }
 
 let cachedEngine: DockerEngine | null = null;
@@ -98,69 +86,30 @@ export async function readBoxStatus(id: string): Promise<BoxStatus | null> {
   }
 }
 
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await stat(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Host path to a subpath inside an OrbStack-managed named volume.
  *
  * OrbStack exposes named volumes at `~/OrbStack/docker/volumes/<name>/` —
- * note: NO `_data` subdir; volume contents appear directly under `<name>/`.
- * `docker volume inspect` reports the in-VM `/var/lib/docker/...` mountpoint
+ * NO `_data` wrapper. `docker volume inspect` reports the in-VM mountpoint
  * instead, which isn't reachable from macOS. Returns the path regardless of
- * whether it exists; callers stat it themselves.
+ * whether it exists; callers stat it themselves. Used by claude's plugin-cache
+ * pre-scan to find host-visible package.jsons on OrbStack.
  */
 export function orbstackVolumePath(volume: string, ...sub: string[]): string {
   return join(homedir(), 'OrbStack', 'docker', 'volumes', volume, ...sub);
 }
 
-/**
- * Resolve the host-visible path to the upper volume's writes layer for live
- * browsing.
- *
- * Docker Desktop has no equivalent host path — returns null.
- */
-export async function resolveUpperLiveOnHost(
-  upperVolume: string,
-  engine: DockerEngine,
-): Promise<string | null> {
-  if (engine !== 'orbstack') return null;
-  // Primary: OrbStack's documented shared folder. Contents of the volume sit
-  // directly under <vol>/ — no _data wrapper.
-  const orbPath = orbstackVolumePath(upperVolume, 'upper');
-  if (await pathExists(orbPath)) return orbPath;
-  // Fallback: if docker reports a real-looking host mountpoint (e.g. on Linux
-  // hosts or unusual setups), trust it.
-  const mp = await inspectVolumeMountpoint(upperVolume);
-  if (mp && !mp.startsWith('/var/lib/docker')) {
-    const candidate = join(mp, 'upper');
-    if (await pathExists(candidate)) return candidate;
-  }
-  return null;
-}
-
 export async function getHostPaths(
-  record: Pick<BoxRecord, 'id' | 'upperVolume'>,
-  engine?: DockerEngine,
+  record: Pick<BoxRecord, 'id'>,
 ): Promise<HostPaths> {
-  const eng = engine ?? (await detectEngine());
   const boxDir = boxRunDirFor(record.id);
   return {
     boxDir,
     mergedExport: join(boxDir, 'workspace'),
-    upperExport: join(boxDir, 'upper'),
-    upperLiveOnHost: await resolveUpperLiveOnHost(record.upperVolume, eng),
   };
 }
 
 export interface RefreshOptions {
-  layer: ExportLayer;
   /** When true, include /workspace/node_modules in the merged export. Off by default. */
   includeNodeModules?: boolean;
 }
@@ -168,18 +117,10 @@ export interface RefreshOptions {
 export interface RefreshResult {
   /** Host path that now reflects the box's current state. */
   hostPath: string;
-  /** True when an rsync/tar copy actually ran. False when the OrbStack live path was used directly. */
+  /** True when an rsync copy actually ran (always true today; kept for callers). */
   copied: boolean;
   /** True when the box predates the /host-export bind and we used the tar-pipe fallback. */
   usedFallback: boolean;
-}
-
-interface RefreshContext {
-  hostBoxDir: string;
-  hostTarget: string;
-  containerSource: string;
-  containerBind: string;
-  excludeNodeModules: boolean;
 }
 
 async function hasContainerPath(container: string, path: string): Promise<boolean> {
@@ -188,84 +129,57 @@ async function hasContainerPath(container: string, path: string): Promise<boolea
 }
 
 /**
- * Refresh a per-box host export so Finder sees the box's current state.
- *
- * Strategy:
- *  - For OrbStack + layer=upper, no copy is needed — the named volume is live
- *    on disk. Caller should prefer `hostPaths.upperLiveOnHost`.
- *  - Otherwise rsync from the in-container source (`/workspace` or
- *    `/upper/upper`) to the bind-mounted host dir (`/host-export` or
- *    `/host-export-upper`).
- *  - Boxes created before the bind-mounts existed fall back to streaming a
- *    `tar | tar` through `docker exec` into the host dir directly.
+ * Refresh the per-box merged host export (~/.agentbox/boxes/<id>/workspace) so
+ * Finder sees the box's current `/workspace`. /workspace lives in the
+ * container's writable layer and is invisible to macOS directly, so we always
+ * have to copy it out. Prefers rsync via the /host-export bind-mount; falls
+ * back to a `tar | tar` pipe through `docker exec` for boxes that predate the
+ * bind.
  */
 export async function refreshExport(
-  record: Pick<BoxRecord, 'id' | 'container' | 'upperVolume'>,
-  opts: RefreshOptions,
+  record: Pick<BoxRecord, 'id' | 'container'>,
+  opts: RefreshOptions = {},
 ): Promise<RefreshResult> {
-  const engine = await detectEngine();
-  const paths = await getHostPaths(record, engine);
+  const paths = await getHostPaths(record);
+  const excludeNodeModules = !opts.includeNodeModules;
+  await mkdir(paths.mergedExport, { recursive: true });
 
-  if (opts.layer === 'upper' && engine === 'orbstack' && paths.upperLiveOnHost) {
-    await mkdir(paths.boxDir, { recursive: true });
-    return { hostPath: paths.upperLiveOnHost, copied: false, usedFallback: false };
-  }
-
-  const ctx: RefreshContext =
-    opts.layer === 'merged'
-      ? {
-          hostBoxDir: paths.boxDir,
-          hostTarget: paths.mergedExport,
-          containerSource: '/workspace',
-          containerBind: CONTAINER_EXPORT_MERGED,
-          excludeNodeModules: !opts.includeNodeModules,
-        }
-      : {
-          hostBoxDir: paths.boxDir,
-          hostTarget: paths.upperExport,
-          containerSource: '/upper/upper',
-          containerBind: CONTAINER_EXPORT_UPPER,
-          excludeNodeModules: false,
-        };
-
-  await mkdir(ctx.hostTarget, { recursive: true });
-
-  const bindAvailable = await hasContainerPath(record.container, ctx.containerBind);
+  const bindAvailable = await hasContainerPath(record.container, CONTAINER_EXPORT_MERGED);
   if (bindAvailable) {
     const args = ['rsync', '-a', '--delete'];
-    if (ctx.excludeNodeModules) args.push('--exclude=node_modules');
-    args.push(`${ctx.containerSource}/`, `${ctx.containerBind}/`);
+    if (excludeNodeModules) args.push('--exclude=node_modules');
+    args.push('/workspace/', `${CONTAINER_EXPORT_MERGED}/`);
     const r = await execInBox(record.container, args, { user: 'root' });
     if (r.exitCode !== 0) {
-      throw new ExportError(`rsync into ${ctx.containerBind} failed`, r.stdout, r.stderr);
+      throw new ExportError(`rsync into ${CONTAINER_EXPORT_MERGED} failed`, r.stdout, r.stderr);
     }
-    return { hostPath: ctx.hostTarget, copied: true, usedFallback: false };
+    return { hostPath: paths.mergedExport, copied: true, usedFallback: false };
   }
 
   // Fallback for pre-existing boxes: stream a tar through docker exec into the
   // host target. Slower and skips the in-place delete that rsync gives us, but
   // it works without recreating the container.
-  const excludes = ctx.excludeNodeModules ? ['--exclude=node_modules'] : [];
+  const excludes = excludeNodeModules ? ['--exclude=node_modules'] : [];
   const result = await execa(
     'docker',
-    ['exec', '--user', 'root', record.container, 'tar', '-cf', '-', ...excludes, '-C', ctx.containerSource, '.'],
+    ['exec', '--user', 'root', record.container, 'tar', '-cf', '-', ...excludes, '-C', '/workspace', '.'],
     { reject: false, encoding: 'buffer' },
   );
   if (result.exitCode !== 0) {
     throw new ExportError(
-      `tar from ${ctx.containerSource} failed`,
+      `tar from /workspace failed`,
       '',
       typeof result.stderr === 'string' ? result.stderr : (result.stderr as Buffer).toString('utf8'),
     );
   }
-  const extract = await execa('tar', ['-xf', '-', '-C', ctx.hostTarget], {
+  const extract = await execa('tar', ['-xf', '-', '-C', paths.mergedExport], {
     input: result.stdout as Buffer,
     reject: false,
   });
   if (extract.exitCode !== 0) {
     throw new ExportError('tar extract on host failed', extract.stdout, extract.stderr);
   }
-  return { hostPath: ctx.hostTarget, copied: true, usedFallback: true };
+  return { hostPath: paths.mergedExport, copied: true, usedFallback: true };
 }
 
 /**
@@ -495,9 +409,9 @@ function parseItemizedChanges(stdout: string): string[] {
  * into the user's actual host working directory (`record.workspacePath`).
  *
  * Two-stage: (1) `refreshExport` materializes `/workspace` in the per-box
- * scratch dir (`~/.agentbox/boxes/<id>/workspace`) — that path is the only
- * way to read the in-container FUSE overlay from the Mac; (2) a host-side
- * rsync copies scratch → `workspacePath`.
+ * scratch dir (`~/.agentbox/boxes/<id>/workspace`) — `/workspace` lives in
+ * the container's writable layer, invisible to macOS directly; (2) a
+ * host-side rsync copies scratch → `workspacePath`.
  *
  * Filtering: by default we ask git *inside the box* which files it would
  * track (`git ls-files --cached --others --exclude-standard`) so node_modules
@@ -508,11 +422,10 @@ function parseItemizedChanges(stdout: string): string[] {
  * are preserved. Removals are the user's call.
  */
 export async function pullToHost(
-  record: Pick<BoxRecord, 'id' | 'container' | 'upperVolume' | 'workspacePath'>,
+  record: Pick<BoxRecord, 'id' | 'container' | 'workspacePath'>,
   opts: PullOptions = {},
 ): Promise<PullResult> {
-  const engine = await detectEngine();
-  const paths = await getHostPaths(record, engine);
+  const paths = await getHostPaths(record);
 
   let scratchDir: string;
   if (opts.noRefresh) {
@@ -520,7 +433,6 @@ export async function pullToHost(
     await mkdir(scratchDir, { recursive: true });
   } else {
     const refreshed = await refreshExport(record, {
-      layer: 'merged',
       includeNodeModules: opts.includeNodeModules,
     });
     scratchDir = refreshed.hostPath;
@@ -623,15 +535,15 @@ export interface OpenResult {
 }
 
 /**
- * Refresh the requested export (unless suppressed) and launch the macOS
- * `open` command on it. Returns the host path that was opened.
+ * Refresh the merged export (unless suppressed) and launch the macOS `open`
+ * command on it. Returns the host path that was opened.
  *
  * Set `noOpen: true` to refresh and return the path without launching
- * Finder — used by `agentbox open --print` so scripted callers get a
- * fresh path in one call.
+ * Finder — used by `agentbox open --path` so scripted callers get a fresh
+ * path in one call.
  */
 export async function openInFinder(
-  record: Pick<BoxRecord, 'id' | 'container' | 'upperVolume'>,
+  record: Pick<BoxRecord, 'id' | 'container'>,
   opts: OpenOptions,
 ): Promise<OpenResult> {
   const engine = await detectEngine();
@@ -640,13 +552,9 @@ export async function openInFinder(
   let usedFallback = false;
 
   if (opts.noRefresh) {
-    const paths = await getHostPaths(record, engine);
-    if (opts.layer === 'upper' && engine === 'orbstack' && paths.upperLiveOnHost) {
-      hostPath = paths.upperLiveOnHost;
-    } else {
-      hostPath = opts.layer === 'merged' ? paths.mergedExport : paths.upperExport;
-      await mkdir(hostPath, { recursive: true });
-    }
+    const paths = await getHostPaths(record);
+    hostPath = paths.mergedExport;
+    await mkdir(hostPath, { recursive: true });
   } else {
     const refreshed = await refreshExport(record, opts);
     hostPath = refreshed.hostPath;

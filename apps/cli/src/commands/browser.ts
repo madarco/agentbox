@@ -35,7 +35,7 @@ export const browserCommand = new Command('browser')
         log.info('box is paused; unpausing');
         await unpauseBox(box.id);
       } else if (insp.state === 'stopped') {
-        log.info('box is stopped; starting (remounting overlay)');
+        log.info('box is stopped; starting');
         await startBox(box.id);
       } else if (insp.state === 'missing') {
         throw new Error(`box ${box.name} has no container; was it destroyed?`);

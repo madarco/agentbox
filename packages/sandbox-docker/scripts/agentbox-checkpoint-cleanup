@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Pre-`docker commit` cleanup: strip ephemeral / disposable state so the
+# captured checkpoint image is closer to "warm project state, nothing else".
+#
+# Invoked by the host via `docker exec --user root <container>
+# /usr/local/bin/agentbox-checkpoint-cleanup` right before
+# `docker commit`. Best-effort: every step is allowed to fail (a checkpoint
+# capture should never block on cleanup hiccups).
+#
+# What we DELIBERATELY keep:
+#   - /workspace                  the actual point of the checkpoint
+#   - /home/vscode/.npm           warm npm cache (next install is fast)
+#   - /home/vscode/.cache         pnpm/yarn/Cargo/etc. caches
+#   - /var/lib/docker             in-box dockerd's data root
+#   - /home/vscode/.claude        the named volume is bind-mounted; image
+#                                 layer never sees it anyway
+set +e
+
+# apt: drop downloaded .deb cache and the package index. The index is ~50MB
+# and gets refreshed on the next `apt-get update`; the .deb cache is reusable
+# only if we don't change versions, which we usually do.
+apt-get clean 2>/dev/null
+rm -rf /var/lib/apt/lists/* 2>/dev/null
+
+# Throwaway scratch dirs.
+rm -rf /tmp/* /tmp/.[!.]* /var/tmp/* /var/tmp/.[!.]* 2>/dev/null
+
+# Logs: truncate (don't delete) so the original file modes / ownerships stay
+# intact for the next run. Targets common rotated archives too.
+find /var/log -type f \( -name '*.log' -o -name '*.gz' -o -name '*.1' \) \
+  -exec truncate -s0 {} + 2>/dev/null
+find /var/log/agentbox -type f -exec truncate -s0 {} + 2>/dev/null
+
+# Bash history (root + vscode).
+: > /root/.bash_history 2>/dev/null
+: > /home/vscode/.bash_history 2>/dev/null
+
+# Anthropic's installer writes a transient marker; redundant once the binary
+# is in place. Safe to wipe.
+rm -rf /home/vscode/.claude-installer 2>/dev/null
+
+exit 0

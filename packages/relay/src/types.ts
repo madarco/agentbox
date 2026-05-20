@@ -24,9 +24,15 @@ export interface BoxRegistration {
 export interface BoxWorktree {
   /** Path inside the container (e.g. /workspace, /workspace/app). */
   containerPath: string;
-  /** Host path to the worktree directory. */
-  hostWorktreeDir: string;
-  /** Branch the worktree was created on. */
+  /**
+   * Absolute host path of the main repo whose `.git/` is shared with the
+   * container. `git push/fetch` RPCs run with `git -C <hostMainRepo>` — the
+   * worktree's working tree lives inside the container's writable layer, but
+   * refs/objects are in this shared `.git/`, so push from the main repo dir
+   * sees the in-container commits.
+   */
+  hostMainRepo: string;
+  /** Branch the in-container worktree was created on (`agentbox/<box-name>`). */
   branch: string;
 }
 
@@ -87,4 +93,11 @@ export interface CheckpointRpcParams {
   merged?: boolean;
   /** Mark the new checkpoint as the project default. */
   setDefault?: boolean;
+  /**
+   * If a checkpoint with the same name exists, rm it (manifest + image)
+   * before capturing. Makes the call safe to retry — useful when the
+   * agent's harness lost the previous invocation's stdout and can't tell
+   * whether it succeeded.
+   */
+  replace?: boolean;
 }

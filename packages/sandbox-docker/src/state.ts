@@ -9,11 +9,23 @@ export interface BoxRecord {
   id: string;
   name: string;
   container: string;
+  /**
+   * The image the box was started from. For plain boxes this is
+   * `agentbox/box:dev` (the base image); for boxes started from a checkpoint
+   * it's the checkpoint image tag (and `checkpointImage` mirrors it). Used by
+   * `inspect`, by `prune --all` to know which checkpoint images are still in
+   * use, and by `agentbox self-update` to know which image to wipe.
+   */
   image: string;
   workspacePath: string;
-  lowerPath: string;
-  upperVolume: string;
-  snapshotDir: string | null;
+  /**
+   * Optional per-box scratch dir holding a `cp -c` APFS clone of the host
+   * workspace, made at create time when `--host-snapshot` is on. The clone is
+   * the source of the tar pipe into the container's `/workspace`; absent when
+   * the option wasn't used. Removed on `destroyBox` (the named-volume model is
+   * gone, so this is the only host-side scratch left).
+   */
+  snapshotDir?: string | null;
   /**
    * Host-side path to the agentbox-ctl unix socket bind-mounted into the
    * container at /run/agentbox/ctl.sock. Absent for boxes created before this
@@ -48,11 +60,14 @@ export interface BoxRecord {
    */
   relayToken?: string;
   /**
-   * Git worktrees mounted into the box. Empty/absent when the host workspace
-   * is not a git checkout. The root entry (kind: 'root') replaces the box's
-   * overlay lower; nested entries (kind: 'nested', from monorepo 1st-level
-   * `.git` dirs) are bind-mounted at /workspace/<relPathFromWorkspace> after
-   * the FUSE overlay is mounted.
+   * Per-box git worktrees created inside the container against the bind-mounted
+   * main `.git/` (`git worktree add -b agentbox/<name> /workspace HEAD` from
+   * `seedWorkspace`). Empty/absent when the host workspace is not a git
+   * checkout. The root entry (kind: 'root') is the worktree at /workspace;
+   * nested entries (kind: 'nested', from monorepo 1st-level `.git` dirs) live
+   * at /workspace/<relPathFromWorkspace>. The host has no per-box worktree
+   * dir under ~/.agentbox/boxes/<id>/worktrees/ — `git push` runs in the
+   * shared host main repo against `branch` (the relay's git RPC).
    */
   gitWorktrees?: GitWorktreeRecord[];
   /**
@@ -119,28 +134,21 @@ export interface BoxRecord {
    */
   projectIndex?: number;
   /**
-   * Ordered in-container lower directories (upper-most first) the FUSE overlay
-   * was mounted with. Persisted so `startBox` re-mounts identically after a
-   * stop/start. Absent on non-checkpoint boxes → `mountOverlay` defaults to
-   * the single base bind `['/host-src']` (byte-identical to legacy boxes).
+   * The checkpoint image tag this box was started from (when `--snapshot <ref>`
+   * resolved to a checkpoint). Mirrors `image`. Absent on plain boxes. Used by
+   * `prune --all` to know which `agentbox-ckpt-*` image tags are still in use
+   * by a live box, and by `inspect`/`status` for lineage display.
    */
-  lowerDirs?: string[];
+  checkpointImage?: string;
   /**
-   * The per-project checkpoint Docker volume mounted read-only at
-   * `/agentbox-checkpoints` when this box was created from a checkpoint (the
-   * `lowerDirs` reference subdirs of that mount). Absent on non-checkpoint
-   * boxes. `startBox` revalidates this volume still exists (Docker bakes the
-   * mount at create time) before re-mounting.
-   */
-  checkpointVolume?: string;
-  /**
-   * Lineage of the checkpoint this box was created from. Drives chain-depth
-   * (auto-merge threshold) and `agentbox inspect`. Absent when the box was not
-   * created from a checkpoint.
+   * Lineage of the checkpoint this box was started from. Drives chain-depth
+   * (auto-flatten threshold) and `agentbox inspect`. Absent when the box was
+   * not created from a checkpoint. `chain` is base-most last; for a flattened
+   * checkpoint it's a single entry.
    */
   checkpointSource?: {
     ref: string;
-    type: 'layered' | 'merged';
+    type: 'layered' | 'flattened';
     /** Checkpoint refs composing the chain, base-most last. */
     chain: string[];
   };
@@ -164,11 +172,22 @@ export interface GitWorktreeRecord {
   kind: 'root' | 'nested';
   /** Host path to the main repo whose `.git/` is bind-mounted RW at the identical path inside the container. */
   hostMainRepo: string;
-  /** Host path to the per-box worktree directory (under ~/.agentbox/boxes/<id>/worktrees/). */
-  hostWorktreeDir: string;
-  /** Container path that resolves to the worktree's working tree. /workspace for root, /workspace/<subpath> for nested. */
+  /**
+   * Agent-visible container path of the worktree (`/workspace` for root,
+   * `/workspace/<sub>` for nested). After `seedWorkspace` runs this is a
+   * symlink to `gitWorktreePath`.
+   */
   containerPath: string;
-  /** Branch the worktree was created on, e.g. `agentbox/<box-name>`. */
+  /**
+   * Per-box unique path where git registered the worktree
+   * (`/home/vscode/.agentbox-worktrees/<fsSafeBranch>`). Load-bearing: the
+   * host main repo's worktree registry is keyed by absolute path, so multiple
+   * concurrent boxes in the same project must register at *different* paths
+   * even though they all expose `/workspace` to the agent. `destroyBox` uses
+   * this path to deregister the worktree on the host.
+   */
+  gitWorktreePath: string;
+  /** Branch the worktree was created on, e.g. `agentbox/<box-name>`. The relay's `git.push`/`git.fetch` runs against this branch in the shared host `.git`. */
   branch: string;
   /** Workspace-relative path the repo was found at (empty string for root). */
   relPathFromWorkspace: string;

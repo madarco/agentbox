@@ -33,25 +33,32 @@ export {
 export { createBox, type CreateBoxOptions, type CreatedBox } from './create.js';
 export {
   agentboxHomeBytes,
-  allCheckpointVolumesBytes,
+  allCheckpointImagesBytes,
   boxResourceStats,
   parseDockerSize,
-  projectCheckpointVolumeBytes,
+  projectCheckpointImageBytes,
   volumeSizeBytes,
 } from './stats.js';
 export { getBoxEndpoints, type BoxEndpoint, type BoxEndpoints } from './endpoints.js';
 export { execInBox, removeImage, type DockerExecResult } from './docker.js';
 export {
-  createBoxWorktree,
   detectGitRepos,
   GitWorktreeError,
   pickFreshBranch,
-  removeBoxWorktree,
-  type CreateBoxWorktreeArgs,
-  type CreateBoxWorktreeResult,
   type DetectedGitRepo,
-  type RemoveBoxWorktreeArgs,
 } from './git-worktree.js';
+export {
+  bindWorktrees,
+  collectRepoCarryOver,
+  gitWorktreePathFor,
+  removeInBoxWorktree,
+  seedWorkspace,
+  seedWorkspaceFromDir,
+  WORKTREE_ROOT,
+  type RepoCarryOver,
+  type SeedWorkspaceOptions,
+  type WorktreeBindSpec,
+} from './in-box-git.js';
 export { DEFAULT_BOX_IMAGE } from './image.js';
 export {
   DEFAULT_RELAY_PORT,
@@ -72,19 +79,16 @@ export {
 export { EXCLUDE_DIRS, SNAPSHOTS_ROOT, snapshotPathFor } from './snapshot.js';
 export {
   CHECKPOINTS_ROOT,
-  CHECKPOINT_MOUNT,
-  CHECKPOINT_VOLUME_PREFIX,
+  CHECKPOINT_IMAGE_PREFIX,
   CheckpointError,
-  checkpointVolumeName,
+  checkpointImageTag,
   computeNextCheckpointName,
   createCheckpoint,
   listCheckpoints,
   projectCheckpointsDir,
   removeCheckpoint,
   resolveCheckpoint,
-  resolveCheckpointLower,
   type CheckpointInfo,
-  type CheckpointLowerSpec,
   type CheckpointManifest,
   type CheckpointType,
   type CreateCheckpointOptions,
@@ -104,13 +108,6 @@ export {
   type GitWorktreeRecord,
   type StateFile,
 } from './state.js';
-export {
-  OverlayError,
-  type MountOverlayOptions,
-  type MountOverlayResult,
-  type NestedWorktreeBind,
-  type OverlayCheck,
-} from './overlay.js';
 export {
   attachedContainerUri,
   buildFlavorMounts,
@@ -142,8 +139,8 @@ export {
   readBoxStatus,
   buildHostEnvFindArgs,
   CONTAINER_EXPORT_MERGED,
-  CONTAINER_EXPORT_UPPER,
   copyHostEnvFilesToBox,
+  orbstackVolumePath,
   DEFAULT_ENV_PATTERNS,
   detectEngine,
   ExportError,
@@ -151,10 +148,8 @@ export {
   openInFinder,
   pullToHost,
   refreshExport,
-  resolveUpperLiveOnHost,
   setEngineOverride,
   type DockerEngine,
-  type ExportLayer,
   type HostPaths,
   type CopyHostEnvOptions,
   type OpenOptions,

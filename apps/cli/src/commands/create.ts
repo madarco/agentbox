@@ -51,12 +51,15 @@ function resolveUseSnapshot(
   opts: CreateOptions,
   configDefault: boolean | undefined,
 ): boolean {
-  // host-snapshot (frozen APFS clone of the host workspace): on by default;
-  // explicit CLI flag wins, then config layers. No interactive prompt — power
-  // users override via `--no-host-snapshot` or `box.hostSnapshot: false`.
+  // host-snapshot used to be on by default because the snapshot was the
+  // overlay lower (the box read directly from it). With the new model the
+  // snapshot is only the tar-pipe source for the no-git case, so default off:
+  // the live host workspace is a fine source for a 1-2s tar pipe. Users who
+  // want the clone-then-tar dance still get it via `--host-snapshot` or
+  // `box.hostSnapshot: true`.
   if (opts.hostSnapshot === false) return false;
   if (opts.hostSnapshot === true) return true;
-  return configDefault ?? true;
+  return configDefault ?? false;
 }
 
 /**
@@ -80,10 +83,10 @@ function attachShell(container: string): never {
 }
 
 export const createCommand = new Command('create')
-  .description('Create and start a new agent box (Docker container with FUSE overlay)')
+  .description('Create and start a new agent box (Docker container with /workspace seeded via in-container git worktree)')
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
   .option('-n, --name <name>', 'friendly box name (default: <workspace-basename>-<id>)')
-  .option('--host-snapshot', 'use a frozen APFS clone of the host workspace as the overlay lower')
+  .option('--host-snapshot', 'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)')
   .option('--no-host-snapshot', 'bind the live workspace directly (host edits leak into reads)')
   .option(
     '--snapshot <ref>',
@@ -104,8 +107,8 @@ export const createCommand = new Command('create')
   .option('--memory <size>', 'memory ceiling (e.g. 512m, 2g); unset = unlimited')
   .option('--cpus <n>', 'CPU count cap (fractional ok, e.g. 1.5); unset = unlimited')
   .option('--pids-limit <n>', 'max process count (PIDs cgroup); unset = unlimited')
-  .option('--disk <size>', 'best-effort writable-layer size (e.g. 10g); no-op on overlay2/macOS')
-  .option('-y, --yes', 'skip prompts, accept defaults (host-snapshot=on)')
+  .option('--disk <size>', 'best-effort container writable-layer size (e.g. 10g); no-op on overlay2/macOS')
+  .option('-y, --yes', 'skip prompts, accept defaults')
   .action(async (opts: CreateOptions) => {
     intro('Setting up a new box...');
 
@@ -165,19 +168,13 @@ export const createCommand = new Command('create')
       }
       log.info(`container: ${result.record.container}`);
       log.info(`image:     ${result.record.image}${result.imageBuilt ? ' (built just now)' : ''}`);
-      log.info(`lower:     ${result.record.lowerPath}`);
-      log.info(`upper:     ${result.record.upperVolume}`);
       if (result.record.snapshotDir) {
         log.info(`snapshot:  ${result.record.snapshotDir}`);
       }
       if (result.record.checkpointSource) {
         log.info(
-          `checkpoint: ${result.record.checkpointSource.ref} (${result.record.checkpointSource.type})`,
+          `checkpoint: ${result.record.checkpointSource.ref} (${result.record.checkpointSource.type}) → ${result.record.checkpointImage ?? '(missing)'}`,
         );
-      }
-
-      for (const check of result.overlayChecks) {
-        log.success(`${check.name} — ${check.detail}`);
       }
 
       log.message(
@@ -188,8 +185,7 @@ export const createCommand = new Command('create')
           `  docker exec ${result.record.container} ls /workspace`,
           '',
           'Destroy:',
-          `  docker rm -f ${result.record.container}`,
-          `  docker volume rm ${result.record.upperVolume}`,
+          `  agentbox destroy ${result.record.name}`,
         ].join('\n'),
       );
 

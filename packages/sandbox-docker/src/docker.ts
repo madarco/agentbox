@@ -31,8 +31,6 @@ export interface BoxLimitSpec {
 export interface RunBoxSpec {
   name: string;
   image: string;
-  lowerPath: string;
-  upperVolume: string;
   extraVolumes?: string[];
   env?: Record<string, string>;
   limits?: BoxLimitSpec;
@@ -61,6 +59,13 @@ export async function runBox(spec: RunBoxSpec): Promise<string> {
     // need. Both are scoped to the outer box's namespaces — inner containers
     // can't escape it. We still avoid --privileged for cloud portability.
     '--cap-add=NET_ADMIN',
+    // /dev/fuse + SYS_ADMIN + apparmor:unconfined used to be required for the
+    // outer /workspace FUSE overlay. That overlay is gone, but they're still
+    // load-bearing for the *inner* dockerd: it runs with
+    // storage-driver=fuse-overlayfs (set in /etc/docker/daemon.json in the
+    // image) because the kernel `overlay` driver isn't usable from an
+    // unprivileged outer container, and fuse-overlayfs needs the fuse device
+    // + SYS_ADMIN to mount layers for inner containers.
     '--device=/dev/fuse',
     '--security-opt=apparmor:unconfined',
     '--security-opt=seccomp=unconfined',
@@ -76,10 +81,6 @@ export async function runBox(spec: RunBoxSpec): Promise<string> {
     // default; on Linux native Docker it requires this explicit flag (no-op
     // on the macOS engines). Boxes use it to reach the host relay process.
     '--add-host=host.docker.internal:host-gateway',
-    '-v',
-    `${spec.lowerPath}:/host-src:ro`,
-    '-v',
-    `${spec.upperVolume}:/upper`,
   ];
   const lim = spec.limits;
   if (lim) {

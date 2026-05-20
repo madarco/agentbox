@@ -14,8 +14,6 @@ const mkBox = (id: string, container: string): BoxRecord => ({
   container,
   image: 'agentbox/box:dev',
   workspacePath: '/tmp/ws',
-  lowerPath: '/tmp/ws',
-  upperVolume: `agentbox-upper-${id}`,
   snapshotDir: null,
   createdAt: '2026-05-12T00:00:00.000Z',
 });
@@ -110,22 +108,25 @@ describe('pruneBoxes', () => {
         inspectContainerStatus: vi.fn(async () => 'running'),
         listAgentboxContainers: vi.fn(async () => ['agentbox-live', 'agentbox-orphan']),
         listAgentboxVolumes: vi.fn(async () => [
-          'agentbox-upper-11111111',
-          // Back-compat guard: the per-box nm volume was removed, but a box
-          // created before that still has agentbox-nm-<id> on disk. The prune
-          // allowlist reconstructs the name for surviving boxes so it is NOT
-          // reaped even though BoxRecord no longer carries the field.
-          'agentbox-nm-11111111',
+          // Per-box claude config (anonymous user; live box) — allowlisted by
+          // record.claudeConfigVolume so it is NOT reaped.
+          'agentbox-claude-config-11111111',
           'agentbox-orphan-vol',
         ]),
         removeContainer: vi.fn(async () => undefined),
         removeVolume: vi.fn(async () => undefined),
+        removeImage: vi.fn(async () => true),
       };
     });
 
     await seed({
       version: 1,
-      boxes: [mkBox('11111111', 'agentbox-live')],
+      boxes: [
+        {
+          ...mkBox('11111111', 'agentbox-live'),
+          claudeConfigVolume: 'agentbox-claude-config-11111111',
+        },
+      ],
     });
 
     const { pruneBoxes } = await import('../src/lifecycle.js');
@@ -135,32 +136,67 @@ describe('pruneBoxes', () => {
     expect(result.removedVolumes).toEqual(['agentbox-orphan-vol']);
   });
 
-  it('with --all, reaps an orphan legacy agentbox-nm volume with no surviving box', async () => {
+  it('with --all, reaps unreferenced checkpoint images', async () => {
     vi.doMock('../src/docker.js', async () => {
       const actual = await vi.importActual<typeof import('../src/docker.js')>('../src/docker.js');
+      const { execa } = await import('execa');
+      // listCheckpointImageTags shells out to `docker image ls`; stub via the
+      // module barrel so the prune codepath sees our chosen tag list.
       return {
         ...actual,
         inspectContainerStatus: vi.fn(async () => 'running'),
         listAgentboxContainers: vi.fn(async () => ['agentbox-live']),
-        listAgentboxVolumes: vi.fn(async () => [
-          'agentbox-upper-11111111',
-          // No surviving box owns id 99999999, so this legacy nm volume is
-          // not allowlisted and must be reaped by the generic agentbox-* sweep.
-          'agentbox-nm-99999999',
-        ]),
+        listAgentboxVolumes: vi.fn(async () => []),
         removeContainer: vi.fn(async () => undefined),
         removeVolume: vi.fn(async () => undefined),
+        removeImage: vi.fn(async () => true),
+        _execa: execa,
+      };
+    });
+
+    // Stub `execa` so listCheckpointImageTags' `docker image ls` returns a
+    // controlled tag list. The shape is the same one-line-per-tag stdout the
+    // real command produces.
+    vi.doMock('execa', async () => {
+      const actual = await vi.importActual<typeof import('execa')>('execa');
+      return {
+        ...actual,
+        execa: vi.fn(async (...args: unknown[]) => {
+          const cmd = args[0] as string;
+          const argv = (args[1] ?? []) as string[];
+          if (
+            cmd === 'docker' &&
+            argv[0] === 'image' &&
+            argv[1] === 'ls' &&
+            (argv[argv.length - 1] ?? '').startsWith('agentbox-ckpt-')
+          ) {
+            return {
+              exitCode: 0,
+              stdout:
+                'agentbox-ckpt-hashA:keep\nagentbox-ckpt-hashB:orphan\n',
+              stderr: '',
+            };
+          }
+          // Fall through to the real execa for anything else (e.g. relay
+          // sweep doesn't fire in dryRun=true).
+          return actual.execa(cmd, argv as readonly string[]);
+        }),
       };
     });
 
     await seed({
       version: 1,
-      boxes: [mkBox('11111111', 'agentbox-live')],
+      boxes: [
+        {
+          ...mkBox('11111111', 'agentbox-live'),
+          checkpointImage: 'agentbox-ckpt-hashA:keep',
+        },
+      ],
     });
 
     const { pruneBoxes } = await import('../src/lifecycle.js');
     const result = await pruneBoxes({ all: true, dryRun: true });
 
-    expect(result.removedVolumes).toEqual(['agentbox-nm-99999999']);
+    expect(result.removedCheckpointImages).toEqual(['agentbox-ckpt-hashB:orphan']);
   });
 });

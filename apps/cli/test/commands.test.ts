@@ -55,13 +55,15 @@ describe('lifecycle CLI surface', () => {
     expect(createCommand.name()).toBe('create');
   });
 
-  it('open is files-only (Finder + --path), no --browser/--loopback', () => {
+  it('open is files-only (Finder + --path), no --browser/--loopback/--upper', () => {
     expect(openCommand.name()).toBe('open');
     expect(openCommand.commands).toHaveLength(0);
     const longs = openCommand.options.map((o) => o.long);
     expect(longs).toEqual(
-      expect.arrayContaining(['--upper', '--no-refresh', '--include-node-modules', '--path', '--print']),
+      expect.arrayContaining(['--no-refresh', '--include-node-modules', '--path', '--print']),
     );
+    // --upper retired with the FUSE overlay; the merged export is the only view now.
+    expect(longs).not.toContain('--upper');
     expect(longs).not.toContain('--browser');
     expect(longs).not.toContain('--loopback');
   });

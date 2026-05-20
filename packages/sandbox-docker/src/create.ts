@@ -22,21 +22,22 @@ import {
 import { dockerVolumeName, launchDockerdDaemon } from './dockerd.js';
 import { generateVncPassword, launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
 import { WEB_CONTAINER_PORT } from './web.js';
-import { createBoxWorktree, detectGitRepos } from './git-worktree.js';
+import { detectGitRepos, pickFreshBranch } from './git-worktree.js';
+import {
+  bindWorktrees,
+  collectRepoCarryOver,
+  gitWorktreePathFor,
+  seedWorkspace,
+  seedWorkspaceFromDir,
+  type RepoCarryOver,
+} from './in-box-git.js';
 import {
   CONTAINER_EXPORT_MERGED,
-  CONTAINER_EXPORT_UPPER,
   DEFAULT_ENV_PATTERNS,
   boxRunDirFor,
   copyHostEnvFilesToBox,
 } from './host-export.js';
 import { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
-import {
-  mountOverlay,
-  verifyOverlay,
-  type NestedWorktreeBind,
-  type OverlayCheck,
-} from './overlay.js';
 import {
   allocateProjectIndex,
   readState,
@@ -45,7 +46,7 @@ import {
   type GitWorktreeRecord,
 } from './state.js';
 import { createSnapshot, snapshotPathFor } from './snapshot.js';
-import { CHECKPOINT_MOUNT, resolveCheckpointLower } from './checkpoint.js';
+import { resolveCheckpoint } from './checkpoint.js';
 import { launchCtlDaemon } from './ctl.js';
 import { writeBoxEnvFile } from './box-env.js';
 import {
@@ -65,13 +66,21 @@ import {
 export interface CreateBoxOptions {
   workspacePath: string;
   name?: string;
-  /** Frozen APFS clone of the host workspace as the overlay lower (the `--host-snapshot` path). */
+  /**
+   * Take a `cp -c` APFS clone of the host workspace into
+   * `~/.agentbox/snapshots/<id>/` before seeding `/workspace`. Stabilizes the
+   * source of the tar pipe in the non-git case (and the untracked-file
+   * pipe in the git case) against host edits during create. Effectively a
+   * no-op when a git worktree is detected — the worktree's tracked content
+   * comes from `.git`, not from a workspace copy.
+   */
   useSnapshot: boolean;
   /**
    * Start the box from a project checkpoint (the `--snapshot <ref>` path).
-   * Resolved against `projectRoot` (or `workspacePath` when unset). A
-   * `layered` checkpoint stacks its captured delta(s) over the normal base
-   * lower; a `merged` checkpoint is the sole, frozen lower.
+   * Resolved against `projectRoot` (or `workspacePath` when unset). The
+   * checkpoint is a local Docker *image* tag now; the box is created with
+   * `docker run <ckpt-image>` and inherits a populated `/workspace`. No
+   * `seedWorkspace` runs in this path.
    */
   checkpointRef?: string;
   image?: string;
@@ -86,16 +95,16 @@ export interface CreateBoxOptions {
   claudeEnv?: Record<string, string>;
   /**
    * When true, run `npm install -g @playwright/cli@latest` inside the box after
-   * the overlay is mounted. agent-browser is always installed in the image; this
-   * flag adds the Playwright CLI on top for boxes that need it.
+   * `/workspace` is seeded. agent-browser is always installed in the image;
+   * this flag adds the Playwright CLI on top for boxes that need it.
    */
   withPlaywright?: boolean;
   /**
    * When true, copy the host's env/config files (DEFAULT_ENV_PATTERNS basename
    * globs — `.env*`, `secrets.toml`, `agentbox.yaml`, ...) into the box's
-   * /workspace after the overlay is mounted, bypassing gitignore. The reverse
-   * of `pull env`. One-shot at create time; the files persist in the writable
-   * upper layer across pause/stop/start.
+   * /workspace after seeding, bypassing gitignore. The reverse of `pull env`.
+   * One-shot at create time; the files persist in the container's writable
+   * layer across pause/stop/start.
    */
   withEnv?: boolean;
   /**
@@ -132,7 +141,6 @@ export interface CreateBoxOptions {
 
 export interface CreatedBox {
   record: BoxRecord;
-  overlayChecks: OverlayCheck[];
   imageBuilt: boolean;
 }
 
@@ -211,8 +219,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // Pre-flight agentbox.yaml validation on the host so the user sees the real
   // ConfigError instead of an opaque "socket did not appear" timeout from the
   // detached daemon exec later. The daemon re-validates inside the box anyway
-  // — defence in depth, and necessary because the file lives in the overlay
-  // and can be edited after create.
+  // — defence in depth, and necessary because the file lives in the
+  // container's writable layer and can be edited after create.
   const cfgPath = join(workspace, 'agentbox.yaml');
   if (await pathExists(cfgPath)) {
     try {
@@ -229,11 +237,41 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   await dockerInfo();
   log('docker daemon reachable');
 
-  const imageRef = opts.image ?? DEFAULT_BOX_IMAGE;
-  const { built } = await ensureImage(imageRef, {
+  // Checkpoint resolution happens *before* image ensure because a checkpoint
+  // image replaces the base image as the docker-run base. resolveCheckpoint
+  // returns null on miss; we error with the ref so the user can fix it.
+  let checkpointImage: string | undefined;
+  let checkpointSource: BoxRecord['checkpointSource'];
+  let restoredWorktrees: GitWorktreeRecord[] | undefined;
+  if (opts.checkpointRef) {
+    const projectRootForCkpt = opts.projectRoot ?? workspace;
+    const head = await resolveCheckpoint(projectRootForCkpt, opts.checkpointRef);
+    if (!head) {
+      throw new Error(`checkpoint not found: ${opts.checkpointRef}`);
+    }
+    checkpointImage = head.manifest.image;
+    // Chain: head first then its parents (base-most last). For a flattened
+    // checkpoint this collapses to a single-entry chain.
+    const chain = [head.name, ...head.manifest.parents];
+    checkpointSource = { ref: opts.checkpointRef, type: head.manifest.type, chain };
+    // The source's per-worktree paths persisted on the manifest so we can
+    // re-establish the /workspace bind mount(s) after `docker run` (docker
+    // commit doesn't capture bind-mount content, so the image's /workspace
+    // is empty until we re-bind).
+    restoredWorktrees = head.manifest.worktrees;
+    log(
+      `starting from checkpoint ${opts.checkpointRef} (${head.manifest.type}, ${String(chain.length)} layer(s), image ${head.manifest.image})`,
+    );
+  }
+
+  const imageRef = checkpointImage ?? opts.image ?? DEFAULT_BOX_IMAGE;
+  // ensureImage only acts on the base image; checkpoint images are local-only
+  // and must already exist (they were created by `agentbox checkpoint`).
+  const ensureRef = checkpointImage ? (opts.image ?? DEFAULT_BOX_IMAGE) : imageRef;
+  const { built } = await ensureImage(ensureRef, {
     onProgress: (line) => log(`[image] ${line}`),
   });
-  log(built ? `built image ${imageRef}` : `using cached image ${imageRef}`);
+  log(built ? `built image ${ensureRef}` : `using cached image ${imageRef}`);
 
   // Bring up the host relay before the box so the box can post events
   // immediately on boot. Best-effort — a relay outage shouldn't block create.
@@ -258,98 +296,72 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     throw new Error(`container ${containerName} already exists; remove it first`);
   }
 
-  // Detect host git repos at workspace root + 1st-level subdirs and create a
-  // dedicated worktree per repo on a fresh `agentbox/<box-name>` branch. The
-  // host's working tree stays untouched; uncommitted (tracked + untracked)
-  // state is carried into the worktree so the agent picks up where the user
-  // left off. The root worktree (if any) replaces the box's overlay lower so
-  // /workspace is the agent's editable working tree; nested worktrees are
-  // staged on a side path and bind-mounted on top of /workspace/<subpath>
-  // after the FUSE overlay is up (see mountOverlay).
-  const worktreesRoot = join(boxRunDirFor(id), 'worktrees');
-  await mkdir(worktreesRoot, { recursive: true });
+  // Repo detection + host-side carry-over capture. Branches are picked here
+  // (against the host main repos' refs) so they're recorded on the BoxRecord
+  // regardless of whether the in-container `git worktree add` succeeds later.
+  // When restoring from a checkpoint, the source's per-worktree records are
+  // restored from the manifest *here* (not after `docker run`) so the
+  // `.git/` bind-mounts in `extraVolumes` know which host main repos to
+  // wire up — without those binds the in-container `/workspace/.git` would
+  // resolve to a path that doesn't exist in the new container.
+  const repoCarryOvers: RepoCarryOver[] = [];
   const gitWorktreeRecords: GitWorktreeRecord[] = [];
-  const nestedWorktreeBinds: NestedWorktreeBind[] = [];
-  const repos = await detectGitRepos(workspace);
-  if (repos.length > 0) {
-    log(
-      `detected ${String(repos.length)} git repo(s): ` +
-        repos.map((r) => `${r.kind}${r.relPathFromWorkspace ? '@' + r.relPathFromWorkspace : ''}`).join(', '),
-    );
+  if (checkpointImage && restoredWorktrees && restoredWorktrees.length > 0) {
+    gitWorktreeRecords.push(...restoredWorktrees);
   }
-  for (const r of repos) {
-    const worktreeDir = join(worktreesRoot, r.relPathFromWorkspace || 'root');
-    const branchBase =
-      r.kind === 'root'
-        ? `agentbox/${name}`
-        : `agentbox/${name}--${r.relPathFromWorkspace.replace(/[^A-Za-z0-9._-]+/g, '_')}`;
-    const result = await createBoxWorktree({
-      hostMainRepo: r.hostMainRepo,
-      branchName: branchBase,
-      worktreeDir,
-      onLog: log,
-    });
-    const containerPath = r.kind === 'root' ? '/workspace' : `/workspace/${r.relPathFromWorkspace}`;
-    gitWorktreeRecords.push({
-      kind: r.kind,
-      hostMainRepo: r.hostMainRepo,
-      hostWorktreeDir: worktreeDir,
-      containerPath,
-      branch: result.branchName,
-      relPathFromWorkspace: r.relPathFromWorkspace,
-    });
-    if (r.kind === 'nested') {
-      nestedWorktreeBinds.push({
+  if (!checkpointImage) {
+    const repos = await detectGitRepos(workspace);
+    if (repos.length > 0) {
+      log(
+        `detected ${String(repos.length)} git repo(s): ` +
+          repos.map((r) => `${r.kind}${r.relPathFromWorkspace ? '@' + r.relPathFromWorkspace : ''}`).join(', '),
+      );
+    }
+    for (const r of repos) {
+      const branchBase =
+        r.kind === 'root'
+          ? `agentbox/${name}`
+          : `agentbox/${name}--${r.relPathFromWorkspace.replace(/[^A-Za-z0-9._-]+/g, '_')}`;
+      const branch = await pickFreshBranch(r.hostMainRepo, branchBase);
+      const containerPath =
+        r.kind === 'root' ? '/workspace' : `/workspace/${r.relPathFromWorkspace}`;
+      const gitWorktreePath = gitWorktreePathFor(branch);
+      const carry = await collectRepoCarryOver(r, branch, containerPath, gitWorktreePath);
+      repoCarryOvers.push(carry);
+      gitWorktreeRecords.push({
+        kind: r.kind,
+        hostMainRepo: r.hostMainRepo,
         containerPath,
-        mountFromPath: `/agentbox-worktrees/${r.relPathFromWorkspace}`,
+        gitWorktreePath,
+        branch,
+        relPathFromWorkspace: r.relPathFromWorkspace,
       });
     }
   }
 
-  let lowerPath = workspace;
-  const rootWorktree = gitWorktreeRecords.find((w) => w.kind === 'root');
-  if (rootWorktree) {
-    lowerPath = rootWorktree.hostWorktreeDir;
-    log(`using worktree as overlay lower: ${lowerPath}`);
-  }
-
+  // --host-snapshot: APFS clone the workspace into a per-box scratch dir.
+  // Only the no-git, no-checkpoint path actually consumes the clone (as the
+  // source of the tar pipe in seedWorkspaceFromDir). For the git path the
+  // worktree content comes from `.git`'s object DB (bind-mounted) and the
+  // untracked-file tar pipe reads from the live host main repo — neither
+  // touches `snapshotDir`, so we skip it. For checkpoint restore there's no
+  // seedWorkspace at all. Kept on the BoxRecord so destroyBox can clean it up.
   let snapshotDir: string | null = null;
-  if (opts.useSnapshot) {
+  const snapshotIsUseful = !checkpointImage && repoCarryOvers.length === 0;
+  if (opts.useSnapshot && snapshotIsUseful) {
     snapshotDir = snapshotPathFor(id);
     log(`cloning workspace to ${snapshotDir} (APFS clone where available)`);
-    const snap = await createSnapshot({ source: lowerPath, destination: snapshotDir });
+    const snap = await createSnapshot({ source: workspace, destination: snapshotDir });
     log(`pruned ${snap.prunedPaths.length} platform-dependent dirs from snapshot`);
-    lowerPath = snapshotDir;
+  } else if (opts.useSnapshot && !checkpointImage) {
+    log('skipping --host-snapshot: git worktree path reads content from .git, not from a workspace clone');
   }
 
-  // Checkpoint restore: mount the per-project checkpoint volume read-only
-  // ONCE at /agentbox-checkpoints; the overlay uses its `<name>` subdirs as
-  // lowerdirs (layered, over the /host-src base) or the sole lower (merged,
-  // code frozen). The base bind is always `${lowerPath}:/host-src`.
-  let lowerDirs: string[] | undefined;
-  let checkpointVolume: string | undefined;
-  let checkpointSource: BoxRecord['checkpointSource'];
-  if (opts.checkpointRef) {
-    const projectRootForCkpt = opts.projectRoot ?? workspace;
-    const spec = await resolveCheckpointLower(projectRootForCkpt, opts.checkpointRef);
-    checkpointVolume = spec.volume;
-    const layerDirs = spec.subpaths.map((s) => `${CHECKPOINT_MOUNT}/${s}`);
-    lowerDirs = spec.type === 'merged' ? layerDirs : [...layerDirs, '/host-src'];
-    checkpointSource = { ref: opts.checkpointRef, type: spec.type, chain: spec.chain };
-    log(
-      `starting from checkpoint ${opts.checkpointRef} (${spec.type}, ${String(spec.subpaths.length)} layer(s), volume ${spec.volume})`,
-    );
-  }
-
-  const upperVolume = `agentbox-upper-${id}`;
-  await ensureVolume(upperVolume);
   await ensureIdeVolumes(id);
   const dockerCacheShared = opts.docker?.sharedCache === true;
   const dockerVolume = dockerVolumeName(id, dockerCacheShared);
   await ensureVolume(dockerVolume);
-  log(
-    `prepared volumes ${upperVolume}, ${vscodeServerVolumeName(id)}, ${cursorServerVolumeName(id)}, ${dockerVolume}`,
-  );
+  log(`prepared volumes ${vscodeServerVolumeName(id)}, ${cursorServerVolumeName(id)}, ${dockerVolume}`);
   const ide = buildIdeMounts(id);
 
   // Claude Code config volume. Shared by default so users sign in once across
@@ -364,7 +376,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   });
   const claudeEnsured = await ensureClaudeVolume(claudeSpec, {
     syncFromHost: true,
-    image: imageRef,
+    image: ensureRef,
     hostWorkspace: workspace,
   });
   if (claudeEnsured.synced) {
@@ -387,51 +399,36 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   }
   // Box-only: seed /agentbox-setup into the volume from the image. Never
   // touches the host's ~/.claude. Skipped if a copy already exists.
-  const seeded = await seedSetupSkillIntoVolume(claudeSpec.volume, imageRef);
+  const seeded = await seedSetupSkillIntoVolume(claudeSpec.volume, ensureRef);
   if (seeded.seeded) log(`seeded /agentbox-setup skill into ${claudeSpec.volume}`);
   const claudeMounts = buildClaudeMounts(claudeSpec, process.env);
 
   const boxDir = boxRunDirFor(id);
   const socketDir = join(boxDir, 'run');
   const socketPath = join(socketDir, 'ctl.sock');
-  // Per-box host dirs that `agentbox open` / `agentbox path` refresh into.
-  // We bind these in at create time so a later `docker exec rsync` can write
-  // straight to the host filesystem — no container restart needed.
+  // Per-box host dir that `agentbox open` refreshes the merged /workspace
+  // into. Bound in at create time so `docker exec rsync` can write straight
+  // to the host filesystem — no container restart needed.
   const mergedExportDir = join(boxDir, 'workspace');
-  const upperExportDir = join(boxDir, 'upper');
   await mkdir(socketDir, { recursive: true });
   await mkdir(mergedExportDir, { recursive: true });
-  await mkdir(upperExportDir, { recursive: true });
 
   const extraVolumes = await buildIdentityMounts();
   extraVolumes.push(...claudeMounts.extraVolumes);
   extraVolumes.push(...ide.extraVolumes);
   extraVolumes.push(`${socketDir}:/run/agentbox`);
   extraVolumes.push(`${mergedExportDir}:${CONTAINER_EXPORT_MERGED}`);
-  extraVolumes.push(`${upperExportDir}:${CONTAINER_EXPORT_UPPER}`);
   // In-box dockerd's data root. Per-box (`agentbox-docker-<id>`, wiped on
   // destroy) by default; shared (`agentbox-docker-cache`, preserved) when
   // `box.dockerCacheShared` is set.
   extraVolumes.push(`${dockerVolume}:/var/lib/docker`);
   // Bind-mount each main repo's `.git/` at its identical absolute host path,
-  // RW. Worktree pointer files (`<worktree>/.git`) and the back-reference at
-  // `<main>/.git/worktrees/<name>/gitdir` contain absolute paths; both must
-  // resolve to the same path on host and inside the container or git breaks
-  // on one side.
+  // RW. The in-container `git worktree add` writes to <main>/.git/worktrees/
+  // and the agent's commits write to refs/objects; both have to hit the same
+  // path on host and inside the container so `git push` from the host main
+  // repo sees the new commits without further sync.
   for (const w of gitWorktreeRecords) {
     extraVolumes.push(`${w.hostMainRepo}/.git:${w.hostMainRepo}/.git`);
-  }
-  // Stage nested worktrees on a side path so mountOverlay() can bind-mount
-  // them on top of /workspace/<subpath> after the FUSE overlay is up.
-  for (const w of gitWorktreeRecords) {
-    if (w.kind === 'nested') {
-      extraVolumes.push(`${w.hostWorktreeDir}:/agentbox-worktrees/${w.relPathFromWorkspace}`);
-    }
-  }
-  // Per-project checkpoint volume, mounted read-only once; the overlay's
-  // lowerdirs are its `<name>` subdirs (see mountOverlay).
-  if (checkpointVolume) {
-    extraVolumes.push(`${checkpointVolume}:${CHECKPOINT_MOUNT}:ro`);
   }
   for (const v of extraVolumes) log(`mounting agent dir: ${v}`);
 
@@ -486,20 +483,13 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   ];
 
   // Per-project monotonic index. Allocated *before* runBox so it can be
-  // injected as AGENTBOX_PROJECT_INDEX in the container env. Re-reads state
-  // each time so concurrent creates from the same project see each other's
-  // assignments (last-write-wins is fine — `recordBox` upserts by id, and
-  // index collisions are harmless since each box's id is unique).
+  // injected as AGENTBOX_PROJECT_INDEX in the container env.
   let projectIndex: number | undefined;
   if (opts.projectRoot) {
     projectIndex = allocateProjectIndex(await readState(), opts.projectRoot);
   }
 
-  // Identity vars that make the box self-aware. `AGENTBOX=1` is the sentinel
-  // `[ -n "$AGENTBOX" ]` checks key off. The rest are metadata for in-box
-  // agents — `AGENTBOX_HOST_WORKSPACE` is intentionally the absolute host
-  // path (not a mount), so an agent can explain to the user what host dir
-  // they are looking at.
+  // Identity vars that make the box self-aware.
   const agentboxEnv: Record<string, string> = {
     AGENTBOX: '1',
     AGENTBOX_BOX_NAME: name,
@@ -514,9 +504,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     ...agentboxEnv,
   };
 
-  // `--storage-opt size=` is only enforced by devicemapper/btrfs/zfs — a hard
-  // error on overlay2 / fuse-overlayfs (every macOS engine). Drop it + warn so
-  // create doesn't blow up; the other limits are universal.
+  // `--storage-opt size=` is only enforced by devicemapper/btrfs/zfs.
   const appliedLimits: BoxLimitSpec | undefined = opts.limits;
   let effectiveLimits = appliedLimits;
   if (appliedLimits?.disk) {
@@ -532,8 +520,6 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   await runBox({
     name: containerName,
     image: imageRef,
-    lowerPath,
-    upperVolume,
     extraVolumes,
     limits: effectiveLimits,
     portMappings: [...vncPortMappings, ...webPortMappings],
@@ -556,24 +542,46 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   if (boxEnv.ok) log('wrote /etc/agentbox/box.env');
   else log(`writing /etc/agentbox/box.env failed: ${boxEnv.reason}`);
 
-  try {
-    await mountOverlay(containerName, { lowerDirs, nestedWorktrees: nestedWorktreeBinds });
-    log('fuse-overlayfs mounted at /workspace');
-    if (nestedWorktreeBinds.length > 0) {
-      log(`bind-mounted ${String(nestedWorktreeBinds.length)} nested worktree(s) over /workspace`);
+  // Seed /workspace.
+  //   - Checkpoint restore: the image already has the source box's per-box
+  //     worktree dir populated; we only need to re-establish the bind mount
+  //     onto /workspace (docker commit doesn't capture bind-mount content).
+  //   - Git path: create in-container worktrees + bind + replay stash + untracked.
+  //   - No-git path: tar-pipe host workspace (or its APFS clone) into
+  //     /workspace (no bind — files live directly in the image's writable
+  //     layer at /workspace).
+  if (!checkpointImage) {
+    if (repoCarryOvers.length > 0) {
+      try {
+        await seedWorkspace({ container: containerName, repos: repoCarryOvers, onLog: log });
+        log('seeded /workspace from in-container git worktree(s)');
+      } catch (err) {
+        log(
+          `seedWorkspace failed; leaving ${containerName} running so you can inspect it`,
+        );
+        throw err;
+      }
+    } else {
+      const source = snapshotDir ?? workspace;
+      await seedWorkspaceFromDir({ container: containerName, hostSource: source, onLog: log });
     }
-  } catch (err) {
-    log(`overlay mount failed; leaving container ${containerName} running so you can inspect it`);
-    throw err;
+  } else if (restoredWorktrees && restoredWorktrees.length > 0) {
+    // gitWorktreeRecords was populated above (pre-`docker run`) so the .git
+    // bind-mounts in extraVolumes are wired. The /workspace bind itself
+    // can't be set up until the container is running, so we apply it here.
+    await bindWorktrees(
+      containerName,
+      restoredWorktrees.map((w) => ({
+        kind: w.kind,
+        containerPath: w.containerPath,
+        gitWorktreePath: w.gitWorktreePath,
+      })),
+      log,
+    );
+    log('re-bound /workspace from checkpoint image');
+  } else {
+    log('using /workspace from checkpoint image (no worktrees recorded; no rebind)');
   }
-
-  const overlayChecks = await verifyOverlay(containerName, lowerDirs ?? ['/host-src']);
-  const failed = overlayChecks.filter((c) => !c.ok);
-  if (failed.length > 0) {
-    const detail = failed.map((c) => `  - ${c.name}: ${c.detail}`).join('\n');
-    throw new Error(`overlay verification failed:\n${detail}`);
-  }
-  log('overlay verified');
 
   await repairIdeOwnership(containerName);
   log('.vscode-server + .cursor-server ownership verified');
@@ -595,9 +603,6 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
 
   if (opts.withPlaywright) {
     log('installing @playwright/cli@latest (--with-playwright)');
-    // npm-global writes to /usr/lib/node_modules/, so we need root. The
-    // resulting binary lives in /usr/bin and persists in the container's
-    // writable layer across pause/stop/start — no need to reinstall on start.
     const result = await execa(
       'docker',
       [
@@ -636,8 +641,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // VNC daemon (Xvnc + websockify). Best-effort, like launchCtlDaemon. The
   // host port mapping was wired into runBox above (hostPort=0 → random); we
   // resolve the assigned port here for storage. If the daemon fails to come
-  // up we still record vncEnabled so `agentbox start` will retry the launch
-  // — the failure is usually transient (apt-running, fs slow).
+  // up we still record vncEnabled so `agentbox start` will retry the launch.
   let vncHostPort: number | null = null;
   if (vncEnabled) {
     const vnc = await launchVncDaemon(containerName);
@@ -661,8 +665,6 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     container: containerName,
     image: imageRef,
     workspacePath: workspace,
-    lowerPath,
-    upperVolume,
     snapshotDir,
     socketPath,
     claudeConfigVolume: claudeSpec.volume,
@@ -682,13 +684,12 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     dockerCacheShared: dockerCacheShared || undefined,
     projectRoot: opts.projectRoot,
     projectIndex,
-    lowerDirs,
-    checkpointVolume,
+    checkpointImage,
     checkpointSource,
     resourceLimits: persistableLimits(effectiveLimits),
     createdAt,
   };
   await recordBox(record);
 
-  return { record, overlayChecks, imageBuilt: built };
+  return { record, imageBuilt: built };
 }

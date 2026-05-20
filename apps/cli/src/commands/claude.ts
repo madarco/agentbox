@@ -124,14 +124,14 @@ export const claudeCommand = new Command('claude')
   // Mirror create's surface so users can swap the verb without re-learning flags.
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
   .option('-n, --name <name>', 'friendly box name (default: <workspace-basename>-<id>)')
-  .option('--host-snapshot', 'use a frozen APFS clone of the host workspace as the overlay lower')
-  .option('--no-host-snapshot', 'bind the live workspace directly (host edits leak into reads)')
+  .option('--host-snapshot', 'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)')
+  .option('--no-host-snapshot', 'tar-pipe directly from the live host workspace at create time')
   .option(
     '--snapshot <ref>',
     'start from a project checkpoint (see `agentbox checkpoint`); overrides box.defaultCheckpoint',
   )
   .option('--image <ref>', 'override the box image')
-  .option('-y, --yes', 'skip prompts, accept defaults (host-snapshot=on)')
+  .option('-y, --yes', 'skip prompts, accept defaults')
   .option(
     '--isolate-claude-config',
     'use a per-box ~/.claude volume instead of the shared agentbox-claude-config',
@@ -186,14 +186,15 @@ export const claudeCommand = new Command('claude')
       );
     }
 
-    // For the create-and-launch verb the default is host-snapshot=on; explicit
-    // --no-host-snapshot still wins. Config can also flip the default.
+    // host-snapshot default off: with the overlay retired, the snapshot is
+    // only the tar-pipe source for the no-git case, and skipped entirely for
+    // git-detected workspaces. Explicit flag/config still wins.
     const useSnapshot =
       opts.hostSnapshot === false
         ? false
         : opts.hostSnapshot === true
           ? true
-          : (cfg.effective.box.hostSnapshot ?? true);
+          : (cfg.effective.box.hostSnapshot ?? false);
     const sessionName = cfg.effective.claude.sessionName;
 
     // Resolve auth from env or the saved auth file. On first run (nothing
@@ -296,7 +297,7 @@ async function startOrAttachClaude(
   const sessionName = cfg.effective.claude.sessionName;
 
   // Auto-unpause/start. Mirrors `agentbox shell` / `agentbox code`.
-  // `startBox` re-mounts the FUSE overlay and relaunches ctl/vnc/dockerd
+  // `startBox` relaunches ctl/vnc/dockerd
   // because those processes die with the container.
   const insp = await inspectBox(box.id);
   if (insp.state === 'missing') {
@@ -317,13 +318,13 @@ async function startOrAttachClaude(
   const s = spinner();
   s.start('preparing box');
 
-  // Auto-unpause/start. `startBox` re-mounts the FUSE overlay and relaunches
+  // Auto-unpause/start. `startBox` relaunches
   // ctl/vnc/dockerd because those processes die with the container.
   if (insp.state === 'paused') {
     s.message('unpausing box');
     await unpauseBox(box.id);
   } else if (insp.state === 'stopped') {
-    s.message('starting box (remounting overlay)');
+    s.message('starting box');
     await startBox(box.id);
   }
 

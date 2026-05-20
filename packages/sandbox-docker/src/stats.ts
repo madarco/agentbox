@@ -2,12 +2,11 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import type { BoxResourceLimits, BoxResourceStats } from '@agentbox/core';
-import { CHECKPOINT_VOLUME_PREFIX, checkpointVolumeName } from './checkpoint.js';
+import { CHECKPOINT_IMAGE_PREFIX, checkpointImageTag } from './checkpoint.js';
 import {
   inspectContainer,
   inspectContainerStatus,
   inspectVolumeMountpoint,
-  listAgentboxVolumes,
 } from './docker.js';
 import { detectEngine } from './host-export.js';
 import type { BoxRecord } from './state.js';
@@ -101,26 +100,66 @@ export async function volumeSizeBytes(name: string): Promise<number | null> {
   return null;
 }
 
-/** Size of the per-project shared checkpoint volume, or null when absent. */
-export async function projectCheckpointVolumeBytes(
-  projectRoot: string,
-): Promise<number | null> {
-  return volumeSizeBytes(checkpointVolumeName(projectRoot));
+/**
+ * On-host byte size of a Docker image (sum of its own layer sizes — what
+ * `docker images` reports). Null on docker errors.
+ */
+async function imageBytes(tag: string): Promise<number | null> {
+  const r = await execa('docker', ['image', 'inspect', tag, '--format', '{{.Size}}'], {
+    reject: false,
+  });
+  if (r.exitCode !== 0) return null;
+  const n = Number.parseInt((r.stdout ?? '').trim(), 10);
+  return Number.isFinite(n) ? n : null;
 }
 
 /**
- * Total on-host bytes of every per-project checkpoint volume (the durable,
- * cross-box warm-state assets). Null when none exist or no size is reachable
- * from the host.
+ * Size of a project's most-recent checkpoint image (the head of the lineage,
+ * resolved via the `checkpointImageTag` helper from a checkpoint *name*). The
+ * caller passes the name because we don't enumerate manifests from this
+ * module — that lives in checkpoint.ts. Null when the image isn't present.
  */
-export async function allCheckpointVolumesBytes(): Promise<number | null> {
-  const vols = (await listAgentboxVolumes()).filter((v) =>
-    v.startsWith(CHECKPOINT_VOLUME_PREFIX),
+export async function projectCheckpointImageBytes(
+  projectRoot: string,
+  name: string,
+): Promise<number | null> {
+  return imageBytes(checkpointImageTag(projectRoot, name));
+}
+
+/**
+ * Total on-host bytes of every checkpoint image (the durable, cross-box
+ * warm-state assets). Walks every image tag under `CHECKPOINT_IMAGE_PREFIX`.
+ * Null when none exist.
+ */
+export async function allCheckpointImagesBytes(): Promise<number | null> {
+  const r = await execa(
+    'docker',
+    [
+      'image',
+      'ls',
+      '--format',
+      '{{.Repository}}:{{.Tag}}\t{{.Size}}',
+      `${CHECKPOINT_IMAGE_PREFIX}*`,
+    ],
+    { reject: false },
   );
-  if (vols.length === 0) return null;
-  const sizes = await Promise.all(vols.map((v) => volumeSizeBytes(v)));
-  const known = sizes.filter((s): s is number => s !== null);
-  return known.length === 0 ? null : known.reduce((a, b) => a + b, 0);
+  if (r.exitCode !== 0) return null;
+  const lines = (r.stdout ?? '')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (lines.length === 0) return null;
+  let total = 0;
+  let any = false;
+  for (const line of lines) {
+    const [, size] = line.split('\t');
+    const n = size ? parseDockerSize(size) : null;
+    if (n !== null) {
+      total += n;
+      any = true;
+    }
+  }
+  return any ? total : null;
 }
 
 /** On-host byte size of the whole ~/.agentbox state/runtime directory. */
@@ -167,28 +206,49 @@ interface DockerStatsLine {
 }
 
 /**
+ * Container writable-layer size from `docker ps --size`. With the overlay
+ * gone, `/workspace` lives here (not in a named volume), so this is the
+ * box's primary writable-surface number.
+ */
+async function containerWritableBytes(container: string): Promise<number | null> {
+  const r = await execa(
+    'docker',
+    ['ps', '-a', '--filter', `name=^${container}$`, '--format', '{{.Size}}', '--size'],
+    { reject: false },
+  );
+  if (r.exitCode !== 0) return null;
+  // `--size` produces `<rw> (virtual <total>)`; we want the first number.
+  const first = (r.stdout ?? '').split('\n')[0]?.trim();
+  if (!first) return null;
+  const m = /^([^()]+?)(?:\s*\(.*\))?$/.exec(first);
+  const sz = m ? m[1]!.trim() : first;
+  return parseDockerSize(sz);
+}
+
+/**
  * Provider-agnostic resource snapshot for a box. CPU/mem/pids/IO come from
  * `docker stats --no-stream` (point-in-time sample; only when the container is
- * running). Disk is the per-box writable surface (upper + docker data-root
- * volumes); the per-box host snapshot dir and the SHARED per-project
- * checkpoint volume are reported on their own fields and never summed into
- * `diskUsedBytes` (would double-count across a project's boxes).
+ * running). Disk is the container's writable layer (where `/workspace` lives
+ * now that the overlay is gone) plus the in-box dockerd's data-root volume;
+ * the per-box host snapshot dir and the checkpoint image lineage are
+ * reported on their own fields.
  */
 export async function boxResourceStats(record: BoxRecord): Promise<BoxResourceStats> {
   const warnings: string[] = [];
   const dockerJson = await inspectContainer(record.container);
   const limits = reconcileLimits(limitsFromRecord(record), dockerJson);
 
-  const [diskUpper, diskDocker, snapshotDiskBytes, checkpointVolumeBytes] = await Promise.all([
-    volumeSizeBytes(record.upperVolume),
-    record.dockerVolume ? volumeSizeBytes(record.dockerVolume) : Promise.resolve(null),
-    record.snapshotDir ? duBytes(record.snapshotDir) : Promise.resolve(null),
-    record.checkpointVolume
-      ? volumeSizeBytes(record.checkpointVolume)
-      : Promise.resolve(null),
-  ]);
+  const [diskContainer, diskDocker, snapshotDiskBytes, checkpointImageBytesValue] =
+    await Promise.all([
+      containerWritableBytes(record.container),
+      record.dockerVolume ? volumeSizeBytes(record.dockerVolume) : Promise.resolve(null),
+      record.snapshotDir ? duBytes(record.snapshotDir) : Promise.resolve(null),
+      record.checkpointImage ? imageBytes(record.checkpointImage) : Promise.resolve(null),
+    ]);
   const diskUsedBytes =
-    diskUpper === null && diskDocker === null ? null : (diskUpper ?? 0) + (diskDocker ?? 0);
+    diskContainer === null && diskDocker === null
+      ? null
+      : (diskContainer ?? 0) + (diskDocker ?? 0);
   if (diskUsedBytes === null) {
     warnings.push('disk usage unavailable on this engine');
   }
@@ -203,7 +263,7 @@ export async function boxResourceStats(record: BoxRecord): Promise<BoxResourceSt
     pids: null,
     diskUsedBytes,
     snapshotDiskBytes,
-    checkpointVolumeBytes,
+    checkpointVolumeBytes: checkpointImageBytesValue,
     netRxBytes: null,
     netTxBytes: null,
     blockReadBytes: null,

@@ -14,8 +14,6 @@ const mk = (id: string, name: string, overrides: Partial<BoxRecord> = {}): BoxRe
   container: `agentbox-${name}`,
   image: 'agentbox/box:dev',
   workspacePath: '/tmp/ws',
-  lowerPath: '/tmp/ws',
-  upperVolume: `agentbox-upper-${id}`,
   snapshotDir: null,
   createdAt: '2026-05-12T00:00:00.000Z',
   ...overrides,
