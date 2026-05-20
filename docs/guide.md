@@ -85,6 +85,7 @@ agentbox cp <src> [dst]              # one-off file copy between host and box (l
                                     # upload:   agentbox cp ./local.txt mybox:/dst   (host path required; chowned to vscode)
 agentbox destroy <box> [-y] [--keep-snapshot]   # alias: rm — discards upper volume
 agentbox prune [--dry-run] [--all] [-y]         # default: drops "missing" state records
+agentbox relay status [--json] | stop | start | restart   # manage the host relay process
 ```
 
 `<box>` resolves against `~/.agentbox/state.json` in this order: exact id → unique id prefix → exact name → exact container name. So `agentbox destroy abc1` works as long as the prefix is unique.

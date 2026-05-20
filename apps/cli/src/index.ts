@@ -22,6 +22,7 @@ import { logsCommand } from './commands/logs.js';
 import { openCommand } from './commands/open.js';
 import { pauseCommand } from './commands/pause.js';
 import { pruneCommand } from './commands/prune.js';
+import { relayCommand } from './commands/relay.js';
 import { screenCommand } from './commands/screen.js';
 import { shellCommand } from './commands/shell.js';
 import { startCommand } from './commands/start.js';
@@ -64,6 +65,7 @@ program.addCommand(destroyCommand);
 program.addCommand(pruneCommand);
 program.addCommand(checkpointCommand);
 program.addCommand(configCommand);
+program.addCommand(relayCommand);
 program.addCommand(updateCommand);
 
 program.configureHelp({ visibleCommands: () => [] });

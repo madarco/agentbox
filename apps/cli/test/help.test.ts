@@ -17,6 +17,7 @@ import { browserCommand } from '../src/commands/browser.js';
 import { screenCommand } from '../src/commands/screen.js';
 import { pauseCommand } from '../src/commands/pause.js';
 import { pruneCommand } from '../src/commands/prune.js';
+import { relayCommand } from '../src/commands/relay.js';
 import { shellCommand } from '../src/commands/shell.js';
 import { startCommand } from '../src/commands/start.js';
 import { statusCommand } from '../src/commands/status.js';
@@ -55,6 +56,7 @@ function buildProgram(): Command {
     pruneCommand,
     checkpointCommand,
     configCommand,
+    relayCommand,
     updateCommand,
   ]) {
     program.addCommand(cmd);

@@ -11,6 +11,7 @@ import { browserCommand } from '../src/commands/browser.js';
 import { screenCommand } from '../src/commands/screen.js';
 import { pauseCommand } from '../src/commands/pause.js';
 import { pruneCommand } from '../src/commands/prune.js';
+import { relayCommand } from '../src/commands/relay.js';
 import { shellCommand } from '../src/commands/shell.js';
 import { startCommand } from '../src/commands/start.js';
 import { stopCommand } from '../src/commands/stop.js';
@@ -76,6 +77,14 @@ describe('lifecycle CLI surface', () => {
       const longs = cmd.options.map((o) => o.long);
       expect(longs, cmd.name()).toEqual(expect.arrayContaining(['--print', '--loopback']));
     }
+  });
+
+  it('relay has status (default) / stop / start / restart subcommands', () => {
+    expect(relayCommand.name()).toBe('relay');
+    const subs = relayCommand.commands.map((c) => c.name());
+    expect(subs).toEqual(expect.arrayContaining(['status', 'stop', 'start', 'restart']));
+    const status = relayCommand.commands.find((c) => c.name() === 'status');
+    expect(status!.options.map((o) => o.long)).toContain('--json');
   });
 
   it('checkpoint has create (default) / ls / set-default / rm subcommands', () => {

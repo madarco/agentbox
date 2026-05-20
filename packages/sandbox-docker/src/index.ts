@@ -65,6 +65,7 @@ export {
   ensureRelay,
   forgetBoxFromRelay,
   generateRelayToken,
+  getRelayStatus,
   registerBoxWithRelay,
   rehydrateRelayRegistry,
   RELAY_CONTAINER_NAME,
@@ -74,6 +75,7 @@ export {
   type EnsureRelayOptions,
   type RegisterBoxArgs,
   type RelayEndpoint,
+  type RelayStatus,
   type StopRelayResult,
 } from './relay.js';
 export { EXCLUDE_DIRS, SNAPSHOTS_ROOT, snapshotPathFor } from './snapshot.js';

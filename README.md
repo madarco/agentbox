@@ -102,6 +102,7 @@ Requirements: macOS (arm64 or Intel), Docker ([Docker Desktop](https://www.docke
 - `agentbox prune` — Clean up orphan state records (and with `--all`, orphan docker resources)
 - `agentbox self-update` — Update agentbox, wipe the box image so it rebuilds, reload the relay
 - `agentbox config` — Read / write layered config (global, per-project, workspace `defaults:`)
+- `agentbox relay` — Manage the host relay process (`status` / `stop` / `start` / `restart`)
 
 Run `agentbox <command> --help` for command-specific options, or see the full [guide](./docs/guide.md).
 

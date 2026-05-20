@@ -218,6 +218,49 @@ export async function stopRelay(): Promise<StopRelayResult> {
   return { stopped: true, pid };
 }
 
+export interface RelayStatus {
+  /** True when /healthz responded with a 2xx. */
+  running: boolean;
+  /** Pidfile contents (null when missing/unparseable). */
+  pid: number | null;
+  /** Signal-0 probe on `pid` (false when `pid` is null). */
+  pidAlive: boolean;
+  /** Configured port (same value as endpoint.port). */
+  port: number;
+  /** URLs boxes / host-side callers use to reach the relay. */
+  endpoint: RelayEndpoint;
+  /** Parsed /healthz body; null when the relay isn't responding. */
+  health: { boxes: number; events: number } | null;
+  /** Absolute path to the pidfile. */
+  pidFile: string;
+  /** Absolute path to the process log. */
+  logFile: string;
+}
+
+/**
+ * Read-only snapshot of the host relay's liveness. Combines the two probes the
+ * lifecycle code uses internally: pidfile + signal-0 + a short /healthz GET.
+ * Three terminal states callers care about:
+ *   - running: true                       — healthz ok
+ *   - running: false, pidAlive: true      — zombie (process up, healthz silent)
+ *   - running: false, pidAlive: false     — truly down
+ */
+export async function getRelayStatus(): Promise<RelayStatus> {
+  const pid = await readPidFile();
+  const pidAlive = pid !== null && (await processAlive(pid));
+  const health = await fetchHealthz(300);
+  return {
+    running: health !== null,
+    pid,
+    pidAlive,
+    port: PORT,
+    endpoint: ENDPOINT,
+    health: health === null ? null : { boxes: health.boxes, events: health.events },
+    pidFile: PID_FILE,
+    logFile: LOG_FILE,
+  };
+}
+
 function pingHealthz(timeoutMs: number): Promise<boolean> {
   return new Promise<boolean>((resolveP) => {
     const req = httpRequest(
@@ -232,6 +275,53 @@ function pingHealthz(timeoutMs: number): Promise<boolean> {
     req.on('timeout', () => {
       req.destroy();
       resolveP(false);
+    });
+    req.end();
+  });
+}
+
+interface HealthzBody {
+  ok: boolean;
+  boxes: number;
+  events: number;
+}
+
+function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
+  return new Promise<HealthzBody | null>((resolveP) => {
+    const req = httpRequest(
+      { host: '127.0.0.1', port: PORT, method: 'GET', path: '/healthz', timeout: timeoutMs },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        if (status < 200 || status >= 300) {
+          res.resume();
+          resolveP(null);
+          return;
+        }
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Partial<HealthzBody>;
+            if (
+              typeof parsed.ok === 'boolean' &&
+              typeof parsed.boxes === 'number' &&
+              typeof parsed.events === 'number'
+            ) {
+              resolveP({ ok: parsed.ok, boxes: parsed.boxes, events: parsed.events });
+            } else {
+              resolveP(null);
+            }
+          } catch {
+            resolveP(null);
+          }
+        });
+        res.on('error', () => resolveP(null));
+      },
+    );
+    req.on('error', () => resolveP(null));
+    req.on('timeout', () => {
+      req.destroy();
+      resolveP(null);
     });
     req.end();
   });

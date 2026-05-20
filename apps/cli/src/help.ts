@@ -22,7 +22,7 @@ export const HELP_GROUPS: HelpGroup[] = [
   { title: 'Sync & state', commands: ['download', 'cp', 'checkpoint'] },
   {
     title: 'Advanced',
-    commands: ['wait', 'prune', 'self-update', 'config'],
+    commands: ['wait', 'prune', 'self-update', 'config', 'relay'],
   },
 ];
 
