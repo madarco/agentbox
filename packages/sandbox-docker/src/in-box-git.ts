@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { execInBox } from './docker.js';
 import type { DetectedGitRepo } from './git-worktree.js';
 import { GitWorktreeError } from './git-worktree.js';
 
@@ -160,6 +161,44 @@ export interface WorktreeBindSpec {
  * bind itself respects file ownership on the source side (vscode-owned),
  * so subsequent in-container operations under `/workspace` work as vscode.
  */
+/**
+ * Make the in-container parent directory of each bind-mounted `.git` owned by
+ * `vscode`. Docker auto-creates the intermediate path for a bind mount
+ * (e.g. `/Users/marco/Projects/Foo/` for a `.git` at `/Users/marco/Projects/Foo/.git`)
+ * in the container's writable layer as `root:root 755`. The bind-mounted
+ * `.git` itself keeps its host UIDs, but agents (turborepo, build caches,
+ * etc.) often want to write *siblings* of `.git` at the project root —
+ * `.turbo/`, `.next/`, scratch files — which fails as `vscode` if the parent
+ * is root-owned. This flips just that parent dir's UID.
+ *
+ * NOT recursive on purpose: `chown -R` would descend into `.git` (the
+ * bind-mount inode) and propagate ownership changes back to the host,
+ * defeating the "no host perms touched" property.
+ *
+ * Best-effort: failures are logged, not thrown — the box still functions,
+ * only sibling writes at the project root are affected.
+ */
+export async function chownGitBindParents(args: {
+  container: string;
+  hostMainRepos: string[];
+  onLog?: (line: string) => void;
+}): Promise<void> {
+  const log = args.onLog ?? (() => {});
+  // Dedupe — nested-repo carry-overs can repeat hostMainRepo.
+  const repos = Array.from(new Set(args.hostMainRepos));
+  for (const repo of repos) {
+    const result = await execInBox(args.container, ['chown', 'vscode:vscode', repo], {
+      user: 'root',
+    });
+    if (result.exitCode === 0) {
+      log(`chowned ${repo} to vscode:vscode (parent of bind-mounted .git)`);
+    } else {
+      const msg = (result.stderr || result.stdout || `exit ${result.exitCode}`).trim();
+      log(`chown ${repo} failed (best-effort, ignoring): ${msg}`);
+    }
+  }
+}
+
 export async function bindWorktrees(
   container: string,
   binds: WorktreeBindSpec[],

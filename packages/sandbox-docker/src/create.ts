@@ -25,6 +25,7 @@ import { WEB_CONTAINER_PORT } from './web.js';
 import { detectGitRepos, pickFreshBranch } from './git-worktree.js';
 import {
   bindWorktrees,
+  chownGitBindParents,
   collectRepoCarryOver,
   gitWorktreePathFor,
   seedWorkspace,
@@ -542,6 +543,20 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     },
   });
   log(`container ${containerName} started`);
+
+  // Flip the in-container parent dir of each bind-mounted `.git` to
+  // vscode-owned. Docker auto-creates the intermediates (e.g. the project root
+  // path that contains `.git`) as root:root 755 in the writable layer; without
+  // this chown the agent can't write siblings of `.git` (`.turbo/`, `.next/`,
+  // build caches) at the project root. Non-recursive — the bind-mounted `.git`
+  // itself stays untouched (recursive chown would propagate to the host).
+  if (gitWorktreeRecords.length > 0) {
+    await chownGitBindParents({
+      container: containerName,
+      hostMainRepos: gitWorktreeRecords.map((w) => w.hostMainRepo),
+      onLog: log,
+    });
+  }
 
   // /etc/agentbox/box.env: sourced by /etc/profile.d/agentbox.sh in login
   // shells (the docker-run env doesn't reach `agentbox shell <box>` cleanly
