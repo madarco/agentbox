@@ -25,7 +25,7 @@ export function buildSetupInitialPrompt(workspace: string): string {
     `Then run \`agentbox-ctl reload\` from inside the box so the already-running supervisor applies the new config ` +
     `and immediately runs the declared tasks and autostarts the services (no box restart needed). ` +
     `When done, summarise what services and tasks you declared, and remind the user how to land the file on the host ` +
-    `(commit through the bind-mounted .git, or "agentbox pull env" on the host).`
+    `(commit through the bind-mounted .git, or "agentbox download env" on the host).`
   );
 }
 

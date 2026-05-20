@@ -4,7 +4,7 @@ import { inspectBox, pullToHost, startBox, unpauseBox } from '@agentbox/sandbox-
 import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
 
-interface PullConfigOpts {
+interface DownloadConfigOpts {
   yes?: boolean;
   dryRun?: boolean;
   refresh: boolean; // commander gives `--no-refresh` => false
@@ -24,12 +24,12 @@ function tagChange(line: string): string {
 }
 
 // `agentbox.yaml` lives in the box's overlay at /workspace and is normally
-// gitignored, so the gitignore-aware default pull skips it. This pulls just
+// gitignored, so the gitignore-aware default download skips it. This pulls just
 // that file (in-box `find` also picks up nested ones in a monorepo).
 const CONFIG_PATTERNS = ['agentbox.yaml'];
 
-export const pullConfigCommand = new Command('config')
-  .description('Pull agentbox.yaml box -> host')
+export const downloadConfigCommand = new Command('config')
+  .description('Download agentbox.yaml box -> host')
   .argument(
     '[box]',
     'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
@@ -37,7 +37,7 @@ export const pullConfigCommand = new Command('config')
   .option('-y, --yes', 'skip the confirmation prompt')
   .option('--dry-run', "list matched files and exit; don't write")
   .option('--no-refresh', 'skip the box->scratch-dir rsync step')
-  .action(async (idOrName: string | undefined, opts: PullConfigOpts) => {
+  .action(async (idOrName: string | undefined, opts: DownloadConfigOpts) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
 
@@ -62,7 +62,7 @@ export const pullConfigCommand = new Command('config')
       });
 
       if (preview.changes.length === 0) {
-        process.stdout.write(`no config file to pull into ${box.workspacePath}\n`);
+        process.stdout.write(`no config file to download into ${box.workspacePath}\n`);
         return;
       }
 
@@ -77,7 +77,7 @@ export const pullConfigCommand = new Command('config')
 
       if (!opts.yes) {
         const ok = await confirm({
-          message: `Pull ${preview.changes.length} config file(s) into ${box.workspacePath}? (existing files will be overwritten)`,
+          message: `Download ${preview.changes.length} config file(s) into ${box.workspacePath}? (existing files will be overwritten)`,
           initialValue: false,
         });
         if (isCancel(ok) || !ok) {
@@ -95,7 +95,7 @@ export const pullConfigCommand = new Command('config')
         noRefresh: true,
       });
       process.stdout.write(
-        `pulled ${result.changes.length} config file(s) into ${result.hostPath}\n`,
+        `downloaded ${result.changes.length} config file(s) into ${result.hostPath}\n`,
       );
     } catch (err) {
       handleLifecycleError(err);

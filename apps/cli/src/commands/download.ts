@@ -9,11 +9,11 @@ import {
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
-import { pullClaudeCommand } from './pull-claude.js';
-import { pullConfigCommand } from './pull-config.js';
-import { pullEnvCommand } from './pull-env.js';
+import { downloadClaudeCommand } from './download-claude.js';
+import { downloadConfigCommand } from './download-config.js';
+import { downloadEnvCommand } from './download-env.js';
 
-interface PullOpts {
+interface DownloadOpts {
   yes?: boolean;
   dryRun?: boolean;
   respectGitignore: boolean; // commander gives `--no-respect-gitignore` => false
@@ -23,12 +23,12 @@ interface PullOpts {
   pattern: string[];
 }
 
-export const pullCommand = new Command('pull')
+export const downloadCommand = new Command('download')
   // Parent and the `env` subcommand share option names (--dry-run, -y,
   // --pattern). Positional options make post-subcommand options bind to the
   // subcommand instead of being swallowed by this parent command.
   .enablePositionalOptions()
-  .description("Pull a box's /workspace back into your host workspace dir (gitignore-aware)")
+  .description("Download a box's /workspace back into your host workspace dir (gitignore-aware)")
   .argument(
     '[box]',
     'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
@@ -46,7 +46,7 @@ export const pullCommand = new Command('pull')
   .option('--no-refresh', "skip the box->scratch-dir rsync step (use whatever's already there)")
   .option(
     '--with-env',
-    'also pull env/config files (.env*, .envrc, secrets.toml, agentbox.yaml, ...) ignoring gitignore',
+    'also download env/config files (.env*, .envrc, secrets.toml, agentbox.yaml, ...) ignoring gitignore',
   )
   .option(
     '--pattern <glob>',
@@ -54,7 +54,7 @@ export const pullCommand = new Command('pull')
     (v: string, acc: string[]) => [...acc, v],
     [] as string[],
   )
-  .action(async (idOrName: string | undefined, opts: PullOpts) => {
+  .action(async (idOrName: string | undefined, opts: DownloadOpts) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
 
@@ -92,7 +92,7 @@ export const pullCommand = new Command('pull')
       });
 
       if (preview.changes.length === 0) {
-        process.stdout.write(`no changes to pull into ${box.workspacePath}\n`);
+        process.stdout.write(`no changes to download into ${box.workspacePath}\n`);
         return;
       }
 
@@ -106,7 +106,7 @@ export const pullCommand = new Command('pull')
 
       if (!opts.yes) {
         const ok = await confirm({
-          message: `Pull ${preview.changes.length} changed file(s)${opts.withEnv ? ' (incl. env/config)' : ''} into ${box.workspacePath}?`,
+          message: `Download ${preview.changes.length} changed file(s)${opts.withEnv ? ' (incl. env/config)' : ''} into ${box.workspacePath}?`,
           initialValue: false,
         });
         if (isCancel(ok) || !ok) {
@@ -133,15 +133,15 @@ export const pullCommand = new Command('pull')
     }
   });
 
-// `agentbox pull env [box]` — commander dispatches the `env` subcommand;
-// `agentbox pull [box]` / `agentbox pull` still hit the default action above.
-pullCommand.addCommand(pullEnvCommand);
+// `agentbox download env [box]` — commander dispatches the `env` subcommand;
+// `agentbox download [box]` / `agentbox download` still hit the default action above.
+downloadCommand.addCommand(downloadEnvCommand);
 
-// `agentbox pull claude [box]` — box -> host pull of newly-added Claude
+// `agentbox download claude [box]` — box -> host pull of newly-added Claude
 // skills/plugins/agents/commands (additive; reads the claude-config volume so
 // the box need not be running).
-pullCommand.addCommand(pullClaudeCommand);
+downloadCommand.addCommand(downloadClaudeCommand);
 
-// `agentbox pull config [box]` — box -> host pull of just agentbox.yaml
+// `agentbox download config [box]` — box -> host pull of just agentbox.yaml
 // (gitignore-bypassing; for syncing back an in-box-edited/regenerated config).
-pullCommand.addCommand(pullConfigCommand);
+downloadCommand.addCommand(downloadConfigCommand);

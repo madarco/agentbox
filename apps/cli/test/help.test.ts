@@ -5,9 +5,11 @@ import { checkpointCommand } from '../src/commands/checkpoint.js';
 import { claudeCommand } from '../src/commands/claude.js';
 import { codeCommand } from '../src/commands/code.js';
 import { configCommand } from '../src/commands/config.js';
+import { cpCommand } from '../src/commands/cp.js';
 import { createCommand } from '../src/commands/create.js';
 import { dashboardCommand } from '../src/commands/dashboard.js';
 import { destroyCommand } from '../src/commands/destroy.js';
+import { downloadCommand } from '../src/commands/download.js';
 import { listCommand } from '../src/commands/list.js';
 import { logsCommand } from '../src/commands/logs.js';
 import { openCommand } from '../src/commands/open.js';
@@ -15,7 +17,6 @@ import { browserCommand } from '../src/commands/browser.js';
 import { screenCommand } from '../src/commands/screen.js';
 import { pauseCommand } from '../src/commands/pause.js';
 import { pruneCommand } from '../src/commands/prune.js';
-import { pullCommand } from '../src/commands/pull.js';
 import { shellCommand } from '../src/commands/shell.js';
 import { startCommand } from '../src/commands/start.js';
 import { statusCommand } from '../src/commands/status.js';
@@ -39,7 +40,8 @@ function buildProgram(): Command {
     openCommand,
     browserCommand,
     screenCommand,
-    pullCommand,
+    downloadCommand,
+    cpCommand,
     statusCommand,
     topCommand,
     dashboardCommand,

@@ -17,8 +17,8 @@ No SSH creds, no host gitconfig identity. For ops that need the user
 -- <args>` — it RPCs to the host, which runs git with the real SSH agent.
 
 If you install a skill/plugin (or otherwise change `~/.claude`), tell the
-user to run `agentbox pull claude` on the host to copy it back. If you
+user to run `agentbox download claude` on the host to copy it back. If you
 create or change `.env`/`.envrc`/secrets files, tell them to run
-`agentbox pull env`. Both are additive and never overwrite host files.
+`agentbox download env`. Both are additive and never overwrite host files.
 
 Box identity: /etc/agentbox/box.env and the AGENTBOX_* env vars.

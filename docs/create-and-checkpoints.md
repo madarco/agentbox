@@ -76,7 +76,7 @@ capture/restore mechanics, with code pointers. Source of truth:
   rsyncs `/workspace` → `~/.agentbox/boxes/<id>/workspace` on demand.
 - `--with-env` additionally copies host `.env*`/`secrets.toml`/`agentbox.yaml`
   -style files (`DEFAULT_ENV_PATTERNS`) into `/workspace` after seeding,
-  bypassing gitignore — the reverse of `agentbox pull env`.
+  bypassing gitignore — the reverse of `agentbox download env`.
 
 Net effect: the agent gets a full, writable copy of the repo on its own
 branch, with the user's uncommitted work carried over, fully isolated from

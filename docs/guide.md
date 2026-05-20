@@ -75,11 +75,14 @@ agentbox browser <box> [--print] [--loopback]
                                     # open the box's web app URL in your browser (even with no expose: service)
 agentbox screen <box> [--print] [--loopback]
                                     # open the box's VNC (noVNC) viewer in your browser
-agentbox pull [box] [--with-env] [--dry-run] [-y]   # box -> host pull of /workspace (gitignore-aware)
-agentbox pull env [box] [--dry-run] [-y]            # just gitignored env/config files
-agentbox pull config [box] [--dry-run] [-y]         # just agentbox.yaml (gitignore-bypassing)
-agentbox pull claude [box] [--dry-run] [-y]         # additive box -> host pull of ~/.claude skills/plugins/agents/commands
+agentbox download [box] [--with-env] [--dry-run] [-y]   # box -> host download of /workspace (gitignore-aware)
+agentbox download env [box] [--dry-run] [-y]            # just gitignored env/config files
+agentbox download config [box] [--dry-run] [-y]         # just agentbox.yaml (gitignore-bypassing)
+agentbox download claude [box] [--dry-run] [-y]         # additive box -> host download of ~/.claude skills/plugins/agents/commands
                                     # reads the claude-config volume (box may be stopped); never overwrites; skips agentbox-* skills
+agentbox cp <src> [dst]              # one-off file copy between host and box (like `docker cp`)
+                                    # download: agentbox cp mybox:/etc/foo [./foo]   (host path optional, defaults to cwd)
+                                    # upload:   agentbox cp ./local.txt mybox:/dst   (host path required; chowned to vscode)
 agentbox destroy <box> [-y] [--keep-snapshot]   # alias: rm — discards upper volume
 agentbox prune [--dry-run] [--all] [-y]         # default: drops "missing" state records
 ```

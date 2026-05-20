@@ -92,7 +92,8 @@ Requirements: macOS (arm64 or Intel), Docker ([Docker Desktop](https://www.docke
 
 **Sync & state**
 
-- `agentbox pull` — Pull a box's `/workspace` back into your host workspace (gitignore-aware)
+- `agentbox download` — Download a box's `/workspace` back into your host workspace (gitignore-aware)
+- `agentbox cp <src> [dst]` — Copy individual files between host and box (like `docker cp`; direction picked by `name:` prefix)
 - `agentbox checkpoint` — Capture and manage project checkpoints (warm box state to start new boxes from)
 
 **Advanced**

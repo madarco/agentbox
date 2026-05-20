@@ -1,5 +1,5 @@
 /**
- * Pure, docker-free helpers for `agentbox pull claude` (box -> host pull of
+ * Pure, docker-free helpers for `agentbox download claude` (box -> host pull of
  * Claude extensions). Kept separate from `claude.ts` so the delta + JSON-merge
  * logic is unit-testable without spawning containers — mirrors how
  * `claude-hooks-filter.ts` factors the forward-sync transforms.

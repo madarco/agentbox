@@ -19,7 +19,7 @@ export const HELP_GROUPS: HelpGroup[] = [
   },
   { title: 'Inspect', commands: ['list', 'status', 'top'] },
   { title: 'Lifecycle', commands: ['start', 'stop', 'destroy', 'pause', 'unpause'] },
-  { title: 'Sync & state', commands: ['pull', 'checkpoint'] },
+  { title: 'Sync & state', commands: ['download', 'cp', 'checkpoint'] },
   {
     title: 'Advanced',
     commands: ['wait', 'prune', 'self-update', 'config'],

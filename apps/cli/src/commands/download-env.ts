@@ -10,7 +10,7 @@ import {
 import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
 
-interface PullEnvOpts {
+interface DownloadEnvOpts {
   yes?: boolean;
   dryRun?: boolean;
   pattern: string[];
@@ -30,9 +30,9 @@ function tagChange(line: string): string {
   return `  ${path} ${isNew ? '(new)' : '(overwrites host)'}`;
 }
 
-export const pullEnvCommand = new Command('env')
+export const downloadEnvCommand = new Command('env')
   .description(
-    'Pull gitignored env/config files (.env*, .envrc, secrets.toml, agentbox.yaml, ...) box -> host',
+    'Download gitignored env/config files (.env*, .envrc, secrets.toml, agentbox.yaml, ...) box -> host',
   )
   .argument(
     '[box]',
@@ -47,7 +47,7 @@ export const pullEnvCommand = new Command('env')
     [] as string[],
   )
   .option('--no-refresh', 'skip the box->scratch-dir rsync step')
-  .action(async (idOrName: string | undefined, opts: PullEnvOpts) => {
+  .action(async (idOrName: string | undefined, opts: DownloadEnvOpts) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
 
@@ -76,7 +76,7 @@ export const pullEnvCommand = new Command('env')
       });
 
       if (preview.changes.length === 0) {
-        process.stdout.write(`no env/config files to pull into ${box.workspacePath}\n`);
+        process.stdout.write(`no env/config files to download into ${box.workspacePath}\n`);
         return;
       }
 
@@ -91,7 +91,7 @@ export const pullEnvCommand = new Command('env')
 
       if (!opts.yes) {
         const ok = await confirm({
-          message: `Pull ${preview.changes.length} env/config file(s) into ${box.workspacePath}? (existing files will be overwritten)`,
+          message: `Download ${preview.changes.length} env/config file(s) into ${box.workspacePath}? (existing files will be overwritten)`,
           initialValue: false,
         });
         if (isCancel(ok) || !ok) {
@@ -109,7 +109,7 @@ export const pullEnvCommand = new Command('env')
         noRefresh: true,
       });
       process.stdout.write(
-        `pulled ${result.changes.length} env/config file(s) into ${result.hostPath}\n`,
+        `downloaded ${result.changes.length} env/config file(s) into ${result.hostPath}\n`,
       );
     } catch (err) {
       handleLifecycleError(err);

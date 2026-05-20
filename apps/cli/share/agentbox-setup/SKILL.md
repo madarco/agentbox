@@ -171,7 +171,7 @@ services:
    > I wrote `/workspace/agentbox.yaml` and ran `agentbox-ctl reload` so the supervisor is already running the declared tasks/services. To land the file on the host:
    > - I've created a checkpoint of the warm box state so future boxes start ready in seconds, no reinstall.
    > - commit it inside the box (`git add agentbox.yaml && git commit -m 'add agentbox config'`) — the box's `.git/` is bind-mounted, so the commit shows up on the host immediately; or
-   > - on the host, tell the user to run `agentbox pull config` to update their original host workspace.
+   > - on the host, tell the user to run `agentbox download config` to update their original host workspace.
 
 ## 9. Known issues
 
