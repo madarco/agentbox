@@ -76,7 +76,7 @@ export async function listBoxes(): Promise<ListedBox[]> {
   return Promise.all(
     boxes.map(async (b): Promise<ListedBox> => {
       const state = await inspectContainerStatus(b.container);
-      const persisted = await readBoxStatus(b.id);
+      const persisted = await readBoxStatus(b);
       const endpoints = await getBoxEndpoints(b, engine, persisted);
       return {
         ...b,
@@ -237,6 +237,7 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
         name: box.name,
         containerName: box.container,
         createdAt: box.createdAt,
+        projectIndex: box.projectIndex,
         worktrees: box.gitWorktrees,
       });
     } catch {
@@ -308,7 +309,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
 
   const hostPaths = await getHostPaths(record);
   const engine = await detectEngine();
-  const persistedStatus = await readBoxStatus(record.id);
+  const persistedStatus = await readBoxStatus(record);
   const endpoints = await getBoxEndpoints(record, engine, persistedStatus);
 
   return {
@@ -416,7 +417,7 @@ export async function destroyBox(
   // dir used by `agentbox open`. Wipe the whole thing so destroy leaves no
   // residue under ~/.agentbox/boxes/.
   try {
-    await rm(boxRunDirFor(box.id), { recursive: true, force: true });
+    await rm(boxRunDirFor(box), { recursive: true, force: true });
   } catch {
     // best-effort
   }
@@ -551,7 +552,7 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
         )
         .map((b) => b.snapshotDir),
     );
-    const expectedBoxDirs = new Set(survivingBoxes.map((b) => boxRunDirFor(b.id)));
+    const expectedBoxDirs = new Set(survivingBoxes.map((b) => boxRunDirFor(b)));
     // Checkpoint images: keep any tag that either a surviving box's
     // `checkpointImage` points at, or that any on-disk manifest still claims
     // as its `image`. The manifest case is the one that matters most after

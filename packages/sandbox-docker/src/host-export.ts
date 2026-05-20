@@ -2,6 +2,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
+import { sanitizeMnemonic } from '@agentbox/config';
 import type { BoxStatus } from '@agentbox/ctl';
 import { execInBox } from './docker.js';
 import type { BoxRecord } from './state.js';
@@ -56,8 +57,31 @@ export function __setEngineForTesting(engine: DockerEngine | null): void {
 
 export const BOXES_ROOT = join(homedir(), '.agentbox', 'boxes');
 
-export function boxRunDirFor(id: string): string {
-  return join(BOXES_ROOT, id);
+/** Box-identity subset every dir helper accepts. Structurally compatible with
+ * `BoxRecord`, but only the fields the segment needs. `projectIndex` is the
+ * 1-based per-project number (`agentbox list`'s `N` column); when present, it
+ * appears between the id and the mnemonic so dir listings sort cleanly within
+ * a project and the segment matches `agentbox <cmd> <n>` intuitively. Legacy
+ * (pre-feature) boxes lack it and keep the original `<id>-<mnemonic>` shape.
+ */
+export interface BoxDirRef {
+  id: string;
+  name: string;
+  projectIndex?: number;
+}
+
+/** On-disk dir segment for a box: `<id>-<n>-<mnemonic>` (or `<id>-<mnemonic>` legacy). */
+export function boxDirSegment(box: BoxDirRef): string {
+  const mnemonic = sanitizeMnemonic(box.name);
+  const n = box.projectIndex;
+  if (typeof n === 'number' && Number.isFinite(n) && n > 0) {
+    return `${box.id}-${String(n)}-${mnemonic}`;
+  }
+  return `${box.id}-${mnemonic}`;
+}
+
+export function boxRunDirFor(box: BoxDirRef): string {
+  return join(BOXES_ROOT, boxDirSegment(box));
 }
 
 /**
@@ -66,8 +90,8 @@ export function boxRunDirFor(id: string): string {
  * the host fs even while the box is paused/stopped. Path must stay in sync
  * with `boxStatusPathFor` in @agentbox/relay's status-store.
  */
-export function boxStatusPathFor(id: string): string {
-  return join(boxRunDirFor(id), 'status.json');
+export function boxStatusPathFor(box: BoxDirRef): string {
+  return join(boxRunDirFor(box), 'status.json');
 }
 
 /**
@@ -75,9 +99,9 @@ export function boxStatusPathFor(id: string): string {
  * feature, relay never received a push, corrupt JSON, or a future-incompatible
  * schema). Never throws — callers fall back to live/“unknown”.
  */
-export async function readBoxStatus(id: string): Promise<BoxStatus | null> {
+export async function readBoxStatus(box: BoxDirRef): Promise<BoxStatus | null> {
   try {
-    const raw = await readFile(boxStatusPathFor(id), 'utf8');
+    const raw = await readFile(boxStatusPathFor(box), 'utf8');
     const parsed = JSON.parse(raw) as BoxStatus;
     if (parsed.schema !== 1) return null;
     return parsed;
@@ -100,9 +124,9 @@ export function orbstackVolumePath(volume: string, ...sub: string[]): string {
 }
 
 export async function getHostPaths(
-  record: Pick<BoxRecord, 'id'>,
+  record: Pick<BoxRecord, 'id' | 'name' | 'projectIndex'>,
 ): Promise<HostPaths> {
-  const boxDir = boxRunDirFor(record.id);
+  const boxDir = boxRunDirFor(record);
   return {
     boxDir,
     mergedExport: join(boxDir, 'workspace'),
@@ -137,7 +161,7 @@ async function hasContainerPath(container: string, path: string): Promise<boolea
  * bind.
  */
 export async function refreshExport(
-  record: Pick<BoxRecord, 'id' | 'container'>,
+  record: Pick<BoxRecord, 'id' | 'name' | 'projectIndex' | 'container'>,
   opts: RefreshOptions = {},
 ): Promise<RefreshResult> {
   const paths = await getHostPaths(record);
@@ -492,7 +516,7 @@ function parseItemizedChanges(stdout: string): string[] {
  * are preserved. Removals are the user's call.
  */
 export async function pullToHost(
-  record: Pick<BoxRecord, 'id' | 'container' | 'workspacePath'>,
+  record: Pick<BoxRecord, 'id' | 'name' | 'projectIndex' | 'container' | 'workspacePath'>,
   opts: PullOptions = {},
 ): Promise<PullResult> {
   const paths = await getHostPaths(record);
@@ -613,7 +637,7 @@ export interface OpenResult {
  * path in one call.
  */
 export async function openInFinder(
-  record: Pick<BoxRecord, 'id' | 'container'>,
+  record: Pick<BoxRecord, 'id' | 'name' | 'projectIndex' | 'container'>,
   opts: OpenOptions,
 ): Promise<OpenResult> {
   const engine = await detectEngine();

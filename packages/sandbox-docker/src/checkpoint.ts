@@ -1,8 +1,13 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { execa } from 'execa';
-import { hashProjectPath, setConfigValue } from '@agentbox/config';
+import {
+  hashProjectPath,
+  projectDirSegment,
+  sanitizeMnemonic,
+  setConfigValue,
+} from '@agentbox/config';
 import { execInBox, removeImage } from './docker.js';
 import { DEFAULT_BOX_IMAGE } from './image.js';
 import type { BoxRecord, GitWorktreeRecord } from './state.js';
@@ -20,11 +25,15 @@ export type CheckpointType = 'layered' | 'flattened';
 
 /**
  * Deterministic image tag for a project checkpoint. The repository segment is
- * keyed on the project root (same hash the per-project config dir uses); the
- * tag segment is the checkpoint name. Pure — unit-tested directly.
+ * keyed on the project root (same hash the per-project config dir uses) and
+ * carries a mnemonic suffix so `docker images` reads self-describing. The
+ * mnemonic is joined with `_` (not `-`) so the leading 16 hex chars remain
+ * unambiguous and the existing `agentbox-ckpt-*` prune glob still matches.
+ * Pure — unit-tested directly.
  */
 export function checkpointImageTag(projectRoot: string, name: string): string {
-  return `${CHECKPOINT_IMAGE_PREFIX}${hashProjectPath(projectRoot)}:${name}`;
+  const mnemonic = sanitizeMnemonic(basename(projectRoot));
+  return `${CHECKPOINT_IMAGE_PREFIX}${hashProjectPath(projectRoot)}_${mnemonic}:${name}`;
 }
 
 export interface CheckpointManifest {
@@ -66,7 +75,7 @@ export interface CheckpointInfo {
 }
 
 export function projectCheckpointsDir(projectRoot: string): string {
-  return join(CHECKPOINTS_ROOT, hashProjectPath(projectRoot));
+  return join(CHECKPOINTS_ROOT, projectDirSegment(projectRoot));
 }
 
 function checkpointDir(projectRoot: string, name: string): string {

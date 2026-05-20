@@ -10,7 +10,10 @@ describe('checkpoint helpers', () => {
     it('builds an image tag from project root + checkpoint name', () => {
       const tag = checkpointImageTag('/Users/x/proj', 'demo-1');
       expect(tag.startsWith(CHECKPOINT_IMAGE_PREFIX)).toBe(true);
-      expect(tag).toMatch(/^agentbox-ckpt-[0-9a-f]{16}:demo-1$/);
+      // <hash>_<mnemonic>:<name> — `_` between hash and mnemonic so the
+      // leading 16 hex chars remain unambiguous and `agentbox-ckpt-*` still
+      // matches in `docker image ls --filter`.
+      expect(tag).toMatch(/^agentbox-ckpt-[0-9a-f]{16}_proj:demo-1$/);
     });
 
     it('is deterministic per project root', () => {

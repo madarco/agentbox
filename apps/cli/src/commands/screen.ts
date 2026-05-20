@@ -50,7 +50,7 @@ export const screenCommand = new Command('screen')
       // viewer). The expose port is reachable at 127.0.0.1:<port> inside the
       // box; absent a web service we fall back to a neutral page so the VNC
       // view isn't a connection-refused error.
-      const persisted = await readBoxStatus(box.id);
+      const persisted = await readBoxStatus(box);
       const exposePort = persisted?.services.find((s) => s.expose)?.expose?.port;
       const inBoxUrl =
         exposePort !== undefined ? `http://localhost:${String(exposePort)}` : 'about:blank';

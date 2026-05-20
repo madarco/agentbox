@@ -37,10 +37,12 @@ Look at `/workspace`:
 ## 2. Pick services and tasks
 
 - **Services** = long-running. Web servers, watchers, queue workers, databases. `restart: on-failure` by default.
-- **Tasks** = one-shot. `pnpm install`, DB migrations, codegen, fixture loaders. Wire dependent services with `needs:` so they wait for the task to finish successfully.
+- **Tasks** = one-shot. `pnpm install`, DB migrations, codegen, fixture loaders, install apt packages. Wire dependent services with `needs:` so they wait for the task to finish successfully.
 - Names: must match `[A-Za-z0-9_-]+`. Task names and service names share a namespace — no collisions.
 - No cycles in `needs:`.
-- **Always generate a dependency-install task** and make it the root of the `needs:` graph (every service that needs deps gets `needs: [install, …]`). The filesystem can be then later captured by `agentbox-ctl checkpoint --set-default`. The task must be **idempotent and self-healing**: `agentbox-ctl` re-runs pending tasks on every box stop/start (the daemon dies with the container and is relaunched), so a plain `rm -rf node_modules && install` would wipe + reinstall on every start. Guard the rebuild with a marker file *inside* `node_modules` (the `.agentbox-installed` convention AgentBox uses internally): rebuild only when the marker is absent (fresh box), and be a fast no-op once it exists. Detect the package manager from the lockfile — never hardcode `pnpm`. See the worked example below.
+- **Always generate a dependency-install task** and make it the root of the `needs:` graph (every service that needs deps gets `needs: [install, …]`). Future boxes start from a snapshot of the final filesystem so they won't need this, but updates or moving to a cloud provider might need to rebuild the container from scratch. The filesystem can be then later captured by `agentbox-ctl checkpoint --set-default`. The task must be **idempotent and self-healing**: `agentbox-ctl` re-runs pending tasks on every box stop/start (the daemon dies with the container and is relaunched), so a plain `rm -rf node_modules && install` would wipe + reinstall on every start. Guard the rebuild with a marker file *inside* `node_modules` (the `.agentbox-installed` convention AgentBox uses internally): rebuild only when the marker is absent (fresh box), and be a fast no-op once it exists. Detect the package manager from the lockfile — never hardcode `pnpm`. See the worked example below.
+- **Add a comment to the beginning** of the file to explain what you did and what issues you encountered, so that future run might use this information in case the project evolves and you need to update the agentbox.yaml file.
+-
 
 ## 3. Wire readiness probes (services only)
 
@@ -90,6 +92,11 @@ Full key list (run on the host): `agentbox config list --keys`.
 
 ```yaml
 # yaml-language-server: $schema=https://agentbox.dev/schema/agentbox.schema.json
+# This agentbox.yaml setup this Next.js project, and includes:
+# - a postgres database because it's used in the project
+# - an inngest server for queues
+# - a fix to move .turbo/cache folder to the workspace to avoid a permission error during setup
+# - ...
 defaults:
   box:
     withPlaywright: true
@@ -109,19 +116,11 @@ tasks:
       set -e
       MARKER=node_modules/.agentbox-installed
       [ -f "$MARKER" ] && { echo "deps installed (marker present) — skip"; exit 0; }
+      apt-get update && apt-get install -y postgresql-client
       rm -rf node_modules
       if [ -f pnpm-lock.yaml ]; then
         corepack enable >/dev/null 2>&1 || true
         pnpm install --frozen-lockfile || pnpm install
-      elif [ -f yarn.lock ]; then
-        corepack enable >/dev/null 2>&1 || true
-        yarn install --frozen-lockfile || yarn install
-      elif [ -f bun.lockb ] || [ -f bun.lock ]; then
-        bun install
-      elif [ -f package-lock.json ]; then
-        npm ci || npm install
-      else
-        npm install
       fi
       touch "$MARKER"
 

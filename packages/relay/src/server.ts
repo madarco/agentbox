@@ -163,7 +163,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           send(res, 400, { error: 'invalid box-status payload' });
           return;
         }
-        await statusStore.set(reg.boxId, body.payload);
+        await statusStore.set(reg.boxId, reg.name, reg.projectIndex, body.payload);
         log(`box-status box=${reg.boxId}`);
         send(res, 202, { ok: true });
         return;
@@ -226,6 +226,15 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         return;
       }
       const worktrees = sanitizeWorktrees(body.worktrees);
+      // Only accept a finite positive integer; everything else (including the
+      // common `undefined` from legacy boxes) drops to `undefined` and the
+      // status-store falls back to the `<id>-<mnemonic>` segment shape.
+      const projectIndex =
+        typeof body.projectIndex === 'number' &&
+        Number.isFinite(body.projectIndex) &&
+        body.projectIndex > 0
+          ? Math.trunc(body.projectIndex)
+          : undefined;
       const reg: BoxRegistration = {
         boxId: body.boxId,
         token: body.token,
@@ -239,6 +248,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           typeof body.createdAt === 'string' && body.createdAt.length > 0
             ? body.createdAt
             : undefined,
+        projectIndex,
         worktrees,
       };
       registry.register(reg);
@@ -291,6 +301,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         registeredAt: r.registeredAt,
         containerName: r.containerName,
         createdAt: r.createdAt,
+        projectIndex: r.projectIndex,
         worktrees: r.worktrees ?? [],
       }));
       send(res, 200, { boxes: redacted });

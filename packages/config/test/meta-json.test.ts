@@ -75,5 +75,10 @@ describe('per-project meta.json', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.originalPath).toBe(tmpCwd);
     expect(entries[0]?.hasConfigFile).toBe(true);
+    // Dir name carries the hash + a mnemonic derived from the basename of
+    // tmpCwd. The hash is the canonical key and is reported separately; the
+    // mnemonic just makes the dir self-describing on disk.
+    expect(entries[0]?.dirName).toMatch(/^[0-9a-f]{16}-[a-z0-9_]+$/);
+    expect(entries[0]?.dirName.startsWith(entries[0]!.hash + '-')).toBe(true);
   });
 });

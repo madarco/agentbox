@@ -9,9 +9,41 @@ import { join } from 'node:path';
  */
 export type BoxStatusSnapshot = Record<string, unknown>;
 
-/** Mirrors `boxRunDirFor` in @agentbox/sandbox-docker — kept in sync by hand. */
-function boxStatusPathFor(boxId: string): string {
-  return join(homedir(), '.agentbox', 'boxes', boxId, 'status.json');
+/**
+ * Mirrors `sanitizeMnemonic` in @agentbox/config — duplicated here so the relay
+ * stays dep-free. Two source-of-truth files; the schema-drift-style guarantee
+ * is that boxes only land in `<id>-<mnemonic>/` if both impls agree.
+ */
+function sanitizeMnemonic(raw: string): string {
+  return (
+    raw
+      .toLowerCase()
+      .replace(/-/g, '_')
+      .replace(/[^a-z0-9_]+/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 32) || 'unnamed'
+  );
+}
+
+/**
+ * Mirrors `boxRunDirFor` / `boxDirSegment` in @agentbox/sandbox-docker — kept
+ * in sync by hand. When `projectIndex` (`agentbox list`'s `N`) is set the
+ * segment is `<id>-<n>-<mnemonic>` so directories sort cleanly within a
+ * project; legacy (pre-feature) boxes register without it and fall back to
+ * the original `<id>-<mnemonic>` shape.
+ */
+function boxRunDirFor(boxId: string, name: string, projectIndex?: number): string {
+  const mnemonic = sanitizeMnemonic(name);
+  const segment =
+    typeof projectIndex === 'number' && Number.isFinite(projectIndex) && projectIndex > 0
+      ? `${boxId}-${String(projectIndex)}-${mnemonic}`
+      : `${boxId}-${mnemonic}`;
+  return join(homedir(), '.agentbox', 'boxes', segment);
+}
+
+function boxStatusPathFor(boxId: string, name: string, projectIndex?: number): string {
+  return join(boxRunDirFor(boxId, name, projectIndex), 'status.json');
 }
 
 /**
@@ -39,13 +71,24 @@ export class BoxStatusStore {
     return this.map.get(boxId);
   }
 
-  /** Update the in-memory entry and best-effort persist it to disk. */
-  async set(boxId: string, status: BoxStatusSnapshot): Promise<void> {
+  /**
+   * Update the in-memory entry and best-effort persist it to disk. `name` is
+   * the box's user-facing name (from the registry); `projectIndex` is the
+   * 1-based per-project `N`. Together they form the on-disk dir
+   * `~/.agentbox/boxes/<id>-<n>-<mnemonic>/status.json` (or
+   * `<id>-<mnemonic>/` if N is absent — legacy boxes).
+   */
+  async set(
+    boxId: string,
+    name: string,
+    projectIndex: number | undefined,
+    status: BoxStatusSnapshot,
+  ): Promise<void> {
     this.map.set(boxId, status);
-    const target = boxStatusPathFor(boxId);
+    const target = boxStatusPathFor(boxId, name, projectIndex);
     const tmp = `${target}.${String(process.pid)}.tmp`;
     try {
-      await mkdir(join(homedir(), '.agentbox', 'boxes', boxId), { recursive: true });
+      await mkdir(boxRunDirFor(boxId, name, projectIndex), { recursive: true });
       await writeFile(tmp, JSON.stringify(status), 'utf8');
       await rename(tmp, target);
     } catch {

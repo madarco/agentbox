@@ -270,6 +270,12 @@ export interface RegisterBoxArgs {
   /** ISO-8601 box-creation time (BoxRecord.createdAt); auto-pause tie-break. */
   createdAt?: string;
   /**
+   * 1-based per-project box index. Forwarded so the relay's status-store
+   * builds the same `<id>-<n>-<mnemonic>` dir segment the host's
+   * `boxRunDirFor` uses. Absent for legacy boxes.
+   */
+  projectIndex?: number;
+  /**
    * Subset of BoxRecord.gitWorktrees the relay needs to dispatch git RPCs.
    * Empty/omitted for boxes without git repos.
    */
@@ -288,6 +294,7 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     name: args.name,
     containerName: args.containerName,
     createdAt: args.createdAt,
+    projectIndex: args.projectIndex,
     worktrees,
   });
 }
@@ -345,6 +352,7 @@ export interface BoxWithToken {
   container?: string;
   createdAt?: string;
   relayToken?: string;
+  projectIndex?: number;
   gitWorktrees?: GitWorktreeRecord[];
 }
 
@@ -363,6 +371,7 @@ export async function rehydrateRelayRegistry(boxes: BoxWithToken[]): Promise<voi
         name: b.name,
         containerName: b.container,
         createdAt: b.createdAt,
+        projectIndex: b.projectIndex,
         worktrees: b.gitWorktrees,
       });
     } catch {

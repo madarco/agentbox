@@ -162,4 +162,48 @@ describe('relay server', () => {
     const r = await fetchJson(handle, 'POST', '/admin/register-box', { body: { boxId: 'b' } });
     expect(r.status).toBe(400);
   });
+
+  it('persists registered projectIndex and uses it in /admin/registry', async () => {
+    const r = await fetchJson(handle, 'POST', '/admin/register-box', {
+      body: { boxId: 'idx-box', token: 'idx-tok', name: 'idx-name', projectIndex: 7 },
+    });
+    expect(r.status).toBe(204);
+    const list = await fetchJson(handle, 'GET', '/admin/registry');
+    expect(list.status).toBe(200);
+    const body = list.body as { boxes: Array<{ boxId: string; projectIndex?: number }> };
+    const entry = body.boxes.find((b) => b.boxId === 'idx-box');
+    expect(entry?.projectIndex).toBe(7);
+  });
+
+  it('writes box-status into <id>-<n>-<mnemonic>/status.json when projectIndex is set', async () => {
+    // Re-home $HOME so the status-store writes under a tmp dir and doesn't
+    // pollute the user's ~/.agentbox during tests.
+    const { mkdtemp, readFile, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const home = await mkdtemp(join(tmpdir(), 'relay-status-'));
+    const originalHome = process.env['HOME'];
+    process.env['HOME'] = home;
+    try {
+      await fetchJson(handle, 'POST', '/admin/register-box', {
+        body: { boxId: 'pid42', token: 'tk', name: 'My-Box', projectIndex: 42 },
+      });
+      const post = await fetchJson(handle, 'POST', '/events', {
+        token: 'tk',
+        body: {
+          type: 'box-status',
+          payload: { schema: 1, boxId: 'pid42', services: [], tasks: [] },
+        },
+      });
+      expect(post.status).toBe(202);
+      // `My-Box` sanitizes to `my_box`; segment is `<id>-<n>-<mnemonic>`.
+      const target = join(home, '.agentbox', 'boxes', 'pid42-42-my_box', 'status.json');
+      const text = await readFile(target, 'utf8');
+      const json = JSON.parse(text) as { boxId: string };
+      expect(json.boxId).toBe('pid42');
+    } finally {
+      process.env['HOME'] = originalHome;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
 });

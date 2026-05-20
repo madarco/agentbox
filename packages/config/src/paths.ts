@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { ConfigScope } from './types.js';
 
 export const STATE_DIR = join(homedir(), '.agentbox');
@@ -73,8 +73,36 @@ export function hashProjectPath(absPath: string): string {
   return createHash('sha1').update(normalised).digest('hex').slice(0, 16);
 }
 
+/**
+ * Make `raw` safe to embed as the mnemonic half of an on-disk dir segment or a
+ * Docker tag repo. Lowercased so docker tag repos stay valid; `-` collapses to
+ * `_` so the single `-` between hash and mnemonic remains the only one (which
+ * is what `listProjectsConfigured` parses on). Bounded length, never empty.
+ */
+export function sanitizeMnemonic(raw: string): string {
+  return (
+    raw
+      .toLowerCase()
+      .replace(/-/g, '_')
+      .replace(/[^a-z0-9_]+/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 32) || 'unnamed'
+  );
+}
+
+/**
+ * On-disk dir segment for a project under `~/.agentbox/projects/` and
+ * `~/.agentbox/checkpoints/`: `<hash>-<mnemonic>`. The hash stays the
+ * canonical key; the trailing mnemonic is decorative — readers parse the hash
+ * as the leading 16 hex chars and ignore the suffix.
+ */
+export function projectDirSegment(absPath: string): string {
+  return `${hashProjectPath(absPath)}-${sanitizeMnemonic(basename(absPath))}`;
+}
+
 export function projectConfigDir(absPath: string): string {
-  return join(PROJECTS_DIR, hashProjectPath(absPath));
+  return join(PROJECTS_DIR, projectDirSegment(absPath));
 }
 
 export function projectConfigFile(absPath: string): string {

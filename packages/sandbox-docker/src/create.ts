@@ -306,6 +306,16 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     throw new Error(`container ${containerName} already exists; remove it first`);
   }
 
+  // Per-project monotonic index. Allocated *here* so it can flow into the
+  // box / snapshot dir segments (`<id>-<n>-<mnemonic>`) and the
+  // `AGENTBOX_PROJECT_INDEX` container env var. Pre-feature legacy boxes
+  // never pass `projectRoot`; those records keep `projectIndex` undefined and
+  // the dir segments fall back to `<id>-<mnemonic>`.
+  let projectIndex: number | undefined;
+  if (opts.projectRoot) {
+    projectIndex = allocateProjectIndex(await readState(), opts.projectRoot);
+  }
+
   // Repo detection + host-side carry-over capture. Branches are picked here
   // (against the host main repos' refs) so they're recorded on the BoxRecord
   // regardless of whether the in-container `git worktree add` succeeds later.
@@ -359,7 +369,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   let snapshotDir: string | null = null;
   const snapshotIsUseful = !checkpointImage && repoCarryOvers.length === 0;
   if (opts.useSnapshot && snapshotIsUseful) {
-    snapshotDir = snapshotPathFor(id);
+    snapshotDir = snapshotPathFor({ id, name, projectIndex });
     log(`cloning workspace to ${snapshotDir} (APFS clone where available)`);
     const snap = await createSnapshot({ source: workspace, destination: snapshotDir });
     log(`pruned ${snap.prunedPaths.length} platform-dependent dirs from snapshot`);
@@ -413,7 +423,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   if (seeded.seeded) log(`seeded /agentbox-setup skill into ${claudeSpec.volume}`);
   const claudeMounts = buildClaudeMounts(claudeSpec, process.env);
 
-  const boxDir = boxRunDirFor(id);
+  const boxDir = boxRunDirFor({ id, name, projectIndex });
   const socketDir = join(boxDir, 'run');
   const socketPath = join(socketDir, 'ctl.sock');
   // Per-box host dir that `agentbox open` refreshes the merged /workspace
@@ -454,6 +464,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         name,
         containerName,
         createdAt,
+        projectIndex,
         worktrees: gitWorktreeRecords,
       });
       log(`registered box token with relay`);
@@ -492,14 +503,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     { hostPort: 0, containerPort: WEB_CONTAINER_PORT, hostIp: '127.0.0.1' },
   ];
 
-  // Per-project monotonic index. Allocated *before* runBox so it can be
-  // injected as AGENTBOX_PROJECT_INDEX in the container env.
-  let projectIndex: number | undefined;
-  if (opts.projectRoot) {
-    projectIndex = allocateProjectIndex(await readState(), opts.projectRoot);
-  }
-
-  // Identity vars that make the box self-aware.
+  // Identity vars that make the box self-aware. `projectIndex` was allocated
+  // earlier (right after `id`/`name`) so dir-segment helpers could see it; we
+  // just read the binding here.
   const agentboxEnv: Record<string, string> = {
     AGENTBOX: '1',
     AGENTBOX_BOX_NAME: name,

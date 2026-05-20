@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { homedir, platform } from 'node:os';
 import { join, resolve } from 'node:path';
+import { sanitizeMnemonic } from '@agentbox/config';
 
 /**
  * Directories whose contents are either platform-specific (built native modules,
@@ -27,8 +28,20 @@ export const EXCLUDE_DIRS: ReadonlySet<string> = new Set([
 
 export const SNAPSHOTS_ROOT = join(homedir(), '.agentbox', 'snapshots');
 
-export function snapshotPathFor(boxId: string): string {
-  return join(SNAPSHOTS_ROOT, boxId);
+/**
+ * `<id>-<n>-<mnemonic>` when `projectIndex` is set (post-feature boxes — all
+ * new boxes), else `<id>-<mnemonic>` (legacy pre-feature fallback). Mirrors
+ * `boxDirSegment` in `host-export.ts` — kept structurally compatible so the
+ * snapshot dir can be looked up alongside its box dir.
+ */
+export function snapshotPathFor(box: { id: string; name: string; projectIndex?: number }): string {
+  const mnemonic = sanitizeMnemonic(box.name);
+  const n = box.projectIndex;
+  const segment =
+    typeof n === 'number' && Number.isFinite(n) && n > 0
+      ? `${box.id}-${String(n)}-${mnemonic}`
+      : `${box.id}-${mnemonic}`;
+  return join(SNAPSHOTS_ROOT, segment);
 }
 
 /**

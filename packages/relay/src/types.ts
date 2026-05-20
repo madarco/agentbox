@@ -15,6 +15,13 @@ export interface BoxRegistration {
   /** ISO-8601 box-creation time (BoxRecord.createdAt); used as a tie-break in auto-pause ordering. */
   createdAt?: string;
   /**
+   * 1-based per-project box index (`agentbox list`'s `N` column). When set,
+   * the relay writes status.json under `~/.agentbox/boxes/<id>-<n>-<mnemonic>/`
+   * to match the host's `boxDirSegment` helper. Absent for legacy
+   * (pre-feature) boxes; absent registrations fall back to `<id>-<mnemonic>`.
+   */
+  projectIndex?: number;
+  /**
    * Container-path → host-worktree-dir mapping the host uses to resolve
    * git.pull/git.push RPCs. Empty when the box has no git repos.
    */
@@ -68,6 +75,12 @@ export interface RegisterBoxBody {
   name: string;
   containerName?: string;
   createdAt?: string;
+  /**
+   * 1-based per-project box index. Optional — additive; older boxes and
+   * legacy (pre-feature) records register without it and the status path
+   * falls back to `<id>-<mnemonic>`.
+   */
+  projectIndex?: number;
   worktrees?: BoxWorktree[];
 }
 

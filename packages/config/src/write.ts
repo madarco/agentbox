@@ -88,7 +88,15 @@ export async function unsetConfigValue(
 }
 
 interface ProjectEntry {
+  /** SHA-1 (first 16 hex chars) of `originalPath` — the canonical key. */
   hash: string;
+  /**
+   * On-disk dir name under `PROJECTS_DIR`. Equal to the hash for legacy
+   * pre-rename dirs; `<hash>-<mnemonic>` for new dirs. Used directly when we
+   * need to `rm` the dir so the call works regardless of which shape happens
+   * to be on disk.
+   */
+  dirName: string;
   originalPath: string;
   createdAt: string | null;
   lastSeenAt: string | null;
@@ -109,14 +117,19 @@ export async function listProjectsConfigured(): Promise<ProjectEntry[]> {
     throw err;
   }
   const out: ProjectEntry[] = [];
-  for (const hash of entries) {
-    if (!/^[0-9a-f]{16}$/.test(hash)) continue;
-    const meta = await readMeta(hash);
+  for (const dirName of entries) {
+    // Dir shape is `<sha1-16>` (legacy) or `<sha1-16>-<mnemonic>` (current);
+    // either way the leading 16 hex chars are the canonical key.
+    const m = /^([0-9a-f]{16})(?:-.+)?$/.exec(dirName);
+    if (!m) continue;
+    const hash = m[1]!;
+    const meta = await readMeta(dirName);
     if (!meta) continue;
     const cfgPath = projectConfigFile(meta.originalPath);
     const hasConfig = await fileExists(cfgPath);
     out.push({
       hash,
+      dirName,
       originalPath: meta.originalPath,
       createdAt: meta.createdAt,
       lastSeenAt: meta.lastSeenAt,
@@ -165,9 +178,11 @@ export async function pruneOrphanProjectConfigs(
     removed.push({ hash: entry.hash, originalPath: entry.originalPath });
     if (!dryRun) {
       try {
-        // Remove by the on-disk hash dir name (originalPath is gone, so
-        // recomputing the hash from it would be pointless).
-        await rm(join(PROJECTS_DIR, entry.hash), { recursive: true, force: true });
+        // Remove by the on-disk dir name (originalPath is gone, so recomputing
+        // the segment from it would be pointless; entry.dirName preserves
+        // whichever shape — legacy `<hash>` or new `<hash>-<mnemonic>` —
+        // happens to be on disk).
+        await rm(join(PROJECTS_DIR, entry.dirName), { recursive: true, force: true });
       } catch {
         /* best-effort */
       }
@@ -205,9 +220,9 @@ export async function bumpProjectGcCounter(): Promise<number> {
 }
 
 async function readMeta(
-  hash: string,
+  dirName: string,
 ): Promise<{ originalPath: string; createdAt: string | null; lastSeenAt: string | null } | null> {
-  const metaPath = `${PROJECTS_DIR}/${hash}/meta.json`;
+  const metaPath = `${PROJECTS_DIR}/${dirName}/meta.json`;
   try {
     const text = await readFile(metaPath, 'utf8');
     const parsed = JSON.parse(text) as Record<string, unknown>;
