@@ -1,5 +1,6 @@
-import { confirm, isCancel, log } from '@clack/prompts';
+import { confirm, isCancel, log, multiselect } from '@clack/prompts';
 import { findProjectRoot } from '@agentbox/config';
+import { DEFAULT_ENV_PATTERNS, scanHostEnvFiles } from '@agentbox/sandbox-docker';
 import { basename } from 'node:path';
 
 /**
@@ -33,6 +34,13 @@ export type WizardAction = 'proceed' | 'switch-to-claude' | 'launch-with-prompt'
 export interface WizardOutcome {
   action: WizardAction;
   initialPrompt?: string;
+  /**
+   * Files the user picked in the env-import multiselect (relative to the
+   * workspace, NUL-safe). Empty/undefined = no copy. Threaded into
+   * `createBox(opts.envFilesToImport)` so the box is seeded with just the
+   * selection. Independent of `withEnv` / the wizard's yes/no answer.
+   */
+  envFilesToImport?: string[];
 }
 
 interface WizardArgs {
@@ -47,6 +55,12 @@ interface WizardArgs {
    * "generate one?" prompt entirely.
    */
   checkpointRef?: string;
+  /**
+   * True when the caller already opted in to importing the full
+   * DEFAULT_ENV_PATTERNS set (`--with-env` / `box.withEnv: true`). The
+   * env-file multiselect is suppressed in that case — the user pre-decided.
+   */
+  withEnv?: boolean;
 }
 
 /**
@@ -56,17 +70,37 @@ interface WizardArgs {
  */
 export const WIZARD_AUTOLAUNCH_ENV = 'AGENTBOX_WIZARD_AUTOLAUNCH';
 
+/**
+ * Sibling sentinel to `WIZARD_AUTOLAUNCH_ENV`: when `agentbox create`
+ * re-dispatches to `agentbox claude`, the user's env-file multiselect picks
+ * ride across the boundary in this env var, NUL-delimited (filenames can
+ * contain newlines but never NUL). The inner wizard parses + acts on it,
+ * then the caller is expected to delete it (mirrors the autolaunch sentinel).
+ */
+export const WIZARD_ENV_FILES_ENV = 'AGENTBOX_WIZARD_ENV_FILES';
+
+/**
+ * Patterns scanned for the wizard's env-file multiselect. Same set as
+ * `--with-env` minus `agentbox.yaml`: the wizard fires precisely *because*
+ * there's no agentbox.yaml on the host, so it can never be a match.
+ */
+const WIZARD_ENV_SCAN_PATTERNS = DEFAULT_ENV_PATTERNS.filter((p) => p !== 'agentbox.yaml');
+
 export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutcome> {
   // Re-entry from agentbox create → claude: outer pass already prompted;
-  // just inject the initial prompt for claude.
+  // just inject the initial prompt for claude. Env-file picks were stashed by
+  // the outer pass in WIZARD_ENV_FILES_ENV and need to flow through this
+  // outcome so claude's action handler can pass them to createBox.
   if (process.env[WIZARD_AUTOLAUNCH_ENV] === '1') {
     if (args.command !== 'claude') return { action: 'proceed' };
-    if (args.checkpointRef) return { action: 'proceed' };
+    const envFiles = parseEnvFilesFromEnv(process.env[WIZARD_ENV_FILES_ENV]);
+    if (args.checkpointRef) return { action: 'proceed', envFilesToImport: envFiles };
     const proj = await findProjectRoot(args.workspace);
-    if (proj.hasAgentboxYaml) return { action: 'proceed' };
+    if (proj.hasAgentboxYaml) return { action: 'proceed', envFilesToImport: envFiles };
     return {
       action: 'launch-with-prompt',
       initialPrompt: buildSetupInitialPrompt(proj.root),
+      envFilesToImport: envFiles,
     };
   }
 
@@ -78,17 +112,38 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
 
   // A configured default checkpoint means the project is already set up — the
   // checkpoint carries node_modules/env *and* the agentbox.yaml from when it
-  // was captured. Don't nag to regenerate one.
+  // was captured. Don't nag to regenerate one. Skip env-file picker too: the
+  // checkpoint already has whatever was on disk when it was captured.
   if (args.checkpointRef) {
     log.info(`starting from checkpoint "${args.checkpointRef}"; skipping agentbox.yaml setup`);
     return { action: 'proceed' };
+  }
+
+  // Env-file multiselect — runs *before* the "run setup wizard?" confirm so
+  // it's independent of that answer. Suppressed when --with-env is on
+  // (the user already opted in to importing the full DEFAULT_ENV_PATTERNS
+  // set). Skipped silently when nothing matched.
+  let envFilesToImport: string[] | undefined;
+  if (!args.withEnv) {
+    const found = await scanHostEnvFiles(proj.root, WIZARD_ENV_SCAN_PATTERNS);
+    if (found.length > 0) {
+      const picked = await multiselect<string>({
+        message: 'Import host env/secret files into the box? (space to toggle, enter to confirm)',
+        options: found.map((p) => ({ value: p, label: p })),
+        initialValues: found,
+        required: false,
+      });
+      if (!isCancel(picked) && Array.isArray(picked) && picked.length > 0) {
+        envFilesToImport = picked;
+      }
+    }
   }
 
   const go = await confirm({
     message: 'New project detected, run setup wizard?',
     initialValue: true,
   });
-  if (isCancel(go) || !go) return { action: 'proceed' };
+  if (isCancel(go) || !go) return { action: 'proceed', envFilesToImport };
 
   // The /agentbox-setup skill is seeded into the box's claude-config volume
   // by seedSetupSkillIntoVolume() (sandbox-docker) — box-only, never written
@@ -97,12 +152,28 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
   // For `agentbox create`, the only sensible yes-path is to hand off to
   // `agentbox claude` (that's where the agent runs). No second prompt — the
   // first confirm already captured the user's intent.
-  if (args.command === 'create') return { action: 'switch-to-claude' };
+  if (args.command === 'create') return { action: 'switch-to-claude', envFilesToImport };
 
   return {
     action: 'launch-with-prompt',
     initialPrompt: buildSetupInitialPrompt(proj.root),
+    envFilesToImport,
   };
+}
+
+/** Serialize the multiselect picks for the create→claude re-dispatch. */
+export function serializeEnvFilesForEnv(files: string[] | undefined): string | undefined {
+  if (!files || files.length === 0) return undefined;
+  // NUL is illegal in POSIX filenames so it's a safe delimiter even though
+  // env-var values can contain newlines (which legal filenames also can).
+  return files.join('\0');
+}
+
+/** Inverse of `serializeEnvFilesForEnv`. Empty/undefined input → undefined. */
+export function parseEnvFilesFromEnv(raw: string | undefined): string[] | undefined {
+  if (!raw) return undefined;
+  const out = raw.split('\0').filter((p) => p.length > 0);
+  return out.length > 0 ? out : undefined;
 }
 
 /**

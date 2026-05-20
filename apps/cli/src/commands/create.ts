@@ -14,7 +14,9 @@ import { resolveLimits } from '../limits.js';
 import {
   maybeRunSetupWizard,
   passthroughFlags,
+  serializeEnvFilesForEnv,
   WIZARD_AUTOLAUNCH_ENV,
+  WIZARD_ENV_FILES_ENV,
 } from '../wizard.js';
 import { claudeCommand } from './claude.js';
 
@@ -126,13 +128,17 @@ export const createCommand = new Command('create')
       yes: !!opts.yes,
       command: 'create',
       checkpointRef,
+      withEnv: cfg.effective.box.withEnv,
     });
     if (wiz.action === 'switch-to-claude') {
       process.env[WIZARD_AUTOLAUNCH_ENV] = '1';
+      const serialized = serializeEnvFilesForEnv(wiz.envFilesToImport);
+      if (serialized !== undefined) process.env[WIZARD_ENV_FILES_ENV] = serialized;
       try {
         await claudeCommand.parseAsync(passthroughFlags(opts), { from: 'user' });
       } finally {
         delete process.env[WIZARD_AUTOLAUNCH_ENV];
+        delete process.env[WIZARD_ENV_FILES_ENV];
       }
       return;
     }
@@ -154,6 +160,7 @@ export const createCommand = new Command('create')
         image: cfg.effective.box.image,
         withPlaywright,
         withEnv: cfg.effective.box.withEnv,
+        envFilesToImport: wiz.envFilesToImport,
         vnc: { enabled: cfg.effective.box.vnc },
         docker: { sharedCache: cfg.effective.box.dockerCacheShared },
         limits: resolveLimits(cfg.effective.box, opts),

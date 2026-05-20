@@ -36,6 +36,7 @@ import {
   DEFAULT_ENV_PATTERNS,
   boxRunDirFor,
   copyHostEnvFilesToBox,
+  copyHostFilesToBox,
 } from './host-export.js';
 import { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
 import {
@@ -107,6 +108,14 @@ export interface CreateBoxOptions {
    * layer across pause/stop/start.
    */
   withEnv?: boolean;
+  /**
+   * Explicit relative-path file list to copy from `workspacePath` into the
+   * box's /workspace after seeding (no glob expansion, no scan — the list is
+   * pre-vetted, e.g. picked by the wizard's multiselect). Independent of
+   * `withEnv`: if both are set, both run (idempotent on overlapping files).
+   * One-shot at create time; persists across pause/stop/start.
+   */
+  envFilesToImport?: string[];
   /**
    * VNC stack (Xvnc on :1 + websockify serving noVNC on container :6080).
    * Defaults to enabled. The CLI exposes `--no-vnc` for opt-out. Disabling
@@ -636,6 +645,19 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       onLog: log,
     });
     log(copied > 0 ? `copied ${String(copied)} env/config file(s)` : 'no env/config files found');
+  }
+
+  if (opts.envFilesToImport && opts.envFilesToImport.length > 0) {
+    log(`copying ${String(opts.envFilesToImport.length)} selected env/config file(s) into /workspace`);
+    const { copied } = await copyHostFilesToBox({
+      container: containerName,
+      workspaceDir: workspace,
+      files: opts.envFilesToImport,
+      onLog: log,
+    });
+    if (copied !== opts.envFilesToImport.length) {
+      log(`copied ${String(copied)}/${String(opts.envFilesToImport.length)} selected env/config file(s)`);
+    }
   }
 
   // VNC daemon (Xvnc + websockify). Best-effort, like launchCtlDaemon. The

@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSetupInitialPrompt,
   IN_BOX_SETUP_GUIDE_PATH,
+  parseEnvFilesFromEnv,
   passthroughFlags,
+  serializeEnvFilesForEnv,
 } from '../src/wizard.js';
+
+const NUL = String.fromCharCode(0);
 
 describe('passthroughFlags', () => {
   it('returns empty for an empty options object', () => {
@@ -62,5 +66,33 @@ describe('buildSetupInitialPrompt', () => {
   it('instructs claude to reload the supervisor so tasks run immediately', () => {
     const prompt = buildSetupInitialPrompt('/x/y');
     expect(prompt).toContain('agentbox-ctl reload');
+  });
+});
+
+describe('serializeEnvFilesForEnv / parseEnvFilesFromEnv', () => {
+  it('round-trips a non-empty list via NUL delimiter', () => {
+    const files = ['.env', '.env.local', 'apps/web/.env'];
+    const raw = serializeEnvFilesForEnv(files);
+    expect(raw).toBe(['.env', '.env.local', 'apps/web/.env'].join(NUL));
+    expect(parseEnvFilesFromEnv(raw)).toEqual(files);
+  });
+
+  it('returns undefined for empty / nullish input on both sides', () => {
+    expect(serializeEnvFilesForEnv(undefined)).toBeUndefined();
+    expect(serializeEnvFilesForEnv([])).toBeUndefined();
+    expect(parseEnvFilesFromEnv(undefined)).toBeUndefined();
+    expect(parseEnvFilesFromEnv('')).toBeUndefined();
+  });
+
+  it('survives filenames with newlines (NUL is the only POSIX-illegal byte)', () => {
+    const files = ['weird\nname.env', '.env'];
+    const raw = serializeEnvFilesForEnv(files);
+    expect(parseEnvFilesFromEnv(raw)).toEqual(files);
+  });
+
+  it('drops empty fragments on parse (defensive against stray trailing NUL)', () => {
+    // Three NUL bytes around two entries — what a malformed env value might look like.
+    const raw = ['.env', '', '.env.local', ''].join(NUL);
+    expect(parseEnvFilesFromEnv(raw)).toEqual(['.env', '.env.local']);
   });
 });

@@ -354,6 +354,76 @@ export async function copyHostEnvFilesToBox(
   return { copied: list.length };
 }
 
+/**
+ * Run `buildHostEnvFindArgs` against `workspaceDir` and return the matched
+ * paths as a relative-path string array. Pure host-side helper: no docker, no
+ * mutation. Empty array on a scan failure (best-effort, matching
+ * `copyHostEnvFilesToBox`). Used by the setup wizard to preview a multiselect
+ * of importable env files.
+ */
+export async function scanHostEnvFiles(
+  workspaceDir: string,
+  patterns: string[],
+): Promise<string[]> {
+  if (patterns.length === 0) return [];
+  const found = await execa('find', buildHostEnvFindArgs(patterns).slice(1), {
+    cwd: workspaceDir,
+    reject: false,
+  });
+  if (found.exitCode !== 0) return [];
+  return String(found.stdout)
+    .split('\0')
+    .map((p) => p.replace(/^\.\//, ''))
+    .filter((p) => p.length > 0);
+}
+
+export interface CopyHostFilesOptions {
+  /** Target container name (must be running). */
+  container: string;
+  /** Absolute host workspace dir — the same dir that maps to /workspace. */
+  workspaceDir: string;
+  /** Relative paths (to workspaceDir) to copy. NUL-safe; no glob expansion. */
+  files: string[];
+  onLog?: (line: string) => void;
+}
+
+/**
+ * Sibling to `copyHostEnvFilesToBox` that skips the `find` scan and trusts a
+ * pre-vetted file list (e.g. the user's multiselect picks from the wizard).
+ * Same tar-pipe body: tar reads the NUL-delimited list on stdin and pipes into
+ * `docker exec tar -x`. Best-effort error handling — a tar/exec failure logs
+ * and returns the count rather than throwing.
+ */
+export async function copyHostFilesToBox(
+  opts: CopyHostFilesOptions,
+): Promise<{ copied: number }> {
+  const log = opts.onLog ?? (() => {});
+  // Normalise — drop any leading "./" so the in-container extract lands at the
+  // right path, and drop empties so a stray trailing NUL doesn't become `tar: ''`.
+  const list = opts.files.map((p) => p.replace(/^\.\//, '')).filter((p) => p.length > 0);
+  if (list.length === 0) return { copied: 0 };
+
+  const packed = await execa('tar', ['-C', opts.workspaceDir, '--null', '-T', '-', '-cf', '-'], {
+    input: list.join('\0'),
+    encoding: 'buffer',
+    reject: false,
+  });
+  if (packed.exitCode !== 0) {
+    log(`warning: env-file tar pack failed: ${String(packed.stderr).slice(0, 300)}`);
+    return { copied: 0 };
+  }
+  const extract = await execa(
+    'docker',
+    ['exec', '-i', '--user', '1000:1000', opts.container, 'tar', '-xf', '-', '-C', '/workspace'],
+    { input: packed.stdout as Buffer, reject: false },
+  );
+  if (extract.exitCode !== 0) {
+    log(`warning: env-file copy into box failed: ${String(extract.stderr).slice(0, 300)}`);
+    return { copied: 0 };
+  }
+  return { copied: list.length };
+}
+
 export interface PullOptions {
   /** Default true. When false, skip git ls-files and use the static exclude-list. */
   respectGitignore?: boolean;

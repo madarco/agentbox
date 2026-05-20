@@ -177,6 +177,7 @@ export const claudeCommand = new Command('claude')
       yes: !!opts.yes,
       command: 'claude',
       checkpointRef,
+      withEnv: cfg.effective.box.withEnv,
     });
     let effectiveClaudeArgs = claudeArgs;
     if (wiz.action === 'launch-with-prompt' && wiz.initialPrompt) {
@@ -225,6 +226,7 @@ export const claudeCommand = new Command('claude')
         claudeEnv: resolved.env,
         withPlaywright,
         withEnv: cfg.effective.box.withEnv,
+        envFilesToImport: wiz.envFilesToImport,
         vnc: { enabled: cfg.effective.box.vnc },
         docker: { sharedCache: cfg.effective.box.dockerCacheShared },
         limits: resolveLimits(cfg.effective.box, opts),
