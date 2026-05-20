@@ -114,3 +114,71 @@ export interface CheckpointRpcParams {
    */
   replace?: boolean;
 }
+
+/**
+ * First-cut prompt UX is a y/N confirmation in the host wrapper's footer.
+ * `select` / `text` are reserved for a follow-up that grows the footer to
+ * two rows; keeping the kind in the wire from day one means the host
+ * wrapper can ignore unknown kinds gracefully when an older box hits a
+ * newer relay (and vice-versa).
+ */
+export type PromptKind = 'confirm';
+
+export interface PromptContext {
+  /** Short label, e.g. "git push" or "cp toHost: /workspace/x -> ~/dl/x". */
+  command?: string;
+  /** Container path of the calling cwd, when known. */
+  cwd?: string;
+  /** Full argv; wrapper truncates for the footer. */
+  argv?: string[];
+}
+
+/**
+ * The shape pushed over SSE on `event: prompt-ask`. Also the shape the
+ * relay-internal `askPrompt()` helper produces. Not a /rpc method — the
+ * relay generates these itself when it is about to take a host-side
+ * action; the in-box ctl never asks for prompts directly.
+ */
+export interface PromptAskEvent {
+  /** Relay-generated UUIDv4 (the wrapper echoes it back in the answer). */
+  id: string;
+  kind: PromptKind;
+  /** Primary question; wrapper truncates to footer width. */
+  message: string;
+  /** Optional second-line context; wrapper may show or skip. */
+  detail?: string;
+  /** Default when the user just hits Enter; default 'n' so y/N is the safe shape. */
+  defaultAnswer?: 'y' | 'n';
+  context?: PromptContext;
+}
+
+/** Body of `POST /admin/prompts/answer`. */
+export interface PromptAnswerBody {
+  id: string;
+  answer: 'y' | 'n';
+  /** Set when the user dismissed the prompt (Esc / Ctrl-c); treated as 'n'. */
+  cancelled?: boolean;
+}
+
+export interface CpRpcParams {
+  /** Container-side path. */
+  boxPath: string;
+  /** Host-side path (dst for toHost, src for fromHost). */
+  hostPath: string;
+  /** Defaults true; relay always uses `docker exec tar` (recursive). */
+  recursive?: boolean;
+}
+
+export type DownloadKind = 'workspace' | 'env' | 'config' | 'claude';
+
+export interface DownloadRpcParams {
+  kind: DownloadKind;
+  /**
+   * Host destination override. Reserved — the v1 relay ignores it and uses
+   * the host CLI's defaults (`box.workspacePath`, or `~/.claude`). Kept in
+   * the wire so a later upgrade can land without bumping the type.
+   */
+  hostPath?: string;
+  /** Reserved for per-kind flags (e.g. workspace: includeNodeModules). */
+  options?: Record<string, unknown>;
+}

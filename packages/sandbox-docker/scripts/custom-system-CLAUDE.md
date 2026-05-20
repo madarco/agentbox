@@ -16,9 +16,17 @@ No SSH creds, no host gitconfig identity. For ops that need the user
 (push, fetch from private remotes), use `agentbox-ctl git push|fetch|pull
 -- <args>` — it RPCs to the host, which runs git with the real SSH agent.
 
-If you install a skill/plugin (or otherwise change `~/.claude`), tell the
-user to run `agentbox download claude` on the host to copy it back. If you
-create or change `.env`/`.envrc`/secrets files, tell them to run
-`agentbox download env`. Both are additive and never overwrite host files.
+For ad-hoc file transfers between this box and the host, use
+`agentbox-ctl cp toHost <boxPath> <hostPath>` and
+`agentbox-ctl cp fromHost <hostPath> <boxPath>`. They RPC to the host and
+ask the user for confirmation on the wrapper that runs `agentbox claude`;
+deny returns exit 10 (`denied by user`). 
+Don't put any timeout on the command, it will run forever and the user will be notified through multiple channels.
+
+If you install a skill/plugin, change `~/.claude`, or write
+`.env`/`.envrc`/secrets/`agentbox.yaml`, you can pull those onto the host
+yourself with `agentbox-ctl download claude` / `download env` /
+`download config` (also user-confirmed; additive; never overwrites host
+files, don't put any timeout on the command).
 
 Box identity: /etc/agentbox/box.env and the AGENTBOX_* env vars.

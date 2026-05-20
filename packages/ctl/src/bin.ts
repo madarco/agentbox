@@ -1,7 +1,9 @@
 import { Command } from 'commander';
 import { claudeSessionCommand } from './commands/claude-session.js';
 import { claudeStateCommand } from './commands/claude-state.js';
+import { cpCommand } from './commands/cp.js';
 import { daemonCommand } from './commands/daemon.js';
+import { downloadCommand } from './commands/download.js';
 import { checkpointCommand } from './commands/checkpoint.js';
 import { gitCommand } from './commands/git.js';
 import { statusCommand } from './commands/status.js';
@@ -37,6 +39,8 @@ program.addCommand(waitReadyCommand);
 program.addCommand(runTaskCommand);
 program.addCommand(gitCommand);
 program.addCommand(checkpointCommand);
+program.addCommand(cpCommand);
+program.addCommand(downloadCommand);
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   const msg = err instanceof Error ? err.message : String(err);

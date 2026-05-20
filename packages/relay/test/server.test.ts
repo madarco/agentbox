@@ -48,14 +48,23 @@ async function register(
 
 describe('relay server', () => {
   let handle: RelayServerHandle;
+  let prevPromptEnv: string | undefined;
 
   beforeEach(async () => {
+    // Auto-accept prompts in this suite — the existing /rpc git.push test
+    // wants to exercise the worktree-resolution failure, which lives behind
+    // the new askPrompt gate. Tests that actually want to test the prompt
+    // flow are in the next describe block and clear this.
+    prevPromptEnv = process.env.AGENTBOX_PROMPT;
+    process.env.AGENTBOX_PROMPT = 'off';
     // port 0 = ephemeral; binding 127.0.0.1 to avoid firewall prompts on macOS.
     handle = await startRelayServer({ port: 0, host: '127.0.0.1' });
   });
 
   afterEach(async () => {
     await handle.close();
+    if (prevPromptEnv === undefined) delete process.env.AGENTBOX_PROMPT;
+    else process.env.AGENTBOX_PROMPT = prevPromptEnv;
   });
 
   it('healthz returns ok', async () => {
@@ -205,5 +214,79 @@ describe('relay server', () => {
       process.env['HOME'] = originalHome;
       await rm(home, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * The host-action prompt flow: a /rpc that touches host state (git.push,
+ * cp.*, download.*) waits for a prompt-ask SSE event to be answered by a
+ * subscribed host wrapper. The relay's `askPrompt` blocks indefinitely on
+ * its Promise — these tests verify the answer + denial paths end-to-end
+ * without leaving the test runner hung.
+ */
+describe('relay prompt flow', () => {
+  let handle: RelayServerHandle;
+
+  beforeEach(async () => {
+    // Explicit: prompts ARE active (no AGENTBOX_PROMPT=off here).
+    delete process.env.AGENTBOX_PROMPT;
+    handle = await startRelayServer({ port: 0, host: '127.0.0.1' });
+  });
+
+  afterEach(async () => {
+    await handle.close();
+  });
+
+  it('denial via /admin/prompts/answer short-circuits git.push with exit 10', async () => {
+    await register(handle, 'b1', 't1', 'box-one');
+
+    // Kick off the /rpc — it'll hang waiting for an answer. We drive the
+    // answer flow concurrently and await both.
+    const rpcPromise = fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: { method: 'git.push', params: { path: '/workspace' } },
+    });
+
+    // Wait for the pending prompt to land in the relay's map. The /rpc
+    // handler adds it synchronously after authBox, but the await chain
+    // means we need to yield. Polling the in-memory map is cheap.
+    let pendingId: string | null = null;
+    for (let i = 0; i < 50 && pendingId === null; i++) {
+      const list = handle.prompts.forBox('b1');
+      if (list.length > 0) pendingId = list[0]!.id;
+      else await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(pendingId).not.toBeNull();
+
+    const answer = await fetchJson(handle, 'POST', '/admin/prompts/answer', {
+      body: { id: pendingId, answer: 'n' },
+    });
+    expect(answer.status).toBe(204);
+
+    const rpc = await rpcPromise;
+    expect(rpc.status).toBe(500);
+    const body = rpc.body as { exitCode: number; stderr: string };
+    expect(body.exitCode).toBe(10);
+    expect(body.stderr).toMatch(/denied by user/);
+  });
+
+  it('answer with unknown id returns 404', async () => {
+    const r = await fetchJson(handle, 'POST', '/admin/prompts/answer', {
+      body: { id: 'no-such-id', answer: 'y' },
+    });
+    expect(r.status).toBe(404);
+  });
+
+  it('answer with malformed body returns 400', async () => {
+    const r = await fetchJson(handle, 'POST', '/admin/prompts/answer', {
+      body: { id: 'x', answer: 'maybe' },
+    });
+    expect(r.status).toBe(400);
+  });
+
+  it('/admin/prompts/stream requires a boxId query', async () => {
+    const port = (handle.server.address() as { port: number }).port;
+    const res = await fetch(`http://127.0.0.1:${String(port)}/admin/prompts/stream`);
+    expect(res.status).toBe(400);
   });
 });

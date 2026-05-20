@@ -1,33 +1,10 @@
 import type { Terminal as XtermTerminal } from '@xterm/headless';
 import type { ScreenSnapshot, CellLike, ColorSpec } from './renderer.js';
+import type { IPtyLike, PtySpawn, TerminalCtor } from '../pty/pty-backend.js';
 
-/**
- * The `@xterm/headless` `Terminal` class. Injected (not imported) because
- * @xterm/headless is CJS — a static ESM named import breaks Node's loader for
- * the whole CLI, so dashboard.ts dynamic-imports it and passes the ctor here.
- */
-export type TerminalCtor = new (opts: {
-  cols: number;
-  rows: number;
-  allowProposedApi: boolean;
-  scrollback: number;
-  convertEol: boolean;
-}) => XtermTerminal;
-
-/** Minimal shape of a node-pty IPty (avoids a hard type dep on the optional module). */
-export interface IPtyLike {
-  onData(cb: (d: string) => void): void;
-  onExit(cb: (e: { exitCode: number }) => void): void;
-  write(d: string): void;
-  resize(cols: number, rows: number): void;
-  kill(): void;
-}
-
-export type PtySpawn = (
-  file: string,
-  args: string[],
-  opts: { name: string; cols: number; rows: number; env: NodeJS.ProcessEnv },
-) => IPtyLike;
+// Re-export types so dashboard-internal imports don't have to know about the
+// shared module split. New code should import directly from ../pty/pty-backend.
+export type { IPtyLike, PtySpawn, TerminalCtor };
 
 function fgSpec(c: {
   isFgDefault(): boolean;

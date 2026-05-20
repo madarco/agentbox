@@ -2,9 +2,12 @@ import { spawnSync } from 'node:child_process';
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
 import { loadEffectiveConfig, type UserConfig } from '@agentbox/config';
-import { inspectBox, startBox, unpauseBox } from '@agentbox/sandbox-docker';
+import { DEFAULT_RELAY_PORT, inspectBox, startBox, unpauseBox } from '@agentbox/sandbox-docker';
 import { resolveBoxOrShift } from '../box-ref.js';
+import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
+
+const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
 
 interface ShellOptions {
   user?: string;
@@ -66,23 +69,39 @@ export const shellCommand = new Command('shell')
       // real TTY — `docker exec -t` errors with "cannot attach stdin to a
       // TTY-enabled container because stdin is not a terminal" when run under
       // a script or another agent that piped its output.
-      const ttyFlag = process.stdout.isTTY && process.stdin.isTTY ? '-it' : '-i';
-      const child = spawnSync(
-        'docker',
-        [
-          'exec',
-          ttyFlag,
-          '-e',
-          `TERM=${term}`,
-          '--user',
-          user,
-          box.container,
-          'bash',
-          ...bashArgs,
-        ],
-        { stdio: 'inherit' },
-      );
-      process.exit(child.status ?? 0);
+      const isInteractive = process.stdout.isTTY && process.stdin.isTTY;
+      const ttyFlag = isInteractive ? '-it' : '-i';
+      const dockerArgv = [
+        'exec',
+        ttyFlag,
+        '-e',
+        `TERM=${term}`,
+        '--user',
+        user,
+        box.container,
+        'bash',
+        ...bashArgs,
+      ];
+
+      // One-shot exec (`agentbox shell box -- cmd…`) and any piped use both
+      // need machine-readable stdout — the wrapped pty would corrupt it with
+      // a footer. Stay on the plain spawnSync path in those cases. The
+      // wrapper also has its own non-TTY fallback, but checking here keeps
+      // node-pty out of the import chain for trivial one-shots.
+      if (!isInteractive || effectiveCmd.length > 0) {
+        const child = spawnSync('docker', dockerArgv, { stdio: 'inherit' });
+        process.exit(child.status ?? 0);
+      }
+      const code = await runWrappedAttach({
+        container: box.container,
+        dockerArgv,
+        relayBaseUrl: RELAY_HOST_URL,
+        boxId: box.id,
+        boxName: box.name,
+        projectIndex: box.projectIndex,
+        mode: 'shell',
+      });
+      process.exit(code);
     } catch (err) {
       handleLifecycleError(err);
     }

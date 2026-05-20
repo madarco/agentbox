@@ -1,11 +1,13 @@
 import { confirm, intro, isCancel, log, outro, password, spinner } from '@clack/prompts';
 import { findProjectRoot, loadEffectiveConfig, type UserConfig } from '@agentbox/config';
 import {
-  attachClaudeSession,
+  buildClaudeAttachArgv,
   ClaudeSessionError,
   claudeSessionInfo,
   createBox,
+  DEFAULT_RELAY_PORT,
   ensureClaudeVolume,
+  formatDetachNotice,
   inspectBox,
   rebuildPluginNativeDeps,
   seedSetupSkillIntoVolume,
@@ -30,12 +32,41 @@ import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { resolveLimits } from '../limits.js';
 import { maybeRunSetupWizard } from '../wizard.js';
+import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
 
 /** Ref shown in the detach notice: the per-project index `n` when set
  *  (resolves from inside the project dir), else the globally-unique name. */
 function reattachRef(r: { projectIndex?: number; name: string }): string {
   return typeof r.projectIndex === 'number' ? String(r.projectIndex) : r.name;
+}
+
+/** Host-side URL for the relay (always loopback for the wrapper's SSE subscription). */
+const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
+
+/**
+ * Replacement for the old `attachClaudeSession`: builds the docker tmux-
+ * attach argv, hands it to the node-pty wrapper for the footer + prompt
+ * channel, then exits with the inner pty's exit code. Falls back
+ * transparently to plain spawnSync inside `runWrappedAttach` when stdio
+ * isn't a TTY or node-pty isn't installed.
+ */
+async function attachClaudeWrapped(
+  box: { id: string; name: string; container: string; projectIndex?: number },
+  sessionName: string | undefined,
+  reattach: string,
+): Promise<never> {
+  const code = await runWrappedAttach({
+    container: box.container,
+    dockerArgv: buildClaudeAttachArgv(box.container, sessionName),
+    relayBaseUrl: RELAY_HOST_URL,
+    boxId: box.id,
+    boxName: box.name,
+    projectIndex: box.projectIndex,
+    mode: 'claude',
+    detachNotice: formatDetachNotice(reattach),
+  });
+  process.exit(code);
 }
 
 interface ClaudeCreateOptions {
@@ -265,7 +296,7 @@ export const claudeCommand = new Command('claude')
       }
 
       outro('attaching — Control+a q to detach, leaves claude running');
-      attachClaudeSession(result.record.container, sessionName, reattachRef(result.record));
+      await attachClaudeWrapped(result.record, sessionName, reattachRef(result.record));
     } catch (err) {
       s.stop('failed');
       if (err instanceof ClaudeSessionError) {
@@ -311,7 +342,7 @@ async function startOrAttachClaude(
   const existing = await claudeSessionInfo(box.container, sessionName);
   if (existing.running) {
     outro(`session "${sessionName}" already running — attaching (Control+a q to detach)`);
-    attachClaudeSession(box.container, sessionName, reattachRef(box));
+    await attachClaudeWrapped(box, sessionName, reattachRef(box));
     return;
   }
 
@@ -376,7 +407,7 @@ async function startOrAttachClaude(
   }
 
   outro('attaching — Control+a q to detach, leaves claude running');
-  attachClaudeSession(box.container, sessionName, reattachRef(box));
+  await attachClaudeWrapped(box, sessionName, reattachRef(box));
 }
 
 const claudeAttachCommand = new Command('attach')

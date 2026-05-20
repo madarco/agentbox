@@ -8,14 +8,29 @@ export {
 export type {
   BoxRegistration,
   BoxWorktree,
+  CheckpointRpcParams,
+  CpRpcParams,
+  DownloadKind,
+  DownloadRpcParams,
   GitRpcParams,
   GitRpcResult,
   PostEventBody,
   PostRpcBody,
+  PromptAnswerBody,
+  PromptAskEvent,
+  PromptContext,
+  PromptKind,
   RegisterBoxBody,
   RelayEvent,
 } from './types.js';
 export { BoxRegistry, EventBuffer } from './registry.js';
+export {
+  askPrompt,
+  isPromptAnswerBody,
+  PendingPrompts,
+  PromptSubscribers,
+  type PromptResolution,
+} from './prompts.js';
 export { BoxStatusStore, isValidBoxStatus, type BoxStatusSnapshot } from './status-store.js';
 export {
   createRelayServer,

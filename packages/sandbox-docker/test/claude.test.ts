@@ -85,47 +85,21 @@ describe('formatDetachNotice', () => {
 });
 
 describe('buildClaudeStatusBarArgs', () => {
-  it('styles the named session with box name + detach hint, no window clutter', () => {
-    const args = buildClaudeStatusBarArgs(DEFAULT_CLAUDE_SESSION, 'my-box');
+  it('remaps the prefix to Ctrl-a and hides the inner tmux status bar', () => {
+    const args = buildClaudeStatusBarArgs(DEFAULT_CLAUDE_SESSION);
 
-    // tmux command separators present; status-* `set`s are scoped to the
-    // session, prefix `set`s are server-global (-g).
-    expect(args.filter((a) => a === ';').length).toBeGreaterThanOrEqual(9);
-    const setIdxs = args.flatMap((a, i) => (a === 'set' ? [i] : []));
-    expect(setIdxs.length).toBeGreaterThan(0);
-    const sessionSetIdxs = setIdxs.filter((i) => args[i + 1] === '-t');
-    expect(sessionSetIdxs.length).toBeGreaterThan(0);
-    for (const i of sessionSetIdxs) {
-      expect(args[i + 2]).toBe(DEFAULT_CLAUDE_SESSION);
-    }
-    // every other `set` is server-global
-    for (const i of setIdxs.filter((i) => args[i + 1] !== '-t')) {
-      expect(args[i + 1]).toBe('-g');
-    }
-
-    // status-left shows the literal box name (no shell/strftime indirection)
-    const leftIdx = args.indexOf('status-left');
-    expect(leftIdx).toBeGreaterThan(-1);
-    const left = args[leftIdx + 1];
-    expect(left).toContain('agentbox ▸ my-box');
-    expect(left).not.toContain('#(');
-    expect(left).not.toContain('%');
-
-    // status-right is the detach hint: white chord + gray label (dashboard parity)
-    const rightIdx = args.indexOf('status-right');
-    expect(args[rightIdx + 1]).toContain('Control+a q');
-    expect(args[rightIdx + 1]).toContain(': detach');
-    expect(args[rightIdx + 1]).toContain('#[fg=colour255]');
-
-    // primary prefix Ctrl+a (dashboard parity); tmux's default Ctrl+b kept as
-    // a secondary prefix so existing muscle memory + integrations keep working
+    // primary prefix Ctrl+a (dashboard parity); tmux's default Ctrl+b kept
+    // as a secondary prefix so existing muscle memory / integrations keep
+    // working.
     expect(args).toContain('prefix');
     expect(args[args.indexOf('prefix') + 1]).toBe('C-a');
     expect(args).toContain('prefix2');
     expect(args[args.indexOf('prefix2') + 1]).toBe('C-b');
     // never explicitly unbinds C-b — the secondary prefix needs it live
     expect(args).not.toContain('unbind-key');
+
     const bindIdxs = args.flatMap((a, i) => (a === 'bind-key' ? [i] : []));
+    // q -> detach-client under either prefix.
     expect(bindIdxs.some((i) => args[i + 1] === 'q' && args[i + 2] === 'detach-client')).toBe(true);
     // C-a C-a -> literal Ctrl+a; C-b C-b -> literal Ctrl+b (send-prefix -2)
     expect(bindIdxs.some((i) => args[i + 1] === 'C-a' && args[i + 2] === 'send-prefix')).toBe(true);
@@ -135,14 +109,35 @@ describe('buildClaudeStatusBarArgs', () => {
       ),
     ).toBe(true);
 
-    // the noisy window list is emptied
-    expect(args).toContain('window-status-format');
-    expect(args).toContain('window-status-current-format');
-    expect(args[args.indexOf('window-status-current-format') + 1]).toBe('');
+    // The inner tmux status bar is OFF — the wrapped-pty footer and the
+    // dashboard's own status row already show the box name + detach hint.
+    const statusIdx = args.indexOf('status');
+    expect(statusIdx).toBeGreaterThan(-1);
+    expect(args[statusIdx + 1]).toBe('off');
+    // scoped to the named session (-t), not the server-global default,
+    // because the dashboard's grouped sibling session has its own opt scope.
+    expect(args[statusIdx - 1]).toBe(DEFAULT_CLAUDE_SESSION);
+    expect(args[statusIdx - 2]).toBe('-t');
+
+    // None of the old custom-styling options remain — that's the regression
+    // this test guards against (those plus the inner status bar were the
+    // double-footer source).
+    expect(args).not.toContain('status-left');
+    expect(args).not.toContain('status-right');
+    expect(args).not.toContain('status-style');
+    expect(args).not.toContain('window-status-format');
+
+    // every server-global `set` is `-g`; every session-scoped one is `-t <s>`.
+    const setIdxs = args.flatMap((a, i) => (a === 'set' ? [i] : []));
+    for (const i of setIdxs) {
+      const flag = args[i + 1];
+      if (flag === '-t') expect(args[i + 2]).toBe(DEFAULT_CLAUDE_SESSION);
+      else expect(flag).toBe('-g');
+    }
   });
 
-  it('scopes options to a custom session name', () => {
-    const args = buildClaudeStatusBarArgs('codex', 'my-box');
+  it('scopes the status-off option to a custom session name', () => {
+    const args = buildClaudeStatusBarArgs('codex');
     const sessionSetIdxs = args.flatMap((a, idx) =>
       a === 'set' && args[idx + 1] === '-t' ? [idx] : [],
     );

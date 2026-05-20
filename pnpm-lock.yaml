@@ -73,6 +73,9 @@ importers:
       '@agentbox/ctl':
         specifier: workspace:*
         version: link:../../packages/ctl
+      '@agentbox/relay':
+        specifier: workspace:*
+        version: link:../../packages/relay
       '@agentbox/sandbox-docker':
         specifier: workspace:*
         version: link:../../packages/sandbox-docker

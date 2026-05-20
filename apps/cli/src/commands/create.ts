@@ -6,11 +6,12 @@ import {
   pruneOrphanProjectConfigs,
   type UserConfig,
 } from '@agentbox/config';
-import { createBox, listBoxes } from '@agentbox/sandbox-docker';
+import { createBox, DEFAULT_RELAY_PORT, listBoxes, type BoxRecord } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { resolveLimits } from '../limits.js';
+import { runWrappedAttach } from '../wrapped-pty/index.js';
 import {
   maybeRunSetupWizard,
   passthroughFlags,
@@ -76,12 +77,27 @@ function resolveCheckpointRef(
   return configDefault.length > 0 ? configDefault : undefined;
 }
 
-function attachShell(container: string): never {
-  // execSync is fine here: we hand control to docker exec and exit on its exit.
-  const child = spawnSync('docker', ['exec', '-it', container, 'bash'], {
-    stdio: 'inherit',
+const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
+
+async function attachShell(record: BoxRecord): Promise<never> {
+  const dockerArgv = ['exec', '-it', record.container, 'bash'];
+  if (!process.stdout.isTTY || !process.stdin.isTTY) {
+    // Non-TTY (scripted create --attach piping somewhere): preserve
+    // bit-for-bit current behavior — the wrapper's own fallback would do
+    // the same, but bypassing avoids the node-pty optional-dep load.
+    const child = spawnSync('docker', dockerArgv, { stdio: 'inherit' });
+    process.exit(child.status ?? 0);
+  }
+  const code = await runWrappedAttach({
+    container: record.container,
+    dockerArgv,
+    relayBaseUrl: RELAY_HOST_URL,
+    boxId: record.id,
+    boxName: record.name,
+    projectIndex: record.projectIndex,
+    mode: 'shell',
   });
-  process.exit(child.status ?? 0);
+  process.exit(code);
 }
 
 export const createCommand = new Command('create')
@@ -224,7 +240,7 @@ export const createCommand = new Command('create')
       outro('done');
 
       if (opts.attach) {
-        attachShell(result.record.container);
+        await attachShell(result.record);
       }
     } catch (err) {
       s.stop('failed');

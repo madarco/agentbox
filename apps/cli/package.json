@@ -65,6 +65,7 @@
     "@agentbox/config": "workspace:*",
     "@agentbox/core": "workspace:*",
     "@agentbox/ctl": "workspace:*",
+    "@agentbox/relay": "workspace:*",
     "@agentbox/sandbox-docker": "workspace:*",
     "@types/node": "^22.10.1",
     "tsup": "^8.3.5",

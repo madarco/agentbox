@@ -1,15 +1,20 @@
 import { spawn } from 'node:child_process';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
 import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
 import type {
   BoxRegistration,
   BoxWorktree,
   CheckpointRpcParams,
+  CpRpcParams,
+  DownloadKind,
+  DownloadRpcParams,
   GitRpcParams,
   GitRpcResult,
   PostEventBody,
   PostRpcBody,
+  PromptAnswerBody,
   RegisterBoxBody,
   RelayEvent,
 } from './types.js';
@@ -26,6 +31,8 @@ export interface RelayServerHandle {
   registry: BoxRegistry;
   events: EventBuffer;
   statusStore: BoxStatusStore;
+  prompts: PendingPrompts;
+  subscribers: PromptSubscribers;
   url: string;
   close: () => Promise<void>;
 }
@@ -36,6 +43,9 @@ const BOX_STATUS_EVENT = 'box-status';
 const MAX_BODY_BYTES = 1024 * 1024; // 1 MiB hard cap; relay is for control-plane traffic, not payloads.
 const GIT_RPC_TIMEOUT_MS = 120_000; // git push/pull can be slow on big repos.
 const CHECKPOINT_RPC_TIMEOUT_MS = 600_000; // capturing node_modules/build trees can be slow.
+const DOWNLOAD_RPC_TIMEOUT_MS = 600_000; // claude/workspace pulls over rsync can take minutes.
+const CP_RPC_TIMEOUT_MS = 300_000; // single-file/dir cp; tar pipe through docker exec.
+const SSE_HEARTBEAT_MS = 15_000; // every 15s; wrapper reconnects if it sees no traffic for ~30s.
 
 function send(
   res: ServerResponse,
@@ -103,12 +113,14 @@ function isLoopbackAddress(addr: string | undefined): boolean {
 /**
  * Build the relay HTTP server. Routes:
  *   POST /events                — bearer auth (box token), appends to ring buffer.
- *   POST /rpc                   — bearer auth; dispatches git.pull / git.push on the host.
+ *   POST /rpc                   — bearer auth; dispatches git.push/fetch, cp.*, download.*, checkpoint.create on the host.
  *   POST /admin/register-box    — loopback only.
  *   POST /admin/forget-box      — loopback only.
  *   GET  /admin/box-status      — loopback only; query `box`; latest snapshot.
  *   GET  /admin/events          — loopback only; query `box`, `since`.
  *   GET  /admin/registry        — loopback only; list registered boxes (token redacted).
+ *   GET  /admin/prompts/stream  — loopback only; SSE; pushes prompt-ask/prompt-resolved/ping events.
+ *   POST /admin/prompts/answer  — loopback only; resolves a pending prompt by id.
  *   GET  /healthz               — liveness probe (no auth).
  */
 export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
@@ -116,6 +128,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const registry = new BoxRegistry();
   const events = new EventBuffer();
   const statusStore = new BoxStatusStore();
+  const prompts = new PendingPrompts();
+  const subscribers = new PromptSubscribers();
   const host = opts.host ?? '0.0.0.0';
 
   const server = createServer((req, res) => {
@@ -189,7 +203,82 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
       log(`rpc box=${reg.boxId} method=${body.method}`);
       if (body.method === 'git.push' || body.method === 'git.fetch') {
+        // Only `push` mutates the user's remote; fetch is read-only and noisy.
+        if (body.method === 'git.push') {
+          const params = body.params as GitRpcParams | undefined;
+          const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+            kind: 'confirm',
+            message: `Allow git push from box ${reg.name}?`,
+            detail: `${params?.remote ?? 'origin'} ${(params?.args ?? []).join(' ')}`.trim(),
+            defaultAnswer: 'n',
+            context: {
+              command: 'git push',
+              cwd: params?.path,
+              argv: params?.args,
+            },
+          });
+          if (verdict.answer !== 'y') {
+            send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
+            return;
+          }
+        }
         const result = await handleGitRpc(reg, body.method, body.params as GitRpcParams | undefined);
+        const status = result.exitCode === 0 ? 200 : 500;
+        send(res, status, result);
+        return;
+      }
+      if (body.method === 'cp.toHost' || body.method === 'cp.fromHost') {
+        const params = body.params as CpRpcParams | undefined;
+        if (!params || typeof params.boxPath !== 'string' || typeof params.hostPath !== 'string') {
+          send(res, 400, { error: 'cp.* requires {boxPath, hostPath} strings' });
+          return;
+        }
+        const direction = body.method === 'cp.toHost' ? 'box -> host' : 'host -> box';
+        const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+          kind: 'confirm',
+          message: `Allow cp (${direction}) on ${reg.name}?`,
+          detail:
+            body.method === 'cp.toHost'
+              ? `${params.boxPath} -> ${params.hostPath}`
+              : `${params.hostPath} -> ${params.boxPath}`,
+          defaultAnswer: 'n',
+          context: {
+            command: body.method,
+            argv: [params.boxPath, params.hostPath],
+          },
+        });
+        if (verdict.answer !== 'y') {
+          send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
+          return;
+        }
+        const result = await handleCpRpc(reg, body.method, params);
+        const status = result.exitCode === 0 ? 200 : 500;
+        send(res, status, result);
+        return;
+      }
+      if (
+        body.method === 'download.workspace' ||
+        body.method === 'download.env' ||
+        body.method === 'download.config' ||
+        body.method === 'download.claude'
+      ) {
+        const params = body.params as DownloadRpcParams | undefined;
+        const kind = (body.method.split('.')[1] ?? 'workspace') as DownloadKind;
+        const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+          kind: 'confirm',
+          message: `Allow download (${kind}) from ${reg.name}?`,
+          detail: params?.hostPath ?? '(default host location)',
+          defaultAnswer: 'n',
+          context: {
+            command: body.method,
+            argv: params?.hostPath ? [params.hostPath] : [],
+          },
+        });
+        if (verdict.answer !== 'y') {
+          send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
+          return;
+        }
+        const result = await handleDownloadRpc(reg, kind);
         const status = result.exitCode === 0 ? 200 : 500;
         send(res, status, result);
         return;
@@ -308,6 +397,72 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       return;
     }
 
+    if (route === 'GET /admin/prompts/stream') {
+      // Per-box SSE channel. The wrapper (apps/cli/src/wrapped-pty) subscribes
+      // and stays connected; we push prompt-ask events on broadcast and a
+      // periodic ping so the wrapper can detect a dead socket without traffic.
+      // `boxId=` is required so a host with multiple boxes only sees its own
+      // box's prompts (the wrapper attaches per-box anyway).
+      const boxId = url.searchParams.get('boxId') ?? '';
+      if (boxId.length === 0) {
+        send(res, 400, { error: 'missing boxId query param' });
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      // Helps with proxies (e.g. nginx) that would otherwise buffer the
+      // chunked response. The relay binds to loopback so this is belt-and-
+      // suspenders, but the cost is one extra header.
+      res.setHeader('X-Accel-Buffering', 'no');
+      if (typeof res.flushHeaders === 'function') res.flushHeaders();
+      res.write(': connected\n\n');
+      subscribers.add(boxId, res);
+      // Flush any prompts that arrived while no wrapper was attached — per
+      // the design we block indefinitely on the in-box RPC, so a backlog can
+      // build up between detach and reattach.
+      for (const ev of prompts.forBox(boxId)) {
+        res.write(`event: prompt-ask\ndata: ${JSON.stringify(ev)}\n\n`);
+      }
+      const heartbeat = setInterval(() => {
+        try {
+          res.write(`event: ping\ndata: {"ts":"${new Date().toISOString()}"}\n\n`);
+        } catch {
+          /* dead socket; close handler below removes */
+        }
+      }, SSE_HEARTBEAT_MS);
+      if (typeof heartbeat.unref === 'function') heartbeat.unref();
+      res.on('close', () => {
+        clearInterval(heartbeat);
+        subscribers.remove(boxId, res);
+      });
+      return;
+    }
+
+    if (route === 'POST /admin/prompts/answer') {
+      const body = await readJsonBody<PromptAnswerBody>(req);
+      if (!isPromptAnswerBody(body)) {
+        send(res, 400, { error: 'expected {id, answer:"y"|"n", cancelled?}' });
+        return;
+      }
+      // Find which box this id belongs to before resolving, so we can target
+      // the prompt-resolved broadcast (other wrappers on the same box clear
+      // their stale footer).
+      const targetBox = prompts.boxFor(body.id);
+      const hit = prompts.resolve(body.id, body.answer, body.cancelled);
+      if (!hit) {
+        // Already answered (idempotent) or never existed.
+        send(res, 404, { error: 'no pending prompt with that id' });
+        return;
+      }
+      if (targetBox) {
+        subscribers.broadcast(targetBox, 'prompt-resolved', { id: body.id });
+      }
+      send(res, 204, null);
+      return;
+    }
+
     send(res, 404, { error: 'not found', route });
   }
 
@@ -334,6 +489,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     registry,
     events,
     statusStore,
+    prompts,
+    subscribers,
     url: `http://${host}:${String(opts.port)}`,
     close: () =>
       new Promise<void>((resolve, reject) => {
@@ -344,6 +501,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }),
   };
 }
+
 
 function sanitizeWorktrees(input: BoxWorktree[] | undefined): BoxWorktree[] | undefined {
   if (!Array.isArray(input)) return undefined;
@@ -416,6 +574,68 @@ async function handleGitRpc(
     }
   }
   return runHostCommand(argv);
+}
+
+/**
+ * cp.toHost / cp.fromHost: copy a file/dir between box and host. Shells
+ * out to the installed agentbox CLI's `cp` subcommand — that command
+ * already knows how to handle the docker exec tar pipe + chown + auto-
+ * unpause; duplicating that here would drift. `AGENTBOX_CLI_ENTRY` is set
+ * by `ensureRelay` when it spawns this process.
+ *
+ * Caller (the /rpc route) already gated this with askPrompt and rejected
+ * non-'y' answers; we never reach this code without consent.
+ */
+async function handleCpRpc(
+  reg: BoxRegistration,
+  method: 'cp.toHost' | 'cp.fromHost',
+  params: CpRpcParams,
+): Promise<GitRpcResult> {
+  const entry = process.env.AGENTBOX_CLI_ENTRY;
+  if (!entry) {
+    return {
+      exitCode: 64,
+      stdout: '',
+      stderr: 'relay: AGENTBOX_CLI_ENTRY not set; cannot run cp host-side',
+    };
+  }
+  // `agentbox cp` is positional: <src> [dst]. Direction is encoded by which
+  // arg carries the `<boxName>:` prefix.
+  const boxRef = `${reg.name}:${params.boxPath}`;
+  const argv =
+    method === 'cp.toHost'
+      ? [process.execPath, entry, 'cp', boxRef, params.hostPath]
+      : [process.execPath, entry, 'cp', params.hostPath, boxRef];
+  return runHostCommand(argv, CP_RPC_TIMEOUT_MS);
+}
+
+/**
+ * download.{workspace,env,config,claude}: ask the installed agentbox CLI
+ * to pull box contents to the host. Same decoupling rationale as cp — the
+ * CLI owns rsync exclude lists, gitignore handling, claude registry
+ * merging. The relay passes `-y` so the host CLI doesn't try to prompt
+ * (we already did, via the host wrapper, before reaching this handler).
+ */
+async function handleDownloadRpc(
+  reg: BoxRegistration,
+  kind: DownloadKind,
+): Promise<GitRpcResult> {
+  // params.hostPath is reserved in the wire shape; the v1 relay ignores it
+  // and lets the host CLI use its defaults (box.workspacePath or ~/.claude).
+  const entry = process.env.AGENTBOX_CLI_ENTRY;
+  if (!entry) {
+    return {
+      exitCode: 64,
+      stdout: '',
+      stderr: 'relay: AGENTBOX_CLI_ENTRY not set; cannot run download host-side',
+    };
+  }
+  const argv = [process.execPath, entry, 'download'];
+  // `workspace` is the default download (no subcommand); the other three
+  // are subcommands of `download`.
+  if (kind !== 'workspace') argv.push(kind);
+  argv.push(reg.name, '-y');
+  return runHostCommand(argv, DOWNLOAD_RPC_TIMEOUT_MS);
 }
 
 /**

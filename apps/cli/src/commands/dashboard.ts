@@ -22,7 +22,7 @@ import { resolveBoxOrExit } from '../box-ref.js';
 import { resolveClaudeAuth } from '../auth.js';
 import { resolveLimits } from '../limits.js';
 import { Compositor, type RightTarget } from '../dashboard/compositor.js';
-import type { PtySpawn, TerminalCtor } from '../dashboard/pty-session.js';
+import { loadPtyBackend, type PtySpawn, type TerminalCtor } from '../pty/pty-backend.js';
 import { NEW_BOX_ID, NEW_BOX_LABEL, type SidebarBox } from '../dashboard/sidebar.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -74,28 +74,16 @@ export const dashboardCommand = new Command('dashboard')
       }
 
       // node-pty is an optionalDependency and @xterm/headless is CJS — both are
-      // dynamic-imported here so a missing native prebuild (or the CJS named
-      // export issue) degrades only the dashboard, never the rest of the CLI.
+      // dynamic-imported via the shared backend loader so a missing native
+      // prebuild (or the CJS named export issue) degrades only the dashboard,
+      // never the rest of the CLI. Same loader is used by wrapped-pty.
+      const backend = await loadPtyBackend();
       let ptySpawn: PtySpawn;
       let termCtor: TerminalCtor;
-      try {
-        const ptyMod = (await import('@homebridge/node-pty-prebuilt-multiarch')) as Record<
-          string,
-          unknown
-        >;
-        const xtermMod = (await import('@xterm/headless')) as Record<string, unknown>;
-        const spawn =
-          (ptyMod['spawn'] as unknown) ??
-          (ptyMod['default'] as Record<string, unknown> | undefined)?.['spawn'];
-        const Terminal =
-          (xtermMod['Terminal'] as unknown) ??
-          (xtermMod['default'] as Record<string, unknown> | undefined)?.['Terminal'];
-        if (typeof spawn !== 'function' || typeof Terminal !== 'function') {
-          throw new Error('terminal backend missing expected exports');
-        }
-        ptySpawn = spawn as unknown as PtySpawn;
-        termCtor = Terminal as unknown as TerminalCtor;
-      } catch {
+      if (backend) {
+        ptySpawn = backend.ptySpawn;
+        termCtor = backend.termCtor;
+      } else {
         log.error(
           'agentbox dashboard is unavailable here (native terminal backend failed to load)',
         );

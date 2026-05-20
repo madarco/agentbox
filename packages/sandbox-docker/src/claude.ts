@@ -711,8 +711,8 @@ export interface StartClaudeSessionOptions {
   container: string;
   claudeArgs: string[];
   sessionName?: string;
-  /** Shown in the session's tmux status bar. Defaults to the container name
-   *  with the `agentbox-` prefix stripped (containers are `agentbox-<name>`). */
+  /** Previously fed into the in-tmux status bar; now unused (the outer UI
+   *  shows the name). Kept for back-compat — callers may still pass it. */
   boxName?: string;
 }
 
@@ -743,7 +743,6 @@ function shQuote(arg: string): string {
  */
 export async function startClaudeSession(opts: StartClaudeSessionOptions): Promise<void> {
   const sessionName = opts.sessionName ?? DEFAULT_CLAUDE_SESSION;
-  const boxName = opts.boxName ?? opts.container.replace(/^agentbox-/, '');
   const cmd = ['claude', ...opts.claudeArgs].map(shQuote).join(' ');
   const term = process.env['TERM'] ?? 'xterm-256color';
   const envFlags: string[] = ['-e', `TERM=${term}`];
@@ -765,7 +764,7 @@ export async function startClaudeSession(opts: StartClaudeSessionOptions): Promi
       '-s',
       sessionName,
       cmd,
-      ...buildClaudeStatusBarArgs(sessionName, boxName),
+      ...buildClaudeStatusBarArgs(sessionName),
     ],
     { reject: false },
   );
@@ -869,10 +868,11 @@ export function buildClaudeDashboardAttachArgv(
 }
 
 /**
- * tmux command-list (separator-prefixed) that remaps the prefix and styles the
- * claude session's status bar: ` agentbox ▸ <box> ` on the left,
- * ` Control+a q: detach ` on the right (white chord, gray label — exact parity
- * with the dashboard's `statusLine()`), dark bar, no window-list clutter.
+ * tmux command-list (separator-prefixed) that remaps the prefix and turns
+ * the inner tmux status bar off. The outer host UI (the wrapped-pty footer
+ * for `agentbox claude` / `agentbox shell`, the dashboard's own status row
+ * for the right pane) already shows the box name + the detach hint, so the
+ * inner bar is double-footer — strip it.
  *
  * `Ctrl+a` is the **primary** prefix (matches the dashboard's quit chord), and
  * tmux's default `Ctrl+b` is kept as a **secondary** prefix (`prefix2 C-b`) so
@@ -887,19 +887,12 @@ export function buildClaudeDashboardAttachArgv(
  *
  * Appended after `tmux new-session …` in {@link startClaudeSession}; the bare
  * `;` elements are tmux's command separator (execa array args, no host shell,
- * so they reach tmux verbatim). `status-*` are session options scoped with
- * `-t <session>` — the dashboard's grouped `<name>-dash` runs its own
- * `status off` and is unaffected.
- *
- * The box name is injected as a literal string (known host-side at session
- * start) rather than read in-box via tmux `#()` — tmux runs `status-left`
- * through strftime, so a shell-substituted value was fragile (a `%`/clock
- * artifact slipped through). Box names are a restricted charset (no `%`, `#`,
- * spaces, or globs), so the literal is strftime- and tmux-format-safe as-is.
+ * so they reach tmux verbatim). `status off` is a session option scoped with
+ * `-t <session>` — the dashboard's grouped `<name>-dash` session has its own
+ * option scope and runs its own `status off` in {@link buildClaudeDashboardAttachArgv}.
  */
-export function buildClaudeStatusBarArgs(sessionName: string, boxName: string): string[] {
+export function buildClaudeStatusBarArgs(sessionName: string): string[] {
   const s = sessionName;
-  const name = boxName;
   return [
     // Server-global (no -t): primary prefix Ctrl+a (dashboard parity), keep
     // tmux's default Ctrl+b as a secondary prefix so users with existing
@@ -912,15 +905,11 @@ export function buildClaudeStatusBarArgs(sessionName: string, boxName: string): 
     ';', 'bind-key', 'C-a', 'send-prefix',
     ';', 'bind-key', 'C-b', 'send-prefix', '-2',
     ';', 'bind-key', 'q', 'detach-client',
-    ';', 'set', '-t', s, 'status-interval', '60',
-    ';', 'set', '-t', s, 'status-justify', 'left',
-    ';', 'set', '-t', s, 'status-style', 'bg=colour236,fg=colour250',
-    ';', 'set', '-t', s, 'status-left-length', '60',
-    ';', 'set', '-t', s, 'status-left', `#[fg=colour16,bg=colour39,bold] agentbox ▸ ${name} #[default] `,
-    ';', 'set', '-t', s, 'status-right-length', '30',
-    ';', 'set', '-t', s, 'status-right', '#[fg=colour255]Control+a q#[fg=colour245]: detach ',
-    ';', 'set', '-t', s, 'window-status-format', '',
-    ';', 'set', '-t', s, 'window-status-current-format', '',
+    // Hide the inner tmux status bar — the wrapped-pty footer (for
+    // `agentbox claude` / `agentbox shell`) and the dashboard's own status
+    // row already show the box name + detach hint; without `status off`
+    // they double up.
+    ';', 'set', '-t', s, 'status', 'off',
   ];
 }
 

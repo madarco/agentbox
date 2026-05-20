@@ -1,3 +1,9 @@
+// Suppress Docker CLI hints (the "What's next?" / promotional lines that
+// appear after some docker subcommands). Affects every `docker …` we spawn
+// because the var inherits via process.env. We use `??=` so a user who
+// explicitly set DOCKER_CLI_HINTS in their shell still wins.
+process.env.DOCKER_CLI_HINTS ??= 'false';
+
 import { Command } from 'commander';
 import { applyEngineOverrideAtStartup } from './engine-override.js';
 import { buildGroupedHelp } from './help.js';
