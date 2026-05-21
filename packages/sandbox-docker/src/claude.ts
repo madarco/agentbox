@@ -939,6 +939,52 @@ export function buildShellArgv(container: string): string[] {
   return ['exec', '-it', '-e', `TERM=${term}`, '--user', CONTAINER_USER, container, 'bash', '-l'];
 }
 
+/**
+ * The `docker run` argv for an interactive `claude auth login` in a throwaway
+ * container. Mounts the claude-config volume at `~/.claude` so the written
+ * credentials persist; runs before any box exists. `extraArgs` are appended
+ * verbatim (e.g. `['--claudeai']`, `['--sso']`).
+ *
+ * `DISPLAY` is blanked: the box image bakes `DISPLAY=:1` (a VNC X server) and
+ * `claude auth login` would otherwise try to open a browser on that invisible
+ * display. An empty `DISPLAY` forces claude's terminal URL/paste-code flow.
+ */
+export function buildClaudeLoginRunArgv(opts: {
+  volume: string;
+  image: string;
+  extraArgs: string[];
+}): string[] {
+  const term = process.env['TERM'] ?? 'xterm-256color';
+  return [
+    'run',
+    '-it',
+    '--rm',
+    '-e',
+    `TERM=${term}`,
+    '-e',
+    'DISPLAY=',
+    '-v',
+    `${opts.volume}:${CONTAINER_CLAUDE_DIR}`,
+    '--user',
+    CONTAINER_USER,
+    opts.image,
+    'claude',
+    'auth',
+    'login',
+    ...opts.extraArgs,
+  ];
+}
+
+/**
+ * Run an interactive docker argv (from {@link buildClaudeLoginRunArgv}) with
+ * the user's terminal attached. Returns the exit code; a null status (killed /
+ * failed to spawn) is reported as 1.
+ */
+export function runInteractiveClaudeLogin(dockerArgv: string[]): { exitCode: number } {
+  const child = spawnSync('docker', dockerArgv, { stdio: 'inherit' });
+  return { exitCode: child.status ?? 1 };
+}
+
 export function formatDetachNotice(ref: string): string {
   return `Session detached. Reattach with: agentbox claude attach ${ref}`;
 }

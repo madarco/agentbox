@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   buildClaudeDashboardAttachArgv,
+  buildClaudeLoginRunArgv,
   buildClaudeMounts,
   buildClaudeStatusBarArgs,
   formatDetachNotice,
@@ -81,6 +82,53 @@ describe('formatDetachNotice', () => {
     expect(formatDetachNotice('my-box')).toBe(
       'Session detached. Reattach with: agentbox claude attach my-box',
     );
+  });
+});
+
+describe('buildClaudeLoginRunArgv', () => {
+  it('builds a throwaway docker run mounting the claude-config volume', () => {
+    const argv = buildClaudeLoginRunArgv({
+      volume: 'agentbox-claude-config',
+      image: 'agentbox/box:dev',
+      extraArgs: ['--sso'],
+    });
+    expect(argv[0]).toBe('run');
+    expect(argv).toContain('--rm');
+    expect(argv).toContain('-it');
+    expect(argv).toContain('-v');
+    expect(argv).toContain('agentbox-claude-config:/home/vscode/.claude');
+    expect(argv).toContain('agentbox/box:dev');
+    expect(argv.slice(-4)).toEqual(['claude', 'auth', 'login', '--sso']);
+  });
+
+  it('blanks DISPLAY and runs as vscode', () => {
+    const argv = buildClaudeLoginRunArgv({
+      volume: 'v',
+      image: 'img',
+      extraArgs: [],
+    });
+    const i = argv.indexOf('DISPLAY=');
+    expect(i).toBeGreaterThan(0);
+    expect(argv[i - 1]).toBe('-e');
+    expect(argv).toContain('--user');
+    expect(argv).toContain('vscode');
+    expect(argv.slice(-3)).toEqual(['claude', 'auth', 'login']);
+  });
+
+  it('appends multiple extra args verbatim', () => {
+    const argv = buildClaudeLoginRunArgv({
+      volume: 'v',
+      image: 'img',
+      extraArgs: ['--console', '--email', 'a@b.c'],
+    });
+    expect(argv.slice(-6)).toEqual([
+      'claude',
+      'auth',
+      'login',
+      '--console',
+      '--email',
+      'a@b.c',
+    ]);
   });
 });
 

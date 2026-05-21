@@ -13,9 +13,11 @@ import {
   listBoxes,
   pauseBox,
   rebuildPluginNativeDeps,
+  SHARED_CLAUDE_VOLUME,
   startBox,
   startClaudeSession,
   stopBox,
+  syncClaudeCredentials,
   unpauseBox,
   type ListedBox,
 } from '@agentbox/sandbox-docker';
@@ -157,6 +159,12 @@ export const dashboardCommand = new Command('dashboard')
         await rebuildPluginNativeDeps(box.container, {
           volume: box.claudeConfigVolume,
         });
+        // Mirror the in-box OAuth credentials with the host backup.
+        const claudeVolume = box.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME;
+        await syncClaudeCredentials(
+          { volume: claudeVolume },
+          { image: box.image, isolate: claudeVolume !== SHARED_CLAUDE_VOLUME },
+        );
         await startClaudeSession({ container: box.container, claudeArgs: [], boxName: box.name });
         const info = await claudeSessionInfo(box.container);
         return {

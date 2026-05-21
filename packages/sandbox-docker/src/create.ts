@@ -10,6 +10,7 @@ import {
   resolveClaudeVolume,
   seedSetupSkillIntoVolume,
 } from './claude.js';
+import { syncClaudeCredentials } from './claude-credentials.js';
 import {
   type BoxLimitSpec,
   containerExists,
@@ -421,6 +422,18 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // touches the host's ~/.claude. Skipped if a copy already exists.
   const seeded = await seedSetupSkillIntoVolume(claudeSpec.volume, ensureRef);
   if (seeded.seeded) log(`seeded /agentbox-setup skill into ${claudeSpec.volume}`);
+  // Mirror the in-box OAuth credentials with the host backup: extract a
+  // box-written `.credentials.json` out to ~/.agentbox, or seed a fresh
+  // volume from a previous box's login. Best-effort.
+  const credSync = await syncClaudeCredentials(claudeSpec, {
+    image: ensureRef,
+    isolate: opts.claudeConfig?.isolate ?? false,
+  });
+  if (credSync.direction === 'extracted') {
+    log('extracted box claude credentials to host backup');
+  } else if (credSync.direction === 'seeded') {
+    log(`seeded claude credentials into ${claudeSpec.volume} from host backup`);
+  }
   const claudeMounts = buildClaudeMounts(claudeSpec, process.env);
 
   const boxDir = boxRunDirFor({ id, name, projectIndex });

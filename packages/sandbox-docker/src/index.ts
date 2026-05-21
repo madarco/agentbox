@@ -5,6 +5,7 @@ export {
   formatDetachNotice,
   buildClaudeAttachArgv,
   buildClaudeDashboardAttachArgv,
+  buildClaudeLoginRunArgv,
   buildClaudeMounts,
   buildClaudeStatusBarArgs,
   buildShellArgv,
@@ -16,6 +17,7 @@ export {
   pullClaudeExtras,
   rebuildPluginNativeDeps,
   resolveClaudeVolume,
+  runInteractiveClaudeLogin,
   scanPluginCacheForRebuild,
   seedSetupSkillIntoVolume,
   SHARED_CLAUDE_VOLUME,
@@ -30,6 +32,14 @@ export {
   type RebuildPluginNativeDepsResult,
   type StartClaudeSessionOptions,
 } from './claude.js';
+export {
+  CREDENTIALS_BACKUP_FILE,
+  hostBackupHasCredentials,
+  parseSyncResult,
+  syncClaudeCredentials,
+  type CredentialSyncDirection,
+  type SyncClaudeCredentialsResult,
+} from './claude-credentials.js';
 export { createBox, type CreateBoxOptions, type CreatedBox } from './create.js';
 export {
   agentboxHomeBytes,
@@ -59,7 +69,7 @@ export {
   type SeedWorkspaceOptions,
   type WorktreeBindSpec,
 } from './in-box-git.js';
-export { DEFAULT_BOX_IMAGE } from './image.js';
+export { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
 export {
   DEFAULT_RELAY_PORT,
   ensureRelay,

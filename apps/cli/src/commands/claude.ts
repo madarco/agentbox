@@ -1,32 +1,29 @@
-import { confirm, intro, isCancel, log, outro, password, spinner } from '@clack/prompts';
+import { confirm, intro, isCancel, log, outro, spinner } from '@clack/prompts';
 import { findProjectRoot, loadEffectiveConfig, type UserConfig } from '@agentbox/config';
 import {
   buildClaudeAttachArgv,
+  buildClaudeLoginRunArgv,
   ClaudeSessionError,
   claudeSessionInfo,
   createBox,
   DEFAULT_RELAY_PORT,
   ensureClaudeVolume,
+  ensureImage,
   formatDetachNotice,
+  hostBackupHasCredentials,
   inspectBox,
   rebuildPluginNativeDeps,
+  runInteractiveClaudeLogin,
   seedSetupSkillIntoVolume,
   SHARED_CLAUDE_VOLUME,
   startBox,
   startClaudeSession,
+  syncClaudeCredentials,
   unpauseBox,
   type BoxRecord,
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
-import {
-  AUTH_FILE,
-  hostClaudeAvailable,
-  isPlausibleOauthToken,
-  resolveClaudeAuth,
-  runHostSetupToken,
-  writeAuthFile,
-  type ResolvedClaudeAuth,
-} from '../auth.js';
+import { resolveClaudeAuth, type ResolvedClaudeAuth } from '../auth.js';
 import { resolveAgentLauncher } from '@agentbox/core';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import { clampSpinnerLine } from '../spinner-line.js';
@@ -105,49 +102,64 @@ function buildClaudeCliOverrides(opts: ClaudeCreateOptions): Partial<UserConfig>
   return out;
 }
 
+/**
+ * Run `claude auth login` in a throwaway container against the shared
+ * claude-config volume, then extract the result to the host backup so every
+ * future box (shared or isolate) is seeded from it. Returns the login
+ * command's exit code.
+ */
+async function runClaudeLoginContainer(image: string, extraArgs: string[]): Promise<number> {
+  const { exitCode } = runInteractiveClaudeLogin(
+    buildClaudeLoginRunArgv({ volume: SHARED_CLAUDE_VOLUME, image, extraArgs }),
+  );
+  if (exitCode === 0) {
+    await syncClaudeCredentials({ volume: SHARED_CLAUDE_VOLUME }, { image, isolate: false });
+  }
+  return exitCode;
+}
 
 /**
- * First-run onboarding. Spawn `claude setup-token` interactively (if the host has
- * Claude Code installed), then prompt the user to paste the token. Save it to
- * ~/.agentbox/auth.json (mode 0600) and return the env shape that should be
- * forwarded to the box. Returns null when the user declines or skips.
+ * First-run sign-in offer, shown before box creation / the setup wizard. When
+ * no credentials are available yet, prompts the user and (on confirm) runs
+ * `claude auth login` in a throwaway container — the result seeds every future
+ * box via the host backup. Silent no-op when credentials already exist, in
+ * non-interactive runs, or when the user provided auth via host env.
  */
-async function offerSetupToken(): Promise<ResolvedClaudeAuth | null> {
-  log.info('first time setup: setup token for Claude Code');
+async function maybeRunClaudeLogin(args: {
+  image: string;
+  authSource: ResolvedClaudeAuth['source'];
+  yes: boolean;
+}): Promise<void> {
+  // Skip when: non-interactive / --yes; the user explicitly provided auth via
+  // host env (respect an intentional ANTHROPIC_API_KEY); or the host backup
+  // already holds real credentials (every box gets seeded from it). A legacy
+  // auth.json setup-token (`auth-file`) still gets the offer — that is the
+  // "Claude API" -> subscription upgrade.
+  if (!process.stdin.isTTY || args.yes) return;
+  if (args.authSource === 'host-env') return;
+  if (await hostBackupHasCredentials()) return;
 
-  const canRun = hostClaudeAvailable();
-  if (canRun) {
-    const yes = await confirm({
-      message: 'Run `claude setup-token` now to save a token?',
-      initialValue: true,
-    });
-    if (isCancel(yes) || !yes) {
-      log.info('ok, continuing without a saved token; /login inside the box once and it persists in the shared volume.');
-      return null;
-    }
-    const { exitCode } = runHostSetupToken();
-    if (exitCode !== 0) {
-      log.warn(`\`claude setup-token\` exited with code ${String(exitCode)}; you can still paste a token below if you have one.`);
-    }
-  } else {
-    log.warn(
-      'Claude Code is not installed on the host, so I cannot run `claude setup-token` for you. ' +
-        'Run it on a machine that has Claude Code installed, then paste the token below — or skip and /login inside the box.',
-    );
+  const message =
+    args.authSource === 'auth-file'
+      ? "You're on a legacy API token (shows as 'Claude API'). Sign in with your Claude subscription instead?"
+      : 'Sign in with your Claude subscription? (saved and reused by every box)';
+  const answer = await confirm({ message, initialValue: true });
+  if (isCancel(answer) || !answer) {
+    log.info('Skipped sign-in — claude will prompt you to /login inside the box.');
+    return;
   }
 
-  const pasted = await password({ message: 'Paste OAuth token (or empty to skip):' });
-  if (isCancel(pasted) || !pasted) {
-    log.info('ok, continuing without a saved token; /login inside the box once and it persists in the shared volume.');
-    return null;
+  const s = spinner();
+  s.start('preparing sandbox image');
+  await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  s.stop('image ready');
+
+  const exitCode = await runClaudeLoginContainer(args.image, ['--claudeai']);
+  if (exitCode !== 0) {
+    log.warn('Claude login did not complete; continuing — run `agentbox claude login` to retry.');
+    return;
   }
-  const token = pasted.trim();
-  if (!isPlausibleOauthToken(token)) {
-    log.warn("That doesn't look like an OAuth token (expected `sk-ant-oat…`); saving anyway — verify inside the box.");
-  }
-  await writeAuthFile({ claudeCodeOauthToken: token });
-  log.success(`saved to ${AUTH_FILE} (mode 0600)`);
-  return { env: { CLAUDE_CODE_OAUTH_TOKEN: token }, source: 'auth-file' };
+  log.success('Signed in with your Claude subscription — saved for future boxes.');
 }
 
 export const claudeCommand = new Command('claude')
@@ -200,6 +212,20 @@ export const claudeCommand = new Command('claude')
           ? cfg.effective.box.defaultCheckpoint
           : undefined;
 
+    // Resolve auth from host env or the legacy ~/.agentbox/auth.json
+    // setup-token (the dormant CI fallback).
+    const resolved = await resolveClaudeAuth(process.env);
+
+    // First-run sign-in offer — before the env-file picker and the setup
+    // wizard, and before any box work, so the user signs in up front. Uses a
+    // throwaway container; the result seeds every future box via the host
+    // backup. No-op when credentials already exist or this isn't interactive.
+    await maybeRunClaudeLogin({
+      image: cfg.effective.box.image,
+      authSource: resolved.source,
+      yes: !!opts.yes,
+    });
+
     // First-run wizard: when no agentbox.yaml exists, offer to inject an
     // initial user-message so claude reads /agentbox-setup and writes one.
     // Skipped when starting from a checkpoint (it already carries the config).
@@ -228,16 +254,6 @@ export const claudeCommand = new Command('claude')
           ? true
           : (cfg.effective.box.hostSnapshot ?? false);
     const sessionName = cfg.effective.claude.sessionName;
-
-    // Resolve auth from env or the saved auth file. On first run (nothing
-    // saved, nothing in env), drive the user through `claude setup-token`
-    // interactively — but only when we have a real TTY and the user didn't
-    // pass `--yes` (which means "no prompts; CI-friendly").
-    let resolved = await resolveClaudeAuth(process.env);
-    if (resolved.source === 'none' && process.stdin.isTTY && !opts.yes) {
-      const next = await offerSetupToken();
-      if (next) resolved = next;
-    }
 
     const s = spinner();
     s.start('creating box');
@@ -328,6 +344,10 @@ async function startOrAttachClaude(
     cliOverrides: opts.sessionName ? { claude: { sessionName: opts.sessionName } } : {},
   });
   const sessionName = cfg.effective.claude.sessionName;
+  // Read-only — used to gate the first-run login offer (respect an intentional
+  // host ANTHROPIC_API_KEY). The box already exists, so `resolved.env` is not
+  // forwarded here.
+  const resolved = await resolveClaudeAuth(process.env);
 
   // Auto-unpause/start. Mirrors `agentbox shell` / `agentbox code`.
   // `startBox` relaunches ctl/vnc/dockerd
@@ -339,12 +359,22 @@ async function startOrAttachClaude(
 
   // If a tmux session already exists, just attach — no resync, no plugin
   // rebuild, ignore any post-`--` args (they only apply to a fresh claude).
+  // A login can't be inserted into a live session; an unauthenticated one
+  // shows claude's own in-TUI `/login` on attach.
   const existing = await claudeSessionInfo(box.container, sessionName);
   if (existing.running) {
     outro(`session "${sessionName}" already running — attaching (Control+a q to detach)`);
     await attachClaudeWrapped(box, sessionName, reattachRef(box));
     return;
   }
+
+  // First-run sign-in offer — before any box prep, so the user signs in up
+  // front. No-op when credentials already exist or this isn't interactive.
+  await maybeRunClaudeLogin({
+    image: box.image,
+    authSource: resolved.source,
+    yes: false,
+  });
 
   // One spinner for the whole prepare→attach sequence: every phase overwrites
   // the single line instead of leaving a scroll of `●`/`◇` rows.
@@ -383,7 +413,17 @@ async function startOrAttachClaude(
 
   // Box-only: ensure /agentbox-setup is in the volume (image-seeded, never
   // on the host). Idempotent — skipped when a copy already exists.
-  await seedSetupSkillIntoVolume(box.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME, box.image);
+  const claudeVolume = box.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME;
+  await seedSetupSkillIntoVolume(claudeVolume, box.image);
+
+  // Mirror the in-box OAuth credentials with the host backup. Runs regardless
+  // of --no-sync-config (this is not the host ~/.claude rsync) — it keeps the
+  // backup fresh as the in-box claude rotates its token, and seeds an isolate
+  // box's volume from an up-front `maybeRunClaudeLogin`.
+  await syncClaudeCredentials(
+    { volume: claudeVolume },
+    { image: box.image, isolate: claudeVolume !== SHARED_CLAUDE_VOLUME },
+  );
 
   // Plugin native deps: idempotent — gated by a per-plugin marker. No-op
   // on subsequent starts unless a new plugin was synced just now.
@@ -477,5 +517,43 @@ const claudeStartCommand = new Command('start')
     }
   });
 
+const claudeLoginCommand = new Command('login')
+  .description(
+    'Sign in to Claude for use in sandboxes (forwards args to `claude auth login`, e.g. --sso, --console). Runs in a throwaway container against the shared claude-config volume — usable before the first `agentbox claude`.',
+  )
+  .argument(
+    '[args...]',
+    'extra args forwarded to `claude auth login`; place after `--`, e.g. `agentbox claude login -- --sso`',
+  )
+  .action(async (args: string[]) => {
+    intro('Signing in to Claude...');
+    if (!process.stdin.isTTY) {
+      log.error('`agentbox claude login` needs an interactive terminal.');
+      process.exit(1);
+    }
+    try {
+      const cfg = await loadEffectiveConfig(process.cwd());
+      const image = cfg.effective.box.image;
+
+      const s = spinner();
+      s.start('preparing sandbox image');
+      await ensureImage(image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+      s.stop('image ready');
+
+      // Throwaway `docker run` against the shared volume — the written
+      // credentials persist there and `syncClaudeCredentials` mirrors them to
+      // the host backup, so every later box (shared or isolate) is seeded.
+      const exitCode = await runClaudeLoginContainer(image, args);
+      if (exitCode !== 0) {
+        log.warn(`\`claude auth login\` exited with code ${String(exitCode)}`);
+        process.exit(exitCode);
+      }
+      outro('signed in — credentials saved for future boxes');
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
 claudeCommand.addCommand(claudeAttachCommand);
 claudeCommand.addCommand(claudeStartCommand);
+claudeCommand.addCommand(claudeLoginCommand);

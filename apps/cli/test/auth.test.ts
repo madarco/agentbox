@@ -1,32 +1,8 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  isPlausibleOauthToken,
-  readAuthFile,
-  resolveClaudeAuth,
-  writeAuthFile,
-} from '../src/auth.js';
-
-describe('isPlausibleOauthToken', () => {
-  it('accepts sk-ant-oat-prefixed tokens >= 40 chars', () => {
-    expect(isPlausibleOauthToken('sk-ant-oat01-' + 'x'.repeat(60))).toBe(true);
-  });
-
-  it('rejects short tokens', () => {
-    expect(isPlausibleOauthToken('sk-ant-oat01-tiny')).toBe(false);
-  });
-
-  it('rejects tokens with the wrong prefix', () => {
-    expect(isPlausibleOauthToken('sk-ant-api01-' + 'x'.repeat(60))).toBe(false);
-    expect(isPlausibleOauthToken('eyJhbGciOiJIUzI1NiJ9.' + 'x'.repeat(40))).toBe(false);
-  });
-
-  it('trims whitespace before checking', () => {
-    expect(isPlausibleOauthToken('  sk-ant-oat01-' + 'x'.repeat(60) + '\n')).toBe(true);
-  });
-});
+import { readAuthFile, resolveClaudeAuth } from '../src/auth.js';
 
 describe('readAuthFile', () => {
   let dir: string;
@@ -57,27 +33,6 @@ describe('readAuthFile', () => {
   it('returns {} when the JSON is shaped wrong', async () => {
     await writeFile(path, JSON.stringify({ claudeCodeOauthToken: 42 }), 'utf8');
     expect(await readAuthFile(path)).toEqual({});
-  });
-});
-
-describe('writeAuthFile', () => {
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'agentbox-auth-test-'));
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
-
-  it('creates the parent directory and writes mode-0600 JSON', async () => {
-    const path = join(dir, 'nested', 'auth.json');
-    await writeAuthFile({ claudeCodeOauthToken: 'sk-ant-oat01-xyz' }, path);
-    const st = await stat(path);
-    // Lower 9 bits = perm bits; 0o600 = owner rw, group/other none.
-    expect(st.mode & 0o777).toBe(0o600);
-    const raw = await readFile(path, 'utf8');
-    expect(JSON.parse(raw)).toEqual({ claudeCodeOauthToken: 'sk-ant-oat01-xyz' });
   });
 });
 

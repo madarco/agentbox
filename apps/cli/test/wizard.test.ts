@@ -44,7 +44,7 @@ describe('passthroughFlags', () => {
     expect(passthroughFlags({ withPlaywright: false, sharedDockerCache: false })).toEqual([]);
   });
 
-  it('does NOT forward --yes (claude wizard would suppress the setup-token prompt)', () => {
+  it('does NOT forward --yes (would suppress the first-run auth guidance)', () => {
     const out = passthroughFlags({ workspace: '/tmp/x' } as never);
     expect(out).not.toContain('--yes');
   });

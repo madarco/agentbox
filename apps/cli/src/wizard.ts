@@ -180,8 +180,8 @@ export function parseEnvFilesFromEnv(raw: string | undefined): string[] | undefi
  * Map the create command's parsed options to an argv that can be re-dispatched
  * through `claudeCommand.parseAsync(['node', 'agentbox', 'claude', ...args])`.
  * `--yes` is intentionally NOT passed through here: the wizard already prompted
- * the user, and forwarding `--yes` would suppress claude's own setup-token
- * prompt that the user typically wants on first run.
+ * the user, and forwarding `--yes` would suppress the first-run auth guidance
+ * that the user typically wants.
  */
 export interface CreatePassthroughOptions {
   workspace?: string;
