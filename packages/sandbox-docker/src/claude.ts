@@ -108,6 +108,24 @@ async function pathExists(p: string): Promise<boolean> {
 }
 
 /**
+ * True when the claude-config volume already holds a `_claude.json` at its
+ * root. Claude Code treats `~/.claude.json` as its own mutable runtime/auth
+ * state (`oauthAccount`, `userID`, onboarding flags, ...). Once the volume has
+ * one — written by an earlier box session or the throwaway `claude auth login`
+ * container — overwriting it with the host's copy clobbers that state, and the
+ * box's first API request then fails with `400 "system" role is not supported`.
+ * Callers use this to keep `_claude.json` write-once.
+ */
+async function volumeHasClaudeJson(volume: string, image: string): Promise<boolean> {
+  const res = await execa(
+    'docker',
+    ['run', '--rm', '-v', `${volume}:/dst`, image, 'sh', '-c', 'test -e /dst/_claude.json'],
+    { reject: false },
+  );
+  return res.exitCode === 0;
+}
+
+/**
  * Walk `root` and return rsync-style relative paths of every symlink whose
  * target doesn't resolve. We pass these to rsync as `--exclude` patterns so
  * the broken-symlink set (e.g. claude's `debug/latest` once an older debug
@@ -189,6 +207,12 @@ export async function ensureClaudeVolume(
   // makes it reachable from the path claude expects.
   const hostClaudeJson = join(homedir(), '.claude.json');
   const hasJson = await pathExists(hostClaudeJson);
+  // `_claude.json` is write-once in the volume. The first writer wins — the
+  // throwaway `claude auth login` container (seeded just before it via this
+  // same function), or an earlier box session. Re-copying the host's
+  // ~/.claude.json on every create/start would clobber Claude's own
+  // `oauthAccount` and break the box's first request (see volumeHasClaudeJson).
+  const seedClaudeJson = !(await volumeHasClaudeJson(spec.volume, opts.image));
   const hostHome = homedir();
   // Claude Code's user-skills convention: ~/.claude/skills/<name> is a
   // RELATIVE symlink to ../../.agents/skills/<name>. From /src-claude/skills/
@@ -212,7 +236,7 @@ export async function ensureClaudeVolume(
     '-v',
     `${hostClaude}:/src-claude:ro`,
   ];
-  if (hasJson) args.push('-v', `${hostClaudeJson}:/src-claude-json:ro`);
+  if (hasJson && seedClaudeJson) args.push('-v', `${hostClaudeJson}:/src-claude-json:ro`);
   if (hasAgents) args.push('-v', `${hostAgents}:/.agents:ro`);
 
   // Pre-filter host-path hooks. Hook commands whose path is under the user's
@@ -235,7 +259,11 @@ export async function ensureClaudeVolume(
       hostHome,
     );
     filteredHookCount += settingsResult.removedHooks;
-    if (hasJson) {
+    if (!seedClaudeJson) {
+      // The volume already has a `_claude.json`; write-once leaves it intact
+      // (see seedClaudeJson). No host overlay is generated for it — the
+      // settings.json filtering above still applies.
+    } else if (hasJson) {
       const jsonResult = await maybeFilterTo(
         hostClaudeJson,
         join(filterDir, '_claude.json'),
@@ -913,8 +941,6 @@ export async function startClaudeSession(opts: StartClaudeSessionOptions): Promi
   const cmd = ['claude', ...opts.claudeArgs].map(shQuote).join(' ');
   const term = process.env['TERM'] ?? 'xterm-256color';
   const envFlags: string[] = ['-e', `TERM=${term}`];
-  // TEMP DEBUG (remove): capture the in-box claude's API requests.
-  envFlags.push('-e', 'ANTHROPIC_BASE_URL=http://host.docker.internal:8799');
   for (const k of FORWARDED_ENV_KEYS) {
     const v = process.env[k];
     if (typeof v === 'string' && v.length > 0) envFlags.push('-e', `${k}=${v}`);

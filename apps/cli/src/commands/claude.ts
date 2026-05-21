@@ -137,6 +137,9 @@ async function maybeRunClaudeLogin(args: {
   image: string;
   authSource: ResolvedClaudeAuth['source'];
   yes: boolean;
+  /** Host workspace path — seeds the project-scoped `/workspace` alias into
+   *  the volume's `_claude.json` before the login container runs. */
+  hostWorkspace: string;
 }): Promise<void> {
   // Skip when: non-interactive / --yes; the user explicitly provided auth via
   // host env (respect an intentional ANTHROPIC_API_KEY); or the host backup
@@ -160,6 +163,16 @@ async function maybeRunClaudeLogin(args: {
   const s = spinner();
   s.start('preparing sandbox image');
   await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  // Seed the shared claude-config volume from the host's ~/.claude *before*
+  // the login container runs, so `claude auth login` writes its oauthAccount
+  // on top of the host config (trust, installMethod, project alias) rather
+  // than into an empty volume. ensureClaudeVolume is write-once for
+  // _claude.json, so the later createBox sync can't clobber the login's work.
+  s.message('preparing claude config');
+  await ensureClaudeVolume(
+    { volume: SHARED_CLAUDE_VOLUME },
+    { syncFromHost: true, image: args.image, hostWorkspace: args.hostWorkspace },
+  );
   s.stop('image ready');
 
   const exitCode = await runClaudeLoginContainer(args.image, ['--claudeai']);
@@ -232,6 +245,7 @@ export const claudeCommand = new Command('claude')
       image: cfg.effective.box.image,
       authSource: resolved.source,
       yes: !!opts.yes,
+      hostWorkspace: opts.workspace,
     });
 
     // First-run wizard: when no agentbox.yaml exists, offer to inject an
@@ -383,6 +397,7 @@ async function startOrAttachClaude(
     image: box.image,
     authSource: resolved.source,
     yes: false,
+    hostWorkspace: box.workspacePath,
   });
 
   // One spinner for the whole prepare→attach sequence: every phase overwrites
