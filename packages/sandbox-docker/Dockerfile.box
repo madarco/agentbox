@@ -5,8 +5,8 @@
 # Silicon hosts). /workspace is a plain dir in the image's writable layer:
 # `agentbox create` populates it via in-container `git worktree add` (or a
 # tar pipe for the no-git case). The old FUSE overlay over /host-src+/upper
-# is gone — but fuse3 + fuse-overlayfs stay because the in-box dockerd uses
-# fuse-overlayfs as its storage driver. Plus the "universal-ish" set of
+# is gone — but fuse3 + fuse-overlayfs stay as the in-box dockerd's fallback
+# storage driver (it prefers the kernel-native overlay2). Plus the "universal-ish" set of
 # language runtimes (Node.js 22 from NodeSource, Python 3 from apt). Heavier
 # tooling (Go, Java, Ruby, .NET, more browser tooling, vscode-server) goes in
 # a later iteration.
@@ -105,14 +105,15 @@ RUN npm install -g corepack@latest \
 # bind-mount of ~/.gitconfig from the host.
 RUN git config --system --add safe.directory '*'
 
-# Docker-in-Docker. dockerd inside the box (storage-driver=fuse-overlayfs, set
-# in /etc/docker/daemon.json) lets the agent run `docker build`/`docker run`
-# in its own namespace without exposing the host daemon. fuse-overlayfs is
-# required because the kernel `overlay` driver isn't usable from an
-# unprivileged container — fuse3 + fuse-overlayfs are installed above
-# specifically for this (the outer /workspace overlay is gone, but the inner
-# dockerd still needs them). iptables is needed
-# for inner-container bridge networking. Adding `vscode` to the `docker` group
+# Docker-in-Docker. dockerd inside the box lets the agent run
+# `docker build`/`docker run` in its own namespace without exposing the host
+# daemon. The storage driver is NOT pinned here: agentbox-dockerd-start picks
+# it at runtime — the kernel-native overlay2 when a probe proves it works on
+# the data-root filesystem, else the fuse-overlayfs fallback (fuse3 +
+# fuse-overlayfs are installed above for that fallback). The baked daemon.json
+# only carries `iptables: true`; the script rewrites it with the resolved
+# `storage-driver` before launching dockerd. iptables is needed for
+# inner-container bridge networking. Adding `vscode` to the `docker` group
 # lets the agent invoke `docker` without sudo once dockerd creates the socket
 # at /var/run/docker.sock at runtime. The matching launch script is COPY'd in
 # below; the daemon is started by the host via `docker exec -d --user root`
@@ -123,7 +124,7 @@ RUN apt-get update \
         iptables \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /etc/docker \
-    && printf '%s\n' '{ "storage-driver": "fuse-overlayfs", "iptables": true }' > /etc/docker/daemon.json \
+    && printf '%s\n' '{ "iptables": true }' > /etc/docker/daemon.json \
     && usermod -aG docker vscode
 
 # agentbox-ctl: the in-container supervisor + CLI. Build context is the

@@ -635,11 +635,12 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
 
   // dockerd: always-on, mirrors launchVncDaemon. Best-effort — a slow start
   // shouldn't fail box creation; `agentbox start` will relaunch on restart
-  // (the daemon dies with the container). Storage driver is fuse-overlayfs,
-  // pinned in /etc/docker/daemon.json baked into the image.
+  // (the daemon dies with the container). The storage driver is selected at
+  // runtime by agentbox-dockerd-start (overlay2, with a fuse-overlayfs
+  // fallback) — see /var/log/agentbox/dockerd.log inside the box.
   const dockerd = await launchDockerdDaemon(containerName);
   if (dockerd.up) {
-    log(`dockerd up (storage-driver=fuse-overlayfs, data root=${dockerVolume})`);
+    log(`dockerd up (data root=${dockerVolume})`);
   } else {
     log(`dockerd did not become ready: ${dockerd.reason}`);
   }

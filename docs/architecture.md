@@ -16,11 +16,11 @@ How `/workspace` gets populated depends on the source:
 
 The retired FUSE overlay had `lowerdir=/host-src,upperdir=/upper/upper` and reasonable boot speed, but every advantage it had against macOS hosts evaporated once we depended on per-box git worktrees + a bind-mounted `.git` — the worktree path *was* the isolation, the overlay added nothing.
 
-Container needs `/dev/fuse` + `SYS_ADMIN` + `apparmor:unconfined`/`seccomp=unconfined` not for the outer FS but for the **in-box dockerd**'s `fuse-overlayfs` storage driver and cgroup remounts.
+Container needs `/dev/fuse` + `SYS_ADMIN` + `apparmor:unconfined`/`seccomp=unconfined` not for the outer FS but for the **in-box dockerd**'s storage driver (the kernel-native `overlay2`, picked by a runtime probe in `agentbox-dockerd-start`, with a `fuse-overlayfs` fallback) and cgroup remounts.
 
 ## First-run setup (per host workspace)
 
-1. Build base image with `node`, `pnpm`, `fuse3`, `fuse-overlayfs` (for inner dockerd), `rsync`, `git`, `tmux`, plus Claude Code and agent-browser.
+1. Build base image with `node`, `pnpm`, `fuse3`, `fuse-overlayfs` (inner dockerd's fallback storage driver), `rsync`, `git`, `tmux`, plus Claude Code and agent-browser.
 2. Run the in-box `/agentbox-setup` wizard once: it inspects the workspace, writes `agentbox.yaml` with install + service definitions, and (optionally) takes the first checkpoint.
 3. `--host-snapshot` is the optional "freeze the source bytes" knob: `cp -c` APFS clone of the workspace into `~/.agentbox/snapshots/<id>/` before the tar pipe so host edits during create don't leak in. No-op when a git repo is detected (worktree content comes from `.git`).
 

@@ -25,8 +25,8 @@ export function dockerVolumeName(boxId: string, shared: boolean): string {
  * detached, then poll for `/var/run/docker.sock` to become accept()-able.
  * Best-effort, mirroring {@link launchVncDaemon} — failure is logged but
  * doesn't fail box creation. Default timeout 30s: first start has to
- * initialize iptables + the fuse-overlayfs graphdriver, which is slower than
- * the VNC stack.
+ * initialize iptables + the storage graphdriver, which is slower than the
+ * VNC stack.
  */
 export async function launchDockerdDaemon(
   container: string,

@@ -61,11 +61,11 @@ export async function runBox(spec: RunBoxSpec): Promise<string> {
     '--cap-add=NET_ADMIN',
     // /dev/fuse + SYS_ADMIN + apparmor:unconfined used to be required for the
     // outer /workspace FUSE overlay. That overlay is gone, but they're still
-    // load-bearing for the *inner* dockerd: it runs with
-    // storage-driver=fuse-overlayfs (set in /etc/docker/daemon.json in the
-    // image) because the kernel `overlay` driver isn't usable from an
-    // unprivileged outer container, and fuse-overlayfs needs the fuse device
-    // + SYS_ADMIN to mount layers for inner containers.
+    // load-bearing for the *inner* dockerd's storage driver, which
+    // agentbox-dockerd-start selects at runtime: SYS_ADMIN lets it `mount -t
+    // overlay` for the preferred kernel-native overlay2 driver, and /dev/fuse
+    // + SYS_ADMIN + apparmor:unconfined are needed for the fuse-overlayfs
+    // fallback (used where overlay2's runtime probe fails).
     '--device=/dev/fuse',
     '--security-opt=apparmor:unconfined',
     '--security-opt=seccomp=unconfined',

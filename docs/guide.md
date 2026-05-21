@@ -146,7 +146,7 @@ Hook commands whose path is under your host home (e.g. `/Users/you/.config/iterm
 
 ### Docker inside the box (Docker-in-Docker)
 
-Every box ships with its own `dockerd` so the agent can `docker build`, `docker run`, and bring up compose stacks **without** seeing your host's Docker daemon. The inner daemon runs in the box's own mount + network namespaces, so anything it spawns is contained. Storage driver is `fuse-overlayfs` (no host kernel module required), and the outer container is **not** `--privileged` — just the same `SYS_ADMIN` / `/dev/fuse` set the FUSE workspace overlay already needs, plus `NET_ADMIN`, `seccomp=unconfined`, and `--cgroupns=private` so the inner bridge networking + cgroup slice work.
+Every box ships with its own `dockerd` so the agent can `docker build`, `docker run`, and bring up compose stacks **without** seeing your host's Docker daemon. The inner daemon runs in the box's own mount + network namespaces, so anything it spawns is contained. The storage driver is picked at runtime: the kernel-native `overlay2` when a probe proves it works on the data-root filesystem (the common case), with a `fuse-overlayfs` fallback. The outer container is **not** `--privileged` — just the same `SYS_ADMIN` / `/dev/fuse` set the FUSE workspace overlay already needs, plus `NET_ADMIN`, `seccomp=unconfined`, and `--cgroupns=private` so the inner bridge networking + cgroup slice work.
 
 ```sh
 agentbox shell mybox -- docker version            # client + server, both inside the box
