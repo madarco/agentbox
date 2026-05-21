@@ -73,7 +73,7 @@ The container's writable layer is the agent's "diff against base image". Persist
 
 ## Checkpoints
 
-A **checkpoint** captures a box's accumulated state — `/workspace` (incl. `node_modules`, build caches, in-box `.env` files) plus everything else the agent wrote into the container's writable layer — so a *new* box can start warm instead of from bare host code. Primary use: after a setup wizard or a merged PR, `agentbox checkpoint <box> --set-default` makes every future box in the project inherit the warm state.
+A **checkpoint** captures a box's accumulated state — `/workspace` (incl. `node_modules`, build caches, in-box `.env` files) plus everything else the agent wrote into the container's writable layer — so a *new* box can start warm instead of from bare host code. Primary use: after a setup wizard or a merged PR, `agentbox checkpoint create <box> --set-default` makes every future box in the project inherit the warm state.
 
 - **Cleanup** runs first: `docker exec --user root <ctr> /usr/local/bin/agentbox-checkpoint-cleanup` strips apt cache + `/tmp` + `/var/log` + bash history. Caches under `~/.npm`/`~/.cache` and `/var/lib/docker` are kept (warm state worth carrying).
 - **Layered checkpoint** (default, fast): `docker commit <ctr> agentbox-ckpt-<projectHash>:<name>`. New layer on top of the box's current image; lineage is implicit in Docker image history. The `parents` chain in the manifest tracks refs for display and the auto-flatten threshold.
@@ -86,7 +86,7 @@ Storage:
 - Image tags use the deterministic `agentbox-ckpt-<sha1-16(projectRoot)>` repo prefix (parallel to the per-project config-dir hash); `agentbox prune --all` reaps any tag under that prefix not referenced by a surviving `BoxRecord.checkpointImage`.
 - `agentbox checkpoint rm <ref>` deletes the manifest + `docker image rm` the tag.
 
-In-box agents trigger capture via the existing relay (`agentbox-ctl checkpoint` → `/rpc checkpoint.create` → host `agentbox checkpoint` CLI). No host creds in the box.
+In-box agents trigger capture via the existing relay (`agentbox-ctl checkpoint` → `/rpc checkpoint.create` → host `agentbox checkpoint create` CLI). No host creds in the box.
 
 This is distinct from the host **snapshot** (`--host-snapshot`, config `box.hostSnapshot`): a per-box APFS clone of the host workspace used only as a stable source for the create-time `tar` pipe. Orthogonal to checkpoints, which capture box-side state.
 

@@ -55,8 +55,8 @@ agentbox claude [-w <path>] [-n <name>] [--host-snapshot | --no-host-snapshot]
                 [--with-env] [--session-name <name>] [-y] [-- <claude-args>...]
                                     # create + start Claude Code in detached tmux + attach
 agentbox claude attach <box> [--session-name <name>]   # reattach to the running session
-agentbox checkpoint [box] [--name <n>] [--merged] [--set-default]   # capture warm box state
-agentbox checkpoint ls | set-default <ref> | rm <ref>
+agentbox checkpoint create [box] [--name <n>] [--merged] [--set-default]   # capture warm box state
+agentbox checkpoint [ls] | set-default <ref> | rm <ref>   # bare `checkpoint`/`checkpoints` -> ls
 # inside a box: agentbox-ctl checkpoint [--name <n>] [--merged] [--set-default]  # via the host relay
 agentbox list                       # alias: ls
 agentbox status <box> [--json] [--inspect]      # services + claude session state
@@ -308,7 +308,7 @@ One-shot (after a build):
 node apps/cli/dist/index.js create --help
 node apps/cli/dist/index.js create --no-host-snapshot -n my-box
 node apps/cli/dist/index.js create --host-snapshot -y
-node apps/cli/dist/index.js checkpoint my-box --set-default   # warm checkpoint -> project default
+node apps/cli/dist/index.js checkpoint create my-box --set-default   # warm checkpoint -> project default
 node apps/cli/dist/index.js create -n my-box2                  # starts from the default checkpoint
 node apps/cli/dist/index.js create --snapshot my-box-1         # or an explicit checkpoint ref
 ```

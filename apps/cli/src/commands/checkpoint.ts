@@ -219,8 +219,9 @@ const rmSub = new Command('rm')
   });
 
 export const checkpointCommand = new Command('checkpoint')
-  .description('Capture and manage project checkpoints (warm box state new boxes can start from)')
-  .addCommand(createSub, { isDefault: true })
-  .addCommand(lsSub)
+  .alias('checkpoints')
+  .description('List and manage project checkpoints (warm box state new boxes can start from)')
+  .addCommand(createSub)
+  .addCommand(lsSub, { isDefault: true })
   .addCommand(setDefaultSub)
   .addCommand(rmSub);

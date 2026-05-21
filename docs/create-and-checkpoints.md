@@ -157,12 +157,13 @@ cold, without baking anything into the base image. Code: `checkpoint.ts`
 
 ### Lifecycle / triggering
 
-- CLI: `agentbox checkpoint <box> [--merged] [--set-default]`,
-  `agentbox checkpoint ls`, `agentbox checkpoint rm <ref>` (deletes the
+- CLI: `agentbox checkpoint create <box> [--merged] [--set-default]`,
+  `agentbox checkpoint ls` (the default — bare `agentbox checkpoint` or
+  `agentbox checkpoints` lists), `agentbox checkpoint rm <ref>` (deletes the
   manifest *and* the image tag).
 - Capture/restore is **host-side**. An in-box agent triggers it through the
   relay: `agentbox-ctl checkpoint` → `/rpc checkpoint.create` → the relay
-  spawns the host `agentbox checkpoint` CLI (`AGENTBOX_CLI_ENTRY`) — no host
+  spawns the host `agentbox checkpoint create` CLI (`AGENTBOX_CLI_ENTRY`) — no host
   creds leak into the box, reusing the existing relay channel (same as
   `agentbox-ctl git`).
 

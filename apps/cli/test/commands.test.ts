@@ -87,8 +87,9 @@ describe('lifecycle CLI surface', () => {
     expect(status!.options.map((o) => o.long)).toContain('--json');
   });
 
-  it('checkpoint has create (default) / ls / set-default / rm subcommands', () => {
+  it('checkpoint has ls (default) / create / set-default / rm subcommands, aliased as checkpoints', () => {
     expect(checkpointCommand.name()).toBe('checkpoint');
+    expect(checkpointCommand.aliases()).toContain('checkpoints');
     const subs = checkpointCommand.commands.map((c) => c.name());
     expect(subs).toEqual(expect.arrayContaining(['create', 'ls', 'set-default', 'rm']));
     const create = checkpointCommand.commands.find((c) => c.name() === 'create');
