@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { BoxState } from '@agentbox/core';
 import type { BoxStatus, ClaudeActivityState } from '@agentbox/ctl';
 import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './claude.js';
+import { listShellSessions, type ShellSessionSummary } from './shell-session.js';
 import { bindWorktrees, removeInBoxWorktree } from './in-box-git.js';
 import {
   cursorServerVolumeName,
@@ -70,6 +71,8 @@ export interface ListedBox extends BoxRecord {
   claudeActivity?: ClaudeActivityState;
   /** Sanitized in-box terminal title Claude set; undefined when none. */
   claudeSessionTitle?: string;
+  /** Live shell tmux sessions; `[]` for non-running boxes (can't `docker exec`). */
+  shellSessions: ShellSessionSummary[];
 }
 
 export async function listBoxes(): Promise<ListedBox[]> {
@@ -80,12 +83,17 @@ export async function listBoxes(): Promise<ListedBox[]> {
       const state = await inspectContainerStatus(b.container);
       const persisted = await readBoxStatus(b);
       const endpoints = await getBoxEndpoints(b, engine, persisted);
+      // Shell sessions are live tmux state — only a running container is
+      // reachable via `docker exec`; paused/stopped report none.
+      const shellSessions =
+        state === 'running' ? await listShellSessions(b.container) : [];
       return {
         ...b,
         state,
         endpoints,
         claudeActivity: persisted?.claude.state,
         claudeSessionTitle: persisted?.claude.sessionTitle,
+        shellSessions,
       };
     }),
   );
@@ -297,6 +305,8 @@ export interface InspectedBox {
   dockerInspect: unknown;
   /** Null when the container isn't running; otherwise best-effort probe of the tmux 'claude' session. */
   claudeSession: ClaudeSessionInfo | null;
+  /** Live shell tmux sessions; `[]` when the container isn't running. */
+  shellSessions: ShellSessionSummary[];
   /** Persisted status snapshot (services/tasks/ports/claude); null when none. */
   persistedStatus: BoxStatus | null;
   /** Host paths for `agentbox open`. */
@@ -324,12 +334,14 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
   const dockerJson = await inspectContainer(record.container);
 
   let claudeSession: ClaudeSessionInfo | null = null;
+  let shellSessions: ShellSessionSummary[] = [];
   if (state === 'running') {
     try {
       claudeSession = await claudeSessionInfo(record.container);
     } catch {
       claudeSession = null;
     }
+    shellSessions = await listShellSessions(record.container);
   }
 
   const hostPaths = await getHostPaths(record);
@@ -343,6 +355,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
     snapshotSizeBytes,
     dockerInspect: dockerJson,
     claudeSession,
+    shellSessions,
     persistedStatus,
     hostPaths,
     endpoints,

@@ -1233,8 +1233,9 @@ export async function warmUpClaudeCredentials(
 export function formatDetachNotice(
   ref: string,
   command: 'claude' | 'shell' = 'claude',
+  suffix = '',
 ): string {
-  return `Session detached. Reattach with: agentbox ${command} attach ${ref}`;
+  return `Session detached. Reattach with: agentbox ${command} attach ${ref}${suffix}`;
 }
 
 export function attachClaudeSession(

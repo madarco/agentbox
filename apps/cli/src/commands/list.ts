@@ -88,18 +88,21 @@ function workspaceCell(path: string, target: number, stream: NodeJS.WriteStream)
 }
 
 function renderTable(boxes: ListedBox[], stream: NodeJS.WriteStream): string {
-  const header = ['N', 'NAME', 'STATE', 'CLAUDE', 'URL', 'WORKSPACE'];
+  const header = ['N', 'NAME', 'STATE', 'CLAUDE', 'SHELLS', 'URL', 'WORKSPACE'];
   const lead: Cell[][] = boxes.map((b) => [
     plain(typeof b.projectIndex === 'number' ? String(b.projectIndex) : ''),
     plain(b.name),
     plain(b.state),
     plain(b.claudeActivity ?? ''),
+    // Live shell-session count; `-` for none (or a non-running box). Detail
+    // lives in `agentbox shell ls <box>`.
+    plain(b.shellSessions.length > 0 ? String(b.shellSessions.length) : '-'),
     urlCell(b, stream),
   ]);
-  const leadHeader = header.slice(0, 5).map(plain);
+  const leadHeader = header.slice(0, 6).map(plain);
 
   // Widths for the fixed columns (everything but WORKSPACE).
-  const fixedWidths = [0, 1, 2, 3, 4].map((col) =>
+  const fixedWidths = [0, 1, 2, 3, 4, 5].map((col) =>
     Math.max(leadHeader[col]?.width ?? 0, ...lead.map((r) => r[col]?.width ?? 0)),
   );
 
@@ -108,7 +111,7 @@ function renderTable(boxes: ListedBox[], stream: NodeJS.WriteStream): string {
   const term = stream.columns && stream.columns > 0 ? stream.columns : 120;
   const fixedTotal = fixedWidths.reduce((a, b) => a + b, 0) + header.length * 2;
   const naturalWs = Math.max(
-    header[5]?.length ?? 0,
+    header[6]?.length ?? 0,
     ...boxes.map((b) => b.workspacePath.length),
   );
   const wsWidth = Math.min(naturalWs, Math.max(16, term - fixedTotal));
@@ -118,7 +121,7 @@ function renderTable(boxes: ListedBox[], stream: NodeJS.WriteStream): string {
     ...(lead[idx] as Cell[]),
     workspaceCell(b.workspacePath, wsWidth, stream),
   ]);
-  const all: Cell[][] = [[...leadHeader, plain(header[5] as string)], ...rows];
+  const all: Cell[][] = [[...leadHeader, plain(header[6] as string)], ...rows];
 
   const padCell = (cell: Cell, col: number): string => {
     const target = widths[col] ?? 0;

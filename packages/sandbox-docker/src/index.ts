@@ -227,11 +227,20 @@ export {
 } from './vnc.js';
 export { browserSessionActive, ensureBoxBrowser, type BoxBrowserResult } from './browser.js';
 export {
+  allocateShellSessionName,
   buildShellSessionAttachArgv,
   DEFAULT_SHELL_SESSION,
+  isShellSessionName,
+  killShellSession,
+  listShellSessions,
+  parseShellSessionList,
+  SHELL_SESSION_PREFIX,
+  shellLabel,
   shellSessionInfo,
+  shellSessionName,
   startShellSession,
   type ShellSessionInfo,
+  type ShellSessionSummary,
   type StartShellSessionOptions,
 } from './shell-session.js';
 export {

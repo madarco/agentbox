@@ -54,8 +54,7 @@
       "properties": {
         "user": { "type": "string", "minLength": 1 },
         "login": { "type": "boolean" },
-        "tmux": { "type": "boolean" },
-        "sessionName": { "type": "string", "minLength": 1 }
+        "tmux": { "type": "boolean" }
       }
     },
     "engine": {

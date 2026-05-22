@@ -123,11 +123,11 @@ describe('lifecycle CLI surface', () => {
     expect(attach!.options.map((o) => o.long)).toContain('--session-name');
   });
 
-  it('shell takes [box] + variadic [cmd...] and exposes --user / --no-login / --no-tmux', () => {
+  it('shell takes [box] + variadic [cmd...] and exposes the multi-shell flags', () => {
     expect(shellCommand.name()).toBe('shell');
     const longs = shellCommand.options.map((o) => o.long);
     expect(longs).toEqual(
-      expect.arrayContaining(['--user', '--no-login', '--no-tmux', '--session-name']),
+      expect.arrayContaining(['--user', '--no-login', '--no-tmux', '--name', '--new']),
     );
     // Two positionals: optional [box] (was required before auto-pick landed),
     // variadic [cmd...].
@@ -136,11 +136,16 @@ describe('lifecycle CLI surface', () => {
     expect(shellCommand.registeredArguments[1]!.variadic).toBe(true);
   });
 
-  it('shell has an `attach` subcommand taking optional [box]', () => {
-    const attach = shellCommand.commands.find((c) => c.name() === 'attach');
-    expect(attach).toBeDefined();
-    expect(attach!.registeredArguments).toHaveLength(1);
-    expect(attach!.registeredArguments[0]!.required).toBe(false);
+  it('shell has attach / ls / kill subcommands taking optional [box]', () => {
+    for (const sub of ['attach', 'ls', 'kill']) {
+      const cmd = shellCommand.commands.find((c) => c.name() === sub);
+      expect(cmd, `missing subcommand: ${sub}`).toBeDefined();
+      expect(cmd!.registeredArguments[0]!.required).toBe(false);
+    }
+    const attach = shellCommand.commands.find((c) => c.name() === 'attach')!;
+    expect(attach.options.map((o) => o.long)).toContain('--name');
+    const kill = shellCommand.commands.find((c) => c.name() === 'kill')!;
+    expect(kill.options.map((o) => o.long)).toEqual(expect.arrayContaining(['--name', '--all']));
   });
 
   it('all box-arg commands now accept [box] (optional) for auto-pick', () => {

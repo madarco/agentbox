@@ -4,7 +4,7 @@ import { Command } from 'commander';
 import { findProjectRoot, loadEffectiveConfig } from '@agentbox/config';
 import {
   buildClaudeDashboardAttachArgv,
-  buildShellArgv,
+  buildShellSessionAttachArgv,
   claudeSessionInfo,
   createBox,
   DEFAULT_RELAY_PORT,
@@ -14,8 +14,10 @@ import {
   pauseBox,
   rebuildPluginNativeDeps,
   SHARED_CLAUDE_VOLUME,
+  shellSessionInfo,
   startBox,
   startClaudeSession,
+  startShellSession,
   stopBox,
   syncClaudeCredentials,
   unpauseBox,
@@ -176,7 +178,18 @@ export const dashboardCommand = new Command('dashboard')
 
       const openShell = async (boxId: string): Promise<RightTarget> => {
         const box = await findBox(boxId);
-        return { kind: 'attach', argv: buildShellArgv(box.container), mode: 'shell' };
+        // Start-or-attach the box's tracked tmux `shell` session, so a shell
+        // opened from the dashboard is the same detachable session the CLI
+        // sees (`agentbox shell` / `agentbox shell ls`), not a throwaway exec.
+        const info = await shellSessionInfo(box.container);
+        if (!info.running) {
+          await startShellSession({ container: box.container });
+        }
+        return {
+          kind: 'attach',
+          argv: buildShellSessionAttachArgv(box.container),
+          mode: 'shell',
+        };
       };
 
       // Non-interactive box creation from the "+ New box" entry: config

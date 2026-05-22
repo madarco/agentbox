@@ -109,6 +109,7 @@ async function buildStatusText(id: string, container: string): Promise<string> {
   }
   out.push('RESOURCES', renderResources(await boxResourceStats(inspected.record)), '');
   out.push('CLAUDE', renderClaude(inspected, persistedStatus));
+  out.push('', 'SHELLS', renderShells(inspected));
 
   if (live) {
     if (live.tasks.length > 0) {
@@ -176,6 +177,16 @@ function renderClaude(i: InspectedBox, persisted: BoxStatus | null): string {
     lines.push(`  activity  ${c.state}${ago ? ` (${ago})` : ''}`);
   }
   return lines.join('\n');
+}
+
+function renderShells(i: InspectedBox): string {
+  if (i.state !== 'running') return '  (box not running)';
+  if (i.shellSessions.length === 0) {
+    return '  (none — start one with `agentbox shell`)';
+  }
+  return i.shellSessions
+    .map((s) => `  ${s.label}  ${s.attached ? 'attached' : 'detached'}`)
+    .join('\n');
 }
 
 function renderPersisted(s: BoxStatus, state: string): string {

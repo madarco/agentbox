@@ -40,6 +40,7 @@ async function renderText(i: InspectedBox): Promise<string> {
     `claude config ${i.record.claudeConfigVolume ?? '(none)'}`,
     `claude session ${renderClaudeSession(i)}`,
     `claude activity ${renderClaudeActivity(i)}`,
+    `shells        ${renderShells(i)}`,
     `persisted     ${renderPersisted(i)}`,
     `playwright    ${i.record.withPlaywright ? 'yes' : 'no'}`,
     `env files     ${i.record.withEnv ? 'yes' : 'no'}`,
@@ -76,6 +77,13 @@ function renderClaudeActivity(i: InspectedBox): string {
   const c = i.persistedStatus?.claude;
   if (!c) return '(none)';
   return `${c.state}${c.updatedAt ? ` (updated ${c.updatedAt})` : ''}`;
+}
+
+function renderShells(i: InspectedBox): string {
+  if (i.state !== 'running') return '(n/a — box not running)';
+  const s = i.shellSessions;
+  if (s.length === 0) return 'none';
+  return `${String(s.length)} (${s.map((x) => x.label).join(', ')})`;
 }
 
 function renderPersisted(i: InspectedBox): string {
