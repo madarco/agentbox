@@ -79,13 +79,13 @@ const DETACH_PIN_HINTS: ReadonlyArray<readonly [string, string]> = [
 const CLAUDE_LEADER_HINTS: ReadonlyArray<readonly [string, string]> = [
   ['c', 'code'],
   ['v', 'vnc'],
-  ['b', 'browser'],
+  ['w', 'browser'],
   ['q', 'detach'],
 ];
 const SHELL_LEADER_HINTS: ReadonlyArray<readonly [string, string]> = [
   ['c', 'code'],
   ['v', 'vnc'],
-  ['b', 'browser'],
+  ['w', 'browser'],
 ];
 
 /**

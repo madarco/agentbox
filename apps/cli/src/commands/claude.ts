@@ -7,6 +7,7 @@ import {
   claudeSessionInfo,
   createBox,
   DEFAULT_RELAY_PORT,
+  detectEngine,
   ensureClaudeVolume,
   ensureImage,
   formatDetachNotice,
@@ -29,6 +30,7 @@ import { resolveAgentLauncher } from '@agentbox/core';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { resolveLimits } from '../limits.js';
+import { maybePromptPortless } from '../portless-prompt.js';
 import { maybeRunSetupWizard } from '../wizard.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
@@ -87,6 +89,7 @@ interface ClaudeCreateOptions {
   withEnv?: boolean;
   vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
   sharedDockerCache?: boolean;
+  portless?: boolean; // commander: --portless / --no-portless => true / false / undefined
   sessionName?: string;
   memory?: string;
   cpus?: string;
@@ -108,6 +111,7 @@ function buildClaudeCliOverrides(opts: ClaudeCreateOptions): Partial<UserConfig>
   const out: Partial<UserConfig> = {};
   if (Object.keys(box).length > 0) out.box = box;
   if (Object.keys(claude).length > 0) out.claude = claude;
+  if (opts.portless !== undefined) out.portless = { enabled: opts.portless };
   return out;
 }
 
@@ -221,6 +225,11 @@ export const claudeCommand = new Command('claude')
     '--shared-docker-cache',
     "use the shared 'agentbox-docker-cache' volume for in-box docker images (preserved on destroy; only one box can run at a time when set)",
   )
+  .option(
+    '--portless',
+    'map the box web app to https://<name>.localhost via the Portless proxy (Docker Desktop)',
+  )
+  .option('--no-portless', 'do not register a Portless alias for this box')
   .option('--session-name <name>', 'tmux session name (default from config; built-in: claude)')
   .option('--memory <size>', 'memory ceiling (e.g. 512m, 2g); unset = unlimited')
   .option('--cpus <n>', 'CPU count cap (fractional ok, e.g. 1.5); unset = unlimited')
@@ -257,6 +266,15 @@ export const claudeCommand = new Command('claude')
       authSource: resolved.source,
       yes: !!opts.yes,
       hostWorkspace: opts.workspace,
+    });
+
+    // First-run Portless opt-in (Docker Desktop only). Persists once per
+    // machine to the global config; the resolved flag goes into createBox.
+    const portlessEnabled = await maybePromptPortless({
+      engine: await detectEngine(),
+      enabled: cfg.effective.portless.enabled,
+      yes: !!opts.yes,
+      cwd: opts.workspace,
     });
 
     // First-run wizard: when no agentbox.yaml exists, offer to inject an
@@ -309,6 +327,8 @@ export const claudeCommand = new Command('claude')
         envFilesToImport: wiz.envFilesToImport,
         vnc: { enabled: cfg.effective.box.vnc },
         docker: { sharedCache: cfg.effective.box.dockerCacheShared },
+        portless: portlessEnabled,
+        portlessStateDir: cfg.effective.portless.stateDir || undefined,
         limits: resolveLimits(cfg.effective.box, opts),
         projectRoot,
         onLog: (line) => s.message(clampSpinnerLine(line)),

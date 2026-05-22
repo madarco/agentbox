@@ -33,6 +33,11 @@ export function browserSessionActive(stdout: string, exitCode: number): boolean 
  * caller warns on failure but never aborts (the noVNC client still connects).
  * `DISPLAY=:1` + `AGENT_BROWSER_EXECUTABLE_PATH` are image-baked env so the
  * exec inherits them; runs as `vscode` like the other in-box launches.
+ *
+ * When `targetUrl` is the box's Portless `<name>.localhost` URL, the in-box
+ * Chromium routes it back out to the host Portless proxy — the box's
+ * `AGENT_BROWSER_ARGS` env (set at create, see `portlessBrowserEnv`) carries
+ * the `--host-resolver-rules` that makes that work.
  */
 export async function ensureBoxBrowser(
   container: string,

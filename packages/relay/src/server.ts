@@ -51,6 +51,7 @@ const CHECKPOINT_RPC_TIMEOUT_MS = 600_000; // capturing node_modules/build trees
 const DOWNLOAD_RPC_TIMEOUT_MS = 600_000; // claude/workspace pulls over rsync can take minutes.
 const CP_RPC_TIMEOUT_MS = 300_000; // single-file/dir cp; tar pipe through docker exec.
 const BROWSER_OPEN_RPC_TIMEOUT_MS = 15_000; // `open` hands off to the browser and returns at once.
+const BROWSER_OPEN_PROMPT_TTL_MS = 25_000; // the "open on host too?" offer auto-dismisses if ignored.
 const SSE_HEARTBEAT_MS = 15_000; // every 15s; wrapper reconnects if it sees no traffic for ~30s.
 
 function send(
@@ -305,8 +306,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         const params = body.params as BrowserOpenRpcParams | undefined;
         const url = typeof params?.url === 'string' ? params.url.trim() : '';
         if (!isOpenableUrl(url)) {
-          // Un-gated by design, but the scheme guard keeps a box from
-          // handing the host's `open` a file path or app instead of a URL.
+          // The scheme guard keeps a box from handing the host's `open` a
+          // file path or app instead of a URL.
           send(res, 400, {
             exitCode: 64,
             stdout: '',
@@ -314,10 +315,38 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           });
           return;
         }
+        // The box already opened the link in its own browser; this RPC is
+        // just a notification. Record the event and answer at once — never
+        // block the box on the host user's decision.
         events.append({ boxId: reg.boxId, type: 'browser-open', payload: { url } });
-        const result = await runHostCommand(['open', url], BROWSER_OPEN_RPC_TIMEOUT_MS);
-        const status = result.exitCode === 0 ? 200 : 500;
-        send(res, status, result);
+        send(res, 200, { exitCode: 0, stdout: '', stderr: '' });
+        // Offer to mirror the link to the host browser: a non-blocking,
+        // auto-expiring confirm prompt in the footer/dashboard. Skipped under
+        // AGENTBOX_PROMPT=off so a headless box can't spray the host with
+        // browser tabs via askPrompt's auto-'y'.
+        if (process.env.AGENTBOX_PROMPT !== 'off') {
+          void askPrompt(
+            prompts,
+            subscribers,
+            reg.boxId,
+            {
+              kind: 'confirm',
+              message: `Open link from box ${reg.name} on the host?`,
+              detail: url,
+              defaultAnswer: 'n',
+              context: { command: 'browser.open', argv: [url] },
+            },
+            { ttlMs: BROWSER_OPEN_PROMPT_TTL_MS },
+          )
+            .then((verdict) => {
+              if (verdict.answer === 'y' && !verdict.cancelled) {
+                void runHostCommand(['open', url], BROWSER_OPEN_RPC_TIMEOUT_MS);
+              }
+            })
+            .catch(() => {
+              /* best-effort */
+            });
+        }
         return;
       }
       events.append({

@@ -125,16 +125,24 @@ export class PromptSubscribers {
 }
 
 /**
- * Internal API used by handleGitRpc / handleCpRpc / handleDownloadRpc.
- * Generates a UUID, adds a pending entry, broadcasts the SSE event, and
- * awaits the answer. Respects `process.env.AGENTBOX_PROMPT === 'off'` —
- * auto-accepts without broadcasting (useful for headless scripts and tests).
+ * Internal API used by handleGitRpc / handleCpRpc / handleDownloadRpc and the
+ * `browser.open` host-mirror offer. Generates a UUID, adds a pending entry,
+ * broadcasts the SSE event, and awaits the answer. Respects
+ * `process.env.AGENTBOX_PROMPT === 'off'` — auto-accepts without broadcasting
+ * (useful for headless scripts and tests).
+ *
+ * `opts.ttlMs` makes the prompt auto-expire: if no answer arrives in time it
+ * resolves to its `defaultAnswer` (cancelled) and a `prompt-resolved` event is
+ * broadcast so attached wrappers clear it. Used for optional, non-blocking
+ * prompts that must not linger when nobody answers; omit it for the
+ * block-until-answered prompts that gate a paused in-box RPC.
  */
 export async function askPrompt(
   prompts: PendingPrompts,
   subscribers: PromptSubscribers,
   boxId: string,
   params: Omit<PromptAskEvent, 'id'>,
+  opts?: { ttlMs?: number },
 ): Promise<PromptResolution> {
   if (process.env.AGENTBOX_PROMPT === 'off') {
     return { answer: 'y' };
@@ -142,6 +150,17 @@ export async function askPrompt(
   const ev: PromptAskEvent = { id: randomUUID(), ...params };
   const promise = prompts.add(boxId, ev);
   subscribers.broadcast(boxId, 'prompt-ask', ev);
+  if (opts?.ttlMs !== undefined && opts.ttlMs > 0) {
+    const timer = setTimeout(() => {
+      if (prompts.resolve(ev.id, params.defaultAnswer ?? 'n', true)) {
+        subscribers.broadcast(boxId, 'prompt-resolved', { id: ev.id });
+      }
+    }, opts.ttlMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    void promise.then(() => {
+      clearTimeout(timer);
+    });
+  }
   return promise;
 }
 

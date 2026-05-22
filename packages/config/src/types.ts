@@ -55,6 +55,10 @@ export interface UserConfig {
   vnc?: {
     containerPort?: number;
   };
+  portless?: {
+    enabled?: boolean;
+    stateDir?: string;
+  };
   autopause?: {
     enabled?: boolean;
     maxRunningBoxes?: number;
@@ -70,8 +74,9 @@ export interface UserConfig {
  * Required-everywhere variant returned as the merged effective config. Each
  * leaf is filled from BUILT_IN_DEFAULTS when no layer set it.
  *
- * `box.hostSnapshot` is intentionally `boolean | undefined` (unprompted): the
- * default is "ask the user", expressed as undefined.
+ * `box.hostSnapshot` and `portless.enabled` are intentionally
+ * `boolean | undefined` (unprompted): the default is "ask the user", expressed
+ * as undefined.
  */
 export interface EffectiveConfig {
   box: {
@@ -115,6 +120,10 @@ export interface EffectiveConfig {
   };
   vnc: {
     containerPort: number;
+  };
+  portless: {
+    enabled: boolean | undefined;
+    stateDir: string;
   };
   autopause: {
     enabled: boolean;
@@ -196,6 +205,10 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   vnc: {
     containerPort: 6080,
+  },
+  portless: {
+    enabled: undefined,
+    stateDir: '',
   },
   autopause: {
     enabled: true,
@@ -361,6 +374,19 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'vnc.containerPort',
     type: 'int',
     description: 'Container-side noVNC port (advanced).',
+    advanced: true,
+  },
+  {
+    key: 'portless.enabled',
+    type: 'bool',
+    description:
+      'Map each box web app to a https://<box-name>.localhost URL via the Portless proxy (Docker Desktop only; OrbStack already has .orb.local). Default: prompt.',
+  },
+  {
+    key: 'portless.stateDir',
+    type: 'string',
+    description:
+      'Host Portless state directory to share into boxes (advanced; default: Portless’s own location).',
     advanced: true,
   },
   {

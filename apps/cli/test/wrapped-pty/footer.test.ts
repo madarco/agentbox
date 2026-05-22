@@ -61,7 +61,7 @@ describe('renderFooter — idle (claude mode)', () => {
     const out = visible(renderFooter({ ...idle, leaderActive: true }, 120));
     expect(out).toContain('c: code');
     expect(out).toContain('v: vnc');
-    expect(out).toContain('b: browser');
+    expect(out).toContain('w: browser');
     expect(out).toContain('q: detach');
     // the collapsed `Actions` label is replaced by the chords
     expect(out).not.toContain('Actions');
@@ -88,7 +88,7 @@ describe('renderFooter — idle (shell mode)', () => {
     const out = visible(renderFooter({ ...idle, leaderActive: true }, 120));
     expect(out).toContain('c: code');
     expect(out).toContain('v: vnc');
-    expect(out).toContain('b: browser');
+    expect(out).toContain('w: browser');
     // shell has nothing to detach from
     expect(out).not.toContain('detach');
   });

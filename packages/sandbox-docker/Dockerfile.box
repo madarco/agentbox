@@ -7,7 +7,7 @@
 # tar pipe for the no-git case). The old FUSE overlay over /host-src+/upper
 # is gone — but fuse3 + fuse-overlayfs stay as the in-box dockerd's fallback
 # storage driver (it prefers the kernel-native overlay2). Plus the "universal-ish" set of
-# language runtimes (Node.js 22 from NodeSource, Python 3 from apt). Heavier
+# language runtimes (Node.js 24 from NodeSource, Python 3 from apt). Heavier
 # tooling (Go, Java, Ruby, .NET, more browser tooling, vscode-server) goes in
 # a later iteration.
 #
@@ -57,7 +57,7 @@ ENV COLORTERM=truecolor \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl ca-certificates gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends \
         fuse3 \
         fuse-overlayfs \
@@ -87,7 +87,7 @@ RUN setcap cap_net_bind_service=+ep "$(readlink -f "$(command -v node)")"
 # Enable corepack (pnpm/yarn shims) at build time as root. Doing this here
 # rather than in the wizard's install task avoids two failures the runtime
 # `corepack enable` (run as non-root `vscode`) hits: it can't write shims into
-# the root-owned NodeSource bin dir (/usr/bin), and node 22's bundled corepack
+# the root-owned NodeSource bin dir (/usr/bin), and node 24's bundled corepack
 # resolves its dist path relative to the symlink dirname, so a
 # ~/.local/bin/pnpm symlink looks for ~/.local/dist/pnpm.js and breaks.
 # `corepack@latest` fixes the symlink resolution; baking the shims into
@@ -217,6 +217,13 @@ RUN apt-get update \
 
 RUN npm install -g agent-browser playwright
 
+# Portless CLI (https://portless.sh). Only the client — the box never runs the
+# proxy; that's a host process. With `portless.enabled`, createBox bind-mounts
+# the host's Portless state dir into the box and sets PORTLESS_STATE_DIR, so
+# the in-box `portless list`/`get` share the host's route registry (discovery).
+# Requires Node 24+ — hence the setup_24.x bump above.
+RUN npm install -g portless
+
 # Download Chromium as `vscode` so the ms-playwright cache lands in vscode's
 # home (the user agent-browser runs as). The downloaded binary lives at
 # `chromium-XXXX/chrome-linux/chrome`, where XXXX is a Playwright-internal
@@ -285,12 +292,12 @@ RUN chmod +x /usr/local/bin/agentbox-dockerd-start
 COPY packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup /usr/local/bin/agentbox-checkpoint-cleanup
 RUN chmod +x /usr/local/bin/agentbox-checkpoint-cleanup
 
-# Host-routed link opener. The box has no real browser; this wrapper forwards
-# http(s) URLs to the host's default browser via the relay (`agentbox-ctl
-# open`). It shadows xdg-utils' /usr/bin/xdg-open (the symlink lands earlier
-# in PATH) and is set as $BROWSER so any tool that opens a link — Claude
-# Code's OAuth flow, `gh`, `git web--browse`, python's webbrowser — routes
-# to the host.
+# In-box link opener. This wrapper routes http(s) URLs to `agentbox-ctl open`,
+# which opens the link in the box's own Chromium (agent-browser) and notifies
+# the relay so the host user can be offered to also open it on the host. It
+# shadows xdg-utils' /usr/bin/xdg-open (the symlink lands earlier in PATH) and
+# is set as $BROWSER so any tool that opens a link — Claude Code's OAuth flow,
+# `gh`, `git web--browse`, python's webbrowser — routes through it.
 COPY packages/sandbox-docker/scripts/agentbox-open /usr/local/bin/agentbox-open
 RUN chmod +x /usr/local/bin/agentbox-open \
     && ln -sf /usr/local/bin/agentbox-open /usr/local/bin/xdg-open

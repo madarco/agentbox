@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Routes in-box URL opens to the *host's* default browser via the agentbox
-# relay. The box has no real browser of its own. This script is installed at
-# /usr/local/bin (earlier in PATH than xdg-utils' /usr/bin/xdg-open, which it
-# is also symlinked over) and is the box's $BROWSER, so `xdg-open`, Claude
-# Code's OAuth flow, `gh`, `git web--browse`, python's webbrowser, etc. all
-# land here.
+# Routes in-box URL opens to `agentbox-ctl open`, which opens the link in the
+# box's own Chromium (agent-browser, visible via `agentbox screen`) and asks
+# the host user — in the footer/dashboard — whether to also open it on the
+# host. This script is installed at /usr/local/bin (earlier in PATH than
+# xdg-utils' /usr/bin/xdg-open, which it is also symlinked over) and is the
+# box's $BROWSER, so `xdg-open`, Claude Code's OAuth flow, `gh`,
+# `git web--browse`, python's webbrowser, etc. all land here.
 #
-# Only http(s) URLs are forwarded to the host. Anything else (a file path,
-# another scheme) falls through to the real xdg-open, which resolves it
-# locally inside the box.
+# Only http(s) URLs are routed. Anything else (a file path, another scheme)
+# falls through to the real xdg-open, which resolves it locally in the box.
 
 set -uo pipefail
 

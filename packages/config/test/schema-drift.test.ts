@@ -58,6 +58,9 @@ relay:
   port: 8787
 vnc:
   containerPort: 6080
+portless:
+  enabled: true
+  stateDir: /tmp/portless
 autopause:
   enabled: false
   maxRunningBoxes: 4
@@ -73,6 +76,8 @@ maintenance:
   },
   { name: 'autopause only', yaml: 'autopause:\n  enabled: true\n' },
   { name: 'maintenance only', yaml: 'maintenance:\n  pruneProjectConfigs: true\n' },
+  { name: 'portless only', yaml: 'portless:\n  enabled: true\n' },
+  { name: 'portless stateDir', yaml: 'portless:\n  enabled: false\n  stateDir: /tmp/portless\n' },
 ];
 
 const INVALID: Fixture[] = [
@@ -131,6 +136,14 @@ const INVALID: Fixture[] = [
   {
     name: 'maintenance unknown leaf',
     yaml: 'maintenance:\n  pruneProjectDirs: true\n',
+  },
+  {
+    name: 'portless wrong type for bool',
+    yaml: 'portless:\n  enabled: 1\n',
+  },
+  {
+    name: 'portless unknown leaf',
+    yaml: 'portless:\n  enable: true\n',
   },
 ];
 

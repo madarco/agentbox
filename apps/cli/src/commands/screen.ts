@@ -45,15 +45,18 @@ export const screenCommand = new Command('screen')
         throw new Error(`box ${box.name} has no container; was it destroyed?`);
       }
 
-      // Point the in-box browser at the box's own web service so the app is
-      // shown *inside* the VNC desktop (the host browser only gets the noVNC
-      // viewer). The expose port is reachable at 127.0.0.1:<port> inside the
-      // box; absent a web service we fall back to a neutral page so the VNC
-      // view isn't a connection-refused error.
+      // Point the in-box browser at the box's web service so the app is shown
+      // *inside* the VNC desktop (the host browser only gets the noVNC viewer).
+      // Prefer the Portless URL — `ensureBoxBrowser` routes it back out to the
+      // host proxy, so the app loads on the exact URL the host browser uses
+      // (one origin both sides). Fall back to the in-box `127.0.0.1:<port>` when
+      // there's no Portless route; a neutral page when no web service at all.
       const persisted = await readBoxStatus(box);
       const exposePort = persisted?.services.find((s) => s.expose)?.expose?.port;
       const inBoxUrl =
-        exposePort !== undefined ? `http://localhost:${String(exposePort)}` : 'about:blank';
+        exposePort !== undefined
+          ? (box.portlessUrl ?? `http://localhost:${String(exposePort)}`)
+          : 'about:blank';
 
       const br = await ensureBoxBrowser(box.container, undefined, inBoxUrl);
       if (br.up && !br.alreadyRunning) {

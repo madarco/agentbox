@@ -160,6 +160,62 @@ describe('askPrompt', () => {
       else process.env.AGENTBOX_PROMPT = prev;
     }
   });
+
+  it('auto-expires after ttlMs, resolving to the default answer', async () => {
+    const prompts = new PendingPrompts();
+    const subs = new PromptSubscribers();
+    const sink = makeSink();
+    subs.add('box-1', sink.res as never);
+
+    const result = await askPrompt(
+      prompts,
+      subs,
+      'box-1',
+      { kind: 'confirm', message: 'go?' },
+      { ttlMs: 20 },
+    );
+    expect(result).toEqual({ answer: 'n', cancelled: true });
+    expect(prompts.size()).toBe(0);
+    // one prompt-ask, then one prompt-resolved when the TTL fires.
+    expect(sink.writes).toHaveLength(2);
+    expect(sink.writes[0]).toContain('event: prompt-ask');
+    expect(sink.writes[1]).toContain('event: prompt-resolved');
+  });
+
+  it('ttlMs expiry honours an explicit defaultAnswer', async () => {
+    const prompts = new PendingPrompts();
+    const subs = new PromptSubscribers();
+    const result = await askPrompt(
+      prompts,
+      subs,
+      'box-1',
+      { kind: 'confirm', message: 'go?', defaultAnswer: 'y' },
+      { ttlMs: 20 },
+    );
+    expect(result).toEqual({ answer: 'y', cancelled: true });
+  });
+
+  it('a real answer before ttlMs wins and no second event is emitted', async () => {
+    const prompts = new PendingPrompts();
+    const subs = new PromptSubscribers();
+    const sink = makeSink();
+    subs.add('box-1', sink.res as never);
+
+    const promise = askPrompt(
+      prompts,
+      subs,
+      'box-1',
+      { kind: 'confirm', message: 'go?' },
+      { ttlMs: 30 },
+    );
+    const ev = JSON.parse(/data: (\{.*\})/.exec(sink.writes[0]!)![1]!) as { id: string };
+    prompts.resolve(ev.id, 'y');
+    await expect(promise).resolves.toEqual({ answer: 'y', cancelled: undefined });
+    // Wait past the TTL: the cleared timer must not broadcast a second event.
+    await new Promise((r) => setTimeout(r, 60));
+    expect(sink.writes).toHaveLength(1);
+    expect(sink.writes[0]).toContain('event: prompt-ask');
+  });
 });
 
 describe('isPromptAnswerBody', () => {

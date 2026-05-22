@@ -84,6 +84,14 @@
         "containerPort": { "type": "integer" }
       }
     },
+    "portless": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "stateDir": { "type": "string", "minLength": 1 }
+      }
+    },
     "autopause": {
       "type": "object",
       "additionalProperties": false,

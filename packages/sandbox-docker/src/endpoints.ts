@@ -121,13 +121,20 @@ export async function getBoxEndpoints(
   // then it renders as "reserved".
   if (record.webContainerPort !== undefined) {
     const hasTarget = webServiceName !== null && record.webHostPort !== undefined;
+    // A registered Portless alias gives the box a stable <name>.localhost URL
+    // on non-OrbStack engines. `portlessUrl` is the real URL resolved from the
+    // proxy at create/start (scheme + port vary); fall back to the https form
+    // for records written before that field existed. No `portless` shell-out
+    // here — this runs in a tight loop for `agentbox list`.
+    const usePortless = record.portlessAlias !== undefined && engine !== 'orbstack';
+    const webUrl = usePortless
+      ? (record.portlessUrl ?? `https://${record.portlessAlias}.localhost`)
+      : `http://127.0.0.1:${String(record.webHostPort)}`;
     endpoints.push({
       kind: 'web',
       name: webServiceName ?? 'web',
       containerPort: record.webContainerPort ?? WEB_CONTAINER_PORT,
-      ...(hasTarget
-        ? { url: `http://127.0.0.1:${String(record.webHostPort)}`, reachable: true }
-        : { reachable: false }),
+      ...(hasTarget ? { url: webUrl, reachable: true } : { reachable: false }),
     });
   }
 

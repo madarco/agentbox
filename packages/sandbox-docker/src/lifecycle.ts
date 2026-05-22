@@ -43,6 +43,7 @@ import { ensureHomeOwnedByVscode } from './home-ownership.js';
 import { launchDockerdDaemon, SHARED_DOCKER_CACHE_VOLUME } from './dockerd.js';
 import { launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
 import { WEB_CONTAINER_PORT } from './web.js';
+import { detectPortless, portlessAlias, portlessGetUrl, portlessUnalias } from './portless.js';
 import { getBoxEndpoints, type BoxEndpoints } from './endpoints.js';
 import {
   ensureRelay,
@@ -229,6 +230,25 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
       box.webHostPort = freshWebPort;
       await recordBox(box);
     }
+    // Docker reallocated the host port, so the Portless route now points at a
+    // stale port — re-register it. Best-effort and silent (startBox has no
+    // onLog); if the proxy/Portless is gone the box still works on loopback.
+    if (box.portlessAlias && box.webHostPort) {
+      try {
+        const portless = await detectPortless();
+        if (portless.installed) {
+          await portlessAlias(box.portlessAlias, box.webHostPort);
+          // The proxy's scheme/port can change between sessions — re-resolve.
+          const url = await portlessGetUrl(box.portlessAlias);
+          if (url !== box.portlessUrl) {
+            box.portlessUrl = url;
+            await recordBox(box);
+          }
+        }
+      } catch {
+        /* best-effort */
+      }
+    }
   }
   // Relay's in-memory registry may have been lost if the relay restarted
   // between create and now (or this is the first start after a host reboot).
@@ -353,6 +373,14 @@ export async function destroyBox(
       await forgetBoxFromRelay(box.id);
     } catch {
       // best-effort — relay may be down or already wiped the entry
+    }
+  }
+  // Remove the Portless route so it doesn't dangle in the user's proxy config.
+  if (box.portlessAlias) {
+    try {
+      await portlessUnalias(box.portlessAlias);
+    } catch {
+      // best-effort — Portless may be uninstalled or the route already gone
     }
   }
   // Deregister each in-container worktree from the host main repo. Skip

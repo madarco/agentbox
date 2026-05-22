@@ -180,6 +180,21 @@ export {
   type RefreshResult,
 } from './host-export.js';
 export {
+  detectPortless,
+  installPortless,
+  portlessBrowserEnv,
+  portlessAlias,
+  portlessUnalias,
+  portlessGetUrl,
+  portlessInstallHint,
+  portlessStartHint,
+  PORTLESS_PROXY_PORT,
+  resetPortlessCache,
+  resolvePortlessHostStateDir,
+  startPortlessProxy,
+  type PortlessState,
+} from './portless.js';
+export {
   AmbiguousBoxError,
   BoxNotFoundError,
   destroyBox,

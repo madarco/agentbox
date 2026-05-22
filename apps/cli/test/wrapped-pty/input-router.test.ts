@@ -53,7 +53,7 @@ function leaderSetup(): LeaderSetup {
   const router = createInputRouter({
     onForward: (b) => forwarded.push(b),
     onAnswer: () => {},
-    leaderChords: { c: 'code', v: 'vnc', b: 'browser', q: 'detach' },
+    leaderChords: { c: 'code', v: 'vnc', w: 'browser', q: 'detach' },
     onLeaderChange: (open) => leaderEvents.push(open),
     onAction: (n) => actions.push(n),
     setTimer: (_ms, fn) => {
@@ -84,11 +84,11 @@ describe('input router (Ctrl+a leader)', () => {
     expect(s.actions).toHaveLength(0);
   });
 
-  it('c / v / b / q dispatch their actions and close the menu', () => {
+  it('c / v / w / q dispatch their actions and close the menu', () => {
     const s = leaderSetup();
     s.router.feed(Buffer.from([0x01, 0x63])); // ^A c
     s.router.feed(Buffer.from([0x01, 0x76])); // ^A v
-    s.router.feed(Buffer.from([0x01, 0x62])); // ^A b
+    s.router.feed(Buffer.from([0x01, 0x77])); // ^A w
     s.router.feed(Buffer.from([0x01, 0x71])); // ^A q
     expect(s.actions).toEqual(['code', 'vnc', 'browser', 'detach']);
     expect(s.leaderEvents).toEqual([true, false, true, false, true, false, true, false]);

@@ -4,6 +4,7 @@ import {
   detectEngine,
   getBoxHostPaths,
   inspectBox,
+  portlessGetUrl,
   startBox,
   unpauseBox,
 } from '@agentbox/sandbox-docker';
@@ -25,7 +26,10 @@ export const browserCommand = new Command('browser')
     'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
   )
   .option('--print', 'print the URL to stdout instead of launching the browser')
-  .option('--loopback', 'use the 127.0.0.1 URL instead of the OrbStack .orb.local URL')
+  .option(
+    '--loopback',
+    'use the 127.0.0.1 URL instead of the OrbStack .orb.local / Portless .localhost URL',
+  )
   .action(async (idOrName: string | undefined, opts: BrowserOptions) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
@@ -56,6 +60,10 @@ export const browserCommand = new Command('browser')
         // OrbStack auto-routes <container>.orb.local to the container; :80 is
         // declared (EXPOSE 80) so no port suffix is needed.
         url = `http://${record.container}.orb.local`;
+      } else if (record.portlessAlias && !opts.loopback) {
+        // A Portless route was registered — use the URL resolved at
+        // create/start; fall back to a live `portless get` for older records.
+        url = record.portlessUrl ?? (await portlessGetUrl(record.portlessAlias));
       } else {
         if (record.webHostPort === undefined) {
           throw new Error(

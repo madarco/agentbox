@@ -272,7 +272,13 @@ export const dashboardCommand = new Command('dashboard')
           const box = await findBox(boxId);
           const web = webTarget(box);
           if (web.exposed) exposedWebUrl = web.url;
-          const br = await ensureBoxBrowser(box.container);
+          // Show the app inside the VNC desktop on the same URL the host uses;
+          // ensureBoxBrowser routes a Portless `.localhost` URL via the host proxy.
+          const br = await ensureBoxBrowser(
+            box.container,
+            undefined,
+            web.exposed ? web.url : 'about:blank',
+          );
           if (!br.up) return `VNC: in-box browser unavailable (${br.reason ?? 'box not running?'})`;
         } catch {
           // Best-effort — still open the viewer even if the box isn't running.

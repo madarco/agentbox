@@ -199,12 +199,12 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     redrawFooter();
   });
 
-  // Ctrl+a leader chord map. Claude also gets `q: detach`; a plain shell has
-  // nothing to detach from.
+  // Ctrl+a leader chord map — keys mirror the dashboard's (`c`/`v`/`w`).
+  // Claude also gets `q: detach`; a plain shell has nothing to detach from.
   const leaderChords: Record<string, LeaderAction> =
     opts.mode === 'claude'
-      ? { c: 'code', v: 'vnc', b: 'browser', q: 'detach' }
-      : { c: 'code', v: 'vnc', b: 'browser' };
+      ? { c: 'code', v: 'vnc', w: 'browser', q: 'detach' }
+      : { c: 'code', v: 'vnc', w: 'browser' };
 
   // Run a Ctrl+a leader action. `detach` writes the tmux detach sequence to
   // the pty (`\x02` = Ctrl+b, tmux's secondary prefix; `d` = detach-client) —

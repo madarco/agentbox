@@ -39,7 +39,16 @@ import {
   boxRunDirFor,
   copyHostEnvFilesToBox,
   copyHostFilesToBox,
+  detectEngine,
 } from './host-export.js';
+import {
+  detectPortless,
+  portlessAlias,
+  portlessBrowserEnv,
+  portlessGetUrl,
+  portlessStartHint,
+  resolvePortlessHostStateDir,
+} from './portless.js';
 import { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
 import {
   allocateProjectIndex,
@@ -133,6 +142,19 @@ export interface CreateBoxOptions {
    * layers persist across boxes (and `destroy`/`prune` won't remove it).
    */
   docker?: { sharedCache: boolean };
+  /**
+   * When true, register a Portless route (`portless alias <box-name> <webPort>`)
+   * so the box web app is reachable at `https://<box-name>.localhost`. Only
+   * acts on non-OrbStack engines (OrbStack already has `.orb.local`) and only
+   * when Portless is installed on the host — best-effort, never fails create.
+   */
+  portless?: boolean;
+  /**
+   * Override for the host Portless state directory shared into the box (the
+   * `portless.stateDir` config key). When unset, `createBox` resolves Portless's
+   * own default. Only consulted when `portless` is true.
+   */
+  portlessStateDir?: string;
   /**
    * Absolute host path of the cwd's project at create time. When provided,
    * `createBox` stamps `projectRoot` + an allocated `projectIndex` on the
@@ -468,6 +490,29 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   for (const w of gitWorktreeRecords) {
     extraVolumes.push(`${w.hostMainRepo}/.git:${w.hostMainRepo}/.git`);
   }
+
+  // Portless: when enabled (and not OrbStack), (1) make the in-box browser
+  // route the box's `<name>.localhost` URL out to the host proxy
+  // (`portlessBrowserEnv`), and (2) bind-mount the host's Portless state dir so
+  // the in-box `portless` CLI shares the host's route registry (discovery).
+  // Best-effort; a missing host dir is created so the bind has a source.
+  // PORTLESS_STATE_DIR pins both sides to the same path.
+  const portlessEnv: Record<string, string> = {};
+  if (opts.portless === true && (await detectEngine()) !== 'orbstack') {
+    Object.assign(portlessEnv, portlessBrowserEnv(name));
+    try {
+      const hostStateDir = await resolvePortlessHostStateDir(opts.portlessStateDir);
+      await mkdir(hostStateDir, { recursive: true });
+      const boxStateDir = '/home/vscode/.portless';
+      extraVolumes.push(`${hostStateDir}:${boxStateDir}`);
+      portlessEnv['PORTLESS_STATE_DIR'] = boxStateDir;
+    } catch (err) {
+      log(
+        `portless: state-dir share skipped (${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
+  }
+
   for (const v of extraVolumes) log(`mounting agent dir: ${v}`);
 
   // Per-box bearer token for the host relay. Register *before* runBox so the
@@ -536,6 +581,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   const boxEnvForFile: Record<string, string> = {
     AGENTBOX_BOX_ID: id,
     ...agentboxEnv,
+    ...portlessEnv,
   };
 
   // `--storage-opt size=` is only enforced by devicemapper/btrfs/zfs.
@@ -563,6 +609,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       ...claudeMounts.env,
       ...relayEnv,
       ...vncEnv,
+      ...portlessEnv,
       ...(opts.claudeEnv ?? {}),
     },
   });
@@ -727,6 +774,39 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     );
   }
 
+  // Portless: register `https://<box-name>.localhost -> 127.0.0.1:<webHostPort>`.
+  // Best-effort — Portless is user-installed and never required; any failure
+  // here just leaves the box on its loopback URL. Skipped on OrbStack (which
+  // already has <container>.orb.local).
+  let portlessAliasName: string | undefined;
+  let portlessUrl: string | undefined;
+  if (opts.portless === true && webHostPort) {
+    try {
+      const engine = await detectEngine();
+      if (engine === 'orbstack') {
+        log('portless: skipped (OrbStack already provides <container>.orb.local)');
+      } else {
+        const portless = await detectPortless();
+        if (!portless.installed) {
+          log('portless not installed — run `npm install -g portless` for a <name>.localhost URL');
+        } else if (await portlessAlias(name, webHostPort)) {
+          portlessAliasName = name;
+          // Resolve the real URL from the proxy: scheme + port depend on how
+          // the proxy was started (http://…:1355 no-TLS, or https://… on :443).
+          portlessUrl = await portlessGetUrl(name);
+          log(`portless alias ${portlessUrl} -> 127.0.0.1:${String(webHostPort)}`);
+          if (!portless.proxyRunning) {
+            log(`portless proxy not running — start it with \`${portlessStartHint()}\``);
+          }
+        } else {
+          log('portless alias failed (best-effort) — box still reachable on the loopback URL');
+        }
+      }
+    } catch (err) {
+      log(`portless: ${err instanceof Error ? err.message : String(err)} (best-effort, ignored)`);
+    }
+  }
+
   const record: BoxRecord = {
     id,
     name,
@@ -748,6 +828,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     vncPassword: vncPassword,
     webContainerPort: WEB_CONTAINER_PORT,
     webHostPort: webHostPort ?? undefined,
+    portlessAlias: portlessAliasName,
+    portlessUrl,
     dockerVolume,
     dockerCacheShared: dockerCacheShared || undefined,
     projectRoot: opts.projectRoot,

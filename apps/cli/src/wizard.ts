@@ -192,6 +192,7 @@ export interface CreatePassthroughOptions {
   withPlaywright?: boolean;
   vnc?: boolean;
   sharedDockerCache?: boolean;
+  portless?: boolean;
 }
 
 export function passthroughFlags(opts: CreatePassthroughOptions): string[] {
@@ -205,5 +206,7 @@ export function passthroughFlags(opts: CreatePassthroughOptions): string[] {
   if (opts.withPlaywright === true) out.push('--with-playwright');
   if (opts.vnc === false) out.push('--no-vnc');
   if (opts.sharedDockerCache === true) out.push('--shared-docker-cache');
+  if (opts.portless === true) out.push('--portless');
+  if (opts.portless === false) out.push('--no-portless');
   return out;
 }

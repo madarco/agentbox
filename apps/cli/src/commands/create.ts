@@ -6,10 +6,17 @@ import {
   pruneOrphanProjectConfigs,
   type UserConfig,
 } from '@agentbox/config';
-import { createBox, DEFAULT_RELAY_PORT, listBoxes, type BoxRecord } from '@agentbox/sandbox-docker';
+import {
+  createBox,
+  DEFAULT_RELAY_PORT,
+  detectEngine,
+  listBoxes,
+  type BoxRecord,
+} from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
 import { clampSpinnerLine } from '../spinner-line.js';
+import { maybePromptPortless } from '../portless-prompt.js';
 import { resolveLimits } from '../limits.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import {
@@ -33,6 +40,7 @@ interface CreateOptions {
   withEnv?: boolean;
   vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
   sharedDockerCache?: boolean;
+  portless?: boolean; // commander: --portless / --no-portless => true / false / undefined
   memory?: string;
   cpus?: string;
   pidsLimit?: string;
@@ -47,7 +55,10 @@ function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
   if (opts.withEnv === true) box.withEnv = true;
   if (opts.vnc === false) box.vnc = false;
   if (opts.sharedDockerCache === true) box.dockerCacheShared = true;
-  return Object.keys(box).length > 0 ? { box } : {};
+  const out: Partial<UserConfig> = {};
+  if (Object.keys(box).length > 0) out.box = box;
+  if (opts.portless !== undefined) out.portless = { enabled: opts.portless };
+  return out;
 }
 
 function resolveUseSnapshot(
@@ -122,6 +133,11 @@ export const createCommand = new Command('create')
     '--shared-docker-cache',
     "use the shared 'agentbox-docker-cache' volume for in-box docker images (preserved on destroy; only one box can run at a time when set)",
   )
+  .option(
+    '--portless',
+    'map the box web app to https://<name>.localhost via the Portless proxy (Docker Desktop)',
+  )
+  .option('--no-portless', 'do not register a Portless alias for this box')
   .option('--memory <size>', 'memory ceiling (e.g. 512m, 2g); unset = unlimited')
   .option('--cpus <n>', 'CPU count cap (fractional ok, e.g. 1.5); unset = unlimited')
   .option('--pids-limit <n>', 'max process count (PIDs cgroup); unset = unlimited')
@@ -135,6 +151,16 @@ export const createCommand = new Command('create')
     });
     const projectRoot = (await findProjectRoot(opts.workspace)).root;
     const checkpointRef = resolveCheckpointRef(opts, cfg.effective.box.defaultCheckpoint);
+
+    // First-run Portless opt-in (Docker Desktop only). Persists the answer to
+    // the global config so it asks once per machine; the resolved flag is
+    // passed straight into createBox.
+    const portlessEnabled = await maybePromptPortless({
+      engine: await detectEngine(),
+      enabled: cfg.effective.portless.enabled,
+      yes: !!opts.yes,
+      cwd: opts.workspace,
+    });
 
     // First-run wizard: when no agentbox.yaml exists, optionally hand off to
     // `agentbox claude` so the agent can interactively generate one. Skipped
@@ -179,6 +205,8 @@ export const createCommand = new Command('create')
         envFilesToImport: wiz.envFilesToImport,
         vnc: { enabled: cfg.effective.box.vnc },
         docker: { sharedCache: cfg.effective.box.dockerCacheShared },
+        portless: portlessEnabled,
+        portlessStateDir: cfg.effective.portless.stateDir || undefined,
         limits: resolveLimits(cfg.effective.box, opts),
         projectRoot,
         onLog: (line) => s.message(clampSpinnerLine(line)),

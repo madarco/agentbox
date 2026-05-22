@@ -105,6 +105,22 @@ export interface BoxRecord {
   /** Random host port Docker assigned to container :80 (resolved via `docker port`). */
   webHostPort?: number;
   /**
+   * Portless route name registered for this box's web port (the box name).
+   * Set at `create` when `portless.enabled` + engine != orbstack + Portless is
+   * installed. `startBox` re-points it (Docker reallocates the host port each
+   * start); `destroyBox` removes it. Absent on boxes created without Portless
+   * or before this field existed → endpoints/browser fall back to loopback.
+   */
+  portlessAlias?: string;
+  /**
+   * Full user-facing URL the Portless proxy serves for this box, resolved via
+   * `portless get` at create and refreshed on `startBox`. Scheme + port depend
+   * on the proxy: `http://<box>.localhost:1355` for an AgentBox-started no-TLS
+   * proxy, `https://<box>.localhost` for a user's :443 proxy. Companion to
+   * `portlessAlias`; absent when no route was registered.
+   */
+  portlessUrl?: string;
+  /**
    * Volume mounted at /var/lib/docker for the in-box dockerd. Per-box
    * (`agentbox-docker-<id>`) by default; the shared `agentbox-docker-cache`
    * volume when `dockerCacheShared` is true. Absent on boxes created before
