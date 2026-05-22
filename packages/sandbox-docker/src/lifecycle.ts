@@ -5,6 +5,11 @@ import type { BoxState } from '@agentbox/core';
 import type { BoxStatus, ClaudeActivityState } from '@agentbox/ctl';
 import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './claude.js';
 import { codexSessionInfo, SHARED_CODEX_VOLUME, type CodexSessionInfo } from './codex.js';
+import {
+  opencodeSessionInfo,
+  SHARED_OPENCODE_VOLUME,
+  type OpencodeSessionInfo,
+} from './opencode.js';
 import { listShellSessions, type ShellSessionSummary } from './shell-session.js';
 import { bindWorktrees, removeInBoxWorktree } from './in-box-git.js';
 import {
@@ -76,6 +81,8 @@ export interface ListedBox extends BoxRecord {
   shellSessions: ShellSessionSummary[];
   /** Live probe of the Codex tmux session; null when the box isn't running. */
   codexSession: CodexSessionInfo | null;
+  /** Live probe of the OpenCode tmux session; null when the box isn't running. */
+  opencodeSession: OpencodeSessionInfo | null;
 }
 
 export async function listBoxes(): Promise<ListedBox[]> {
@@ -94,6 +101,8 @@ export async function listBoxes(): Promise<ListedBox[]> {
         state === 'running' ? await listShellSessions(b.container) : [];
       const codexSession =
         state === 'running' ? await codexSessionInfo(b.container) : null;
+      const opencodeSession =
+        state === 'running' ? await opencodeSessionInfo(b.container) : null;
       return {
         ...b,
         state,
@@ -102,6 +111,7 @@ export async function listBoxes(): Promise<ListedBox[]> {
         claudeSessionTitle: persisted?.claude.sessionTitle,
         shellSessions,
         codexSession,
+        opencodeSession,
       };
     }),
   );
@@ -315,6 +325,8 @@ export interface InspectedBox {
   claudeSession: ClaudeSessionInfo | null;
   /** Null when the container isn't running; otherwise best-effort probe of the tmux 'codex' session. */
   codexSession: CodexSessionInfo | null;
+  /** Null when the container isn't running; otherwise best-effort probe of the tmux 'opencode' session. */
+  opencodeSession: OpencodeSessionInfo | null;
   /** Live shell tmux sessions; `[]` when the container isn't running. */
   shellSessions: ShellSessionSummary[];
   /** Persisted status snapshot (services/tasks/ports/claude); null when none. */
@@ -345,6 +357,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
 
   let claudeSession: ClaudeSessionInfo | null = null;
   let codexSession: CodexSessionInfo | null = null;
+  let opencodeSession: OpencodeSessionInfo | null = null;
   let shellSessions: ShellSessionSummary[] = [];
   if (state === 'running') {
     try {
@@ -356,6 +369,11 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
       codexSession = await codexSessionInfo(record.container);
     } catch {
       codexSession = null;
+    }
+    try {
+      opencodeSession = await opencodeSessionInfo(record.container);
+    } catch {
+      opencodeSession = null;
     }
     shellSessions = await listShellSessions(record.container);
   }
@@ -372,6 +390,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
     dockerInspect: dockerJson,
     claudeSession,
     codexSession,
+    opencodeSession,
     shellSessions,
     persistedStatus,
     hostPaths,
@@ -453,6 +472,11 @@ export async function destroyBox(
   if (box.codexConfigVolume && box.codexConfigVolume !== SHARED_CODEX_VOLUME) {
     await removeVolume(box.codexConfigVolume);
     removedVolumes.push(box.codexConfigVolume);
+  }
+  // Same for the opencode-config volume.
+  if (box.opencodeConfigVolume && box.opencodeConfigVolume !== SHARED_OPENCODE_VOLUME) {
+    await removeVolume(box.opencodeConfigVolume);
+    removedVolumes.push(box.opencodeConfigVolume);
   }
   // Per-box `.vscode-server` and `.cursor-server` volumes. The shared
   // SHARED_*_EXTENSIONS_VOLUMEs are never auto-removed (parallel reasoning to
@@ -600,6 +624,9 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
         .map((b) => b.codexConfigVolume)
         .filter((v): v is string => typeof v === 'string'),
       ...survivingBoxes
+        .map((b) => b.opencodeConfigVolume)
+        .filter((v): v is string => typeof v === 'string'),
+      ...survivingBoxes
         .map((b) => b.vscodeServerVolume)
         .filter((v): v is string => typeof v === 'string'),
       ...survivingBoxes
@@ -613,6 +640,8 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
       SHARED_CLAUDE_VOLUME,
       // The shared codex-config volume — same reasoning (holds Codex auth).
       SHARED_CODEX_VOLUME,
+      // The shared opencode-config volume — same reasoning (holds OpenCode auth).
+      SHARED_OPENCODE_VOLUME,
       // Shared across boxes: downloaded IDE extensions. Same reasoning.
       SHARED_VSCODE_EXTENSIONS_VOLUME,
       SHARED_CURSOR_EXTENSIONS_VOLUME,

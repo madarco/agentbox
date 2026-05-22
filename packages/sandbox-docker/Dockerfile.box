@@ -199,6 +199,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g @openai/codex
 
+# OpenCode CLI (sst/opencode) — the multi-provider terminal coding agent.
+# Parallel to the Claude/Codex installs: `agentbox opencode` launches it in a
+# tmux session and the box mounts a synced `agentbox-opencode-config` volume
+# (see packages/sandbox-docker/src/opencode.ts). OpenCode splits its state
+# across ~/.config/opencode (config) and ~/.local/share/opencode (data + auth);
+# the volume holds both, with the config dir relocated via OPENCODE_CONFIG_DIR.
+RUN npm install -g opencode-ai
+
 # Browser support for in-box agents: Vercel's agent-browser drives Chrome via
 # CDP. Two things have to happen here:
 #

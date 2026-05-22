@@ -108,13 +108,15 @@ describe('pruneBoxes', () => {
         inspectContainerStatus: vi.fn(async () => 'running'),
         listAgentboxContainers: vi.fn(async () => ['agentbox-live', 'agentbox-orphan']),
         listAgentboxVolumes: vi.fn(async () => [
-          // Per-box claude/codex config (anonymous user; live box) —
-          // allowlisted by record.{claude,codex}ConfigVolume so NOT reaped.
+          // Per-box claude/codex/opencode config (anonymous user; live box) —
+          // allowlisted by record.{claude,codex,opencode}ConfigVolume so NOT reaped.
           'agentbox-claude-config-11111111',
           'agentbox-codex-config-11111111',
-          // Shared codex-config volume — allowlisted unconditionally (holds
-          // the user's Codex auth across boxes).
+          'agentbox-opencode-config-11111111',
+          // Shared codex/opencode config volumes — allowlisted unconditionally
+          // (hold the user's Codex/OpenCode auth across boxes).
           'agentbox-codex-config',
+          'agentbox-opencode-config',
           'agentbox-orphan-vol',
         ]),
         removeContainer: vi.fn(async () => undefined),
@@ -130,6 +132,7 @@ describe('pruneBoxes', () => {
           ...mkBox('11111111', 'agentbox-live'),
           claudeConfigVolume: 'agentbox-claude-config-11111111',
           codexConfigVolume: 'agentbox-codex-config-11111111',
+          opencodeConfigVolume: 'agentbox-opencode-config-11111111',
         },
       ],
     });
@@ -138,7 +141,7 @@ describe('pruneBoxes', () => {
     const result = await pruneBoxes({ all: true, dryRun: true });
 
     expect(result.removedContainers).toEqual(['agentbox-orphan']);
-    // Only the orphan volume is reaped; per-box + shared codex volumes survive.
+    // Only the orphan volume is reaped; per-box + shared codex/opencode volumes survive.
     expect(result.removedVolumes).toEqual(['agentbox-orphan-vol']);
   });
 

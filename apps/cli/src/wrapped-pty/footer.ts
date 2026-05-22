@@ -18,9 +18,9 @@ export type FooterState =
       /** Claude activity hint shown in `(<state>)` after the name. Same field
        *  the dashboard sidebar uses (`working` / `idle` / `waiting` / etc.). */
       claudeActivity?: string;
-      /** Mode drives the state label: claude shows claude activity, shell
-       *  shows `(shell)`, codex shows `(codex)`. */
-      mode: 'claude' | 'shell' | 'codex';
+      /** Mode drives the state label: claude shows claude activity, the
+       *  others show `(shell)` / `(codex)` / `(opencode)`. */
+      mode: 'claude' | 'shell' | 'codex' | 'opencode';
       /** Whether the session can be detached (tmux-backed). Drives the
        *  expanded leader menu + the pinned `Control+a q: detach` hint. */
       detachable?: boolean;
@@ -127,7 +127,7 @@ export function renderFooter(state: FooterState, cols: number): string {
     // `stateLabel` overrides statusLine's default (which would otherwise show
     // `(unknown)` because `claudeActivity` is undefined and the container is
     // running).
-    const stateLabel = isClaude ? undefined : state.mode === 'codex' ? 'codex' : 'shell';
+    const stateLabel = isClaude ? undefined : state.mode === 'shell' ? 'shell' : state.mode;
     if (state.leaderActive) {
       const leaderHints = detachable ? DETACHABLE_LEADER_HINTS : PLAIN_LEADER_HINTS;
       return statusLine(sidebarBox, cols, stateLabel, leaderHints);

@@ -18,6 +18,12 @@ import {
   type CodexMountResult,
 } from './codex.js';
 import {
+  buildOpencodeMounts,
+  ensureOpencodeVolume,
+  resolveOpencodeVolume,
+  type OpencodeMountResult,
+} from './opencode.js';
+import {
   type BoxLimitSpec,
   containerExists,
   dockerInfo,
@@ -120,6 +126,14 @@ export interface CreateBoxOptions {
    * the codex block below. `isolate: true` opts into a per-box volume.
    */
   codexConfig?: { isolate: boolean };
+  /**
+   * OpenCode CLI config volume. When provided (i.e. `agentbox opencode`), the
+   * box always mounts a synced `agentbox-opencode-config` volume. When omitted,
+   * `createBox` still mounts it *if the host uses OpenCode* (`~/.config/opencode`
+   * or `~/.local/share/opencode` exists). `isolate: true` opts into a per-box
+   * volume. See the opencode block below.
+   */
+  opencodeConfig?: { isolate: boolean };
   /**
    * When true, run `npm install -g @playwright/cli@latest` inside the box after
    * `/workspace` is seeded. agent-browser is always installed in the image;
@@ -502,6 +516,33 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     codexConfigVolume = codexSpec.volume;
   }
 
+  // OpenCode config volume. Mounted when the caller wants opencode
+  // (`agentbox opencode` passes `opencodeConfig`) OR the host already uses
+  // OpenCode (`~/.config/opencode` or `~/.local/share/opencode` exists). One
+  // volume holds both OpenCode dirs (data at the root, config in a `config/`
+  // subdir via OPENCODE_CONFIG_DIR — see opencode.ts).
+  const wantOpencode =
+    opts.opencodeConfig !== undefined ||
+    (await pathExists(join(homedir(), '.config', 'opencode'))) ||
+    (await pathExists(join(homedir(), '.local', 'share', 'opencode')));
+  let opencodeMounts: OpencodeMountResult | undefined;
+  let opencodeConfigVolume: string | undefined;
+  if (wantOpencode) {
+    const opencodeSpec = resolveOpencodeVolume({
+      isolate: opts.opencodeConfig?.isolate ?? false,
+      boxId: id,
+    });
+    const opencodeEnsured = await ensureOpencodeVolume(opencodeSpec, {
+      syncFromHost: true,
+      image: ensureRef,
+    });
+    if (opencodeEnsured.synced) log(`synced ${opencodeSpec.volume} from ~/.config + ~/.local/share opencode`);
+    else if (opencodeEnsured.created) log(`created empty volume ${opencodeSpec.volume} (no host opencode)`);
+    else log(`reusing volume ${opencodeSpec.volume}`);
+    opencodeMounts = buildOpencodeMounts(opencodeSpec, process.env);
+    opencodeConfigVolume = opencodeSpec.volume;
+  }
+
   const boxDir = boxRunDirFor({ id, name, projectIndex });
   const socketDir = join(boxDir, 'run');
   const socketPath = join(socketDir, 'ctl.sock');
@@ -515,6 +556,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   const extraVolumes = await buildIdentityMounts();
   extraVolumes.push(...claudeMounts.extraVolumes);
   if (codexMounts) extraVolumes.push(...codexMounts.extraVolumes);
+  if (opencodeMounts) extraVolumes.push(...opencodeMounts.extraVolumes);
   extraVolumes.push(...ide.extraVolumes);
   extraVolumes.push(`${socketDir}:/run/agentbox`);
   extraVolumes.push(`${mergedExportDir}:${CONTAINER_EXPORT_MERGED}`);
@@ -648,6 +690,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       ...agentboxEnv,
       ...claudeMounts.env,
       ...(codexMounts?.env ?? {}),
+      ...(opencodeMounts?.env ?? {}),
       ...relayEnv,
       ...vncEnv,
       ...portlessEnv,
@@ -858,6 +901,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     socketPath,
     claudeConfigVolume: claudeSpec.volume,
     codexConfigVolume,
+    opencodeConfigVolume,
     vscodeServerVolume: vscodeServerVolumeName(id),
     cursorServerVolume: cursorServerVolumeName(id),
     relayToken: relayUp ? relayToken : undefined,

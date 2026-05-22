@@ -21,6 +21,7 @@ export interface UserConfig {
     vnc?: boolean;
     isolateClaudeConfig?: boolean;
     isolateCodexConfig?: boolean;
+    isolateOpencodeConfig?: boolean;
     image?: string;
     dockerCacheShared?: boolean;
     memory?: number;
@@ -35,6 +36,9 @@ export interface UserConfig {
     sessionName?: string;
   };
   codex?: {
+    sessionName?: string;
+  };
+  opencode?: {
     sessionName?: string;
   };
   code?: {
@@ -92,6 +96,7 @@ export interface EffectiveConfig {
     vnc: boolean;
     isolateClaudeConfig: boolean;
     isolateCodexConfig: boolean;
+    isolateOpencodeConfig: boolean;
     image: string;
     dockerCacheShared: boolean;
     memory: number;
@@ -106,6 +111,9 @@ export interface EffectiveConfig {
     sessionName: string;
   };
   codex: {
+    sessionName: string;
+  };
+  opencode: {
     sessionName: string;
   };
   code: {
@@ -182,6 +190,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     vnc: true,
     isolateClaudeConfig: false,
     isolateCodexConfig: false,
+    isolateOpencodeConfig: false,
     image: 'agentbox/box:dev',
     dockerCacheShared: false,
     memory: 0,
@@ -197,6 +206,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   codex: {
     sessionName: 'codex',
+  },
+  opencode: {
+    sessionName: 'opencode',
   },
   code: {
     ide: 'auto',
@@ -301,6 +313,11 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     description: 'Use a per-box ~/.codex volume instead of the shared one.',
   },
   {
+    key: 'box.isolateOpencodeConfig',
+    type: 'bool',
+    description: 'Use a per-box OpenCode config/data volume instead of the shared one.',
+  },
+  {
     key: 'box.image',
     type: 'string',
     description: 'Box image ref (advanced).',
@@ -345,6 +362,11 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'codex.sessionName',
     type: 'string',
     description: 'tmux session name for `agentbox codex`.',
+  },
+  {
+    key: 'opencode.sessionName',
+    type: 'string',
+    description: 'tmux session name for `agentbox opencode`.',
   },
   {
     key: 'code.ide',

@@ -68,6 +68,32 @@ export {
   type PullCodexResult,
   type StartCodexSessionOptions,
 } from './codex.js';
+export {
+  buildOpencodeAttachArgv,
+  buildOpencodeLoginRunArgv,
+  buildOpencodeMounts,
+  DEFAULT_OPENCODE_SESSION,
+  ensureOpencodeInstalled,
+  ensureOpencodeVolume,
+  OPENCODE_FORWARDED_ENV_KEYS,
+  OpencodeSessionError,
+  opencodeSessionInfo,
+  pullOpencodeConfig,
+  resolveOpencodeVolume,
+  runInteractiveOpencodeLogin,
+  SHARED_OPENCODE_VOLUME,
+  startOpencodeSession,
+  volumeHasOpencodeAuth,
+  type EnsureOpencodeInstalledResult,
+  type EnsureOpencodeVolumeOptions,
+  type EnsureOpencodeVolumeResult,
+  type OpencodeConfigSpec,
+  type OpencodeMountResult,
+  type OpencodeSessionInfo,
+  type PullOpencodeOptions,
+  type PullOpencodeResult,
+  type StartOpencodeSessionOptions,
+} from './opencode.js';
 export { createBox, type CreateBoxOptions, type CreatedBox } from './create.js';
 export {
   agentboxHomeBytes,

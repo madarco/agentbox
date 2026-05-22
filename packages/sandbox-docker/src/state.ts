@@ -48,6 +48,14 @@ export interface BoxRecord {
    */
   codexConfigVolume?: string;
   /**
+   * Docker volume mounted at /home/vscode/.local/share/opencode inside the box.
+   * One volume holds both OpenCode dirs (data at the root, config in a `config/`
+   * subdir). Parallel to `codexConfigVolume`: shared `agentbox-opencode-config`
+   * by default, per-box under `--isolate-opencode-config`. Absent when the box
+   * was created without OpenCode, or before this field existed.
+   */
+  opencodeConfigVolume?: string;
+  /**
    * Per-box volume holding `.vscode-server` (server binary + TS cache).
    * The shared `agentbox-vscode-extensions` volume layers over the `extensions`
    * subdir at run time and isn't recorded here (never auto-removed). Absent

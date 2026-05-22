@@ -87,17 +87,35 @@ function workspaceCell(path: string, target: number, stream: NodeJS.WriteStream)
   return { text: hyperlink(display, url, stream), width: display.length };
 }
 
+/**
+ * The merged AGENT column: every active agent session, claude annotated with
+ * its activity state (working/idle/…), codex/opencode with just their name
+ * (running/not is all they expose). Comma-joined when more than one is up;
+ * `-` when none.
+ *
+ * `claudeActivity === 'unknown'` is treated as "no claude" — the supervisor
+ * seeds that default for *every* box (even codex/opencode boxes), so showing
+ * it would put a spurious `claude:unknown` on nearly every row.
+ */
+function agentSummary(b: ListedBox): string {
+  const agents: string[] = [];
+  if (b.claudeActivity && b.claudeActivity !== 'unknown') {
+    agents.push(`claude:${b.claudeActivity}`);
+  }
+  if (b.codexSession?.running) agents.push('codex');
+  if (b.opencodeSession?.running) agents.push('opencode');
+  return agents.length > 0 ? agents.join(', ') : '-';
+}
+
 function renderTable(boxes: ListedBox[], stream: NodeJS.WriteStream): string {
-  const header = ['N', 'NAME', 'STATE', 'CLAUDE', 'CODEX', 'SHELLS', 'URL', 'WORKSPACE'];
+  const header = ['N', 'NAME', 'STATE', 'AGENT', 'SHELLS', 'URL', 'WORKSPACE'];
   const wsCol = header.length - 1;
   const lead: Cell[][] = boxes.map((b) => [
     plain(typeof b.projectIndex === 'number' ? String(b.projectIndex) : ''),
     plain(b.name),
     plain(b.state),
-    plain(b.claudeActivity ?? ''),
-    // Live codex tmux session: `running` when up, else blank (parallels the
-    // CLAUDE activity column — empty when there's nothing to show).
-    plain(b.codexSession?.running ? 'running' : ''),
+    // One column for every agent (claude / codex / opencode) — see agentSummary.
+    plain(agentSummary(b)),
     // Live shell-session count; `-` for none (or a non-running box). Detail
     // lives in `agentbox shell ls <box>`.
     plain(b.shellSessions.length > 0 ? String(b.shellSessions.length) : '-'),
