@@ -32,8 +32,13 @@ export interface WrappedAttachOptions {
    *  boxId/boxName to read the per-box status.json for the live session
    *  title. Pre-feature boxes lack it; absent is fine. */
   projectIndex?: number;
-  /** Mode label affects the idle footer text only. */
+  /** Mode label affects the idle footer state label only. */
   mode: 'claude' | 'shell';
+  /** Whether the inner session can be detached (tmux-backed). Drives the
+   *  `Ctrl+a q` detach chord + footer hint. Defaults to `mode === 'claude'`
+   *  (claude is always tmux-backed); a tmux-backed `agentbox shell` passes
+   *  `true`, a `--no-tmux` shell leaves it false. */
+  detachable?: boolean;
   /** Optional notice printed to stdout *after* the pty exits with code 0
    *  (mirrors today's `formatDetachNotice` for `agentbox claude`). */
   detachNotice?: string;
@@ -99,6 +104,10 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     env: process.env,
   });
 
+  // claude is always tmux-backed; a tmux-backed `agentbox shell` opts in via
+  // `detachable: true`, a `--no-tmux` shell leaves it false (nothing to detach).
+  const detachable = opts.detachable ?? opts.mode === 'claude';
+
   // Idle footer = dashboard's statusLine() with a single hint (`Control+a:
   // Actions`, expanding to the chord menu while the leader is open). Session
   // title + claude activity come from the per-box status.json polled below.
@@ -109,6 +118,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     sessionTitle,
     claudeActivity,
     mode: opts.mode,
+    detachable,
     leaderActive,
   });
   let footerState: FooterState = buildIdle();
@@ -200,11 +210,11 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   });
 
   // Ctrl+a leader chord map — keys mirror the dashboard's (`c`/`v`/`w`).
-  // Claude also gets `q: detach`; a plain shell has nothing to detach from.
-  const leaderChords: Record<string, LeaderAction> =
-    opts.mode === 'claude'
-      ? { c: 'code', v: 'vnc', w: 'browser', q: 'detach' }
-      : { c: 'code', v: 'vnc', w: 'browser' };
+  // A detachable (tmux-backed) session also gets `q: detach`; a plain
+  // `--no-tmux` shell has nothing to detach from.
+  const leaderChords: Record<string, LeaderAction> = detachable
+    ? { c: 'code', v: 'vnc', w: 'browser', q: 'detach' }
+    : { c: 'code', v: 'vnc', w: 'browser' };
 
   // Run a Ctrl+a leader action. `detach` writes the tmux detach sequence to
   // the pty (`\x02` = Ctrl+b, tmux's secondary prefix; `d` = detach-client) —
@@ -366,13 +376,14 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // teardown via `\x1b[r` (clear scroll region -> full screen).
   process.stdout.write(`\x1b[1;${String(innerRows)}r`);
 
-  // Shell mode: bash doesn't enter alt-screen, so without help the user's
-  // pre-shell host-terminal content stays visible above bash's freshly
-  // drawn prompt. Clear the visible screen + home the cursor before the
-  // pty's first write. We don't touch scrollback (`\x1b[3J`) — the user's
-  // pre-shell context stays scroll-up-able. Claude mode skips this: claude
-  // enters its own alt-screen on init and would just overpaint anyway.
-  if (opts.mode === 'shell') {
+  // Plain shell (`--no-tmux`): bash doesn't enter alt-screen, so without help
+  // the user's pre-shell host-terminal content stays visible above bash's
+  // freshly drawn prompt. Clear the visible screen + home the cursor before
+  // the pty's first write. We don't touch scrollback (`\x1b[3J`) — the user's
+  // pre-shell context stays scroll-up-able. Claude and the tmux-backed shell
+  // skip this: they enter their own alt-screen on init and would just
+  // overpaint anyway (clearing first would only flicker).
+  if (opts.mode === 'shell' && !detachable) {
     process.stdout.write('\x1b[H\x1b[2J');
   }
 

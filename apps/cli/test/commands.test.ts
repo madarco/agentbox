@@ -123,15 +123,24 @@ describe('lifecycle CLI surface', () => {
     expect(attach!.options.map((o) => o.long)).toContain('--session-name');
   });
 
-  it('shell takes [box] + variadic [cmd...] and exposes --user / --no-login', () => {
+  it('shell takes [box] + variadic [cmd...] and exposes --user / --no-login / --no-tmux', () => {
     expect(shellCommand.name()).toBe('shell');
     const longs = shellCommand.options.map((o) => o.long);
-    expect(longs).toEqual(expect.arrayContaining(['--user', '--no-login']));
+    expect(longs).toEqual(
+      expect.arrayContaining(['--user', '--no-login', '--no-tmux', '--session-name']),
+    );
     // Two positionals: optional [box] (was required before auto-pick landed),
     // variadic [cmd...].
     expect(shellCommand.registeredArguments).toHaveLength(2);
     expect(shellCommand.registeredArguments[0]!.required).toBe(false);
     expect(shellCommand.registeredArguments[1]!.variadic).toBe(true);
+  });
+
+  it('shell has an `attach` subcommand taking optional [box]', () => {
+    const attach = shellCommand.commands.find((c) => c.name() === 'attach');
+    expect(attach).toBeDefined();
+    expect(attach!.registeredArguments).toHaveLength(1);
+    expect(attach!.registeredArguments[0]!.required).toBe(false);
   });
 
   it('all box-arg commands now accept [box] (optional) for auto-pick', () => {

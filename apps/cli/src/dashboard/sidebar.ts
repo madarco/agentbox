@@ -268,7 +268,7 @@ export function createMenuLines(where: string, w: number, h: number): string[] {
 }
 
 // Status-bar palette — matches the in-box tmux footer
-// (`buildClaudeStatusBarArgs`): dark bar, blue brand block, dim-grey hints
+// (`buildTmuxSessionArgs`): dark bar, blue brand block, dim-grey hints
 // with white key chords.
 /** The footer/sidebar background gray. Truecolor (not palette index 236) so
  *  it pins an exact RGB — terminals can remap/shade indexed colors per

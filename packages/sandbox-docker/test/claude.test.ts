@@ -6,7 +6,7 @@ import {
   buildClaudeDashboardAttachArgv,
   buildClaudeLoginRunArgv,
   buildClaudeMounts,
-  buildClaudeStatusBarArgs,
+  buildTmuxSessionArgs,
   formatDetachNotice,
   DEFAULT_CLAUDE_SESSION,
   resolveClaudeVolume,
@@ -83,6 +83,11 @@ describe('formatDetachNotice', () => {
       'Session detached. Reattach with: agentbox claude attach my-box',
     );
   });
+  it('points at `shell attach` for the shell command', () => {
+    expect(formatDetachNotice('2', 'shell')).toBe(
+      'Session detached. Reattach with: agentbox shell attach 2',
+    );
+  });
 });
 
 describe('buildClaudeLoginRunArgv', () => {
@@ -132,9 +137,9 @@ describe('buildClaudeLoginRunArgv', () => {
   });
 });
 
-describe('buildClaudeStatusBarArgs', () => {
+describe('buildTmuxSessionArgs', () => {
   it('remaps the prefix to Ctrl-a and hides the inner tmux status bar', () => {
-    const args = buildClaudeStatusBarArgs(DEFAULT_CLAUDE_SESSION);
+    const args = buildTmuxSessionArgs(DEFAULT_CLAUDE_SESSION);
 
     // primary prefix Ctrl+a (dashboard parity); tmux's default Ctrl+b kept
     // as a secondary prefix so existing muscle memory / integrations keep
@@ -185,7 +190,7 @@ describe('buildClaudeStatusBarArgs', () => {
   });
 
   it('scopes the status-off option to a custom session name', () => {
-    const args = buildClaudeStatusBarArgs('codex');
+    const args = buildTmuxSessionArgs('codex');
     const sessionSetIdxs = args.flatMap((a, idx) =>
       a === 'set' && args[idx + 1] === '-t' ? [idx] : [],
     );

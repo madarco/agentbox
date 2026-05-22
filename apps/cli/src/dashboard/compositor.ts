@@ -16,7 +16,6 @@ import {
   createMenuLines,
   NEW_BOX_ID,
   ADVANCED_HINT_GROUPS,
-  BAR_BG,
   type SidebarBox,
 } from './sidebar.js';
 import { renderFooter } from '../wrapped-pty/footer.js';
@@ -25,20 +24,21 @@ import type { BoxNoticeEvent, PromptAskEvent } from '@agentbox/relay';
 
 // Sidebar panel styling (256-color, portable). Each sidebar line is already
 // padded to the panel width, so wrapping it in a bg SGR tints the full column.
-// Background is the footer gray (`BAR_BG`) everywhere — uniform with the status
-// bar; the selected row reads via bold bright-white text + the `▸` marker.
-const SB_BODY = BAR_BG + '\x1b[38;5;250m';
-const SB_HEADER = BAR_BG + '\x1b[38;5;39m\x1b[1m';
-const SB_SELECTED = BAR_BG + '\x1b[38;5;255m\x1b[1m';
+// Background is pure black (truecolor, so terminals can't shade it per
+// context); the selected row reads via bold bright-white text + the `▸` marker.
+const SB_BG = '\x1b[48;2;0;0;0m';
+const SB_BODY = SB_BG + '\x1b[38;5;250m';
+const SB_HEADER = SB_BG + '\x1b[38;5;39m\x1b[1m';
+const SB_SELECTED = SB_BG + '\x1b[38;5;255m\x1b[1m';
 // Bright yellow + bold for non-selected rows that have a pending relay
 // prompt — same palette index as the [!] tag in the wrapped-pty footer
 // (renderFooter URGENT). Reads as "this box needs your attention".
-const SB_PROMPT = BAR_BG + '\x1b[38;5;220m\x1b[1m';
+const SB_PROMPT = SB_BG + '\x1b[38;5;220m\x1b[1m';
 // Bright cyan + bold for the agent's own "awaiting input" state
 // (claudeActivity === 'waiting'). Distinct hue from yellow so the user can
 // triage at a glance: yellow ▲ = relay needs a decision NOW; cyan ◐ =
 // the agent is idle waiting for the user's direction (less urgent).
-const SB_AWAITING = BAR_BG + '\x1b[38;5;51m\x1b[1m';
+const SB_AWAITING = SB_BG + '\x1b[38;5;51m\x1b[1m';
 const SGR_RESET = '\x1b[0m';
 
 export type RightTarget =

@@ -42,6 +42,8 @@ export interface UserConfig {
   shell?: {
     user?: string;
     login?: boolean;
+    tmux?: boolean;
+    sessionName?: string;
   };
   engine?: {
     kind?: EngineKind;
@@ -108,6 +110,8 @@ export interface EffectiveConfig {
   shell: {
     user: string;
     login: boolean;
+    tmux: boolean;
+    sessionName: string;
   };
   engine: {
     kind: EngineKind;
@@ -193,6 +197,8 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   shell: {
     user: 'vscode',
     login: true,
+    tmux: true,
+    sessionName: 'shell',
   },
   engine: {
     kind: 'auto',
@@ -351,6 +357,16 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'shell.login',
     type: 'bool',
     description: 'Pass `-l` to bash so the login profile loads.',
+  },
+  {
+    key: 'shell.tmux',
+    type: 'bool',
+    description: 'Run `agentbox shell` inside a detachable tmux session (Ctrl+a q to detach).',
+  },
+  {
+    key: 'shell.sessionName',
+    type: 'string',
+    description: 'tmux session name for `agentbox shell`.',
   },
   {
     key: 'engine.kind',

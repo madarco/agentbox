@@ -960,7 +960,7 @@ export async function startClaudeSession(opts: StartClaudeSessionOptions): Promi
       '-s',
       sessionName,
       cmd,
-      ...buildClaudeStatusBarArgs(sessionName),
+      ...buildTmuxSessionArgs(sessionName),
     ],
     { reject: false },
   );
@@ -1068,7 +1068,8 @@ export function buildClaudeDashboardAttachArgv(
  * the inner tmux status bar off. The outer host UI (the wrapped-pty footer
  * for `agentbox claude` / `agentbox shell`, the dashboard's own status row
  * for the right pane) already shows the box name + the detach hint, so the
- * inner bar is double-footer — strip it.
+ * inner bar is double-footer — strip it. Shared by {@link startClaudeSession}
+ * and `startShellSession` (both tmux-backed sessions get the same chords).
  *
  * `Ctrl+a` is the **primary** prefix (matches the dashboard's quit chord), and
  * tmux's default `Ctrl+b` is kept as a **secondary** prefix (`prefix2 C-b`) so
@@ -1087,7 +1088,7 @@ export function buildClaudeDashboardAttachArgv(
  * `-t <session>` — the dashboard's grouped `<name>-dash` session has its own
  * option scope and runs its own `status off` in {@link buildClaudeDashboardAttachArgv}.
  */
-export function buildClaudeStatusBarArgs(sessionName: string): string[] {
+export function buildTmuxSessionArgs(sessionName: string): string[] {
   const s = sessionName;
   return [
     // Server-global (no -t): primary prefix Ctrl+a (dashboard parity), keep
@@ -1229,8 +1230,11 @@ export async function warmUpClaudeCredentials(
   return { warmed: false, attempts: MAX_ATTEMPTS };
 }
 
-export function formatDetachNotice(ref: string): string {
-  return `Session detached. Reattach with: agentbox claude attach ${ref}`;
+export function formatDetachNotice(
+  ref: string,
+  command: 'claude' | 'shell' = 'claude',
+): string {
+  return `Session detached. Reattach with: agentbox ${command} attach ${ref}`;
 }
 
 export function attachClaudeSession(

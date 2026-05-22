@@ -7,7 +7,7 @@ export {
   buildClaudeDashboardAttachArgv,
   buildClaudeLoginRunArgv,
   buildClaudeMounts,
-  buildClaudeStatusBarArgs,
+  buildTmuxSessionArgs,
   buildShellArgv,
   ClaudeSessionError,
   claudeSessionInfo,
@@ -226,6 +226,14 @@ export {
   type VncUrls,
 } from './vnc.js';
 export { browserSessionActive, ensureBoxBrowser, type BoxBrowserResult } from './browser.js';
+export {
+  buildShellSessionAttachArgv,
+  DEFAULT_SHELL_SESSION,
+  shellSessionInfo,
+  startShellSession,
+  type ShellSessionInfo,
+  type StartShellSessionOptions,
+} from './shell-session.js';
 export {
   dockerVolumeName,
   launchDockerdDaemon,

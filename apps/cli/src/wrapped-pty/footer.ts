@@ -18,9 +18,12 @@ export type FooterState =
       /** Claude activity hint shown in `(<state>)` after the name. Same field
        *  the dashboard sidebar uses (`working` / `idle` / `waiting` / etc.). */
       claudeActivity?: string;
-      /** Mode drives the expanded leader menu: claude includes `q: detach`,
-       *  shell does not. */
+      /** Mode drives the state label: claude shows claude activity, shell
+       *  shows `(shell)`. */
       mode: 'claude' | 'shell';
+      /** Whether the session can be detached (tmux-backed). Drives the
+       *  expanded leader menu + the pinned `Control+a q: detach` hint. */
+      detachable?: boolean;
       /** True while the Ctrl+a leader menu is open — swaps the collapsed
        *  `Control+a: Actions` hint for the expanded chord list. */
       leaderActive?: boolean;
@@ -59,30 +62,32 @@ const NOTICE_FG = '\x1b[38;5;16m\x1b[1m'; // near-black + bold text
 // Flash footer = a calm one-line confirmation on the normal dark bar.
 const FLASH_FG = '\x1b[38;5;150m\x1b[1m'; // soft green + bold
 
-/** Collapsed idle hint (shell) — the leader is hidden behind one chord. */
-const COLLAPSED_HINTS_SHELL: ReadonlyArray<readonly [string, string]> = [
+/** Collapsed idle hint (plain `--no-tmux` shell) — the leader is hidden
+ *  behind one chord. */
+const COLLAPSED_HINTS_PLAIN: ReadonlyArray<readonly [string, string]> = [
   ['Control+a', 'Actions'],
 ];
-/** Collapsed idle hint (claude) — the detach chord stays pinned on the right
- *  even while the actions menu is closed. */
-const COLLAPSED_HINTS_CLAUDE: ReadonlyArray<readonly [string, string]> = [
+/** Collapsed idle hint (detachable session) — the detach chord stays pinned
+ *  on the right even while the actions menu is closed. */
+const COLLAPSED_HINTS_DETACHABLE: ReadonlyArray<readonly [string, string]> = [
   ['Control+a', 'Actions'],
   ['Control+a q', 'detach'],
 ];
-/** Narrow-bar fallback for claude: drop the `Actions` hint first, but never
- *  the detach chord. */
+/** Narrow-bar fallback for a detachable session: drop the `Actions` hint
+ *  first, but never the detach chord. */
 const DETACH_PIN_HINTS: ReadonlyArray<readonly [string, string]> = [
   ['Control+a q', 'detach'],
 ];
-/** Expanded which-key menu shown while the Ctrl+a leader is open. Claude
- *  also gets `q: detach`; shell has nothing to detach from. */
-const CLAUDE_LEADER_HINTS: ReadonlyArray<readonly [string, string]> = [
+/** Expanded which-key menu shown while the Ctrl+a leader is open. A
+ *  detachable (tmux-backed) session also gets `q: detach`; a plain shell
+ *  has nothing to detach from. */
+const DETACHABLE_LEADER_HINTS: ReadonlyArray<readonly [string, string]> = [
   ['c', 'code'],
   ['v', 'vnc'],
   ['w', 'browser'],
   ['q', 'detach'],
 ];
-const SHELL_LEADER_HINTS: ReadonlyArray<readonly [string, string]> = [
+const PLAIN_LEADER_HINTS: ReadonlyArray<readonly [string, string]> = [
   ['c', 'code'],
   ['v', 'vnc'],
   ['w', 'browser'],
@@ -117,18 +122,19 @@ export function renderFooter(state: FooterState, cols: number): string {
       sessionTitle: state.sessionTitle,
     };
     const isClaude = state.mode === 'claude';
+    const detachable = state.detachable ?? isClaude;
     // Shell mode has no claude activity to surface — passing `stateLabel`
     // overrides statusLine's default (which would otherwise show `(unknown)`
     // because `claudeActivity` is undefined and the container is running).
     const stateLabel = isClaude ? undefined : 'shell';
     if (state.leaderActive) {
-      const leaderHints = isClaude ? CLAUDE_LEADER_HINTS : SHELL_LEADER_HINTS;
+      const leaderHints = detachable ? DETACHABLE_LEADER_HINTS : PLAIN_LEADER_HINTS;
       return statusLine(sidebarBox, cols, stateLabel, leaderHints);
     }
-    // Collapsed: claude keeps the detach chord pinned on the right (its
-    // narrow-bar fallback drops `Actions` first, never `detach`).
-    const collapsed = isClaude ? COLLAPSED_HINTS_CLAUDE : COLLAPSED_HINTS_SHELL;
-    const fallback = isClaude ? DETACH_PIN_HINTS : undefined;
+    // Collapsed: a detachable session keeps the detach chord pinned on the
+    // right (its narrow-bar fallback drops `Actions` first, never `detach`).
+    const collapsed = detachable ? COLLAPSED_HINTS_DETACHABLE : COLLAPSED_HINTS_PLAIN;
+    const fallback = detachable ? DETACH_PIN_HINTS : undefined;
     return statusLine(sidebarBox, cols, stateLabel, collapsed, fallback);
   }
   if (state.kind === 'flash') {

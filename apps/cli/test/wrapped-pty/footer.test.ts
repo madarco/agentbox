@@ -89,8 +89,29 @@ describe('renderFooter — idle (shell mode)', () => {
     expect(out).toContain('c: code');
     expect(out).toContain('v: vnc');
     expect(out).toContain('w: browser');
-    // shell has nothing to detach from
+    // a plain (--no-tmux) shell has nothing to detach from
     expect(out).not.toContain('detach');
+  });
+});
+
+describe('renderFooter — idle (tmux-backed shell)', () => {
+  const idle: FooterState = {
+    kind: 'idle',
+    boxName: 'smoke',
+    mode: 'shell',
+    detachable: true,
+  };
+
+  it('keeps the `(shell)` label but pins the detach chord', () => {
+    const out = visible(renderFooter(idle, 80));
+    expect(out).toContain('(shell)');
+    expect(out).toContain('Control+a q: detach');
+  });
+
+  it('includes the detach entry in the expanded chord menu', () => {
+    const out = visible(renderFooter({ ...idle, leaderActive: true }, 120));
+    expect(out).toContain('c: code');
+    expect(out).toContain('q: detach');
   });
 });
 
