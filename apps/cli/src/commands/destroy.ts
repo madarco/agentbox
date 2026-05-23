@@ -3,6 +3,7 @@ import { destroyBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
+import { agentboxAliasFor, removeAgentboxSshAlias } from '../ssh-config.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface DestroyOptions {
@@ -60,6 +61,14 @@ export const destroyCommand = new Command('destroy')
       } else {
         const provider = await providerForBox(box);
         await provider.destroy(box);
+        // Best-effort: remove the `~/.ssh/config` block `agentbox code` may
+        // have written for this cloud box. A missing block isn't an error
+        // and a file failure shouldn't block destroy.
+        try {
+          await removeAgentboxSshAlias(agentboxAliasFor(box.name));
+        } catch {
+          /* best-effort */
+        }
         process.stdout.write(
           `destroyed ${box.name} (${providerName} sandbox ${box.cloud?.sandboxId ?? '<unknown>'})\n`,
         );
