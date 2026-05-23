@@ -8,8 +8,8 @@ import {
   unpauseBox,
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
-import { requireDockerProvider } from './_provider-guard.js';
 import { downloadClaudeCommand } from './download-claude.js';
 import { downloadCodexCommand } from './download-codex.js';
 import { downloadOpencodeCommand } from './download-opencode.js';
@@ -60,7 +60,47 @@ export const downloadCommand = new Command('download')
   .action(async (idOrName: string | undefined, opts: DownloadOpts) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
-      requireDockerProvider(box, 'download');
+      const isCloud = (box.provider ?? 'docker') !== 'docker';
+
+      if (isCloud) {
+        // Cloud download (workspace): we don't have rsync over docker exec, so
+        // gitignore-aware change-detection isn't wired. Fall back to a bulk
+        // tar of `/workspace` via provider.downloadPath — overwrites the host
+        // workspace dir. The user already gets git-aware sync-back via
+        // `agentbox-ctl git push` inside the box for tracked files; this is
+        // for grabbing untracked or env artifacts.
+        if (opts.dryRun) {
+          throw new Error('cloud download does not yet support --dry-run; omit to bulk-pull /workspace.');
+        }
+        if (!opts.respectGitignore || opts.includeNodeModules || opts.withEnv || opts.pattern.length > 0) {
+          log.warn(
+            'cloud download ignores gitignore/--with-env/--pattern filters in v1 — pulling the whole /workspace tree (Phase 6 polish).',
+          );
+        }
+        if (!opts.yes) {
+          const ok = await confirm({
+            message: `Overwrite ${box.workspacePath} with the cloud box's /workspace contents?`,
+            initialValue: false,
+          });
+          if (isCancel(ok) || !ok) {
+            log.info('cancelled');
+            return;
+          }
+        }
+        const provider = await providerForBox(box);
+        if (!provider.downloadDirContents) {
+          throw new Error(`provider '${provider.name}' does not support bulk workspace download`);
+        }
+        // Pull the *contents* of /workspace into box.workspacePath — files
+        // land directly, not under a `workspace/` subdir.
+        const result = await provider.downloadDirContents(
+          box,
+          '/workspace',
+          box.workspacePath,
+        );
+        process.stdout.write(`downloaded /workspace contents to ${result.finalPath}\n`);
+        return;
+      }
 
       const insp = await inspectBox(box.id);
       if (insp.state === 'paused') {

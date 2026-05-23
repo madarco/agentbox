@@ -5,8 +5,8 @@ import { Command } from 'commander';
 import { execa } from 'execa';
 import { inspectBox, startBox, unpauseBox, type BoxRecord } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
-import { requireDockerProvider } from './_provider-guard.js';
 
 /**
  * A `<box>:<path>` arg has a `:` in it AND no `/` before that colon. Anything
@@ -255,7 +255,30 @@ export const cpCommand = new Command('cp')
     try {
       const parsed = parseArgs(src, dst);
       const box = await resolveBoxOrExit(parsed.boxRef);
-      requireDockerProvider(box, 'cp');
+      const isCloud = (box.provider ?? 'docker') !== 'docker';
+
+      if (isCloud) {
+        // Cloud cp: provider.uploadPath / downloadPath handle the tar +
+        // backend.uploadFile/downloadFile dance. No docker exec, no pause-
+        // probe — Daytona sandboxes don't have a Docker container state to
+        // probe and the SDK handles the running/archived states itself.
+        const provider = await providerForBox(box);
+        if (!provider.uploadPath || !provider.downloadPath) {
+          throw new Error(`provider '${provider.name}' does not support cp`);
+        }
+        if (parsed.direction === 'upload') {
+          const result = await provider.uploadPath(box, parsed.hostPath!, parsed.boxPath);
+          process.stdout.write(`copied to ${box.name}:${result.finalPath}\n`);
+        } else {
+          const result = await provider.downloadPath(
+            box,
+            parsed.boxPath,
+            parsed.hostPath ?? process.cwd(),
+          );
+          process.stdout.write(`copied to ${result.finalPath}\n`);
+        }
+        return;
+      }
 
       const insp = await inspectBox(box.id);
       if (insp.state === 'paused') {

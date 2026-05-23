@@ -133,5 +133,13 @@ export interface Provider {
   buildAttach?(box: BoxRecord, kind: AttachKind, opts?: BuildAttachOptions): Promise<AttachSpec>;
   uploadPath?(box: BoxRecord, hostSrc: string, boxDst: string): Promise<{ finalPath: string }>;
   downloadPath?(box: BoxRecord, boxSrc: string, hostDst: string): Promise<{ finalPath: string }>;
+  /**
+   * Pull the *contents* of an in-box directory into a host directory —
+   * `/workspace/*` → `<hostDst>/*`, not `<hostDst>/<srcBasename>/*`. Used by
+   * `agentbox download` for the bulk workspace pull. Docker providers don't
+   * need this (the rsync path in `pullToHost` already handles it); cloud
+   * providers do because their `downloadPath` matches docker-cp semantics.
+   */
+  downloadDirContents?(box: BoxRecord, boxSrc: string, hostDst: string): Promise<{ finalPath: string }>;
   checkpoint?: ProviderCheckpoint;
 }

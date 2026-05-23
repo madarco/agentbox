@@ -15,3 +15,9 @@ export {
   type SeedCloudWorkspaceResult,
 } from './workspace-seed.js';
 export { bashScript, quoteShellArg, quoteShellArgv } from './shell.js';
+export {
+  downloadFromCloudBox,
+  pullCloudDirContents,
+  uploadToCloudBox,
+  type CloudCpResult,
+} from './cloud-cp.js';

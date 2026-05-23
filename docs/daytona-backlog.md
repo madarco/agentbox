@@ -1,11 +1,15 @@
 # Daytona Cloud Provider — Backlog
 
-The full 6-phase plan lives at `~/.claude/plans/synthetic-jumping-flame.md`. This file tracks **what's still missing** after the foundation + comms + Daytona backend + Phase 3 routing all landed and were e2e-verified against a real Daytona sandbox.
+The full 6-phase plan lives at `~/.claude/plans/synthetic-jumping-flame.md`. This file tracks **what's still missing** after the foundation + comms + Daytona backend + most of Phase 3 routing landed and were e2e-verified against a real Daytona sandbox.
 
 Status legend:
 - 🔴 **blocking** — cloud users hit this often / no workaround.
 - 🟡 **friction** — has a workaround; smooths UX when fixed.
 - 🟢 **polish** — nice-to-have / cleanup / aesthetics.
+
+## Already landed (for context — not in backlog)
+
+`create --provider daytona` · `list` · `status` · `inspect` · `url --print` · `pause`/`unpause`/`stop`/`start` · `destroy` (with sync stop+delete) · `shell` (incl. `-- <cmd>` one-shot) · `claude attach`/`start`, `codex attach`/`start`, `opencode attach`/`start` (via SSH + tmux) · `cp` both directions (file + dir, via `provider.uploadPath`/`downloadPath`) · `download` bulk workspace pull (via `provider.downloadDirContents`) · in-box `agentbox-ctl git push` (host bundle pull-back executor with `askPrompt` gate) · `relay restart` rehydrates cloud pollers from persisted state.
 
 ---
 
@@ -40,13 +44,15 @@ Docker provider runs `git stash create` + tar of untracked files so the in-box w
 
 ## 2. Host executor & comms layer (Phase 4 polish)
 
-### 2.1 🔴 `cp.toHost` / `cp.fromHost` cloud executor is a stub
-`packages/relay/src/host-actions.ts` `executeCloudAction` only handles `git.push` / `git.fetch`. `cp.*` falls into the default branch and returns `"host executor for 'cp.toHost' is not yet supported for cloud boxes"`. The in-box `agentbox-ctl cp …` call unblocks cleanly but the user can't move files.
+### 2.1 🟡 In-box `agentbox-ctl cp` cloud executor is a stub
+**Host-side `agentbox cp` works** (`provider.uploadPath`/`downloadPath`, see "Already landed"). What's still stubbed is the **in-box `agentbox-ctl cp`** path — when the agent inside the sandbox calls `cp`, the request goes through the bridge → host action queue → `executeCloudAction` in `packages/relay/src/host-actions.ts`, which currently returns `"host executor for 'cp.toHost' is not yet supported for cloud boxes"`. The in-box CTL call unblocks cleanly with that error.
 
-**Fix:** implement `cp.toHost` (sandbox → host) via `backend.downloadFile`; `cp.fromHost` (host → sandbox) via `backend.uploadFile`. Reuse the existing `askPrompt` gating like Docker does.
+**Fix:** in `executeCloudAction`, add `cp.toHost`/`cp.fromHost` cases that call `provider.uploadPath`/`downloadPath` (or `cloud-cp.ts` helpers directly). Reuse the `askPrompt` gating like Docker does.
 
-### 2.2 🔴 `download.workspace` / `download.env` / `download.config` / `download.claude` cloud executor stubbed
-Same as 2.1 — the bridge plumbing parks them but no executor handles them. The Docker provider shells out to the CLI's `download` subcommands; for cloud we'd need to mirror that with `backend.downloadFile` + rsync semantics.
+### 2.2 🟡 In-box `agentbox-ctl download` cloud executor stubbed
+Same as 2.1 — host-side `agentbox download <cloud-box>` is wired. The in-box `agentbox-ctl download workspace|env|config|claude` parks an action that no cloud executor handles.
+
+**Fix:** map `download.workspace` to `provider.downloadDirContents`; the others (`env`/`config`/`claude`) defer to Phase 6 once cloud agent-config sync (1.2) lands.
 
 ### 2.3 🟡 `checkpoint.create` cloud executor stubbed
 v1 deferred checkpoints for cloud (Daytona can't snapshot a live sandbox's FS). For long-term: implement via `sb.archive()` + naming, or via image rebuild. Until then the in-box `agentbox-ctl checkpoint` returns "not yet supported".
@@ -86,8 +92,8 @@ The Docker shell command has multi-session support (named shells, attach-by-labe
 
 **Fix:** route session naming + `--new` through `BuildAttachOptions.sessionName`; mirror docker's `allocateShellSessionName` / `listShellSessions` semantics for cloud using `tmux ls` over SSH.
 
-### 3.4 🟡 `agentbox cp` / `download` cloud-guarded
-Currently `requireDockerProvider(box, 'cp')` / `'download'` bails with a clear message. Need to route through `provider.uploadPath` / `downloadPath` (cloud impl already exists conceptually but isn't wired in commands).
+### 3.4 ✅ `agentbox cp` / `download` cloud-routed (done)
+~~Cloud-guarded~~ — routed through `provider.uploadPath` / `downloadPath` / `downloadDirContents`. See "Already landed".
 
 ### 3.5 🟡 `agentbox logs` cloud-guarded
 For cloud could run `backend.exec("tail -F /var/log/agentbox/<service>.log")` via the SSH attach machinery. Same shape as `agentbox shell` one-shot.
@@ -209,9 +215,12 @@ Hard to fully test without a real TTY; rely on the smoke `agentbox shell <box> -
 
 ## Quick-win order (suggested)
 
-1. **6.1 Retry-on-504** — smallest, fixes a real flakiness everyone sees.
-2. **1.1 envFilesToImport upload for cloud** — wizard collects them but throws them away; easy win.
-3. **4.1 URL token UX** — `agentbox url` for cloud currently 401s in browser; needs at least clear documentation + ideally a query-param attempt.
-4. **3.1 `--provider` on `agentbox claude/codex/opencode` default actions** — the most-confusing UX gap (`agentbox claude my-cloud-box` silently creates a docker box).
-5. **1.2 Agent-config sync** — biggest UX leap (no more in-box `claude login`).
-6. **2.1 / 2.2 cp + download cloud executors** — unblocks the `agentbox-ctl cp/download` workflows.
+1. **6.1 Retry-on-504** — smallest, fixes a real flakiness everyone sees (observed multiple times during e2e).
+2. **3.6 `agentbox screen` for cloud** — VNC daemon already runs in the sandbox; just resolve `backend.previewUrl(6080)` and open. Same pattern as `url`. ~30 min.
+3. **3.5 `agentbox logs` for cloud** — `backend.exec("tail -F …")` over the SSH attach machinery; mirrors shell one-shot. ~30 min.
+4. **3.7 `agentbox wait` for cloud** — `provider.exec(box, ['agentbox-ctl', 'wait-ready', '--json'])`. Trivial.
+5. **1.1 envFilesToImport upload for cloud** — wizard collects them but `create()` drops them; easy win.
+6. **4.1 URL token UX** — `agentbox url` for cloud currently 401s in browser; needs at least clear documentation + ideally a query-param or `public:true` opt-in.
+7. **3.1 `--provider` on `agentbox claude/codex/opencode` default actions** — the most-confusing UX gap (`agentbox claude my-cloud-box` silently creates a docker box). Attach/start subcommands already work; this just needs the default action to honor `--provider`.
+8. **1.2 Agent-config sync** — biggest UX leap (no more in-box `claude login`).
+9. **2.1 / 2.2 In-box `agentbox-ctl cp` / `download` cloud executors** — unblocks the in-sandbox workflows (host-side equivalents already work).

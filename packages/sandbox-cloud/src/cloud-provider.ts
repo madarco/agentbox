@@ -36,6 +36,11 @@ import {
   generateRelayToken,
   registerBoxWithRelay,
 } from '@agentbox/sandbox-docker';
+import {
+  downloadFromCloudBox,
+  pullCloudDirContents,
+  uploadToCloudBox,
+} from './cloud-cp.js';
 import { launchCloudCtlDaemon } from './ctl-launch.js';
 import { quoteShellArgv } from './shell.js';
 import { seedCloudWorkspace } from './workspace-seed.js';
@@ -423,6 +428,30 @@ export function createCloudProvider(
           }
         : undefined;
       return { argv: fullArgv, cleanup };
+    },
+
+    async uploadPath(
+      box: BoxRecord,
+      hostSrc: string,
+      boxDst: string,
+    ): Promise<{ finalPath: string }> {
+      return uploadToCloudBox(backend, handleFor(box), hostSrc, boxDst);
+    },
+
+    async downloadPath(
+      box: BoxRecord,
+      boxSrc: string,
+      hostDst: string,
+    ): Promise<{ finalPath: string }> {
+      return downloadFromCloudBox(backend, handleFor(box), boxSrc, hostDst);
+    },
+
+    async downloadDirContents(
+      box: BoxRecord,
+      boxSrc: string,
+      hostDst: string,
+    ): Promise<{ finalPath: string }> {
+      return pullCloudDirContents(backend, handleFor(box), boxSrc, hostDst);
     },
 
     async resolveUrl(box: BoxRecord): Promise<string> {
