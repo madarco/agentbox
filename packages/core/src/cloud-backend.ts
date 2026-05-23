@@ -7,6 +7,18 @@
  * every cloud backend. Adding a new cloud is then ~one file implementing this.
  */
 
+/**
+ * Persistent volume to mount into the sandbox at provision time. Backends
+ * without a volume primitive ignore this field. `mountPath` is absolute inside
+ * the sandbox; `subpath` (optional) mounts a subdirectory of the volume — the
+ * shared-volume-per-tenant pattern.
+ */
+export interface CloudVolumeMount {
+  volumeId: string;
+  mountPath: string;
+  subpath?: string;
+}
+
 export interface CloudProvisionRequest {
   name: string;
   /** Resolved base image / snapshot ref. */
@@ -14,6 +26,8 @@ export interface CloudProvisionRequest {
   resources?: { cpu?: number; memory?: number; disk?: number };
   /** Env vars baked into the sandbox at provision time. */
   env?: Record<string, string>;
+  /** Persistent volumes to attach. Backends without a volume API ignore this. */
+  volumes?: CloudVolumeMount[];
   onLog?: (line: string) => void;
 }
 
@@ -105,4 +119,13 @@ export interface CloudBackend {
   attachArgv?(h: CloudHandle): Promise<string[]>;
   /** Optional: best-effort cleanup of a token minted by `attachArgv`. */
   revokeAttachToken?(h: CloudHandle, argv: string[]): Promise<void>;
+
+  /**
+   * Optional: get-or-create a persistent volume by name and return an opaque
+   * id that callers thread into `CloudProvisionRequest.volumes[i].volumeId`.
+   * Backends without a volume API omit this; callers detect the absence with
+   * `typeof backend.ensureVolume === 'function'` and degrade gracefully (e.g.
+   * fall back to per-sandbox seeding).
+   */
+  ensureVolume?(name: string): Promise<{ volumeId: string }>;
 }

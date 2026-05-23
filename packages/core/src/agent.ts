@@ -16,17 +16,30 @@ const claudeCodeLauncher: AgentLauncher = {
   },
 };
 
+// codex accepts a leading positional as the seed prompt — `codex "<message>"`
+// drops the user into the TUI with that turn pre-submitted. Same shape as
+// claude, so the launcher is structurally identical.
 const codexLauncher: AgentLauncher = {
   kind: 'codex',
-  buildArgs() {
-    throw new Error(
-      'codex agent is not yet supported by agentbox; install + wire the codex launcher first',
-    );
+  buildArgs(initialMessage, userArgs) {
+    if (!initialMessage) return [...userArgs];
+    return [initialMessage, ...userArgs];
+  },
+};
+
+// opencode also accepts a leading positional as the seed prompt — `opencode
+// "<message>"` enters the TUI with that turn pre-submitted. Mirrors claude/codex.
+const opencodeLauncher: AgentLauncher = {
+  kind: 'opencode',
+  buildArgs(initialMessage, userArgs) {
+    if (!initialMessage) return [...userArgs];
+    return [initialMessage, ...userArgs];
   },
 };
 
 export function resolveAgentLauncher(kind: AgentKind): AgentLauncher {
   if (kind === 'claude-code') return claudeCodeLauncher;
   if (kind === 'codex') return codexLauncher;
+  if (kind === 'opencode') return opencodeLauncher;
   throw new Error(`unknown agent kind: ${String(kind)}`);
 }

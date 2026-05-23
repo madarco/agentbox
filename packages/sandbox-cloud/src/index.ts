@@ -14,6 +14,14 @@ export {
   type SeedCloudWorkspaceArgs,
   type SeedCloudWorkspaceResult,
 } from './workspace-seed.js';
+export {
+  agentSpecsForCloud,
+  ensureAgentVolumesForCloud,
+  seedAgentVolumesIfFresh,
+  type CloudAgentKind,
+  type EnsureAgentVolumesResult,
+  type SeedAgentVolumesOptions,
+} from './agent-credentials.js';
 export { bashScript, quoteShellArg, quoteShellArgv } from './shell.js';
 export {
   downloadFromCloudBox,

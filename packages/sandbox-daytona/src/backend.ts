@@ -14,6 +14,7 @@ import type {
   CloudPreviewUrl,
   CloudProvisionRequest,
   CloudState,
+  CloudVolumeMount,
 } from '@agentbox/core';
 import { resolveDockerfileContext } from './dockerfile-context.js';
 import { ensureDaytonaEnvLoaded } from './env-loader.js';
@@ -95,6 +96,23 @@ function mapState(s: SandboxState | string | undefined): CloudState {
   }
 }
 
+/**
+ * Translate our provider-neutral `CloudVolumeMount` into the SDK shape Daytona
+ * expects. The SDK's `VolumeMount` carries `volumeId` + `mountPath` (+ optional
+ * `subpath` for S3-prefix mounts); a 1:1 mapping with our type.
+ */
+function toDaytonaVolumeMount(v: CloudVolumeMount): {
+  volumeId: string;
+  mountPath: string;
+  subpath?: string;
+} {
+  return {
+    volumeId: v.volumeId,
+    mountPath: v.mountPath,
+    ...(v.subpath ? { subpath: v.subpath } : {}),
+  };
+}
+
 /** Translate the request's image ref into something Daytona's `create` accepts. */
 function resolveImage(ref: string): string | Image {
   if (ref !== DEFAULT_BOX_IMAGE_REF) return ref;
@@ -126,6 +144,9 @@ export const daytonaBackend: CloudBackend = {
         image,
         ...(req.resources ? { resources: req.resources } : {}),
         envVars: req.env,
+        ...(req.volumes && req.volumes.length > 0
+          ? { volumes: req.volumes.map(toDaytonaVolumeMount) }
+          : {}),
         labels: { 'agentbox.name': req.name },
       },
       {
@@ -134,6 +155,41 @@ export const daytonaBackend: CloudBackend = {
       },
     );
     return { sandboxId: sandbox.id };
+  },
+
+  async ensureVolume(name: string): Promise<{ volumeId: string }> {
+    // Daytona's `volume.get(name, create=true)` returns the existing volume or
+    // initiates creation on first call. Critically, a freshly-created volume
+    // comes back in `creating`/`pending_create` state — passing such a volume
+    // into `Daytona.create({ volumes: […] })` is rejected with
+    // "Volume is not in a ready state. Current state: creating". So poll
+    // `volume.get` until the state lands on `ready` (or a terminal failure).
+    //
+    // Volumes are org-scoped on Daytona — every sandbox in the same Daytona
+    // organization sees the same id, which is what we want for sharing agent
+    // credentials across all of a user's boxes.
+    const client = getClient();
+    let vol = await client.volume.get(name, true);
+    // Volumes typically transition from creating → ready within a few seconds.
+    // Allow up to 60s in case of slow control-plane operations.
+    const deadline = Date.now() + 60_000;
+    while (vol.state !== 'ready') {
+      if (vol.state === 'error' || vol.state === 'deleted' || vol.state === 'deleting') {
+        throw new Error(
+          `Daytona volume '${name}' is in unrecoverable state '${vol.state}'. ` +
+            `Delete it from the Daytona dashboard and retry.`,
+        );
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Daytona volume '${name}' did not become ready within 60s (state: ${vol.state}). ` +
+            `Try again — the Daytona control plane may be slow.`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+      vol = await client.volume.get(name);
+    }
+    return { volumeId: vol.id };
   },
 
   async get(sandboxId: string): Promise<CloudHandle | null> {

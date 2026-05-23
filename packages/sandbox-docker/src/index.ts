@@ -9,6 +9,7 @@ export {
   buildClaudeMounts,
   buildTmuxSessionArgs,
   buildShellArgv,
+  CLAUDE_FORWARDED_ENV_KEYS,
   ClaudeSessionError,
   claudeSessionInfo,
   CONTAINER_USER,
@@ -146,6 +147,15 @@ export {
   type RelayStatus,
   type StopRelayResult,
 } from './relay.js';
+export {
+  stageClaudeForUpload,
+  stageCodexForUpload,
+  stageOpencodeForUpload,
+  type StageClaudeOptions,
+  type StageCodexOptions,
+  type StageOpencodeOptions,
+  type StageResult,
+} from './host-stage.js';
 export { EXCLUDE_DIRS, SNAPSHOTS_ROOT, snapshotPathFor } from './snapshot.js';
 export {
   CHECKPOINTS_ROOT,

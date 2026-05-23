@@ -37,6 +37,10 @@ import {
   registerBoxWithRelay,
 } from '@agentbox/sandbox-docker';
 import {
+  ensureAgentVolumesForCloud,
+  seedAgentVolumesIfFresh,
+} from './agent-credentials.js';
+import {
   downloadFromCloudBox,
   pullCloudDirContents,
   uploadToCloudBox,
@@ -149,6 +153,13 @@ export function createCloudProvider(
         log(`relay ensure failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
       }
 
+      // Reserve per-agent credential volumes (Claude / Codex / OpenCode)
+      // before provision so we can pass them as mounts in the same SDK call —
+      // Daytona only attaches volumes at create time, not after. Backends
+      // without a volume primitive return an empty list and we degrade to
+      // "user logs in inside the box" the way cloud worked before.
+      const agentVolumes = await ensureAgentVolumesForCloud(backend, { onLog: log });
+
       log(`provisioning ${providerName} sandbox`);
       const handle = await backend.provision({
         name,
@@ -162,7 +173,9 @@ export function createCloudProvider(
           AGENTBOX_RELAY_URL: `http://127.0.0.1:${String(8787)}`,
           AGENTBOX_RELAY_TOKEN: relayToken,
           AGENTBOX_BRIDGE_TOKEN: bridgeToken,
+          ...agentVolumes.env,
         },
+        volumes: agentVolumes.mounts,
         onLog: log,
       });
 
@@ -175,6 +188,19 @@ export function createCloudProvider(
           workspaceDir: CLOUD_WORKSPACE_DIR,
           onLog: log,
         });
+
+        // After the sandbox is up with the credential volumes mounted, seed
+        // any volume that doesn't already carry a `.agentbox-seeded-at`
+        // marker from the host's filtered ~/.claude / ~/.codex /
+        // opencode tree. Idempotent per agent — subsequent boxes find the
+        // marker and skip the upload entirely.
+        if (agentVolumes.agents.length > 0) {
+          await seedAgentVolumesIfFresh(backend, handle, {
+            agents: agentVolumes.agents,
+            hostWorkspace: req.workspacePath,
+            onLog: log,
+          });
+        }
 
         log('launching agentbox-ctl daemon');
         await launchCloudCtlDaemon({

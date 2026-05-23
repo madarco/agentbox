@@ -42,5 +42,6 @@ export type {
   CloudPreviewUrl,
   CloudProvisionRequest,
   CloudState,
+  CloudVolumeMount,
 } from './cloud-backend.js';
 export { AmbiguousBoxError, BoxNotFoundError } from './errors.js';

@@ -103,6 +103,12 @@ async function seedFromGitBundle(args: SeedFromGitBundleArgs): Promise<void> {
     const SUDO = `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi`;
     const script = [
       `set -euo pipefail`,
+      // Move out of any cwd we might inherit from Daytona's executeCommand
+      // before we delete /workspace. The agentbox image bakes WORKDIR
+      // /workspace; if the shell's cwd is /workspace when we `rm -rf` it,
+      // the next process inherits a stale cwd FD and git-clone's child
+      // (index-pack) fails with "Unable to read current working directory".
+      `cd /tmp`,
       SUDO,
       `$SUDO rm -rf ${quoteShellArgv([args.workspaceDir])}`,
       `$SUDO mkdir -p ${quoteShellArgv([args.workspaceDir])}`,
@@ -149,6 +155,12 @@ async function seedFromTar(args: SeedFromTarArgs): Promise<void> {
     const SUDO = `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi`;
     const script = [
       `set -euo pipefail`,
+      // Move out of any cwd we might inherit from Daytona's executeCommand
+      // before we delete /workspace. The agentbox image bakes WORKDIR
+      // /workspace; if the shell's cwd is /workspace when we `rm -rf` it,
+      // the next process inherits a stale cwd FD and git-clone's child
+      // (index-pack) fails with "Unable to read current working directory".
+      `cd /tmp`,
       SUDO,
       `$SUDO rm -rf ${quoteShellArgv([args.workspaceDir])}`,
       `$SUDO mkdir -p ${quoteShellArgv([args.workspaceDir])}`,

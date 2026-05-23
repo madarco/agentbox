@@ -505,12 +505,14 @@ export interface ClaudeMountResult {
 // When the user invokes `agentbox claude` from inside their host claude
 // session, that env IS present in the calling shell; forwarding it is the
 // only way the in-box claude inherits the same model default.
-const FORWARDED_ENV_KEYS = [
+export const CLAUDE_FORWARDED_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
   'CLAUDE_CODE_OAUTH_TOKEN',
   'CLAUDE_EFFORT',
   'ANTHROPIC_MODEL',
 ] as const;
+// Internal alias kept so existing usages in this file stay terse.
+const FORWARDED_ENV_KEYS = CLAUDE_FORWARDED_ENV_KEYS;
 
 export function buildClaudeMounts(
   spec: ClaudeConfigSpec,

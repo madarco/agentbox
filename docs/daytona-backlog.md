@@ -20,10 +20,14 @@ The setup wizard collects host env/config files (`.env`, `secrets.toml`, `agentb
 
 **Fix:** in `packages/sandbox-cloud/src/cloud-provider.ts` `create()`, after workspace seeding, build a tar of `req.envFilesToImport` (workspace-relative paths) → `backend.uploadFile(tar, '/tmp/envfiles.tar')` → `backend.exec(... tar -xf ... -C /workspace)`. Mirror the `copyHostEnvFilesToBox` logic from `packages/sandbox-docker/src/host-export.ts`.
 
-### 1.2 🔴 Claude / Codex / OpenCode credentials not synced to cloud
-Docker boxes get host `~/.claude`, `~/.codex`, `~/.config/opencode` rsync'd into named volumes at create (filtered for host-only hooks, plugin native deps, etc — see `packages/sandbox-docker/src/claude.ts` / `codex.ts` / `opencode.ts`). **Cloud boxes get nothing** — the user must `claude login` / `codex auth login` / `opencode auth login` interactively inside every new sandbox.
+### 1.2 ✅ Claude / Codex / OpenCode credentials synced to cloud (done)
+Initial cloud boxes now seed `~/.claude`, `~/.codex`, `~/.config/opencode` (+ `~/.local/share/opencode/`) from the host into per-agent Daytona volumes (`agentbox-claude-config`, `agentbox-codex-config`, `agentbox-opencode-config`). Volumes are shared across every cloud box; once seeded, subsequent `create`s skip the upload (`.agentbox-seeded-at` marker check). Refresh is **explicit only** — `agentbox daytona resync [--agent claude|codex|opencode|all]` provisions a throwaway sandbox, force-re-uploads, and destroys.
 
-**Fix:** extract the host-side filtering ("what to sync") from `claude.ts` / `codex.ts` / `opencode.ts` into provider-neutral helpers in `@agentbox/sandbox-core/agent-config/`. Cloud impl: stage the filtered tree to a host tmpdir, tar, upload via `backend.uploadFile`, extract into the right HOME paths. Handle the `_claude.json` write-once rule across sandbox restarts.
+Implementation: host-side staging lives in `packages/sandbox-docker/src/host-stage.ts` (`stageClaudeForUpload` / `stageCodexForUpload` / `stageOpencodeForUpload` — filtered tarballs reusing the existing host-hook filter, install-method coercion, workspace-trust and project-alias logic). Cloud orchestration in `packages/sandbox-cloud/src/agent-credentials.ts`. `CloudBackend` gained an optional `ensureVolume(name)` primitive and `CloudProvisionRequest.volumes`.
+
+**Codex macOS Keychain landmine**: detected and surfaced as a one-time warning during seed (skip codex for the box, claude + opencode still work). User fixes by setting `cli_auth_credentials_store = "file"` in `~/.codex/config.toml` then `codex login` again, or by setting `OPENAI_API_KEY`.
+
+**Remaining follow-up**: box→host pull (the reverse direction of `agentbox download claude|codex|opencode` against a cloud volume) is deferred. Today the docker `download` paths still work for docker boxes only.
 
 ### 1.3 🟡 Workspace bundle is full-history `--all`
 `packages/sandbox-cloud/src/workspace-seed.ts` does `git bundle create --all`, which is fine for small repos but slow + big upload for monorepos with deep history. (eg use range export from the start of the current branch)
