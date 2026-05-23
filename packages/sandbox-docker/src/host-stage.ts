@@ -20,7 +20,7 @@
  * Linux distro ship both.
  */
 
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join, relative } from 'node:path';
 import { execa } from 'execa';
@@ -30,6 +30,7 @@ import {
   setInstallMethodNative,
   trustWorkspace,
 } from './claude-hooks-filter.js';
+import { CREDENTIALS_BACKUP_FILE } from './claude-credentials.js';
 
 export interface StageResult {
   /** Absolute path to the .tar.gz, or null when there was nothing to stage. */
@@ -88,7 +89,14 @@ function emptyResult(warnings: string[] = []): StageResult {
 
 async function tarballFromDir(stageDir: string, agent: string): Promise<string> {
   const tarballPath = join(tmpdir(), `agentbox-${agent}-${basename(stageDir)}.tar.gz`);
-  await execa('tar', ['-czf', tarballPath, '-C', stageDir, '.']);
+  // COPYFILE_DISABLE=1: macOS's bsdtar (the system `tar`) walks extended attrs
+  // and emits AppleDouble `._<name>` sidecars for any file with xattrs, which
+  // then pollute the volume inside the cloud sandbox (claude reads ~/.claude
+  // top-level and chokes on those bogus entries). The env knob makes Apple's
+  // copyfile() helpers a no-op, so tar produces a clean POSIX archive.
+  await execa('tar', ['-czf', tarballPath, '-C', stageDir, '.'], {
+    env: { ...process.env, COPYFILE_DISABLE: '1' },
+  });
   return tarballPath;
 }
 
@@ -221,6 +229,19 @@ export async function stageClaudeForUpload(opts: StageClaudeOptions = {}): Promi
       working = trustWorkspace(working, CLOUD_WORKSPACE).data;
     }
     await writeFile(join(stageDir, '_claude.json'), JSON.stringify(working, null, 2));
+
+    // 3b. .credentials.json — the OAuth token file Claude Code reads alongside
+    //     `_claude.json`. On macOS the host's ~/.claude/.credentials.json is
+    //     typically missing because the token is in the system Keychain, but
+    //     the agentbox Docker provider mirrors a portable copy to
+    //     ~/.agentbox/claude-credentials.json via syncClaudeCredentials. That
+    //     backup is what we ship to the cloud volume. Without this, the in-box
+    //     claude sees `_claude.json` (account info) but no token and bounces
+    //     to the interactive sign-in flow — which inside a tmux-attached SSH
+    //     session manifests as an immediate exit.
+    if (await pathExists(CREDENTIALS_BACKUP_FILE)) {
+      await copyFile(CREDENTIALS_BACKUP_FILE, join(stageDir, '.credentials.json'));
+    }
 
     // 4. plugins/*.json: rewrite host-home installPath/installLocation values
     //    to the box's /home/vscode/.claude/plugins/ tree. Without this, claude

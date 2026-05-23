@@ -29,6 +29,8 @@ import { resolveClaudeAuth, type ResolvedClaudeAuth } from '../auth.js';
 import { resolveAgentLauncher } from '@agentbox/core';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
+import { cloudAgentCreate } from './_cloud-agent-create.js';
+import { providerForCreate } from '../provider/registry.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
@@ -96,6 +98,8 @@ interface ClaudeCreateOptions {
   cpus?: string;
   pidsLimit?: string;
   disk?: string;
+  /** Sandbox backend: `docker` (default) or `daytona`. */
+  provider?: string;
 }
 
 function buildClaudeCliOverrides(opts: ClaudeCreateOptions): Partial<UserConfig> {
@@ -236,6 +240,10 @@ export const claudeCommand = new Command('claude')
   .option('--cpus <n>', 'CPU count cap (fractional ok, e.g. 1.5); unset = unlimited')
   .option('--pids-limit <n>', 'max process count (PIDs cgroup); unset = unlimited')
   .option('--disk <size>', 'best-effort writable-layer size (e.g. 10g); no-op on overlay2/macOS')
+  .option(
+    '--provider <name>',
+    "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
+  )
   .argument(
     '[claude-args...]',
     "extra args passed to claude inside the box; place after `--`, e.g. `agentbox claude -- --model sonnet`",
@@ -254,29 +262,37 @@ export const claudeCommand = new Command('claude')
           ? cfg.effective.box.defaultCheckpoint
           : undefined;
 
+    // Resolve provider once. The --provider flag wins, then box.provider config,
+    // then default 'docker'. The Docker-only fast path below skips entirely on
+    // cloud — we delegate to the cloud-agent-create helper after running the
+    // (provider-agnostic) setup wizard.
+    const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
+    const isCloud = providerName !== 'docker';
+
     // Resolve auth from host env or the legacy ~/.agentbox/auth.json
     // setup-token (the dormant CI fallback).
     const resolved = await resolveClaudeAuth(process.env);
 
-    // First-run sign-in offer — before the env-file picker and the setup
-    // wizard, and before any box work, so the user signs in up front. Uses a
-    // throwaway container; the result seeds every future box via the host
-    // backup. No-op when credentials already exist or this isn't interactive.
-    await maybeRunClaudeLogin({
-      image: cfg.effective.box.image,
-      authSource: resolved.source,
-      yes: !!opts.yes,
-      hostWorkspace: opts.workspace,
-    });
+    // First-run sign-in offer is Docker-only — the cloud path seeds creds via
+    // the per-agent Daytona volume (see ensureAgentVolumesForCloud).
+    if (!isCloud) {
+      await maybeRunClaudeLogin({
+        image: cfg.effective.box.image,
+        authSource: resolved.source,
+        yes: !!opts.yes,
+        hostWorkspace: opts.workspace,
+      });
+    }
 
-    // First-run Portless opt-in (Docker Desktop only). Persists once per
-    // machine to the global config; the resolved flag goes into createBox.
-    const portlessEnabled = await maybePromptPortless({
-      engine: await detectEngine(),
-      enabled: cfg.effective.portless.enabled,
-      yes: !!opts.yes,
-      cwd: opts.workspace,
-    });
+    // Portless is Docker Desktop-only — skip on cloud.
+    const portlessEnabled = isCloud
+      ? undefined
+      : await maybePromptPortless({
+          engine: await detectEngine(),
+          enabled: cfg.effective.portless.enabled,
+          yes: !!opts.yes,
+          cwd: opts.workspace,
+        });
 
     // First-run wizard: when no agentbox.yaml exists, offer to inject an
     // initial user-message so claude reads /agentbox-setup and writes one.
@@ -294,6 +310,34 @@ export const claudeCommand = new Command('claude')
         wiz.initialPrompt,
         claudeArgs,
       );
+    }
+
+    if (isCloud) {
+      const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });
+      // browser.default = 'playwright' | 'both' implies installing playwright
+      // even if box.withPlaywright wasn't explicitly set.
+      const withPlaywright =
+        cfg.effective.box.withPlaywright || cfg.effective.browser.default !== 'agent-browser';
+      await cloudAgentCreate({
+        provider,
+        request: {
+          workspacePath: opts.workspace,
+          name: opts.name,
+          checkpointRef,
+          image: cfg.effective.box.image,
+          withPlaywright,
+          withEnv: cfg.effective.box.withEnv,
+          envFilesToImport: wiz.envFilesToImport,
+          vnc: { enabled: cfg.effective.box.vnc },
+          limits: resolveLimits(cfg.effective.box, opts),
+          projectRoot,
+        },
+        binary: 'claude',
+        sessionName: cfg.effective.claude.sessionName,
+        mode: 'claude',
+        extraArgs: effectiveClaudeArgs,
+      });
+      return;
     }
 
     // host-snapshot default off: with the overlay retired, the snapshot is

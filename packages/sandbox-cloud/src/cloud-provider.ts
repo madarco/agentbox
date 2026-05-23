@@ -41,6 +41,7 @@ import {
   ensureAgentVolumesForCloud,
   seedAgentVolumesIfFresh,
 } from './agent-credentials.js';
+import { uploadEnvFiles } from './env-files.js';
 import {
   downloadFromCloudBox,
   pullCloudDirContents,
@@ -202,6 +203,22 @@ export function createCloudProvider(
             hostWorkspace: req.workspacePath,
             onLog: log,
           });
+        }
+
+        // Copy the env/config files the setup wizard collected (`.env`,
+        // `secrets.toml`, `agentbox.yaml`, …) into `/workspace`. The Docker
+        // provider does the same via copyHostEnvFilesToBox; before this hook
+        // these files were silently dropped on the cloud path.
+        if (req.envFilesToImport && req.envFilesToImport.length > 0) {
+          const { copied } = await uploadEnvFiles({
+            backend,
+            handle,
+            workspacePath: req.workspacePath,
+            files: req.envFilesToImport,
+            workspaceDir: CLOUD_WORKSPACE_DIR,
+            onLog: log,
+          });
+          if (copied > 0) log(`copied ${String(copied)} env/config file(s) into /workspace`);
         }
 
         log('launching agentbox-ctl daemon');

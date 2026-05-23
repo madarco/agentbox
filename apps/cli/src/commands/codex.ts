@@ -28,6 +28,8 @@ import {
 import { Command } from 'commander';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
+import { cloudAgentCreate } from './_cloud-agent-create.js';
+import { providerForCreate } from '../provider/registry.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
@@ -94,6 +96,8 @@ interface CodexCreateOptions {
   cpus?: string;
   pidsLimit?: string;
   disk?: string;
+  /** Sandbox backend: `docker` (default) or `daytona`. */
+  provider?: string;
 }
 
 function buildCodexCliOverrides(opts: CodexCreateOptions): Partial<UserConfig> {
@@ -211,6 +215,10 @@ export const codexCommand = new Command('codex')
   .option('--cpus <n>', 'CPU count cap (fractional ok, e.g. 1.5); unset = unlimited')
   .option('--pids-limit <n>', 'max process count (PIDs cgroup); unset = unlimited')
   .option('--disk <size>', 'best-effort writable-layer size (e.g. 10g); no-op on overlay2/macOS')
+  .option(
+    '--provider <name>',
+    "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
+  )
   .argument(
     '[codex-args...]',
     "extra args passed to codex inside the box; place after `--`, e.g. `agentbox codex -- -m gpt-5.4`",
@@ -228,6 +236,36 @@ export const codexCommand = new Command('codex')
         : cfg.effective.box.defaultCheckpoint.length > 0
           ? cfg.effective.box.defaultCheckpoint
           : undefined;
+
+    // Resolve provider. Cloud path skips docker-only steps (login offer,
+    // Portless, createBox) and delegates to cloudAgentCreate.
+    const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
+    const isCloud = providerName !== 'docker';
+
+    if (isCloud) {
+      const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });
+      const withPlaywright =
+        cfg.effective.box.withPlaywright || cfg.effective.browser.default !== 'agent-browser';
+      await cloudAgentCreate({
+        provider,
+        request: {
+          workspacePath: opts.workspace,
+          name: opts.name,
+          checkpointRef,
+          image: cfg.effective.box.image,
+          withPlaywright,
+          withEnv: cfg.effective.box.withEnv,
+          vnc: { enabled: cfg.effective.box.vnc },
+          limits: resolveLimits(cfg.effective.box, opts),
+          projectRoot,
+        },
+        binary: 'codex',
+        sessionName: cfg.effective.codex.sessionName,
+        mode: 'codex',
+        extraArgs: codexArgs,
+      });
+      return;
+    }
 
     // First-run sign-in offer — before any box work, so the user signs in up
     // front. Uses a throwaway container; the result seeds every future box.

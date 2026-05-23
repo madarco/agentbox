@@ -15,15 +15,28 @@ Status legend:
 
 ## 1. Sandbox seeding & agent config (Phase 6 core)
 
-### 1.1 🔴 `envFilesToImport` not uploaded to cloud sandboxes
-The setup wizard collects host env/config files (`.env`, `secrets.toml`, `agentbox.yaml`, …) and `--with-env` works for Docker. **The cloud provider's `create()` drops them entirely** — the user picks files in the wizard but they never land in the sandbox.
+### 1.1 ✅ `envFilesToImport` uploaded to cloud sandboxes (done)
+Cloud `create()` now packs the wizard-selected env/config files on the host (same `find` + `tar --null -T -` mechanic Docker uses) and ships the tarball into the sandbox via `backend.uploadFile` + `backend.exec(tar -xf -C /workspace --no-same-permissions --no-same-owner -m)`.
 
-**Fix:** in `packages/sandbox-cloud/src/cloud-provider.ts` `create()`, after workspace seeding, build a tar of `req.envFilesToImport` (workspace-relative paths) → `backend.uploadFile(tar, '/tmp/envfiles.tar')` → `backend.exec(... tar -xf ... -C /workspace)`. Mirror the `copyHostEnvFilesToBox` logic from `packages/sandbox-docker/src/host-export.ts`.
+Implementation: `packages/sandbox-cloud/src/env-files.ts` (`uploadEnvFiles`), called from `packages/sandbox-cloud/src/cloud-provider.ts` `create()` between `seedCloudWorkspace` and `launchCloudCtlDaemon`. Reuses `buildHostEnvFindArgs` (exported from `@agentbox/sandbox-docker`) so the glob + prune set are identical across providers.
 
 ### 1.2 ✅ Claude / Codex / OpenCode credentials synced to cloud (done)
 Initial cloud boxes now seed `~/.claude`, `~/.codex`, `~/.config/opencode` (+ `~/.local/share/opencode/`) from the host into per-agent Daytona volumes (`agentbox-claude-config`, `agentbox-codex-config`, `agentbox-opencode-config`). Volumes are shared across every cloud box; once seeded, subsequent `create`s skip the upload (`.agentbox-seeded-at` marker check). Refresh is **explicit only** — `agentbox daytona resync [--agent claude|codex|opencode|all]` provisions a throwaway sandbox, force-re-uploads, and destroys.
 
 Implementation: host-side staging lives in `packages/sandbox-docker/src/host-stage.ts` (`stageClaudeForUpload` / `stageCodexForUpload` / `stageOpencodeForUpload` — filtered tarballs reusing the existing host-hook filter, install-method coercion, workspace-trust and project-alias logic). Cloud orchestration in `packages/sandbox-cloud/src/agent-credentials.ts`. `CloudBackend` gained an optional `ensureVolume(name)` primitive and `CloudProvisionRequest.volumes`.
+
+**Claude OAuth `.credentials.json`**: the host's `~/.agentbox/claude-credentials.json` backup (managed by the existing `syncClaudeCredentials` for Docker) is bundled into the claude tarball at `.credentials.json`. Without this, the in-box claude reads `_claude.json` (account info), can't find the token, falls back to interactive `/login`, and inside a tmux-over-SSH session that manifests as an immediate exit with no error.
+
+**macOS AppleDouble suppression**: the host tarball is built with `COPYFILE_DISABLE=1` set on the `tar` exec — without it macOS' `bsdtar` emits `._<name>` sidecar files for any source with extended attributes, which then clutter `~/.claude` inside the box and confuse claude's top-level directory scan.
+
+**Codex macOS Keychain landmine**: detected and surfaced as a one-time warning during seed (skip codex for the box, claude + opencode still work). User fixes by setting `cli_auth_credentials_store = "file"` in `~/.codex/config.toml` then `codex login` again, or by setting `OPENAI_API_KEY`.
+
+**Daytona FUSE-mounted volume quirks** (relevant to any code that writes to a mounted volume, not just credential seeding):
+- `chmod(2)` / `utime(2)` / `chown(2)` all return EPERM — even with sudo/root. Files come up owned by `nobody:nogroup` and you can't change that. We pass `--no-same-permissions --no-same-owner -m` to every `tar -xzf` that lands inside a volume mount (`agent-credentials.ts`, `cloud-cp.ts`, `env-files.ts`).
+- `rename(2)` returns ENOSYS. Use `cp -f` + `rm -f` instead. (Applied in `cloud-cp.ts`.)
+- `symlink(2)` returns EPERM. Stage with `rsync -L` (dereference all symlinks) so the tarball is symlink-free.
+
+**Remaining follow-up**: box→host pull (the reverse direction of `agentbox download claude|codex|opencode` against a cloud volume) is deferred. Today the docker `download` paths still work for docker boxes only.
 
 ### 1.3 🟡 Workspace bundle is full-history `--all`
 `packages/sandbox-cloud/src/workspace-seed.ts` does `git bundle create --all`, which is fine for small repos but slow + big upload for monorepos with deep history. (eg use range export from the start of the current branch)
@@ -75,17 +88,13 @@ The `CloudBoxPoller` holds `/bridge/poll` up to ~25s. Daytona's CloudFront edge 
 
 ## 3. CLI routing (Phase 3 polish)
 
-### 3.1 🔴 Default `agentbox claude` / `codex` / `opencode` actions are Docker-only
-These commands' default action (`agentbox claude` with no subcommand) creates a fresh **Docker** box and attaches. They don't have a `--provider` option; the `<name>` positional is passed as args to the agent (not as a box ref). So `agentbox claude my-cloud-box` makes a *new docker box*, doesn't attach to `my-cloud-box`.
+### 3.1 ✅ Default `agentbox claude` / `codex` / `opencode` actions accept `--provider` (done)
+Each of the three default actions takes `--provider <name>` (and respects `box.provider` in the user config). On `daytona` they delegate to `cloudAgentCreate` (`apps/cli/src/commands/_cloud-agent-create.ts`), which runs `provider.create(...)` + `cloudAgentAttach(...)`. The Docker fast path is unchanged.
 
-**Workaround today:** `agentbox create --provider daytona -n my-cloud-box` then `agentbox claude attach my-cloud-box` (the attach subcommand IS cloud-aware via `cloudAgentAttach`).
+Implementation: per-agent option added to the `.option(...)` chain + provider-name branch right after the setup wizard runs in each of `apps/cli/src/commands/{claude,codex,opencode}.ts`. The wizard's `envFilesToImport` and (for claude) initial-prompt threading work for cloud too.
 
-**Fix:** add `--provider <name>` to claudeCommand / codexCommand / opencodeCommand defaults; when set to a cloud provider, route through `providerForCreate` + `cloudAgentAttach`. Currently this is partially handled by `agentbox create --provider daytona` running the wizard which can auto-attach claude post-create, but a direct `agentbox claude --provider daytona` would be cleaner.
-
-### 3.2 🟡 Extra agent args after `--` dropped for cloud
-`cloudAgentAttach` warns and ignores `claudeArgs`/`codexArgs`/`opencodeArgs` because 3-layer shell escaping (SSH → tmux → bash) is fiddly. Users who need `--model sonnet` or similar must attach plain and pass them inside the agent's TUI.
-
-**Fix:** properly escape the args through all three layers. Likely via a heredoc or base64-encoded launcher script.
+### 3.2 ✅ Extra agent args after `--` forwarded for cloud (done)
+`cloudAgentAttach` (`apps/cli/src/commands/_cloud-attach.ts`) now builds the inner shell command via a base64-encoded launcher (`buildCloudAttachInnerCommand`) when `extraArgs` is non-empty: argv is joined newline-delimited, base64-encoded, and reconstructed inside the sandbox via `mapfile -t A < <(echo … | base64 -d); exec <binary> "${A[@]}"`. Base64 is opaque to every shell-quoting layer (SSH → tmux → bash), so args with spaces / quotes / shell metachars survive verbatim. Unit-tested in `apps/cli/test/cloud-attach.test.ts`. Limitation: args containing literal newlines aren't supported (none of claude/codex/opencode flags carry newlines in practice).
 
 ### 3.3 🟡 `agentbox shell` cloud path doesn't support `--name <label>` / `--new` shell session management
 The Docker shell command has multi-session support (named shells, attach-by-label). The cloud branch uses a single fixed `sessionName: 'shell'` tmux session.
@@ -146,10 +155,15 @@ Lives at `/var/log/agentbox/ctl-daemon.log` inside the sandbox. No CLI command p
 
 ## 6. Operational / robustness
 
-### 6.1 🔴 Daytona 504s from CloudFront mid-call
-The Daytona SDK's `executeCommand` and other API calls intermittently 504 from Daytona's CloudFront edge. Observed multiple times during e2e testing. **No retry logic** in `packages/sandbox-daytona/src/backend.ts`.
+### 6.1 ✅ Daytona 504s from CloudFront — bounded retry wrapper (done)
+~~Unbounded wedge on edge 504s~~ — `packages/sandbox-daytona/src/retry.ts` (`withDaytonaRetry`) wraps every `daytonaBackend` method. Three attempts with 1s/2s/4s backoff, per-attempt timeout via `Promise.race`. Classifies errors using the SDK's typed classes: `DaytonaRateLimitError` always retries; `DaytonaConnectionError` / `DaytonaTimeoutError` / `DaytonaError(statusCode >= 500)` retry only when the caller passes `retryOnAmbiguous: true`; `DaytonaNotFoundError` / `DaytonaAuthenticationError` / `DaytonaAuthorizationError` / `DaytonaValidationError` / `DaytonaConflictError` never retry. Original typed errors pass through untouched on exhaustion so caller `instanceof` checks still work. Retry chatter goes to `process.stderr` with a `[daytona-retry]` prefix.
 
-**Fix:** wrap each backend method in a small retry-with-backoff (3 attempts, 1s/2s/4s) for 5xx responses. Don't retry on 4xx (auth / not-found).
+Per-method policy in `backend.ts`:
+- `provision` — `retryOnAmbiguous: false`, 900s timeout. Non-idempotent — a retry post-origin could create a duplicate billable sandbox. Wrapper just bounds wall-clock vs. infinite hang.
+- `uploadFile` / `downloadFile` — 300s timeout, retry on ambiguous (file ops are atomic per call; re-sending is wasteful but safe).
+- `exec` / `destroy` — 120s timeout.
+- `start` / `stop` / `pause` / `resume` — 60s timeout.
+- Everything else (`get`, `state`, `previewUrl`, `signedPreviewUrl`, `attachArgv`, `revokeAttachToken`, `listFiles`, `ensureVolume`'s individual `volume.get` calls) — 30s timeout, retry on ambiguous.
 
 ### 6.2 🟡 `agentbox destroy` for cloud leaves the Daytona dashboard showing the sandbox for ~30s
 `sb.delete()` is queued; the API reports `not found` immediately but the dashboard polls slowly. Our `stop` → `delete` sequence makes the actual deletion sync, but the dashboard lag is cosmetic.

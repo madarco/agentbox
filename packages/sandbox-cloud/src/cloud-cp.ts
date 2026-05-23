@@ -77,15 +77,23 @@ export async function uploadToCloudBox(
     // passwordless sudo and the SUDO=:'' fallback makes it a no-op when
     // sudo isn't available (test sandboxes).
     const initialPath = boxParent === '/' ? `/${srcBasename}` : `${boxParent}/${srcBasename}`;
+    // Daytona's S3-backed FUSE volumes return ENOSYS for rename(2), so `mv`
+    // fails when the destination crosses the mount boundary. `cp -f` + `rm`
+    // works on every backend (and on the regular sandbox disk is no slower
+    // than mv for a single file).
     const renameStep =
       finalName !== srcBasename
-        ? `$SUDO mv ${quoteShellArg(initialPath)} ${quoteShellArg(finalPath)}`
+        ? `$SUDO cp -f ${quoteShellArg(initialPath)} ${quoteShellArg(finalPath)} && $SUDO rm -f ${quoteShellArg(initialPath)}`
         : ': # no rename';
     const script = [
       `set -euo pipefail`,
       `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi`,
       `$SUDO mkdir -p ${quoteShellArg(boxParent)}`,
-      `$SUDO tar -xzf ${quoteShellArg(REMOTE_UP_TAR)} -C ${quoteShellArg(boxParent)}`,
+      // --no-same-permissions / --no-same-owner / -m: Daytona's S3-backed
+      // FUSE volumes reject chmod/utime/chown; skipping them lets the extract
+      // complete on a mounted-volume destination. Harmless no-op on the
+      // sandbox's regular disk. Same flags as the credential-seed extract.
+      `$SUDO tar -xzf ${quoteShellArg(REMOTE_UP_TAR)} -C ${quoteShellArg(boxParent)} --no-same-permissions --no-same-owner -m`,
       renameStep,
       // chown only the landed path — anything we mkdir'd through stays at
       // its existing ownership. Tolerate failure (chown bad on read-only mounts).
