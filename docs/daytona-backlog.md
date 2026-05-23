@@ -125,8 +125,10 @@ Today `listBoxes`-style aggregation in top.ts filters out cloud entries. Live st
 ### 3.11 🟢 `agentbox dashboard` cloud-guarded
 The TUI dashboard polls live stats + claude state. Could work with the persisted status snapshot we already mirror, but the live panels (tmux capture etc.) don't have a cloud path.
 
-### 3.12 🟢 `agentbox checkpoint` / `prune` / `update` Docker-only by design
-Plan deferred these for cloud v1. Checkpoint depends on cloud snapshot semantics (Daytona's `sb.archive()` is the closest); prune/update are docker-image lifecycle ops. Leave guarded.
+### 3.12 ✅ `agentbox checkpoint` cloud-routed (done) — `prune` / `update` still Docker-only
+~~Checkpoint deferred for cloud~~ — `agentbox checkpoint create / ls / rm / set-default` all dispatch on `box.provider` (`apps/cli/src/commands/checkpoint.ts`). For cloud boxes the create flow calls `provider.checkpoint.create()`, which captures the live sandbox via the new `CloudBackend.createSnapshot` primitive (Daytona: `sb._experimental_createSnapshot(name)`) and persists a thin manifest at `~/.agentbox/cloud-checkpoints/<backend>/<projectHash-mnemonic>/<name>/manifest.json`. Cloud snapshots are org-scoped and project-prefixed (`agentbox-ckpt-<hash>_<mnemonic>-<name>`) to avoid name collisions. `agentbox create --checkpoint <name>` (and `box.defaultCheckpoint`) now resolves to a Daytona snapshot and provisions from `client.create({ snapshot })` — workspace seeding is skipped because the snapshot already carries `/workspace`. The wizard's "starting from checkpoint" announcement is provider-aware (`apps/cli/src/checkpoint-lookup.ts`): if the named checkpoint doesn't exist for the active provider, the wizard silently falls through to normal setup instead of misleadingly skipping it.
+
+`prune` / `update` remain Docker-only by design — they're docker-image lifecycle ops. Daytona snapshot cleanup goes through `agentbox checkpoint rm <name>`.
 
 ---
 

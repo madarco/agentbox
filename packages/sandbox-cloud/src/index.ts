@@ -34,3 +34,15 @@ export {
   uploadToCloudBox,
   type CloudCpResult,
 } from './cloud-cp.js';
+export {
+  CLOUD_CHECKPOINTS_ROOT,
+  CLOUD_SNAPSHOT_NAME_PREFIX,
+  cloudSnapshotName,
+  listCloudCheckpoints,
+  removeCloudCheckpointDir,
+  resolveCloudCheckpoint,
+  writeCloudCheckpointManifest,
+  type CloudCheckpointInfo,
+  type CloudCheckpointManifest,
+  type WriteCloudManifestFields,
+} from './checkpoint.js';

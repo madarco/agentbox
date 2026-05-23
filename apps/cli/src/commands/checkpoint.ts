@@ -6,6 +6,7 @@ import {
   setConfigValue,
   unsetConfigValue,
 } from '@agentbox/config';
+import type { BoxRecord } from '@agentbox/core';
 import {
   clearRelayNotice,
   createCheckpoint,
@@ -16,9 +17,10 @@ import {
   startBox,
   unpauseBox,
 } from '@agentbox/sandbox-docker';
+import { listCloudCheckpoints, resolveCloudCheckpoint } from '@agentbox/sandbox-cloud';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
-import { requireDockerProvider } from './_provider-guard.js';
 
 /** Footer warning shown in attached sessions while a checkpoint runs. */
 const CHECKPOINT_NOTICE = 'Checkpoint in progress — the box will be unresponsive for a moment';
@@ -56,7 +58,12 @@ const createSub = new Command('create')
   .action(async (idOrName: string | undefined, opts: CreateOpts) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
-      requireDockerProvider(box, 'checkpoint create');
+      const providerName = box.provider ?? 'docker';
+
+      if (providerName !== 'docker') {
+        await runCloudCheckpointCreate(box, opts);
+        return;
+      }
 
       const insp = await inspectBox(box.id);
       if (insp.state === 'paused') {
@@ -129,21 +136,31 @@ const createSub = new Command('create')
   });
 
 const lsSub = new Command('ls')
-  .description('List this project\'s checkpoints')
+  .description("List this project's checkpoints (both docker and cloud)")
   .action(async () => {
     try {
       const projectRoot = (await findProjectRoot(process.cwd())).root;
       const cfg = await loadEffectiveConfig(projectRoot);
       const def = cfg.effective.box.defaultCheckpoint;
-      const list = await listCheckpoints(projectRoot);
-      if (list.length === 0) {
+      const dockerList = await listCheckpoints(projectRoot);
+      // Merge in cloud-backend checkpoints. v1: only Daytona is known. Future
+      // backends slot in here once they implement `createSnapshot`.
+      const daytonaList = await listCloudCheckpoints(projectRoot, 'daytona');
+
+      if (dockerList.length === 0 && daytonaList.length === 0) {
         process.stdout.write(`no checkpoints for ${projectRoot}\n`);
         return;
       }
-      for (const c of list) {
+      for (const c of dockerList) {
         const flag = c.name === def ? ' *default' : '';
         process.stdout.write(
-          `${c.name}  ${c.manifest.type}  from ${c.manifest.sourceBoxName}  ${c.manifest.createdAt}${flag}\n`,
+          `${c.name}  docker (${c.manifest.type})  from ${c.manifest.sourceBoxName}  ${c.manifest.createdAt}${flag}\n`,
+        );
+      }
+      for (const c of daytonaList) {
+        const flag = c.name === def ? ' *default' : '';
+        process.stdout.write(
+          `${c.name}  daytona (snapshot)  from ${c.manifest.sourceBoxName}  ${c.manifest.createdAt}${flag}\n`,
         );
       }
     } catch (err) {
@@ -173,8 +190,15 @@ const setDefaultSub = new Command('set-default')
       if (ref === undefined) {
         throw new Error('missing <ref> (or pass --clear to unset the default)');
       }
-      const list = await listCheckpoints(projectRoot);
-      if (!list.some((c) => c.name === ref)) {
+      // Accept the name if EITHER provider's checkpoint store has it. The
+      // wizard's per-provider lookup will resolve to the right artifact at
+      // create time.
+      const dockerList = await listCheckpoints(projectRoot);
+      const daytonaList = await listCloudCheckpoints(projectRoot, 'daytona');
+      if (
+        !dockerList.some((c) => c.name === ref) &&
+        !daytonaList.some((c) => c.name === ref)
+      ) {
         throw new Error(`checkpoint not found: ${ref} (see \`agentbox checkpoint ls\`)`);
       }
       const r = await setConfigValue('project', 'box.defaultCheckpoint', ref, projectRoot);
@@ -185,12 +209,19 @@ const setDefaultSub = new Command('set-default')
   });
 
 const rmSub = new Command('rm')
-  .description('Delete a checkpoint')
+  .description('Delete a checkpoint (any provider that has it)')
   .argument('<ref>', 'checkpoint name')
   .option('-y, --yes', 'skip the confirmation prompt')
-  .action(async (ref: string, opts: { yes?: boolean }) => {
+  .option('--provider <name>', "delete only from this provider's store (default: all)")
+  .action(async (ref: string, opts: { yes?: boolean; provider?: string }) => {
     try {
       const projectRoot = (await findProjectRoot(process.cwd())).root;
+      // Look up both stores so the confirm + removal can act on whichever has it.
+      const dockerInfo = !opts.provider || opts.provider === 'docker';
+      const daytonaInfo =
+        (!opts.provider || opts.provider === 'daytona') &&
+        (await resolveCloudCheckpoint(projectRoot, 'daytona', ref));
+
       if (!opts.yes) {
         const ok = await confirm({ message: `Delete checkpoint ${ref}?`, initialValue: false });
         if (isCancel(ok) || !ok) {
@@ -198,9 +229,27 @@ const rmSub = new Command('rm')
           return;
         }
       }
-      const removed = await removeCheckpoint(projectRoot, ref);
-      if (!removed) throw new Error(`checkpoint not found: ${ref}`);
-      process.stdout.write(`removed checkpoint ${ref}\n`);
+      let any = false;
+      if (dockerInfo) {
+        const removed = await removeCheckpoint(projectRoot, ref);
+        if (removed) {
+          any = true;
+          process.stdout.write(`removed docker checkpoint ${ref}\n`);
+        }
+      }
+      if (daytonaInfo) {
+        const { daytonaProvider } = await import('@agentbox/sandbox-daytona');
+        try {
+          await daytonaProvider.checkpoint?.remove(projectRoot, ref);
+          any = true;
+          process.stdout.write(`removed daytona checkpoint ${ref}\n`);
+        } catch (err) {
+          log.warn(
+            `daytona checkpoint remove failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      if (!any) throw new Error(`checkpoint not found: ${ref}`);
 
       // Don't leave box.defaultCheckpoint dangling at a now-deleted ref —
       // future `agentbox create` would fail to resolve it. Clear it when the
@@ -219,6 +268,65 @@ const rmSub = new Command('rm')
       handleLifecycleError(err);
     }
   });
+
+/**
+ * Cloud checkpoint create: delegate to `provider.checkpoint.create`. The cloud
+ * provider's implementation captures via the backend's `createSnapshot` and
+ * writes the manifest under `~/.agentbox/cloud-checkpoints/<backend>/…`.
+ * Unlike Docker, there's no `--merged` (Daytona snapshots are flattened by
+ * construction) and no `--replace` rerun yet (the underlying snapshot delete
+ * is async on Daytona's side — keep it explicit: `agentbox checkpoint rm <name>`
+ * then re-create).
+ */
+async function runCloudCheckpointCreate(box: BoxRecord, opts: CreateOpts): Promise<void> {
+  if (opts.merged) {
+    log.warn('--merged is Docker-only (cloud snapshots are always flattened); ignoring');
+  }
+  const projectRoot = await projectRootFor(box.workspacePath, box.projectRoot);
+  const name = opts.name ?? `${box.name}-${String(Date.now()).slice(-6)}`;
+
+  // Make sure the sandbox is running — `_experimental_createSnapshot` requires
+  // a started sandbox. The provider's `probeState` + `start` handles the
+  // pause/stop/missing branches with the same shape `agentbox url` / `screen`
+  // use today.
+  const provider = await providerForBox(box);
+  const state = await provider.probeState(box);
+  if (state === 'paused') {
+    log.info('box is paused; resuming');
+    await provider.resume(box);
+  } else if (state === 'stopped') {
+    log.info('box is stopped; starting');
+    await provider.start(box);
+  } else if (state === 'missing') {
+    throw new Error(`cloud sandbox for ${box.name} is missing; was it deleted?`);
+  }
+
+  if (!provider.checkpoint) {
+    throw new Error(`provider '${box.provider ?? 'docker'}' doesn't support checkpoints`);
+  }
+
+  // Daytona's snapshot capture pauses the sandbox while writing the image.
+  // Warn attached sessions the same way the docker path does.
+  const noticeId = await setRelayNotice(
+    box.id,
+    'checkpoint',
+    CHECKPOINT_NOTICE,
+    CHECKPOINT_NOTICE_TTL_MS,
+  );
+  try {
+    log.info(`capturing cloud snapshot '${name}' (this may take a few minutes)`);
+    const result = await provider.checkpoint.create(box, name);
+    log.success(`checkpoint ${result.ref} (daytona snapshot) captured`);
+    if (opts.setDefault) {
+      await setConfigValue('project', 'box.defaultCheckpoint', result.ref, projectRoot);
+      log.info(`set project default checkpoint -> ${result.ref}`);
+    } else {
+      log.info(`make it the default for new boxes: agentbox checkpoint set-default ${result.ref}`);
+    }
+  } finally {
+    if (noticeId) await clearRelayNotice(box.id, noticeId);
+  }
+}
 
 export const checkpointCommand = new Command('checkpoint')
   .alias('checkpoints')

@@ -23,6 +23,14 @@ export interface CloudProvisionRequest {
   name: string;
   /** Resolved base image / snapshot ref. */
   image: string;
+  /**
+   * Provider-native named snapshot to provision from. When set, takes
+   * precedence over `image` — the new sandbox boots from the snapshot's
+   * captured filesystem state (e.g. a post-setup `/workspace`, warmed-up
+   * `node_modules`, etc.). Daytona maps this to `client.create({snapshot})`.
+   * Backends without snapshot support ignore the field and fall back to `image`.
+   */
+  snapshot?: string;
   resources?: { cpu?: number; memory?: number; disk?: number };
   /** Env vars baked into the sandbox at provision time. */
   env?: Record<string, string>;
@@ -128,4 +136,25 @@ export interface CloudBackend {
    * fall back to per-sandbox seeding).
    */
   ensureVolume?(name: string): Promise<{ volumeId: string }>;
+
+  /**
+   * Optional: capture the running sandbox's filesystem into a named provider
+   * snapshot. Daytona maps this to `sb._experimental_createSnapshot(name)`
+   * (the only SDK method that captures live state). The resulting snapshot
+   * becomes a separate org-scoped artifact that future `provision()` calls
+   * can boot from via `CloudProvisionRequest.snapshot`. Names must be unique
+   * within the provider's namespace — callers usually prefix them with a
+   * project-hash to avoid collisions.
+   *
+   * Backends without a snapshot primitive omit this; the cloud provider's
+   * `checkpoint.create` then throws a clear "not supported" error.
+   */
+  createSnapshot?(h: CloudHandle, snapshotName: string): Promise<void>;
+
+  /**
+   * Optional: delete a named provider snapshot. Idempotent — a missing
+   * snapshot must resolve cleanly without throwing (matches the
+   * `destroy()` "already gone" semantics).
+   */
+  deleteSnapshot?(snapshotName: string): Promise<void>;
 }

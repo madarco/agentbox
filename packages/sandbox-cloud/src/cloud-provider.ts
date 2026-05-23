@@ -28,6 +28,7 @@ import type {
   ExecResult,
   InspectedBox,
   Provider,
+  ProviderCheckpoint,
 } from '@agentbox/core';
 import { allocateProjectIndex, readState, recordBox, removeBoxRecord } from '@agentbox/sandbox-core';
 import {
@@ -41,6 +42,13 @@ import {
   ensureAgentVolumesForCloud,
   seedAgentVolumesIfFresh,
 } from './agent-credentials.js';
+import {
+  cloudSnapshotName,
+  listCloudCheckpoints,
+  removeCloudCheckpointDir,
+  resolveCloudCheckpoint,
+  writeCloudCheckpointManifest,
+} from './checkpoint.js';
 import { uploadEnvFiles } from './env-files.js';
 import {
   downloadFromCloudBox,
@@ -156,6 +164,28 @@ export function createCloudProvider(
         log(`relay ensure failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
       }
 
+      // Resolve any cloud checkpoint the caller requested. When found, we
+      // boot from the snapshot (which already carries /workspace + any
+      // installed deps) instead of from the base image, and skip the
+      // workspace-seeding step below. A `checkpointRef` set for a checkpoint
+      // that doesn't exist for THIS backend is logged and silently dropped —
+      // matches the wizard's provider-aware behavior (the user may have a
+      // Docker checkpoint with the same name; that's not our store).
+      let snapshotName: string | undefined;
+      let resolvedCheckpointRef: string | undefined;
+      if (req.checkpointRef && req.projectRoot) {
+        const found = await resolveCloudCheckpoint(req.projectRoot, backend.name, req.checkpointRef);
+        if (found) {
+          snapshotName = found.manifest.snapshotName;
+          resolvedCheckpointRef = found.name;
+          log(`provisioning from cloud checkpoint '${found.name}' (snapshot ${snapshotName})`);
+        } else {
+          log(
+            `cloud checkpoint '${req.checkpointRef}' not found for ${backend.name}; provisioning from base image`,
+          );
+        }
+      }
+
       // Reserve per-agent credential volumes (Claude / Codex / OpenCode)
       // before provision so we can pass them as mounts in the same SDK call —
       // Daytona only attaches volumes at create time, not after. Backends
@@ -163,10 +193,15 @@ export function createCloudProvider(
       // "user logs in inside the box" the way cloud worked before.
       const agentVolumes = await ensureAgentVolumesForCloud(backend, { onLog: log });
 
-      log(`provisioning ${providerName} sandbox`);
+      log(
+        snapshotName
+          ? `provisioning ${providerName} sandbox from snapshot`
+          : `provisioning ${providerName} sandbox`,
+      );
       const handle = await backend.provision({
         name,
         image,
+        snapshot: snapshotName,
         resources,
         env: {
           AGENTBOX_BOX_ID: id,
@@ -183,14 +218,21 @@ export function createCloudProvider(
       });
 
       try {
-        await seedCloudWorkspace({
-          backend,
-          handle,
-          workspacePath: req.workspacePath,
-          branch,
-          workspaceDir: CLOUD_WORKSPACE_DIR,
-          onLog: log,
-        });
+        if (snapshotName) {
+          // Snapshot already carries /workspace (captured by the source box's
+          // `agentbox checkpoint create`). Re-seeding would clobber the
+          // user's setup state. Match Docker's `applyCheckpointRef` behavior.
+          log('skipping workspace seed — snapshot already contains /workspace');
+        } else {
+          await seedCloudWorkspace({
+            backend,
+            handle,
+            workspacePath: req.workspacePath,
+            branch,
+            workspaceDir: CLOUD_WORKSPACE_DIR,
+            onLog: log,
+          });
+        }
 
         // After the sandbox is up with the credential volumes mounted, seed
         // any volume that doesn't already carry a `.agentbox-seeded-at`
@@ -329,6 +371,7 @@ export function createCloudProvider(
             relayPreviewUrl: relayPreview?.url,
             relayPreviewToken: relayPreview?.token,
             bridgeToken,
+            snapshotRef: resolvedCheckpointRef,
           },
           createdAt: new Date().toISOString(),
         };
@@ -565,8 +608,71 @@ export function createCloudProvider(
       );
     },
 
+    // Cloud checkpoint capability. Backends without `createSnapshot` get a
+    // capability stub whose methods throw — the CLI's `agentbox checkpoint
+    // create` then surfaces a clean "not supported" error rather than a
+    // silent no-op.
+    checkpoint: makeCloudCheckpoint(backend),
+
     // stats is provider-optional; cloud backends without a metrics API just
     // omit it. Backends that have one can decorate the returned provider.
+  };
+}
+
+/**
+ * Build the `Provider.checkpoint` capability for a cloud backend.
+ *
+ * - `create(box, name)` captures the live sandbox via `backend.createSnapshot`
+ *   and persists a thin manifest on the host (`~/.agentbox/cloud-checkpoints/…`).
+ * - `list(projectRoot)` reads the on-disk manifest store.
+ * - `remove(projectRoot, ref)` deletes the Daytona snapshot best-effort and
+ *   removes the local manifest unconditionally so a remote-only failure
+ *   doesn't leave the user with a dead pointer.
+ */
+function makeCloudCheckpoint(backend: CloudBackend): ProviderCheckpoint {
+  return {
+    async create(box: BoxRecord, name: string) {
+      if (!backend.createSnapshot) {
+        throw new Error(
+          `cloud backend '${backend.name}' doesn't support snapshots — \`agentbox checkpoint\` unavailable`,
+        );
+      }
+      if (!box.projectRoot) {
+        throw new Error(
+          `cloud checkpoint requires the box to have a project root (run \`agentbox checkpoint\` from inside the project)`,
+        );
+      }
+      if (!box.cloud?.sandboxId) {
+        throw new Error(`cloud box ${box.name} has no sandboxId — record is malformed`);
+      }
+      const snapshotName = cloudSnapshotName(box.projectRoot, name);
+      await backend.createSnapshot({ sandboxId: box.cloud.sandboxId }, snapshotName);
+      const info = await writeCloudCheckpointManifest(box.projectRoot, backend.name, name, {
+        snapshotName,
+        sourceBoxId: box.id,
+        sourceBoxName: box.name,
+      });
+      return { ref: info.name };
+    },
+    async list(projectRoot: string) {
+      const entries = await listCloudCheckpoints(projectRoot, backend.name);
+      return entries.map((e) => ({ ref: e.name, createdAt: e.manifest.createdAt }));
+    },
+    async remove(projectRoot: string, ref: string) {
+      const entry = await resolveCloudCheckpoint(projectRoot, backend.name, ref);
+      if (!entry) return;
+      if (backend.deleteSnapshot) {
+        try {
+          await backend.deleteSnapshot(entry.manifest.snapshotName);
+        } catch {
+          // Best-effort: even if the remote delete fails (network, perms,
+          // or already-gone), drop the local manifest so the user isn't
+          // stuck with a pointer to nothing. They can clean up the orphan
+          // snapshot from the Daytona dashboard.
+        }
+      }
+      await removeCloudCheckpointDir(projectRoot, backend.name, ref);
+    },
   };
 }
 

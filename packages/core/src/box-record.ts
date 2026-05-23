@@ -46,6 +46,13 @@ export interface CloudBoxFields {
    * the in-box agent sees) so a compromised agent cannot impersonate the host.
    */
   bridgeToken?: string;
+  /**
+   * User-facing checkpoint name this box was provisioned from (e.g. `setup`),
+   * when `agentbox create --checkpoint <name>` resolved to a cloud snapshot.
+   * Surfaces in `agentbox status --inspect` so the user can tell which
+   * checkpoint a box is currently running.
+   */
+  snapshotRef?: string;
 }
 
 export interface GitWorktreeRecord {

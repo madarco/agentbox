@@ -4,7 +4,7 @@
  * importing this module costs nothing until a daytona-tagged box does something.
  */
 
-import { Daytona, Image, SandboxState, type Sandbox } from '@daytonaio/sdk';
+import { Daytona, DaytonaNotFoundError, Image, SandboxState, type Sandbox } from '@daytonaio/sdk';
 import type {
   CloudBackend,
   CloudExecOptions,
@@ -161,26 +161,36 @@ export const daytonaBackend: CloudBackend = {
     return retry(
       'provision',
       async () => {
-        const image = resolveImage(req.image);
+        // Two SDK overloads:
+        //   - `CreateSandboxFromSnapshotParams` takes `snapshot:` and no
+        //     `onSnapshotCreateLogs` (the snapshot already exists, nothing to build).
+        //   - `CreateSandboxFromImageParams` takes `image:` and accepts
+        //     `onSnapshotCreateLogs` for streaming the Dockerfile build.
+        // TypeScript can't infer the right overload from a union literal, so
+        // split the call.
+        const baseParams = {
+          ...(req.resources ? { resources: req.resources } : {}),
+          envVars: req.env,
+          ...(req.volumes && req.volumes.length > 0
+            ? { volumes: req.volumes.map(toDaytonaVolumeMount) }
+            : {}),
+          labels: { 'agentbox.name': req.name },
+        };
+        const client = getClient();
         // The first-time Dockerfile.box snapshot build is ~41 layers and pulls
         // Chromium — comfortably 5+ minutes wall time. Daytona's default ready
         // timeout is too short for that; override with 15 min so a cold build
-        // doesn't fail mid-snapshot. Cached snapshots come up in seconds.
-        const sandbox = await getClient().create(
-          {
-            image,
-            ...(req.resources ? { resources: req.resources } : {}),
-            envVars: req.env,
-            ...(req.volumes && req.volumes.length > 0
-              ? { volumes: req.volumes.map(toDaytonaVolumeMount) }
-              : {}),
-            labels: { 'agentbox.name': req.name },
-          },
-          {
-            timeout: 900,
-            ...(req.onLog ? { onSnapshotCreateLogs: req.onLog } : {}),
-          },
-        );
+        // doesn't fail mid-snapshot. Cached snapshots and snapshot-based
+        // creates come up in seconds.
+        const sandbox = req.snapshot
+          ? await client.create({ snapshot: req.snapshot, ...baseParams }, { timeout: 900 })
+          : await client.create(
+              { image: resolveImage(req.image), ...baseParams },
+              {
+                timeout: 900,
+                ...(req.onLog ? { onSnapshotCreateLogs: req.onLog } : {}),
+              },
+            );
         return { sandboxId: sandbox.id };
       },
       { retryOnAmbiguous: false, attemptTimeoutMs: 900_000 },
@@ -423,5 +433,43 @@ export const daytonaBackend: CloudBackend = {
     } catch {
       // Best-effort — tokens auto-expire after 60 min anyway.
     }
+  },
+
+  async createSnapshot(h: CloudHandle, snapshotName: string): Promise<void> {
+    // Daytona's `_experimental_createSnapshot` puts the sandbox into the
+    // `snapshotting` state, captures its filesystem, then returns. The
+    // resulting snapshot is org-scoped and visible via the Daytona dashboard
+    // and `client.snapshot.list()`. We give it a generous timeout (15min,
+    // matching `provision`) because a large `/workspace` plus warmed agent
+    // volumes can take a while to snapshot.
+    //
+    // No retry on ambiguous failures: a 504 mid-snapshot could leave a
+    // half-built named snapshot in Daytona that a retry would collide on.
+    // Matches `provision`'s policy.
+    return retry(
+      'createSnapshot',
+      async () => {
+        const sb = await getSandbox(h.sandboxId);
+        await sb._experimental_createSnapshot(snapshotName);
+      },
+      { attemptTimeoutMs: 900_000, retryOnAmbiguous: false },
+    );
+  },
+
+  async deleteSnapshot(snapshotName: string): Promise<void> {
+    return retry('deleteSnapshot', async () => {
+      try {
+        const client = getClient();
+        const snapshot = await client.snapshot.get(snapshotName);
+        await client.snapshot.delete(snapshot);
+      } catch (err) {
+        // Idempotent: a snapshot that's already gone is success from the
+        // caller's perspective (mirrors `destroy()`'s "not found" handling).
+        if (err instanceof DaytonaNotFoundError) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/not found/i.test(msg)) return;
+        throw err;
+      }
+    });
   },
 };

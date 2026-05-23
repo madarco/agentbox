@@ -180,6 +180,7 @@ export const createCommand = new Command('create')
       yes: !!opts.yes,
       command: 'create',
       checkpointRef,
+      provider: providerName,
       withEnv: cfg.effective.box.withEnv,
     });
     if (wiz.action === 'switch-to-claude' && isDocker) {

@@ -302,6 +302,7 @@ export const claudeCommand = new Command('claude')
       yes: !!opts.yes,
       command: 'claude',
       checkpointRef,
+      provider: providerName,
       withEnv: cfg.effective.box.withEnv,
     });
     let effectiveClaudeArgs = claudeArgs;

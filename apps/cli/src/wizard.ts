@@ -1,7 +1,9 @@
 import { confirm, isCancel, log, multiselect } from '@clack/prompts';
 import { findProjectRoot } from '@agentbox/config';
+import type { ProviderName } from '@agentbox/core';
 import { DEFAULT_ENV_PATTERNS, scanHostEnvFiles } from '@agentbox/sandbox-docker';
 import { basename } from 'node:path';
+import { checkpointExistsForProvider } from './checkpoint-lookup.js';
 
 /**
  * In-box absolute path to the setup guide markdown (baked into the box image
@@ -49,12 +51,21 @@ interface WizardArgs {
   command: 'create' | 'claude';
   /**
    * Resolved checkpoint ref this box will start from (explicit `--snapshot`
-   * or the project's `box.defaultCheckpoint`), if any. When set, the project
-   * is already configured: the checkpoint carries the warm state *and* the
-   * agentbox.yaml that was present when it was captured, so we skip the
-   * "generate one?" prompt entirely.
+   * or the project's `box.defaultCheckpoint`), if any. When set AND the
+   * checkpoint exists for the active provider, the project is already
+   * configured: the checkpoint carries the warm state *and* the agentbox.yaml
+   * that was present when it was captured, so we skip the "generate one?"
+   * prompt entirely. When the checkpoint doesn't exist for the active
+   * provider (e.g. a Docker `setup` checkpoint and the user is creating a
+   * cloud box), the wizard falls through silently to normal setup.
    */
   checkpointRef?: string;
+  /**
+   * The provider this box will be created on. Used to scope the
+   * `checkpointRef` lookup so the wizard only announces "starting from
+   * checkpoint …" when the artifact actually exists for the target.
+   */
+  provider?: ProviderName;
   /**
    * True when the caller already opted in to importing the full
    * DEFAULT_ENV_PATTERNS set (`--with-env` / `box.withEnv: true`). The
@@ -94,7 +105,9 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
   if (process.env[WIZARD_AUTOLAUNCH_ENV] === '1') {
     if (args.command !== 'claude') return { action: 'proceed' };
     const envFiles = parseEnvFilesFromEnv(process.env[WIZARD_ENV_FILES_ENV]);
-    if (args.checkpointRef) return { action: 'proceed', envFilesToImport: envFiles };
+    if (args.checkpointRef && (await checkpointAppliesHere(args))) {
+      return { action: 'proceed', envFilesToImport: envFiles };
+    }
     const proj = await findProjectRoot(args.workspace);
     if (proj.hasAgentboxYaml) return { action: 'proceed', envFilesToImport: envFiles };
     return {
@@ -114,7 +127,13 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
   // checkpoint carries node_modules/env *and* the agentbox.yaml from when it
   // was captured. Don't nag to regenerate one. Skip env-file picker too: the
   // checkpoint already has whatever was on disk when it was captured.
-  if (args.checkpointRef) {
+  //
+  // …but only if the checkpoint exists for the ACTIVE provider. A
+  // `box.defaultCheckpoint` resolved against the wrong provider's store would
+  // mislead the user — wizard announces the skip, then the cloud-provider
+  // create silently drops the ref because the snapshot doesn't exist for
+  // daytona. Silently fall through to normal setup instead.
+  if (args.checkpointRef && (await checkpointAppliesHere(args))) {
     log.info(`starting from checkpoint "${args.checkpointRef}"; skipping agentbox.yaml setup`);
     return { action: 'proceed' };
   }
@@ -159,6 +178,20 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
     initialPrompt: buildSetupInitialPrompt(proj.root),
     envFilesToImport,
   };
+}
+
+/**
+ * True when `args.checkpointRef` resolves to an artifact in the active
+ * provider's checkpoint store. Falls back to `true` only when no `checkpointRef`
+ * is set (caller checked already). Resolves the project root from the workspace
+ * so the lookup uses the same hash the `agentbox checkpoint create` flow
+ * persists under.
+ */
+async function checkpointAppliesHere(args: WizardArgs): Promise<boolean> {
+  if (!args.checkpointRef) return false;
+  const proj = await findProjectRoot(args.workspace);
+  const provider = args.provider ?? 'docker';
+  return checkpointExistsForProvider(provider, proj.root, args.checkpointRef);
 }
 
 /** Serialize the multiselect picks for the create→claude re-dispatch. */

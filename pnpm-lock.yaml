@@ -205,6 +205,9 @@ importers:
 
   packages/sandbox-cloud:
     dependencies:
+      '@agentbox/config':
+        specifier: workspace:*
+        version: link:../config
       '@agentbox/core':
         specifier: workspace:*
         version: link:../core
