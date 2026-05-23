@@ -32,6 +32,7 @@ import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { providerForCreate } from '../provider/registry.js';
 import { clampSpinnerLine } from '../spinner-line.js';
+import { openCommandLog } from '../lib/log-file.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
 import { maybeRunSetupWizard } from '../wizard.js';
@@ -66,6 +67,7 @@ async function attachClaudeWrapped(
   box: { id: string; name: string; container: string; projectIndex?: number },
   sessionName: string | undefined,
   reattach: string,
+  onError?: (msg: string) => void,
 ): Promise<never> {
   const code = await runWrappedAttach({
     container: box.container,
@@ -76,6 +78,7 @@ async function attachClaudeWrapped(
     projectIndex: box.projectIndex,
     mode: 'claude',
     detachNotice: formatDetachNotice(reattach),
+    onError,
   });
   process.exit(code);
 }
@@ -249,6 +252,8 @@ export const claudeCommand = new Command('claude')
     "extra args passed to claude inside the box; place after `--`, e.g. `agentbox claude -- --model sonnet`",
   )
   .action(async (claudeArgs: string[], opts: ClaudeCreateOptions) => {
+    const cmdLog = openCommandLog('claude');
+    process.stderr.write(`log: ${cmdLog.path}\n`);
     intro('Starting Claude in a box...');
 
     const cfg = await loadEffectiveConfig(opts.workspace, {
@@ -377,7 +382,10 @@ export const claudeCommand = new Command('claude')
         portlessStateDir: cfg.effective.portless.stateDir || undefined,
         limits: resolveLimits(cfg.effective.box, opts),
         projectRoot,
-        onLog: (line) => s.message(clampSpinnerLine(line)),
+        onLog: (line) => {
+          s.message(clampSpinnerLine(line));
+          cmdLog.write(line);
+        },
       });
       containerName = result.record.container;
 
@@ -388,9 +396,13 @@ export const claudeCommand = new Command('claude')
       // and exit immediately. Keep the same spinner alive — every phase
       // overwrites the one line instead of leaving a scroll of `●`/`◇` rows.
       s.message('checking plugin native deps');
+      cmdLog.write('checking plugin native deps');
       const rebuild = await rebuildPluginNativeDeps(result.record.container, {
         volume: result.record.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME,
-        onProgress: (line) => s.message(clampSpinnerLine(line)),
+        onProgress: (line) => {
+          s.message(clampSpinnerLine(line));
+          cmdLog.write(line);
+        },
       });
 
       s.message('starting claude session');
@@ -412,18 +424,27 @@ export const claudeCommand = new Command('claude')
       }
 
       outro('attaching — Control+a d to detach, leaves claude running');
-      await attachClaudeWrapped(result.record, sessionName, reattachRef(result.record));
+      await attachClaudeWrapped(
+        result.record,
+        sessionName,
+        reattachRef(result.record),
+        (m) => cmdLog.write(m),
+      );
     } catch (err) {
       s.stop('failed');
+      cmdLog.write(`FAIL: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
       if (err instanceof ClaudeSessionError) {
         log.error(err.message);
         if (containerName) {
           log.info(`The box ${containerName} is still running. Destroy it with:`);
           log.info(`  agentbox destroy ${containerName} -y`);
         }
+        cmdLog.close();
         process.exit(1);
       }
       handleLifecycleError(err);
+    } finally {
+      cmdLog.close();
     }
   });
 

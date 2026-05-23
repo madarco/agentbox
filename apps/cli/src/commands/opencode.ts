@@ -31,6 +31,7 @@ import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { providerForCreate } from '../provider/registry.js';
 import { clampSpinnerLine } from '../spinner-line.js';
+import { openCommandLog } from '../lib/log-file.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
@@ -62,6 +63,7 @@ async function attachOpencodeWrapped(
   box: { id: string; name: string; container: string; projectIndex?: number },
   sessionName: string | undefined,
   reattach: string,
+  onError?: (msg: string) => void,
 ): Promise<never> {
   const code = await runWrappedAttach({
     container: box.container,
@@ -73,6 +75,7 @@ async function attachOpencodeWrapped(
     mode: 'opencode',
     detachable: true,
     detachNotice: formatDetachNotice(reattach, 'opencode'),
+    onError,
   });
   process.exit(code);
 }
@@ -229,6 +232,8 @@ export const opencodeCommand = new Command('opencode')
     "extra args passed to opencode inside the box; place after `--`, e.g. `agentbox opencode -- -m anthropic/claude-sonnet-4-5`",
   )
   .action(async (opencodeArgs: string[], opts: OpencodeCreateOptions) => {
+    const cmdLog = openCommandLog('opencode');
+    process.stderr.write(`log: ${cmdLog.path}\n`);
     intro('Starting OpenCode in a box...');
 
     const cfg = await loadEffectiveConfig(opts.workspace, {
@@ -314,7 +319,10 @@ export const opencodeCommand = new Command('opencode')
         portlessStateDir: cfg.effective.portless.stateDir || undefined,
         limits: resolveLimits(cfg.effective.box, opts),
         projectRoot,
-        onLog: (line) => s.message(clampSpinnerLine(line)),
+        onLog: (line) => {
+          s.message(clampSpinnerLine(line));
+          cmdLog.write(line);
+        },
       });
       containerName = result.record.container;
 
@@ -322,8 +330,12 @@ export const opencodeCommand = new Command('opencode')
       // checkpoint captured before OpenCode support won't have it — install it
       // into the box's writable layer in that case (fast no-op otherwise).
       s.message('checking opencode');
+      cmdLog.write('checking opencode');
       await ensureOpencodeInstalled(result.record.container, {
-        onProgress: (line) => s.message(clampSpinnerLine(line)),
+        onProgress: (line) => {
+          s.message(clampSpinnerLine(line));
+          cmdLog.write(line);
+        },
       });
 
       s.message('starting opencode session');
@@ -340,18 +352,27 @@ export const opencodeCommand = new Command('opencode')
       s.stop(`box ${result.record.container} ready${nSuffix}`);
 
       outro('attaching — Control+a d to detach, leaves opencode running');
-      await attachOpencodeWrapped(result.record, sessionName, reattachRef(result.record));
+      await attachOpencodeWrapped(
+        result.record,
+        sessionName,
+        reattachRef(result.record),
+        (m) => cmdLog.write(m),
+      );
     } catch (err) {
       s.stop('failed');
+      cmdLog.write(`FAIL: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
       if (err instanceof OpencodeSessionError) {
         log.error(err.message);
         if (containerName) {
           log.info(`The box ${containerName} is still running. Destroy it with:`);
           log.info(`  agentbox destroy ${containerName} -y`);
         }
+        cmdLog.close();
         process.exit(1);
       }
       handleLifecycleError(err);
+    } finally {
+      cmdLog.close();
     }
   });
 

@@ -48,6 +48,11 @@ export interface WrappedAttachOptions {
   /** Optional notice printed to stdout *after* the pty exits with code 0
    *  (mirrors today's `formatDetachNotice` for `agentbox claude`). */
   detachNotice?: string;
+  /** Optional sink for non-fatal errors that we'd otherwise swallow (Ctrl+a
+   *  action spawn failures, status-poll failures, unexpected prompt-capture
+   *  rejections). Callers wire this to their command log so post-mortem
+   *  inspection isn't blind. */
+  onError?: (msg: string) => void;
 }
 
 const FOOTER_ROWS = 1;
@@ -86,6 +91,9 @@ const ACTION_CMD: Record<
  */
 export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<number> {
   const command = opts.command ?? 'docker';
+  const logErr = (msg: string): void => {
+    opts.onError?.(msg);
+  };
   if (!process.stdout.isTTY || !process.stdin.isTTY) {
     // Non-interactive path: piping / scripts. Don't wrap — preserves
     // machine-readable stdout, no footer corruption.
@@ -242,8 +250,9 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
           [cliEntry, cmd.sub, opts.boxId, ...cmd.flags],
           { detached: true, stdio: 'ignore' },
         ).unref();
-      } catch {
-        /* best-effort — the footer flash still shows */
+      } catch (e) {
+        // Best-effort — the footer flash still shows. Surface for inspection.
+        logErr(`leader-action spawn (${name}) failed: ${(e as Error).message}`);
       }
     }
     flashMessage = ACTION_FLASH[name];
@@ -316,8 +325,13 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       // input-router's onAnswer callback already POSTs and resets the footer.
       // We just need to await so unhandled rejections (router.abort) don't
       // crash the process.
-      router.capture(ev).catch(() => {
-        /* aborted — sibling answered, or pty exited. State already reset. */
+      router.capture(ev).catch((e: unknown) => {
+        // Expected reasons: sibling answered ('resolved-elsewhere'), pty exit.
+        // Anything else is a real bug worth surfacing.
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg !== 'resolved-elsewhere') {
+          logErr(`prompt capture rejected: ${msg}`);
+        }
       });
     },
     onResolved: (id: string) => {
@@ -366,8 +380,10 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
         recomputeFooter();
         redrawFooter();
       }
-    } catch {
-      /* readBoxStatus already swallows errors; this catch is belt-and-suspenders */
+    } catch (e) {
+      // readBoxStatus already swallows the common cases (paused/stopped/pre-feature);
+      // anything reaching here is unexpected and worth a log line.
+      logErr(`status poll failed: ${(e as Error).message}`);
     }
   };
   void pollStatus();

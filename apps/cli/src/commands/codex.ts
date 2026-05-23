@@ -31,6 +31,7 @@ import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { providerForCreate } from '../provider/registry.js';
 import { clampSpinnerLine } from '../spinner-line.js';
+import { openCommandLog } from '../lib/log-file.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
@@ -63,6 +64,7 @@ async function attachCodexWrapped(
   box: { id: string; name: string; container: string; projectIndex?: number },
   sessionName: string | undefined,
   reattach: string,
+  onError?: (msg: string) => void,
 ): Promise<never> {
   const code = await runWrappedAttach({
     container: box.container,
@@ -74,6 +76,7 @@ async function attachCodexWrapped(
     mode: 'codex',
     detachable: true,
     detachNotice: formatDetachNotice(reattach, 'codex'),
+    onError,
   });
   process.exit(code);
 }
@@ -224,6 +227,8 @@ export const codexCommand = new Command('codex')
     "extra args passed to codex inside the box; place after `--`, e.g. `agentbox codex -- -m gpt-5.4`",
   )
   .action(async (codexArgs: string[], opts: CodexCreateOptions) => {
+    const cmdLog = openCommandLog('codex');
+    process.stderr.write(`log: ${cmdLog.path}\n`);
     intro('Starting Codex in a box...');
 
     const cfg = await loadEffectiveConfig(opts.workspace, {
@@ -309,7 +314,10 @@ export const codexCommand = new Command('codex')
         portlessStateDir: cfg.effective.portless.stateDir || undefined,
         limits: resolveLimits(cfg.effective.box, opts),
         projectRoot,
-        onLog: (line) => s.message(clampSpinnerLine(line)),
+        onLog: (line) => {
+          s.message(clampSpinnerLine(line));
+          cmdLog.write(line);
+        },
       });
       containerName = result.record.container;
 
@@ -317,8 +325,12 @@ export const codexCommand = new Command('codex')
       // checkpoint captured before Codex support won't have it — install it
       // into the box's writable layer in that case (fast no-op otherwise).
       s.message('checking codex');
+      cmdLog.write('checking codex');
       await ensureCodexInstalled(result.record.container, {
-        onProgress: (line) => s.message(clampSpinnerLine(line)),
+        onProgress: (line) => {
+          s.message(clampSpinnerLine(line));
+          cmdLog.write(line);
+        },
       });
 
       s.message('starting codex session');
@@ -335,18 +347,27 @@ export const codexCommand = new Command('codex')
       s.stop(`box ${result.record.container} ready${nSuffix}`);
 
       outro('attaching — Control+a d to detach, leaves codex running');
-      await attachCodexWrapped(result.record, sessionName, reattachRef(result.record));
+      await attachCodexWrapped(
+        result.record,
+        sessionName,
+        reattachRef(result.record),
+        (m) => cmdLog.write(m),
+      );
     } catch (err) {
       s.stop('failed');
+      cmdLog.write(`FAIL: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
       if (err instanceof CodexSessionError) {
         log.error(err.message);
         if (containerName) {
           log.info(`The box ${containerName} is still running. Destroy it with:`);
           log.info(`  agentbox destroy ${containerName} -y`);
         }
+        cmdLog.close();
         process.exit(1);
       }
       handleLifecycleError(err);
+    } finally {
+      cmdLog.close();
     }
   });
 

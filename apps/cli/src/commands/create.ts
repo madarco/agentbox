@@ -15,6 +15,7 @@ import {
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
 import { clampSpinnerLine } from '../spinner-line.js';
+import { openCommandLog } from '../lib/log-file.js';
 import { maybePromptPortless } from '../portless-prompt.js';
 import { providerForCreate } from '../provider/registry.js';
 import { resolveLimits } from '../limits.js';
@@ -147,6 +148,8 @@ export const createCommand = new Command('create')
   .option('--disk <size>', 'best-effort container writable-layer size (e.g. 10g); no-op on overlay2/macOS')
   .option('-y, --yes', 'skip prompts, accept defaults')
   .action(async (opts: CreateOptions) => {
+    const cmdLog = openCommandLog('create');
+    process.stderr.write(`log: ${cmdLog.path}\n`);
     intro('Setting up a new box...');
 
     const cfg = await loadEffectiveConfig(opts.workspace, {
@@ -227,7 +230,10 @@ export const createCommand = new Command('create')
         vnc: { enabled: cfg.effective.box.vnc },
         limits: resolveLimits(cfg.effective.box, opts),
         projectRoot,
-        onLog: (line) => s.message(clampSpinnerLine(line)),
+        onLog: (line) => {
+          s.message(clampSpinnerLine(line));
+          cmdLog.write(line);
+        },
         providerOptions: {
           useSnapshot,
           sharedCache: cfg.effective.box.dockerCacheShared,
@@ -321,6 +327,7 @@ export const createCommand = new Command('create')
     } catch (err) {
       s.stop('failed');
       const msg = err instanceof Error ? err.message : String(err);
+      cmdLog.write(`FAIL: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
       log.error(msg);
       // Help the user clean up partial state.
       try {
@@ -337,6 +344,9 @@ export const createCommand = new Command('create')
       } catch {
         /* best-effort */
       }
+      cmdLog.close();
       process.exit(1);
+    } finally {
+      cmdLog.close();
     }
   });
