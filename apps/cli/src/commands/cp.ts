@@ -6,6 +6,7 @@ import { execa } from 'execa';
 import { inspectBox, startBox, unpauseBox, type BoxRecord } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
+import { requireDockerProvider } from './_provider-guard.js';
 
 /**
  * A `<box>:<path>` arg has a `:` in it AND no `/` before that colon. Anything
@@ -254,6 +255,7 @@ export const cpCommand = new Command('cp')
     try {
       const parsed = parseArgs(src, dst);
       const box = await resolveBoxOrExit(parsed.boxRef);
+      requireDockerProvider(box, 'cp');
 
       const insp = await inspectBox(box.id);
       if (insp.state === 'paused') {

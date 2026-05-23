@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@agentbox/core": "workspace:*",
+    "@agentbox/relay": "workspace:*",
     "commander": "^12.1.0",
     "yaml": "^2.6.1"
   },

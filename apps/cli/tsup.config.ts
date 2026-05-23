@@ -14,7 +14,15 @@ export default defineConfig({
   // require('child_process') and break esbuild's ESM `__require` shim if
   // bundled. tsup externalizes anything in `dependencies`; the explicit list
   // also keeps esbuild from walking node-pty's prebuilt-binary path probing.
-  external: ['@homebridge/node-pty-prebuilt-multiarch', '@xterm/headless'],
+  external: [
+    '@homebridge/node-pty-prebuilt-multiarch',
+    '@xterm/headless',
+    // @daytonaio/sdk pulls a heavy CJS tree (AWS S3 SDK, axios, dotenv, ...)
+    // that uses dynamic `require()` — bundling it breaks esbuild's ESM
+    // `__require` shim ("Dynamic require of 'util' is not supported"). Keep
+    // it external; the published `agent-box` package lists it as a real dep.
+    '@daytonaio/sdk',
+  ],
   noExternal: [/^@agentbox\//],
   banner: {
     js: '#!/usr/bin/env node',

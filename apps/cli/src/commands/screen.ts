@@ -12,6 +12,7 @@ import {
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
+import { requireDockerProvider } from './_provider-guard.js';
 
 interface ScreenOptions {
   print?: boolean;
@@ -29,6 +30,7 @@ export const screenCommand = new Command('screen')
   .action(async (idOrName: string | undefined, opts: ScreenOptions) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
+      requireDockerProvider(box, 'screen');
 
       if (!box.vncEnabled) {
         throw new Error(`VNC is disabled for box ${box.name} — recreate without \`--no-vnc\``);

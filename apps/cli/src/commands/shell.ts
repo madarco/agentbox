@@ -23,6 +23,7 @@ import {
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
+import { requireDockerProvider } from './_provider-guard.js';
 
 const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
 
@@ -167,6 +168,7 @@ export const shellCommand = new Command('shell')
       // binds "ls" to [box], which doesn't resolve; if auto-pick succeeds we
       // treat "ls" as the first cmd token instead.
       const { box, shifted } = await resolveBoxOrShift(idOrName);
+      requireDockerProvider(box, 'shell');
       const effectiveCmd = shifted && idOrName ? [idOrName, ...cmd] : cmd;
 
       const cfg = await loadEffectiveConfig(box.workspacePath, {
@@ -261,6 +263,7 @@ const shellAttachCommand = new Command('attach')
       // subcommand reads it back through the merge.
       const opts = this.optsWithGlobals() as ShellOptions;
       const box = await resolveBoxOrExit(idOrName);
+      requireDockerProvider(box, 'shell');
       const cfg = await loadEffectiveConfig(box.workspacePath, {
         cliOverrides: buildShellCliOverrides(opts),
       });
@@ -296,6 +299,7 @@ const shellLsCommand = new Command('ls')
   .action(async (idOrName: string | undefined) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
+      requireDockerProvider(box, 'shell');
       const insp = await inspectBox(box.id);
       if (insp.state !== 'running') {
         log.info(`box ${box.name} is ${insp.state} — no live shell sessions`);
@@ -332,6 +336,7 @@ const shellKillCommand = new Command('kill')
       // (it parses the flag); `--all` is this subcommand's own.
       const opts = this.optsWithGlobals() as ShellKillOptions;
       const box = await resolveBoxOrExit(idOrName);
+      requireDockerProvider(box, 'shell');
       const insp = await inspectBox(box.id);
       if (insp.state !== 'running') {
         log.info(`box ${box.name} is ${insp.state} — no shell sessions to kill`);

@@ -32,6 +32,7 @@ import {
   type ListedBox,
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { requireDockerProvider } from './_provider-guard.js';
 import { resolveClaudeAuth } from '../auth.js';
 import { resolveLimits } from '../limits.js';
 import { Compositor, type RightTarget } from '../dashboard/compositor.js';
@@ -136,6 +137,7 @@ export const dashboardCommand = new Command('dashboard')
       let initialId: string;
       if (idOrName !== undefined) {
         const picked = await resolveBoxOrExit(idOrName);
+        requireDockerProvider(picked, 'dashboard');
         initialId = picked.id;
         if (!scoped0.some((b) => b.id === picked.id)) showAll = true; // widen so it shows
       } else if (scoped0.length === 0) {

@@ -16,6 +16,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
+import { requireDockerProvider } from './_provider-guard.js';
 
 interface CodeOptions {
   // commander stores `--no-wait` / `--no-auto-terminals` under the positive
@@ -67,6 +68,7 @@ export const codeCommand = new Command('code')
   .action(async (idOrName: string | undefined, opts: CodeOptions) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
+      requireDockerProvider(box, 'code');
 
       // Layered config: workspace = the box's host workspace, not cwd, so
       // per-project defaults follow the box even if you run `agentbox code`

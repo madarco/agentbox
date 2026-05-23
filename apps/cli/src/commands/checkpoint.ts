@@ -18,6 +18,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
+import { requireDockerProvider } from './_provider-guard.js';
 
 /** Footer warning shown in attached sessions while a checkpoint runs. */
 const CHECKPOINT_NOTICE = 'Checkpoint in progress — the box will be unresponsive for a moment';
@@ -55,6 +56,7 @@ const createSub = new Command('create')
   .action(async (idOrName: string | undefined, opts: CreateOpts) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
+      requireDockerProvider(box, 'checkpoint create');
 
       const insp = await inspectBox(box.id);
       if (insp.state === 'paused') {

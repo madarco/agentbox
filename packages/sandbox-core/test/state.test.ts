@@ -1,8 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { BoxRecord } from '@agentbox/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readState, recordBox, removeBoxRecord, writeState, type BoxRecord } from '../src/state.js';
+import { readState, recordBox, removeBoxRecord, writeState } from '../src/state.js';
 
 describe('state.ts', () => {
   let dir: string;
@@ -35,7 +36,42 @@ describe('state.ts', () => {
     await recordBox(box, file);
 
     const reloaded = await readState(file);
-    expect(reloaded.boxes).toEqual([box]);
+    // readState migrates legacy records by defaulting `provider` to 'docker'.
+    expect(reloaded.boxes).toEqual([{ ...box, provider: 'docker' }]);
+  });
+
+  it("defaults `provider` to 'docker' for records written without it", async () => {
+    const legacy = {
+      version: 1,
+      boxes: [
+        {
+          id: 'legacy01',
+          name: 'legacy',
+          container: 'agentbox-legacy',
+          image: 'agentbox/box:dev',
+          workspacePath: '/tmp/ws',
+          createdAt: '2026-05-12T12:00:00.000Z',
+        },
+      ],
+    };
+    await writeState(legacy as unknown as Parameters<typeof writeState>[0], file);
+    const reloaded = await readState(file);
+    expect(reloaded.boxes[0]?.provider).toBe('docker');
+  });
+
+  it('preserves an explicit non-docker provider on read', async () => {
+    const box: BoxRecord = {
+      id: 'cloud001',
+      name: 'cloud-demo',
+      provider: 'daytona',
+      container: 'agentbox-cloud-demo',
+      image: 'agentbox/box:dev',
+      workspacePath: '/tmp/ws',
+      createdAt: '2026-05-12T12:00:00.000Z',
+    };
+    await recordBox(box, file);
+    const reloaded = await readState(file);
+    expect(reloaded.boxes[0]?.provider).toBe('daytona');
   });
 
   it('replaces an existing record with the same id', async () => {
@@ -94,7 +130,7 @@ describe('state.ts', () => {
     };
     await recordBox(box, file);
     const reloaded = await readState(file);
-    expect(reloaded.boxes).toEqual([box]);
+    expect(reloaded.boxes).toEqual([{ ...box, provider: 'docker' }]);
   });
 
   it('round-trips projectRoot + projectIndex', async () => {

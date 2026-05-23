@@ -27,6 +27,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import { requireDockerProvider } from './_provider-guard.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
@@ -405,6 +406,7 @@ const codexAttachCommand = new Command('attach')
     intro('Attaching to Codex session...');
     try {
       const box = await resolveBoxOrExit(idOrName);
+      requireDockerProvider(box, 'codex');
       await startOrAttachCodex(box, [], { ...opts, syncConfig: false });
     } catch (err) {
       if (err instanceof CodexSessionError) {
@@ -439,6 +441,7 @@ const codexStartCommand = new Command('start')
       // Two positionals make commander bind the first post-`--` token to
       // `[box]`; resolveBoxOrShift detects that and auto-picks the box.
       const { box, shifted } = await resolveBoxOrShift(idOrName);
+      requireDockerProvider(box, 'codex');
       const effectiveCodexArgs = shifted && idOrName ? [idOrName, ...codexArgs] : codexArgs;
       await startOrAttachCodex(box, effectiveCodexArgs, opts);
     } catch (err) {

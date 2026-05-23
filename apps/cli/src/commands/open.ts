@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { runPath } from './path.js';
 import { handleLifecycleError } from './_errors.js';
+import { requireDockerProvider } from './_provider-guard.js';
 
 interface OpenOpts {
   refresh: boolean; // commander gives `--no-refresh` => refresh=false
@@ -27,6 +28,7 @@ export const openCommand = new Command('open')
   .action(async (idOrName: string | undefined, opts: OpenOpts) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
+      requireDockerProvider(box, 'open');
 
       if (opts.path || opts.print) {
         await runPath(box, {

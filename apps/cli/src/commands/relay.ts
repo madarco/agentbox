@@ -2,11 +2,40 @@ import { log, spinner } from '@clack/prompts';
 import {
   ensureRelay,
   getRelayStatus,
+  rehydrateRelayRegistry,
   stopRelay,
   type RelayStatus,
 } from '@agentbox/sandbox-docker';
+import { readState } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { handleLifecycleError } from './_errors.js';
+
+/**
+ * After a fresh relay process starts (cold start or restart), it has no
+ * in-memory box registry — and for cloud boxes that means no `CloudBoxPoller`
+ * is running. Re-push every persisted (id, token, kind, preview…) so the
+ * relay regains the same registry it had before the restart. Lifts the
+ * cloud poller back up so status push + git push resume seamlessly.
+ */
+async function rehydrateFromState(): Promise<void> {
+  const state = await readState();
+  await rehydrateRelayRegistry(
+    state.boxes.map((b) => ({
+      id: b.id,
+      name: b.name,
+      provider: b.provider,
+      container: b.container,
+      createdAt: b.createdAt,
+      relayToken: b.relayToken,
+      projectIndex: b.projectIndex,
+      gitWorktrees: b.gitWorktrees,
+      cloudBackend: b.cloud?.backend,
+      relayPreviewUrl: b.cloud?.relayPreviewUrl,
+      relayPreviewToken: b.cloud?.relayPreviewToken,
+      bridgeToken: b.cloud?.bridgeToken,
+    })),
+  );
+}
 
 interface StatusOpts {
   json?: boolean;
@@ -73,6 +102,7 @@ const startSub = new Command('start')
       const s = spinner();
       s.start('starting relay');
       const ep = await ensureRelay();
+      await rehydrateFromState();
       s.stop(`relay running on ${ep.hostUrl}`);
     } catch (err) {
       handleLifecycleError(err);
@@ -95,6 +125,7 @@ const restartSub = new Command('restart')
       s2.start('starting relay');
       try {
         const ep = await ensureRelay();
+        await rehydrateFromState();
         s2.stop(`relay running on ${ep.hostUrl}`);
       } catch (err) {
         s2.stop('relay start failed');

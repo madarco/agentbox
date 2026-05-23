@@ -10,6 +10,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface UrlOptions {
@@ -33,44 +34,62 @@ export const urlCommand = new Command('url')
   .action(async (idOrName: string | undefined, opts: UrlOptions) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
+      const provider = box.provider ?? 'docker';
 
-      const insp = await inspectBox(box.id);
-      if (insp.state === 'paused') {
-        log.info('box is paused; unpausing');
-        await unpauseBox(box.id);
-      } else if (insp.state === 'stopped') {
-        log.info('box is stopped; starting');
-        await startBox(box.id);
-      } else if (insp.state === 'missing') {
-        throw new Error(`box ${box.name} has no container; was it destroyed?`);
-      }
-
-      // Re-read after a possible start: startBox re-resolves & persists the
-      // reallocated webHostPort (lifecycle.ts).
-      const { record } = await getBoxHostPaths(box.id);
-      if (record.webContainerPort === undefined) {
-        throw new Error(
-          `box ${box.name} predates the reserved web port; recreate it to use \`agentbox url\``,
-        );
-      }
-
-      const engine = await detectEngine();
       let url: string;
-      if (engine === 'orbstack' && !opts.loopback) {
-        // OrbStack auto-routes <container>.orb.local to the container; :80 is
-        // declared (EXPOSE 80) so no port suffix is needed.
-        url = `http://${record.container}.orb.local`;
-      } else if (record.portlessAlias && !opts.loopback) {
-        // A Portless route was registered — use the URL resolved at
-        // create/start; fall back to a live `portless get` for older records.
-        url = record.portlessUrl ?? (await portlessGetUrl(record.portlessAlias));
-      } else {
-        if (record.webHostPort === undefined) {
+      if (provider === 'docker') {
+        const insp = await inspectBox(box.id);
+        if (insp.state === 'paused') {
+          log.info('box is paused; unpausing');
+          await unpauseBox(box.id);
+        } else if (insp.state === 'stopped') {
+          log.info('box is stopped; starting');
+          await startBox(box.id);
+        } else if (insp.state === 'missing') {
+          throw new Error(`box ${box.name} has no container; was it destroyed?`);
+        }
+
+        // Re-read after a possible start: startBox re-resolves & persists the
+        // reallocated webHostPort (lifecycle.ts).
+        const { record } = await getBoxHostPaths(box.id);
+        if (record.webContainerPort === undefined) {
           throw new Error(
-            `web port not resolved for box ${box.name}; is the container running? try \`agentbox inspect ${box.name}\``,
+            `box ${box.name} predates the reserved web port; recreate it to use \`agentbox url\``,
           );
         }
-        url = `http://127.0.0.1:${String(record.webHostPort)}`;
+
+        const engine = await detectEngine();
+        if (engine === 'orbstack' && !opts.loopback) {
+          // OrbStack auto-routes <container>.orb.local to the container; :80 is
+          // declared (EXPOSE 80) so no port suffix is needed.
+          url = `http://${record.container}.orb.local`;
+        } else if (record.portlessAlias && !opts.loopback) {
+          // A Portless route was registered — use the URL resolved at
+          // create/start; fall back to a live `portless get` for older records.
+          url = record.portlessUrl ?? (await portlessGetUrl(record.portlessAlias));
+        } else {
+          if (record.webHostPort === undefined) {
+            throw new Error(
+              `web port not resolved for box ${box.name}; is the container running? try \`agentbox inspect ${box.name}\``,
+            );
+          }
+          url = `http://127.0.0.1:${String(record.webHostPort)}`;
+        }
+      } else {
+        // Cloud provider: probeState + lifecycle handled by the provider; URL
+        // is the (token-authed) preview URL the backend resolves on demand.
+        const p = await providerForBox(box);
+        const state = await p.probeState(box);
+        if (state === 'paused') {
+          log.info('box is paused; resuming');
+          await p.resume(box);
+        } else if (state === 'stopped') {
+          log.info('box is stopped; starting');
+          await p.start(box);
+        } else if (state === 'missing') {
+          throw new Error(`cloud sandbox for ${box.name} is missing; was it deleted?`);
+        }
+        url = await p.resolveUrl(box, { loopback: opts.loopback });
       }
 
       if (opts.print) {

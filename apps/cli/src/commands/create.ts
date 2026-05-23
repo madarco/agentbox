@@ -7,7 +7,6 @@ import {
   type UserConfig,
 } from '@agentbox/config';
 import {
-  createBox,
   DEFAULT_RELAY_PORT,
   detectEngine,
   listBoxes,
@@ -17,6 +16,7 @@ import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { maybePromptPortless } from '../portless-prompt.js';
+import { providerForCreate } from '../provider/registry.js';
 import { resolveLimits } from '../limits.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import {
@@ -31,6 +31,8 @@ import { claudeCommand } from './claude.js';
 interface CreateOptions {
   workspace: string;
   name?: string;
+  /** Override the sandbox backend. Resolved via the provider registry. */
+  provider?: string;
   hostSnapshot?: boolean; // commander: --host-snapshot / --no-host-snapshot => true / false / undefined
   snapshot?: string; // --snapshot <ref>: start from this checkpoint
   image?: string;
@@ -115,6 +117,7 @@ export const createCommand = new Command('create')
   .description('Create and start a new agent box (Docker container with /workspace seeded via in-container git worktree)')
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
   .option('-n, --name <name>', 'friendly box name (default: <workspace-basename>-<id>)')
+  .option('--provider <name>', "sandbox backend: 'docker' (default) or 'daytona' (cloud)")
   .option('--host-snapshot', 'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)')
   .option('--no-host-snapshot', 'bind the live workspace directly (host edits leak into reads)')
   .option(
@@ -194,22 +197,28 @@ export const createCommand = new Command('create')
       // even if box.withPlaywright wasn't explicitly set in any layer.
       const withPlaywright =
         cfg.effective.box.withPlaywright || cfg.effective.browser.default !== 'agent-browser';
-      const result = await createBox({
+      // --provider flag wins over box.provider config. The registry hands back
+      // a DockerProvider for 'docker' and (once Phase 5 wires it) a cloud
+      // provider for 'daytona'; everything below is provider-neutral.
+      const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });
+      const result = await provider.create({
         workspacePath: opts.workspace,
         name: opts.name,
-        useSnapshot,
         checkpointRef,
         image: cfg.effective.box.image,
         withPlaywright,
         withEnv: cfg.effective.box.withEnv,
         envFilesToImport: wiz.envFilesToImport,
         vnc: { enabled: cfg.effective.box.vnc },
-        docker: { sharedCache: cfg.effective.box.dockerCacheShared },
-        portless: portlessEnabled,
-        portlessStateDir: cfg.effective.portless.stateDir || undefined,
         limits: resolveLimits(cfg.effective.box, opts),
         projectRoot,
         onLog: (line) => s.message(clampSpinnerLine(line)),
+        providerOptions: {
+          useSnapshot,
+          sharedCache: cfg.effective.box.dockerCacheShared,
+          portless: portlessEnabled,
+          portlessStateDir: cfg.effective.portless.stateDir || undefined,
+        },
       });
       s.stop(`box ${result.record.container} ready`);
 

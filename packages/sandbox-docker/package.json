@@ -30,6 +30,7 @@
     "@agentbox/core": "workspace:*",
     "@agentbox/ctl": "workspace:*",
     "@agentbox/relay": "workspace:*",
+    "@agentbox/sandbox-core": "workspace:*",
     "execa": "^9.5.2"
   },
   "devDependencies": {

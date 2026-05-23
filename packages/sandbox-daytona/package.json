@@ -1,0 +1,38 @@
+{
+  "name": "@agentbox/sandbox-daytona",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Daytona Cloud sandbox provider — CloudBackend over @daytonaio/sdk",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "eslint src test",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@agentbox/core": "workspace:*",
+    "@agentbox/sandbox-cloud": "workspace:*",
+    "@daytonaio/sdk": "^0.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -355,6 +355,18 @@ export interface RegisterBoxArgs {
   boxId: string;
   token: string;
   name: string;
+  /**
+   * Sandbox backend. Defaults to 'docker'. 'cloud' tells the host relay to
+   * spawn a `CloudBoxPoller` for this box (which requires `previewUrl` +
+   * `bridgeToken` to be set).
+   */
+  kind?: 'docker' | 'cloud';
+  /**
+   * For cloud boxes: which cloud backend to drive (e.g. 'daytona'). The
+   * relay's executor lazy-imports `@agentbox/sandbox-{backend}` to do
+   * host-only RPCs like git push.
+   */
+  backend?: string;
   /** Docker container name; lets the relay `docker pause` the box for auto-pause. */
   containerName?: string;
   /** ISO-8601 box-creation time (BoxRecord.createdAt); auto-pause tie-break. */
@@ -370,6 +382,12 @@ export interface RegisterBoxArgs {
    * Empty/omitted for boxes without git repos.
    */
   worktrees?: GitWorktreeRecord[];
+  /** Required for `kind === 'cloud'`: preview URL of the in-sandbox relay's `/bridge/*`. */
+  previewUrl?: string;
+  /** Provider-proxy token for `previewUrl` (Daytona `x-daytona-preview-token`). */
+  previewToken?: string;
+  /** Required for `kind === 'cloud'`: bearer for the in-sandbox relay's `/bridge/*`. */
+  bridgeToken?: string;
 }
 
 export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void> {
@@ -382,10 +400,15 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     boxId: args.boxId,
     token: args.token,
     name: args.name,
+    kind: args.kind ?? 'docker',
+    backend: args.backend,
     containerName: args.containerName,
     createdAt: args.createdAt,
     projectIndex: args.projectIndex,
     worktrees,
+    previewUrl: args.previewUrl,
+    previewToken: args.previewToken,
+    bridgeToken: args.bridgeToken,
   });
 }
 
@@ -521,30 +544,45 @@ async function adminPostForJson(path: string, body: unknown): Promise<unknown> {
 export interface BoxWithToken {
   id: string;
   name: string;
+  /** Sandbox backend the box runs on. Defaults to 'docker' when absent. */
+  provider?: 'docker' | 'cloud' | string;
   container?: string;
   createdAt?: string;
   relayToken?: string;
   projectIndex?: number;
   gitWorktrees?: GitWorktreeRecord[];
+  /** Cloud-only: which backend (e.g. 'daytona') drives this box. */
+  cloudBackend?: string;
+  /** Cloud-only: in-sandbox /bridge URL + tokens (from BoxRecord.cloud). */
+  relayPreviewUrl?: string;
+  relayPreviewToken?: string;
+  bridgeToken?: string;
 }
 
 /**
  * Re-push every known (id, token) to the relay's in-memory registry. Called
  * after `ensureRelay()` so a fresh / restarted relay learns about boxes that
- * were created in a previous CLI invocation.
+ * were created in a previous CLI invocation — and, for cloud boxes,
+ * restarts the host-side `CloudBoxPoller`.
  */
 export async function rehydrateRelayRegistry(boxes: BoxWithToken[]): Promise<void> {
   for (const b of boxes) {
     if (!b.relayToken) continue;
+    const kind = b.provider === 'docker' || b.provider === undefined ? 'docker' : 'cloud';
     try {
       await registerBoxWithRelay({
         boxId: b.id,
         token: b.relayToken,
         name: b.name,
+        kind,
+        backend: kind === 'cloud' ? b.cloudBackend : undefined,
         containerName: b.container,
         createdAt: b.createdAt,
         projectIndex: b.projectIndex,
         worktrees: b.gitWorktrees,
+        previewUrl: b.relayPreviewUrl,
+        previewToken: b.relayPreviewToken,
+        bridgeToken: b.bridgeToken,
       });
     } catch {
       // best-effort

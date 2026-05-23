@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { execInBox } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
+import { requireDockerProvider } from './_provider-guard.js';
 
 interface LogsOptions {
   tail: string;
@@ -43,6 +44,7 @@ export const logsCommand = new Command('logs')
       }
 
       const box = await resolveBoxOrExit(idOrName);
+      requireDockerProvider(box, 'logs');
 
       const tail = String(Number.parseInt(opts.tail, 10) || 200);
       const args = ['agentbox-ctl', 'logs', service, '--tail', tail];

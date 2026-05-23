@@ -6,9 +6,12 @@ export {
   RELAY_EVENT_RING_SIZE,
 } from './types.js';
 export type {
+  BoxKind,
   BoxNoticeEvent,
   BoxRegistration,
   BoxWorktree,
+  BridgeActionResultBody,
+  BridgePollResponse,
   BrowserOpenRpcParams,
   CheckpointRpcParams,
   ClearNoticeBody,
@@ -17,6 +20,8 @@ export type {
   DownloadRpcParams,
   GitRpcParams,
   GitRpcResult,
+  HostAction,
+  HostActionResult,
   NoticeKind,
   PostEventBody,
   PostRpcBody,
@@ -28,6 +33,8 @@ export type {
   RelayEvent,
   SetNoticeBody,
 } from './types.js';
+export { HostActionQueue } from './host-action-queue.js';
+export { CloudBoxPoller, CloudBoxPollers, type CloudBoxPollerDeps } from './cloud-poller.js';
 export { BoxRegistry, EventBuffer } from './registry.js';
 export {
   askPrompt,
@@ -41,6 +48,7 @@ export { BoxStatusStore, isValidBoxStatus, type BoxStatusSnapshot } from './stat
 export {
   createRelayServer,
   startRelayServer,
+  type RelayMode,
   type RelayServerHandle,
   type RelayServerOptions,
 } from './server.js';

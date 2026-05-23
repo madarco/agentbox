@@ -2,11 +2,10 @@ import { findProjectRoot } from '@agentbox/config';
 import {
   AmbiguousBoxError,
   BoxNotFoundError,
-  readState,
-  resolveBoxRef,
   type BoxRecord,
   type FindBoxResult,
-} from '@agentbox/sandbox-docker';
+} from '@agentbox/core';
+import { readState, resolveBoxRef } from '@agentbox/sandbox-core';
 import { log } from '@clack/prompts';
 
 interface ResolveOptions {

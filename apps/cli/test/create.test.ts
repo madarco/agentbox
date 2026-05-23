@@ -12,6 +12,7 @@ describe('agentbox create command', () => {
       expect.arrayContaining([
         '--workspace',
         '--name',
+        '--provider',
         '--snapshot',
         '--image',
         '--attach',

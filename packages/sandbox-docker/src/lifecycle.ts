@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BoxState } from '@agentbox/core';
+import { AmbiguousBoxError, BoxNotFoundError } from '@agentbox/core';
 import type { AgentActivityState, BoxStatus, ClaudeActivityState } from '@agentbox/ctl';
 import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './claude.js';
 import { codexSessionInfo, SHARED_CODEX_VOLUME, type CodexSessionInfo } from './codex.js';
@@ -95,6 +96,45 @@ export async function listBoxes(): Promise<ListedBox[]> {
   const engine = await detectEngine();
   return Promise.all(
     boxes.map(async (b): Promise<ListedBox> => {
+      // Cloud boxes don't have a host Docker container — skip every Docker
+      // probe (inspect / exec / shell-session). Their state is optimistically
+      // 'running' (a real probe would round-trip the cloud SDK on every list;
+      // tracked for Phase 6); endpoints come from the cloud.previewUrls map
+      // populated at create/start; agent activity rides the persisted status
+      // snapshot the host poller mirrors from the in-sandbox relay.
+      if (b.provider && b.provider !== 'docker') {
+        const persisted = await readBoxStatus(b);
+        const webPort = b.cloud?.webPort ?? 0;
+        const webUrl = webPort > 0 ? b.cloud?.previewUrls?.[webPort] : undefined;
+        const endpoints: BoxEndpoints = {
+          domain: webUrl ? safeHost(webUrl) : '',
+          domainIsOrb: false,
+          endpoints: webUrl
+            ? [
+                {
+                  kind: 'web',
+                  name: 'web',
+                  containerPort: webPort,
+                  url: webUrl,
+                  reachable: true,
+                },
+              ]
+            : [],
+        };
+        return {
+          ...b,
+          state: 'running',
+          endpoints,
+          claudeActivity: persisted?.claude.state,
+          claudeSessionTitle: persisted?.claude.sessionTitle,
+          codexActivity: persisted?.codex?.state,
+          codexSessionTitle: persisted?.codex?.sessionTitle,
+          opencodeSessionTitle: persisted?.opencode?.sessionTitle,
+          shellSessions: [],
+          codexSession: null,
+          opencodeSession: null,
+        };
+      }
       const state = await inspectContainerStatus(b.container);
       const persisted = await readBoxStatus(b);
       const endpoints = await getBoxEndpoints(b, engine, persisted);
@@ -125,23 +165,19 @@ export async function listBoxes(): Promise<ListedBox[]> {
   );
 }
 
-export class BoxNotFoundError extends Error {
-  constructor(public readonly query: string) {
-    super(`no agentbox matches "${query}"`);
-    this.name = 'BoxNotFoundError';
+/** Extract host from a URL string; empty when unparseable. */
+function safeHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '';
   }
 }
 
-export class AmbiguousBoxError extends Error {
-  constructor(
-    public readonly query: string,
-    public readonly matches: BoxRecord[],
-  ) {
-    const ids = matches.map((m) => m.id).join(', ');
-    super(`"${query}" matches multiple boxes: ${ids}`);
-    this.name = 'AmbiguousBoxError';
-  }
-}
+// The box-resolution error classes are provider-neutral; they live in
+// @agentbox/core. Imported for local `throw`s below and re-exported so existing
+// `@agentbox/sandbox-docker` consumers keep importing them from here.
+export { AmbiguousBoxError, BoxNotFoundError };
 
 async function pathExists(p: string): Promise<boolean> {
   try {

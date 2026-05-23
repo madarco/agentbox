@@ -1,4 +1,4 @@
-import type { SandboxProvider } from '@agentbox/core';
+export { dockerProvider, type DockerCreateOptions } from './docker-provider.js';
 
 export {
   attachClaudeSession,
@@ -304,64 +304,6 @@ export {
   type DockerdLaunchResult,
 } from './dockerd.js';
 
-const notYet = (op: string): never => {
-  throw new Error(`@agentbox/sandbox-docker: ${op} is not yet implemented`);
-};
-
-export const dockerProvider: SandboxProvider = {
-  name: 'docker',
-  async start(opts) {
-    const { createBox } = await import('./create.js');
-    const { record } = await createBox({
-      workspacePath: opts.workspacePath,
-      useSnapshot: false,
-    });
-    return {
-      id: record.id,
-      state: 'running',
-      agent: opts.agent,
-      workspacePath: record.workspacePath,
-      createdAt: new Date(record.createdAt),
-    };
-  },
-  async pause(id) {
-    const { pauseBox } = await import('./lifecycle.js');
-    await pauseBox(id);
-  },
-  async resume(id) {
-    const { unpauseBox } = await import('./lifecycle.js');
-    await unpauseBox(id);
-  },
-  async stop(id) {
-    const { stopBox } = await import('./lifecycle.js');
-    await stopBox(id);
-  },
-  async destroy(id) {
-    const { destroyBox } = await import('./lifecycle.js');
-    await destroyBox(id);
-  },
-  async list() {
-    const { listBoxes } = await import('./lifecycle.js');
-    const boxes = await listBoxes();
-    return boxes.map((b) => ({
-      id: b.id,
-      state: b.state,
-      agent: 'claude-code' as const,
-      workspacePath: b.workspacePath,
-      createdAt: new Date(b.createdAt),
-    }));
-  },
-  async stats(id) {
-    const { readState, findBox } = await import('./state.js');
-    const { boxResourceStats } = await import('./stats.js');
-    const found = findBox(id, await readState());
-    if (found.kind !== 'ok') {
-      throw new Error(`box not found: ${id}`);
-    }
-    return boxResourceStats(found.box);
-  },
-};
-
-// notYet is no longer reachable from the public API. Keep it for now in case
-// future provider methods need it before they're implemented.
-void notYet;
+// The new `dockerProvider` (implementing the provider-neutral `Provider`
+// interface from @agentbox/core) is exported from ./docker-provider.js at the
+// top of this file. The CLI resolves it via apps/cli/src/provider/registry.ts.

@@ -11,9 +11,12 @@
 export type IdeFlavor = 'vscode' | 'cursor' | 'auto';
 export type EngineKind = 'orbstack' | 'docker-desktop' | 'other' | 'auto';
 export type BrowserKind = 'agent-browser' | 'playwright' | 'both';
+/** Sandbox backend new boxes are created on. */
+export type ProviderKind = 'docker' | 'daytona';
 
 export interface UserConfig {
   box?: {
+    provider?: ProviderKind;
     hostSnapshot?: boolean;
     defaultCheckpoint?: string;
     withPlaywright?: boolean;
@@ -89,6 +92,7 @@ export interface UserConfig {
  */
 export interface EffectiveConfig {
   box: {
+    provider: ProviderKind;
     hostSnapshot: boolean | undefined;
     defaultCheckpoint: string;
     withPlaywright: boolean;
@@ -183,6 +187,7 @@ export interface LoadedConfig {
 
 export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   box: {
+    provider: 'docker',
     hostSnapshot: undefined,
     defaultCheckpoint: '',
     withPlaywright: false,
@@ -267,6 +272,13 @@ export interface KeyDescriptor {
  * and the JSON schema).
  */
 export const KEY_REGISTRY: readonly KeyDescriptor[] = [
+  {
+    key: 'box.provider',
+    type: 'enum',
+    enumValues: ['docker', 'daytona'] as const,
+    description:
+      'Sandbox backend new boxes are created on: local Docker containers or Daytona Cloud sandboxes.',
+  },
   {
     key: 'box.hostSnapshot',
     type: 'bool',

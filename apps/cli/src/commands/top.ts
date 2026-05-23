@@ -12,6 +12,7 @@ import { resolveBoxOrExit } from '../box-ref.js';
 import { fmtBytes, fmtPercent } from '../fmt.js';
 import { watchRender } from '../watch.js';
 import { handleLifecycleError } from './_errors.js';
+import { requireDockerProvider } from './_provider-guard.js';
 
 interface TopOptions {
   project?: boolean;
@@ -53,16 +54,22 @@ async function selectBoxes(
   opts: TopOptions,
 ): Promise<ListedBox[]> {
   const boxes = await listBoxes();
+  // Cloud boxes have no host Docker container; `boxResourceStats` and the
+  // live-stats path here are Docker-only. Filter them out so `top` (with or
+  // without an explicit box ref) doesn't try to docker-inspect a synthetic
+  // container name. Phase 6 may surface cloud stats via the backend SDK.
+  const dockerOnly = boxes.filter((b) => (b.provider ?? 'docker') === 'docker');
   if (idOrName === undefined) {
     // Default: every box on the host. --project narrows to the cwd's project.
     // An empty result is not an error here: watch mode stays up and picks up
     // boxes as they're created. Callers render a placeholder.
-    if (!opts.project) return boxes;
+    if (!opts.project) return dockerOnly;
     const project = await findProjectRoot(process.cwd());
-    return boxes.filter((b) => b.projectRoot === project.root);
+    return dockerOnly.filter((b) => b.projectRoot === project.root);
   }
   const picked = await resolveBoxOrExit(idOrName);
-  return boxes.filter((b) => b.id === picked.id);
+  requireDockerProvider(picked, 'top');
+  return dockerOnly.filter((b) => b.id === picked.id);
 }
 
 async function snapshot(

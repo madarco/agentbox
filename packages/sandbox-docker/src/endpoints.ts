@@ -1,35 +1,14 @@
 import { join } from 'node:path';
 import { loadConfig } from '@agentbox/ctl';
 import type { BoxStatus } from '@agentbox/ctl';
-import type { BoxRecord } from './state.js';
+import type { BoxEndpoint, BoxEndpoints, BoxRecord } from '@agentbox/core';
 import type { DockerEngine } from './host-export.js';
 import { buildVncUrls, VNC_CONTAINER_PORT } from './vnc.js';
 import { WEB_CONTAINER_PORT } from './web.js';
 
-export interface BoxEndpoint {
-  kind: 'vnc' | 'service' | 'web';
-  /** Service name (kind === 'service'/'web') or 'vnc' (kind === 'vnc'). */
-  name: string;
-  /** In-container port (6080 for VNC, the `ready_when.port` value for services). */
-  containerPort: number;
-  /**
-   * Host-side URL the user can open. Undefined when the port isn't reachable
-   * from the host (service ports on Docker Desktop, since we don't auto-publish
-   * them today).
-   */
-  url?: string;
-  /** Whether the URL is reachable from the host on the current engine. */
-  reachable: boolean;
-}
-
-export interface BoxEndpoints {
-  /** Bare hostname/IP for the box — `<container>.orb.local` on OrbStack, `127.0.0.1` otherwise. */
-  domain: string;
-  /** True when domain is the OrbStack auto-DNS (any in-container port works). */
-  domainIsOrb: boolean;
-  /** Ordered list of endpoints: VNC first (if enabled), then services in agentbox.yaml order. */
-  endpoints: BoxEndpoint[];
-}
+// BoxEndpoint / BoxEndpoints are the provider-neutral network-surface shape;
+// they live in @agentbox/core. Re-exported so existing consumers are unchanged.
+export type { BoxEndpoint, BoxEndpoints };
 
 /**
  * Build the box's user-facing network surface. Pure host-side: no docker exec,

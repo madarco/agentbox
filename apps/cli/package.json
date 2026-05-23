@@ -52,6 +52,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^0.9.0",
+    "@daytonaio/sdk": "^0.27.0",
     "@xterm/headless": "^5.5.0",
     "commander": "^12.1.0",
     "execa": "^9.5.2",
@@ -66,6 +67,9 @@
     "@agentbox/core": "workspace:*",
     "@agentbox/ctl": "workspace:*",
     "@agentbox/relay": "workspace:*",
+    "@agentbox/sandbox-cloud": "workspace:*",
+    "@agentbox/sandbox-core": "workspace:*",
+    "@agentbox/sandbox-daytona": "workspace:*",
     "@agentbox/sandbox-docker": "workspace:*",
     "@types/node": "^22.10.1",
     "tsup": "^8.3.5",

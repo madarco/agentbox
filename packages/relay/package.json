@@ -30,7 +30,10 @@
   },
   "dependencies": {
     "@agentbox/config": "workspace:*",
-    "commander": "^12.1.0"
+    "@agentbox/core": "workspace:*",
+    "@agentbox/sandbox-core": "workspace:*",
+    "commander": "^12.1.0",
+    "execa": "^9.5.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

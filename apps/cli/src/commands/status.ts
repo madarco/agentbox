@@ -43,6 +43,16 @@ export const statusCommand = withWatchOptions(
     }
     const box = await resolveBoxOrExit(idOrName);
 
+    // Cloud boxes don't have a host Docker container to `docker exec` into for
+    // a live status pull, and `inspectBox` is Docker-only. The persisted
+    // box-status (mirrored by the host poller into ~/.agentbox/boxes/<id>/
+    // status.json) carries the same service / task / ports info. Delegate to
+    // the inspect renderer's cloud branch — it surfaces all of it.
+    if ((box.provider ?? 'docker') !== 'docker') {
+      await runInspect(box, { json: opts.json, watch: opts.watch, interval: opts.interval });
+      return;
+    }
+
     if (opts.inspect) {
       await runInspect(box, { json: opts.json, watch: opts.watch, interval: opts.interval });
       return;

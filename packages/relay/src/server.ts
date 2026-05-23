@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { executeCloudAction } from './host-actions.js';
+import { HostActionQueue } from './host-action-queue.js';
 import { BoxNotices } from './notices.js';
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
@@ -7,6 +9,8 @@ import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
 import type {
   BoxRegistration,
   BoxWorktree,
+  BridgeActionResultBody,
+  BridgePollResponse,
   BrowserOpenRpcParams,
   CheckpointRpcParams,
   ClearNoticeBody,
@@ -23,11 +27,26 @@ import type {
   SetNoticeBody,
 } from './types.js';
 
+export type RelayMode = 'host' | 'box';
+
 export interface RelayServerOptions {
   port: number;
-  /** Bind address; defaults to '0.0.0.0' so the container reachable from other containers on the same docker network. */
+  /** Bind address; defaults to '0.0.0.0' so containers can reach the relay across the local docker network OR the Daytona preview proxy can hit the in-sandbox box-mode relay. */
   host?: string;
   logger?: (line: string) => void;
+  /**
+   * 'host' (default): host relay process; executes host-only RPCs locally
+   * via `spawn` and serves `/admin/*` to the CLI / wrapper.
+   * 'box': in-sandbox relay; host-only RPCs enqueue on a `HostActionQueue`
+   * for the host poller to drain via `/bridge/*`.
+   */
+  mode?: RelayMode;
+  /**
+   * Required when `mode === 'box'`: bearer for the box-only `/bridge/*`
+   * routes. Distinct from per-box `BoxRegistration.token` so a compromised
+   * in-box agent cannot impersonate the host poller.
+   */
+  bridgeToken?: string;
 }
 
 export interface RelayServerHandle {
@@ -38,6 +57,8 @@ export interface RelayServerHandle {
   prompts: PendingPrompts;
   subscribers: PromptSubscribers;
   notices: BoxNotices;
+  /** Present only in `mode === 'box'`: the parking lot for host-only RPCs. */
+  hostActions?: HostActionQueue;
   url: string;
   close: () => Promise<void>;
 }
@@ -141,6 +162,27 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const subscribers = new PromptSubscribers();
   const notices = new BoxNotices(subscribers);
   const host = opts.host ?? '0.0.0.0';
+  const mode: RelayMode = opts.mode ?? 'host';
+  // Box mode parks host-only RPCs until the host poller answers; host mode
+  // executes them inline (the historical behavior).
+  const hostActions = mode === 'box' ? new HostActionQueue() : null;
+  if (mode === 'box' && (!opts.bridgeToken || opts.bridgeToken.length === 0)) {
+    throw new Error("relay mode='box' requires a non-empty bridgeToken");
+  }
+  const bridgeToken = opts.bridgeToken ?? '';
+
+  // Host-mode pollers for cloud-tagged boxes; started on /admin/register-box,
+  // stopped on /admin/forget-box. Lazy import to keep host-mode startup free
+  // of cloud-poller deps until actually needed.
+  type CloudPollersModule = typeof import('./cloud-poller.js');
+  let pollers: InstanceType<CloudPollersModule['CloudBoxPollers']> | null = null;
+  async function getPollers(): Promise<InstanceType<CloudPollersModule['CloudBoxPollers']>> {
+    if (!pollers) {
+      const mod: CloudPollersModule = await import('./cloud-poller.js');
+      pollers = new mod.CloudBoxPollers();
+    }
+    return pollers;
+  }
 
   const server = createServer((req, res) => {
     handle(req, res).catch((err: unknown) => {
@@ -157,6 +199,68 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
 
     if (route === 'GET /healthz') {
       send(res, 200, { ok: true, boxes: registry.size(), events: events.size() });
+      return;
+    }
+
+    // Bridge routes are the host poller's view into an in-sandbox box-mode
+    // relay. They are bearer-authed with the per-relay bridgeToken and
+    // exist only when mode === 'box'. No loopback check: the Daytona
+    // preview proxy reaches them from non-loopback IPs.
+    if (url.pathname.startsWith('/bridge/')) {
+      if (mode !== 'box' || !hostActions) {
+        send(res, 404, { error: 'bridge routes available only in mode=box' });
+        return;
+      }
+      if (bearerToken(req) !== bridgeToken) {
+        send(res, 401, { error: 'invalid bridge token' });
+        return;
+      }
+      if (route === 'GET /bridge/healthz') {
+        send(res, 200, { ok: true, queued: hostActions.size(), events: events.size() });
+        return;
+      }
+      if (route === 'GET /bridge/poll') {
+        const since = Number.parseInt(url.searchParams.get('since') ?? '0', 10) || 0;
+        const newEvents = events.since(since);
+        const lastId = newEvents.length > 0 ? newEvents[newEvents.length - 1]!.id : since;
+        const actions = hostActions.drain();
+        // A box-mode relay only ever has one registered box (itself). The
+        // status snapshot — if any has been pushed — belongs to that box.
+        const only = registry.list()[0];
+        const status = only ? statusStore.get(only.boxId) ?? null : null;
+        const reply: BridgePollResponse = {
+          actions,
+          events: newEvents,
+          status,
+          cursor: lastId,
+        };
+        send(res, 200, reply);
+        return;
+      }
+      if (route === 'POST /bridge/action-result') {
+        const body = await readJsonBody<BridgeActionResultBody>(req);
+        if (
+          !body ||
+          typeof body.id !== 'string' ||
+          body.id.length === 0 ||
+          typeof body.exitCode !== 'number'
+        ) {
+          send(res, 400, { error: 'expected {id, exitCode, stdout, stderr}' });
+          return;
+        }
+        const ok = hostActions.resolve(body.id, {
+          exitCode: body.exitCode,
+          stdout: typeof body.stdout === 'string' ? body.stdout : '',
+          stderr: typeof body.stderr === 'string' ? body.stderr : '',
+        });
+        if (!ok) {
+          send(res, 404, { error: 'no parked action with that id' });
+          return;
+        }
+        send(res, 204, null);
+        return;
+      }
+      send(res, 404, { error: 'not found', route });
       return;
     }
 
@@ -212,6 +316,18 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         return;
       }
       log(`rpc box=${reg.boxId} method=${body.method}`);
+      // Box-mode: every host-only RPC (anything except the in-sandbox-local
+      // `browser.open` notification) is parked on the HostActionQueue. The
+      // host's CloudBoxPoller drains via `/bridge/poll`, executes on the
+      // host (with the existing `askPrompt` gate for `git.push`), and POSTs
+      // the result back to `/bridge/action-result`, which resolves the
+      // awaited Promise here and unblocks the in-box `/rpc` caller.
+      if (mode === 'box' && hostActions && body.method !== 'browser.open') {
+        const queued = await hostActions.enqueue(reg.boxId, body.method, body.params);
+        const status = queued.exitCode === 0 ? 200 : 500;
+        send(res, status, queued);
+        return;
+      }
       if (body.method === 'git.push' || body.method === 'git.fetch') {
         // Only `push` mutates the user's remote; fetch is read-only and noisy.
         if (body.method === 'git.push') {
@@ -381,10 +497,16 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         body.projectIndex > 0
           ? Math.trunc(body.projectIndex)
           : undefined;
+      const kind = body.kind === 'cloud' ? 'cloud' : 'docker';
       const reg: BoxRegistration = {
         boxId: body.boxId,
         token: body.token,
         name: body.name,
+        kind,
+        backend:
+          typeof body.backend === 'string' && body.backend.length > 0
+            ? body.backend
+            : undefined,
         registeredAt: new Date().toISOString(),
         containerName:
           typeof body.containerName === 'string' && body.containerName.length > 0
@@ -396,12 +518,78 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             : undefined,
         projectIndex,
         worktrees,
+        previewUrl:
+          typeof body.previewUrl === 'string' && body.previewUrl.length > 0
+            ? body.previewUrl
+            : undefined,
+        previewToken:
+          typeof body.previewToken === 'string' && body.previewToken.length > 0
+            ? body.previewToken
+            : undefined,
+        bridgeToken:
+          typeof body.bridgeToken === 'string' && body.bridgeToken.length > 0
+            ? body.bridgeToken
+            : undefined,
       };
       registry.register(reg);
       log(
-        `registered box ${reg.boxId} (${reg.name})` +
+        `registered ${kind} box ${reg.boxId} (${reg.name})` +
           (worktrees && worktrees.length > 0 ? ` with ${String(worktrees.length)} worktree(s)` : ''),
       );
+      // Cloud boxes get a host-side poller so the host relay can mirror their
+      // status into its BoxStatusStore (and, once the executor is wired,
+      // drain queued host-only RPCs and post results back).
+      if (kind === 'cloud' && reg.previewUrl && reg.bridgeToken) {
+        try {
+          const set = await getPollers();
+          set.start(reg.boxId, {
+            boxId: reg.boxId,
+            previewUrl: reg.previewUrl,
+            bridgeToken: reg.bridgeToken,
+            previewToken: reg.previewToken,
+            onEvents: (evs) => {
+              for (const ev of evs) {
+                events.append({ boxId: reg.boxId, type: ev.type, payload: ev.payload, ts: ev.ts });
+              }
+            },
+            onStatus: (status) => {
+              if (isValidBoxStatus(status)) {
+                void statusStore.set(reg.boxId, reg.name, reg.projectIndex, status);
+              }
+            },
+            // Drained host-only RPCs (git.push, …) run on the host via the
+            // executor and the result is POSTed back to /bridge/action-result.
+            // No backend name → no executor; the poller's default respond
+            // already returns a "no executor" error so the box unblocks.
+            onAction: reg.backend
+              ? async (action, respond) => {
+                  try {
+                    const result = await executeCloudAction(action, {
+                      backendName: reg.backend!,
+                      boxId: reg.boxId,
+                      boxName: reg.name,
+                      prompts,
+                      subscribers,
+                      log,
+                    });
+                    await respond(result);
+                  } catch (err) {
+                    await respond({
+                      exitCode: 1,
+                      stdout: '',
+                      stderr: `host executor failed: ${err instanceof Error ? err.message : String(err)}\n`,
+                    });
+                  }
+                }
+              : undefined,
+            logger: log,
+          });
+        } catch (err) {
+          log(
+            `failed to start cloud poller for ${reg.boxId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
       send(res, 204, null);
       return;
     }
@@ -414,6 +602,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
       const existed = registry.forget(body.boxId);
       statusStore.delete(body.boxId);
+      if (pollers) await pollers.stop(body.boxId);
       log(`forgot box ${body.boxId} (existed=${String(existed)})`);
       send(res, 204, null);
       return;
@@ -590,14 +779,17 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     prompts,
     subscribers,
     notices,
+    hostActions: hostActions ?? undefined,
     url: `http://${host}:${String(opts.port)}`,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
+    close: async () => {
+      if (pollers) await pollers.stopAll();
+      await new Promise<void>((resolve, reject) => {
         server.close((err) => {
           if (err) reject(err);
           else resolve();
         });
-      }),
+      });
+    },
   };
 }
 

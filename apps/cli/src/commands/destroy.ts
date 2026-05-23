@@ -2,6 +2,7 @@ import { confirm, isCancel, log } from '@clack/prompts';
 import { destroyBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface DestroyOptions {
@@ -41,15 +42,28 @@ export const destroyCommand = new Command('destroy')
         }
       }
 
-      const result = await destroyBox(box.id, { keepSnapshot: opts.keepSnapshot });
-      const out: string[] = [`destroyed ${result.record.container}`];
-      if (result.removedContainer) out.push('  ✓ container removed');
-      out.push(`  ✓ volumes removed: ${result.removedVolumes.join(', ')}`);
-      if (result.removedSnapshot) out.push(`  ✓ snapshot removed: ${result.removedSnapshot}`);
-      else if (box.snapshotDir && opts.keepSnapshot) {
-        out.push(`  · snapshot kept: ${box.snapshotDir}`);
+      // Docker boxes still use the rich `destroyBox` path so the user sees
+      // container/volume/snapshot accounting. Cloud boxes go through the
+      // provider's `destroy`, which deletes the remote sandbox and removes
+      // the local record but has no Docker-shaped output to enumerate.
+      const providerName = box.provider ?? 'docker';
+      if (providerName === 'docker') {
+        const result = await destroyBox(box.id, { keepSnapshot: opts.keepSnapshot });
+        const out: string[] = [`destroyed ${result.record.container}`];
+        if (result.removedContainer) out.push('  ✓ container removed');
+        out.push(`  ✓ volumes removed: ${result.removedVolumes.join(', ')}`);
+        if (result.removedSnapshot) out.push(`  ✓ snapshot removed: ${result.removedSnapshot}`);
+        else if (box.snapshotDir && opts.keepSnapshot) {
+          out.push(`  · snapshot kept: ${box.snapshotDir}`);
+        }
+        process.stdout.write(out.join('\n') + '\n');
+      } else {
+        const provider = await providerForBox(box);
+        await provider.destroy(box);
+        process.stdout.write(
+          `destroyed ${box.name} (${providerName} sandbox ${box.cloud?.sandboxId ?? '<unknown>'})\n`,
+        );
       }
-      process.stdout.write(out.join('\n') + '\n');
     } catch (err) {
       handleLifecycleError(err);
     }

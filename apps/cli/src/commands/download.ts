@@ -9,6 +9,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { handleLifecycleError } from './_errors.js';
+import { requireDockerProvider } from './_provider-guard.js';
 import { downloadClaudeCommand } from './download-claude.js';
 import { downloadCodexCommand } from './download-codex.js';
 import { downloadOpencodeCommand } from './download-opencode.js';
@@ -59,6 +60,7 @@ export const downloadCommand = new Command('download')
   .action(async (idOrName: string | undefined, opts: DownloadOpts) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
+      requireDockerProvider(box, 'download');
 
       const insp = await inspectBox(box.id);
       if (insp.state === 'paused') {

@@ -1,0 +1,435 @@
+/**
+ * `createCloudProvider(backend)` — composes a full `Provider` from a thin
+ * `CloudBackend`. Every cloud backend (Daytona, future Vercel, …) reuses this
+ * scaffolding instead of re-implementing workspace seeding, ctl launch, state
+ * persistence, URL resolution, etc.
+ *
+ * v0 covers create / lifecycle / probe / exec / resolveUrl on top of the
+ * `CloudBackend` primitives. The host-poller comms layer (queued git.push,
+ * status event mirroring, prompts) is Phase 4 — until then a cloud box's
+ * `agentbox-ctl` runs without a relay, and host-only RPCs surface a clear
+ * "no relay configured" error.
+ */
+
+import { randomBytes } from 'node:crypto';
+import { basename } from 'node:path';
+import type {
+  BoxRecord,
+  BoxResourceStats,
+  BoxRuntimeState,
+  CloudBackend,
+  CloudHandle,
+  CreateBoxRequest,
+  CreatedBox,
+  ExecOptions,
+  ExecResult,
+  InspectedBox,
+  Provider,
+} from '@agentbox/core';
+import { allocateProjectIndex, readState, recordBox, removeBoxRecord } from '@agentbox/sandbox-core';
+import {
+  ensureRelay,
+  forgetBoxFromRelay,
+  generateRelayToken,
+  registerBoxWithRelay,
+} from '@agentbox/sandbox-docker';
+import { launchCloudCtlDaemon } from './ctl-launch.js';
+import { quoteShellArgv } from './shell.js';
+import { seedCloudWorkspace } from './workspace-seed.js';
+
+/** Workspace mount path inside every cloud sandbox. Matches the Docker model. */
+export const CLOUD_WORKSPACE_DIR = '/workspace';
+/** In-box port the supervisor's WebProxy binds to. Non-privileged so no `setcap` dep. */
+export const CLOUD_WEB_PROXY_PORT = 8080;
+
+/**
+ * Provider-neutral image selector. Cloud backends typically resolve it to a
+ * snapshot ref (Daytona) or a registry image. Backends may translate it via
+ * `provisionImage` (see `CreateCloudProviderOptions`).
+ */
+export interface CreateCloudProviderOptions {
+  /**
+   * Translate the request's image to a backend-specific image / snapshot ref.
+   * When omitted the backend is handed `req.image` verbatim (or the v0 default
+   * `agentbox/box:dev`, which most cloud backends won't be able to resolve —
+   * Daytona uses its snapshot helper here).
+   */
+  provisionImage?(req: CreateBoxRequest): Promise<string>;
+  /**
+   * Per-create cloud resource ceiling. Default: 2 cpu / 4 GiB / 8 GiB disk.
+   */
+  defaultResources?: { cpu?: number; memory?: number; disk?: number };
+}
+
+const FALLBACK_IMAGE = 'agentbox/box:dev';
+
+export function createCloudProvider(
+  backend: CloudBackend,
+  opts: CreateCloudProviderOptions = {},
+): Provider {
+  const providerName = backend.name;
+
+  function handleFor(box: BoxRecord): CloudHandle {
+    const sandboxId = box.cloud?.sandboxId;
+    if (!sandboxId) {
+      throw new Error(`cloud box ${box.name} has no sandboxId — record is malformed`);
+    }
+    return { sandboxId };
+  }
+
+  /** Resolve a fresh per-cloud-box id + name + branch + synthetic container ref. */
+  function mintBox(req: CreateBoxRequest): {
+    id: string;
+    name: string;
+    branch: string;
+    container: string;
+  } {
+    const id = randomBytes(4).toString('hex');
+    const name = req.name ?? `${basename(req.workspacePath)}-${id}`;
+    return {
+      id,
+      name,
+      branch: `agentbox/${name}`,
+      // BoxRecord.container is required (Docker legacy); use a synthetic value
+      // that never resolves to a real Docker container.
+      container: `agentbox-cloud-${id}`,
+    };
+  }
+
+  async function probe(box: BoxRecord): Promise<BoxRuntimeState> {
+    try {
+      const h = handleFor(box);
+      const state = await backend.state(h);
+      // CloudState aligns with BoxRuntimeState by construction.
+      return state;
+    } catch {
+      return 'missing';
+    }
+  }
+
+  return {
+    name: providerName,
+
+    async create(req: CreateBoxRequest): Promise<CreatedBox> {
+      const log = req.onLog ?? (() => {});
+      const { id, name, branch, container } = mintBox(req);
+      const image = opts.provisionImage ? await opts.provisionImage(req) : (req.image ?? FALLBACK_IMAGE);
+      const resources = opts.defaultResources ?? { cpu: 2, memory: 4, disk: 8 };
+
+      // Per-box tokens: `relayToken` authenticates the in-box agent to its
+      // in-sandbox relay (`/events`, `/rpc` bearer); `bridgeToken` separately
+      // authenticates the HOST poller to the in-sandbox relay's `/bridge/*`
+      // routes. Distinct so a compromised agent can't impersonate the host.
+      const relayToken = generateRelayToken();
+      const bridgeToken = generateRelayToken();
+
+      // Bring the host relay up before we provision — registering the box
+      // (and starting its CloudBoxPoller) happens at the bottom of this
+      // function, and the loop wants the host relay reachable.
+      try {
+        await ensureRelay({ onLog: log });
+      } catch (err) {
+        log(`relay ensure failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      log(`provisioning ${providerName} sandbox`);
+      const handle = await backend.provision({
+        name,
+        image,
+        resources,
+        env: {
+          AGENTBOX_BOX_ID: id,
+          AGENTBOX_BOX_NAME: name,
+          AGENTBOX_BOX_KIND: 'cloud',
+          // In-sandbox relay is on the box's loopback at the default port.
+          AGENTBOX_RELAY_URL: `http://127.0.0.1:${String(8787)}`,
+          AGENTBOX_RELAY_TOKEN: relayToken,
+          AGENTBOX_BRIDGE_TOKEN: bridgeToken,
+        },
+        onLog: log,
+      });
+
+      try {
+        await seedCloudWorkspace({
+          backend,
+          handle,
+          workspacePath: req.workspacePath,
+          branch,
+          workspaceDir: CLOUD_WORKSPACE_DIR,
+          onLog: log,
+        });
+
+        log('launching agentbox-ctl daemon');
+        await launchCloudCtlDaemon({
+          backend,
+          handle,
+          boxId: id,
+          boxName: name,
+          relayUrl: `http://127.0.0.1:${String(8787)}`,
+          relayToken,
+          bridgeToken,
+        });
+
+        // The web preview URL is best-effort at create — most boxes won't
+        // have a service on CLOUD_WEB_PROXY_PORT until the supervisor schedules
+        // the `expose:` service. `agentbox url` re-resolves on demand.
+        let webPreview: { url: string; token?: string } | undefined;
+        try {
+          webPreview = await backend.previewUrl(handle, CLOUD_WEB_PROXY_PORT);
+        } catch {
+          webPreview = undefined;
+        }
+
+        // The bridge preview URL is critical: it's how the host CloudBoxPoller
+        // reaches the in-sandbox relay. The ctl daemon binds 0.0.0.0:8787 in
+        // box mode (cloud), so the Daytona preview proxy can route to it.
+        let relayPreview: { url: string; token?: string } | undefined;
+        try {
+          relayPreview = await backend.previewUrl(handle, 8787);
+        } catch {
+          relayPreview = undefined;
+        }
+
+        // Tell the host relay about this cloud box so it spawns a poller.
+        // Best-effort: a failed register doesn't break create (status / git
+        // push just won't reach the host until a later register).
+        if (relayPreview) {
+          try {
+            await registerBoxWithRelay({
+              boxId: id,
+              token: relayToken,
+              name,
+              kind: 'cloud',
+              backend: backend.name,
+              previewUrl: relayPreview.url,
+              previewToken: relayPreview.token,
+              bridgeToken,
+              createdAt: new Date().toISOString(),
+            });
+          } catch (err) {
+            log(
+              `register with host relay failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+
+        const state = await readState();
+        const projectIndex = req.projectRoot
+          ? allocateProjectIndex(state, req.projectRoot)
+          : undefined;
+
+        const record: BoxRecord = {
+          id,
+          name,
+          provider: providerName,
+          container,
+          image,
+          workspacePath: req.workspacePath,
+          projectRoot: req.projectRoot,
+          projectIndex,
+          relayToken,
+          withPlaywright: req.withPlaywright,
+          withEnv: req.withEnv,
+          vncEnabled: req.vnc?.enabled,
+          resourceLimits: req.limits
+            ? {
+                memoryBytes: req.limits.memoryBytes ?? undefined,
+                cpus: req.limits.cpus ?? undefined,
+                pidsLimit: req.limits.pidsLimit ?? undefined,
+                disk: req.limits.disk ?? undefined,
+              }
+            : undefined,
+          cloud: {
+            backend: backend.name,
+            sandboxId: handle.sandboxId,
+            image,
+            webPort: CLOUD_WEB_PROXY_PORT,
+            previewUrls: webPreview ? { [CLOUD_WEB_PROXY_PORT]: webPreview.url } : undefined,
+            relayPreviewUrl: relayPreview?.url,
+            relayPreviewToken: relayPreview?.token,
+            bridgeToken,
+          },
+          createdAt: new Date().toISOString(),
+        };
+        await recordBox(record);
+        return { record, imageBuilt: false };
+      } catch (err) {
+        // Best-effort teardown of the half-provisioned sandbox so a failed
+        // create doesn't leave the user paying for an inert box.
+        try {
+          await backend.destroy(handle);
+        } catch {
+          // The user is going to see the original error; suppressing this
+          // secondary failure keeps the message clean.
+        }
+        throw err;
+      }
+    },
+
+    async start(box: BoxRecord): Promise<BoxRecord> {
+      const h = handleFor(box);
+      await backend.start(h);
+      // Preview URLs (and their tokens) can rotate across stop/start — refresh
+      // the web + relay preview URLs and persist so `agentbox url` and the
+      // host poller see the live values.
+      const webPort = box.cloud?.webPort ?? CLOUD_WEB_PROXY_PORT;
+      let webPreview: { url: string; token?: string } | undefined;
+      try {
+        webPreview = await backend.previewUrl(h, webPort);
+      } catch {
+        const cached = box.cloud?.previewUrls?.[webPort];
+        webPreview = cached ? { url: cached } : undefined;
+      }
+      let relayPreview: { url: string; token?: string } | undefined;
+      try {
+        relayPreview = await backend.previewUrl(h, 8787);
+      } catch {
+        relayPreview = box.cloud?.relayPreviewUrl
+          ? { url: box.cloud.relayPreviewUrl, token: box.cloud.relayPreviewToken }
+          : undefined;
+      }
+      const next: BoxRecord = {
+        ...box,
+        cloud: {
+          ...(box.cloud ?? { backend: providerName, sandboxId: h.sandboxId }),
+          webPort,
+          previewUrls:
+            webPreview !== undefined
+              ? { ...(box.cloud?.previewUrls ?? {}), [webPort]: webPreview.url }
+              : box.cloud?.previewUrls,
+          relayPreviewUrl: relayPreview?.url ?? box.cloud?.relayPreviewUrl,
+          relayPreviewToken: relayPreview?.token ?? box.cloud?.relayPreviewToken,
+        },
+      };
+      await recordBox(next);
+      // Re-launch the ctl daemon — it dies with the sandbox.
+      await launchCloudCtlDaemon({
+        backend,
+        handle: h,
+        boxId: box.id,
+        boxName: box.name,
+        relayUrl: `http://127.0.0.1:${String(8787)}`,
+        relayToken: box.relayToken ?? '',
+        bridgeToken: box.cloud?.bridgeToken,
+      });
+      // Re-register with the host relay so its CloudBoxPoller picks up the
+      // fresh preview URL/token.
+      if (relayPreview && box.relayToken && box.cloud?.bridgeToken) {
+        try {
+          await registerBoxWithRelay({
+            boxId: box.id,
+            token: box.relayToken,
+            name: box.name,
+            kind: 'cloud',
+            backend: backend.name,
+            previewUrl: relayPreview.url,
+            previewToken: relayPreview.token,
+            bridgeToken: box.cloud.bridgeToken,
+            createdAt: box.createdAt,
+            projectIndex: box.projectIndex,
+          });
+        } catch {
+          // best-effort
+        }
+      }
+      return next;
+    },
+
+    async pause(box: BoxRecord): Promise<void> {
+      await backend.pause(handleFor(box));
+    },
+
+    async resume(box: BoxRecord): Promise<void> {
+      await backend.resume(handleFor(box));
+    },
+
+    async stop(box: BoxRecord): Promise<void> {
+      await backend.stop(handleFor(box));
+    },
+
+    async destroy(box: BoxRecord): Promise<void> {
+      try {
+        await backend.destroy(handleFor(box));
+      } catch (err) {
+        // Surface but don't block state cleanup — a "missing" sandbox should
+        // still let `agentbox destroy` drop the local record.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!/not.?found|missing/i.test(msg)) throw err;
+      }
+      // Best-effort: stop the host poller and drop the registration.
+      try {
+        await forgetBoxFromRelay(box.id);
+      } catch {
+        // forgetBoxFromRelay already swallows; this catch is paranoid.
+      }
+      await removeBoxRecord(box.id);
+    },
+
+    async probeState(box: BoxRecord): Promise<BoxRuntimeState> {
+      return probe(box);
+    },
+
+    async inspect(box: BoxRecord): Promise<InspectedBox> {
+      const state = await probe(box);
+      const webPort = box.cloud?.webPort ?? CLOUD_WEB_PROXY_PORT;
+      const webUrl = box.cloud?.previewUrls?.[webPort];
+      return {
+        record: box,
+        state,
+        endpoints: {
+          domain: box.cloud?.previewUrls?.[webPort] ? new URL(box.cloud.previewUrls[webPort]!).host : '',
+          domainIsOrb: false,
+          endpoints: webUrl
+            ? [{ kind: 'web', name: 'web', containerPort: webPort, url: webUrl, reachable: true }]
+            : [],
+        },
+        raw: undefined,
+      };
+    },
+
+    async exec(box: BoxRecord, argv: string[], opts?: ExecOptions): Promise<ExecResult> {
+      const r = await backend.exec(handleFor(box), quoteShellArgv(argv), {
+        cwd: opts?.cwd,
+        env: opts?.env,
+        user: opts?.user,
+      });
+      return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+    },
+
+    async resolveUrl(box: BoxRecord): Promise<string> {
+      const h = handleFor(box);
+      const webPort = box.cloud?.webPort ?? CLOUD_WEB_PROXY_PORT;
+      // Always re-resolve via the SDK — the cached URL on the record may be
+      // from a previous start whose token has rotated. The bare URL alone
+      // isn't enough for a browser (Daytona's preview proxy expects the
+      // token as a header); Phase 6 grows this to surface both.
+      const p = await backend.previewUrl(h, webPort);
+      return p.url;
+    },
+
+    // stats is provider-optional; cloud backends without a metrics API just
+    // omit it. Backends that have one can decorate the returned provider.
+  };
+}
+
+/** Helper: returns a BoxResourceStats stub so callers needn't unwrap optional. */
+export function emptyCloudStats(provider: string): BoxResourceStats {
+  return {
+    source: provider,
+    live: false,
+    cpuPercent: null,
+    memUsedBytes: null,
+    memLimitBytes: null,
+    memPercent: null,
+    pids: null,
+    diskUsedBytes: null,
+    snapshotDiskBytes: null,
+    checkpointVolumeBytes: null,
+    netRxBytes: null,
+    netTxBytes: null,
+    blockReadBytes: null,
+    blockWriteBytes: null,
+    limits: { memoryBytes: null, cpus: null, pidsLimit: null, disk: null },
+    warnings: [],
+  };
+}

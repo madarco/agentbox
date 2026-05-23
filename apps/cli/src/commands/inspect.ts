@@ -2,11 +2,13 @@ import { log } from '@clack/prompts';
 import {
   inspectBox,
   projectCheckpointImageBytes,
+  readBoxStatus,
   type BoxRecord,
   type InspectedBox,
 } from '@agentbox/sandbox-docker';
 import { renderEndpointLines } from '../endpoints-render.js';
 import { fmtBytes } from '../fmt.js';
+import { providerForBox } from '../provider/registry.js';
 import { watchRender } from '../watch.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -127,6 +129,64 @@ function renderEndpoints(i: InspectedBox): string[] {
   return lines.length > 0 ? lines : ['  (none)'];
 }
 
+/**
+ * `agentbox inspect` for cloud boxes: skips the Docker-specific probes
+ * (`docker exec`, `docker inspect`, tmux session info) and renders what the
+ * cloud provider can cheaply give us — state via probeState, endpoints from
+ * preview URLs, persisted box-status snapshot mirrored from the in-sandbox
+ * relay.
+ */
+async function renderCloudText(box: BoxRecord): Promise<string> {
+  const provider = await providerForBox(box);
+  const state = await provider.probeState(box);
+  const persisted = await readBoxStatus(box);
+  const lim = box.resourceLimits;
+  const lines: string[] = [
+    `id            ${box.id}`,
+    `name          ${box.name}`,
+    `provider      ${box.provider ?? 'docker'}`,
+    `sandboxId     ${box.cloud?.sandboxId ?? '(none)'}`,
+    `image         ${box.image}`,
+    `state         ${state}`,
+    `workspace     ${box.workspacePath}  (sandbox fs at /workspace)`,
+    `project       ${box.projectRoot ?? '(unset)'}`,
+    `n             ${typeof box.projectIndex === 'number' ? String(box.projectIndex) : '(none)'}`,
+    `claude activity ${renderClaudeActivityCloud(persisted)}`,
+    `codex activity ${renderCodexActivityCloud(persisted)}`,
+    `web port      ${box.cloud?.webPort ?? '(none)'}`,
+    `web preview   ${webPreviewLine(box)}`,
+    `relay preview ${box.cloud?.relayPreviewUrl ?? '(unresolved)'}`,
+    `bridge token  ${box.cloud?.bridgeToken ? '(set)' : '(unset)'}`,
+    `playwright    ${box.withPlaywright ? 'yes' : 'no'}`,
+    `env files     ${box.withEnv ? 'yes' : 'no'}`,
+    `mem limit     ${lim?.memoryBytes ? fmtBytes(lim.memoryBytes) : 'unlimited'}`,
+    `cpu limit     ${fmtLimit(lim?.cpus, '')}`,
+    `pids limit    ${fmtLimit(lim?.pidsLimit, '')}`,
+    `persisted     ${persisted ? `${persisted.timestamp} (${String(persisted.services.length)} svc, ${String(persisted.tasks.length)} tasks, ${String(persisted.ports.length)} ports)` : '(none)'}`,
+    `created       ${box.createdAt}`,
+  ];
+  return lines.join('\n');
+}
+
+function webPreviewLine(box: BoxRecord): string {
+  const port = box.cloud?.webPort;
+  if (port === undefined) return '(none)';
+  const url = box.cloud?.previewUrls?.[port];
+  return url ?? '(unresolved — re-run `agentbox url` to refresh)';
+}
+
+function renderClaudeActivityCloud(persisted: Awaited<ReturnType<typeof readBoxStatus>>): string {
+  const c = persisted?.claude;
+  if (!c) return '(none — host poller hasn\'t mirrored status yet)';
+  return `${c.state}${c.updatedAt ? ` (updated ${c.updatedAt})` : ''}`;
+}
+
+function renderCodexActivityCloud(persisted: Awaited<ReturnType<typeof readBoxStatus>>): string {
+  const c = persisted?.codex;
+  if (!c) return '(none)';
+  return `${c.state}${c.updatedAt ? ` (updated ${c.updatedAt})` : ''}`;
+}
+
 // `agentbox inspect` was folded into `agentbox status --inspect`; this is the
 // extracted body, called by status.ts with an already-resolved box.
 export async function runInspect(box: BoxRecord, opts: InspectRunOptions): Promise<void> {
@@ -135,8 +195,28 @@ export async function runInspect(box: BoxRecord, opts: InspectRunOptions): Promi
       log.error('cannot combine --json with --watch');
       process.exit(2);
     }
+    const isCloud = (box.provider ?? 'docker') !== 'docker';
     if (opts.watch) {
-      await watchRender(async () => renderText(await inspectBox(box.id)), opts.interval);
+      await watchRender(
+        async () =>
+          isCloud ? await renderCloudText(box) : await renderText(await inspectBox(box.id)),
+        opts.interval,
+      );
+      return;
+    }
+    if (isCloud) {
+      // Provider-level inspect gives us state + endpoints; for JSON we surface
+      // the box record + a probeState (cheap), avoiding heavy SDK round-trips.
+      if (opts.json) {
+        const provider = await providerForBox(box);
+        const state = await provider.probeState(box);
+        const persisted = await readBoxStatus(box);
+        process.stdout.write(
+          JSON.stringify({ record: box, state, persistedStatus: persisted }, null, 2) + '\n',
+        );
+      } else {
+        process.stdout.write((await renderCloudText(box)) + '\n');
+      }
       return;
     }
     const result = await inspectBox(box.id);

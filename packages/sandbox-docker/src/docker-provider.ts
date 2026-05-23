@@ -1,0 +1,142 @@
+/**
+ * `DockerProvider` — the local-Docker implementation of the provider-neutral
+ * `Provider` interface. A thin adapter: every method delegates to the existing
+ * `createBox` / lifecycle / docker / stats functions. The CLI resolves this via
+ * the provider registry for any box whose `provider` is `'docker'`.
+ */
+
+import type {
+  BoxRecord,
+  BoxResourceStats,
+  BoxRuntimeState,
+  CreateBoxRequest,
+  CreatedBox,
+  ExecOptions,
+  ExecResult,
+  InspectedBox,
+  Provider,
+} from '@agentbox/core';
+import { createBox, type CreateBoxOptions } from './create.js';
+import { destroyBox, inspectBox, pauseBox, startBox, stopBox, unpauseBox } from './lifecycle.js';
+import { execInBox, inspectContainerStatus } from './docker.js';
+import { boxResourceStats } from './stats.js';
+import { detectEngine } from './host-export.js';
+import { portlessGetUrl } from './portless.js';
+
+/**
+ * Docker-specific knobs the CLI passes through `CreateBoxRequest.providerOptions`.
+ * Kept out of the provider-neutral `CreateBoxRequest` so cloud backends don't
+ * carry Docker concepts.
+ */
+export interface DockerCreateOptions {
+  useSnapshot?: boolean;
+  sharedCache?: boolean;
+  portless?: boolean;
+  portlessStateDir?: string;
+  claudeConfig?: { isolate: boolean };
+  codexConfig?: { isolate: boolean };
+  opencodeConfig?: { isolate: boolean };
+  claudeEnv?: Record<string, string>;
+}
+
+export const dockerProvider: Provider = {
+  name: 'docker',
+
+  async create(req: CreateBoxRequest): Promise<CreatedBox> {
+    const po = (req.providerOptions ?? {}) as DockerCreateOptions;
+    const opts: CreateBoxOptions = {
+      workspacePath: req.workspacePath,
+      name: req.name,
+      useSnapshot: po.useSnapshot ?? false,
+      checkpointRef: req.checkpointRef,
+      image: req.image,
+      onLog: req.onLog,
+      claudeConfig: po.claudeConfig,
+      claudeEnv: po.claudeEnv,
+      codexConfig: po.codexConfig,
+      opencodeConfig: po.opencodeConfig,
+      withPlaywright: req.withPlaywright,
+      withEnv: req.withEnv,
+      envFilesToImport: req.envFilesToImport,
+      vnc: req.vnc,
+      docker: po.sharedCache !== undefined ? { sharedCache: po.sharedCache } : undefined,
+      portless: po.portless,
+      portlessStateDir: po.portlessStateDir,
+      projectRoot: req.projectRoot,
+      limits: req.limits ?? undefined,
+    };
+    const result = await createBox(opts);
+    return {
+      record: { ...result.record, provider: 'docker' },
+      imageBuilt: result.imageBuilt,
+    };
+  },
+
+  async start(box: BoxRecord): Promise<BoxRecord> {
+    const { record } = await startBox(box.id);
+    return { ...record, provider: 'docker' };
+  },
+
+  async pause(box: BoxRecord): Promise<void> {
+    await pauseBox(box.id);
+  },
+
+  async resume(box: BoxRecord): Promise<void> {
+    await unpauseBox(box.id);
+  },
+
+  async stop(box: BoxRecord): Promise<void> {
+    await stopBox(box.id);
+  },
+
+  async destroy(box: BoxRecord): Promise<void> {
+    await destroyBox(box.id);
+  },
+
+  async inspect(box: BoxRecord): Promise<InspectedBox> {
+    const insp = await inspectBox(box.id);
+    return {
+      record: insp.record,
+      // The Docker `BoxState` adds a 'destroyed' value the provider-neutral
+      // `BoxRuntimeState` folds into 'missing'.
+      state: insp.state === 'destroyed' ? 'missing' : insp.state,
+      endpoints: insp.endpoints,
+      raw: insp.dockerInspect,
+    };
+  },
+
+  async probeState(box: BoxRecord): Promise<BoxRuntimeState> {
+    return inspectContainerStatus(box.container);
+  },
+
+  async stats(box: BoxRecord): Promise<BoxResourceStats> {
+    return boxResourceStats(box);
+  },
+
+  async exec(box: BoxRecord, argv: string[], opts?: ExecOptions): Promise<ExecResult> {
+    const r = await execInBox(box.container, argv, opts?.user ? { user: opts.user } : {});
+    return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+  },
+
+  async resolveUrl(box: BoxRecord, opts?: { loopback?: boolean }): Promise<string> {
+    if (box.webContainerPort === undefined) {
+      throw new Error(
+        `box ${box.name} predates the reserved web port; recreate it to use \`agentbox url\``,
+      );
+    }
+    const engine = await detectEngine();
+    if (engine === 'orbstack' && !opts?.loopback) {
+      // OrbStack auto-routes <container>.orb.local to container :80.
+      return `http://${box.container}.orb.local`;
+    }
+    if (box.portlessAlias && !opts?.loopback) {
+      return box.portlessUrl ?? (await portlessGetUrl(box.portlessAlias));
+    }
+    if (box.webHostPort === undefined) {
+      throw new Error(
+        `web port not resolved for box ${box.name}; is the container running?`,
+      );
+    }
+    return `http://127.0.0.1:${String(box.webHostPort)}`;
+  },
+};
