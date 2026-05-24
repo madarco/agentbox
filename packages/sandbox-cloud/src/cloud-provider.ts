@@ -50,6 +50,7 @@ import {
   writeCloudCheckpointManifest,
 } from './checkpoint.js';
 import { uploadEnvFiles } from './env-files.js';
+import { readExposedServicePorts } from './expose-ports.js';
 import {
   downloadFromCloudBox,
   pullCloudDirContents,
@@ -300,6 +301,23 @@ export function createCloudProvider(
         } catch {
           webPreview = undefined;
         }
+        // Per-service preview URLs. Each `services.*.expose.port` from
+        // `agentbox.yaml` gets a direct preview URL alongside the main
+        // WebProxy URL — lets users hit services without going through the
+        // WebProxy. Best-effort: a failed `previewUrl` for a given port
+        // just omits it from the map.
+        const servicePorts = await readExposedServicePorts(req.workspacePath);
+        const servicePreviews: Record<number, string> = {};
+        for (const port of servicePorts) {
+          if (port === CLOUD_WEB_PROXY_PORT) continue;
+          try {
+            const p = await backend.previewUrl(handle, port);
+            servicePreviews[port] = p.url;
+          } catch {
+            // skip this port; the user can still hit the service via the
+            // WebProxy if the YAML wires `expose.as: 80`.
+          }
+        }
 
         // The bridge preview URL is critical: it's how the host CloudBoxPoller
         // reaches the in-sandbox relay. The ctl daemon binds 0.0.0.0:8787 in
@@ -367,7 +385,11 @@ export function createCloudProvider(
             sandboxId: handle.sandboxId,
             image,
             webPort: CLOUD_WEB_PROXY_PORT,
-            previewUrls: webPreview ? { [CLOUD_WEB_PROXY_PORT]: webPreview.url } : undefined,
+            previewUrls: ((): Record<number, string> | undefined => {
+              const m: Record<number, string> = { ...servicePreviews };
+              if (webPreview) m[CLOUD_WEB_PROXY_PORT] = webPreview.url;
+              return Object.keys(m).length > 0 ? m : undefined;
+            })(),
             relayPreviewUrl: relayPreview?.url,
             relayPreviewToken: relayPreview?.token,
             bridgeToken,
@@ -404,6 +426,24 @@ export function createCloudProvider(
         const cached = box.cloud?.previewUrls?.[webPort];
         webPreview = cached ? { url: cached } : undefined;
       }
+      // Re-mint per-service preview URLs from `agentbox.yaml`. Daytona's
+      // preview URLs rotate when a sandbox restarts, so any cached ports
+      // need to be re-resolved against the live handle.
+      const servicePreviews: Record<number, string> = {};
+      try {
+        const ports = await readExposedServicePorts(box.workspacePath);
+        for (const port of ports) {
+          if (port === webPort) continue;
+          try {
+            const p = await backend.previewUrl(h, port);
+            servicePreviews[port] = p.url;
+          } catch {
+            // skip — falls back to cached value below if any
+          }
+        }
+      } catch {
+        // workspace path missing / yaml unreadable: keep cached previewUrls
+      }
       let relayPreview: { url: string; token?: string } | undefined;
       try {
         relayPreview = await backend.previewUrl(h, 8787);
@@ -412,15 +452,19 @@ export function createCloudProvider(
           ? { url: box.cloud.relayPreviewUrl, token: box.cloud.relayPreviewToken }
           : undefined;
       }
+      // Build the refreshed preview map: keep cached values for ports we
+      // couldn't re-resolve, overlay fresh URLs from this start.
+      const mergedPreviews: Record<number, string> = {
+        ...(box.cloud?.previewUrls ?? {}),
+        ...servicePreviews,
+      };
+      if (webPreview !== undefined) mergedPreviews[webPort] = webPreview.url;
       const next: BoxRecord = {
         ...box,
         cloud: {
           ...(box.cloud ?? { backend: providerName, sandboxId: h.sandboxId }),
           webPort,
-          previewUrls:
-            webPreview !== undefined
-              ? { ...(box.cloud?.previewUrls ?? {}), [webPort]: webPreview.url }
-              : box.cloud?.previewUrls,
+          previewUrls: Object.keys(mergedPreviews).length > 0 ? mergedPreviews : undefined,
           relayPreviewUrl: relayPreview?.url ?? box.cloud?.relayPreviewUrl,
           relayPreviewToken: relayPreview?.token ?? box.cloud?.relayPreviewToken,
         },
@@ -508,15 +552,44 @@ export function createCloudProvider(
       const state = await probe(box);
       const webPort = box.cloud?.webPort ?? CLOUD_WEB_PROXY_PORT;
       const webUrl = box.cloud?.previewUrls?.[webPort];
+      // Surface each per-service preview URL alongside the main WebProxy.
+      // Naming is `service-<port>` because we don't track the YAML name
+      // -> port map on the record (avoids extra wire shape just for
+      // display).
+      const endpoints: Array<{
+        kind: 'web';
+        name: string;
+        containerPort: number;
+        url: string;
+        reachable: boolean;
+      }> = [];
+      if (webUrl) {
+        endpoints.push({
+          kind: 'web',
+          name: 'web',
+          containerPort: webPort,
+          url: webUrl,
+          reachable: true,
+        });
+      }
+      for (const [portStr, url] of Object.entries(box.cloud?.previewUrls ?? {})) {
+        const port = Number.parseInt(portStr, 10);
+        if (!Number.isFinite(port) || port === webPort) continue;
+        endpoints.push({
+          kind: 'web',
+          name: `service-${String(port)}`,
+          containerPort: port,
+          url,
+          reachable: true,
+        });
+      }
       return {
         record: box,
         state,
         endpoints: {
-          domain: box.cloud?.previewUrls?.[webPort] ? new URL(box.cloud.previewUrls[webPort]!).host : '',
+          domain: webUrl ? new URL(webUrl).host : '',
           domainIsOrb: false,
-          endpoints: webUrl
-            ? [{ kind: 'web', name: 'web', containerPort: webPort, url: webUrl, reachable: true }]
-            : [],
+          endpoints,
         },
         raw: undefined,
       };

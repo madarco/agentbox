@@ -29,7 +29,8 @@
     "@agentbox/core": "workspace:*",
     "@agentbox/sandbox-core": "workspace:*",
     "@agentbox/sandbox-docker": "workspace:*",
-    "execa": "^9.5.2"
+    "execa": "^9.5.2",
+    "yaml": "^2.6.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

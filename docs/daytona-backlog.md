@@ -135,8 +135,8 @@ The TUI dashboard polls live stats + claude state. Could work with the persisted
 ### 4.1 ✅ `agentbox url <cloud-box>` now uses signed preview URLs (done)
 ~~Browser-rejected bare URL~~ — `CloudBackend.signedPreviewUrl` (Daytona: `sb.getSignedPreviewUrl(port, expiresInSeconds)`) mints a URL with the token embedded in the host (`https://{port}-{token}.proxy.daytona.work`). The cloud provider's `resolveUrl` calls it with a 3600s default expiry, overridable via `agentbox url --ttl <seconds>` (max 86400). Standard header-token URLs (`getPreviewLink`) stay in use for bridge/poller traffic where headers are controlled.
 
-### 4.2 🟡 `getBoxEndpoints` for cloud doesn't include service ports
-Cloud box's `cloud.previewUrls` only carries port 80/8080 today. Per-service `expose:` ports declared in `agentbox.yaml` could each get a preview URL (call `backend.previewUrl(port)` at create+start for every declared port).
+### 4.2 ✅ Cloud `previewUrls` includes per-service expose ports (done)
+~~Only port 8080~~ — At create + start the cloud provider now parses `agentbox.yaml` via `readExposedServicePorts(workspacePath)` (minimal YAML extractor, ignores everything but `services.*.expose.port`) and calls `backend.previewUrl(port)` for each. The resulting URLs land in `box.cloud.previewUrls[port]` alongside the WebProxy URL. `inspect()` surfaces each as a `kind: 'web'` endpoint named `service-<port>`. Best-effort: a `previewUrl` call that fails for one port doesn't drop the others (and the cached value is kept across a stop/start if the resolver throws).
 
 ---
 
