@@ -344,19 +344,57 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
   // /admin/prompts/stream surfaces it as a footer y/N; `askPrompt` returns
   // auto-`y` when AGENTBOX_PROMPT=off (matches Docker behavior).
   if (action.method === 'git.push' && deps.prompts && deps.subscribers) {
-    const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, {
-      kind: 'confirm',
-      message: `Allow git push from cloud box ${deps.boxName ?? deps.boxId}?`,
-      detail: `${params.remote ?? 'origin'} ${branch} ${(params.args ?? []).join(' ')}`.trim(),
-      defaultAnswer: 'n',
-      context: {
-        command: 'git push',
-        cwd: containerPath,
-        argv: params.args,
-      },
-    });
-    if (verdict.answer !== 'y') {
-      return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+    // Cloud-specific fallback: when no SSE subscriber is attached the prompt
+    // would block indefinitely (the user has nothing to answer in). Choose
+    // up-front whether to auto-deny (default) or auto-approve based on env
+    // — same env knob shape as `AGENTBOX_PROMPT`. The decision is bounded
+    // by `AGENTBOX_GIT_PUSH_NO_SUB`: 'deny' (default), 'allow', or 'prompt'
+    // (block anyway, legacy behavior).
+    const hasSubscriber = deps.subscribers.forBox(deps.boxId).length > 0;
+    if (!hasSubscriber && process.env['AGENTBOX_PROMPT'] !== 'off') {
+      const noSubMode = (process.env['AGENTBOX_GIT_PUSH_NO_SUB'] ?? 'deny').toLowerCase();
+      if (noSubMode === 'deny') {
+        return {
+          exitCode: 10,
+          stdout: '',
+          stderr:
+            'denied automatically — no attached wrapper to confirm. Attach `agentbox claude` (or similar) and retry, or set AGENTBOX_GIT_PUSH_NO_SUB=allow.\n',
+        };
+      }
+      if (noSubMode === 'allow') {
+        deps.log?.('git.push auto-approved (no subscribers, AGENTBOX_GIT_PUSH_NO_SUB=allow)');
+        // Fall through to the actual push.
+      } else {
+        // 'prompt' or anything else: legacy blocking behavior with a TTL so
+        // a never-attaching user doesn't wedge the executor forever.
+        const verdict = await askPrompt(
+          deps.prompts,
+          deps.subscribers,
+          deps.boxId,
+          {
+            kind: 'confirm',
+            message: `Allow git push from cloud box ${deps.boxName ?? deps.boxId}?`,
+            detail: `${params.remote ?? 'origin'} ${branch} ${(params.args ?? []).join(' ')}`.trim(),
+            defaultAnswer: 'n',
+            context: { command: 'git push', cwd: containerPath, argv: params.args },
+          },
+          { ttlMs: 5 * 60 * 1000 },
+        );
+        if (verdict.answer !== 'y') {
+          return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+        }
+      }
+    } else {
+      const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, {
+        kind: 'confirm',
+        message: `Allow git push from cloud box ${deps.boxName ?? deps.boxId}?`,
+        detail: `${params.remote ?? 'origin'} ${branch} ${(params.args ?? []).join(' ')}`.trim(),
+        defaultAnswer: 'n',
+        context: { command: 'git push', cwd: containerPath, argv: params.args },
+      });
+      if (verdict.answer !== 'y') {
+        return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+      }
     }
   }
 

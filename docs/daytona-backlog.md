@@ -70,13 +70,8 @@ Soft-fail keeps `agentbox create --provider daytona` from blocking when a shallo
 ### 2.3.1 ✅ Per-provider defaultCheckpoint (done)
 ~~Global only~~ — config schema gained two optional per-provider override keys: `box.defaultCheckpointDocker` and `box.defaultCheckpointDaytona`. Resolution order: per-provider override (when set) > `box.defaultCheckpoint` (cross-provider fallback) > empty/none. The helper `resolveDefaultCheckpoint(cfg, provider)` lives in `@agentbox/config/checkpoint.ts`; every place that previously read `cfg.effective.box.defaultCheckpoint` now goes through it (create, claude/codex/opencode, dashboard, checkpoint ls). `agentbox checkpoint set-default [--provider docker|daytona] <ref>` writes the right key via `defaultCheckpointConfigKey(provider)`; without `--provider` the global fallback key is still used. `checkpoint create --set-default` writes the provider-specific key (docker → defaultCheckpointDocker; daytona → defaultCheckpointDaytona) so the same project can hold separate docker and cloud defaults safely. `checkpoint rm` sweeps all three keys and clears whichever the project layer pointed at the deleted ref.
 
-### 2.4 🟡 `askPrompt` host-confirm gate needs SSE mirror for cloud `git.push`
-`executeCloudAction` calls `askPrompt(deps.prompts, deps.subscribers, …)` for `git.push`. This pushes the prompt event on the host relay's `subscribers` (PromptSubscribers) — only consumed by an *attached* `agentbox claude` wrapper via `/admin/prompts/stream` SSE. If no wrapper is attached and `AGENTBOX_PROMPT` ≠ `'off'`, the executor blocks indefinitely waiting for an answer.
-
-**Fix options:**
-- Add a `--auto-yes-git-push` config for cloud boxes that don't have an attached wrapper.
-- Or: have the cloud-poller's askPrompt include a ttl + default-deny when no subscribers are present.
-- Or: route the prompt to a desktop notification / browser tab when no terminal is attached.
+### 2.4 ✅ Bounded cloud `git.push` prompt with no-subscriber fallback (done)
+~~Indefinite block~~ — `executeCloudAction`'s `git.push` path now checks `deps.subscribers.forBox(boxId).length`. With **zero subscribers** it consults `AGENTBOX_GIT_PUSH_NO_SUB`: `deny` (default) returns exit 10 with a clear "no wrapper attached" message, `allow` falls through and runs the push, `prompt` falls back to a 5-minute-TTL `askPrompt` (legacy blocking shape but bounded). With **one or more subscribers** the prompt blocks as before (the user can answer from any attached window). `AGENTBOX_PROMPT=off` still auto-approves universally (script / test path), preserving existing semantics.
 
 ### 2.5 🟢 `browser.open` host-mirror offer for cloud
 Cloud box's `agentbox-ctl open <url>` is currently handled at the in-sandbox relay (records event, returns 200 immediately). The "open on host too?" offer that Docker shows is not mirrored for cloud — would need the same SSE bridge as 2.4.
