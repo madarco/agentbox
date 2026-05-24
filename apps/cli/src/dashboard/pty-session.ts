@@ -58,12 +58,17 @@ const BLANK: CellLike = {
 };
 
 /**
- * One box's live terminal: a node-pty running `docker exec … tmux attach`
- * feeding an @xterm/headless emulator we read back as a screen grid.
+ * One box's live terminal: a node-pty running either `docker exec … tmux
+ * attach` (docker provider) or `ssh … tmux …` (cloud providers via
+ * `Provider.buildAttach`) and feeding an @xterm/headless emulator we read
+ * back as a screen grid. The optional `cleanup` callback fires from
+ * `dispose()` — daytona's `buildAttach` returns a `revokeAttachToken`
+ * cleanup so its 60-min ephemeral SSH token doesn't outlive the attach.
  */
 export class PtySession {
   private readonly term: XtermTerminal;
   private readonly pty: IPtyLike;
+  private readonly cleanup?: () => Promise<void>;
   private disposed = false;
   // Reused per cell read — valid only until the next cell() call (the renderer
   // consumes it synchronously within composeRow).
@@ -72,11 +77,13 @@ export class PtySession {
   constructor(
     spawn: PtySpawn,
     TerminalClass: TerminalCtor,
-    dockerArgv: string[],
+    command: string,
+    args: string[],
     cols: number,
     rows: number,
     onRenderable: () => void,
     onExit: () => void,
+    cleanup?: () => Promise<void>,
   ) {
     this.term = new TerminalClass({
       cols,
@@ -85,7 +92,8 @@ export class PtySession {
       scrollback: 0,
       convertEol: false,
     });
-    this.pty = spawn('docker', dockerArgv, {
+    this.cleanup = cleanup;
+    this.pty = spawn(command, args, {
       name: 'xterm-256color',
       cols,
       rows,
@@ -154,5 +162,6 @@ export class PtySession {
       /* already gone */
     }
     this.term.dispose();
+    if (this.cleanup) void this.cleanup().catch(() => {});
   }
 }

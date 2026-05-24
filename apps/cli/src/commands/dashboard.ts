@@ -31,12 +31,16 @@ import {
   waitForTmuxPaneContent,
   type ListedBox,
 } from '@agentbox/sandbox-docker';
+import { readState } from '@agentbox/sandbox-core';
+import type { BoxRecord } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { resolveClaudeAuth } from '../auth.js';
 import { resolveLimits } from '../limits.js';
 import { Compositor, type RightTarget } from '../dashboard/compositor.js';
 import { loadPtyBackend, type PtySpawn, type TerminalCtor } from '../pty/pty-backend.js';
+import { providerForBox } from '../provider/registry.js';
 import { NEW_BOX_ID, NEW_BOX_LABEL, type SidebarBox } from '../dashboard/sidebar.js';
+import { buildCloudAttachInnerCommand } from './_cloud-attach.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface DashboardOptions {
@@ -158,28 +162,6 @@ export const dashboardCommand = new Command('dashboard')
         if (boxId === NEW_BOX_ID) return { kind: 'create-menu', where: project.root };
         const box = (await listBoxes()).find((b) => b.id === boxId);
         if (!box) return { kind: 'placeholder', lines: ['', '  box not found'] };
-        // Cloud boxes don't have a host docker container — the live attach
-        // (`docker exec tmux attach`) used for the right pane has no
-        // equivalent we can do from a TUI today. Surface a placeholder
-        // pointing the user at the relevant `agentbox <agent> attach`
-        // commands instead.
-        if ((box.provider ?? 'docker') !== 'docker') {
-          return {
-            kind: 'placeholder',
-            lines: [
-              '',
-              `  ${box.name} is a cloud box (${box.provider ?? ''}).`,
-              '',
-              '  The TUI dashboard\'s live panels are docker-only.',
-              '  From another terminal:',
-              `    agentbox claude attach ${box.name}`,
-              `    agentbox codex attach ${box.name}`,
-              `    agentbox opencode attach ${box.name}`,
-              `    agentbox shell ${box.name}`,
-              `    agentbox url ${box.name}`,
-            ],
-          };
-        }
         if (box.state === 'paused' || box.state === 'stopped') {
           return { kind: 'lifecycle-menu', state: box.state };
         }
@@ -193,28 +175,46 @@ export const dashboardCommand = new Command('dashboard')
             ],
           };
         }
-        // Attach whichever agent session is live — priority claude > codex >
-        // opencode. claude needs a fresh probe (not in listBoxes()); codex /
-        // opencode were already live-probed by listBoxes().
+        // Cloud boxes: probe the box's live tmux sessions over SSH and pick
+        // the highest-priority agent (claude > codex > opencode) — mirrors
+        // the docker branch below. One round-trip per selection; cheap with
+        // the hetzner ControlMaster warm. Falls back to the menu if no
+        // session is up (or the probe failed).
+        if ((box.provider ?? 'docker') !== 'docker') {
+          const record = await loadBoxRecord(box.id);
+          const sessions = await probeCloudSessions(record);
+          for (const which of ['claude', 'codex', 'opencode'] as const) {
+            if (sessions.has(which)) {
+              return buildCloudAttachTarget(record, which);
+            }
+          }
+          return { kind: 'menu' };
+        }
+        // Docker: probe whichever agent session is live — priority
+        // claude > codex > opencode. claude needs a fresh probe (not in
+        // listBoxes()); codex / opencode were already live-probed by listBoxes().
         const claude = await claudeSessionInfo(box.container);
         if (claude.running) {
           return {
             kind: 'attach',
-            argv: buildDashboardAttachArgv(box.container, claude.sessionName),
+            command: 'docker',
+            args: buildDashboardAttachArgv(box.container, claude.sessionName),
             mode: 'claude',
           };
         }
         if (box.codexSession?.running) {
           return {
             kind: 'attach',
-            argv: buildDashboardAttachArgv(box.container, box.codexSession.sessionName),
+            command: 'docker',
+            args: buildDashboardAttachArgv(box.container, box.codexSession.sessionName),
             mode: 'codex',
           };
         }
         if (box.opencodeSession?.running) {
           return {
             kind: 'attach',
-            argv: buildDashboardAttachArgv(box.container, box.opencodeSession.sessionName),
+            command: 'docker',
+            args: buildDashboardAttachArgv(box.container, box.opencodeSession.sessionName),
             mode: 'opencode',
           };
         }
@@ -228,8 +228,83 @@ export const dashboardCommand = new Command('dashboard')
         return box;
       };
 
+      // The cloud attach path needs the full BoxRecord (sandboxId, ssh control
+      // socket path, etc.) — ListedBox is the enriched view used for the
+      // sidebar and lifecycle ops only.
+      const loadBoxRecord = async (boxId: string): Promise<BoxRecord> => {
+        const rec = (await readState()).boxes.find((b) => b.id === boxId);
+        if (!rec) throw new Error('box not found');
+        return rec;
+      };
+
+      // Cloud equivalent of buildDashboardAttachArgv. Reuses the same
+      // base64+mapfile inner-command pattern as `agentbox claude/codex/
+      // opencode` so positional args (wizard prompts) survive every quoting
+      // layer. For `shell`, attach to/create the box's tracked `shell` tmux
+      // session so the dashboard's shell pane is the same detachable session
+      // `agentbox shell` sees from the CLI — matching the docker UX.
+      const buildCloudAttachTarget = async (
+        record: BoxRecord,
+        which: 'claude' | 'codex' | 'opencode' | 'shell',
+      ): Promise<RightTarget> => {
+        const provider = await providerForBox(record);
+        if (!provider.buildAttach) {
+          throw new Error(`provider '${provider.name}' does not support interactive attach`);
+        }
+        const sessionName = which;
+        const kind = which === 'shell' ? 'shell' : 'agent';
+        // `bash -l` for shell — login shell so /etc/profile.d/agentbox.sh
+        // exports AGENTBOX_BOX_* env. For agents, the base64+mapfile launcher
+        // (extraArgs is always [] from the dashboard — no `--` passthrough).
+        const innerCommand =
+          which === 'shell' ? 'bash -l' : buildCloudAttachInnerCommand(which);
+        const spec = await provider.buildAttach(record, kind, {
+          sessionName,
+          command: innerCommand,
+        });
+        return {
+          kind: 'attach',
+          command: spec.argv[0]!,
+          args: spec.argv.slice(1),
+          ...(spec.cleanup ? { cleanup: spec.cleanup } : {}),
+          mode: which,
+        };
+      };
+
+      const isCloudBox = (box: ListedBox): boolean =>
+        (box.provider ?? 'docker') !== 'docker';
+
+      // Cloud equivalent of claudeSessionInfo / box.codexSession.running for
+      // the docker path: probe the box over SSH for live tmux sessions, so
+      // resolveTarget can land directly on the running agent's pane instead
+      // of the menu. One round-trip per box selection; cheap once the
+      // hetzner ControlMaster is warm.
+      const probeCloudSessions = async (record: BoxRecord): Promise<Set<string>> => {
+        try {
+          const provider = await providerForBox(record);
+          const r = await provider.exec(record, [
+            'tmux',
+            'list-sessions',
+            '-F',
+            '#{session_name}',
+          ]);
+          if (r.exitCode !== 0) return new Set();
+          return new Set(
+            r.stdout
+              .split('\n')
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0),
+          );
+        } catch {
+          return new Set();
+        }
+      };
+
       const startClaude = async (boxId: string): Promise<RightTarget> => {
         const box = await findBox(boxId);
+        if (isCloudBox(box)) {
+          return buildCloudAttachTarget(await loadBoxRecord(boxId), 'claude');
+        }
         // Idempotent + marker-gated: needed the first time a box that never ran
         // Claude starts one; a no-op afterwards. (No host ~/.claude re-sync —
         // already synced at `agentbox create`; == `claude start --no-sync-config`.)
@@ -248,13 +323,17 @@ export const dashboardCommand = new Command('dashboard')
         await waitForTmuxPaneContent(box.container, info.sessionName);
         return {
           kind: 'attach',
-          argv: buildDashboardAttachArgv(box.container, info.sessionName),
+          command: 'docker',
+          args: buildDashboardAttachArgv(box.container, info.sessionName),
           mode: 'claude',
         };
       };
 
       const startCodex = async (boxId: string): Promise<RightTarget> => {
         const box = await findBox(boxId);
+        if (isCloudBox(box)) {
+          return buildCloudAttachTarget(await loadBoxRecord(boxId), 'codex');
+        }
         // Install codex if the box image lacks it (checkpoint predating Codex).
         await ensureCodexInstalled(box.container);
         if (box.codexConfigVolume) await seedCodexHooks(box.codexConfigVolume, box.image);
@@ -262,25 +341,33 @@ export const dashboardCommand = new Command('dashboard')
         await waitForTmuxPaneContent(box.container, DEFAULT_CODEX_SESSION);
         return {
           kind: 'attach',
-          argv: buildDashboardAttachArgv(box.container, DEFAULT_CODEX_SESSION),
+          command: 'docker',
+          args: buildDashboardAttachArgv(box.container, DEFAULT_CODEX_SESSION),
           mode: 'codex',
         };
       };
 
       const startOpencode = async (boxId: string): Promise<RightTarget> => {
         const box = await findBox(boxId);
+        if (isCloudBox(box)) {
+          return buildCloudAttachTarget(await loadBoxRecord(boxId), 'opencode');
+        }
         await ensureOpencodeInstalled(box.container);
         await startOpencodeSession({ container: box.container, opencodeArgs: [] });
         await waitForTmuxPaneContent(box.container, DEFAULT_OPENCODE_SESSION);
         return {
           kind: 'attach',
-          argv: buildDashboardAttachArgv(box.container, DEFAULT_OPENCODE_SESSION),
+          command: 'docker',
+          args: buildDashboardAttachArgv(box.container, DEFAULT_OPENCODE_SESSION),
           mode: 'opencode',
         };
       };
 
       const openShell = async (boxId: string): Promise<RightTarget> => {
         const box = await findBox(boxId);
+        if (isCloudBox(box)) {
+          return buildCloudAttachTarget(await loadBoxRecord(boxId), 'shell');
+        }
         // Start-or-attach the box's tracked tmux `shell` session, so a shell
         // opened from the dashboard is the same detachable session the CLI
         // sees (`agentbox shell` / `agentbox shell ls`), not a throwaway exec.
@@ -290,7 +377,8 @@ export const dashboardCommand = new Command('dashboard')
         }
         return {
           kind: 'attach',
-          argv: buildShellSessionAttachArgv(box.container),
+          command: 'docker',
+          args: buildShellSessionAttachArgv(box.container),
           mode: 'shell',
         };
       };
@@ -345,7 +433,8 @@ export const dashboardCommand = new Command('dashboard')
             boxId: result.record.id,
             attach: {
               kind: 'attach',
-              argv: buildDashboardAttachArgv(ctr, DEFAULT_CODEX_SESSION),
+              command: 'docker',
+              args: buildDashboardAttachArgv(ctr, DEFAULT_CODEX_SESSION),
               mode: 'codex',
             },
           };
@@ -358,7 +447,8 @@ export const dashboardCommand = new Command('dashboard')
             boxId: result.record.id,
             attach: {
               kind: 'attach',
-              argv: buildDashboardAttachArgv(ctr, DEFAULT_OPENCODE_SESSION),
+              command: 'docker',
+              args: buildDashboardAttachArgv(ctr, DEFAULT_OPENCODE_SESSION),
               mode: 'opencode',
             },
           };
@@ -371,7 +461,8 @@ export const dashboardCommand = new Command('dashboard')
           boxId: result.record.id,
           attach: {
             kind: 'attach',
-            argv: buildDashboardAttachArgv(ctr, info.sessionName),
+            command: 'docker',
+            args: buildDashboardAttachArgv(ctr, info.sessionName),
             mode: 'claude',
           },
         };
@@ -456,22 +547,52 @@ export const dashboardCommand = new Command('dashboard')
         return 'Launching VS Code / Cursor…';
       };
 
+      // Lifecycle actions dispatch on provider: docker boxes go through the
+      // sandbox-docker helpers (rich container/volume teardown for destroy,
+      // etc.); cloud boxes go through `Provider.{pause,stop,start,resume,
+      // destroy}(record)`. Mirrors the docker-vs-cloud split in `commands/
+      // destroy.ts:46-75`.
       const resumeBox = async (boxId: string): Promise<void> => {
         const box = (await listBoxes()).find((b) => b.id === boxId);
         if (!box) throw new Error('box not found');
+        if (isCloudBox(box)) {
+          const record = await loadBoxRecord(boxId);
+          const provider = await providerForBox(record);
+          if (box.state === 'paused') await provider.resume(record);
+          else await provider.start(record);
+          return;
+        }
         if (box.state === 'paused') await unpauseBox(box.id);
         else await startBox(box.id);
       };
 
       const pauseBoxAction = async (boxId: string): Promise<void> => {
+        const record = await loadBoxRecord(boxId);
+        if ((record.provider ?? 'docker') !== 'docker') {
+          const provider = await providerForBox(record);
+          await provider.pause(record);
+          return;
+        }
         await pauseBox(boxId);
       };
 
       const stopBoxAction = async (boxId: string): Promise<void> => {
+        const record = await loadBoxRecord(boxId);
+        if ((record.provider ?? 'docker') !== 'docker') {
+          const provider = await providerForBox(record);
+          await provider.stop(record);
+          return;
+        }
         await stopBox(boxId);
       };
 
       const destroyBoxAction = async (boxId: string): Promise<void> => {
+        const record = await loadBoxRecord(boxId);
+        if ((record.provider ?? 'docker') !== 'docker') {
+          const provider = await providerForBox(record);
+          await provider.destroy(record);
+          return;
+        }
         await destroyBox(boxId);
       };
 

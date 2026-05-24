@@ -42,7 +42,17 @@ const SB_AWAITING = SB_BG + '\x1b[38;5;51m\x1b[1m';
 const SGR_RESET = '\x1b[0m';
 
 export type RightTarget =
-  | { kind: 'attach'; argv: string[]; mode?: 'claude' | 'shell' | 'codex' | 'opencode' }
+  | {
+      kind: 'attach';
+      /** Program to spawn — `'docker'` for docker boxes, `'ssh'` for cloud. */
+      command: string;
+      /** Args passed to `command` (everything after `argv[0]`). */
+      args: string[];
+      /** Fires when the PtySession is disposed. Used by daytona to revoke the
+       *  ephemeral SSH token its `buildAttach` mints. */
+      cleanup?: () => Promise<void>;
+      mode?: 'claude' | 'shell' | 'codex' | 'opencode';
+    }
   | { kind: 'menu' }
   | { kind: 'lifecycle-menu'; state: 'paused' | 'stopped' }
   | { kind: 'create-menu'; where: string }
@@ -434,11 +444,13 @@ export class Compositor {
       this.session = new PtySession(
         this.deps.ptySpawn,
         this.deps.termCtor,
-        target.argv,
+        target.command,
+        target.args,
         Math.max(1, this.layout.right.w),
         Math.max(1, this.layout.right.h),
         () => this.scheduleRender(),
         () => this.onSessionExit(),
+        target.cleanup,
       );
     } else if (target.kind === 'menu') {
       this.menu = { boxName: this.selectedBox()?.name ?? this.selectedId };
