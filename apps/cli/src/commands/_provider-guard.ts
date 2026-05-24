@@ -17,7 +17,7 @@ export function requireDockerProvider(box: BoxRecord, commandName: string): void
     `\`agentbox ${commandName}\` doesn't yet support cloud boxes (this box's provider is '${provider}').`,
   );
   log.info(
-    'Cloud-provider routing for this command is on the Phase 3 backlog. For now: use `agentbox url` for web access, `agentbox-ctl git push` from inside the sandbox via SSH/web terminal, or fall back to the cloud provider\'s own console.',
+    "Cloud-provider routing for this command is on the Phase 3 backlog. For now: use `agentbox url` for web access, `agentbox-ctl git push` from inside the sandbox via SSH/web terminal, or fall back to the cloud provider's own console.",
   );
   process.exit(2);
 }

@@ -110,12 +110,11 @@ export function createCloudProvider(
     return { sandboxId };
   }
 
-  /** Resolve a fresh per-cloud-box id + name + branch + synthetic container ref. */
+  /** Resolve a fresh per-cloud-box id + name + branch. */
   function mintBox(req: CreateBoxRequest): {
     id: string;
     name: string;
     branch: string;
-    container: string;
   } {
     const id = randomBytes(4).toString('hex');
     const name = req.name ?? `${basename(req.workspacePath)}-${id}`;
@@ -123,9 +122,6 @@ export function createCloudProvider(
       id,
       name,
       branch: `agentbox/${name}`,
-      // BoxRecord.container is required (Docker legacy); use a synthetic value
-      // that never resolves to a real Docker container.
-      container: `agentbox-cloud-${id}`,
     };
   }
 
@@ -145,7 +141,7 @@ export function createCloudProvider(
 
     async create(req: CreateBoxRequest): Promise<CreatedBox> {
       const log = req.onLog ?? (() => {});
-      const { id, name, branch, container } = mintBox(req);
+      const { id, name, branch } = mintBox(req);
       const image = opts.provisionImage ? await opts.provisionImage(req) : (req.image ?? FALLBACK_IMAGE);
       const resources = opts.defaultResources ?? { cpu: 2, memory: 4, disk: 8 };
 
@@ -361,7 +357,13 @@ export function createCloudProvider(
           id,
           name,
           provider: providerName,
-          container,
+          // `container` carries the sandbox id with a `cloud:` prefix —
+          // unique within state, never collides with a real docker
+          // container, and grepping for `agentbox-cloud-*` (the old
+          // synthetic value) finds nothing now. `image` mirrors the
+          // resolved cloud image so `BoxRecord.image: string` stays
+          // required without docker-internal readers seeing `undefined`.
+          container: `cloud:${handle.sandboxId}`,
           image,
           workspacePath: req.workspacePath,
           projectRoot: req.projectRoot,

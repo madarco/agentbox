@@ -127,6 +127,10 @@ export function findBox(idOrName: string, state: StateFile): FindBoxResult {
   const byName = state.boxes.find((b) => b.name === q);
   if (byName) return { kind: 'ok', box: byName };
 
+  // For docker records `container` is the docker container name; for cloud
+  // records it's `cloud:<sandboxId>` (post 7.2 — no more synthetic
+  // agentbox-cloud-* prefix). Either form is a valid byContainer lookup
+  // key for `findBox`.
   const byContainer = state.boxes.find((b) => b.container === q);
   if (byContainer) return { kind: 'ok', box: byContainer };
 

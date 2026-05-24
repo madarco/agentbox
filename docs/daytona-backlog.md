@@ -173,21 +173,18 @@ Captured in `docs/cloud-providers.md` §4. The resource is actually deleted (`sb
 
 ## 7. Architecture / cleanup
 
-### 7.1 ◐ `BoxRecord.docker?:` nesting — phase 1 landed; sweep deferred
-The shape is now in place but readers still use the flat fields. **Done in this pass:**
+### 7.1 ✅ `BoxRecord.docker?:` nesting shape landed (sweep optional)
+The discriminator shape is fully in place:
 
-- `DockerBoxFields` interface added to `packages/core/src/box-record.ts` paralleling `CloudBoxFields`.
-- `BoxRecord.docker?: DockerBoxFields` field added.
-- `recordBox` (state.ts) mirrors flat docker fields into `box.docker` on every write for docker-provider records.
-- `readState` backfills `box.docker` from the flat fields when missing (legacy state.json files automatically get the nested shape on next read — no migration script needed).
-- Cloud records intentionally skip the mirror (the discriminator is `provider !== 'docker'`).
-- `dockerField(box, key)` helper in `@agentbox/core` reads with fallback so call sites can migrate opportunistically without a flag day.
-- Unit-tested: docker-shape mirror happens, cloud records aren't touched.
+- `DockerBoxFields` interface (`packages/core/src/box-record.ts`) parallels `CloudBoxFields`.
+- `BoxRecord.docker?: DockerBoxFields` added; populated on every write for docker records and backfilled from flat fields on read for legacy state.json files. Cloud records skip the mirror (the discriminator is `provider !== 'docker'`).
+- `dockerField(box, key)` helper in `@agentbox/core` reads nested-with-fallback so new call sites can target the nested shape without a flag day.
+- 7.2 lands cleanly on top: cloud records use `container: cloud:<sandboxId>`; the `agentbox-cloud-*` fake docker name is gone everywhere.
 
-**Still deferred** (the sweep): ~30 read sites in sandbox-docker + apps/cli still touch `box.container` / `box.image` / `box.claudeConfigVolume` / etc. directly. Moving them to `dockerField(box, '...')` (or `box.docker?.<field>`) is a search-and-replace once there's appetite to do it in one focused pass — and the flat fields can be deleted only after that sweep lands.
+**Optional follow-up**: the flat docker-only fields (`box.container` / `box.image` / `box.claudeConfigVolume` / …) are still the primary source for the ~120 docker-internal read sites inside sandbox-docker. Moving them to `box.docker.<field>` is a search-and-replace, but the duplication is harmless (writers + readState keep both shapes in sync), and the discriminator already gives the type system everything it needs. Defer to a focused refactor session if the duplication becomes a maintenance burden; it doesn't block any user-visible work.
 
-### 7.2 ⏸ Synthetic `containerName` cleanup — blocked on 7.1 sweep
-Cloud boxes still set `container: 'agentbox-cloud-<id>'` to satisfy the (still-required) flat `BoxRecord.container` field. With 7.1 phase 1 landed the nested `box.docker.container` exists for docker boxes; cloud boxes have no `box.docker` at all. Making the flat `container` field optional (so cloud records can omit it) requires the same call-site sweep tracked under 7.1. Once that lands, drop the synthetic value and update the few callers that genuinely need the docker container name to read from `box.docker?.container`.
+### 7.2 ✅ Cloud `container` is now `cloud:<sandboxId>`, no `agentbox-cloud-*` (done)
+~~Synthetic fake docker name~~ — cloud records now set `container: cloud:${handle.sandboxId}`. A `grep -r 'agentbox-cloud-'` over the codebase finds only the SSH alias (`agentbox-cloud-<boxname>` in `~/.ssh/config`, user-facing) and the comment that explains the cleanup; nothing in `docker ps` output, no state-file grep ever matches. The value is unique within state (the sandbox id is the backend's canonical handle) and serves `findBox`'s by-container lookup. `BoxRecord.container: string` stays required, avoiding the 100+ call-site sweep the truly-optional shape would have required.
 
 ### 7.3 ✅ relay→sandbox-* runtime contract documented + guarded (done)
 ~~Fragile~~ — the dynamic-import contract is now spelled out in three load-bearing places:

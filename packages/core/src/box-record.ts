@@ -128,11 +128,20 @@ export interface BoxRecord {
    * multi-provider split — `readState` migrates those to `'docker'` on read.
    */
   provider?: ProviderName;
+  /**
+   * Unique runtime identifier. For docker records: the container name
+   * (`agentbox-<id|name>`) — what `docker exec` resolves. For cloud
+   * records: the backend sandbox id, prefixed with `cloud:` so a grep
+   * for "agentbox-cloud-*" finds nothing (post 7.2) — the cloud
+   * sandbox is not a docker container and shouldn't look like one.
+   * Docker-internal code should only ever reach this via
+   * `requireDockerProvider(box, ...)` first.
+   */
   container: string;
   /**
-   * The image the box was started from. For plain boxes this is
-   * `agentbox/box:dev` (the base image); for boxes started from a checkpoint
-   * it's the checkpoint image tag (and `checkpointImage` mirrors it).
+   * The image the box was started from. Docker: base image or checkpoint
+   * image tag. Cloud: the resolved sandbox image / snapshot ref (mirrors
+   * `box.cloud.image`).
    */
   image: string;
   workspacePath: string;

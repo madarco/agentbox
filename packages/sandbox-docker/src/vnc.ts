@@ -79,7 +79,7 @@ export interface VncUrls {
  */
 export function buildVncUrls(
   record: {
-    container: string;
+    container?: string;
     vncEnabled?: boolean;
     vncHostPort?: number;
     vncContainerPort?: number;
@@ -91,7 +91,7 @@ export function buildVncUrls(
   const containerPort = record.vncContainerPort ?? VNC_CONTAINER_PORT;
   const qs = `autoconnect=1&password=${encodeURIComponent(record.vncPassword)}`;
   const urls: VncUrls = {};
-  if (engine === 'orbstack') {
+  if (engine === 'orbstack' && record.container) {
     urls.orbUrl = `http://${record.container}.orb.local:${String(containerPort)}/vnc.html?${qs}`;
   }
   if (record.vncHostPort) {

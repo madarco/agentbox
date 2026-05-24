@@ -54,7 +54,7 @@ describe('createCloudProvider composition', () => {
         {
           id: 'b1',
           name: 'b1',
-          container: 'agentbox-cloud-b1',
+          container: 'cloud:sb-1',
           image: 'img',
           workspacePath: '/tmp',
           createdAt: new Date().toISOString(),
@@ -70,7 +70,7 @@ describe('createCloudProvider composition', () => {
     const insp = await p.inspect({
       id: 'b1',
       name: 'b1',
-      container: 'agentbox-cloud-b1',
+      container: 'cloud:sb-1',
       image: 'img',
       workspacePath: '/tmp',
       createdAt: new Date().toISOString(),
@@ -100,7 +100,7 @@ describe('createCloudProvider composition', () => {
         {
           id: 'b1',
           name: 'b1',
-          container: 'agentbox-cloud-b1',
+          container: 'cloud:sb-1',
           image: 'img',
           workspacePath: '/tmp',
           createdAt: new Date().toISOString(),
@@ -127,7 +127,7 @@ describe('createCloudProvider composition', () => {
       {
         id: 'b1',
         name: 'b1',
-        container: 'agentbox-cloud-b1',
+        container: 'cloud:sb-1',
         image: 'img',
         workspacePath: '/tmp',
         createdAt: new Date().toISOString(),
