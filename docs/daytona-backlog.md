@@ -207,8 +207,8 @@ Project's `CLAUDE.md` describes the Docker box model. Should mention `--provider
 
 ## 9. Testing
 
-### 9.1 🟡 No automated cloud E2E test
-All cloud verification has been manual via the Daytona API. A scripted test in `apps/cli/test/cloud-e2e.test.ts` that does create → ssh shell → destroy (requires `DAYTONA_API_KEY` + `DAYTONA_ORGANIZATION_ID` in env) would catch regressions.
+### 9.1 ✅ Cloud E2E test gated on DAYTONA_API_KEY (done)
+~~Manual only~~ — `apps/cli/test/cloud-e2e.test.ts` runs a full `create → shell --echo → status → destroy` round-trip against a real Daytona sandbox. Uses `describe.skipIf(!hasCreds)` so the suite stays silent when `DAYTONA_API_KEY` isn't set (CI without secrets sees nothing). Test bootstraps a tmp git workspace so `seedCloudWorkspace` has a bundle to ship; `afterAll` always destroys (with `agentbox prune --provider daytona` as the orphan fallback). Per-step timeouts are generous (15 min total budget) to absorb the ~7-minute cold Dockerfile.box build on first run.
 
 ### 9.2 ✅ Unit tests for sandbox-cloud composition + expose-ports (done)
 ~~Only `shell.test.ts`~~ — added:
