@@ -81,8 +81,8 @@ Soft-fail keeps `agentbox create --provider daytona` from blocking when a shallo
 ### 2.5 🟢 `browser.open` host-mirror offer for cloud
 Cloud box's `agentbox-ctl open <url>` is currently handled at the in-sandbox relay (records event, returns 200 immediately). The "open on host too?" offer that Docker shows is not mirrored for cloud — would need the same SSE bridge as 2.4.
 
-### 2.6 🟢 Host poller: long-poll vs Daytona proxy idle cap
-The `CloudBoxPoller` holds `/bridge/poll` up to ~25s. Daytona's CloudFront edge sometimes 504s mid-poll (observed during e2e testing). Add a backoff + faster-cycle fallback after a 504.
+### 2.6 ✅ Cloud poller 504 fast-mode (done)
+~~Unmitigated~~ — `CloudBoxPoller` now detects 504 responses (matched on `→ 504` / `504:` in the error message) and arms `fastModePolls = FAST_MODE_DECAY_POLLS` (5). While the counter is > 0 the next `pollOnce` uses `FAST_REQUEST_TIMEOUT_MS = 8s` (vs the default 25s), so the request clips short of the edge proxy's next 504 window. Successful polls decrement the counter; after ~5 healthy round-trips the poller drifts back to the long timeout. No persistent state required.
 
 ---
 

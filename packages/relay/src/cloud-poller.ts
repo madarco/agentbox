@@ -49,7 +49,26 @@ export interface CloudBoxPollerDeps {
 
 const BACKOFF_BASE_MS = 1500;
 const BACKOFF_MAX_MS = 30_000;
+/**
+ * Default request timeout. Daytona's CloudFront edge sits in front of the
+ * in-sandbox relay and 504s once its idle window expires (~25-30s in
+ * practice). Keep the default a hair below that so the poller's timer
+ * fires before CloudFront's does, then short-cycle aggressively when we
+ * actually see a 504 — see {@link FAST_REQUEST_TIMEOUT_MS}.
+ */
 const REQUEST_TIMEOUT_MS = 25_000;
+/**
+ * Faster timeout used after a recent 504 response. Cuts the request short
+ * enough that we round-trip multiple times in the same window where the
+ * edge proxy would otherwise wedge — recovers throughput quickly when the
+ * box is healthy but the edge is flaky.
+ */
+const FAST_REQUEST_TIMEOUT_MS = 8_000;
+/**
+ * Number of consecutive non-504 polls before reverting from the fast
+ * timeout back to the default. Decays naturally; no separate timer.
+ */
+const FAST_MODE_DECAY_POLLS = 5;
 const STOPPED_TICK_MS = 250;
 
 export class CloudBoxPoller {
@@ -57,6 +76,13 @@ export class CloudBoxPoller {
   private cursor = 0;
   private currentBackoffMs = 0;
   private loopPromise: Promise<void> | null = null;
+  /**
+   * Counts down from {@link FAST_MODE_DECAY_POLLS} after each 504. While > 0
+   * the next poll uses {@link FAST_REQUEST_TIMEOUT_MS}. Successful polls
+   * decrement, so a flaky edge converges back to the default timeout
+   * within ~5 successful round-trips.
+   */
+  private fastModePolls = 0;
 
   constructor(private readonly deps: CloudBoxPollerDeps) {}
 
@@ -169,8 +195,18 @@ export class CloudBoxPoller {
           this.cursor = body.cursor;
         }
       } catch (err) {
-        this.log(`poll error: ${err instanceof Error ? err.message : String(err)}`);
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('→ 504') || msg.includes('504:')) {
+          // Edge proxy timeout — the box is likely fine; arm fast-mode so the
+          // next polls clip the request short of the next 504 window.
+          this.fastModePolls = FAST_MODE_DECAY_POLLS;
+        }
+        this.log(`poll error: ${msg}`);
         await this.backoff();
+      }
+      // Successful poll decays fast-mode toward the default timeout.
+      if (this.currentBackoffMs === 0 && this.fastModePolls > 0) {
+        this.fastModePolls -= 1;
       }
       // Tight loop only when we got something fresh — otherwise yield briefly
       // so we don't spin under a misbehaving preview proxy.
@@ -192,6 +228,7 @@ export class CloudBoxPoller {
     const isHttps = url.protocol === 'https:';
     const transport = isHttps ? httpsRequest : httpRequest;
     const port = url.port.length > 0 ? Number.parseInt(url.port, 10) : isHttps ? 443 : 80;
+    const timeoutMs = this.fastModePolls > 0 ? FAST_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
 
     return new Promise<BridgePollResponse>((resolve, reject) => {
       const headers: Record<string, string> = {
@@ -208,7 +245,7 @@ export class CloudBoxPoller {
           method: 'GET',
           path: `${url.pathname}${url.search}`,
           headers,
-          timeout: REQUEST_TIMEOUT_MS,
+          timeout: timeoutMs,
         },
         (res) => {
           const status = res.statusCode ?? 0;
