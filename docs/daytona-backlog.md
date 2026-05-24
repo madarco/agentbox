@@ -183,8 +183,12 @@ Per the plan's §3 deferred cleanup, Docker-specific fields (`container`, `image
 ### 7.2 🟡 `containerName` on cloud `BoxRecord` is synthetic
 Cloud boxes set `container: 'agentbox-cloud-<id>'` to satisfy the (still-required) `BoxRecord.container` field. Anything that grep/inspects container names sees this; `agentbox-cloud-*` should never appear in `docker ps` output. Cleaner once 7.1 lands.
 
-### 7.3 🟡 `@agentbox/relay` → `@agentbox/sandbox-daytona` is a runtime dep with no package.json declaration
-The relay uses `await import('@agentbox/sandbox-' + 'daytona')` to defeat esbuild's static resolution (avoiding a sandbox-daytona → sandbox-cloud → sandbox-docker → relay cycle). Runtime resolution depends on the parent CLI's `node_modules`. Works in dev (pnpm symlinks) and when the published `agent-box` package has `@agentbox/sandbox-daytona` as a dep (it does), but it's a fragile contract — document or formalize as a peerDependency.
+### 7.3 ✅ relay→sandbox-* runtime contract documented + guarded (done)
+~~Fragile~~ — the dynamic-import contract is now spelled out in three load-bearing places:
+
+1. `packages/relay/src/host-actions.ts`: a long-form comment on `resolveCloudBackend` describes the cycle that motivates the dynamic import, names the owner (`@madarco/agentbox` CLI) responsible for keeping `@agentbox/sandbox-daytona` and `@agentbox/sandbox-cloud` resolvable next to the relay bin, and explains what happens for standalone embedders. The same note is referenced from `loadCloudCp`.
+2. `packages/relay/tsup.config.ts`: the `externalAtRuntime` list now includes `@agentbox/sandbox-cloud` (matching the runtime reality — it was de-facto external already), with a comment cataloguing the three motivations (cycle, lazy load, bin size).
+3. Both `resolveCloudBackend` and `loadCloudCp` catch `MODULE_NOT_FOUND` and rethrow with a clear "install it alongside @agentbox/relay" message instead of the raw Node error. Standalone embedders get an actionable failure mode.
 
 ### 7.4 🟢 Multiple cloud backends (Vercel, …) when needed
 The `CloudBackend` interface is provider-neutral; adding a new backend means a new `packages/sandbox-<name>` with `~150` lines + a string case in `resolveCloudBackend`. No design changes needed.
