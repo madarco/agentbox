@@ -1,11 +1,14 @@
 import { confirm, isCancel, log } from '@clack/prompts';
 import { Command } from 'commander';
 import {
+  defaultCheckpointConfigKey,
   findProjectRoot,
   loadEffectiveConfig,
+  resolveDefaultCheckpoint,
   setConfigValue,
   unsetConfigValue,
 } from '@agentbox/config';
+import type { ProviderKind } from '@agentbox/config';
 import type { BoxRecord } from '@agentbox/core';
 import {
   clearRelayNotice,
@@ -141,7 +144,10 @@ const lsSub = new Command('ls')
     try {
       const projectRoot = (await findProjectRoot(process.cwd())).root;
       const cfg = await loadEffectiveConfig(projectRoot);
-      const def = cfg.effective.box.defaultCheckpoint;
+      // Resolve per-provider so the `*default` marker tracks which one the
+      // wizard would actually pick for that provider's row.
+      const defDocker = resolveDefaultCheckpoint(cfg.effective, 'docker');
+      const defDaytona = resolveDefaultCheckpoint(cfg.effective, 'daytona');
       const dockerList = await listCheckpoints(projectRoot);
       // Merge in cloud-backend checkpoints. v1: only Daytona is known. Future
       // backends slot in here once they implement `createSnapshot`.
@@ -152,13 +158,13 @@ const lsSub = new Command('ls')
         return;
       }
       for (const c of dockerList) {
-        const flag = c.name === def ? ' *default' : '';
+        const flag = c.name === defDocker ? ' *default' : '';
         process.stdout.write(
           `${c.name}  docker (${c.manifest.type})  from ${c.manifest.sourceBoxName}  ${c.manifest.createdAt}${flag}\n`,
         );
       }
       for (const c of daytonaList) {
-        const flag = c.name === def ? ' *default' : '';
+        const flag = c.name === defDaytona ? ' *default' : '';
         process.stdout.write(
           `${c.name}  daytona (snapshot)  from ${c.manifest.sourceBoxName}  ${c.manifest.createdAt}${flag}\n`,
         );
@@ -172,37 +178,49 @@ const setDefaultSub = new Command('set-default')
   .description('Pin a checkpoint as the project default (box.defaultCheckpoint)')
   .argument('[ref]', 'checkpoint name (omit with --clear)')
   .option('--clear', 'unset the project default instead of setting one')
-  .action(async (ref: string | undefined, opts: { clear?: boolean }) => {
+  .option(
+    '--provider <name>',
+    'set the default for only this provider (docker|daytona); without it, sets the cross-provider fallback',
+  )
+  .action(async (ref: string | undefined, opts: { clear?: boolean; provider?: string }) => {
     try {
       const projectRoot = (await findProjectRoot(process.cwd())).root;
+      const providerArg = opts.provider as ProviderKind | undefined;
+      if (providerArg !== undefined && providerArg !== 'docker' && providerArg !== 'daytona') {
+        throw new Error(`unknown provider '${opts.provider ?? ''}' (known: docker, daytona)`);
+      }
+      const configKey = defaultCheckpointConfigKey(providerArg);
+      const label = providerArg ? `${providerArg} default checkpoint` : 'project default checkpoint';
       if (opts.clear) {
         if (ref !== undefined) {
           throw new Error('pass either a <ref> or --clear, not both');
         }
-        const r = await unsetConfigValue('project', 'box.defaultCheckpoint', projectRoot);
+        const r = await unsetConfigValue('project', configKey, projectRoot);
         process.stdout.write(
           r.existed
-            ? `cleared project default checkpoint   (wrote ${r.path})\n`
-            : `no project default checkpoint was set   (${r.path})\n`,
+            ? `cleared ${label}   (wrote ${r.path})\n`
+            : `no ${label} was set   (${r.path})\n`,
         );
         return;
       }
       if (ref === undefined) {
         throw new Error('missing <ref> (or pass --clear to unset the default)');
       }
-      // Accept the name if EITHER provider's checkpoint store has it. The
-      // wizard's per-provider lookup will resolve to the right artifact at
-      // create time.
-      const dockerList = await listCheckpoints(projectRoot);
-      const daytonaList = await listCloudCheckpoints(projectRoot, 'daytona');
+      // Accept the name if it exists in the store(s) we'd resolve against.
+      // For --provider, restrict to that provider's store; without --provider,
+      // accept if EITHER store has it (matches existing back-compat behavior).
+      const checkDocker = providerArg === undefined || providerArg === 'docker';
+      const checkDaytona = providerArg === undefined || providerArg === 'daytona';
+      const dockerList = checkDocker ? await listCheckpoints(projectRoot) : [];
+      const daytonaList = checkDaytona ? await listCloudCheckpoints(projectRoot, 'daytona') : [];
       if (
         !dockerList.some((c) => c.name === ref) &&
         !daytonaList.some((c) => c.name === ref)
       ) {
         throw new Error(`checkpoint not found: ${ref} (see \`agentbox checkpoint ls\`)`);
       }
-      const r = await setConfigValue('project', 'box.defaultCheckpoint', ref, projectRoot);
-      process.stdout.write(`project default checkpoint = ${ref}   (wrote ${r.path})\n`);
+      const r = await setConfigValue('project', configKey, ref, projectRoot);
+      process.stdout.write(`${label} = ${ref}   (wrote ${r.path})\n`);
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -251,18 +269,27 @@ const rmSub = new Command('rm')
       }
       if (!any) throw new Error(`checkpoint not found: ${ref}`);
 
-      // Don't leave box.defaultCheckpoint dangling at a now-deleted ref —
-      // future `agentbox create` would fail to resolve it. Clear it when the
-      // project layer pointed here; warn (can't auto-edit) if it came from a
-      // global / workspace-defaults layer instead.
+      // Don't leave any default-checkpoint pointer dangling at a now-deleted
+      // ref — future `agentbox create` would fail to resolve it. Sweep the
+      // global + per-provider keys, clear whichever the project layer set
+      // to this ref, warn if the dangling pointer lives in a layer we can't
+      // auto-edit (global or agentbox.yaml defaults).
       const cfg = await loadEffectiveConfig(projectRoot);
-      if (cfg.layers.project.values.box?.defaultCheckpoint === ref) {
-        await unsetConfigValue('project', 'box.defaultCheckpoint', projectRoot);
-        log.info(`cleared project default checkpoint (was ${ref})`);
-      } else if (cfg.effective.box.defaultCheckpoint === ref) {
-        log.warn(
-          `default checkpoint ${ref} is set outside the per-project config (global or agentbox.yaml defaults) — clear it manually`,
-        );
+      const projectBox = cfg.layers.project.values.box;
+      const defKeys = [
+        ['box.defaultCheckpoint', projectBox?.defaultCheckpoint, cfg.effective.box.defaultCheckpoint],
+        ['box.defaultCheckpointDocker', projectBox?.defaultCheckpointDocker, cfg.effective.box.defaultCheckpointDocker],
+        ['box.defaultCheckpointDaytona', projectBox?.defaultCheckpointDaytona, cfg.effective.box.defaultCheckpointDaytona],
+      ] as const;
+      for (const [key, projectValue, effectiveValue] of defKeys) {
+        if (projectValue === ref) {
+          await unsetConfigValue('project', key, projectRoot);
+          log.info(`cleared project ${key} (was ${ref})`);
+        } else if (effectiveValue === ref) {
+          log.warn(
+            `${key} = ${ref} is set outside the per-project config (global or agentbox.yaml defaults) — clear it manually`,
+          );
+        }
       }
     } catch (err) {
       handleLifecycleError(err);
@@ -318,10 +345,16 @@ async function runCloudCheckpointCreate(box: BoxRecord, opts: CreateOpts): Promi
     const result = await provider.checkpoint.create(box, name);
     log.success(`checkpoint ${result.ref} (daytona snapshot) captured`);
     if (opts.setDefault) {
-      await setConfigValue('project', 'box.defaultCheckpoint', result.ref, projectRoot);
-      log.info(`set project default checkpoint -> ${result.ref}`);
+      // Cloud snapshots aren't usable by docker boxes — pin the daytona-
+      // specific default so `agentbox create --provider docker` in the same
+      // project doesn't trip over a snapshot it can't resolve.
+      const key = defaultCheckpointConfigKey(box.provider ?? 'daytona');
+      await setConfigValue('project', key, result.ref, projectRoot);
+      log.info(`set project default checkpoint (${key}) -> ${result.ref}`);
     } else {
-      log.info(`make it the default for new boxes: agentbox checkpoint set-default ${result.ref}`);
+      log.info(
+        `make it the default for new boxes: agentbox checkpoint set-default --provider ${box.provider ?? 'daytona'} ${result.ref}`,
+      );
     }
   } finally {
     if (noticeId) await clearRelayNotice(box.id, noticeId);

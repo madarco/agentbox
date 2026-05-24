@@ -414,8 +414,10 @@ export async function createCheckpoint(opts: CreateCheckpointOptions): Promise<C
   await writeFile(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 
   if (opts.setDefault) {
-    await setConfigValue('project', 'box.defaultCheckpoint', name, opts.projectRoot);
-    log(`set project default checkpoint -> ${name}`);
+    // Pin the docker-specific default so a `agentbox create --provider daytona`
+    // in the same project doesn't trip over a docker image ref it can't load.
+    await setConfigValue('project', 'box.defaultCheckpointDocker', name, opts.projectRoot);
+    log(`set project default checkpoint (box.defaultCheckpointDocker) -> ${name}`);
   }
 
   return { name, dir, manifest };

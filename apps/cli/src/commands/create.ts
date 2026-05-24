@@ -4,6 +4,7 @@ import {
   findProjectRoot,
   loadEffectiveConfig,
   pruneOrphanProjectConfigs,
+  resolveDefaultCheckpoint,
   type UserConfig,
 } from '@agentbox/config';
 import {
@@ -156,13 +157,16 @@ export const createCommand = new Command('create')
       cliOverrides: buildCliOverrides(opts),
     });
     const projectRoot = (await findProjectRoot(opts.workspace)).root;
-    const checkpointRef = resolveCheckpointRef(opts, cfg.effective.box.defaultCheckpoint);
+    const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
+    const checkpointRef = resolveCheckpointRef(
+      opts,
+      resolveDefaultCheckpoint(cfg.effective, providerName as 'docker' | 'daytona'),
+    );
 
     // Cloud providers don't use the Docker-only Portless proxy and would
     // hand off to `agentbox claude` (a Docker-only flow that ignores
     // --provider) via the setup wizard — skip both for non-docker providers
     // so `agentbox create --provider daytona` provisions a cloud box.
-    const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
     const isDocker = providerName === 'docker';
 
     const portlessEnabled = isDocker

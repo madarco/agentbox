@@ -19,6 +19,9 @@ export interface UserConfig {
     provider?: ProviderKind;
     hostSnapshot?: boolean;
     defaultCheckpoint?: string;
+    /** Per-provider override of `defaultCheckpoint`. Resolved before falling back to the global. */
+    defaultCheckpointDocker?: string;
+    defaultCheckpointDaytona?: string;
     withPlaywright?: boolean;
     withEnv?: boolean;
     vnc?: boolean;
@@ -95,6 +98,8 @@ export interface EffectiveConfig {
     provider: ProviderKind;
     hostSnapshot: boolean | undefined;
     defaultCheckpoint: string;
+    defaultCheckpointDocker: string;
+    defaultCheckpointDaytona: string;
     withPlaywright: boolean;
     withEnv: boolean;
     vnc: boolean;
@@ -190,6 +195,8 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     provider: 'docker',
     hostSnapshot: undefined,
     defaultCheckpoint: '',
+    defaultCheckpointDocker: '',
+    defaultCheckpointDaytona: '',
     withPlaywright: false,
     withEnv: false,
     vnc: true,
@@ -289,7 +296,21 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.defaultCheckpoint',
     type: 'string',
     description:
-      'Checkpoint ref new boxes in this project start from when --snapshot is not given (set via `agentbox checkpoint set-default`).',
+      'Checkpoint ref new boxes in this project start from when --snapshot is not given (set via `agentbox checkpoint set-default`). Used as fallback when no per-provider override is set.',
+  },
+  {
+    key: 'box.defaultCheckpointDocker',
+    type: 'string',
+    description:
+      'Per-provider override of `box.defaultCheckpoint` for docker. Wins over the global when set; set via `agentbox checkpoint set-default --provider docker`.',
+    advanced: true,
+  },
+  {
+    key: 'box.defaultCheckpointDaytona',
+    type: 'string',
+    description:
+      'Per-provider override of `box.defaultCheckpoint` for daytona. Wins over the global when set; set via `agentbox checkpoint set-default --provider daytona`.',
+    advanced: true,
   },
   {
     key: 'checkpoint.maxLayers',

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
-import { findProjectRoot, loadEffectiveConfig } from '@agentbox/config';
+import { findProjectRoot, loadEffectiveConfig, resolveDefaultCheckpoint } from '@agentbox/config';
 import {
   buildDashboardAttachArgv,
   buildShellSessionAttachArgv,
@@ -281,10 +281,10 @@ export const dashboardCommand = new Command('dashboard')
       ): Promise<{ boxId: string; attach?: RightTarget }> => {
         const cfg = await loadEffectiveConfig(project.root);
         const auth = await resolveClaudeAuth(process.env);
-        const checkpointRef =
-          cfg.effective.box.defaultCheckpoint.length > 0
-            ? cfg.effective.box.defaultCheckpoint
-            : undefined;
+        // Dashboard create flow is docker-only — use the docker per-provider
+        // default with the global fallback.
+        const dockerDefault = resolveDefaultCheckpoint(cfg.effective, 'docker');
+        const checkpointRef = dockerDefault.length > 0 ? dockerDefault : undefined;
         const result = await createBox({
           workspacePath: project.root,
           useSnapshot: cfg.effective.box.hostSnapshot ?? true,

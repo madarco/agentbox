@@ -12,6 +12,8 @@
       "properties": {
         "hostSnapshot": { "type": "boolean" },
         "defaultCheckpoint": { "type": "string", "minLength": 1 },
+        "defaultCheckpointDocker": { "type": "string", "minLength": 1 },
+        "defaultCheckpointDaytona": { "type": "string", "minLength": 1 },
         "withPlaywright": { "type": "boolean" },
         "withEnv": { "type": "boolean" },
         "vnc": { "type": "boolean" },

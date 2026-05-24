@@ -13,6 +13,7 @@ export {
   type KeyDescriptor,
   type KeyType,
   type LoadedConfig,
+  type ProviderKind,
   type UserConfig,
 } from './types.js';
 
@@ -44,6 +45,11 @@ export {
   loadProjectAgentboxDefaults,
   type LoadEffectiveConfigOptions,
 } from './load.js';
+
+export {
+  defaultCheckpointConfigKey,
+  resolveDefaultCheckpoint,
+} from './checkpoint.js';
 
 export {
   bumpProjectGcCounter,

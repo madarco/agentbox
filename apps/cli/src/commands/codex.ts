@@ -2,7 +2,12 @@ import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { confirm, intro, isCancel, log, outro, spinner } from '@clack/prompts';
-import { findProjectRoot, loadEffectiveConfig, type UserConfig } from '@agentbox/config';
+import {
+  findProjectRoot,
+  loadEffectiveConfig,
+  resolveDefaultCheckpoint,
+  type UserConfig,
+} from '@agentbox/config';
 import {
   buildCodexAttachArgv,
   buildCodexLoginRunArgv,
@@ -235,17 +240,17 @@ export const codexCommand = new Command('codex')
       cliOverrides: buildCodexCliOverrides(opts),
     });
     const projectRoot = (await findProjectRoot(opts.workspace)).root;
-    const checkpointRef =
-      opts.snapshot && opts.snapshot.length > 0
-        ? opts.snapshot
-        : cfg.effective.box.defaultCheckpoint.length > 0
-          ? cfg.effective.box.defaultCheckpoint
-          : undefined;
-
     // Resolve provider. Cloud path skips docker-only steps (login offer,
     // Portless, createBox) and delegates to cloudAgentCreate.
     const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
     const isCloud = providerName !== 'docker';
+    const providerDefault = resolveDefaultCheckpoint(cfg.effective, providerName);
+    const checkpointRef =
+      opts.snapshot && opts.snapshot.length > 0
+        ? opts.snapshot
+        : providerDefault.length > 0
+          ? providerDefault
+          : undefined;
 
     if (isCloud) {
       const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });

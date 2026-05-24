@@ -1,5 +1,10 @@
 import { confirm, intro, isCancel, log, outro, spinner } from '@clack/prompts';
-import { findProjectRoot, loadEffectiveConfig, type UserConfig } from '@agentbox/config';
+import {
+  findProjectRoot,
+  loadEffectiveConfig,
+  resolveDefaultCheckpoint,
+  type UserConfig,
+} from '@agentbox/config';
 import {
   buildClaudeAttachArgv,
   buildClaudeLoginRunArgv,
@@ -260,19 +265,19 @@ export const claudeCommand = new Command('claude')
       cliOverrides: buildClaudeCliOverrides(opts),
     });
     const projectRoot = (await findProjectRoot(opts.workspace)).root;
-    const checkpointRef =
-      opts.snapshot && opts.snapshot.length > 0
-        ? opts.snapshot
-        : cfg.effective.box.defaultCheckpoint.length > 0
-          ? cfg.effective.box.defaultCheckpoint
-          : undefined;
-
     // Resolve provider once. The --provider flag wins, then box.provider config,
     // then default 'docker'. The Docker-only fast path below skips entirely on
     // cloud — we delegate to the cloud-agent-create helper after running the
     // (provider-agnostic) setup wizard.
     const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
     const isCloud = providerName !== 'docker';
+    const providerDefault = resolveDefaultCheckpoint(cfg.effective, providerName);
+    const checkpointRef =
+      opts.snapshot && opts.snapshot.length > 0
+        ? opts.snapshot
+        : providerDefault.length > 0
+          ? providerDefault
+          : undefined;
 
     // Resolve auth from host env or the legacy ~/.agentbox/auth.json
     // setup-token (the dormant CI fallback).
