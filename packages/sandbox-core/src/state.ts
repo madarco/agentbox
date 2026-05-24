@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { BoxRecord, FindBoxResult, StateFile } from '@agentbox/core';
+import type { BoxRecord, DockerBoxFields, FindBoxResult, StateFile } from '@agentbox/core';
 
 export const STATE_DIR = join(homedir(), '.agentbox');
 export const STATE_FILE = join(STATE_DIR, 'state.json');
@@ -18,8 +18,14 @@ export async function readState(path: string = STATE_FILE): Promise<StateFile> {
     // Migrate-on-read: records written before the multi-provider split carry no
     // `provider` field — they are all Docker boxes. Default it so every
     // consumer (provider registry, `findBox`) sees a discriminated record.
+    // Also backfill `box.docker` from the flat fields for Docker records so
+    // forward-looking readers (7.1) see the nested shape without waiting
+    // for the box to be re-recorded.
     for (const b of parsed.boxes) {
       b.provider ??= 'docker';
+      if ((b.provider ?? 'docker') === 'docker' && !b.docker) {
+        b.docker = projectDockerFields(b);
+      }
     }
     return parsed;
   } catch (err) {
@@ -36,12 +42,51 @@ export async function writeState(state: StateFile, path: string = STATE_FILE): P
 }
 
 export async function recordBox(box: BoxRecord, path: string = STATE_FILE): Promise<void> {
+  // Forward-looking shape: every Docker write also mirrors the flat
+  // docker-specific fields into `box.docker` so readers can move to the
+  // nested form opportunistically (7.1). Cloud records skip the mirror —
+  // the discriminator is `box.provider !== 'docker'`.
+  const toWrite: BoxRecord =
+    (box.provider ?? 'docker') === 'docker' && !box.docker
+      ? { ...box, docker: projectDockerFields(box) }
+      : box;
   const state = await readState(path);
   const next: StateFile = {
     version: 1,
-    boxes: [...state.boxes.filter((b) => b.id !== box.id), box],
+    boxes: [...state.boxes.filter((b) => b.id !== toWrite.id), toWrite],
   };
   await writeState(next, path);
+}
+
+/**
+ * Build a `DockerBoxFields` payload from the flat Docker-specific fields
+ * still living on `BoxRecord` for back-compat. Pure function, no
+ * filesystem; safe for both `readState` migration and `recordBox` mirror.
+ *
+ * Once every reader uses `box.docker?.<field>` (the rest of 7.1), the
+ * flat fields can be dropped and this projection becomes the canonical
+ * shape. Until then, every write produces both shapes from the same
+ * source so they can't drift.
+ */
+function projectDockerFields(box: BoxRecord): DockerBoxFields {
+  return {
+    container: box.container,
+    image: box.image,
+    snapshotDir: box.snapshotDir ?? null,
+    socketPath: box.socketPath,
+    claudeConfigVolume: box.claudeConfigVolume,
+    codexConfigVolume: box.codexConfigVolume,
+    opencodeConfigVolume: box.opencodeConfigVolume,
+    vscodeServerVolume: box.vscodeServerVolume,
+    cursorServerVolume: box.cursorServerVolume,
+    vncHostPort: box.vncHostPort,
+    webHostPort: box.webHostPort,
+    portlessAlias: box.portlessAlias,
+    portlessUrl: box.portlessUrl,
+    dockerVolume: box.dockerVolume,
+    dockerCacheShared: box.dockerCacheShared,
+    checkpointImage: box.checkpointImage,
+  };
 }
 
 export async function removeBoxRecord(id: string, path: string = STATE_FILE): Promise<boolean> {

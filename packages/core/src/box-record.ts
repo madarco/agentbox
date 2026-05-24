@@ -9,6 +9,49 @@
 export type ProviderName = 'docker' | 'daytona' | (string & {});
 
 /**
+ * Docker-backend-specific fields nested under `BoxRecord.docker` once 7.1
+ * lands fully. Today every Docker box also keeps the flat copies of these
+ * fields on `BoxRecord` directly for back-compat (state.json migration is
+ * the rest of 7.1) — write sites populate both shapes; read sites still
+ * use the flat fields. New code should target this interface so the
+ * eventual flat-field removal is a search-and-replace, not a redesign.
+ */
+export interface DockerBoxFields {
+  /** Docker container name (`agentbox-<id|name>`). */
+  container: string;
+  /** Base image / checkpoint image tag the container was started from. */
+  image: string;
+  /** Per-box scratch dir with the `cp -c` APFS clone (when --host-snapshot is on). */
+  snapshotDir?: string | null;
+  /** Host-side path to the agentbox-ctl unix socket bind-mounted into the container. */
+  socketPath?: string;
+  /** Docker volume mounted at /home/vscode/.claude inside the box. */
+  claudeConfigVolume?: string;
+  /** Docker volume mounted at /home/vscode/.codex inside the box. */
+  codexConfigVolume?: string;
+  /** Docker volume mounted at /home/vscode/.local/share/opencode. */
+  opencodeConfigVolume?: string;
+  /** Per-box volume holding `.vscode-server`. */
+  vscodeServerVolume?: string;
+  /** Per-box volume holding `.cursor-server`. */
+  cursorServerVolume?: string;
+  /** Host port mapped to the noVNC web server. */
+  vncHostPort?: number;
+  /** Host port mapped to container :80. */
+  webHostPort?: number;
+  /** Portless route name registered for this box's web port. */
+  portlessAlias?: string;
+  /** Full user-facing URL the Portless proxy serves for this box. */
+  portlessUrl?: string;
+  /** Volume mounted at /var/lib/docker for the in-box dockerd. */
+  dockerVolume?: string;
+  /** True when this box's `dockerVolume` is the shared cache. */
+  dockerCacheShared?: boolean;
+  /** Checkpoint image tag this box was started from. */
+  checkpointImage?: string;
+}
+
+/**
  * Cloud-backend-specific fields for a box. Populated only when
  * `BoxRecord.provider` is a cloud provider; `undefined` for Docker boxes.
  */
@@ -164,9 +207,34 @@ export interface BoxRecord {
     pidsLimit?: number;
     disk?: string;
   };
+  /**
+   * Docker-backend-specific fields. Populated alongside the flat fields
+   * during the 7.1 transition; once readers migrate, the flat fields go
+   * away. New code SHOULD prefer `box.docker?.<field>` and fall back to
+   * the flat field via the `dockerField()` helper in `@agentbox/core`.
+   */
+  docker?: DockerBoxFields;
   /** Cloud-backend-specific fields. Present only for cloud providers. */
   cloud?: CloudBoxFields;
   createdAt: string; // ISO-8601
+}
+
+/**
+ * Read a Docker-specific field with fallback to the legacy flat slot.
+ * Prefer this over `box.field` directly while the 7.1 migration is in
+ * flight — once the flat fields are removed, this collapses to
+ * `box.docker?.[key]` and the migration is mechanical.
+ */
+export function dockerField<K extends keyof DockerBoxFields>(
+  box: BoxRecord,
+  key: K,
+): DockerBoxFields[K] | undefined {
+  if (box.docker && box.docker[key] !== undefined) return box.docker[key];
+  // Fall back to the flat copy. Container / image are required at the
+  // BoxRecord top level so they always exist as flat fields today.
+  return (box as unknown as Record<string, unknown>)[key as string] as
+    | DockerBoxFields[K]
+    | undefined;
 }
 
 export interface StateFile {

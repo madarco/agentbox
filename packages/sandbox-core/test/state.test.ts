@@ -36,8 +36,15 @@ describe('state.ts', () => {
     await recordBox(box, file);
 
     const reloaded = await readState(file);
-    // readState migrates legacy records by defaulting `provider` to 'docker'.
-    expect(reloaded.boxes).toEqual([{ ...box, provider: 'docker' }]);
+    // readState migrates legacy records by defaulting `provider` to 'docker'
+    // and (per 7.1) backfilling the nested `docker` shape from the flat
+    // Docker-specific fields. Skip the deep equality on `docker` here —
+    // the dedicated 7.1 test below covers the projection.
+    const reloadedBox = reloaded.boxes[0]!;
+    const rest = { ...reloadedBox };
+    delete rest.docker;
+    expect(rest).toEqual({ ...box, provider: 'docker' });
+    expect(reloadedBox.docker?.container).toBe(box.container);
   });
 
   it("defaults `provider` to 'docker' for records written without it", async () => {
@@ -130,7 +137,11 @@ describe('state.ts', () => {
     };
     await recordBox(box, file);
     const reloaded = await readState(file);
-    expect(reloaded.boxes).toEqual([{ ...box, provider: 'docker' }]);
+    const reloadedBox = reloaded.boxes[0]!;
+    const rest = { ...reloadedBox };
+    delete rest.docker;
+    expect(rest).toEqual({ ...box, provider: 'docker' });
+    expect(reloadedBox.docker?.container).toBe(box.container);
   });
 
   it('round-trips projectRoot + projectIndex', async () => {
@@ -149,6 +160,47 @@ describe('state.ts', () => {
     const reloaded = await readState(file);
     expect(reloaded.boxes[0]?.projectRoot).toBe('/Users/x/repo');
     expect(reloaded.boxes[0]?.projectIndex).toBe(3);
+  });
+
+  it('mirrors docker-specific fields into box.docker on write + on legacy read (7.1)', async () => {
+    const box: BoxRecord = {
+      id: 'd1234567',
+      name: 'docker-shape',
+      container: 'agentbox-docker-shape',
+      image: 'agentbox/box:dev',
+      workspacePath: '/tmp/ws',
+      claudeConfigVolume: 'agentbox-claude-shared',
+      vncHostPort: 49001,
+      webHostPort: 49002,
+      portlessAlias: 'shape.localhost',
+      createdAt: '2026-05-12T12:00:00.000Z',
+    };
+    await recordBox(box, file);
+    const reloaded = await readState(file);
+    const r = reloaded.boxes[0]!;
+    expect(r.docker?.container).toBe('agentbox-docker-shape');
+    expect(r.docker?.image).toBe('agentbox/box:dev');
+    expect(r.docker?.claudeConfigVolume).toBe('agentbox-claude-shared');
+    expect(r.docker?.vncHostPort).toBe(49001);
+    expect(r.docker?.webHostPort).toBe(49002);
+    expect(r.docker?.portlessAlias).toBe('shape.localhost');
+  });
+
+  it('cloud records do NOT get a docker shape mirrored in', async () => {
+    const cloud: BoxRecord = {
+      id: 'c1234567',
+      name: 'cloud-shape',
+      provider: 'daytona',
+      container: 'agentbox-cloud-c1234567',
+      image: 'agentbox/box:dev',
+      workspacePath: '/tmp/ws',
+      cloud: { backend: 'daytona', sandboxId: 'sb-1' },
+      createdAt: '2026-05-12T12:00:00.000Z',
+    };
+    await recordBox(cloud, file);
+    const reloaded = await readState(file);
+    expect(reloaded.boxes[0]?.docker).toBeUndefined();
+    expect(reloaded.boxes[0]?.cloud?.sandboxId).toBe('sb-1');
   });
 
   it('removeBoxRecord removes by id and reports whether anything matched', async () => {

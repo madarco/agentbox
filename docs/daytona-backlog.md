@@ -173,13 +173,21 @@ Captured in `docs/cloud-providers.md` §4. The resource is actually deleted (`sb
 
 ## 7. Architecture / cleanup
 
-### 7.1 🟡 `BoxRecord.docker?:` nesting cleanup
-Per the plan's §3 deferred cleanup, Docker-specific fields (`container`, `image`, `*Volume`, `webHostPort`, `portlessAlias`, …) still live flat on `BoxRecord` for back-compat. Nesting them under `box.docker?:` (paralleling `box.cloud?:`) would make the discriminator clean.
+### 7.1 ◐ `BoxRecord.docker?:` nesting — phase 1 landed; sweep deferred
+The shape is now in place but readers still use the flat fields. **Done in this pass:**
 
-**Risk:** ~30 call sites touch the flat fields; sweep + state-file migration on read.
+- `DockerBoxFields` interface added to `packages/core/src/box-record.ts` paralleling `CloudBoxFields`.
+- `BoxRecord.docker?: DockerBoxFields` field added.
+- `recordBox` (state.ts) mirrors flat docker fields into `box.docker` on every write for docker-provider records.
+- `readState` backfills `box.docker` from the flat fields when missing (legacy state.json files automatically get the nested shape on next read — no migration script needed).
+- Cloud records intentionally skip the mirror (the discriminator is `provider !== 'docker'`).
+- `dockerField(box, key)` helper in `@agentbox/core` reads with fallback so call sites can migrate opportunistically without a flag day.
+- Unit-tested: docker-shape mirror happens, cloud records aren't touched.
 
-### 7.2 🟡 `containerName` on cloud `BoxRecord` is synthetic
-Cloud boxes set `container: 'agentbox-cloud-<id>'` to satisfy the (still-required) `BoxRecord.container` field. Anything that grep/inspects container names sees this; `agentbox-cloud-*` should never appear in `docker ps` output. Cleaner once 7.1 lands.
+**Still deferred** (the sweep): ~30 read sites in sandbox-docker + apps/cli still touch `box.container` / `box.image` / `box.claudeConfigVolume` / etc. directly. Moving them to `dockerField(box, '...')` (or `box.docker?.<field>`) is a search-and-replace once there's appetite to do it in one focused pass — and the flat fields can be deleted only after that sweep lands.
+
+### 7.2 ⏸ Synthetic `containerName` cleanup — blocked on 7.1 sweep
+Cloud boxes still set `container: 'agentbox-cloud-<id>'` to satisfy the (still-required) flat `BoxRecord.container` field. With 7.1 phase 1 landed the nested `box.docker.container` exists for docker boxes; cloud boxes have no `box.docker` at all. Making the flat `container` field optional (so cloud records can omit it) requires the same call-site sweep tracked under 7.1. Once that lands, drop the synthetic value and update the few callers that genuinely need the docker container name to read from `box.docker?.container`.
 
 ### 7.3 ✅ relay→sandbox-* runtime contract documented + guarded (done)
 ~~Fragile~~ — the dynamic-import contract is now spelled out in three load-bearing places:

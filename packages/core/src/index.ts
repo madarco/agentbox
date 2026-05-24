@@ -13,11 +13,13 @@ export { resolveAgentLauncher } from './agent.js';
 export type {
   BoxRecord,
   CloudBoxFields,
+  DockerBoxFields,
   FindBoxResult,
   GitWorktreeRecord,
   ProviderName,
   StateFile,
 } from './box-record.js';
+export { dockerField } from './box-record.js';
 export type { BoxEndpoint, BoxEndpoints } from './endpoints.js';
 export type {
   AttachKind,
