@@ -12,7 +12,6 @@ import { resolveBoxOrExit } from '../box-ref.js';
 import { fmtBytes, fmtPercent } from '../fmt.js';
 import { watchRender } from '../watch.js';
 import { handleLifecycleError } from './_errors.js';
-import { requireDockerProvider } from './_provider-guard.js';
 
 interface TopOptions {
   project?: boolean;
@@ -54,22 +53,20 @@ async function selectBoxes(
   opts: TopOptions,
 ): Promise<ListedBox[]> {
   const boxes = await listBoxes();
-  // Cloud boxes have no host Docker container; `boxResourceStats` and the
-  // live-stats path here are Docker-only. Filter them out so `top` (with or
-  // without an explicit box ref) doesn't try to docker-inspect a synthetic
-  // container name. Phase 6 may surface cloud stats via the backend SDK.
-  const dockerOnly = boxes.filter((b) => (b.provider ?? 'docker') === 'docker');
   if (idOrName === undefined) {
     // Default: every box on the host. --project narrows to the cwd's project.
-    // An empty result is not an error here: watch mode stays up and picks up
+    // Empty result isn't an error here — watch mode stays up and picks up
     // boxes as they're created. Callers render a placeholder.
-    if (!opts.project) return dockerOnly;
+    if (!opts.project) return boxes;
     const project = await findProjectRoot(process.cwd());
-    return dockerOnly.filter((b) => b.projectRoot === project.root);
+    return boxes.filter((b) => b.projectRoot === project.root);
   }
   const picked = await resolveBoxOrExit(idOrName);
-  requireDockerProvider(picked, 'top');
-  return dockerOnly.filter((b) => b.id === picked.id);
+  // Cloud boxes are listed read-only (state from listBoxes, all metrics —)
+  // because Daytona's SDK doesn't expose CPU/mem live stats. The
+  // requireDockerProvider guard would refuse the cloud ref — relax it here
+  // and just resolve.
+  return boxes.filter((b) => b.id === picked.id);
 }
 
 async function snapshot(
@@ -77,8 +74,38 @@ async function snapshot(
   opts: TopOptions,
 ): Promise<{ boxes: ListedBox[]; stats: BoxResourceStats[] }> {
   const boxes = await selectBoxes(idOrName, opts);
-  const stats = await Promise.all(boxes.map((b) => boxResourceStats(b)));
+  const stats = await Promise.all(
+    boxes.map((b) => {
+      // Skip the docker-only `boxResourceStats` for cloud boxes — it would
+      // try to `docker inspect` the synthetic `agentbox-cloud-*` container
+      // name. Hand back an empty placeholder stats record so the row still
+      // renders (with — for every metric); state comes from listBoxes.
+      if ((b.provider ?? 'docker') !== 'docker') return emptyStats(b.provider ?? 'cloud');
+      return boxResourceStats(b);
+    }),
+  );
   return { boxes, stats };
+}
+
+function emptyStats(source: string): BoxResourceStats {
+  return {
+    source,
+    live: false,
+    cpuPercent: null,
+    memUsedBytes: null,
+    memLimitBytes: null,
+    memPercent: null,
+    pids: null,
+    diskUsedBytes: null,
+    snapshotDiskBytes: null,
+    checkpointVolumeBytes: null,
+    netRxBytes: null,
+    netTxBytes: null,
+    blockReadBytes: null,
+    blockWriteBytes: null,
+    limits: { memoryBytes: null, cpus: null, pidsLimit: null, disk: null },
+    warnings: ['cloud box: live metrics not yet exposed by the backend SDK'],
+  };
 }
 
 async function renderProjectFooters(): Promise<string> {

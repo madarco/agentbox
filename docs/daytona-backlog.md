@@ -112,8 +112,8 @@ Implementation: per-agent option added to the `.option(...)` chain + provider-na
 ### 3.9 ✅ `agentbox open` cloud-routed via sshfs (done)
 ~~Guarded~~ — `open.ts` branches on provider. For cloud boxes it reuses the SSH alias machinery from `agentbox code` (`writeAgentboxSshAlias`) to mint a fresh 60-min token and rewrite the `~/.ssh/config` block, then `sshfs <alias>:/workspace ~/.agentbox/mounts/<box-name>/ -o reconnect -o volname=agentbox-<box> -o noappledouble` and `open` the mount in Finder. Existing stale mounts at the path are auto-unmounted first. `--path/--print` reports the mount path without mounting. `--unmount` tears down an existing mount. sshfs missing → clear `brew install macfuse sshfs` hint. The docker path is unchanged.
 
-### 3.10 🟢 `agentbox top` filters cloud boxes
-Today `listBoxes`-style aggregation in top.ts filters out cloud entries. Live stats for cloud would need `backend`-level metrics (Daytona SDK doesn't seem to expose CPU/mem stats directly). Defer.
+### 3.10 ✅ `agentbox top` surfaces cloud rows (no live stats) (done)
+~~Cloud entries filtered out~~ — `selectBoxes` returns docker + cloud boxes; cloud rows get a placeholder `BoxResourceStats` (`live: false`, every metric `null`) from a local `emptyStats(source)` helper, with `warnings: ['cloud box: live metrics not yet exposed by the backend SDK']`. State still comes from `listBoxes` (which probes the provider). Daytona's SDK doesn't expose CPU/mem live stats yet — when it does, hook a `provider.stats?(box)` impl and drop the placeholder branch.
 
 ### 3.11 🟢 `agentbox dashboard` cloud-guarded
 The TUI dashboard polls live stats + claude state. Could work with the persisted status snapshot we already mirror, but the live panels (tmux capture etc.) don't have a cloud path.
