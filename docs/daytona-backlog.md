@@ -224,8 +224,8 @@ The discriminator shape is fully in place:
 ### 9.3 ✅ Routing-level unit tests for `host-actions.ts` (done)
 ~~No coverage~~ — `packages/relay/test/host-actions.test.ts` covers the routing surface: unknown methods, `cp.*` parameter validation, `download.env|config|claude` "not supported" branch, `checkpoint.create` without `AGENTBOX_CLI_ENTRY`, `browser.open.mirror` URL safety + no-subscribers fallback. The cloud SDK + sandbox-cloud helpers are dynamic-imported by computed string (intentionally — see 7.3), which makes them hard to vitest-mock; that's why the test stops at the routing layer rather than the full executor path. A future expansion could intercept the dynamic import via a vitest setup file if needed.
 
-### 9.4 🟢 Interactive flows (claude / shell PTY) only manually verifiable
-Hard to fully test without a real TTY; rely on the smoke `agentbox shell <box> -- <cmd>` non-TTY path which exercises the SSH + exec + env code paths.
+### 9.4 ✅ Drive-harness integration test (done)
+~~Only manually verifiable~~ — `apps/cli/test/_harness/harness-integration.test.ts` spawns `pnpm drive` against a small stdin-echoing Node program, sends a keystroke (`hello<Enter>`), uses `drive wait --text` to block until the echo lands, then captures the screen with `drive screen` and asserts the expected text. Validates the harness end-to-end and gives future tests (`dashboard`, `claude attach`, …) a working template — copy the pattern, swap the inner command. Skipped via `describe.skipIf(!hasPty)` when `@homebridge/node-pty-prebuilt-multiarch` isn't installed (CI without the prebuilt).
 
 ---
 
