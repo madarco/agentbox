@@ -53,11 +53,11 @@ describe('CloudBackend contract (mock)', () => {
     const backend = makeMockCloudBackend({
       preloaded: [{ id: 'pre-1', name: 'pre', state: 'running' }],
     });
-    const initial = await backend.list();
+    const initial = await backend.list!();
     expect(initial.map((s) => s.sandboxId)).toEqual(['pre-1']);
 
     await backend.provision({ name: 'new', image: 'i' });
-    const later = await backend.list();
+    const later = await backend.list!();
     expect(later).toHaveLength(2);
   });
 

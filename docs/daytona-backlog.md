@@ -140,8 +140,13 @@ Implementation: per-agent option added to the `.option(...)` chain + provider-na
 ### 5.1 🟡 First-time Dockerfile.box snapshot build takes ~7 min on Daytona
 41 layers including Playwright + Chrome download. Acceptable for first run, but `agentbox create --provider daytona` from a fresh org/user feels slow. Considered: publish a pre-built snapshot to a public Daytona snapshot registry; default to it; fall back to `Image.fromDockerfile` for users who want to rebuild.
 
-### 5.2 🟢 No DinD verification for cloud
-The Daytona DinD PoC validated `dockerd` runs inside a Daytona sandbox, but our cloud provider doesn't launch `dockerd` (`packages/sandbox-docker/src/dockerd.ts` is Docker-only). The Dockerfile.box installs `docker.io` so a cloud user could `dockerd &` manually, but `agentbox`-driven in-box docker isn't wired.
+### 5.2 ✅ `agentbox dockerd <box>` launches in-box dockerd (done)
+~~Manual `dockerd &`~~ — added a new CLI command `agentbox dockerd [box] [--timeout ms]`. Behavior:
+
+- **Docker boxes**: calls the existing `launchDockerdDaemon(box.container, ms)`.
+- **Cloud boxes**: calls `launchCloudDockerdDaemon({ backend, handle, timeoutMs })` (new helper in `@agentbox/sandbox-cloud/src/dockerd-launch.ts`). The helper runs `nohup sudo -n /usr/local/bin/agentbox-dockerd-start >> /var/log/agentbox/dockerd.log 2>&1 &` over `backend.exec` (the agentbox image already bakes the start script), then polls `/var/run/docker.sock` until `docker info` succeeds. Daytona sandboxes have CAP_SYS_ADMIN per the earlier PoC, so the in-sandbox dockerd starts cleanly.
+
+Idempotent — running it twice short-circuits on the second invocation when the socket already accepts connections. Logs land at `/var/log/agentbox/dockerd.log` inside the sandbox; `agentbox logs --daemon` doesn't tail this one yet (it tails `ctl-daemon.log`), but `agentbox shell <box> -- tail -F /var/log/agentbox/dockerd.log` works.
 
 ### 5.3 ✅ `agentbox logs --daemon` surfaces ctl-daemon log (done)
 ~~No CLI path~~ — `logs.ts` accepts `--daemon`, which tails `/var/log/agentbox/ctl-daemon.log` directly via `tail -n N [-F]`. Works on both docker (over `provider.exec`) and cloud (non-follow → `provider.exec`; follow → `provider.buildAttach(kind: 'shell', noTmux: true)` running the tail argv over SSH). The service positional argument is optional when `--daemon` is set; usage hint updated.

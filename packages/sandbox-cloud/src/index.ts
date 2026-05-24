@@ -10,6 +10,10 @@ export {
   type LaunchCloudCtlArgs,
 } from './ctl-launch.js';
 export {
+  launchCloudDockerdDaemon,
+  type CloudDockerdLaunchResult,
+} from './dockerd-launch.js';
+export {
   seedCloudWorkspace,
   type SeedCloudWorkspaceArgs,
   type SeedCloudWorkspaceResult,
