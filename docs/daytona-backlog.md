@@ -41,10 +41,8 @@ Implementation: host-side staging lives in `packages/sandbox-docker/src/host-sta
 ### 1.3 ✅ Workspace bundle depth knob (done)
 ~~Always `--all`~~ — `seedFromGitBundle` now honors `AGENTBOX_BUNDLE_DEPTH=N`. Default (unset / 0 / non-numeric) stays at `git bundle create --all`. With N > 0 the bundle becomes `git bundle create --depth=N HEAD`, shipping only the last N commits of HEAD as a shallow clone — fast enough for monorepos with deep history. `git push` from inside the sandbox still resolves merge bases because the host relay's pull-back fetches the per-box branch and lets the real `git push` find common ancestors via the host repo's full history.
 
-### 1.4 🟡 Nested-repo monorepos not seeded
-`workspace-seed.ts` v0 only handles the root repo (`detectGitRepos(...).find(r => r.kind === 'root')`). Nested submodules / monorepo with multiple `.git` dirs are silently skipped.
-
-**Fix:** iterate `detectGitRepos` results; bundle + clone each at the right `/workspace/<rel>` path. Matches the docker `seedWorkspace` semantics.
+### 1.4 ✅ Nested-repo monorepos seeded (done)
+~~Root-only~~ — `seedCloudWorkspace` now also loops over every `kind === 'nested'` entry from `detectGitRepos`. For each, it bundles + clones at `/workspace/<rel>` on the same per-box branch. The clone-then-rm script targets only `args.workspaceDir` so the nested clone wipes just its own subdir without disturbing the root checkout. Matches the docker `seedWorkspace` semantics (one branch per repo, all named `agentbox/<box-name>`).
 
 ### 1.5 🟡 Host uncommitted changes carry-over not implemented
 Docker provider runs `git stash create` + tar of untracked files so the in-box workspace starts with the user's local-but-unstaged state. Cloud `seedFromGitBundle` skips this — the sandbox starts from the last committed tip of every branch.

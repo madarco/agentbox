@@ -13,11 +13,12 @@ import { bashScript, quoteShellArgv } from './shell.js';
  *
  *   - Git workspace: `git bundle create --all` on the host, upload the bundle,
  *     `git clone` it inside the sandbox, repoint `origin`, check out the
- *     per-box branch `agentbox/<box-name>`.
+ *     per-box branch `agentbox/<box-name>`. Repeats for every nested repo
+ *     (1st-level subdir with its own `.git/`) so monorepos seed correctly.
  *   - Non-git workspace: tar the host workspace, upload, extract.
  *
- * This v0 covers the root repo only. Nested-repo monorepos and the host
- * uncommitted-carry-over (stash + untracked) are tracked in Phase 6.
+ * Host-uncommitted-carry-over (stash + untracked) is the remaining gap
+ * tracked in Phase 6.
  */
 export interface SeedCloudWorkspaceArgs {
   backend: CloudBackend;
@@ -47,9 +48,14 @@ export async function seedCloudWorkspace(
   const log = args.onLog ?? (() => {});
   const repos = await detectGitRepos(args.workspacePath);
   const root = repos.find((r) => r.kind === 'root');
+  const nested = repos.filter((r) => r.kind === 'nested');
 
   if (root) {
-    log('seeding /workspace from git bundle');
+    log(
+      nested.length > 0
+        ? `seeding /workspace from git bundle (+${String(nested.length)} nested repo${nested.length === 1 ? '' : 's'})`
+        : 'seeding /workspace from git bundle',
+    );
     await seedFromGitBundle({
       backend: args.backend,
       handle: args.handle,
@@ -57,6 +63,21 @@ export async function seedCloudWorkspace(
       branch: args.branch,
       workspaceDir,
     });
+    // Each nested repo gets its own bundle + clone at /workspace/<rel>. We
+    // do these after the root clone because the root clone wipes
+    // /workspace; a nested dir created during the root checkout (if
+    // tracked) would be replaced when we clone over it.
+    for (const r of nested) {
+      const sub = `${workspaceDir}/${r.relPathFromWorkspace}`;
+      log(`seeding nested repo ${r.relPathFromWorkspace} from git bundle`);
+      await seedFromGitBundle({
+        backend: args.backend,
+        handle: args.handle,
+        hostRepo: r.hostMainRepo,
+        branch: args.branch,
+        workspaceDir: sub,
+      });
+    }
     return { fromGit: true, branch: args.branch };
   }
 
@@ -122,6 +143,9 @@ async function seedFromGitBundle(args: SeedFromGitBundleArgs): Promise<void> {
       // (index-pack) fails with "Unable to read current working directory".
       `cd /tmp`,
       SUDO,
+      // rm -rf only the directory we're about to clone into — for nested
+      // repos this is just `/workspace/<rel>`, so the root clone (already
+      // at `/workspace`) is preserved.
       `$SUDO rm -rf ${quoteShellArgv([args.workspaceDir])}`,
       `$SUDO mkdir -p ${quoteShellArgv([args.workspaceDir])}`,
       `$SUDO chown "$(id -un):$(id -gn)" ${quoteShellArgv([args.workspaceDir])}`,
