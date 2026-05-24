@@ -66,4 +66,5 @@ Each topic has a dedicated file under [`docs/`](./docs). Read the relevant one b
 - [`docs/features.md`](./docs/features.md) — what works today (the full CLI lifecycle) and what is not built yet.
 - [`docs/development.md`](./docs/development.md) — build + verify commands, manual end-to-end runs, the image-rebuild checklist, and assumed host environment.
 - [`docs/cloud-providers.md`](./docs/cloud-providers.md) — Daytona (and future cloud) provider: how `--provider daytona` differs from docker, the bridge relay model, agent-credential volumes, signed preview URLs, known caveats.
+- [`docs/cloud-create-flow.md`](./docs/cloud-create-flow.md) — step-by-step walk of `agentbox create --provider daytona`: how `.git` and workspace files get into the box (git bundle + stash + untracked tar), and what changes first-time vs. subsequent boxes.
 - [`docs/daytona-backlog.md`](./docs/daytona-backlog.md) — what's done vs still missing on the cloud path. Quick index of where each cloud feature actually lives.
