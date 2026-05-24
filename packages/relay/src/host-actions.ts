@@ -90,11 +90,69 @@ export async function executeCloudAction(
   if (action.method === 'checkpoint.create') {
     return runCheckpointRpc(action, deps);
   }
+  if (action.method === 'browser.open.mirror') {
+    return runBrowserOpenMirror(action, deps);
+  }
   return {
     exitCode: 1,
     stdout: '',
     stderr: `host executor for '${action.method}' is not yet supported for cloud boxes\n`,
   };
+}
+
+/**
+ * Mirror an in-box `browser.open` notification on the host. The action runs
+ * detached from the box's `/rpc` (the in-box handler responded 200 long
+ * before queuing this), so blocking here doesn't tie up an agent — we can
+ * happily wait for the host user's verdict with a TTL fallback.
+ *
+ * On `y` we spawn `open <url>` on the host. Any other verdict (deny / TTL
+ * timeout / no subscribers) silently drops the link. Always resolves
+ * exit 0 because the box doesn't observe the result.
+ */
+async function runBrowserOpenMirror(
+  action: HostAction,
+  deps: CloudActionExecutorDeps,
+): Promise<HostActionResult> {
+  const params = (action.params ?? {}) as { url?: string };
+  const url = typeof params.url === 'string' ? params.url.trim() : '';
+  if (!url || !/^https?:\/\//i.test(url)) {
+    return { exitCode: 0, stdout: '', stderr: '' };
+  }
+  if (!deps.prompts || !deps.subscribers) return { exitCode: 0, stdout: '', stderr: '' };
+  if (process.env['AGENTBOX_PROMPT'] === 'off') {
+    return { exitCode: 0, stdout: '', stderr: '' };
+  }
+  // 90s TTL matches the docker browser.open behavior closely enough that an
+  // attached user has plenty of time to answer without leaving a stale
+  // prompt indefinitely.
+  const TTL_MS = 90_000;
+  try {
+    const verdict = await askPrompt(
+      deps.prompts,
+      deps.subscribers,
+      deps.boxId,
+      {
+        kind: 'confirm',
+        message: `Open link from cloud box ${deps.boxName ?? deps.boxId} on the host?`,
+        detail: url,
+        defaultAnswer: 'n',
+        context: { command: 'browser.open', argv: [url] },
+      },
+      { ttlMs: TTL_MS },
+    );
+    if (verdict.answer === 'y' && !verdict.cancelled) {
+      // macOS `open` is the only supported launcher today (Daytona client is
+      // mac/Linux; on Linux the same call no-ops or errors — either way the
+      // box doesn't observe). Spawn detached so the relay loop isn't blocked.
+      const { spawn } = await import('node:child_process');
+      const child = spawn('open', [url], { stdio: 'ignore', detached: true });
+      child.unref();
+    }
+  } catch (err) {
+    deps.log?.(`browser.open.mirror failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return { exitCode: 0, stdout: '', stderr: '' };
 }
 
 interface BoxLookup {

@@ -441,27 +441,38 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // AGENTBOX_PROMPT=off so a headless box can't spray the host with
         // browser tabs via askPrompt's auto-'y'.
         if (process.env.AGENTBOX_PROMPT !== 'off') {
-          void askPrompt(
-            prompts,
-            subscribers,
-            reg.boxId,
-            {
-              kind: 'confirm',
-              message: `Open link from box ${reg.name} on the host?`,
-              detail: url,
-              defaultAnswer: 'n',
-              context: { command: 'browser.open', argv: [url] },
-            },
-            { ttlMs: BROWSER_OPEN_PROMPT_TTL_MS },
-          )
-            .then((verdict) => {
-              if (verdict.answer === 'y' && !verdict.cancelled) {
-                void runHostCommand(['open', url], BROWSER_OPEN_RPC_TIMEOUT_MS);
-              }
-            })
-            .catch(() => {
-              /* best-effort */
-            });
+          if (mode === 'box' && hostActions) {
+            // Cloud: the in-sandbox relay has no SSE subscribers (the host
+            // wrapper attaches to the host relay, not the in-sandbox one).
+            // Queue a `browser.open.mirror` host action — the host poller
+            // drains it, executes the prompt + open against host
+            // subscribers, and resolves the parked entry. We don't await;
+            // the host's verdict isn't reported back to the in-box agent
+            // and `HostActionQueue.maxAgeMs` GCs the entry if it lingers.
+            void hostActions.enqueue(reg.boxId, 'browser.open.mirror', { url });
+          } else {
+            void askPrompt(
+              prompts,
+              subscribers,
+              reg.boxId,
+              {
+                kind: 'confirm',
+                message: `Open link from box ${reg.name} on the host?`,
+                detail: url,
+                defaultAnswer: 'n',
+                context: { command: 'browser.open', argv: [url] },
+              },
+              { ttlMs: BROWSER_OPEN_PROMPT_TTL_MS },
+            )
+              .then((verdict) => {
+                if (verdict.answer === 'y' && !verdict.cancelled) {
+                  void runHostCommand(['open', url], BROWSER_OPEN_RPC_TIMEOUT_MS);
+                }
+              })
+              .catch(() => {
+                /* best-effort */
+              });
+          }
         }
         return;
       }
