@@ -22,6 +22,7 @@ Just run `agentbox claude` to automatically spin a new VM from the current folde
 - 🎛️ **Dashboard** - Control all agents from a single view, with activity notifications and autosleep
 - 💾 **Checkpoints** — Sub <1s startup of new boxes from a previous checkpoint
 - 🌐 **A full Computer** — each box get his own dedicated Chromium browser, screen sharing web viewer, shell and a VS Code / Cursor IDE
+- ☁️ **Local or cloud** — same CLI, two backends. Default is a local Docker container; pass `--provider daytona` (or pin `box.provider: daytona` per project) to provision a Daytona Cloud sandbox instead. See [docs/cloud-providers.md](./docs/cloud-providers.md).
 
 
 ```sh

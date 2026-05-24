@@ -1,6 +1,6 @@
 # Where state lives
 
-> Part of the AgentBox docs. Start at [CLAUDE.md](../CLAUDE.md).
+> Part of the AgentBox docs. Start at [CLAUDE.md](../CLAUDE.md). For cloud-specific state (per-org credential volumes, snapshot manifests under `~/.agentbox/cloud-checkpoints/`, sshfs mount root, Daytona credentials) see [`cloud-providers.md`](./cloud-providers.md).
 
 - `~/.agentbox/config.yaml` — global user config (layered defaults). Same shape as the per-project file and the `defaults:` block in `agentbox.yaml`. Owned by `@agentbox/config` (read by every `apps/cli` command at startup). Manage via `agentbox config get|set|unset|list|edit|path|list-projects` — `set/unset/edit` only target `--global` and `--project` (default), the workspace `defaults:` block is hand-edited. Precedence (highest wins): CLI flag > workspace `defaults:` > per-project (`~/.agentbox/projects/<sha1-16-of-abs-path>/config.yaml`) > global > built-in. Engine override (`engine.kind`) is the only key applied at CLI startup via `setEngineOverride()` in `host-export.ts`; everything else flows through `loadEffectiveConfig()` per command. The full key set + types live in `KEY_REGISTRY` (`packages/config/src/types.ts`) — single source of truth for the parser, the JSON schema, and `config set` coercion. The ctl parser accepts top-level `defaults:` as a permissive passthrough (no dep on `@agentbox/config`); the host re-validates strictly when loading.
 - `~/.agentbox/state.json` — registry of created boxes

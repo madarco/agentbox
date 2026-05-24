@@ -1,18 +1,21 @@
 # AgentBox — context for Claude Code
 
-`agentbox` is an npm CLI that spins up isolated Docker containers ("boxes") for coding agents (Claude Code, Codex, others) to work in, so they can't touch the host. Each box gets its own per-box git branch in an in-container worktree — `agentbox create` runs `git worktree add /workspace` *inside* the box against the bind-mounted host `.git/`, so `/workspace` lives in the container's writable layer and is isolated by branch, not by overlay.
+`agentbox` is an npm CLI that spins up isolated sandboxes ("boxes") for coding agents (Claude Code, Codex, others) to work in, so they can't touch the host. Two backends share one provider abstraction: **Docker** (the default — one local container per box, isolated by per-box git branch in an in-container worktree against the bind-mounted host `.git/`) and **Daytona Cloud** (`--provider daytona` — a remote sandbox seeded from a host git bundle + per-agent credential volumes, reached via SSH-token attach and an in-sandbox bridge relay).
 
 ## Architecture overview
 
-- **Boxes** — one Docker container per agent run (`agentbox-<id|name>`). `/workspace` is the in-container git worktree on branch `agentbox/<box-name>`; the host's `.git/` is bind-mounted RW so commits land on the host immediately. Boxes pause/unpause for cheap context switching and survive stop/start; `destroy` wipes the container + per-box volumes.
-- **In-box supervisor** (`@agentbox/ctl`) — reads `/workspace/agentbox.yaml` and runs the declared tasks/services under a DAG scheduler. Ships as `agentbox-ctl` inside every box.
-- **Host relay** (`@agentbox/relay`) — a host node process boxes call for things they have no credentials for (`git push`, checkpoint capture) and to push status events. Keeps SSH keys out of the box.
-- **Checkpoints** — `docker commit` (+ periodic `FROM scratch` flatten) captures a box's warm state as a local image tag so future boxes start populated instead of cold.
-- The full design — file-handling rationale, the checkpoint model, pause/resume strategy, what we explicitly rejected — lives in [`docs/architecture.md`](./docs/architecture.md) and [`docs/create-and-checkpoints.md`](./docs/create-and-checkpoints.md). **Read them before making non-trivial changes to the lifecycle code.**
+- **Boxes** — one isolated sandbox per agent run. The shape differs by provider but the abstraction is one `Provider` interface (`packages/core/src/provider.ts`):
+  - **docker**: container `agentbox-<id|name>`; `/workspace` is the in-container git worktree on branch `agentbox/<box-name>`; host's `.git/` is bind-mounted RW so commits land on the host immediately. Boxes pause/unpause for cheap context switching and survive stop/start; `destroy` wipes the container + per-box volumes.
+  - **daytona** (cloud): Daytona sandbox with `/workspace` seeded from a host `git bundle create` (incl. stash + untracked carry-over for the user's local state). Lifecycle goes through the Daytona SDK; agent credentials (`~/.claude`, `~/.codex`, `~/.config/opencode`) live in shared per-org volumes seeded from the host. Host↔box comms go through a per-box bridge URL (CloudFront preview) that the host relay's `CloudBoxPoller` long-polls.
+- **In-box supervisor** (`@agentbox/ctl`) — reads `/workspace/agentbox.yaml` and runs the declared tasks/services under a DAG scheduler. Ships as `agentbox-ctl` inside every box (docker and cloud).
+- **Host relay** (`@agentbox/relay`) — a host node process boxes call for things they have no credentials for (`git push`, checkpoint capture, `cp`/`download`) and to push status events. Keeps SSH keys out of the box. The cloud path drives the same relay via `CloudBoxPoller` + `executeCloudAction`.
+- **Checkpoints** — `docker commit` (+ periodic `FROM scratch` flatten) for docker; Daytona snapshots (`sb._experimental_createSnapshot`) for cloud. Both flow through `provider.checkpoint.create`. `box.defaultCheckpoint` is the cross-provider fallback; `box.defaultCheckpointDocker` / `box.defaultCheckpointDaytona` override per provider.
+- The full design — file-handling rationale, the checkpoint model, pause/resume strategy, what we explicitly rejected — lives in [`docs/architecture.md`](./docs/architecture.md) and [`docs/create-and-checkpoints.md`](./docs/create-and-checkpoints.md). Cloud-specific status lives in [`docs/daytona-backlog.md`](./docs/daytona-backlog.md). **Read them before making non-trivial changes to the lifecycle code.**
 
 ## Important notes
 
  - You have docker and you are authorized to run docker commands, inspect containers, run commands inside containers, etc.
+ - For cloud work: the Daytona API key + org id live in `~/.agentbox/secrets.env` (managed by `agentbox daytona login`). You may use the Daytona SDK directly via `node` + `@daytonaio/sdk` to inspect / clean up sandboxes when a test leaves an orphan, or `agentbox prune --provider daytona -y` for the supported path.
 
 ## Testing / verifying
 
@@ -62,3 +65,5 @@ Each topic has a dedicated file under [`docs/`](./docs). Read the relevant one b
 - [`docs/host-relay.md`](./docs/host-relay.md) — `@agentbox/relay`: the host process, per-box bearer token, endpoints, registration/rehydration, in-box `agentbox-ctl git`/`open`.
 - [`docs/features.md`](./docs/features.md) — what works today (the full CLI lifecycle) and what is not built yet.
 - [`docs/development.md`](./docs/development.md) — build + verify commands, manual end-to-end runs, the image-rebuild checklist, and assumed host environment.
+- [`docs/cloud-providers.md`](./docs/cloud-providers.md) — Daytona (and future cloud) provider: how `--provider daytona` differs from docker, the bridge relay model, agent-credential volumes, signed preview URLs, known caveats.
+- [`docs/daytona-backlog.md`](./docs/daytona-backlog.md) — what's done vs still missing on the cloud path. Quick index of where each cloud feature actually lives.

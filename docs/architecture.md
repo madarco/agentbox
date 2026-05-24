@@ -2,7 +2,9 @@
 
 ## Goal
 
-Spawn isolated, disposable Linux containers ("boxes") for each Claude agent instance against a host workspace. Fast cold start, full host-side isolation, instant switching between agents in VS Code.
+Spawn isolated, disposable Linux sandboxes ("boxes") for each Claude agent instance against a host workspace. Fast cold start, full host-side isolation, instant switching between agents in VS Code.
+
+The default backend is a local Docker container (everything in this doc is the docker path unless noted). A second backend, **Daytona Cloud** (`agentbox create --provider daytona`), composes the same in-box supervisor + host relay on top of a remote Daytona sandbox; the shape diverges in workspace seeding (git bundle vs. bind-mounted `.git/`), comms (signed preview URL + bridge poller vs. localhost relay), and snapshots (Daytona snapshots vs. `docker commit`). See [`cloud-providers.md`](./cloud-providers.md) for the cloud-specific design + the `daytona-backlog.md` for what's done vs. pending on that path.
 
 ## Filesystem layout per box
 

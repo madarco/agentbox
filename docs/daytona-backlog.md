@@ -197,11 +197,11 @@ The `CloudBackend` interface is provider-neutral; adding a new backend means a n
 
 ## 8. Docs
 
-### 8.1 🔴 README + `docs/architecture.md` don't mention cloud
-Plan called out updating `docs/architecture.md`, `docs/host-relay.md`, `docs/state.md`, `docs/features.md`, and adding `docs/cloud-providers.md`. Currently the docs all describe the Docker-only world.
+### 8.1 ✅ Docs cover the cloud path (done)
+~~Docker-only world~~ — added [`docs/cloud-providers.md`](./cloud-providers.md): the design + the running surface inventory (provider abstraction, Daytona shape, workspace seed, comms layer, preview URLs, snapshots, attach flow, robustness wrapper, knobs that exist today). Cross-references plumbed in at each existing doc's intro: `architecture.md`, `host-relay.md`, `state.md`, `features.md` each link out to `cloud-providers.md`. README's "How it works" picks up the local-or-cloud bullet.
 
-### 8.2 🟡 CLAUDE.md doesn't mention the cloud path
-Project's `CLAUDE.md` describes the Docker box model. Should mention `--provider daytona` and link to this backlog + `docs/cloud-providers.md` (8.1).
+### 8.2 ✅ CLAUDE.md mentions the cloud path (done)
+~~Docker box model only~~ — CLAUDE.md's intro now spells out "two backends share one provider abstraction", the architecture-overview bullets call out the docker/daytona shape per box / supervisor / relay / checkpoint, the "Important notes" section names `~/.agentbox/secrets.env` + the `prune --provider daytona` orphan path, and the doc map adds `cloud-providers.md` and `daytona-backlog.md` entries.
 
 ---
 
