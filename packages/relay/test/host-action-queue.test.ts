@@ -47,4 +47,35 @@ describe('HostActionQueue', () => {
     await expect(p1).resolves.toEqual({ exitCode: 0, stdout: 'one', stderr: '' });
     await expect(p2).resolves.toEqual({ exitCode: 7, stdout: '', stderr: 'two' });
   });
+
+  it('drain expires actions older than maxAgeMs and unblocks their Promises', async () => {
+    let clock = 1000;
+    const q = new HostActionQueue({ maxAgeMs: 100, now: () => clock });
+    const p = q.enqueue('b1', 'git.push', {});
+    // Step the clock past the expiry window without ever calling drain in
+    // between. Next drain should expire it.
+    clock += 500;
+    expect(q.drain()).toHaveLength(0);
+    await expect(p).resolves.toEqual({
+      exitCode: 124,
+      stdout: '',
+      stderr: "host action 'git.push' expired before the host could execute it\n",
+    });
+    expect(q.size()).toBe(0);
+  });
+
+  it('drain keeps fresh actions even when older actions expire alongside', async () => {
+    let clock = 1000;
+    const q = new HostActionQueue({ maxAgeMs: 100, now: () => clock });
+    const stale = q.enqueue('b1', 'git.push', {});
+    clock += 500;
+    // Fresh action enqueues at the new clock — should survive the same drain.
+    const fresh = q.enqueue('b1', 'cp.toHost', {});
+    const drained = q.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]!.method).toBe('cp.toHost');
+    await expect(stale).resolves.toMatchObject({ exitCode: 124 });
+    q.resolve(drained[0]!.id, { exitCode: 0, stdout: 'ok', stderr: '' });
+    await expect(fresh).resolves.toMatchObject({ exitCode: 0 });
+  });
 });

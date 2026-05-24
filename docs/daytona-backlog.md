@@ -175,8 +175,8 @@ Per-method policy in `backend.ts`:
 ### 6.3 🟡 Smoke-test orphan sandboxes left behind on harness timeouts
 If a test (or interactive create) is killed mid-provision before `recordBox` completes, the half-provisioned Daytona sandbox lingers (the `catch` block's `backend.destroy` only runs if Node gets to handle the exception). Add a periodic cleanup helper (`agentbox prune --provider daytona` would list orphans + offer to delete).
 
-### 6.4 🟢 Relay rehydrate on restart re-runs every previously-parked action
-After `agentbox relay restart`, the host poller drains stale actions from the in-sandbox `HostActionQueue` and re-executes them — including old `git.push` attempts the user has long forgotten. Add a "max age" on queued actions so anything older than ~15 min is discarded instead of executed.
+### 6.4 ✅ Max age on parked host actions (done)
+~~Unbounded~~ — `HostActionQueue` gained a `maxAgeMs` (default 15 min, override per instance). On every `drain()` any action older than that is settled with `exitCode: 124` / `stderr: "host action '<method>' expired before the host could execute it"` so the in-box RPC unblocks, and the action never reaches the host poller. Keeps a host relay restart from replaying a long-forgotten `git.push`. Unit tests cover both single-action expiry and the mixed expired+fresh drain case.
 
 ---
 
