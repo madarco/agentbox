@@ -247,6 +247,36 @@ Then add a one-line case to `resolveCloudBackend` in
 `apps/cli/src/provider/registry.ts`'s `KNOWN`. Compose the full
 `Provider` with `createCloudProvider(backend)`.
 
+### 6.1 Validating with the mock backend + contract tests
+
+`@agentbox/sandbox-cloud` exports a `makeMockCloudBackend()` reference
+implementation:
+
+```ts
+import { makeMockCloudBackend, createCloudProvider } from '@agentbox/sandbox-cloud';
+const backend = makeMockCloudBackend();
+const provider = createCloudProvider(backend);
+```
+
+The mock implements every required + optional method on `CloudBackend`,
+records calls in invocation order (`backend.calls`), and lets tests
+inject failures via `beforeCall` (handy for retry-wrapper testing).
+
+The contract test suite in
+`packages/sandbox-cloud/test/mock-backend-contract.test.ts` exercises:
+
+- The full lifecycle: `provision → start/stop/pause/resume → destroy`.
+- `list()` shape (`CloudSandboxSummary`).
+- Stable URLs from `previewUrl` / `signedPreviewUrl`.
+- `createSnapshot` / `deleteSnapshot`, `ensureVolume`.
+- `createCloudProvider` composition (resolveUrl prefers signed,
+  buildAttach uses attachArgv when present).
+- Failure injection (so backends can validate their retry semantics).
+
+To certify a new backend (`@agentbox/sandbox-vercel`, say): copy the
+suite, swap the factory, and ensure every test still passes. Any
+failure flags either a backend bug or an abstraction gap.
+
 ## 7. Where each cloud piece actually lives
 
 | Topic | File |

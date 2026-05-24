@@ -29,6 +29,11 @@ export {
 } from './env-files.js';
 export { bashScript, quoteShellArg, quoteShellArgv } from './shell.js';
 export {
+  makeMockCloudBackend,
+  type MockCloudBackend,
+  type MockCloudBackendOptions,
+} from './mock-backend.js';
+export {
   downloadFromCloudBox,
   pullCloudDirContents,
   uploadToCloudBox,

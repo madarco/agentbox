@@ -193,8 +193,8 @@ The discriminator shape is fully in place:
 2. `packages/relay/tsup.config.ts`: the `externalAtRuntime` list now includes `@agentbox/sandbox-cloud` (matching the runtime reality — it was de-facto external already), with a comment cataloguing the three motivations (cycle, lazy load, bin size).
 3. Both `resolveCloudBackend` and `loadCloudCp` catch `MODULE_NOT_FOUND` and rethrow with a clear "install it alongside @agentbox/relay" message instead of the raw Node error. Standalone embedders get an actionable failure mode.
 
-### 7.4 🟢 Multiple cloud backends (Vercel, …) when needed
-The `CloudBackend` interface is provider-neutral; adding a new backend means a new `packages/sandbox-<name>` with `~150` lines + a string case in `resolveCloudBackend`. No design changes needed.
+### 7.4 ✅ Backend pluggability: mock backend + contract tests (done)
+~~Future work~~ — `@agentbox/sandbox-cloud` now exports `makeMockCloudBackend(opts)`, a fully in-memory `CloudBackend` implementation that records every call and lets tests inject failures via `beforeCall`. The contract suite at `packages/sandbox-cloud/test/mock-backend-contract.test.ts` exercises every required + optional method (lifecycle, `list`, signed previews, snapshots, volumes, `createCloudProvider` composition, failure injection). New backends — `@agentbox/sandbox-vercel`, etc. — can adapt this suite to certify compliance. The "Adding a new cloud backend" section of `docs/cloud-providers.md` walks through the workflow.
 
 ---
 
