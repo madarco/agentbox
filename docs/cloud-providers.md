@@ -182,6 +182,11 @@ that file; project `.env` is never harvested. First-time use of
 
 ## 4. Known caveats
 
+- **Destroy lag in the Daytona dashboard**: `sb.delete()` returns immediately
+  and our local `state.json` clears synchronously, but the Daytona web UI
+  polls slowly — the deleted sandbox keeps showing up there for ~30s. The
+  resource is gone; only the dashboard is stale. Refresh the page if you
+  need an immediate-consistent view. Nothing for us to fix on this side.
 - **First-run Dockerfile.box build** takes ~7 min on Daytona because
   it includes Playwright + Chromium. Cached snapshot reuse is seconds.
   Future: ship a public snapshot to skip the cold build. Tracked as

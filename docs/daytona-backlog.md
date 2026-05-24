@@ -160,10 +160,8 @@ Per-method policy in `backend.ts`:
 - `start` / `stop` / `pause` / `resume` — 60s timeout.
 - Everything else (`get`, `state`, `previewUrl`, `signedPreviewUrl`, `attachArgv`, `revokeAttachToken`, `listFiles`, `ensureVolume`'s individual `volume.get` calls) — 30s timeout, retry on ambiguous.
 
-### 6.2 🟡 `agentbox destroy` for cloud leaves the Daytona dashboard showing the sandbox for ~30s
-`sb.delete()` is queued; the API reports `not found` immediately but the dashboard polls slowly. Our `stop` → `delete` sequence makes the actual deletion sync, but the dashboard lag is cosmetic.
-
-**Fix:** none from our side — Daytona consistency window. Document.
+### 6.2 ✅ Destroy lag documented as a Daytona consistency window (done)
+Captured in `docs/cloud-providers.md` §4. The resource is actually deleted (`sb.delete()` returns immediately, local `state.json` clears synchronously); only the Daytona web UI polls slowly. Refresh shows the up-to-date list. Nothing for us to fix.
 
 ### 6.3 ✅ `agentbox prune --provider daytona` cleans up orphans (done)
 ~~Manual via Daytona API~~ — added `CloudBackend.list?()` returning `CloudSandboxSummary[]` (id, name, state, createdAt). Daytona's implementation calls `client.list()` and unwraps the SDK's `PaginatedSandboxes.items`. The CLI's `prune --provider daytona` flow loads local state, finds sandboxes whose `agentbox.name` label is set (i.e. created by this CLI) but whose id isn't in `state.json`, and offers to delete them. `--dry-run` lists without deleting; `-y` skips the confirm. Outputs `deleted N, failed M` so the user sees what happened.
