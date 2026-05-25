@@ -122,6 +122,7 @@ Two cosmetic issues found and patched mid-smoke:
 - ✅ Parallel scp uploads were racing sshd's `MaxStartups 10:30:100`, leaving some destination files 0-byte — serialized.
 
 **Phase-7 follow-ups (in the Follow-ups section below):**
+- ✅ **Chromium AppArmor user-ns block (post-2026-05-25).** On Ubuntu 24.04 (Hetzner's default), `kernel.apparmor_restrict_unprivileged_userns=1` blocks Chromium's zygote sandbox — every in-box `agent-browser` / `chromium` invocation died with `FATAL: No usable sandbox!`. The host VPS is itself the isolation boundary, so relaxing the knob is safe. `install-box.sh` now writes `/etc/sysctl.d/99-agentbox-userns.conf` (sets `apparmor_restrict_unprivileged_userns=0` + `unprivileged_userns_clone=1`) and applies it inline so the rest of the install can use Chromium too. Future snapshot rebakes pick it up automatically.
 - Cosmetic: `agentbox checkpoint create` says "daytona snapshot" in user-facing text even for hetzner boxes (the message is in the shared cloud-provider scaffolding).
 - Cosmetic: `agentbox checkpoint ls` returns "no checkpoints" from /tmp paths because the project-hash anchor reads `/private/tmp/...` vs `/tmp/...` differently — minor lookup-path inconsistency, manifest is correctly written.
 - Cosmetic: `/usr/local/bin/chromium` symlink missing (the last command of the Chromium download step) — `AGENT_BROWSER_EXECUTABLE_PATH` should fallback to the playwright cache; tracked.

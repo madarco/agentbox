@@ -260,6 +260,33 @@ SSHD
 # include it; the next boot reads it).
 done_ "sshd hardening drop-in"
 
+step "allow unprivileged user namespaces (sysctl drop-in)"
+# Ubuntu 23.10+ / 24.04 enables an AppArmor knob that blocks unprivileged
+# user namespaces, which Chromium's sandbox needs. Without this, every
+# in-box `chromium` / `agent-browser` invocation dies with
+# "FATAL: zygote_host_impl_linux.cc: No usable sandbox!". Docker boxes
+# don't hit it because the host kernel running their containers is older
+# (or they get the relaxed sysctl from the docker host). On a bare Ubuntu
+# 24.04 Hetzner VPS we have to flip it ourselves.
+#
+# We flip both the modern knob (`apparmor_restrict_unprivileged_userns`)
+# and the legacy `unprivileged_userns_clone` — the legacy one is already
+# 1 on 24.04 but writing it costs nothing and keeps the drop-in valid if
+# a future kernel hardens the default back to 0.
+cat > /etc/sysctl.d/99-agentbox-userns.conf <<'SYSCTL'
+# Written by AgentBox install-box.sh — Chromium needs unprivileged user
+# namespaces for its sandbox; the VPS itself is the isolation boundary.
+kernel.apparmor_restrict_unprivileged_userns = 0
+kernel.unprivileged_userns_clone = 1
+SYSCTL
+chmod 0644 /etc/sysctl.d/99-agentbox-userns.conf
+# Apply now too so the rest of this install (in particular `playwright
+# install chromium`'s post-install probe) works without needing a reboot
+# of the prepare VPS. The drop-in then re-applies on every boot of the
+# baked snapshot.
+sysctl -p /etc/sysctl.d/99-agentbox-userns.conf >/dev/null
+done_ "allow unprivileged user namespaces (sysctl drop-in)"
+
 # === END EARLY BAKE ===
 
 step "VNC stack (TigerVNC + noVNC + websockify + autocutsel)"
