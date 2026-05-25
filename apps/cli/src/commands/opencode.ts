@@ -6,6 +6,7 @@ import {
   findProjectRoot,
   loadEffectiveConfig,
   resolveDefaultCheckpoint,
+  type AttachOpenIn,
   type UserConfig,
 } from '@agentbox/config';
 import {
@@ -32,6 +33,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import { ATTACH_IN_HELP, parseAttachInOption } from './_attach-in.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { providerForCreate } from '../provider/registry.js';
@@ -70,6 +72,7 @@ async function attachOpencodeWrapped(
   sessionName: string | undefined,
   reattach: string,
   onError?: (msg: string) => void,
+  openIn?: AttachOpenIn,
 ): Promise<never> {
   const code = await runWrappedAttach({
     container: box.container,
@@ -82,6 +85,7 @@ async function attachOpencodeWrapped(
     detachable: true,
     detachNotice: formatDetachNotice(reattach, 'opencode'),
     onError,
+    openIn,
   });
   process.exit(code);
 }
@@ -108,6 +112,8 @@ interface OpencodeCreateOptions {
   provider?: string;
   /** -v / --verbose: bypass the spinner and stream raw provider output. */
   verbose?: boolean;
+  /** Raw `--attach-in <mode>` value; validated by `parseAttachInOption`. */
+  attachIn?: string;
 }
 
 function buildOpencodeCliOverrides(opts: OpencodeCreateOptions): Partial<UserConfig> {
@@ -125,6 +131,8 @@ function buildOpencodeCliOverrides(opts: OpencodeCreateOptions): Partial<UserCon
   if (Object.keys(box).length > 0) out.box = box;
   if (Object.keys(opencode).length > 0) out.opencode = opencode;
   if (opts.portless !== undefined) out.portless = { enabled: opts.portless };
+  const attachIn = parseAttachInOption(opts.attachIn);
+  if (attachIn !== undefined) out.attach = { openIn: attachIn };
   return out;
 }
 
@@ -239,6 +247,7 @@ export const opencodeCommand = new Command('opencode')
     '-v, --verbose',
     'bypass the spinner and stream raw provider output to stderr. The same content always lands in ~/.agentbox/logs/opencode.log.',
   )
+  .option('--attach-in <mode>', ATTACH_IN_HELP)
   .argument(
     '[opencode-args...]',
     "extra args passed to opencode inside the box; place after `--`, e.g. `agentbox opencode -- -m anthropic/claude-sonnet-4-5`",
@@ -286,6 +295,7 @@ export const opencodeCommand = new Command('opencode')
         mode: 'opencode',
         extraArgs: opencodeArgs,
         verbose: opts.verbose === true,
+        openIn: cfg.effective.attach.openIn,
       });
       return;
     }
@@ -370,6 +380,7 @@ export const opencodeCommand = new Command('opencode')
         sessionName,
         reattachRef(result.record),
         (m) => cmdLog.write(m),
+        cfg.effective.attach.openIn,
       );
     } catch (err) {
       s.stop('failed');
@@ -392,6 +403,7 @@ export const opencodeCommand = new Command('opencode')
 interface OpencodeStartOptions {
   sessionName?: string;
   syncConfig?: boolean; // commander: --no-sync-config => false; default true
+  attachIn?: string; // raw `--attach-in <mode>` value, validated below.
 }
 
 // Shared by `opencode start` and `opencode attach`: if a session is already
@@ -402,10 +414,13 @@ async function startOrAttachOpencode(
   opencodeArgs: string[],
   opts: OpencodeStartOptions,
 ): Promise<void> {
-  const cfg = await loadEffectiveConfig(box.workspacePath, {
-    cliOverrides: opts.sessionName ? { opencode: { sessionName: opts.sessionName } } : {},
-  });
+  const attachIn = parseAttachInOption(opts.attachIn);
+  const cliOverrides: Partial<UserConfig> = {};
+  if (opts.sessionName) cliOverrides.opencode = { sessionName: opts.sessionName };
+  if (attachIn !== undefined) cliOverrides.attach = { openIn: attachIn };
+  const cfg = await loadEffectiveConfig(box.workspacePath, { cliOverrides });
   const sessionName = cfg.effective.opencode.sessionName;
+  const openIn = cfg.effective.attach.openIn;
 
   const insp = await inspectBox(box.id);
   if (insp.state === 'missing') {
@@ -417,7 +432,7 @@ async function startOrAttachOpencode(
   const existing = await opencodeSessionInfo(box.container, sessionName);
   if (existing.running) {
     outro(`session "${sessionName}" already running — attaching (Control+a d to detach)`);
-    await attachOpencodeWrapped(box, sessionName, reattachRef(box));
+    await attachOpencodeWrapped(box, sessionName, reattachRef(box), undefined, openIn);
     return;
   }
 
@@ -473,17 +488,23 @@ const opencodeAttachCommand = new Command('attach')
     'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
   )
   .option('--session-name <name>', 'tmux session name (default from config; built-in: opencode)')
+  .option('--attach-in <mode>', ATTACH_IN_HELP)
   .action(async function (this: Command, idOrName: string | undefined) {
     const opts = this.optsWithGlobals() as OpencodeStartOptions;
     intro('Attaching to OpenCode session...');
     try {
+      const attachIn = parseAttachInOption(opts.attachIn);
       const box = await resolveBoxOrExit(idOrName);
       if ((box.provider ?? 'docker') !== 'docker') {
+        const cfg = await loadEffectiveConfig(box.workspacePath, {
+          cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
+        });
         await cloudAgentAttach({
           box,
           binary: 'opencode',
           sessionName: opts.sessionName ?? 'opencode',
           mode: 'opencode',
+          openIn: cfg.effective.attach.openIn,
         });
         return;
       }
@@ -510,6 +531,7 @@ const opencodeStartCommand = new Command('start')
     '--no-sync-config',
     "skip rsyncing the host's OpenCode config into the box's volume before starting (faster; use existing in-box state)",
   )
+  .option('--attach-in <mode>', ATTACH_IN_HELP)
   .argument(
     '[opencode-args...]',
     "extra args passed to opencode when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox opencode start 1 -- -m anthropic/claude-sonnet-4-5`",
@@ -518,17 +540,22 @@ const opencodeStartCommand = new Command('start')
     const opts = this.optsWithGlobals() as OpencodeStartOptions;
     intro('Starting OpenCode in a box...');
     try {
+      const attachIn = parseAttachInOption(opts.attachIn);
       // Two positionals make commander bind the first post-`--` token to
       // `[box]`; resolveBoxOrShift detects that and auto-picks the box.
       const { box, shifted } = await resolveBoxOrShift(idOrName);
       const effectiveOpencodeArgs = shifted && idOrName ? [idOrName, ...opencodeArgs] : opencodeArgs;
       if ((box.provider ?? 'docker') !== 'docker') {
+        const cfg = await loadEffectiveConfig(box.workspacePath, {
+          cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
+        });
         await cloudAgentAttach({
           box,
           binary: 'opencode',
           sessionName: opts.sessionName ?? 'opencode',
           mode: 'opencode',
           extraArgs: effectiveOpencodeArgs,
+          openIn: cfg.effective.attach.openIn,
         });
         return;
       }

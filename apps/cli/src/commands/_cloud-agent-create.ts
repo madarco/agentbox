@@ -18,6 +18,7 @@
 
 import { log, outro } from '@clack/prompts';
 import type { CreateBoxRequest, Provider } from '@agentbox/core';
+import type { AttachOpenIn } from '@agentbox/config';
 import { makeProgressReporter } from '../lib/progress.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
 
@@ -36,6 +37,8 @@ export interface CloudAgentCreateArgs {
   extraArgs?: string[];
   /** Bypass the spinner and stream raw provider output to stderr. */
   verbose?: boolean;
+  /** Where to open the attached session; forwarded to `cloudAgentAttach`. */
+  openIn?: AttachOpenIn;
 }
 
 /**
@@ -68,6 +71,7 @@ export async function cloudAgentCreate(args: CloudAgentCreateArgs): Promise<void
       sessionName: args.sessionName,
       mode: args.mode,
       extraArgs: args.extraArgs,
+      openIn: args.openIn,
     });
   } catch (err) {
     s.stop('cloud box create failed');

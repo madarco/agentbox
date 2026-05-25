@@ -1,6 +1,8 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { readBoxStatus } from '@agentbox/sandbox-docker';
+import type { AttachOpenIn } from '@agentbox/config';
 import { loadPtyBackend } from '../pty/pty-backend.js';
+import { detectHostTerminal, spawnInNewTerminal } from '../terminal/host.js';
 import {
   createInputRouter,
   type InputRouter,
@@ -53,6 +55,12 @@ export interface WrappedAttachOptions {
    *  rejections). Callers wire this to their command log so post-mortem
    *  inspection isn't blind. */
   onError?: (msg: string) => void;
+  /** Where to open the attached session. When set to anything other than
+   *  `same` (or undefined) and the host shell is running inside tmux or iTerm2,
+   *  the attach runs in a fresh pane/tab/window and this function returns 0
+   *  without taking over the current terminal. Outside tmux/iTerm2 it falls
+   *  back to inline attach (the original behavior). */
+  openIn?: AttachOpenIn;
 }
 
 const FOOTER_ROWS = 1;
@@ -80,6 +88,17 @@ const ACTION_CMD: Record<
   url: { sub: 'url', flags: [] },
 };
 
+/** Recursive `agentbox <agent> attach <box> --attach-in same` argv for the
+ *  new-pane re-entry. Returns null for modes that don't have an `attach`
+ *  subcommand (notably `shell`), so the caller can skip new-pane spawning. */
+function buildAgentboxAttachArgv(
+  mode: WrappedAttachOptions['mode'],
+  boxName: string,
+): string[] | null {
+  if (mode !== 'claude' && mode !== 'codex' && mode !== 'opencode') return null;
+  return [mode, 'attach', boxName, '--attach-in', 'same'];
+}
+
 /**
  * Replace `spawnSync('docker', argv, { stdio: 'inherit' })` with a
  * node-pty wrapper that reserves the bottom row for a permission-prompt
@@ -94,6 +113,35 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   const logErr = (msg: string): void => {
     opts.onError?.(msg);
   };
+
+  // Open-in-new-terminal short-circuit: if the user asked for split/window/tab
+  // and we're inside tmux or iTerm2, re-invoke `agentbox <agent> attach <box>
+  // --attach-in same` in a fresh pane so the new pane runs the full wrapper
+  // (footer + prompt channel) against the already-prepared session — same UX
+  // as inline, just in a new pane. The host process then exits 0. Unknown
+  // hosts, shell mode (no attach subcommand to recurse into), and spawn
+  // failures fall through to the inline attach below.
+  const openIn = opts.openIn ?? 'same';
+  if (openIn !== 'same') {
+    const subArgv = buildAgentboxAttachArgv(opts.mode, opts.boxName);
+    const host = subArgv ? detectHostTerminal() : 'unknown';
+    if (subArgv && host !== 'unknown' && process.argv[1]) {
+      const r = await spawnInNewTerminal({
+        host,
+        mode: openIn,
+        argv: [process.execPath, process.argv[1], ...subArgv],
+        cwd: process.cwd(),
+        title: opts.boxName,
+      });
+      if (r.launched) {
+        process.stdout.write(r.note + '\n');
+        return 0;
+      }
+      if (r.error) logErr(r.error);
+      // fall through to inline attach
+    }
+  }
+
   if (!process.stdout.isTTY || !process.stdin.isTTY) {
     // Non-interactive path: piping / scripts. Don't wrap — preserves
     // machine-readable stdout, no footer corruption.

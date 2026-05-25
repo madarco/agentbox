@@ -3,6 +3,7 @@ import {
   findProjectRoot,
   loadEffectiveConfig,
   resolveDefaultCheckpoint,
+  type AttachOpenIn,
   type UserConfig,
 } from '@agentbox/config';
 import {
@@ -33,6 +34,7 @@ import { Command } from 'commander';
 import { resolveClaudeAuth, type ResolvedClaudeAuth } from '../auth.js';
 import { resolveAgentLauncher } from '@agentbox/core';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import { ATTACH_IN_HELP, parseAttachInOption } from './_attach-in.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { providerForCreate } from '../provider/registry.js';
@@ -74,6 +76,7 @@ async function attachClaudeWrapped(
   sessionName: string | undefined,
   reattach: string,
   onError?: (msg: string) => void,
+  openIn?: AttachOpenIn,
 ): Promise<never> {
   const code = await runWrappedAttach({
     container: box.container,
@@ -85,6 +88,7 @@ async function attachClaudeWrapped(
     mode: 'claude',
     detachNotice: formatDetachNotice(reattach),
     onError,
+    openIn,
   });
   process.exit(code);
 }
@@ -111,6 +115,8 @@ interface ClaudeCreateOptions {
   provider?: string;
   /** -v / --verbose: bypass the spinner and stream raw provider output. */
   verbose?: boolean;
+  /** Raw `--attach-in <mode>` value; validated by `parseAttachInOption`. */
+  attachIn?: string;
 }
 
 function buildClaudeCliOverrides(opts: ClaudeCreateOptions): Partial<UserConfig> {
@@ -128,6 +134,8 @@ function buildClaudeCliOverrides(opts: ClaudeCreateOptions): Partial<UserConfig>
   if (Object.keys(box).length > 0) out.box = box;
   if (Object.keys(claude).length > 0) out.claude = claude;
   if (opts.portless !== undefined) out.portless = { enabled: opts.portless };
+  const attachIn = parseAttachInOption(opts.attachIn);
+  if (attachIn !== undefined) out.attach = { openIn: attachIn };
   return out;
 }
 
@@ -259,6 +267,7 @@ export const claudeCommand = new Command('claude')
     '-v, --verbose',
     'bypass the spinner and stream raw provider output (docker build / Daytona snapshot create) to stderr. The same content always lands in ~/.agentbox/logs/claude.log.',
   )
+  .option('--attach-in <mode>', ATTACH_IN_HELP)
   .argument(
     '[claude-args...]',
     "extra args passed to claude inside the box; place after `--`, e.g. `agentbox claude -- --model sonnet`",
@@ -355,6 +364,7 @@ export const claudeCommand = new Command('claude')
         mode: 'claude',
         extraArgs: effectiveClaudeArgs,
         verbose: opts.verbose === true,
+        openIn: cfg.effective.attach.openIn,
       });
       return;
     }
@@ -442,6 +452,7 @@ export const claudeCommand = new Command('claude')
         sessionName,
         reattachRef(result.record),
         (m) => cmdLog.write(m),
+        cfg.effective.attach.openIn,
       );
     } catch (err) {
       s.stop('failed');
@@ -464,6 +475,7 @@ export const claudeCommand = new Command('claude')
 interface ClaudeStartOptions {
   sessionName?: string;
   syncConfig?: boolean; // commander: --no-sync-config => false; default true
+  attachIn?: string; // raw `--attach-in <mode>` value, validated below.
 }
 
 // Shared by `claude start` and `claude attach`: if a session is already
@@ -474,10 +486,13 @@ async function startOrAttachClaude(
   claudeArgs: string[],
   opts: ClaudeStartOptions,
 ): Promise<void> {
-  const cfg = await loadEffectiveConfig(box.workspacePath, {
-    cliOverrides: opts.sessionName ? { claude: { sessionName: opts.sessionName } } : {},
-  });
+  const attachIn = parseAttachInOption(opts.attachIn);
+  const cliOverrides: Partial<UserConfig> = {};
+  if (opts.sessionName) cliOverrides.claude = { sessionName: opts.sessionName };
+  if (attachIn !== undefined) cliOverrides.attach = { openIn: attachIn };
+  const cfg = await loadEffectiveConfig(box.workspacePath, { cliOverrides });
   const sessionName = cfg.effective.claude.sessionName;
+  const openIn = cfg.effective.attach.openIn;
   // Read-only — used to gate the first-run login offer (respect an intentional
   // host ANTHROPIC_API_KEY). The box already exists, so `resolved.env` is not
   // forwarded here.
@@ -498,7 +513,7 @@ async function startOrAttachClaude(
   const existing = await claudeSessionInfo(box.container, sessionName);
   if (existing.running) {
     outro(`session "${sessionName}" already running — attaching (Control+a d to detach)`);
-    await attachClaudeWrapped(box, sessionName, reattachRef(box));
+    await attachClaudeWrapped(box, sessionName, reattachRef(box), undefined, openIn);
     return;
   }
 
@@ -597,19 +612,25 @@ const claudeAttachCommand = new Command('attach')
     'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
   )
   .option('--session-name <name>', 'tmux session name (default from config; built-in: claude)')
+  .option('--attach-in <mode>', ATTACH_IN_HELP)
   .action(async function (this: Command, idOrName: string | undefined) {
     // optsWithGlobals merges parent + own options — the parent `claude`
     // command also defines `--session-name`.
     const opts = this.optsWithGlobals() as ClaudeStartOptions;
     intro('Attaching to Claude session...');
     try {
+      const attachIn = parseAttachInOption(opts.attachIn);
       const box = await resolveBoxOrExit(idOrName);
       if ((box.provider ?? 'docker') !== 'docker') {
+        const cfg = await loadEffectiveConfig(box.workspacePath, {
+          cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
+        });
         await cloudAgentAttach({
           box,
           binary: 'claude',
           sessionName: opts.sessionName ?? 'claude',
           mode: 'claude',
+          openIn: cfg.effective.attach.openIn,
         });
         return;
       }
@@ -639,6 +660,7 @@ const claudeStartCommand = new Command('start')
     '--no-sync-config',
     "skip rsyncing the host's ~/.claude into the box's volume before starting (faster; use existing in-box state)",
   )
+  .option('--attach-in <mode>', ATTACH_IN_HELP)
   .argument(
     '[claude-args...]',
     "extra args passed to claude when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox claude start 1 -- --model sonnet`",
@@ -647,6 +669,7 @@ const claudeStartCommand = new Command('start')
     const opts = this.optsWithGlobals() as ClaudeStartOptions;
     intro('Starting Claude in a box...');
     try {
+      const attachIn = parseAttachInOption(opts.attachIn);
       // Two positionals (`[box] [claude-args...]`) make commander bind the
       // first post-`--` token (e.g. `--model`) to `[box]`. resolveBoxOrShift
       // detects that, auto-picks the project's single box, and tells us to
@@ -654,12 +677,16 @@ const claudeStartCommand = new Command('start')
       const { box, shifted } = await resolveBoxOrShift(idOrName);
       const effectiveClaudeArgs = shifted && idOrName ? [idOrName, ...claudeArgs] : claudeArgs;
       if ((box.provider ?? 'docker') !== 'docker') {
+        const cfg = await loadEffectiveConfig(box.workspacePath, {
+          cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
+        });
         await cloudAgentAttach({
           box,
           binary: 'claude',
           sessionName: opts.sessionName ?? 'claude',
           mode: 'claude',
           extraArgs: effectiveClaudeArgs,
+          openIn: cfg.effective.attach.openIn,
         });
         return;
       }

@@ -1,5 +1,6 @@
 import { DEFAULT_RELAY_PORT } from '@agentbox/sandbox-docker';
 import type { BoxRecord } from '@agentbox/core';
+import type { AttachOpenIn } from '@agentbox/config';
 import { providerForBox } from '../provider/registry.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 
@@ -37,6 +38,15 @@ export interface CloudAgentAttachArgs {
    * literal `\n` aren't supported (none of claude/codex/opencode flags do).
    */
   extraArgs?: string[];
+  /**
+   * Where to open the attached session in the host's terminal (`split`/`window`/
+   * `tab`/`same`). Forwarded to `runWrappedAttach`. Daytona attaches are forced
+   * to `same` for now because `provider.buildAttach()` may return a `cleanup`
+   * that tears down per-call SSH tunnels — running cleanup while a detached
+   * new pane still holds the connection would kill the pane. Hetzner's
+   * ControlMaster is per-box-lifetime so spawn-and-detach is safe there.
+   */
+  openIn?: AttachOpenIn;
 }
 
 /**
@@ -78,6 +88,11 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     sessionName: args.sessionName,
     command,
   });
+  // Daytona-only: force inline attach. `spec.cleanup` would otherwise run as
+  // soon as the host process returns from the spawn (before the new pane has
+  // released the per-call SSH tunnel), breaking the detached attach.
+  const safeOpenIn: AttachOpenIn | undefined =
+    args.box.provider === 'daytona' ? 'same' : args.openIn;
   try {
     const code = await runWrappedAttach({
       container: args.box.name,
@@ -89,6 +104,7 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
       projectIndex: args.box.projectIndex,
       mode: args.mode,
       detachable: true,
+      openIn: safeOpenIn,
     });
     process.exit(code);
   } finally {

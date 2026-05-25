@@ -3,6 +3,7 @@ export {
   KEY_REGISTRY,
   lookupKey,
   UserConfigError,
+  type AttachOpenIn,
   type BrowserKind,
   type ConfigLayer,
   type ConfigScope,
