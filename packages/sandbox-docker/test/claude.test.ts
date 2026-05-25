@@ -180,12 +180,13 @@ describe('buildTmuxSessionArgs', () => {
     expect(args).not.toContain('status-style');
     expect(args).not.toContain('window-status-format');
 
-    // every server-global `set` is `-g`; every session-scoped one is `-t <s>`.
+    // every server-global `set` is `-g`/`-as` (append to a list-typed global,
+    // e.g. terminal-features); every session-scoped one is `-t <s>`.
     const setIdxs = args.flatMap((a, i) => (a === 'set' ? [i] : []));
     for (const i of setIdxs) {
       const flag = args[i + 1];
       if (flag === '-t') expect(args[i + 2]).toBe(DEFAULT_CLAUDE_SESSION);
-      else expect(flag).toBe('-g');
+      else expect(['-g', '-as']).toContain(flag);
     }
   });
 

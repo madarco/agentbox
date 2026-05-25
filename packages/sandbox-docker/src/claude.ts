@@ -1133,6 +1133,14 @@ export function buildTmuxSessionArgs(sessionName: string): string[] {
     ';', 'bind-key', 'C-a', 'send-prefix',
     ';', 'bind-key', 'C-b', 'send-prefix', '-2',
     ';', 'bind-key', 'd', 'detach-client',
+    // Modified-key reporting: without `extended-keys on`, tmux strips the
+    // modifier from Shift+Enter / Ctrl+Enter / etc. so Claude Code can't
+    // distinguish them from a plain Enter — pressing Shift+Enter submits the
+    // prompt instead of inserting a newline. `csi-u` is the format Claude
+    // Code recognises after `/terminal-setup`. Server-global so it survives
+    // grouped sibling sessions (e.g. the dashboard's `<name>-dash`).
+    ';', 'set', '-g', 'extended-keys', 'on',
+    ';', 'set', '-as', 'terminal-features', ',*:extkeys',
     // Hide the inner tmux status bar — the wrapped-pty footer (for
     // `agentbox claude` / `agentbox shell`) and the dashboard's own status
     // row already show the box name + detach hint; without `status off`

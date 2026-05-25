@@ -182,6 +182,8 @@ set -as terminal-features ",*:hyperlinks"
 set -as terminal-features ",*:RGB"
 set -g allow-passthrough on
 set -g set-clipboard on
+set -g extended-keys on
+set -as terminal-features ",*:extkeys"
 set -g mouse on
 bind -T copy-mode    WheelUpPane   send -N2 -X scroll-up
 bind -T copy-mode    WheelDownPane send -N2 -X scroll-down
