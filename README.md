@@ -35,9 +35,12 @@ npm -g install @madarco/agentbox
 # Optionally pre-build the VM images:
 agentbox prepare
 agentbox prepare --provider hetzner
-agentbox claude --provider hetzner
+
+agentbox hetzner claude
 # Ctrl +d to detach, claude keep going
-agentbox shellagentbox attach
+
+# Persistent shells: 
+agentbox shell
 
 # add a second box:
 agentbox claude
