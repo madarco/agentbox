@@ -21,7 +21,7 @@ npx @madarco/agentbox claude
 
 - 📦 **Teleport** - Move your project to a dedicated VM, local or in the cloud, with a single command.
 - 🤖 **Automatic** - Bring all your skills, plugins, and settings for **Claude Code**, **Codex**, **Open Code**
-- 🌐 **A full Computer** — Dedicated browser, screen sharing, persisten shells and wermed up VS Code / Cursor IDE, with each box.
+- 🌐 **A full Computer** — Dedicated browser, screen sharing, persistent shells and warmed up VS Code / Cursor IDE, with each box.
 - 💾 **Checkpoints** — Sub <1s startup of new boxes from a previous checkpoint, auto pause to save cost/resources when not in use.
 - 🔒 **Safe** - Your git credentials are kept on your local machine, with permission requests to push to the remote repository.
 
