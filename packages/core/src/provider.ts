@@ -21,6 +21,25 @@ export interface CreateBoxLimits {
   disk: string | null;
 }
 
+/**
+ * One fully resolved carry entry, as approved by the host CLI's carry prompt.
+ * Cross-provider — both DockerProvider and the cloud providers apply these the
+ * same way: tar the host `absSrc`, extract at the box-side `absDest` (with
+ * `~/` expanded against the in-box `$HOME` at copy time). Kept on `core` so the
+ * Provider seam doesn't depend on apps/cli.
+ */
+export interface ResolvedCarryEntry {
+  rawSrc: string;
+  rawDest: string;
+  absSrc: string;
+  absDest: string;
+  kind: 'file' | 'dir' | 'missing';
+  bytes?: number;
+  mode?: number;
+  optional: boolean;
+  symlinkInfo?: 'safe' | 'outside-home';
+}
+
 export interface CreateBoxRequest {
   workspacePath: string;
   name?: string;
@@ -34,6 +53,13 @@ export interface CreateBoxRequest {
   withEnv?: boolean;
   /** Workspace-relative host file paths to seed into /workspace at create. */
   envFilesToImport?: string[];
+  /**
+   * Approved host→box file copies from `agentbox.yaml`'s `carry:` block.
+   * Each entry is extracted at its declared `absDest` (not under /workspace).
+   * Empty / undefined → no carry. The host CLI is responsible for resolution
+   * and user approval before threading entries in here.
+   */
+  carry?: ResolvedCarryEntry[];
   vnc?: { enabled: boolean };
   limits?: CreateBoxLimits;
   /** Provider-specific knobs (docker: sharedCache/portless; daytona: resources/region). */

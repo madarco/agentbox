@@ -430,7 +430,11 @@ function assertBool(raw: unknown, where: string): boolean {
 // supervisor doesn't touch it, but we accept it here so `ctl validate` doesn't
 // flag it as unknown. Strict typo-detection still applies (top-level keys
 // outside this set are rejected).
-const TOP_LEVEL_KEYS = new Set(['services', 'tasks', 'ide', 'defaults']);
+// `carry` is the host-side declarative file-carry block (read by the apps/cli
+// layer via @agentbox/ctl/carry, applied at create time). The supervisor never
+// reads it — listing it here only suppresses the unknown-key error so a project
+// yaml that declares `carry:` still parses cleanly inside the box.
+const TOP_LEVEL_KEYS = new Set(['services', 'tasks', 'ide', 'defaults', 'carry']);
 
 function validateUnitGraph(tasks: TaskSpec[], services: ServiceSpec[]): void {
   const names = new Set<string>();

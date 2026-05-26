@@ -64,3 +64,10 @@ export {
   type ServiceSpec,
   type TaskSpec,
 } from './config.js';
+export {
+  parseCarryRaw,
+  parseCarrySection,
+  loadCarrySection,
+  CarryConfigError,
+  type CarryItem,
+} from './carry.js';

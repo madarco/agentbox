@@ -43,6 +43,7 @@ import {
 } from './_attach-in.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
+import { runCarryGate } from '../lib/carry-gate.js';
 import { providerForCreate } from '../provider/registry.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { makeProgressReporter } from '../lib/progress.js';
@@ -128,6 +129,10 @@ interface CodexCreateOptions {
   isolateCodexConfig?: boolean;
   withPlaywright?: boolean;
   withEnv?: boolean;
+  /** --carry-yes (or AGENTBOX_CARRY_YES=1): auto-approve the carry: block. */
+  carryYes?: boolean;
+  /** --carry <mode>: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
+  carry?: 'skip' | 'ask';
   vnc?: boolean; // commander: --no-vnc => false; default true
   sharedDockerCache?: boolean;
   portless?: boolean; // commander: --portless / --no-portless => true / false / undefined
@@ -235,6 +240,15 @@ export const codexCommand = new Command('codex')
   .option('--image <ref>', 'override the box image')
   .option('-y, --yes', 'skip prompts, accept defaults')
   .option(
+    '--carry-yes',
+    "auto-approve agentbox.yaml's `carry:` block (also AGENTBOX_CARRY_YES=1). Required for non-TTY use of `-y` when carry: is non-empty.",
+  )
+  .option(
+    '--carry <mode>',
+    "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip). Default: 'ask' (prompt).",
+    'ask',
+  )
+  .option(
     '--isolate-codex-config',
     'use a per-box ~/.codex volume instead of the shared agentbox-codex-config',
   )
@@ -338,6 +352,29 @@ export const codexCommand = new Command('codex')
       return;
     }
 
+    // Carry gate (agentbox.yaml's `carry:` block): resolve + ask before any
+    // box work. Cancel aborts; skip proceeds with no carry payload.
+    let carryEntries: import('@agentbox/core').ResolvedCarryEntry[] = [];
+    try {
+      const gate = await runCarryGate({
+        projectRoot,
+        yes: !!opts.yes,
+        carryYesFlag: opts.carryYes ? true : undefined,
+        carrySkipFlag: opts.carry === 'skip' ? true : undefined,
+        onLog: (line) => cmdLog.write(line),
+      });
+      if (gate.decision === 'cancel') {
+        log.warn('carry: cancelled — not creating the box');
+        cmdLog.close();
+        process.exit(0);
+      }
+      if (gate.decision === 'approve') carryEntries = gate.entries;
+    } catch (err) {
+      log.error(err instanceof Error ? err.message : String(err));
+      cmdLog.close();
+      process.exit(1);
+    }
+
     if (isCloud) {
       const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });
       const withPlaywright =
@@ -351,6 +388,7 @@ export const codexCommand = new Command('codex')
           image: cfg.effective.box.image,
           withPlaywright,
           withEnv: cfg.effective.box.withEnv,
+          carry: carryEntries,
           vnc: { enabled: cfg.effective.box.vnc },
           limits: resolveLimits(cfg.effective.box, opts),
           projectRoot,
@@ -402,6 +440,7 @@ export const codexCommand = new Command('codex')
         codexConfig: { isolate: cfg.effective.box.isolateCodexConfig },
         withPlaywright,
         withEnv: cfg.effective.box.withEnv,
+        carry: carryEntries,
         vnc: { enabled: cfg.effective.box.vnc },
         docker: { sharedCache: cfg.effective.box.dockerCacheShared },
         portless: portlessEnabled,

@@ -47,6 +47,7 @@ import {
 } from './_attach-in.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
+import { runCarryGate } from '../lib/carry-gate.js';
 import { providerForCreate } from '../provider/registry.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { makeProgressReporter } from '../lib/progress.js';
@@ -144,6 +145,10 @@ interface ClaudeCreateOptions {
   isolateClaudeConfig?: boolean;
   withPlaywright?: boolean;
   withEnv?: boolean;
+  /** --carry-yes (or AGENTBOX_CARRY_YES=1): auto-approve the carry: block. */
+  carryYes?: boolean;
+  /** --carry <mode>: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
+  carry?: 'skip' | 'ask';
   vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
   sharedDockerCache?: boolean;
   portless?: boolean; // commander: --portless / --no-portless => true / false / undefined
@@ -289,6 +294,15 @@ export const claudeCommand = new Command('claude')
   .option('--image <ref>', 'override the box image')
   .option('-y, --yes', 'skip prompts, accept defaults')
   .option(
+    '--carry-yes',
+    "auto-approve agentbox.yaml's `carry:` block (also AGENTBOX_CARRY_YES=1). Required for non-TTY use of `-y` when carry: is non-empty.",
+  )
+  .option(
+    '--carry <mode>',
+    "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip). Default: 'ask' (prompt).",
+    'ask',
+  )
+  .option(
     '--isolate-claude-config',
     'use a per-box ~/.claude volume instead of the shared agentbox-claude-config',
   )
@@ -424,6 +438,30 @@ export const claudeCommand = new Command('claude')
           cwd: opts.workspace,
         });
 
+    // Carry gate (agentbox.yaml's `carry:` block): resolve + ask BEFORE the
+    // wizard so the user sees the host-secrets prompt while still in the
+    // pre-create phase. Cancel aborts; skip proceeds with no carry payload.
+    let carryEntries: import('@agentbox/core').ResolvedCarryEntry[] = [];
+    try {
+      const gate = await runCarryGate({
+        projectRoot,
+        yes: !!opts.yes,
+        carryYesFlag: opts.carryYes ? true : undefined,
+        carrySkipFlag: opts.carry === 'skip' ? true : undefined,
+        onLog: (line) => cmdLog.write(line),
+      });
+      if (gate.decision === 'cancel') {
+        log.warn('carry: cancelled — not creating the box');
+        cmdLog.close();
+        process.exit(0);
+      }
+      if (gate.decision === 'approve') carryEntries = gate.entries;
+    } catch (err) {
+      log.error(err instanceof Error ? err.message : String(err));
+      cmdLog.close();
+      process.exit(1);
+    }
+
     // First-run wizard: when no agentbox.yaml exists, offer to inject an
     // initial user-message so claude reads /agentbox-setup and writes one.
     // Skipped when starting from a checkpoint (it already carries the config).
@@ -456,6 +494,7 @@ export const claudeCommand = new Command('claude')
           withPlaywright,
           withEnv: cfg.effective.box.withEnv,
           envFilesToImport: wiz.envFilesToImport,
+          carry: carryEntries,
           vnc: { enabled: cfg.effective.box.vnc },
           limits: resolveLimits(cfg.effective.box, opts),
           projectRoot,
@@ -501,6 +540,7 @@ export const claudeCommand = new Command('claude')
         withPlaywright,
         withEnv: cfg.effective.box.withEnv,
         envFilesToImport: wiz.envFilesToImport,
+        carry: carryEntries,
         vnc: { enabled: cfg.effective.box.vnc },
         docker: { sharedCache: cfg.effective.box.dockerCacheShared },
         portless: portlessEnabled,

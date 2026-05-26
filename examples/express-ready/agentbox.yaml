@@ -1,7 +1,33 @@
 # yaml-language-server: $schema=../../packages/ctl/schema/agentbox.schema.json
+
+# Smoke fixture for the host→box carry: feature. The host-side marker file
+# is created ad-hoc by the smoke recipe in the README — `optional: true`
+# means a plain `agentbox claude -w examples/express-ready` (without
+# staging the marker) just skips the entry rather than erroring at the
+# carry prompt.
+carry:
+  - src: ~/.agentbox/carry-smoke/marker.txt
+    dest: ~/carried-marker.txt
+    mode: 0o600
+    optional: true
+
 tasks:
   install:
     command: 'cp -n .env.example .env 2>/dev/null || true; npm install'
+
+  # Conditional verifier: asserts mode + owner only when the marker file
+  # actually landed (i.e. the smoke recipe staged it). A plain claude/codex
+  # run without the marker exits 0 and just notes the skip.
+  verify-carry:
+    command: |
+      set -e
+      if [ ! -f ~/carried-marker.txt ]; then
+        echo "carry: marker not present (skip smoke recipe didn't run); ok"
+        exit 0
+      fi
+      test "$(stat -c '%a' ~/carried-marker.txt)" = "600"
+      test "$(stat -c '%U' ~/carried-marker.txt)" = "vscode"
+      echo "carry OK: $(cat ~/carried-marker.txt)"
 
 services:
   web:

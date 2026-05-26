@@ -61,6 +61,7 @@ export const dockerProvider: Provider = {
       withPlaywright: req.withPlaywright,
       withEnv: req.withEnv,
       envFilesToImport: req.envFilesToImport,
+      carry: req.carry,
       vnc: req.vnc,
       docker: po.sharedCache !== undefined ? { sharedCache: po.sharedCache } : undefined,
       portless: po.portless,

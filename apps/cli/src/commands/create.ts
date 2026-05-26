@@ -15,6 +15,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
+import { runCarryGate } from '../lib/carry-gate.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { makeProgressReporter } from '../lib/progress.js';
 import { maybePromptPortless, setupPortlessHost } from '../portless-prompt.js';
@@ -42,6 +43,10 @@ interface CreateOptions {
   yes?: boolean;
   withPlaywright?: boolean;
   withEnv?: boolean;
+  /** --carry-yes (or AGENTBOX_CARRY_YES=1): auto-approve the carry: block prompt. */
+  carryYes?: boolean;
+  /** --carry <mode>: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
+  carry?: 'skip' | 'ask';
   vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
   sharedDockerCache?: boolean;
   portless?: boolean; // commander: --portless / --no-portless => true / false / undefined
@@ -151,6 +156,15 @@ export const createCommand = new Command('create')
   .option('--disk <size>', 'best-effort container writable-layer size (e.g. 10g); no-op on overlay2/macOS')
   .option('-y, --yes', 'skip prompts, accept defaults')
   .option(
+    '--carry-yes',
+    "auto-approve agentbox.yaml's `carry:` block (also AGENTBOX_CARRY_YES=1). Required for non-TTY use of `-y` when carry: is non-empty.",
+  )
+  .option(
+    '--carry <mode>',
+    "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip). Default: 'ask' (prompt).",
+    'ask',
+  )
+  .option(
     '-v, --verbose',
     'also stream the raw provider output (docker build / Daytona snapshot create) to stderr. The same content always lands in ~/.agentbox/logs/create.log — pass -v when you want to watch it live without tailing the log.',
   )
@@ -190,6 +204,32 @@ export const createCommand = new Command('create')
     } else if (isHetzner) {
       portlessEnabled = cfg.effective.portless.enabled ?? true;
       if (portlessEnabled) await setupPortlessHost();
+    }
+
+    // Carry gate (agentbox.yaml's `carry:` block): resolve + ask BEFORE the
+    // wizard so the user sees the host-secrets prompt while still in the
+    // pre-create phase. Cancel aborts; skip proceeds with no carry payload.
+    let carryEntries: import('@agentbox/core').ResolvedCarryEntry[] = [];
+    try {
+      const gate = await runCarryGate({
+        projectRoot,
+        yes: !!opts.yes,
+        // Pass undefined when the flag wasn't set so the env-var fallback in
+        // runCarryGate (?? carryYesEnv / ?? carrySkipEnv) actually fires.
+        carryYesFlag: opts.carryYes ? true : undefined,
+        carrySkipFlag: opts.carry === 'skip' ? true : undefined,
+        onLog: (line) => cmdLog.write(line),
+      });
+      if (gate.decision === 'cancel') {
+        log.warn('carry: cancelled — not creating the box');
+        cmdLog.close();
+        process.exit(0);
+      }
+      if (gate.decision === 'approve') carryEntries = gate.entries;
+    } catch (err) {
+      log.error(err instanceof Error ? err.message : String(err));
+      cmdLog.close();
+      process.exit(1);
     }
 
     // First-run wizard: when no agentbox.yaml exists, optionally hand off to
@@ -250,6 +290,7 @@ export const createCommand = new Command('create')
         withPlaywright,
         withEnv: cfg.effective.box.withEnv,
         envFilesToImport: wiz.envFilesToImport,
+        carry: carryEntries,
         vnc: { enabled: cfg.effective.box.vnc },
         limits: resolveLimits(cfg.effective.box, opts),
         projectRoot,

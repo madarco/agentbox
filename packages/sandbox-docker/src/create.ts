@@ -50,6 +50,7 @@ import {
   CONTAINER_EXPORT_MERGED,
   DEFAULT_ENV_PATTERNS,
   boxRunDirFor,
+  copyCarryPathsToBox,
   copyHostEnvFilesToBox,
   copyHostFilesToBox,
   detectEngine,
@@ -70,6 +71,7 @@ import {
   type BoxRecord,
   type GitWorktreeRecord,
 } from './state.js';
+import type { ResolvedCarryEntry } from '@agentbox/core';
 import { createSnapshot, snapshotPathFor } from './snapshot.js';
 import { resolveCheckpoint } from './checkpoint.js';
 import { launchCtlDaemon } from './ctl.js';
@@ -157,6 +159,15 @@ export interface CreateBoxOptions {
    * One-shot at create time; persists across pause/stop/start.
    */
   envFilesToImport?: string[];
+  /**
+   * Pre-approved host→box file copies from `agentbox.yaml`'s `carry:` block.
+   * Resolved + user-approved by the apps/cli layer (resolveCarry + the carry
+   * prompt) before being threaded in here. Each entry is copied to its
+   * declared `absDest` (NOT under /workspace) after env-file imports and
+   * before the supervisor starts, so the first declared task can already
+   * read e.g. `~/.agentbox/secrets.env`. Empty / undefined → no-op.
+   */
+  carry?: ResolvedCarryEntry[];
   /**
    * VNC stack (Xvnc on :1 + websockify serving noVNC on container :6080).
    * Defaults to enabled. The CLI exposes `--no-vnc` for opt-out. Disabling
@@ -847,6 +858,24 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     }
   }
 
+  // carry: from agentbox.yaml — resolved and approved by the host CLI, then
+  // threaded in here. Runs after the env-file copies and before the supervisor
+  // launches so the first task can already see e.g. ~/.agentbox/secrets.env.
+  let carrySummary: BoxRecord['carry'] | undefined;
+  if (opts.carry && opts.carry.length > 0) {
+    log(`carry: copying ${String(opts.carry.length)} host path(s) into the box`);
+    const result = await copyCarryPathsToBox({
+      container: containerName,
+      entries: opts.carry,
+      onLog: log,
+    });
+    log(`carry: copied ${String(result.copied)}/${String(opts.carry.length)} entry/entries`);
+    for (const err of result.errors) log(`carry: ${err}`);
+    if (result.applied.length > 0) {
+      carrySummary = { count: result.applied.length, entries: result.applied };
+    }
+  }
+
   // VNC daemon (Xvnc + websockify). Best-effort, like launchCtlDaemon. The
   // host port mapping was wired into runBox above (hostPort=0 → random); we
   // resolve the assigned port here for storage. If the daemon fails to come
@@ -918,6 +947,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     gitWorktrees: gitWorktreeRecords.length > 0 ? gitWorktreeRecords : undefined,
     withPlaywright: opts.withPlaywright ? true : undefined,
     withEnv: opts.withEnv ? true : undefined,
+    carry: carrySummary,
     vncEnabled: vncEnabled ? true : undefined,
     vncContainerPort: vncEnabled ? VNC_CONTAINER_PORT : undefined,
     vncHostPort: vncHostPort ?? undefined,

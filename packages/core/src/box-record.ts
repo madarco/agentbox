@@ -176,6 +176,16 @@ export interface BoxRecord {
   withPlaywright?: boolean;
   /** True when the box was created with --with-env. */
   withEnv?: boolean;
+  /**
+   * Carry summary recorded at create time: which host paths were copied into
+   * the box from `agentbox.yaml`'s `carry:` block. Audit trail for inspect
+   * (the actual file content is not retained — only the src/dest pairs and
+   * sizes). Absent when no carry: block was applied.
+   */
+  carry?: {
+    count: number;
+    entries: Array<{ src: string; dest: string; bytes: number }>;
+  };
   /** VNC stack (Xvnc + websockify + noVNC) is enabled for this box. */
   vncEnabled?: boolean;
   /** Container-side noVNC web port. */

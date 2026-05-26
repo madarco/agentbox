@@ -208,6 +208,36 @@ attach by alias.
   so a host relay restart doesn't replay forgotten `git.push` attempts
   (6.4).
 
+### 2.8 `carry:` block (host→box file copy)
+
+The cloud `carry:` path is symmetric to the docker one (see `docs/features.md`
+for the schema, flags, and security rationale). `uploadCarryPaths`
+(`packages/sandbox-cloud/src/carry.ts`) runs in the create pipeline right
+after `uploadEnvFiles` and before the supervisor launches, so the first
+declared task can already see `~/.agentbox/secrets.env`, etc.
+
+Per-entry flow:
+
+1. Host: `tar` the source on disk into `/tmp/agentbox-carry-<i>.tar`
+   (single file → `-C dirname <basename>`; directory → `-C dir .`).
+2. `backend.uploadFile` ships the tar to `/tmp/agentbox-carry-<i>.tar` in
+   the sandbox.
+3. `backend.exec` runs one bash one-liner: `mkdir -p $(dirname dest) &&
+   tar -xf … -C … --no-same-permissions --no-same-owner -m && [mv if file
+   src/dest basenames differ] && [chmod -R <mode>] && [chown -R 1000:1000
+   when dest is under /home/vscode] && rm -f /tmp/agentbox-carry-<i>.tar`.
+
+Per-entry isolation (one tar per entry rather than one combined tar) keeps
+arbitrary destinations safe — a failing entry never poisons the
+`/workspace` seed, and the audit summary on `BoxRecord.carry` reflects
+only what actually landed. The same `uploadCarryPaths` powers Hetzner
+(scp over ControlMaster) and Daytona (SDK upload+exec) without per-backend
+code — both already implement `uploadFile` + `exec`.
+
+`~/` in the user-declared dest expands to `/home/vscode` host-side (never
+in-box) so the path is explicit before it leaves the host — the supervisor
+runs as `vscode` (uid 1000) and that's the only home we care about.
+
 ## 3. The Hetzner shape
 
 Hetzner is structurally different from Daytona: instead of a managed

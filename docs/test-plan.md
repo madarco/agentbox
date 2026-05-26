@@ -322,6 +322,33 @@ A regression checklist that an AI (or human) can drive end-to-end to declare Age
   - **Signal:** retry wrapper absorbs up to 3 attempts; create still succeeds.
   - **Note:** Edge-proxy intermittent failures shouldn't break create. *(Manual fault injection required; skip if unable.)*
 
+- [ ] **CREATE-013** `carry:` block + `--carry-yes` copies host files into the box at declared destinations.
+  - **Providers:** [docker, hetzner, daytona]
+  - **Setup:** `mkdir -p ~/.agentbox/carry-smoke && echo marker > ~/.agentbox/carry-smoke/m.txt && mkdir -p /tmp/cbtest && cat > /tmp/cbtest/agentbox.yaml <<'EOF'
+carry:
+  - src: ~/.agentbox/carry-smoke/m.txt
+    dest: ~/carried.txt
+    mode: 0o600
+EOF`
+  - **Run:** `node apps/cli/dist/index.js create -w /tmp/cbtest -y -n carry-smoke --carry-yes`.
+  - **Signal:** `agentbox shell carry-smoke -- stat -c '%a %U:%G %n' /home/vscode/carried.txt` returns `600 vscode:vscode /home/vscode/carried.txt`; `agentbox shell carry-smoke -- cat /home/vscode/carried.txt` returns `marker`; `~/.agentbox/state.json` shows `carry: {count:1, entries:[…]}` on the BoxRecord.
+
+- [ ] **CREATE-014** `carry:` + `AGENTBOX_CARRY=skip` creates the box but copies nothing.
+  - **Providers:** [docker]
+  - **Run:** with the CREATE-013 yaml: `AGENTBOX_CARRY=skip node apps/cli/dist/index.js create -w /tmp/cbtest -y -n carry-skip`.
+  - **Signal:** `agentbox shell carry-skip -- ls /home/vscode/carried.txt` returns "No such file"; create.log contains `carry: skipped for this box`.
+
+- [ ] **CREATE-015** `carry:` + `-y` on non-TTY without opt-in fails loud (CI safety).
+  - **Providers:** [docker]
+  - **Run:** with the CREATE-013 yaml: `node apps/cli/dist/index.js create -w /tmp/cbtest -y -n carry-fail </dev/null`.
+  - **Signal:** exits non-zero with `carry: requires approval but stdin is not a TTY and --carry-yes was not set. … set AGENTBOX_CARRY_YES=1 … or AGENTBOX_CARRY=skip`. No container created.
+  - **Note:** Prevents silent exfiltration of `~/.agentbox/secrets.env` from shared CI runners.
+
+- [ ] **CREATE-016** `carry:` resolver rejects denylisted dests and `..` traversal at parse time.
+  - **Providers:** [docker]
+  - **Run:** stage a yaml with `carry: [{src: ~/something.txt, dest: /etc/passwd}]`; `agentbox create -w /tmp/cbtest -y --carry-yes` (also try `dest: ~/../etc/passwd`).
+  - **Signal:** create fails with `carry: refused to proceed:` + the specific denylist / `..` error; no container started.
+
 ---
 
 ### agentbox daytona

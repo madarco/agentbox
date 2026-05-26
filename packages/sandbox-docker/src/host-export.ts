@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { sanitizeMnemonic } from '@agentbox/config';
+import type { ResolvedCarryEntry } from '@agentbox/core';
 import type { BoxStatus } from '@agentbox/ctl';
 import { execInBox } from './docker.js';
 import type { BoxRecord } from './state.js';
@@ -690,4 +691,173 @@ export class ExportError extends Error {
     super(`${message}${stderr ? `: ${stderr.trim()}` : ''}`);
     this.name = 'ExportError';
   }
+}
+
+export interface CopyCarryOptions {
+  /** Running container name. */
+  container: string;
+  /** Resolved + approved carry entries. */
+  entries: ResolvedCarryEntry[];
+  onLog?: (line: string) => void;
+}
+
+export interface CopyCarryResult {
+  copied: number;
+  errors: string[];
+  /** Audit summary for BoxRecord.carry. */
+  applied: Array<{ src: string; dest: string; bytes: number }>;
+}
+
+/**
+ * Apply the `carry:` block: copy each host path to its declared in-box dest.
+ * Per-entry tar pipe (not muxed onto one stream) because each entry has its
+ * own dest. `~/` in `absDest` is expanded inside the container via `$HOME` —
+ * never on the host — so the box's vscode home (`/home/vscode`) is the
+ * reference, not the user's macOS home.
+ *
+ * Files: tar a single regular file (preserves mode) and extract at the parent
+ * of dest, renamed to the basename of dest. Dirs: tar the directory contents
+ * (after `cd src`) and extract into the dest path (which is created with
+ * `mkdir -p`). Both extracts pass `--no-same-permissions --no-same-owner` so
+ * macOS attrs don't leak in; a recursive `chmod` runs when `mode` is set.
+ *
+ * `missing` entries (optional + absent on host) are silently skipped.
+ * Per-entry failures are recorded in `errors` and the function returns rather
+ * than throwing — the box stays usable; the caller logs the misses.
+ */
+export async function copyCarryPathsToBox(opts: CopyCarryOptions): Promise<CopyCarryResult> {
+  const log = opts.onLog ?? (() => {});
+  let copied = 0;
+  const errors: string[] = [];
+  const applied: CopyCarryResult['applied'] = [];
+
+  for (const [i, entry] of opts.entries.entries()) {
+    const where = `carry[${String(i)}] "${entry.rawSrc}"`;
+    if (entry.kind === 'missing') {
+      log(`${where}: skipped (missing on host, optional)`);
+      continue;
+    }
+    try {
+      await copyOneEntry(opts.container, entry);
+      copied += 1;
+      applied.push({ src: entry.absSrc, dest: entry.absDest, bytes: entry.bytes ?? 0 });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`${where}: ${msg}`);
+      log(`${where}: failed: ${msg}`);
+    }
+  }
+
+  return { copied, errors, applied };
+}
+
+/** Hardcoded box home — boxes always run as the `vscode` user (uid 1000). */
+const BOX_HOME = '/home/vscode';
+
+async function copyOneEntry(container: string, entry: ResolvedCarryEntry): Promise<void> {
+  if (entry.kind === 'missing') return;
+
+  // ~/ in the dest expands to /home/vscode at this layer (host-side), NOT
+  // inside the box's shell — so we never depend on the executing user's
+  // $HOME (which is /root when we --user 0:0 below).
+  const boxDest = entry.absDest.startsWith('~/')
+    ? `${BOX_HOME}/${entry.absDest.slice(2)}`
+    : entry.absDest;
+
+  const boxDestParent = boxDest.endsWith('/') ? boxDest.slice(0, -1) : boxDest;
+  const parentDir = entry.kind === 'dir' ? boxDestParent : dirnameUnix(boxDestParent);
+
+  // Pre-create the dest's parent dir. Run as root so destinations outside
+  // /home/vscode work; we re-chown to vscode if the dest is in $HOME.
+  const mkdir = await execa(
+    'docker',
+    ['exec', '--user', '0:0', container, 'mkdir', '-p', parentDir],
+    { reject: false },
+  );
+  if (mkdir.exitCode !== 0) {
+    throw new Error(`mkdir -p ${parentDir} failed: ${String(mkdir.stderr).slice(0, 300)}`);
+  }
+
+  if (entry.kind === 'file') {
+    // docker cp preserves file mode and writes to the exact destination path
+    // (no shell, no transform expression — sidesteps all the quoting traps).
+    const cp = await execa(
+      'docker',
+      ['cp', entry.absSrc, `${container}:${boxDest}`],
+      { reject: false },
+    );
+    if (cp.exitCode !== 0) {
+      throw new Error(`docker cp failed: ${String(cp.stderr).slice(0, 300)}`);
+    }
+  } else {
+    // Tar the directory contents (cd in + tar .) so they extract at the
+    // dest without a duplicated basename layer. --no-same-permissions /
+    // --no-same-owner so macOS attrs don't leak into the linux box.
+    const packed = await execa(
+      'tar',
+      ['-C', entry.absSrc, '-cf', '-', '.'],
+      { encoding: 'buffer', reject: false },
+    );
+    if (packed.exitCode !== 0) {
+      throw new Error(`tar pack failed: ${String(packed.stderr).slice(0, 300)}`);
+    }
+    const extract = await execa(
+      'docker',
+      [
+        'exec',
+        '-i',
+        '--user',
+        '0:0',
+        container,
+        'tar',
+        '-xf',
+        '-',
+        '-C',
+        boxDest,
+        '--no-same-permissions',
+        '--no-same-owner',
+        '-m',
+      ],
+      { input: packed.stdout as Buffer, reject: false },
+    );
+    if (extract.exitCode !== 0) {
+      throw new Error(`tar extract failed: ${String(extract.stderr).slice(0, 300)}`);
+    }
+  }
+
+  if (entry.mode !== undefined) {
+    const modeStr = entry.mode.toString(8).padStart(4, '0');
+    const chmod = await execa(
+      'docker',
+      ['exec', '--user', '0:0', container, 'chmod', '-R', modeStr, boxDest],
+      { reject: false },
+    );
+    if (chmod.exitCode !== 0) {
+      throw new Error(`chmod failed: ${String(chmod.stderr).slice(0, 300)}`);
+    }
+  }
+
+  if (inBoxHome(boxDest)) {
+    // Hand the file back to vscode so the in-box agent owns it. The parent
+    // dirs we just `mkdir -p` are also chowned in case we created them.
+    const chown = await execa(
+      'docker',
+      ['exec', '--user', '0:0', container, 'chown', '-R', '1000:1000', boxDest],
+      { reject: false },
+    );
+    if (chown.exitCode !== 0) {
+      throw new Error(`chown failed: ${String(chown.stderr).slice(0, 300)}`);
+    }
+  }
+}
+
+/** dirname() that always uses '/' regardless of host OS (box is linux). */
+function dirnameUnix(p: string): string {
+  const i = p.lastIndexOf('/');
+  if (i <= 0) return '/';
+  return p.slice(0, i);
+}
+
+function inBoxHome(absDest: string): boolean {
+  return absDest === BOX_HOME || absDest.startsWith(BOX_HOME + '/');
 }

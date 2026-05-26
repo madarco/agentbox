@@ -36,6 +36,7 @@ export type {
   PrepareResult,
   Provider,
   ProviderCheckpoint,
+  ResolvedCarryEntry,
 } from './provider.js';
 export type {
   CloudBackend,

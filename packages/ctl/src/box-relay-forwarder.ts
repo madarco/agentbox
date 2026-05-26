@@ -43,7 +43,7 @@ export function startBoxRelayForwarder(
         : 80;
 
   const server: Server = createServer((req, res) => {
-    const path = (req.url ?? '').split('?')[0];
+    const path = (req.url ?? '').split('?')[0] ?? '';
     if (req.method !== 'POST' || !ALLOWED_PATHS.has(path)) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('not found');

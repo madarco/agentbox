@@ -63,7 +63,7 @@ Each topic has a dedicated file under [`docs/`](./docs). Read the relevant one b
 - [`docs/create-and-checkpoints.md`](./docs/create-and-checkpoints.md) — implementation reference for `agentbox create` (file/git handling) and the checkpoint capture/restore mechanics.
 - [`docs/repo-layout.md`](./docs/repo-layout.md) — the package tree, build wiring, and box-identifier / per-project-index resolution rules.
 - [`docs/state.md`](./docs/state.md) — where every piece of state lives: `~/.agentbox/*`, docker objects, volumes, worktrees, the box image.
-- [`docs/in-box-supervisor.md`](./docs/in-box-supervisor.md) — `@agentbox/ctl`: the DAG scheduler, tasks vs services, `ready_when`, `expose`/`WebProxy`, wire ops, config validation.
+- [`docs/in-box-supervisor.md`](./docs/in-box-supervisor.md) — `@agentbox/ctl`: the DAG scheduler, tasks vs services, `ready_when`, `expose`/`WebProxy`, wire ops, config validation. The `carry:` block (host→box file copy with one-prompt host approval) is also declared at the top level of `agentbox.yaml` but is host-CLI-applied, not parsed by the supervisor — see `docs/features.md` for the schema + flags (`--carry-yes`, `--carry skip`, `AGENTBOX_CARRY_YES`, `AGENTBOX_CARRY`).
 - [`docs/host-relay.md`](./docs/host-relay.md) — `@agentbox/relay`: the host process, per-box bearer token, endpoints, registration/rehydration, in-box `agentbox-ctl git`/`open`.
 - [`docs/features.md`](./docs/features.md) — what works today (the full CLI lifecycle) and what is not built yet.
 - [`docs/development.md`](./docs/development.md) — build + verify commands, manual end-to-end runs, the image-rebuild checklist, and assumed host environment.

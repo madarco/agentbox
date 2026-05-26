@@ -53,6 +53,7 @@ import {
   writeCloudCheckpointManifest,
 } from './checkpoint.js';
 import { uploadEnvFiles } from './env-files.js';
+import { uploadCarryPaths } from './carry.js';
 import { readExposedServicePorts } from './expose-ports.js';
 import {
   downloadFromCloudBox,
@@ -358,6 +359,26 @@ export function createCloudProvider(
           if (copied > 0) log(`copied ${String(copied)} env/config file(s) into /workspace`);
         }
 
+        // carry: from agentbox.yaml — runs after the env-file copies and
+        // before the supervisor launches, mirroring the docker provider.
+        // The host CLI already resolved + got user approval before threading
+        // entries into req.carry.
+        let carrySummary: { count: number; entries: Array<{ src: string; dest: string; bytes: number }> } | undefined;
+        if (req.carry && req.carry.length > 0) {
+          log(`carry: copying ${String(req.carry.length)} host path(s) into the box`);
+          const result = await uploadCarryPaths({
+            backend,
+            handle,
+            entries: req.carry,
+            onLog: log,
+          });
+          log(`carry: copied ${String(result.copied)}/${String(req.carry.length)} entry/entries`);
+          for (const err of result.errors) log(`carry: ${err}`);
+          if (result.applied.length > 0) {
+            carrySummary = { count: result.applied.length, entries: result.applied };
+          }
+        }
+
         log('launching agentbox-ctl daemon');
         await launchCloudCtlDaemon({
           backend,
@@ -504,6 +525,7 @@ export function createCloudProvider(
           relayToken,
           withPlaywright: req.withPlaywright,
           withEnv: req.withEnv,
+          carry: carrySummary,
           portlessAlias: portlessAliasName,
           portlessUrl: portlessUrlResolved,
           vncEnabled,
