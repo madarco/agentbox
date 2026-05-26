@@ -94,6 +94,35 @@ describe('uploadCarryPaths', () => {
     expect(cmd).toContain('rm -f /tmp/agentbox-carry-0.tar');
   });
 
+  it('walks parent dirs under $HOME and chowns them — but not outside $HOME', async () => {
+    const src = join(workspace, 'm.txt');
+    await writeFile(src, 'x');
+
+    const backend = makeMockCloudBackend();
+    const handle = await backend.provision({ name: 'b', image: 'i' });
+
+    // Dest under $HOME → parent walk emitted.
+    await uploadCarryPaths({
+      backend,
+      handle,
+      entries: [
+        entry({ absSrc: src, absDest: '~/.agentbox/claude-credentials.json', kind: 'file', bytes: 1 }),
+      ],
+    });
+    const homeCmd = String(backend.calls.filter((c) => c.method === 'exec')[0]!.args[1]);
+    expect(homeCmd).toContain('while [ "$parent" != "/home/vscode" ]');
+
+    // Dest outside $HOME → no parent walk (system paths untouched).
+    backend.calls.length = 0;
+    await uploadCarryPaths({
+      backend,
+      handle,
+      entries: [entry({ absSrc: src, absDest: '/etc/agentbox/x', kind: 'file', bytes: 1 })],
+    });
+    const sysCmd = String(backend.calls.filter((c) => c.method === 'exec')[0]!.args[1]);
+    expect(sysCmd).not.toContain('while [ "$parent"');
+  });
+
   it('honors explicit user: override (default 1000; explicit overrides)', async () => {
     const src = join(workspace, 'm.txt');
     await writeFile(src, 'x');

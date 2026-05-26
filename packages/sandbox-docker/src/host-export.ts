@@ -850,6 +850,29 @@ async function copyOneEntry(container: string, entry: ResolvedCarryEntry): Promi
   if (chown.exitCode !== 0) {
     throw new Error(`chown failed: ${String(chown.stderr).slice(0, 300)}`);
   }
+
+  // Parent-chain chown: `mkdir -p` above ran as root, so any new dirs
+  // between $HOME and dirname(boxDest) are root-owned even though the
+  // leaf is now uid-owned. Walk back up to $HOME (exclusive) and chown
+  // each. Only walk when dest is under $HOME — for destinations like
+  // /etc/* or /opt/*, leave system parents alone.
+  if (boxDest.startsWith(BOX_HOME + '/') && dirnameUnix(boxDest) !== BOX_HOME) {
+    const safeDest = boxDest.replace(/'/g, `'\\''`);
+    const script =
+      `set -e; parent="$(dirname '${safeDest}')"; ` +
+      `while [ "$parent" != "${BOX_HOME}" ] && [ "$parent" != "/" ]; do ` +
+      `chown ${String(uid)}:${String(uid)} "$parent"; ` +
+      `parent="$(dirname "$parent")"; ` +
+      `done`;
+    const chownParents = await execa(
+      'docker',
+      ['exec', '--user', '0:0', container, 'bash', '-c', script],
+      { reject: false },
+    );
+    if (chownParents.exitCode !== 0) {
+      throw new Error(`chown parents failed: ${String(chownParents.stderr).slice(0, 300)}`);
+    }
+  }
 }
 
 /** dirname() that always uses '/' regardless of host OS (box is linux). */

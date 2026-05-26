@@ -140,6 +140,19 @@ async function uploadOneEntry(args: UploadOneArgs): Promise<void> {
   }
   if (mode) parts.push(`chmod -R ${mode} ${shellQuote(boxDest)}`);
   parts.push(`chown -R ${String(uid)}:${String(uid)} ${shellQuote(boxDest)}`);
+  // Parent-chain chown: `mkdir -p` ran as root, so any new dirs between
+  // $HOME and dirname(boxDest) are root-owned. Walk back up to $HOME
+  // (exclusive) and chown each. Only when dest is under $HOME — system
+  // paths like /etc/* keep their existing ownership.
+  if (boxDest.startsWith(BOX_HOME + '/') && parentDir !== BOX_HOME) {
+    parts.push(
+      `parent=$(dirname ${shellQuote(boxDest)}); ` +
+        `while [ "$parent" != "${BOX_HOME}" ] && [ "$parent" != "/" ]; do ` +
+        `chown ${String(uid)}:${String(uid)} "$parent"; ` +
+        `parent=$(dirname "$parent"); ` +
+        `done`,
+    );
+  }
   parts.push(`rm -f ${remoteTar}`);
   const cmd = parts.join(' && ');
 
