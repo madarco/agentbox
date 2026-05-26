@@ -86,3 +86,21 @@ tasks:
   build:
     command: pnpm build
     needs: [install]
+
+  # Drop a tiny `agentbox` wrapper into ~/.local/bin (already in PATH via
+  # Ubuntu's default .profile, no sudo needed) so `agentbox …` works in
+  # any shell, not just `node apps/cli/dist/index.js …`. Idempotent:
+  # heredoc rewrites the wrapper on every run so a `pnpm build` rebuild
+  # is picked up immediately (the wrapper itself just execs node against
+  # the dist path).
+  link:
+    command: |
+      set -e
+      mkdir -p ~/.local/bin
+      cat > ~/.local/bin/agentbox <<'WRAPPER'
+      #!/bin/sh
+      exec node /workspace/apps/cli/dist/index.js "$@"
+      WRAPPER
+      chmod +x ~/.local/bin/agentbox
+      ~/.local/bin/agentbox --version
+    needs: [build]
