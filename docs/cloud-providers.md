@@ -136,9 +136,21 @@ keep the two channels isolated.
 Host actions implemented today (every other method gets a clear "not
 supported" error so the in-box RPC unblocks):
 
-- `git.push` / `git.fetch` — bundle pull-back through the host's main
-  repo (lets the host's SSH keys do the real push without ever sending
-  them into the sandbox).
+- `git.push` / `git.fetch` — by default, bundle pull-back through the
+  host's main repo (lets the host's SSH keys do the real push without
+  ever sending them into the sandbox). On Hetzner, a faster path runs:
+  the host opens a fresh `ssh -A` connection into the box and runs
+  `git push` / `git fetch` *inside* the box against `origin` directly.
+  For SSH origins (`git@…`/`ssh://…`), the in-box git uses the host's
+  forwarded SSH agent. For HTTPS origins, the host additionally spins
+  up a short-lived loopback credential proxy and `-R`-forwards it into
+  the box for the duration of the SSH session, so the in-box git
+  credential helper can authenticate without the token entering the
+  box's filesystem or env. The forwarded agent socket and reverse-
+  forwarded port disappear with the SSH session — no persistent
+  credential exposure. Falls back to the bundle path on any failure
+  (no host agent, permission denied, helper unconfigured, etc.).
+  The `askPrompt()` confirmation gate runs before either path.
 - `cp.toHost` / `cp.fromHost` — via `uploadToCloudBox` /
   `downloadFromCloudBox` from sandbox-cloud, gated by `askPrompt`.
 - `download.workspace` — bulk pull via `pullCloudDirContents`.
@@ -388,6 +400,57 @@ hetzner-specific code (verified live in Phase-7 smoke).
   recovery.
 - `agentbox hetzner firewall show <box>` — prints current rules + the
   host's current egress IP, with a `WARN` line on drift.
+
+### 3.8 Faster `git push` / `git fetch` (SSH agent + credential proxy)
+
+By default the relay's `git.push` / `git.fetch` round-trip through a
+git bundle. On Hetzner that's replaced with a single fresh `ssh -A`
+exec into the box that runs `git push` / `git fetch` against `origin`
+directly:
+
+- **SSH origin** (`git@…`/`ssh://…`): host SSH agent is forwarded via
+  `-A`. The in-box `git` uses the forwarded agent socket to
+  authenticate to GitHub. Socket disappears when the SSH session ends.
+- **HTTPS origin** (`https://…`): host starts a short-lived loopback
+  TCP listener that speaks git's credential-helper protocol and
+  delegates to the user's actual configured helper (`osxkeychain`,
+  `libsecret`, `gh auth git-credential`, …). The ephemeral `ssh -A`
+  also passes `-R <inboxPort>:127.0.0.1:<proxyPort>`, so the in-box
+  `git -c credential.helper='!bash -c "exec 3<>/dev/tcp/127.0.0.1/<inboxPort>; cat >&3; cat <&3"'`
+  reaches the host's helper. The token transits the box's loopback
+  for the push window but is never written to a file or env var
+  inside the box. A box-resident attacker with simultaneous shell
+  access could intercept by hitting the forwarded port while the
+  push runs — but they already have the user's worktree, so this is
+  not a new exposure.
+
+Fast path auto-falls-back to the bundle path on: missing host
+`SSH_AUTH_SOCK`, `Permission denied (publickey)`, helper timeout
+(>5s), proxy startup failure, or `ssh -R` bind failure. Fallback is
+logged once per box. The existing `askPrompt()` confirmation gate
+runs before either path executes — the safety model is unchanged,
+only the transport.
+
+### 3.9 `agentbox git box-fetch <box> [refspec...]` (host pulls box's commits)
+
+A symmetric helper for the host side: pull a Hetzner box's commits
+back into the host repo over SSH (no GitHub round-trip, no bundle,
+no persistent remote). The host already has the per-box ed25519
+key + known_hosts under `~/.agentbox/boxes/<id>/ssh/`, so it just
+needs `GIT_SSH_COMMAND` to point at them and `git fetch ssh://vscode@<vps>/workspace`.
+
+```
+agentbox git box-fetch smoke
+# → git fetch ssh://vscode@<vps>/workspace +refs/heads/*:refs/remotes/agentbox-<id>/*
+```
+
+Default refspec scopes refs under `refs/remotes/agentbox-<box-id>/*`.
+No persistent remote is registered; no entries are written to
+`~/.ssh/config` or `git config`. The box's `/workspace` is a regular
+git clone (not a worktree), so `git-upload-pack` over SSH works
+without any server-side setup. Docker boxes (which share `.git/`
+via bind-mount) and Daytona boxes (no SSH passthrough) report a
+clear error pointing at the bundle path.
 
 ## 4. Authentication
 

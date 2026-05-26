@@ -107,6 +107,77 @@ export async function sshExec(
   };
 }
 
+export interface SshExecWithAgentOptions extends SshExecOptions {
+  /**
+   * Add `-R <inboxPort>:127.0.0.1:<hostPort>` to forward a localhost port on
+   * the box back to a localhost port on the host. Used by the relay's git
+   * fast path for HTTPS origins: the in-box git credential helper hits
+   * 127.0.0.1:<inboxPort>, which tunnels back to the host's short-lived
+   * credential proxy. Connection dies → forwarded socket goes away.
+   */
+  reverseForward?: { inboxPort: number; hostPort: number };
+}
+
+/**
+ * Run a one-shot command over a *fresh* SSH connection (no ControlMaster
+ * reuse) with the host's SSH agent forwarded (`-A`). The fresh connection is
+ * deliberate: ControlMaster-multiplexed sessions inherit the master's
+ * `ForwardAgent` setting, and our master is opened with that off — opening a
+ * one-off master per call keeps the forwarded-agent socket on the box bound
+ * 1:1 to the lifetime of this command.
+ *
+ * Returns the exit code + captured stdout/stderr; non-zero exits do NOT
+ * throw — callers decide whether to fall back (e.g. bundle path) on a
+ * `Permission denied (publickey)` or `agent refused` failure.
+ */
+export async function sshExecWithAgent(
+  target: SshTargetArgs,
+  remoteCmd: string,
+  opts: SshExecWithAgentOptions = {},
+): Promise<SshExecResult> {
+  // Strip controlPath — we want a fresh master so `-A` actually engages.
+  const freshTarget: SshTargetArgs = { ...target, controlPath: undefined };
+  const argv: string[] = [
+    '-A',
+    '-o', 'ForwardAgent=yes',
+  ];
+  if (opts.reverseForward) {
+    const { inboxPort, hostPort } = opts.reverseForward;
+    argv.push('-R', `${String(inboxPort)}:127.0.0.1:${String(hostPort)}`);
+    // Without this, ssh blocks waiting for the remote bind even if it would
+    // immediately fail (e.g. port in use), wedging the push.
+    argv.push('-o', 'ExitOnForwardFailure=yes');
+  }
+  argv.push(
+    ...sshOptArgs(freshTarget),
+    `${freshTarget.user}@${freshTarget.host}`,
+    remoteCmd,
+  );
+
+  const child = execa('ssh', argv, {
+    reject: false,
+    timeout: opts.timeoutMs,
+    env: { ...process.env, ...opts.env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (opts.onLine) {
+    const handle = (chunk: Buffer | string) => {
+      const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+      for (const line of text.split(/\r?\n/)) {
+        if (line.length > 0) opts.onLine?.(line);
+      }
+    };
+    child.stdout?.on('data', handle);
+    child.stderr?.on('data', handle);
+  }
+  const res = await child;
+  return {
+    exitCode: typeof res.exitCode === 'number' ? res.exitCode : 1,
+    stdout: typeof res.stdout === 'string' ? res.stdout : '',
+    stderr: typeof res.stderr === 'string' ? res.stderr : '',
+  };
+}
+
 /** Copy a local file to the target VPS via `scp`. Throws on non-zero exit. */
 export async function scpUpload(
   target: SshTargetArgs,

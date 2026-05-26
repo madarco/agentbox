@@ -78,6 +78,17 @@ export interface CloudFileEntry {
   isDir: boolean;
 }
 
+export interface CloudExecWithAgentOptions extends CloudExecOptions {
+  /**
+   * Add `ssh -R <inboxPort>:127.0.0.1:<hostPort>` to the fresh agent-forwarded
+   * connection. The relay uses this to expose its short-lived host credential
+   * proxy into the box for an HTTPS-origin git push/fetch — the in-box git
+   * credential helper hits `127.0.0.1:<inboxPort>`, which tunnels back to
+   * `<hostPort>` on host loopback. SSH session ends → forwarded port closes.
+   */
+  reverseForward?: { inboxPort: number; hostPort: number };
+}
+
 /**
  * Token-authed preview URL returned by `CloudBackend.previewUrl(port)`. Some
  * providers (Daytona) gate previews with a `token` the caller must attach as
@@ -131,6 +142,29 @@ export interface CloudBackend {
   state(h: CloudHandle): Promise<CloudState>;
 
   exec(h: CloudHandle, cmd: string, opts?: CloudExecOptions): Promise<CloudExecResult>;
+
+  /**
+   * Optional: run a one-shot command over a *fresh* SSH connection with the
+   * host's SSH agent forwarded (and an optional `-R <inboxPort>:127.0.0.1:<hostPort>`
+   * reverse forward). Used by the relay's git push/fetch fast path so the
+   * in-box `git push origin` reaches GitHub directly — no bundle round-trip
+   * — using the host's already-loaded agent (SSH origins) or a host-loopback
+   * credential helper tunneled in via `-R` (HTTPS origins).
+   *
+   * Lifetime of the forwarded agent socket / reverse-forwarded port is bound
+   * 1:1 to this exec — the SSH session ends, the sockets disappear. The host
+   * never persists credentials inside the box.
+   *
+   * Backends without an SSH layer that can carry per-call forwarding (e.g.
+   * Daytona's token gateway) omit this; callers detect with
+   * `typeof backend.execWithAgent === 'function'` and fall back to the
+   * bundle path.
+   */
+  execWithAgent?(
+    h: CloudHandle,
+    cmd: string,
+    opts?: CloudExecWithAgentOptions,
+  ): Promise<CloudExecResult>;
 
   uploadFile(h: CloudHandle, localPath: string, remotePath: string): Promise<void>;
   downloadFile(h: CloudHandle, remotePath: string, localPath: string): Promise<void>;

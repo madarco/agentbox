@@ -59,7 +59,7 @@ import { pollUntil } from './poll.js';
 import { readPreparedState } from './prepared-state.js';
 import { ensureHetznerBaseSnapshot } from './prepare.js';
 import { mintSshKey } from './ssh-key.js';
-import { waitForSsh, sshOptArgs, type SshTargetArgs } from './ssh-cli.js';
+import { waitForSsh, sshOptArgs, sshExecWithAgent, type SshTargetArgs } from './ssh-cli.js';
 import { SshTunnelManager, defaultBoxSshDir } from './ssh-tunnel.js';
 import { withHetznerRetry } from './retry.js';
 
@@ -531,6 +531,22 @@ export const hetznerBackend: CloudBackend = {
     };
   },
 
+  async execWithAgent(h, cmd, opts): Promise<CloudExecResult> {
+    const { target } = await ensureLiveTarget(h.sandboxId);
+    // sshExecWithAgent strips controlPath internally so the fresh master
+    // actually carries -A. We still pass `target` so it picks up the right
+    // identity/known-hosts/user/host.
+    return sshExecWithAgent(
+      target,
+      bashScript(opts?.cwd ? `cd ${shellQuote(opts.cwd)} && ${cmd}` : cmd),
+      {
+        timeoutMs: opts?.attemptTimeoutMs ?? 120_000,
+        env: opts?.env,
+        reverseForward: opts?.reverseForward,
+      },
+    );
+  },
+
   async uploadFile(h, localPath, remotePath): Promise<void> {
     const { target } = await ensureLiveTarget(h.sandboxId);
     const argv = [
@@ -663,6 +679,34 @@ export const hetznerBackend: CloudBackend = {
 
 /** Exposed for the CLI's `firewall sync` / `show` subcommands. */
 export { tunnels as _hetznerTunnels };
+
+/**
+ * Resolve the SSH target for a Hetzner box by its cloud sandbox id (= the
+ * Hetzner server id, stringified). Used by `agentbox git box-fetch <box>`
+ * which shells out to the host's `git fetch ssh://...` against the box's
+ * workspace and needs the per-box identity + known_hosts + the VPS's
+ * current IPv4 address. Throws when the server can't be resolved or has
+ * no per-box key on disk (e.g. created on a different host).
+ */
+export async function resolveHetznerBoxSshTarget(sandboxId: string): Promise<SshTargetArgs> {
+  const id = Number.parseInt(sandboxId, 10);
+  if (!Number.isFinite(id)) {
+    throw new Error(`hetzner: invalid sandboxId ${sandboxId}`);
+  }
+  const server = await getServerStrict(id);
+  const vpsIp = server.public_net.ipv4?.ip;
+  if (!vpsIp) {
+    throw new Error(`hetzner: server ${String(id)} has no IPv4 address`);
+  }
+  const state = await ensurePerBoxState(sandboxId);
+  if (!existsSync(state.identity)) {
+    throw new Error(
+      `hetzner: per-box SSH key missing for sandbox ${sandboxId} (expected at ${state.identity}). ` +
+        `If this box was created by a different host, you'll need to re-create it on this host.`,
+    );
+  }
+  return buildSshTarget(state, vpsIp);
+}
 
 /**
  * Push the host's renewable agent credentials (.credentials.json for claude,

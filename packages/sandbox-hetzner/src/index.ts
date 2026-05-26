@@ -26,6 +26,7 @@ export const hetznerProvider: Provider = {
 };
 
 export { hetznerBackend, HETZNER_DEFAULT_BOX_IMAGE_REF };
+export { resolveHetznerBoxSshTarget } from './backend.js';
 export { ensureHetznerEnvLoaded } from './env-loader.js';
 export {
   ensureHetznerCredentials,

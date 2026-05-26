@@ -18,8 +18,9 @@ import { execa } from 'execa';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { CloudBackend, CloudHandle } from '@agentbox/core';
+import type { CloudBackend, CloudExecResult, CloudHandle } from '@agentbox/core';
 import { findBox, readState } from '@agentbox/sandbox-core';
+import { startHostCredentialProxy, type HostCredentialProxy } from './host-credential-proxy.js';
 import {
   assertGhReady,
   checkoutGuards,
@@ -624,6 +625,26 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
     }
   }
 
+  // Fast path (Hetzner): instead of bundling the per-box branch back to the
+  // host and pushing from there, ssh into the box with the host's SSH agent
+  // forwarded and run `git push`/`git fetch` against the real origin directly.
+  // For HTTPS origins we additionally `-R`-forward a host-loopback credential
+  // proxy so the in-box git can authenticate without the token entering the
+  // box's filesystem or env. Both forwarded sockets disappear with the SSH
+  // session. Falls back to the bundle path on any failure.
+  const fast = await maybeRunGitFastPath({
+    action,
+    backend,
+    handle,
+    containerPath,
+    branch,
+    remote: params.remote ?? 'origin',
+    extraArgs: Array.isArray(params.args) ? params.args.filter((a): a is string => typeof a === 'string') : [],
+    log: deps.log,
+    hostRepo: lookup.workspacePath,
+  });
+  if (fast.taken) return fast.result;
+
   const stage = await mkdtemp(join(tmpdir(), 'agentbox-git-rpc-'));
   const hostBundle = join(stage, 'op.bundle');
   const remoteBundle = '/tmp/agentbox-rpc.bundle';
@@ -715,4 +736,191 @@ function shellQuote(arg: string): string {
   if (arg.length === 0) return "''";
   if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(arg)) return arg;
   return "'" + arg.replace(/'/g, "'\\''") + "'";
+}
+
+interface FastPathInput {
+  action: HostAction;
+  backend: CloudBackend;
+  handle: CloudHandle;
+  containerPath: string;
+  branch: string;
+  remote: string;
+  extraArgs: string[];
+  log?: (line: string) => void;
+  hostRepo: string;
+}
+
+interface FastPathOutcome {
+  taken: boolean;
+  result: HostActionResult;
+}
+
+/**
+ * Try the SSH-agent / credential-helper fast path for git.push and git.fetch.
+ * Returns `taken: false` when the path doesn't apply (backend without
+ * execWithAgent, missing host agent for SSH origin, unsupported scheme,
+ * permission denied, etc.) so the caller can fall back to the bundle path.
+ */
+async function maybeRunGitFastPath(input: FastPathInput): Promise<FastPathOutcome> {
+  const { action, backend, handle, containerPath, branch, remote, extraArgs, hostRepo } = input;
+  const log = input.log ?? (() => {});
+  const execWithAgent = backend.execWithAgent?.bind(backend);
+  if (!execWithAgent) {
+    return { taken: false, result: emptyResult() };
+  }
+
+  // Read the upstream URL inside the box so we know which auth path to take.
+  // One round-trip via the (cheap) ControlMaster-multiplexed exec.
+  const urlProbe = await backend.exec(
+    handle,
+    `git -C ${shellQuote(containerPath)} remote get-url ${shellQuote(remote)}`,
+  );
+  if (urlProbe.exitCode !== 0) {
+    log(`git fast path: could not read remote URL (exit ${String(urlProbe.exitCode)}); falling back to bundle`);
+    return { taken: false, result: emptyResult() };
+  }
+  const remoteUrl = (urlProbe.stdout ?? '').trim();
+  if (remoteUrl.length === 0) {
+    return { taken: false, result: emptyResult() };
+  }
+
+  const scheme = classifyRemoteUrl(remoteUrl);
+
+  if (scheme === 'ssh') {
+    if (!process.env['SSH_AUTH_SOCK']) {
+      log('git fast path: SSH_AUTH_SOCK not set on host; falling back to bundle');
+      return { taken: false, result: emptyResult() };
+    }
+    const gitCmd = buildBoxGitCommand(action.method, containerPath, remote, branch, extraArgs, 'ssh', null);
+    if (!gitCmd) return { taken: false, result: emptyResult() };
+    const res = await execWithAgent(handle, gitCmd, { attemptTimeoutMs: 5 * 60_000 });
+    if (isFastPathAuthFailure(res)) {
+      log(`git fast path (ssh): auth failure (exit ${String(res.exitCode)}); falling back to bundle`);
+      return { taken: false, result: emptyResult() };
+    }
+    return { taken: true, result: { exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr } };
+  }
+
+  if (scheme === 'https') {
+    // Bring up the host credential proxy, plumb it via `-R`, and run the
+    // git command. The proxy lifetime is bounded by this exec.
+    const inboxPort = pickInboxPort();
+    let proxy: HostCredentialProxy | undefined;
+    try {
+      proxy = await startHostCredentialProxy({ log, hostRepo });
+    } catch (err) {
+      log(
+        `git fast path (https): could not start credential proxy: ${err instanceof Error ? err.message : String(err)}; falling back to bundle`,
+      );
+      return { taken: false, result: emptyResult() };
+    }
+    try {
+      const gitCmd = buildBoxGitCommand(action.method, containerPath, remote, branch, extraArgs, 'https', inboxPort);
+      if (!gitCmd) return { taken: false, result: emptyResult() };
+      const res = await execWithAgent(handle, gitCmd, {
+        attemptTimeoutMs: 5 * 60_000,
+        reverseForward: { inboxPort, hostPort: proxy.port },
+      });
+      if (isFastPathAuthFailure(res)) {
+        log(`git fast path (https): auth failure (exit ${String(res.exitCode)}); falling back to bundle`);
+        return { taken: false, result: emptyResult() };
+      }
+      return { taken: true, result: { exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr } };
+    } finally {
+      await proxy.stop().catch(() => {
+        /* best-effort */
+      });
+    }
+  }
+
+  // Other schemes (file://, git://, etc.) fall back to the bundle path.
+  return { taken: false, result: emptyResult() };
+}
+
+function emptyResult(): HostActionResult {
+  return { exitCode: 0, stdout: '', stderr: '' };
+}
+
+type RemoteScheme = 'ssh' | 'https' | 'other';
+
+function classifyRemoteUrl(url: string): RemoteScheme {
+  if (/^ssh:\/\//i.test(url)) return 'ssh';
+  // scp-like: user@host:path/to/repo.git
+  if (/^[^/@\s]+@[^/:\s]+:[^/]/.test(url)) return 'ssh';
+  if (/^https?:\/\//i.test(url)) return 'https';
+  return 'other';
+}
+
+function buildBoxGitCommand(
+  method: string,
+  containerPath: string,
+  remote: string,
+  branch: string,
+  extraArgs: string[],
+  scheme: RemoteScheme,
+  inboxPort: number | null,
+): string | null {
+  const extras = extraArgs.map((a) => shellQuote(a)).join(' ');
+  const subcommand = method === 'git.push' ? 'push' : method === 'git.fetch' ? 'fetch' : null;
+  if (!subcommand) return null;
+  const target = subcommand === 'push' ? `${shellQuote(remote)} ${shellQuote(branch)}` : shellQuote(remote);
+  if (scheme === 'ssh') {
+    // Force `accept-new` so the in-box ssh accepts github.com (or whatever the
+    // git remote is) on first contact instead of trying ssh-askpass and dying.
+    // The box is short-lived and has its own known_hosts; per-host trust pinning
+    // makes no sense here. The agent-forwarded keys still gate authentication.
+    const sshOpts = `ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes`;
+    return (
+      `GIT_SSH_COMMAND=${shellQuote(sshOpts)} ` +
+      `git -C ${shellQuote(containerPath)} ${subcommand} ${target} ${extras}`
+    ).trim();
+  }
+  if (scheme === 'https') {
+    if (inboxPort === null) return null;
+    // Credential helper: connect to the host's `-R`-forwarded proxy port,
+    // pipe stdin to it, pipe its response to stdout. We use OpenBSD `nc -N`
+    // (available in the Hetzner base snapshot — Ubuntu ships `netcat-openbsd`)
+    // because `-N` shuts down the network socket once stdin EOFs, letting the
+    // server detect end-of-request and respond. /dev/tcp via bash worked in
+    // local tests but produced an unflushed-write race against the parent
+    // shell's fd 3 lifecycle inside actual git-credential invocations.
+    //
+    // Git invokes the helper for `get`, `store`, and `erase` (passed as $1
+    // because git uses `sh -c "<helper> <action>"`). We only respond to `get`;
+    // store/erase exit 0 silently — the helper is per-invocation so persistence
+    // is meaningless here.
+    const helperBody = `[ "$1" = get ] || exit 0; exec nc -N 127.0.0.1 ${String(inboxPort)}`;
+    const helper = `!sh -c ${shellQuote(helperBody)} --`;
+    return (
+      `git -C ${shellQuote(containerPath)} ` +
+      // First `-c credential.helper=` clears any inherited helpers so the
+      // box's git only consults ours, avoiding a slow timeout against a
+      // configured-but-unreachable helper (e.g. inherited gh from the host).
+      `-c credential.helper= ` +
+      `-c credential.helper=${shellQuote(helper)} ` +
+      `${subcommand} ${target} ${extras}`
+    ).trim();
+  }
+  return null;
+}
+
+function isFastPathAuthFailure(res: CloudExecResult): boolean {
+  if (res.exitCode === 0) return false;
+  const stderr = (res.stderr ?? '').toLowerCase();
+  return (
+    stderr.includes('permission denied (publickey)') ||
+    stderr.includes('agent refused operation') ||
+    stderr.includes('could not open a connection to your authentication agent')
+  );
+}
+
+/**
+ * Pick a port to use inside the box for the `-R` reverse forward. We don't
+ * verify availability on the remote — `ExitOnForwardFailure=yes` makes SSH
+ * fail fast if the port is taken, and `maybeRunGitFastPath` treats that as
+ * a fallback signal. Random ephemeral-range port keeps collisions vanishingly
+ * unlikely.
+ */
+function pickInboxPort(): number {
+  return 49152 + Math.floor(Math.random() * (65535 - 49152));
 }

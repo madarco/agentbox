@@ -42,6 +42,7 @@ export type {
   CloudBackend,
   CloudExecOptions,
   CloudExecResult,
+  CloudExecWithAgentOptions,
   CloudFileEntry,
   CloudHandle,
   CloudPreviewUrl,
