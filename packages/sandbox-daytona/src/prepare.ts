@@ -31,9 +31,23 @@ import {
 import { getClient } from './backend.js';
 import { resolveDaytonaCustomClaudeMd, resolveDockerfileContext } from './dockerfile-context.js';
 import { ensureDaytonaEnvLoaded } from './env-loader.js';
+import {
+  computeDaytonaContextFingerprint,
+  preparedMatches,
+  readPreparedDaytonaState,
+  writePreparedDaytonaState,
+} from './prepared-state.js';
 
-/** Default snapshot name shape when `opts.name` is omitted. */
-function defaultSnapshotName(): string {
+/**
+ * Default snapshot name. Keyed on the first 12 chars of the build-context
+ * fingerprint so identical content produces the same snapshot name across
+ * machines / CLI runs (idempotent): if the named snapshot already exists
+ * on Daytona, prepare can short-circuit without uploading the build
+ * context again. Falls back to a timestamp when fingerprinting fails
+ * (partial dev rebuild).
+ */
+function defaultSnapshotName(fingerprint: string | null): string {
+  if (fingerprint) return `agentbox-base-${fingerprint.slice(0, 12)}`;
   return `agentbox-base-${Math.floor(Date.now() / 1000).toString()}`;
 }
 
@@ -86,7 +100,49 @@ async function stageAllAgentStatic(opts: { hostWorkspace?: string }): Promise<Ag
 export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResult> {
   ensureDaytonaEnvLoaded();
   const log = opts.onLog ?? (() => {});
-  const snapshotName = opts.name ?? defaultSnapshotName();
+
+  // Fingerprint the build context first so we can (a) name the snapshot
+  // deterministically and (b) detect cache hits against the recorded
+  // prepared state. Computed before staging so an early `null` (partial
+  // dev rebuild) doesn't waste a tar staging cycle.
+  const fingerprint = await computeDaytonaContextFingerprint();
+  const snapshotName =
+    opts.name ?? defaultSnapshotName(fingerprint?.contextSha256 ?? null);
+
+  const prepared = readPreparedDaytonaState();
+  if (
+    !opts.force &&
+    fingerprint &&
+    preparedMatches(prepared, fingerprint.contextSha256)
+  ) {
+    // Confirm the snapshot still exists on Daytona before short-circuiting.
+    // A "yes locally, no on the server" mismatch must rebuild.
+    try {
+      const existing = await getClient().snapshot.get(
+        prepared?.base?.imageRef ?? snapshotName,
+      );
+      if (existing?.name) {
+        log(
+          `daytona snapshot '${existing.name}' up to date ` +
+            `(fingerprint ${fingerprint.contextSha256.slice(0, 12)}) — skipping rebuild ` +
+            `(pass --force to override)`,
+        );
+        return { snapshotName: existing.name };
+      }
+      log(
+        `recorded snapshot '${prepared?.base?.imageRef ?? snapshotName}' not found on Daytona; rebuilding`,
+      );
+    } catch {
+      log(
+        `recorded snapshot lookup failed; rebuilding (pass --force to silence)`,
+      );
+    }
+  } else if (!opts.force && fingerprint && prepared?.base?.contextSha256) {
+    log(
+      `daytona build context changed (was ${prepared.base.contextSha256.slice(0, 12)}, ` +
+        `now ${fingerprint.contextSha256.slice(0, 12)}); rebuilding snapshot`,
+    );
+  }
 
   const ctx = resolveDockerfileContext();
   if (!ctx) {
@@ -159,6 +215,15 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
       },
     );
     log(`snapshot '${snapshot.name}' is ${snapshot.state ?? 'created'}`);
+    if (fingerprint) {
+      writePreparedDaytonaState({
+        snapshotName: snapshot.name ?? snapshotName,
+        contextSha256: fingerprint.contextSha256,
+      });
+      log(
+        `recorded daytona-prepared.json (fingerprint ${fingerprint.contextSha256.slice(0, 12)})`,
+      );
+    }
     return { snapshotName: snapshot.name ?? snapshotName };
   } finally {
     await Promise.all(stages.map((s) => s.staged.cleanup()));

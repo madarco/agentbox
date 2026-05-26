@@ -133,16 +133,53 @@ export interface EnsureImageOptions {
 export async function ensureImage(
   ref: string = DEFAULT_BOX_IMAGE,
   opts: EnsureImageOptions = {},
-): Promise<{ ref: string; built: boolean }> {
-  if (await imageExists(ref)) {
-    return { ref, built: false };
+): Promise<{ ref: string; built: boolean; reason?: string }> {
+  // Lazy import: prepared-state imports back into image.ts for the default
+  // DOCKERFILE_PATH/BUILD_CONTEXT_DIR constants, so loading it at top-level
+  // would create a circular ESM init order.
+  const {
+    computeDockerContextFingerprint,
+    readPreparedDockerState,
+    writePreparedDockerState,
+    preparedMatches,
+  } = await import('./prepared-state.js');
+
+  const fingerprint = await computeDockerContextFingerprint({
+    contextDir: opts.contextDir,
+  });
+  const prepared = readPreparedDockerState();
+  const exists = await imageExists(ref);
+
+  let reason: string | undefined;
+  if (!exists) {
+    reason = `image ${ref} not present`;
+  } else if (!fingerprint) {
+    // Couldn't enumerate the context (partial dev rebuild?). Don't rebuild
+    // unconditionally — that would surprise users mid-iteration. Trust the
+    // image-exists check and leave the prepared file untouched.
+    return { ref, built: false, reason: 'image present (fingerprint skipped)' };
+  } else if (!prepared) {
+    reason = 'no docker-prepared.json on disk';
+  } else if (!preparedMatches(prepared, fingerprint.contextSha256)) {
+    reason =
+      `build context changed (was ${prepared.base?.contextSha256?.slice(0, 12) ?? '<none>'}, ` +
+      `now ${fingerprint.contextSha256.slice(0, 12)})`;
   }
+
+  if (!reason) {
+    return { ref, built: false, reason: 'image up to date' };
+  }
+
+  opts.onProgress?.(`[image] rebuilding ${ref}: ${reason}`);
   await buildImage({
     ref,
     dockerfile: opts.dockerfile,
     contextDir: opts.contextDir,
     onProgress: opts.onProgress,
   });
-  return { ref, built: true };
+  if (fingerprint) {
+    writePreparedDockerState({ imageRef: ref, contextSha256: fingerprint.contextSha256 });
+  }
+  return { ref, built: true, reason };
 }
 

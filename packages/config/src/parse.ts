@@ -112,6 +112,19 @@ export function parseUserConfigObject(doc: unknown, where: string): Partial<User
 
   const out: Partial<UserConfig> = {};
   for (const [branchName, branchRaw] of Object.entries(doc)) {
+    // Top-level `schema` is a metadata stamp written by the loader on first
+    // save (future-proofs migrations). It's not a config section and never
+    // appears in `EffectiveConfig`; carry it through so writers preserve it
+    // round-trip, but skip the "must be a mapping" / leaf checks below.
+    if (branchName === 'schema') {
+      if (branchRaw !== undefined && branchRaw !== null) {
+        if (typeof branchRaw !== 'number' || !Number.isInteger(branchRaw)) {
+          throw new UserConfigError(`${where}.schema: must be an integer (got ${String(branchRaw)})`);
+        }
+        out.schema = branchRaw;
+      }
+      continue;
+    }
     const branchSpec = BRANCHES.get(branchName);
     if (!branchSpec) {
       throw new UserConfigError(

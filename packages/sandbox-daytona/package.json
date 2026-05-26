@@ -31,6 +31,7 @@
   "dependencies": {
     "@agentbox/core": "workspace:*",
     "@agentbox/sandbox-cloud": "workspace:*",
+    "@agentbox/sandbox-core": "workspace:*",
     "@clack/prompts": "^0.9.0",
     "@daytonaio/sdk": "^0.179.0",
     "commander": "^12.1.0"

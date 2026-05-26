@@ -1,4 +1,21 @@
 import { defineConfig } from 'tsup';
+import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const pkg = JSON.parse(readFileSync(resolve(here, 'package.json'), 'utf8')) as { version: string };
+
+function gitShortSha(): string {
+  try {
+    return execSync('git rev-parse --short HEAD', { cwd: here, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim();
+  } catch {
+    return 'dev';
+  }
+}
 
 export default defineConfig({
   entry: ['src/index.ts'],
@@ -7,6 +24,12 @@ export default defineConfig({
   clean: true,
   dts: false,
   sourcemap: true,
+  // Substituted at bundle time — see apps/cli/src/version.ts for the
+  // matching `declare` lines that keep the unbundled typecheck honest.
+  define: {
+    __AGENTBOX_VERSION__: JSON.stringify(pkg.version),
+    __AGENTBOX_COMMIT__: JSON.stringify(gitShortSha()),
+  },
   // Published as the standalone `agent-box` npm package. Only the @agentbox/*
   // workspace libs are bundled (pure TS/ESM) so the package carries no
   // `workspace:*` deps. Every third-party dep stays external and is a real

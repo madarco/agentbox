@@ -134,6 +134,15 @@ export {
   imageInfo,
   type ImageInfo,
 } from './image.js';
+export {
+  computeDockerContextFingerprint,
+  preparedMatches,
+  readPreparedDockerState,
+  resolveContextFiles,
+  writePreparedDockerState,
+  type PreparedDockerState,
+  type ResolvedFingerprint,
+} from './prepared-state.js';
 export { volumeExists } from './docker.js';
 export {
   clearRelayNotice,

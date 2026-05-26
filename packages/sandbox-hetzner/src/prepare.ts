@@ -29,10 +29,9 @@
  * step boundaries from `progress()`.
  */
 
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
 import type { Provider } from '@agentbox/core';
+import { computeContextSha256, readCliStamp } from '@agentbox/sandbox-core';
 import {
   stageClaudeStaticForUpload,
   stageCodexStaticForUpload,
@@ -119,7 +118,7 @@ export async function prepareHetzner(
   const progress = (step: string) => log(`prepare-hetzner: ${step}`);
 
   // Skip-fast: if a base snapshot is already recorded *and* its image is
-  // still on Hetzner *and* the install script's sha hasn't changed *and*
+  // still on Hetzner *and* the build-context fingerprint hasn't changed *and*
   // --force was not passed, return the existing record.
   const existingState = readPreparedState();
   // Prefer an explicit override; otherwise auto-detect the published-CLI
@@ -128,19 +127,20 @@ export async function prepareHetzner(
     cliRuntimeRoot: opts.cliRuntimeRoot ?? findStagedCliRuntimeRoot(),
     repoRoot: opts.repoRoot,
   });
-  const installAsset = assets.find((a) => a.name === 'install-box.sh');
-  if (!installAsset) {
-    throw new Error('prepare: missing install-box.sh asset (this should have been caught earlier)');
-  }
-  const installSha = await sha256OfFile(installAsset.localPath);
+  // Fingerprint = hash of every asset we scp into the prepare VPS. Keyed on
+  // logical name (stable across staged-vs-monorepo layouts) so two CLIs with
+  // the same staged tree produce the same hash.
+  const contextSha = await computeContextSha256(
+    assets.map((a) => ({ rel: a.name, abs: a.localPath })),
+  );
 
   if (!opts.force && existingState.base) {
     const remote = await client
       .getImage(existingState.base.imageId)
       .catch(() => null);
-    if (remote && existingState.base.installScriptSha256 === installSha) {
+    if (remote && existingState.base.contextSha256 === contextSha) {
       progress(
-        `base snapshot ${String(existingState.base.imageId)} already exists (sha matches); skipping rebuild (pass --force to override)`,
+        `base snapshot ${String(existingState.base.imageId)} already exists (fingerprint ${contextSha.slice(0, 12)} matches); skipping rebuild (pass --force to override)`,
       );
       return {
         snapshotName: existingState.base.description,
@@ -150,7 +150,9 @@ export async function prepareHetzner(
     if (!remote) {
       progress(`recorded base snapshot ${String(existingState.base.imageId)} is gone on Hetzner; rebuilding`);
     } else {
-      progress(`install script changed; rebuilding base snapshot`);
+      progress(
+        `build context changed (was ${existingState.base.contextSha256?.slice(0, 12) ?? '<none>'}, now ${contextSha.slice(0, 12)}); rebuilding base snapshot`,
+      );
     }
   }
 
@@ -321,11 +323,14 @@ export async function prepareHetzner(
     // about the new snapshot.
     progress('persisting hetzner-prepared.json');
     const state = readPreparedState();
+    const cliStamp = readCliStamp();
     state.base = {
       imageId: ready.id,
       description: ready.description,
       createdAt: new Date().toISOString(),
-      installScriptSha256: installSha,
+      contextSha256: contextSha,
+      cliVersion: cliStamp.cliVersion,
+      cliCommit: cliStamp.cliCommit,
     };
     writePreparedState(state);
     log(`prepare-hetzner: wrote ${preparedStatePath()}`);
@@ -373,11 +378,6 @@ export async function prepareHetzner(
   } finally {
     await key.cleanup();
   }
-}
-
-async function sha256OfFile(path: string): Promise<string> {
-  const buf = await readFile(path);
-  return createHash('sha256').update(buf).digest('hex');
 }
 
 /**

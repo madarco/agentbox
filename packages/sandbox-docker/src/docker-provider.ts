@@ -25,6 +25,12 @@ import { boxResourceStats } from './stats.js';
 import { detectEngine } from './host-export.js';
 import { portlessGetUrl } from './portless.js';
 import { DEFAULT_BOX_IMAGE, buildImage, imageExists } from './image.js';
+import {
+  computeDockerContextFingerprint,
+  preparedMatches,
+  readPreparedDockerState,
+  writePreparedDockerState,
+} from './prepared-state.js';
 import { downloadFromBox, uploadToBox } from './box-cp.js';
 
 /**
@@ -170,16 +176,39 @@ export const dockerProvider: Provider = {
     // Docker uses the rsync-into-named-volume flow at create time, so the
     // base image stays generic — no agent-config layering. `prepare` here is
     // just an explicit handle on the build step `agentbox create` does
-    // lazily on first use. Idempotent: skip if the image is already built
-    // unless force.
+    // lazily on first use. Idempotent: skip when the image exists *and* the
+    // build-context fingerprint matches the recorded one. `--force`
+    // overrides both checks.
     const ref = DEFAULT_BOX_IMAGE;
-    if (!opts.force && (await imageExists(ref))) {
-      opts.onLog?.(`docker image ${ref} already built — skipping (use --force to rebuild)`);
-      return {};
+    const fingerprint = await computeDockerContextFingerprint();
+    const prepared = readPreparedDockerState();
+
+    if (!opts.force) {
+      const exists = await imageExists(ref);
+      if (exists && fingerprint && preparedMatches(prepared, fingerprint.contextSha256)) {
+        opts.onLog?.(
+          `docker image ${ref} up to date (fingerprint ${fingerprint.contextSha256.slice(0, 12)}) — skipping (use --force to rebuild)`,
+        );
+        return {};
+      }
+      if (exists && !fingerprint) {
+        opts.onLog?.(
+          `docker image ${ref} present but build context could not be fingerprinted — skipping (use --force to rebuild)`,
+        );
+        return {};
+      }
     }
+
     opts.onLog?.(`building docker image ${ref}…`);
     await buildImage({ ref, onProgress: opts.onLog });
-    opts.onLog?.(`docker image ${ref} built`);
+    if (fingerprint) {
+      writePreparedDockerState({ imageRef: ref, contextSha256: fingerprint.contextSha256 });
+      opts.onLog?.(
+        `docker image ${ref} built; recorded fingerprint ${fingerprint.contextSha256.slice(0, 12)}`,
+      );
+    } else {
+      opts.onLog?.(`docker image ${ref} built (fingerprint unavailable, prepared state not written)`);
+    }
     return {};
   },
 };

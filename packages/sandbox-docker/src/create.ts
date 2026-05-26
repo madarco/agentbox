@@ -74,6 +74,10 @@ import {
 import type { ResolvedCarryEntry } from '@agentbox/core';
 import { createSnapshot, snapshotPathFor } from './snapshot.js';
 import { resolveCheckpoint } from './checkpoint.js';
+import {
+  computeDockerContextFingerprint,
+  readPreparedDockerState,
+} from './prepared-state.js';
 import { launchCtlDaemon } from './ctl.js';
 import { writeBoxEnvFile } from './box-env.js';
 import { ensureHomeOwnedByVscode } from './home-ownership.js';
@@ -336,6 +340,41 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     log(
       `starting from checkpoint ${opts.checkpointRef} (${head.manifest.type}, ${String(chain.length)} layer(s), image ${head.manifest.image})`,
     );
+
+    // Stale-checkpoint warning: the checkpoint image replaces the base image
+    // as the docker-run base, so any base-image update (a CLI upgrade, an
+    // edit to `custom-system-CLAUDE.md`, etc.) is invisible inside a box
+    // restored from a pre-update checkpoint. Compare the captured
+    // fingerprint with the current prepared state and surface the
+    // mismatch loudly. We never block — the user might intentionally pin
+    // an old image — but they need to know.
+    const ckptFingerprint = head.manifest.baseFingerprint;
+    const ckptCliVersion = head.manifest.cliVersion ?? 'unknown';
+    if (head.manifest.schema === 2) {
+      log(
+        `WARNING: checkpoint '${opts.checkpointRef}' was captured before checkpoint versioning landed.\n` +
+          `  Its base-image layers may be older than your current base image. If the box is missing\n` +
+          `  expected updates, remove the checkpoint with \`agentbox checkpoint rm ${opts.checkpointRef}\` and recreate it.`,
+      );
+    } else {
+      const prepared = readPreparedDockerState();
+      const currentFingerprint =
+        prepared?.base?.contextSha256 ??
+        (await computeDockerContextFingerprint())?.contextSha256;
+      if (
+        ckptFingerprint &&
+        currentFingerprint &&
+        ckptFingerprint !== currentFingerprint
+      ) {
+        log(
+          `WARNING: checkpoint '${opts.checkpointRef}' was captured against an older base image.\n` +
+            `  captured: cli ${ckptCliVersion}, fingerprint ${ckptFingerprint.slice(0, 12)}\n` +
+            `  current : cli ${prepared?.base?.cliVersion ?? 'unknown'}, fingerprint ${currentFingerprint.slice(0, 12)}\n` +
+            `  The restored box will keep the old base layers and will NOT include base-image updates.\n` +
+            `  To pick up updates: \`agentbox checkpoint rm ${opts.checkpointRef}\` and recreate from a fresh box.`,
+        );
+      }
+    }
   }
 
   const imageRef = checkpointImage ?? opts.image ?? DEFAULT_BOX_IMAGE;

@@ -16,11 +16,24 @@
  * accept `schema: 1` for now.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { preparedStatePathFor, readPreparedStateRaw, writePreparedStateRaw } from '@agentbox/sandbox-core';
 
-const SCHEMA = 1 as const;
+/**
+ * Schema history:
+ *   1 — `base.imageId`, `base.description`, `base.createdAt`,
+ *       `base.installScriptSha256?`
+ *   2 — `base.installScriptSha256` → `base.contextSha256` (now covers every
+ *       asset we scp'd in, not just the install script); `base.cliVersion`
+ *       and `base.cliCommit?` added so we can warn when an old snapshot
+ *       predates the running CLI.
+ *
+ * Read-time migration is lossy in one direction: a schema-1 file is lifted
+ * to schema 2 by *renaming* `installScriptSha256` to `contextSha256`. The
+ * hash doesn't change but the meaning narrows (install script only → full
+ * asset list), so the next `agentbox prepare --provider hetzner` run will
+ * recompute and overwrite.
+ */
+const SCHEMA = 2 as const;
 
 export interface PreparedBaseSnapshot {
   /** Hetzner image id (numeric — opaque, but stable across `getImage` calls). */
@@ -29,8 +42,15 @@ export interface PreparedBaseSnapshot {
   description: string;
   /** ISO timestamp of bake-completion. */
   createdAt: string;
-  /** Hash of the install script we baked from (so re-bake on script change). */
-  installScriptSha256?: string;
+  /**
+   * Deterministic SHA-256 of the build context (every file scp'd into the
+   * prepare VPS). Rebuild when it changes.
+   */
+  contextSha256?: string;
+  /** CLI version that produced this snapshot (informational). */
+  cliVersion?: string;
+  /** Git short SHA of the CLI build (informational). */
+  cliCommit?: string;
 }
 
 export interface PreparedProjectSnapshot {
@@ -49,38 +69,66 @@ export interface PreparedHetznerState {
   projects: Record<string, PreparedProjectSnapshot>;
 }
 
+interface LegacyV1Base {
+  imageId: number;
+  description: string;
+  createdAt: string;
+  installScriptSha256?: string;
+}
+
+interface LegacyV1State {
+  schema: 1;
+  base?: LegacyV1Base;
+  projects?: Record<string, PreparedProjectSnapshot>;
+}
+
 export function preparedStatePath(): string {
-  return resolve(homedir(), '.agentbox', 'hetzner-prepared.json');
+  return preparedStatePathFor('hetzner');
 }
 
 export function readPreparedState(): PreparedHetznerState {
-  const path = preparedStatePath();
-  if (!existsSync(path)) return { schema: SCHEMA, projects: {} };
-  try {
-    const raw = readFileSync(path, 'utf8');
-    const parsed = JSON.parse(raw) as Partial<PreparedHetznerState>;
-    if (parsed.schema !== SCHEMA) {
-      // Unknown schema: don't crash, just refuse to read — the file will be
-      // overwritten on the next successful prepare.
-      return { schema: SCHEMA, projects: {} };
-    }
-    return {
-      schema: SCHEMA,
-      base: parsed.base,
-      projects: parsed.projects ?? {},
-    };
-  } catch {
+  const raw = readPreparedStateRaw('hetzner');
+  if (raw === null || typeof raw !== 'object') return { schema: SCHEMA, projects: {} };
+  const parsed = raw as Partial<PreparedHetznerState> | LegacyV1State;
+  if ((parsed as { schema?: unknown }).schema === 1) {
+    const v1 = parsed as LegacyV1State;
+    return migrateFromV1(v1);
+  }
+  if (parsed.schema !== SCHEMA) {
+    // Unknown schema: don't crash, just refuse to read — the file will be
+    // overwritten on the next successful prepare.
     return { schema: SCHEMA, projects: {} };
   }
+  return {
+    schema: SCHEMA,
+    base: parsed.base,
+    projects: parsed.projects ?? {},
+  };
+}
+
+function migrateFromV1(v1: LegacyV1State): PreparedHetznerState {
+  // The v1 `installScriptSha256` covered only `install-box.sh`, not the full
+  // asset list a v2 `contextSha256` represents. Lifting it forward as a
+  // placeholder fingerprint means the next prepare run will mismatch and
+  // rebuild — exactly what we want, since the broader hash semantics also
+  // changed.
+  const base: PreparedBaseSnapshot | undefined = v1.base
+    ? {
+        imageId: v1.base.imageId,
+        description: v1.base.description,
+        createdAt: v1.base.createdAt,
+        contextSha256: v1.base.installScriptSha256,
+      }
+    : undefined;
+  return {
+    schema: SCHEMA,
+    base,
+    projects: v1.projects ?? {},
+  };
 }
 
 export function writePreparedState(state: PreparedHetznerState): void {
-  const path = preparedStatePath();
-  mkdirSync(dirname(path), { recursive: true });
-  const body = JSON.stringify(state, null, 2) + '\n';
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, body, { mode: 0o600 });
-  renameSync(tmp, path);
+  writePreparedStateRaw('hetzner', state);
 }
 
 /**

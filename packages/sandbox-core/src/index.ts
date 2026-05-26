@@ -16,3 +16,18 @@ export {
   pickFreshBranch,
   type DetectedGitRepo,
 } from './git-detect.js';
+export {
+  computeContextSha256,
+  DOCKER_CONTEXT_FILE_MAP,
+  preparedStatePathFor,
+  readCliStamp,
+  readPreparedStateRaw,
+  resolveContextFilesFrom,
+  sha256OfFile,
+  shortFingerprint,
+  writePreparedStateRaw,
+  type CliStamp,
+  type ContextFile,
+  type PreparedBaseSnapshot,
+  type PreparedProviderKind,
+} from './prepared-state.js';

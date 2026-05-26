@@ -8,8 +8,13 @@ import {
   sanitizeMnemonic,
   setConfigValue,
 } from '@agentbox/config';
+import { readCliStamp } from '@agentbox/sandbox-core';
 import { execInBox, removeImage } from './docker.js';
 import { DEFAULT_BOX_IMAGE } from './image.js';
+import {
+  computeDockerContextFingerprint,
+  readPreparedDockerState,
+} from './prepared-state.js';
 import type { BoxRecord, GitWorktreeRecord } from './state.js';
 
 export const CHECKPOINTS_ROOT = join(homedir(), '.agentbox', 'checkpoints');
@@ -37,7 +42,16 @@ export function checkpointImageTag(projectRoot: string, name: string): string {
 }
 
 export interface CheckpointManifest {
-  schema: 2;
+  /**
+   * Schema history:
+   *   2 — original fields (image, parents, base, worktrees, source*, createdAt)
+   *   3 — adds `baseProvider`, `baseFingerprint`, `cliVersion`. A checkpoint
+   *       captured before the rebuild that produced the *current* base
+   *       image will have a stale `baseFingerprint`; the restore path warns
+   *       loudly so the user knows the box won't see the new base layers
+   *       until the checkpoint is removed and recaptured.
+   */
+  schema: 2 | 3;
   name: string;
   type: CheckpointType;
   /** Local Docker image tag this checkpoint resolves to (`agentbox-ckpt-<hash>:<name>`). */
@@ -64,6 +78,22 @@ export interface CheckpointManifest {
    * `/workspace`, which the bind logic doesn't touch).
    */
   worktrees?: GitWorktreeRecord[];
+  /**
+   * Provider whose base-image fingerprint this checkpoint was captured
+   * against. Schema-3+ only. Always `'docker'` today (docker is the only
+   * provider with local checkpoints); cloud-provider checkpoints will set
+   * it accordingly when they land.
+   */
+  baseProvider?: 'docker' | 'daytona' | 'hetzner';
+  /**
+   * Build-context fingerprint of the base image at the time the checkpoint
+   * was captured. Schema-3+ only. Missing → schema 2 → "unknown
+   * fingerprint" (caller surfaces a softer "this checkpoint predates
+   * versioning" warning).
+   */
+  baseFingerprint?: string;
+  /** CLI version that captured the checkpoint. Schema-3+ only. */
+  cliVersion?: string;
   createdAt: string;
 }
 
@@ -86,7 +116,10 @@ async function readManifest(dir: string): Promise<CheckpointManifest | null> {
   try {
     const raw = await readFile(join(dir, 'manifest.json'), 'utf8');
     const m = JSON.parse(raw) as CheckpointManifest;
-    if (m.schema !== 2) return null;
+    // Accept schema 2 (legacy — no baseFingerprint, restore warns softly)
+    // and schema 3 (current — full versioning). Anything else is treated
+    // as unreadable so an opaque file can't break list/resolve.
+    if (m.schema !== 2 && m.schema !== 3) return null;
     return m;
   } catch {
     return null;
@@ -398,8 +431,21 @@ export async function createCheckpoint(opts: CreateCheckpointOptions): Promise<C
   const base: 'worktree' | 'workspace' = (box.gitWorktrees ?? []).some((w) => w.kind === 'root')
     ? 'worktree'
     : 'workspace';
+  // Capture the base-image fingerprint so a future `create --checkpoint`
+  // can detect a stale checkpoint pinned to a now-rebuilt base. Prefer the
+  // recorded prepared state (cheap, no I/O on the build context), but fall
+  // back to recomputing if the prepared file is missing. Both paths may
+  // yield `null` (partial dev rebuild) — the manifest then omits the
+  // field and restore degrades to a softer warning.
+  const prepared = readPreparedDockerState();
+  let baseFingerprint: string | undefined = prepared?.base?.contextSha256;
+  if (!baseFingerprint) {
+    const fp = await computeDockerContextFingerprint();
+    baseFingerprint = fp?.contextSha256;
+  }
+  const stamp = readCliStamp();
   const manifest: CheckpointManifest = {
-    schema: 2,
+    schema: 3,
     name,
     type,
     image: tag,
@@ -409,6 +455,9 @@ export async function createCheckpoint(opts: CreateCheckpointOptions): Promise<C
     sourceBoxId: box.id,
     sourceBoxName: box.name,
     worktrees: box.gitWorktrees,
+    baseProvider: 'docker',
+    baseFingerprint,
+    cliVersion: stamp.cliVersion,
     createdAt: new Date().toISOString(),
   };
   await writeFile(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');

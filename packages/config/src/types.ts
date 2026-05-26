@@ -18,6 +18,14 @@ export type ProviderKind = 'docker' | 'daytona' | 'hetzner';
 export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
 
 export interface UserConfig {
+  /**
+   * Config-file shape version. Stamped to `1` on first write so future
+   * migrations (e.g. a renamed key, a leaf-shape change) have a stable
+   * read-time discriminator. No behavioural effect yet — placeholder for
+   * later. Loader strips it before merge so it never leaks into
+   * `EffectiveConfig`.
+   */
+  schema?: number;
   box?: {
     provider?: ProviderKind;
     hostSnapshot?: boolean;

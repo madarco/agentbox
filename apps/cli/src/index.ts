@@ -4,6 +4,15 @@
 // explicitly set DOCKER_CLI_HINTS in their shell still wins.
 process.env.DOCKER_CLI_HINTS ??= 'false';
 
+// Build-time CLI version stamps. The provider packages (sandbox-docker,
+// sandbox-hetzner, sandbox-daytona) read these lazily — at prepare/create/
+// checkpoint time, never at import — so the ESM-hoists-imports-first order
+// is fine. Set via env so the provider packages don't need a compile-time
+// dep on apps/cli's bundled-only version module.
+import { AGENTBOX_COMMIT, AGENTBOX_VERSION } from './version.js';
+process.env.AGENTBOX_CLI_VERSION = AGENTBOX_VERSION;
+process.env.AGENTBOX_CLI_COMMIT = AGENTBOX_COMMIT;
+
 import { Command } from 'commander';
 import { applyEngineOverrideAtStartup } from './engine-override.js';
 import { buildGroupedHelp } from './help.js';
@@ -44,7 +53,10 @@ import { rewriteProviderPrefix } from './provider/argv-prefix.js';
 
 const program = new Command();
 
-program.name('agentbox').description('Launch coding agents in isolated sandboxes').version('0.0.0');
+program
+  .name('agentbox')
+  .description('Launch coding agents in isolated sandboxes')
+  .version(AGENTBOX_VERSION);
 
 // Required so `agentbox download env --dry-run` binds --dry-run to the `env`
 // subcommand rather than the parent `download` (both define it). Positional
