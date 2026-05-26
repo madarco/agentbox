@@ -794,7 +794,7 @@ async function maybeRunGitFastPath(input: FastPathInput): Promise<FastPathOutcom
     const gitCmd = buildBoxGitCommand(action.method, containerPath, remote, branch, extraArgs, 'ssh', null);
     if (!gitCmd) return { taken: false, result: emptyResult() };
     const res = await execWithAgent(handle, gitCmd, { attemptTimeoutMs: 5 * 60_000 });
-    if (isFastPathAuthFailure(res)) {
+    if (isFastPathAuthFailure(res, 'ssh')) {
       log(`git fast path (ssh): auth failure (exit ${String(res.exitCode)}); falling back to bundle`);
       return { taken: false, result: emptyResult() };
     }
@@ -821,7 +821,7 @@ async function maybeRunGitFastPath(input: FastPathInput): Promise<FastPathOutcom
         attemptTimeoutMs: 5 * 60_000,
         reverseForward: { inboxPort, hostPort: proxy.port },
       });
-      if (isFastPathAuthFailure(res)) {
+      if (isFastPathAuthFailure(res, 'https')) {
         log(`git fast path (https): auth failure (exit ${String(res.exitCode)}); falling back to bundle`);
         return { taken: false, result: emptyResult() };
       }
@@ -904,13 +904,30 @@ function buildBoxGitCommand(
   return null;
 }
 
-function isFastPathAuthFailure(res: CloudExecResult): boolean {
+function isFastPathAuthFailure(res: CloudExecResult, scheme: 'ssh' | 'https'): boolean {
   if (res.exitCode === 0) return false;
   const stderr = (res.stderr ?? '').toLowerCase();
+  // Patterns that indicate the *credential transport* failed (not the user's
+  // intent), so falling back to the bundle path is the right recovery.
+  // Each scheme has its own surface — ssh emits openssh-specific lines; git
+  // over HTTPS surfaces credential-helper and curl/git errors.
+  if (scheme === 'ssh') {
+    return (
+      stderr.includes('permission denied (publickey)') ||
+      stderr.includes('agent refused operation') ||
+      stderr.includes('could not open a connection to your authentication agent')
+    );
+  }
+  // HTTPS: the credential proxy / helper failed to supply usable creds, or
+  // git couldn't get any creds at all (no helper, helper crashed, etc.).
+  // Note: a "remote: Invalid username or token" or "401" is a *real* auth
+  // rejection by the upstream — those should NOT fall back, because the
+  // bundle path uses the same host creds and would fail identically. We
+  // only fall back for "couldn't even ask for creds" cases.
   return (
-    stderr.includes('permission denied (publickey)') ||
-    stderr.includes('agent refused operation') ||
-    stderr.includes('could not open a connection to your authentication agent')
+    stderr.includes('could not read username') ||
+    stderr.includes('terminal prompts disabled') ||
+    stderr.includes('credential helper') && stderr.includes('exited with')
   );
 }
 

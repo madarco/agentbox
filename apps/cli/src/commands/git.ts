@@ -21,8 +21,14 @@ import { handleLifecycleError } from './_errors.js';
 
 const VPS_USER = 'vscode';
 
-interface BoxFetchOptions {
-  remote?: string;
+/**
+ * Single-quote shell-quote a path so it survives `GIT_SSH_COMMAND`'s
+ * shell parsing. Paths normally come from `~/.agentbox/boxes/…` so the only
+ * realistic special characters are spaces (when $HOME contains a space).
+ * `'` is escaped via the standard `'\''` trick.
+ */
+function shQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 export const gitCommand = new Command('git')
@@ -62,11 +68,16 @@ export const gitCommand = new Command('git')
           const { resolveHetznerBoxSshTarget } = await import('@agentbox/sandbox-hetzner');
           const target = await resolveHetznerBoxSshTarget(sandboxId);
 
+          // GIT_SSH_COMMAND is parsed by a shell, so paths with spaces (e.g.
+          // a `$HOME` like `/Users/Foo Bar/…`) need quoting. `UserKnownHostsFile`
+          // gets quoted inside the `-o` value because shellQuote on the whole
+          // `key=value` would put the quotes around `key=value` and ssh would
+          // see the literal quotes.
           const gitSshCommand = [
             'ssh',
-            '-i', target.identity,
+            '-i', shQuote(target.identity),
             '-o', 'StrictHostKeyChecking=accept-new',
-            '-o', `UserKnownHostsFile=${target.knownHosts}`,
+            '-o', `UserKnownHostsFile=${shQuote(target.knownHosts)}`,
             '-o', 'GlobalKnownHostsFile=/dev/null',
             '-o', 'BatchMode=yes',
             '-o', 'LogLevel=ERROR',
