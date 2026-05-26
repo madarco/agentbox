@@ -73,6 +73,7 @@ import {
 } from './state.js';
 import type { ResolvedCarryEntry } from '@agentbox/core';
 import { createSnapshot, snapshotPathFor } from './snapshot.js';
+import { shortFingerprint } from '@agentbox/sandbox-core';
 import { resolveCheckpoint } from './checkpoint.js';
 import {
   computeDockerContextFingerprint,
@@ -368,8 +369,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       ) {
         log(
           `WARNING: checkpoint '${opts.checkpointRef}' was captured against an older base image.\n` +
-            `  captured: cli ${ckptCliVersion}, fingerprint ${ckptFingerprint.slice(0, 12)}\n` +
-            `  current : cli ${prepared?.base?.cliVersion ?? 'unknown'}, fingerprint ${currentFingerprint.slice(0, 12)}\n` +
+            `  captured: cli ${ckptCliVersion}, fingerprint ${shortFingerprint(ckptFingerprint)}\n` +
+            `  current : cli ${prepared?.base?.cliVersion ?? 'unknown'}, fingerprint ${shortFingerprint(currentFingerprint)}\n` +
             `  The restored box will keep the old base layers and will NOT include base-image updates.\n` +
             `  To pick up updates: \`agentbox checkpoint rm ${opts.checkpointRef}\` and recreate from a fresh box.`,
         );

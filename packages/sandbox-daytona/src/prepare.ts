@@ -22,6 +22,7 @@
 
 import { Image } from '@daytonaio/sdk';
 import type { PrepareOptions, PrepareResult } from '@agentbox/core';
+import { shortFingerprint } from '@agentbox/sandbox-core';
 import {
   stageClaudeStaticForUpload,
   stageCodexStaticForUpload,
@@ -47,7 +48,7 @@ import {
  * (partial dev rebuild).
  */
 function defaultSnapshotName(fingerprint: string | null): string {
-  if (fingerprint) return `agentbox-base-${fingerprint.slice(0, 12)}`;
+  if (fingerprint) return `agentbox-base-${shortFingerprint(fingerprint)}`;
   return `agentbox-base-${Math.floor(Date.now() / 1000).toString()}`;
 }
 
@@ -124,7 +125,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
       if (existing?.name) {
         log(
           `daytona snapshot '${existing.name}' up to date ` +
-            `(fingerprint ${fingerprint.contextSha256.slice(0, 12)}) — skipping rebuild ` +
+            `(fingerprint ${shortFingerprint(fingerprint.contextSha256)}) — skipping rebuild ` +
             `(pass --force to override)`,
         );
         return { snapshotName: existing.name };
@@ -139,8 +140,8 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     }
   } else if (!opts.force && fingerprint && prepared?.base?.contextSha256) {
     log(
-      `daytona build context changed (was ${prepared.base.contextSha256.slice(0, 12)}, ` +
-        `now ${fingerprint.contextSha256.slice(0, 12)}); rebuilding snapshot`,
+      `daytona build context changed (was ${shortFingerprint(prepared.base.contextSha256)}, ` +
+        `now ${shortFingerprint(fingerprint.contextSha256)}); rebuilding snapshot`,
     );
   }
 
@@ -221,7 +222,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         contextSha256: fingerprint.contextSha256,
       });
       log(
-        `recorded daytona-prepared.json (fingerprint ${fingerprint.contextSha256.slice(0, 12)})`,
+        `recorded daytona-prepared.json (fingerprint ${shortFingerprint(fingerprint.contextSha256)})`,
       );
     }
     return { snapshotName: snapshot.name ?? snapshotName };

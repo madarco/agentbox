@@ -31,7 +31,7 @@
 
 import { join } from 'node:path';
 import type { Provider } from '@agentbox/core';
-import { computeContextSha256, readCliStamp } from '@agentbox/sandbox-core';
+import { computeContextSha256, readCliStamp, shortFingerprint } from '@agentbox/sandbox-core';
 import {
   stageClaudeStaticForUpload,
   stageCodexStaticForUpload,
@@ -140,7 +140,7 @@ export async function prepareHetzner(
       .catch(() => null);
     if (remote && existingState.base.contextSha256 === contextSha) {
       progress(
-        `base snapshot ${String(existingState.base.imageId)} already exists (fingerprint ${contextSha.slice(0, 12)} matches); skipping rebuild (pass --force to override)`,
+        `base snapshot ${String(existingState.base.imageId)} already exists (fingerprint ${shortFingerprint(contextSha)} matches); skipping rebuild (pass --force to override)`,
       );
       return {
         snapshotName: existingState.base.description,
@@ -150,8 +150,11 @@ export async function prepareHetzner(
     if (!remote) {
       progress(`recorded base snapshot ${String(existingState.base.imageId)} is gone on Hetzner; rebuilding`);
     } else {
+      const wasFingerprint = existingState.base.contextSha256
+        ? shortFingerprint(existingState.base.contextSha256)
+        : '<none>';
       progress(
-        `build context changed (was ${existingState.base.contextSha256?.slice(0, 12) ?? '<none>'}, now ${contextSha.slice(0, 12)}); rebuilding base snapshot`,
+        `build context changed (was ${wasFingerprint}, now ${shortFingerprint(contextSha)}); rebuilding base snapshot`,
       );
     }
   }

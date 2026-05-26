@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { shortFingerprint } from '@agentbox/sandbox-core';
 
 export const DEFAULT_BOX_IMAGE = 'agentbox/box:dev';
 
@@ -161,9 +162,10 @@ export async function ensureImage(
   } else if (!prepared) {
     reason = 'no docker-prepared.json on disk';
   } else if (!preparedMatches(prepared, fingerprint.contextSha256)) {
-    reason =
-      `build context changed (was ${prepared.base?.contextSha256?.slice(0, 12) ?? '<none>'}, ` +
-      `now ${fingerprint.contextSha256.slice(0, 12)})`;
+    const was = prepared.base?.contextSha256
+      ? shortFingerprint(prepared.base.contextSha256)
+      : '<none>';
+    reason = `build context changed (was ${was}, now ${shortFingerprint(fingerprint.contextSha256)})`;
   }
 
   if (!reason) {

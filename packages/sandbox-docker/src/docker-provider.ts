@@ -24,6 +24,7 @@ import { execInBox, inspectContainerStatus } from './docker.js';
 import { boxResourceStats } from './stats.js';
 import { detectEngine } from './host-export.js';
 import { portlessGetUrl } from './portless.js';
+import { shortFingerprint } from '@agentbox/sandbox-core';
 import { DEFAULT_BOX_IMAGE, buildImage, imageExists } from './image.js';
 import {
   computeDockerContextFingerprint,
@@ -187,7 +188,7 @@ export const dockerProvider: Provider = {
       const exists = await imageExists(ref);
       if (exists && fingerprint && preparedMatches(prepared, fingerprint.contextSha256)) {
         opts.onLog?.(
-          `docker image ${ref} up to date (fingerprint ${fingerprint.contextSha256.slice(0, 12)}) — skipping (use --force to rebuild)`,
+          `docker image ${ref} up to date (fingerprint ${shortFingerprint(fingerprint.contextSha256)}) — skipping (use --force to rebuild)`,
         );
         return {};
       }
@@ -204,7 +205,7 @@ export const dockerProvider: Provider = {
     if (fingerprint) {
       writePreparedDockerState({ imageRef: ref, contextSha256: fingerprint.contextSha256 });
       opts.onLog?.(
-        `docker image ${ref} built; recorded fingerprint ${fingerprint.contextSha256.slice(0, 12)}`,
+        `docker image ${ref} built; recorded fingerprint ${shortFingerprint(fingerprint.contextSha256)}`,
       );
     } else {
       opts.onLog?.(`docker image ${ref} built (fingerprint unavailable, prepared state not written)`);
