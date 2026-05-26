@@ -273,6 +273,10 @@ export const prepareCommand = new Command('prepare')
       // Show the relevant status section after a successful prepare.
       process.stdout.write('\n');
       await showStatus({ onlyProvider: providerName });
+      log.info(
+        'tip: install the agentbox host skill so Claude Code on this machine can drive AgentBox for you:\n' +
+          '  npx skills add https://github.com/madarco/agentbox --skill agentbox',
+      );
     } catch (err) {
       sp.stop(`prepare failed: ${describeError(err)}`);
       process.exit(1);
