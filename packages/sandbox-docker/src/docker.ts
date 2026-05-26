@@ -82,6 +82,17 @@ export async function runBox(spec: RunBoxSpec): Promise<string> {
     // on the macOS engines). Boxes use it to reach the host relay process.
     '--add-host=host.docker.internal:host-gateway',
   ];
+  // Nested AgentBox-in-AgentBox dev only: the outer sandbox lacks
+  // CAP_SYS_PTRACE, so the inner dockerd can't bind-mount /proc/<pid>/ns/net
+  // for a non-root container init (image default USER is vscode → uid 1000).
+  // Forcing init to uid 0 makes init's /proc readable by daemon (same uid) so
+  // netns setup succeeds. Gated on AGENTBOX=1 so normal-host runs are
+  // unaffected. shell/exec flows pass --user explicitly (CONTAINER_USER),
+  // so this only changes which uid the supervisor + service tree run as
+  // inside a nested box.
+  if (process.env.AGENTBOX === '1') {
+    args.push('--user', '0');
+  }
   const lim = spec.limits;
   if (lim) {
     if (lim.memoryBytes && lim.memoryBytes > 0) {
@@ -160,10 +171,7 @@ export async function removeVolume(name: string): Promise<void> {
  * passed by default so a stale tagged image with no live containers goes away
  * even if other tags point at the same layers.
  */
-export async function removeImage(
-  ref: string,
-  opts: { force?: boolean } = {},
-): Promise<boolean> {
+export async function removeImage(ref: string, opts: { force?: boolean } = {}): Promise<boolean> {
   const args = ['image', 'rm'];
   if (opts.force !== false) args.push('-f');
   args.push(ref);
