@@ -36,6 +36,12 @@ export interface ResolvedCarryEntry {
   kind: 'file' | 'dir' | 'missing';
   bytes?: number;
   mode?: number;
+  /**
+   * Numeric uid that should own the carried file inside the box. When unset,
+   * the per-provider copy step defaults to 1000 (the in-box `vscode` user).
+   * Set 0 (root) to skip the chown and leave the extract owner intact.
+   */
+  user?: number;
   optional: boolean;
   symlinkInfo?: 'safe' | 'outside-home';
 }

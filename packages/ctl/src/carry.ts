@@ -13,6 +13,12 @@ export interface CarryItem {
   src: string;
   dest: string;
   mode?: number;
+  /**
+   * Numeric uid that should own the carried file inside the box. When unset,
+   * the copy step defaults to 1000 (the `vscode` user every box runs as) so
+   * the carried files are always agent-readable. Set 0 to keep root-owned.
+   */
+  user?: number;
   optional: boolean;
 }
 
@@ -23,7 +29,32 @@ export class CarryConfigError extends Error {
   }
 }
 
-const ITEM_KEYS = new Set(['src', 'dest', 'mode', 'optional']);
+const ITEM_KEYS = new Set(['src', 'dest', 'mode', 'user', 'optional']);
+
+function parseUser(raw: unknown, where: string): number | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  let n: number;
+  if (typeof raw === 'number') {
+    if (!Number.isInteger(raw) || raw < 0) {
+      throw new CarryConfigError(`${where}.user must be a non-negative integer uid (got ${String(raw)})`);
+    }
+    n = raw;
+  } else if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!/^[0-9]+$/.test(trimmed)) {
+      throw new CarryConfigError(
+        `${where}.user "${raw}" must be a numeric uid (e.g. 1000). Usernames not supported — look up the uid first.`,
+      );
+    }
+    n = parseInt(trimmed, 10);
+  } else {
+    throw new CarryConfigError(`${where}.user must be a non-negative integer uid`);
+  }
+  if (n > 65535) {
+    throw new CarryConfigError(`${where}.user must be between 0 and 65535 (got ${String(n)})`);
+  }
+  return n;
+}
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -139,6 +170,7 @@ function parseMapping(raw: Record<string, unknown>, where: string): CarryItem {
   assertDestShape(dest, where);
 
   const mode = parseMode(raw.mode, where);
+  const user = parseUser(raw.user, where);
 
   let optional = false;
   if (raw.optional !== undefined && raw.optional !== null) {
@@ -148,7 +180,10 @@ function parseMapping(raw: Record<string, unknown>, where: string): CarryItem {
     optional = raw.optional;
   }
 
-  return mode === undefined ? { src, dest, optional } : { src, dest, mode, optional };
+  const out: CarryItem = { src, dest, optional };
+  if (mode !== undefined) out.mode = mode;
+  if (user !== undefined) out.user = user;
+  return out;
 }
 
 export function parseCarryRaw(raw: unknown): CarryItem[] {

@@ -837,17 +837,18 @@ async function copyOneEntry(container: string, entry: ResolvedCarryEntry): Promi
     }
   }
 
-  if (inBoxHome(boxDest)) {
-    // Hand the file back to vscode so the in-box agent owns it. The parent
-    // dirs we just `mkdir -p` are also chowned in case we created them.
-    const chown = await execa(
-      'docker',
-      ['exec', '--user', '0:0', container, 'chown', '-R', '1000:1000', boxDest],
-      { reject: false },
-    );
-    if (chown.exitCode !== 0) {
-      throw new Error(`chown failed: ${String(chown.stderr).slice(0, 300)}`);
-    }
+  // Always chown explicitly so the result is predictable across providers.
+  // Default uid 1000 (in-box vscode); `user: 0` lands explicit root:root.
+  // (For docker cp this matters — without an explicit chown the host's
+  // macOS uid/gid leaks through into the container.)
+  const uid = entry.user ?? 1000;
+  const chown = await execa(
+    'docker',
+    ['exec', '--user', '0:0', container, 'chown', '-R', `${String(uid)}:${String(uid)}`, boxDest],
+    { reject: false },
+  );
+  if (chown.exitCode !== 0) {
+    throw new Error(`chown failed: ${String(chown.stderr).slice(0, 300)}`);
   }
 }
 
@@ -856,8 +857,4 @@ function dirnameUnix(p: string): string {
   const i = p.lastIndexOf('/');
   if (i <= 0) return '/';
   return p.slice(0, i);
-}
-
-function inBoxHome(absDest: string): boolean {
-  return absDest === BOX_HOME || absDest.startsWith(BOX_HOME + '/');
 }

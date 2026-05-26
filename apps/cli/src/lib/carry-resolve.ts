@@ -106,6 +106,7 @@ async function resolveOne(item: CarryItem, ctx: OneCtx): Promise<ResolvedCarryEn
           absDest,
           kind: 'missing',
           ...(item.mode !== undefined ? { mode: item.mode } : {}),
+          ...(item.user !== undefined ? { user: item.user } : {}),
           optional: true,
         };
       }
@@ -150,6 +151,7 @@ async function resolveOne(item: CarryItem, ctx: OneCtx): Promise<ResolvedCarryEn
       kind: 'dir',
       bytes,
       ...(item.mode !== undefined ? { mode: item.mode } : {}),
+      ...(item.user !== undefined ? { user: item.user } : {}),
       optional,
       ...(symlinkInfo ? { symlinkInfo } : {}),
     };
@@ -169,6 +171,7 @@ async function resolveOne(item: CarryItem, ctx: OneCtx): Promise<ResolvedCarryEn
       kind: 'file',
       bytes: st.size,
       ...(item.mode !== undefined ? { mode: item.mode } : {}),
+      ...(item.user !== undefined ? { user: item.user } : {}),
       optional,
       ...(symlinkInfo ? { symlinkInfo } : {}),
     };

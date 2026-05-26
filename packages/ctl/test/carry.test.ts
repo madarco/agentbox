@@ -107,6 +107,43 @@ describe('parseCarrySection', () => {
     expect(items[0]).toEqual({ src: '/a', dest: '/b', optional: false });
     expect('mode' in items[0]!).toBe(false);
   });
+
+  it('parses user as number, numeric string, both accepted', () => {
+    const items = parseCarrySection(`carry:
+  - src: /a
+    dest: /b
+    user: 1000
+  - src: /c
+    dest: /d
+    user: "1000"
+  - src: /e
+    dest: /f
+    user: 0
+`);
+    expect(items[0]?.user).toBe(1000);
+    expect(items[1]?.user).toBe(1000);
+    expect(items[2]?.user).toBe(0);
+  });
+
+  it('rejects non-numeric user (usernames not supported)', () => {
+    expect(() =>
+      parseCarrySection(`carry:\n  - src: /a\n    dest: /b\n    user: vscode\n`),
+    ).toThrow(/numeric uid/);
+  });
+
+  it('rejects negative or > 65535 user', () => {
+    expect(() =>
+      parseCarrySection(`carry:\n  - src: /a\n    dest: /b\n    user: -1\n`),
+    ).toThrow(/non-negative/);
+    expect(() =>
+      parseCarrySection(`carry:\n  - src: /a\n    dest: /b\n    user: 99999\n`),
+    ).toThrow(/between 0 and 65535/);
+  });
+
+  it('user field is omitted when not declared', () => {
+    const items = parseCarrySection(`carry:\n  - src: /a\n    dest: /b\n`);
+    expect('user' in items[0]!).toBe(false);
+  });
 });
 
 describe('parseCarryRaw', () => {

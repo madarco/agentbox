@@ -94,6 +94,38 @@ describe('uploadCarryPaths', () => {
     expect(cmd).toContain('rm -f /tmp/agentbox-carry-0.tar');
   });
 
+  it('honors explicit user: override (default 1000; explicit overrides)', async () => {
+    const src = join(workspace, 'm.txt');
+    await writeFile(src, 'x');
+
+    const backend = makeMockCloudBackend();
+    const handle = await backend.provision({ name: 'b', image: 'i' });
+
+    await uploadCarryPaths({
+      backend,
+      handle,
+      entries: [
+        entry({ absSrc: src, absDest: '/etc/agentbox/x', kind: 'file', bytes: 1, user: 33 }),
+      ],
+    });
+    const cmd1 = String(backend.calls.filter((c) => c.method === 'exec')[0]!.args[1]);
+    expect(cmd1).toContain('chown -R 33:33');
+
+    // user: 0 → chown to root explicitly (NOT a skip — the result must be
+    // predictable across providers, especially docker where `docker cp`
+    // would otherwise leak the host's uid:gid into the box).
+    backend.calls.length = 0;
+    await uploadCarryPaths({
+      backend,
+      handle,
+      entries: [
+        entry({ absSrc: src, absDest: '/etc/x', kind: 'file', bytes: 1, user: 0 }),
+      ],
+    });
+    const cmd2 = String(backend.calls.filter((c) => c.method === 'exec')[0]!.args[1]);
+    expect(cmd2).toContain('chown -R 0:0');
+  });
+
   it('per-entry isolation: a tar-pack failure on entry 0 still uploads entry 1', async () => {
     const okSrc = join(workspace, 'ok.txt');
     await writeFile(okSrc, 'ok');

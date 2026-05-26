@@ -82,6 +82,9 @@ function printSummary(entries: ResolvedCarryEntry[]): void {
     else if (e.optional) flags.push('optional');
     if (e.kind === 'dir') flags.push('dir');
     if (e.mode !== undefined) flags.push(`mode ${e.mode.toString(8).padStart(4, '0')}`);
+    // Default user is 1000 (vscode); only show in flags when explicitly set
+    // to something else, to keep the table calm in the common case.
+    if (e.user !== undefined && e.user !== 1000) flags.push(`user ${String(e.user)}`);
     if (e.symlinkInfo === 'outside-home') flags.push('symlink → outside $HOME!');
     const size = e.kind === 'missing' ? '—' : fmtBytes(e.bytes ?? 0);
     rows.push(

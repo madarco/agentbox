@@ -118,7 +118,9 @@ async function uploadOneEntry(args: UploadOneArgs): Promise<void> {
   //    paths are safe because carry: dest values are user-provided absolute
   //    paths the resolver already vetted.
   const mode = entry.mode !== undefined ? entry.mode.toString(8).padStart(4, '0') : '';
-  const inHome = boxDest === BOX_HOME || boxDest.startsWith(BOX_HOME + '/');
+  // Default: chown to the in-box vscode user (uid 1000). Explicit `user: 0`
+  // (root) skips the chown so a root-owned extract stays root-owned.
+  const uid = entry.user ?? 1000;
   // For files: tar's input contains a single entry at basename(absSrc), and
   // we extract at the dest's parent, then `mv` to the dest if the source
   // basename differs from the dest basename.
@@ -137,7 +139,7 @@ async function uploadOneEntry(args: UploadOneArgs): Promise<void> {
     );
   }
   if (mode) parts.push(`chmod -R ${mode} ${shellQuote(boxDest)}`);
-  if (inHome) parts.push(`chown -R 1000:1000 ${shellQuote(boxDest)}`);
+  parts.push(`chown -R ${String(uid)}:${String(uid)} ${shellQuote(boxDest)}`);
   parts.push(`rm -f ${remoteTar}`);
   const cmd = parts.join(' && ');
 
