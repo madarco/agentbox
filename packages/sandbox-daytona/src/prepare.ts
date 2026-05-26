@@ -29,7 +29,7 @@ import {
   type StageResult,
 } from '@agentbox/sandbox-cloud';
 import { getClient } from './backend.js';
-import { resolveDockerfileContext } from './dockerfile-context.js';
+import { resolveDaytonaCustomClaudeMd, resolveDockerfileContext } from './dockerfile-context.js';
 import { ensureDaytonaEnvLoaded } from './env-loader.js';
 
 /** Default snapshot name shape when `opts.name` is omitted. */
@@ -96,6 +96,15 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     );
   }
 
+  const daytonaClaudeMd = resolveDaytonaCustomClaudeMd();
+  if (!daytonaClaudeMd) {
+    throw new Error(
+      'could not locate packages/sandbox-daytona/scripts/custom-system-CLAUDE.md ' +
+        '(or its staged runtime/daytona/ copy). Ensure `pnpm -w build` ran so the ' +
+        'CLI staging populated runtime/daytona/.',
+    );
+  }
+
   const stages = await stageAllAgentStatic({ hostWorkspace: opts.hostWorkspace });
   // Surface staging warnings (codex Keychain landmine, etc.) before the
   // longer build kicks off.
@@ -106,31 +115,40 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
   try {
     let image: Image = Image.fromDockerfile(ctx.dockerfile);
 
+    // Overlay the daytona-specific /etc/claude-code/CLAUDE.md on top of the
+    // docker-shaped one baked by Dockerfile.box. Daytona boxes have no host
+    // .git/ bind-mount, so the in-box hint needs daytona-specific git wording.
+    image = image.addLocalFile(daytonaClaudeMd, '/tmp/agentbox-custom-CLAUDE.md');
+    const extractCmds: string[] = [
+      'install -m 0644 /tmp/agentbox-custom-CLAUDE.md /etc/claude-code/CLAUDE.md',
+      'rm -f /tmp/agentbox-custom-CLAUDE.md',
+    ];
+
     // For each agent whose stage produced a tarball, add the file to the
     // image build context and append a single tar-extract + chown.
-    const extractCmds: string[] = [];
     const usable = stages.filter((s) => s.staged.tarballPath !== null);
     for (const s of usable) {
       image = image.addLocalFile(s.staged.tarballPath as string, s.remoteTar);
       extractCmds.push(`mkdir -p ${s.extractDir}`);
       extractCmds.push(`tar -xzf ${s.remoteTar} -C ${s.extractDir}`);
     }
-    if (extractCmds.length > 0) {
+    if (usable.length > 0) {
       // One final pass: own the extracted trees as the box user, then drop the
       // staging tarballs (no point shipping them twice in the image layer).
       extractCmds.push(
         'chown -R vscode:vscode /home/vscode/.claude /home/vscode/.codex /home/vscode/.local',
       );
       extractCmds.push('rm -f /tmp/agentbox-seed-*.tar.gz');
-      // Dockerfile.box ends with `USER vscode`. Switch to root for the
-      // tar/chown/rm pass — COPYed tarballs are root-owned in /tmp (sticky
-      // bit), and chown -R on /home/vscode/.* only works as root. Switch
-      // back to vscode so the image keeps its default-user invariant.
-      image = image
-        .dockerfileCommands(['USER root'])
-        .runCommands(...extractCmds)
-        .dockerfileCommands(['USER vscode']);
     }
+    // Dockerfile.box ends with `USER vscode`. Switch to root for the
+    // install/tar/chown/rm pass — COPYed files are root-owned in /tmp (sticky
+    // bit), chown -R on /home/vscode/.* only works as root, and
+    // /etc/claude-code is root-owned. Switch back to vscode so the image
+    // keeps its default-user invariant.
+    image = image
+      .dockerfileCommands(['USER root'])
+      .runCommands(...extractCmds)
+      .dockerfileCommands(['USER vscode']);
 
     const client = getClient();
     log(`creating Daytona snapshot '${snapshotName}'…`);

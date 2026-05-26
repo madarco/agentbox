@@ -24,6 +24,7 @@ const repoRoot = resolve(cliRoot, '..', '..'); // monorepo root
 const runtime = join(cliRoot, 'runtime');
 const dockerCtx = join(runtime, 'docker');
 const hetznerCtx = join(runtime, 'hetzner');
+const daytonaCtx = join(runtime, 'daytona');
 
 // Copies that land directly under runtime/ (not part of the docker context).
 const direct = [
@@ -86,7 +87,7 @@ const hetznerFiles = [
   ['packages/sandbox-docker/scripts/agentbox-dockerd-start', 'agentbox-dockerd-start', true],
   ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
   ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
-  ['packages/sandbox-docker/scripts/custom-system-CLAUDE.md', 'custom-system-CLAUDE.md', false],
+  ['packages/sandbox-hetzner/scripts/custom-system-CLAUDE.md', 'custom-system-CLAUDE.md', false],
   ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
   ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
@@ -95,11 +96,24 @@ for (const [srcRel, destRel, exec] of hetznerFiles) {
   copy(srcRel, join(hetznerCtx, destRel), exec);
 }
 
+// Daytona provider — overlay files the daytona prepare step adds on top of
+// Dockerfile.box via Image.addLocalFile(). Resolver lives at
+// `packages/sandbox-daytona/src/dockerfile-context.ts` and looks for these
+// under `<cliRoot>/runtime/daytona/<basename>`.
+const daytonaFiles = [
+  ['packages/sandbox-daytona/scripts/custom-system-CLAUDE.md', 'custom-system-CLAUDE.md', false],
+];
+for (const [srcRel, destRel, exec] of daytonaFiles) {
+  copy(srcRel, join(daytonaCtx, destRel), exec);
+}
+
 if (missing > 0) {
   console.warn(
     `[stage-runtime] ${missing} asset(s) missing — fine in a partial dev rebuild, ` +
       `but a publish must run a full \`pnpm -w build\` first (prepublishOnly does).`,
   );
 } else {
-  console.log('[stage-runtime] staged runtime/ (relay bin + docker build context + hetzner install assets)');
+  console.log(
+    '[stage-runtime] staged runtime/ (relay bin + docker build context + hetzner install assets + daytona overlay)',
+  );
 }

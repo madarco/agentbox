@@ -44,3 +44,27 @@ export function resolveDockerfileContext(): DockerfileContext | null {
   }
   return null;
 }
+
+/**
+ * Locate the daytona-specific `custom-system-CLAUDE.md` that overlays the
+ * docker-shaped one baked into `Dockerfile.box`. Daytona boxes have no host
+ * `.git/` bind-mount, so the in-box hint needs daytona-specific git wording
+ * (use `agentbox-ctl git` for any host-touching op). Same two-tier lookup
+ * shape as `resolveDockerfileContext()`: staged CLI runtime first, monorepo
+ * source as the dev fallback.
+ */
+export function resolveDaytonaCustomClaudeMd(): string | null {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const staged = resolve(here, '..', 'runtime', 'daytona', 'custom-system-CLAUDE.md');
+  if (existsSync(staged)) return staged;
+  const monorepoRoot = resolve(here, '..', '..', '..');
+  const dev = resolve(
+    monorepoRoot,
+    'packages',
+    'sandbox-daytona',
+    'scripts',
+    'custom-system-CLAUDE.md',
+  );
+  if (existsSync(dev)) return dev;
+  return null;
+}
