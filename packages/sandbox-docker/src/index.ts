@@ -1,4 +1,5 @@
 export { dockerProvider, type DockerCreateOptions } from './docker-provider.js';
+export { downloadFromBox, uploadToBox, type BoxCpResult } from './box-cp.js';
 
 export {
   attachClaudeSession,

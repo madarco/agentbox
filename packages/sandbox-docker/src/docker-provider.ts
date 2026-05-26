@@ -25,6 +25,7 @@ import { boxResourceStats } from './stats.js';
 import { detectEngine } from './host-export.js';
 import { portlessGetUrl } from './portless.js';
 import { DEFAULT_BOX_IMAGE, buildImage, imageExists } from './image.js';
+import { downloadFromBox, uploadToBox } from './box-cp.js';
 
 /**
  * Docker-specific knobs the CLI passes through `CreateBoxRequest.providerOptions`.
@@ -120,6 +121,24 @@ export const dockerProvider: Provider = {
   async exec(box: BoxRecord, argv: string[], opts?: ExecOptions): Promise<ExecResult> {
     const r = await execInBox(box.container, argv, opts?.user ? { user: opts.user } : {});
     return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+  },
+
+  async uploadPath(
+    box: BoxRecord,
+    hostSrc: string,
+    boxDst: string,
+  ): Promise<{ finalPath: string }> {
+    const r = await uploadToBox(box, hostSrc, boxDst);
+    return { finalPath: r.finalPath };
+  },
+
+  async downloadPath(
+    box: BoxRecord,
+    boxSrc: string,
+    hostDst: string,
+  ): Promise<{ finalPath: string }> {
+    const r = await downloadFromBox(box, boxSrc, hostDst);
+    return { finalPath: r.finalPath };
   },
 
   async resolveUrl(

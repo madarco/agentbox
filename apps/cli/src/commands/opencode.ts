@@ -44,6 +44,7 @@ import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { runCarryGate } from '../lib/carry-gate.js';
 import { providerForCreate } from '../provider/registry.js';
+import { prepareTeleport, TeleportError } from '../session-teleport/index.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { makeProgressReporter } from '../lib/progress.js';
 import { openCommandLog } from '../lib/log-file.js';
@@ -153,6 +154,10 @@ interface OpencodeCreateOptions {
   initialPrompt?: string;
   /** Per-invocation override of `queue.maxConcurrent`. */
   maxRunning?: string;
+  /** `-c, --continue`: detected then refused (v1 stub). */
+  continue?: boolean;
+  /** `--resume <id>`: detected then refused (v1 stub). */
+  resume?: string;
 }
 
 function buildOpencodeCliOverrides(opts: OpencodeCreateOptions): Partial<UserConfig> {
@@ -293,6 +298,14 @@ export const opencodeCommand = new Command('opencode')
     '--max-running <n>',
     'per-invocation override of queue.maxConcurrent; only honored when `-i` is set',
   )
+  .option(
+    '-c, --continue',
+    'session teleport (not yet supported for opencode in v1; emits a friendly error)',
+  )
+  .option(
+    '--resume <id>',
+    'session teleport (not yet supported for opencode in v1; emits a friendly error)',
+  )
   .argument(
     '[opencode-args...]',
     "extra args passed to opencode inside the box; place after `--`, e.g. `agentbox opencode -- -m anthropic/claude-sonnet-4-5`",
@@ -301,6 +314,28 @@ export const opencodeCommand = new Command('opencode')
     const cmdLog = openCommandLog('opencode');
     process.stderr.write(`log: ${cmdLog.path}\n`);
     intro('Starting OpenCode in a box...');
+
+    // OpenCode session teleport is not yet supported (v1 stub). Detect resume
+    // flags early and bail with a clear message before any box work happens.
+    if (opts.continue === true || opts.resume) {
+      try {
+        await prepareTeleport({
+          agent: 'opencode',
+          hostCwd: opts.workspace,
+          mode:
+            opts.continue === true
+              ? { kind: 'continue' }
+              : { kind: 'resume', id: opts.resume! },
+        });
+      } catch (err) {
+        if (err instanceof TeleportError) {
+          log.error(err.message);
+          cmdLog.close();
+          process.exit(2);
+        }
+        throw err;
+      }
+    }
 
     const cfg = await loadEffectiveConfig(opts.workspace, {
       cliOverrides: buildOpencodeCliOverrides(opts),
@@ -519,6 +554,8 @@ interface OpencodeStartOptions {
   attachIn?: string; // raw `--attach-in <mode>` value, validated below.
   inline?: boolean; // -i / --inline: shortcut for --attach-in same.
   attach?: boolean; // commander: --no-attach => false; default true.
+  continue?: boolean;
+  resume?: string;
 }
 
 // Shared by `opencode start` and `opencode attach`: if a session is already
@@ -663,6 +700,14 @@ const opencodeStartCommand = new Command('start')
   .option('--attach-in <mode>', ATTACH_IN_HELP)
   .option('-i, --inline', INLINE_HELP)
   .option('-b, --no-attach', NO_ATTACH_HELP)
+  .option(
+    '-c, --continue',
+    'session teleport (not yet supported for opencode in v1; emits a friendly error)',
+  )
+  .option(
+    '--resume <id>',
+    'session teleport (not yet supported for opencode in v1; emits a friendly error)',
+  )
   .argument(
     '[opencode-args...]',
     "extra args passed to opencode when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox opencode start 1 -- -m anthropic/claude-sonnet-4-5`",
@@ -676,6 +721,24 @@ const opencodeStartCommand = new Command('start')
       // `[box]`; resolveBoxOrShift detects that and auto-picks the box.
       const { box, shifted } = await resolveBoxOrShift(idOrName);
       const effectiveOpencodeArgs = shifted && idOrName ? [idOrName, ...opencodeArgs] : opencodeArgs;
+      if (opts.continue === true || opts.resume) {
+        try {
+          await prepareTeleport({
+            agent: 'opencode',
+            hostCwd: box.workspacePath,
+            mode:
+              opts.continue === true
+                ? { kind: 'continue' }
+                : { kind: 'resume', id: opts.resume! },
+          });
+        } catch (err) {
+          if (err instanceof TeleportError) {
+            log.error(err.message);
+            process.exit(2);
+          }
+          throw err;
+        }
+      }
       if ((box.provider ?? 'docker') !== 'docker') {
         if (opts.attach === false) {
           outro(

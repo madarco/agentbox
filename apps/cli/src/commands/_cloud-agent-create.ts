@@ -17,7 +17,7 @@
  */
 
 import { log, outro } from '@clack/prompts';
-import type { CreateBoxRequest, Provider } from '@agentbox/core';
+import type { BoxRecord, CreateBoxRequest, Provider } from '@agentbox/core';
 import type { AttachOpenIn } from '@agentbox/config';
 import { makeProgressReporter } from '../lib/progress.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
@@ -45,6 +45,13 @@ export interface CloudAgentCreateArgs {
    *  isn't started yet — a later `agentbox <agent> attach <box>` starts it on
    *  first attach. */
   attach?: boolean;
+  /**
+   * Hook fired AFTER the box is provisioned and BEFORE the agent attach starts
+   * the in-box tmux session. Used by the session-teleport path to upload a
+   * host session file into the new sandbox before the agent CLI launches. May
+   * mutate `extraArgs` indirectly via the returned `agentArgsPrefix`.
+   */
+  beforeStart?: (box: BoxRecord) => Promise<{ agentArgsPrefix?: string[] } | void>;
 }
 
 /**
@@ -70,6 +77,13 @@ export async function cloudAgentCreate(args: CloudAgentCreateArgs): Promise<void
     if (result.record.cloud?.sandboxId) {
       log.info(`sandboxId: ${result.record.cloud.sandboxId}`);
     }
+    let extraArgs = args.extraArgs;
+    if (args.beforeStart) {
+      const hook = await args.beforeStart(result.record);
+      if (hook && hook.agentArgsPrefix && hook.agentArgsPrefix.length > 0) {
+        extraArgs = [...hook.agentArgsPrefix, ...(extraArgs ?? [])];
+      }
+    }
     if (args.attach === false) {
       outro(
         `session not started — attach with: agentbox ${args.mode} attach ${result.record.name}`,
@@ -82,7 +96,7 @@ export async function cloudAgentCreate(args: CloudAgentCreateArgs): Promise<void
       binary: args.binary,
       sessionName: args.sessionName,
       mode: args.mode,
-      extraArgs: args.extraArgs,
+      extraArgs,
       openIn: args.openIn,
     });
   } catch (err) {

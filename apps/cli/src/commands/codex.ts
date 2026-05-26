@@ -44,7 +44,14 @@ import {
 import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { runCarryGate } from '../lib/carry-gate.js';
-import { providerForCreate } from '../provider/registry.js';
+import { providerForBox, providerForCreate } from '../provider/registry.js';
+import {
+  prepareTeleport,
+  TeleportError,
+  uploadTeleport,
+  type ResolvedTeleport,
+  type ResumeMode,
+} from '../session-teleport/index.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { makeProgressReporter } from '../lib/progress.js';
 import { openCommandLog } from '../lib/log-file.js';
@@ -155,6 +162,10 @@ interface CodexCreateOptions {
   initialPrompt?: string;
   /** Per-invocation override of `queue.maxConcurrent`. */
   maxRunning?: string;
+  /** `-c, --continue`: teleport and resume the most recent host codex session for this cwd. */
+  continue?: boolean;
+  /** `--resume <id>`: teleport and resume the specified host codex session uuid. */
+  resume?: string;
 }
 
 function buildCodexCliOverrides(opts: CodexCreateOptions): Partial<UserConfig> {
@@ -291,6 +302,14 @@ export const codexCommand = new Command('codex')
     '--max-running <n>',
     'per-invocation override of queue.maxConcurrent; only honored when `-i` is set',
   )
+  .option(
+    '-c, --continue',
+    'teleport the most recent host Codex session for this cwd into the box and resume from it',
+  )
+  .option(
+    '--resume <id>',
+    'teleport the specified host Codex session uuid into the box and resume from it',
+  )
   .argument(
     '[codex-args...]',
     "extra args passed to codex inside the box; place after `--`, e.g. `agentbox codex -- -m gpt-5.4`",
@@ -299,6 +318,38 @@ export const codexCommand = new Command('codex')
     const cmdLog = openCommandLog('codex');
     process.stderr.write(`log: ${cmdLog.path}\n`);
     intro('Starting Codex in a box...');
+
+    let resumeMode: ResumeMode | null = null;
+    if (opts.continue === true && opts.resume) {
+      log.error('only one of -c / --continue / --resume can be passed');
+      cmdLog.close();
+      process.exit(2);
+    }
+    if (opts.continue === true) resumeMode = { kind: 'continue' };
+    else if (opts.resume) resumeMode = { kind: 'resume', id: opts.resume };
+    if (resumeMode && opts.initialPrompt && opts.initialPrompt.length > 0) {
+      log.error('-i / --initial-prompt cannot be combined with -c / --resume.');
+      cmdLog.close();
+      process.exit(2);
+    }
+    let resumePrepared: ResolvedTeleport | null = null;
+    if (resumeMode) {
+      try {
+        resumePrepared = await prepareTeleport({
+          agent: 'codex',
+          hostCwd: opts.workspace,
+          mode: resumeMode,
+          log: (line) => cmdLog.write(line),
+        });
+      } catch (err) {
+        if (err instanceof TeleportError) {
+          log.error(err.message);
+          cmdLog.close();
+          process.exit(2);
+        }
+        throw err;
+      }
+    }
 
     const cfg = await loadEffectiveConfig(opts.workspace, {
       cliOverrides: buildCodexCliOverrides(opts),
@@ -400,6 +451,26 @@ export const codexCommand = new Command('codex')
         verbose: opts.verbose === true,
         openIn: cfg.effective.attach.openIn,
         attach: opts.attach !== false,
+        beforeStart: resumePrepared
+          ? async (box) => {
+              try {
+                await uploadTeleport({
+                  box,
+                  provider,
+                  resolved: resumePrepared!,
+                  log: (line) => cmdLog.write(line),
+                });
+                return { agentArgsPrefix: resumePrepared!.forwardArgs };
+              } catch (err) {
+                if (err instanceof TeleportError) {
+                  log.error(err.message);
+                  cmdLog.close();
+                  process.exit(2);
+                }
+                throw err;
+              }
+            }
+          : undefined,
       });
       return;
     }
@@ -466,10 +537,40 @@ export const codexCommand = new Command('codex')
         },
       });
 
+      let effectiveCodexArgs = codexArgs;
+      if (resumePrepared) {
+        s.message('uploading codex session into box');
+        cmdLog.write('uploading codex session into box');
+        try {
+          const provider = await providerForBox(result.record);
+          await uploadTeleport({
+            box: result.record,
+            provider,
+            resolved: resumePrepared,
+            log: (line) => {
+              s.message(clampSpinnerLine(line));
+              cmdLog.write(line);
+            },
+          });
+          effectiveCodexArgs = [...resumePrepared.forwardArgs, ...effectiveCodexArgs];
+        } catch (err) {
+          if (err instanceof TeleportError) {
+            s.stop('teleport failed');
+            log.error(err.message);
+            log.info(
+              `The box ${result.record.container} is up but unused. Destroy it with: agentbox destroy ${result.record.container} -y`,
+            );
+            cmdLog.close();
+            process.exit(2);
+          }
+          throw err;
+        }
+      }
+
       s.message('starting codex session');
       await startCodexSession({
         container: result.record.container,
-        codexArgs,
+        codexArgs: effectiveCodexArgs,
         sessionName,
       });
 
@@ -517,6 +618,8 @@ interface CodexStartOptions {
   attachIn?: string; // raw `--attach-in <mode>` value, validated below.
   inline?: boolean; // -i / --inline: shortcut for --attach-in same.
   attach?: boolean; // commander: --no-attach => false; default true.
+  continue?: boolean;
+  resume?: string;
 }
 
 // Shared by `codex start` and `codex attach`: if a session is already running,
@@ -526,6 +629,7 @@ async function startOrAttachCodex(
   box: BoxRecord,
   codexArgs: string[],
   opts: CodexStartOptions,
+  resumePrepared?: ResolvedTeleport | null,
 ): Promise<void> {
   const attachIn = resolveAttachInOption(opts);
   const cliOverrides: Partial<UserConfig> = {};
@@ -545,6 +649,11 @@ async function startOrAttachCodex(
   // post-`--` args (they only apply to a fresh codex).
   const existing = await codexSessionInfo(box.container, sessionName);
   if (existing.running) {
+    if (resumePrepared) {
+      throw new Error(
+        `cannot resume into ${box.name}: a Codex session is already running. Kill it first or use \`agentbox codex attach\`.`,
+      );
+    }
     if (!wantAttach) {
       outro(
         `session "${sessionName}" already running — attach with: agentbox codex attach ${reattachRef(box)}`,
@@ -595,8 +704,30 @@ async function startOrAttachCodex(
     onProgress: (line) => s.message(clampSpinnerLine(line)),
   });
 
+  let effectiveArgs = codexArgs;
+  if (resumePrepared) {
+    s.message('uploading codex session into box');
+    try {
+      const provider = await providerForBox(box);
+      await uploadTeleport({
+        box,
+        provider,
+        resolved: resumePrepared,
+        log: (line) => s.message(clampSpinnerLine(line)),
+      });
+      effectiveArgs = [...resumePrepared.forwardArgs, ...effectiveArgs];
+    } catch (err) {
+      if (err instanceof TeleportError) {
+        s.stop('teleport failed');
+        log.error(err.message);
+        process.exit(2);
+      }
+      throw err;
+    }
+  }
+
   s.message('starting codex session');
-  await startCodexSession({ container: box.container, codexArgs, sessionName });
+  await startCodexSession({ container: box.container, codexArgs: effectiveArgs, sessionName });
 
   s.stop(`box ${box.container} ready`);
 
@@ -666,6 +797,14 @@ const codexStartCommand = new Command('start')
   .option('--attach-in <mode>', ATTACH_IN_HELP)
   .option('-i, --inline', INLINE_HELP)
   .option('-b, --no-attach', NO_ATTACH_HELP)
+  .option(
+    '-c, --continue',
+    'teleport the most recent host Codex session for this cwd into the box and resume',
+  )
+  .option(
+    '--resume <id>',
+    'teleport the specified host Codex session uuid into the box and resume',
+  )
   .argument(
     '[codex-args...]',
     "extra args passed to codex when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox codex start 1 -- -m gpt-5.4`",
@@ -678,7 +817,30 @@ const codexStartCommand = new Command('start')
       // Two positionals make commander bind the first post-`--` token to
       // `[box]`; resolveBoxOrShift detects that and auto-picks the box.
       const { box, shifted } = await resolveBoxOrShift(idOrName);
-      const effectiveCodexArgs = shifted && idOrName ? [idOrName, ...codexArgs] : codexArgs;
+      let effectiveCodexArgs = shifted && idOrName ? [idOrName, ...codexArgs] : codexArgs;
+      let resumeMode: ResumeMode | null = null;
+      if (opts.continue === true && opts.resume) {
+        log.error('only one of -c / --continue / --resume can be passed');
+        process.exit(2);
+      }
+      if (opts.continue === true) resumeMode = { kind: 'continue' };
+      else if (opts.resume) resumeMode = { kind: 'resume', id: opts.resume };
+      let resumePrepared: ResolvedTeleport | null = null;
+      if (resumeMode) {
+        try {
+          resumePrepared = await prepareTeleport({
+            agent: 'codex',
+            hostCwd: box.workspacePath,
+            mode: resumeMode,
+          });
+        } catch (err) {
+          if (err instanceof TeleportError) {
+            log.error(err.message);
+            process.exit(2);
+          }
+          throw err;
+        }
+      }
       if ((box.provider ?? 'docker') !== 'docker') {
         if (opts.attach === false) {
           outro(
@@ -689,6 +851,19 @@ const codexStartCommand = new Command('start')
         const cfg = await loadEffectiveConfig(box.workspacePath, {
           cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
         });
+        if (resumePrepared) {
+          try {
+            const provider = await providerForBox(box);
+            await uploadTeleport({ box, provider, resolved: resumePrepared });
+            effectiveCodexArgs = [...resumePrepared.forwardArgs, ...effectiveCodexArgs];
+          } catch (err) {
+            if (err instanceof TeleportError) {
+              log.error(err.message);
+              process.exit(2);
+            }
+            throw err;
+          }
+        }
         await cloudAgentAttach({
           box,
           binary: 'codex',
@@ -699,7 +874,7 @@ const codexStartCommand = new Command('start')
         });
         return;
       }
-      await startOrAttachCodex(box, effectiveCodexArgs, opts);
+      await startOrAttachCodex(box, effectiveCodexArgs, opts, resumePrepared);
     } catch (err) {
       if (err instanceof CodexSessionError) {
         log.error(err.message);

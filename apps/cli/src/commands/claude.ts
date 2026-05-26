@@ -48,7 +48,14 @@ import {
 import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { runCarryGate } from '../lib/carry-gate.js';
-import { providerForCreate } from '../provider/registry.js';
+import { providerForBox, providerForCreate } from '../provider/registry.js';
+import {
+  prepareTeleport,
+  TeleportError,
+  uploadTeleport,
+  type ResolvedTeleport,
+  type ResumeMode,
+} from '../session-teleport/index.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { makeProgressReporter } from '../lib/progress.js';
 import { openCommandLog } from '../lib/log-file.js';
@@ -175,6 +182,10 @@ interface ClaudeCreateOptions {
   initialPrompt?: string;
   /** Per-invocation override of `queue.maxConcurrent` (number string from commander). */
   maxRunning?: string;
+  /** `-c, --continue`: teleport and resume the most recent host claude session for this cwd. */
+  continue?: boolean;
+  /** `--resume <id>`: teleport and resume the specified host claude session by id. */
+  resume?: string;
 }
 
 function buildClaudeCliOverrides(opts: ClaudeCreateOptions): Partial<UserConfig> {
@@ -345,6 +356,14 @@ export const claudeCommand = new Command('claude')
     '--max-running <n>',
     'per-invocation override of queue.maxConcurrent; only honored when `-i` is set',
   )
+  .option(
+    '-c, --continue',
+    'teleport the most recent host Claude Code session for this cwd into the box and resume from it',
+  )
+  .option(
+    '--resume <id>',
+    'teleport the specified host Claude Code session id into the box and resume from it',
+  )
   .argument(
     '[claude-args...]',
     "extra args passed to claude inside the box; place after `--`, e.g. `agentbox claude -- --model sonnet`",
@@ -353,6 +372,43 @@ export const claudeCommand = new Command('claude')
     const cmdLog = openCommandLog('claude');
     process.stderr.write(`log: ${cmdLog.path}\n`);
     intro('Starting Claude in a box...');
+
+    // -c / --continue / --resume <id>: handled by agentbox (the teleport runs
+    // after box creation, below) and forwarded to the in-box claude as the
+    // canonical `--resume <id>` tuple. The in-box claude never sees `-c`.
+    let resumeMode: ResumeMode | null = null;
+    if (opts.continue === true && opts.resume) {
+      log.error('only one of -c / --continue / --resume can be passed');
+      cmdLog.close();
+      process.exit(2);
+    }
+    if (opts.continue === true) resumeMode = { kind: 'continue' };
+    else if (opts.resume) resumeMode = { kind: 'resume', id: opts.resume };
+    if (resumeMode && opts.initialPrompt && opts.initialPrompt.length > 0) {
+      log.error('-i / --initial-prompt cannot be combined with -c / --resume (seeding a new turn into a resumed session is not supported).');
+      cmdLog.close();
+      process.exit(2);
+    }
+    // Pre-flight: resolve the host session BEFORE any box work so a missing
+    // session id fails fast (the user doesn't pay for a doomed box).
+    let resumePrepared: ResolvedTeleport | null = null;
+    if (resumeMode) {
+      try {
+        resumePrepared = await prepareTeleport({
+          agent: 'claude',
+          hostCwd: opts.workspace,
+          mode: resumeMode,
+          log: (line) => cmdLog.write(line),
+        });
+      } catch (err) {
+        if (err instanceof TeleportError) {
+          log.error(err.message);
+          cmdLog.close();
+          process.exit(2);
+        }
+        throw err;
+      }
+    }
 
     const cfg = await loadEffectiveConfig(opts.workspace, {
       cliOverrides: buildClaudeCliOverrides(opts),
@@ -506,6 +562,26 @@ export const claudeCommand = new Command('claude')
         verbose: opts.verbose === true,
         openIn: cfg.effective.attach.openIn,
         attach: opts.attach !== false,
+        beforeStart: resumePrepared
+          ? async (box) => {
+              try {
+                await uploadTeleport({
+                  box,
+                  provider,
+                  resolved: resumePrepared!,
+                  log: (line) => cmdLog.write(line),
+                });
+                return { agentArgsPrefix: resumePrepared!.forwardArgs };
+              } catch (err) {
+                if (err instanceof TeleportError) {
+                  log.error(err.message);
+                  cmdLog.close();
+                  process.exit(2);
+                }
+                throw err;
+              }
+            }
+          : undefined,
       });
       return;
     }
@@ -570,6 +646,35 @@ export const claudeCommand = new Command('claude')
         },
       });
 
+      if (resumePrepared) {
+        s.message('uploading claude session into box');
+        cmdLog.write('uploading claude session into box');
+        try {
+          const provider = await providerForBox(result.record);
+          await uploadTeleport({
+            box: result.record,
+            provider,
+            resolved: resumePrepared,
+            log: (line) => {
+              s.message(clampSpinnerLine(line));
+              cmdLog.write(line);
+            },
+          });
+          effectiveClaudeArgs = [...resumePrepared.forwardArgs, ...effectiveClaudeArgs];
+        } catch (err) {
+          if (err instanceof TeleportError) {
+            s.stop('teleport failed');
+            log.error(err.message);
+            log.info(
+              `The box ${result.record.container} is up but unused. Destroy it with: agentbox destroy ${result.record.container} -y`,
+            );
+            cmdLog.close();
+            process.exit(2);
+          }
+          throw err;
+        }
+      }
+
       s.message('starting claude session');
       await startClaudeSession({
         container: result.record.container,
@@ -626,6 +731,8 @@ interface ClaudeStartOptions {
   attachIn?: string; // raw `--attach-in <mode>` value, validated below.
   inline?: boolean; // -i / --inline: shortcut for --attach-in same.
   attach?: boolean; // commander: --no-attach => false; default true.
+  continue?: boolean; // -c / --continue: teleport newest session for cwd.
+  resume?: string; // --resume <id>: teleport specific session.
 }
 
 // Shared by `claude start` and `claude attach`: if a session is already
@@ -635,6 +742,7 @@ async function startOrAttachClaude(
   box: BoxRecord,
   claudeArgs: string[],
   opts: ClaudeStartOptions,
+  resumePrepared?: ResolvedTeleport | null,
 ): Promise<void> {
   const attachIn = resolveAttachInOption(opts);
   const cliOverrides: Partial<UserConfig> = {};
@@ -663,6 +771,11 @@ async function startOrAttachClaude(
   // shows claude's own in-TUI `/login` on attach.
   const existing = await claudeSessionInfo(box.container, sessionName);
   if (existing.running) {
+    if (resumePrepared) {
+      throw new Error(
+        `cannot resume into ${box.name}: a Claude session is already running. Detach and kill the session first (Control+a then :kill-session), or use \`agentbox claude attach\` to reattach to the live one.`,
+      );
+    }
     if (!wantAttach) {
       outro(
         `session "${sessionName}" already running — attach with: agentbox claude attach ${reattachRef(box)}`,
@@ -742,10 +855,32 @@ async function startOrAttachClaude(
     onProgress: (line) => s.message(clampSpinnerLine(line)),
   });
 
+  let effectiveArgs = claudeArgs;
+  if (resumePrepared) {
+    s.message('uploading claude session into box');
+    try {
+      const provider = await providerForBox(box);
+      await uploadTeleport({
+        box,
+        provider,
+        resolved: resumePrepared,
+        log: (line) => s.message(clampSpinnerLine(line)),
+      });
+      effectiveArgs = [...resumePrepared.forwardArgs, ...effectiveArgs];
+    } catch (err) {
+      if (err instanceof TeleportError) {
+        s.stop('teleport failed');
+        log.error(err.message);
+        process.exit(2);
+      }
+      throw err;
+    }
+  }
+
   s.message('starting claude session');
   await startClaudeSession({
     container: box.container,
-    claudeArgs,
+    claudeArgs: effectiveArgs,
     sessionName,
     boxName: box.name,
   });
@@ -827,6 +962,14 @@ const claudeStartCommand = new Command('start')
   .option('--attach-in <mode>', ATTACH_IN_HELP)
   .option('-i, --inline', INLINE_HELP)
   .option('-b, --no-attach', NO_ATTACH_HELP)
+  .option(
+    '-c, --continue',
+    'teleport the most recent host Claude Code session for this cwd into the box and resume',
+  )
+  .option(
+    '--resume <id>',
+    'teleport the specified host Claude Code session id into the box and resume',
+  )
   .argument(
     '[claude-args...]',
     "extra args passed to claude when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox claude start 1 -- --model sonnet`",
@@ -841,7 +984,30 @@ const claudeStartCommand = new Command('start')
       // detects that, auto-picks the project's single box, and tells us to
       // treat the bound `idOrName` as the first claude-args token instead.
       const { box, shifted } = await resolveBoxOrShift(idOrName);
-      const effectiveClaudeArgs = shifted && idOrName ? [idOrName, ...claudeArgs] : claudeArgs;
+      let effectiveClaudeArgs = shifted && idOrName ? [idOrName, ...claudeArgs] : claudeArgs;
+      let resumeMode: ResumeMode | null = null;
+      if (opts.continue === true && opts.resume) {
+        log.error('only one of -c / --continue / --resume can be passed');
+        process.exit(2);
+      }
+      if (opts.continue === true) resumeMode = { kind: 'continue' };
+      else if (opts.resume) resumeMode = { kind: 'resume', id: opts.resume };
+      let resumePrepared: ResolvedTeleport | null = null;
+      if (resumeMode) {
+        try {
+          resumePrepared = await prepareTeleport({
+            agent: 'claude',
+            hostCwd: box.workspacePath,
+            mode: resumeMode,
+          });
+        } catch (err) {
+          if (err instanceof TeleportError) {
+            log.error(err.message);
+            process.exit(2);
+          }
+          throw err;
+        }
+      }
       if ((box.provider ?? 'docker') !== 'docker') {
         if (opts.attach === false) {
           outro(
@@ -852,6 +1018,19 @@ const claudeStartCommand = new Command('start')
         const cfg = await loadEffectiveConfig(box.workspacePath, {
           cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
         });
+        if (resumePrepared) {
+          try {
+            const provider = await providerForBox(box);
+            await uploadTeleport({ box, provider, resolved: resumePrepared });
+            effectiveClaudeArgs = [...resumePrepared.forwardArgs, ...effectiveClaudeArgs];
+          } catch (err) {
+            if (err instanceof TeleportError) {
+              log.error(err.message);
+              process.exit(2);
+            }
+            throw err;
+          }
+        }
         await cloudAgentAttach({
           box,
           binary: 'claude',
@@ -862,7 +1041,7 @@ const claudeStartCommand = new Command('start')
         });
         return;
       }
-      await startOrAttachClaude(box, effectiveClaudeArgs, opts);
+      await startOrAttachClaude(box, effectiveClaudeArgs, opts, resumePrepared);
     } catch (err) {
       if (err instanceof ClaudeSessionError) {
         log.error(err.message);
