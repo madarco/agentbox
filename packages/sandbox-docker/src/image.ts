@@ -93,7 +93,16 @@ export async function buildImage(opts: BuildImageOptions = {}): Promise<string> 
   const dockerfile = opts.dockerfile ?? DOCKERFILE_PATH;
   const contextDir = opts.contextDir ?? BUILD_CONTEXT_DIR;
 
-  const subprocess = execa('docker', ['build', '-t', ref, '-f', dockerfile, contextDir], {
+  // Dogfood path: when building from inside an agentbox (docker-in-docker),
+  // the default bridge network can't bind-mount /proc/<pid>/ns/net for the
+  // build container, breaking any RUN that needs network (e.g. apt, curl).
+  // Falling back to host networking sidesteps the missing capability.
+  const args = ['build', '-t', ref, '-f', dockerfile, contextDir];
+  if (process.env.AGENTBOX === '1') {
+    args.splice(1, 0, '--network=host');
+  }
+
+  const subprocess = execa('docker', args, {
     stderr: 'pipe',
     stdout: 'pipe',
   });
