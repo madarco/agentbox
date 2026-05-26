@@ -51,6 +51,13 @@ export interface MockCloudBackend extends CloudBackend {
   readonly calls: ReadonlyArray<{ method: string; args: unknown[] }>;
   /** Sandboxes currently present in the backend (post any provision/destroy). */
   readonly sandboxes: ReadonlyArray<Readonly<SandboxRecord>>;
+  /**
+   * Empty the recorded `calls` log. Useful between assertions in a single
+   * test: do an action, assert, clear, do another action, assert again
+   * without the first batch polluting the filter. Tests previously poked
+   * `calls.length = 0`, which trips strict TS on the readonly array.
+   */
+  clearCalls(): void;
 }
 
 /** Make a fresh mock backend. Always returns a brand-new internal state. */
@@ -88,6 +95,9 @@ export function makeMockCloudBackend(opts: MockCloudBackendOptions = {}): MockCl
     },
     get sandboxes() {
       return Array.from(sandboxes.values());
+    },
+    clearCalls(): void {
+      calls.length = 0;
     },
 
     async provision(req: CloudProvisionRequest): Promise<CloudHandle> {

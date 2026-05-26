@@ -113,7 +113,7 @@ describe('uploadCarryPaths', () => {
     expect(homeCmd).toContain('while [ "$parent" != "/home/vscode" ]');
 
     // Dest outside $HOME → no parent walk (system paths untouched).
-    backend.calls.length = 0;
+    backend.clearCalls();
     await uploadCarryPaths({
       backend,
       handle,
@@ -143,7 +143,7 @@ describe('uploadCarryPaths', () => {
     // user: 0 → chown to root explicitly (NOT a skip — the result must be
     // predictable across providers, especially docker where `docker cp`
     // would otherwise leak the host's uid:gid into the box).
-    backend.calls.length = 0;
+    backend.clearCalls();
     await uploadCarryPaths({
       backend,
       handle,
