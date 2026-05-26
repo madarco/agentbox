@@ -15,6 +15,11 @@ the host, so local commits show up in the host's `git log` immediately.
 No SSH creds, no host gitconfig identity. For ops that need the user
 (push, fetch from private remotes), use `agentbox-ctl git push|fetch|pull
 -- <args>` — it RPCs to the host, which runs git with the real SSH agent.
+The wrapper already builds `git push <remote> <branch>` host-side from the
+registered worktree; the `-- <args>` slot is for extra flags only (e.g.
+`--force-with-lease`, `--tags`). Re-passing the remote or branch makes git
+treat them as refspecs and fails with `refs/remotes/origin/HEAD cannot be
+resolved to branch`.
 
 For ad-hoc file transfers between this box and the host, use
 `agentbox-ctl cp toHost <boxPath> <hostPath>` and

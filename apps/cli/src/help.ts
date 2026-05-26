@@ -19,7 +19,7 @@ export const HELP_GROUPS: HelpGroup[] = [
   },
   { title: 'Inspect', commands: ['list', 'status', 'top'] },
   { title: 'Lifecycle', commands: ['start', 'stop', 'destroy', 'pause', 'unpause'] },
-  { title: 'Sync & state', commands: ['download', 'cp', 'checkpoint'] },
+  { title: 'Sync & state', commands: ['download', 'cp', 'checkpoint', 'queue'] },
   {
     title: 'Advanced',
     commands: [
@@ -41,14 +41,26 @@ function term(cmd: Command): string {
   return aliases.length ? `${cmd.name()}|${aliases.join('|')}` : cmd.name();
 }
 
+/**
+ * True when a command was registered with `program.addCommand(cmd, { hidden: true })`.
+ * commander v12 stores this on the private `_hidden` property; the cast keeps
+ * the lint clean without exposing commander internals across the codebase.
+ */
+function isHiddenCommand(cmd: Command): boolean {
+  return (cmd as unknown as { _hidden?: boolean })._hidden === true;
+}
+
 // Builds the grouped Commands: block. Descriptions/aliases come straight from
 // the registered Command objects so help text never drifts from the source.
-// Any registered command missing from HELP_GROUPS lands in a trailing
+// Hidden commands (`addCommand(cmd, { hidden: true })`) are excluded — that's
+// how internal-only commands like `_run-queued-job` stay out of help. Any
+// registered visible command missing from HELP_GROUPS lands in a trailing
 // "Other" group (fail-soft — the drift test fails if this is non-empty).
 export function buildGroupedHelp(program: Command): string {
-  const byName = new Map(program.commands.map((c) => [c.name(), c] as const));
+  const visible = program.commands.filter((c) => !isHiddenCommand(c));
+  const byName = new Map(visible.map((c) => [c.name(), c] as const));
   const grouped = new Set(HELP_GROUPS.flatMap((g) => g.commands));
-  const orphans = program.commands.map((c) => c.name()).filter((n) => !grouped.has(n));
+  const orphans = visible.map((c) => c.name()).filter((n) => !grouped.has(n));
 
   const groups: HelpGroup[] = [...HELP_GROUPS];
   if (orphans.length) groups.push({ title: 'Other', commands: orphans });

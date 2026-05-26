@@ -45,7 +45,10 @@ export const gitCommand = new Command('git')
       .option('--cwd <path>', 'container path identifying which registered worktree to use')
       .allowExcessArguments(true)
       .allowUnknownOption(true)
-      .argument('[args...]', 'additional args forwarded to git push')
+      .argument(
+        '[args...]',
+        "extra flags appended to the host-built `git push <remote> <branch>` (e.g. `--force-with-lease`, `--tags`). Do NOT re-pass the remote or branch — they are taken from --remote and the registered worktree; appending them as positionals makes git treat them as refspecs and fail with `refs/remotes/origin/HEAD cannot be resolved to branch`. Use --remote to change the remote.",
+      )
       .action(async (args: string[], opts: CommonOptions) => {
         const code = await postRpcAndExit('git.push', buildParams(opts, args), {
           errorPrefix: 'agentbox-ctl git',
@@ -60,7 +63,10 @@ export const gitCommand = new Command('git')
       .option('--cwd <path>', 'container path identifying which registered worktree to use')
       .allowExcessArguments(true)
       .allowUnknownOption(true)
-      .argument('[args...]', 'additional args forwarded to git fetch')
+      .argument(
+        '[args...]',
+        'extra flags appended to the host-built `git fetch <remote> <branch>` (e.g. `--prune`, `--tags`). Do NOT re-pass the remote or branch; they come from --remote and the registered worktree (same gotcha as `push`).',
+      )
       .action(async (args: string[], opts: CommonOptions) => {
         const code = await postRpcAndExit('git.fetch', buildParams(opts, args), {
           errorPrefix: 'agentbox-ctl git',
@@ -78,7 +84,10 @@ export const gitCommand = new Command('git')
       .option('--ff-only', 'pass --ff-only to the local merge')
       .allowExcessArguments(true)
       .allowUnknownOption(true)
-      .argument('[args...]', 'additional args forwarded to git fetch')
+      .argument(
+        '[args...]',
+        'extra flags appended to the host-built `git fetch <remote> <branch>` (e.g. `--prune`). Do NOT re-pass the remote or branch; they come from --remote and the registered worktree (same gotcha as `push`).',
+      )
       .action(
         async (
           args: string[],

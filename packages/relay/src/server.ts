@@ -60,6 +60,13 @@ export interface RelayServerHandle {
   /** Present only in `mode === 'box'`: the parking lot for host-only RPCs. */
   hostActions?: HostActionQueue;
   url: string;
+  /**
+   * Wire a "kick the queue scheduler now" callback. Called by
+   * `POST /admin/queue/enqueue` so a freshly-submitted background job doesn't
+   * wait up to one tick for the relay to notice the new manifest.
+   * No-op until set; the queue still picks the job up via the periodic tick.
+   */
+  setQueuePoke: (fn: () => void) => void;
   close: () => Promise<void>;
 }
 
@@ -161,6 +168,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const prompts = new PendingPrompts();
   const subscribers = new PromptSubscribers();
   const notices = new BoxNotices(subscribers);
+  let queuePoke: (() => void) | null = null;
   const host = opts.host ?? '0.0.0.0';
   const mode: RelayMode = opts.mode ?? 'host';
   // Box mode parks host-only RPCs until the host poller answers; host mode
@@ -749,6 +757,22 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       return;
     }
 
+    if (route === 'POST /admin/queue/enqueue') {
+      // The CLI's `submitQueueJob` writes the manifest first, then POSTs here
+      // so the relay's scheduler runs immediately instead of waiting for the
+      // next periodic tick. Body is informational — the source of truth is
+      // the manifest on disk.
+      const body = await readJsonBody<{ id?: string }>(req);
+      if (!body || typeof body.id !== 'string' || body.id.length === 0) {
+        send(res, 400, { error: 'expected {id}' });
+        return;
+      }
+      log(`queue-enqueue id=${body.id}`);
+      queuePoke?.();
+      send(res, 204, null);
+      return;
+    }
+
     if (route === 'POST /admin/notices/clear') {
       const body = await readJsonBody<ClearNoticeBody>(req);
       if (!body || typeof body.id !== 'string' || body.id.length === 0) {
@@ -792,6 +816,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     notices,
     hostActions: hostActions ?? undefined,
     url: `http://${host}:${String(opts.port)}`,
+    setQueuePoke: (fn) => {
+      queuePoke = fn;
+    },
     close: async () => {
       if (pollers) await pollers.stopAll();
       await new Promise<void>((resolve, reject) => {

@@ -86,6 +86,10 @@ export interface UserConfig {
     maxRunningBoxes?: number;
     idleMinutes?: number;
   };
+  queue?: {
+    enabled?: boolean;
+    maxConcurrent?: number;
+  };
   maintenance?: {
     pruneProjectConfigs?: boolean;
     pruneProjectConfigsEvery?: number;
@@ -167,6 +171,10 @@ export interface EffectiveConfig {
     enabled: boolean;
     maxRunningBoxes: number;
     idleMinutes: number;
+  };
+  queue: {
+    enabled: boolean;
+    maxConcurrent: number;
   };
   maintenance: {
     pruneProjectConfigs: boolean;
@@ -268,6 +276,10 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     enabled: true,
     maxRunningBoxes: 5,
     idleMinutes: 5,
+  },
+  queue: {
+    enabled: true,
+    maxConcurrent: 5,
   },
   maintenance: {
     pruneProjectConfigs: true,
@@ -520,6 +532,18 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       'Minutes a box must be continuously idle (claude state) before it is eligible for auto-pause.',
+  },
+  {
+    key: 'queue.enabled',
+    type: 'bool',
+    description:
+      'Run `agentbox claude|codex|opencode -i <prompt>` jobs through the host-wide background queue (FIFO, capped by queue.maxConcurrent).',
+  },
+  {
+    key: 'queue.maxConcurrent',
+    type: 'int',
+    description:
+      'Max number of simultaneously-running boxes (across providers) before background `-i` jobs queue up instead of starting immediately. Per-invocation override: `--max-running <n>`.',
   },
   {
     key: 'maintenance.pruneProjectConfigs',

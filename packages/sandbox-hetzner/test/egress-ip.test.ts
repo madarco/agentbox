@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { detectEgressIp } from '../src/egress-ip.js';
 
 function fakeFetch(map: Record<string, { status: number; body: string }>): typeof fetch {
-  return (async (url: RequestInfo | URL) => {
+  // Use Parameters<typeof fetch>[0] instead of `RequestInfo | URL` so this
+  // doesn't depend on DOM lib being in scope — different @types/node versions
+  // expose `RequestInfo` inconsistently and CI was failing the typecheck.
+  return (async (url: Parameters<typeof fetch>[0]) => {
     const u = typeof url === 'string' ? url : url.toString();
     const r = map[u];
     if (!r) throw new Error(`no fake for ${u}`);

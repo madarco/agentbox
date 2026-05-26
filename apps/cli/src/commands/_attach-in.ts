@@ -6,7 +6,7 @@ export const ATTACH_IN_HELP =
   'where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.';
 
 export const INLINE_HELP =
-  'attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab).';
+  'attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).';
 
 export const NO_ATTACH_HELP =
   'create the box and start the agent session, but do not attach (background mode); prints the box ref and exits 0. Re-attach later with `agentbox <agent> attach <box>`.';

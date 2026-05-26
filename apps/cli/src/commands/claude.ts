@@ -32,8 +32,13 @@ import {
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveClaudeAuth, type ResolvedClaudeAuth } from '../auth.js';
-import { resolveAgentLauncher } from '@agentbox/core';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import {
+  assertAgentCredsAvailable,
+  MissingAgentCredsError,
+} from '../lib/queue/assert-creds.js';
+import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
+import { submitQueueJob } from '../lib/queue/submit.js';
 import {
   ATTACH_IN_HELP,
   INLINE_HELP,
@@ -56,6 +61,37 @@ import { handleLifecycleError } from './_errors.js';
  *  (resolves from inside the project dir), else the globally-unique name. */
 function reattachRef(r: { projectIndex?: number; name: string }): string {
   return typeof r.projectIndex === 'number' ? String(r.projectIndex) : r.name;
+}
+
+/** Validate `--max-running <n>` from commander into a positive integer; throws on garbage. */
+function parseMaxRunningOption(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`--max-running: expected a positive integer, got "${raw}"`);
+  }
+  return n;
+}
+
+/** Project an agent-create options struct down to what the queue worker needs. */
+function pickCreateOpts(opts: ClaudeCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
+  return {
+    workspace: opts.workspace,
+    name: opts.name,
+    hostSnapshot: opts.hostSnapshot,
+    snapshot: opts.snapshot,
+    image: opts.image,
+    withPlaywright: opts.withPlaywright,
+    withEnv: opts.withEnv,
+    vnc: opts.vnc,
+    sharedDockerCache: opts.sharedDockerCache,
+    portless: opts.portless,
+    sessionName: opts.sessionName,
+    memory: opts.memory,
+    cpus: opts.cpus,
+    pidsLimit: opts.pidsLimit,
+    disk: opts.disk,
+  };
 }
 
 /** Log how much the plugin-cache prune reclaimed, when it reclaimed anything. */
@@ -122,10 +158,18 @@ interface ClaudeCreateOptions {
   verbose?: boolean;
   /** Raw `--attach-in <mode>` value; validated by `parseAttachInOption`. */
   attachIn?: string;
-  /** -i / --inline: shortcut for `--attach-in same`. */
+  /** --inline: shortcut for `--attach-in same` (long-form only — `-i` is `--initial-prompt`). */
   inline?: boolean;
   /** Commander parses `-b, --no-attach` as `attach: false` (defaults true). */
   attach?: boolean;
+  /**
+   * `-i, --initial-prompt <text>`: seed the claude TUI with this user turn
+   * and run in background mode (no attach). Jobs go through the host-wide
+   * queue; `--max-running` overrides `queue.maxConcurrent` for this job.
+   */
+  initialPrompt?: string;
+  /** Per-invocation override of `queue.maxConcurrent` (number string from commander). */
+  maxRunning?: string;
 }
 
 function buildClaudeCliOverrides(opts: ClaudeCreateOptions): Partial<UserConfig> {
@@ -277,8 +321,16 @@ export const claudeCommand = new Command('claude')
     'bypass the spinner and stream raw provider output (docker build / Daytona snapshot create) to stderr. The same content always lands in ~/.agentbox/logs/claude.log.',
   )
   .option('--attach-in <mode>', ATTACH_IN_HELP)
-  .option('-i, --inline', INLINE_HELP)
+  .option('--inline', INLINE_HELP)
   .option('-b, --no-attach', NO_ATTACH_HELP)
+  .option(
+    '-i, --initial-prompt <text>',
+    'seed the claude session with this initial user turn and run in background (no attach). Jobs go through the host-wide queue (queue.maxConcurrent). NOTE: this is NOT claude\'s own `-p` headless print mode — for that, pass `-- -p ...`.',
+  )
+  .option(
+    '--max-running <n>',
+    'per-invocation override of queue.maxConcurrent; only honored when `-i` is set',
+  )
   .argument(
     '[claude-args...]',
     "extra args passed to claude inside the box; place after `--`, e.g. `agentbox claude -- --model sonnet`",
@@ -298,6 +350,47 @@ export const claudeCommand = new Command('claude')
     // (provider-agnostic) setup wizard.
     const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
     const isCloud = providerName !== 'docker';
+
+    // -i / --initial-prompt: background mode. Write a queue manifest and exit;
+    // the relay's queue loop spawns the worker as a slot frees. Docker-only
+    // for v1 — the cloud `cloudAgentCreate` path starts the tmux session
+    // lazily on first attach, so a "create but don't attach" cloud run has no
+    // chance to seed the prompt.
+    if (opts.initialPrompt && opts.initialPrompt.length > 0) {
+      if (isCloud) {
+        log.error('-i / --initial-prompt is currently docker-only (cloud sessions only start on attach).');
+        cmdLog.close();
+        process.exit(2);
+      }
+      try {
+        await assertAgentCredsAvailable({
+          agent: 'claude-code',
+          image: cfg.effective.box.image,
+        });
+      } catch (err) {
+        if (err instanceof MissingAgentCredsError) {
+          log.error(err.message);
+          cmdLog.close();
+          process.exit(2);
+        }
+        throw err;
+      }
+      const maxRunningOverride = parseMaxRunningOption(opts.maxRunning);
+      const result = await submitQueueJob({
+        agent: 'claude-code',
+        boxName: opts.name ?? '',
+        providerName,
+        prompt: opts.initialPrompt,
+        agentArgs: claudeArgs,
+        createOpts: pickCreateOpts(opts),
+        maxRunningOverride,
+      });
+      outro(
+        `job ${result.job.id} queued (${String(result.runningCount)}/${String(result.maxConcurrent)} running); log: ${result.job.logPath}`,
+      );
+      cmdLog.close();
+      return;
+    }
     const providerDefault = resolveDefaultCheckpoint(cfg.effective, providerName);
     const checkpointRef =
       opts.snapshot && opts.snapshot.length > 0
@@ -344,10 +437,7 @@ export const claudeCommand = new Command('claude')
     });
     let effectiveClaudeArgs = claudeArgs;
     if (wiz.action === 'launch-with-prompt' && wiz.initialPrompt) {
-      effectiveClaudeArgs = resolveAgentLauncher('claude-code').buildArgs(
-        wiz.initialPrompt,
-        claudeArgs,
-      );
+      effectiveClaudeArgs = buildPromptArgs('claude-code', wiz.initialPrompt, claudeArgs);
     }
 
     if (isCloud) {

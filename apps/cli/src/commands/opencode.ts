@@ -1,6 +1,3 @@
-import { stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { confirm, intro, isCancel, log, outro, spinner } from '@clack/prompts';
 import {
   findProjectRoot,
@@ -20,7 +17,6 @@ import {
   ensureOpencodeVolume,
   formatDetachNotice,
   inspectBox,
-  OPENCODE_FORWARDED_ENV_KEYS,
   OpencodeSessionError,
   opencodeSessionInfo,
   runInteractiveOpencodeLogin,
@@ -28,11 +24,16 @@ import {
   startBox,
   startOpencodeSession,
   unpauseBox,
-  volumeHasOpencodeAuth,
   type BoxRecord,
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import {
+  assertAgentCredsAvailable,
+  MissingAgentCredsError,
+  opencodeAuthAvailable,
+} from '../lib/queue/assert-creds.js';
+import { submitQueueJob } from '../lib/queue/submit.js';
 import {
   ATTACH_IN_HELP,
   INLINE_HELP,
@@ -55,17 +56,37 @@ function reattachRef(r: { projectIndex?: number; name: string }): string {
   return typeof r.projectIndex === 'number' ? String(r.projectIndex) : r.name;
 }
 
+function parseMaxRunningOption(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`--max-running: expected a positive integer, got "${raw}"`);
+  }
+  return n;
+}
+
+function pickOpencodeCreateOpts(opts: OpencodeCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
+  return {
+    workspace: opts.workspace,
+    name: opts.name,
+    hostSnapshot: opts.hostSnapshot,
+    snapshot: opts.snapshot,
+    image: opts.image,
+    withPlaywright: opts.withPlaywright,
+    withEnv: opts.withEnv,
+    vnc: opts.vnc,
+    sharedDockerCache: opts.sharedDockerCache,
+    portless: opts.portless,
+    sessionName: opts.sessionName,
+    memory: opts.memory,
+    cpus: opts.cpus,
+    pidsLimit: opts.pidsLimit,
+    disk: opts.disk,
+  };
+}
+
 /** Host-side URL for the relay (loopback for the wrapper's SSE subscription). */
 const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
-
-async function fileExists(p: string): Promise<boolean> {
-  try {
-    await stat(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Attach to a box's OpenCode tmux session through the wrapped-pty footer (same
@@ -119,10 +140,14 @@ interface OpencodeCreateOptions {
   verbose?: boolean;
   /** Raw `--attach-in <mode>` value; validated by `parseAttachInOption`. */
   attachIn?: string;
-  /** -i / --inline: shortcut for `--attach-in same`. */
+  /** --inline: shortcut for `--attach-in same` (long-form only — `-i` is `--initial-prompt`). */
   inline?: boolean;
   /** Commander parses `-b, --no-attach` as `attach: false` (defaults true). */
   attach?: boolean;
+  /** `-i, --initial-prompt <text>`: seed opencode with this user turn; runs in background. */
+  initialPrompt?: string;
+  /** Per-invocation override of `queue.maxConcurrent`. */
+  maxRunning?: string;
 }
 
 function buildOpencodeCliOverrides(opts: OpencodeCreateOptions): Partial<UserConfig> {
@@ -156,19 +181,6 @@ async function runOpencodeLoginContainer(image: string, extraArgs: string[]): Pr
     buildOpencodeLoginRunArgv({ volume: SHARED_OPENCODE_VOLUME, image, extraArgs }),
   );
   return exitCode;
-}
-
-/**
- * True when OpenCode is already authenticated: a forwarded provider key in the
- * host env, a host `~/.local/share/opencode/auth.json` (carried into the box by
- * the volume sync), or an `auth.json` already in the shared opencode volume.
- */
-async function opencodeAuthAvailable(image: string): Promise<boolean> {
-  for (const k of OPENCODE_FORWARDED_ENV_KEYS) {
-    if ((process.env[k] ?? '').length > 0) return true;
-  }
-  if (await fileExists(join(homedir(), '.local', 'share', 'opencode', 'auth.json'))) return true;
-  return volumeHasOpencodeAuth(SHARED_OPENCODE_VOLUME, image);
 }
 
 /**
@@ -257,8 +269,16 @@ export const opencodeCommand = new Command('opencode')
     'bypass the spinner and stream raw provider output to stderr. The same content always lands in ~/.agentbox/logs/opencode.log.',
   )
   .option('--attach-in <mode>', ATTACH_IN_HELP)
-  .option('-i, --inline', INLINE_HELP)
+  .option('--inline', INLINE_HELP)
   .option('-b, --no-attach', NO_ATTACH_HELP)
+  .option(
+    '-i, --initial-prompt <text>',
+    'seed the opencode session with this initial user turn and run in background (no attach). Jobs go through the host-wide queue (queue.maxConcurrent).',
+  )
+  .option(
+    '--max-running <n>',
+    'per-invocation override of queue.maxConcurrent; only honored when `-i` is set',
+  )
   .argument(
     '[opencode-args...]',
     "extra args passed to opencode inside the box; place after `--`, e.g. `agentbox opencode -- -m anthropic/claude-sonnet-4-5`",
@@ -283,6 +303,42 @@ export const opencodeCommand = new Command('opencode')
         : providerDefault.length > 0
           ? providerDefault
           : undefined;
+
+    if (opts.initialPrompt && opts.initialPrompt.length > 0) {
+      if (isCloud) {
+        log.error('-i / --initial-prompt is currently docker-only (cloud sessions only start on attach).');
+        cmdLog.close();
+        process.exit(2);
+      }
+      try {
+        await assertAgentCredsAvailable({
+          agent: 'opencode',
+          image: cfg.effective.box.image,
+        });
+      } catch (err) {
+        if (err instanceof MissingAgentCredsError) {
+          log.error(err.message);
+          cmdLog.close();
+          process.exit(2);
+        }
+        throw err;
+      }
+      const maxRunningOverride = parseMaxRunningOption(opts.maxRunning);
+      const result = await submitQueueJob({
+        agent: 'opencode',
+        boxName: opts.name ?? '',
+        providerName,
+        prompt: opts.initialPrompt,
+        agentArgs: opencodeArgs,
+        createOpts: pickOpencodeCreateOpts(opts),
+        maxRunningOverride,
+      });
+      outro(
+        `job ${result.job.id} queued (${String(result.runningCount)}/${String(result.maxConcurrent)} running); log: ${result.job.logPath}`,
+      );
+      cmdLog.close();
+      return;
+    }
 
     if (isCloud) {
       const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });

@@ -3,6 +3,7 @@ import { request as httpRequest } from 'node:http';
 import { DEFAULT_RELAY_PORT } from './types.js';
 import { startRelayServer } from './server.js';
 import { startAutopauseLoop } from './autopause.js';
+import { startQueueLoop } from './queue.js';
 
 const program = new Command();
 
@@ -35,11 +36,16 @@ program
       events: handle.events,
       log: (line) => process.stdout.write(`agentbox-relay: ${line}\n`),
     });
+    const queue = startQueueLoop({
+      log: (line) => process.stdout.write(`agentbox-relay: ${line}\n`),
+    });
+    handle.setQueuePoke(() => {
+      (queue as { poke?: () => void }).poke?.();
+    });
 
     const shutdown = (signal: string): void => {
       process.stdout.write(`agentbox-relay: ${signal} — shutting down\n`);
-      autopause
-        .stop()
+      Promise.allSettled([autopause.stop(), queue.stop()])
         .finally(() => handle.close())
         .finally(() => process.exit(0));
     };

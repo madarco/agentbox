@@ -23,7 +23,9 @@ import { screenCommand } from '../src/commands/screen.js';
 import { pauseCommand } from '../src/commands/pause.js';
 import { prepareCommand } from '../src/commands/prepare.js';
 import { pruneCommand } from '../src/commands/prune.js';
+import { queueCommand } from '../src/commands/queue.js';
 import { relayCommand } from '../src/commands/relay.js';
+import { runQueuedJobCommand } from '../src/commands/_run-queued-job.js';
 import { shellCommand } from '../src/commands/shell.js';
 import { startCommand } from '../src/commands/start.js';
 import { statusCommand } from '../src/commands/status.js';
@@ -65,6 +67,7 @@ function buildProgram(): Command {
     pruneCommand,
     checkpointCommand,
     configCommand,
+    queueCommand,
     relayCommand,
     daytonaCommand,
     hetznerCommand,
@@ -73,6 +76,10 @@ function buildProgram(): Command {
   ]) {
     program.addCommand(cmd);
   }
+  // The queue worker is hidden — buildGroupedHelp filters it out, so it must
+  // NOT appear in HELP_GROUPS either. Register it the same way index.ts does
+  // (with `{ hidden: true }`) so the drift assertion mirrors production.
+  program.addCommand(runQueuedJobCommand, { hidden: true });
   return program;
 }
 
@@ -90,10 +97,18 @@ describe('grouped --help', () => {
     const help = buildGroupedHelp(buildProgram());
     expect(help).not.toContain('Other');
     const grouped = HELP_GROUPS.flatMap((g) => g.commands).sort();
+    // Hidden internal commands (e.g. `_run-queued-job`) are intentionally
+    // excluded from HELP_GROUPS; mirror that filter when comparing.
     const registered = buildProgram()
-      .commands.map((c) => c.name())
+      .commands.filter((c) => !(c as unknown as { _hidden?: boolean })._hidden)
+      .map((c) => c.name())
       .sort();
     expect(grouped).toEqual(registered);
+  });
+
+  it('hidden internal commands stay out of the rendered help', () => {
+    const help = buildGroupedHelp(buildProgram());
+    expect(help).not.toContain('_run-queued-job');
   });
 
   it('renders each group title and the help footer', () => {

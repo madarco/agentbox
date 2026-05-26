@@ -1,6 +1,3 @@
-import { stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { confirm, intro, isCancel, log, outro, spinner } from '@clack/prompts';
 import {
   findProjectRoot,
@@ -28,11 +25,16 @@ import {
   startBox,
   startCodexSession,
   unpauseBox,
-  volumeHasCodexAuth,
   type BoxRecord,
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import {
+  assertAgentCredsAvailable,
+  codexAuthAvailable,
+  MissingAgentCredsError,
+} from '../lib/queue/assert-creds.js';
+import { submitQueueJob } from '../lib/queue/submit.js';
 import {
   ATTACH_IN_HELP,
   INLINE_HELP,
@@ -55,17 +57,37 @@ function reattachRef(r: { projectIndex?: number; name: string }): string {
   return typeof r.projectIndex === 'number' ? String(r.projectIndex) : r.name;
 }
 
+function parseMaxRunningOption(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`--max-running: expected a positive integer, got "${raw}"`);
+  }
+  return n;
+}
+
+function pickCodexCreateOpts(opts: CodexCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
+  return {
+    workspace: opts.workspace,
+    name: opts.name,
+    hostSnapshot: opts.hostSnapshot,
+    snapshot: opts.snapshot,
+    image: opts.image,
+    withPlaywright: opts.withPlaywright,
+    withEnv: opts.withEnv,
+    vnc: opts.vnc,
+    sharedDockerCache: opts.sharedDockerCache,
+    portless: opts.portless,
+    sessionName: opts.sessionName,
+    memory: opts.memory,
+    cpus: opts.cpus,
+    pidsLimit: opts.pidsLimit,
+    disk: opts.disk,
+  };
+}
+
 /** Host-side URL for the relay (loopback for the wrapper's SSE subscription). */
 const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
-
-async function fileExists(p: string): Promise<boolean> {
-  try {
-    await stat(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Attach to a box's Codex tmux session through the wrapped-pty footer (same
@@ -120,10 +142,14 @@ interface CodexCreateOptions {
   verbose?: boolean;
   /** Raw `--attach-in <mode>` value; validated by `parseAttachInOption`. */
   attachIn?: string;
-  /** -i / --inline: shortcut for `--attach-in same`. */
+  /** --inline: shortcut for `--attach-in same` (long-form only — `-i` is `--initial-prompt`). */
   inline?: boolean;
   /** Commander parses `-b, --no-attach` as `attach: false` (defaults true). */
   attach?: boolean;
+  /** `-i, --initial-prompt <text>`: seed codex with this user turn; runs in background. */
+  initialPrompt?: string;
+  /** Per-invocation override of `queue.maxConcurrent`. */
+  maxRunning?: string;
 }
 
 function buildCodexCliOverrides(opts: CodexCreateOptions): Partial<UserConfig> {
@@ -156,17 +182,6 @@ async function runCodexLoginContainer(image: string, extraArgs: string[]): Promi
     buildCodexLoginRunArgv({ volume: SHARED_CODEX_VOLUME, image, extraArgs }),
   );
   return exitCode;
-}
-
-/**
- * True when Codex is already authenticated: a host `OPENAI_API_KEY`, a host
- * `~/.codex/auth.json` (which the volume sync carries into the box), or an
- * `auth.json` already in the shared codex-config volume.
- */
-async function codexAuthAvailable(image: string): Promise<boolean> {
-  if ((process.env['OPENAI_API_KEY'] ?? '').length > 0) return true;
-  if (await fileExists(join(homedir(), '.codex', 'auth.json'))) return true;
-  return volumeHasCodexAuth(SHARED_CODEX_VOLUME, image);
 }
 
 /**
@@ -252,8 +267,16 @@ export const codexCommand = new Command('codex')
     'bypass the spinner and stream raw provider output to stderr. The same content always lands in ~/.agentbox/logs/codex.log.',
   )
   .option('--attach-in <mode>', ATTACH_IN_HELP)
-  .option('-i, --inline', INLINE_HELP)
+  .option('--inline', INLINE_HELP)
   .option('-b, --no-attach', NO_ATTACH_HELP)
+  .option(
+    '-i, --initial-prompt <text>',
+    'seed the codex session with this initial user turn and run in background (no attach). Jobs go through the host-wide queue (queue.maxConcurrent).',
+  )
+  .option(
+    '--max-running <n>',
+    'per-invocation override of queue.maxConcurrent; only honored when `-i` is set',
+  )
   .argument(
     '[codex-args...]',
     "extra args passed to codex inside the box; place after `--`, e.g. `agentbox codex -- -m gpt-5.4`",
@@ -278,6 +301,42 @@ export const codexCommand = new Command('codex')
         : providerDefault.length > 0
           ? providerDefault
           : undefined;
+
+    if (opts.initialPrompt && opts.initialPrompt.length > 0) {
+      if (isCloud) {
+        log.error('-i / --initial-prompt is currently docker-only (cloud sessions only start on attach).');
+        cmdLog.close();
+        process.exit(2);
+      }
+      try {
+        await assertAgentCredsAvailable({
+          agent: 'codex',
+          image: cfg.effective.box.image,
+        });
+      } catch (err) {
+        if (err instanceof MissingAgentCredsError) {
+          log.error(err.message);
+          cmdLog.close();
+          process.exit(2);
+        }
+        throw err;
+      }
+      const maxRunningOverride = parseMaxRunningOption(opts.maxRunning);
+      const result = await submitQueueJob({
+        agent: 'codex',
+        boxName: opts.name ?? '',
+        providerName,
+        prompt: opts.initialPrompt,
+        agentArgs: codexArgs,
+        createOpts: pickCodexCreateOpts(opts),
+        maxRunningOverride,
+      });
+      outro(
+        `job ${result.job.id} queued (${String(result.runningCount)}/${String(result.maxConcurrent)} running); log: ${result.job.logPath}`,
+      );
+      cmdLog.close();
+      return;
+    }
 
     if (isCloud) {
       const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });
