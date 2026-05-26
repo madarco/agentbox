@@ -1,6 +1,3 @@
-import { stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { confirm, intro, isCancel, log, outro, spinner } from '@clack/prompts';
 import {
   findProjectRoot,
@@ -20,7 +17,6 @@ import {
   ensureOpencodeVolume,
   formatDetachNotice,
   inspectBox,
-  OPENCODE_FORWARDED_ENV_KEYS,
   OpencodeSessionError,
   opencodeSessionInfo,
   runInteractiveOpencodeLogin,
@@ -28,11 +24,15 @@ import {
   startBox,
   startOpencodeSession,
   unpauseBox,
-  volumeHasOpencodeAuth,
   type BoxRecord,
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import {
+  assertAgentCredsAvailable,
+  MissingAgentCredsError,
+  opencodeAuthAvailable,
+} from '../lib/queue/assert-creds.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
 import {
   ATTACH_IN_HELP,
@@ -87,15 +87,6 @@ function pickOpencodeCreateOpts(opts: OpencodeCreateOptions): import('@agentbox/
 
 /** Host-side URL for the relay (loopback for the wrapper's SSE subscription). */
 const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
-
-async function fileExists(p: string): Promise<boolean> {
-  try {
-    await stat(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Attach to a box's OpenCode tmux session through the wrapped-pty footer (same
@@ -190,19 +181,6 @@ async function runOpencodeLoginContainer(image: string, extraArgs: string[]): Pr
     buildOpencodeLoginRunArgv({ volume: SHARED_OPENCODE_VOLUME, image, extraArgs }),
   );
   return exitCode;
-}
-
-/**
- * True when OpenCode is already authenticated: a forwarded provider key in the
- * host env, a host `~/.local/share/opencode/auth.json` (carried into the box by
- * the volume sync), or an `auth.json` already in the shared opencode volume.
- */
-async function opencodeAuthAvailable(image: string): Promise<boolean> {
-  for (const k of OPENCODE_FORWARDED_ENV_KEYS) {
-    if ((process.env[k] ?? '').length > 0) return true;
-  }
-  if (await fileExists(join(homedir(), '.local', 'share', 'opencode', 'auth.json'))) return true;
-  return volumeHasOpencodeAuth(SHARED_OPENCODE_VOLUME, image);
 }
 
 /**
@@ -331,6 +309,19 @@ export const opencodeCommand = new Command('opencode')
         log.error('-i / --initial-prompt is currently docker-only (cloud sessions only start on attach).');
         cmdLog.close();
         process.exit(2);
+      }
+      try {
+        await assertAgentCredsAvailable({
+          agent: 'opencode',
+          image: cfg.effective.box.image,
+        });
+      } catch (err) {
+        if (err instanceof MissingAgentCredsError) {
+          log.error(err.message);
+          cmdLog.close();
+          process.exit(2);
+        }
+        throw err;
       }
       const maxRunningOverride = parseMaxRunningOption(opts.maxRunning);
       const result = await submitQueueJob({

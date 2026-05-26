@@ -33,6 +33,10 @@ import {
 import { Command } from 'commander';
 import { resolveClaudeAuth, type ResolvedClaudeAuth } from '../auth.js';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import {
+  assertAgentCredsAvailable,
+  MissingAgentCredsError,
+} from '../lib/queue/assert-creds.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
 import {
@@ -357,6 +361,19 @@ export const claudeCommand = new Command('claude')
         log.error('-i / --initial-prompt is currently docker-only (cloud sessions only start on attach).');
         cmdLog.close();
         process.exit(2);
+      }
+      try {
+        await assertAgentCredsAvailable({
+          agent: 'claude-code',
+          image: cfg.effective.box.image,
+        });
+      } catch (err) {
+        if (err instanceof MissingAgentCredsError) {
+          log.error(err.message);
+          cmdLog.close();
+          process.exit(2);
+        }
+        throw err;
       }
       const maxRunningOverride = parseMaxRunningOption(opts.maxRunning);
       const result = await submitQueueJob({
