@@ -431,7 +431,7 @@ async function buildBundleWithSizeGuard(
   log: (line: string) => void,
 ): Promise<BundleDepth> {
   let effective = depth;
-  await writeBundle(hostRepo, bundlePath, effective, carry);
+  await writeBundle(hostRepo, bundlePath, effective, carry, log);
   const size = await safeStat(bundlePath);
   const budget = bundleBudgetBytes();
   if (
@@ -444,7 +444,7 @@ async function buildBundleWithSizeGuard(
       `git bundle seed: bundle ${formatBytes(size)} > budget ${formatBytes(budget)}; reshallowing to depth=${String(RESHALLOW_FALLBACK_DEPTH)}`,
     );
     effective = { kind: 'shallow', depth: RESHALLOW_FALLBACK_DEPTH, explicit: false };
-    await writeBundle(hostRepo, bundlePath, effective, carry);
+    await writeBundle(hostRepo, bundlePath, effective, carry, log);
     const size2 = await safeStat(bundlePath);
     if (size2 > budget) {
       log(`git bundle seed: bundle ${formatBytes(size2)} still over budget; uploading anyway`);
@@ -457,20 +457,46 @@ async function buildBundleWithSizeGuard(
   return effective;
 }
 
+let bundleDepthSupportProbed = false;
+let bundleDepthSupported = true;
+
+/**
+ * One-shot probe for `git bundle create --depth=N` support. The flag was
+ * added in git 2.40 (April 2023); older gits — notably the macOS system git
+ * (2.39.x) — reject it with "unrecognized argument: --depth=". Cached for
+ * the process lifetime so repeated bundle creations don't re-probe.
+ *
+ * We probe with `git bundle create --depth=1 /dev/null HEAD` (NUL-discarded
+ * output) so the command both validates the flag AND fails fast.
+ */
+async function probeBundleDepthSupport(hostRepo: string): Promise<boolean> {
+  if (bundleDepthSupportProbed) return bundleDepthSupported;
+  const r = await execa('git', ['-C', hostRepo, 'bundle', 'create', '/dev/null', '--depth=1', 'HEAD'], { reject: false });
+  // exit 128 with "unrecognized argument: --depth=1" → unsupported.
+  // exit 0 (or some other non-flag error) → supported.
+  const stderr = (r.stderr ?? '').toLowerCase();
+  bundleDepthSupported = !stderr.includes('unrecognized argument: --depth');
+  bundleDepthSupportProbed = true;
+  return bundleDepthSupported;
+}
+
 async function writeBundle(
   hostRepo: string,
   bundlePath: string,
   depth: BundleDepth,
   carry: CarryOver,
+  log: (line: string) => void,
 ): Promise<void> {
-  // Use `--max-count=N` (a rev-list arg) rather than `--depth=N` (a bundle-
-  // create flag added in git 2.40) so we work with the macOS system git
-  // (currently 2.39.x). `--max-count` limits the rev-list walk to N commits
-  // per starting rev, producing a shallow-equivalent bundle.
+  const supportsDepth = depth.kind === 'shallow' && depth.depth ? await probeBundleDepthSupport(hostRepo) : true;
   const argv: string[] = ['-C', hostRepo, 'bundle', 'create', bundlePath];
-  if (depth.kind === 'shallow' && depth.depth) {
-    argv.push('HEAD', `--max-count=${String(depth.depth)}`);
+  if (depth.kind === 'shallow' && depth.depth && supportsDepth) {
+    argv.push(`--depth=${String(depth.depth)}`, 'HEAD');
   } else {
+    if (depth.kind === 'shallow' && depth.depth && !supportsDepth) {
+      log(
+        `git bundle seed: host git too old for --depth=N (needs git 2.40+); bundling --all instead. Upgrade git or set AGENTBOX_BUNDLE_DEPTH=full to silence.`,
+      );
+    }
     argv.push('--all');
   }
   if (carry.stashRefOwned) argv.push(STASH_CARRYOVER_REF);
