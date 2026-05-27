@@ -1032,7 +1032,24 @@ async function handleGitRpc(
       if (typeof a === 'string') argv.push(a);
     }
   }
-  return runHostCommand(argv);
+  const result = await runHostCommand(argv);
+  // After a successful push, mirror what `git push -u` would have left behind:
+  // make the branch track `origin/<branch>` so the in-box `git status` /
+  // Claude Code's PR badge see an upstream. Skip per-box scratch branches
+  // (`agentbox/<name>`) — they're local-only by design. Docker shares .git/
+  // with the box, so update-ref of the remote-tracking ref already happened
+  // during the push; only the upstream config is missing.
+  if (method === 'git.push' && result.exitCode === 0 && !worktree.branch.startsWith('agentbox/')) {
+    await runHostCommand([
+      'git',
+      '-C',
+      worktree.hostMainRepo,
+      'branch',
+      `--set-upstream-to=${remote}/${worktree.branch}`,
+      worktree.branch,
+    ]);
+  }
+  return result;
 }
 
 /**

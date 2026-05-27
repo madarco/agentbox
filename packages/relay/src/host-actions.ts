@@ -762,10 +762,48 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
         for (const a of params.args) if (typeof a === 'string') argv.push(a);
       }
       const push = await execa('git', argv, { reject: false });
+      let pushStderr = push.stderr ?? '';
+      // After a successful push, sync the box's view of origin to match what
+      // a normal local `git push -u` would have left behind: write the pushed
+      // tip into the box's `refs/remotes/origin/<branch>` and set the branch
+      // upstream to track it. Without this, Claude Code's PR badge sees no
+      // upstream on the branch and doesn't fetch / display the PR. Per-box
+      // scratch branches (`agentbox/<name>`) skip the sync — they're
+      // local-only by design.
+      if ((push.exitCode ?? 1) === 0 && !branch.startsWith('agentbox/')) {
+        try {
+          const sha = await execa(
+            'git',
+            ['-C', lookup.workspacePath, 'rev-parse', branch],
+            { reject: false },
+          );
+          const shaText = (sha.stdout ?? '').trim();
+          if (sha.exitCode === 0 && shaText.length > 0) {
+            const updateRef = await backend.exec(
+              handle,
+              `git -C ${shellQuote(containerPath)} update-ref refs/remotes/${remote}/${branch} ${shellQuote(shaText)}`,
+            );
+            if (updateRef.exitCode !== 0) {
+              pushStderr += `\nrelay: post-push in-box update-ref refs/remotes/${remote}/${branch} failed: ${updateRef.stderr || updateRef.stdout}`;
+            }
+            const setUpstream = await backend.exec(
+              handle,
+              `git -C ${shellQuote(containerPath)} branch --set-upstream-to=${remote}/${branch} ${shellQuote(branch)}`,
+            );
+            if (setUpstream.exitCode !== 0) {
+              pushStderr += `\nrelay: post-push in-box --set-upstream-to=${remote}/${branch} failed: ${setUpstream.stderr || setUpstream.stdout}`;
+            }
+          } else {
+            pushStderr += `\nrelay: post-push rev-parse ${branch} failed on host; skipping in-box origin/upstream sync`;
+          }
+        } catch (err) {
+          pushStderr += `\nrelay: post-push in-box origin/upstream sync threw: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
       return {
         exitCode: push.exitCode ?? 1,
         stdout: push.stdout ?? '',
-        stderr: push.stderr ?? '',
+        stderr: pushStderr,
       };
     }
     // git.fetch: host fetches origin, bundles, uploads, sandbox fetches.
