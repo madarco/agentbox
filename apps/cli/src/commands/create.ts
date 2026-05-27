@@ -16,6 +16,7 @@ import {
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
 import { runCarryGate } from '../lib/carry-gate.js';
+import { FromBranchError, resolveFromBranch } from '../lib/from-branch.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { makeProgressReporter } from '../lib/progress.js';
 import { maybePromptPortless, setupPortlessHost } from '../portless-prompt.js';
@@ -56,6 +57,8 @@ interface CreateOptions {
   disk?: string;
   /** --bundle-depth <n>: cap commits in the cloud-seed git bundle. 0 = full history. */
   bundleDepth?: number;
+  /** --from-branch <ref>: base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. */
+  fromBranch?: string;
   /** -v / --verbose: also stream raw build / provision output to stderr. */
   verbose?: boolean;
 }
@@ -165,6 +168,10 @@ export const createCommand = new Command('create')
       if (!Number.isInteger(n) || n < 0) throw new Error(`--bundle-depth: expected a non-negative integer, got "${v}"`);
       return n;
     },
+  )
+  .option(
+    '--from-branch <ref>',
+    "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
   )
   .option('-y, --yes', 'skip prompts, accept defaults')
   .option(
@@ -294,6 +301,18 @@ export const createCommand = new Command('create')
       // a DockerProvider for 'docker' and (once Phase 5 wires it) a cloud
       // provider for 'daytona'; everything below is provider-neutral.
       const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });
+      let fromBranch: string | undefined;
+      try {
+        fromBranch = await resolveFromBranch(opts.fromBranch, { repo: opts.workspace });
+      } catch (err) {
+        if (err instanceof FromBranchError) {
+          s.stop('aborting: invalid --from-branch');
+          log.error(err.message);
+          cmdLog.close();
+          process.exit(2);
+        }
+        throw err;
+      }
       const result = await provider.create({
         workspacePath: opts.workspace,
         name: opts.name,
@@ -306,6 +325,7 @@ export const createCommand = new Command('create')
         vnc: { enabled: cfg.effective.box.vnc },
         limits: resolveLimits(cfg.effective.box, opts),
         bundleDepth: cfg.effective.box.bundleDepth,
+        fromBranch,
         projectRoot,
         onLog: (line) => {
           s.message(line);

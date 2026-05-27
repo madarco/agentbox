@@ -1,17 +1,37 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { spawn } from 'node:child_process';
 import { postRpcAndExit } from '../relay-rpc.js';
 import { buildPrCommand } from './pr-subcommands.js';
 
+/**
+ * Hidden CLI flag carrying a one-time scoped token minted by the host CLI
+ * via the relay's loopback-only `/admin/host-initiated/mint`. The relay
+ * validates the token + (boxId, method) scope on the receiving RPC and
+ * skips its confirm prompt on match. We use a CLI arg (not an env var)
+ * because env vars are inherited by child processes — a `git push`
+ * pre-push hook (or any other in-box command agentbox-ctl spawns) would
+ * inherit the token and could replay it. The CLI arg lives only on the
+ * agentbox-ctl process itself.
+ */
+function hostInitiatedOption(): Option {
+  return new Option(
+    '--host-initiated-token <token>',
+    'internal: one-time token from the host CLI; skips relay confirm prompt when valid',
+  ).hideHelp();
+}
+
 interface CommonOptions {
   remote?: string;
   cwd?: string;
+  /** Set by the host CLI; carries a one-time token the relay validates. */
+  hostInitiatedToken?: string;
 }
 
 interface GitRpcParams {
   path: string;
   remote?: string;
   args?: string[];
+  hostInitiated?: string;
 }
 
 interface GitCloneRpcParams {
@@ -25,6 +45,7 @@ function buildParams(opts: CommonOptions, extra: string[]): GitRpcParams {
   const params: GitRpcParams = { path: opts.cwd ?? process.cwd() };
   if (opts.remote) params.remote = opts.remote;
   if (extra.length > 0) params.args = extra;
+  if (opts.hostInitiatedToken) params.hostInitiated = opts.hostInitiatedToken;
   return params;
 }
 
@@ -51,6 +72,7 @@ export const gitCommand = new Command('git')
       .description("Run `git push` on the host main repo against this box's branch (user is prompted on the host wrapper to confirm)")
       .option('--remote <name>', 'remote name (default: origin)')
       .option('--cwd <path>', 'container path identifying which registered worktree to use')
+      .addOption(hostInitiatedOption())
       .allowExcessArguments(true)
       .allowUnknownOption(true)
       .argument(
@@ -69,6 +91,7 @@ export const gitCommand = new Command('git')
       .description('Run `git fetch` on the host main repo (refs land in the shared .git)')
       .option('--remote <name>', 'remote name (default: origin)')
       .option('--cwd <path>', 'container path identifying which registered worktree to use')
+      .addOption(hostInitiatedOption())
       .allowExcessArguments(true)
       .allowUnknownOption(true)
       .argument(
@@ -90,6 +113,7 @@ export const gitCommand = new Command('git')
       .option('--remote <name>', 'remote name (default: origin)')
       .option('--cwd <path>', 'container path identifying which registered worktree to use')
       .option('--ff-only', 'pass --ff-only to the local merge')
+      .addOption(hostInitiatedOption())
       .allowExcessArguments(true)
       .allowUnknownOption(true)
       .argument(

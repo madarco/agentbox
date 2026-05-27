@@ -14,6 +14,7 @@ import {
   type GhPrOp,
   type GhPrRpcParams,
 } from './gh.js';
+import { hashRpcParams, HostInitiatedTokens } from './host-initiated.js';
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
 import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
@@ -168,6 +169,7 @@ function isLoopbackAddress(addr: string | undefined): boolean {
  *   GET  /admin/registry        — loopback only; list registered boxes (token redacted).
  *   GET  /admin/prompts/stream  — loopback only; SSE; pushes prompt-ask/prompt-resolved/notice-set/notice-clear/ping events.
  *   POST /admin/prompts/answer  — loopback only; resolves a pending prompt by id.
+ *   POST /admin/host-initiated/mint — loopback only; mints a one-time token scoped to (boxId, method).
  *   POST /admin/notices/set     — loopback only; sets an informational box notice (returns {id}).
  *   POST /admin/notices/clear   — loopback only; clears a box notice by id.
  *   GET  /healthz               — liveness probe (no auth).
@@ -180,6 +182,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const prompts = new PendingPrompts();
   const subscribers = new PromptSubscribers();
   const notices = new BoxNotices(subscribers);
+  const hostInitiatedTokens = new HostInitiatedTokens();
   let queuePoke: (() => void) | null = null;
   const host = opts.host ?? '0.0.0.0';
   const mode: RelayMode = opts.mode ?? 'host';
@@ -357,7 +360,31 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           const params = body.params as GitRpcParams | undefined;
           const worktree = resolveWorktree(reg, params?.path ?? '/workspace');
           const isAgentboxBranch = worktree?.branch.startsWith('agentbox/') ?? false;
-          if (!isAgentboxBranch) {
+          // Host-initiated pushes (driven by `agentbox git push <box>`) skip
+          // the confirm prompt — but only if the host CLI minted a valid,
+          // unexpired, scope-matched, params-hash-bound token via
+          // /admin/host-initiated/mint. If a token is *present* but doesn't
+          // validate (wrong scope, mutated params, expired, replayed), reject
+          // hard: that's an attack signal (the only way to get a token is to
+          // mint one host-side, and a legitimate host call always sends what
+          // it minted for). Fall through to the prompt only when no token was
+          // claimed — that's the normal agent-initiated path.
+          const tokenClaimed = typeof params?.hostInitiated === 'string';
+          const incomingHash = hashRpcParams(params);
+          const hostInitiatedOk =
+            !isAgentboxBranch &&
+            tokenClaimed &&
+            hostInitiatedTokens.consume(params?.hostInitiated, reg.boxId, 'git.push', incomingHash);
+          if (!isAgentboxBranch && tokenClaimed && !hostInitiatedOk) {
+            send(res, 500, {
+              exitCode: 10,
+              stdout: '',
+              stderr:
+                'host-initiated token rejected: invalid, expired, or bound to different params\n',
+            });
+            return;
+          }
+          if (!isAgentboxBranch && !hostInitiatedOk) {
             const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
               kind: 'confirm',
               message: `Allow git push from box ${reg.name}?`,
@@ -421,6 +448,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           body.params as GhPrRpcParams | undefined,
           prompts,
           subscribers,
+          hostInitiatedTokens,
         );
         const status = result.exitCode === 0 ? 200 : 500;
         send(res, status, result);
@@ -637,6 +665,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                       boxName: reg.name,
                       prompts,
                       subscribers,
+                      hostInitiatedTokens,
                       log,
                     });
                     await respond(result);
@@ -785,6 +814,52 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         subscribers.broadcast(targetBox, 'prompt-resolved', { id: body.id });
       }
       send(res, 204, null);
+      return;
+    }
+
+    if (route === 'POST /admin/host-initiated/mint') {
+      // Host CLI mints a one-time token before invoking `agentbox-ctl` in a
+      // box for a credentialed RPC. The token is scoped to
+      // (boxId, method, paramsHash) and consumed on first use.
+      // See ./host-initiated.ts for rationale.
+      //
+      // paramsHash is mandatory in practice — without it a box that
+      // harvests the token from agentbox-ctl's /proc/<pid>/cmdline could
+      // replay it with mutated args. Accept `null` only for callers that
+      // intentionally opt out (none today).
+      const body = await readJsonBody<{
+        boxId?: string;
+        method?: string;
+        paramsHash?: string | null;
+        ttlMs?: number;
+      }>(req);
+      if (
+        !body ||
+        typeof body.boxId !== 'string' ||
+        body.boxId.length === 0 ||
+        typeof body.method !== 'string' ||
+        body.method.length === 0
+      ) {
+        send(res, 400, { error: 'expected {boxId, method, paramsHash, ttlMs?}' });
+        return;
+      }
+      // Allow `paramsHash: null` (explicit opt-out) or a hex string.
+      let paramsHash: string | null;
+      if (body.paramsHash === null || body.paramsHash === undefined) {
+        paramsHash = null;
+      } else if (typeof body.paramsHash === 'string' && /^[0-9a-f]{64}$/.test(body.paramsHash)) {
+        paramsHash = body.paramsHash;
+      } else {
+        send(res, 400, { error: 'paramsHash must be a 64-hex sha256 string or null' });
+        return;
+      }
+      const ttlMs =
+        typeof body.ttlMs === 'number' && Number.isFinite(body.ttlMs) && body.ttlMs > 0
+          ? body.ttlMs
+          : undefined;
+      const token = hostInitiatedTokens.mint(body.boxId, body.method, paramsHash, ttlMs);
+      log(`host-initiated-mint box=${body.boxId} method=${body.method} paramsBound=${paramsHash !== null}`);
+      send(res, 200, { token });
       return;
     }
 
@@ -978,6 +1053,7 @@ async function handleGhPrRpc(
   params: GhPrRpcParams | undefined,
   prompts: PendingPrompts,
   subscribers: PromptSubscribers,
+  hostInitiatedTokens: HostInitiatedTokens,
 ): Promise<GitRpcResult> {
   // Env-only refusals first — cheap, deterministic, no fs/process calls.
   const mergeBypass = refuseMergeBypass(op);
@@ -1007,7 +1083,27 @@ async function handleGhPrRpc(
     if (guard) return guard;
   }
 
-  if (!GH_PR_READ_ONLY_OPS.has(op)) {
+  // Host-initiated `gh pr <op>` (from `agentbox git pr <op> <box>`) skips
+  // the confirm prompt — but only with a valid scope-matched, params-hash-
+  // bound one-time token. If a token is *present* but invalid (mutated
+  // params, replayed, etc.) we reject hard — that's an attack signal. Only
+  // fall through to the prompt when no token was claimed. The
+  // `refuseMergeBypass` / `refuseCheckoutByDefault` guards above still run.
+  const tokenClaimedGh = typeof params?.hostInitiated === 'string';
+  const incomingHashGh = hashRpcParams(params);
+  const hostInitiatedOk =
+    !GH_PR_READ_ONLY_OPS.has(op) &&
+    tokenClaimedGh &&
+    hostInitiatedTokens.consume(params?.hostInitiated, reg.boxId, `gh.pr.${op}`, incomingHashGh);
+  if (!GH_PR_READ_ONLY_OPS.has(op) && tokenClaimedGh && !hostInitiatedOk) {
+    return {
+      exitCode: 10,
+      stdout: '',
+      stderr:
+        'host-initiated token rejected: invalid, expired, or bound to different params\n',
+    };
+  }
+  if (!GH_PR_READ_ONLY_OPS.has(op) && !hostInitiatedOk) {
     const detail = args.join(' ').slice(0, 200);
     const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
       kind: 'confirm',

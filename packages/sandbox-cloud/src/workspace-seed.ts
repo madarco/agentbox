@@ -39,6 +39,15 @@ export interface SeedCloudWorkspaceArgs {
    * fixed shallow depth, no adaptive rebuild. Applied per repo.
    */
   bundleDepth?: number;
+  /**
+   * Base ref the box's `<branch>` is forked from (default: clone's HEAD).
+   * When set, the host clone passes `--branch <fromBranch>` so the clone's
+   * HEAD points at the requested ref, and the in-sandbox `git checkout -B
+   * <branch>` picks it up. Nested repos keep their own default branch —
+   * `<fromBranch>` is applied to the root only. Caller is responsible for
+   * validating the ref host-side.
+   */
+  fromBranch?: string;
   onLog?: (line: string) => void;
 }
 
@@ -73,6 +82,7 @@ export async function seedCloudWorkspace(
       branch: args.branch,
       workspaceDir,
       bundleDepth: args.bundleDepth,
+      fromBranch: args.fromBranch,
       onLog: log,
     });
     // Each nested repo gets its own clone at /workspace/<rel>. We do these
@@ -113,6 +123,8 @@ interface SeedFromGitCloneArgs {
   workspaceDir: string;
   /** See `SeedCloudWorkspaceArgs.bundleDepth`. */
   bundleDepth?: number;
+  /** See `SeedCloudWorkspaceArgs.fromBranch`. */
+  fromBranch?: string;
   onLog?: (line: string) => void;
 }
 
@@ -183,7 +195,7 @@ async function seedFromGitClone(args: SeedFromGitCloneArgs): Promise<void> {
           ? 'clone: depth=full (configured)'
           : `clone: depth=${String(initialDepth)} (configured)`,
     );
-    await runShallowClone(args.hostRepo, cloneDir, initialDepth, stashRefCreated);
+    await runShallowClone(args.hostRepo, cloneDir, initialDepth, stashRefCreated, args.fromBranch);
     await tarCloneDir(cloneDir, tarPath);
     if (adaptive && initialDepth !== null) {
       const size = await safeFileSize(tarPath);
@@ -194,7 +206,7 @@ async function seedFromGitClone(args: SeedFromGitCloneArgs): Promise<void> {
         );
         await rm(cloneDir, { recursive: true, force: true });
         await rm(tarPath, { force: true });
-        await runShallowClone(args.hostRepo, cloneDir, LARGE_BUNDLE_DEPTH, stashRefCreated);
+        await runShallowClone(args.hostRepo, cloneDir, LARGE_BUNDLE_DEPTH, stashRefCreated, args.fromBranch);
         await tarCloneDir(cloneDir, tarPath);
       }
     }
@@ -297,9 +309,16 @@ async function runShallowClone(
   cloneDir: string,
   depth: number | null,
   includeStashRef: boolean,
+  fromBranch?: string,
 ): Promise<void> {
   const cloneArgs: string[] = ['clone', '--no-checkout', '--quiet'];
   if (depth !== null) cloneArgs.push(`--depth=${String(depth)}`);
+  // `--branch` pins the clone's HEAD to the requested ref so the in-sandbox
+  // `git checkout -B <branch>` picks up that ref as the fork point. Accepts
+  // branch names + tags; SHAs aren't supported by `git clone --branch` and
+  // would need a separate fetch (callers using SHAs should validate
+  // host-side and pass a branch/tag name instead, or skip --from-branch).
+  if (fromBranch) cloneArgs.push('--branch', fromBranch);
   cloneArgs.push(`file://${hostRepo}`, cloneDir);
   await execa('git', cloneArgs);
   if (includeStashRef) {

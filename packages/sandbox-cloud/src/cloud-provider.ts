@@ -328,6 +328,7 @@ export function createCloudProvider(
             branch,
             workspaceDir: CLOUD_WORKSPACE_DIR,
             bundleDepth: req.bundleDepth,
+            fromBranch: req.fromBranch,
             onLog: log,
           });
         }

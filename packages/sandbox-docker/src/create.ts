@@ -115,6 +115,12 @@ export interface CreateBoxOptions {
    * `seedWorkspace` runs in this path.
    */
   checkpointRef?: string;
+  /**
+   * Base ref the box's per-box branch is forked from (default: HEAD). Caller
+   * is responsible for validation + any required fetch beforehand. Accepts
+   * any ref `git rev-parse` resolves; passed verbatim to `git worktree add`.
+   */
+  fromBranch?: string;
   image?: string;
   onLog?: (line: string) => void;
   /**
@@ -798,7 +804,12 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   if (!checkpointImage) {
     if (repoCarryOvers.length > 0) {
       try {
-        await seedWorkspace({ container: containerName, repos: repoCarryOvers, onLog: log });
+        await seedWorkspace({
+          container: containerName,
+          repos: repoCarryOvers,
+          fromBranch: opts.fromBranch,
+          onLog: log,
+        });
         log('seeded /workspace from in-container git worktree(s)');
       } catch (err) {
         log(

@@ -112,6 +112,13 @@ export interface SeedWorkspaceOptions {
   container: string;
   /** Repos with collected carry-over, in DAG order: root first, nested after. */
   repos: RepoCarryOver[];
+  /**
+   * Base ref each worktree is forked from. `undefined` (default) → `HEAD`.
+   * Caller validates host-side; passed verbatim to `git worktree add`. Set
+   * by `agentbox create --from-branch <ref>` so the box can start from main
+   * (or any ref) instead of whatever the host happens to have checked out.
+   */
+  fromBranch?: string;
   onLog?: (line: string) => void;
 }
 
@@ -264,6 +271,9 @@ export async function seedWorkspace(opts: SeedWorkspaceOptions): Promise<void> {
   await dexec(opts.container, ['mkdir', '-p', WORKTREE_ROOT]);
 
   // Phase 1: register each worktree at its per-box unique path.
+  // `fromBranch` (when set) overrides the default `HEAD` base ref — lets the
+  // CLI's `--from-branch <ref>` start the box on a specific branch/SHA/tag.
+  const baseRef = opts.fromBranch ?? 'HEAD';
   for (const r of opts.repos) {
     const main = r.repo.hostMainRepo;
     const wt = r.gitWorktreePath;
@@ -282,7 +292,7 @@ export async function seedWorkspace(opts: SeedWorkspaceOptions): Promise<void> {
         '-b',
         r.branch,
         wt,
-        'HEAD',
+        baseRef,
       ],
       { reject: false },
     );

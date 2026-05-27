@@ -45,6 +45,7 @@ export {
   type PromptResolution,
 } from './prompts.js';
 export { BoxNotices } from './notices.js';
+export { hashRpcParams, HostInitiatedTokens } from './host-initiated.js';
 export {
   assertGhReady,
   checkoutGuards,

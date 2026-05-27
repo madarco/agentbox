@@ -76,6 +76,15 @@ export interface CreateBoxRequest {
    * Ignored by the docker provider (it bind-mounts `.git/`, no bundle).
    */
   bundleDepth?: number;
+  /**
+   * Base ref the box's per-box branch (`agentbox/<name>`) is created from.
+   * When unset, the worktree forks from `HEAD` (current behavior). When set,
+   * accepts any ref `git rev-parse --verify` resolves on the host main repo
+   * (`main`, `origin/main`, SHAs, tags, …). The CLI is responsible for
+   * validating + optionally fetching first so a bad ref fails fast before
+   * any provider work — the provider trusts whatever it gets here.
+   */
+  fromBranch?: string;
   /** Provider-specific knobs (docker: sharedCache/portless; daytona: resources/region). */
   providerOptions?: Record<string, unknown>;
   onLog?: (line: string) => void;

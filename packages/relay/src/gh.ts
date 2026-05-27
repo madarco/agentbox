@@ -44,6 +44,16 @@ export interface GhPrRpcParams {
   path?: string;
   /** Pass-through argv (`--title`, `--body`, `--label`, `--draft`, `--json`, …). */
   args?: string[];
+  /**
+   * One-time token minted by the host CLI via `/admin/host-initiated/mint`
+   * before invoking `agentbox git pr <op> <box>`. Validated against the
+   * relay's in-memory store, scoped to `(boxId, method=gh.pr.<op>)`;
+   * consumed on match and the confirm prompt is skipped. Boxes cannot mint
+   * tokens (admin endpoint is loopback-only). `AGENTBOX_GH_FORCE` /
+   * `AGENTBOX_GH_PR_CHECKOUT` opt-ins still apply — destructive guards do
+   * not weaken when host-initiated.
+   */
+  hostInitiated?: string;
 }
 
 const GH_RPC_TIMEOUT_MS = 120_000;

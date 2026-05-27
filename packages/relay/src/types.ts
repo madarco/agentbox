@@ -186,6 +186,16 @@ export interface GitRpcParams {
   remote?: string;
   /** Extra argv tail appended after the standard args (e.g. ['--set-upstream', 'origin', 'branch']). */
   args?: string[];
+  /**
+   * One-time token minted by the host CLI via `/admin/host-initiated/mint`
+   * before invoking this RPC through `agentbox-ctl`. The relay validates the
+   * token against its in-memory store, scoped to `(boxId, method)`; on
+   * match, the token is consumed and the confirm prompt is skipped. Boxes
+   * cannot mint these (the admin endpoint is loopback-only), so a malicious
+   * agent cannot forge "host-initiated" calls. Invalid/expired tokens fall
+   * through to the normal prompt path.
+   */
+  hostInitiated?: string;
 }
 
 export interface GitRpcResult {

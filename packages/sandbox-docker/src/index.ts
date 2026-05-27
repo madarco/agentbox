@@ -152,6 +152,7 @@ export {
   forgetBoxFromRelay,
   generateRelayToken,
   getRelayStatus,
+  mintHostInitiatedToken,
   registerBoxWithRelay,
   rehydrateRelayRegistry,
   RELAY_CONTAINER_NAME,

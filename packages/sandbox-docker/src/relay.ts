@@ -457,6 +457,42 @@ export async function clearRelayNotice(boxId: string, id: string): Promise<void>
   }
 }
 
+/**
+ * Mint a one-time host-initiated token from the host relay, scoped to
+ * `(boxId, method, paramsHash)`. The caller passes the returned token to
+ * `agentbox-ctl` via `--host-initiated-token`, which forwards it in the RPC
+ * params; the relay re-hashes the incoming params and only skips the confirm
+ * prompt on a full scope+hash match. Binding to paramsHash prevents a box
+ * that harvests the token from agentbox-ctl's argv from replaying it with
+ * mutated args (e.g. `--force` on push, modified `--title`/`--body` on PR).
+ *
+ * The endpoint is loopback-only, so the box cannot mint these directly. If
+ * the relay is unreachable / too old to know the route, returns null and the
+ * caller falls back to the wrapper-side prompt path.
+ *
+ * Pass `paramsHash: null` to opt out of params binding (no current call
+ * sites do this; the host CLI always binds).
+ */
+export async function mintHostInitiatedToken(
+  boxId: string,
+  method: string,
+  paramsHash: string | null,
+  ttlMs?: number,
+): Promise<string | null> {
+  try {
+    const body = await adminPostForJson('/admin/host-initiated/mint', {
+      boxId,
+      method,
+      paramsHash,
+      ...(typeof ttlMs === 'number' ? { ttlMs } : {}),
+    });
+    const token = (body as { token?: unknown } | null)?.token;
+    return typeof token === 'string' && token.length > 0 ? token : null;
+  } catch {
+    return null;
+  }
+}
+
 async function adminPost(path: string, body: unknown): Promise<void> {
   const json = JSON.stringify(body);
   await new Promise<void>((resolveP, rejectP) => {

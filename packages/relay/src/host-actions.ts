@@ -30,6 +30,7 @@ import {
   runHostGh,
   type GhPrRpcParams,
 } from './gh.js';
+import { hashRpcParams, type HostInitiatedTokens } from './host-initiated.js';
 import { askPrompt, type PendingPrompts, type PromptSubscribers } from './prompts.js';
 import type {
   CheckpointRpcParams,
@@ -52,6 +53,8 @@ export interface CloudActionExecutorDeps {
   prompts?: PendingPrompts;
   /** Host wrapper SSE subscribers — the prompt UX feeds through them. */
   subscribers?: PromptSubscribers;
+  /** Host CLI one-time tokens; presence + scope-match skips the confirm prompt. */
+  hostInitiatedTokens?: HostInitiatedTokens;
   /** Best-effort logger. */
   log?: (line: string) => void;
 }
@@ -243,7 +246,36 @@ async function runGhPrRpc(
     if (guard) return guard;
   }
 
-  if (!GH_PR_READ_ONLY_OPS.has(op) && deps.prompts && deps.subscribers) {
+  // Host-initiated `gh pr <op>` (from `agentbox git pr <op> <box>`) skips
+  // the confirm prompt — but only with a valid scope-matched, params-hash-
+  // bound one-time token. If a token is *present* but invalid, reject
+  // hard: attack signal. Only fall through to the prompt when no token was
+  // claimed. Destructive-op env opt-ins above still apply.
+  const tokenClaimedGhCloud = typeof params.hostInitiated === 'string';
+  const incomingHashGhCloud = hashRpcParams(params);
+  const hostInitiatedGhOk =
+    !GH_PR_READ_ONLY_OPS.has(op) &&
+    tokenClaimedGhCloud &&
+    (deps.hostInitiatedTokens?.consume(
+      params.hostInitiated,
+      deps.boxId,
+      `gh.pr.${op}`,
+      incomingHashGhCloud,
+    ) ?? false);
+  if (!GH_PR_READ_ONLY_OPS.has(op) && tokenClaimedGhCloud && !hostInitiatedGhOk) {
+    return {
+      exitCode: 10,
+      stdout: '',
+      stderr:
+        'host-initiated token rejected: invalid, expired, or bound to different params\n',
+    };
+  }
+  if (
+    !GH_PR_READ_ONLY_OPS.has(op) &&
+    !hostInitiatedGhOk &&
+    deps.prompts &&
+    deps.subscribers
+  ) {
     const detail = args.join(' ').slice(0, 200);
     const ctx = {
       kind: 'confirm' as const,
@@ -608,7 +640,37 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
   // Per-box `agentbox/<name>` branches bypass the gate — pushing to them is
   // the box's whole job; the prompt would only ever ask about other branches.
   const isAgentboxBranch = branch.startsWith('agentbox/');
-  if (action.method === 'git.push' && !isAgentboxBranch && deps.prompts && deps.subscribers) {
+  // Host-initiated pushes (driven by `agentbox git push <box>`) skip the
+  // confirm prompt — but only with a valid scope-matched, params-hash-bound
+  // one-time token. If a token is *present* but invalid (mutated args,
+  // replayed, expired), reject hard: that's an attack signal. Only fall
+  // through to the prompt when no token was claimed.
+  const tokenClaimedGit = typeof params.hostInitiated === 'string';
+  const incomingHashGit = hashRpcParams(params);
+  const hostInitiatedOk =
+    !isAgentboxBranch &&
+    tokenClaimedGit &&
+    (deps.hostInitiatedTokens?.consume(
+      params.hostInitiated,
+      deps.boxId,
+      'git.push',
+      incomingHashGit,
+    ) ?? false);
+  if (action.method === 'git.push' && !isAgentboxBranch && tokenClaimedGit && !hostInitiatedOk) {
+    return {
+      exitCode: 10,
+      stdout: '',
+      stderr:
+        'host-initiated token rejected: invalid, expired, or bound to different params\n',
+    };
+  }
+  if (
+    action.method === 'git.push' &&
+    !isAgentboxBranch &&
+    !hostInitiatedOk &&
+    deps.prompts &&
+    deps.subscribers
+  ) {
     // Cloud-specific fallback: when no SSE subscriber is attached the prompt
     // would block indefinitely (the user has nothing to answer in). Choose
     // up-front whether to auto-deny (default) or auto-approve based on env

@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { postRpcAndExit } from '../relay-rpc.js';
 
 export interface PrSubcommandSpec {
@@ -43,11 +43,14 @@ export const PR_SUBCOMMANDS: PrSubcommandSpec[] = [
 
 interface PrCommonOptions {
   cwd?: string;
+  /** Set by the host CLI; carries a one-time token the relay validates. */
+  hostInitiatedToken?: string;
 }
 
 interface GhPrRpcParams {
   path: string;
   args?: string[];
+  hostInitiated?: string;
 }
 
 /**
@@ -64,6 +67,12 @@ export function buildPrCommand(errorPrefix: string): Command {
       new Command(spec.op)
         .description(spec.description)
         .option('--cwd <path>', 'container path identifying which registered worktree to use')
+        .addOption(
+          new Option(
+            '--host-initiated-token <token>',
+            'internal: one-time token from the host CLI; skips relay confirm prompt when valid',
+          ).hideHelp(),
+        )
         .allowExcessArguments(true)
         .allowUnknownOption(true)
         .argument(
@@ -73,6 +82,7 @@ export function buildPrCommand(errorPrefix: string): Command {
         .action(async (args: string[], opts: PrCommonOptions) => {
           const params: GhPrRpcParams = { path: opts.cwd ?? process.cwd() };
           if (args.length > 0) params.args = args;
+          if (opts.hostInitiatedToken) params.hostInitiated = opts.hostInitiatedToken;
           const code = await postRpcAndExit(`gh.pr.${spec.op}`, params, { errorPrefix });
           process.exit(code);
         }),

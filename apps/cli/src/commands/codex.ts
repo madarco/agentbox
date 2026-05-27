@@ -44,6 +44,7 @@ import {
 import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { runCarryGate } from '../lib/carry-gate.js';
+import { FromBranchError, resolveFromBranch } from '../lib/from-branch.js';
 import { providerForBox, providerForCreate } from '../provider/registry.js';
 import {
   prepareTeleport,
@@ -150,6 +151,8 @@ interface CodexCreateOptions {
   disk?: string;
   /** Sandbox backend: `docker` (default) or `daytona`. */
   provider?: string;
+  /** --from-branch <ref>: base the box's per-box branch on this ref instead of HEAD. */
+  fromBranch?: string;
   /** -v / --verbose: bypass the spinner and stream raw provider output. */
   verbose?: boolean;
   /** Raw `--attach-in <mode>` value; validated by `parseAttachInOption`. */
@@ -286,6 +289,10 @@ export const codexCommand = new Command('codex')
   .option(
     '--provider <name>',
     "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
+  )
+  .option(
+    '--from-branch <ref>',
+    "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
   )
   .option(
     '-v, --verbose',
@@ -426,6 +433,18 @@ export const codexCommand = new Command('codex')
       process.exit(1);
     }
 
+    let fromBranch: string | undefined;
+    try {
+      fromBranch = await resolveFromBranch(opts.fromBranch, { repo: opts.workspace });
+    } catch (err) {
+      if (err instanceof FromBranchError) {
+        log.error(err.message);
+        cmdLog.close();
+        process.exit(2);
+      }
+      throw err;
+    }
+
     if (isCloud) {
       const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });
       const withPlaywright =
@@ -442,6 +461,7 @@ export const codexCommand = new Command('codex')
           carry: carryEntries,
           vnc: { enabled: cfg.effective.box.vnc },
           limits: resolveLimits(cfg.effective.box, opts),
+          fromBranch,
           projectRoot,
         },
         binary: 'codex',
@@ -507,6 +527,7 @@ export const codexCommand = new Command('codex')
         name: opts.name,
         useSnapshot,
         checkpointRef,
+        fromBranch,
         image: cfg.effective.box.image,
         codexConfig: { isolate: cfg.effective.box.isolateCodexConfig },
         withPlaywright,
