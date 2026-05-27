@@ -39,13 +39,25 @@ function stubRelay(): { enabled: boolean; post: (type: string, payload: unknown)
   };
 }
 
-async function flushDebounce(reporter: StatusReporter): Promise<void> {
-  // The reporter debounces pushes 300ms by default. Force-flush the buffer
-  // and wait long enough for the snapshot's async tmux probes to resolve
-  // (probeAgentSession spawns `tmux has-session`, which in a unit-test
-  // environment fails fast and emits the snapshot with `sessionRunning: false`).
+/**
+ * Force the reporter to push at least one new snapshot, then wait until it
+ * actually lands on the relay stub. `reporter.push()` is fire-and-forget AND
+ * its snapshot awaits three `probeAgentSession` calls (each spawns `tmux
+ * has-session`). On slow CI runners with no tmux installed, ENOENT can take
+ * 100ms+ to surface, so a fixed sleep is fragile — poll instead.
+ */
+async function flushDebounce(
+  reporter: StatusReporter,
+  relay: { posted: Posted[] },
+): Promise<void> {
+  const before = relay.posted.length;
   reporter.flush();
-  await new Promise((r) => setTimeout(r, 50));
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    if (relay.posted.length > before) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`flushDebounce: no new relay post within 2s (had ${String(before)} before)`);
 }
 
 interface PaylClaude {
@@ -85,11 +97,11 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
     const plan: ClaudePlanPayload = { plan: 'do X', capturedAt: '2026-05-27T00:00:00.000Z' };
 
     reporter.setClaudeState('end-plan', { plan });
-    await flushDebounce(reporter);
+    await flushDebounce(reporter, relay);
 
     // Racing catchall PreToolUse: working (no clear). Should be ignored.
     reporter.setClaudeState('working');
-    await flushDebounce(reporter);
+    await flushDebounce(reporter, relay);
 
     expect(latestClaude(relay.posted)?.state).toBe('end-plan');
     expect(latestClaude(relay.posted)?.plan).toEqual(plan);
@@ -101,7 +113,7 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
 
     reporter.setClaudeState('end-plan', { plan });
     reporter.setClaudeState('working', { clearPending: true });
-    await flushDebounce(reporter);
+    await flushDebounce(reporter, relay);
 
     const c = latestClaude(relay.posted);
     expect(c?.state).toBe('working');
@@ -117,7 +129,7 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
 
     reporter.setClaudeState('question', { question });
     reporter.setClaudeState('working');
-    await flushDebounce(reporter);
+    await flushDebounce(reporter, relay);
 
     expect(latestClaude(relay.posted)?.state).toBe('question');
     expect(latestClaude(relay.posted)?.question).toEqual(question);
@@ -129,7 +141,7 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
 
     reporter.setClaudeState('end-plan', { plan });
     reporter.setClaudeState('idle');
-    await flushDebounce(reporter);
+    await flushDebounce(reporter, relay);
 
     expect(latestClaude(relay.posted)?.state).toBe('idle');
     // Plan is the user's pending decision — it must survive until clearPending.
@@ -148,7 +160,7 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
     // The question payload must persist so `agent get-plan-question` works
     // while Claude is parked at the picker.
     reporter.setClaudeState('waiting');
-    await flushDebounce(reporter);
+    await flushDebounce(reporter, relay);
 
     expect(latestClaude(relay.posted)?.state).toBe('waiting');
     expect(latestClaude(relay.posted)?.question).toEqual(question);
@@ -161,7 +173,7 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
 
     reporter.setClaudeState('end-plan', { plan: planA });
     reporter.setClaudeState('end-plan', { plan: planB });
-    await flushDebounce(reporter);
+    await flushDebounce(reporter, relay);
 
     expect(latestClaude(relay.posted)?.plan).toEqual(planB);
   });
