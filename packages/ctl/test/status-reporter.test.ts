@@ -68,9 +68,10 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
   function makeReporter(): { reporter: StatusReporter; relay: ReturnType<typeof stubRelay> } {
     const sup = stubSupervisor();
     const relay = stubRelay();
+    type ReporterOpts = ConstructorParameters<typeof StatusReporter>[0];
     const reporter = new StatusReporter({
-      supervisor: sup as unknown as Parameters<typeof StatusReporter>[0]['supervisor'],
-      relay: relay as unknown as Parameters<typeof StatusReporter>[0]['relay'],
+      supervisor: sup as unknown as ReporterOpts['supervisor'],
+      relay: relay as unknown as ReporterOpts['relay'],
       boxId: 'b1',
       sessionName: 'claude',
       debounceMs: 0,

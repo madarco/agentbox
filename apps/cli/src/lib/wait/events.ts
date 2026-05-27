@@ -36,9 +36,15 @@ export class WaitTimeoutError extends Error {
 /**
  * Block until `predicate` returns truthy for one of the events streaming out
  * of `/admin/events`. The predicate's return value is what `waitForEvent`
- * resolves to — handy for "match + decode" in one step. Resolves to undefined
- * only if the predicate never returns truthy AND no timeout was set (which
- * means an infinite loop; callers should always pass `timeoutMs` in practice).
+ * resolves to — handy for "match + decode" in one step.
+ *
+ * Race-handling note: when the caller doesn't pass `sinceId`, the first fetch
+ * is `since=0` — which returns the whole buffer. We evaluate the predicate
+ * against the LATEST event in that batch (not the rest, to avoid replaying
+ * stale historical transitions) so a state change that was broadcast to the
+ * ring buffer but whose `status.json` atomic write was still in flight when
+ * the caller's fast-path read happened is still caught here. Subsequent
+ * fetches then long-poll from the head cursor as usual.
  */
 export async function waitForEvent<T>(
   predicate: (ev: RelayEvent) => T | undefined,
@@ -46,16 +52,32 @@ export async function waitForEvent<T>(
 ): Promise<T> {
   const relayUrl = await getRelayUrl();
   const start = Date.now();
-  let cursor = opts.sinceId ?? (await currentHeadCursor(relayUrl, opts.boxId));
+  let cursor = opts.sinceId ?? 0;
+  let bootstrapped = opts.sinceId !== undefined;
   while (true) {
     const remaining = opts.timeoutMs !== undefined ? opts.timeoutMs - (Date.now() - start) : Infinity;
     if (remaining <= 0) throw new WaitTimeoutError(Date.now() - start);
 
     const events = await fetchEvents(relayUrl, cursor, opts.boxId);
-    for (const ev of events) {
-      const matched = predicate(ev);
-      if (matched !== undefined) return matched;
-      cursor = Math.max(cursor, ev.id);
+
+    if (!bootstrapped) {
+      // First sweep with no caller-supplied cursor: only the most recent
+      // event represents "current state" — older buffered events are stale
+      // transitions. Match against the head, advance cursor past it, and
+      // proceed to long-poll for future transitions.
+      const last = events[events.length - 1];
+      if (last) {
+        const matched = predicate(last);
+        if (matched !== undefined) return matched;
+        cursor = last.id;
+      }
+      bootstrapped = true;
+    } else {
+      for (const ev of events) {
+        const matched = predicate(ev);
+        if (matched !== undefined) return matched;
+        cursor = Math.max(cursor, ev.id);
+      }
     }
     // No match in this batch — sleep and re-poll (or wake early on timeout).
     const sleepMs = Math.min(POLL_INTERVAL_MS, remaining);
@@ -77,16 +99,6 @@ async function fetchEvents(
   }
   const body = (await res.json()) as { events?: RelayEvent[] };
   return body.events ?? [];
-}
-
-/**
- * "Head" cursor — the id of the most recent event already in the buffer. New
- * `since=<head>` queries will only return strictly newer events, which is what
- * a freshly invoked `wait-for` wants (no replay of historical state changes).
- */
-async function currentHeadCursor(relayUrl: string, boxId: string | undefined): Promise<number> {
-  const events = await fetchEvents(relayUrl, 0, boxId);
-  return events.length > 0 ? events[events.length - 1]!.id : 0;
 }
 
 async function getRelayUrl(): Promise<string> {
