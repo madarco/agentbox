@@ -1,6 +1,6 @@
 import { confirm, isCancel, log } from '@clack/prompts';
 import { pruneOrphanProjectConfigs } from '@agentbox/config';
-import type { CloudSandboxSummary } from '@agentbox/core';
+import type { CloudBackend, CloudSandboxSummary } from '@agentbox/core';
 import { readState } from '@agentbox/sandbox-core';
 import { listBoxes, pruneBoxes, type PruneResult } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
@@ -79,16 +79,16 @@ export const pruneCommand = new Command('prune')
   .option('-y, --yes', 'skip the confirmation prompt')
   .option(
     '--provider <name>',
-    'restrict prune to a specific provider (docker | daytona). For daytona, lists cloud sandboxes that are not in this CLI\'s state.json and offers to delete them.',
+    'restrict prune to a specific provider (docker | daytona | hetzner | vercel). For cloud providers, lists sandboxes that are not in this CLI\'s state.json and offers to delete them.',
   )
   .action(async (opts: PruneOptions) => {
     try {
-      if (opts.provider === 'daytona') {
-        await pruneDaytona(opts);
+      if (opts.provider !== undefined && isCloudPruneProvider(opts.provider)) {
+        await pruneCloud(opts.provider, opts);
         return;
       }
       if (opts.provider !== undefined && opts.provider !== 'docker') {
-        log.error(`unknown provider '${opts.provider}'; expected docker or daytona`);
+        log.error(`unknown provider '${opts.provider}'; expected docker, daytona, hetzner, or vercel`);
         process.exit(2);
       }
       const dryRun = opts.dryRun ?? false;
@@ -128,47 +128,64 @@ export const pruneCommand = new Command('prune')
     }
   });
 
+/** Cloud providers whose orphan sandboxes `prune --provider <p>` can enumerate + delete. */
+const CLOUD_PRUNE_PROVIDERS = ['daytona', 'hetzner', 'vercel'] as const;
+type CloudPruneProvider = (typeof CLOUD_PRUNE_PROVIDERS)[number];
+
+function isCloudPruneProvider(name: string): name is CloudPruneProvider {
+  return (CLOUD_PRUNE_PROVIDERS as readonly string[]).includes(name);
+}
+
+/** Lazily resolve a cloud backend (dynamic import keeps provider SDKs out of the hot path). */
+async function cloudBackendFor(provider: CloudPruneProvider): Promise<CloudBackend> {
+  switch (provider) {
+    case 'daytona':
+      return (await import('@agentbox/sandbox-daytona')).daytonaBackend;
+    case 'hetzner':
+      return (await import('@agentbox/sandbox-hetzner')).hetznerBackend;
+    case 'vercel':
+      return (await import('@agentbox/sandbox-vercel')).vercelBackend;
+  }
+}
+
 /**
- * Daytona orphan-sandbox prune. Lists every sandbox the configured
- * credentials can see, cross-references against this CLI's local
- * `state.json`, and offers to delete the ones the user no longer tracks
- * (typically: a harness timeout killed the create before `recordBox`
- * ran, leaving a half-provisioned billable sandbox lingering).
+ * Cloud orphan-sandbox prune. Lists every sandbox the configured credentials
+ * can see, cross-references against this CLI's local `state.json`, and offers
+ * to delete the ones the user no longer tracks (typically: a harness timeout
+ * killed the create before `recordBox` ran, leaving a half-provisioned
+ * billable sandbox lingering).
  *
  * Read-only without `--yes`: prints the orphan list and confirms before
  * deleting. With `--dry-run`, only prints.
  */
-async function pruneDaytona(opts: PruneOptions): Promise<void> {
+async function pruneCloud(provider: CloudPruneProvider, opts: PruneOptions): Promise<void> {
   const dryRun = opts.dryRun ?? false;
-  const { daytonaBackend } = await import('@agentbox/sandbox-daytona');
-  if (!daytonaBackend.list) {
-    log.error("daytona backend doesn't expose `list()`; cannot enumerate sandboxes for prune");
+  const backend = await cloudBackendFor(provider);
+  if (!backend.list) {
+    log.error(`${provider} backend doesn't expose \`list()\`; cannot enumerate sandboxes for prune`);
     process.exit(2);
   }
-  const [remote, state] = await Promise.all([daytonaBackend.list(), readState()]);
+  const [remote, state] = await Promise.all([backend.list(), readState()]);
   const knownIds = new Set<string>();
   for (const b of state.boxes) {
-    if ((b.provider ?? 'docker') === 'daytona' && b.cloud?.sandboxId) {
+    if ((b.provider ?? 'docker') === provider && b.cloud?.sandboxId) {
       knownIds.add(b.cloud.sandboxId);
     }
   }
-  // Anything we created (labelled by us via `labels: { 'agentbox.name': ... }`)
+  // Anything we created (labelled by us via `tags: { 'agentbox.name': ... }`)
   // but isn't in state is an orphan we should offer to clean up. Sandboxes
-  // the user provisioned through other tooling shouldn't be touched —
-  // identify ours by the `agentbox.name` label OR by an `agentbox-cloud-`
-  // legacy name prefix.
+  // the user provisioned through other tooling shouldn't be touched — identify
+  // ours by the presence of a friendly name (`summary.name` mirrors that tag).
   const orphans: CloudSandboxSummary[] = remote.filter((sb) => {
     if (knownIds.has(sb.sandboxId)) return false;
     const friendly = sb.name ?? '';
-    // The provision call sets `labels: { 'agentbox.name': req.name }` —
-    // `summary.name` mirrors that label when present.
     return friendly.length > 0;
   });
   if (orphans.length === 0) {
-    process.stdout.write('no daytona orphans found\n');
+    process.stdout.write(`no ${provider} orphans found\n`);
     return;
   }
-  log.info(`found ${String(orphans.length)} daytona sandbox(es) not in this CLI's state:`);
+  log.info(`found ${String(orphans.length)} ${provider} sandbox(es) not in this CLI's state:`);
   for (const sb of orphans) {
     const parts = [sb.sandboxId];
     if (sb.name) parts.push(sb.name);
@@ -191,7 +208,7 @@ async function pruneDaytona(opts: PruneOptions): Promise<void> {
   let failed = 0;
   for (const sb of orphans) {
     try {
-      await daytonaBackend.destroy({ sandboxId: sb.sandboxId });
+      await backend.destroy({ sandboxId: sb.sandboxId });
       deleted++;
     } catch (err) {
       failed++;
@@ -201,6 +218,6 @@ async function pruneDaytona(opts: PruneOptions): Promise<void> {
     }
   }
   process.stdout.write(
-    `daytona prune: deleted ${String(deleted)}, failed ${String(failed)}\n`,
+    `${provider} prune: deleted ${String(deleted)}, failed ${String(failed)}\n`,
   );
 }

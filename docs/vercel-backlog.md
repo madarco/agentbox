@@ -179,8 +179,11 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
 14. **Per-project snapshot tier** — the daytona/hetzner `projects[<hash>]`
     optimization that skips workspace/credential re-seeding on repeat creates for
     the same project. `prepared-state.ts` is single-tier (base only) today.
-15. **`agentbox prune --provider vercel`** — the backend `list()` works; the
-    prune command branch isn't wired.
+15. [x] **`agentbox prune --provider vercel`.** Done — generalized the daytona-only
+    `pruneDaytona` into a provider-agnostic `pruneCloud` over a
+    `CLOUD_PRUNE_PROVIDERS` list, so `--provider vercel` (and `hetzner`, also
+    previously unwired) now enumerate orphan sandboxes via `backend.list()` and
+    offer to delete the ones absent from `state.json`. `apps/cli/src/commands/prune.ts`.
 16. **`Sandbox.fork()`** as a faster "branch from a running box" primitive than
     snapshot + create (Vercel-native, no host round-trip).
 17. **4th port / per-service `expose`.** Only 3 of the 4 allowed ports are used
