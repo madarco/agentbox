@@ -44,7 +44,7 @@ export const GH_PR_READ_ONLY_OPS: ReadonlySet<GhPrOp> = new Set(['view', 'list']
  * (`gh` infers head from the cwd's HEAD, which is the user's own branch — or
  * an untracked one, which aborts with "you must first push the current branch
  * to a remote, or use the --head flag"). Only injected for `create`, only when
- * the caller didn't already pass `--head`, and only when we resolved a real
+ * the caller didn't already pass `--head` (or its `-H` shorthand), and only when we resolved a real
  * branch (not empty / detached `HEAD`). The host CLI's `agentbox git pr create`
  * already injects this; the relay covers the in-box `agentbox-ctl git pr` /
  * `gh pr` path, which forwards args verbatim.
@@ -56,9 +56,37 @@ export function injectPrCreateHead(
 ): string[] {
   if (op !== 'create') return args;
   if (!branch || branch === 'HEAD') return args;
-  if (args.some((a) => a === '--head' || a.startsWith('--head='))) return args;
+  if (hasHeadArg(args)) return args;
   return ['--head', branch, ...args];
 }
+
+function hasHeadArg(args: string[]): boolean {
+  // `gh pr create` accepts `--head`, `--head=<b>`, and the `-H` shorthand in
+  // its `-H <b>` / `-H<b>` / `-H=<b>` forms. Recognize all so an explicit head
+  // neither gets double-injected nor triggers the no-head refusal.
+  return args.some((a) => a === '--head' || a.startsWith('--head=') || a.startsWith('-H'));
+}
+
+/**
+ * True when a `gh pr create` would run with no `--head` — i.e. we couldn't
+ * resolve the box's branch to inject and the caller didn't pass one. The
+ * relay must refuse rather than let `gh` fall back to the host repo's
+ * *checked-out* branch, which would open a PR for the wrong branch.
+ */
+export function prCreateNeedsHead(op: GhPrOp, args: string[]): boolean {
+  return op === 'create' && !hasHeadArg(args);
+}
+
+/** Ready-to-send refusal for a `create` that has no resolvable `--head`. */
+export const PR_CREATE_NO_HEAD_REFUSAL: GitRpcResult = {
+  exitCode: 65,
+  stdout: '',
+  stderr:
+    'gh pr create: refusing to run without --head — could not resolve this ' +
+    "box's branch, and falling back to the host repo's checked-out branch " +
+    'would open a PR for the wrong branch. Ensure the box branch is pushed, ' +
+    'or pass --head <branch> explicitly.\n',
+};
 
 /** Wire params for every `gh.pr.<op>` method. Mirrors the new ctl command surface. */
 export interface GhPrRpcParams {

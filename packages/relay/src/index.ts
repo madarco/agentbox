@@ -53,6 +53,8 @@ export {
   GH_PR_READ_ONLY_OPS,
   injectPrCreateHead,
   isGhPrOp,
+  PR_CREATE_NO_HEAD_REFUSAL,
+  prCreateNeedsHead,
   refuseCheckoutByDefault,
   refuseMergeBypass,
   runHostGh,
