@@ -15,14 +15,20 @@
 // create / start. Idempotent overwrite.
 //
 // Event coverage (mirrors the Claude / Codex state machine):
-//   working   — codex/claude equivalent of "agent is generating"
-//   idle      — turn complete, ready for input (mapped from session.idle and
-//               session.created baseline)
-//   waiting   — user input required (permission.asked)
-//   error     — session.error fired
-//   compacting — session.compacted (note: opencode fires AFTER compaction
-//                finishes, so we briefly flag and then the next event
-//                supersedes; semantically "context was just compacted")
+//   working   — agent is generating. Driven by `message.part.delta` (streamed
+//               tokens) — these fire only DURING active generation, never after
+//               the turn ends, so they don't fight the `session.idle` end
+//               signal. (Empirically `tool.execute.before` does NOT reach the
+//               plugin event bus in opencode 1.15, and `message.updated` fires
+//               once AFTER `session.idle` — so neither is safe to map to
+//               working.)
+//   idle      — turn complete / ready for input (`session.idle`, plus
+//               `session.created` as a baseline at session start).
+//   waiting   — user input required (`permission.asked`).
+//   error     — `session.error`.
+//   compacting — opencode has no PreCompact event; `session.compacted` fires
+//                AFTER compaction completes, so it maps to `working` (the next
+//                event supersedes) rather than `compacting`.
 //
 // The plugin shape comes from https://opencode.ai/docs/plugins/ — `event` is
 // a single handler that receives `{ event }` with a `type` field. Multiple
@@ -33,18 +39,24 @@ import { spawn } from 'node:child_process';
 const EVENT_TO_STATE = {
   'session.created': 'idle',
   'session.idle': 'idle',
-  'session.compacted': 'working',
   'session.error': 'error',
+  'session.compacted': 'working',
   'permission.asked': 'waiting',
   'permission.replied': 'working',
+  'message.part.delta': 'working',
+  // tool.execute.before kept as a defensive mapping — harmless if a future
+  // opencode build starts surfacing it (it doesn't today).
   'tool.execute.before': 'working',
-  // tool.execute.after intentionally omitted — the next event will set the
-  // appropriate state. Pushing `working` here would cause a working → idle
-  // → working flicker on a normal turn.
 };
 
+// Dedupe: `message.part.delta` fires dozens of times per streamed turn. Only
+// spawn agentbox-ctl when the mapped state actually changes, so a turn costs
+// ~2 spawns (working on the first delta, idle on session.idle) instead of ~50.
+let lastState = null;
+
 function pushState(state) {
-  if (!state) return;
+  if (!state || state === lastState) return;
+  lastState = state;
   try {
     const p = spawn('agentbox-ctl', ['opencode-state', state], {
       stdio: 'ignore',
@@ -59,7 +71,6 @@ function pushState(state) {
 
 export const AgentboxStatePlugin = async () => ({
   event: async ({ event }) => {
-    const state = EVENT_TO_STATE[event?.type];
-    pushState(state);
+    pushState(EVENT_TO_STATE[event?.type]);
   },
 });
