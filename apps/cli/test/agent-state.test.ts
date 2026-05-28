@@ -103,3 +103,17 @@ describe('derivedAgentState', () => {
     expect(derivedAgentState(claude({ state: 'waiting' }))).toBe('waiting');
   });
 });
+
+describe('matchesAgentWaitState — compacting / error', () => {
+  it("passes through 'compacting' and 'error' as raw state matches", () => {
+    expect(matchesAgentWaitState(claude({ state: 'compacting' }), 'compacting')).toBe(true);
+    expect(matchesAgentWaitState(claude({ state: 'error' }), 'error')).toBe(true);
+  });
+
+  it('does not let a stale plan/question payload silently match compacting/error', () => {
+    // The plan/question sticky-payload trick is specific to end-plan/question.
+    // compacting/error don't carry payload, so the raw state must match.
+    expect(matchesAgentWaitState(claude({ state: 'working', plan: PLAN }), 'compacting')).toBe(false);
+    expect(matchesAgentWaitState(claude({ state: 'working' }), 'error')).toBe(false);
+  });
+});

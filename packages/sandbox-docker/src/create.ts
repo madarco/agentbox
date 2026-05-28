@@ -21,6 +21,7 @@ import {
 import {
   buildOpencodeMounts,
   ensureOpencodeVolume,
+  seedOpencodePlugin,
   resolveOpencodeVolume,
   type OpencodeMountResult,
 } from './opencode.js';
@@ -600,6 +601,11 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     if (opencodeEnsured.synced) log(`synced ${opencodeSpec.volume} from ~/.config + ~/.local/share opencode`);
     else if (opencodeEnsured.created) log(`created empty volume ${opencodeSpec.volume} (no host opencode)`);
     else log(`reusing volume ${opencodeSpec.volume}`);
+    // Seed the AgentBox state-reporting plugin from the image-baked copy.
+    // OpenCode autoloads anything under $OPENCODE_CONFIG_DIR/plugins/; the
+    // plugin shells `agentbox-ctl opencode-state` on each lifecycle event.
+    const opencodePlugin = await seedOpencodePlugin(opencodeSpec.volume, ensureRef);
+    if (opencodePlugin.seeded) log(`seeded agentbox-state plugin into ${opencodeSpec.volume}`);
     opencodeMounts = buildOpencodeMounts(opencodeSpec, process.env);
     opencodeConfigVolume = opencodeSpec.volume;
   }

@@ -73,6 +73,14 @@ export interface ReloadResult {
  * clears them back to `working`. The hook also pipes the tool input JSON to
  * the daemon so `agentbox agent get-plan-question` can read the plan body or
  * the questions[] array without scraping the terminal.
+ *
+ * `compacting` is fed by Claude's PreCompact hook (the conversation is being
+ * summarized to free context space). PostCompact clears it via
+ * `working --clear-pending`. `error` is fed by StopFailure (a turn ended with
+ * an unrecoverable failure); the next UserPromptSubmit / Stop naturally
+ * supersedes it.
+ *
+ * The same union is reused for Codex and OpenCode via {@link AgentActivityState}.
  */
 export type ClaudeActivityState =
   | 'working'
@@ -80,6 +88,8 @@ export type ClaudeActivityState =
   | 'waiting'
   | 'end-plan'
   | 'question'
+  | 'compacting'
+  | 'error'
   | 'unknown';
 
 export const CLAUDE_ACTIVITY_STATES: readonly ClaudeActivityState[] = [
@@ -88,6 +98,8 @@ export const CLAUDE_ACTIVITY_STATES: readonly ClaudeActivityState[] = [
   'waiting',
   'end-plan',
   'question',
+  'compacting',
+  'error',
   'unknown',
 ];
 
@@ -181,10 +193,16 @@ export interface BoxStatusCodex {
 }
 
 /**
- * OpenCode session status. OpenCode has no activity-hook integration yet, so
- * only the tmux session presence + title are reported (no `state`).
+ * OpenCode session status — parallel to {@link BoxStatusClaude} /
+ * {@link BoxStatusCodex}. `state` is fed by the agentbox OpenCode plugin
+ * (seeded into `~/.config/opencode/plugin/agentbox-state.js`) which
+ * subscribes to OpenCode's event bus and shells `agentbox-ctl opencode-state`
+ * for each lifecycle transition.
  */
 export interface BoxStatusOpencode {
+  state: AgentActivityState;
+  /** ISO-8601 time the last opencode-state hook fired, or null if none yet. */
+  updatedAt: string | null;
   /** Whether the opencode tmux session was present at snapshot time. */
   sessionRunning: boolean;
   /** Sanitized in-box tmux pane title, when the OpenCode TUI set one. */
@@ -255,7 +273,8 @@ export type CtlRequest =
        */
       clearPending?: boolean;
     }
-  | { op: 'codex-state'; state: AgentActivityState };
+  | { op: 'codex-state'; state: AgentActivityState }
+  | { op: 'opencode-state'; state: AgentActivityState };
 
 export type CtlResponse = { ok: true; data: unknown } | { ok: false; error: string };
 

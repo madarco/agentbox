@@ -270,9 +270,21 @@ export interface StartCodexSessionOptions {
  * shared {@link buildTmuxSessionArgs} remaps the prefix (Ctrl+a / Ctrl+b) and
  * hides the inner status bar, exactly as for the claude session.
  */
+// Flags codex needs to actually try our seeded hooks.json from the box image:
+// - `--enable hooks` opts into Claude-style lifecycle hook loading (the codex
+//   feature was renamed from `codex_hooks` -> `hooks` in 0.134.0).
+// - `--dangerously-bypass-hook-trust` skips the in-TUI "trust these hooks?"
+//   dialog that would otherwise block startup on every fresh box. The hooks
+//   are AgentBox-managed and pre-vetted; the user never sees them, so trust
+//   verification has no UX value here.
+// The actual mechanism that lights up codex.state in production is the
+// tmux-pane scraper (codex-scraper.ts); these flags are defense-in-depth for
+// the day codex's JSON-hook firing becomes reliable.
+const CODEX_AGENTBOX_FLAGS = ['--enable', 'hooks', '--dangerously-bypass-hook-trust'] as const;
+
 export async function startCodexSession(opts: StartCodexSessionOptions): Promise<void> {
   const sessionName = opts.sessionName ?? DEFAULT_CODEX_SESSION;
-  const cmd = ['codex', ...opts.codexArgs].map(shQuote).join(' ');
+  const cmd = ['codex', ...CODEX_AGENTBOX_FLAGS, ...opts.codexArgs].map(shQuote).join(' ');
   const term = process.env['TERM'] ?? 'xterm-256color';
   const envFlags: string[] = ['-e', `TERM=${term}`];
   for (const k of CODEX_FORWARDED_ENV_KEYS) {

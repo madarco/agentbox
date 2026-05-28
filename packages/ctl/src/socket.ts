@@ -179,6 +179,16 @@ async function handleConnection(sock: Socket, opts: ServerOptions): Promise<void
       sock.end();
       return;
     }
+    case 'opencode-state': {
+      if (!CLAUDE_ACTIVITY_STATES.includes(req.state)) {
+        writeLine(sock, { ok: false, error: `invalid opencode state: ${String(req.state)}` });
+      } else {
+        opts.reporter?.setOpencodeState(req.state);
+        writeLine(sock, { ok: true, data: 'ok' });
+      }
+      sock.end();
+      return;
+    }
     default: {
       writeLine(sock, { ok: false, error: `unknown op` });
       sock.end();

@@ -177,4 +177,45 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
 
     expect(latestClaude(relay.posted)?.plan).toEqual(planB);
   });
+
+  it("PreCompact sets 'compacting'; PostCompact (with clearPending) resets to working and clears any pending plan", async () => {
+    const { reporter, relay } = makeReporter();
+    const plan: ClaudePlanPayload = { plan: 'do X', capturedAt: '2026-05-27T00:00:00.000Z' };
+
+    // Compaction can run while a plan is pending — exercise both transitions.
+    reporter.setClaudeState('end-plan', { plan });
+    reporter.setClaudeState('compacting');
+    await flushDebounce(reporter, relay);
+    expect(latestClaude(relay.posted)?.state).toBe('compacting');
+    // Plan survives a non-`working` transition (same rule as idle / waiting).
+    expect(latestClaude(relay.posted)?.plan).toEqual(plan);
+
+    reporter.setClaudeState('working', { clearPending: true });
+    await flushDebounce(reporter, relay);
+    expect(latestClaude(relay.posted)?.state).toBe('working');
+    expect(latestClaude(relay.posted)?.plan).toBeUndefined();
+  });
+
+  it("StopFailure sets 'error'; next UserPromptSubmit naturally clears it back to working", async () => {
+    const { reporter, relay } = makeReporter();
+
+    reporter.setClaudeState('error');
+    await flushDebounce(reporter, relay);
+    expect(latestClaude(relay.posted)?.state).toBe('error');
+
+    // No clearPending needed — error is not sticky.
+    reporter.setClaudeState('working');
+    await flushDebounce(reporter, relay);
+    expect(latestClaude(relay.posted)?.state).toBe('working');
+  });
+
+  it('Subagent hooks keep state at working (sanity — they explicitly re-assert working)', async () => {
+    const { reporter, relay } = makeReporter();
+
+    reporter.setClaudeState('working');
+    reporter.setClaudeState('working'); // SubagentStart hook re-fires working
+    reporter.setClaudeState('working'); // SubagentStop hook re-fires working
+    await flushDebounce(reporter, relay);
+    expect(latestClaude(relay.posted)?.state).toBe('working');
+  });
 });

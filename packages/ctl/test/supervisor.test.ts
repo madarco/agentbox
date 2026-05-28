@@ -397,25 +397,29 @@ describe('Supervisor', () => {
   it('concurrent independent tasks run in parallel', async () => {
     const sup = new Supervisor({ workspace: dir, logDir: dir });
     const start = Date.now();
+    // Per-task delay sized so the gap between sequential (≥1600ms + 2× spawn,
+    // typically 1700–1900ms) and parallel (~800ms + spawn, typically 900–1200ms)
+    // is large enough to survive CI runner noise. The 700ms threshold from a
+    // 400ms-per-task version flaked at 733ms on a slow GitHub Actions runner;
+    // doubling the task delay buys ~600ms of headroom without losing the
+    // parallelism signal.
     await sup.init(
       cfg(
         [],
         [
           taskSpec({
             name: 't1',
-            command: [NODE, '-e', 'setTimeout(()=>process.exit(0), 400)'],
+            command: [NODE, '-e', 'setTimeout(()=>process.exit(0), 800)'],
           }),
           taskSpec({
             name: 't2',
-            command: [NODE, '-e', 'setTimeout(()=>process.exit(0), 400)'],
+            command: [NODE, '-e', 'setTimeout(()=>process.exit(0), 800)'],
           }),
         ],
       ),
     );
-    await waitFor(() => sup.listTasks().every((t) => t.state === 'done') || null, 3000);
+    await waitFor(() => sup.listTasks().every((t) => t.state === 'done') || null, 5000);
     const elapsed = Date.now() - start;
-    // Sequential would be ~800ms; parallel is ~400ms plus spawn overhead.
-    // The wide margin keeps this from flaking on slow CI while still proving concurrency.
-    expect(elapsed).toBeLessThan(700);
+    expect(elapsed).toBeLessThan(1400);
   });
 });

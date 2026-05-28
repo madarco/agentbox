@@ -48,6 +48,41 @@
         ]
       }
     ],
+    "StopFailure": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state error >/dev/null 2>&1 &", "timeout": 3 }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state compacting >/dev/null 2>&1 &", "timeout": 3 }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state working --clear-pending >/dev/null 2>&1 &", "timeout": 3 }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state working >/dev/null 2>&1 &", "timeout": 3 }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbox-ctl claude-state working >/dev/null 2>&1 &", "timeout": 3 }
+        ]
+      }
+    ],
     "Notification": [
       {
         "matcher": "permission_prompt",

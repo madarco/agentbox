@@ -30,6 +30,7 @@ import {
   stageCodexCredentialsForUpload,
   stageOpencodeStaticForUpload,
   stageOpencodeCredentialsForUpload,
+  stageOpencodeStateForUpload,
   type StageResult,
 } from '@agentbox/sandbox-docker';
 import type { CloudBackend, CloudHandle, CloudVolumeMount } from '@agentbox/core';
@@ -296,6 +297,57 @@ async function seedCredentialsOne(
     }
     log(`${spec.kind}: credentials seeded ✓`);
     process.stderr.write(`[agent-creds] ${spec.kind}: credentials seeded\n`);
+  } finally {
+    await staged.cleanup();
+  }
+}
+
+/** Box-side OpenCode state dir (default XDG location; cloud sets no XDG_STATE_HOME). */
+const OPENCODE_STATE_DIR = '/home/vscode/.local/state/opencode';
+
+/**
+ * Seed the host's selected OpenCode model (`~/.local/state/opencode/model.json`)
+ * into the box's default state dir, host-authoritative, on **every** create.
+ *
+ * Unlike credentials (a seed-once volume), the cloud box's state dir is ephemeral
+ * — there is no persistent per-box store on either cloud (Daytona's only shared
+ * volume holds credentials; Hetzner has none), so the host is authoritative each
+ * create and there is no marker to gate on. Without this, OpenCode boots a cloud
+ * box with its built-in default model instead of the one the user picked on the
+ * host. Provider-agnostic: runs on any `CloudBackend` (`exec` + `uploadFile`).
+ *
+ * Best-effort: a failure logs and leaves the box on OpenCode's default — it must
+ * never fail box creation.
+ */
+export async function seedOpencodeModelState(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  opts: { onLog?: (line: string) => void } = {},
+): Promise<void> {
+  const log = opts.onLog ?? (() => {});
+  const staged = await stageOpencodeStateForUpload();
+  if (staged.tarballPath === null) {
+    log('opencode: no host model selection to seed');
+    return;
+  }
+  try {
+    const remoteTar = '/tmp/agentbox-opencode-state.tar.gz';
+    await backend.uploadFile(handle, staged.tarballPath, remoteTar);
+    const res = await backend.exec(
+      handle,
+      `set -e; mkdir -p ${OPENCODE_STATE_DIR}; ` +
+        `tar -xzf ${remoteTar} -C ${OPENCODE_STATE_DIR}; ` +
+        `chown -R vscode:vscode ${OPENCODE_STATE_DIR} 2>/dev/null || true; ` +
+        `rm -f ${remoteTar}`,
+    );
+    if (res.exitCode !== 0) {
+      log(
+        `opencode: model-state seed failed (exit ${String(res.exitCode)}); ` +
+          `box falls back to OpenCode's default model. stderr: ${res.stderr.slice(-200)}`,
+      );
+      return;
+    }
+    log('opencode: model selection seeded ✓');
   } finally {
     await staged.cleanup();
   }

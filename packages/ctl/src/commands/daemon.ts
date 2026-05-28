@@ -5,6 +5,7 @@ import {
   type RelayServerHandle,
 } from '@agentbox/relay';
 import { loadConfig } from '../config.js';
+import { startCodexScraper, type CodexScraperHandle } from '../codex-scraper.js';
 import { Supervisor } from '../supervisor.js';
 import { startServer } from '../socket.js';
 import { StatusReporter } from '../status-reporter.js';
@@ -56,6 +57,19 @@ export const daemonCommand = new Command('daemon')
       sessionName: DEFAULT_CLAUDE_SESSION_NAME,
     });
     reporter.start();
+
+    // Codex's JSON-hook firing is unreliable in 0.134.0 (see
+    // packages/sandbox-docker/scripts/agentbox-codex-hooks.json header). Run a
+    // cheap tmux-pane scraper as the actual state-reporting mechanism. Cost
+    // is one `tmux capture-pane -p` per second; no-ops when no codex session.
+    let codexScraper: CodexScraperHandle | null = null;
+    try {
+      codexScraper = startCodexScraper({ reporter });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`agentbox-ctl: codex scraper failed to start: ${msg}\n`);
+    }
+
     const server = await startServer({
       socketPath: opts.socket,
       supervisor: sup,
@@ -139,6 +153,7 @@ export const daemonCommand = new Command('daemon')
 
     const shutdown = async (signal: string): Promise<void> => {
       process.stdout.write(`agentbox-ctl: ${signal} — shutting down\n`);
+      if (codexScraper) codexScraper.stop();
       reporter.stop();
       reporter.flush();
       server.close();

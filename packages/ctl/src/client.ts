@@ -198,6 +198,13 @@ export async function codexState(
   return sendOneShot<'ok'>(opts, { op: 'codex-state', state });
 }
 
+export async function opencodeState(
+  opts: ConnectOptions,
+  state: ClaudeActivityState,
+): Promise<'ok'> {
+  return sendOneShot<'ok'>(opts, { op: 'opencode-state', state });
+}
+
 export interface LogsResult {
   initial: LogEvent[];
   /**

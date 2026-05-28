@@ -54,6 +54,7 @@ const contextFiles = [
   'packages/sandbox-docker/scripts/custom-system-CLAUDE.md',
   'packages/sandbox-docker/scripts/claude-managed-settings.json',
   'packages/sandbox-docker/scripts/agentbox-codex-hooks.json',
+  'packages/sandbox-docker/scripts/opencode-agentbox-plugin.js',
 ];
 
 let missing = 0;
@@ -96,6 +97,7 @@ const hetznerFiles = [
   ['packages/sandbox-hetzner/scripts/custom-system-CLAUDE.md', 'custom-system-CLAUDE.md', false],
   ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
   ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
+  ['packages/sandbox-docker/scripts/opencode-agentbox-plugin.js', 'opencode-agentbox-plugin.js', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
 ];
 for (const [srcRel, destRel, exec] of hetznerFiles) {

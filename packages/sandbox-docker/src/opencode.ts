@@ -21,6 +21,16 @@ export const DEFAULT_OPENCODE_SESSION = 'opencode';
 const CONTAINER_OPENCODE_DIR = '/home/vscode/.local/share/opencode';
 /** Relocated config dir (a subdir of the volume); the value of `OPENCODE_CONFIG_DIR`. */
 const CONTAINER_OPENCODE_CONFIG_DIR = '/home/vscode/.local/share/opencode/config';
+/**
+ * Relocated XDG state base (a subdir of the volume); the value of `XDG_STATE_HOME`.
+ * OpenCode derives its state dir as `$XDG_STATE_HOME/opencode`, so its state
+ * (incl. `model.json` — the last-selected model) lands at
+ * `<volume>/.state/opencode` and persists with the volume. OpenCode has no
+ * dedicated `OPENCODE_STATE_DIR`, so `XDG_STATE_HOME` is the only knob.
+ */
+const CONTAINER_OPENCODE_STATE_HOME = '/home/vscode/.local/share/opencode/.state';
+/** Image-baked AgentBox OpenCode plugin (copied in from packages/sandbox-docker/scripts/). */
+const IN_BOX_OPENCODE_PLUGIN_PATH = '/usr/local/share/agentbox/opencode-agentbox-plugin.js';
 
 export interface OpencodeConfigSpec {
   /** Resolved Docker volume name mounted at the OpenCode data dir. */
@@ -80,11 +90,14 @@ export interface EnsureOpencodeVolumeResult {
  * state) rsync host -> volume via a throwaway helper container. The host is
  * authoritative — same model as the claude/codex volumes.
  *
- * Two host sources land in the one volume: `~/.local/share/opencode` -> volume
- * root (the data dir, holds `auth.json`), and `~/.config/opencode` -> volume
- * `config/` (the relocated config dir). The data sync excludes the SQLite
- * session storage / logs (`storage`, `log`, `project`, `cache`, `bin`) — large,
- * box-irrelevant, and host binaries don't run on linux.
+ * Three host sources land in the one volume: `~/.local/share/opencode` -> volume
+ * root (the data dir, holds `auth.json`), `~/.config/opencode` -> volume
+ * `config/` (the relocated config dir), and `~/.local/state/opencode` ->
+ * volume `.state/opencode` (the relocated state dir, holds `model.json` — the
+ * last-selected model, matched by `XDG_STATE_HOME` in {@link buildOpencodeMounts}).
+ * The data sync excludes the SQLite session storage / logs (`storage`, `log`,
+ * `project`, `cache`, `bin`) — large, box-irrelevant, and host binaries don't run
+ * on linux. The state sync is newest-wins (`--update`) since the model is two-way.
  *
  * When there is nothing to sync the volume root is still `chown`ed to uid 1000
  * so a throwaway `opencode auth login` container can write into it.
@@ -99,14 +112,17 @@ export async function ensureOpencodeVolume(
 
   const hostData = join(homedir(), '.local', 'share', 'opencode');
   const hostConfig = join(homedir(), '.config', 'opencode');
+  const hostState = join(homedir(), '.local', 'state', 'opencode');
   const hasData = await pathExists(hostData);
   const hasConfig = await pathExists(hostConfig);
-  const willSync = opts.syncFromHost && (hasData || hasConfig);
+  const hasState = await pathExists(hostState);
+  const willSync = opts.syncFromHost && (hasData || hasConfig || hasState);
 
   if (willSync) {
     const args = ['run', '--rm', '--user', '0', '-v', `${spec.volume}:/dst`];
     if (hasData) args.push('-v', `${hostData}:/src-data:ro`);
     if (hasConfig) args.push('-v', `${hostConfig}:/src-config:ro`);
+    if (hasState) args.push('-v', `${hostState}:/src-state:ro`);
     const steps: string[] = [];
     if (hasData) {
       // Exclude the SQLite session store (`opencode.db*`), logs, cloned repos
@@ -121,6 +137,16 @@ export async function ensureOpencodeVolume(
     }
     if (hasConfig) {
       steps.push('mkdir -p /dst/config && rsync -a /src-config/ /dst/config/');
+    }
+    if (hasState) {
+      // The selected model (`model.json`) is two-way state, not host-authoritative
+      // config: `--update` (newest-wins) keeps a stale host file from clobbering a
+      // model picked inside the box (which persists in this volume). `locks` is a
+      // runtime lock dir — host-local, never synced.
+      steps.push(
+        'mkdir -p /dst/.state/opencode &&' +
+          ' rsync -a --update --exclude=locks /src-state/ /dst/.state/opencode/',
+      );
     }
     steps.push('chown -R 1000:1000 /dst');
     args.push(opts.image, 'sh', '-c', steps.join(' && '));
@@ -147,6 +173,42 @@ export async function ensureOpencodeVolume(
     { reject: false },
   );
   return { created, synced: false };
+}
+
+/**
+ * Seed the AgentBox state-reporting plugin into the OpenCode config volume
+ * from the image-baked copy ({@link IN_BOX_OPENCODE_PLUGIN_PATH}) as
+ * `<volume>/config/plugins/agentbox-state.js`. OpenCode auto-loads any
+ * JS/TS file under `$OPENCODE_CONFIG_DIR/plugins/` at startup; the plugin
+ * subscribes to OpenCode's event bus and shells `agentbox-ctl opencode-state`
+ * for each lifecycle transition.
+ *
+ * Re-seeded on every create/start (image-versioned) so an image upgrade
+ * propagates. Best-effort — a failure must not fail box creation.
+ */
+export async function seedOpencodePlugin(
+  volume: string,
+  image: string,
+): Promise<{ seeded: boolean }> {
+  try {
+    const { stdout } = await execa('docker', [
+      'run',
+      '--rm',
+      '--user',
+      '0',
+      '-v',
+      `${volume}:/dst`,
+      image,
+      'sh',
+      '-c',
+      `{ [ -f ${IN_BOX_OPENCODE_PLUGIN_PATH} ] && mkdir -p /dst/config/plugins && ` +
+        `cp -a ${IN_BOX_OPENCODE_PLUGIN_PATH} /dst/config/plugins/agentbox-state.js && ` +
+        `chown -R 1000:1000 /dst/config/plugins && echo SEEDED; } || true`,
+    ]);
+    return { seeded: stdout.includes('SEEDED') };
+  } catch {
+    return { seeded: false };
+  }
 }
 
 export interface OpencodeMountResult {
@@ -183,7 +245,13 @@ export function buildOpencodeMounts(
   // OPENCODE_CONFIG_DIR is a fixed box-internal path (relocates the config dir
   // into the volume). It is OpenCode-specific, so setting it box-global is
   // safe — unlike XDG_DATA_HOME, which would move every app's data dir.
-  const env: Record<string, string> = { OPENCODE_CONFIG_DIR: CONTAINER_OPENCODE_CONFIG_DIR };
+  // XDG_STATE_HOME relocates OpenCode's state dir (model.json etc.) into the
+  // volume too; it is generic, but the only state we read back is the
+  // `opencode/` subdir, so other tools' state landing there is harmless.
+  const env: Record<string, string> = {
+    OPENCODE_CONFIG_DIR: CONTAINER_OPENCODE_CONFIG_DIR,
+    XDG_STATE_HOME: CONTAINER_OPENCODE_STATE_HOME,
+  };
   for (const k of OPENCODE_FORWARDED_ENV_KEYS) {
     const v = hostEnv[k];
     if (typeof v === 'string' && v.length > 0) env[k] = v;
@@ -365,6 +433,8 @@ export function buildOpencodeLoginRunArgv(opts: {
     'DISPLAY=',
     '-e',
     `OPENCODE_CONFIG_DIR=${CONTAINER_OPENCODE_CONFIG_DIR}`,
+    '-e',
+    `XDG_STATE_HOME=${CONTAINER_OPENCODE_STATE_HOME}`,
     '-v',
     `${opts.volume}:${CONTAINER_OPENCODE_DIR}`,
     '--user',

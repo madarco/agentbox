@@ -47,6 +47,8 @@ export class StatusReporter {
   private claudeQuestion: ClaudeQuestionPayload | undefined;
   private codexState: AgentActivityState = 'unknown';
   private codexUpdatedAt: string | null = null;
+  private opencodeState: AgentActivityState = 'unknown';
+  private opencodeUpdatedAt: string | null = null;
   private debounceTimer: NodeJS.Timeout | null = null;
   private periodicTimer: NodeJS.Timeout | null = null;
   private readonly onChange = (): void => this.schedulePush();
@@ -125,6 +127,12 @@ export class StatusReporter {
     this.schedulePush();
   }
 
+  setOpencodeState(state: AgentActivityState): void {
+    this.opencodeState = state;
+    this.opencodeUpdatedAt = new Date().toISOString();
+    this.schedulePush();
+  }
+
   /** Forced immediate push (used on shutdown). */
   flush(): void {
     if (this.debounceTimer) {
@@ -198,9 +206,11 @@ export class StatusReporter {
         ...(codexSession.title ? { sessionTitle: codexSession.title } : {}),
       };
     }
-    if (opencodeSession.running) {
+    if (opencodeSession.running || this.opencodeState !== 'unknown') {
       status.opencode = {
-        sessionRunning: true,
+        state: this.opencodeState,
+        updatedAt: this.opencodeUpdatedAt,
+        sessionRunning: opencodeSession.running,
         ...(opencodeSession.title ? { sessionTitle: opencodeSession.title } : {}),
       };
     }

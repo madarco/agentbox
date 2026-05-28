@@ -22,6 +22,7 @@ export {
   agentSpecsForCloud,
   ensureAgentVolumesForCloud,
   seedAgentVolumesIfFresh,
+  seedOpencodeModelState,
   type CloudAgentKind,
   type EnsureAgentVolumesResult,
   type SeedAgentVolumesOptions,

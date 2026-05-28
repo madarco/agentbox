@@ -45,6 +45,7 @@ import {
 import {
   ensureAgentVolumesForCloud,
   seedAgentVolumesIfFresh,
+  seedOpencodeModelState,
 } from './agent-credentials.js';
 import {
   cloudSnapshotName,
@@ -369,6 +370,12 @@ export function createCloudProvider(
             onLog: log,
           });
         }
+
+        // Seed the host's selected OpenCode model into the box's (ephemeral)
+        // state dir on every create. Runs unconditionally — Hetzner has no
+        // credentials volume, so it is absent from `agentVolumes.agents` above
+        // yet still needs the model seeded.
+        await seedOpencodeModelState(backend, handle, { onLog: log });
 
         // Copy the env/config files the setup wizard collected (`.env`,
         // `secrets.toml`, `agentbox.yaml`, …) into `/workspace`. The Docker

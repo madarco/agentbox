@@ -10,6 +10,8 @@ export const AGENT_WAIT_STATES = [
   'end-plan',
   'question',
   'prompt',
+  'compacting',
+  'error',
 ] as const;
 export type AgentWaitState = (typeof AGENT_WAIT_STATES)[number];
 

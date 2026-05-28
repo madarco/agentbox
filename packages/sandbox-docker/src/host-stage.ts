@@ -513,3 +513,18 @@ export async function stageOpencodeCredentialsForUpload(
   if (!(await pathExists(hostAuth))) return emptyResult();
   return stageSingleFileTarball('opencode-creds', hostAuth, 'auth.json');
 }
+
+/**
+ * Tarball with **only** the selected-model state (`model.json`, sourced from
+ * `~/.local/state/opencode/model.json`). Extracts to a box's state dir so a
+ * fresh box inherits the host's active model instead of OpenCode's default.
+ * Returns an empty result when the host has never picked a model.
+ */
+export async function stageOpencodeStateForUpload(
+  opts: StageOpencodeOptions = {},
+): Promise<StageResult> {
+  const hostHome = opts.hostHome ?? homedir();
+  const hostModel = join(hostHome, '.local', 'state', 'opencode', 'model.json');
+  if (!(await pathExists(hostModel))) return emptyResult();
+  return stageSingleFileTarball('opencode-state', hostModel, 'model.json');
+}

@@ -40,13 +40,14 @@ describe('buildOpencodeMounts', () => {
     expect(result.env['OPENAI_API_KEY']).toBe('sk-oai');
   });
 
-  it('skips empty/missing provider keys but always sets OPENCODE_CONFIG_DIR', () => {
+  it('skips empty/missing provider keys but always sets the relocated dir env', () => {
     const result = buildOpencodeMounts(
       { volume: 'v' },
       { ANTHROPIC_API_KEY: '', OPENROUTER_API_KEY: undefined, OTHER_KEY: 'x' },
     );
     expect(result.env).toEqual({
       OPENCODE_CONFIG_DIR: '/home/vscode/.local/share/opencode/config',
+      XDG_STATE_HOME: '/home/vscode/.local/share/opencode/.state',
     });
   });
 });
@@ -64,6 +65,7 @@ describe('buildOpencodeLoginRunArgv', () => {
     expect(argv).toContain(`${SHARED_OPENCODE_VOLUME}:/home/vscode/.local/share/opencode`);
     expect(argv).toContain('agentbox/box:dev');
     expect(argv).toContain('OPENCODE_CONFIG_DIR=/home/vscode/.local/share/opencode/config');
+    expect(argv).toContain('XDG_STATE_HOME=/home/vscode/.local/share/opencode/.state');
     expect(argv.slice(-3)).toEqual(['opencode', 'auth', 'login']);
   });
 
