@@ -99,6 +99,9 @@ export interface UserConfig {
     enabled?: boolean;
     maxConcurrent?: number;
   };
+  cloud?: {
+    useCurrentBranch?: boolean;
+  };
   maintenance?: {
     pruneProjectConfigs?: boolean;
     pruneProjectConfigsEvery?: number;
@@ -185,6 +188,9 @@ export interface EffectiveConfig {
   queue: {
     enabled: boolean;
     maxConcurrent: number;
+  };
+  cloud: {
+    useCurrentBranch: boolean;
   };
   maintenance: {
     pruneProjectConfigs: boolean;
@@ -291,6 +297,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   queue: {
     enabled: true,
     maxConcurrent: 5,
+  },
+  cloud: {
+    useCurrentBranch: false,
   },
   maintenance: {
     pruneProjectConfigs: true,
@@ -561,6 +570,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       'Max number of simultaneously-running boxes (across providers) before background `-i` jobs queue up instead of starting immediately. Per-invocation override: `--max-running <n>`.',
+  },
+  {
+    key: 'cloud.useCurrentBranch',
+    type: 'bool',
+    description:
+      "On cloud providers (daytona/hetzner), start new boxes on the host's current branch instead of forking a new agentbox/<box-name> branch. Overridden by an explicit --use-branch / --from-branch.",
   },
   {
     key: 'maintenance.pruneProjectConfigs',

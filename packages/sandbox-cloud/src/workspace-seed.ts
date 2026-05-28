@@ -48,6 +48,15 @@ export interface SeedCloudWorkspaceArgs {
    * validating the ref host-side.
    */
   fromBranch?: string;
+  /**
+   * Reuse an existing branch directly (root repo only) instead of forking a
+   * fresh per-box branch. The host clone pins `--branch <useBranch>` so the
+   * clone HEAD lands on it, and the in-sandbox checkout is a plain `git
+   * checkout <useBranch>` (no `-B` reset). Mutually exclusive with
+   * `fromBranch` (enforced by the CLI). When set, `branch` equals
+   * `useBranch`.
+   */
+  useBranch?: string;
   onLog?: (line: string) => void;
 }
 
@@ -83,6 +92,7 @@ export async function seedCloudWorkspace(
       workspaceDir,
       bundleDepth: args.bundleDepth,
       fromBranch: args.fromBranch,
+      useBranch: args.useBranch,
       onLog: log,
     });
     // Each nested repo gets its own clone at /workspace/<rel>. We do these
@@ -125,6 +135,8 @@ interface SeedFromGitCloneArgs {
   bundleDepth?: number;
   /** See `SeedCloudWorkspaceArgs.fromBranch`. */
   fromBranch?: string;
+  /** See `SeedCloudWorkspaceArgs.useBranch`. Root clone only. */
+  useBranch?: string;
   onLog?: (line: string) => void;
 }
 
@@ -195,7 +207,10 @@ async function seedFromGitClone(args: SeedFromGitCloneArgs): Promise<void> {
           ? 'clone: depth=full (configured)'
           : `clone: depth=${String(initialDepth)} (configured)`,
     );
-    await runShallowClone(args.hostRepo, cloneDir, initialDepth, stashRefCreated, args.fromBranch);
+    // --use-branch reuses the named branch directly; otherwise --from-branch
+    // (or nothing) picks the fork base. Either way it pins the clone's HEAD.
+    const cloneBranch = args.useBranch ?? args.fromBranch;
+    await runShallowClone(args.hostRepo, cloneDir, initialDepth, stashRefCreated, cloneBranch);
     await tarCloneDir(cloneDir, tarPath);
     if (adaptive && initialDepth !== null) {
       const size = await safeFileSize(tarPath);
@@ -206,7 +221,7 @@ async function seedFromGitClone(args: SeedFromGitCloneArgs): Promise<void> {
         );
         await rm(cloneDir, { recursive: true, force: true });
         await rm(tarPath, { force: true });
-        await runShallowClone(args.hostRepo, cloneDir, LARGE_BUNDLE_DEPTH, stashRefCreated, args.fromBranch);
+        await runShallowClone(args.hostRepo, cloneDir, LARGE_BUNDLE_DEPTH, stashRefCreated, cloneBranch);
         await tarCloneDir(cloneDir, tarPath);
       }
     }
@@ -269,7 +284,12 @@ async function seedFromGitClone(args: SeedFromGitCloneArgs): Promise<void> {
       `$SUDO chown "$(id -un):$(id -gn)" ${quoteShellArgv([args.workspaceDir])}`,
       `tar -C ${quoteShellArgv([args.workspaceDir])} -xzf ${quoteShellArgv([remoteTar])}`,
       setOrigin,
-      `git -C ${quoteShellArgv([args.workspaceDir])} checkout -B ${quoteShellArgv([args.branch])}`,
+      // reuse: the clone already landed on `<branch>` (pinned via `--branch`);
+      // a plain checkout materializes the working tree without resetting the
+      // ref. fork: `-B` (re)points `<branch>` at the clone HEAD.
+      args.useBranch
+        ? `git -C ${quoteShellArgv([args.workspaceDir])} checkout ${quoteShellArgv([args.branch])}`
+        : `git -C ${quoteShellArgv([args.workspaceDir])} checkout -B ${quoteShellArgv([args.branch])}`,
       ...carryOverSteps,
       `rm -f ${quoteShellArgv([remoteTar])}`,
     ].join('\n');

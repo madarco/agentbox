@@ -43,6 +43,7 @@ import {
   chownGitBindParents,
   collectRepoCarryOver,
   gitWorktreePathFor,
+  removeInBoxWorktree,
   seedWorkspace,
   seedWorkspaceFromDir,
   type RepoCarryOver,
@@ -122,6 +123,16 @@ export interface CreateBoxOptions {
    * any ref `git rev-parse` resolves; passed verbatim to `git worktree add`.
    */
   fromBranch?: string;
+  /**
+   * Reuse an existing branch (root repo only) instead of forking a fresh
+   * `agentbox/<name>`. The root worktree is created with `git worktree add
+   * <wt> <branch>` (no `-b`), so git fails fast if the host already has
+   * `<useBranch>` checked out. No host stash / untracked carry-over is
+   * replayed — the box gets the branch's committed tip. Nested repos keep
+   * their per-box `agentbox/<name>--<sub>` branches. Mutually exclusive with
+   * `fromBranch` (enforced by the CLI).
+   */
+  useBranch?: string;
   image?: string;
   onLog?: (line: string) => void;
   /**
@@ -448,13 +459,42 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       );
     }
     for (const r of repos) {
+      const containerPath =
+        r.kind === 'root' ? '/workspace' : `/workspace/${r.relPathFromWorkspace}`;
+      // --use-branch reuses the named branch for the *root* repo only: no
+      // pickFreshBranch (we want the exact branch), no carry-over replay (the
+      // user wants the branch's committed tip, not host uncommitted state).
+      // Nested repos always fork their own per-box branch — the root's reused
+      // branch won't exist in a nested repo.
+      const reuseBranch = r.kind === 'root' && opts.useBranch !== undefined;
+      if (reuseBranch) {
+        const branch = opts.useBranch as string;
+        const gitWorktreePath = gitWorktreePathFor(branch);
+        repoCarryOvers.push({
+          repo: r,
+          containerPath,
+          gitWorktreePath,
+          branch,
+          stashSha: null,
+          untrackedNul: '',
+          hostSource: r.hostMainRepo,
+          reuseBranch: true,
+        });
+        gitWorktreeRecords.push({
+          kind: r.kind,
+          hostMainRepo: r.hostMainRepo,
+          containerPath,
+          gitWorktreePath,
+          branch,
+          relPathFromWorkspace: r.relPathFromWorkspace,
+        });
+        continue;
+      }
       const branchBase =
         r.kind === 'root'
           ? `agentbox/${name}`
           : `agentbox/${name}--${r.relPathFromWorkspace.replace(/[^A-Za-z0-9._-]+/g, '_')}`;
       const branch = await pickFreshBranch(r.hostMainRepo, branchBase);
-      const containerPath =
-        r.kind === 'root' ? '/workspace' : `/workspace/${r.relPathFromWorkspace}`;
       const gitWorktreePath = gitWorktreePathFor(branch);
       const carry = await collectRepoCarryOver(r, branch, containerPath, gitWorktreePath);
       repoCarryOvers.push(carry);
@@ -818,9 +858,23 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         });
         log('seeded /workspace from in-container git worktree(s)');
       } catch (err) {
-        log(
-          `seedWorkspace failed; leaving ${containerName} running so you can inspect it`,
-        );
+        // --use-branch seed failures are almost always "branch already used by
+        // another worktree" (the host has it checked out). There's nothing
+        // useful to inspect, and a leftover container + worktree registration
+        // would block the next attempt, so tear it down. Other seed failures
+        // keep the existing inspect-on-failure behavior.
+        if (opts.useBranch !== undefined) {
+          log(`seedWorkspace failed for --use-branch ${opts.useBranch}; cleaning up the box`);
+          await execa('docker', ['rm', '-f', containerName], { reject: false });
+          for (const w of gitWorktreeRecords) {
+            await removeInBoxWorktree({
+              hostMainRepo: w.hostMainRepo,
+              gitWorktreePath: w.gitWorktreePath,
+            });
+          }
+        } else {
+          log(`seedWorkspace failed; leaving ${containerName} running so you can inspect it`);
+        }
         throw err;
       }
     } else {
