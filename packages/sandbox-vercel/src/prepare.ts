@@ -13,10 +13,14 @@
  *   5. Stage host agent static config (claude/codex/opencode) into the snapshot.
  *   6. `sandbox.snapshot({ expiration: 0 })` → the never-expiring base snapshot.
  *   7. Persist the snapshot id into ~/.agentbox/vercel-prepared.json.
+ *   8. Delete the builder sandbox.
  *
- * The builder sandbox is left to Vercel's reaper after the snapshot is taken —
- * we deliberately don't `delete()` it, because deleting a sandbox can cascade
- * to its current snapshot and the snapshot is the whole deliverable.
+ * Step 8 is safe: a Vercel snapshot is an independent, id-addressed resource
+ * that survives its source sandbox's deletion (verified live — snapshot stays
+ * `status: 'created'` and boots a fresh sandbox after the builder is deleted).
+ * We delete it best-effort *after* the snapshot id is persisted, so a delete
+ * failure only leaves a lingering sandbox for Vercel's reaper, never a broken
+ * bake.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -156,6 +160,20 @@ export async function prepareVercel(
     },
   });
   progress(`wrote ${preparedStatePath()}`);
+
+  // 8. Delete the builder. The snapshot is an independent resource that
+  // survives this (verified live), and its id is already persisted above, so
+  // this is best-effort: a failure just leaves the sandbox for Vercel's reaper.
+  progress('deleting builder sandbox');
+  try {
+    await sb.delete();
+    progress('builder sandbox deleted');
+  } catch (err) {
+    progress(
+      `builder delete failed (left for Vercel reaper): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   progress(`prepare complete — base snapshot ${snap.snapshotId}`);
   return { snapshotName: snap.snapshotId };
 }

@@ -156,10 +156,11 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
    `build-attach.ts`'s `resolveAttachHelperPath()` gained the `runtime/vercel/`
    (next-to-dist) candidate for the bundled CLI. Verified: all 11 runtime assets
    resolve from the staged tree with the monorepo fallback disabled.
-10. **Builder cleanup after `prepare`.** We deliberately do NOT `delete()` the
-    builder sandbox after `snapshot()` (in case delete cascades to the snapshot).
-    Confirm a snapshot survives its source's deletion; if so, delete the builder
-    so it isn't left for Vercel's reaper.
+10. [x] **Builder cleanup after `prepare`.** Done — verified live that a Vercel
+    snapshot is independent of its source: after `snapshot({expiration:0})` →
+    `builder.delete()`, the snapshot stays `status: 'created'` (256 MB) and boots
+    a fresh sandbox. `prepare.ts` now deletes the builder (step 8) best-effort
+    *after* persisting the snapshot id, so a delete failure never breaks the bake.
 11. [x] **OIDC 12h expiry friction.** Done (doc) — `docs/cloud-providers.md` now
     has a "Which to use" note recommending the access-token trio for long ops
     (`prepare`, CI) since OIDC dev tokens expire ~12h with no headless refresh,
