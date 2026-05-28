@@ -53,7 +53,12 @@ export const runQueuedJobCommand = new Command('_run-queued-job')
       // supported here (the cloud agent attach starts the tmux session lazily
       // on first attach; with no attach there's nowhere to seed the prompt).
       // The submit-side already rejected cloud in that case.
-      await runDockerJob(job, log);
+      // The worker records boxId on the outer `job` the instant the box is
+      // created (via onBoxCreated), so the catch block below preserves the
+      // box attribution even if the session start throws afterwards.
+      await runDockerJob(job, log, (boxId) => {
+        if (job) job = { ...job, boxId };
+      });
 
       const done: QueueJob = {
         ...job,
@@ -87,7 +92,11 @@ export const runQueuedJobCommand = new Command('_run-queued-job')
     }
   });
 
-async function runDockerJob(job: QueueJob, log: ReturnType<typeof openCommandLog>): Promise<void> {
+async function runDockerJob(
+  job: QueueJob,
+  log: ReturnType<typeof openCommandLog>,
+  onBoxCreated: (boxId: string) => void,
+): Promise<void> {
   const opts = job.createOpts;
   const cfg = await loadEffectiveConfig(opts.workspace, {
     cliOverrides: buildOverridesFromJob(job),
@@ -156,6 +165,14 @@ async function runDockerJob(job: QueueJob, log: ReturnType<typeof openCommandLog
     onLog: (line) => log.write(line),
   });
   log.write(`box created: ${result.record.container}`);
+
+  // Record the box id on the manifest (and propagate it to the caller) so the
+  // relay's working-agent counter can join this running job to its live box
+  // status, and stop counting the in-flight startup slot once the box has
+  // registered. Written before the session starts so a crash mid-launch is
+  // still attributable to a box.
+  onBoxCreated(result.record.id);
+  await writeJob({ ...job, boxId: result.record.id });
 
   const promptedArgs = buildPromptArgs(job.agent, job.prompt, job.agentArgs);
 

@@ -33,6 +33,7 @@ import {
   MissingAgentCredsError,
   opencodeAuthAvailable,
 } from '../lib/queue/assert-creds.js';
+import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
 import {
   ATTACH_IN_HELP,
@@ -57,15 +58,6 @@ import { handleLifecycleError } from './_errors.js';
 /** Ref shown in the detach notice: the per-project index `n` when set, else the name. */
 function reattachRef(r: { projectIndex?: number; name: string }): string {
   return typeof r.projectIndex === 'number' ? String(r.projectIndex) : r.name;
-}
-
-function parseMaxRunningOption(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n <= 0) {
-    throw new Error(`--max-running: expected a positive integer, got "${raw}"`);
-  }
-  return n;
 }
 
 function pickOpencodeCreateOpts(opts: OpencodeCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
@@ -159,6 +151,8 @@ interface OpencodeCreateOptions {
   initialPrompt?: string;
   /** Per-invocation override of `queue.maxConcurrent`. */
   maxRunning?: string;
+  /** Per-invocation override of `queue.maxWorking`. */
+  maxWorking?: string;
   /** `-c, --continue`: detected then refused (v1 stub). */
   continue?: boolean;
   /** `--resume <id>`: detected then refused (v1 stub). */
@@ -312,6 +306,10 @@ export const opencodeCommand = new Command('opencode')
     'per-invocation override of queue.maxConcurrent; only honored when `-i` is set',
   )
   .option(
+    '--max-working <n>',
+    'per-invocation override of queue.maxWorking; only honored when `-i` is set',
+  )
+  .option(
     '-c, --continue',
     'session teleport (not yet supported for opencode in v1; emits a friendly error)',
   )
@@ -385,7 +383,8 @@ export const opencodeCommand = new Command('opencode')
         }
         throw err;
       }
-      const maxRunningOverride = parseMaxRunningOption(opts.maxRunning);
+      const maxRunningOverride = parseMaxOption('--max-running', opts.maxRunning);
+      const maxWorkingOverride = parseMaxOption('--max-working', opts.maxWorking);
       const result = await submitQueueJob({
         agent: 'opencode',
         boxName: opts.name ?? '',
@@ -394,6 +393,7 @@ export const opencodeCommand = new Command('opencode')
         agentArgs: opencodeArgs,
         createOpts: pickOpencodeCreateOpts(opts),
         maxRunningOverride,
+        maxWorkingOverride,
       });
       outro(
         `job ${result.job.id} queued (${String(result.runningCount)}/${String(result.maxConcurrent)} running); log: ${result.job.logPath}`,

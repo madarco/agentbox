@@ -98,6 +98,8 @@ export interface UserConfig {
   queue?: {
     enabled?: boolean;
     maxConcurrent?: number;
+    maxWorking?: number;
+    idleGraceSeconds?: number;
   };
   cloud?: {
     useCurrentBranch?: boolean;
@@ -188,6 +190,8 @@ export interface EffectiveConfig {
   queue: {
     enabled: boolean;
     maxConcurrent: number;
+    maxWorking: number;
+    idleGraceSeconds: number;
   };
   cloud: {
     useCurrentBranch: boolean;
@@ -297,6 +301,8 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   queue: {
     enabled: true,
     maxConcurrent: 5,
+    maxWorking: 0,
+    idleGraceSeconds: 15,
   },
   cloud: {
     useCurrentBranch: false,
@@ -570,6 +576,18 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       'Max number of simultaneously-running boxes (across providers) before background `-i` jobs queue up instead of starting immediately. Per-invocation override: `--max-running <n>`.',
+  },
+  {
+    key: 'queue.maxWorking',
+    type: 'int',
+    description:
+      'Max agents actively working/thinking (quota-consuming) at once before background `-i` jobs queue. 0 = disabled (use the queue.maxConcurrent running-box gate). Counts all boxes, foreground + queued. Per-invocation override: `--max-working <n>`.',
+  },
+  {
+    key: 'queue.idleGraceSeconds',
+    type: 'int',
+    description:
+      'Seconds an agent must stay non-working before it frees its working slot (debounce against brief idle flaps between turns). Only used when queue.maxWorking > 0.',
   },
   {
     key: 'cloud.useCurrentBranch',

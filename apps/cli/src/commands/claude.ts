@@ -38,6 +38,7 @@ import {
   MissingAgentCredsError,
 } from '../lib/queue/assert-creds.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
+import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
 import {
   ATTACH_IN_HELP,
@@ -71,16 +72,6 @@ import { handleLifecycleError } from './_errors.js';
  *  (resolves from inside the project dir), else the globally-unique name. */
 function reattachRef(r: { projectIndex?: number; name: string }): string {
   return typeof r.projectIndex === 'number' ? String(r.projectIndex) : r.name;
-}
-
-/** Validate `--max-running <n>` from commander into a positive integer; throws on garbage. */
-function parseMaxRunningOption(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n <= 0) {
-    throw new Error(`--max-running: expected a positive integer, got "${raw}"`);
-  }
-  return n;
 }
 
 /** Project an agent-create options struct down to what the queue worker needs. */
@@ -188,6 +179,8 @@ interface ClaudeCreateOptions {
   initialPrompt?: string;
   /** Per-invocation override of `queue.maxConcurrent` (number string from commander). */
   maxRunning?: string;
+  /** Per-invocation override of `queue.maxWorking` (number string from commander). */
+  maxWorking?: string;
   /** `-c, --continue`: teleport and resume the most recent host claude session for this cwd. */
   continue?: boolean;
   /** `--resume <id>`: teleport and resume the specified host claude session by id. */
@@ -371,6 +364,10 @@ export const claudeCommand = new Command('claude')
     'per-invocation override of queue.maxConcurrent; only honored when `-i` is set',
   )
   .option(
+    '--max-working <n>',
+    'per-invocation override of queue.maxWorking; only honored when `-i` is set',
+  )
+  .option(
     '-c, --continue',
     'teleport the most recent host Claude Code session for this cwd into the box and resume from it',
   )
@@ -459,7 +456,8 @@ export const claudeCommand = new Command('claude')
         }
         throw err;
       }
-      const maxRunningOverride = parseMaxRunningOption(opts.maxRunning);
+      const maxRunningOverride = parseMaxOption('--max-running', opts.maxRunning);
+      const maxWorkingOverride = parseMaxOption('--max-working', opts.maxWorking);
       const result = await submitQueueJob({
         agent: 'claude-code',
         boxName: opts.name ?? '',
@@ -468,6 +466,7 @@ export const claudeCommand = new Command('claude')
         agentArgs: claudeArgs,
         createOpts: pickCreateOpts(opts),
         maxRunningOverride,
+        maxWorkingOverride,
       });
       outro(
         `job ${result.job.id} queued (${String(result.runningCount)}/${String(result.maxConcurrent)} running); log: ${result.job.logPath}`,
