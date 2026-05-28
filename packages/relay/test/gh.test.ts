@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { injectPrCreateHead } from '../src/gh.js';
+import { injectPrCreateHead, prCreateNeedsHead } from '../src/gh.js';
 
 describe('injectPrCreateHead', () => {
   it('prepends --head <branch> for create when none was passed', () => {
@@ -30,5 +30,28 @@ describe('injectPrCreateHead', () => {
     expect(injectPrCreateHead('create', undefined, ['--title', 'T'])).toEqual(['--title', 'T']);
     expect(injectPrCreateHead('create', '', ['--title', 'T'])).toEqual(['--title', 'T']);
     expect(injectPrCreateHead('create', 'HEAD', ['--title', 'T'])).toEqual(['--title', 'T']);
+  });
+});
+
+describe('prCreateNeedsHead', () => {
+  it('is true for a create that still has no --head', () => {
+    expect(prCreateNeedsHead('create', ['--title', 'T'])).toBe(true);
+    // After injectPrCreateHead failed to resolve a branch:
+    expect(prCreateNeedsHead('create', injectPrCreateHead('create', '', ['--title', 'T']))).toBe(
+      true,
+    );
+  });
+
+  it('is false once --head is present (injected or caller-supplied)', () => {
+    expect(prCreateNeedsHead('create', ['--head', 'agentbox/box-one', '--title', 'T'])).toBe(false);
+    expect(prCreateNeedsHead('create', ['--head=feat/x'])).toBe(false);
+    expect(
+      prCreateNeedsHead('create', injectPrCreateHead('create', 'agentbox/box-one', ['--title', 'T'])),
+    ).toBe(false);
+  });
+
+  it('is false for non-create ops', () => {
+    expect(prCreateNeedsHead('view', ['7'])).toBe(false);
+    expect(prCreateNeedsHead('merge', ['42'])).toBe(false);
   });
 });

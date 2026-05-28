@@ -26,6 +26,8 @@ import {
   GH_PR_READ_ONLY_OPS,
   injectPrCreateHead,
   isGhPrOp,
+  PR_CREATE_NO_HEAD_REFUSAL,
+  prCreateNeedsHead,
   refuseCheckoutByDefault,
   refuseMergeBypass,
   runHostGh,
@@ -335,6 +337,8 @@ async function runGhPrRpc(
     const branch = branchProbe.exitCode === 0 ? (branchProbe.stdout ?? '').trim() : '';
     finalArgs = injectPrCreateHead(op, branch, args);
   }
+  // Never let `gh` fall back to the host repo's checked-out branch.
+  if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
   return runHostGh(['pr', op, ...finalArgs], lookup.workspacePath);
 }
 

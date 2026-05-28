@@ -9,6 +9,8 @@ import {
   GH_PR_READ_ONLY_OPS,
   injectPrCreateHead,
   isGhPrOp,
+  PR_CREATE_NO_HEAD_REFUSAL,
+  prCreateNeedsHead,
   refuseCheckoutByDefault,
   refuseMergeBypass,
   runHostGh,
@@ -1143,6 +1145,8 @@ async function handleGhPrRpc(
   // on the box branch, so gh can't infer it). Done after token validation —
   // which hashes the incoming `params`, not this post-injection argv.
   const finalArgs = injectPrCreateHead(op, worktree.branch, args);
+  // Never let `gh` fall back to the host repo's checked-out branch.
+  if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
   return runHostGh(['pr', op, ...finalArgs], worktree.hostMainRepo);
 }
 

@@ -56,9 +56,34 @@ export function injectPrCreateHead(
 ): string[] {
   if (op !== 'create') return args;
   if (!branch || branch === 'HEAD') return args;
-  if (args.some((a) => a === '--head' || a.startsWith('--head='))) return args;
+  if (hasHeadArg(args)) return args;
   return ['--head', branch, ...args];
 }
+
+function hasHeadArg(args: string[]): boolean {
+  return args.some((a) => a === '--head' || a.startsWith('--head='));
+}
+
+/**
+ * True when a `gh pr create` would run with no `--head` — i.e. we couldn't
+ * resolve the box's branch to inject and the caller didn't pass one. The
+ * relay must refuse rather than let `gh` fall back to the host repo's
+ * *checked-out* branch, which would open a PR for the wrong branch.
+ */
+export function prCreateNeedsHead(op: GhPrOp, args: string[]): boolean {
+  return op === 'create' && !hasHeadArg(args);
+}
+
+/** Ready-to-send refusal for a `create` that has no resolvable `--head`. */
+export const PR_CREATE_NO_HEAD_REFUSAL: GitRpcResult = {
+  exitCode: 65,
+  stdout: '',
+  stderr:
+    'gh pr create: refusing to run without --head — could not resolve this ' +
+    "box's branch, and falling back to the host repo's checked-out branch " +
+    'would open a PR for the wrong branch. Ensure the box branch is pushed, ' +
+    'or pass --head <branch> explicitly.\n',
+};
 
 /** Wire params for every `gh.pr.<op>` method. Mirrors the new ctl command surface. */
 export interface GhPrRpcParams {

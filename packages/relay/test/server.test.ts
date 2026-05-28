@@ -534,6 +534,35 @@ exit 0
     );
   });
 
+  it('gh.pr.create refuses (exit 65) when the box branch cannot be resolved', async () => {
+    // Register a worktree with an empty branch so injectPrCreateHead can't add
+    // --head; the relay must refuse rather than let gh fall back to the host
+    // repo's checked-out branch.
+    const r0 = await fetchJson(handle, 'POST', '/admin/register-box', {
+      body: {
+        boxId: 'b1',
+        token: 't1',
+        name: 'box-one',
+        worktrees: [{ containerPath: '/workspace', hostMainRepo: stubDir, branch: '' }],
+      },
+    });
+    expect(r0.status).toBe(204);
+    process.env.AGENTBOX_PROMPT = 'off';
+    const r = await fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: {
+        method: 'gh.pr.create',
+        params: { path: '/workspace', args: ['--title', 'T'] },
+      },
+    });
+    expect(r.status).toBe(500);
+    const body = r.body as { exitCode: number; stderr: string; stdout: string };
+    expect(body.exitCode).toBe(65);
+    expect(body.stderr).toMatch(/refusing to run without --head/);
+    // gh must not have been invoked.
+    expect(body.stdout).not.toContain('stub: gh pr create');
+  });
+
   it('gh.pr.create does not double-inject --head when the caller passed one', async () => {
     await registerWithWorktree();
     process.env.AGENTBOX_PROMPT = 'off';
