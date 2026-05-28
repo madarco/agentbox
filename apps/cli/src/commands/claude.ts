@@ -59,6 +59,7 @@ import {
 } from '../session-teleport/index.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { makeProgressReporter } from '../lib/progress.js';
+import { maybeShowInstallHint } from '../lib/install-hint.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
@@ -715,6 +716,7 @@ export const claudeCommand = new Command('claude')
       for (const f of rebuild.failed) {
         log.warn(`plugin install failed for ${f.dir}; claude may still load it. stderr:\n${f.stderr.trim()}`);
       }
+      maybeShowInstallHint();
 
       if (opts.attach === false) {
         outro(

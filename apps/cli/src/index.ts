@@ -32,6 +32,8 @@ import { hetznerCommand } from '@agentbox/sandbox-hetzner/cli';
 import { destroyCommand } from './commands/destroy.js';
 import { downloadCommand } from './commands/download.js';
 import { driveCommand } from './commands/drive.js';
+import { forkCommand } from './commands/fork.js';
+import { installCommand } from './commands/install.js';
 import { gitCommand } from './commands/git.js';
 import { listCommand } from './commands/list.js';
 import { logsCommand } from './commands/logs.js';
@@ -68,6 +70,7 @@ program.enablePositionalOptions();
 
 program.addCommand(createCommand);
 program.addCommand(claudeCommand);
+program.addCommand(forkCommand);
 program.addCommand(codexCommand);
 program.addCommand(gitCommand);
 program.addCommand(opencodeCommand);
@@ -104,6 +107,7 @@ program.addCommand(daytonaCommand);
 program.addCommand(hetznerCommand);
 program.addCommand(dockerCommand);
 program.addCommand(updateCommand);
+program.addCommand(installCommand);
 
 program.configureHelp({ visibleCommands: () => [] });
 program.addHelpText('after', () => '\n' + buildGroupedHelp(program));
