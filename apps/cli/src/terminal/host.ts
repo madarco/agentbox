@@ -118,33 +118,45 @@ async function spawnInITerm2(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTe
   const cmdLine = `cd ${shellQuote(args.cwd)} && exec ${inner}`;
   const cmdLit = `"${appleScriptEscape(cmdLine)}"`;
 
-  let script: string;
+  // Always create the tab/window/split first, then `write text` into its
+  // session. The `... with default profile command "<cmd>"` parameter form is
+  // unreliable on iTerm 3.7 betas — it fails (returns `missing value`) and the
+  // command bounces to Terminal.app instead of running in iTerm. The
+  // create-then-write-text form is the supported path and works across
+  // versions, so every mode uses it.
+  let lines: string[];
   let noteKind: string;
   switch (args.mode) {
     case 'split':
-      // iTerm2's AppleScript dictionary doesn't expose a `split … with command`
-      // form, so we split, then `write text` into the new session.
-      script =
-        'tell application "iTerm" to ' +
-        'tell current session of current window to ' +
-        `tell (split vertically with default profile) to write text ${cmdLit}`;
+      lines = [
+        'tell application "iTerm"',
+        '  tell current session of current window to set _s to (split vertically with default profile)',
+        `  tell _s to write text ${cmdLit}`,
+        'end tell',
+      ];
       noteKind = 'iTerm2 split';
       break;
     case 'tab':
-      script =
-        'tell application "iTerm" to ' +
-        `tell current window to create tab with default profile command ${cmdLit}`;
+      lines = [
+        'tell application "iTerm"',
+        '  tell current window to set _t to (create tab with default profile)',
+        `  tell current session of _t to write text ${cmdLit}`,
+        'end tell',
+      ];
       noteKind = 'iTerm2 tab';
       break;
     case 'window':
-      script =
-        'tell application "iTerm" to ' +
-        `create window with default profile command ${cmdLit}`;
+      lines = [
+        'tell application "iTerm"',
+        '  set _w to (create window with default profile)',
+        `  tell current session of _w to write text ${cmdLit}`,
+        'end tell',
+      ];
       noteKind = 'iTerm2 window';
       break;
   }
 
-  const r = await runQuiet('osascript', ['-e', script]);
+  const r = await runQuiet('osascript', ['-e', lines.join('\n')]);
   if (r.code !== 0) {
     return {
       launched: false,

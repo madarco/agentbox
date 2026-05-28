@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { checkpointCommand } from '../src/commands/checkpoint.js';
 import { claudeCommand } from '../src/commands/claude.js';
 import { createCommand } from '../src/commands/create.js';
+import { forkCommand } from '../src/commands/fork.js';
+import { installCommand } from '../src/commands/install.js';
 import { daytonaCommand } from '@agentbox/sandbox-daytona/cli';
 import { dockerCommand } from '../src/commands/docker.js';
 import { destroyCommand } from '../src/commands/destroy.js';
@@ -60,6 +62,28 @@ describe('lifecycle CLI surface', () => {
 
   it('create is still wired (regression check)', () => {
     expect(createCommand.name()).toBe('create');
+  });
+
+  it('fork takes --session/--provider/--name/--attach-in/--workspace/--carry-yes', () => {
+    expect(forkCommand.name()).toBe('fork');
+    const longs = forkCommand.options.map((o) => o.long);
+    expect(longs).toEqual(
+      expect.arrayContaining([
+        '--session',
+        '--provider',
+        '--name',
+        '--attach-in',
+        '--workspace',
+        '--carry-yes',
+      ]),
+    );
+  });
+
+  it('install takes --force and --dry-run, no subcommands', () => {
+    expect(installCommand.name()).toBe('install');
+    expect(installCommand.commands).toHaveLength(0);
+    const longs = installCommand.options.map((o) => o.long);
+    expect(longs).toEqual(expect.arrayContaining(['--force', '--dry-run']));
   });
 
   it('open is files-only (Finder + --path), no --browser/--loopback/--upper', () => {

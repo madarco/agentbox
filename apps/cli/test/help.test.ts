@@ -17,6 +17,8 @@ import { hetznerCommand } from '@agentbox/sandbox-hetzner/cli';
 import { destroyCommand } from '../src/commands/destroy.js';
 import { downloadCommand } from '../src/commands/download.js';
 import { driveCommand } from '../src/commands/drive.js';
+import { forkCommand } from '../src/commands/fork.js';
+import { installCommand } from '../src/commands/install.js';
 import { listCommand } from '../src/commands/list.js';
 import { logsCommand } from '../src/commands/logs.js';
 import { openCommand } from '../src/commands/open.js';
@@ -45,6 +47,7 @@ function buildProgram(): Command {
   for (const cmd of [
     createCommand,
     claudeCommand,
+    forkCommand,
     codexCommand,
     opencodeCommand,
     codeCommand,
@@ -77,6 +80,7 @@ function buildProgram(): Command {
     hetznerCommand,
     dockerCommand,
     updateCommand,
+    installCommand,
   ]) {
     program.addCommand(cmd);
   }
