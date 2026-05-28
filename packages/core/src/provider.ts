@@ -85,6 +85,17 @@ export interface CreateBoxRequest {
    * any provider work — the provider trusts whatever it gets here.
    */
   fromBranch?: string;
+  /**
+   * Reuse an existing branch directly instead of forking a fresh
+   * `agentbox/<name>` branch. The box checks out `<useBranch>` as-is (root
+   * repo only); commits and `git push` flow straight to it. Mutually
+   * exclusive with `fromBranch` (the CLI enforces this). Docker: `git
+   * worktree add <wt> <branch>` (no `-b`) — fails if the host already has
+   * the branch checked out. Cloud: the clone lands on the branch and we skip
+   * the `checkout -B` rename. The CLI validates the branch exists host-side
+   * before any provider work.
+   */
+  useBranch?: string;
   /** Provider-specific knobs (docker: sharedCache/portless; daytona: resources/region). */
   providerOptions?: Record<string, unknown>;
   onLog?: (line: string) => void;

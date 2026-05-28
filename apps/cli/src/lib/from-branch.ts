@@ -1,6 +1,6 @@
 /**
- * Host-side validation for `--from-branch <ref>` on `create` / `claude` /
- * `codex` / `opencode` / `code`.
+ * Host-side validation for `--from-branch <ref>` and `--use-branch <name>`
+ * on `create` / `claude` / `codex` / `opencode` / `code`.
  *
  * The flag tells the provider what base ref to fork the box's per-box branch
  * from instead of the host's current `HEAD`. We validate the ref *here*,
@@ -79,4 +79,125 @@ export async function resolveFromBranch(
     );
   }
   return ref;
+}
+
+export class UseBranchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UseBranchError';
+  }
+}
+
+/**
+ * Host-side validation for `--use-branch <name>`. Unlike `--from-branch`
+ * (which only picks a *base ref* to fork a fresh `agentbox/<box>` branch
+ * from), `--use-branch` checks out the existing branch directly — so we
+ * require a real local **branch** ref, not a tag or detached SHA. A box that
+ * checks out a detached ref has nowhere to `git push`, so those are rejected.
+ *
+ * Best-effort `git fetch <remote> <name>` first so the branch tracks the
+ * remote tip (the cloud bundle is built from the host's local ref state).
+ * Returns the name verbatim on success; throws `UseBranchError` otherwise.
+ * `undefined` / empty input → returns `undefined` without touching git.
+ */
+export async function resolveUseBranch(
+  name: string | undefined,
+  opts: ResolveFromBranchOpts,
+): Promise<string | undefined> {
+  if (!name || name.length === 0) return undefined;
+  const remote = opts.remote ?? 'origin';
+
+  // Update the local branch to the remote tip when possible. Soft-fail: the
+  // branch may be local-only, in which case the show-ref check below still
+  // passes against the existing local ref.
+  await execa('git', ['-C', opts.repo, 'fetch', '--quiet', remote, name], {
+    reject: false,
+  });
+
+  const exists = await execa(
+    'git',
+    ['-C', opts.repo, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`],
+    { reject: false },
+  );
+  if (exists.exitCode !== 0) {
+    throw new UseBranchError(
+      `--use-branch: no local branch "${name}" in ${opts.repo}. ` +
+        `Create or check it out on the host first (--use-branch reuses an ` +
+        `existing branch; use --from-branch to fork a new box branch from a ref).`,
+    );
+  }
+  return name;
+}
+
+/**
+ * The host workspace's current branch name (`git rev-parse --abbrev-ref
+ * HEAD`). Returns `undefined` when HEAD is detached (git prints the literal
+ * `HEAD`) or when the command fails. Used by the `cloud.useCurrentBranch`
+ * config path to default cloud boxes onto the host's current branch.
+ */
+export async function currentHostBranch(repo: string): Promise<string | undefined> {
+  const r = await execa('git', ['-C', repo, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+    reject: false,
+  });
+  if (r.exitCode !== 0) return undefined;
+  const branch = r.stdout.trim();
+  if (!branch || branch === 'HEAD') return undefined;
+  return branch;
+}
+
+export interface BranchSelectionOpts {
+  /** Raw `--use-branch <name>` value (undefined when not passed). */
+  useBranch?: string;
+  /** Raw `--from-branch <ref>` value (undefined when not passed). */
+  fromBranch?: string;
+  /** Host repo path (the workspace root). */
+  repo: string;
+  /** Provider the box will be created on; gates the cloud.useCurrentBranch default. */
+  providerName: string;
+  /** `cfg.effective.cloud.useCurrentBranch`. */
+  cloudUseCurrentBranch: boolean;
+  /** Optional logger for informational notes (e.g. detached-HEAD fallback). */
+  log?: (msg: string) => void;
+}
+
+/**
+ * Resolve the box's branch strategy from the two flags plus the
+ * `cloud.useCurrentBranch` config. Single source of truth shared by
+ * `create` / `claude` / `codex` / `opencode` so the mutex + precedence stay
+ * identical across commands.
+ *
+ * Precedence: `--use-branch` > `--from-branch` > (cloud only)
+ * `cloud.useCurrentBranch` > default fork. Throws `UseBranchError` on the
+ * mutex conflict or an invalid `--use-branch`, `FromBranchError` on an
+ * invalid `--from-branch`; callers catch both and exit before provider work.
+ */
+export async function resolveBranchSelection(
+  opts: BranchSelectionOpts,
+): Promise<{ useBranch?: string; fromBranch?: string }> {
+  if (opts.useBranch && opts.fromBranch) {
+    throw new UseBranchError(
+      '--use-branch and --from-branch are mutually exclusive: --use-branch reuses an ' +
+        'existing branch, --from-branch forks a new box branch from a base ref. Pass only one.',
+    );
+  }
+  if (opts.useBranch) {
+    return { useBranch: await resolveUseBranch(opts.useBranch, { repo: opts.repo }) };
+  }
+  if (opts.fromBranch) {
+    return { fromBranch: await resolveFromBranch(opts.fromBranch, { repo: opts.repo }) };
+  }
+  // cloud.useCurrentBranch defaults cloud boxes onto the host's current
+  // branch. Docker can't reuse it (the host already has it checked out → a
+  // worktree-registry collision), so this only fires for cloud providers.
+  if (opts.providerName !== 'docker' && opts.cloudUseCurrentBranch) {
+    const current = await currentHostBranch(opts.repo);
+    if (current) {
+      opts.log?.(`cloud.useCurrentBranch: starting box on host branch "${current}"`);
+      return { useBranch: current };
+    }
+    opts.log?.(
+      'cloud.useCurrentBranch is set but host HEAD is detached; forking a fresh branch instead',
+    );
+  }
+  return {};
 }

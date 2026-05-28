@@ -66,6 +66,13 @@ export interface RepoCarryOver {
   untrackedNul: string;
   /** Host dir to tar from (== repo.hostMainRepo, kept here so seedWorkspace doesn't need to know about the repo shape). */
   hostSource: string;
+  /**
+   * Reuse the existing branch `<branch>` instead of forking a fresh one:
+   * `git worktree add <wt> <branch>` (no `-b`, no base ref). Set by the
+   * `--use-branch` path for the root repo. When unset/false the worktree is
+   * created with `-b <branch>` from `fromBranch ?? HEAD` (the default fork).
+   */
+  reuseBranch?: boolean;
 }
 
 /**
@@ -282,24 +289,17 @@ export async function seedWorkspace(opts: SeedWorkspaceOptions): Promise<void> {
   for (const r of opts.repos) {
     const main = r.repo.hostMainRepo;
     const wt = r.gitWorktreePath;
+    // reuse: check out the existing branch directly (`git worktree add <wt>
+    // <branch>`). Git refuses if the host already has it checked out — that
+    // stderr is surfaced verbatim below. fork (default): create a fresh
+    // branch with `-b` from `fromBranch ?? HEAD` (root only; nested → HEAD).
     const baseRef = r.repo.kind === 'root' ? (opts.fromBranch ?? 'HEAD') : 'HEAD';
+    const addArgs = r.reuseBranch
+      ? ['worktree', 'add', wt, r.branch]
+      : ['worktree', 'add', '-b', r.branch, wt, baseRef];
     const add = await execa(
       'docker',
-      [
-        'exec',
-        '--user',
-        'vscode',
-        opts.container,
-        'git',
-        '-C',
-        main,
-        'worktree',
-        'add',
-        '-b',
-        r.branch,
-        wt,
-        baseRef,
-      ],
+      ['exec', '--user', 'vscode', opts.container, 'git', '-C', main, ...addArgs],
       { reject: false },
     );
     if (add.exitCode !== 0) {
