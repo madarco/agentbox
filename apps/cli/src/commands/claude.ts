@@ -38,6 +38,7 @@ import {
   MissingAgentCredsError,
 } from '../lib/queue/assert-creds.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
+import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
 import {
   ATTACH_IN_HELP,
@@ -71,26 +72,6 @@ import { handleLifecycleError } from './_errors.js';
  *  (resolves from inside the project dir), else the globally-unique name. */
 function reattachRef(r: { projectIndex?: number; name: string }): string {
   return typeof r.projectIndex === 'number' ? String(r.projectIndex) : r.name;
-}
-
-/** Validate `--max-running <n>` from commander into a positive integer; throws on garbage. */
-function parseMaxRunningOption(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n <= 0) {
-    throw new Error(`--max-running: expected a positive integer, got "${raw}"`);
-  }
-  return n;
-}
-
-/** Validate `--max-working <n>` from commander into a positive integer; throws on garbage. */
-function parseMaxWorkingOption(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n <= 0) {
-    throw new Error(`--max-working: expected a positive integer, got "${raw}"`);
-  }
-  return n;
 }
 
 /** Project an agent-create options struct down to what the queue worker needs. */
@@ -475,8 +456,8 @@ export const claudeCommand = new Command('claude')
         }
         throw err;
       }
-      const maxRunningOverride = parseMaxRunningOption(opts.maxRunning);
-      const maxWorkingOverride = parseMaxWorkingOption(opts.maxWorking);
+      const maxRunningOverride = parseMaxOption('--max-running', opts.maxRunning);
+      const maxWorkingOverride = parseMaxOption('--max-working', opts.maxWorking);
       const result = await submitQueueJob({
         agent: 'claude-code',
         boxName: opts.name ?? '',

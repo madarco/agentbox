@@ -33,6 +33,7 @@ import {
   MissingAgentCredsError,
   opencodeAuthAvailable,
 } from '../lib/queue/assert-creds.js';
+import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
 import {
   ATTACH_IN_HELP,
@@ -57,24 +58,6 @@ import { handleLifecycleError } from './_errors.js';
 /** Ref shown in the detach notice: the per-project index `n` when set, else the name. */
 function reattachRef(r: { projectIndex?: number; name: string }): string {
   return typeof r.projectIndex === 'number' ? String(r.projectIndex) : r.name;
-}
-
-function parseMaxRunningOption(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n <= 0) {
-    throw new Error(`--max-running: expected a positive integer, got "${raw}"`);
-  }
-  return n;
-}
-
-function parseMaxWorkingOption(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n <= 0) {
-    throw new Error(`--max-working: expected a positive integer, got "${raw}"`);
-  }
-  return n;
 }
 
 function pickOpencodeCreateOpts(opts: OpencodeCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
@@ -400,8 +383,8 @@ export const opencodeCommand = new Command('opencode')
         }
         throw err;
       }
-      const maxRunningOverride = parseMaxRunningOption(opts.maxRunning);
-      const maxWorkingOverride = parseMaxWorkingOption(opts.maxWorking);
+      const maxRunningOverride = parseMaxOption('--max-running', opts.maxRunning);
+      const maxWorkingOverride = parseMaxOption('--max-working', opts.maxWorking);
       const result = await submitQueueJob({
         agent: 'opencode',
         boxName: opts.name ?? '',
