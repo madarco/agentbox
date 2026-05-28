@@ -3,7 +3,7 @@
  *
  * Wired into the attach wrapper's Ctrl+V hook (`wrapped-pty/run.ts`). When the
  * user pastes while attached to an in-box Claude Code session we:
- *   1. grab the image off the macOS clipboard (`captureClipboardImage`),
+ *   1. grab the image off the host clipboard (`captureClipboardImage`),
  *   2. make sure the box's X server (`DISPLAY=:1`) is up,
  *   3. ship the PNG into the box (`Provider.uploadPath`),
  *   4. load it into the box's X11 CLIPBOARD via `xclip -t image/png`.
@@ -17,7 +17,7 @@
 import { rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { BoxRecord, Provider } from '@agentbox/core';
-import { captureClipboardImage } from './mac-clipboard.js';
+import { captureClipboardImage } from './host-clipboard.js';
 
 export type PasteImageResult = 'pasted' | 'no-image' | 'error';
 

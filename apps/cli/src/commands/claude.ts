@@ -67,6 +67,7 @@ import { maybePromptPortless } from '../portless-prompt.js';
 import { maybeRunSetupWizard } from '../wizard.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { pasteHostClipboardImage } from '../lib/paste-image.js';
+import { clipboardCaptureAvailable } from '../lib/host-clipboard.js';
 import { handleLifecycleError } from './_errors.js';
 
 /** Ref shown in the detach notice: the per-project index `n` when set
@@ -122,6 +123,10 @@ async function attachClaudeWrapped(
   openIn?: AttachOpenIn,
 ): Promise<never> {
   const provider = await providerForBox(box);
+  // Only wire Ctrl+V paste when this host can actually capture a clipboard image
+  // (macOS, or a Linux desktop with xclip/wl-paste). Elsewhere Ctrl+V forwards
+  // verbatim instead of being intercepted for a guaranteed-empty paste.
+  const canPaste = await clipboardCaptureAvailable();
   const code = await runWrappedAttach({
     container: box.container,
     dockerArgv: buildClaudeAttachArgv(box.container, sessionName),
@@ -133,12 +138,9 @@ async function attachClaudeWrapped(
     detachNotice: formatDetachNotice(reattach),
     onError,
     openIn,
-    // macOS-only: off darwin clipboard capture can't succeed, so leave Ctrl+V
-    // forwarding verbatim instead of intercepting it for a no-op flash.
-    onPasteImage:
-      process.platform === 'darwin'
-        ? () => pasteHostClipboardImage(provider, box)
-        : undefined,
+    onPasteImage: canPaste
+      ? () => pasteHostClipboardImage(provider, box)
+      : undefined,
   });
   process.exit(code);
 }
