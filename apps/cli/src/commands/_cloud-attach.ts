@@ -4,6 +4,7 @@ import type { BoxRecord } from '@agentbox/core';
 import type { AttachOpenIn } from '@agentbox/config';
 import { providerForBox } from '../provider/registry.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
+import { pasteHostClipboardImage } from '../lib/paste-image.js';
 
 const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
 
@@ -127,6 +128,12 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
       mode: args.mode,
       detachable: true,
       openIn: safeOpenIn,
+      // claude + macOS only: off darwin clipboard capture can't succeed, so
+      // leave Ctrl+V forwarding verbatim instead of a no-op flash.
+      onPasteImage:
+        args.mode === 'claude' && process.platform === 'darwin'
+          ? () => pasteHostClipboardImage(provider, args.box)
+          : undefined,
     });
     process.exit(code);
   } finally {

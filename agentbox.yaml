@@ -50,7 +50,17 @@
 # carry: actively helps: the existing scp-at-create-time is marker-gated
 # and won't re-copy a rotated token, while carry: refreshes on every
 # create.
+#
+# Cloud-provider creds (~/.agentbox/secrets.env): carry the host's
+# DAYTONA_* / HCLOUD_* tokens into the box so the in-box agentbox can
+# provision daytona / hetzner boxes when dogfooding cloud paths. The
+# provider env-loaders read this exact path. `optional` so docker-only
+# users without the file still get a working box.
 carry:
+  - src: ~/.agentbox/secrets.env
+    dest: ~/.agentbox/secrets.env
+    mode: 0o600
+    optional: true
   - src: ~/.agentbox/claude-credentials.json
     dest: ~/.agentbox/claude-credentials.json
     mode: 0o600

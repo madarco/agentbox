@@ -62,6 +62,13 @@ export interface WrappedAttachOptions {
    *  without taking over the current terminal. Outside tmux/iTerm2 it falls
    *  back to inline attach (the original behavior). */
   openIn?: AttachOpenIn;
+  /** Optional host→box clipboard image paste, invoked when the user presses
+   *  Ctrl+V (wired for claude only). Ships the host clipboard image into the
+   *  box and loads it into the box's X11 clipboard; resolves with the outcome
+   *  so the footer can flash a result. The input router re-emits Ctrl+V after
+   *  this settles, so Claude Code reads the now-loaded clipboard. Omitted →
+   *  Ctrl+V forwards verbatim. */
+  onPasteImage?: () => Promise<'pasted' | 'no-image' | 'error'>;
 }
 
 const FOOTER_ROWS = 1;
@@ -326,6 +333,42 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     redrawFooter();
   };
 
+  // Ctrl+V image paste: hold a "Pasting image…" notice in the footer while the
+  // host clipboard image is shipped into the box, then flash the outcome. The
+  // input router re-emits the Ctrl+V once this resolves, so Claude reads the
+  // now-loaded box clipboard. Never throws — failures degrade to a flash.
+  const handlePasteImage = async (): Promise<void> => {
+    if (!opts.onPasteImage) return;
+    if (flashTimer) {
+      clearTimeout(flashTimer);
+      flashTimer = null;
+    }
+    flashMessage = 'Pasting image…';
+    recomputeFooter();
+    redrawFooter();
+    let result: 'pasted' | 'no-image' | 'error' = 'error';
+    try {
+      result = await opts.onPasteImage();
+    } catch (e) {
+      logErr(`paste-image failed: ${(e as Error).message}`);
+    }
+    flashMessage =
+      result === 'pasted'
+        ? 'Image pasted'
+        : result === 'no-image'
+          ? 'No image in clipboard'
+          : 'Image paste failed';
+    flashTimer = setTimeout(() => {
+      flashTimer = null;
+      flashMessage = null;
+      recomputeFooter();
+      redrawFooter();
+    }, FLASH_DURATION_MS);
+    if (typeof flashTimer.unref === 'function') flashTimer.unref();
+    recomputeFooter();
+    redrawFooter();
+  };
+
   // Wire stdin -> pty (through the router so prompts + the leader can intercept).
   const router: InputRouter = createInputRouter({
     onForward: (b) => {
@@ -349,6 +392,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     onAction: (name) => {
       runAction(name);
     },
+    onPasteImage: opts.onPasteImage ? handlePasteImage : undefined,
   });
 
   if (process.stdin.isTTY) process.stdin.setRawMode(true);

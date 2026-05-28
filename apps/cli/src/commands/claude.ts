@@ -66,6 +66,7 @@ import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
 import { maybeRunSetupWizard } from '../wizard.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
+import { pasteHostClipboardImage } from '../lib/paste-image.js';
 import { handleLifecycleError } from './_errors.js';
 
 /** Ref shown in the detach notice: the per-project index `n` when set
@@ -114,12 +115,13 @@ const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
  * isn't a TTY or node-pty isn't installed.
  */
 async function attachClaudeWrapped(
-  box: { id: string; name: string; container: string; projectIndex?: number },
+  box: BoxRecord,
   sessionName: string | undefined,
   reattach: string,
   onError?: (msg: string) => void,
   openIn?: AttachOpenIn,
 ): Promise<never> {
+  const provider = await providerForBox(box);
   const code = await runWrappedAttach({
     container: box.container,
     dockerArgv: buildClaudeAttachArgv(box.container, sessionName),
@@ -131,6 +133,12 @@ async function attachClaudeWrapped(
     detachNotice: formatDetachNotice(reattach),
     onError,
     openIn,
+    // macOS-only: off darwin clipboard capture can't succeed, so leave Ctrl+V
+    // forwarding verbatim instead of intercepting it for a no-op flash.
+    onPasteImage:
+      process.platform === 'darwin'
+        ? () => pasteHostClipboardImage(provider, box)
+        : undefined,
   });
   process.exit(code);
 }
