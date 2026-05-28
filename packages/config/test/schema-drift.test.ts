@@ -75,6 +75,11 @@ maintenance:
     yaml: 'box:\n  memory: 1024\n  cpus: 2\n  pidsLimit: 256\n',
   },
   { name: 'autopause only', yaml: 'autopause:\n  enabled: true\n' },
+  { name: 'queue only', yaml: 'queue:\n  enabled: true\n' },
+  {
+    name: 'queue full',
+    yaml: 'queue:\n  enabled: true\n  maxConcurrent: 5\n  maxWorking: 3\n  idleGraceSeconds: 20\n',
+  },
   { name: 'maintenance only', yaml: 'maintenance:\n  pruneProjectConfigs: true\n' },
   { name: 'portless only', yaml: 'portless:\n  enabled: true\n' },
   { name: 'portless stateDir', yaml: 'portless:\n  enabled: false\n  stateDir: /tmp/portless\n' },
@@ -128,6 +133,14 @@ const INVALID: Fixture[] = [
   {
     name: 'autopause unknown leaf',
     yaml: 'autopause:\n  idleMins: 30\n',
+  },
+  {
+    name: 'queue wrong type for int',
+    yaml: 'queue:\n  maxWorking: "3"\n',
+  },
+  {
+    name: 'queue unknown leaf',
+    yaml: 'queue:\n  maxWorkers: 3\n',
   },
   {
     name: 'maintenance wrong type for int',

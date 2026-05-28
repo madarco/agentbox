@@ -83,6 +83,16 @@ function parseMaxRunningOption(raw: string | undefined): number | undefined {
   return n;
 }
 
+/** Validate `--max-working <n>` from commander into a positive integer; throws on garbage. */
+function parseMaxWorkingOption(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`--max-working: expected a positive integer, got "${raw}"`);
+  }
+  return n;
+}
+
 /** Project an agent-create options struct down to what the queue worker needs. */
 function pickCreateOpts(opts: ClaudeCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
   return {
@@ -188,6 +198,8 @@ interface ClaudeCreateOptions {
   initialPrompt?: string;
   /** Per-invocation override of `queue.maxConcurrent` (number string from commander). */
   maxRunning?: string;
+  /** Per-invocation override of `queue.maxWorking` (number string from commander). */
+  maxWorking?: string;
   /** `-c, --continue`: teleport and resume the most recent host claude session for this cwd. */
   continue?: boolean;
   /** `--resume <id>`: teleport and resume the specified host claude session by id. */
@@ -371,6 +383,10 @@ export const claudeCommand = new Command('claude')
     'per-invocation override of queue.maxConcurrent; only honored when `-i` is set',
   )
   .option(
+    '--max-working <n>',
+    'per-invocation override of queue.maxWorking; only honored when `-i` is set',
+  )
+  .option(
     '-c, --continue',
     'teleport the most recent host Claude Code session for this cwd into the box and resume from it',
   )
@@ -460,6 +476,7 @@ export const claudeCommand = new Command('claude')
         throw err;
       }
       const maxRunningOverride = parseMaxRunningOption(opts.maxRunning);
+      const maxWorkingOverride = parseMaxWorkingOption(opts.maxWorking);
       const result = await submitQueueJob({
         agent: 'claude-code',
         boxName: opts.name ?? '',
@@ -468,6 +485,7 @@ export const claudeCommand = new Command('claude')
         agentArgs: claudeArgs,
         createOpts: pickCreateOpts(opts),
         maxRunningOverride,
+        maxWorkingOverride,
       });
       outro(
         `job ${result.job.id} queued (${String(result.runningCount)}/${String(result.maxConcurrent)} running); log: ${result.job.logPath}`,

@@ -68,6 +68,15 @@ function parseMaxRunningOption(raw: string | undefined): number | undefined {
   return n;
 }
 
+function parseMaxWorkingOption(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`--max-working: expected a positive integer, got "${raw}"`);
+  }
+  return n;
+}
+
 function pickOpencodeCreateOpts(opts: OpencodeCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
   return {
     workspace: opts.workspace,
@@ -159,6 +168,8 @@ interface OpencodeCreateOptions {
   initialPrompt?: string;
   /** Per-invocation override of `queue.maxConcurrent`. */
   maxRunning?: string;
+  /** Per-invocation override of `queue.maxWorking`. */
+  maxWorking?: string;
   /** `-c, --continue`: detected then refused (v1 stub). */
   continue?: boolean;
   /** `--resume <id>`: detected then refused (v1 stub). */
@@ -312,6 +323,10 @@ export const opencodeCommand = new Command('opencode')
     'per-invocation override of queue.maxConcurrent; only honored when `-i` is set',
   )
   .option(
+    '--max-working <n>',
+    'per-invocation override of queue.maxWorking; only honored when `-i` is set',
+  )
+  .option(
     '-c, --continue',
     'session teleport (not yet supported for opencode in v1; emits a friendly error)',
   )
@@ -386,6 +401,7 @@ export const opencodeCommand = new Command('opencode')
         throw err;
       }
       const maxRunningOverride = parseMaxRunningOption(opts.maxRunning);
+      const maxWorkingOverride = parseMaxWorkingOption(opts.maxWorking);
       const result = await submitQueueJob({
         agent: 'opencode',
         boxName: opts.name ?? '',
@@ -394,6 +410,7 @@ export const opencodeCommand = new Command('opencode')
         agentArgs: opencodeArgs,
         createOpts: pickOpencodeCreateOpts(opts),
         maxRunningOverride,
+        maxWorkingOverride,
       });
       outro(
         `job ${result.job.id} queued (${String(result.runningCount)}/${String(result.maxConcurrent)} running); log: ${result.job.logPath}`,

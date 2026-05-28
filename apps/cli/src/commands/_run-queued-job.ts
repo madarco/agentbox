@@ -53,7 +53,8 @@ export const runQueuedJobCommand = new Command('_run-queued-job')
       // supported here (the cloud agent attach starts the tmux session lazily
       // on first attach; with no attach there's nowhere to seed the prompt).
       // The submit-side already rejected cloud in that case.
-      await runDockerJob(job, log);
+      const boxId = await runDockerJob(job, log);
+      job = { ...job, boxId };
 
       const done: QueueJob = {
         ...job,
@@ -87,7 +88,10 @@ export const runQueuedJobCommand = new Command('_run-queued-job')
     }
   });
 
-async function runDockerJob(job: QueueJob, log: ReturnType<typeof openCommandLog>): Promise<void> {
+async function runDockerJob(
+  job: QueueJob,
+  log: ReturnType<typeof openCommandLog>,
+): Promise<string> {
   const opts = job.createOpts;
   const cfg = await loadEffectiveConfig(opts.workspace, {
     cliOverrides: buildOverridesFromJob(job),
@@ -157,6 +161,12 @@ async function runDockerJob(job: QueueJob, log: ReturnType<typeof openCommandLog
   });
   log.write(`box created: ${result.record.container}`);
 
+  // Record the box id on the manifest so the relay's working-agent counter can
+  // join this running job to its live box status (and stop counting the
+  // in-flight startup slot once the box has registered). Written before the
+  // session starts so a crash mid-launch is still attributable to a box.
+  await writeJob({ ...job, boxId: result.record.id });
+
   const promptedArgs = buildPromptArgs(job.agent, job.prompt, job.agentArgs);
 
   if (job.agent === 'claude-code') {
@@ -197,6 +207,8 @@ async function runDockerJob(job: QueueJob, log: ReturnType<typeof openCommandLog
   } else {
     throw new Error(`unknown agent kind: ${String(job.agent satisfies QueueAgentKind)}`);
   }
+
+  return result.record.id;
 }
 
 function buildOverridesFromJob(job: QueueJob): Partial<UserConfig> {

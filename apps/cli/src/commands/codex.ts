@@ -75,6 +75,15 @@ function parseMaxRunningOption(raw: string | undefined): number | undefined {
   return n;
 }
 
+function parseMaxWorkingOption(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`--max-working: expected a positive integer, got "${raw}"`);
+  }
+  return n;
+}
+
 function pickCodexCreateOpts(opts: CodexCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
   return {
     workspace: opts.workspace,
@@ -167,6 +176,8 @@ interface CodexCreateOptions {
   initialPrompt?: string;
   /** Per-invocation override of `queue.maxConcurrent`. */
   maxRunning?: string;
+  /** Per-invocation override of `queue.maxWorking`. */
+  maxWorking?: string;
   /** `-c, --continue`: teleport and resume the most recent host codex session for this cwd. */
   continue?: boolean;
   /** `--resume <id>`: teleport and resume the specified host codex session uuid. */
@@ -316,6 +327,10 @@ export const codexCommand = new Command('codex')
     'per-invocation override of queue.maxConcurrent; only honored when `-i` is set',
   )
   .option(
+    '--max-working <n>',
+    'per-invocation override of queue.maxWorking; only honored when `-i` is set',
+  )
+  .option(
     '-c, --continue',
     'teleport the most recent host Codex session for this cwd into the box and resume from it',
   )
@@ -400,6 +415,7 @@ export const codexCommand = new Command('codex')
         throw err;
       }
       const maxRunningOverride = parseMaxRunningOption(opts.maxRunning);
+      const maxWorkingOverride = parseMaxWorkingOption(opts.maxWorking);
       const result = await submitQueueJob({
         agent: 'codex',
         boxName: opts.name ?? '',
@@ -408,6 +424,7 @@ export const codexCommand = new Command('codex')
         agentArgs: codexArgs,
         createOpts: pickCodexCreateOpts(opts),
         maxRunningOverride,
+        maxWorkingOverride,
       });
       outro(
         `job ${result.job.id} queued (${String(result.runningCount)}/${String(result.maxConcurrent)} running); log: ${result.job.logPath}`,
