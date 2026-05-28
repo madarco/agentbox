@@ -28,7 +28,9 @@
         "cpus": { "type": "integer", "minimum": 0 },
         "pidsLimit": { "type": "integer", "minimum": 0 },
         "disk": { "type": "string" },
-        "bundleDepth": { "type": "integer", "minimum": 0 }
+        "bundleDepth": { "type": "integer", "minimum": 0 },
+        "vercelVcpus": { "type": "integer", "minimum": 1 },
+        "vercelTimeoutMs": { "type": "integer", "minimum": 1 }
       }
     },
     "checkpoint": {

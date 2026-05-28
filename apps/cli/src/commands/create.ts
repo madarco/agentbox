@@ -336,6 +336,14 @@ export const createCommand = new Command('create')
           sharedCache: cfg.effective.box.dockerCacheShared,
           portless: portlessEnabled,
           portlessStateDir: cfg.effective.portless.stateDir || undefined,
+          // Vercel-only sizing (box.vercelVcpus / vercelTimeoutMs). The cloud
+          // scaffold reads these as overrides; other providers ignore them.
+          ...(provider.name === 'vercel'
+            ? {
+                vcpus: cfg.effective.box.vercelVcpus,
+                timeoutMs: cfg.effective.box.vercelTimeoutMs,
+              }
+            : {}),
         },
       });
       s.stop(`box ${result.record.container} ready`);

@@ -168,7 +168,7 @@ export const vercelBackend: CloudBackend = {
           source: { type: 'snapshot', snapshotId },
           resources: { vcpus: req.resources?.cpu ?? 2 },
           ports: [...VERCEL_EXPOSED_PORTS],
-          timeout: DEFAULT_TIMEOUT_MS,
+          timeout: req.timeoutMs ?? DEFAULT_TIMEOUT_MS,
           env: req.env,
           tags: { agentbox: 'true', 'agentbox.name': req.name },
           persistent: true,

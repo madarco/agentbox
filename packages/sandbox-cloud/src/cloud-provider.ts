@@ -273,7 +273,18 @@ export function createCloudProvider(
       const log = req.onLog ?? (() => {});
       const { id, name, branch } = mintBox(req);
       const image = opts.provisionImage ? await opts.provisionImage(req) : (req.image ?? FALLBACK_IMAGE);
-      const resources = opts.defaultResources ?? { cpu: 2, memory: 4, disk: 8 };
+      // Per-create overrides (currently vercel's box.vercelVcpus / vercelTimeoutMs,
+      // threaded through providerOptions). Fall back to the provider's static
+      // defaults so daytona/hetzner are unaffected.
+      const baseResources = opts.defaultResources ?? { cpu: 2, memory: 4, disk: 8 };
+      const vcpuOverride = req.providerOptions?.['vcpus'];
+      const resources =
+        typeof vcpuOverride === 'number' && vcpuOverride > 0
+          ? { ...baseResources, cpu: vcpuOverride }
+          : baseResources;
+      const timeoutOverride = req.providerOptions?.['timeoutMs'];
+      const timeoutMs =
+        typeof timeoutOverride === 'number' && timeoutOverride > 0 ? timeoutOverride : undefined;
 
       // Per-box tokens: `relayToken` authenticates the in-box agent to its
       // in-sandbox relay (`/events`, `/rpc` bearer); `bridgeToken` separately
@@ -330,6 +341,7 @@ export function createCloudProvider(
         image,
         snapshot: snapshotName,
         resources,
+        timeoutMs,
         env: {
           AGENTBOX_BOX_ID: id,
           AGENTBOX_BOX_NAME: name,

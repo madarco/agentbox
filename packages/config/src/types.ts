@@ -48,6 +48,8 @@ export interface UserConfig {
     pidsLimit?: number;
     disk?: string;
     bundleDepth?: number;
+    vercelVcpus?: number;
+    vercelTimeoutMs?: number;
   };
   checkpoint?: {
     maxLayers?: number;
@@ -136,6 +138,8 @@ export interface EffectiveConfig {
     pidsLimit: number;
     disk: string;
     bundleDepth: number | undefined;
+    vercelVcpus: number;
+    vercelTimeoutMs: number;
   };
   checkpoint: {
     maxLayers: number;
@@ -243,6 +247,8 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     pidsLimit: 0,
     disk: '',
     bundleDepth: undefined,
+    vercelVcpus: 2,
+    vercelTimeoutMs: 2_700_000,
   },
   checkpoint: {
     maxLayers: 3,
@@ -446,6 +452,18 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       'Cap git bundle history shipped to cloud sandboxes (daytona, hetzner). 0 = full history. Unset = adaptive default (last 200 commits; re-bundle at 100 if the bundle exceeds 20 MB). Ignored for docker (which bind-mounts .git/).',
+  },
+  {
+    key: 'box.vercelVcpus',
+    type: 'int',
+    description:
+      'vCPUs for new --provider vercel boxes (Vercel couples RAM at 2048 MB/vCPU). Default 2. Vercel only accepts specific counts (e.g. 1, 2, 4, 8) — an unsupported value fails create with a 400. Vercel-only; ignored by other providers.',
+  },
+  {
+    key: 'box.vercelTimeoutMs',
+    type: 'int',
+    description:
+      'Max session length (ms) for new --provider vercel boxes before the VM auto-snapshots; persistent mode auto-resumes on the next call. Default 2700000 (45 min, the Hobby ceiling). Vercel-only.',
   },
   {
     key: 'claude.sessionName',

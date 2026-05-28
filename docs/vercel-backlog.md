@@ -166,10 +166,15 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
     (`prepare`, CI) since OIDC dev tokens expire ~12h with no headless refresh,
     and the `agentbox vercel login` prompt/labels say the same at the decision
     point. (Auto-refresh itself remains unbuilt — this is the documentation half.)
-12. **No per-provider resource/region/timeout config.** `vcpus` defaults to 2,
-    timeout to 45 min, region is fixed `iad1` (Vercel constraint). The
-    "per-provider VM size config" TODO (already tracked in the repo TODO.md)
-    should cover vercel `box.vercel.vcpus` / `timeoutMs`.
+12. [x] **Per-provider vercel resource/timeout config.** Done — added
+    `box.vercelVcpus` + `box.vercelTimeoutMs` (flat keys, matching the existing
+    `box.defaultCheckpointVercel` convention rather than a one-off nested
+    `box.vercel` object). Threaded config → `providerOptions` (vercel-only) →
+    `cloud-provider` overrides → `CloudProvisionRequest.timeoutMs` + `resources.cpu`
+    → `Sandbox.create({ resources: { vcpus }, timeout })`. Verified live:
+    `vercelVcpus=4` yields `sandbox.vcpus === 4` (default 2). Region stays fixed
+    `iad1` (Vercel constraint). Note: Vercel only accepts specific vcpu counts
+    (1/2/4/8); an unsupported value (e.g. 3) fails create with a 400.
 
 ### P2 — deferred (parity niceties, not blocking)
 
