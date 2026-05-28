@@ -3,6 +3,7 @@ import { readBoxStatus } from '@agentbox/sandbox-docker';
 import type { AttachOpenIn } from '@agentbox/config';
 import { loadPtyBackend } from '../pty/pty-backend.js';
 import { detectHostTerminal, spawnInNewTerminal } from '../terminal/host.js';
+import { popTerminalTitle, pushTerminalTitle, setTerminalTitle } from '../terminal/title.js';
 import {
   createInputRouter,
   type InputRouter,
@@ -166,6 +167,15 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     rows: innerRows,
     env: process.env,
   });
+
+  // Mirror the agent's session title to the host terminal/tab title (iTerm2
+  // etc.). tmux swallows the inner OSC title (set-titles off), so the host
+  // never sees it; we re-emit it ourselves from the polled status below. Save
+  // the user's current title first so teardown can restore it. Seed with the
+  // box name so the tab is named immediately, before the first status poll.
+  pushTerminalTitle();
+  let lastEmittedTitle = opts.boxName;
+  setTerminalTitle(lastEmittedTitle);
 
   // claude is always tmux-backed; a tmux-backed `agentbox shell` opts in via
   // `detachable: true`, a `--no-tmux` shell leaves it false (nothing to detach).
@@ -419,8 +429,25 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
         name: opts.boxName,
         projectIndex: opts.projectIndex,
       });
-      const nextTitle = status?.claude?.sessionTitle?.trim() || undefined;
-      const nextActivity = status?.claude?.state || undefined;
+      // Read the title/activity from the body of the agent we attached to;
+      // shell mode has no agent session so it keeps the box-name title.
+      const body =
+        opts.mode === 'codex'
+          ? status?.codex
+          : opts.mode === 'opencode'
+            ? status?.opencode
+            : opts.mode === 'shell'
+              ? undefined
+              : status?.claude;
+      const nextTitle = body?.sessionTitle?.trim() || undefined;
+      const nextActivity = body?.state || undefined;
+      // Mirror the live title to the host terminal/tab, falling back to the box
+      // name until the agent sets one. Deduped so we don't spam the terminal.
+      const desiredTitle = nextTitle ?? opts.boxName;
+      if (desiredTitle !== lastEmittedTitle) {
+        lastEmittedTitle = desiredTitle;
+        setTerminalTitle(desiredTitle);
+      }
       if (nextTitle === lastSessionTitle && nextActivity === lastActivity) return;
       lastSessionTitle = nextTitle;
       lastActivity = nextActivity;
@@ -489,6 +516,8 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       `\x1b[2K` +
       cursorMoveTo(rsFinal, csFinal),
   );
+  // Restore the host terminal/tab title we saved at attach time.
+  popTerminalTitle();
 
   if (exitCode === 0 && opts.detachNotice) {
     // Match the cosmetic of the old attachClaudeSession: overwrite tmux's
