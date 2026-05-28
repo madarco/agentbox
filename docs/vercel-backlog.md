@@ -50,52 +50,101 @@ implementation (per the project convention), not as end-of-PR cleanup.
 
 ## What's still missing
 
-The code builds/lints/typechecks and the unit suite (pure, mocked SDK) is green,
-but **nothing has been run end-to-end against the real Vercel platform yet** —
-both OIDC tokens supplied during development were already expired (the API auth
-path was reached, returning 403, which confirms the credential plumbing but not
-the runtime behavior). The list below is the actionable backlog, roughly in
-priority order.
+The code builds/lints/typechecks and the unit suite (pure, mocked SDK) is green.
+Two live e2e passes ran **2026-05-28**, both with a `VERCEL_TOKEN` access-token
+trio (`VERCEL_TOKEN`/`VERCEL_TEAM_ID`/`VERCEL_PROJECT_ID`) — every dev OIDC token
+kept arriving already-expired, so the access-token trio is the practical path for
+anything long-running like `prepare`. The two passes (in-box, then re-validated
+from the host repo via `scripts/vercel-live-e2e.sh`) confirmed prepare → create →
+boot → pause/resume → checkpoint round-trip → destroy, and surfaced three real
+bugs, all now fixed (see "Bugs found live" below). Only the relay round-trip (#4)
+is still unconfirmed (it's interactive — needs a pushable origin). The list below
+is the actionable backlog, roughly in priority order.
 
-### P0 — first live smoke pass (needs a non-expired Vercel credential)
+### P0 — first live smoke pass
 
-These are correctness assumptions that can only be confirmed against the real
-platform. Run `agentbox prepare --provider vercel`, then
-`create → list → shell → claude → checkpoint → pause → start → destroy`, and
-verify each:
+Confirmed live 2026-05-28:
 
-1. **`prepare` / `provision.sh` actually completes on AL2023.** dnf package names
-   (`tigervnc-server`, `python3-pip`, `libcap`, …), the Claude native installer
-   as `vscode`, node24 setcap, corepack — all unverified on a live microVM. The
-   snapshot must come back usable.
-2. **User mapping.** Default user is `vercel-sandbox`; agentbox standardizes on
-   `vscode`. `provision.sh` creates `vscode` (auto uid, no bind mounts so the
-   number is irrelevant) + passwordless sudo; `exec` runs `root → sudo -u vscode`;
-   `uploadFile` chowns to vscode after `writeFiles` (which writes as
-   `vercel-sandbox`). Confirm ownership + that the scaffold's `$HOME`/`$(id -un)`
-   resolve to vscode, and that `/workspace` is vscode-owned.
-3. **Workspace seed + agent credentials + carry + env-files.** All go through the
-   shared cloud scaffold (git bundle/stash/untracked tar upload, `seedAgentVolumesIfFresh`
-   fallback, `uploadCarryPaths`, `uploadEnvFiles`) on top of our `uploadFile`/`exec`.
-   The `writeFiles`-as-`vercel-sandbox` + chown path is the riskiest unverified
-   piece — confirm files land readable/owned correctly under `/workspace` and
-   `/home/vscode`.
-4. **Relay round-trip.** Confirm the host `CloudBoxPoller` reaches the in-box
+1. [x] **`prepare` / `provision.sh` completes on AL2023.** Bakes a base snapshot
+   (~1.3 GB) in a few minutes; the snapshot comes back usable. claude / codex /
+   opencode are all present in a booted box.
+2. [x] **User mapping.** A booted box runs as `vscode` (uid 1001) with `/workspace`
+   checked out on `agentbox/<box>`; `docker` is correctly unavailable
+   (`launchDockerd:false`). vscode passwordless sudo now works (see bug #3).
+3. [x] **Workspace seed.** The shallow-clone seed (`$SUDO rm/mkdir/chown` +
+   tar-extract as vscode) lands `/workspace` on the box branch — gated on the
+   sudoers fix (#3). Agent-credential / carry / env-file ownership beyond this was
+   not separately audited but the box boots with the agent CLIs present.
+4. [ ] **Relay round-trip.** Confirm the host `CloudBoxPoller` reaches the in-box
    relay over `sandbox.domain(8788)` and that `agentbox-ctl git push|pull` +
-   `gh pr` work from inside a vercel box.
-5. **Lifecycle semantics.** `pause`→`stop` auto-snapshots; `start`→`get({resume:true})`
-   resumes with the same `/workspace`; `destroy` deletes the sandbox AND purges
-   its snapshot (no lingering storage charge). Verify preview URLs survive a
-   stop/start (they may rotate).
-6. **Checkpoint round-trip.** `agentbox checkpoint create` snapshots (stops the
-   box; it should auto-resume), the manifest stores the Vercel snapshot id, and a
-   later `create --snapshot <ref>` boots from it.
+   `gh pr` work from inside a vercel box. (Still open — interactive; see runbook.)
+5. [x] **Lifecycle semantics.** `stop` auto-snapshots (live status `running →
+   stopping → stopped` in ~18 s); `start` resumes (`get({resume:true})`) with the
+   same `/workspace` (marker survived); `destroy` preserves the base; the public
+   `*.vercel.run` preview URL is stable across a stop/start (did not rotate).
+6. [x] **Checkpoint round-trip.** `agentbox checkpoint create` snapshots, the
+   manifest stores the Vercel snapshot **id**, and `create --snapshot <ref>` boots
+   from it with the captured `/workspace` intact.
+
+#### Bugs found live 2026-05-28 (fixed)
+
+- **vscode had no working passwordless sudo → workspace seed failed.** Vercel's
+  AL2023 base ships `/etc/sudoers` with **no `@includedir /etc/sudoers.d`** (and
+  non-0440 perms), so provision.sh's `/etc/sudoers.d/90-agentbox-vscode` drop-in
+  was silently ignored and `sudo -n` as vscode failed with "a password is
+  required" — breaking the workspace-seed `$SUDO rm/mkdir/chown` (and it would
+  break ctl-launch / carry too). provision.sh now appends the includedir,
+  normalises `/etc/sudoers` to 0440, and `visudo -cf`-validates the result.
+- **`destroy` nuked the shared base snapshot.** A box created from a snapshot has
+  `currentSnapshotId === sourceSnapshotId` until it pauses/snapshots itself, so a
+  naive "delete `currentSnapshotId` on destroy" deleted the shared base and broke
+  every later `create` with a 410. `destroy` now purges only a box's *own*
+  auto-snapshot (`snapId !== source && snapId !== base`). Covered by a unit test in
+  `packages/sandbox-vercel/test/backend.test.ts`.
+- **`prepare` skip-fast treated a deleted snapshot as present.** `Snapshot.get`
+  resolves deleted/failed tombstones (`status: 'deleted'|'failed'`, `sizeBytes: 0`)
+  instead of throwing, so "get didn't throw" wrongly meant "exists." The skip check
+  now requires `status === 'created'` (`prepare.ts`).
+
+The platform-side root causes (the AL2023 sudoers gap, the `Snapshot.get`
+tombstone behavior, the `currentSnapshotId === sourceSnapshotId` aliasing, the
+`list`/`get` inconsistency, and the headless-OIDC refresh failure) are written up
+for the Vercel team in [`docs/vercel-sandbox-findings.md`](./vercel-sandbox-findings.md).
+
+#### Running the remaining P0 checks
+
+`scripts/vercel-live-e2e.sh` automates items #5 (pause/resume + `/workspace`
+survival) and #6 (checkpoint round-trip), plus a regression for the destroy/base
+guard. It must run from a context that holds a `VERCEL_TOKEN` trio — e.g. the host
+repo checkout (with `pnpm build` run) or a box with the repo built, and the trio
+in env. Pass `AGENTBOX_BIN="node <repo>/apps/cli/dist/index.js"` since the
+published CLI can't do `--provider vercel` yet (backlog #9). It avoids the laggy
+attach bridge: the `/workspace` marker travels over `agentbox cp` (the
+relay-backed provider transfer), the snapshot id is read from the checkpoint
+manifest, and **box state is read from the live Vercel SDK**
+(`packages/sandbox-vercel/test/live-state.mjs`) — *not* `agentbox list`, which
+reports cloud boxes as optimistically `running` with no live probe
+(`sandbox-docker/src/lifecycle.ts`, "tracked for Phase 6").
+
+```
+VERCEL_TOKEN=… VERCEL_TEAM_ID=… VERCEL_PROJECT_ID=… \
+  AGENTBOX_BIN="node $PWD/apps/cli/dist/index.js" bash scripts/vercel-live-e2e.sh
+```
+
+Item #4 (relay round-trip) is inherently interactive and needs a pushable origin
+the host relay can reach, so it's opt-in (`E2E_RELAY=1`) and otherwise printed as
+a manual runbook: `agentbox shell <box>` → commit in `/workspace` →
+`agentbox-ctl git push` → confirm on the host that `git ls-remote origin
+agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`.
 
 ### P1 — known functional gaps
 
-7. **VNC on AL2023.** `tigervnc-server` + `websockify` (pip) + noVNC (git clone)
-   install is best-effort. Confirm `agentbox screen` works, or fix the package
-   set / `agentbox-vnc-start` for AL2023 (it was written for Debian/Ubuntu).
+7. **VNC on AL2023 — confirmed broken.** The e2e showed the VNC daemon launch
+   failing at create/start (`agentbox-vnc-start failed: websockify did not bind
+   6080 within 5s`); the box continues (it's best-effort) but `agentbox screen`
+   won't work. `tigervnc-server` + `websockify` (pip) + noVNC (git clone) /
+   `agentbox-vnc-start` need fixing for AL2023 (the script was written for
+   Debian/Ubuntu).
 8. **Attach is laggy.** The `send-keys`/`capture-pane` pump is real but
    higher-latency than a PTY and repaints the whole pane (cursor position not
    preserved). **Upgrade:** a ttyd / WebSocket terminal over `sandbox.domain(port)`

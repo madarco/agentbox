@@ -82,6 +82,17 @@ fi
 install -d -m 0755 -o vscode -g vscode /home/vscode
 echo 'vscode ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/90-agentbox-vscode
 chmod 0440 /etc/sudoers.d/90-agentbox-vscode
+# Vercel's AL2023 base ships /etc/sudoers WITHOUT an includedir for
+# /etc/sudoers.d (and with non-0440 perms), so the drop-in above is silently
+# ignored and `sudo -n` as vscode fails with "a password is required" — which
+# breaks the workspace seed, ctl-launch, and carry (all run as vscode and lean
+# on passwordless sudo). Wire the include in and normalise perms so the rule
+# actually loads, then fail loud if the result doesn't parse.
+if ! grep -qE '^[[:space:]]*[@#]includedir[[:space:]]+/etc/sudoers\.d' /etc/sudoers; then
+  printf '\n@includedir /etc/sudoers.d\n' >> /etc/sudoers
+fi
+chmod 0440 /etc/sudoers
+visudo -cf /etc/sudoers >/dev/null
 done_ "vscode user + sudoers"
 
 step "agentbox base dirs + /workspace ownership"
