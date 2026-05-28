@@ -144,6 +144,17 @@ export interface BuildAttachOptions {
   command?: string;
   /** Plain (non-tmux) attach: skip the tmux wrap, just run `command` directly. */
   noTmux?: boolean;
+  /**
+   * Build a "create the tmux session detached, do NOT attach" argv instead of
+   * an interactive attach. The CLI uses this to pre-start a cloud session with
+   * its full launch `command` (e.g. `claude --resume <id>`) before opening the
+   * attach in a new terminal tab — the new tab re-invokes `agentbox <agent>
+   * attach` without those args, so without a pre-start it would create the
+   * session fresh. With the session already running, the re-invoked attach
+   * finds it (`tmux has-session`) and just attaches. Cloud providers honor
+   * this; Docker ignores it (its sessions start at create time anyway).
+   */
+  detached?: boolean;
 }
 
 /** Optional checkpoint capability — not every provider supports it. */

@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { DEFAULT_RELAY_PORT } from '@agentbox/sandbox-docker';
 import type { BoxRecord } from '@agentbox/core';
 import type { AttachOpenIn } from '@agentbox/config';
@@ -84,15 +85,36 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     throw new Error(`provider '${provider.name}' does not support interactive attach`);
   }
   const command = buildCloudAttachInnerCommand(args.binary, args.extraArgs);
-  const spec = await provider.buildAttach(args.box, 'agent', {
-    sessionName: args.sessionName,
-    command,
-  });
   // Daytona-only: force inline attach. `spec.cleanup` would otherwise run as
   // soon as the host process returns from the spawn (before the new pane has
   // released the per-call SSH tunnel), breaking the detached attach.
   const safeOpenIn: AttachOpenIn | undefined =
     args.box.provider === 'daytona' ? 'same' : args.openIn;
+
+  // New-terminal attaches (tab/window/split) re-invoke `agentbox <agent> attach`
+  // in the fresh pane, and that re-invocation carries NO `extraArgs` — so for a
+  // resume/teleport launch (`claude --resume <id>`, etc.) the session would
+  // otherwise be created fresh, dropping the resumed session. Pre-create the
+  // session detached here with the full command; the re-invoked attach then
+  // finds it via `tmux has-session` and just attaches. (Inline attach runs the
+  // full command itself, so it doesn't need this.)
+  if (safeOpenIn && safeOpenIn !== 'same' && args.extraArgs && args.extraArgs.length > 0) {
+    const pre = await provider.buildAttach(args.box, 'agent', {
+      sessionName: args.sessionName,
+      command,
+      detached: true,
+    });
+    try {
+      await runDetached(pre.argv);
+    } finally {
+      if (pre.cleanup) await pre.cleanup();
+    }
+  }
+
+  const spec = await provider.buildAttach(args.box, 'agent', {
+    sessionName: args.sessionName,
+    command,
+  });
   try {
     const code = await runWrappedAttach({
       container: args.box.name,
@@ -110,4 +132,19 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   } finally {
     if (spec.cleanup) await spec.cleanup();
   }
+}
+
+/**
+ * Run an attach-style argv non-interactively to completion (used for the
+ * `detached` session pre-start). stdio is ignored — the remote command only
+ * creates + configures the tmux session and exits; there's nothing to show.
+ * Resolves on exit regardless of code (a non-zero here shouldn't block the
+ * subsequent attach, which surfaces any real failure to the user).
+ */
+function runDetached(argv: string[]): Promise<void> {
+  return new Promise((resolve) => {
+    const child = spawn(argv[0]!, argv.slice(1), { stdio: 'ignore' });
+    child.on('error', () => resolve());
+    child.on('exit', () => resolve());
+  });
 }

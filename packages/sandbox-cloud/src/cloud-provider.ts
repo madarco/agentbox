@@ -926,7 +926,11 @@ export function createCloudProvider(
       const inner = renderInnerCommand(kind, opts);
       // -t forces TTY allocation on the remote side (the SSH default of
       // skipping TTY when a command is provided would break tmux + readline).
-      const argv = [...baseArgv.slice(1), '-t', inner];
+      // A `detached` build only creates the session (no `exec tmux attach`), so
+      // it runs as a plain non-interactive exec — no TTY needed.
+      const argv = opts?.detached
+        ? [...baseArgv.slice(1), inner]
+        : [...baseArgv.slice(1), '-t', inner];
       // Keep argv[0] = the program name (ssh) so callers can split.
       const fullArgv = [baseArgv[0]!, ...argv];
       const cleanup = backend.revokeAttachToken
@@ -1098,12 +1102,16 @@ function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions): string
   const cwdQ = shellSingle(CLOUD_WORKSPACE_DIR);
   const fallbackQ = shellSingle(fallback);
   const configSnippet = buildTmuxConfigShellSnippet(sessionName);
-  return [
+  const lines = [
     `command -v tmux >/dev/null || { echo "tmux not installed in sandbox"; exit 127; }`,
     `tmux has-session -t ${sessionQ} 2>/dev/null || tmux new-session -d -c ${cwdQ} -s ${sessionQ} ${fallbackQ}`,
     configSnippet,
-    `exec tmux attach -t ${sessionQ}`,
-  ].join('; ');
+  ];
+  // `detached`: create + configure the session but don't attach. Used to
+  // pre-start a session with its full launch command before a new-tab attach
+  // re-invokes `agentbox <agent> attach` (which carries no launch args).
+  if (opts?.detached) return lines.join('; ');
+  return [...lines, `exec tmux attach -t ${sessionQ}`].join('; ');
 }
 
 function defaultSessionName(kind: AttachKind): string {
