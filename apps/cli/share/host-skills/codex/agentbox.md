@@ -1,0 +1,35 @@
+---
+description: Fork the current Codex session into a new AgentBox box and resume it there (opens in a new terminal tab).
+argument-hint: [provider]
+---
+<!-- agentbox-managed:v1 -->
+
+Fork the current Codex session into a fresh AgentBox box running Codex.
+
+Optional provider argument: `$ARGUMENTS` (docker | daytona | hetzner; default docker).
+
+## Steps
+
+1. **Pre-flight (stop on either):**
+   - If `AGENTBOX_RELAY_URL` is set in the environment, you are running *inside* a box — box→box fork is not supported yet; stop and tell the user.
+   - If `which agentbox` fails, tell the user to install AgentBox (`npm -g install @madarco/agentbox`) and stop.
+
+2. **Find the current Codex session id.** Codex exposes no session-id variable, so resolve it from the most recently written rollout file (that is the live session). Run via your shell tool:
+
+   ```
+   ls -t "$HOME"/.codex/sessions/*/*/*/rollout-*.jsonl 2>/dev/null | head -1 \
+     | xargs -I{} basename {} .jsonl \
+     | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+   ```
+
+   That prints the session `<uuid>`. If it prints nothing, stop and tell the user no Codex session was found for this machine.
+
+3. **Resolve the provider flag from `$ARGUMENTS`:** empty → none; `docker` | `daytona` | `hetzner` → `--provider $ARGUMENTS`; anything else → stop and report the valid values.
+
+4. **Fork.** Run, via your shell tool:
+
+   ```
+   agentbox fork --agent codex --session <uuid> [--provider <from step 3>]
+   ```
+
+5. **Report** the new box name from the command output. Your current Codex session is unaffected — you now have two parallel timelines.

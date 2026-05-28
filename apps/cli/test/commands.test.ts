@@ -64,11 +64,12 @@ describe('lifecycle CLI surface', () => {
     expect(createCommand.name()).toBe('create');
   });
 
-  it('fork takes --session/--provider/--name/--attach-in/--workspace/--carry-yes', () => {
+  it('fork takes --agent/--session/--provider/--name/--attach-in/--workspace/--carry-yes', () => {
     expect(forkCommand.name()).toBe('fork');
     const longs = forkCommand.options.map((o) => o.long);
     expect(longs).toEqual(
       expect.arrayContaining([
+        '--agent',
         '--session',
         '--provider',
         '--name',

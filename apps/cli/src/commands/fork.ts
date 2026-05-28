@@ -6,6 +6,20 @@ import { join } from 'node:path';
 import { detectHostTerminal } from '../terminal/host.js';
 import { encodeClaudeProjectsDir } from '../session-teleport/cwd-encoding.js';
 import { claudeCommand } from './claude.js';
+import { codexCommand } from './codex.js';
+import { opencodeCommand } from './opencode.js';
+
+type ForkAgent = 'claude' | 'codex' | 'opencode';
+const FORK_AGENTS = ['claude', 'codex', 'opencode'] as const;
+
+/** The create-style command each agent forks through. fork forwards a curated
+ *  argv and lets the delegate run its own create+teleport+attach pipeline
+ *  (incl. the new-tab spawn, tagged with that agent's attach mode). */
+const AGENT_COMMAND: Record<ForkAgent, Command> = {
+  claude: claudeCommand,
+  codex: codexCommand,
+  opencode: opencodeCommand,
+};
 
 interface ForkOptions {
   workspace: string;
@@ -14,6 +28,7 @@ interface ForkOptions {
   name?: string;
   attachIn?: string;
   carryYes?: boolean;
+  agent?: string;
 }
 
 /** fork's attach modes: claude's split|window|tab|same plus `background`
@@ -24,11 +39,28 @@ const FORK_ATTACH_VALUES = ['window', 'tab', 'split', 'background', 'same'] as c
  *  which Claude window the user meant — they must pass --session. */
 const RECENT_SESSION_MS = 5 * 60 * 1000;
 
-/** `--resume <id>` when --session is given; otherwise `--continue`, but refuse
- *  first if several sessions in this cwd were written to recently (ambiguous —
- *  the newest-by-mtime heuristic claude's `--continue` uses would be a guess). */
-function resolveSessionArgs(opts: ForkOptions): string[] {
+/** Session args fork forwards to the delegate command, per agent:
+ *  - claude: `--resume <id>` when given; else `--continue`, but refuse first if
+ *    several sessions in this cwd were written to recently (the newest-by-mtime
+ *    heuristic claude's `--continue` uses would be a guess). The Codex/OpenCode
+ *    paths can't read the cwd's session list the same way, so they're simpler.
+ *  - codex: `--resume <uuid>` when given; else `--continue` (codex teleport is
+ *    already cwd-scoped). The Codex `/agentbox` prompt resolves the live uuid
+ *    and passes it, since Codex exposes no session-id variable.
+ *  - opencode: no resume — teleport is a stub, so fork starts a fresh box.
+ *    `--session` is rejected (resume isn't possible yet). */
+function resolveSessionArgs(agent: ForkAgent, opts: ForkOptions): string[] {
+  if (agent === 'opencode') {
+    if (opts.session) {
+      throw new Error(
+        'OpenCode session resume is not supported yet; `agentbox fork --agent opencode` starts a fresh box. Drop --session.',
+      );
+    }
+    return [];
+  }
   if (opts.session) return ['--resume', opts.session];
+  if (agent === 'codex') return ['--continue'];
+  // claude: guard against an ambiguous newest-by-mtime pick.
   const dir = join(homedir(), '.claude', 'projects', encodeClaudeProjectsDir(opts.workspace));
   if (!existsSync(dir)) return ['--continue']; // claude emits the clear "run claude here first" error
   const now = Date.now();
@@ -76,12 +108,16 @@ function resolveAttachArgs(attachIn: string): string[] {
 
 export const forkCommand = new Command('fork')
   .description(
-    'Fork the current host Claude Code session into a new box and resume it there. Opens the box in a new terminal tab under iTerm/tmux; otherwise starts it in the background.',
+    'Fork the current host agent session into a new box and resume it there. Opens the box in a new terminal tab under iTerm/tmux; otherwise starts it in the background.',
   )
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
   .option(
+    '--agent <name>',
+    'which agent to fork: claude (default), codex, or opencode. OpenCode starts a fresh box (session resume not supported yet).',
+  )
+  .option(
     '--session <id>',
-    'host Claude Code session id to resume (default: the newest session for this cwd; refuses if several were used recently)',
+    'host agent session id to resume (default: the newest session for this cwd; claude refuses if several were used recently). Ignored for --agent opencode.',
   )
   .option('--provider <name>', "sandbox backend: 'docker' (default), 'daytona', or 'hetzner'")
   .option('-n, --name <name>', 'box name (default: fork-<HHMMSS>)')
@@ -95,13 +131,19 @@ export const forkCommand = new Command('fork')
   )
   .action(async (opts: ForkOptions) => {
     // Box→box guard: AGENTBOX_RELAY_URL is only set inside a box. Fork teleports
-    // a *host* Claude session into a new box; it can't run from inside one yet.
+    // a *host* agent session into a new box; it can't run from inside one yet.
     // Checked here (not just in the /agentbox skill) so an LLM that calls the
     // CLI directly still gets a clear refusal instead of a confusing failure.
     if ((process.env.AGENTBOX_RELAY_URL ?? '').trim().length > 0) {
       log.error(
-        'agentbox fork runs on the host only: it teleports a host Claude Code session into a new box. You appear to be inside a box (AGENTBOX_RELAY_URL is set) — box→box fork is not supported yet.',
+        'agentbox fork runs on the host only: it teleports a host agent session into a new box. You appear to be inside a box (AGENTBOX_RELAY_URL is set) — box→box fork is not supported yet.',
       );
+      process.exit(2);
+    }
+
+    const agent = (opts.agent?.trim() || 'claude') as ForkAgent;
+    if (!(FORK_AGENTS as readonly string[]).includes(agent)) {
+      log.error(`--agent: expected one of ${FORK_AGENTS.join(', ')}, got "${opts.agent ?? ''}"`);
       process.exit(2);
     }
 
@@ -117,7 +159,7 @@ export const forkCommand = new Command('fork')
 
     let sessionArgs: string[];
     try {
-      sessionArgs = resolveSessionArgs(opts);
+      sessionArgs = resolveSessionArgs(agent, opts);
     } catch (err) {
       log.error(err instanceof Error ? err.message : String(err));
       process.exit(2);
@@ -135,9 +177,10 @@ export const forkCommand = new Command('fork')
       ...resolveAttachArgs(attachIn),
     ];
 
-    // Delegate to the existing `claude` create+teleport+attach pipeline. It
-    // runs prepareTeleport (pre-flight) -> createBox -> uploadTeleport ->
-    // startClaudeSession, and (for --attach-in window) spawnInNewTerminal. The
-    // action terminates the process itself (process.exit) on every path.
-    await claudeCommand.parseAsync(subArgv, { from: 'user' });
+    // Delegate to the chosen agent's existing create+teleport+attach pipeline.
+    // It runs prepareTeleport (pre-flight) -> createBox -> uploadTeleport ->
+    // startSession, and (for --attach-in tab/window) spawnInNewTerminal tagged
+    // with that agent's attach mode. The action terminates the process itself
+    // (process.exit) on every path.
+    await AGENT_COMMAND[agent].parseAsync(subArgv, { from: 'user' });
   });

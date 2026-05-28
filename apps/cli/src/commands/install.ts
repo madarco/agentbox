@@ -14,9 +14,39 @@ const MANAGED_SENTINEL = '<!-- agentbox-managed:v1 -->';
  *  that old file predates the sentinel. */
 const LEGACY_INFO_MARKER = 'Drive AgentBox from the host:';
 
-/** Host skills this command installs, keyed by the bundled source subdir. The
- *  same name is used for the target dir under ~/.claude/skills/. */
-const SKILLS = ['agentbox', 'agentbox-info'] as const;
+interface InstallTarget {
+  /** Path relative to the bundled `share/host-skills/` dir. */
+  src: string;
+  /** Absolute destination on the host. */
+  dest: string;
+  /** When set, install only if this directory exists — i.e. the tool is set up
+   *  on this host. Absent dir = silently skip (don't write configs for a tool
+   *  the user doesn't use). */
+  gateDir?: string;
+}
+
+/** The files `agentbox install` writes. Claude skills always install; the Codex
+ *  prompt and OpenCode command install only when that tool's config dir exists.
+ *  All three surface the same `/agentbox` fork command in their respective
+ *  agent UIs (Codex shows it under `/prompts:`). */
+function installTargets(): InstallTarget[] {
+  const home = homedir();
+  const claudeSkills = join(home, '.claude', 'skills');
+  return [
+    { src: join('agentbox', 'SKILL.md'), dest: join(claudeSkills, 'agentbox', 'SKILL.md') },
+    { src: join('agentbox-info', 'SKILL.md'), dest: join(claudeSkills, 'agentbox-info', 'SKILL.md') },
+    {
+      src: join('codex', 'agentbox.md'),
+      dest: join(home, '.codex', 'prompts', 'agentbox.md'),
+      gateDir: join(home, '.codex'),
+    },
+    {
+      src: join('opencode', 'agentbox.md'),
+      dest: join(home, '.config', 'opencode', 'commands', 'agentbox.md'),
+      gateDir: join(home, '.config', 'opencode'),
+    },
+  ];
+}
 
 /**
  * Locate the bundled `share/host-skills/` directory. This module is bundled
@@ -56,12 +86,12 @@ function writableReason(target: string, force: boolean): 'new' | 'managed' | 'fo
 
 export const installCommand = new Command('install')
   .description(
-    "Install AgentBox's host-side Claude Code skills into ~/.claude/skills (the /agentbox fork command + the agentbox-info reference). Idempotent.",
+    "Install AgentBox's host-side /agentbox fork command into Claude (~/.claude/skills), and — when detected — into Codex (~/.codex/prompts) and OpenCode (~/.config/opencode/commands). Idempotent.",
   )
-  .option('--force', 'overwrite existing skill files even if not AgentBox-managed')
+  .option('--force', 'overwrite existing files even if not AgentBox-managed')
   .option('--dry-run', 'print what would be written without changing anything')
   .action((opts: InstallOptions) => {
-    intro('Installing AgentBox host skills...');
+    intro('Installing AgentBox host commands...');
     const force = opts.force === true;
     const dryRun = opts.dryRun === true;
 
@@ -73,33 +103,33 @@ export const installCommand = new Command('install')
       process.exit(1);
     }
 
-    const skillsRoot = join(homedir(), '.claude', 'skills');
     const written: string[] = [];
     let skipped = 0;
 
-    for (const name of SKILLS) {
-      const src = join(srcDir, name, 'SKILL.md');
-      const targetDir = join(skillsRoot, name);
-      const target = join(targetDir, 'SKILL.md');
+    for (const t of installTargets()) {
+      const src = join(srcDir, t.src);
       if (!existsSync(src)) {
-        log.warn(`bundled skill missing (skipped): ${src}`);
+        log.warn(`bundled file missing (skipped): ${src}`);
         skipped++;
         continue;
       }
-      const reason = writableReason(target, force);
+      // Tool not set up on this host — skip silently (don't seed configs for a
+      // tool the user doesn't use).
+      if (t.gateDir && !existsSync(t.gateDir)) continue;
+      const reason = writableReason(t.dest, force);
       if (reason === 'skip') {
-        log.warn(`user-modified file at ${target}, skipping; pass --force to overwrite`);
+        log.warn(`user-modified file at ${t.dest}, skipping; pass --force to overwrite`);
         skipped++;
         continue;
       }
       if (dryRun) {
-        log.info(`would write ${target} (${reason})`);
-        written.push(target);
+        log.info(`would write ${t.dest} (${reason})`);
+        written.push(t.dest);
         continue;
       }
-      mkdirSync(targetDir, { recursive: true });
-      writeFileSync(target, readFileSync(src, 'utf8'));
-      written.push(target);
+      mkdirSync(dirname(t.dest), { recursive: true });
+      writeFileSync(t.dest, readFileSync(src, 'utf8'));
+      written.push(t.dest);
     }
 
     if (dryRun) {
