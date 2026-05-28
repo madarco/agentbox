@@ -65,11 +65,25 @@ if ! pgrep -u "$(id -u)" -x autocutsel >/dev/null; then
   DISPLAY=:1 autocutsel -selection PRIMARY -fork >/dev/null 2>&1 || true
 fi
 
+# noVNC's static assets live at different paths per base image: Debian/Ubuntu
+# (docker, hetzner) ship them at /usr/share/novnc via apt; the AL2023 bake
+# (vercel) git-clones them to /usr/local/share/novnc. websockify runs
+# os.chdir(--web) at startup, so a wrong path makes it FileNotFoundError and
+# never bind 6080 — pick the first dir that exists.
+NOVNC_WEB=""
+for _d in /usr/share/novnc /usr/local/share/novnc; do
+  if [[ -d "$_d" ]]; then NOVNC_WEB="$_d"; break; fi
+done
+if [[ -z "$NOVNC_WEB" ]]; then
+  echo "agentbox-vnc-start: noVNC assets not found (looked in /usr/share/novnc, /usr/local/share/novnc)" >&2
+  exit 65
+fi
+
 # websockify serves noVNC at /vnc.html (--web) and tunnels WS frames to Xvnc's
 # RFB. Bind 0.0.0.0:6080 so both Docker `-p` mappings and OrbStack's
 # <name>.orb.local routing reach it.
 websockify \
-  --web=/usr/share/novnc \
+  --web="$NOVNC_WEB" \
   0.0.0.0:6080 \
   127.0.0.1:5901 \
   >/var/log/agentbox/websockify.log 2>&1 &

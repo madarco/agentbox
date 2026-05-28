@@ -139,12 +139,18 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
 
 ### P1 — known functional gaps
 
-7. **VNC on AL2023 — confirmed broken.** The e2e showed the VNC daemon launch
-   failing at create/start (`agentbox-vnc-start failed: websockify did not bind
-   6080 within 5s`); the box continues (it's best-effort) but `agentbox screen`
-   won't work. `tigervnc-server` + `websockify` (pip) + noVNC (git clone) /
-   `agentbox-vnc-start` need fixing for AL2023 (the script was written for
-   Debian/Ubuntu).
+7. [x] **VNC on AL2023.** Root-caused live: every piece was actually present
+   (Xvnc, vncpasswd, websockify, noVNC) and Xvnc bound 5901 fine — the only bug
+   was `agentbox-vnc-start` hardcoding `--web=/usr/share/novnc` while the AL2023
+   bake git-clones noVNC to `/usr/local/share/novnc`. websockify runs
+   `os.chdir(--web)` at startup, so the missing dir raised FileNotFoundError and
+   it never bound 6080. Fixed the (shared) script to resolve the noVNC dir from
+   `[/usr/share/novnc, /usr/local/share/novnc]` (Debian/Ubuntu first → docker +
+   hetzner unaffected). Verified live on a snapshot box: 6080 binds, `vnc.html`
+   returns HTTP 200, web root `/usr/local/share/novnc`. The script is in the
+   prepare context fingerprint, so the next `agentbox prepare` auto-rebakes.
+   (Minor follow-up: `autocutsel` isn't in the AL2023 bake, so VNC clipboard
+   sync is degraded there — the script already tolerates its absence.)
 8. **Attach is laggy.** The `send-keys`/`capture-pane` pump is real but
    higher-latency than a PTY and repaints the whole pane (cursor position not
    preserved). **Upgrade:** a ttyd / WebSocket terminal over `sandbox.domain(port)`
