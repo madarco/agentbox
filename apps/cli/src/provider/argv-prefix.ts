@@ -2,7 +2,7 @@
  * Provider-prefix argv sugar:
  *
  *   agentbox <provider> <subcmd> [...rest]
- *     where provider ∈ {docker, daytona, hetzner}
+ *     where provider ∈ {docker, daytona, hetzner, vercel}
  *     and   subcmd   ∈ SUGARED_COMMANDS
  *
  *   ↓ rewritten before commander parses

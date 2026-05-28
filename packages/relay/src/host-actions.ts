@@ -118,6 +118,21 @@ export async function resolveCloudBackend(name: string): Promise<CloudBackend> {
       throw err;
     }
   }
+  if (name === 'vercel') {
+    const pkg = '@agentbox/sandbox-' + 'vercel';
+    try {
+      const mod = (await import(pkg)) as { vercelBackend: CloudBackend };
+      return mod.vercelBackend;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/cannot find module|MODULE_NOT_FOUND/i.test(msg)) {
+        throw new Error(
+          `relay: cannot load '${pkg}' at runtime — install it alongside @agentbox/relay (the @madarco/agentbox CLI normally provides this dependency). Original: ${msg}`,
+        );
+      }
+      throw err;
+    }
+  }
   throw new Error(`no host executor for cloud backend '${name}'`);
 }
 

@@ -105,6 +105,13 @@ export interface CreateCloudProviderOptions {
    * Per-create cloud resource ceiling. Default: 2 cpu / 4 GiB / 8 GiB disk.
    */
   defaultResources?: { cpu?: number; memory?: number; disk?: number };
+  /**
+   * Whether to launch the in-box `dockerd` daemon on create/start. Default
+   * true (Daytona/Hetzner support nested containers). Vercel Sandbox blocks the
+   * namespace syscalls a container runtime needs, so its provider sets this
+   * false — otherwise every create/start logs a spurious dockerd failure.
+   */
+  launchDockerd?: boolean;
 }
 
 const FALLBACK_IMAGE = 'agentbox/box:dev';
@@ -429,13 +436,16 @@ export function createCloudProvider(
         // /usr/local/bin/agentbox-dockerd-start; Daytona sandboxes ship with
         // CAP_SYS_ADMIN so it starts cleanly. Best-effort — a slow or failed
         // start shouldn't fail create; `agentbox start` re-launches it on
-        // resume because dockerd dies with the sandbox.
-        log('launching in-box dockerd');
-        try {
-          const dockerd = await launchCloudDockerdDaemon({ backend, handle, timeoutMs: 60_000 });
-          if (!dockerd.up) log(`dockerd did not become ready (continuing): ${dockerd.reason ?? 'unknown'}`);
-        } catch (err) {
-          log(`dockerd daemon launch failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+        // resume because dockerd dies with the sandbox. Skipped for backends
+        // that can't run nested containers (vercel), which set launchDockerd:false.
+        if (opts.launchDockerd !== false) {
+          log('launching in-box dockerd');
+          try {
+            const dockerd = await launchCloudDockerdDaemon({ backend, handle, timeoutMs: 60_000 });
+            if (!dockerd.up) log(`dockerd did not become ready (continuing): ${dockerd.reason ?? 'unknown'}`);
+          } catch (err) {
+            log(`dockerd daemon launch failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
 
         // Mint the per-box VNC password and start the in-sandbox VNC stack
@@ -751,14 +761,17 @@ export function createCloudProvider(
         bridgeToken: box.cloud?.bridgeToken,
       });
       // Re-launch in-box dockerd — also dies with the sandbox. Best-effort,
-      // mirrors the docker provider's lifecycle.ts:276 relaunch.
-      try {
-        const dockerd = await launchCloudDockerdDaemon({ backend, handle: h, timeoutMs: 60_000 });
-        if (!dockerd.up) {
-          // swallowed; surface only on follow-up `docker info`
+      // mirrors the docker provider's lifecycle.ts:276 relaunch. Skipped for
+      // backends that can't run nested containers (vercel).
+      if (opts.launchDockerd !== false) {
+        try {
+          const dockerd = await launchCloudDockerdDaemon({ backend, handle: h, timeoutMs: 60_000 });
+          if (!dockerd.up) {
+            // swallowed; surface only on follow-up `docker info`
+          }
+        } catch {
+          // best-effort
         }
-      } catch {
-        // best-effort
       }
       // Re-launch the VNC stack — Xvnc + websockify die with the sandbox.
       // Best-effort: a failure here shouldn't block start; `agentbox screen`

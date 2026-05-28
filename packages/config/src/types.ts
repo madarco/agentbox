@@ -12,7 +12,7 @@ export type IdeFlavor = 'vscode' | 'cursor' | 'auto';
 export type EngineKind = 'orbstack' | 'docker-desktop' | 'other' | 'auto';
 export type BrowserKind = 'agent-browser' | 'playwright' | 'both';
 /** Sandbox backend new boxes are created on. */
-export type ProviderKind = 'docker' | 'daytona' | 'hetzner';
+export type ProviderKind = 'docker' | 'daytona' | 'hetzner' | 'vercel';
 /** Where `agentbox claude|codex|opencode` opens the attached session when the host
  *  shell is running inside tmux or iTerm2. `same` keeps today's inline behavior. */
 export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
@@ -34,6 +34,7 @@ export interface UserConfig {
     defaultCheckpointDocker?: string;
     defaultCheckpointDaytona?: string;
     defaultCheckpointHetzner?: string;
+    defaultCheckpointVercel?: string;
     withPlaywright?: boolean;
     withEnv?: boolean;
     vnc?: boolean;
@@ -121,6 +122,7 @@ export interface EffectiveConfig {
     defaultCheckpointDocker: string;
     defaultCheckpointDaytona: string;
     defaultCheckpointHetzner: string;
+    defaultCheckpointVercel: string;
     withPlaywright: boolean;
     withEnv: boolean;
     vnc: boolean;
@@ -227,6 +229,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     defaultCheckpointDocker: '',
     defaultCheckpointDaytona: '',
     defaultCheckpointHetzner: '',
+    defaultCheckpointVercel: '',
     withPlaywright: false,
     withEnv: false,
     vnc: true,
@@ -320,9 +323,9 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
   {
     key: 'box.provider',
     type: 'enum',
-    enumValues: ['docker', 'daytona', 'hetzner'] as const,
+    enumValues: ['docker', 'daytona', 'hetzner', 'vercel'] as const,
     description:
-      'Sandbox backend new boxes are created on: local Docker containers, Daytona Cloud sandboxes, or Hetzner Cloud VPSes.',
+      'Sandbox backend new boxes are created on: local Docker containers, Daytona Cloud sandboxes, Hetzner Cloud VPSes, or Vercel Sandboxes.',
   },
   {
     key: 'box.hostSnapshot',
@@ -355,6 +358,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'string',
     description:
       'Per-provider override of `box.defaultCheckpoint` for hetzner. Wins over the global when set; set via `agentbox checkpoint set-default --provider hetzner`.',
+    advanced: true,
+  },
+  {
+    key: 'box.defaultCheckpointVercel',
+    type: 'string',
+    description:
+      'Per-provider override of `box.defaultCheckpoint` for vercel. Wins over the global when set; set via `agentbox checkpoint set-default --provider vercel`.',
     advanced: true,
   },
   {

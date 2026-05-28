@@ -201,7 +201,7 @@ export const prepareCommand = new Command('prepare')
   )
   .option(
     '-p, --provider <name>',
-    'provider to prepare (docker | daytona | hetzner). Omit for status-only.',
+    'provider to prepare (docker | daytona | hetzner | vercel). Omit for status-only.',
   )
   .option(
     '-n, --name <name>',

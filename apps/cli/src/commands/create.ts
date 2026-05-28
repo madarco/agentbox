@@ -199,7 +199,7 @@ export const createCommand = new Command('create')
     const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
     const checkpointRef = resolveCheckpointRef(
       opts,
-      resolveDefaultCheckpoint(cfg.effective, providerName as 'docker' | 'daytona' | 'hetzner'),
+      resolveDefaultCheckpoint(cfg.effective, providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel'),
     );
 
     // Cloud providers that use the Daytona public-URL path don't need

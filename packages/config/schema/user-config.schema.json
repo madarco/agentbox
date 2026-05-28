@@ -14,6 +14,8 @@
         "defaultCheckpoint": { "type": "string", "minLength": 1 },
         "defaultCheckpointDocker": { "type": "string", "minLength": 1 },
         "defaultCheckpointDaytona": { "type": "string", "minLength": 1 },
+        "defaultCheckpointHetzner": { "type": "string", "minLength": 1 },
+        "defaultCheckpointVercel": { "type": "string", "minLength": 1 },
         "withPlaywright": { "type": "boolean" },
         "withEnv": { "type": "boolean" },
         "vnc": { "type": "boolean" },

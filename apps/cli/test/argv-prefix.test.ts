@@ -51,10 +51,19 @@ describe('rewriteProviderPrefix', () => {
   });
 
   it('leaves unknown two-token combinations alone', () => {
-    // `agentbox vercel create` — vercel isn't a known provider.
-    expect(rewriteProviderPrefix(argv('vercel', 'create'))).toEqual(argv('vercel', 'create'));
+    // `agentbox fly create` — fly isn't a known provider.
+    expect(rewriteProviderPrefix(argv('fly', 'create'))).toEqual(argv('fly', 'create'));
     // `agentbox daytona stop` — stop isn't sugared.
     expect(rewriteProviderPrefix(argv('daytona', 'stop'))).toEqual(argv('daytona', 'stop'));
+  });
+
+  it('rewrites `vercel <sugared>` to `--provider vercel`', () => {
+    expect(rewriteProviderPrefix(argv('vercel', 'create'))).toEqual(
+      argv('create', '--provider', 'vercel'),
+    );
+    expect(rewriteProviderPrefix(argv('vercel', 'claude'))).toEqual(
+      argv('claude', '--provider', 'vercel'),
+    );
   });
 
   it('handles short argvs without crashing', () => {
