@@ -38,6 +38,28 @@ export function isGhPrOp(value: string): value is GhPrOp {
 /** Read-only ops never trigger the host confirmation prompt. */
 export const GH_PR_READ_ONLY_OPS: ReadonlySet<GhPrOp> = new Set(['view', 'list']);
 
+/**
+ * Default `gh pr create`'s `--head` to the box's branch so the PR is for the
+ * box's work, not whatever the host main repo happens to have checked out
+ * (`gh` infers head from the cwd's HEAD, which is the user's own branch — or
+ * an untracked one, which aborts with "you must first push the current branch
+ * to a remote, or use the --head flag"). Only injected for `create`, only when
+ * the caller didn't already pass `--head`, and only when we resolved a real
+ * branch (not empty / detached `HEAD`). The host CLI's `agentbox git pr create`
+ * already injects this; the relay covers the in-box `agentbox-ctl git pr` /
+ * `gh pr` path, which forwards args verbatim.
+ */
+export function injectPrCreateHead(
+  op: GhPrOp,
+  branch: string | undefined,
+  args: string[],
+): string[] {
+  if (op !== 'create') return args;
+  if (!branch || branch === 'HEAD') return args;
+  if (args.some((a) => a === '--head' || a.startsWith('--head='))) return args;
+  return ['--head', branch, ...args];
+}
+
 /** Wire params for every `gh.pr.<op>` method. Mirrors the new ctl command surface. */
 export interface GhPrRpcParams {
   /** Container path the ctl ran in; used to pick the registered worktree. */

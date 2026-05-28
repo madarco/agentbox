@@ -514,7 +514,7 @@ exit 0
     expect(body.stderr).toMatch(/denied by user/);
   });
 
-  it('gh.pr.create with AGENTBOX_PROMPT=off runs gh and forwards args', async () => {
+  it('gh.pr.create with AGENTBOX_PROMPT=off runs gh and injects --head <box branch>', async () => {
     await registerWithWorktree();
     process.env.AGENTBOX_PROMPT = 'off';
     const r = await fetchJson(handle, 'POST', '/rpc', {
@@ -527,7 +527,28 @@ exit 0
     expect(r.status).toBe(200);
     const body = r.body as { exitCode: number; stdout: string };
     expect(body.exitCode).toBe(0);
-    expect(body.stdout).toContain('stub: gh pr create --title T --body B --draft');
+    // The relay defaults --head to the registered box branch so gh doesn't have
+    // to infer it from the host repo's (different) checked-out branch.
+    expect(body.stdout).toContain(
+      'stub: gh pr create --head agentbox/box-one --title T --body B --draft',
+    );
+  });
+
+  it('gh.pr.create does not double-inject --head when the caller passed one', async () => {
+    await registerWithWorktree();
+    process.env.AGENTBOX_PROMPT = 'off';
+    const r = await fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: {
+        method: 'gh.pr.create',
+        params: { path: '/workspace', args: ['--head', 'feature/x', '--title', 'T'] },
+      },
+    });
+    expect(r.status).toBe(200);
+    const body = r.body as { exitCode: number; stdout: string };
+    expect(body.exitCode).toBe(0);
+    expect(body.stdout).toContain('stub: gh pr create --head feature/x --title T');
+    expect(body.stdout).not.toContain('agentbox/box-one');
   });
 
   it('gh.pr.view returns 500 with exit 64 when no worktree is registered', async () => {

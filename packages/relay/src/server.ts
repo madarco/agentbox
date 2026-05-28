@@ -7,6 +7,7 @@ import {
   assertGhReady,
   checkoutGuards,
   GH_PR_READ_ONLY_OPS,
+  injectPrCreateHead,
   isGhPrOp,
   refuseCheckoutByDefault,
   refuseMergeBypass,
@@ -1138,7 +1139,11 @@ async function handleGhPrRpc(
     }
   }
 
-  return runHostGh(['pr', op, ...args], worktree.hostMainRepo);
+  // Default `--head` to the box's branch for `create` (the host repo cwd isn't
+  // on the box branch, so gh can't infer it). Done after token validation —
+  // which hashes the incoming `params`, not this post-injection argv.
+  const finalArgs = injectPrCreateHead(op, worktree.branch, args);
+  return runHostGh(['pr', op, ...finalArgs], worktree.hostMainRepo);
 }
 
 /**

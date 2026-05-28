@@ -51,6 +51,7 @@ export {
   checkoutGuards,
   GH_PR_OPS,
   GH_PR_READ_ONLY_OPS,
+  injectPrCreateHead,
   isGhPrOp,
   refuseCheckoutByDefault,
   refuseMergeBypass,
