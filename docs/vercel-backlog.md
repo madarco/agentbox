@@ -107,25 +107,28 @@ Confirmed live 2026-05-28:
    tar-extract as vscode) lands `/workspace` on the box branch — gated on the
    sudoers fix (#3). Agent-credential / carry / env-file ownership beyond this was
    not separately audited but the box boots with the agent CLIs present.
-4. [ ] **Relay round-trip.** Still **unconfirmed** — and the `scripts/vercel-live-e2e.sh`
-   Phase D "PASS" (run **2026-05-29**, `E2E_RELAY=1`, `../agentbox-test-repo`) is a
-   **false positive**: it only checks that the `agentbox shell <box> -- … git push`
-   wrapper exits 0, but Vercel's attach is the laggy send-keys/capture-pane pump
-   whose exit code does **not** reliably reflect the in-box command's. After the
-   "PASS", `git ls-remote origin` showed **no `agentbox/vfe-*` branch** and the
-   relay log recorded **no `git.push` from that box** — i.e. the push never reached
-   the remote. The e2e's Phase D needs a real verification gate (assert the probe
-   commit appears on the remote via `git ls-remote`, not just the wrapper exit
-   code) before this can be ticked.
-   What the 2026-05-29 work *did* establish: two real bugs blocking the path were
-   found and fixed (see "Bugs found live 2026-05-29" below) — the secrets.env-only
-   credential path, and the missing attach-helper chunk in the staged runtime that
-   made `agentbox shell` on a vercel box die `ERR_MODULE_NOT_FOUND` (that crash is
-   gone now). #19 (PATH/shim ordering) was also fixed. Phases A/B/C (create,
-   pause/resume, checkpoint round-trip) and the destroy/base-guard regression did
-   pass legitimately. **Next:** add the ls-remote assertion to the e2e and re-run,
-   or drive the push via a non-attach path (e.g. `agentbox exec`) so the in-box
-   exit code is trustworthy.
+4. [x] **Relay round-trip.** **Confirmed live 2026-05-29** by ground truth (not a
+   wrapper exit code). On box `relayv1`: an in-box `agentbox-ctl git push` of commit
+   `fc6d54de` traveled vercel box → in-box bridge on `sandbox.domain(8788)` → host
+   `CloudBoxPoller` → `runGitRpc` (git-bundle pull-back + host `git push origin`),
+   and `git ls-remote origin refs/heads/agentbox/relayv1` returned **`fc6d54de`** —
+   the commit reached GitHub. The relay log shows `rpc box=40ebb05d method=git.push`.
+   The push was driven via `backend.exec` (real exit code), not the attach pump.
+   Getting here required fixing several real issues found live (see "Bugs found live
+   2026-05-29" below): secrets.env-only credentials, the missing attach-helper chunk
+   in the staged runtime, the #19 PATH/shim ordering, **and a stale host-relay
+   process** — the running relay predated vercel support, so `resolveCloudBackend`
+   returned `no host executor for cloud backend 'vercel'`; `ensureRelay` only
+   reclaims a relay when `cliEntry===false`, not when it lacks a provider executor,
+   so it silently reused the old one. Killing it (next `agentbox` call respawns a
+   capable relay) fixed it — see the follow-up item below to make this self-healing.
+   Notes on the earlier **false positive**: the original `vercel-live-e2e.sh` Phase D
+   trusted the `agentbox shell … git push` exit code, but on vercel `shell` is the
+   laggy send-keys/capture-pane attach pump whose exit code reflects the wrapper, not
+   the in-box command — it reported PASS while nothing reached origin. Phase D now
+   gates on `git ls-remote` (the probe branch is absent before, present after); it
+   also needs the `VERCEL_TOKEN` trio in env (it predates CLI-login auth, so under
+   `VERCEL_AUTH_SOURCE=cli` drive the round-trip via the CLI/`backend.exec` directly).
    **Original plan (host — must run on a real host, not a nested box):**
    - *Why nested doesn't work:* a vercel box's `CloudBoxPoller` runs wherever the
      `agentbox` CLI runs; from inside a docker agentbox the relay/git creds chain is
