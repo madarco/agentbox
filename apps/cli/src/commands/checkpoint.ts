@@ -378,6 +378,23 @@ async function runCloudCheckpointCreate(box: BoxRecord, opts: CreateOpts): Promi
     CHECKPOINT_NOTICE_TTL_MS,
   );
   try {
+    // When this checkpoint becomes the project default, capture the box's
+    // agent login(s) back to the host (~/.agentbox) BEFORE the snapshot — the
+    // box is guaranteed running here; the snapshot may pause it. Cloud has no
+    // shared volume, so a login made inside the box would otherwise be lost on
+    // destroy; mirroring it lets the next box (seeded by the cloud push)
+    // inherit it. Best-effort — never blocks the checkpoint.
+    if (opts.setDefault && provider.extractAgentCredentials) {
+      try {
+        const saved = await provider.extractAgentCredentials(box);
+        if (saved.length > 0) {
+          log.info(`saved ${saved.join(', ')} login to ~/.agentbox for future boxes`);
+        }
+      } catch (err) {
+        log.warn(`agent credential extract skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
     log.info(`capturing cloud snapshot '${name}' (this may take a few minutes)`);
     const result = await provider.checkpoint.create(box, name);
     log.success(`checkpoint ${result.ref} (daytona snapshot) captured`);

@@ -23,6 +23,8 @@
  * after a host re-auth.
  */
 
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import {
   stageClaudeStaticForUpload,
   stageClaudeCredentialsForUpload,
@@ -31,6 +33,10 @@ import {
   stageOpencodeStaticForUpload,
   stageOpencodeCredentialsForUpload,
   stageOpencodeStateForUpload,
+  CREDENTIALS_BACKUP_FILE,
+  CODEX_CREDENTIALS_BACKUP_FILE,
+  OPENCODE_CREDENTIALS_BACKUP_FILE,
+  isRealAgentCredential,
   type StageResult,
 } from '@agentbox/sandbox-docker';
 import type { CloudBackend, CloudHandle, CloudVolumeMount } from '@agentbox/core';
@@ -369,4 +375,65 @@ export function agentSpecsForCloud(): Array<{
     credentialsMountPath: s.credentialsMountPath,
     credentialsSubpath: s.credentialsSubpath,
   }));
+}
+
+/**
+ * Per-agent: the canonical in-box auth file (what the agent actually reads/
+ * writes — NOT the `~/.agentbox-creds` symlink target, because an agent that
+ * writes atomically replaces the symlink with a regular file there) and the
+ * host backup file we mirror it into.
+ */
+const EXTRACT_SPECS: Array<{ kind: CloudAgentKind; boxPath: string; hostBackup: string }> = [
+  { kind: 'claude', boxPath: '/home/vscode/.claude/.credentials.json', hostBackup: CREDENTIALS_BACKUP_FILE },
+  { kind: 'codex', boxPath: '/home/vscode/.codex/auth.json', hostBackup: CODEX_CREDENTIALS_BACKUP_FILE },
+  {
+    kind: 'opencode',
+    boxPath: '/home/vscode/.local/share/opencode/auth.json',
+    hostBackup: OPENCODE_CREDENTIALS_BACKUP_FILE,
+  },
+];
+
+/**
+ * Extract the agent login credentials from a running cloud box back to the
+ * host backups under `~/.agentbox/`, so the next box (seeded by the cloud
+ * push) inherits the login. The cloud analogue of docker's
+ * `syncClaudeCredentials` extract direction, generalized to codex/opencode —
+ * cloud has no shared volume, so a login captured inside a box would otherwise
+ * be lost on destroy.
+ *
+ * Reads the canonical agent path via `backend.exec(... cat ...)`; only writes
+ * the host backup when the content passes `isRealAgentCredential`, so an empty
+ * / not-logged-in box never clobbers a good backup. Best-effort per agent
+ * (never throws). Returns the list of agents whose backup was updated.
+ */
+export async function extractCloudAgentCredentials(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  opts: {
+    onLog?: (line: string) => void;
+    /** Override host backup paths per agent (tests). Defaults to the ~/.agentbox constants. */
+    backups?: Partial<Record<CloudAgentKind, string>>;
+  } = {},
+): Promise<CloudAgentKind[]> {
+  const log = opts.onLog ?? (() => {});
+  const extracted: CloudAgentKind[] = [];
+  for (const spec of EXTRACT_SPECS) {
+    const hostBackup = opts.backups?.[spec.kind] ?? spec.hostBackup;
+    try {
+      // `cat` the canonical file; tolerate "missing" (exit 1) silently.
+      const r = await backend.exec(handle, `cat ${spec.boxPath} 2>/dev/null`, { noRetry: true });
+      const text = r.stdout;
+      if (r.exitCode !== 0 || !text || !isRealAgentCredential(spec.kind, text)) continue;
+      await mkdir(dirname(hostBackup), { recursive: true });
+      await writeFile(hostBackup, text, { mode: 0o600 });
+      await chmod(hostBackup, 0o600).catch(() => {});
+      extracted.push(spec.kind);
+      log(`extracted ${spec.kind} login from box to ${hostBackup}`);
+    } catch (err) {
+      log(
+        `WARN: ${spec.kind} credential extract failed (${err instanceof Error ? err.message : String(err)}) — skipping`,
+      );
+    }
+  }
+  return extracted;
 }

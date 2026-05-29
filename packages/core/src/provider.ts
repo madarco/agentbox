@@ -278,6 +278,15 @@ export interface Provider {
   downloadDirContents?(box: BoxRecord, boxSrc: string, hostDst: string): Promise<{ finalPath: string }>;
   checkpoint?: ProviderCheckpoint;
   /**
+   * Extract the box's agent login credentials (claude/codex/opencode) from the
+   * running box back to the host backups under `~/.agentbox`, so the next box
+   * is seeded with the captured login. Cloud-only: the box has no shared volume
+   * to persist a login across destroys (docker shares the host's real auth
+   * paths already, so it omits this). The CLI calls it on `checkpoint create
+   * --set-default`. Returns the agents whose host backup was updated.
+   */
+  extractAgentCredentials?(box: BoxRecord): Promise<string[]>;
+  /**
    * One-time "build the base image" hook for `agentbox prepare --provider`.
    * Docker builds the local Dockerfile.box image; daytona builds a layered
    * Image (Dockerfile.box + host agent static config) and registers it as a

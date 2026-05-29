@@ -22,6 +22,44 @@ import { STATE_DIR } from './state.js';
  */
 export const CREDENTIALS_BACKUP_FILE = join(STATE_DIR, 'claude-credentials.json');
 
+/**
+ * Host-side backups of the in-box codex / opencode auth files, the cloud
+ * analogue of {@link CREDENTIALS_BACKUP_FILE} for Claude. Unlike docker (which
+ * bind-mounts the host's real `~/.codex` / `~/.config/opencode`), cloud
+ * providers have no shared volume, so a login captured inside a cloud box is
+ * stored here (by `extractCloudAgentCredentials` on `checkpoint --set-default`)
+ * and re-pushed to the next box. The cloud stagers prefer these copies and fall
+ * back to the host's real path when absent. Written mode 0600 like the claude
+ * backup.
+ */
+export const CODEX_CREDENTIALS_BACKUP_FILE = join(STATE_DIR, 'codex-credentials.json');
+export const OPENCODE_CREDENTIALS_BACKUP_FILE = join(STATE_DIR, 'opencode-credentials.json');
+
+/** Agents whose credentials we extract from a cloud box back to the host. */
+export type CredentialAgentKind = 'claude' | 'codex' | 'opencode';
+
+/**
+ * True iff `text` looks like a real (usable) credential for `agent`, not an
+ * empty/placeholder file. Used so the cloud extraction never clobbers a good
+ * host backup with an empty box file. Claude requires a non-empty
+ * `claudeAiOauth.refreshToken` (mirrors {@link hostBackupHasCredentials}); codex
+ * and opencode auth files just have to parse as a non-empty JSON object.
+ */
+export function isRealAgentCredential(agent: CredentialAgentKind, text: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return false;
+  if (agent === 'claude') {
+    const rt = (parsed as { claudeAiOauth?: { refreshToken?: unknown } }).claudeAiOauth?.refreshToken;
+    return typeof rt === 'string' && rt.length > 0;
+  }
+  return Object.keys(parsed as Record<string, unknown>).length > 0;
+}
+
 export type CredentialSyncDirection = 'extracted' | 'seeded' | 'noop';
 
 export interface SyncClaudeCredentialsResult {

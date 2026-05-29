@@ -40,9 +40,13 @@ export {
 } from './claude.js';
 export {
   CREDENTIALS_BACKUP_FILE,
+  CODEX_CREDENTIALS_BACKUP_FILE,
+  OPENCODE_CREDENTIALS_BACKUP_FILE,
   hostBackupHasCredentials,
+  isRealAgentCredential,
   parseSyncResult,
   syncClaudeCredentials,
+  type CredentialAgentKind,
   type CredentialSyncDirection,
   type SyncClaudeCredentialsResult,
 } from './claude-credentials.js';

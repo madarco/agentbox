@@ -38,7 +38,11 @@ import {
   setInstallMethodNative,
   trustWorkspace,
 } from './claude-hooks-filter.js';
-import { CREDENTIALS_BACKUP_FILE } from './claude-credentials.js';
+import {
+  CREDENTIALS_BACKUP_FILE,
+  CODEX_CREDENTIALS_BACKUP_FILE,
+  OPENCODE_CREDENTIALS_BACKUP_FILE,
+} from './claude-credentials.js';
 
 export interface StageResult {
   /** Absolute path to the .tar.gz, or null when there was nothing to stage. */
@@ -405,13 +409,19 @@ export async function stageCodexStaticForUpload(
 }
 
 /**
- * Tarball with **only** `auth.json` (sourced from `~/.codex/auth.json`).
- * Surfaces the macOS Keychain landmine as a warning when the file is missing
- * — see `CODEX_KEYCHAIN_WARNING`.
+ * Tarball with **only** `auth.json`. Prefers the cloud backup
+ * `~/.agentbox/codex-credentials.json` (a login captured from a previous cloud
+ * box by `extractCloudAgentCredentials`); falls back to the host's real
+ * `~/.codex/auth.json` so a fresh project still bootstraps from a host login.
+ * Surfaces the macOS Keychain landmine as a warning when neither exists — see
+ * `CODEX_KEYCHAIN_WARNING`.
  */
 export async function stageCodexCredentialsForUpload(
   opts: StageCodexOptions = {},
 ): Promise<StageResult> {
+  if (await pathExists(CODEX_CREDENTIALS_BACKUP_FILE)) {
+    return stageSingleFileTarball('codex-creds', CODEX_CREDENTIALS_BACKUP_FILE, 'auth.json');
+  }
   const hostHome = opts.hostHome ?? homedir();
   const hostAuth = join(hostHome, '.codex', 'auth.json');
   if (!(await pathExists(hostAuth))) return emptyResult([CODEX_KEYCHAIN_WARNING]);
@@ -501,13 +511,17 @@ export async function stageOpencodeStaticForUpload(
 }
 
 /**
- * Tarball with **only** `auth.json` (sourced from
- * `~/.local/share/opencode/auth.json`). Returns an empty result when the host
- * has no opencode auth file.
+ * Tarball with **only** `auth.json`. Prefers the cloud backup
+ * `~/.agentbox/opencode-credentials.json` (captured from a previous cloud box);
+ * falls back to the host's real `~/.local/share/opencode/auth.json`. Returns an
+ * empty result when neither exists.
  */
 export async function stageOpencodeCredentialsForUpload(
   opts: StageOpencodeOptions = {},
 ): Promise<StageResult> {
+  if (await pathExists(OPENCODE_CREDENTIALS_BACKUP_FILE)) {
+    return stageSingleFileTarball('opencode-creds', OPENCODE_CREDENTIALS_BACKUP_FILE, 'auth.json');
+  }
   const hostHome = opts.hostHome ?? homedir();
   const hostAuth = join(hostHome, '.local', 'share', 'opencode', 'auth.json');
   if (!(await pathExists(hostAuth))) return emptyResult();

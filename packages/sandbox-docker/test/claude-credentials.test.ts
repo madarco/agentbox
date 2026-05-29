@@ -2,7 +2,33 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { hostBackupHasCredentials, parseSyncResult } from '../src/claude-credentials.js';
+import {
+  hostBackupHasCredentials,
+  isRealAgentCredential,
+  parseSyncResult,
+} from '../src/claude-credentials.js';
+
+describe('isRealAgentCredential', () => {
+  it('claude requires a non-empty claudeAiOauth.refreshToken', () => {
+    expect(isRealAgentCredential('claude', JSON.stringify({ claudeAiOauth: { refreshToken: 'x' } }))).toBe(true);
+    expect(isRealAgentCredential('claude', JSON.stringify({ claudeAiOauth: { refreshToken: '' } }))).toBe(false);
+    expect(isRealAgentCredential('claude', JSON.stringify({ claudeAiOauth: {} }))).toBe(false);
+    expect(isRealAgentCredential('claude', '{}')).toBe(false);
+  });
+
+  it('codex/opencode accept any non-empty JSON object', () => {
+    expect(isRealAgentCredential('codex', '{"OPENAI_API_KEY":"sk"}')).toBe(true);
+    expect(isRealAgentCredential('opencode', '{"anthropic":{}}')).toBe(true);
+    expect(isRealAgentCredential('codex', '{}')).toBe(false);
+  });
+
+  it('rejects non-JSON / empty / non-object input', () => {
+    expect(isRealAgentCredential('claude', '')).toBe(false);
+    expect(isRealAgentCredential('codex', 'not json')).toBe(false);
+    expect(isRealAgentCredential('opencode', '[]')).toBe(false);
+    expect(isRealAgentCredential('codex', 'null')).toBe(false);
+  });
+});
 
 describe('parseSyncResult', () => {
   it('reports extracted when the volume creds were copied to the host backup', () => {
