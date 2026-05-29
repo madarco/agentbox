@@ -340,6 +340,10 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       // resumes mid-animation when the prompt clears.
       if (bandState?.kind === 'notice') {
         bandState = { kind: 'notice', message: bandState.message, frame: noticeFrame };
+        // When the band is collapsed on a tiny terminal the notice renders
+        // through `footerState` instead, so re-derive it to pick up the new
+        // frame — otherwise the footer-fallback spinner glyph freezes.
+        if (bandReservedRows === 0) recomputeFooter();
         redrawChrome();
       }
     }, SPINNER_INTERVAL_MS);
