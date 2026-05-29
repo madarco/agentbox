@@ -1,11 +1,10 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  // Three entries: the provider surface (`.`), the CLI surface (`./cli`), and
-  // the standalone attach-helper (a host-side process the PTY wrapper spawns to
-  // pump stdio through the Vercel SDK — Vercel has no SSH, so attach can't be a
-  // plain `ssh` argv like daytona/hetzner).
-  entry: ['src/index.ts', 'src/cli.ts', 'src/attach-helper.ts'],
+  // Two entries: the provider surface (`.`) and the CLI surface (`./cli`).
+  // Interactive attach drives the external `sbx` CLI (real PTY) — see
+  // build-attach.ts — so there's no standalone helper process to build.
+  entry: ['src/index.ts', 'src/cli.ts'],
   format: ['esm'],
   target: 'node20',
   clean: true,

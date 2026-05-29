@@ -1,90 +1,83 @@
 /**
  * `buildVercelAttach` — the Vercel provider's override of `Provider.buildAttach`.
  *
- * The cloud scaffold's default `buildAttach` builds an `ssh ... -t '<cmd>'`
- * argv, which is unusable on Vercel (no SSH). Instead we return an argv that
- * spawns the bundled `attach-helper.js` under the host PTY wrapper; that helper
- * bridges the local terminal to the box's tmux session over the Vercel SDK (see
- * attach-helper.ts).
+ * Vercel has no SSH, so the cloud scaffold's `ssh … -t '<cmd>'` argv is unusable.
+ * Instead we drive the official Vercel Sandbox CLI (`sbx`/`sandbox`), which has a
+ * real interactive PTY (`sbx exec -i`) and streams non-interactive output live —
+ * giving a proper terminal with none of the old send-keys/capture-pane polling.
+ *
+ * Argv shape (validated against sbx 3.0.1):
+ *   sbx exec --sudo [-i] --project <p> --scope <team> <name>
+ *       -- sudo -u vscode -H bash -lc '<inner>'
+ *
+ * Notes:
+ *   - The sandbox's default exec user is `vercel-sandbox`; we pass `--sudo` (runs
+ *     as root) and then `sudo -u vscode -H` so tmux/agents run as the box user in
+ *     /workspace. Passing `sudo -u vscode …` directly as sbx's argv (not wrapped
+ *     in an outer `bash -lc`) avoids a double-`bash -lc` re-parse.
+ *   - `-i` only for interactive shell/agent attaches; detached pre-start and logs
+ *     run non-interactively (live stdout stream).
+ *   - The access token is passed via the child env (`VERCEL_AUTH_TOKEN`), never in
+ *     argv, so it can't leak through `ps`. project/scope are not secret → flags.
+ *   - `<inner>` is the shared cloud `renderInnerCommand` (same tmux ensure +
+ *     footer-aware config + `exec tmux attach` used by hetzner/daytona).
  */
 
-import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import type { AttachKind, AttachSpec, BoxRecord, BuildAttachOptions } from '@agentbox/core';
+import {
+  type AttachKind,
+  type AttachSpec,
+  type BoxRecord,
+  type BuildAttachOptions,
+} from '@agentbox/core';
+import { renderInnerCommand } from '@agentbox/sandbox-cloud';
+import { detectSbx } from './sbx-cli.js';
+import { ensureFreshCredentials, resolveCredentials } from './sdk.js';
 
-const SELF = dirname(fileURLToPath(import.meta.url));
-
-interface AttachHelperSpec {
-  sessionName: string;
-  command: string;
-  kind: AttachKind;
-  detached?: boolean;
-}
-
-function defaultSessionName(kind: AttachKind): string {
-  return kind;
-}
-
-function defaultCommand(kind: AttachKind, opts?: BuildAttachOptions): string {
-  switch (kind) {
-    case 'shell':
-    case 'agent':
-      return 'bash -l';
-    case 'logs': {
-      if (!opts?.service) return 'echo "no service specified"';
-      const tail = opts.tail !== undefined ? String(opts.tail) : '200';
-      const follow = opts.follow !== false ? ' --follow' : '';
-      return `/usr/local/bin/agentbox-ctl logs ${opts.service} --tail ${tail}${follow}`;
-    }
-  }
-}
-
-/**
- * Resolve the compiled attach-helper entry. In the monorepo it sits next to
- * this module in `dist/`. In the published standalone CLI the vercel package is
- * bundled into the CLI's `dist/index.js`, so the helper is staged separately
- * into `runtime/vercel/attach-helper.js` (next to `dist/`) by
- * `apps/cli/scripts/stage-runtime.mjs` — mirrors `findStagedCliRuntimeRoot()`
- * in runtime-assets.ts.
- */
-function resolveAttachHelperPath(): string {
-  const candidates = [
-    resolve(SELF, 'attach-helper.js'),
-    resolve(SELF, '..', 'dist', 'attach-helper.js'),
-    resolve(SELF, '..', 'runtime', 'vercel', 'attach-helper.js'),
-    resolve(SELF, '..', '..', 'runtime', 'vercel', 'attach-helper.js'),
-  ];
-  const hit = candidates.find((p) => existsSync(p));
-  if (!hit) {
-    throw new Error(
-      `vercel attach: could not find attach-helper.js (looked in: ${candidates.join(', ')}). ` +
-        `Run \`pnpm --filter @agentbox/sandbox-vercel build\`.`,
-    );
-  }
-  return hit;
-}
-
-export function buildVercelAttach(
+export async function buildVercelAttach(
   box: BoxRecord,
   kind: AttachKind,
   opts?: BuildAttachOptions,
 ): Promise<AttachSpec> {
   const sandboxId = box.cloud?.sandboxId;
   if (!sandboxId) {
-    return Promise.reject(new Error(`vercel box ${box.name} has no sandboxId — record is malformed`));
+    throw new Error(`vercel box ${box.name} has no sandboxId — record is malformed`);
   }
-  const spec: AttachHelperSpec = {
-    sessionName: opts?.sessionName ?? defaultSessionName(kind),
-    command: opts?.command ?? defaultCommand(kind, opts),
-    kind,
-    detached: opts?.detached,
-  };
+
+  const det = await detectSbx();
+  if (!det.installed || !det.bin) {
+    throw new Error(
+      'Vercel interactive attach needs the Vercel `sandbox` CLI — run ' +
+        '`agentbox vercel login` (it installs it) or `npm install -g sandbox`.',
+    );
+  }
+
+  await ensureFreshCredentials();
+  const { token, teamId, projectId } = resolveCredentials();
+
+  // Interactive (real PTY) only for live shell/agent attaches. Detached
+  // pre-start and logs stream non-interactively.
+  const interactive = (kind === 'shell' || kind === 'agent') && !opts?.detached;
+  const inner = renderInnerCommand(kind, opts);
+
   const argv = [
-    process.execPath,
-    resolveAttachHelperPath(),
+    det.bin,
+    'exec',
+    '--sudo',
+    ...(interactive ? ['-i'] : []),
+    '--project',
+    projectId,
+    '--scope',
+    teamId,
     sandboxId,
-    Buffer.from(JSON.stringify(spec), 'utf8').toString('base64'),
+    '--',
+    'sudo',
+    '-u',
+    'vscode',
+    '-H',
+    'bash',
+    '-lc',
+    inner,
   ];
-  return Promise.resolve({ argv });
+
+  return { argv, env: { VERCEL_AUTH_TOKEN: token } };
 }

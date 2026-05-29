@@ -107,7 +107,7 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
       detached: true,
     });
     try {
-      await runDetached(pre.argv);
+      await runDetached(pre.argv, pre.env);
     } finally {
       if (pre.cleanup) await pre.cleanup();
     }
@@ -126,6 +126,7 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
       container: args.box.name,
       command: spec.argv[0],
       dockerArgv: spec.argv.slice(1),
+      env: spec.env,
       relayBaseUrl: RELAY_HOST_URL,
       boxId: args.box.id,
       boxName: args.box.name,
@@ -150,9 +151,12 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
  * Resolves on exit regardless of code (a non-zero here shouldn't block the
  * subsequent attach, which surfaces any real failure to the user).
  */
-function runDetached(argv: string[]): Promise<void> {
+function runDetached(argv: string[], env?: Record<string, string>): Promise<void> {
   return new Promise((resolve) => {
-    const child = spawn(argv[0]!, argv.slice(1), { stdio: 'ignore' });
+    const child = spawn(argv[0]!, argv.slice(1), {
+      stdio: 'ignore',
+      env: env ? { ...process.env, ...env } : process.env,
+    });
     child.on('error', () => resolve());
     child.on('exit', () => resolve());
   });

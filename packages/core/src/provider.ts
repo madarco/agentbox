@@ -134,6 +134,12 @@ export type AttachKind = 'shell' | 'agent' | 'logs';
 export interface AttachSpec {
   /** argv the wrapper spawns locally to attach to the box. */
   argv: string[];
+  /**
+   * Extra environment for the spawned argv (merged over `process.env`). Used by
+   * the Vercel provider to pass `VERCEL_AUTH_TOKEN` to the `sbx` CLI without
+   * leaking it into the process argv.
+   */
+  env?: Record<string, string>;
   /** Optional cleanup invoked after the PTY detaches. */
   cleanup?: () => Promise<void>;
 }

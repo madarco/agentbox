@@ -1129,7 +1129,7 @@ function makeCloudCheckpoint(backend: CloudBackend): ProviderCheckpoint {
  * see /workspace as their cwd (otherwise tmux inherits the SSH login
  * shell's $HOME and the agents prompt for workspace-trust).
  */
-function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions): string {
+export function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions): string {
   const sessionName = opts?.sessionName ?? defaultSessionName(kind);
   const fallback = opts?.command ?? defaultCommand(kind, opts);
   if (kind === 'logs') {

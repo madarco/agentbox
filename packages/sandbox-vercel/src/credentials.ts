@@ -106,6 +106,7 @@ export async function ensureVercelCredentials(
     reloadVercelEnv();
     if (process.env.VERCEL_OIDC_TOKEN) {
       log.success('Found VERCEL_OIDC_TOKEN — Vercel is configured.');
+      await ensureSbxInstalled();
       outro('Setup complete.');
     } else {
       log.warn('No VERCEL_OIDC_TOKEN found yet — set it as above, then re-run `agentbox vercel login`.');
@@ -117,6 +118,7 @@ export async function ensureVercelCredentials(
   if (creds === null) return;
   persistCredentials(creds);
   log.success(`Vercel credentials saved to ${secretsPath()}`);
+  await ensureSbxInstalled();
   outro('Setup complete.');
 }
 
@@ -242,31 +244,44 @@ function writeManaged(record: Record<string, string>): void {
  * let the user pick a project to scope sandboxes to, and persist the marker +
  * ids. The access token is never stored — `resolveCredentials` reads it live.
  */
-async function runCliLogin(): Promise<void> {
+/**
+ * Make sure the Vercel `sandbox` CLI is on PATH, offering to install it. Every
+ * login mode ensures it because interactive attach (`agentbox shell|claude|
+ * codex|opencode` on a vercel box) drives `sbx exec` for a real PTY. Returns the
+ * resolved bin, or null if absent / declined / install failed (callers warn).
+ */
+async function ensureSbxInstalled(): Promise<{ bin: string } | null> {
   let det = await detectSbx();
   if (!det.installed) {
     const doInstall = await confirm({
-      message: `The Vercel sandbox CLI isn't installed. Install it now? (${installSbxHint()})`,
+      message: `The Vercel sandbox CLI (needed for interactive attach) isn't installed. Install it now? (${installSbxHint()})`,
       initialValue: true,
     });
     if (isCancel(doInstall) || !doInstall) {
-      log.warn(`Install it with \`${installSbxHint()}\`, then re-run \`agentbox vercel login\`.`);
-      return;
+      log.warn(
+        `Install it with \`${installSbxHint()}\` to use \`agentbox shell|claude|codex|opencode\` on Vercel boxes.`,
+      );
+      return null;
     }
     const sp = spinner();
     sp.start('Installing the Vercel sandbox CLI…');
     const ok = await installSbx();
     resetSbxCache();
     det = await detectSbx();
-    if (!ok || !det.installed) {
+    if (!ok || !det.installed || !det.bin) {
       sp.stop('Install failed.');
-      log.warn(`Could not install the sandbox CLI — run \`${installSbxHint()}\` manually, then retry.`);
-      return;
+      log.warn(`Could not install the sandbox CLI — run \`${installSbxHint()}\` manually.`);
+      return null;
     }
     sp.stop(`Installed sandbox CLI${det.version ? ` ${det.version}` : ''}.`);
   }
-  if (!det.bin) {
-    log.warn(`Sandbox CLI not found — run \`${installSbxHint()}\`, then re-run \`agentbox vercel login\`.`);
+  return det.bin ? { bin: det.bin } : null;
+}
+
+async function runCliLogin(): Promise<void> {
+  const det = await ensureSbxInstalled();
+  if (!det) {
+    log.warn('The Vercel sandbox CLI is required to sign in this way — install it, then re-run `agentbox vercel login`.');
     return;
   }
 

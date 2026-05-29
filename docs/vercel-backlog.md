@@ -40,8 +40,9 @@ implementation (per the project convention), not as end-of-PR cleanup.
 - [x] **Phase 3 — prepare + provision.sh.** Base-snapshot bake with context
   fingerprinting + skip-fast; AL2023 installer (dnf, vscode user, ctl/vnc/shims,
   Claude native installer, codex/opencode).
-- [x] **Phase 4 — attach.** `buildVercelAttach` + `attach-helper.js` tmux bridge
-  (send-keys / capture-pane pump over the SDK).
+- [x] **Phase 4 — attach.** `buildVercelAttach` drives the Vercel `sandbox` CLI's
+  real PTY (`sbx exec -i … -- sudo -u vscode -H bash -lc '<tmux attach>'`). (Was a
+  custom `attach-helper.js` send-keys/capture-pane bridge — replaced; see #8.)
 - [x] **Phase 5 — checkpoints.** Provider-level `checkpoint` override storing the
   Vercel snapshot **id** in the cloud-checkpoint manifest (Vercel snapshots are
   id-addressed, not name-addressed).
@@ -244,32 +245,22 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
    prepare context fingerprint, so the next `agentbox prepare` auto-rebakes.
    (Minor follow-up: `autocutsel` isn't in the AL2023 bake, so VNC clipboard
    sync is degraded there — the script already tolerates its absence.)
-8. **Attach is laggy.** The `send-keys`/`capture-pane` pump is real but
-   higher-latency than a PTY and repaints the whole pane (cursor position not
-   preserved). **Upgrade:** a ttyd / WebSocket terminal over `sandbox.domain(port)`
-   (WebSocket works through the domain proxy — noVNC relies on it) — needs a ttyd
-   binary in the snapshot + a ws client in `attach-helper.ts`, and the 4th port.
-   **Plan (host — heavy, needs a re-bake):**
-   - Bake `ttyd` into the base snapshot: add an install step to
-     `packages/sandbox-vercel/scripts/provision.sh` (no AL2023 dnf package — grab a
-     static x86_64 binary from the ttyd releases, or build; drop at
-     `/usr/local/bin/ttyd`, `chmod 755`). This changes the prepare context
-     fingerprint, so `agentbox prepare --provider vercel` auto-rebakes (no `--force`).
-   - Expose a ttyd port. The 4-port cap math is now: base `[6080, 8788]` + up to 2
-     `expose` ports (see #17, done). Reserve one slot for ttyd, e.g. add a 3rd base
-     port `7681` (ttyd default) to `VERCEL_EXPOSED_PORTS` in `backend.ts`
-     (`buildExposedPorts` already caps at `VERCEL_MAX_PORTS=4`). Note this leaves
-     only 1 free slot for `expose` — document the trade-off.
-   - In-box launch: a small `agentbox-ttyd-start` helper (run via the cloud
-     lifecycle, like `vnc-launch.ts` runs `agentbox-vnc-start`) that does
-     `ttyd -p 7681 -i 0.0.0.0 --writable tmux new -A -s <session>`.
-   - Rewrite the attach: `build-attach.ts` / `attach-helper.ts` currently spawn the
-     SDK send-keys/capture-pane pump. Replace with a WebSocket client to
-     `wss://<sandbox.domain(7681)>/ws` bridging the local PTY (ttyd speaks a simple
-     binary ws protocol: client sends `'0'+data` for stdin, `'1'+JSON` for resize;
-     server sends `'0'+data` for output). Keep the send-keys path as a fallback.
-   - Verify live: attach to a box, confirm low-latency keystrokes + correct cursor
-     positioning (vs. the current full-pane repaint).
+8. [x] **Attach is laggy.** Done — replaced the `send-keys`/`capture-pane` pump
+   with the official Vercel `sandbox` CLI's real PTY. `buildVercelAttach` now emits
+   `sbx exec --sudo [-i] --project <p> --scope <team> <name> -- sudo -u vscode -H
+   bash -lc '<inner>'` (interactive `-i` for shell/agent; non-interactive for
+   detached pre-start + logs, which stream live), with the token passed via the
+   child env `VERCEL_AUTH_TOKEN` (added `AttachSpec.env`, threaded through the host
+   PTY wrapper + the three spawn sites). `<inner>` reuses the shared cloud
+   `renderInnerCommand` (same tmux ensure + footer-aware config + `exec tmux
+   attach` as hetzner/daytona). The custom `attach-helper.ts` bridge + its
+   stage-runtime chunk staging are **deleted**. `sbx` is ensured at
+   `agentbox vercel login` (all modes). The ttyd/WebSocket upgrade below is
+   obsolete — `sbx exec` gives the real PTY with no re-bake and no extra port.
+   PoC-validated 2026-05-29 (default user `vercel-sandbox` → `--sudo` + `sudo -u
+   vscode`; live streaming; env-token auth; tmux-as-vscode) and live e2e (detached
+   pre-start creates a reattachable `agent` session). Interactive typing/resize/
+   detach is the remaining manual TTY check.
 9. [x] **Published-CLI asset staging.** Done — `stage-runtime.mjs` now stages a
    `runtime/vercel/` tree (attach-helper.js + provision.sh + ctl/shims + baked
    config) mirroring the candidates `runtime-assets.ts` already resolved, and

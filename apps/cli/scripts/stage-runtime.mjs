@@ -14,7 +14,7 @@
 // needs zero changes. runtime/ sits next to dist/ in both the dev tree and the
 // published package, so the resolvers anchor on it uniformly.
 
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -118,13 +118,12 @@ for (const [srcRel, destRel, exec] of daytonaFiles) {
 
 // Vercel provider — assets uploaded into a fresh sandbox during `prepareVercel`
 // (resolved by packages/sandbox-vercel/src/runtime-assets.ts under
-// runtime/vercel/<...>), plus the attach-helper bundle that buildVercelAttach
-// spawns (runtime/vercel/attach-helper.js). The vercel package is bundled into
-// dist/index.js, so unlike the monorepo its dist/ isn't shipped — stage these
-// explicitly. provision.sh lands at runtime/vercel/scripts/provision.sh because
-// findStagedCliRuntimeRoot() anchors on that path.
+// runtime/vercel/<...>). The vercel package is bundled into dist/index.js, so
+// unlike the monorepo its dist/ isn't shipped — stage these explicitly.
+// provision.sh lands at runtime/vercel/scripts/provision.sh because
+// findStagedCliRuntimeRoot() anchors on that path. (Interactive attach uses the
+// external `sbx` CLI now, so there's no attach-helper bundle to stage.)
 const vercelFiles = [
-  ['packages/sandbox-vercel/dist/attach-helper.js', 'attach-helper.js', false],
   ['packages/sandbox-vercel/scripts/provision.sh', 'scripts/provision.sh', true],
   ['packages/ctl/dist/bin.cjs', 'ctl.cjs', true],
   ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
@@ -139,30 +138,6 @@ const vercelFiles = [
 ];
 for (const [srcRel, destRel, exec] of vercelFiles) {
   copy(srcRel, join(vercelCtx, destRel), exec);
-}
-
-// attach-helper.js is a tsup entry that imports a shared `./chunk-<hash>.js`
-// (Sandbox + resolveCredentials). The chunk's name is a content hash that
-// changes every build, so it can't be listed statically above — walk the
-// import graph from the staged attach-helper.js and stage every chunk it
-// (transitively) pulls in, next to it. Without this, `agentbox shell` on a
-// vercel box dies with ERR_MODULE_NOT_FOUND for the missing chunk.
-const chunkImportRe = /from\s*["'](\.\/chunk-[A-Za-z0-9_-]+\.js)["']/g;
-const stagedChunks = new Set();
-const chunkQueue = ['attach-helper.js'];
-while (chunkQueue.length > 0) {
-  const rel = chunkQueue.shift();
-  const abs = join(vercelCtx, rel);
-  if (!existsSync(abs)) continue;
-  const body = readFileSync(abs, 'utf8');
-  let m;
-  while ((m = chunkImportRe.exec(body)) !== null) {
-    const chunk = m[1].replace('./', '');
-    if (stagedChunks.has(chunk)) continue;
-    stagedChunks.add(chunk);
-    copy(join('packages/sandbox-vercel/dist', chunk), join(vercelCtx, chunk), false);
-    chunkQueue.push(chunk); // a chunk may import further chunks
-  }
 }
 
 if (missing > 0) {

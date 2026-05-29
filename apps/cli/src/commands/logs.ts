@@ -117,7 +117,10 @@ export const logsCommand = new Command('logs')
           });
       const [argv0, ...rest] = spec.argv;
       if (!argv0) throw new Error('provider.buildAttach returned an empty argv');
-      const child = spawn(argv0, rest, { stdio: ['ignore', 'inherit', 'inherit'] });
+      const child = spawn(argv0, rest, {
+        stdio: ['ignore', 'inherit', 'inherit'],
+        env: spec.env ? { ...process.env, ...spec.env } : process.env,
+      });
       const cleanup = async (): Promise<void> => {
         if (spec.cleanup) await spec.cleanup();
       };
