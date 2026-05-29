@@ -156,7 +156,15 @@ async function uploadOneEntry(args: UploadOneArgs): Promise<void> {
   parts.push(`rm -f ${remoteTar}`);
   const cmd = parts.join(' && ');
 
-  const res = await args.backend.exec(args.handle, cmd);
+  // Run as root: the command writes to arbitrary dest paths and chowns to the
+  // target uid (the parent-chain chown below assumes root-created dirs), so it
+  // needs root. It also keeps Vercel's exec on its single `bash -lc` path —
+  // the default (vscode) path wraps in `sudo -u vscode -H bash -lc '<cmd>'`,
+  // and that extra nesting mangles this command's `$(...)`/`$var`/`while`
+  // (parent expands empty → `dirname "."` loops forever → the exec hangs).
+  // Hetzner/Daytona ignore `user` (they run as their default user already), so
+  // this only changes the Vercel path.
+  const res = await args.backend.exec(args.handle, cmd, { user: 'root' });
   if (res.exitCode !== 0) {
     throw new Error(
       `in-box extract failed (exit ${String(res.exitCode)}): ${(res.stderr || res.stdout).slice(-300)}`,
