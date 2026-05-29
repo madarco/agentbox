@@ -53,6 +53,7 @@
   "dependencies": {
     "@clack/prompts": "^0.9.0",
     "@daytonaio/sdk": "^0.179.0",
+    "@vercel/sandbox": "^2.0.1",
     "@xterm/headless": "^5.5.0",
     "commander": "^12.1.0",
     "execa": "^9.5.2",
@@ -72,6 +73,7 @@
     "@agentbox/sandbox-daytona": "workspace:*",
     "@agentbox/sandbox-docker": "workspace:*",
     "@agentbox/sandbox-hetzner": "workspace:*",
+    "@agentbox/sandbox-vercel": "workspace:*",
     "@types/node": "^22.10.1",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",

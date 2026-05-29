@@ -69,16 +69,27 @@ export function buildCloudAttachInnerCommand(binary: string, extraArgs?: string[
   // its own argv element — quotes/spaces inside an arg are preserved exactly
   // because base64 is opaque to every outer shell quoting pass.
   const blob = Buffer.from(extraArgs.join('\n'), 'utf8').toString('base64');
+  // The decode feeds `mapfile` via a **here-string**, NOT process substitution
+  // (`< <(…)`). Process substitution needs `/dev/fd/N`, and the Vercel Sandbox
+  // (Firecracker microVM, AL2023) has no `/dev/fd` — so `mapfile -t A < <(…)`
+  // fails with `/dev/fd/63: No such file or directory`, A stays empty, and the
+  // agent launches with no args (the wizard's initial setup prompt is silently
+  // dropped). A here-string is backed by a temp file, needs no `/dev/fd`, and
+  // works on every backend (docker/daytona/hetzner unaffected). `$(…)` strips
+  // the trailing newline `<<<` re-adds, so mapfile -t yields one element per
+  // arg exactly as the join produced them.
+  //
   // **bash -lc body MUST be single-quoted, not double-quoted.** When tmux
   // launches the session command, it goes through `/bin/sh -c <cmd>`. If we
   // double-quote, sh's parser sees `"${A[@]}"` and expands it eagerly —
   // before mapfile ever runs — to the empty string, so claude is invoked as
   // `claude ""` and the wizard's initial prompt is silently dropped. Single
-  // quotes are inert in sh's parser: the literal `${A[@]}` reaches bash,
-  // which expands it AFTER mapfile populates A. The outer shellSingle wrap
-  // in renderInnerCommand re-escapes any internal `'` as `'\''`, so this
+  // quotes are inert in sh's parser: the literal `${A[@]}` (and `$(…)`) reach
+  // bash, which runs them AFTER the outer sh layer. The outer shellSingle wrap
+  // in renderInnerCommand re-escapes any internal `'` as `'\''`; this body has
+  // no single quotes (it uses double quotes around the here-string), so it
   // composes fine.
-  return `bash -lc 'mapfile -t A < <(echo ${blob} | base64 -d); exec ${binary} "\${A[@]}"'`;
+  return `bash -lc 'mapfile -t A <<< "$(echo ${blob} | base64 -d)"; exec ${binary} "\${A[@]}"'`;
 }
 
 export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void> {
@@ -107,7 +118,7 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
       detached: true,
     });
     try {
-      await runDetached(pre.argv);
+      await runDetached(pre.argv, pre.env);
     } finally {
       if (pre.cleanup) await pre.cleanup();
     }
@@ -126,6 +137,7 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
       container: args.box.name,
       command: spec.argv[0],
       dockerArgv: spec.argv.slice(1),
+      env: spec.env,
       relayBaseUrl: RELAY_HOST_URL,
       boxId: args.box.id,
       boxName: args.box.name,
@@ -150,9 +162,12 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
  * Resolves on exit regardless of code (a non-zero here shouldn't block the
  * subsequent attach, which surfaces any real failure to the user).
  */
-function runDetached(argv: string[]): Promise<void> {
+function runDetached(argv: string[], env?: Record<string, string>): Promise<void> {
   return new Promise((resolve) => {
-    const child = spawn(argv[0]!, argv.slice(1), { stdio: 'ignore' });
+    const child = spawn(argv[0]!, argv.slice(1), {
+      stdio: 'ignore',
+      env: env ? { ...process.env, ...env } : process.env,
+    });
     child.on('error', () => resolve());
     child.on('exit', () => resolve());
   });

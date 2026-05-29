@@ -34,13 +34,14 @@ describe('hetzner prepared-state schema migration', () => {
         createdAt: '2026-01-01T00:00:00.000Z',
         installScriptSha256: 'deadbeefcafebabe',
       },
+      // A legacy `projects` key (the never-wired per-project tier) is ignored.
       projects: { foo: { imageId: 7, description: 'p-foo', createdAt: '2026-01-02T00:00:00.000Z' } },
     });
     const got = readPreparedState();
     expect(got.schema).toBe(2);
     expect(got.base?.imageId).toBe(42);
     expect(got.base?.contextSha256).toBe('deadbeefcafebabe');
-    expect(got.projects['foo']?.imageId).toBe(7);
+    expect((got as unknown as { projects?: unknown }).projects).toBeUndefined();
     // `installScriptSha256` is dropped; the new field carries the value.
     expect((got.base as unknown as { installScriptSha256?: string }).installScriptSha256).toBeUndefined();
   });
@@ -50,7 +51,6 @@ describe('hetzner prepared-state schema migration', () => {
     const got = readPreparedState();
     expect(got.schema).toBe(2);
     expect(got.base).toBeUndefined();
-    expect(got.projects).toEqual({});
   });
 
   it('round-trips schema-2 unchanged', async () => {
@@ -64,7 +64,6 @@ describe('hetzner prepared-state schema migration', () => {
         cliVersion: '0.7.0',
         cliCommit: 'abc1234',
       },
-      projects: {},
     };
     writePreparedState(before);
     const got = readPreparedState();
@@ -76,6 +75,5 @@ describe('hetzner prepared-state schema migration', () => {
     const got = readPreparedState();
     expect(got.schema).toBe(2);
     expect(got.base).toBeUndefined();
-    expect(got.projects).toEqual({});
   });
 });

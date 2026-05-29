@@ -31,6 +31,14 @@ describe('buildCloudAttachInnerCommand', () => {
     expect(decodeArgs(cmd)).toEqual(['--model', 'sonnet']);
   });
 
+  it('decodes via a here-string, not process substitution', () => {
+    // Process substitution (`< <(…)`) needs /dev/fd, which the Vercel Sandbox
+    // lacks — the launcher must use a here-string so the args survive there.
+    const cmd = buildCloudAttachInnerCommand('claude', ['--model', 'sonnet']);
+    expect(cmd).toContain('mapfile -t A <<< "$(');
+    expect(cmd).not.toContain('< <(');
+  });
+
   it('preserves args with spaces as a single element', () => {
     // `-p "hello world"` — the user wants `hello world` to reach claude as a
     // single argv element, not split into two by intermediate shells. Base64

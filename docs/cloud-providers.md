@@ -1,8 +1,8 @@
 # Cloud providers
 
-> _Status: v1 ships with Daytona + Hetzner. The provider abstraction is generic — adding another cloud is ~150 lines (see §6)._
+> _Status: v1 ships with Daytona + Hetzner + Vercel. The provider abstraction is generic — adding another cloud is ~150 lines (see §6)._
 
-AgentBox runs on three backends today, behind a single `Provider` interface
+AgentBox runs on four backends today, behind a single `Provider` interface
 (`packages/core/src/provider.ts`):
 
 | Provider | Where the box lives | When to use it |
@@ -10,11 +10,12 @@ AgentBox runs on three backends today, behind a single `Provider` interface
 | `docker` (default) | Local Docker container | Fast, free, owns the host. Good default. |
 | `daytona` | Daytona Cloud sandbox | When the workload outgrows the laptop, when teammates need to attach, when you want a snapshot-ready remote env. |
 | `hetzner` | Hetzner Cloud VPS (1:1 per box) | When you want bare-VPS control (root, full kernel, your own region), pure OpenSSH (no third-party agent in the box), and a Cloud Firewall locked to your egress IP. ~€4/mo per running box. |
+| `vercel` | Vercel Sandbox (Firecracker microVM) | When you want a fast snapshot-based remote env with public HTTPS preview URLs and persistent pause/resume. No nested containers (no in-box `docker`); region `iad1` only. See §3b. |
 
-Switch backends per box: `agentbox create --provider daytona` (or `--provider hetzner`),
-or pin project-wide via `box.provider: <name>` in `agentbox.yaml`. The rest of
-the CLI surface (`shell`, `claude`, `url`, `cp`, `checkpoint`, …) routes
-on `box.provider` and Just Works for all three.
+Switch backends per box: `agentbox create --provider daytona` (or `--provider
+hetzner` / `--provider vercel`), or pin project-wide via `box.provider: <name>`
+in `agentbox.yaml`. The rest of the CLI surface (`shell`, `claude`, `url`, `cp`,
+`checkpoint`, …) routes on `box.provider` and Just Works for all four.
 
 ## 1. The provider abstraction
 
@@ -392,6 +393,44 @@ hetzner-specific code (verified live in Phase-7 smoke).
 - `agentbox hetzner firewall show <box>` — prints current rules + the
   host's current egress IP, with a `WARN` line on drift.
 
+## 3b. The Vercel shape
+
+Vercel Sandbox is a Firecracker microVM on Amazon Linux 2023 with first-class
+snapshots and `sandbox.domain(port)` public preview URLs. Full build-out status
+and the live-verify checklist live in [`vercel-backlog.md`](./vercel-backlog.md);
+the shape in brief:
+
+- **Base via snapshot, not Dockerfile.** Vercel can't build an image, so
+  `agentbox prepare --provider vercel` boots a fresh `node24` sandbox, runs
+  `packages/sandbox-vercel/scripts/provision.sh` (dnf deps, `vscode` user,
+  agentbox-ctl + shims, Claude native installer, codex/opencode), then
+  `sandbox.snapshot({ expiration: 0 })`. The snapshot id is persisted to
+  `~/.agentbox/vercel-prepared.json` and every `create` boots from it.
+- **No nested containers.** Seccomp blocks the namespace syscalls a container
+  runtime needs (validated), so the provider passes `launchDockerd: false`;
+  in-box `docker` is unavailable. Everything else (node, python, git, tmux,
+  VNC, Claude Code) runs as plain processes.
+- **Persistent → pause/resume for free.** Sandboxes are created `persistent:
+  true` with `keepLastSnapshots: { count: 1, expiration: 0 }`. `pause`/`stop`
+  call `sb.stop()` (auto-snapshot + shut down); `resume`/`start` call
+  `Sandbox.get({ resume: true })`. `destroy` deletes the sandbox and purges its
+  current snapshot so storage doesn't linger.
+- **Preview URLs are public HTTPS.** `previewUrl`/`signedPreviewUrl` both return
+  `sandbox.domain(port)` — reachable from the host browser AND from inside the
+  box, so (like Daytona) the Portless in-box mirror is skipped. Max 4 exposed
+  ports; we declare 80 (WebProxy), 6080 (noVNC), 8788 (relay/ctl bridge).
+- **No SSH → custom attach.** `@vercel/sandbox` exposes no stdin/PTY channel, so
+  `buildAttach` is overridden to spawn `attach-helper.js`, which bridges the
+  local terminal to a box-side tmux session via `send-keys`/`capture-pane` over
+  the SDK. (A ttyd/WebSocket terminal is the planned latency upgrade — see the
+  backlog.)
+- **Checkpoints store the snapshot id.** Vercel snapshots are id-addressed, so
+  the provider overrides `checkpoint` to write the Vercel snapshot id into the
+  cloud-checkpoint manifest's `snapshotName` field; restore boots from it.
+  Caveat: `sb.snapshot()` stops the source box (it auto-resumes on next call).
+- **Hard platform limits:** region `iad1` only, 32 GB fixed disk, 2048 MB RAM
+  per vCPU, 45 min (Hobby) / 5 hr (Pro+) sessions.
+
 ## 4. Authentication
 
 `agentbox daytona login` is the supported path. It prompts for
@@ -405,6 +444,25 @@ prompts for `HCLOUD_TOKEN` (Read+Write API token from a Hetzner project's
 Security → API Tokens page), validates it via `GET /locations`, and
 persists it to the same `~/.agentbox/secrets.env`. First-time use of
 `--provider hetzner` triggers the login prompt automatically.
+
+`agentbox vercel login` is the Vercel equivalent. Two auth modes: an **access
+token** trio (`VERCEL_TOKEN` + `VERCEL_TEAM_ID` + `VERCEL_PROJECT_ID`) persisted
+to `~/.agentbox/secrets.env`, or the **OIDC** path (`vercel link && vercel env
+pull` mints a `VERCEL_OIDC_TOKEN`; export it in your shell or add it to
+`~/.agentbox/secrets.env`). Like daytona/hetzner, agentbox reads credentials
+**only** from the shell env or `~/.agentbox/secrets.env` — project-local `.env` /
+`.env.local` are never harvested. First-time use of `--provider vercel` triggers
+the prompt automatically.
+
+**Which to use:** OIDC is the quickest for short-lived interactive work, but the
+dev token expires on a ~12h cycle and `resolveCredentials` has **no headless
+auto-refresh** (a CLI-backed refresh needs an interactive `vercel` session). So
+for any long-running operation — most importantly `agentbox prepare --provider
+vercel`, whose base-snapshot bake can outlive a token — use the **access-token
+trio**: it doesn't expire on the 12h cycle and is the practical path for
+`prepare`, CI, and other headless/long jobs. Mint a token at
+`https://vercel.com/account/settings/tokens`; the team id is in the team's
+General settings and the project id in the project's General settings.
 
 ## 5. Known caveats
 

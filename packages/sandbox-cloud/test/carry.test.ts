@@ -175,4 +175,32 @@ describe('uploadCarryPaths', () => {
     expect(res.errors).toHaveLength(1);
     expect(res.errors[0]).toMatch(/tar pack failed/);
   });
+
+  it('runs the extract as root on Vercel (avoids the sudo -u vscode exec-nesting hang)', async () => {
+    const src = join(workspace, 'marker.txt');
+    await writeFile(src, 'hi');
+    const backend = makeMockCloudBackend({ name: 'vercel' });
+    const handle = await backend.provision({ name: 'b', image: 'i' });
+    await uploadCarryPaths({
+      backend,
+      handle,
+      entries: [entry({ absSrc: src, absDest: '~/.agentbox/marker.txt', kind: 'file', bytes: 2 })],
+    });
+    const execCall = backend.calls.find((c) => c.method === 'exec');
+    expect(execCall!.args[2]).toMatchObject({ user: 'root' });
+  });
+
+  it('leaves the exec user unset on non-Vercel backends', async () => {
+    const src = join(workspace, 'marker.txt');
+    await writeFile(src, 'hi');
+    const backend = makeMockCloudBackend({ name: 'hetzner' });
+    const handle = await backend.provision({ name: 'b', image: 'i' });
+    await uploadCarryPaths({
+      backend,
+      handle,
+      entries: [entry({ absSrc: src, absDest: '~/.agentbox/marker.txt', kind: 'file', bytes: 2 })],
+    });
+    const execCall = backend.calls.find((c) => c.method === 'exec');
+    expect(execCall!.args[2]).toBeUndefined();
+  });
 });

@@ -25,6 +25,22 @@ import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
+/** Cloud backends that store snapshots under ~/.agentbox/cloud-checkpoints/<backend>/. */
+const CLOUD_BACKENDS = ['daytona', 'hetzner', 'vercel'] as const;
+type CloudBackend = (typeof CLOUD_BACKENDS)[number];
+
+/** Lazily resolve a cloud provider's checkpoint capability (dynamic import keeps SDKs out of the hot path). */
+async function cloudProviderFor(backend: CloudBackend): Promise<import('@agentbox/core').Provider> {
+  switch (backend) {
+    case 'daytona':
+      return (await import('@agentbox/sandbox-daytona')).daytonaProvider;
+    case 'hetzner':
+      return (await import('@agentbox/sandbox-hetzner')).hetznerProvider;
+    case 'vercel':
+      return (await import('@agentbox/sandbox-vercel')).vercelProvider;
+  }
+}
+
 /** Footer warning shown in attached sessions while a checkpoint runs. */
 const CHECKPOINT_NOTICE = 'Checkpoint in progress — the box will be unresponsive for a moment';
 /**
@@ -147,13 +163,19 @@ const lsSub = new Command('ls')
       // Resolve per-provider so the `*default` marker tracks which one the
       // wizard would actually pick for that provider's row.
       const defDocker = resolveDefaultCheckpoint(cfg.effective, 'docker');
-      const defDaytona = resolveDefaultCheckpoint(cfg.effective, 'daytona');
       const dockerList = await listCheckpoints(projectRoot);
-      // Merge in cloud-backend checkpoints. v1: only Daytona is known. Future
-      // backends slot in here once they implement `createSnapshot`.
-      const daytonaList = await listCloudCheckpoints(projectRoot, 'daytona');
+      // Merge in cloud-backend checkpoints. Each cloud provider stores its
+      // snapshots under ~/.agentbox/cloud-checkpoints/<backend>/.
+      const cloudLists = await Promise.all(
+        CLOUD_BACKENDS.map(async (backend) => ({
+          backend,
+          def: resolveDefaultCheckpoint(cfg.effective, backend),
+          items: await listCloudCheckpoints(projectRoot, backend),
+        })),
+      );
 
-      if (dockerList.length === 0 && daytonaList.length === 0) {
+      const totalCloud = cloudLists.reduce((n, c) => n + c.items.length, 0);
+      if (dockerList.length === 0 && totalCloud === 0) {
         process.stdout.write(`no checkpoints for ${projectRoot}\n`);
         return;
       }
@@ -163,11 +185,13 @@ const lsSub = new Command('ls')
           `${c.name}  docker (${c.manifest.type})  from ${c.manifest.sourceBoxName}  ${c.manifest.createdAt}${flag}\n`,
         );
       }
-      for (const c of daytonaList) {
-        const flag = c.name === defDaytona ? ' *default' : '';
-        process.stdout.write(
-          `${c.name}  daytona (snapshot)  from ${c.manifest.sourceBoxName}  ${c.manifest.createdAt}${flag}\n`,
-        );
+      for (const { backend, def, items } of cloudLists) {
+        for (const c of items) {
+          const flag = c.name === def ? ' *default' : '';
+          process.stdout.write(
+            `${c.name}  ${backend} (snapshot)  from ${c.manifest.sourceBoxName}  ${c.manifest.createdAt}${flag}\n`,
+          );
+        }
       }
     } catch (err) {
       handleLifecycleError(err);
@@ -180,14 +204,17 @@ const setDefaultSub = new Command('set-default')
   .option('--clear', 'unset the project default instead of setting one')
   .option(
     '--provider <name>',
-    'set the default for only this provider (docker|daytona); without it, sets the cross-provider fallback',
+    'set the default for only this provider (docker|daytona|hetzner|vercel); without it, sets the cross-provider fallback',
   )
   .action(async (ref: string | undefined, opts: { clear?: boolean; provider?: string }) => {
     try {
       const projectRoot = (await findProjectRoot(process.cwd())).root;
       const providerArg = opts.provider as ProviderKind | undefined;
-      if (providerArg !== undefined && providerArg !== 'docker' && providerArg !== 'daytona') {
-        throw new Error(`unknown provider '${opts.provider ?? ''}' (known: docker, daytona)`);
+      const knownProviders: ProviderKind[] = ['docker', ...CLOUD_BACKENDS];
+      if (providerArg !== undefined && !knownProviders.includes(providerArg)) {
+        throw new Error(
+          `unknown provider '${opts.provider ?? ''}' (known: ${knownProviders.join(', ')})`,
+        );
       }
       const configKey = defaultCheckpointConfigKey(providerArg);
       const label = providerArg ? `${providerArg} default checkpoint` : 'project default checkpoint';
@@ -208,15 +235,19 @@ const setDefaultSub = new Command('set-default')
       }
       // Accept the name if it exists in the store(s) we'd resolve against.
       // For --provider, restrict to that provider's store; without --provider,
-      // accept if EITHER store has it (matches existing back-compat behavior).
-      const checkDocker = providerArg === undefined || providerArg === 'docker';
-      const checkDaytona = providerArg === undefined || providerArg === 'daytona';
-      const dockerList = checkDocker ? await listCheckpoints(projectRoot) : [];
-      const daytonaList = checkDaytona ? await listCloudCheckpoints(projectRoot, 'daytona') : [];
-      if (
-        !dockerList.some((c) => c.name === ref) &&
-        !daytonaList.some((c) => c.name === ref)
-      ) {
+      // accept if ANY store has it (matches existing back-compat behavior).
+      const dockerHit =
+        (providerArg === undefined || providerArg === 'docker') &&
+        (await listCheckpoints(projectRoot)).some((c) => c.name === ref);
+      let cloudHit = false;
+      for (const backend of CLOUD_BACKENDS) {
+        if (providerArg !== undefined && providerArg !== backend) continue;
+        if (await resolveCloudCheckpoint(projectRoot, backend, ref)) {
+          cloudHit = true;
+          break;
+        }
+      }
+      if (!dockerHit && !cloudHit) {
         throw new Error(`checkpoint not found: ${ref} (see \`agentbox checkpoint ls\`)`);
       }
       const r = await setConfigValue('project', configKey, ref, projectRoot);
@@ -234,11 +265,15 @@ const rmSub = new Command('rm')
   .action(async (ref: string, opts: { yes?: boolean; provider?: string }) => {
     try {
       const projectRoot = (await findProjectRoot(process.cwd())).root;
-      // Look up both stores so the confirm + removal can act on whichever has it.
-      const dockerInfo = !opts.provider || opts.provider === 'docker';
-      const daytonaInfo =
-        (!opts.provider || opts.provider === 'daytona') &&
-        (await resolveCloudCheckpoint(projectRoot, 'daytona', ref));
+      // Look up every store so the confirm + removal can act on whichever has
+      // it. Docker is always a candidate (removeCheckpoint no-ops if absent);
+      // cloud stores are pre-resolved so we only act on backends that have it.
+      const wantDocker = !opts.provider || opts.provider === 'docker';
+      const cloudHits: CloudBackend[] = [];
+      for (const backend of CLOUD_BACKENDS) {
+        if (opts.provider && opts.provider !== backend) continue;
+        if (await resolveCloudCheckpoint(projectRoot, backend, ref)) cloudHits.push(backend);
+      }
 
       if (!opts.yes) {
         const ok = await confirm({ message: `Delete checkpoint ${ref}?`, initialValue: false });
@@ -248,22 +283,22 @@ const rmSub = new Command('rm')
         }
       }
       let any = false;
-      if (dockerInfo) {
+      if (wantDocker) {
         const removed = await removeCheckpoint(projectRoot, ref);
         if (removed) {
           any = true;
           process.stdout.write(`removed docker checkpoint ${ref}\n`);
         }
       }
-      if (daytonaInfo) {
-        const { daytonaProvider } = await import('@agentbox/sandbox-daytona');
+      for (const backend of cloudHits) {
         try {
-          await daytonaProvider.checkpoint?.remove(projectRoot, ref);
+          const provider = await cloudProviderFor(backend);
+          await provider.checkpoint?.remove(projectRoot, ref);
           any = true;
-          process.stdout.write(`removed daytona checkpoint ${ref}\n`);
+          process.stdout.write(`removed ${backend} checkpoint ${ref}\n`);
         } catch (err) {
           log.warn(
-            `daytona checkpoint remove failed: ${err instanceof Error ? err.message : String(err)}`,
+            `${backend} checkpoint remove failed: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
       }
@@ -281,6 +316,7 @@ const rmSub = new Command('rm')
         ['box.defaultCheckpointDocker', projectBox?.defaultCheckpointDocker, cfg.effective.box.defaultCheckpointDocker],
         ['box.defaultCheckpointDaytona', projectBox?.defaultCheckpointDaytona, cfg.effective.box.defaultCheckpointDaytona],
         ['box.defaultCheckpointHetzner', projectBox?.defaultCheckpointHetzner, cfg.effective.box.defaultCheckpointHetzner],
+        ['box.defaultCheckpointVercel', projectBox?.defaultCheckpointVercel, cfg.effective.box.defaultCheckpointVercel],
       ] as const;
       for (const [key, projectValue, effectiveValue] of defKeys) {
         if (projectValue === ref) {

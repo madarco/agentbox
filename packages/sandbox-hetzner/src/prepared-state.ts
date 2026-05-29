@@ -3,17 +3,18 @@
  * Lives at `~/.agentbox/hetzner-prepared.json` so the auto-prepare gate
  * (`ensureHetznerBaseSnapshot()`) and runtime image resolution can see it.
  *
- * Two tiers are recorded (matching the daytona shape — see
- * `docs/cloud-create-flow.md` §"base vs project snapshot"):
- *   - `base` — built once per Hetzner project / API token. Ubuntu + deps +
- *     agentbox-ctl + agents + agent-browser, baked from `install-box.sh`.
- *   - `projects[<projectHash>]` — optional per-project snapshot built after
- *     the first successful `agentbox create` for that project; subsequent
- *     creates for the same project boot from it instead of re-seeding
- *     workspace / agent credentials over SSH.
+ * Only the shared `base` snapshot is recorded here — built once per Hetzner
+ * project / API token: Ubuntu + deps + agentbox-ctl + agents + agent-browser,
+ * baked from `install-box.sh`.
  *
- * Schema versioned so future shape changes can migrate; we'll only ever
- * accept `schema: 1` for now.
+ * The per-project snapshot tier is NOT a separate registry: it's the existing
+ * `agentbox checkpoint create --set-default` + `box.defaultCheckpointHetzner`
+ * flow (see `docs/cloud-create-flow.md` §"base vs project snapshot"), and
+ * auto-capture at the end of setup is driven by the `/agentbox-setup` skill
+ * (`agentbox-ctl checkpoint --set-default`), cross-provider. So there's no
+ * `projects[<hash>]` map here.
+ *
+ * Schema versioned so future shape changes can migrate.
  */
 
 import { preparedStatePathFor, readPreparedStateRaw, writePreparedStateRaw } from '@agentbox/sandbox-core';
@@ -31,7 +32,9 @@ import { preparedStatePathFor, readPreparedStateRaw, writePreparedStateRaw } fro
  * to schema 2 by *renaming* `installScriptSha256` to `contextSha256`. The
  * hash doesn't change but the meaning narrows (install script only → full
  * asset list), so the next `agentbox prepare --provider hetzner` run will
- * recompute and overwrite.
+ * recompute and overwrite. A legacy `projects` key (an early, never-wired
+ * per-project tier) is simply ignored — removing the field doesn't break
+ * reads, so no schema bump is needed.
  */
 const SCHEMA = 2 as const;
 
@@ -53,20 +56,10 @@ export interface PreparedBaseSnapshot {
   cliCommit?: string;
 }
 
-export interface PreparedProjectSnapshot {
-  imageId: number;
-  description: string;
-  createdAt: string;
-  /** Bake source — what was in /workspace when we snapshotted. */
-  fromSandboxId?: string;
-}
-
 export interface PreparedHetznerState {
   schema: typeof SCHEMA;
   /** The shared base snapshot. Absent until first `agentbox prepare`. */
   base?: PreparedBaseSnapshot;
-  /** Per-project snapshots, keyed by the agentbox project hash. */
-  projects: Record<string, PreparedProjectSnapshot>;
 }
 
 interface LegacyV1Base {
@@ -79,7 +72,6 @@ interface LegacyV1Base {
 interface LegacyV1State {
   schema: 1;
   base?: LegacyV1Base;
-  projects?: Record<string, PreparedProjectSnapshot>;
 }
 
 export function preparedStatePath(): string {
@@ -88,7 +80,7 @@ export function preparedStatePath(): string {
 
 export function readPreparedState(): PreparedHetznerState {
   const raw = readPreparedStateRaw('hetzner');
-  if (raw === null || typeof raw !== 'object') return { schema: SCHEMA, projects: {} };
+  if (raw === null || typeof raw !== 'object') return { schema: SCHEMA };
   const parsed = raw as Partial<PreparedHetznerState> | LegacyV1State;
   if ((parsed as { schema?: unknown }).schema === 1) {
     const v1 = parsed as LegacyV1State;
@@ -97,12 +89,11 @@ export function readPreparedState(): PreparedHetznerState {
   if (parsed.schema !== SCHEMA) {
     // Unknown schema: don't crash, just refuse to read — the file will be
     // overwritten on the next successful prepare.
-    return { schema: SCHEMA, projects: {} };
+    return { schema: SCHEMA };
   }
   return {
     schema: SCHEMA,
     base: parsed.base,
-    projects: parsed.projects ?? {},
   };
 }
 
@@ -123,7 +114,6 @@ function migrateFromV1(v1: LegacyV1State): PreparedHetznerState {
   return {
     schema: SCHEMA,
     base,
-    projects: v1.projects ?? {},
   };
 }
 

@@ -249,6 +249,7 @@ export const shellCommand = new Command('shell')
             container: box.name,
             command: spec.argv[0],
             dockerArgv: spec.argv.slice(1),
+            env: spec.env,
             relayBaseUrl: RELAY_HOST_URL,
             boxId: box.id,
             boxName: box.name,

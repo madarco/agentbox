@@ -32,6 +32,26 @@ export interface CloudProvisionRequest {
    */
   snapshot?: string;
   resources?: { cpu?: number; memory?: number; disk?: number };
+  /**
+   * Max session length in ms before the backend auto-snapshots/stops the
+   * sandbox. Backends that don't model a session timeout ignore it; Vercel
+   * maps it to `Sandbox.create({ timeout })`.
+   */
+  timeoutMs?: number;
+  /**
+   * Extra in-box service ports (from `agentbox.yaml` `expose`) the caller wants
+   * reachable via `previewUrl`. Backends with a fixed port allowance (Vercel:
+   * max 4, no privileged ports) merge these into the create-time port list up
+   * to their cap; backends that route all ports through one proxy ignore it.
+   */
+  exposePorts?: number[];
+  /**
+   * Backend-interpreted egress policy string. Vercel maps it to a
+   * `Sandbox.create({ networkPolicy })`: `allow-all` / `deny-all` / a
+   * comma-separated domain allowlist. Backends without a native egress
+   * primitive ignore it (hetzner locks egress via its own firewall instead).
+   */
+  networkPolicy?: string;
   /** Env vars baked into the sandbox at provision time. */
   env?: Record<string, string>;
   /** Persistent volumes to attach. Backends without a volume API ignore this. */

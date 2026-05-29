@@ -8,9 +8,9 @@
 import type { EffectiveConfig } from '@agentbox/config';
 import type { BoxRecord, Provider, ProviderName } from '@agentbox/core';
 
-export type KnownProviderName = 'docker' | 'daytona' | 'hetzner';
+export type KnownProviderName = 'docker' | 'daytona' | 'hetzner' | 'vercel';
 
-const KNOWN: readonly KnownProviderName[] = ['docker', 'daytona', 'hetzner'];
+const KNOWN: readonly KnownProviderName[] = ['docker', 'daytona', 'hetzner', 'vercel'];
 
 export function isKnownProvider(name: string): name is KnownProviderName {
   return (KNOWN as readonly string[]).includes(name);
@@ -44,6 +44,15 @@ export async function getProvider(name: ProviderName): Promise<Provider> {
       const mod = await import('@agentbox/sandbox-hetzner');
       await mod.ensureHetznerCredentials();
       return mod.hetznerProvider;
+    }
+    case 'vercel': {
+      // Same lazy-import pattern. `ensureVercelCredentials` walks the user
+      // through `agentbox vercel login` (OIDC or token trio) on first use. The
+      // base-snapshot gate lives inside `backend.provision` (so `prepare` can
+      // build it without tripping the gate), matching the hetzner shape.
+      const mod = await import('@agentbox/sandbox-vercel');
+      await mod.ensureVercelCredentials();
+      return mod.vercelProvider;
     }
     default:
       throw new Error(`unknown sandbox provider: ${String(name)}`);

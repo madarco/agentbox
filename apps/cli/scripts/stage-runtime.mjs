@@ -25,6 +25,7 @@ const runtime = join(cliRoot, 'runtime');
 const dockerCtx = join(runtime, 'docker');
 const hetznerCtx = join(runtime, 'hetzner');
 const daytonaCtx = join(runtime, 'daytona');
+const vercelCtx = join(runtime, 'vercel');
 
 // Copies that land directly under runtime/ (not part of the docker context).
 const direct = [
@@ -115,6 +116,30 @@ for (const [srcRel, destRel, exec] of daytonaFiles) {
   copy(srcRel, join(daytonaCtx, destRel), exec);
 }
 
+// Vercel provider — assets uploaded into a fresh sandbox during `prepareVercel`
+// (resolved by packages/sandbox-vercel/src/runtime-assets.ts under
+// runtime/vercel/<...>). The vercel package is bundled into dist/index.js, so
+// unlike the monorepo its dist/ isn't shipped — stage these explicitly.
+// provision.sh lands at runtime/vercel/scripts/provision.sh because
+// findStagedCliRuntimeRoot() anchors on that path. (Interactive attach uses the
+// external `sbx` CLI now, so there's no attach-helper bundle to stage.)
+const vercelFiles = [
+  ['packages/sandbox-vercel/scripts/provision.sh', 'scripts/provision.sh', true],
+  ['packages/ctl/dist/bin.cjs', 'ctl.cjs', true],
+  ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
+  ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
+  ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
+  ['packages/sandbox-docker/scripts/gh-shim', 'gh-shim', true],
+  ['packages/sandbox-docker/scripts/git-shim', 'git-shim', true],
+  ['packages/sandbox-vercel/scripts/custom-system-CLAUDE.md', 'custom-system-CLAUDE.md', false],
+  ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
+  ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
+  ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
+];
+for (const [srcRel, destRel, exec] of vercelFiles) {
+  copy(srcRel, join(vercelCtx, destRel), exec);
+}
+
 if (missing > 0) {
   console.warn(
     `[stage-runtime] ${missing} asset(s) missing — fine in a partial dev rebuild, ` +
@@ -122,6 +147,6 @@ if (missing > 0) {
   );
 } else {
   console.log(
-    '[stage-runtime] staged runtime/ (relay bin + docker build context + hetzner install assets + daytona overlay)',
+    '[stage-runtime] staged runtime/ (relay bin + docker build context + hetzner install assets + daytona overlay + vercel assets)',
   );
 }

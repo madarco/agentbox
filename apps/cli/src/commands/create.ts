@@ -205,7 +205,7 @@ export const createCommand = new Command('create')
     const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
     const checkpointRef = resolveCheckpointRef(
       opts,
-      resolveDefaultCheckpoint(cfg.effective, providerName as 'docker' | 'daytona' | 'hetzner'),
+      resolveDefaultCheckpoint(cfg.effective, providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel'),
     );
 
     // Cloud providers that use the Daytona public-URL path don't need
@@ -354,6 +354,15 @@ export const createCommand = new Command('create')
           sharedCache: cfg.effective.box.dockerCacheShared,
           portless: portlessEnabled,
           portlessStateDir: cfg.effective.portless.stateDir || undefined,
+          // Vercel-only sizing (box.vercelVcpus / vercelTimeoutMs). The cloud
+          // scaffold reads these as overrides; other providers ignore them.
+          ...(provider.name === 'vercel'
+            ? {
+                vcpus: cfg.effective.box.vercelVcpus,
+                timeoutMs: cfg.effective.box.vercelTimeoutMs,
+                networkPolicy: cfg.effective.box.vercelNetworkPolicy,
+              }
+            : {}),
         },
       });
       s.stop(`box ${result.record.container} ready`);

@@ -32,6 +32,9 @@ export interface WrappedAttachOptions {
    * pass `'ssh'` with the Daytona SSH argv instead.
    */
   command?: string;
+  /** Extra env merged over `process.env` for the spawned child (e.g. the
+   *  Vercel provider's `VERCEL_AUTH_TOKEN` for the `sbx` CLI). */
+  env?: Record<string, string>;
   /** Relay base URL — http://127.0.0.1:8787 in normal use. */
   relayBaseUrl: string;
   boxId: string;
@@ -153,7 +156,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   if (!process.stdout.isTTY || !process.stdin.isTTY) {
     // Non-interactive path: piping / scripts. Don't wrap — preserves
     // machine-readable stdout, no footer corruption.
-    return runFallback(command, opts.dockerArgv);
+    return runFallback(command, opts.dockerArgv, opts.env);
   }
   const backend = await loadPtyBackend();
   if (!backend) {
@@ -161,7 +164,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     process.stderr.write(
       'agentbox: permission prompts disabled (node-pty backend unavailable)\n',
     );
-    return runFallback(command, opts.dockerArgv);
+    return runFallback(command, opts.dockerArgv, opts.env);
   }
 
   const cols = process.stdout.columns ?? 80;
@@ -172,7 +175,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     name: 'xterm-256color',
     cols,
     rows: innerRows,
-    env: process.env,
+    env: opts.env ? { ...process.env, ...opts.env } : process.env,
   });
 
   // Mirror the agent's session title to the host terminal/tab title (iTerm2
@@ -575,7 +578,10 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
  * Fallback when node-pty is unavailable or stdio isn't a TTY. Identical to
  * today's call: blocking spawnSync with inherited stdio.
  */
-function runFallback(command: string, argv: string[]): number {
-  const child = spawnSync(command, argv, { stdio: 'inherit' });
+function runFallback(command: string, argv: string[], env?: Record<string, string>): number {
+  const child = spawnSync(command, argv, {
+    stdio: 'inherit',
+    env: env ? { ...process.env, ...env } : process.env,
+  });
   return child.status ?? 0;
 }

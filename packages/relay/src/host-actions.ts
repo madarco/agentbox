@@ -91,37 +91,47 @@ export interface CloudActionExecutorDeps {
  * "no host executor" message above.
  */
 export async function resolveCloudBackend(name: string): Promise<CloudBackend> {
+  // NB: the `'@agentbox/sandbox-' + '<name>'` specifiers are written as literal
+  // concatenations (not `+ name`) on purpose — esbuild constant-folds them so
+  // the bundler can statically resolve + inline each provider package
+  // (`noExternal: [/^@agentbox\//]`, see above). A runtime variable specifier
+  // would defeat that and MODULE_NOT_FOUND in the published CLI. Only the
+  // error-handling is shared (via `loadCloudBackend`).
   if (name === 'daytona') {
     const pkg = '@agentbox/sandbox-' + 'daytona';
-    try {
-      const mod = (await import(pkg)) as { daytonaBackend: CloudBackend };
-      return mod.daytonaBackend;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (/cannot find module|MODULE_NOT_FOUND/i.test(msg)) {
-        throw new Error(
-          `relay: cannot load '${pkg}' at runtime — install it alongside @agentbox/relay (the @madarco/agentbox CLI normally provides this dependency). Original: ${msg}`,
-        );
-      }
-      throw err;
-    }
+    return loadCloudBackend(pkg, async () => ((await import(pkg)) as { daytonaBackend: CloudBackend }).daytonaBackend);
   }
   if (name === 'hetzner') {
     const pkg = '@agentbox/sandbox-' + 'hetzner';
-    try {
-      const mod = (await import(pkg)) as { hetznerBackend: CloudBackend };
-      return mod.hetznerBackend;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (/cannot find module|MODULE_NOT_FOUND/i.test(msg)) {
-        throw new Error(
-          `relay: cannot load '${pkg}' at runtime — install it alongside @agentbox/relay (the @madarco/agentbox CLI normally provides this dependency). Original: ${msg}`,
-        );
-      }
-      throw err;
-    }
+    return loadCloudBackend(pkg, async () => ((await import(pkg)) as { hetznerBackend: CloudBackend }).hetznerBackend);
+  }
+  if (name === 'vercel') {
+    const pkg = '@agentbox/sandbox-' + 'vercel';
+    return loadCloudBackend(pkg, async () => ((await import(pkg)) as { vercelBackend: CloudBackend }).vercelBackend);
   }
   throw new Error(`no host executor for cloud backend '${name}'`);
+}
+
+/**
+ * Run a provider's dynamic import, turning a missing-module failure into the
+ * actionable "install it alongside @agentbox/relay" error (other errors
+ * propagate unchanged). Shared by every branch of `resolveCloudBackend`.
+ */
+async function loadCloudBackend(
+  pkg: string,
+  load: () => Promise<CloudBackend>,
+): Promise<CloudBackend> {
+  try {
+    return await load();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/cannot find module|MODULE_NOT_FOUND/i.test(msg)) {
+      throw new Error(
+        `relay: cannot load '${pkg}' at runtime — install it alongside @agentbox/relay (the @madarco/agentbox CLI normally provides this dependency). Original: ${msg}`,
+      );
+    }
+    throw err;
+  }
 }
 
 /**

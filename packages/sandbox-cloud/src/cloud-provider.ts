@@ -105,6 +105,13 @@ export interface CreateCloudProviderOptions {
    * Per-create cloud resource ceiling. Default: 2 cpu / 4 GiB / 8 GiB disk.
    */
   defaultResources?: { cpu?: number; memory?: number; disk?: number };
+  /**
+   * Whether to launch the in-box `dockerd` daemon on create/start. Default
+   * true (Daytona/Hetzner support nested containers). Vercel Sandbox blocks the
+   * namespace syscalls a container runtime needs, so its provider sets this
+   * false — otherwise every create/start logs a spurious dockerd failure.
+   */
+  launchDockerd?: boolean;
 }
 
 const FALLBACK_IMAGE = 'agentbox/box:dev';
@@ -268,7 +275,23 @@ export function createCloudProvider(
       const log = req.onLog ?? (() => {});
       const { id, name, branch } = mintBox(req);
       const image = opts.provisionImage ? await opts.provisionImage(req) : (req.image ?? FALLBACK_IMAGE);
-      const resources = opts.defaultResources ?? { cpu: 2, memory: 4, disk: 8 };
+      // Per-create overrides (currently vercel's box.vercelVcpus / vercelTimeoutMs,
+      // threaded through providerOptions). Fall back to the provider's static
+      // defaults so daytona/hetzner are unaffected.
+      const baseResources = opts.defaultResources ?? { cpu: 2, memory: 4, disk: 8 };
+      const vcpuOverride = req.providerOptions?.['vcpus'];
+      const resources =
+        typeof vcpuOverride === 'number' && vcpuOverride > 0
+          ? { ...baseResources, cpu: vcpuOverride }
+          : baseResources;
+      const timeoutOverride = req.providerOptions?.['timeoutMs'];
+      const timeoutMs =
+        typeof timeoutOverride === 'number' && timeoutOverride > 0 ? timeoutOverride : undefined;
+      const networkPolicyOpt = req.providerOptions?.['networkPolicy'];
+      const networkPolicy =
+        typeof networkPolicyOpt === 'string' && networkPolicyOpt.trim() !== ''
+          ? networkPolicyOpt.trim()
+          : undefined;
 
       // Per-box tokens: `relayToken` authenticates the in-box agent to its
       // in-sandbox relay (`/events`, `/rpc` bearer); `bridgeToken` separately
@@ -315,6 +338,12 @@ export function createCloudProvider(
       // "user logs in inside the box" the way cloud worked before.
       const agentVolumes = await ensureAgentVolumesForCloud(backend, { onLog: log });
 
+      // Read the `expose:` service ports up front so port-capped backends
+      // (vercel) can declare them at create time — a preview URL only routes to
+      // a port that was exposed when the sandbox was created. Reused below for
+      // the per-service preview-URL map. Best-effort: [] when there's no yaml.
+      const exposeServicePorts = await readExposedServicePorts(req.workspacePath);
+
       log(
         snapshotName
           ? `provisioning ${providerName} sandbox from snapshot`
@@ -325,6 +354,9 @@ export function createCloudProvider(
         image,
         snapshot: snapshotName,
         resources,
+        timeoutMs,
+        exposePorts: exposeServicePorts,
+        networkPolicy,
         env: {
           AGENTBOX_BOX_ID: id,
           AGENTBOX_BOX_NAME: name,
@@ -432,13 +464,16 @@ export function createCloudProvider(
         // /usr/local/bin/agentbox-dockerd-start; Daytona sandboxes ship with
         // CAP_SYS_ADMIN so it starts cleanly. Best-effort — a slow or failed
         // start shouldn't fail create; `agentbox start` re-launches it on
-        // resume because dockerd dies with the sandbox.
-        log('launching in-box dockerd');
-        try {
-          const dockerd = await launchCloudDockerdDaemon({ backend, handle, timeoutMs: 60_000 });
-          if (!dockerd.up) log(`dockerd did not become ready (continuing): ${dockerd.reason ?? 'unknown'}`);
-        } catch (err) {
-          log(`dockerd daemon launch failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+        // resume because dockerd dies with the sandbox. Skipped for backends
+        // that can't run nested containers (vercel), which set launchDockerd:false.
+        if (opts.launchDockerd !== false) {
+          log('launching in-box dockerd');
+          try {
+            const dockerd = await launchCloudDockerdDaemon({ backend, handle, timeoutMs: 60_000 });
+            if (!dockerd.up) log(`dockerd did not become ready (continuing): ${dockerd.reason ?? 'unknown'}`);
+          } catch (err) {
+            log(`dockerd daemon launch failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
 
         // Mint the per-box VNC password and start the in-sandbox VNC stack
@@ -520,7 +555,7 @@ export function createCloudProvider(
         // WebProxy URL — lets users hit services without going through the
         // WebProxy. Best-effort: a failed `previewUrl` for a given port
         // just omits it from the map.
-        const servicePorts = await readExposedServicePorts(req.workspacePath);
+        const servicePorts = exposeServicePorts;
         const servicePreviews: Record<number, string> = {};
         for (const port of servicePorts) {
           if (port === CLOUD_WEB_PROXY_PORT) continue;
@@ -543,6 +578,19 @@ export function createCloudProvider(
           relayPreview = undefined;
         }
 
+        // Allocate the per-project index BEFORE registering with the relay: the
+        // relay keys the status.json path on the projectIndex it's registered
+        // with (`<id>-<N>-<mnemonic>`), and the host reader (list / footer /
+        // readBoxStatus) derives the same path from the box record. Registering
+        // first (projectIndex undefined) made the relay write to the legacy
+        // no-index path while the record had `projectIndex: N` — so the reader
+        // looked at the `-N-` path, found nothing, and `agentbox list` showed
+        // no AGENT status for cloud boxes.
+        const state = await readState();
+        const projectIndex = req.projectRoot
+          ? allocateProjectIndex(state, req.projectRoot)
+          : undefined;
+
         // Tell the host relay about this cloud box so it spawns a poller.
         // Best-effort: a failed register doesn't break create (status / git
         // push just won't reach the host until a later register).
@@ -552,6 +600,7 @@ export function createCloudProvider(
               boxId: id,
               token: relayToken,
               name,
+              projectIndex,
               kind: 'cloud',
               backend: backend.name,
               previewUrl: relayPreview.url,
@@ -565,11 +614,6 @@ export function createCloudProvider(
             );
           }
         }
-
-        const state = await readState();
-        const projectIndex = req.projectRoot
-          ? allocateProjectIndex(state, req.projectRoot)
-          : undefined;
 
         const record: BoxRecord = {
           id,
@@ -754,14 +798,17 @@ export function createCloudProvider(
         bridgeToken: box.cloud?.bridgeToken,
       });
       // Re-launch in-box dockerd — also dies with the sandbox. Best-effort,
-      // mirrors the docker provider's lifecycle.ts:276 relaunch.
-      try {
-        const dockerd = await launchCloudDockerdDaemon({ backend, handle: h, timeoutMs: 60_000 });
-        if (!dockerd.up) {
-          // swallowed; surface only on follow-up `docker info`
+      // mirrors the docker provider's lifecycle.ts:276 relaunch. Skipped for
+      // backends that can't run nested containers (vercel).
+      if (opts.launchDockerd !== false) {
+        try {
+          const dockerd = await launchCloudDockerdDaemon({ backend, handle: h, timeoutMs: 60_000 });
+          if (!dockerd.up) {
+            // swallowed; surface only on follow-up `docker info`
+          }
+        } catch {
+          // best-effort
         }
-      } catch {
-        // best-effort
       }
       // Re-launch the VNC stack — Xvnc + websockify die with the sandbox.
       // Best-effort: a failure here shouldn't block start; `agentbox screen`
@@ -1091,7 +1138,7 @@ function makeCloudCheckpoint(backend: CloudBackend): ProviderCheckpoint {
  * see /workspace as their cwd (otherwise tmux inherits the SSH login
  * shell's $HOME and the agents prompt for workspace-trust).
  */
-function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions): string {
+export function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions): string {
   const sessionName = opts?.sessionName ?? defaultSessionName(kind);
   const fallback = opts?.command ?? defaultCommand(kind, opts);
   if (kind === 'logs') {

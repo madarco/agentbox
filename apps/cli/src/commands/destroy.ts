@@ -13,7 +13,7 @@ interface DestroyOptions {
 
 export const destroyCommand = new Command('destroy')
   .alias('rm')
-  .description("Destroy a box and discard its container writable layer (where /workspace lived)")
+  .description('Destroy a box and discard its container writable layer (where /workspace lived)')
   .argument(
     '[box]',
     'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
@@ -25,14 +25,15 @@ export const destroyCommand = new Command('destroy')
       const box = await resolveBoxOrExit(idOrName);
 
       if (!opts.yes) {
-        log.warn(
-          'This will wipe the container writable layer — /workspace contents and agent work-in-progress are lost.',
-        );
-        log.info(`id:        ${box.id}`);
-        log.info(`container: ${box.container}`);
+        log.warn('Will also wipe the box volume and agent work-in-progress');
+        const rootBranch = box.gitWorktrees?.find((w) => w.kind === 'root')?.branch;
+        const lines = [box.name];
+        if (rootBranch) lines.push(`branch:    ${rootBranch}`);
+        lines.push(`project: ${box.workspacePath}`);
         if (box.snapshotDir) {
-          log.info(`snapshot:  ${box.snapshotDir}${opts.keepSnapshot ? ' (will be kept)' : ''}`);
+          lines.push(`snapshot:  ${box.snapshotDir}${opts.keepSnapshot ? ' (will be kept)' : ''}`);
         }
+        log.info(lines.join('\n'));
         const ok = await confirm({
           message: 'Destroy this box?',
           initialValue: false,

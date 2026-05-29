@@ -14,6 +14,8 @@
         "defaultCheckpoint": { "type": "string", "minLength": 1 },
         "defaultCheckpointDocker": { "type": "string", "minLength": 1 },
         "defaultCheckpointDaytona": { "type": "string", "minLength": 1 },
+        "defaultCheckpointHetzner": { "type": "string", "minLength": 1 },
+        "defaultCheckpointVercel": { "type": "string", "minLength": 1 },
         "withPlaywright": { "type": "boolean" },
         "withEnv": { "type": "boolean" },
         "vnc": { "type": "boolean" },
@@ -26,7 +28,10 @@
         "cpus": { "type": "integer", "minimum": 0 },
         "pidsLimit": { "type": "integer", "minimum": 0 },
         "disk": { "type": "string" },
-        "bundleDepth": { "type": "integer", "minimum": 0 }
+        "bundleDepth": { "type": "integer", "minimum": 0 },
+        "vercelVcpus": { "type": "integer", "minimum": 1 },
+        "vercelTimeoutMs": { "type": "integer", "minimum": 1 },
+        "vercelNetworkPolicy": { "type": "string" }
       }
     },
     "checkpoint": {

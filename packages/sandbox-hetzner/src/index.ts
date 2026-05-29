@@ -69,7 +69,6 @@ export {
   updatePreparedState,
   type PreparedBaseSnapshot,
   type PreparedHetznerState,
-  type PreparedProjectSnapshot,
 } from './prepared-state.js';
 export {
   makeHetznerClient,

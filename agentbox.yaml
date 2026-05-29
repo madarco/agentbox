@@ -56,9 +56,37 @@
 # provision daytona / hetzner boxes when dogfooding cloud paths. The
 # provider env-loaders read this exact path. `optional` so docker-only
 # users without the file still get a working box.
+#
+# Vercel CLI-login store: in CLI-login mode (`agentbox vercel login` →
+# "Sign in with Vercel"), the OAuth access token is NOT in secrets.env —
+# secrets.env only carries the `VERCEL_AUTH_SOURCE=cli` marker + team/project,
+# and the live token is read from the Vercel CLI's own store. Carry that store
+# too, or the in-box agentbox can't use `--provider vercel`. Two src candidates
+# cover a macOS host (`~/Library/Application Support/...`) and a Linux host
+# (`~/.local/share/...`); both write the box's Linux path and the absent one is
+# skipped (optional). The box has no `sbx`, so it reads the token but never
+# refreshes it (a refresh there would rotate the host's token) — the token is
+# short-lived (~8h); re-create the box after a host re-login once it expires.
+# Harmless on the PAT/OIDC modes (these files simply won't exist).
 carry:
   - src: ~/.agentbox/secrets.env
     dest: ~/.agentbox/secrets.env
+    mode: 0o600
+    optional: true
+  - src: ~/Library/Application Support/com.vercel.cli/auth.json
+    dest: ~/.local/share/com.vercel.cli/auth.json
+    mode: 0o600
+    optional: true
+  - src: ~/Library/Application Support/com.vercel.cli/config.json
+    dest: ~/.local/share/com.vercel.cli/config.json
+    mode: 0o600
+    optional: true
+  - src: ~/.local/share/com.vercel.cli/auth.json
+    dest: ~/.local/share/com.vercel.cli/auth.json
+    mode: 0o600
+    optional: true
+  - src: ~/.local/share/com.vercel.cli/config.json
+    dest: ~/.local/share/com.vercel.cli/config.json
     mode: 0o600
     optional: true
   - src: ~/.agentbox/claude-credentials.json

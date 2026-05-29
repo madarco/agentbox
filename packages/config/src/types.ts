@@ -12,7 +12,7 @@ export type IdeFlavor = 'vscode' | 'cursor' | 'auto';
 export type EngineKind = 'orbstack' | 'docker-desktop' | 'other' | 'auto';
 export type BrowserKind = 'agent-browser' | 'playwright' | 'both';
 /** Sandbox backend new boxes are created on. */
-export type ProviderKind = 'docker' | 'daytona' | 'hetzner';
+export type ProviderKind = 'docker' | 'daytona' | 'hetzner' | 'vercel';
 /** Where `agentbox claude|codex|opencode` opens the attached session when the host
  *  shell is running inside tmux or iTerm2. `same` keeps today's inline behavior. */
 export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
@@ -34,6 +34,7 @@ export interface UserConfig {
     defaultCheckpointDocker?: string;
     defaultCheckpointDaytona?: string;
     defaultCheckpointHetzner?: string;
+    defaultCheckpointVercel?: string;
     withPlaywright?: boolean;
     withEnv?: boolean;
     vnc?: boolean;
@@ -47,6 +48,9 @@ export interface UserConfig {
     pidsLimit?: number;
     disk?: string;
     bundleDepth?: number;
+    vercelVcpus?: number;
+    vercelTimeoutMs?: number;
+    vercelNetworkPolicy?: string;
   };
   checkpoint?: {
     maxLayers?: number;
@@ -126,6 +130,7 @@ export interface EffectiveConfig {
     defaultCheckpointDocker: string;
     defaultCheckpointDaytona: string;
     defaultCheckpointHetzner: string;
+    defaultCheckpointVercel: string;
     withPlaywright: boolean;
     withEnv: boolean;
     vnc: boolean;
@@ -139,6 +144,9 @@ export interface EffectiveConfig {
     pidsLimit: number;
     disk: string;
     bundleDepth: number | undefined;
+    vercelVcpus: number;
+    vercelTimeoutMs: number;
+    vercelNetworkPolicy: string;
   };
   checkpoint: {
     maxLayers: number;
@@ -237,6 +245,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     defaultCheckpointDocker: '',
     defaultCheckpointDaytona: '',
     defaultCheckpointHetzner: '',
+    defaultCheckpointVercel: '',
     withPlaywright: false,
     withEnv: false,
     vnc: true,
@@ -250,6 +259,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     pidsLimit: 0,
     disk: '',
     bundleDepth: undefined,
+    vercelVcpus: 2,
+    vercelTimeoutMs: 2_700_000,
+    vercelNetworkPolicy: '',
   },
   checkpoint: {
     maxLayers: 3,
@@ -335,9 +347,9 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
   {
     key: 'box.provider',
     type: 'enum',
-    enumValues: ['docker', 'daytona', 'hetzner'] as const,
+    enumValues: ['docker', 'daytona', 'hetzner', 'vercel'] as const,
     description:
-      'Sandbox backend new boxes are created on: local Docker containers, Daytona Cloud sandboxes, or Hetzner Cloud VPSes.',
+      'Sandbox backend new boxes are created on: local Docker containers, Daytona Cloud sandboxes, Hetzner Cloud VPSes, or Vercel Sandboxes.',
   },
   {
     key: 'box.hostSnapshot',
@@ -370,6 +382,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'string',
     description:
       'Per-provider override of `box.defaultCheckpoint` for hetzner. Wins over the global when set; set via `agentbox checkpoint set-default --provider hetzner`.',
+    advanced: true,
+  },
+  {
+    key: 'box.defaultCheckpointVercel',
+    type: 'string',
+    description:
+      'Per-provider override of `box.defaultCheckpoint` for vercel. Wins over the global when set; set via `agentbox checkpoint set-default --provider vercel`.',
     advanced: true,
   },
   {
@@ -451,6 +470,24 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       'Cap git bundle history shipped to cloud sandboxes (daytona, hetzner). 0 = full history. Unset = adaptive default (last 200 commits; re-bundle at 100 if the bundle exceeds 20 MB). Ignored for docker (which bind-mounts .git/).',
+  },
+  {
+    key: 'box.vercelVcpus',
+    type: 'int',
+    description:
+      'vCPUs for new --provider vercel boxes (Vercel couples RAM at 2048 MB/vCPU). Default 2. Vercel only accepts specific counts (e.g. 1, 2, 4, 8) — an unsupported value fails create with a 400. Vercel-only; ignored by other providers.',
+  },
+  {
+    key: 'box.vercelTimeoutMs',
+    type: 'int',
+    description:
+      'Max session length (ms) for new --provider vercel boxes before the VM auto-snapshots; persistent mode auto-resumes on the next call. Default 2700000 (45 min, the Hobby ceiling). Vercel-only.',
+  },
+  {
+    key: 'box.vercelNetworkPolicy',
+    type: 'string',
+    description:
+      "Egress lock for new --provider vercel boxes: 'allow-all' (default, unset), 'deny-all', or a comma-separated domain allowlist (e.g. 'github.com,*.npmjs.org') that denies everything else. Vercel-only; ignored by other providers.",
   },
   {
     key: 'claude.sessionName',

@@ -32,7 +32,7 @@ describe('provider/registry', () => {
   });
 
   it('getProvider rejects unknown names', async () => {
-    await expect(getProvider('vercel' as 'docker')).rejects.toThrow(/unknown sandbox provider/);
+    await expect(getProvider('fly' as 'docker')).rejects.toThrow(/unknown sandbox provider/);
   });
 
   it('providerForBox defaults a missing provider tag to docker', async () => {
