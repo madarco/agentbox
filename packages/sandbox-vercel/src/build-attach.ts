@@ -57,7 +57,14 @@ export async function buildVercelAttach(
   // Interactive (real PTY) only for live shell/agent attaches. Detached
   // pre-start and logs stream non-interactively.
   const interactive = (kind === 'shell' || kind === 'agent') && !opts?.detached;
-  const inner = renderInnerCommand(kind, opts);
+
+  // `sbx exec` (unlike `ssh -t`) forwards neither TERM nor the locale, so the
+  // box session lands in TERM=unknown + an ASCII (POSIX) locale — tmux then
+  // collapses Claude Code's Unicode glyphs (logo, spinner, box-drawing) to `_`.
+  // Force a UTF-8 locale + a 256color TERM (matching the host PTY wrapper) so
+  // the tmux server + the agent it spawns render correctly.
+  const envPrelude = 'export LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=xterm-256color; ';
+  const inner = envPrelude + renderInnerCommand(kind, opts);
 
   const argv = [
     det.bin,

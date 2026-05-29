@@ -16,6 +16,9 @@ vi.mock('@agentbox/sandbox-cloud', () => ({
 const { buildVercelAttach } = await import('../src/build-attach.js');
 import type { BoxRecord } from '@agentbox/core';
 
+// The attach inner is prefixed with a UTF-8/TERM prelude (sbx forwards neither).
+const PRELUDE = 'export LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=xterm-256color; ';
+
 function boxWith(sandboxId: string | undefined): BoxRecord {
   return {
     id: 'id-1',
@@ -65,7 +68,7 @@ describe('buildVercelAttach', () => {
       '-H',
       'bash',
       '-lc',
-      'INNER(agent)',
+      `${PRELUDE}INNER(agent)`,
     ]);
     expect(spec.env).toEqual({ VERCEL_AUTH_TOKEN: 'vca_tok' });
   });
@@ -74,12 +77,12 @@ describe('buildVercelAttach', () => {
     const spec = await buildVercelAttach(boxWith('box-1'), 'agent', { command: 'x', detached: true });
     expect(spec.argv).not.toContain('-i');
     expect(spec.argv).toContain('--sudo');
-    expect(spec.argv[spec.argv.length - 1]).toBe('INNER(agent)');
+    expect(spec.argv[spec.argv.length - 1]).toBe(`${PRELUDE}INNER(agent)`);
   });
 
   it('omits -i for logs (non-interactive stream)', async () => {
     const spec = await buildVercelAttach(boxWith('box-1'), 'logs', { service: 'web' });
     expect(spec.argv).not.toContain('-i');
-    expect(spec.argv[spec.argv.length - 1]).toBe('INNER(logs)');
+    expect(spec.argv[spec.argv.length - 1]).toBe(`${PRELUDE}INNER(logs)`);
   });
 });
