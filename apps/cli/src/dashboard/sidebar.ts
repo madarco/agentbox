@@ -1,3 +1,5 @@
+import type { ClaudeQuestionPayload } from '@agentbox/ctl';
+
 export interface SidebarBox {
   id: string;
   name: string;
@@ -24,6 +26,10 @@ export interface SidebarBox {
    *  captured, freezing the box). Injected by the compositor; shown as
    *  `◆ checkpoint` in the activity cell. Outranked by `pendingPrompt`. */
   checkpointing?: boolean;
+  /** Last `AskUserQuestion` payload from the box's claude status; populated
+   *  only while `activity === 'question'`. The compositor renders it into the
+   *  alert band above the footer for the selected box. */
+  claudeQuestion?: ClaudeQuestionPayload;
 }
 
 /** Per-row ownership + styling map returned alongside the rendered lines so

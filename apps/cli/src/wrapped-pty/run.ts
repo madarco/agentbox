@@ -10,16 +10,20 @@ import {
   type LeaderAction,
 } from './input-router.js';
 import {
+  ALERT_BAND_ROWS,
   CURSOR_RESTORE,
   CURSOR_SAVE,
   cursorMoveTo,
+  renderAlertBand,
   renderFooter,
   SYNC_BEGIN,
   SYNC_END,
+  type AlertBandState,
   type FooterState,
 } from './footer.js';
 import { postAnswer, subscribePrompts, type PromptStream } from './prompt-client.js';
 import type { BoxNoticeEvent, PromptAskEvent } from '@agentbox/relay';
+import type { ClaudeQuestionPayload } from '@agentbox/ctl';
 
 export interface WrappedAttachOptions {
   /** Docker container name (only used for log lines). */
@@ -75,6 +79,10 @@ export interface WrappedAttachOptions {
 }
 
 const FOOTER_ROWS = 1;
+/** Min visible inner-PTY rows below which we collapse the band back into the
+ *  one-line footer (today's behavior). Keeps a tiny terminal usable instead of
+ *  driving the inner program to a 0-row pane. */
+const MIN_INNER_ROWS = 5;
 const STATUS_POLL_INTERVAL_MS = 3000;
 /** Spinner advance cadence while a `notice` footer is active. */
 const SPINNER_INTERVAL_MS = 120;
@@ -207,47 +215,63 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   let footerState: FooterState = buildIdle();
   let lastSessionTitle: string | undefined;
   let lastActivity: string | undefined;
-  // Prompt + notice + flash are tracked independently of `footerState`;
-  // `recomputeFooter` derives the visible state (prompt > notice > flash > idle).
+  // Prompt + notice + question feed the alert band above the footer; flash +
+  // leader stay in the footer. `recomputeFooter` keeps the footer at idle/flash;
+  // `recomputeBand` derives the band visibility from prompt > notice > question.
   let capturingPrompt: PromptAskEvent | null = null;
   let activeNotice: BoxNoticeEvent | null = null;
   let noticeFrame = 0;
+  let questionPayload: ClaudeQuestionPayload | null = null;
+  let bandState: AlertBandState | null = null;
+  let bandReservedRows = 0; // 0 or ALERT_BAND_ROWS depending on band visibility
   let spinnerTimer: ReturnType<typeof setInterval> | null = null;
   // Transient confirmation shown after a Ctrl+a action fires.
   let flashMessage: string | null = null;
   let flashTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /** Reserved rows above the inner pty: footer (always 1) + band (3 or 0). */
+  const reservedRows = (): number => FOOTER_ROWS + bandReservedRows;
+  /** Whether the current terminal has room for the band without collapsing
+   *  the inner pty below `MIN_INNER_ROWS`; gates the band on tiny terminals. */
+  const bandFits = (): boolean => {
+    const rs = process.stdout.rows ?? rows;
+    return rs - FOOTER_ROWS - ALERT_BAND_ROWS >= MIN_INNER_ROWS;
+  };
+
   // Lazy SGR mirror: when the inner pty's most recent attribute is bright
   // bold, our footer paint won't reset it correctly via the inner program's
-  // next byte. We always end the footer with SGR reset, but the inner
-  // program may be in the middle of a graphics run when the footer redraw
-  // happens — wrap the redraw in cursor save/restore + sync output so the
-  // inner program never sees our cursor moves and the user sees one atomic
-  // frame.
-  const redrawFooter = (): void => {
+  // next byte. We always end the chrome with SGR reset, but the inner program
+  // may be in the middle of a graphics run when the redraw happens — wrap the
+  // redraw in cursor save/restore + sync output so the inner program never
+  // sees our cursor moves and the user sees one atomic frame.
+  const redrawChrome = (): void => {
     const cs = process.stdout.columns ?? cols;
     const rs = process.stdout.rows ?? rows;
-    const line = renderFooter(footerState, cs);
-    // Position at the last row, then write. Save/restore around the lot so
-    // the inner pty's cursor doesn't move.
-    const payload =
-      SYNC_BEGIN +
-      CURSOR_SAVE +
-      cursorMoveTo(rs, 1) +
-      line +
-      CURSOR_RESTORE +
-      SYNC_END;
+    const footerLine = renderFooter(footerState, cs);
+    let payload = SYNC_BEGIN + CURSOR_SAVE;
+    if (bandReservedRows > 0 && bandState) {
+      const bandLines = renderAlertBand(bandState, cs, bandReservedRows);
+      for (let i = 0; i < bandLines.length; i++) {
+        const row = rs - FOOTER_ROWS - (bandLines.length - i);
+        payload += cursorMoveTo(row + 1, 1) + bandLines[i];
+      }
+    }
+    payload += cursorMoveTo(rs, 1) + footerLine + CURSOR_RESTORE + SYNC_END;
     process.stdout.write(payload);
   };
 
-  // Derive `footerState` from the current prompt / notice / flash / idle
-  // inputs. A pending prompt outranks a notice (it hard-blocks the box's
-  // RPC); a notice outranks a flash; a flash outranks idle. Called after any
-  // input changes.
+  // Derive `footerState` from flash > leader/idle. Prompt/notice/question are
+  // surfaced in the alert band above the footer (see `recomputeBand`); the
+  // footer keeps showing the calm status bar so the user always has context.
+  // **Min-size fallback**: when the band collapses on a tiny terminal
+  // (`bandReservedRows === 0` while `bandState != null`), prompt and notice
+  // fall back to the pre-band footer-replacement so they're not lost (the
+  // question state has no one-line footer renderer — sidebar marker only).
   const recomputeFooter = (): void => {
-    if (capturingPrompt) {
+    const collapsed = bandState !== null && bandReservedRows === 0;
+    if (collapsed && capturingPrompt) {
       footerState = { kind: 'prompt', prompt: capturingPrompt };
-    } else if (activeNotice) {
+    } else if (collapsed && activeNotice) {
       footerState = { kind: 'notice', message: activeNotice.message, frame: noticeFrame };
     } else if (flashMessage) {
       footerState = { kind: 'flash', message: flashMessage };
@@ -256,15 +280,71 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     }
   };
 
+  // Derive the band's content + visibility from prompt > notice > question.
+  // Priority chain: a relay prompt hard-blocks an in-box RPC (most urgent);
+  // a notice means the box is frozen for a snapshot (loud animated banner);
+  // a question is the agent waiting for the user. When nothing is active the
+  // band collapses entirely.
+  const recomputeBand = (): void => {
+    if (capturingPrompt) {
+      bandState = { kind: 'prompt', prompt: capturingPrompt };
+    } else if (activeNotice) {
+      bandState = { kind: 'notice', message: activeNotice.message, frame: noticeFrame };
+    } else if (questionPayload) {
+      bandState = { kind: 'question', question: questionPayload };
+    } else {
+      bandState = null;
+    }
+  };
+
+  /** Resize the inner pty + reapply the scroll region for the current reserved
+   *  rows, then clear any rows that just changed ownership (the freed region
+   *  when the band collapses; the band area itself when it appears). Called
+   *  after `recomputeBand` whenever the band visibility flips. */
+  const relayoutForBand = (): void => {
+    const cs = process.stdout.columns ?? cols;
+    const rs = process.stdout.rows ?? rows;
+    const inner = Math.max(1, rs - reservedRows());
+    pty.resize(cs, inner);
+    process.stdout.write(`\x1b[1;${String(inner)}r`);
+    // Clear the chrome area (band + footer rows) so stale agent output left
+    // over from the previous scroll region doesn't show through under the
+    // newly painted band/footer.
+    let clear = SYNC_BEGIN + CURSOR_SAVE;
+    for (let r = inner + 1; r <= rs; r++) clear += cursorMoveTo(r, 1) + '\x1b[2K';
+    clear += CURSOR_RESTORE + SYNC_END;
+    process.stdout.write(clear);
+  };
+
+  /** Re-derive the band state and, if visibility changed, resize + reflow.
+   *  Always finishes with a chrome redraw so the band/footer are repainted.
+   *  Also re-derives the footer so the min-size fallback (prompt/notice in
+   *  the footer when the band collapses) keeps in sync. */
+  const applyBandChange = (): void => {
+    recomputeBand();
+    const wantRows = bandState && bandFits() ? ALERT_BAND_ROWS : 0;
+    if (wantRows !== bandReservedRows) {
+      bandReservedRows = wantRows;
+      relayoutForBand();
+    }
+    recomputeFooter();
+    redrawChrome();
+  };
+
   const startSpinner = (): void => {
     if (spinnerTimer) return;
     spinnerTimer = setInterval(() => {
       noticeFrame++;
-      // Only repaint while the notice is the visible state — if a prompt is
-      // covering it the frame still advances so it resumes mid-animation.
-      if (footerState.kind === 'notice') {
-        recomputeFooter();
-        redrawFooter();
+      // Advance the spinner frame whenever a notice is the live band; if the
+      // notice was outranked by a prompt the frame still advances so it
+      // resumes mid-animation when the prompt clears.
+      if (bandState?.kind === 'notice') {
+        bandState = { kind: 'notice', message: bandState.message, frame: noticeFrame };
+        // When the band is collapsed on a tiny terminal the notice renders
+        // through `footerState` instead, so re-derive it to pick up the new
+        // frame — otherwise the footer-fallback spinner glyph freezes.
+        if (bandReservedRows === 0) recomputeFooter();
+        redrawChrome();
       }
     }, SPINNER_INTERVAL_MS);
     if (typeof spinnerTimer.unref === 'function') spinnerTimer.unref();
@@ -289,7 +369,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // Apple Terminal/Ghostty).
   pty.onData((d: string) => {
     process.stdout.write(d);
-    redrawFooter();
+    redrawChrome();
   });
 
   // Ctrl+a leader chord map — keys mirror the dashboard's (`c`/`s`/`u`).
@@ -329,11 +409,11 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       flashTimer = null;
       flashMessage = null;
       recomputeFooter();
-      redrawFooter();
+      redrawChrome();
     }, FLASH_DURATION_MS);
     if (typeof flashTimer.unref === 'function') flashTimer.unref();
     recomputeFooter();
-    redrawFooter();
+    redrawChrome();
   };
 
   // Ctrl+V image paste: hold a "Pasting image…" notice in the footer while the
@@ -348,7 +428,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     }
     flashMessage = 'Pasting image…';
     recomputeFooter();
-    redrawFooter();
+    redrawChrome();
     let result: 'pasted' | 'no-image' | 'error' = 'error';
     try {
       result = await opts.onPasteImage();
@@ -365,11 +445,11 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       flashTimer = null;
       flashMessage = null;
       recomputeFooter();
-      redrawFooter();
+      redrawChrome();
     }, FLASH_DURATION_MS);
     if (typeof flashTimer.unref === 'function') flashTimer.unref();
     recomputeFooter();
-    redrawFooter();
+    redrawChrome();
   };
 
   // Wire stdin -> pty (through the router so prompts + the leader can intercept).
@@ -383,14 +463,13 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       // block the input flow on the network roundtrip.
       void postAnswer({ relayBaseUrl: opts.relayBaseUrl, body });
       capturingPrompt = null;
-      recomputeFooter();
-      redrawFooter();
+      applyBandChange();
     },
     leaderChords,
     onLeaderChange: (open) => {
       leaderActive = open;
       recomputeFooter();
-      redrawFooter();
+      redrawChrome();
     },
     onAction: (name) => {
       runAction(name);
@@ -405,16 +484,24 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   };
   process.stdin.on('data', onStdinData);
 
-  // Resize: keep the pty one row shorter than the host terminal; the footer
-  // owns the last row directly. Re-apply the scroll region too — most
-  // terminals reset DECSTBM on resize.
+  // Resize: keep the pty `reservedRows` shorter than the host terminal; the
+  // footer owns the last row directly and the band (when active) owns the 3
+  // rows above it. Re-apply the scroll region too — most terminals reset
+  // DECSTBM on resize. The bandFits() check downgrades band → 0 if the new
+  // size is too small to host both.
   const onResize = (): void => {
     const cs = process.stdout.columns ?? cols;
     const rs = process.stdout.rows ?? rows;
-    const inner = Math.max(1, rs - FOOTER_ROWS);
+    // Re-evaluate band visibility against the new size first; a now-too-small
+    // terminal collapses the band, a now-big-enough one re-opens it. Refresh
+    // the footer so the collapsed-band fallback (prompt/notice in the footer)
+    // tracks the new reserve.
+    bandReservedRows = bandState && bandFits() ? ALERT_BAND_ROWS : 0;
+    const inner = Math.max(1, rs - reservedRows());
     pty.resize(cs, inner);
     process.stdout.write(`\x1b[1;${String(inner)}r`);
-    redrawFooter();
+    recomputeFooter();
+    redrawChrome();
   };
   process.stdout.on('resize', onResize);
 
@@ -424,10 +511,9 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     boxId: opts.boxId,
     onPrompt: (ev: PromptAskEvent) => {
       capturingPrompt = ev;
-      recomputeFooter();
-      redrawFooter();
+      applyBandChange();
       // capture() returns a Promise that resolves with the answer body; the
-      // input-router's onAnswer callback already POSTs and resets the footer.
+      // input-router's onAnswer callback already POSTs and resets the band.
       // We just need to await so unhandled rejections (router.abort) don't
       // crash the process.
       router.capture(ev).catch((e: unknown) => {
@@ -440,26 +526,23 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       });
     },
     onResolved: (id: string) => {
-      // Clear footer if it's still showing this id (sibling wrapper won).
+      // Clear band if it's still showing this id (sibling wrapper won).
       if (capturingPrompt && capturingPrompt.id === id) {
         capturingPrompt = null;
         router.abort('resolved-elsewhere');
-        recomputeFooter();
-        redrawFooter();
+        applyBandChange();
       }
     },
     onNotice: (ev: BoxNoticeEvent) => {
       activeNotice = ev;
       startSpinner();
-      recomputeFooter();
-      redrawFooter();
+      applyBandChange();
     },
     onNoticeCleared: (id: string) => {
       if (activeNotice && activeNotice.id === id) {
         activeNotice = null;
         stopSpinner();
-        recomputeFooter();
-        redrawFooter();
+        applyBandChange();
       }
     },
   });
@@ -495,12 +578,27 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
         lastEmittedTitle = desiredTitle;
         setTerminalTitle(desiredTitle);
       }
+      // Surface claude's AskUserQuestion payload to the band when the agent
+      // is in `question` state; clear it on any other state. Only meaningful
+      // for claude mode (codex/opencode have no question payload). The band's
+      // priority chain (`recomputeBand`) demotes question below prompt/notice,
+      // so it only shows when nothing more urgent is pending.
+      const nextQuestion =
+        opts.mode === 'claude' && status?.claude.state === 'question'
+          ? (status.claude.question ?? null)
+          : null;
+      const questionChanged =
+        (nextQuestion?.capturedAt ?? null) !== (questionPayload?.capturedAt ?? null);
+      if (questionChanged) {
+        questionPayload = nextQuestion;
+        applyBandChange();
+      }
       if (nextTitle === lastSessionTitle && nextActivity === lastActivity) return;
       lastSessionTitle = nextTitle;
       lastActivity = nextActivity;
       if (footerState.kind === 'idle') {
         recomputeFooter();
-        redrawFooter();
+        redrawChrome();
       }
     } catch (e) {
       // readBoxStatus already swallows the common cases (paused/stopped/pre-feature);
@@ -533,7 +631,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   }
 
   // Initial paint so the idle footer appears immediately.
-  redrawFooter();
+  redrawChrome();
 
   // Wait for the pty to exit, then tear down everything.
   const exitCode = await new Promise<number>((resolve) => {
@@ -556,13 +654,14 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   const csFinal = process.stdout.columns ?? cols;
   // Clear the scroll region first so the cursor moves below can reach row N
   // without the terminal trying to keep them inside the smaller region.
-  // Then move to the footer row, erase it, return the cursor.
-  process.stdout.write(
-    '\x1b[r' +
-      cursorMoveTo(rsFinal, 1) +
-      `\x1b[2K` +
-      cursorMoveTo(rsFinal, csFinal),
-  );
+  // Then erase every row owned by chrome (band + footer) so a stale band
+  // doesn't sit above the next shell prompt; return the cursor afterwards.
+  let teardownPaint = '\x1b[r';
+  for (let r = rsFinal - bandReservedRows; r <= rsFinal; r++) {
+    if (r >= 1) teardownPaint += cursorMoveTo(r, 1) + '\x1b[2K';
+  }
+  teardownPaint += cursorMoveTo(rsFinal, csFinal);
+  process.stdout.write(teardownPaint);
   // Restore the host terminal/tab title we saved at attach time.
   popTerminalTitle();
 

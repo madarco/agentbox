@@ -21,7 +21,7 @@ import {
   ADVANCED_HINT_GROUPS,
   type SidebarBox,
 } from './sidebar.js';
-import { renderFooter } from '../wrapped-pty/footer.js';
+import { ALERT_BAND_ROWS, renderAlertBand, renderFooter } from '../wrapped-pty/footer.js';
 import { popTerminalTitle, pushTerminalTitle, setTerminalTitle } from '../terminal/title.js';
 import { postAnswer, subscribePrompts, type PromptStream } from '../wrapped-pty/prompt-client.js';
 import type { BoxNoticeEvent, PromptAskEvent } from '@agentbox/relay';
@@ -196,7 +196,10 @@ export class Compositor {
     initialId: string,
   ) {
     this.selectedId = initialId;
-    this.layout = computeLayout(this.out.columns ?? 100, this.out.rows ?? 30);
+    // Initial layout: no alert active yet (maps empty, no question payload),
+    // so requestedAlertH is 0; relayout() kicks in once SSE subscriptions
+    // populate or the poll fetches a question state.
+    this.layout = computeLayout(this.out.columns ?? 100, this.out.rows ?? 30, 0);
     this.parser = new InputParser({
       onEvent: (e) => {
         if (e.type === 'leader') {
@@ -322,7 +325,7 @@ export class Compositor {
         let changed = this.activePrompts.delete(boxId);
         if (this.activeNotices.delete(boxId)) changed = true;
         if (this.activeNotices.size === 0) this.stopNoticeSpinner();
-        if (changed) this.drawChrome();
+        if (changed) this.redrawForAlert();
       }
     }
     // Open subscriptions for boxes we don't already track.
@@ -334,21 +337,21 @@ export class Compositor {
         onPrompt: (ev) => {
           if (this.tornDown) return;
           this.activePrompts.set(boxId, ev);
-          this.drawChrome();
+          this.redrawForAlert();
         },
         onResolved: (id) => {
           if (this.tornDown) return;
           const current = this.activePrompts.get(boxId);
           if (current && current.id === id) {
             this.activePrompts.delete(boxId);
-            this.drawChrome();
+            this.redrawForAlert();
           }
         },
         onNotice: (ev) => {
           if (this.tornDown) return;
           this.activeNotices.set(boxId, ev);
           this.startNoticeSpinner();
-          this.drawChrome();
+          this.redrawForAlert();
         },
         onNoticeCleared: (id) => {
           if (this.tornDown) return;
@@ -356,7 +359,7 @@ export class Compositor {
           if (current && current.id === id) {
             this.activeNotices.delete(boxId);
             if (this.activeNotices.size === 0) this.stopNoticeSpinner();
-            this.drawChrome();
+            this.redrawForAlert();
           }
         },
         onError: () => {
@@ -388,9 +391,12 @@ export class Compositor {
   }
 
   private async poll(): Promise<void> {
-    const before = JSON.stringify(
-      this.boxes.map((b) => [b.id, b.state, b.activity, b.sessionTitle]),
-    );
+    const stateKey = (): string =>
+      JSON.stringify(
+        this.boxes.map((b) => [b.id, b.state, b.activity, b.sessionTitle]),
+      );
+    const before = stateKey();
+    const beforeAlertH = this.alertHeight();
     await this.refreshBoxes();
     if (this.busy) {
       // A start/shell action is mid-flight — don't yank the right pane.
@@ -410,11 +416,11 @@ export class Compositor {
         (this.lifecycleMenu != null && box?.state !== this.lifecycleMenu.state);
       if (reresolve) await this.spawnActive();
     }
-    if (
-      JSON.stringify(
-        this.boxes.map((b) => [b.id, b.state, b.activity, b.sessionTitle]),
-      ) !== before
-    ) {
+    const stateChanged = stateKey() !== before;
+    const alertChanged = this.alertHeight() !== beforeAlertH;
+    if (alertChanged) {
+      this.relayout();
+    } else if (stateChanged) {
       this.drawChrome();
     }
   }
@@ -476,7 +482,10 @@ export class Compositor {
       this.placeholder = target.lines;
     }
     this.prevRows = null;
-    this.drawChrome();
+    // Selection just changed (spawnActive → applyTarget) — the new box may
+    // have a different alert state than the previous one (prompt/notice/
+    // question), so reflow if the band height needs to flip.
+    if (!this.syncAlertLayout()) this.drawChrome();
     this.scheduleRender();
   }
 
@@ -1009,8 +1018,46 @@ export class Compositor {
     // Blue (SB_HEADER) so the whole right border matches the rounded header.
     for (let y = 0; y < sidebar.h; y++)
       s += cursorTo(sepX, y) + SB_HEADER + (y === 0 ? '╮' : '│') + SGR_RESET;
-    let status: string;
+    // Alert band: 3-line surface above the footer for the selected box's
+    // active relay prompt, notice (checkpoint), or claude AskUserQuestion.
+    // Painted only when `layout.alertH > 0`, which already gates on min size.
+    // Priority matches the wrapped-pty band: prompt > notice > question.
     const activePromptForSelected = this.activePrompts.get(this.selectedId);
+    const activeNoticeForSelected = this.activeNotices.get(this.selectedId);
+    if (this.layout.alertH > 0) {
+      const bandRows = this.layout.alertH;
+      let bandLines: string[] | null = null;
+      if (activePromptForSelected) {
+        bandLines = renderAlertBand(
+          { kind: 'prompt', prompt: activePromptForSelected },
+          this.layout.cols,
+          bandRows,
+        );
+      } else if (activeNoticeForSelected) {
+        bandLines = renderAlertBand(
+          { kind: 'notice', message: activeNoticeForSelected.message, frame: this.noticeFrame },
+          this.layout.cols,
+          bandRows,
+        );
+      } else {
+        const q = this.selectedBox()?.claudeQuestion;
+        if (q) {
+          bandLines = renderAlertBand({ kind: 'question', question: q }, this.layout.cols, bandRows);
+        }
+      }
+      if (bandLines) {
+        for (let i = 0; i < bandLines.length; i++) {
+          s += cursorTo(0, this.layout.alertY + i) + bandLines[i] + SGR_RESET;
+        }
+      }
+    }
+
+    // Footer (statusY row): stays at idle / pendingConfirm / flashMsg even when
+    // the band is showing prompt/notice/question above — keeps the calm status
+    // bar in place. Min-size fallback: when alertH was dropped to 0 by the
+    // layout but the selected box has an alert, surface the legacy
+    // prompt/notice replacement so a tiny terminal still shows the alert.
+    let status: string;
     if (this.pendingConfirm) {
       const w = this.layout.cols;
       const txt = ` Destroy ${this.pendingConfirm.name}?  y = confirm  ·  any other key = cancel `
@@ -1021,22 +1068,14 @@ export class Compositor {
       const w = this.layout.cols;
       const txt = ` ${this.flashMsg} `.slice(0, w).padEnd(w);
       status = `\x1b[7m${txt}\x1b[0m`;
-    } else if (activePromptForSelected) {
-      // Selected box has a pending relay prompt — reuse the wrapped-pty's
-      // `[!] <message>  <detail>  [y/N]` renderer so the two surfaces look
-      // identical. y/Y/Enter/n/N/Esc/Ctrl-c are intercepted in onEvent's
-      // forward branch above.
+    } else if (this.layout.alertH === 0 && activePromptForSelected) {
       status = renderFooter(
         { kind: 'prompt', prompt: activePromptForSelected },
         this.layout.cols,
       );
-    } else if (this.activeNotices.has(this.selectedId)) {
-      // Selected box is busy with a relay notice (e.g. checkpoint) — reuse
-      // the wrapped-pty's animated notice renderer. Informational, so it
-      // sits below a pending prompt in the priority chain.
-      const notice = this.activeNotices.get(this.selectedId)!;
+    } else if (this.layout.alertH === 0 && activeNoticeForSelected) {
       status = renderFooter(
-        { kind: 'notice', message: notice.message, frame: this.noticeFrame },
+        { kind: 'notice', message: activeNoticeForSelected.message, frame: this.noticeFrame },
         this.layout.cols,
       );
     } else {
@@ -1065,16 +1104,65 @@ export class Compositor {
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     this.resizeTimer = setTimeout(() => {
       this.resizeTimer = null;
-      this.layout = computeLayout(this.out.columns ?? 100, this.out.rows ?? 30);
-      this.prevRows = null;
-      const r = this.layout.right;
-      if (this.session && !this.layout.tooSmall) {
-        this.session.resize(Math.max(1, r.w), Math.max(1, r.h));
-      }
-      this.out.write(SYNC_BEGIN + '\x1b[2J' + SYNC_END);
-      this.drawChrome();
-      this.render();
+      this.relayout();
     }, RESIZE_DEBOUNCE_MS);
+  }
+
+  /**
+   * Requested band height for the currently-selected box. Returns
+   * `ALERT_BAND_ROWS` when the box has an active relay prompt, an active
+   * notice (checkpoint), or claude is in the `question` state with a payload;
+   * 0 otherwise. The layout silently drops the band to 0 if reserving it
+   * would push the right pane below MIN_RIGHT_H.
+   */
+  private alertHeight(): number {
+    const id = this.selectedId;
+    if (this.activePrompts.has(id)) return ALERT_BAND_ROWS;
+    if (this.activeNotices.has(id)) return ALERT_BAND_ROWS;
+    const box = this.selectedBox();
+    if (box?.claudeQuestion) return ALERT_BAND_ROWS;
+    return 0;
+  }
+
+  /**
+   * Recompute the layout against the current alert height, resize the inner
+   * session, and repaint. Called from `scheduleResize` (terminal resize) and
+   * from {@link syncAlertLayout} when the selected box's alert state flips.
+   */
+  private relayout(): void {
+    this.layout = computeLayout(
+      this.out.columns ?? 100,
+      this.out.rows ?? 30,
+      this.alertHeight(),
+    );
+    this.prevRows = null;
+    const r = this.layout.right;
+    if (this.session && !this.layout.tooSmall) {
+      this.session.resize(Math.max(1, r.w), Math.max(1, r.h));
+    }
+    this.out.write(SYNC_BEGIN + '\x1b[2J' + SYNC_END);
+    this.drawChrome();
+    this.render();
+  }
+
+  /**
+   * If the selected box's alert state implies a different band height than
+   * the current layout, run a full {@link relayout}; otherwise return false
+   * so the caller can take the lighter `drawChrome()` path. Used by all
+   * alert-state transitions (SSE handlers, poll, selection change).
+   */
+  private syncAlertLayout(): boolean {
+    if (this.alertHeight() !== this.layout.alertH) {
+      this.relayout();
+      return true;
+    }
+    return false;
+  }
+
+  /** Common path for alert-state transitions: relayout when the band's
+   *  visibility changes, drawChrome only when it doesn't. */
+  private redrawForAlert(): void {
+    if (!this.syncAlertLayout()) this.drawChrome();
   }
 
   private teardown(): void {

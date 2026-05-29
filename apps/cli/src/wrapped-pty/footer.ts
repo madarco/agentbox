@@ -1,5 +1,6 @@
 import { BAR_BG, statusLine, type SidebarBox } from '../dashboard/sidebar.js';
 import type { PromptAskEvent } from '@agentbox/relay';
+import type { ClaudeQuestionPayload } from '@agentbox/ctl';
 
 /**
  * Footer rendering state. `idle` reuses the dashboard's `statusLine` shape
@@ -54,6 +55,10 @@ const URGENT = '\x1b[38;5;220m\x1b[1m'; // bright yellow + bold (active prompt)
 const TXT = '\x1b[38;5;250m'; // dim gray body text
 const SUBTLE = '\x1b[38;5;245m'; // very dim (Y/N hint)
 const RESET = '\x1b[0m';
+// Agent-question accent: cyan + bold, matching the dashboard sidebar's
+// "awaiting" hue — distinct from URGENT (relay prompt) so the two readings
+// don't collide when both could in principle stack.
+const QUESTION_ACCENT = '\x1b[38;5;51m\x1b[1m';
 // Notice footer = a full-width warning banner: bright yellow background with
 // near-black bold text. High contrast so the "box is frozen" state is
 // unmissable — deliberately louder than the dim-on-dark idle/prompt bars.
@@ -197,3 +202,127 @@ export const CURSOR_RESTORE = '\x1b8';
  */
 export const SYNC_BEGIN = '\x1b[?2026h';
 export const SYNC_END = '\x1b[?2026l';
+
+/**
+ * Alert-band state: the surface shown directly above the (idle) footer when
+ * a box needs the user's attention. The band is fixed at 3 rows; the inner
+ * PTY is resized down by 3 rows so the band never overlaps agent output.
+ *
+ * - `prompt`: a relay confirm prompt (hard-blocks an in-box RPC).
+ * - `notice`: an informational warning (checkpoint/snapshot in progress);
+ *   `frame` advances the spinner glyph.
+ * - `question`: the agent's `AskUserQuestion` payload (claude.state ===
+ *   'question'); shown as header + question text + option labels.
+ */
+export type AlertBandState =
+  | { kind: 'prompt'; prompt: PromptAskEvent }
+  | { kind: 'notice'; message: string; frame: number }
+  | { kind: 'question'; question: ClaudeQuestionPayload };
+
+/** Default band height; both TUIs reserve this many rows above the footer. */
+export const ALERT_BAND_ROWS = 3;
+
+function blankBar(cols: number, bg: string): string {
+  return `${bg}${' '.repeat(Math.max(0, cols))}${RESET}`;
+}
+
+function renderPromptBand(prompt: PromptAskEvent, cols: number, rows: number): string[] {
+  const def = prompt.defaultAnswer ?? 'n';
+  const yn = def === 'y' ? '[Y/n]' : '[y/N]';
+  const tag = ' [!] ';
+  const indent = ' '.repeat(tag.length);
+  const innerW = Math.max(0, cols - tag.length);
+  const contW = Math.max(0, cols - indent.length);
+
+  const msg = padTo(prompt.message, innerW);
+  const line1 = `${BAR_BG}${URGENT}${tag}${TXT}${msg}${RESET}`;
+
+  const detail = prompt.detail ?? '';
+  const detailPadded = padTo(detail, contW);
+  const line2 = `${BAR_BG}${TXT}${indent}${detailPadded}${RESET}`;
+
+  const hint = ` ${yn} `;
+  const leftW = Math.max(0, cols - hint.length);
+  const left = ' '.repeat(leftW);
+  const line3 = `${BAR_BG}${left}${SUBTLE}${hint}${RESET}`;
+
+  return [line1, line2, line3].slice(0, rows);
+}
+
+function renderNoticeBand(
+  message: string,
+  frame: number,
+  cols: number,
+  rows: number,
+): string[] {
+  const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length]!;
+  const prefix = ` ${spinner} `;
+  const indent = ' '.repeat(prefix.length);
+  const firstW = Math.max(0, cols - prefix.length);
+  const contW = Math.max(0, cols - indent.length);
+
+  const out: string[] = [];
+  let i = 0;
+  for (let r = 0; r < rows; r++) {
+    const isLast = r === rows - 1;
+    const w = r === 0 ? firstW : contW;
+    let cell: string;
+    if (i >= message.length) {
+      cell = ' '.repeat(w);
+    } else if (isLast) {
+      cell = padTo(message.slice(i), w);
+      i = message.length;
+    } else {
+      cell = message.slice(i, i + w).padEnd(w);
+      i += w;
+    }
+    const lead = r === 0 ? prefix : indent;
+    out.push(`${NOTICE_BG}${NOTICE_FG}${lead}${cell}${RESET}`);
+  }
+  return out;
+}
+
+function renderQuestionBand(
+  payload: ClaudeQuestionPayload,
+  cols: number,
+  rows: number,
+): string[] {
+  const q = payload.questions[0];
+  if (!q) return Array.from({ length: rows }, () => blankBar(cols, BAR_BG));
+
+  const tag = ' [?] ';
+  const indent = ' '.repeat(tag.length);
+  const innerW = Math.max(0, cols - tag.length);
+  const contW = Math.max(0, cols - indent.length);
+
+  const header = q.header && q.header.trim().length > 0 ? q.header : 'Question';
+  const headerPadded = padTo(header, innerW);
+  const line1 = `${BAR_BG}${QUESTION_ACCENT}${tag}${TXT}${headerPadded}${RESET}`;
+
+  const questionText = padTo(q.question, contW);
+  const line2 = `${BAR_BG}${TXT}${indent}${questionText}${RESET}`;
+
+  const optLabels = q.options.map((o) => o.label).join(' · ');
+  const optsLine = optLabels.length > 0 ? `options: ${optLabels}` : '';
+  const optsPadded = padTo(optsLine, contW);
+  const line3 = `${BAR_BG}${SUBTLE}${indent}${optsPadded}${RESET}`;
+
+  return [line1, line2, line3].slice(0, rows);
+}
+
+/**
+ * Render the 3-row alert band as an array of `rows` ANSI strings. Each
+ * element is a full-width painted row (background tint reset at EOL).
+ * Callers position the cursor at each row's column 1 and write the line
+ * inside the same synchronized-output wrap as the footer.
+ */
+export function renderAlertBand(
+  state: AlertBandState,
+  cols: number,
+  rows: number = ALERT_BAND_ROWS,
+): string[] {
+  if (cols <= 0 || rows <= 0) return Array.from({ length: Math.max(0, rows) }, () => '');
+  if (state.kind === 'prompt') return renderPromptBand(state.prompt, cols, rows);
+  if (state.kind === 'notice') return renderNoticeBand(state.message, state.frame, cols, rows);
+  return renderQuestionBand(state.question, cols, rows);
+}

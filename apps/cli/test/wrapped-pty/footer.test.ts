@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { renderFooter, type FooterState } from '../../src/wrapped-pty/footer.js';
+import {
+  ALERT_BAND_ROWS,
+  renderAlertBand,
+  renderFooter,
+  type AlertBandState,
+  type FooterState,
+} from '../../src/wrapped-pty/footer.js';
 
 /**
  * Strip ANSI SGR/CSI sequences for human-readable assertions on the
@@ -225,5 +231,77 @@ describe('renderFooter — edge cases', () => {
     expect(renderFooter({ kind: 'notice', message: 'm', frame: 0 }, 80)).toMatch(
       /\x1b\[0m$/,
     );
+  });
+});
+
+describe('renderAlertBand', () => {
+  it('renders a prompt band as 3 rows with [!] tag, detail row, and right-aligned [y/N] hint', () => {
+    const state: AlertBandState = {
+      kind: 'prompt',
+      prompt: {
+        id: '1',
+        kind: 'confirm',
+        message: 'git push to origin',
+        detail: 'branch: agentbox/foo',
+      },
+    };
+    const lines = renderAlertBand(state, 80);
+    expect(lines).toHaveLength(ALERT_BAND_ROWS);
+    const visibleLines = lines.map(visible);
+    expect(visibleLines[0]).toContain('[!]');
+    expect(visibleLines[0]).toContain('git push to origin');
+    expect(visibleLines[1]).toContain('branch: agentbox/foo');
+    expect(visibleLines[2]).toContain('[y/N]');
+  });
+
+  it('renders a notice band with a spinner glyph + message, all rows on the yellow banner', () => {
+    const state: AlertBandState = {
+      kind: 'notice',
+      message: 'Checkpoint in progress — capturing box state…',
+      frame: 0,
+    };
+    const lines = renderAlertBand(state, 80);
+    expect(lines).toHaveLength(ALERT_BAND_ROWS);
+    const visibleLines = lines.map(visible);
+    // First line carries the spinner; full message visible somewhere in the band.
+    expect(visibleLines[0]).toMatch(/[◐◑◒◓]/);
+    expect(visibleLines.join(' ')).toContain('Checkpoint in progress');
+    // Every row should set the yellow background (NOTICE_BG = SGR 48;5;220).
+    for (const line of lines) expect(line).toContain('\x1b[48;5;220m');
+  });
+
+  it('renders a question band with header + question text + option labels', () => {
+    const state: AlertBandState = {
+      kind: 'question',
+      question: {
+        questions: [
+          {
+            question: 'Scope',
+            header: 'Which TUI?',
+            options: [{ label: 'Single-attach' }, { label: 'Dashboard' }, { label: 'Both' }],
+          },
+        ],
+        capturedAt: '2026-05-29T00:00:00Z',
+      },
+    };
+    const lines = renderAlertBand(state, 80);
+    expect(lines).toHaveLength(ALERT_BAND_ROWS);
+    const visibleLines = lines.map(visible);
+    expect(visibleLines[0]).toContain('[?]');
+    expect(visibleLines[0]).toContain('Which TUI?');
+    expect(visibleLines[1]).toContain('Scope');
+    expect(visibleLines[2]).toContain('Single-attach');
+    expect(visibleLines[2]).toContain('Dashboard');
+    expect(visibleLines[2]).toContain('Both');
+  });
+
+  it('honors a custom row count', () => {
+    const state: AlertBandState = {
+      kind: 'notice',
+      message: 'short',
+      frame: 0,
+    };
+    expect(renderAlertBand(state, 80, 1)).toHaveLength(1);
+    expect(renderAlertBand(state, 80, 5)).toHaveLength(5);
   });
 });

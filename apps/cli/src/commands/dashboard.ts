@@ -100,6 +100,9 @@ function toSidebar(b: ListedBox): SidebarBox {
     sessionTitle: agent.sessionTitle,
     index: b.projectIndex,
     project: b.projectRoot,
+    // Only claude reports an AskUserQuestion payload; gated on claudeActivity
+    // === 'question' upstream (lifecycle.listBoxes) so it's undefined otherwise.
+    claudeQuestion: b.claudeQuestion,
   };
 }
 

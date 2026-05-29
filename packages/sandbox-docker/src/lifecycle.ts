@@ -3,7 +3,12 @@ import { readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BoxState } from '@agentbox/core';
 import { AmbiguousBoxError, BoxNotFoundError } from '@agentbox/core';
-import type { AgentActivityState, BoxStatus, ClaudeActivityState } from '@agentbox/ctl';
+import type {
+  AgentActivityState,
+  BoxStatus,
+  ClaudeActivityState,
+  ClaudeQuestionPayload,
+} from '@agentbox/ctl';
 import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './claude.js';
 import { codexSessionInfo, SHARED_CODEX_VOLUME, type CodexSessionInfo } from './codex.js';
 import {
@@ -78,6 +83,10 @@ export interface ListedBox extends BoxRecord {
   claudeActivity?: ClaudeActivityState;
   /** Sanitized in-box terminal title Claude set; undefined when none. */
   claudeSessionTitle?: string;
+  /** Last captured `AskUserQuestion` payload — present only when
+   *  `claudeActivity === 'question'`. Surfaced to the dashboard so it can paint
+   *  the agent's question into the alert band above the footer. */
+  claudeQuestion?: ClaudeQuestionPayload;
   /** Codex activity from the persisted status file (Codex hooks); undefined when none. */
   codexActivity?: AgentActivityState;
   /** Sanitized in-box terminal title the Codex/OpenCode TUI set; undefined when none. */
@@ -152,6 +161,8 @@ export async function listBoxes(): Promise<ListedBox[]> {
           endpoints,
           claudeActivity: persisted?.claude.state,
           claudeSessionTitle: persisted?.claude.sessionTitle,
+          claudeQuestion:
+            persisted?.claude.state === 'question' ? persisted.claude.question : undefined,
           codexActivity: persisted?.codex?.state,
           codexSessionTitle: persisted?.codex?.sessionTitle,
           opencodeSessionTitle: persisted?.opencode?.sessionTitle,
@@ -179,6 +190,8 @@ export async function listBoxes(): Promise<ListedBox[]> {
         endpoints,
         claudeActivity: persisted?.claude.state,
         claudeSessionTitle: persisted?.claude.sessionTitle,
+        claudeQuestion:
+          persisted?.claude.state === 'question' ? persisted.claude.question : undefined,
         codexActivity: persisted?.codex?.state,
         codexSessionTitle: persisted?.codex?.sessionTitle,
         opencodeSessionTitle: persisted?.opencode?.sessionTitle,
