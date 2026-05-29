@@ -1,5 +1,5 @@
 import type { BoxRecord, ExecResult } from '@agentbox/core';
-import { GH_PR_OPS, hashRpcParams, injectPrCreateHead as injectHead, type GhPrOp } from '@agentbox/relay';
+import { GH_PR_OPS, hashRpcParams, type GhPrOp } from '@agentbox/relay';
 import { mintHostInitiatedToken } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
@@ -79,7 +79,10 @@ async function hostInitiatedArgs(
 }
 
 /** Build the `{ path, remote?, args? }` ctl will send for git RPCs. */
-function buildPredictedGitParams(remote: string | undefined, extraArgs: string[]): PredictedGitParams {
+function buildPredictedGitParams(
+  remote: string | undefined,
+  extraArgs: string[],
+): PredictedGitParams {
   const out: PredictedGitParams = { path: WORKSPACE };
   if (remote) out.remote = remote;
   if (extraArgs.length > 0) out.args = extraArgs;
@@ -102,7 +105,10 @@ async function exitWith(code: number): Promise<never> {
 const pushCommand = new Command('push')
   .description("Push the box's branch via the host relay (host creds, no prompt)")
   .argument('<box>', 'box ref: project index, id, id prefix, name, or container')
-  .argument('[args...]', 'extra flags forwarded to `agentbox-ctl git push` (e.g. --force-with-lease, --tags)')
+  .argument(
+    '[args...]',
+    'extra flags forwarded to `agentbox-ctl git push` (e.g. --force-with-lease, --tags)',
+  )
   .option('--remote <name>', 'remote name (default: origin)')
   .allowExcessArguments(true)
   .allowUnknownOption(true)
@@ -146,7 +152,7 @@ const fetchCommand = new Command('fetch')
 
 const pullCommand = new Command('pull')
   .description(
-    "Fetch via the relay then merge in /workspace. With <branch>: first `git checkout <branch>` so the box switches base branch and pulls latest — useful for reusing a box on a new task.",
+    'Fetch via the relay then merge in /workspace. With <branch>: first `git checkout <branch>` so the box switches base branch and pulls latest — useful for reusing a box on a new task.',
   )
   .argument('<box>', 'box ref')
   .argument('[branch]', 'optional branch to switch to before pulling (e.g. main)')
@@ -186,7 +192,7 @@ const pullCommand = new Command('pull')
   );
 
 const checkoutCommand = new Command('checkout')
-  .description('Change the box\'s working branch (runs `git checkout <branch>` in /workspace)')
+  .description("Change the box's working branch (runs `git checkout <branch>` in /workspace)")
   .argument('<box>', 'box ref')
   .argument('<branch>', 'branch to check out inside the box')
   .argument('[args...]', 'extra flags forwarded to `git checkout`')
@@ -203,7 +209,7 @@ const checkoutCommand = new Command('checkout')
   });
 
 const statusCommand = new Command('status')
-  .description('Run `git status` in the box\'s /workspace (read-only, no relay)')
+  .description("Run `git status` in the box's /workspace (read-only, no relay)")
   .argument('<box>', 'box ref')
   .argument('[args...]', 'extra flags forwarded to `git status`')
   .allowExcessArguments(true)
@@ -237,20 +243,6 @@ const PR_OP_DESCRIPTIONS: Record<GhPrOp, string> = {
   reopen: 'Reopen a PR.',
 };
 
-/**
- * Default to the box's root branch as `--head` on `gh pr create` so the PR
- * is for the box's branch, not whatever the host happens to have checked
- * out (gh's default infers head from the cwd's HEAD, which is `feat/test`
- * or similar when the user is mid-task). Only injected when the user hasn't
- * already passed `--head`, and only for `create`. The relay's
- * `worktree.hostMainRepo` is the cwd `gh` runs in, so passing `--head` is
- * sufficient — base stays whatever the user picked / repo default.
- */
-function injectPrCreateHead(op: GhPrOp, box: { gitWorktrees?: { kind: string; branch: string }[] }, args: string[]): string[] {
-  const rootWt = (box.gitWorktrees ?? []).find((w) => w.kind === 'root');
-  return injectHead(op, rootWt?.branch, args);
-}
-
 function buildPrSubcommand(op: GhPrOp): Command {
   return new Command(op)
     .description(PR_OP_DESCRIPTIONS[op])
@@ -264,12 +256,13 @@ function buildPrSubcommand(op: GhPrOp): Command {
     .action(async (boxRef: string, args: string[]) => {
       try {
         const box = await resolveBoxOrExit(boxRef);
-        const ghArgs = injectPrCreateHead(op, box, args);
-        // Hash the args *after* injection so the bound paramsHash matches
-        // what ctl will end up sending.
-        const predicted = buildPredictedGhPrParams(ghArgs);
+        // No branch injection here: the relay resolves the box's *live* branch
+        // and injects it for every op (post-token-validation). Both the host
+        // and relay hash the same raw, pre-injection args, so the bound
+        // paramsHash round-trips.
+        const predicted = buildPredictedGhPrParams(args);
         const tokenArgs = await hostInitiatedArgs(box.id, `gh.pr.${op}`, predicted);
-        const argv = ['agentbox-ctl', 'gh', 'pr', op, ...tokenArgs, ...ghArgs];
+        const argv = ['agentbox-ctl', 'gh', 'pr', op, ...tokenArgs, ...args];
         await exitWith(await runAndStream(box, argv));
       } catch (err) {
         handleLifecycleError(err);

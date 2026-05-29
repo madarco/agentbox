@@ -23,11 +23,11 @@ import { findBox, readState } from '@agentbox/sandbox-core';
 import {
   assertGhReady,
   checkoutGuards,
+  branchTargetUnresolved,
+  branchUnresolvedRefusal,
   GH_PR_READ_ONLY_OPS,
-  injectPrCreateHead,
+  injectBoxBranch,
   isGhPrOp,
-  PR_CREATE_NO_HEAD_REFUSAL,
-  prCreateNeedsHead,
   refuseCheckoutByDefault,
   refuseMergeBypass,
   runHostGh,
@@ -264,21 +264,16 @@ async function runGhPrRpc(
       deps.boxId,
       `gh.pr.${op}`,
       incomingHashGhCloud,
-    ) ?? false);
+    ) ??
+      false);
   if (!GH_PR_READ_ONLY_OPS.has(op) && tokenClaimedGhCloud && !hostInitiatedGhOk) {
     return {
       exitCode: 10,
       stdout: '',
-      stderr:
-        'host-initiated token rejected: invalid, expired, or bound to different params\n',
+      stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
     };
   }
-  if (
-    !GH_PR_READ_ONLY_OPS.has(op) &&
-    !hostInitiatedGhOk &&
-    deps.prompts &&
-    deps.subscribers
-  ) {
+  if (!GH_PR_READ_ONLY_OPS.has(op) && !hostInitiatedGhOk && deps.prompts && deps.subscribers) {
     const detail = args.join(' ').slice(0, 200);
     const ctx = {
       kind: 'confirm' as const,
@@ -321,24 +316,26 @@ async function runGhPrRpc(
     }
   }
 
-  // Default `--head` to the box's branch for `create` (the host repo cwd isn't
-  // on the box branch, so gh can't infer it). Resolve the branch from the
-  // sandbox HEAD the same way `runGitRpc` does; a failed probe leaves args
-  // unchanged (today's behavior). Only probed when we'd actually inject.
-  let finalArgs = args;
-  if (op === 'create' && !args.some((a) => a === '--head' || a.startsWith('--head='))) {
-    const backend = await resolveCloudBackend(deps.backendName);
-    const handle: CloudHandle = { sandboxId: lookup.cloudSandboxId };
-    const containerPath = params.path ?? '/workspace';
-    const branchProbe = await backend.exec(
-      handle,
-      `git -C ${shellQuote(containerPath)} rev-parse --abbrev-ref HEAD`,
-    );
-    const branch = branchProbe.exitCode === 0 ? (branchProbe.stdout ?? '').trim() : '';
-    finalArgs = injectPrCreateHead(op, branch, args);
-  }
+  // Target the box's branch for every op (the host repo cwd is on the user's
+  // own branch, so gh can't infer it). No shared `.git/` on the cloud host, so
+  // probe the sandbox's *live* HEAD over the wire — the cloud equivalent of
+  // the docker `git worktree list` read. A detached HEAD / failed probe yields
+  // an empty branch, which the refusal below converts to a clear error rather
+  // than letting gh act on the host's branch.
+  const backend = await resolveCloudBackend(deps.backendName);
+  const handle: CloudHandle = { sandboxId: lookup.cloudSandboxId };
+  const containerPath = params.path ?? '/workspace';
+  const branchProbe = await backend.exec(
+    handle,
+    `git -C ${shellQuote(containerPath)} rev-parse --abbrev-ref HEAD`,
+  );
+  const probed = branchProbe.exitCode === 0 ? (branchProbe.stdout ?? '').trim() : '';
+  // `rev-parse --abbrev-ref HEAD` prints `HEAD` for a detached head — treat as
+  // unresolved so injectBoxBranch skips and the op refuses.
+  const branch = probed === 'HEAD' ? '' : probed;
+  const finalArgs = injectBoxBranch(op, branch, args);
   // Never let `gh` fall back to the host repo's checked-out branch.
-  if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
+  if (branchTargetUnresolved(op, finalArgs)) return branchUnresolvedRefusal(op);
   return runHostGh(['pr', op, ...finalArgs], lookup.workspacePath);
 }
 
@@ -593,9 +590,10 @@ async function runDownloadRpc(
   const cp = await loadCloudCp();
   // params.hostPath is reserved in the wire shape; v1 lands /workspace under
   // box.workspacePath (the host project root), matching docker's default.
-  const hostDst = typeof params.hostPath === 'string' && params.hostPath.length > 0
-    ? params.hostPath
-    : lookup.workspacePath;
+  const hostDst =
+    typeof params.hostPath === 'string' && params.hostPath.length > 0
+      ? params.hostPath
+      : lookup.workspacePath;
   try {
     const result = await cp.pullCloudDirContents(backend, handle, '/workspace', hostDst);
     return { exitCode: 0, stdout: `${result.finalPath}\n`, stderr: '' };
@@ -620,7 +618,10 @@ async function runDownloadRpc(
  * sandbox fetches from the bundle, in-box `agentbox-ctl git pull` then
  * does its local merge as today.
  */
-async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Promise<HostActionResult> {
+async function runGitRpc(
+  action: HostAction,
+  deps: CloudActionExecutorDeps,
+): Promise<HostActionResult> {
   const params = (action.params ?? {}) as GitRpcParams;
   const lookup = await lookupCloudBox(deps.boxId);
   const backend = await resolveCloudBackend(deps.backendName);
@@ -676,13 +677,13 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
       deps.boxId,
       'git.push',
       incomingHashGit,
-    ) ?? false);
+    ) ??
+      false);
   if (action.method === 'git.push' && !isAgentboxBranch && tokenClaimedGit && !hostInitiatedOk) {
     return {
       exitCode: 10,
       stdout: '',
-      stderr:
-        'host-initiated token rejected: invalid, expired, or bound to different params\n',
+      stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
     };
   }
   if (
@@ -722,7 +723,8 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
           {
             kind: 'confirm',
             message: `Allow git push from cloud box ${deps.boxName ?? deps.boxId}?`,
-            detail: `${params.remote ?? 'origin'} ${branch} ${(params.args ?? []).join(' ')}`.trim(),
+            detail:
+              `${params.remote ?? 'origin'} ${branch} ${(params.args ?? []).join(' ')}`.trim(),
             defaultAnswer: 'n',
             context: { command: 'git push', cwd: containerPath, argv: params.args },
           },
@@ -757,7 +759,11 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
         `git -C ${shellQuote(containerPath)} bundle create ${shellQuote(remoteBundle)} ${shellQuote(branch)}`,
       );
       if (make.exitCode !== 0) {
-        return { exitCode: make.exitCode, stdout: '', stderr: `bundle create failed: ${make.stderr || make.stdout}` };
+        return {
+          exitCode: make.exitCode,
+          stdout: '',
+          stderr: `bundle create failed: ${make.stderr || make.stdout}`,
+        };
       }
       // 2b. Download to host tmp.
       await backend.downloadFile(handle, remoteBundle, hostBundle);
@@ -793,11 +799,9 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
       // local-only by design.
       if ((push.exitCode ?? 1) === 0 && !branch.startsWith('agentbox/')) {
         try {
-          const sha = await execa(
-            'git',
-            ['-C', lookup.workspacePath, 'rev-parse', branch],
-            { reject: false },
-          );
+          const sha = await execa('git', ['-C', lookup.workspacePath, 'rev-parse', branch], {
+            reject: false,
+          });
           const shaText = (sha.stdout ?? '').trim();
           if (sha.exitCode === 0 && shaText.length > 0) {
             const updateRef = await backend.exec(
@@ -829,7 +833,9 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
     }
     // git.fetch: host fetches origin, bundles, uploads, sandbox fetches.
     const remote = params.remote ?? 'origin';
-    const hostFetch = await execa('git', ['-C', lookup.workspacePath, 'fetch', remote], { reject: false });
+    const hostFetch = await execa('git', ['-C', lookup.workspacePath, 'fetch', remote], {
+      reject: false,
+    });
     if (hostFetch.exitCode !== 0) {
       return {
         exitCode: hostFetch.exitCode ?? 1,
@@ -862,11 +868,9 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
     };
   } finally {
     await rm(stage, { recursive: true, force: true });
-    await backend
-      .exec(handle, `rm -f ${shellQuote(remoteBundle)}`)
-      .catch(() => {
-        /* best-effort */
-      });
+    await backend.exec(handle, `rm -f ${shellQuote(remoteBundle)}`).catch(() => {
+      /* best-effort */
+    });
   }
 }
 

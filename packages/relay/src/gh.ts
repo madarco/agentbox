@@ -39,54 +39,150 @@ export function isGhPrOp(value: string): value is GhPrOp {
 export const GH_PR_READ_ONLY_OPS: ReadonlySet<GhPrOp> = new Set(['view', 'list']);
 
 /**
- * Default `gh pr create`'s `--head` to the box's branch so the PR is for the
- * box's work, not whatever the host main repo happens to have checked out
- * (`gh` infers head from the cwd's HEAD, which is the user's own branch — or
- * an untracked one, which aborts with "you must first push the current branch
- * to a remote, or use the --head flag"). Only injected for `create`, only when
- * the caller didn't already pass `--head` (or its `-H` shorthand), and only when we resolved a real
- * branch (not empty / detached `HEAD`). The host CLI's `agentbox git pr create`
- * already injects this; the relay covers the in-box `agentbox-ctl git pr` /
- * `gh pr` path, which forwards args verbatim.
+ * Ops whose box branch goes in as a leading positional `<ref>` (the way
+ * `gh pr view <branch>` / `gh pr merge <branch>` take it). Mirrors the in-box
+ * gh shim's table.
  */
-export function injectPrCreateHead(
-  op: GhPrOp,
-  branch: string | undefined,
-  args: string[],
-): string[] {
-  if (op !== 'create') return args;
+const POSITIONAL_BRANCH_OPS: ReadonlySet<GhPrOp> = new Set([
+  'view',
+  'comment',
+  'review',
+  'merge',
+  'close',
+  'reopen',
+]);
+
+/** Ops whose box branch goes in as `--head <branch>`. */
+const HEAD_BRANCH_OPS: ReadonlySet<GhPrOp> = new Set(['list', 'create']);
+
+/**
+ * Inject the box's branch into a `gh pr <op>` argv so the host's `gh` (running
+ * with `cwd` in the host main repo, *not* on the box's branch) targets the
+ * box's work rather than falling back to whatever the host has checked out.
+ * Positional ops get the branch prepended as the ref; `list`/`create` get
+ * `--head <branch>`; `checkout` is never touched (it requires an explicit
+ * ref). No-op when the caller already supplied a ref or when `branch` is
+ * empty / detached `HEAD`. The relay is the single chokepoint: the in-box
+ * shim and host CLI forward args verbatim.
+ */
+export function injectBoxBranch(op: GhPrOp, branch: string | undefined, args: string[]): string[] {
   if (!branch || branch === 'HEAD') return args;
-  if (hasHeadArg(args)) return args;
-  return ['--head', branch, ...args];
+  if (HEAD_BRANCH_OPS.has(op)) {
+    return hasHeadArg(args) ? args : ['--head', branch, ...args];
+  }
+  if (POSITIONAL_BRANCH_OPS.has(op)) {
+    return hasPositional(args) ? args : [branch, ...args];
+  }
+  return args;
 }
 
 function hasHeadArg(args: string[]): boolean {
-  // `gh pr create` accepts `--head`, `--head=<b>`, and the `-H` shorthand in
-  // its `-H <b>` / `-H<b>` / `-H=<b>` forms. Recognize all so an explicit head
-  // neither gets double-injected nor triggers the no-head refusal.
+  // `gh pr create`/`list` accept `--head`, `--head=<b>`, and the `-H` shorthand
+  // in its `-H <b>` / `-H<b>` / `-H=<b>` forms. Recognize all so an explicit
+  // head neither gets double-injected nor triggers the no-branch refusal.
   return args.some((a) => a === '--head' || a.startsWith('--head=') || a.startsWith('-H'));
 }
 
 /**
- * True when a `gh pr create` would run with no `--head` — i.e. we couldn't
- * resolve the box's branch to inject and the caller didn't pass one. The
- * relay must refuse rather than let `gh` fall back to the host repo's
- * *checked-out* branch, which would open a PR for the wrong branch.
+ * True when `args` already carries an explicit PR ref. For `gh pr <op>` the ref
+ * is always the *leading* positional (`gh pr view 42 …`, `gh pr merge <branch>
+ * …`), so we only look at the first token: a leading flag means "no ref, inject
+ * the box branch."
+ *
+ * We deliberately do NOT scan past flags looking for a bare token — that would
+ * require knowing every value-taking flag per op (`--body`, `--subject`,
+ * `--comment`, `--json`, …, plus short forms), and an incomplete list **fails
+ * open**: a flag's value gets mistaken for a ref, injection is skipped, and gh
+ * falls back to the host's checked-out branch — the exact wrong-PR bug this
+ * guards against. The leading-token rule needs no flag table and **fails
+ * safe**: a ref placed *after* flags (`gh pr merge --squash 42`, uncommon)
+ * collides with the injected branch and gh errors out rather than ever acting
+ * on the wrong PR.
  */
-export function prCreateNeedsHead(op: GhPrOp, args: string[]): boolean {
-  return op === 'create' && !hasHeadArg(args);
+function hasPositional(args: string[]): boolean {
+  const first = args[0];
+  if (first === undefined) return false;
+  // `--` is the POSIX end-of-options marker; a token after it is the ref.
+  if (first === '--') return args.length > 1;
+  return !first.startsWith('-');
 }
 
-/** Ready-to-send refusal for a `create` that has no resolvable `--head`. */
-export const PR_CREATE_NO_HEAD_REFUSAL: GitRpcResult = {
-  exitCode: 65,
-  stdout: '',
-  stderr:
-    'gh pr create: refusing to run without --head — could not resolve this ' +
-    "box's branch, and falling back to the host repo's checked-out branch " +
-    'would open a PR for the wrong branch. Ensure the box branch is pushed, ' +
-    'or pass --head <branch> explicitly.\n',
-};
+/**
+ * Ops that act on a specific branch's PR and so MUST run with an explicit ref:
+ * everything except `list` (a bare `gh pr list` legitimately lists all PRs, no
+ * host-branch leak) and `checkout` (takes a required explicit ref of its own).
+ * If we couldn't resolve the box's branch for one of these, the relay refuses
+ * rather than let `gh` fall back to the host repo's checked-out branch — which
+ * would act on an unrelated PR.
+ */
+function isBranchRequiredOp(op: GhPrOp): boolean {
+  return op === 'create' || POSITIONAL_BRANCH_OPS.has(op);
+}
+
+/**
+ * True when a branch-required op would run with no resolvable branch — i.e.
+ * neither injection nor the caller supplied one. Call *after* {@link injectBoxBranch}.
+ */
+export function branchTargetUnresolved(op: GhPrOp, args: string[]): boolean {
+  if (!isBranchRequiredOp(op)) return false;
+  return op === 'create' ? !hasHeadArg(args) : !hasPositional(args);
+}
+
+/** Ready-to-send refusal for a branch-required op with no resolvable branch. */
+export function branchUnresolvedRefusal(op: GhPrOp): GitRpcResult {
+  return {
+    exitCode: 65,
+    stdout: '',
+    stderr:
+      `gh pr ${op}: refusing to run without a branch — could not resolve this ` +
+      "box's current branch (detached HEAD?), and falling back to the host " +
+      "repo's checked-out branch would act on the wrong PR. Ensure the box is " +
+      'on a branch (pushed for `create`), or pass the ref explicitly.\n',
+  };
+}
+
+/**
+ * Resolve the box's *live* current branch on the docker path by reading the
+ * shared `.git/`'s worktree registry. The box's worktree is registered at
+ * `gitWorktreePath` (a container-only path); its per-worktree `HEAD` lives in
+ * the host-visible `.git/worktrees/<subdir>/`, so `git worktree list` reflects
+ * branch switches the box made after creation (`git checkout -b …`).
+ *
+ * Returns the live branch name; falls back to `registeredBranch` when the
+ * worktree block isn't found; returns `''` when the box is on a detached HEAD
+ * (so callers refuse rather than target a stale ref).
+ */
+export async function resolveLiveBoxBranch(
+  hostMainRepo: string,
+  gitWorktreePath: string | undefined,
+  registeredBranch: string,
+): Promise<string> {
+  if (!gitWorktreePath) return registeredBranch;
+  const r = await runGitProbe(['-C', hostMainRepo, 'worktree', 'list', '--porcelain']);
+  if (r.exitCode !== 0) return registeredBranch;
+  const live = parseWorktreeBranch(r.stdout, gitWorktreePath);
+  // null = block not found (registry drift) → trust the registered branch.
+  // '' = found but detached → return empty so the op refuses.
+  return live === null ? registeredBranch : live;
+}
+
+/**
+ * Parse `git worktree list --porcelain` for the branch of the worktree at
+ * `gitWorktreePath`. Returns the short branch name, `''` for a detached HEAD,
+ * or `null` when no block matches. Pure — unit-testable without spawning git.
+ */
+export function parseWorktreeBranch(porcelain: string, gitWorktreePath: string): string | null {
+  for (const block of porcelain.split('\n\n')) {
+    const lines = block.split('\n');
+    const wtLine = lines.find((l) => l.startsWith('worktree '));
+    if (!wtLine || wtLine.slice('worktree '.length).trim() !== gitWorktreePath) continue;
+    const branchLine = lines.find((l) => l.startsWith('branch '));
+    if (!branchLine) return ''; // detached HEAD (porcelain emits `detached`, no `branch` line)
+    const ref = branchLine.slice('branch '.length).trim();
+    return ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ref;
+  }
+  return null;
+}
 
 /** Wire params for every `gh.pr.<op>` method. Mirrors the new ctl command surface. */
 export interface GhPrRpcParams {
@@ -240,7 +336,9 @@ export async function checkoutGuards(
     return {
       exitCode: status.exitCode,
       stdout: '',
-      stderr: `gh pr checkout: failed to inspect host repo: ${status.stderr || status.stdout}`.trimEnd() + '\n',
+      stderr:
+        `gh pr checkout: failed to inspect host repo: ${status.stderr || status.stdout}`.trimEnd() +
+        '\n',
     };
   }
   if (status.stdout.trim().length > 0) {
@@ -255,7 +353,8 @@ export async function checkoutGuards(
     return {
       exitCode: head.exitCode,
       stdout: '',
-      stderr: `gh pr checkout: failed to resolve HEAD: ${head.stderr || head.stdout}`.trimEnd() + '\n',
+      stderr:
+        `gh pr checkout: failed to resolve HEAD: ${head.stderr || head.stdout}`.trimEnd() + '\n',
     };
   }
   const currentBranch = head.stdout.trim();
@@ -318,7 +417,6 @@ export function refuseCheckoutByDefault(op: GhPrOp): GitRpcResult | null {
   return {
     exitCode: 13,
     stdout: '',
-    stderr:
-      'gh pr checkout: disabled by default; set AGENTBOX_GH_PR_CHECKOUT=allow to enable\n',
+    stderr: 'gh pr checkout: disabled by default; set AGENTBOX_GH_PR_CHECKOUT=allow to enable\n',
   };
 }

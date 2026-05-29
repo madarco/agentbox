@@ -551,9 +551,10 @@ exit 0
   });
 
   it('gh.pr.create refuses (exit 65) when the box branch cannot be resolved', async () => {
-    // Register a worktree with an empty branch so injectPrCreateHead can't add
-    // --head; the relay must refuse rather than let gh fall back to the host
-    // repo's checked-out branch.
+    // Register a worktree with an empty branch (and no gitWorktreePath, so the
+    // live resolver falls back to it) so injectBoxBranch can't add --head; the
+    // relay must refuse rather than let gh fall back to the host repo's
+    // checked-out branch.
     const r0 = await fetchJson(handle, 'POST', '/admin/register-box', {
       body: {
         boxId: 'b1',
@@ -574,7 +575,7 @@ exit 0
     expect(r.status).toBe(500);
     const body = r.body as { exitCode: number; stderr: string; stdout: string };
     expect(body.exitCode).toBe(65);
-    expect(body.stderr).toMatch(/refusing to run without --head/);
+    expect(body.stderr).toMatch(/refusing to run without a branch/);
     // gh must not have been invoked.
     expect(body.stdout).not.toContain('stub: gh pr create');
   });

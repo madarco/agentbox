@@ -5,14 +5,15 @@ import { HostActionQueue } from './host-action-queue.js';
 import { BoxNotices } from './notices.js';
 import {
   assertGhReady,
+  branchTargetUnresolved,
+  branchUnresolvedRefusal,
   checkoutGuards,
   GH_PR_READ_ONLY_OPS,
-  injectPrCreateHead,
+  injectBoxBranch,
   isGhPrOp,
-  PR_CREATE_NO_HEAD_REFUSAL,
-  prCreateNeedsHead,
   refuseCheckoutByDefault,
   refuseMergeBypass,
+  resolveLiveBoxBranch,
   runHostGh,
   type GhPrOp,
   type GhPrRpcParams,
@@ -154,10 +155,7 @@ function bearerToken(req: IncomingMessage): string {
 function isLoopbackAddress(addr: string | undefined): boolean {
   if (!addr) return false;
   return (
-    addr === '127.0.0.1' ||
-    addr === '::1' ||
-    addr === '::ffff:127.0.0.1' ||
-    addr.startsWith('127.')
+    addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1' || addr.startsWith('127.')
   );
 }
 
@@ -264,7 +262,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // A box-mode relay only ever has one registered box (itself). The
         // status snapshot — if any has been pushed — belongs to that box.
         const only = registry.list()[0];
-        const status = only ? statusStore.get(only.boxId) ?? null : null;
+        const status = only ? (statusStore.get(only.boxId) ?? null) : null;
         const reply: BridgePollResponse = {
           actions,
           events: newEvents,
@@ -373,7 +371,17 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         if (body.method === 'git.push') {
           const params = body.params as GitRpcParams | undefined;
           const worktree = resolveWorktree(reg, params?.path ?? '/workspace');
-          const isAgentboxBranch = worktree?.branch.startsWith('agentbox/') ?? false;
+          // Auto-allow keys off the box's *live* branch (matches what
+          // handleGitRpc will actually push): a box that switched to a real
+          // feature branch should prompt, not silently auto-allow.
+          const liveBranch = worktree
+            ? await resolveLiveBoxBranch(
+                worktree.hostMainRepo,
+                worktree.gitWorktreePath,
+                worktree.branch,
+              )
+            : '';
+          const isAgentboxBranch = liveBranch.startsWith('agentbox/');
           // Host-initiated pushes (driven by `agentbox git push <box>`) skip
           // the confirm prompt — but only if the host CLI minted a valid,
           // unexpired, scope-matched, params-hash-bound token via
@@ -416,7 +424,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             }
           }
         }
-        const result = await handleGitRpc(reg, body.method, body.params as GitRpcParams | undefined);
+        const result = await handleGitRpc(
+          reg,
+          body.method,
+          body.params as GitRpcParams | undefined,
+        );
         const status = result.exitCode === 0 ? 200 : 500;
         send(res, status, result);
         return;
@@ -613,9 +625,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         name: body.name,
         kind,
         backend:
-          typeof body.backend === 'string' && body.backend.length > 0
-            ? body.backend
-            : undefined,
+          typeof body.backend === 'string' && body.backend.length > 0 ? body.backend : undefined,
         registeredAt: new Date().toISOString(),
         containerName:
           typeof body.containerName === 'string' && body.containerName.length > 0
@@ -643,7 +653,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       registry.register(reg);
       log(
         `registered ${kind} box ${reg.boxId} (${reg.name})` +
-          (worktrees && worktrees.length > 0 ? ` with ${String(worktrees.length)} worktree(s)` : ''),
+          (worktrees && worktrees.length > 0
+            ? ` with ${String(worktrees.length)} worktree(s)`
+            : ''),
       );
       // Cloud boxes get a host-side poller so the host relay can mirror their
       // status into its BoxStatusStore (and, once the executor is wired,
@@ -872,7 +884,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           ? body.ttlMs
           : undefined;
       const token = hostInitiatedTokens.mint(body.boxId, body.method, paramsHash, ttlMs);
-      log(`host-initiated-mint box=${body.boxId} method=${body.method} paramsBound=${paramsHash !== null}`);
+      log(
+        `host-initiated-mint box=${body.boxId} method=${body.method} paramsBound=${paramsHash !== null}`,
+      );
       send(res, 200, { token });
       return;
     }
@@ -975,7 +989,6 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   };
 }
 
-
 function sanitizeWorktrees(input: BoxWorktree[] | undefined): BoxWorktree[] | undefined {
   if (!Array.isArray(input)) return undefined;
   const out: BoxWorktree[] = [];
@@ -990,6 +1003,7 @@ function sanitizeWorktrees(input: BoxWorktree[] | undefined): BoxWorktree[] | un
         containerPath: w.containerPath,
         hostMainRepo: w.hostMainRepo,
         branch: w.branch,
+        ...(typeof w.gitWorktreePath === 'string' ? { gitWorktreePath: w.gitWorktreePath } : {}),
       });
     }
   }
@@ -1008,7 +1022,9 @@ function resolveWorktree(reg: BoxRegistration, containerPath: string): BoxWorktr
   const exact = trees.find((w) => w.containerPath === containerPath);
   if (exact) return exact;
   const prefixMatches = trees
-    .filter((w) => containerPath === w.containerPath || containerPath.startsWith(w.containerPath + '/'))
+    .filter(
+      (w) => containerPath === w.containerPath || containerPath.startsWith(w.containerPath + '/'),
+    )
     .sort((a, b) => b.containerPath.length - a.containerPath.length);
   return prefixMatches[0] ?? trees.find((w) => w.containerPath === '/workspace') ?? null;
 }
@@ -1040,7 +1056,22 @@ async function handleGitRpc(
   }
   const op = method === 'git.push' ? 'push' : 'fetch';
   const remote = params?.remote ?? 'origin';
-  const argv = ['git', '-C', worktree.hostMainRepo, op, remote, worktree.branch];
+  // Resolve the box's *live* branch from the shared .git rather than the
+  // registered (create-time) branch: a box that did `git checkout -b feature`
+  // must push/fetch `feature`, not the stale `agentbox/<name>`.
+  const branch = await resolveLiveBoxBranch(
+    worktree.hostMainRepo,
+    worktree.gitWorktreePath,
+    worktree.branch,
+  );
+  if (!branch) {
+    return {
+      exitCode: 65,
+      stdout: '',
+      stderr: `git ${op}: refusing — box is on a detached HEAD; no branch to ${op}.\n`,
+    };
+  }
+  const argv = ['git', '-C', worktree.hostMainRepo, op, remote, branch];
   if (Array.isArray(params?.args)) {
     for (const a of params.args) {
       if (typeof a === 'string') argv.push(a);
@@ -1053,14 +1084,14 @@ async function handleGitRpc(
   // (`agentbox/<name>`) — they're local-only by design. Docker shares .git/
   // with the box, so update-ref of the remote-tracking ref already happened
   // during the push; only the upstream config is missing.
-  if (method === 'git.push' && result.exitCode === 0 && !worktree.branch.startsWith('agentbox/')) {
+  if (method === 'git.push' && result.exitCode === 0 && !branch.startsWith('agentbox/')) {
     await runHostCommand([
       'git',
       '-C',
       worktree.hostMainRepo,
       'branch',
-      `--set-upstream-to=${remote}/${worktree.branch}`,
-      worktree.branch,
+      `--set-upstream-to=${remote}/${branch}`,
+      branch,
     ]);
   }
   return result;
@@ -1130,8 +1161,7 @@ async function handleGhPrRpc(
     return {
       exitCode: 10,
       stdout: '',
-      stderr:
-        'host-initiated token rejected: invalid, expired, or bound to different params\n',
+      stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
     };
   }
   if (!GH_PR_READ_ONLY_OPS.has(op) && !hostInitiatedOk) {
@@ -1152,12 +1182,17 @@ async function handleGhPrRpc(
     }
   }
 
-  // Default `--head` to the box's branch for `create` (the host repo cwd isn't
-  // on the box branch, so gh can't infer it). Done after token validation —
+  // Target the box's *live* branch for every op (the host repo cwd is on the
+  // user's own branch, so gh can't infer it). Done after token validation —
   // which hashes the incoming `params`, not this post-injection argv.
-  const finalArgs = injectPrCreateHead(op, worktree.branch, args);
+  const branch = await resolveLiveBoxBranch(
+    worktree.hostMainRepo,
+    worktree.gitWorktreePath,
+    worktree.branch,
+  );
+  const finalArgs = injectBoxBranch(op, branch, args);
   // Never let `gh` fall back to the host repo's checked-out branch.
-  if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
+  if (branchTargetUnresolved(op, finalArgs)) return branchUnresolvedRefusal(op);
   return runHostGh(['pr', op, ...finalArgs], worktree.hostMainRepo);
 }
 
@@ -1201,10 +1236,7 @@ async function handleCpRpc(
  * merging. The relay passes `-y` so the host CLI doesn't try to prompt
  * (we already did, via the host wrapper, before reaching this handler).
  */
-async function handleDownloadRpc(
-  reg: BoxRegistration,
-  kind: DownloadKind,
-): Promise<GitRpcResult> {
+async function handleDownloadRpc(reg: BoxRegistration, kind: DownloadKind): Promise<GitRpcResult> {
   // params.hostPath is reserved in the wire shape; the v1 relay ignores it
   // and lets the host CLI use its defaults (box.workspacePath or ~/.claude).
   const entry = process.env.AGENTBOX_CLI_ENTRY;

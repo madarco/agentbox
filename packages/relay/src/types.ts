@@ -82,6 +82,14 @@ export interface BoxWorktree {
   hostMainRepo: string;
   /** Branch the in-container worktree was created on (`agentbox/<box-name>`). */
   branch: string;
+  /**
+   * Path the worktree was registered at in the shared `.git/` (a container-only
+   * path under `WORKTREE_ROOT`). Lets the relay read the box's *live* branch
+   * from `git worktree list --porcelain` on the host — the per-worktree HEAD
+   * updates as the box switches branches, unlike the create-time `branch`.
+   * Optional: cloud providers register without it (no shared `.git/`).
+   */
+  gitWorktreePath?: string;
 }
 
 export interface RelayEvent {

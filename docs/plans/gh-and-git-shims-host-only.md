@@ -167,6 +167,6 @@ Both live under `packages/sandbox-docker/scripts/` and `COPY` into `/usr/local/b
 ## Deferred follow-ups
 
 - **Widen the whitelist on demand.** Each new flag/op is a deliberate decision, not a default. Track requests; reject silently until requested.
-- **Host worktree under `~/.agentbox/host-worktrees/<box-name>/`** — adopt when explicit-branch injection isn't enough (e.g. `gh pr status` or any gh/git subcommand hard-wired to HEAD). Would replace per-op injection with a uniform "relay runs everything in the box's worktree" model.
+- **Host worktree under `~/.agentbox/host-worktrees/<box-name>/`** — adopt when explicit-branch injection isn't enough (e.g. `gh pr status` or any gh/git subcommand hard-wired to HEAD). Would replace per-op injection with a uniform "relay runs everything in the box's worktree" model. *Update:* the explicit-branch path was made robust instead — the relay now resolves the box's **live** branch (docker: `git worktree list --porcelain` on the registered `gitWorktreePath`; cloud: live `git rev-parse` probe) and targets it for every `gh.pr.*` / `git.push` / `git.fetch` op, refusing rather than falling back to the host's checked-out branch. A host worktree is only needed if the shim whitelist grows to commands that can't take an explicit branch ref.
 - **`gh issue` / `gh repo view` / `gh api`** — extend the gh shim surface when concrete agent flows need them. Each new op needs a matching relay RPC.
 - **Prune integration** — `agentbox destroy` / `agentbox prune` should sweep leftover `~/.agentbox/clones/<random>/` tmpdirs.

@@ -80,7 +80,9 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
     if (health.cliEntry !== false) {
       return ENDPOINT;
     }
-    log('relay is alive but lacks AGENTBOX_CLI_ENTRY (cp/download/checkpoint would fail) — reclaiming');
+    log(
+      'relay is alive but lacks AGENTBOX_CLI_ENTRY (cp/download/checkpoint would fail) — reclaiming',
+    );
     await reclaimRelay(health.pid, log);
     // fall through to a fresh spawn below
   } else {
@@ -125,7 +127,10 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
  * the pidfile pid. Fails loud if the port is still held afterward — a silent
  * "couldn't reclaim" would just resurrect the original broken-relay bug.
  */
-async function reclaimRelay(reportedPid: number | undefined, log: (line: string) => void): Promise<void> {
+async function reclaimRelay(
+  reportedPid: number | undefined,
+  log: (line: string) => void,
+): Promise<void> {
   const pidFromFile = await readPidFile();
   const seen = new Set<number>();
   for (const pid of [reportedPid, pidFromFile]) {
@@ -223,9 +228,7 @@ function resolveRelayBin(): string {
   for (const c of candidates) {
     if (existsSync(c)) return c;
   }
-  throw new Error(
-    `could not locate @agentbox/relay bin; tried:\n  ${candidates.join('\n  ')}`,
-  );
+  throw new Error(`could not locate @agentbox/relay bin; tried:\n  ${candidates.join('\n  ')}`);
 }
 
 /**
@@ -383,7 +386,9 @@ function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
         res.on('data', (c: Buffer) => chunks.push(c));
         res.on('end', () => {
           try {
-            const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Partial<HealthzBody>;
+            const parsed = JSON.parse(
+              Buffer.concat(chunks).toString('utf8'),
+            ) as Partial<HealthzBody>;
             if (
               typeof parsed.ok === 'boolean' &&
               typeof parsed.boxes === 'number' &&
@@ -483,6 +488,7 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     containerPath: w.containerPath,
     hostMainRepo: w.hostMainRepo,
     branch: w.branch,
+    gitWorktreePath: w.gitWorktreePath,
   }));
   await adminPost('/admin/register-box', {
     boxId: args.boxId,
