@@ -250,9 +250,10 @@ function isProviderName(s: string): s is ProviderName {
 
 /**
  * Drive the setup wizard. Returns true on a clean run, false if the user
- * cancelled at any prompt (the caller decides whether to write the marker —
- * for the explicit `install` command we record completion even on cancel
- * mid-flow, for the auto-trigger we do not).
+ * cancelled at any prompt. The first-run marker is written only on the
+ * success path (after the skill-install step), so a cancel from either
+ * caller leaves the system in the same "still pending" state — the
+ * auto-trigger will offer the wizard again on the next non-exempt command.
  */
 export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Promise<boolean> {
   if (!ensureTty()) return false;

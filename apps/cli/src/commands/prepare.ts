@@ -309,15 +309,15 @@ export const prepareCommand = new Command('prepare')
 
     const providerName = opts.provider.trim();
     intro(`preparing ${providerName} base image`);
-    try {
-      await runPrepare(providerName, {
-        name: opts.name,
-        force: opts.force,
-        yes: opts.yes,
-      });
-    } catch {
-      process.exit(1);
-    }
+    // Errors propagate to `program.parseAsync().catch` so they reach the user
+    // via `console.error` — a bare `catch { process.exit(1) }` here would
+    // silently swallow getProvider() failures (e.g. an ensureCredentials cancel)
+    // that fall outside runPrepare's inner spinner error handler.
+    await runPrepare(providerName, {
+      name: opts.name,
+      force: opts.force,
+      yes: opts.yes,
+    });
   });
 
 /**

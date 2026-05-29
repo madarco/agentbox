@@ -60,8 +60,12 @@ afterEach(async () => {
 
 describe('vercelBackend.provision — per-box credential push', () => {
   it('uploads + extracts a tarball for each agent that has host creds', async () => {
-    const runCommand = vi.fn(async () => ({ exitCode: 0 }));
-    const writeFiles = vi.fn(async () => undefined);
+    const runCommand = vi.fn<(opts: { args: string[] }) => Promise<{ exitCode: number }>>(
+      async () => ({ exitCode: 0 }),
+    );
+    const writeFiles = vi.fn<(files: Array<{ path: string; content: string }>) => Promise<undefined>>(
+      async () => undefined,
+    );
     mocks.get.mockResolvedValue({ name: 'box-1', writeFiles, runCommand });
 
     stage.claude.mockResolvedValue(stageResult(await fakeTarball('claude.tgz')));
@@ -75,7 +79,7 @@ describe('vercelBackend.provision — per-box credential push', () => {
     expect(writeFiles).toHaveBeenCalledTimes(3);
     expect(runCommand).toHaveBeenCalledTimes(3);
 
-    const remotes = writeFiles.mock.calls.map((c) => (c[0] as Array<{ path: string }>)[0].path);
+    const remotes = writeFiles.mock.calls.map((c) => c[0][0]?.path);
     expect(remotes).toEqual([
       '/tmp/agentbox-claude-creds.tar.gz',
       '/tmp/agentbox-codex-creds.tar.gz',
@@ -83,7 +87,7 @@ describe('vercelBackend.provision — per-box credential push', () => {
     ]);
 
     // Each extract targets the matching ~/.agentbox-creds/<kind> dest.
-    const extracts = runCommand.mock.calls.map((c) => (c[0] as { args: string[] }).args[1]);
+    const extracts = runCommand.mock.calls.map((c) => c[0].args[1] ?? '');
     expect(extracts[0]).toContain('/home/vscode/.agentbox-creds/claude');
     expect(extracts[1]).toContain('/home/vscode/.agentbox-creds/codex');
     expect(extracts[2]).toContain('/home/vscode/.agentbox-creds/opencode');
@@ -94,8 +98,12 @@ describe('vercelBackend.provision — per-box credential push', () => {
   });
 
   it('skips agents with no host credentials and still returns the handle', async () => {
-    const runCommand = vi.fn(async () => ({ exitCode: 0 }));
-    const writeFiles = vi.fn(async () => undefined);
+    const runCommand = vi.fn<(opts: { args: string[] }) => Promise<{ exitCode: number }>>(
+      async () => ({ exitCode: 0 }),
+    );
+    const writeFiles = vi.fn<(files: Array<{ path: string; content: string }>) => Promise<undefined>>(
+      async () => undefined,
+    );
     mocks.get.mockResolvedValue({ name: 'box-1', writeFiles, runCommand });
 
     stage.claude.mockResolvedValue(stageResult(await fakeTarball('claude.tgz')));
@@ -110,15 +118,19 @@ describe('vercelBackend.provision — per-box credential push', () => {
   });
 
   it('a non-zero extract is logged, not thrown', async () => {
-    const runCommand = vi.fn(async () => ({ exitCode: 2 }));
-    const writeFiles = vi.fn(async () => undefined);
+    const runCommand = vi.fn<(opts: { args: string[] }) => Promise<{ exitCode: number }>>(
+      async () => ({ exitCode: 2 }),
+    );
+    const writeFiles = vi.fn<(files: Array<{ path: string; content: string }>) => Promise<undefined>>(
+      async () => undefined,
+    );
     mocks.get.mockResolvedValue({ name: 'box-1', writeFiles, runCommand });
     stage.claude.mockResolvedValue(stageResult(await fakeTarball('claude.tgz')));
     stage.codex.mockResolvedValue(stageResult(null));
     stage.opencode.mockResolvedValue(stageResult(null));
 
     const logs: string[] = [];
-    const handle = await vercelBackend.provision({ name: 'box-1', onLog: (l) => logs.push(l) } as never);
+    const handle = await vercelBackend.provision({ name: 'box-1', onLog: (l: string) => logs.push(l) } as never);
     expect(handle).toEqual({ sandboxId: 'box-1' });
     expect(logs.some((l) => l.includes('claude credential extract failed'))).toBe(true);
   });
@@ -131,7 +143,7 @@ describe('vercelBackend.provision — per-box credential push', () => {
     stage.opencode.mockResolvedValue(stageResult(null));
 
     const logs: string[] = [];
-    const handle = await vercelBackend.provision({ name: 'box-1', onLog: (l) => logs.push(l) } as never);
+    const handle = await vercelBackend.provision({ name: 'box-1', onLog: (l: string) => logs.push(l) } as never);
     expect(handle).toEqual({ sandboxId: 'box-1' });
     expect(logs.some((l) => l.includes('agent credential push failed'))).toBe(true);
   });
