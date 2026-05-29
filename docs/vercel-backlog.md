@@ -255,29 +255,45 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
     `CLOUD_PRUNE_PROVIDERS` list, so `--provider vercel` (and `hetzner`, also
     previously unwired) now enumerate orphan sandboxes via `backend.list()` and
     offer to delete the ones absent from `state.json`. `apps/cli/src/commands/prune.ts`.
-16. **`Sandbox.fork()`** as a faster "branch from a running box" primitive than
-    snapshot + create (Vercel-native, no host round-trip).
-    **Plan (investigated 2026-05-29, not yet built):**
-    - SDK is ready: `Sandbox.fork({ sourceSandbox: <name>, name?, resources?, ports?, env?, ...creds })`
-      copies the source's current filesystem (inherits its snapshot/runtime). `env`
-      is **not** copied — pass it explicitly. Returns a new `Sandbox`.
-    - The hard part is the agentbox surface, not the SDK call. Box-record minting
-      (`mintBox`) + relay registration (`registerBoxWithRelay`) + `recordBox` are
-      currently **inline in `cloud-provider.ts` `create()`** (~L272–660, shared by
-      daytona/hetzner/vercel). Two options:
-      1. *Refactor* `create()` to extract a `finalizeCloudBox(handle, req, {id,name,branch,relayToken,bridgeToken})` that does the post-provision steps (workspace already present on a fork, so skip the seed), and call it from both `create` and a new `forkBox`. Cleanest, but regression-risk to all three cloud creates — cover with the existing cloud-provider unit tests + a daytona/hetzner smoke.
-      2. *Duplicate* the ~80-line record-construction + register + `recordBox` in a vercel-only `forkBox`. Lower risk, more drift.
-    - Add a `Provider.fork?(sourceBox, opts)` capability (vercel-only) + an
-      `agentbox fork [box] [--name]` CLI command (mirror `url.ts`'s box-resolution +
-      cloud lifecycle probe; source must be a running vercel box).
-    - **Branch semantics decision needed:** the fork inherits the source's
-      `/workspace` on the source's `agentbox/<src>` branch. Decide whether to leave
-      it (fast, but two boxes share a branch name → host `.git` confusion on cloud
-      is moot since cloud uses a git bundle, not the bind-mount) or `git checkout -b
-      agentbox/<fork>` in the fork at finalize. Recommend re-branching for parity
-      with `create`.
-    - Verify live: `Sandbox.fork` a running box, confirm the fork has the source's
-      `/workspace` edits (write a marker in the source first), then `destroy` both.
+16. **`Sandbox.fork()` — won't build (SDK fork is strictly weaker than
+    checkpoint + create).** Investigated 2026-05-29; decision: shelved, no code.
+    The proposal was a faster Vercel-native "branch from a running box" than
+    snapshot + create. Reading the SDK kills the premise.
+    **Finding.** `Sandbox.fork` in `@vercel/sandbox@2.0.1`
+    (`dist/sandbox.js:347-386`) is, in full:
+    ```js
+    const source = await Sandbox.get({ name: sourceSandbox, resume: false }); // does NOT touch the source
+    const snapshotId = source.currentSnapshotId;                              // the LAST existing snapshot
+    return Sandbox.create({ ...copiedConfig, ...overrides,
+      source: snapshotId ? { type: 'snapshot', snapshotId } : undefined,
+      runtime: snapshotId ? undefined : source.runtime });
+    ```
+    It reads the source's **last existing snapshot** and creates from it. It does
+    **not** take a fresh snapshot, **not** capture memory, and **not** read the live
+    filesystem. The `.d.ts` phrase "inherits the source's current filesystem
+    snapshot" is technically true but misleading — "current snapshot" means *last*
+    snapshot, not live FS.
+    **Why that makes it useless here**, given Vercel's snapshot model (persistent
+    boxes only snapshot on *stop*; while running `currentSnapshotId ===
+    sourceSnapshotId`, the base — see the destroy-guard in
+    `packages/sandbox-vercel/test/backend.test.ts` and the
+    `project-vercel-snapshot-lifecycle` finding):
+    - Forking a running, never-stopped box yields the **base snapshot** — none of
+      the agent's work. Surprising and dangerous.
+    - Capturing the source's *current* work requires snapshotting it first, which on
+      Vercel **stops the VM** — at which point `agentbox checkpoint create` +
+      `agentbox create --snapshot <ref>` (already implemented, all four providers)
+      does exactly the same thing.
+    So fork collapses to "create from the source's last snapshot," strictly weaker
+    than the existing path. The only thing that would justify a new box→box
+    primitive — branching a *live*, mid-flight agent (process + memory) without
+    disturbing the source — is not offered by the Vercel platform (cold,
+    VM-stopping snapshots only).
+    **Revisit condition.** Only worth building if a provider ships **live / memory
+    snapshots** (fork the running VM's RAM, source untouched). Until then the
+    box→box workflow we actually want (start from a previous version → self-update
+    via `agentbox.yaml` → agent re-branches from main) is served by checkpoints +
+    `create`. Platform-side write-up: [`docs/vercel-sandbox-findings.md`](./vercel-sandbox-findings.md).
 17. [x] **Per-service `expose` ports.** Done — the cloud scaffold already minted a
     preview URL per `services.*.expose.port`, but on Vercel a URL only routes to a
     port declared at `Sandbox.create({ ports })`, and only `[6080, 8788]` were
