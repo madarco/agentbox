@@ -578,6 +578,19 @@ export function createCloudProvider(
           relayPreview = undefined;
         }
 
+        // Allocate the per-project index BEFORE registering with the relay: the
+        // relay keys the status.json path on the projectIndex it's registered
+        // with (`<id>-<N>-<mnemonic>`), and the host reader (list / footer /
+        // readBoxStatus) derives the same path from the box record. Registering
+        // first (projectIndex undefined) made the relay write to the legacy
+        // no-index path while the record had `projectIndex: N` — so the reader
+        // looked at the `-N-` path, found nothing, and `agentbox list` showed
+        // no AGENT status for cloud boxes.
+        const state = await readState();
+        const projectIndex = req.projectRoot
+          ? allocateProjectIndex(state, req.projectRoot)
+          : undefined;
+
         // Tell the host relay about this cloud box so it spawns a poller.
         // Best-effort: a failed register doesn't break create (status / git
         // push just won't reach the host until a later register).
@@ -587,6 +600,7 @@ export function createCloudProvider(
               boxId: id,
               token: relayToken,
               name,
+              projectIndex,
               kind: 'cloud',
               backend: backend.name,
               previewUrl: relayPreview.url,
@@ -600,11 +614,6 @@ export function createCloudProvider(
             );
           }
         }
-
-        const state = await readState();
-        const projectIndex = req.projectRoot
-          ? allocateProjectIndex(state, req.projectRoot)
-          : undefined;
 
         const record: BoxRecord = {
           id,
