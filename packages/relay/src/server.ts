@@ -7,7 +7,10 @@ import {
   assertGhReady,
   checkoutGuards,
   GH_PR_READ_ONLY_OPS,
+  injectPrCreateHead,
   isGhPrOp,
+  PR_CREATE_NO_HEAD_REFUSAL,
+  prCreateNeedsHead,
   refuseCheckoutByDefault,
   refuseMergeBypass,
   runHostGh,
@@ -172,7 +175,7 @@ function isLoopbackAddress(addr: string | undefined): boolean {
  *   POST /admin/host-initiated/mint — loopback only; mints a one-time token scoped to (boxId, method).
  *   POST /admin/notices/set     — loopback only; sets an informational box notice (returns {id}).
  *   POST /admin/notices/clear   — loopback only; clears a box notice by id.
- *   GET  /healthz               — liveness probe (no auth).
+ *   GET  /healthz               — liveness + capability probe (no auth); reports {pid, cliEntry}.
  */
 export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const log = opts.logger ?? (() => {});
@@ -221,7 +224,18 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     const route = `${req.method ?? 'GET'} ${url.pathname}`;
 
     if (route === 'GET /healthz') {
-      send(res, 200, { ok: true, boxes: registry.size(), events: events.size() });
+      // `cliEntry` and `pid` let the host-side `ensureRelay` distinguish a
+      // *capable* relay from one that's merely alive: a relay spawned without
+      // AGENTBOX_CLI_ENTRY silently fails every cp/download/checkpoint host
+      // action (exit 64) for its whole lifetime. Reporting it here lets the
+      // caller reclaim (kill by `pid`) and respawn instead of reusing it.
+      send(res, 200, {
+        ok: true,
+        boxes: registry.size(),
+        events: events.size(),
+        pid: process.pid,
+        cliEntry: Boolean(process.env.AGENTBOX_CLI_ENTRY),
+      });
       return;
     }
 
@@ -1138,7 +1152,13 @@ async function handleGhPrRpc(
     }
   }
 
-  return runHostGh(['pr', op, ...args], worktree.hostMainRepo);
+  // Default `--head` to the box's branch for `create` (the host repo cwd isn't
+  // on the box branch, so gh can't infer it). Done after token validation —
+  // which hashes the incoming `params`, not this post-injection argv.
+  const finalArgs = injectPrCreateHead(op, worktree.branch, args);
+  // Never let `gh` fall back to the host repo's checked-out branch.
+  if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
+  return runHostGh(['pr', op, ...finalArgs], worktree.hostMainRepo);
 }
 
 /**

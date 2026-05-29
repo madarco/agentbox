@@ -295,3 +295,77 @@ describe('input router (active prompt)', () => {
     await expect(p).rejects.toThrow(/disposed/);
   });
 });
+
+interface PasteSetup {
+  forwarded: Buffer[];
+  calls: () => number;
+  resolveAll: () => void;
+  router: ReturnType<typeof createInputRouter>;
+}
+
+function pasteSetup(): PasteSetup {
+  const forwarded: Buffer[] = [];
+  const resolvers: Array<() => void> = [];
+  let calls = 0;
+  const router = createInputRouter({
+    onForward: (b) => forwarded.push(b),
+    onAnswer: () => {},
+    onPasteImage: () =>
+      new Promise<void>((res) => {
+        calls++;
+        resolvers.push(res);
+      }),
+  });
+  return {
+    forwarded,
+    calls: () => calls,
+    resolveAll: () => {
+      for (const r of resolvers.splice(0)) r();
+    },
+    router,
+  };
+}
+
+const CTRL_V = 0x16;
+const flushMicrotasks = (): Promise<void> =>
+  new Promise((r) => setImmediate(r));
+
+describe('input router (Ctrl+V image paste)', () => {
+  it('forwards Ctrl+V verbatim when no paste hook is set', () => {
+    const s = setup();
+    s.router.feed(Buffer.from([CTRL_V]));
+    expect(Buffer.concat(s.forwarded)).toEqual(Buffer.from([CTRL_V]));
+  });
+
+  it('intercepts Ctrl+V: awaits the hook, then re-emits exactly one Ctrl+V', async () => {
+    const s = pasteSetup();
+    s.router.feed(Buffer.from([CTRL_V]));
+    await flushMicrotasks();
+    expect(s.calls()).toBe(1);
+    expect(s.forwarded).toHaveLength(0); // nothing forwarded until the load finishes
+    s.resolveAll();
+    await flushMicrotasks();
+    expect(Buffer.concat(s.forwarded)).toEqual(Buffer.from([CTRL_V]));
+  });
+
+  it('debounces Ctrl+V while a paste is in flight', async () => {
+    const s = pasteSetup();
+    s.router.feed(Buffer.from([CTRL_V]));
+    s.router.feed(Buffer.from([CTRL_V]));
+    await flushMicrotasks();
+    expect(s.calls()).toBe(1); // second press dropped
+    s.resolveAll();
+    await flushMicrotasks();
+    expect(Buffer.concat(s.forwarded)).toEqual(Buffer.from([CTRL_V]));
+  });
+
+  it('forwards surrounding bytes immediately and defers only the Ctrl+V', async () => {
+    const s = pasteSetup();
+    s.router.feed(Buffer.from('ab\x16cd'));
+    await flushMicrotasks();
+    expect(Buffer.concat(s.forwarded).toString('utf8')).toBe('abcd');
+    s.resolveAll();
+    await flushMicrotasks();
+    expect(Buffer.concat(s.forwarded)).toEqual(Buffer.from('abcd\x16'));
+  });
+});

@@ -122,7 +122,7 @@ function projectLabel(project: string | undefined): string {
  *  spinner glyph, e.g. `✳ `) plus any leading symbols/asterisks/space, so the
  *  sidebar shows just the words. Falls back to the trimmed original if the
  *  title is all decoration. */
-function stripTitleGlyph(s: string): string {
+export function stripTitleGlyph(s: string): string {
   const t = s.replace(/^[\s\p{S}*·]+/u, '');
   return t.length > 0 ? t : s.trim();
 }

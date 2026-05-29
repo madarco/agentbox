@@ -18,6 +18,8 @@ import {
 } from '@agentbox/config';
 import { readState, STATE_DIR, STATE_FILE } from '@agentbox/sandbox-core';
 import type { BoxRecord } from '@agentbox/core';
+import type { BoxRegistry } from './registry.js';
+import type { BoxStatusStore } from './status-store.js';
 
 export const QUEUE_DIR = join(STATE_DIR, 'queue');
 
@@ -40,6 +42,19 @@ export interface QueueJob {
   createOpts: QueueJobCreateOpts;
   /** Per-job concurrency ceiling (--max-running override, else the global). */
   maxConcurrent: number;
+  /**
+   * Per-job working-agent ceiling (--max-working override, else the global
+   * `queue.maxWorking`). Only consulted when the working-agent gate is active
+   * (`queue.maxWorking > 0`). Absent → use the global.
+   */
+  maxWorking?: number;
+  /**
+   * Box id the worker created for this job, written back to the manifest as
+   * soon as `createBox` returns (before the agent session starts). Lets the
+   * working-agent counter join a `running` manifest to its live box status and
+   * avoid double-counting the in-flight startup slot once the box registers.
+   */
+  boxId?: string;
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
@@ -79,6 +94,10 @@ export interface QueueJobCreateOpts {
 export interface QueueConfig {
   enabled: boolean;
   maxConcurrent: number;
+  /** Max concurrently-working agents before `-i` jobs queue. 0 = disabled (use the running-box gate). */
+  maxWorking: number;
+  /** Debounce: ms an agent must stay non-working before it frees its working slot. */
+  idleGraceMs: number;
 }
 
 /**
@@ -99,6 +118,8 @@ export async function loadQueueConfig(): Promise<QueueConfig> {
   return {
     enabled: q.enabled ?? d.enabled,
     maxConcurrent: q.maxConcurrent ?? d.maxConcurrent,
+    maxWorking: q.maxWorking ?? d.maxWorking,
+    idleGraceMs: (q.idleGraceSeconds ?? d.idleGraceSeconds) * 1_000,
   };
 }
 
@@ -177,7 +198,159 @@ export function selectNextRunnable(jobs: QueueJob[], runningCount: number): Queu
   return null;
 }
 
+// ---- working-agent gate ---------------------------------------------------
+//
+// When `queue.maxWorking > 0` the scheduler caps the number of *working*
+// (quota-consuming) agents instead of running boxes. The signal is each box's
+// live activity state in the relay's BoxStatusStore (fed for docker and cloud
+// alike). A box that has finished thinking and is waiting for the user no
+// longer occupies a slot, so the next queued job starts — without pausing the
+// finished box.
+
+/** Activity union the working gate reasons about (mirrors @agentbox/ctl's `ClaudeActivityState`). */
+export type WorkingAgentState =
+  | 'working'
+  | 'idle'
+  | 'waiting'
+  | 'end-plan'
+  | 'question'
+  | 'compacting'
+  | 'error'
+  | 'unknown';
+
+const WORKING_AGENT_STATES: readonly WorkingAgentState[] = [
+  'working',
+  'idle',
+  'waiting',
+  'end-plan',
+  'question',
+  'compacting',
+  'error',
+  'unknown',
+];
+
+function isWorkingAgentState(v: unknown): v is WorkingAgentState {
+  return typeof v === 'string' && (WORKING_AGENT_STATES as readonly string[]).includes(v);
+}
+
+/**
+ * Boot window during which a freshly-created box (agent not yet reporting a
+ * state) still counts as occupying a slot. Must exceed worst-case box
+ * create + session launch before the first `working` hook fires, or a burst
+ * of queued jobs would over-start before any reports working. Internal
+ * constant, not user-tunable (it's a correctness guard, not a preference).
+ */
+export const STARTUP_GRACE_MS = 90_000;
+
+/** One box's facts the pure working-slot predicate reasons about. No I/O, no clock. */
+export interface WorkingSlotEntry {
+  /** boxId (registered box) — for logging/debug only. */
+  key: string;
+  /** Most-recent active-agent state across claude/codex/opencode, or null when no snapshot. */
+  agentState: WorkingAgentState | null;
+  /** ms since that agent's `updatedAt` (now - updatedAt), or null. */
+  sinceUpdateMs: number | null;
+  /** ms since the box was created (now - box.createdAt), or null. */
+  sinceCreateMs: number | null;
+}
+
+/**
+ * Pure predicate: does this box occupy a working slot right now?
+ *   - working/compacting           → yes (actively consuming quota)
+ *   - unknown/no-snapshot, booting  → yes while within {@link STARTUP_GRACE_MS}
+ *   - idle/waiting/end-plan/question→ yes only while within the debounce window
+ *     (`now - updatedAt < idleGraceMs`); this absorbs brief idle flaps between
+ *     turns so a slot isn't freed-then-reclaimed in a thrash.
+ *   - error, or anything past its window → no (slot frees).
+ */
+export function occupiesWorkingSlot(e: WorkingSlotEntry, idleGraceMs: number): boolean {
+  if (e.agentState === 'working' || e.agentState === 'compacting') return true;
+  if (
+    (e.agentState === null || e.agentState === 'unknown') &&
+    e.sinceCreateMs !== null &&
+    e.sinceCreateMs < STARTUP_GRACE_MS
+  ) {
+    return true;
+  }
+  if (
+    (e.agentState === 'idle' ||
+      e.agentState === 'waiting' ||
+      e.agentState === 'end-plan' ||
+      e.agentState === 'question') &&
+    e.sinceUpdateMs !== null &&
+    e.sinceUpdateMs < idleGraceMs
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function countWorkingSlots(entries: WorkingSlotEntry[], idleGraceMs: number): number {
+  return entries.reduce((n, e) => (occupiesWorkingSlot(e, idleGraceMs) ? n + 1 : n), 0);
+}
+
+/**
+ * Pure selector mirroring {@link selectNextRunnable} but for the working-agent
+ * gate: pick the oldest queued job whose effective working ceiling (per-job
+ * `maxWorking`, else the global) is above the current working count.
+ */
+export function selectNextRunnableByWorking(
+  jobs: QueueJob[],
+  workingCount: number,
+  globalMaxWorking: number,
+): QueueJob | null {
+  for (const j of jobs) {
+    if (j.status !== 'queued') continue;
+    const ceil =
+      typeof j.maxWorking === 'number' && j.maxWorking > 0 ? j.maxWorking : globalMaxWorking;
+    if (workingCount < ceil) return j;
+  }
+  return null;
+}
+
+/**
+ * Pick the active agent's state from a box-status snapshot. `claude` is always
+ * present (codex/opencode are additive), so prefer whichever agent reports a
+ * quota-consuming state, else the most-recently-updated one. Returns nulls
+ * when no snapshot / no recognizable state.
+ */
+export function readActiveAgent(snap: Record<string, unknown> | undefined): {
+  state: WorkingAgentState | null;
+  updatedAt: string | null;
+} {
+  if (!snap || typeof snap !== 'object') return { state: null, updatedAt: null };
+  const candidates: Array<{ state: WorkingAgentState; updatedAt: string | null }> = [];
+  for (const key of ['claude', 'codex', 'opencode']) {
+    const sub = (snap as Record<string, unknown>)[key];
+    if (!sub || typeof sub !== 'object') continue;
+    const o = sub as Record<string, unknown>;
+    if (!isWorkingAgentState(o.state)) continue;
+    candidates.push({
+      state: o.state,
+      updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : null,
+    });
+  }
+  if (candidates.length === 0) return { state: null, updatedAt: null };
+  const active = candidates.find((c) => c.state === 'working' || c.state === 'compacting');
+  if (active) return active;
+  candidates.sort((a, b) => parseTime(b.updatedAt) - parseTime(a.updatedAt));
+  return candidates[0]!;
+}
+
+function parseTime(iso: string | null): number {
+  if (!iso) return 0;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? 0 : t;
+}
+
+function msSince(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? null : Date.now() - t;
+}
+
 export type RunningCountFn = () => Promise<number>;
+export type CountWorkingFn = (idleGraceMs: number) => Promise<number>;
 
 export interface QueueLoopDeps {
   log: (line: string) => void;
@@ -185,6 +358,15 @@ export interface QueueLoopDeps {
   loadConfig?: () => Promise<QueueConfig>;
   /** Injectable; defaults to docker inspect + cloud-as-running (see {@link defaultCountRunningBoxes}). */
   countRunning?: RunningCountFn;
+  /**
+   * Injectable working-agent counter (used when `queue.maxWorking > 0`).
+   * Defaults to {@link defaultCountWorkingBoxes} over `registry` + `statusStore`.
+   */
+  countWorking?: CountWorkingFn;
+  /** The relay's box registry; required (with `statusStore`) for the working gate. */
+  registry?: Pick<BoxRegistry, 'list'>;
+  /** The relay's box-status store; required (with `registry`) for the working gate. */
+  statusStore?: Pick<BoxStatusStore, 'get'>;
   /** Injectable; defaults to `spawn detached node <cliEntry> _run-queued-job <id>`. */
   spawnWorker?: (job: QueueJob) => Promise<number | null>;
   /** Hook invoked when a manifest's status flips. Tests inject to assert. */
@@ -213,8 +395,15 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
   const intervalMs = deps.intervalMs ?? DEFAULT_INTERVAL_MS;
   const { log, onStatusChange } = deps;
 
+  const countWorking: CountWorkingFn | null =
+    deps.countWorking ??
+    (deps.registry && deps.statusStore
+      ? (idleGraceMs) => defaultCountWorkingBoxes(deps.registry!, deps.statusStore!, idleGraceMs)
+      : null);
+
   let ticking = false;
   let stopped = false;
+  let warnedNoWorkingDeps = false;
   let inFlight: Promise<void> = recoverOrphanedWorkers(log, onStatusChange).catch((err) => {
     log(`queue: orphan recovery failed: ${err instanceof Error ? err.message : String(err)}`);
   });
@@ -230,13 +419,32 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
       const hasQueued = jobs.some((j) => j.status === 'queued');
       if (!hasQueued) return;
 
+      // Working-agent gate when `queue.maxWorking > 0` and the relay wired in
+      // its registry + status store; otherwise the legacy running-box gate.
+      let gateByWorking = cfg.maxWorking > 0;
+      if (gateByWorking && !countWorking) {
+        gateByWorking = false;
+        if (!warnedNoWorkingDeps) {
+          warnedNoWorkingDeps = true;
+          log('queue: maxWorking set but registry/statusStore not wired; using running-box gate');
+        }
+      }
+
       // Start as many slots as we can in one tick — picking one per tick would
       // mean a 2s lag per job after a slot frees, which adds up when a burst
       // of jobs queues against a freshly-cleared pool.
       while (!stopped) {
-        const running = await countRunning();
-        const fresh = await loadQueue();
-        const next = selectNextRunnable(fresh, running);
+        let occupancy: number;
+        let next: QueueJob | null;
+        if (gateByWorking && countWorking) {
+          occupancy = await countWorking(cfg.idleGraceMs);
+          const fresh = await loadQueue();
+          next = selectNextRunnableByWorking(fresh, occupancy, cfg.maxWorking);
+        } else {
+          occupancy = await countRunning();
+          const fresh = await loadQueue();
+          next = selectNextRunnable(fresh, occupancy);
+        }
         if (!next) return;
         // Atomic claim: re-read to make sure no other process already started
         // it (the relay is the only writer of status: running, but a
@@ -257,8 +465,13 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
             const withPid: QueueJob = { ...updated, pid };
             await writeJob(withPid);
             onStatusChange?.(withPid);
+            const ceil = gateByWorking
+              ? typeof updated.maxWorking === 'number' && updated.maxWorking > 0
+                ? updated.maxWorking
+                : cfg.maxWorking
+              : updated.maxConcurrent;
             log(
-              `queue: started job ${updated.id} (${updated.agent}) as pid ${String(pid)}; running ${String(running + 1)}/${String(updated.maxConcurrent)}`,
+              `queue: started job ${updated.id} (${updated.agent}) as pid ${String(pid)}; ${gateByWorking ? 'working' : 'running'} ${String(occupancy + 1)}/${String(ceil)}`,
             );
           } else {
             log(`queue: started job ${updated.id} (${updated.agent}); pid unknown`);
@@ -343,6 +556,51 @@ function processAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Count concurrently *working* agents for the working-agent gate. Computed
+ * fresh each call from in-memory relay state (no docker shell-out, no cache):
+ *   - one {@link WorkingSlotEntry} per registered box, from its live status
+ *     snapshot (`statusStore`) and creation time (`registry`), scored by
+ *     {@link occupiesWorkingSlot};
+ *   - plus each `running` queue job whose box hasn't registered yet (in-flight
+ *     create), so a burst can't over-start before the first box reports. A job
+ *     whose `boxId` is already in the registry is counted via its box entry
+ *     (no double count); a job whose worker PID is dead is skipped (the box,
+ *     if it exists, is counted via the registry).
+ */
+export async function defaultCountWorkingBoxes(
+  registry: Pick<BoxRegistry, 'list'>,
+  statusStore: Pick<BoxStatusStore, 'get'>,
+  idleGraceMs: number,
+): Promise<number> {
+  const boxes = registry.list();
+  const registeredIds = new Set(boxes.map((b) => b.boxId));
+  const entries: WorkingSlotEntry[] = boxes.map((b) => {
+    const active = readActiveAgent(statusStore.get(b.boxId));
+    return {
+      key: b.boxId,
+      agentState: active.state,
+      sinceUpdateMs: msSince(active.updatedAt),
+      sinceCreateMs: msSince(b.createdAt),
+    };
+  });
+  let count = countWorkingSlots(entries, idleGraceMs);
+
+  let jobs: QueueJob[];
+  try {
+    jobs = await loadQueue();
+  } catch {
+    return count;
+  }
+  for (const j of jobs) {
+    if (j.status !== 'running') continue;
+    if (j.boxId && registeredIds.has(j.boxId)) continue; // counted via its box entry
+    if (typeof j.pid === 'number' && !processAlive(j.pid)) continue; // dead worker
+    count += 1; // in-flight box creation — occupies a slot until it registers
+  }
+  return count;
 }
 
 const RUNNING_COUNT_CACHE_MS = 3_000;

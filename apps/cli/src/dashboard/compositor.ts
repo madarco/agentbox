@@ -16,11 +16,13 @@ import {
   menuLines,
   lifecycleMenuLines,
   createMenuLines,
+  stripTitleGlyph,
   NEW_BOX_ID,
   ADVANCED_HINT_GROUPS,
   type SidebarBox,
 } from './sidebar.js';
 import { renderFooter } from '../wrapped-pty/footer.js';
+import { popTerminalTitle, pushTerminalTitle, setTerminalTitle } from '../terminal/title.js';
 import { postAnswer, subscribePrompts, type PromptStream } from '../wrapped-pty/prompt-client.js';
 import type { BoxNoticeEvent, PromptAskEvent } from '@agentbox/relay';
 
@@ -167,6 +169,9 @@ export class Compositor {
    * the poll respawn so it can't interrupt the transition). */
   private busy = false;
   private layout: DashboardLayout;
+  /** Last host terminal/tab title we emitted, to dedupe OSC writes across the
+   *  frequent (spinner-driven) drawChrome calls. */
+  private lastTitle: string | null = null;
   private prevRows: string[] | null = null;
   private renderTimer: ReturnType<typeof setTimeout> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -257,6 +262,9 @@ export class Compositor {
 
   async run(): Promise<void> {
     this.out.write('\x1b[?1049h\x1b[?25l\x1b[2J' + MOUSE_ENABLE_SEQ + EXT_KEYS_ENABLE_SEQ);
+    // Save the user's tab title so teardown can restore it; updateTitle() (via
+    // drawChrome) then drives it to `AgentBox: <selected box>`.
+    pushTerminalTitle(this.out);
     if (this.inp.isTTY) this.inp.setRawMode(true);
     this.inp.resume();
     this.inp.on('data', this.onData);
@@ -928,7 +936,26 @@ export class Compositor {
     }
   }
 
+  /** Drive the host terminal/tab title from the selected box:
+   *  `AgentBox: <session title | box name>`, or just `AgentBox` for the
+   *  synthetic "+ New box" entry / no selection. Deduped via {@link lastTitle}. */
+  private updateTitle(): void {
+    if (this.tornDown) return;
+    const box = this.selectedBox();
+    const inner =
+      box && box.id !== NEW_BOX_ID
+        ? box.state === 'running' && box.sessionTitle
+          ? stripTitleGlyph(box.sessionTitle)
+          : box.name
+        : undefined;
+    const title = inner ? `AgentBox: ${inner}` : 'AgentBox';
+    if (title === this.lastTitle) return;
+    this.lastTitle = title;
+    setTerminalTitle(title, this.out);
+  }
+
   private drawChrome(): void {
+    this.updateTitle();
     if (this.tornDown || this.layout.tooSmall) return;
     const { sidebar, sepX, statusY } = this.layout;
     // Inject the per-box pendingPrompt / checkpointing flags at render time
@@ -1072,6 +1099,8 @@ export class Compositor {
     // Belt-and-suspenders: clear the whole mouse-mode family in case Claude
     // enabled one we didn't individually track.
     this.out.write(EXT_KEYS_DISABLE_SEQ + MOUSE_DISABLE_SEQ + '\x1b[?25h\x1b[0m\x1b[?1049l');
+    // Restore the host terminal/tab title saved in run().
+    popTerminalTitle(this.out);
     this.resolveDone?.();
   }
 }

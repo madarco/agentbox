@@ -38,6 +38,8 @@ program
     });
     const queue = startQueueLoop({
       log: (line) => process.stdout.write(`agentbox-relay: ${line}\n`),
+      registry: handle.registry,
+      statusStore: handle.statusStore,
     });
     handle.setQueuePoke(() => {
       (queue as { poke?: () => void }).poke?.();

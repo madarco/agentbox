@@ -3,6 +3,7 @@ import { readBoxStatus } from '@agentbox/sandbox-docker';
 import type { AttachOpenIn } from '@agentbox/config';
 import { loadPtyBackend } from '../pty/pty-backend.js';
 import { detectHostTerminal, spawnInNewTerminal } from '../terminal/host.js';
+import { popTerminalTitle, pushTerminalTitle, setTerminalTitle } from '../terminal/title.js';
 import {
   createInputRouter,
   type InputRouter,
@@ -61,6 +62,13 @@ export interface WrappedAttachOptions {
    *  without taking over the current terminal. Outside tmux/iTerm2 it falls
    *  back to inline attach (the original behavior). */
   openIn?: AttachOpenIn;
+  /** Optional host→box clipboard image paste, invoked when the user presses
+   *  Ctrl+V (wired for claude only). Ships the host clipboard image into the
+   *  box and loads it into the box's X11 clipboard; resolves with the outcome
+   *  so the footer can flash a result. The input router re-emits Ctrl+V after
+   *  this settles, so Claude Code reads the now-loaded clipboard. Omitted →
+   *  Ctrl+V forwards verbatim. */
+  onPasteImage?: () => Promise<'pasted' | 'no-image' | 'error'>;
 }
 
 const FOOTER_ROWS = 1;
@@ -166,6 +174,15 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     rows: innerRows,
     env: process.env,
   });
+
+  // Mirror the agent's session title to the host terminal/tab title (iTerm2
+  // etc.). tmux swallows the inner OSC title (set-titles off), so the host
+  // never sees it; we re-emit it ourselves from the polled status below. Save
+  // the user's current title first so teardown can restore it. Seed with the
+  // box name so the tab is named immediately, before the first status poll.
+  pushTerminalTitle();
+  let lastEmittedTitle = opts.boxName;
+  setTerminalTitle(lastEmittedTitle);
 
   // claude is always tmux-backed; a tmux-backed `agentbox shell` opts in via
   // `detachable: true`, a `--no-tmux` shell leaves it false (nothing to detach).
@@ -316,6 +333,42 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     redrawFooter();
   };
 
+  // Ctrl+V image paste: hold a "Pasting image…" notice in the footer while the
+  // host clipboard image is shipped into the box, then flash the outcome. The
+  // input router re-emits the Ctrl+V once this resolves, so Claude reads the
+  // now-loaded box clipboard. Never throws — failures degrade to a flash.
+  const handlePasteImage = async (): Promise<void> => {
+    if (!opts.onPasteImage) return;
+    if (flashTimer) {
+      clearTimeout(flashTimer);
+      flashTimer = null;
+    }
+    flashMessage = 'Pasting image…';
+    recomputeFooter();
+    redrawFooter();
+    let result: 'pasted' | 'no-image' | 'error' = 'error';
+    try {
+      result = await opts.onPasteImage();
+    } catch (e) {
+      logErr(`paste-image failed: ${(e as Error).message}`);
+    }
+    flashMessage =
+      result === 'pasted'
+        ? 'Image pasted'
+        : result === 'no-image'
+          ? 'No image in clipboard'
+          : 'Image paste failed';
+    flashTimer = setTimeout(() => {
+      flashTimer = null;
+      flashMessage = null;
+      recomputeFooter();
+      redrawFooter();
+    }, FLASH_DURATION_MS);
+    if (typeof flashTimer.unref === 'function') flashTimer.unref();
+    recomputeFooter();
+    redrawFooter();
+  };
+
   // Wire stdin -> pty (through the router so prompts + the leader can intercept).
   const router: InputRouter = createInputRouter({
     onForward: (b) => {
@@ -339,6 +392,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     onAction: (name) => {
       runAction(name);
     },
+    onPasteImage: opts.onPasteImage ? handlePasteImage : undefined,
   });
 
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
@@ -419,8 +473,25 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
         name: opts.boxName,
         projectIndex: opts.projectIndex,
       });
-      const nextTitle = status?.claude?.sessionTitle?.trim() || undefined;
-      const nextActivity = status?.claude?.state || undefined;
+      // Read the title/activity from the body of the agent we attached to;
+      // shell mode has no agent session so it keeps the box-name title.
+      const body =
+        opts.mode === 'codex'
+          ? status?.codex
+          : opts.mode === 'opencode'
+            ? status?.opencode
+            : opts.mode === 'shell'
+              ? undefined
+              : status?.claude;
+      const nextTitle = body?.sessionTitle?.trim() || undefined;
+      const nextActivity = body?.state || undefined;
+      // Mirror the live title to the host terminal/tab, falling back to the box
+      // name until the agent sets one. Deduped so we don't spam the terminal.
+      const desiredTitle = nextTitle ?? opts.boxName;
+      if (desiredTitle !== lastEmittedTitle) {
+        lastEmittedTitle = desiredTitle;
+        setTerminalTitle(desiredTitle);
+      }
       if (nextTitle === lastSessionTitle && nextActivity === lastActivity) return;
       lastSessionTitle = nextTitle;
       lastActivity = nextActivity;
@@ -489,6 +560,8 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       `\x1b[2K` +
       cursorMoveTo(rsFinal, csFinal),
   );
+  // Restore the host terminal/tab title we saved at attach time.
+  popTerminalTitle();
 
   if (exitCode === 0 && opts.detachNotice) {
     // Match the cosmetic of the old attachClaudeSession: overwrite tmux's

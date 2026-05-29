@@ -1,5 +1,5 @@
 import type { BoxRecord, ExecResult } from '@agentbox/core';
-import { GH_PR_OPS, hashRpcParams, type GhPrOp } from '@agentbox/relay';
+import { GH_PR_OPS, hashRpcParams, injectPrCreateHead as injectHead, type GhPrOp } from '@agentbox/relay';
 import { mintHostInitiatedToken } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
@@ -247,11 +247,8 @@ const PR_OP_DESCRIPTIONS: Record<GhPrOp, string> = {
  * sufficient — base stays whatever the user picked / repo default.
  */
 function injectPrCreateHead(op: GhPrOp, box: { gitWorktrees?: { kind: string; branch: string }[] }, args: string[]): string[] {
-  if (op !== 'create') return args;
-  if (args.some((a) => a === '--head' || a.startsWith('--head='))) return args;
   const rootWt = (box.gitWorktrees ?? []).find((w) => w.kind === 'root');
-  if (!rootWt) return args;
-  return ['--head', rootWt.branch, ...args];
+  return injectHead(op, rootWt?.branch, args);
 }
 
 function buildPrSubcommand(op: GhPrOp): Command {

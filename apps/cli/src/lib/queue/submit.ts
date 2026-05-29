@@ -20,6 +20,8 @@ export interface SubmitQueueJobInput {
   createOpts: QueueJobCreateOpts;
   /** Per-invocation override of queue.maxConcurrent. */
   maxRunningOverride?: number;
+  /** Per-invocation override of queue.maxWorking. */
+  maxWorkingOverride?: number;
 }
 
 export interface SubmitQueueJobResult {
@@ -48,6 +50,11 @@ export async function submitQueueJob(
       ? input.maxRunningOverride
       : cfg.maxConcurrent;
 
+  const maxWorking =
+    typeof input.maxWorkingOverride === 'number' && input.maxWorkingOverride > 0
+      ? input.maxWorkingOverride
+      : undefined;
+
   const id = newJobId();
   const job: QueueJob = {
     id,
@@ -59,6 +66,7 @@ export async function submitQueueJob(
     agentArgs: input.agentArgs,
     createOpts: input.createOpts,
     maxConcurrent: ceiling,
+    ...(maxWorking !== undefined ? { maxWorking } : {}),
     createdAt: new Date().toISOString(),
     logPath: queueLogPath(id),
   };

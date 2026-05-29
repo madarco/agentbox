@@ -251,7 +251,9 @@ export function createCloudProvider(
     return {
       id,
       name,
-      branch: `agentbox/${name}`,
+      // --use-branch reuses the named branch directly; otherwise fork a fresh
+      // per-box branch. The CLI validated `useBranch` exists host-side.
+      branch: req.useBranch ?? `agentbox/${name}`,
     };
   }
 
@@ -386,6 +388,7 @@ export function createCloudProvider(
             workspaceDir: CLOUD_WORKSPACE_DIR,
             bundleDepth: req.bundleDepth,
             fromBranch: req.fromBranch,
+            useBranch: req.useBranch,
             onLog: log,
           });
         }

@@ -67,32 +67,110 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
     log(`removed legacy relay container ${RELAY_CONTAINER_NAME}`);
   }
 
-  if (await pingHealthz(500)) {
-    return ENDPOINT;
-  }
-
-  const existingPid = await readPidFile();
-  if (existingPid !== null && (await processAlive(existingPid))) {
-    // Pid exists but healthz isn't responding yet — give it a beat to finish
-    // startup. If it stays unresponsive, leave it alone (someone might be
-    // debugging it) and let downstream POSTs fail as best-effort.
-    for (let i = 0; i < 10; i++) {
-      if (await pingHealthz(300)) return ENDPOINT;
-      await delay(200);
+  const health = await fetchHealthz(500);
+  if (health !== null) {
+    // A relay is answering on the port. Only reuse it if it can actually run
+    // host-side CLI actions. A relay spawned during a transient window where
+    // the CLI dist didn't exist comes up without AGENTBOX_CLI_ENTRY and then
+    // silently returns exit 64 for every cp/download/checkpoint for its whole
+    // lifetime — and bare liveness can never detect that, so it's never
+    // replaced. `cliEntry === false` (new relay, capability missing) → reclaim
+    // and respawn. `cliEntry === undefined` (a relay from before this field
+    // existed) is reused as before to avoid needlessly cycling old relays.
+    if (health.cliEntry !== false) {
+      return ENDPOINT;
     }
-    log(`relay pid ${String(existingPid)} alive but /healthz unresponsive — proceeding anyway`);
-    return ENDPOINT;
-  }
-  if (existingPid !== null) {
-    await unlink(PID_FILE).catch(() => {});
+    log('relay is alive but lacks AGENTBOX_CLI_ENTRY (cp/download/checkpoint would fail) — reclaiming');
+    await reclaimRelay(health.pid, log);
+    // fall through to a fresh spawn below
+  } else {
+    const existingPid = await readPidFile();
+    if (existingPid !== null && (await processAlive(existingPid))) {
+      // Pid exists but healthz isn't responding yet — give it a beat to finish
+      // startup. If it stays unresponsive, leave it alone (someone might be
+      // debugging it) and let downstream POSTs fail as best-effort.
+      for (let i = 0; i < 10; i++) {
+        if (await pingHealthz(300)) return ENDPOINT;
+        await delay(200);
+      }
+      log(`relay pid ${String(existingPid)} alive but /healthz unresponsive — proceeding anyway`);
+      return ENDPOINT;
+    }
+    if (existingPid !== null) {
+      await unlink(PID_FILE).catch(() => {});
+    }
   }
 
   const relayBin = resolveRelayBin();
-  const logFd = openSync(LOG_FILE, 'a');
-  // The relay shells out to this CLI entry for the checkpoint.create RPC
-  // (it only knows the box id; the CLI resolves the rest). Resolve best-effort
-  // — if not found the relay's handler reports a clear error.
+  // The relay shells back into this CLI entry for the cp / download /
+  // checkpoint host actions (it only knows the box id; the CLI resolves the
+  // rest). Resolve it BEFORE spawning and fail loud if missing: a relay
+  // without it answers /healthz fine but 64s every such action, and the
+  // capability gate above would just keep reclaiming + respawning it. A null
+  // here almost always means the CLI dist is mid-rebuild — surface that
+  // instead of producing a half-working relay.
   const cliEntry = resolveCliEntry();
+  if (cliEntry === null) {
+    throw new Error(
+      'cannot start the host relay: agentbox CLI entry not found ' +
+        '(is the build complete / dist present?). Set AGENTBOX_CLI_ENTRY to override.',
+    );
+  }
+  return spawnRelay(relayBin, cliEntry, log);
+}
+
+/**
+ * Stop a relay that's alive but missing AGENTBOX_CLI_ENTRY so a capable one
+ * can take the port. Tries the pid the relay reported via /healthz first, then
+ * the pidfile pid. Fails loud if the port is still held afterward — a silent
+ * "couldn't reclaim" would just resurrect the original broken-relay bug.
+ */
+async function reclaimRelay(reportedPid: number | undefined, log: (line: string) => void): Promise<void> {
+  const pidFromFile = await readPidFile();
+  const seen = new Set<number>();
+  for (const pid of [reportedPid, pidFromFile]) {
+    if (typeof pid !== 'number' || pid <= 0 || seen.has(pid)) continue;
+    seen.add(pid);
+    if (!(await processAlive(pid))) continue;
+    log(`stopping crippled relay pid ${String(pid)}`);
+    await killPid(pid);
+  }
+  await unlink(PID_FILE).catch(() => {});
+  // Confirm the port actually freed; if a relay still answers we'd reuse the
+  // broken one again on the next call. Surface it rather than loop silently.
+  if (await pingHealthz(300)) {
+    throw new Error(
+      `a relay without AGENTBOX_CLI_ENTRY is still listening on :${String(PORT)} and could not be ` +
+        `stopped (reported pid ${String(reportedPid ?? 'unknown')}); kill it manually and retry`,
+    );
+  }
+}
+
+/** SIGTERM, wait for exit, then SIGKILL — same escalation as {@link stopRelay}. */
+async function killPid(pid: number): Promise<void> {
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    return; // already gone
+  }
+  for (let i = 0; i < 20; i++) {
+    if (!(await processAlive(pid))) return;
+    await delay(100);
+  }
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    // best-effort
+  }
+}
+
+/** Spawn the detached relay process wired with AGENTBOX_CLI_ENTRY, then wait for it to come up. */
+async function spawnRelay(
+  relayBin: string,
+  cliEntry: string,
+  log: (line: string) => void,
+): Promise<RelayEndpoint> {
+  const logFd = openSync(LOG_FILE, 'a');
   const child = spawn(
     process.execPath,
     [relayBin, 'serve', '--port', String(PORT), '--host', '0.0.0.0'],
@@ -101,7 +179,7 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
       stdio: ['ignore', logFd, logFd],
       env: {
         ...process.env,
-        ...(cliEntry ? { AGENTBOX_CLI_ENTRY: cliEntry } : {}),
+        AGENTBOX_CLI_ENTRY: cliEntry,
       },
     },
   );
@@ -284,6 +362,10 @@ interface HealthzBody {
   ok: boolean;
   boxes: number;
   events: number;
+  /** The relay's own pid (for reclaiming). Absent on relays predating this field. */
+  pid?: number;
+  /** Whether the relay has AGENTBOX_CLI_ENTRY (can run cp/download/checkpoint). Absent on old relays. */
+  cliEntry?: boolean;
 }
 
 function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
@@ -307,7 +389,13 @@ function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
               typeof parsed.boxes === 'number' &&
               typeof parsed.events === 'number'
             ) {
-              resolveP({ ok: parsed.ok, boxes: parsed.boxes, events: parsed.events });
+              resolveP({
+                ok: parsed.ok,
+                boxes: parsed.boxes,
+                events: parsed.events,
+                pid: typeof parsed.pid === 'number' ? parsed.pid : undefined,
+                cliEntry: typeof parsed.cliEntry === 'boolean' ? parsed.cliEntry : undefined,
+              });
             } else {
               resolveP(null);
             }

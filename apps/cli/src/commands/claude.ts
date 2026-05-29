@@ -38,6 +38,7 @@ import {
   MissingAgentCredsError,
 } from '../lib/queue/assert-creds.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
+import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
 import {
   ATTACH_IN_HELP,
@@ -48,7 +49,7 @@ import {
 import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { runCarryGate } from '../lib/carry-gate.js';
-import { FromBranchError, resolveFromBranch } from '../lib/from-branch.js';
+import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { providerForBox, providerForCreate } from '../provider/registry.js';
 import {
   prepareTeleport,
@@ -65,22 +66,14 @@ import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
 import { maybeRunSetupWizard } from '../wizard.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
+import { pasteHostClipboardImage } from '../lib/paste-image.js';
+import { clipboardCaptureAvailable } from '../lib/host-clipboard.js';
 import { handleLifecycleError } from './_errors.js';
 
 /** Ref shown in the detach notice: the per-project index `n` when set
  *  (resolves from inside the project dir), else the globally-unique name. */
 function reattachRef(r: { projectIndex?: number; name: string }): string {
   return typeof r.projectIndex === 'number' ? String(r.projectIndex) : r.name;
-}
-
-/** Validate `--max-running <n>` from commander into a positive integer; throws on garbage. */
-function parseMaxRunningOption(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n <= 0) {
-    throw new Error(`--max-running: expected a positive integer, got "${raw}"`);
-  }
-  return n;
 }
 
 /** Project an agent-create options struct down to what the queue worker needs. */
@@ -123,12 +116,17 @@ const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
  * isn't a TTY or node-pty isn't installed.
  */
 async function attachClaudeWrapped(
-  box: { id: string; name: string; container: string; projectIndex?: number },
+  box: BoxRecord,
   sessionName: string | undefined,
   reattach: string,
   onError?: (msg: string) => void,
   openIn?: AttachOpenIn,
 ): Promise<never> {
+  const provider = await providerForBox(box);
+  // Only wire Ctrl+V paste when this host can actually capture a clipboard image
+  // (macOS, or a Linux desktop with xclip/wl-paste). Elsewhere Ctrl+V forwards
+  // verbatim instead of being intercepted for a guaranteed-empty paste.
+  const canPaste = await clipboardCaptureAvailable();
   const code = await runWrappedAttach({
     container: box.container,
     dockerArgv: buildClaudeAttachArgv(box.container, sessionName),
@@ -140,6 +138,9 @@ async function attachClaudeWrapped(
     detachNotice: formatDetachNotice(reattach),
     onError,
     openIn,
+    onPasteImage: canPaste
+      ? () => pasteHostClipboardImage(provider, box)
+      : undefined,
   });
   process.exit(code);
 }
@@ -170,13 +171,15 @@ interface ClaudeCreateOptions {
   provider?: string;
   /** --from-branch <ref>: base the box's per-box branch on this ref instead of HEAD. */
   fromBranch?: string;
+  /** -b / --use-branch <name>: reuse an existing branch directly instead of forking agentbox/<name>. */
+  useBranch?: string;
   /** -v / --verbose: bypass the spinner and stream raw provider output. */
   verbose?: boolean;
   /** Raw `--attach-in <mode>` value; validated by `parseAttachInOption`. */
   attachIn?: string;
   /** --inline: shortcut for `--attach-in same` (long-form only — `-i` is `--initial-prompt`). */
   inline?: boolean;
-  /** Commander parses `-b, --no-attach` as `attach: false` (defaults true). */
+  /** Commander parses `-d, --no-attach` as `attach: false` (defaults true). */
   attach?: boolean;
   /**
    * `-i, --initial-prompt <text>`: seed the claude TUI with this user turn
@@ -186,6 +189,8 @@ interface ClaudeCreateOptions {
   initialPrompt?: string;
   /** Per-invocation override of `queue.maxConcurrent` (number string from commander). */
   maxRunning?: string;
+  /** Per-invocation override of `queue.maxWorking` (number string from commander). */
+  maxWorking?: string;
   /** `-c, --continue`: teleport and resume the most recent host claude session for this cwd. */
   continue?: boolean;
   /** `--resume <id>`: teleport and resume the specified host claude session by id. */
@@ -350,12 +355,16 @@ export const claudeCommand = new Command('claude')
     "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
   )
   .option(
+    '-b, --use-branch <name>',
+    "reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.",
+  )
+  .option(
     '-v, --verbose',
     'bypass the spinner and stream raw provider output (docker build / Daytona snapshot create) to stderr. The same content always lands in ~/.agentbox/logs/claude.log.',
   )
   .option('--attach-in <mode>', ATTACH_IN_HELP)
   .option('--inline', INLINE_HELP)
-  .option('-b, --no-attach', NO_ATTACH_HELP)
+  .option('-d, --no-attach', NO_ATTACH_HELP)
   .option(
     '-i, --initial-prompt <text>',
     'seed the claude session with this initial user turn and run in background (no attach). Jobs go through the host-wide queue (queue.maxConcurrent). NOTE: this is NOT claude\'s own `-p` headless print mode — for that, pass `-- -p ...`.',
@@ -363,6 +372,10 @@ export const claudeCommand = new Command('claude')
   .option(
     '--max-running <n>',
     'per-invocation override of queue.maxConcurrent; only honored when `-i` is set',
+  )
+  .option(
+    '--max-working <n>',
+    'per-invocation override of queue.maxWorking; only honored when `-i` is set',
   )
   .option(
     '-c, --continue',
@@ -453,7 +466,8 @@ export const claudeCommand = new Command('claude')
         }
         throw err;
       }
-      const maxRunningOverride = parseMaxRunningOption(opts.maxRunning);
+      const maxRunningOverride = parseMaxOption('--max-running', opts.maxRunning);
+      const maxWorkingOverride = parseMaxOption('--max-working', opts.maxWorking);
       const result = await submitQueueJob({
         agent: 'claude-code',
         boxName: opts.name ?? '',
@@ -462,6 +476,7 @@ export const claudeCommand = new Command('claude')
         agentArgs: claudeArgs,
         createOpts: pickCreateOpts(opts),
         maxRunningOverride,
+        maxWorkingOverride,
       });
       outro(
         `job ${result.job.id} queued (${String(result.runningCount)}/${String(result.maxConcurrent)} running); log: ${result.job.logPath}`,
@@ -542,13 +557,21 @@ export const claudeCommand = new Command('claude')
       effectiveClaudeArgs = buildPromptArgs('claude-code', wiz.initialPrompt, claudeArgs);
     }
 
-    // Validate --from-branch before any provider work so a typo doesn't
+    // Validate branch selection before any provider work so a typo doesn't
     // leave a half-created box.
     let fromBranch: string | undefined;
+    let useBranch: string | undefined;
     try {
-      fromBranch = await resolveFromBranch(opts.fromBranch, { repo: opts.workspace });
+      ({ fromBranch, useBranch } = await resolveBranchSelection({
+        useBranch: opts.useBranch,
+        fromBranch: opts.fromBranch,
+        repo: opts.workspace,
+        providerName,
+        cloudUseCurrentBranch: cfg.effective.cloud.useCurrentBranch,
+        log: (m) => cmdLog.write(m),
+      }));
     } catch (err) {
-      if (err instanceof FromBranchError) {
+      if (err instanceof FromBranchError || err instanceof UseBranchError) {
         log.error(err.message);
         cmdLog.close();
         process.exit(2);
@@ -576,6 +599,7 @@ export const claudeCommand = new Command('claude')
           vnc: { enabled: cfg.effective.box.vnc },
           limits: resolveLimits(cfg.effective.box, opts),
           fromBranch,
+          useBranch,
           projectRoot,
         },
         binary: 'claude',
@@ -634,6 +658,7 @@ export const claudeCommand = new Command('claude')
         useSnapshot,
         checkpointRef,
         fromBranch,
+        useBranch,
         image: cfg.effective.box.image,
         claudeConfig: { isolate: cfg.effective.box.isolateClaudeConfig },
         claudeEnv: resolved.env,
@@ -986,7 +1011,7 @@ const claudeStartCommand = new Command('start')
   )
   .option('--attach-in <mode>', ATTACH_IN_HELP)
   .option('-i, --inline', INLINE_HELP)
-  .option('-b, --no-attach', NO_ATTACH_HELP)
+  .option('-d, --no-attach', NO_ATTACH_HELP)
   .option(
     '-c, --continue',
     'teleport the most recent host Claude Code session for this cwd into the box and resume',

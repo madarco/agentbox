@@ -126,6 +126,16 @@
         "idleMinutes": { "type": "integer" }
       }
     },
+    "queue": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "maxConcurrent": { "type": "integer" },
+        "maxWorking": { "type": "integer" },
+        "idleGraceSeconds": { "type": "integer" }
+      }
+    },
     "maintenance": {
       "type": "object",
       "additionalProperties": false,

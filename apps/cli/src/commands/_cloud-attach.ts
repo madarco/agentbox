@@ -4,6 +4,8 @@ import type { BoxRecord } from '@agentbox/core';
 import type { AttachOpenIn } from '@agentbox/config';
 import { providerForBox } from '../provider/registry.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
+import { pasteHostClipboardImage } from '../lib/paste-image.js';
+import { clipboardCaptureAvailable } from '../lib/host-clipboard.js';
 
 const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
 
@@ -115,6 +117,10 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     sessionName: args.sessionName,
     command,
   });
+  // claude only, and only when this host can capture a clipboard image (macOS,
+  // or a Linux desktop with xclip/wl-paste). Otherwise Ctrl+V forwards verbatim.
+  const canPaste =
+    args.mode === 'claude' && (await clipboardCaptureAvailable());
   try {
     const code = await runWrappedAttach({
       container: args.box.name,
@@ -127,6 +133,9 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
       mode: args.mode,
       detachable: true,
       openIn: safeOpenIn,
+      onPasteImage: canPaste
+        ? () => pasteHostClipboardImage(provider, args.box)
+        : undefined,
     });
     process.exit(code);
   } finally {

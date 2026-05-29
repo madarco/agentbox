@@ -60,6 +60,7 @@ export const dockerProvider: Provider = {
       useSnapshot: po.useSnapshot ?? false,
       checkpointRef: req.checkpointRef,
       fromBranch: req.fromBranch,
+      useBranch: req.useBranch,
       image: req.image,
       onLog: req.onLog,
       claudeConfig: po.claudeConfig,

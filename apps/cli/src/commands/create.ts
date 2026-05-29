@@ -16,7 +16,7 @@ import {
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
 import { runCarryGate } from '../lib/carry-gate.js';
-import { FromBranchError, resolveFromBranch } from '../lib/from-branch.js';
+import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { makeProgressReporter } from '../lib/progress.js';
 import { maybePromptPortless, setupPortlessHost } from '../portless-prompt.js';
@@ -59,6 +59,8 @@ interface CreateOptions {
   bundleDepth?: number;
   /** --from-branch <ref>: base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. */
   fromBranch?: string;
+  /** -b / --use-branch <name>: reuse an existing branch directly instead of forking agentbox/<name>. */
+  useBranch?: string;
   /** -v / --verbose: also stream raw build / provision output to stderr. */
   verbose?: boolean;
 }
@@ -172,6 +174,10 @@ export const createCommand = new Command('create')
   .option(
     '--from-branch <ref>',
     "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
+  )
+  .option(
+    '-b, --use-branch <name>',
+    "reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.",
   )
   .option('-y, --yes', 'skip prompts, accept defaults')
   .option(
@@ -302,11 +308,22 @@ export const createCommand = new Command('create')
       // provider for 'daytona'; everything below is provider-neutral.
       const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });
       let fromBranch: string | undefined;
+      let useBranch: string | undefined;
       try {
-        fromBranch = await resolveFromBranch(opts.fromBranch, { repo: opts.workspace });
+        ({ fromBranch, useBranch } = await resolveBranchSelection({
+          useBranch: opts.useBranch,
+          fromBranch: opts.fromBranch,
+          repo: opts.workspace,
+          providerName: provider.name,
+          cloudUseCurrentBranch: cfg.effective.cloud.useCurrentBranch,
+          log: (m) => {
+            s.message(m);
+            cmdLog.write(m);
+          },
+        }));
       } catch (err) {
-        if (err instanceof FromBranchError) {
-          s.stop('aborting: invalid --from-branch');
+        if (err instanceof FromBranchError || err instanceof UseBranchError) {
+          s.stop('aborting: invalid branch selection');
           log.error(err.message);
           cmdLog.close();
           process.exit(2);
@@ -326,6 +343,7 @@ export const createCommand = new Command('create')
         limits: resolveLimits(cfg.effective.box, opts),
         bundleDepth: cfg.effective.box.bundleDepth,
         fromBranch,
+        useBranch,
         projectRoot,
         onLog: (line) => {
           s.message(line);

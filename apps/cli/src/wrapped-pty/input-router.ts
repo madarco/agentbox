@@ -45,6 +45,7 @@ const KEY_Y_UP = 0x59;
 const KEY_N_LOW = 0x6e;
 const KEY_N_UP = 0x4e;
 const KEY_LEADER = 0x01; // Ctrl-a
+const KEY_CTRL_V = 0x16; // Ctrl-v — Claude Code's "paste image from clipboard"
 
 const DEFAULT_LEADER_TIMEOUT_MS = 2000;
 
@@ -59,6 +60,14 @@ export interface InputRouterOptions {
   onLeaderChange?: (active: boolean) => void;
   /** Fired when a recognized chord key resolves the leader. */
   onAction?: (name: LeaderAction) => void;
+  /**
+   * When set, a lone `Ctrl+V` (0x16) in steady state is intercepted instead of
+   * forwarded: the router awaits this hook (which loads the host clipboard
+   * image into the box), then re-emits the `Ctrl+V` so the inner program's own
+   * paste handler reads the now-populated box clipboard. Presses while one is
+   * in flight are dropped (debounced). When omitted, `Ctrl+V` forwards
+   * verbatim. Used for claude image paste; other modes don't pass it. */
+  onPasteImage?: () => Promise<unknown>;
   /** ms the leader menu stays open with no key before auto-closing (default 2000). */
   leaderTimeoutMs?: number;
   /** Injected for unit tests; defaults to global timers. */
@@ -72,6 +81,9 @@ export function createInputRouter(opts: InputRouterOptions): InputRouter {
 
   const leaderChords = opts.leaderChords ?? {};
   const leaderEnabled = Object.keys(leaderChords).length > 0;
+  const onPasteImage = opts.onPasteImage;
+  const pasteEnabled = typeof onPasteImage === 'function';
+  let pasteInFlight = false;
   const leaderTimeoutMs = opts.leaderTimeoutMs ?? DEFAULT_LEADER_TIMEOUT_MS;
   const setTimer = opts.setTimer ?? ((ms, fn) => setTimeout(fn, ms) as unknown);
   const clearTimer =
@@ -168,8 +180,24 @@ export function createInputRouter(opts: InputRouterOptions): InputRouter {
     // Anything else: ignored (not forwarded, not consumed).
   };
 
-  // Leader-aware steady-state forwarding: scan bytes, batching non-leader
-  // runs into a single onForward call, and intercept `Ctrl+a` chords.
+  // Intercepted Ctrl+V: run the host→box image-paste hook, then re-emit the
+  // Ctrl+V so the inner program reads the (now-loaded) box clipboard. A press
+  // while one is in flight is dropped — the Ctrl+V was already swallowed by the
+  // caller, so there's nothing to forward.
+  const triggerPaste = (): void => {
+    if (pasteInFlight) return;
+    pasteInFlight = true;
+    const done = (): void => {
+      pasteInFlight = false;
+      if (!disposed) opts.onForward(Buffer.from([KEY_CTRL_V]));
+    };
+    void Promise.resolve()
+      .then(() => onPasteImage?.())
+      .then(done, done);
+  };
+
+  // Leader-aware steady-state forwarding: scan bytes, batching plain runs into
+  // a single onForward call, and intercept `Ctrl+a` chords + `Ctrl+V` paste.
   const feedSteady = (buf: Buffer): void => {
     let chunkStart = 0;
     const flushChunk = (end: number): void => {
@@ -184,10 +212,16 @@ export function createInputRouter(opts: InputRouterOptions): InputRouter {
         chunkStart = i + 1;
         continue;
       }
-      if (byte === KEY_LEADER) {
+      if (leaderEnabled && byte === KEY_LEADER) {
         flushChunk(i); // forward everything typed before the Ctrl+a
         chunkStart = i + 1;
         enterLeader();
+        continue;
+      }
+      if (pasteEnabled && byte === KEY_CTRL_V) {
+        flushChunk(i); // forward everything typed before the Ctrl+V
+        chunkStart = i + 1; // swallow it; triggerPaste re-emits after the load
+        triggerPaste();
       }
     }
     flushChunk(buf.length);
@@ -227,7 +261,7 @@ export function createInputRouter(opts: InputRouterOptions): InputRouter {
         }
         return;
       }
-      if (!leaderEnabled) {
+      if (!leaderEnabled && !pasteEnabled) {
         opts.onForward(buf);
         return;
       }

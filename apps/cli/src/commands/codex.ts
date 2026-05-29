@@ -34,6 +34,7 @@ import {
   codexAuthAvailable,
   MissingAgentCredsError,
 } from '../lib/queue/assert-creds.js';
+import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
 import {
   ATTACH_IN_HELP,
@@ -44,7 +45,7 @@ import {
 import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { runCarryGate } from '../lib/carry-gate.js';
-import { FromBranchError, resolveFromBranch } from '../lib/from-branch.js';
+import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { providerForBox, providerForCreate } from '../provider/registry.js';
 import {
   prepareTeleport,
@@ -64,15 +65,6 @@ import { handleLifecycleError } from './_errors.js';
 /** Ref shown in the detach notice: the per-project index `n` when set, else the name. */
 function reattachRef(r: { projectIndex?: number; name: string }): string {
   return typeof r.projectIndex === 'number' ? String(r.projectIndex) : r.name;
-}
-
-function parseMaxRunningOption(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n <= 0) {
-    throw new Error(`--max-running: expected a positive integer, got "${raw}"`);
-  }
-  return n;
 }
 
 function pickCodexCreateOpts(opts: CodexCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
@@ -153,18 +145,22 @@ interface CodexCreateOptions {
   provider?: string;
   /** --from-branch <ref>: base the box's per-box branch on this ref instead of HEAD. */
   fromBranch?: string;
+  /** -b / --use-branch <name>: reuse an existing branch directly instead of forking agentbox/<name>. */
+  useBranch?: string;
   /** -v / --verbose: bypass the spinner and stream raw provider output. */
   verbose?: boolean;
   /** Raw `--attach-in <mode>` value; validated by `parseAttachInOption`. */
   attachIn?: string;
   /** --inline: shortcut for `--attach-in same` (long-form only — `-i` is `--initial-prompt`). */
   inline?: boolean;
-  /** Commander parses `-b, --no-attach` as `attach: false` (defaults true). */
+  /** Commander parses `-d, --no-attach` as `attach: false` (defaults true). */
   attach?: boolean;
   /** `-i, --initial-prompt <text>`: seed codex with this user turn; runs in background. */
   initialPrompt?: string;
   /** Per-invocation override of `queue.maxConcurrent`. */
   maxRunning?: string;
+  /** Per-invocation override of `queue.maxWorking`. */
+  maxWorking?: string;
   /** `-c, --continue`: teleport and resume the most recent host codex session for this cwd. */
   continue?: boolean;
   /** `--resume <id>`: teleport and resume the specified host codex session uuid. */
@@ -295,12 +291,16 @@ export const codexCommand = new Command('codex')
     "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
   )
   .option(
+    '-b, --use-branch <name>',
+    "reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.",
+  )
+  .option(
     '-v, --verbose',
     'bypass the spinner and stream raw provider output to stderr. The same content always lands in ~/.agentbox/logs/codex.log.',
   )
   .option('--attach-in <mode>', ATTACH_IN_HELP)
   .option('--inline', INLINE_HELP)
-  .option('-b, --no-attach', NO_ATTACH_HELP)
+  .option('-d, --no-attach', NO_ATTACH_HELP)
   .option(
     '-i, --initial-prompt <text>',
     'seed the codex session with this initial user turn and run in background (no attach). Jobs go through the host-wide queue (queue.maxConcurrent).',
@@ -308,6 +308,10 @@ export const codexCommand = new Command('codex')
   .option(
     '--max-running <n>',
     'per-invocation override of queue.maxConcurrent; only honored when `-i` is set',
+  )
+  .option(
+    '--max-working <n>',
+    'per-invocation override of queue.maxWorking; only honored when `-i` is set',
   )
   .option(
     '-c, --continue',
@@ -393,7 +397,8 @@ export const codexCommand = new Command('codex')
         }
         throw err;
       }
-      const maxRunningOverride = parseMaxRunningOption(opts.maxRunning);
+      const maxRunningOverride = parseMaxOption('--max-running', opts.maxRunning);
+      const maxWorkingOverride = parseMaxOption('--max-working', opts.maxWorking);
       const result = await submitQueueJob({
         agent: 'codex',
         boxName: opts.name ?? '',
@@ -402,6 +407,7 @@ export const codexCommand = new Command('codex')
         agentArgs: codexArgs,
         createOpts: pickCodexCreateOpts(opts),
         maxRunningOverride,
+        maxWorkingOverride,
       });
       outro(
         `job ${result.job.id} queued (${String(result.runningCount)}/${String(result.maxConcurrent)} running); log: ${result.job.logPath}`,
@@ -434,10 +440,18 @@ export const codexCommand = new Command('codex')
     }
 
     let fromBranch: string | undefined;
+    let useBranch: string | undefined;
     try {
-      fromBranch = await resolveFromBranch(opts.fromBranch, { repo: opts.workspace });
+      ({ fromBranch, useBranch } = await resolveBranchSelection({
+        useBranch: opts.useBranch,
+        fromBranch: opts.fromBranch,
+        repo: opts.workspace,
+        providerName,
+        cloudUseCurrentBranch: cfg.effective.cloud.useCurrentBranch,
+        log: (m) => cmdLog.write(m),
+      }));
     } catch (err) {
-      if (err instanceof FromBranchError) {
+      if (err instanceof FromBranchError || err instanceof UseBranchError) {
         log.error(err.message);
         cmdLog.close();
         process.exit(2);
@@ -462,6 +476,7 @@ export const codexCommand = new Command('codex')
           vnc: { enabled: cfg.effective.box.vnc },
           limits: resolveLimits(cfg.effective.box, opts),
           fromBranch,
+          useBranch,
           projectRoot,
         },
         binary: 'codex',
@@ -528,6 +543,7 @@ export const codexCommand = new Command('codex')
         useSnapshot,
         checkpointRef,
         fromBranch,
+        useBranch,
         image: cfg.effective.box.image,
         codexConfig: { isolate: cfg.effective.box.isolateCodexConfig },
         withPlaywright,
@@ -817,7 +833,7 @@ const codexStartCommand = new Command('start')
   )
   .option('--attach-in <mode>', ATTACH_IN_HELP)
   .option('-i, --inline', INLINE_HELP)
-  .option('-b, --no-attach', NO_ATTACH_HELP)
+  .option('-d, --no-attach', NO_ATTACH_HELP)
   .option(
     '-c, --continue',
     'teleport the most recent host Codex session for this cwd into the box and resume',

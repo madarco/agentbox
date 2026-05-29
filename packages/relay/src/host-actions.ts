@@ -24,7 +24,10 @@ import {
   assertGhReady,
   checkoutGuards,
   GH_PR_READ_ONLY_OPS,
+  injectPrCreateHead,
   isGhPrOp,
+  PR_CREATE_NO_HEAD_REFUSAL,
+  prCreateNeedsHead,
   refuseCheckoutByDefault,
   refuseMergeBypass,
   runHostGh,
@@ -328,7 +331,25 @@ async function runGhPrRpc(
     }
   }
 
-  return runHostGh(['pr', op, ...args], lookup.workspacePath);
+  // Default `--head` to the box's branch for `create` (the host repo cwd isn't
+  // on the box branch, so gh can't infer it). Resolve the branch from the
+  // sandbox HEAD the same way `runGitRpc` does; a failed probe leaves args
+  // unchanged (today's behavior). Only probed when we'd actually inject.
+  let finalArgs = args;
+  if (op === 'create' && !args.some((a) => a === '--head' || a.startsWith('--head='))) {
+    const backend = await resolveCloudBackend(deps.backendName);
+    const handle: CloudHandle = { sandboxId: lookup.cloudSandboxId };
+    const containerPath = params.path ?? '/workspace';
+    const branchProbe = await backend.exec(
+      handle,
+      `git -C ${shellQuote(containerPath)} rev-parse --abbrev-ref HEAD`,
+    );
+    const branch = branchProbe.exitCode === 0 ? (branchProbe.stdout ?? '').trim() : '';
+    finalArgs = injectPrCreateHead(op, branch, args);
+  }
+  // Never let `gh` fall back to the host repo's checked-out branch.
+  if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
+  return runHostGh(['pr', op, ...finalArgs], lookup.workspacePath);
 }
 
 /**
