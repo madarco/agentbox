@@ -159,7 +159,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
   }
 
   const go = await confirm({
-    message: 'New project detected, run setup wizard?',
+    message: 'New project: run setup wizard? Will install dependencies and setup agentbox.yaml',
     initialValue: true,
   });
   if (isCancel(go) || !go) return { action: 'proceed', envFilesToImport };
