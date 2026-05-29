@@ -36,28 +36,35 @@ describe('injectBoxBranch', () => {
     }
   });
 
-  it('does not treat a value-taking flag value as an existing positional', () => {
-    // `gh pr view --json number,url` has NO positional ref — the field list is
-    // a flag value, so the branch must still be injected.
-    expect(injectBoxBranch('view', 'agentbox/box-one', ['--json', 'number,url'])).toEqual([
-      'agentbox/box-one',
-      '--json',
-      'number,url',
-    ]);
-    expect(injectBoxBranch('comment', 'agentbox/box-one', ['--body', 'text'])).toEqual([
-      'agentbox/box-one',
-      '--body',
-      'text',
-    ]);
+  it('injects when the leading arg is a flag, never mistaking a flag value for a ref', () => {
+    // A leading flag means "no ref" — its value must never be read as the ref,
+    // for ANY op (no value-taking-flag table). Covers the bugbot cases: merge
+    // --body, close --comment, reopen --comment, view --json, etc.
+    const cases: [string, string[]][] = [
+      ['view', ['--json', 'number,url']],
+      ['comment', ['--body', 'text']],
+      ['merge', ['--body', 'merge msg', '--squash']],
+      ['merge', ['--subject', 's', '--match-head-commit', 'abc123']],
+      ['close', ['--comment', 'closing']],
+      ['reopen', ['--comment', 'reopening']],
+    ];
+    for (const [op, args] of cases) {
+      expect(injectBoxBranch(op as 'merge', 'agentbox/box-one', args)).toEqual([
+        'agentbox/box-one',
+        ...args,
+      ]);
+    }
   });
 
-  it('leaves an explicit positional ref alone', () => {
+  it('leaves an explicit leading positional ref alone', () => {
     expect(injectBoxBranch('view', 'agentbox/box-one', ['42', '--json', 'x'])).toEqual([
       '42',
       '--json',
       'x',
     ]);
     expect(injectBoxBranch('merge', 'agentbox/box-one', ['42'])).toEqual(['42']);
+    // `--` end-of-options then the ref.
+    expect(injectBoxBranch('view', 'agentbox/box-one', ['--', '42'])).toEqual(['--', '42']);
   });
 
   it('never injects for checkout', () => {

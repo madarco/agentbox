@@ -56,19 +56,6 @@ const POSITIONAL_BRANCH_OPS: ReadonlySet<GhPrOp> = new Set([
 const HEAD_BRANCH_OPS: ReadonlySet<GhPrOp> = new Set(['list', 'create']);
 
 /**
- * Value-taking flags per positional op — needed to tell a flag's *value*
- * apart from a real positional when scanning for an already-supplied ref
- * (e.g. `gh pr view --json number,url` has no positional; the field list is a
- * value). Booleans (`--approve`, `--squash`, `--delete-branch`, …) aren't
- * listed: they consume no following token. Kept in sync with the gh shim.
- */
-const VALUE_TAKING_FLAGS: Partial<Record<GhPrOp, ReadonlySet<string>>> = {
-  view: new Set(['--json']),
-  comment: new Set(['--body']),
-  review: new Set(['--body']),
-};
-
-/**
  * Inject the box's branch into a `gh pr <op>` argv so the host's `gh` (running
  * with `cwd` in the host main repo, *not* on the box's branch) targets the
  * box's work rather than falling back to whatever the host has checked out.
@@ -84,7 +71,7 @@ export function injectBoxBranch(op: GhPrOp, branch: string | undefined, args: st
     return hasHeadArg(args) ? args : ['--head', branch, ...args];
   }
   if (POSITIONAL_BRANCH_OPS.has(op)) {
-    return hasPositional(op, args) ? args : [branch, ...args];
+    return hasPositional(args) ? args : [branch, ...args];
   }
   return args;
 }
@@ -97,26 +84,27 @@ function hasHeadArg(args: string[]): boolean {
 }
 
 /**
- * True when `args` already carries a non-flag positional for `op` — scanning
- * past value-taking flags so a flag value isn't mistaken for a ref. Mirrors
- * the gh shim's `first_positional`.
+ * True when `args` already carries an explicit PR ref. For `gh pr <op>` the ref
+ * is always the *leading* positional (`gh pr view 42 …`, `gh pr merge <branch>
+ * …`), so we only look at the first token: a leading flag means "no ref, inject
+ * the box branch."
+ *
+ * We deliberately do NOT scan past flags looking for a bare token — that would
+ * require knowing every value-taking flag per op (`--body`, `--subject`,
+ * `--comment`, `--json`, …, plus short forms), and an incomplete list **fails
+ * open**: a flag's value gets mistaken for a ref, injection is skipped, and gh
+ * falls back to the host's checked-out branch — the exact wrong-PR bug this
+ * guards against. The leading-token rule needs no flag table and **fails
+ * safe**: a ref placed *after* flags (`gh pr merge --squash 42`, uncommon)
+ * collides with the injected branch and gh errors out rather than ever acting
+ * on the wrong PR.
  */
-function hasPositional(op: GhPrOp, args: string[]): boolean {
-  const valueTaking = VALUE_TAKING_FLAGS[op] ?? new Set<string>();
-  let skipValue = false;
-  for (const arg of args) {
-    if (skipValue) {
-      skipValue = false;
-      continue;
-    }
-    if (arg === '--') continue;
-    if (arg.startsWith('-')) {
-      if (valueTaking.has(arg)) skipValue = true;
-      continue;
-    }
-    return true;
-  }
-  return false;
+function hasPositional(args: string[]): boolean {
+  const first = args[0];
+  if (first === undefined) return false;
+  // `--` is the POSIX end-of-options marker; a token after it is the ref.
+  if (first === '--') return args.length > 1;
+  return !first.startsWith('-');
 }
 
 /**
@@ -137,7 +125,7 @@ function isBranchRequiredOp(op: GhPrOp): boolean {
  */
 export function branchTargetUnresolved(op: GhPrOp, args: string[]): boolean {
   if (!isBranchRequiredOp(op)) return false;
-  return op === 'create' ? !hasHeadArg(args) : !hasPositional(op, args);
+  return op === 'create' ? !hasHeadArg(args) : !hasPositional(args);
 }
 
 /** Ready-to-send refusal for a branch-required op with no resolvable branch. */
