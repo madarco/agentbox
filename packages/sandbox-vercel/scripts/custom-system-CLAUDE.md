@@ -12,11 +12,13 @@ runtime needs (no `CAP_SYS_ADMIN`, seccomp-filtered `clone`/`unshare`), so
 container engine; run build/test/dev processes directly on the microVM instead.
 
 This box is **persistent**: stopping it captures a snapshot and resuming
-restarts from that snapshot, so filesystem survives a pause. 
-However checkpoints/snapshots STOPS the box, you can also save the
-current filesystem state for future boxes with
-`agentbox-ctl checkpoint --set-default`, but use it only at the end of the setup wizard, otherwise rely on idenmpotent tasks in `agentbox.yaml`. NB: This agentbox-ctl command doesn't need to be confirmed by
-the user, so ask for confirmation before running it since it will stop the box.
+restarts from that snapshot, so the filesystem survives a pause. You can also
+save the current filesystem state for future boxes with
+`agentbox-ctl checkpoint --set-default`, but a checkpoint/snapshot STOPS the
+box, so use it only at the end of the setup wizard — otherwise rely on
+idempotent tasks in `agentbox.yaml`. NB: this `agentbox-ctl` command normally
+doesn't need user confirmation, but since it stops the box, ask for
+confirmation before running it.
 
 `/workspace` is a normal git checkout seeded from the host repo at create time.
 Because there is no host bind-mount, plain `git` inside the box only affects
