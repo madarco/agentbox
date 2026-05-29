@@ -16,7 +16,7 @@ Run multiple agents in parallel, with a single command, on your PC, self-hosted,
 ## How it works
 
 ```sh
-npx @madarco/agentbox claude
+agentbox claude # launch a new VM with claude and your project inside
 ```
 
 - 📦 **Teleport** - Move your project to a dedicated VM, local or in the cloud, with a single command.
@@ -30,36 +30,37 @@ npx @madarco/agentbox claude
 
 ```sh
 npm -g install @madarco/agentbox
+agentbox install
 
-# Optionally pre-build the VM images:
-agentbox prepare
-agentbox prepare --provider hetzner
+# Launch a new VM with claude, copy all your settings and workspace
+agentbox claude
 
-agentbox hetzner claude
-# Ctrl +d to detach, claude keep going
+# Also install required project libraries and launch your dev server
+> Run setup wizard? -> Yes
 
-# Persistent shells: 
-agentbox shell
+# Also use a cloud:
+agentbox hetzner claude # or vercel, daytona
 
-# add a second box:
+# Ctrl+a d to detach, claude keep going, to reconnect later:
+agentbox claude attach 1
+
+# To open a persistent shell inside the box:
+agentbox shell 1
+
+# Create a second box:
 agentbox claude
 agentbox claude attach 2
 agentbox shell 2
 
-# Open local tunnel preview
+# Open your web project on a .local url tunnel on your pc
 agentbox url 2
 # Or the in-box browser via webVNC:
 agentbox screen 2
-# Or connect to vscode/cursor:
+# Or connect to vscode/cursor inside the box:
 agentbox code 2
 
 # See status and quickly switch between agents:
 agentbox dashboard
-
-# Launch web screen viewer (VNC), open the web app URL, open VSCode/Cursor
-agentbox screen
-agentbox url
-agentbox code
 ```
 
 ## Demo
@@ -77,17 +78,19 @@ Uses `portless` to give box web apps the same URL from inside the box and on the
 
 ## Cloud Providers
 
-|                     | local docker              | hetzner                | daytona            |
-| ------------------- | ------------------------- | ---------------------- | ------------------ |
-| Support             | ✅                        | ✅                     | ⚠️ Partial         |
-| Base image          | Dockerfile                | Setup script (Ubuntu)  | Dockerfile         |
-| Live snapshots      | ✅                        | ✅                     | 🧪 Experimental    |
-| Private preview URLs| ✅ (portless or OrbStack) | ✅ (portless)          | ✅ (native)        |
+|                     | local docker              | hetzner                | daytona            | vercel            |
+| ------------------- | ------------------------- | ---------------------- | ------------------ | ------------------ |
+| Support             | ✅                        | ✅                     | ⚠️ Partial         | ✅                 |
+| Base image          | Dockerfile                | Setup script (Ubuntu)  | Dockerfile         | Setup script       |
+| Live snapshots      | ✅                        | ✅                     | 🧪 Experimental    | ✅                 |
+| Private preview URLs| ✅ (portless or OrbStack) | ✅ (portless)          | ✅ (native)        | ✅ (native)        |
 
 **Cloud setup** (optional — skip for local Docker)
 
-- `agentbox daytona login` — interactive Daytona API key setup, saved to `~/.agentbox/secrets.env`
+- `agentbox install` — interactive setup wizard to choose which providers to use and configure them.
+- `agentbox vercel login` — interactive Vercel Sandbox token setup, saved to `~/.agentbox/secrets.env`
 - `agentbox hetzner login` — interactive Hetzner Cloud token setup, saved to `~/.agentbox/secrets.env`
+- `agentbox daytona login` — interactive Daytona API key setup, saved to `~/.agentbox/secrets.env`
 - `agentbox prepare [--provider daytona|hetzner]` — build the image and initial snapshot
 - `agentbox hetzner claude`, `agentbox hetzner codex`, `agentbox hetzner create`, etc.
 
