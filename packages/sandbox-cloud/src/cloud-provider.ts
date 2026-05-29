@@ -44,6 +44,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import {
   ensureAgentVolumesForCloud,
+  extractCloudAgentCredentials,
   seedAgentVolumesIfFresh,
   seedOpencodeModelState,
 } from './agent-credentials.js';
@@ -1058,6 +1059,16 @@ export function createCloudProvider(
     // create` then surfaces a clean "not supported" error rather than a
     // silent no-op.
     checkpoint: makeCloudCheckpoint(backend),
+
+    // Extract the box's agent login(s) back to the host (~/.agentbox) so the
+    // next box inherits the login. Lives on the base cloud provider (not inside
+    // `checkpoint.create`) so it works even for providers that override the
+    // whole `checkpoint` capability (vercel). The CLI calls this on
+    // `checkpoint create --set-default`, while the box is guaranteed running.
+    async extractAgentCredentials(box: BoxRecord): Promise<string[]> {
+      if (!box.cloud?.sandboxId) return [];
+      return extractCloudAgentCredentials(backend, { sandboxId: box.cloud.sandboxId });
+    },
 
     // stats is provider-optional; cloud backends without a metrics API just
     // omit it. Backends that have one can decorate the returned provider.

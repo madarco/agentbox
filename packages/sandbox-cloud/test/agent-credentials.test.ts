@@ -10,8 +10,10 @@ import type {
   CloudState,
 } from '@agentbox/core';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
+import { readFile, stat } from 'node:fs/promises';
 import {
   ensureAgentVolumesForCloud,
+  extractCloudAgentCredentials,
   seedAgentVolumesIfFresh,
 } from '../src/agent-credentials.js';
 
@@ -217,6 +219,91 @@ describe('seedAgentVolumesIfFresh (credentials-only)', () => {
     ).toBe(true);
 
     await rm(codexDir, { recursive: true, force: true });
+  });
+});
+
+describe('extractCloudAgentCredentials', () => {
+  let dir: string;
+  const realClaude = JSON.stringify({ claudeAiOauth: { refreshToken: 'rt-real' } });
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'agentbox-extract-test-'));
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  // Mock backend whose `exec` answers `cat <path>` from a provided file map.
+  function backendCatting(files: Record<string, string | undefined>): CloudBackend {
+    return {
+      name: 'mock',
+      async provision(): Promise<CloudHandle> { return { sandboxId: 's' }; },
+      async get(): Promise<CloudHandle | null> { return { sandboxId: 's' }; },
+      async start() {}, async stop() {}, async pause() {}, async resume() {},
+      async destroy() {},
+      async state(): Promise<CloudState> { return 'running'; },
+      async exec(_h, cmd: string): Promise<CloudExecResult> {
+        const m = /^cat (\S+) 2>\/dev\/null$/.exec(cmd);
+        if (m) {
+          const content = files[m[1]!];
+          return content === undefined
+            ? { exitCode: 1, stdout: '', stderr: '' }
+            : { exitCode: 0, stdout: content, stderr: '' };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+      async uploadFile() {}, async downloadFile() {},
+      async listFiles(): Promise<CloudFileEntry[]> { return []; },
+      async previewUrl(): Promise<CloudPreviewUrl> { return { url: 'https://mock/' }; },
+    };
+  }
+
+  it('writes only agents with a real credential (0600) and returns them', async () => {
+    const backups = {
+      claude: join(dir, 'claude-credentials.json'),
+      codex: join(dir, 'codex-credentials.json'),
+      opencode: join(dir, 'opencode-credentials.json'),
+    };
+    const backend = backendCatting({
+      '/home/vscode/.claude/.credentials.json': realClaude,
+      '/home/vscode/.codex/auth.json': '{}', // empty object → not "real" → skipped
+      // opencode file missing → exec exit 1 → skipped
+    });
+    const extracted = await extractCloudAgentCredentials(backend, { sandboxId: 's' }, { backups });
+    expect(extracted).toEqual(['claude']);
+    expect(await readFile(backups.claude, 'utf8')).toBe(realClaude);
+    expect((await stat(backups.claude)).mode & 0o777).toBe(0o600);
+    await expect(stat(backups.codex)).rejects.toThrow();
+    await expect(stat(backups.opencode)).rejects.toThrow();
+  });
+
+  it('extracts codex + opencode when their auth files are non-empty JSON', async () => {
+    const backups = {
+      claude: join(dir, 'c2.json'),
+      codex: join(dir, 'codex2.json'),
+      opencode: join(dir, 'oc2.json'),
+    };
+    const backend = backendCatting({
+      '/home/vscode/.codex/auth.json': '{"OPENAI_API_KEY":"sk-x"}',
+      '/home/vscode/.local/share/opencode/auth.json': '{"anthropic":{"type":"oauth"}}',
+    });
+    const extracted = await extractCloudAgentCredentials(backend, { sandboxId: 's' }, { backups });
+    expect(extracted.sort()).toEqual(['codex', 'opencode']);
+  });
+
+  it('swallows a failing exec and returns []', async () => {
+    const backend: CloudBackend = {
+      ...backendCatting({}),
+      async exec(): Promise<CloudExecResult> { throw new Error('transient'); },
+    };
+    const logs: string[] = [];
+    const extracted = await extractCloudAgentCredentials(
+      backend,
+      { sandboxId: 's' },
+      { backups: { claude: join(dir, 'never.json') }, onLog: (l) => logs.push(l) },
+    );
+    expect(extracted).toEqual([]);
+    expect(logs.some((l) => l.includes('extract failed'))).toBe(true);
   });
 });
 
