@@ -73,8 +73,12 @@ implementation (per the project convention), not as end-of-PR cleanup.
     `api.vercel.com` and the SDK; `GET/POST /v9/projects` accept it. New unit
     tests: `cli-store`, `cli-auth` (resolve + ensureFreshCredentials), `vercel-rest`.
   - PAT-trio and OIDC modes are unchanged, so headless/CI is unaffected.
-  - **Not yet live-verified end-to-end** (`prepare`/`create` against a real box
-    in CLI-login mode) — see the verify checklist below.
+  - **Live-verified end-to-end 2026-05-29.** `agentbox vercel login` → browser
+    OAuth → project pick wrote only the marker + team + project to `secrets.env`
+    (no token); `--status` showed the live token (expires in 8h) from the CLI
+    store. `prepare` skip-fast confirmed the base snapshot via a real API call on
+    the new auth; `create` booted a box (`provision`/`exec`/`uploadFile` all on
+    the live token) and `destroy` tore it down — all without a stored token.
 
 ## What's still missing
 

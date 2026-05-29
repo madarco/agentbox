@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('../src/sdk.js', () => ({
   resolveCredentials: () => ({}),
+  ensureFreshCredentials: () => Promise.resolve(),
   Sandbox: {
     get: mocks.get,
     create: mocks.create,

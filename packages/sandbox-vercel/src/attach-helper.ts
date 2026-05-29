@@ -19,7 +19,7 @@
  * where the JSON spec is { sessionName, command, kind, detached }.
  */
 
-import { resolveCredentials, Sandbox, type SandboxType } from './sdk.js';
+import { ensureFreshCredentials, resolveCredentials, Sandbox, type SandboxType } from './sdk.js';
 
 interface AttachHelperSpec {
   sessionName: string;
@@ -174,6 +174,7 @@ export async function attachMain(argv: string[]): Promise<number> {
     return 2;
   }
   const spec = JSON.parse(Buffer.from(specB64, 'base64').toString('utf8')) as AttachHelperSpec;
+  await ensureFreshCredentials();
   const sb = await Sandbox.get({ name: sandboxId, resume: true, ...resolveCredentials() });
 
   if (spec.detached) {

@@ -28,6 +28,10 @@ const VERCEL_KEYS = [
   'VERCEL_TOKEN',
   'VERCEL_TEAM_ID',
   'VERCEL_PROJECT_ID',
+  // Marker for CLI-login mode (`agentbox vercel login` → `sandbox login`). The
+  // access token is NOT stored here — it's read live from the Vercel CLI store;
+  // only this marker + team/project ids are persisted.
+  'VERCEL_AUTH_SOURCE',
 ] as const;
 
 let loaded = false;

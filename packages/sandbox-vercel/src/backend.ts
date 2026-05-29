@@ -34,7 +34,13 @@ import type {
   CloudState,
 } from '@agentbox/core';
 import type { NetworkPolicy } from '@vercel/sandbox';
-import { resolveCredentials, Sandbox, Snapshot, type SandboxType } from './sdk.js';
+import {
+  ensureFreshCredentials,
+  resolveCredentials,
+  Sandbox,
+  Snapshot,
+  type SandboxType,
+} from './sdk.js';
 import { withVercelRetry } from './retry.js';
 import { readPreparedState } from './prepared-state.js';
 
@@ -193,6 +199,7 @@ export const vercelBackend: CloudBackend = {
   name: 'vercel',
 
   async provision(req: CloudProvisionRequest): Promise<CloudHandle> {
+    await ensureFreshCredentials();
     // Resolve the snapshot to boot from: an explicit cloud-checkpoint snapshot
     // (req.snapshot) wins, else the prepared base. Vercel can't build from a
     // Dockerfile, so there is no image fallback — fail loud with the fix.
@@ -230,6 +237,7 @@ export const vercelBackend: CloudBackend = {
   },
 
   async get(sandboxId: string): Promise<CloudHandle | null> {
+    await ensureFreshCredentials();
     return withVercelRetry({ method: 'get', retryOnAmbiguous: true }, async () => {
       const sb = await maybeGetSandbox(sandboxId);
       return sb ? { sandboxId: sb.name } : null;
@@ -237,6 +245,7 @@ export const vercelBackend: CloudBackend = {
   },
 
   async list(): Promise<CloudSandboxSummary[]> {
+    await ensureFreshCredentials();
     return withVercelRetry({ method: 'list', retryOnAmbiguous: true }, async () => {
       const page = await Sandbox.list({ ...creds() });
       const items = await page.toArray();
@@ -256,6 +265,7 @@ export const vercelBackend: CloudBackend = {
   },
 
   async start(h: CloudHandle): Promise<void> {
+    await ensureFreshCredentials();
     await withVercelRetry(
       { method: 'start', retryOnAmbiguous: true, attemptTimeoutMs: 120_000 },
       async () => {
@@ -266,6 +276,7 @@ export const vercelBackend: CloudBackend = {
   },
 
   async stop(h: CloudHandle): Promise<void> {
+    await ensureFreshCredentials();
     await withVercelRetry(
       { method: 'stop', retryOnAmbiguous: true, attemptTimeoutMs: 120_000 },
       async () => {
@@ -287,6 +298,7 @@ export const vercelBackend: CloudBackend = {
   },
 
   async destroy(h: CloudHandle): Promise<void> {
+    await ensureFreshCredentials();
     await withVercelRetry(
       { method: 'destroy', retryOnAmbiguous: true, attemptTimeoutMs: 120_000 },
       async () => {
@@ -316,6 +328,7 @@ export const vercelBackend: CloudBackend = {
   },
 
   async state(h: CloudHandle): Promise<CloudState> {
+    await ensureFreshCredentials();
     return withVercelRetry({ method: 'state', retryOnAmbiguous: true }, async () => {
       const sb = await maybeGetSandbox(h.sandboxId);
       if (!sb) return 'missing';
@@ -324,6 +337,7 @@ export const vercelBackend: CloudBackend = {
   },
 
   async exec(h: CloudHandle, cmd: string, opts?: CloudExecOptions): Promise<CloudExecResult> {
+    await ensureFreshCredentials();
     return withVercelRetry(
       {
         method: 'exec',
@@ -341,6 +355,7 @@ export const vercelBackend: CloudBackend = {
   },
 
   async uploadFile(h: CloudHandle, localPath: string, remotePath: string): Promise<void> {
+    await ensureFreshCredentials();
     await withVercelRetry(
       { method: 'uploadFile', retryOnAmbiguous: true, attemptTimeoutMs: 300_000 },
       async () => {
@@ -360,6 +375,7 @@ export const vercelBackend: CloudBackend = {
   },
 
   async downloadFile(h: CloudHandle, remotePath: string, localPath: string): Promise<void> {
+    await ensureFreshCredentials();
     await withVercelRetry(
       { method: 'downloadFile', retryOnAmbiguous: true, attemptTimeoutMs: 300_000 },
       async () => {
@@ -377,6 +393,7 @@ export const vercelBackend: CloudBackend = {
   },
 
   async listFiles(h: CloudHandle, remoteDir: string): Promise<CloudFileEntry[]> {
+    await ensureFreshCredentials();
     return withVercelRetry({ method: 'listFiles', retryOnAmbiguous: true }, async () => {
       const sb = await getSandbox(h.sandboxId);
       const entries = await sb.fs.readdir(remoteDir, { withFileTypes: true });
@@ -385,6 +402,7 @@ export const vercelBackend: CloudBackend = {
   },
 
   async previewUrl(h: CloudHandle, port: number): Promise<CloudPreviewUrl> {
+    await ensureFreshCredentials();
     return withVercelRetry({ method: 'previewUrl', retryOnAmbiguous: true }, async () => {
       const sb = await getSandbox(h.sandboxId);
       // sb.domain(port) is a public HTTPS URL (no header token needed).
@@ -414,6 +432,7 @@ export const vercelBackend: CloudBackend = {
  * resumes it on the next SDK call, so the box comes back automatically.
  */
 export async function snapshotVercelSandbox(sandboxId: string): Promise<string> {
+  await ensureFreshCredentials();
   return withVercelRetry(
     { method: 'createSnapshot', retryOnAmbiguous: false, attemptTimeoutMs: 900_000, backoffMs: [] },
     async () => {
@@ -426,6 +445,7 @@ export async function snapshotVercelSandbox(sandboxId: string): Promise<string> 
 
 /** Delete a Vercel snapshot by id. Idempotent — a missing snapshot is success. */
 export async function deleteVercelSnapshot(snapshotId: string): Promise<void> {
+  await ensureFreshCredentials();
   await withVercelRetry({ method: 'deleteSnapshot', retryOnAmbiguous: true }, async () => {
     try {
       const snap = await Snapshot.get({ snapshotId, ...creds() });

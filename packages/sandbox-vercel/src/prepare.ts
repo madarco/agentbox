@@ -34,7 +34,13 @@ import {
   type StageResult,
 } from '@agentbox/sandbox-cloud';
 import { ensureVercelCredentials } from './credentials.js';
-import { resolveCredentials, Sandbox, Snapshot, type SandboxType } from './sdk.js';
+import {
+  ensureFreshCredentials,
+  resolveCredentials,
+  Sandbox,
+  Snapshot,
+  type SandboxType,
+} from './sdk.js';
 import {
   preparedStatePath,
   readPreparedState,
@@ -71,6 +77,7 @@ export async function prepareVercel(
   opts: PrepareVercelOptions = {},
 ): Promise<PrepareVercelResult> {
   await ensureVercelCredentials();
+  await ensureFreshCredentials();
   const creds = resolveCredentials();
   const log = opts.onLog ?? (() => {});
   const progress = (s: string) => log(`prepare-vercel: ${s}`);
