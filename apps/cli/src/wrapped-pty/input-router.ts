@@ -46,6 +46,83 @@ const KEY_N_LOW = 0x6e;
 const KEY_N_UP = 0x4e;
 const KEY_LEADER = 0x01; // Ctrl-a
 const KEY_CTRL_V = 0x16; // Ctrl-v — Claude Code's "paste image from clipboard"
+const KEY_A_LOW = 0x61; // 'a'
+
+/**
+ * A key decoded from an enhanced-keyboard escape sequence. TUIs like Claude Code
+ * can switch the terminal into the kitty keyboard protocol or xterm
+ * modifyOtherKeys, in which `Ctrl+a` and even plain letters arrive not as raw
+ * bytes but as escape sequences. The leader must decode those so the Actions
+ * footer keeps working under those modes.
+ */
+interface CsiKey {
+  /** Total byte length of the sequence (so the caller can advance past it). */
+  len: number;
+  /** Base unicode codepoint of the key (e.g. 97 for 'a'). */
+  code: number;
+  /** Whether Ctrl was held. */
+  ctrl: boolean;
+}
+
+/**
+ * Parse a kitty keyboard (`ESC [ <code> ; <mods> u`) or xterm modifyOtherKeys
+ * (`ESC [ 27 ; <mods> ; <code> ~`) key sequence at `buf[i]`. Returns the base
+ * keycode + Ctrl flag, or null when `buf[i]` isn't one of those (a plain byte,
+ * an arrow/function/mouse sequence, or an incomplete sequence split across
+ * reads — all of which just forward unchanged). Precise on purpose: only the
+ * exact `…u` / `CSI 27 … ~` key shapes match, so cursor/mouse CSI sequences
+ * (`ESC [ A`, `ESC [ < … M`) fall through.
+ */
+function parseCsiKey(buf: Buffer, i: number): CsiKey | null {
+  if (buf[i] !== KEY_ESC || buf[i + 1] !== 0x5b /* [ */) return null;
+  const params: number[] = [];
+  let val = -1;
+  for (let j = i + 2; j < buf.length; j++) {
+    const b = buf[j];
+    if (b !== undefined && b >= 0x30 && b <= 0x39) {
+      val = (val < 0 ? 0 : val) * 10 + (b - 0x30);
+      continue;
+    }
+    if (b === 0x3b /* ; */) {
+      params.push(val);
+      val = -1;
+      continue;
+    }
+    if (b === 0x3a /* : */) {
+      // Sub-parameters (kitty event types / alternate keys): record the param,
+      // then skip to the next ';' or final byte.
+      params.push(val);
+      val = -1;
+      while (
+        j + 1 < buf.length &&
+        buf[j + 1] !== 0x3b &&
+        buf[j + 1] !== 0x75 &&
+        buf[j + 1] !== 0x7e
+      ) {
+        j++;
+      }
+      continue;
+    }
+    if (b === 0x75 /* u */ || b === 0x7e /* ~ */) {
+      if (val >= 0) params.push(val);
+      const len = j - i + 1;
+      const modsToCtrl = (m: number): boolean => ((m - 1) & 4) !== 0;
+      if (b === 0x75) {
+        // kitty: CSI <code> ; <mods> u
+        const code = params[0];
+        if (code === undefined || code < 0) return null;
+        return { len, code, ctrl: modsToCtrl(params[1] ?? 1) };
+      }
+      // modifyOtherKeys: CSI 27 ; <mods> ; <code> ~ (other '~' seqs aren't keys)
+      if (params[0] !== 27) return null;
+      const code = params[2];
+      if (code === undefined || code < 0) return null;
+      return { len, code, ctrl: modsToCtrl(params[1] ?? 1) };
+    }
+    return null; // any other byte → not a CSI-u / modifyOtherKeys key
+  }
+  return null; // incomplete (split across reads) — forward as-is
+}
 
 const DEFAULT_LEADER_TIMEOUT_MS = 2000;
 
@@ -204,25 +281,66 @@ export function createInputRouter(opts: InputRouterOptions): InputRouter {
       if (end > chunkStart) opts.onForward(buf.subarray(chunkStart, end));
       chunkStart = end;
     };
-    for (let i = 0; i < buf.length; i++) {
+    let i = 0;
+    while (i < buf.length) {
       const byte = buf[i];
-      if (byte === undefined) continue;
-      if (leader) {
-        resolveLeaderByte(byte);
-        chunkStart = i + 1;
+      if (byte === undefined) {
+        i++;
         continue;
       }
+
+      if (leader) {
+        // Resolve the chord. The key may be a raw byte, or — when the inner app
+        // enabled an enhanced keyboard protocol — a CSI-u / modifyOtherKeys
+        // sequence (e.g. 'c' as `ESC [ 99 u`).
+        const k = parseCsiKey(buf, i);
+        if (k) {
+          if (k.ctrl && k.code === KEY_A_LOW) {
+            // Double Ctrl+a → one literal Ctrl+a to the inner program.
+            exitLeader();
+            opts.onForward(Buffer.from([KEY_LEADER]));
+          } else {
+            const action = leaderChords[String.fromCharCode(k.code).toLowerCase()];
+            exitLeader();
+            if (action) opts.onAction?.(action);
+            else opts.onForward(buf.subarray(i, i + k.len)); // unknown: don't lose it
+          }
+          i += k.len;
+          chunkStart = i;
+          continue;
+        }
+        resolveLeaderByte(byte);
+        i += 1;
+        chunkStart = i;
+        continue;
+      }
+
       if (leaderEnabled && byte === KEY_LEADER) {
         flushChunk(i); // forward everything typed before the Ctrl+a
-        chunkStart = i + 1;
         enterLeader();
+        i += 1;
+        chunkStart = i;
         continue;
+      }
+      // Ctrl+a re-encoded by an enhanced keyboard protocol (kitty / modifyOtherKeys).
+      if (leaderEnabled && byte === KEY_ESC) {
+        const k = parseCsiKey(buf, i);
+        if (k && k.ctrl && k.code === KEY_A_LOW) {
+          flushChunk(i);
+          enterLeader();
+          i += k.len;
+          chunkStart = i;
+          continue;
+        }
       }
       if (pasteEnabled && byte === KEY_CTRL_V) {
         flushChunk(i); // forward everything typed before the Ctrl+V
-        chunkStart = i + 1; // swallow it; triggerPaste re-emits after the load
+        i += 1;
+        chunkStart = i; // swallow it; triggerPaste re-emits after the load
         triggerPaste();
+        continue;
       }
+      i += 1;
     }
     flushChunk(buf.length);
   };

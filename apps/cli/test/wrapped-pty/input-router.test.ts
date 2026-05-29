@@ -369,3 +369,58 @@ describe('input router (Ctrl+V image paste)', () => {
     expect(Buffer.concat(s.forwarded)).toEqual(Buffer.from('abcd\x16'));
   });
 });
+
+describe('input router (enhanced keyboard: kitty / modifyOtherKeys)', () => {
+  it('kitty-encoded Ctrl+a (ESC[97;5u) opens the menu without forwarding', () => {
+    const s = leaderSetup();
+    s.router.feed(Buffer.from('\x1b[97;5u', 'latin1'));
+    expect(s.leaderEvents).toEqual([true]);
+    expect(fwd(s)).toBe('');
+    expect(s.actions).toHaveLength(0);
+  });
+
+  it('modifyOtherKeys Ctrl+a (ESC[27;5;97~) opens the menu', () => {
+    const s = leaderSetup();
+    s.router.feed(Buffer.from('\x1b[27;5;97~', 'latin1'));
+    expect(s.leaderEvents).toEqual([true]);
+    expect(fwd(s)).toBe('');
+  });
+
+  it('dispatches a kitty-encoded chord after a kitty leader', () => {
+    const s = leaderSetup();
+    s.router.feed(Buffer.from('\x1b[97;5u', 'latin1')); // Ctrl+a
+    s.router.feed(Buffer.from('\x1b[99u', 'latin1')); // 'c'
+    expect(s.actions).toEqual(['code']);
+    expect(s.leaderEvents).toEqual([true, false]);
+    expect(fwd(s)).toBe('');
+  });
+
+  it('handles a raw leader followed by a kitty-encoded chord (mixed)', () => {
+    const s = leaderSetup();
+    s.router.feed(Buffer.from([0x01])); // raw Ctrl+a
+    s.router.feed(Buffer.from('\x1b[100;1u', 'latin1')); // 'd' with no mods
+    expect(s.actions).toEqual(['detach']);
+  });
+
+  it('double kitty Ctrl+a sends one literal Ctrl+a and closes the menu', () => {
+    const s = leaderSetup();
+    s.router.feed(Buffer.from('\x1b[97;5u\x1b[97;5u', 'latin1'));
+    expect(fwd(s)).toBe('\x01');
+    expect(s.actions).toHaveLength(0);
+    expect(s.leaderEvents).toEqual([true, false]);
+  });
+
+  it('does NOT treat a cursor key (ESC[A) as the leader', () => {
+    const s = leaderSetup();
+    s.router.feed(Buffer.from('\x1b[A', 'latin1'));
+    expect(s.leaderEvents).toEqual([]);
+    expect(fwd(s)).toBe('\x1b[A');
+  });
+
+  it('does NOT treat a plain kitty key (no Ctrl) as the leader', () => {
+    const s = leaderSetup();
+    s.router.feed(Buffer.from('\x1b[97u', 'latin1')); // 'a', no modifiers
+    expect(s.leaderEvents).toEqual([]);
+    expect(fwd(s)).toBe('\x1b[97u');
+  });
+});
