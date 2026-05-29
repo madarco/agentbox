@@ -201,6 +201,13 @@ case ":$PATH:" in
   *:/home/vscode/.local/bin:*) : ;;
   *) PATH=/home/vscode/.local/bin:$PATH ;;
 esac
+# Force /usr/local/bin to win PATH. Vercel's AL2023 base prepends /opt/git/bin
+# AHEAD of /usr/local/bin, so the relay-routing shims at /usr/local/bin/{git,gh}
+# are otherwise shadowed by the real binaries and agent-typed `git push` /
+# `gh ...` bypass the host relay (backlog #19). A plain `case` prepend doesn't
+# help — /usr/local/bin is already on PATH, just not first — so strip any
+# existing occurrence and re-prepend.
+PATH=/usr/local/bin:$(printf '%s' "$PATH" | sed -e 's#:/usr/local/bin:#:#g' -e 's#^/usr/local/bin:##' -e 's#:/usr/local/bin$##' -e 's#^/usr/local/bin$##')
 export PATH
 export COLORTERM=${COLORTERM:-truecolor}
 export DISABLE_AUTOUPDATER=${DISABLE_AUTOUPDATER:-1}
@@ -243,11 +250,13 @@ dnf clean all 2>/dev/null || true
 done_ "dnf cleanup"
 
 # Relay-routing shims, installed LAST — after every git/gh use in this script
-# (the noVNC `git clone` and any npm/installer step). They win on PATH
-# (/usr/local/bin precedes /usr/bin) so at RUNTIME agent calls to `gh ...` /
-# `git push|pull|fetch|clone` route through the host relay; during the bake there
-# is no relay, so they must not shadow the real binaries until provisioning is
-# done. Installed from /tmp just before the trim step removes the sources.
+# (the noVNC `git clone` and any npm/installer step). At RUNTIME agent calls to
+# `gh ...` / `git push|pull|fetch|clone` must route through the host relay; the
+# login-shell shim above forces /usr/local/bin ahead of Vercel's /opt/git/bin so
+# these win (a plain install location is NOT enough on AL2023 — see #19). During
+# the bake there is no relay, so they must not shadow the real binaries until
+# provisioning is done. Installed from /tmp just before the trim step removes the
+# sources.
 step "relay shims (gh + git)"
 install -m 0755 /tmp/agentbox-gh-shim  /usr/local/bin/gh
 install -m 0755 /tmp/agentbox-git-shim /usr/local/bin/git
