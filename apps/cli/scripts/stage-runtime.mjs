@@ -14,7 +14,7 @@
 // needs zero changes. runtime/ sits next to dist/ in both the dev tree and the
 // published package, so the resolvers anchor on it uniformly.
 
-import { chmodSync, cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -139,6 +139,29 @@ const vercelFiles = [
 for (const [srcRel, destRel, exec] of vercelFiles) {
   copy(srcRel, join(vercelCtx, destRel), exec);
 }
+
+// README — npm reads the published package's README only from the package
+// root (apps/cli/), and there's no package.json field to point elsewhere.
+// Mirror the repo-root README here so npmjs.com has a landing page, rewriting
+// relative links to absolute GitHub URLs: the package's repository.directory
+// is apps/cli, so `./docs/cover.jpg` would resolve to a non-existent path.
+function stageReadme() {
+  const src = join(repoRoot, 'README.md');
+  if (!existsSync(src)) {
+    console.warn('[stage-runtime] WARN missing source (skipped): README.md');
+    missing++;
+    return;
+  }
+  const raw = 'https://raw.githubusercontent.com/madarco/agentbox/main/';
+  const blob = 'https://github.com/madarco/agentbox/blob/main/';
+  const isImage = (p) => /\.(png|jpe?g|gif|svg|webp)(#.*)?$/i.test(p);
+  const absolutize = (p) => (isImage(p) ? raw : blob) + p.replace(/^\.\//, '');
+  const rewritten = readFileSync(src, 'utf8')
+    .replace(/(\]\()(\.\/[^)]+)(\))/g, (_, a, p, b) => a + absolutize(p) + b)
+    .replace(/((?:src|href)=")(\.\/[^"]+)(")/g, (_, a, p, b) => a + absolutize(p) + b);
+  writeFileSync(join(cliRoot, 'README.md'), rewritten);
+}
+stageReadme();
 
 if (missing > 0) {
   console.warn(
