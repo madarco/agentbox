@@ -131,6 +131,17 @@ export interface CloudSandboxSummary {
 export interface CloudBackend {
   readonly name: string;
 
+  /**
+   * Port the in-box WebProxy binds and that the provider exposes + treats as the
+   * box's "web" port (what `resolveUrl(kind:'web')` resolves and `agentbox url`
+   * opens). Defaults to `CLOUD_WEB_PROXY_PORT` (80) when absent — docker/hetzner/
+   * daytona reach the WebProxy on :80. Vercel rejects privileged ports (<1024)
+   * and can't add ports to a running sandbox, so it sets this to a non-privileged
+   * port (8080) that is exposed at create; the value is also wired to the in-box
+   * ctl via AGENTBOX_WEB_PROXY_PORT so the WebProxy binds the same port.
+   */
+  readonly webProxyPort?: number;
+
   provision(req: CloudProvisionRequest): Promise<CloudHandle>;
   /** Resolve an existing sandbox by id; null when it no longer exists. */
   get(sandboxId: string): Promise<CloudHandle | null>;

@@ -342,7 +342,33 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
     `agentbox.yaml`). Daytona/Hetzner expose `:80` directly so the branch never
     runs for them. **Live-verified 2026-05-30:** `agentbox url --print` on the
     express-ready box returns the service preview URL and curls `HTTP/2 200`
-    (Express) instead of erroring.
+    (Express) instead of erroring. *(Superseded as the primary path by 14d — kept
+    as a harmless safety net.)*
+14d. [x] **WebProxy on a non-privileged port (8080) so `url`/`screen` work for an
+    in-box-only `agentbox.yaml`.** When the web service is declared by an
+    `agentbox.yaml` that lives only inside the box (host workspace has none), no
+    app port is exposed at create, so `agentbox url` had nothing to reach.
+    **Empirically established (PoC, 2026-05-30):** Vercel rejects privileged ports
+    (`update({ports:[...,80]})` → 400) **and** `sandbox.update` can't add a routable
+    port to a running box (create-time `domain(6080)`=200 vs update-added
+    `domain(3000)`=502, same instant, both with live listeners; docs confirm
+    `domain()` is for "a port you exposed during creation"). So ports must be in
+    `Sandbox.create({ ports })`. Fix: run the in-box WebProxy on **8080** and expose
+    it at create. The WebProxy (owned by the supervisor) forwards `8080 → 127.0.0.1:
+    <expose.port>` from the *in-box* yaml, so it works regardless of where the yaml
+    lives. Changes: ctl WebProxy listen port is configurable via
+    `AGENTBOX_WEB_PROXY_PORT` (`supervisor.ts`/`daemon.ts`); `CloudBackend.webProxyPort`
+    (default 80) — vercel sets 8080; `VERCEL_EXPOSED_PORTS = [8080, 6080, 8788]`;
+    `cloud-provider` uses `backend.webProxyPort` for the web preview / recorded
+    `webPort` / `resolveUrl`, and threads it to the box via `ctl-launch`. Also
+    `agentbox screen` now opens the in-box Chromium onto the VNC desktop at the same
+    `domain(8080)` URL the host uses (the box reaches its own `*.vercel.run` —
+    hairpin verified 200 host + in-box). **Requires a re-bake** (ctl is baked into
+    the snapshot) and applies to **newly-created** boxes (ports are fixed at create).
+    **Live-verified 2026-05-30:** WebProxy logs `:8080 -> 127.0.0.1:3000`,
+    `agentbox url` → `domain(8080)` curls `HTTP/2 200` (Express), and the noVNC
+    screenshot shows the in-box Chromium on the same URL rendering the app.
+    Out of scope: multiple exposed service ports; docker/hetzner/daytona stay on `:80`.
 
 ### P2 — deferred (parity niceties, not blocking)
 

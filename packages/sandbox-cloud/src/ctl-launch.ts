@@ -23,6 +23,12 @@ export interface LaunchCloudCtlArgs {
   relayToken?: string;
   /** When set, exported as AGENTBOX_BRIDGE_TOKEN inside the box. v0 leaves unset. */
   bridgeToken?: string;
+  /**
+   * When set, exported as AGENTBOX_WEB_PROXY_PORT so the in-box ctl binds its
+   * WebProxy on this port instead of the default 80. Vercel uses 8080 because it
+   * can't expose privileged ports.
+   */
+  webProxyPort?: number;
 }
 
 export async function launchCloudCtlDaemon(args: LaunchCloudCtlArgs): Promise<void> {
@@ -34,6 +40,8 @@ export async function launchCloudCtlDaemon(args: LaunchCloudCtlArgs): Promise<vo
   if (args.relayUrl) env.push(`AGENTBOX_RELAY_URL=${quoteShellArgv([args.relayUrl])}`);
   if (args.relayToken) env.push(`AGENTBOX_RELAY_TOKEN=${quoteShellArgv([args.relayToken])}`);
   if (args.bridgeToken) env.push(`AGENTBOX_BRIDGE_TOKEN=${quoteShellArgv([args.bridgeToken])}`);
+  if (args.webProxyPort !== undefined)
+    env.push(`AGENTBOX_WEB_PROXY_PORT=${quoteShellArgv([String(args.webProxyPort)])}`);
 
   // nohup + & detaches the daemon from the exec channel; logs go to the file
   // the daemon already uses for Docker boxes so debugging is uniform.

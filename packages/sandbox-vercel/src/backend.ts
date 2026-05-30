@@ -61,16 +61,16 @@ const BOX_OWNER = 'vscode:vscode';
 
 /**
  * Base ports exposed at create. Vercel REJECTS privileged ports (<1024) with a
- * 400, so we cannot expose the scaffold's WebProxy port 80 — the two base ports
- * are 6080 (noVNC) and 8788 (the relay/ctl bridge the host poller reaches via
- * `sandbox.domain(8788)`). The in-box WebProxy still binds 80, but it isn't
- * externally reachable on Vercel — so `agentbox url` can't resolve :80 and the
- * shared cloud `resolveUrl` falls back to the first exposed `expose:` service
- * port instead. The remaining slots (up to VERCEL_MAX_PORTS) are filled at create
- * from `agentbox.yaml` `expose:` ports so those per-service preview URLs actually
- * route (see buildExposedPorts).
+ * 400, so we cannot expose the scaffold's WebProxy on :80. Instead the in-box
+ * WebProxy binds 8080 (set via `webProxyPort` → AGENTBOX_WEB_PROXY_PORT) and we
+ * expose 8080 here so `sandbox.domain(8080)` routes to it → the in-box `expose:`
+ * service. Ports are fixed at create (update can't add a routable port to a
+ * running sandbox — verified), so 8080 must be in this base set. The other two
+ * base ports are 6080 (noVNC) and 8788 (the relay/ctl bridge the host poller
+ * reaches via `sandbox.domain(8788)`). Remaining slots (up to VERCEL_MAX_PORTS)
+ * are filled at create from `agentbox.yaml` `expose:` ports (see buildExposedPorts).
  */
-export const VERCEL_EXPOSED_PORTS = [6080, 8788] as const;
+export const VERCEL_EXPOSED_PORTS = [8080, 6080, 8788] as const;
 
 /** Vercel's hard per-sandbox exposed-port cap. */
 export const VERCEL_MAX_PORTS = 4;
@@ -272,6 +272,12 @@ async function pushVercelAgentCredentials(
 
 export const vercelBackend: CloudBackend = {
   name: 'vercel',
+
+  // Vercel rejects privileged ports (<1024) and can't add a routable port to a
+  // running sandbox (update registers a route that 502s — verified). So the
+  // in-box WebProxy binds 8080 (exposed at create via VERCEL_EXPOSED_PORTS) and
+  // `agentbox url` resolves sandbox.domain(8080) → WebProxy → the in-box service.
+  webProxyPort: 8080,
 
   async provision(req: CloudProvisionRequest): Promise<CloudHandle> {
     await ensureFreshCredentials();

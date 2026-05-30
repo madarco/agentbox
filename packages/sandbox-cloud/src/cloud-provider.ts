@@ -299,7 +299,7 @@ export function createCloudProvider(
     // Preview URLs (and their tokens) can rotate across stop/start — refresh
     // the web + relay preview URLs and persist so `agentbox url` and the
     // host poller see the live values.
-    const webPort = box.cloud?.webPort ?? CLOUD_WEB_PROXY_PORT;
+    const webPort = box.cloud?.webPort ?? backend.webProxyPort ?? CLOUD_WEB_PROXY_PORT;
     let webPreview: { url: string; token?: string } | undefined;
     try {
       webPreview = await backend.previewUrl(h, webPort);
@@ -411,6 +411,7 @@ export function createCloudProvider(
       relayUrl: `http://127.0.0.1:${String(8788)}`,
       relayToken: box.relayToken ?? '',
       bridgeToken: box.cloud?.bridgeToken,
+      webProxyPort: backend.webProxyPort,
     });
     // Re-launch in-box dockerd — also dies with the sandbox. Best-effort,
     // mirrors the docker provider's lifecycle.ts:276 relaunch. Skipped for
@@ -681,6 +682,7 @@ export function createCloudProvider(
           relayUrl: `http://127.0.0.1:${String(8788)}`,
           relayToken,
           bridgeToken,
+          webProxyPort: backend.webProxyPort,
         });
 
         // Always-on in-box dockerd, matching the Docker provider
@@ -717,12 +719,16 @@ export function createCloudProvider(
           }
         }
 
+        // The box's "web" port: the in-box WebProxy port the provider exposes.
+        // Defaults to 80; Vercel uses 8080 (it can't expose privileged ports).
+        const wp = backend.webProxyPort ?? CLOUD_WEB_PROXY_PORT;
+
         // The web preview URL is best-effort at create — most boxes won't
-        // have a service on CLOUD_WEB_PROXY_PORT until the supervisor schedules
+        // have a service on the WebProxy port until the supervisor schedules
         // the `expose:` service. `agentbox url` re-resolves on demand.
         let webPreview: { url: string; token?: string } | undefined;
         try {
-          webPreview = await backend.previewUrl(handle, CLOUD_WEB_PROXY_PORT);
+          webPreview = await backend.previewUrl(handle, wp);
         } catch {
           webPreview = undefined;
         }
@@ -739,7 +745,7 @@ export function createCloudProvider(
           const r = await bootstrapPortlessForCloudBox(backend, handle, {
             boxName: name,
             webPreviewUrl: webPreview.url,
-            webPort: CLOUD_WEB_PROXY_PORT,
+            webPort: wp,
             onLog: log,
           });
           if (r) {
@@ -782,7 +788,7 @@ export function createCloudProvider(
         const servicePorts = exposeServicePorts;
         const servicePreviews: Record<number, string> = {};
         for (const port of servicePorts) {
-          if (port === CLOUD_WEB_PROXY_PORT) continue;
+          if (port === wp) continue;
           try {
             const p = await backend.previewUrl(handle, port);
             servicePreviews[port] = p.url;
@@ -877,10 +883,10 @@ export function createCloudProvider(
             backend: backend.name,
             sandboxId: handle.sandboxId,
             image,
-            webPort: CLOUD_WEB_PROXY_PORT,
+            webPort: wp,
             previewUrls: ((): Record<number, string> | undefined => {
               const m: Record<number, string> = { ...servicePreviews };
-              if (webPreview) m[CLOUD_WEB_PROXY_PORT] = webPreview.url;
+              if (webPreview) m[wp] = webPreview.url;
               return Object.keys(m).length > 0 ? m : undefined;
             })(),
             relayPreviewUrl: relayPreview?.url,
@@ -974,7 +980,7 @@ export function createCloudProvider(
 
     async inspect(box: BoxRecord): Promise<InspectedBox> {
       const state = await probe(box);
-      const webPort = box.cloud?.webPort ?? CLOUD_WEB_PROXY_PORT;
+      const webPort = box.cloud?.webPort ?? backend.webProxyPort ?? CLOUD_WEB_PROXY_PORT;
       // Prefer the stable Portless URL for the `web` endpoint when one was
       // registered — matches Docker's endpoint shape (sandbox-docker/src/
       // endpoints.ts:108-117) so `<name>.localhost` shows up uniformly in
@@ -1110,7 +1116,10 @@ export function createCloudProvider(
         }
       }
       // VNC port is fixed by Dockerfile.box (websockify serves noVNC on :6080).
-      const port = kind === 'vnc' ? CLOUD_VNC_PORT : (box.cloud?.webPort ?? CLOUD_WEB_PROXY_PORT);
+      const port =
+        kind === 'vnc'
+          ? CLOUD_VNC_PORT
+          : (box.cloud?.webPort ?? backend.webProxyPort ?? CLOUD_WEB_PROXY_PORT);
       // Always re-resolve through the SDK — cached URLs on the record may be
       // from a previous start whose token has rotated. Prefer signed URLs
       // because the user is about to hand the URL to a browser (no way to
@@ -1178,14 +1187,16 @@ const RESERVED_CLOUD_PORTS = new Set<number>([CLOUD_WEB_PROXY_PORT, CLOUD_VNC_PO
  * when the box exposes no non-reserved service port.
  */
 async function firstExposedServicePort(box: BoxRecord): Promise<number | undefined> {
+  // The box's own WebProxy port (e.g. Vercel's 8080) is reserved too — it's the
+  // web aggregator, not a user service port.
+  const reserved = (p: number): boolean =>
+    RESERVED_CLOUD_PORTS.has(p) || p === box.cloud?.webPort;
   const fromRecord = Object.keys(box.cloud?.previewUrls ?? {})
     .map(Number)
-    .filter((p) => Number.isInteger(p) && !RESERVED_CLOUD_PORTS.has(p));
+    .filter((p) => Number.isInteger(p) && !reserved(p));
   if (fromRecord.length > 0) return Math.min(...fromRecord);
   try {
-    const fromYaml = (await readExposedServicePorts(box.workspacePath)).filter(
-      (p) => !RESERVED_CLOUD_PORTS.has(p),
-    );
+    const fromYaml = (await readExposedServicePorts(box.workspacePath)).filter((p) => !reserved(p));
     if (fromYaml.length > 0) return Math.min(...fromYaml);
   } catch {
     // workspace path missing / yaml unreadable — no fallback available

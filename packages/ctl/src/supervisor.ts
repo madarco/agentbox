@@ -515,6 +515,13 @@ export interface SupervisorOptions {
   workspace: string;
   logDir: string;
   spawn?: typeof spawn;
+  /**
+   * Port the in-box WebProxy binds (forwarding to the `expose:` service).
+   * Defaults to 80 (docker/hetzner/daytona). Cloud backends that can't expose a
+   * privileged port — Vercel rejects <1024 — set this to a non-privileged port
+   * (8080) via AGENTBOX_WEB_PROXY_PORT so the WebProxy is reachable at all.
+   */
+  webProxyPort?: number;
 }
 
 interface SupervisorEvents {
@@ -548,11 +555,12 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
   private scheduling = false;
   private rescheduleDirty = false;
   private readonly relay: RelayClient;
-  private readonly webProxy = new WebProxy();
+  private readonly webProxy: WebProxy;
 
   constructor(private readonly opts: SupervisorOptions) {
     super();
     this.relay = new RelayClient();
+    this.webProxy = new WebProxy(opts.webProxyPort);
   }
 
   /** The relay client the supervisor pushes state events on. Shared with the
