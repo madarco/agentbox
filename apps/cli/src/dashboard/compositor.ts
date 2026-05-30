@@ -487,12 +487,20 @@ export class Compositor {
   /** Dispose and drop the pooled session for `boxId` (box gone / stopped /
    *  its attach died). Clears the active reference if it was the shown one. */
   private evictSession(boxId: string): void {
-    const s = this.liveSessions.get(boxId);
-    if (s) {
+    const pooled = this.liveSessions.get(boxId);
+    if (pooled) {
       this.liveSessions.delete(boxId);
-      s.dispose();
+      pooled.dispose();
     }
-    if (this.session && this.session.boxId === boxId) this.session = null;
+    if (this.session && this.session.boxId === boxId) {
+      // Dispose the active session too — unless it's the pooled one we just
+      // disposed (avoid a double dispose). Non-keepAlive sessions
+      // (docker/hetzner/daytona) are never in `liveSessions`, so this is the
+      // only place their `dispose()` — and its `cleanup` callback, e.g.
+      // daytona's `revokeAttachToken` — runs on an unexpected PTY exit.
+      if (this.session !== pooled) this.session.dispose();
+      this.session = null;
+    }
   }
 
   /** Bound the pool: evict least-recently-used pooled sessions (Map insertion
