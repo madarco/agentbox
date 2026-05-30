@@ -45,12 +45,14 @@ function renderStatus(s: RelayStatus): string {
   if (s.running && s.health) {
     return [
       'relay: running',
-      `  pid:    ${s.pid === null ? '?' : String(s.pid)}`,
-      `  port:   ${String(s.port)}`,
-      `  url:    ${s.endpoint.hostUrl}`,
-      `  boxes:  ${String(s.health.boxes)}`,
-      `  events: ${String(s.health.events)}`,
-      `  log:    ${s.logFile}`,
+      `  pid:     ${s.pid === null ? '?' : String(s.pid)}`,
+      `  port:    ${String(s.port)}`,
+      `  url:     ${s.endpoint.hostUrl}`,
+      `  version: ${s.health.version ?? '(unknown — relay predates version field)'}`,
+      `  commit:  ${s.health.commit ?? '(unknown)'}`,
+      `  boxes:   ${String(s.health.boxes)}`,
+      `  events:  ${String(s.health.events)}`,
+      `  log:     ${s.logFile}`,
     ].join('\n');
   }
   if (s.pidAlive) {

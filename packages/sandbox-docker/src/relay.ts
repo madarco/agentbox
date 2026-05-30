@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, openSync } from 'node:fs';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import {
@@ -20,6 +21,7 @@ import type { GitWorktreeRecord } from './state.js';
 const STATE_DIR = join(homedir(), '.agentbox');
 const PID_FILE = join(STATE_DIR, 'relay.pid');
 const LOG_FILE = join(STATE_DIR, 'relay.log');
+const RELAY_HOME_DIR = join(STATE_DIR, 'relay');
 
 export interface RelayEndpoint {
   /** URL boxes use to reach the relay from inside the container. */
@@ -42,6 +44,41 @@ const ENDPOINT: RelayEndpoint = {
 
 export interface EnsureRelayOptions {
   onLog?: (line: string) => void;
+}
+
+/** The subset of /healthz the relay-reuse decision needs. */
+export interface RelayReuseHealth {
+  cliEntry?: boolean;
+  version?: string;
+}
+
+/**
+ * Decide whether an already-alive relay must be reclaimed + respawned. Pure (no
+ * fs/network) so it's unit-testable. Two independent gates, OR'd:
+ *   - capability (existing): `cliEntry === false` → the relay can't run
+ *     cp/download/checkpoint and would 64 forever, so reclaim it.
+ *   - version (new): both sides report a known non-empty version that DIFFERS →
+ *     the relay was spawned by a different agentbox install (a stale npx cache
+ *     entry, say) and must be replaced so the relay's code matches the CLI.
+ * Either version unknown → reuse (don't churn relays predating the field). Match
+ * on VERSION only, never commit, so dev rebuilds ('0.0.0-dev' constant) never
+ * cycle the relay every build.
+ */
+export function shouldReclaimForVersion(
+  health: RelayReuseHealth,
+  currentVersion: string | undefined,
+): boolean {
+  if (health.cliEntry === false) return true;
+  if (
+    typeof health.version === 'string' &&
+    health.version.length > 0 &&
+    typeof currentVersion === 'string' &&
+    currentVersion.length > 0 &&
+    health.version !== currentVersion
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -67,20 +104,25 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
     log(`removed legacy relay container ${RELAY_CONTAINER_NAME}`);
   }
 
+  const currentVersion = process.env.AGENTBOX_CLI_VERSION;
   const health = await fetchHealthz(500);
   if (health !== null) {
-    // A relay is answering on the port. Only reuse it if it can actually run
-    // host-side CLI actions. A relay spawned during a transient window where
-    // the CLI dist didn't exist comes up without AGENTBOX_CLI_ENTRY and then
-    // silently returns exit 64 for every cp/download/checkpoint for its whole
-    // lifetime — and bare liveness can never detect that, so it's never
-    // replaced. `cliEntry === false` (new relay, capability missing) → reclaim
-    // and respawn. `cliEntry === undefined` (a relay from before this field
-    // existed) is reused as before to avoid needlessly cycling old relays.
-    if (health.cliEntry !== false) {
+    // A relay is answering on the port. Reuse it unless it's either incapable
+    // (no AGENTBOX_CLI_ENTRY → 64s every cp/download/checkpoint for its whole
+    // lifetime, undetectable by bare liveness) or version-mismatched (spawned
+    // by a different agentbox install — e.g. a stale npx cache entry — so its
+    // code may not match this CLI). See shouldReclaimForVersion for the gates.
+    if (!shouldReclaimForVersion(health, currentVersion)) {
       return ENDPOINT;
     }
-    log('relay is alive but lacks AGENTBOX_CLI_ENTRY (cp/download/checkpoint would fail) — reclaiming');
+    if (health.cliEntry === false) {
+      log('relay is alive but lacks AGENTBOX_CLI_ENTRY (cp/download/checkpoint would fail) — reclaiming');
+    } else {
+      log(
+        `relay was spawned by agentbox ${health.version ?? '?'} but this CLI is ` +
+          `${currentVersion ?? '?'} — reclaiming to keep the relay version-consistent`,
+      );
+    }
     await reclaimRelay(health.pid, log);
     // fall through to a fresh spawn below
   } else {
@@ -101,7 +143,11 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
     }
   }
 
-  const relayBin = resolveRelayBin();
+  // Prefer a stable ~/.agentbox/relay/<version>/ home so the long-lived relay's
+  // code (and the CLI entry it shells back into) survive npx cache GC. Falls
+  // back to the bundle-relative resolvers in dev / on any staging failure.
+  const staged = await stageRelayHome(currentVersion ?? '', log).catch(() => null);
+  const relayBin = staged?.relayBin ?? resolveRelayBin();
   // The relay shells back into this CLI entry for the cp / download /
   // checkpoint host actions (it only knows the box id; the CLI resolves the
   // rest). Resolve it BEFORE spawning and fail loud if missing: a relay
@@ -109,7 +155,7 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
   // capability gate above would just keep reclaiming + respawning it. A null
   // here almost always means the CLI dist is mid-rebuild — surface that
   // instead of producing a half-working relay.
-  const cliEntry = resolveCliEntry();
+  const cliEntry = staged?.cliEntry ?? resolveCliEntry();
   if (cliEntry === null) {
     throw new Error(
       'cannot start the host relay: agentbox CLI entry not found ' +
@@ -120,10 +166,11 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
 }
 
 /**
- * Stop a relay that's alive but missing AGENTBOX_CLI_ENTRY so a capable one
- * can take the port. Tries the pid the relay reported via /healthz first, then
- * the pidfile pid. Fails loud if the port is still held afterward — a silent
- * "couldn't reclaim" would just resurrect the original broken-relay bug.
+ * Stop a relay we don't want to reuse (missing AGENTBOX_CLI_ENTRY, or spawned by
+ * a different agentbox version) so a fresh one can take the port. Tries the pid
+ * the relay reported via /healthz first, then the pidfile pid. Fails loud if the
+ * port is still held afterward — a silent "couldn't reclaim" would just resurrect
+ * the original broken-relay bug.
  */
 async function reclaimRelay(reportedPid: number | undefined, log: (line: string) => void): Promise<void> {
   const pidFromFile = await readPidFile();
@@ -140,7 +187,7 @@ async function reclaimRelay(reportedPid: number | undefined, log: (line: string)
   // broken one again on the next call. Surface it rather than loop silently.
   if (await pingHealthz(300)) {
     throw new Error(
-      `a relay without AGENTBOX_CLI_ENTRY is still listening on :${String(PORT)} and could not be ` +
+      `a relay is still listening on :${String(PORT)} and could not be ` +
         `stopped (reported pid ${String(reportedPid ?? 'unknown')}); kill it manually and retry`,
     );
   }
@@ -252,6 +299,141 @@ function resolveCliEntry(): string | null {
   return null;
 }
 
+interface StagedRelay {
+  relayBin: string;
+  cliEntry: string;
+}
+
+/**
+ * Stage the relay's code into a stable `~/.agentbox/relay/<version>/` home so
+ * the long-lived relay process AND the `AGENTBOX_CLI_ENTRY` it shells back into
+ * for cp/download/checkpoint/git-push don't depend on the volatile npx cache
+ * path (`~/.npm/_npx/<hash>/...`), which can be garbage-collected while the
+ * relay is still alive — host actions fire even when no foreground CLI is
+ * running, so a vanished entry path would break them.
+ *
+ * Copies the CLI package tree (`dist/` + `runtime/` + `share/`) PLUS the
+ * externalized npm deps (`node_modules/`): the CLI bundle is not self-contained
+ * (apps/cli/tsup.config.ts keeps commander/execa/@daytonaio/sdk/... external).
+ * The staged tree mirrors the package layout exactly, so the bundled entry's
+ * own sibling-relative resolvers and its external `require`s all resolve inside
+ * the home.
+ *
+ * Returns null (caller falls back to the bundle-relative resolvers, unchanged)
+ * when the version is dev/empty, an `AGENTBOX_RELAY_BIN`/`AGENTBOX_CLI_ENTRY`
+ * override is set, the layout/dep root can't be resolved, or any copy fails.
+ */
+async function stageRelayHome(version: string, log: (line: string) => void): Promise<StagedRelay | null> {
+  // Dev is a moving target ('0.0.0-dev' regardless of code) — pinning it would
+  // serve a stale bundle. Overrides must flow through untouched.
+  if (!version || version === '0.0.0-dev') return null;
+  if (process.env.AGENTBOX_RELAY_BIN || process.env.AGENTBOX_CLI_ENTRY) return null;
+
+  const cliRoot = findCliRoot(dirname(fileURLToPath(import.meta.url)));
+  if (cliRoot === null) return null;
+
+  const homeDir = join(RELAY_HOME_DIR, version);
+  const stagedEntry = join(homeDir, 'dist', 'index.js');
+  const stagedBin = join(homeDir, 'runtime', 'relay', 'bin.cjs');
+  // Warm path: already staged for this version → two existsSync checks, no I/O.
+  if (existsSync(stagedEntry) && existsSync(stagedBin)) {
+    return { relayBin: stagedBin, cliEntry: stagedEntry };
+  }
+
+  const nodeModules = resolveDepRoot(join(cliRoot, 'dist', 'index.js'));
+  if (nodeModules === null) return null;
+
+  // Stage into a per-pid tmp dir then atomic-rename, so a crash mid-copy never
+  // leaves a homeDir that passes the existsSync gate above but is incomplete.
+  const tmpDir = `${homeDir}.tmp-${String(process.pid)}`;
+  try {
+    await mkdir(RELAY_HOME_DIR, { recursive: true });
+    await rm(tmpDir, { recursive: true, force: true });
+    await mkdir(tmpDir, { recursive: true });
+    for (const sub of ['dist', 'runtime', 'share']) {
+      const src = join(cliRoot, sub);
+      if (existsSync(src)) await cp(src, join(tmpDir, sub), { recursive: true });
+    }
+    // dereference so a symlinked dep tree (rare in published installs) lands as
+    // real files in the portable home.
+    await cp(nodeModules, join(tmpDir, 'node_modules'), { recursive: true, dereference: true });
+    await rm(homeDir, { recursive: true, force: true });
+    await rename(tmpDir, homeDir);
+  } catch (err) {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    // A concurrent invocation may have won the rename onto homeDir; if the home
+    // is complete now, use it. Otherwise fall back to bundle-relative resolvers.
+    if (existsSync(stagedEntry) && existsSync(stagedBin)) {
+      return { relayBin: stagedBin, cliEntry: stagedEntry };
+    }
+    log(`relay home staging failed (${err instanceof Error ? err.message : String(err)}); using bundle paths`);
+    return null;
+  }
+
+  log(`staged relay home for ${version} at ${homeDir}`);
+  await gcOldRelayHomes(version).catch(() => {});
+  return { relayBin: stagedBin, cliEntry: stagedEntry };
+}
+
+/**
+ * Walk up from the bundled module dir to the CLI package root (the dir holding
+ * `dist/index.js` next to `runtime/`). The module is bundled into the CLI's
+ * dist/, so it sits one level under the root (chunked builds keep it in dist/).
+ */
+function findCliRoot(moduleDir: string): string | null {
+  for (const root of [resolve(moduleDir, '..'), resolve(moduleDir, '..', '..')]) {
+    if (existsSync(join(root, 'dist', 'index.js')) && existsSync(join(root, 'runtime', 'relay', 'bin.cjs'))) {
+      return root;
+    }
+  }
+  return null;
+}
+
+/**
+ * Locate the flat `node_modules` dir the externalized CLI deps resolve from.
+ * Uses commander (a guaranteed external dep) as the probe and ascends to its
+ * enclosing node_modules — handles npm/npx hoisting where the deps live above
+ * the package dir.
+ *
+ * Returns null for a non-flat (pnpm) store: there the probe resolves into a
+ * `.pnpm/<pkg>/node_modules` path, and a wholesale recursive copy of that would
+ * silently miss transitive deps and produce a broken staged CLI entry. Only a
+ * flat npm/npx tree — the actual npx-cache scenario this staging targets — is
+ * safe to copy. A pnpm workspace dev tree falls back to bundle-relative paths
+ * (current behavior, no regression).
+ */
+function resolveDepRoot(fromFile: string): string | null {
+  try {
+    const req = createRequire(fromFile);
+    // Resolve the package MAIN, not '<pkg>/package.json' — modern packages with
+    // an `exports` map (commander included) block deep package.json resolution
+    // with ERR_PACKAGE_PATH_NOT_EXPORTED. The main always resolves.
+    const main = req.resolve('commander');
+    if (main.includes(`${sep}.pnpm${sep}`)) return null;
+    const marker = `${sep}node_modules${sep}`;
+    const idx = main.lastIndexOf(marker);
+    if (idx === -1) return null;
+    const nm = main.slice(0, idx + marker.length - 1); // ".../node_modules"
+    return existsSync(join(nm, 'commander')) ? nm : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Remove stale relay homes (other versions + leftover .tmp dirs), keeping the current version. */
+async function gcOldRelayHomes(keepVersion: string): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await readdir(RELAY_HOME_DIR);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if (name === keepVersion) continue;
+    await rm(join(RELAY_HOME_DIR, name), { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export interface StopRelayResult {
   /** True when a live relay process was signalled (and the pidfile cleared). */
   stopped: boolean;
@@ -308,7 +490,7 @@ export interface RelayStatus {
   /** URLs boxes / host-side callers use to reach the relay. */
   endpoint: RelayEndpoint;
   /** Parsed /healthz body; null when the relay isn't responding. */
-  health: { boxes: number; events: number } | null;
+  health: { boxes: number; events: number; version?: string; commit?: string } | null;
   /** Absolute path to the pidfile. */
   pidFile: string;
   /** Absolute path to the process log. */
@@ -333,7 +515,10 @@ export async function getRelayStatus(): Promise<RelayStatus> {
     pidAlive,
     port: PORT,
     endpoint: ENDPOINT,
-    health: health === null ? null : { boxes: health.boxes, events: health.events },
+    health:
+      health === null
+        ? null
+        : { boxes: health.boxes, events: health.events, version: health.version, commit: health.commit },
     pidFile: PID_FILE,
     logFile: LOG_FILE,
   };
@@ -366,6 +551,10 @@ interface HealthzBody {
   pid?: number;
   /** Whether the relay has AGENTBOX_CLI_ENTRY (can run cp/download/checkpoint). Absent on old relays. */
   cliEntry?: boolean;
+  /** The agentbox version that spawned the relay. Absent on relays predating this field. */
+  version?: string;
+  /** The agentbox short commit that spawned the relay (observability only). Absent on old relays. */
+  commit?: string;
 }
 
 function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
@@ -395,6 +584,14 @@ function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
                 events: parsed.events,
                 pid: typeof parsed.pid === 'number' ? parsed.pid : undefined,
                 cliEntry: typeof parsed.cliEntry === 'boolean' ? parsed.cliEntry : undefined,
+                version:
+                  typeof parsed.version === 'string' && parsed.version.length > 0
+                    ? parsed.version
+                    : undefined,
+                commit:
+                  typeof parsed.commit === 'string' && parsed.commit.length > 0
+                    ? parsed.commit
+                    : undefined,
               });
             } else {
               resolveP(null);

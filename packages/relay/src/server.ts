@@ -235,6 +235,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         events: events.size(),
         pid: process.pid,
         cliEntry: Boolean(process.env.AGENTBOX_CLI_ENTRY),
+        // The spawning CLI's version/commit (inherited via env at spawn time).
+        // `version` lets host-side ensureRelay reclaim a relay left over from a
+        // different agentbox version; `commit` is observability-only.
+        version: process.env.AGENTBOX_CLI_VERSION || undefined,
+        commit: process.env.AGENTBOX_CLI_COMMIT || undefined,
       });
       return;
     }
