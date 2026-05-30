@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentbox.dev/schema/agentbox.schema.json",
+  "$id": "https://agent-box.sh/schema/agentbox.schema.json",
   "title": "AgentBox box configuration",
   "description": "Declarative config consumed by agentbox-ctl (the in-container supervisor). Sits at /workspace/agentbox.yaml.",
   "type": "object",
@@ -29,7 +29,7 @@
     },
     "defaults": {
       "type": "object",
-      "description": "Host-side AgentBox layered-config defaults for this project. Same shape as ~/.agentbox/config.yaml. The supervisor ignores this; @agentbox/config validates it strictly when loaded. See https://agentbox.dev/schema/user-config.schema.json for the full key set.",
+      "description": "Host-side AgentBox layered-config defaults for this project. Same shape as ~/.agentbox/config.yaml. The supervisor ignores this; @agentbox/config validates it strictly when loaded. See https://agent-box.sh/schema/user-config.schema.json for the full key set.",
       "additionalProperties": true
     }
   },

@@ -1,6 +1,6 @@
 {
   "cleanUrls": true,
   "installCommand": "",
-  "buildCommand": "",
+  "buildCommand": "mkdir -p schema && cp ../../packages/ctl/schema/agentbox.schema.json ../../packages/config/schema/user-config.schema.json schema/",
   "outputDirectory": "."
 }

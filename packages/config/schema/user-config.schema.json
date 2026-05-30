@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentbox.dev/schema/user-config.schema.json",
+  "$id": "https://agent-box.sh/schema/user-config.schema.json",
   "title": "AgentBox user config",
   "description": "Layered defaults for the agentbox CLI. Same shape lives in ~/.agentbox/config.yaml (global), ~/.agentbox/projects/<hash>/config.yaml (per-project user), and the `defaults:` block of agentbox.yaml (committed project policy).",
   "type": "object",

@@ -1,6 +1,7 @@
 node_modules/
 dist/
 apps/cli/runtime/
+apps/web/schema/
 .turbo/
 coverage/
 *.log

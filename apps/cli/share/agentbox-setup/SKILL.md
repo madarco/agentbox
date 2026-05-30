@@ -97,7 +97,7 @@ Full key list (run on the host): `agentbox config list --keys`.
 ## 6. Worked example
 
 ```yaml
-# yaml-language-server: $schema=https://agentbox.dev/schema/agentbox.schema.json
+# yaml-language-server: $schema=https://agent-box.sh/schema/agentbox.schema.json
 # This agentbox.yaml setup this Next.js project, and includes:
 # - a postgres database because it's used in the project
 # - an inngest server for queues

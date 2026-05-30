@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://agentbox.dev/schema/agentbox.schema.json
+# yaml-language-server: $schema=https://agent-box.sh/schema/agentbox.schema.json
 #
 # AgentBox monorepo (this very project) — TypeScript + pnpm + turbo.
 #

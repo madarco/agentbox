@@ -28,7 +28,7 @@ The agent should detect:
 A plausible result, written to `/workspace/agentbox.yaml`:
 
 ```yaml
-# yaml-language-server: $schema=https://agentbox.dev/schema/agentbox.schema.json
+# yaml-language-server: $schema=https://agent-box.sh/schema/agentbox.schema.json
 tasks:
   install:
     command: npm install
