@@ -316,6 +316,21 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
     every create (renewable tokens), best-effort (a failure logs + falls back to
     interactive login). Closes the agent-credential gap from the no-volume
     short-circuit. Unit-tested in `test/push-credentials.test.ts`.
+14b. [ ] **Chromium baked for `agent-browser`.** The login-shell shim exported
+    `AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chromium` and `provision.sh`
+    installed the `agent-browser` CLI, but never installed Chromium nor created
+    that symlink — so `agent-browser open` failed with `Failed to launch Chrome
+    at "/usr/local/bin/chromium": No such file or directory`. `provision.sh` now
+    mirrors docker/hetzner: installs the AL2023 (dnf) Chrome runtime libs —
+    `nss nspr atk at-spi2-atk at-spi2-core cups-libs libdrm libxkbcommon
+    libX{composite,damage,fixes,randr,ext,11} libxcb mesa-libgbm pango cairo
+    alsa-lib liberation-fonts` (the dnf equivalents of the Ubuntu `t64` deps; the
+    Ubuntu names don't exist on AL2023) — then `playwright install chromium` as
+    vscode and symlinks the resolved binary to `/usr/local/bin/chromium`. The bake
+    fails loud (`exit 70` if the binary doesn't resolve, `exit 71` if `ldd` shows
+    unresolved libs) so an incomplete AL2023 dep set surfaces at prepare time, not
+    at first launch. Headless launch is the success bar; `--headed` still needs the
+    VNC X server on `:1`. **Live-verify pending: re-bake + `ldd`/headless smoke.**
 
 ### P2 — deferred (parity niceties, not blocking)
 
