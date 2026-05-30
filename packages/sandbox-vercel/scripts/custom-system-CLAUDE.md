@@ -15,10 +15,7 @@ This box is **persistent**: stopping it captures a snapshot and resuming
 restarts from that snapshot, so the filesystem survives a pause. You can also
 save the current filesystem state for future boxes with
 `agentbox-ctl checkpoint --set-default`, but a checkpoint/snapshot STOPS the
-box, so use it only at the end of the setup wizard — otherwise rely on
-idempotent tasks in `agentbox.yaml`. NB: this `agentbox-ctl` command normally
-doesn't need user confirmation, but since it stops the box, ask for
-confirmation before running it.
+box, so use it only at the end of the setup wizard.
 
 `/workspace` is a normal git checkout seeded from the host repo at create time.
 Because there is no host bind-mount, plain `git` inside the box only affects

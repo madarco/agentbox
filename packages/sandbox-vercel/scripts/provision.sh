@@ -245,6 +245,46 @@ step "Claude Code (native installer, run as vscode)"
 sudo -u vscode -H bash -lc 'curl -fsSL https://claude.ai/install.sh | bash -s stable'
 done_ "Claude Code (native installer, run as vscode)"
 
+step "Chrome runtime libs (dnf)"
+# agent-browser launches Chromium at AGENT_BROWSER_EXECUTABLE_PATH
+# (/usr/local/bin/chromium, set in the login-shell shim above). Docker + hetzner
+# bake that binary in; do the same here. These are the AL2023 (dnf) equivalents
+# of the Ubuntu `t64` Chrome deps the other two providers apt-install — the
+# Ubuntu package names don't exist on Amazon Linux 2023. Fail loud: a missing lib
+# means a silently broken browser, not a convenience we can skip.
+dnf install -y -q --allowerasing \
+  nss nspr atk at-spi2-atk at-spi2-core cups-libs \
+  libdrm libxkbcommon libXcomposite libXdamage libXfixes libXrandr \
+  libXext libX11 libxcb mesa-libgbm pango cairo alsa-lib \
+  liberation-fonts
+done_ "Chrome runtime libs (dnf)"
+
+step "playwright + Chromium download (as vscode)"
+# Run the download as vscode so the cache lands under
+# /home/vscode/.cache/ms-playwright. Resolve a stable symlink at
+# /usr/local/bin/chromium so AGENT_BROWSER_EXECUTABLE_PATH stays predictable
+# across Chromium revision bumps (mirrors hetzner install-box.sh).
+npm install -g playwright 2>&1 | tail -3
+sudo -u vscode -H bash -lc 'playwright install chromium'
+CHROME_BIN="$(sudo -u vscode -H bash -lc 'ls /home/vscode/.cache/ms-playwright/chromium-*/chrome-linux*/chrome 2>/dev/null | sort | tail -1')"
+if [ -z "$CHROME_BIN" ] || [ ! -x "$CHROME_BIN" ]; then
+  echo "provision.sh: could not resolve Playwright Chromium binary" >&2
+  exit 70
+fi
+# Fail loud if a shared lib is missing — this is where an incomplete AL2023 dep
+# set surfaces at bake time instead of at first agent-browser launch. Capture
+# ldd's output first (|| true): under `set -euo pipefail` a non-zero ldd exit
+# would otherwise dominate the `ldd | grep` pipeline and make the missing-libs
+# check a silent no-op even when 'not found' lines are present.
+LDD_OUT="$(ldd "$CHROME_BIN" 2>&1 || true)"
+if printf '%s\n' "$LDD_OUT" | grep -q 'not found'; then
+  echo "provision.sh: Chromium has unresolved shared libs:" >&2
+  printf '%s\n' "$LDD_OUT" | grep 'not found' >&2
+  exit 71
+fi
+ln -sf "$CHROME_BIN" /usr/local/bin/chromium
+done_ "playwright + Chromium download (as vscode)"
+
 step "dnf cleanup"
 dnf clean all 2>/dev/null || true
 done_ "dnf cleanup"

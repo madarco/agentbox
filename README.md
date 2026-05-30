@@ -140,7 +140,7 @@ Uses `portless` to give box web apps the same URL from inside the box and on the
 - `agentbox config` — Read / write layered config (global, per-project, workspace `defaults:`)
 - `agentbox relay` — Manage the host relay process (`status` / `stop` / `start` / `restart`)
 
-Run `agentbox <command> --help` for command-specific options, or see the full [guide](./docs/guide.md).
+Run `agentbox <command> --help` for command-specific options.
 
 ## Development
 
@@ -150,7 +150,7 @@ pnpm install && pnpm build
 node apps/cli/dist/index.js --help
 ```
 
-The full development workflow, stack, end-to-end smoke tests, and teardown live in the [guide](./docs/guide.md#development).
+The full development workflow, stack, end-to-end smoke tests, and teardown live in [`docs/development.md`](./docs/development.md).
 
 # Author
 

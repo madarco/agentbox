@@ -153,21 +153,28 @@ describe('renderFooter — prompt', () => {
     },
   };
 
-  it('shows the message + Y/N hint', () => {
+  it('shows the message + spelled-out answer chip', () => {
     const out = visible(renderFooter(prompt, 80));
     expect(out).toContain('Allow git push to origin?');
-    expect(out).toContain('[y/N]');
+    expect(out).toContain('y Yes');
+    expect(out).toContain('n No');
     expect(out.startsWith(' [!] ')).toBe(true);
   });
 
-  it('prompt with defaultAnswer "y" shows [Y/n]', () => {
+  it('underlines No (the safe default) when defaultAnswer is absent', () => {
+    // The default is conveyed via the underline SGR, not the chip text, so
+    // assert on the raw (un-stripped) string.
+    const raw = renderFooter(prompt, 80);
+    expect(raw).toContain('\x1b[4mn No');
+  });
+
+  it('underlines Yes when defaultAnswer is "y"', () => {
     const p: FooterState = {
       kind: 'prompt',
       prompt: { ...prompt.prompt, defaultAnswer: 'y' } as never,
     };
-    const out = visible(renderFooter(p, 80));
-    expect(out).toContain('[Y/n]');
-    expect(out).not.toContain('[y/N]');
+    const raw = renderFooter(p, 80);
+    expect(raw).toContain('\x1b[4my Yes');
   });
 
   it('truncates long messages with an ellipsis when cols is narrow', () => {
@@ -181,7 +188,7 @@ describe('renderFooter — prompt', () => {
     };
     const out = visible(renderFooter(long, 30));
     expect(out).toContain('…');
-    expect(out).toContain('[y/N]');
+    expect(out).toContain('n No');
   });
 });
 
@@ -235,7 +242,7 @@ describe('renderFooter — edge cases', () => {
 });
 
 describe('renderAlertBand', () => {
-  it('renders a prompt band as 3 rows with [!] tag, detail row, and right-aligned [y/N] hint', () => {
+  it('renders a prompt band as 3 rows: title + answer chip, then message, then detail', () => {
     const state: AlertBandState = {
       kind: 'prompt',
       prompt: {
@@ -243,15 +250,30 @@ describe('renderAlertBand', () => {
         kind: 'confirm',
         message: 'git push to origin',
         detail: 'branch: agentbox/foo',
+        context: { command: 'git push' },
       },
     };
     const lines = renderAlertBand(state, 80);
     expect(lines).toHaveLength(ALERT_BAND_ROWS);
     const visibleLines = lines.map(visible);
+    // Row 1: marker + bold title (the command, uppercased) + spelled-out chip.
     expect(visibleLines[0]).toContain('[!]');
-    expect(visibleLines[0]).toContain('git push to origin');
-    expect(visibleLines[1]).toContain('branch: agentbox/foo');
-    expect(visibleLines[2]).toContain('[y/N]');
+    expect(visibleLines[0]).toContain('GIT PUSH');
+    expect(visibleLines[0]).toContain('y Yes');
+    expect(visibleLines[0]).toContain('n No');
+    // Row 2: the question; Row 3: the sub-message.
+    expect(visibleLines[1]).toContain('git push to origin');
+    expect(visibleLines[2]).toContain('branch: agentbox/foo');
+  });
+
+  it('falls back to a CONFIRM title when the prompt carries no command', () => {
+    const state: AlertBandState = {
+      kind: 'prompt',
+      prompt: { id: '1', kind: 'confirm', message: 'do the thing?' },
+    };
+    const visibleLines = renderAlertBand(state, 80).map(visible);
+    expect(visibleLines[0]).toContain('CONFIRM');
+    expect(visibleLines[1]).toContain('do the thing?');
   });
 
   it('renders a notice band with a spinner glyph + message, all rows on the yellow banner', () => {

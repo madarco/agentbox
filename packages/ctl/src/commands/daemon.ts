@@ -48,7 +48,10 @@ export const daemonCommand = new Command('daemon')
   .option('--workspace <path>', 'cwd for service processes', '/workspace')
   .action(async (opts: DaemonOptions) => {
     const cfg = await loadConfig(opts.config);
-    const sup = new Supervisor({ workspace: opts.workspace, logDir: opts.logDir });
+    // Cloud backends that can't expose port 80 (Vercel) set AGENTBOX_WEB_PROXY_PORT
+    // so the WebProxy binds a reachable non-privileged port. Unset → default 80.
+    const webProxyPort = Number(process.env.AGENTBOX_WEB_PROXY_PORT) || undefined;
+    const sup = new Supervisor({ workspace: opts.workspace, logDir: opts.logDir, webProxyPort });
     await sup.init(cfg);
     const reporter = new StatusReporter({
       supervisor: sup,

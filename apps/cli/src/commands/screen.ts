@@ -131,6 +131,35 @@ export const screenCommand = new Command('screen')
         } else if (state === 'missing') {
           throw new Error(`cloud sandbox for ${box.name} is missing; was it deleted?`);
         }
+
+        // Open the box's web app *inside* the VNC desktop (the host browser only
+        // gets the noVNC viewer), mirroring the docker path. The in-box Chromium
+        // loads the same public preview URL the host uses — the box can reach its
+        // own `*.vercel.run` domain (verified), so it's one origin both sides.
+        // Only when a web service is declared; best-effort, never fails `screen`.
+        const persisted = await readBoxStatus(box);
+        const hasWebService = persisted?.services.some((s) => s.expose) ?? false;
+        if (hasWebService) {
+          try {
+            const webUrl = await p.resolveUrl(box, { kind: 'web' });
+            const q = `'${webUrl.replace(/'/g, "'\\''")}'`;
+            const br = await p.exec(box, ['bash', '-lc', `agent-browser open --headed ${q}`], {
+              user: 'vscode',
+            });
+            if (br.exitCode === 0) {
+              log.info(`opened ${webUrl} in the in-box browser (visible in the VNC view)`);
+            } else {
+              log.warn(
+                `could not open in-box browser (continuing): ${br.stderr.trim() || br.stdout.trim() || `exit ${String(br.exitCode)}`}`,
+              );
+            }
+          } catch (err) {
+            log.warn(
+              `in-box browser skipped: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+
         const base = await p.resolveUrl(box, { kind: 'vnc', ttl });
         // Append noVNC's auto-connect query so the browser jumps straight to
         // the desktop without prompting for a password — same shape Docker's

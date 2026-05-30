@@ -200,26 +200,27 @@ describe('vercelBackend.snapshotExists', () => {
 
 describe('buildExposedPorts', () => {
   it('returns just the base ports when no expose ports are given', () => {
-    expect(buildExposedPorts(undefined)).toEqual([6080, 8788]);
-    expect(buildExposedPorts([])).toEqual([6080, 8788]);
+    expect(buildExposedPorts(undefined)).toEqual([8080, 6080, 8788]);
+    expect(buildExposedPorts([])).toEqual([8080, 6080, 8788]);
   });
 
   it('appends non-privileged expose ports after the base set', () => {
-    expect(buildExposedPorts([3000])).toEqual([6080, 8788, 3000]);
+    expect(buildExposedPorts([3000])).toEqual([8080, 6080, 8788, 3000]);
   });
 
   it('drops privileged ports (<1024, which Vercel 400s) and out-of-range', () => {
-    expect(buildExposedPorts([80, 443, 3000, 70000])).toEqual([6080, 8788, 3000]);
+    expect(buildExposedPorts([80, 443, 3000, 70000])).toEqual([8080, 6080, 8788, 3000]);
   });
 
   it('dedupes against the base set and itself', () => {
-    expect(buildExposedPorts([6080, 3000, 3000])).toEqual([6080, 8788, 3000]);
+    expect(buildExposedPorts([8080, 6080, 3000, 3000])).toEqual([8080, 6080, 8788, 3000]);
   });
 
   it('never exceeds the Vercel 4-port cap', () => {
+    // Base set is now [8080, 6080, 8788] (3 ports), so only one expose slot is left.
     const out = buildExposedPorts([3000, 3001, 3002, 3003]);
     expect(out.length).toBe(VERCEL_MAX_PORTS);
-    expect(out).toEqual([6080, 8788, 3000, 3001]);
+    expect(out).toEqual([8080, 6080, 8788, 3000]);
   });
 });
 

@@ -34,6 +34,14 @@ CLI, not the raw commits.
 - Cloud boxes now offer to sign you in before the box starts when agent
   credentials are missing or expired, seeding the login into this box and every
   future one (Claude, Codex, OpenCode).
+- Attach now survives a box reboot: the wrapper stays open and auto-reconnects
+  once the box is back, so a Vercel checkpoint or restart no longer drops your
+  session.
+- `agentbox url` and `agentbox screen` reach an in-box web service on Vercel —
+  the in-box proxy binds to the always-exposed port 8080, and `url` falls back to
+  the first exposed service port when no proxy is configured.
+- `agentbox list --live` forces a real state probe of cloud boxes; by default
+  `list` now reads persisted box state, so it's fast even with several boxes.
 - A 3-line alert band above the footer surfaces relay confirm prompts,
   checkpoint notices, and the agent's questions without hiding the status bar —
   in both the single-attach TUI and the dashboard.
@@ -48,6 +56,13 @@ CLI, not the raw commits.
   footers and the dashboard: `s` opens the noVNC screen, `u` opens the web-app
   URL, `d` detaches. The dashboard keeps `Ctrl+a q` to quit and moves "stop the
   box" to `Ctrl+a t`.
+- A Vercel checkpoint reboots the box, so it now asks for confirmation first
+  (skip with `-y`).
+- Chromium is baked into the Vercel base snapshot at `prepare` time, so
+  agent-browser is ready immediately on every box instead of installing on each
+  create.
+- The host relay is now a version-consistent global singleton shared by all
+  boxes, robust to mismatched `npx` caches.
 - Faster dashboard switching on the Vercel provider; install-wizard copy and
   progress animation polished.
 
@@ -55,6 +70,14 @@ CLI, not the raw commits.
 
 - The cloud login offer runs in the default docker image instead of a cloud
   snapshot ref, fixing a `docker build` failure on `snap_…` image names.
+- `agentbox list` shows the real state of cloud boxes (stopped/paused) instead
+  of always reporting `running`.
+- Resuming a cloud box re-ensures its daemons and declared services, and a
+  stopped cloud box is resumed before attach instead of failing.
+- Hetzner box creation waits for SSH to be ready before returning, so the next
+  command no longer races a not-yet-reachable VPS.
+- The published npm package now includes the repo README.
+- `Ctrl+c` during the startup banner animation exits cleanly.
 - Skip-permissions conflict detection now also matches inline `--flag=value`
   syntax, so an explicit user choice always wins; background-queue jobs honor
   `--no-dangerously-skip-permissions`.

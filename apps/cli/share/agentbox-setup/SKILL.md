@@ -164,14 +164,7 @@ services:
 - A service with `restart: never` and an autostart dependency will block the dependent forever after one failed run — usually a mistake.
 - `command:` is either a shell string (run via `bash -c`) or an argv array. Use the argv form if you need to avoid shell quoting.
 
-## 8. Checkpoint the warm state (do this at the very end)
-
-Checkpoint (snapshot) this box writable layer: once the box is warmed up (deps installed, services ready), checkpoint it with `agentbox-ctl checkpoint --name setup --replace --set-default` so future boxes start ready.
-Run this command exactly once. The `--name setup --replace` makes it idempotent — if it ever needs to run again it overwrites the existing `setup` checkpoint instead of stacking duplicates.
-On all providers except Vercel, this doesn't need to be confirmed by the user. It will pause the container for several seconds so warn the user about it and write Done when it's done.
-On Vercel: this actually STOPS the sandbox, so warn the user about it and ask if they want to continue.
-
-## 9. Hand-off
+## 8. Hand-off
 
 Tell the user (verbatim):
 
@@ -186,6 +179,14 @@ Tell the user (verbatim):
 
    your box is ready, you can start more sessions with `agentbox claude`
    you can access the web app at https://<boxname>.localhost
+
+
+## 9. Checkpoint the warm state - DON't SKIP THIS STEP
+
+Checkpoint (snapshot) this box writable layer: once the box is warmed up (deps installed, services ready), checkpoint it with `agentbox-ctl checkpoint --name setup --replace --set-default` so future boxes start ready.
+Run this command exactly once. The `--name setup --replace` makes it idempotent — if it ever needs to run again it overwrites the existing `setup` checkpoint instead of stacking duplicates.
+On all providers except Vercel, this doesn't need to be confirmed by the user. It will pause the container for several seconds so warn the user about it and write Done when it's done.
+On Vercel: this actually STOPS the sandbox, so warn the user about it. Also the system will ask confirmation.
 
 ## 10. Known issues
 

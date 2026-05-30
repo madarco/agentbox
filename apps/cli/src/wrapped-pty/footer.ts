@@ -52,9 +52,12 @@ export type FooterState =
 export const SPINNER_FRAMES = ['◐', '◓', '◑', '◒'] as const;
 
 const URGENT = '\x1b[38;5;220m\x1b[1m'; // bright yellow + bold (active prompt)
+const TITLE = '\x1b[1m\x1b[38;5;253m'; // bold near-white (prompt band title)
 const TXT = '\x1b[38;5;250m'; // dim gray body text
-const SUBTLE = '\x1b[38;5;245m'; // very dim (Y/N hint)
+const SUBTLE = '\x1b[38;5;245m'; // very dim (detail / Y/N hint)
 const RESET = '\x1b[0m';
+const UNDERLINE = '\x1b[4m'; // emphasizes the default answer inside the chip
+const NO_UNDERLINE = '\x1b[24m'; // ends underline without dropping the chip bg
 // Agent-question accent: cyan + bold, matching the dashboard sidebar's
 // "awaiting" hue — distinct from URGENT (relay prompt) so the two readings
 // don't collide when both could in principle stack.
@@ -112,6 +115,27 @@ function padTo(visible: string, width: number): string {
 }
 
 /**
+ * High-contrast answer chip for a confirm prompt: the keys spelled out on a
+ * bright-yellow background (the same NOTICE treatment used for the "box
+ * frozen" banner) so the y/N choice is unmissable. The default answer is
+ * underlined. Returns the styled string plus its visible column width — the
+ * ANSI codes don't count toward layout, so callers need the plain width.
+ */
+function answerChip(defaultAnswer: 'y' | 'n' | undefined): { ansi: string; width: number } {
+  const yesKey = 'y Yes';
+  const noKey = 'n No';
+  const sep = ' · ';
+  const yesIsDefault = defaultAnswer === 'y';
+  const yes = yesIsDefault ? `${UNDERLINE}${yesKey}${NO_UNDERLINE}` : yesKey;
+  const no = yesIsDefault ? noKey : `${UNDERLINE}${noKey}${NO_UNDERLINE}`;
+  const ansi = `${NOTICE_BG}${NOTICE_FG} ${yes}${sep}${no} ${RESET}`;
+  // Width derived from the plain (underline-free) shape so it stays correct
+  // if the wording changes.
+  const width = ` ${yesKey}${sep}${noKey} `.length;
+  return { ansi, width };
+}
+
+/**
  * Render the footer row as a single ANSI string. Caller positions the
  * cursor at the last row, col 0 before writing, and restores it afterwards.
  * Always ends with SGR reset so the inner pty's next byte starts clean.
@@ -160,15 +184,13 @@ export function renderFooter(state: FooterState, cols: number): string {
     const message = padTo(state.message, inner);
     return `${NOTICE_BG}${NOTICE_FG}${prefix}${message}${RESET}`;
   }
-  // Prompt state: "[!] <message> [detail]  [y/N]"
-  // The y/N hint is suffixed; we squeeze the message+detail into the space
+  // Prompt state (narrow-terminal fallback): "[!] <message> [detail] <chip>".
+  // The answer chip is suffixed; we squeeze the message+detail into the space
   // left over (truncating message first, then detail).
-  const def = state.prompt.defaultAnswer ?? 'n';
-  const yn = def === 'y' ? '[Y/n]' : '[y/N]';
+  const chip = answerChip(state.prompt.defaultAnswer);
   const tag = ' [!] ';
   const sep = '  ';
-  const hintW = ` ${yn} `.length;
-  const inner = Math.max(0, cols - tag.length - hintW);
+  const inner = Math.max(0, cols - tag.length - chip.width);
   const detailRaw = state.prompt.detail ?? '';
   let message = state.prompt.message;
   let detail = detailRaw;
@@ -183,7 +205,7 @@ export function renderFooter(state: FooterState, cols: number): string {
   }
   const middlePlain = detail.length > 0 ? `${message}${sep}${detail}` : message;
   const padded = padTo(middlePlain, inner);
-  return `${BAR_BG}${URGENT}${tag}${TXT}${padded}${SUBTLE} ${yn} ${RESET}`;
+  return `${BAR_BG}${URGENT}${tag}${TXT}${padded}${RESET}${chip.ansi}`;
 }
 
 /**
@@ -227,24 +249,25 @@ function blankBar(cols: number, bg: string): string {
 }
 
 function renderPromptBand(prompt: PromptAskEvent, cols: number, rows: number): string[] {
-  const def = prompt.defaultAnswer ?? 'n';
-  const yn = def === 'y' ? '[Y/n]' : '[y/N]';
   const tag = ' [!] ';
   const indent = ' '.repeat(tag.length);
-  const innerW = Math.max(0, cols - tag.length);
   const contW = Math.max(0, cols - indent.length);
 
-  const msg = padTo(prompt.message, innerW);
-  const line1 = `${BAR_BG}${URGENT}${tag}${TXT}${msg}${RESET}`;
+  // Row 1: "[!] TITLE ............ <chip>". The bold title (the relay action,
+  // e.g. GIT PUSH) flags what needs approval; the high-contrast answer chip
+  // sits right next to it so the keys are spotted immediately — not stranded
+  // dim in the bottom-right corner.
+  const chip = answerChip(prompt.defaultAnswer);
+  const title = (prompt.context?.command ?? 'confirm').toUpperCase();
+  const titleW = Math.max(0, cols - tag.length - chip.width);
+  const titlePadded = padTo(title, titleW);
+  const line1 = `${BAR_BG}${URGENT}${tag}${TITLE}${titlePadded}${RESET}${chip.ansi}`;
 
-  const detail = prompt.detail ?? '';
-  const detailPadded = padTo(detail, contW);
-  const line2 = `${BAR_BG}${TXT}${indent}${detailPadded}${RESET}`;
+  // Row 2: the question itself, full width.
+  const line2 = `${BAR_BG}${TXT}${indent}${padTo(prompt.message, contW)}${RESET}`;
 
-  const hint = ` ${yn} `;
-  const leftW = Math.max(0, cols - hint.length);
-  const left = ' '.repeat(leftW);
-  const line3 = `${BAR_BG}${left}${SUBTLE}${hint}${RESET}`;
+  // Row 3: optional detail/sub-message, dimmer.
+  const line3 = `${BAR_BG}${SUBTLE}${indent}${padTo(prompt.detail ?? '', contW)}${RESET}`;
 
   return [line1, line2, line3].slice(0, rows);
 }
