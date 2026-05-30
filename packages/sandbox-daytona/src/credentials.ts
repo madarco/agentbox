@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { hostOpenCommand } from '@agentbox/sandbox-core';
 import {
   chmodSync,
   existsSync,
@@ -248,7 +249,7 @@ function persistCredentials(creds: Credentials): void {
 
 function openDashboard(): void {
   try {
-    const r = spawnSync('open', [DASHBOARD_KEYS_URL], { stdio: 'ignore' });
+    const r = spawnSync(hostOpenCommand(), [DASHBOARD_KEYS_URL], { stdio: 'ignore' });
     if (r.status !== 0) {
       log.warn(`Could not auto-open the browser — visit ${DASHBOARD_KEYS_URL} manually.`);
     }

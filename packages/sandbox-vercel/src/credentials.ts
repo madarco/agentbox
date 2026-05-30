@@ -8,6 +8,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
+import { hostOpenCommand } from '@agentbox/sandbox-core';
 import {
   confirm,
   isCancel,
@@ -389,7 +390,7 @@ function openDashboard(): void {
   // Lazy import keeps node:child_process out of the module's load cost.
   import('node:child_process')
     .then(({ spawnSync }) => {
-      const r = spawnSync('open', [DASHBOARD_TOKENS_URL], { stdio: 'ignore' });
+      const r = spawnSync(hostOpenCommand(), [DASHBOARD_TOKENS_URL], { stdio: 'ignore' });
       if (r.status !== 0) {
         log.warn(`Could not auto-open the browser — visit ${DASHBOARD_TOKENS_URL} manually.`);
       }

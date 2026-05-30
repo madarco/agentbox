@@ -16,6 +16,7 @@ export {
   pickFreshBranch,
   type DetectedGitRepo,
 } from './git-detect.js';
+export { hostOpenCommand } from './host-open.js';
 export {
   computeContextSha256,
   DOCKER_CONTEXT_FILE_MAP,
