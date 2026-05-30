@@ -71,7 +71,13 @@ function checkNode(): CheckResult {
 }
 
 function checkPlatform(): CheckResult {
-  return { label: 'platform', status: 'ok', detail: `${process.platform}/${process.arch}` };
+  const supported = process.platform === 'darwin' || process.platform === 'linux';
+  return {
+    label: 'platform',
+    status: supported ? 'ok' : 'warn',
+    detail: `${process.platform}/${process.arch}`,
+    hint: supported ? undefined : 'agentbox supports macOS and Linux hosts; this OS is untested',
+  };
 }
 
 function checkAgentboxHome(): CheckResult {
@@ -121,6 +127,7 @@ export async function runSystemChecks(): Promise<CheckResult[]> {
 }
 
 async function dockerChecks(): Promise<CheckResult[]> {
+  const linux = process.platform === 'linux';
   const cli = await probeVersion('docker');
   if (!cli) {
     return [
@@ -128,23 +135,38 @@ async function dockerChecks(): Promise<CheckResult[]> {
         label: 'docker cli',
         status: 'warn',
         detail: 'not found',
-        hint: 'install Docker Desktop, OrbStack, or docker engine',
+        hint: linux
+          ? 'install docker engine: https://docs.docker.com/engine/install/'
+          : 'install Docker Desktop, OrbStack, or docker engine',
       },
     ];
   }
   const cliRes: CheckResult = { label: 'docker cli', status: 'ok', detail: cli };
 
   // Daemon reachability via `docker info` (same probe pattern as
-  // packages/sandbox-docker/src/docker.ts:dockerInfo).
+  // packages/sandbox-docker/src/docker.ts:dockerInfo). On Linux the most common
+  // failure is not a stopped daemon but the user missing from the `docker`
+  // group — `docker info` then exits non-zero with "permission denied" on the
+  // socket. Distinguish the two so the hint points at the right fix.
   const info = await execa('docker', ['info'], { reject: false });
   if (info.exitCode !== 0) {
+    const permDenied = `${info.stderr ?? ''}`.toLowerCase().includes('permission denied');
+    let hint: string;
+    if (permDenied && linux) {
+      hint =
+        'add your user to the docker group: `sudo usermod -aG docker $USER`, then log out/in (or run `newgrp docker`)';
+    } else if (linux) {
+      hint = 'start Docker: `sudo systemctl start docker` (install docker engine if missing)';
+    } else {
+      hint = 'start Docker (Desktop / OrbStack)';
+    }
     return [
       cliRes,
       {
         label: 'docker daemon',
         status: 'warn',
-        detail: 'unreachable',
-        hint: 'start Docker (Desktop / OrbStack / `systemctl start docker`)',
+        detail: permDenied ? 'permission denied' : 'unreachable',
+        hint,
       },
     ];
   }
