@@ -110,11 +110,15 @@ async function animateBanner(): Promise<void> {
   };
   process.once('exit', restoreCursor);
   // Adding a SIGINT listener suppresses Node's default terminate-on-Ctrl+C, so
-  // restore the cursor and exit explicitly (130 = terminated by SIGINT).
-  process.once('SIGINT', () => {
+  // restore the cursor and exit explicitly (130 = terminated by SIGINT). Keep a
+  // named reference so the cleanup below can actually remove it — otherwise the
+  // handler leaks past the animation and fires on the next Ctrl+C (e.g. during a
+  // clack prompt), bypassing clack's cancellation flow.
+  const onSigint = (): void => {
     restoreCursor();
     process.exit(130);
-  });
+  };
+  process.once('SIGINT', onSigint);
 
   const frameMs = 45;
   // Band starts just off the left edge and exits past the right edge.
@@ -157,7 +161,7 @@ async function animateBanner(): Promise<void> {
   // the real (instant) system check prints its result there via `intro(...)`.
   process.stdout.write(SYNC_BEGIN + '\n\x1b[2K\n\x1b[2K' + SHOW_CURSOR + SYNC_END);
   process.removeListener('exit', restoreCursor);
-  process.removeListener('SIGINT', restoreCursor);
+  process.removeListener('SIGINT', onSigint);
 }
 
 /** Substring unique to the pre-rename `agentbox` host skill. Lets `install`
