@@ -9,6 +9,19 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.10.1] - 2026-05-30
+
+### Changed
+
+- First-time setup is now a `docker pull` instead of a local image build. The
+  box image is fetched prebuilt (multi-arch) from GitHub Container Registry on
+  first use — including for the cloud providers, which need it for the local
+  agent-login step — cutting first install from a ~10-15 min build to a
+  download. If the registry is unreachable or you've customized the build
+  context, it falls back to building locally as before. Use `--build` on
+  `agentbox create` / `agentbox prepare`, or set `box.imageRegistry` to empty,
+  to always build locally.
+
 ## [0.10.0] - 2026-05-30
 
 ### Breaking
