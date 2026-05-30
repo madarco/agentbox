@@ -4,6 +4,7 @@ import { listBoxes, type ListedBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { pathToFileURL } from 'node:url';
 import { hyperlink } from '../hyperlink.js';
+import { applyLiveCloudStates } from '../lib/cloud-state.js';
 import { withWatchOptions, watchRender, type WatchableOptions } from '../watch.js';
 
 interface ListOptions extends WatchableOptions {
@@ -98,6 +99,10 @@ function workspaceCell(path: string, target: number, stream: NodeJS.WriteStream)
  * it would put a spurious `claude:unknown` on nearly every row.
  */
 function agentSummary(b: ListedBox): string {
+  // A non-running box can't have a live agent; its persisted status.json (the
+  // source of these fields) is just the last snapshot before it stopped, so
+  // showing `claude:idle` next to `paused`/`stopped` would be contradictory.
+  if (b.state !== 'running') return '-';
   const agents: string[] = [];
   if (b.claudeActivity && b.claudeActivity !== 'unknown') {
     agents.push(`claude:${b.claudeActivity}`);
@@ -180,9 +185,15 @@ async function scopedBoxes(
   all: boolean,
 ): Promise<{ boxes: ListedBox[]; projectRoot: string; scoped: boolean }> {
   const boxes = await listBoxes();
-  if (all) return { boxes, projectRoot: '', scoped: false };
+  if (all) {
+    await applyLiveCloudStates(boxes);
+    return { boxes, projectRoot: '', scoped: false };
+  }
   const { root } = await findProjectRoot(process.cwd());
-  return { boxes: boxes.filter((b) => b.projectRoot === root), projectRoot: root, scoped: true };
+  const scoped = boxes.filter((b) => b.projectRoot === root);
+  // Probe only the scoped boxes — don't round-trip every cloud box on the host.
+  await applyLiveCloudStates(scoped);
+  return { boxes: scoped, projectRoot: root, scoped: true };
 }
 
 async function buildListText(all: boolean): Promise<string> {

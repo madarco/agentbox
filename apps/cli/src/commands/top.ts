@@ -10,6 +10,7 @@ import {
 import type { BoxResourceStats } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { fmtBytes, fmtPercent } from '../fmt.js';
+import { applyLiveCloudStates } from '../lib/cloud-state.js';
 import { watchRender } from '../watch.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -74,6 +75,8 @@ async function snapshot(
   opts: TopOptions,
 ): Promise<{ boxes: ListedBox[]; stats: BoxResourceStats[] }> {
   const boxes = await selectBoxes(idOrName, opts);
+  // listBoxes hardcodes cloud state to 'running'; replace it with a live probe.
+  await applyLiveCloudStates(boxes);
   const stats = await Promise.all(
     boxes.map((b) => {
       // Skip the docker-only `boxResourceStats` for cloud boxes — it would
