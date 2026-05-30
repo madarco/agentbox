@@ -81,15 +81,57 @@
   .hero { padding-top: 64px; padding-bottom: 52px; }
   .kicker { font-family: var(--mono); font-size: 12.5px; color: var(--accent); letter-spacing: 0.04em; margin-bottom: 22px; }
   .hero h1 {
-    font-size: clamp(34px, 6vw, 54px);
-    line-height: 1.05;
-    letter-spacing: -0.035em;
+    font-size: clamp(32px, 4.4vw, 44px);
+    line-height: 1.08;
+    letter-spacing: -0.03em;
     font-weight: 600;
-    margin-bottom: 22px;
+    margin-bottom: 20px;
   }
   .hero h1 .dim { color: var(--faint); }
-  .hero p.lede { font-size: clamp(15px, 2vw, 17.5px); color: var(--ink-2); max-width: 54ch; line-height: 1.62; margin-bottom: 34px; }
+  .hero p.lede { font-size: clamp(15px, 1.6vw, 16.5px); color: var(--ink-2); max-width: 46ch; line-height: 1.6; margin-bottom: 30px; }
   .hero p.lede b { font-weight: 500; }
+
+  /* hero two-column with fake terminal */
+  .hero-grid { display: grid; grid-template-columns: 1fr; gap: 38px; }
+  @media (min-width: 900px) {
+    .hero-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 340px); gap: 48px; align-items: center; }
+  }
+
+  .term {
+    background: #15171b;
+    border: 1px solid #262a31;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 28px 56px -30px rgba(20, 24, 30, .55), 0 2px 8px -3px rgba(20,24,30,.25);
+    font-family: var(--mono);
+    min-width: 0;
+  }
+  .term-bar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 9px 12px; background: #1b1e24; border-bottom: 1px solid #262a31;
+  }
+  .term-bar .td { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .td.r { background: #ec6a5e; } .td.y { background: #f4bf4f; } .td.g { background: #61c554; }
+  .term-title { margin-left: 7px; font-size: 10.5px; color: #6c727b; letter-spacing: .02em; white-space: nowrap; }
+  .term-body {
+    padding: 13px 14px 15px; height: 224px; overflow: hidden;
+    font-size: 11.5px; line-height: 1.74; color: #c8ccd3;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 26px);
+            mask-image: linear-gradient(to bottom, transparent 0, #000 26px);
+  }
+  .term-line { white-space: pre-wrap; word-break: break-word; }
+  .term-line.gap { height: 9px; }
+  .term-line .pr { color: #4ec98a; }
+  .term-line .cmd { color: #f0f2f5; }
+  .term-line.dim { color: #7c828c; }
+  .term-line.ok { color: #5fc88f; }
+  .term-line .shellp { color: #62a9f0; }
+  .term .cursor {
+    display: inline-block; width: 6px; height: 12px; background: #7fe0a8;
+    vertical-align: -1px; margin-left: 1px; animation: term-blink 1.05s steps(1) infinite;
+  }
+  @keyframes term-blink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .term .cursor { animation: none; } }
 
   /* command line */
   .runline {
@@ -128,7 +170,7 @@
   .runline button svg { width: 14px; height: 14px; }
 
   .runlink {
-    display: inline-flex; align-items: center; gap: 6px;
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
     margin-top: 16px; font-family: var(--mono); font-size: 12.5px; color: var(--muted);
     transition: color .15s;
   }
@@ -427,6 +469,19 @@
 </style>
 </head>
 <body>
+<template id="__bundler_thumbnail" data-bg-color="#f6f6f3">
+  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <rect width="1200" height="800" fill="#f6f6f3"/>
+    <rect x="470" y="300" width="260" height="200" rx="26" fill="#16181c"/>
+    <rect x="470" y="300" width="260" height="46" rx="26" fill="#1b1e24"/>
+    <circle cx="500" cy="323" r="7" fill="#ec6a5e"/>
+    <circle cx="524" cy="323" r="7" fill="#f4bf4f"/>
+    <circle cx="548" cy="323" r="7" fill="#61c554"/>
+    <rect x="494" y="378" width="14" height="14" rx="3" fill="#4ec98a"/>
+    <rect x="520" y="380" width="150" height="10" rx="5" fill="#c8ccd3"/>
+    <rect x="494" y="410" width="120" height="10" rx="5" fill="#5fc88f"/>
+  </svg>
+</template>
 <div class="frame">
 
   <!-- TOP BAR -->
@@ -451,19 +506,31 @@
 
   <!-- HERO -->
   <section class="hero pad" id="top">
-    <div class="kicker">// self-hosted agent sandboxes</div>
-    <h1>One command teleport<br /><span class="dim">for agents, in parallel.</span></h1>
-    <p class="lede">Move your project into a dedicated VM — local or in the cloud — and launch <b>Claude Code</b>, <b>Codex</b>, or <b>Open Code</b> inside it. Each box is isolated, checkpointed, and runs on hardware you control.</p>
-    <div class="runline">
-      <div class="body">
-        <span class="p">$</span>
-        <span class="k"><span class="pkg">npx </span>@madarco/agentbox <span class="roller" id="agentRoller"><span class="roller-track"><span>claude</span><span>codex</span><span>opencode</span><span aria-hidden="true">claude</span></span></span></span>
+    <div class="hero-grid">
+     <div class="hero-main">
+      <div class="kicker">// self-hosted agent sandboxes</div>
+      <h1>One command teleport<br /><span class="dim">for agents, in parallel.</span></h1>
+      <p class="lede">Move your project into a dedicated VM — local or in the cloud — and launch <b>Claude Code</b>, <b>Codex</b>, or <b>Open Code</b> inside it. Each box is isolated, checkpointed, and runs on hardware you control.</p>
+      <div class="runline">
+        <div class="body">
+          <span class="p">$</span>
+          <span class="k"><span class="pkg">npx </span>@madarco/agentbox <span class="roller" id="agentRoller"><span class="roller-track"><span>claude</span><span>codex</span><span>opencode</span><span aria-hidden="true">claude</span></span></span></span>
+        </div>
+        <button data-copy="npx @madarco/agentbox claude" aria-label="Copy">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-1a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1"/></svg>
+        </button>
       </div>
-      <button data-copy="npx @madarco/agentbox claude" aria-label="Copy">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-1a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1"/></svg>
-      </button>
+      <a class="runlink" href="#install">full install instructions <span>→</span></a>
+     </div>
+
+     <div class="term" id="heroTerm" aria-hidden="true">
+       <div class="term-bar">
+         <span class="td r"></span><span class="td y"></span><span class="td g"></span>
+         <span class="term-title">agentbox — zsh</span>
+       </div>
+       <div class="term-body" id="termBody"></div>
+     </div>
     </div>
-    <a class="runlink" href="#install">full install instructions <span>→</span></a>
   </section>
 
   <!-- DIAGRAM -->
@@ -715,6 +782,103 @@
       i = (i + 1) % words.length;
       if (copyBtn) copyBtn.dataset.copy = 'npx @madarco/agentbox ' + words[i];
     }, period);
+  })();
+
+  // fake terminal in the hero — types the command sequence on a loop
+  (function () {
+    var body = document.getElementById('termBody');
+    if (!body) return;
+    var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var script = [
+      { t: 'cmd', s: 'agentbox hetzner claude' },
+      { t: 'out', s: '⬡ provisioning box on hetzner…', c: 'dim' },
+      { t: 'out', s: '✓ box 1 ready · claude code attached', c: 'ok' },
+      { t: 'gap' },
+      { t: 'cmd', s: 'agentbox vercel codex' },
+      { t: 'out', s: '⬡ provisioning box on vercel…', c: 'dim' },
+      { t: 'out', s: '✓ box 2 ready · codex attached', c: 'ok' },
+      { t: 'gap' },
+      { t: 'cmd', s: 'agentbox codex attach 2' },
+      { t: 'out', s: '↳ reattaching to running session…', c: 'dim' },
+      { t: 'out', s: '✓ resumed codex on box 2', c: 'ok' },
+      { t: 'gap' },
+      { t: 'cmd', s: 'agentbox shell 2' },
+      { t: 'out', s: '↳ opening bash in box 2…', c: 'dim' },
+      { t: 'shell', s: 'user@box-2:~/workspace$' }
+    ];
+    var cursor = null;
+    function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+    function line(cls) {
+      var d = document.createElement('div');
+      d.className = 'term-line' + (cls ? ' ' + cls : '');
+      body.appendChild(d);
+      body.scrollTop = body.scrollHeight;
+      return d;
+    }
+    function putCursor(el) {
+      cursor = document.createElement('span');
+      cursor.className = 'cursor';
+      el.appendChild(cursor);
+    }
+    function dropCursor() {
+      if (cursor && cursor.parentNode) cursor.parentNode.removeChild(cursor);
+      cursor = null;
+    }
+    async function typeCmd(text) {
+      var el = line();
+      var pr = document.createElement('span'); pr.className = 'pr'; pr.textContent = '$ '; el.appendChild(pr);
+      var c = document.createElement('span'); c.className = 'cmd'; el.appendChild(c);
+      putCursor(el);
+      for (var i = 0; i < text.length; i++) {
+        c.insertBefore(document.createTextNode(text[i]), null);
+        body.scrollTop = body.scrollHeight;
+        await sleep(34 + Math.random() * 46);
+      }
+      await sleep(380);
+      dropCursor();
+    }
+    async function render() {
+      body.innerHTML = '';
+      for (var k = 0; k < script.length; k++) {
+        var step = script[k];
+        if (step.t === 'cmd') await typeCmd(step.s);
+        else if (step.t === 'gap') { line('gap'); await sleep(160); }
+        else if (step.t === 'shell') {
+          var el = line('shell');
+          var p = document.createElement('span'); p.className = 'shellp'; p.textContent = step.s + ' '; el.appendChild(p);
+          putCursor(el); await sleep(2600); dropCursor();
+        } else {
+          var o = line(step.c); o.textContent = step.s;
+          body.scrollTop = body.scrollHeight;
+          await sleep(430);
+        }
+      }
+      await sleep(2800);
+      render();
+    }
+    function renderStatic() {
+      body.innerHTML = '';
+      for (var k = 0; k < script.length; k++) {
+        var step = script[k];
+        if (step.t === 'gap') { line('gap'); continue; }
+        var el = line(step.t === 'cmd' ? '' : (step.t === 'shell' ? 'shell' : step.c));
+        if (step.t === 'cmd') {
+          var pr = document.createElement('span'); pr.className = 'pr'; pr.textContent = '$ '; el.appendChild(pr);
+          var c = document.createElement('span'); c.className = 'cmd'; c.textContent = step.s; el.appendChild(c);
+        } else if (step.t === 'shell') {
+          var p = document.createElement('span'); p.className = 'shellp'; p.textContent = step.s + ' '; el.appendChild(p);
+          putCursor(el);
+        } else { el.textContent = step.s; }
+      }
+    }
+    // start the loop directly (terminal is above the fold)
+    if (reduce) { renderStatic(); return; }
+    var started = false;
+    function begin() { if (!started) { started = true; render(); } }
+    if (document.readyState === 'complete') { setTimeout(begin, 250); }
+    else { window.addEventListener('load', function () { setTimeout(begin, 250); }); }
+    // safety net in case load already fired
+    setTimeout(begin, 600);
   })();
 
   document.querySelectorAll('[data-copy]').forEach(function (btn) {
