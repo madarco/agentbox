@@ -316,7 +316,7 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
     every create (renewable tokens), best-effort (a failure logs + falls back to
     interactive login). Closes the agent-credential gap from the no-volume
     short-circuit. Unit-tested in `test/push-credentials.test.ts`.
-14b. [ ] **Chromium baked for `agent-browser`.** The login-shell shim exported
+14b. [x] **Chromium baked for `agent-browser`.** The login-shell shim exported
     `AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chromium` and `provision.sh`
     installed the `agent-browser` CLI, but never installed Chromium nor created
     that symlink — so `agent-browser open` failed with `Failed to launch Chrome
@@ -330,7 +330,19 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
     fails loud (`exit 70` if the binary doesn't resolve, `exit 71` if `ldd` shows
     unresolved libs) so an incomplete AL2023 dep set surfaces at prepare time, not
     at first launch. Headless launch is the success bar; `--headed` still needs the
-    VNC X server on `:1`. **Live-verify pending: re-bake + `ldd`/headless smoke.**
+    VNC X server on `:1`. **Live-verified 2026-05-30:** re-baked snapshot, `ldd`
+    clean, headless `--dump-dom https://example.com` works, `agent-browser open`
+    returns ok, and a headed Chromium renders over the noVNC desktop.
+14c. [x] **`agentbox url` fallback when :80 isn't exposable.** Vercel rejects
+    privileged ports, so the WebProxy `:80` is never exposed and `sb.domain(80)`
+    throws "No route for port 80" — `agentbox url` errored instead of opening the
+    app. The shared cloud `resolveUrl` (`packages/sandbox-cloud/src/cloud-provider.ts`)
+    now catches a failed `kind:'web'` resolve and falls back to the first exposed
+    `expose:` service port (from the box record's `previewUrls`, else re-read from
+    `agentbox.yaml`). Daytona/Hetzner expose `:80` directly so the branch never
+    runs for them. **Live-verified 2026-05-30:** `agentbox url --print` on the
+    express-ready box returns the service preview URL and curls `HTTP/2 200`
+    (Express) instead of erroring.
 
 ### P2 — deferred (parity niceties, not blocking)
 

@@ -64,10 +64,11 @@ const BOX_OWNER = 'vscode:vscode';
  * 400, so we cannot expose the scaffold's WebProxy port 80 — the two base ports
  * are 6080 (noVNC) and 8788 (the relay/ctl bridge the host poller reaches via
  * `sandbox.domain(8788)`). The in-box WebProxy still binds 80, but it isn't
- * externally reachable on Vercel, so `agentbox url` for a web app on :80 stays a
- * documented limitation. The remaining slots (up to VERCEL_MAX_PORTS) are filled
- * at create from `agentbox.yaml` `expose:` ports so per-service preview URLs
- * actually route (see buildExposedPorts).
+ * externally reachable on Vercel — so `agentbox url` can't resolve :80 and the
+ * shared cloud `resolveUrl` falls back to the first exposed `expose:` service
+ * port instead. The remaining slots (up to VERCEL_MAX_PORTS) are filled at create
+ * from `agentbox.yaml` `expose:` ports so those per-service preview URLs actually
+ * route (see buildExposedPorts).
  */
 export const VERCEL_EXPOSED_PORTS = [6080, 8788] as const;
 

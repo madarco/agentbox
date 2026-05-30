@@ -1117,8 +1117,24 @@ export function createCloudProvider(
       // attach an `x-daytona-preview-token` header from a click).
       if (backend.signedPreviewUrl) {
         const ttl = opts?.ttl ?? DEFAULT_SIGNED_URL_TTL_SECONDS;
-        const signed = await backend.signedPreviewUrl(h, port, ttl);
-        return signed.url;
+        try {
+          const signed = await backend.signedPreviewUrl(h, port, ttl);
+          return signed.url;
+        } catch (err) {
+          // Web fallback: some backends (Vercel) can't expose the privileged
+          // WebProxy port (<1024), so resolving :80 throws "no route". Fall back
+          // to the first exposed `expose:` service port so `agentbox url` still
+          // reaches the app the user actually published. Daytona/Hetzner expose
+          // :80 directly, so this branch never runs for them.
+          if (kind === 'web') {
+            const fallbackPort = await firstExposedServicePort(box);
+            if (fallbackPort !== undefined && fallbackPort !== port) {
+              const signed = await backend.signedPreviewUrl(h, fallbackPort, ttl);
+              return signed.url;
+            }
+          }
+          throw err;
+        }
       }
       // No signed-URL primitive: fall back to the header-token URL, but fail
       // loudly so the caller sees this isn't usable in a browser as-is.
@@ -1149,6 +1165,32 @@ export function createCloudProvider(
     // stats is provider-optional; cloud backends without a metrics API just
     // omit it. Backends that have one can decorate the returned provider.
   };
+}
+
+/** Reserved cloud ports that are never a user-facing web service. */
+const RESERVED_CLOUD_PORTS = new Set<number>([CLOUD_WEB_PROXY_PORT, CLOUD_VNC_PORT, 8788]);
+
+/**
+ * The lowest exposed `expose:` service port for a box, used as the web URL
+ * fallback when the WebProxy port itself can't be exposed (Vercel). Prefers the
+ * box record's `previewUrls` map (only ports that actually got a preview URL
+ * land there), then falls back to re-reading `agentbox.yaml`. Returns undefined
+ * when the box exposes no non-reserved service port.
+ */
+async function firstExposedServicePort(box: BoxRecord): Promise<number | undefined> {
+  const fromRecord = Object.keys(box.cloud?.previewUrls ?? {})
+    .map(Number)
+    .filter((p) => Number.isInteger(p) && !RESERVED_CLOUD_PORTS.has(p));
+  if (fromRecord.length > 0) return Math.min(...fromRecord);
+  try {
+    const fromYaml = (await readExposedServicePorts(box.workspacePath)).filter(
+      (p) => !RESERVED_CLOUD_PORTS.has(p),
+    );
+    if (fromYaml.length > 0) return Math.min(...fromYaml);
+  } catch {
+    // workspace path missing / yaml unreadable — no fallback available
+  }
+  return undefined;
 }
 
 /**
