@@ -4,6 +4,12 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BoxRecord, StateFile } from '../src/state.js';
 
+// Each test does `vi.resetModules()` then dynamic-imports lifecycle.js/state.js.
+// On a cold CI runner the first import transpiles the whole module graph, which
+// can exceed vitest's 5s default and flakily time out (passes in ~300ms locally).
+// The work is real one-time transpile cost, not a hang — give it headroom.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
 // pruneBoxes reads/writes STATE_FILE, which is resolved against $HOME at module
 // load time. To isolate, we redirect HOME, vi.resetModules so the next import
 // re-evaluates state.ts with the new HOME, then dynamic-import everything.

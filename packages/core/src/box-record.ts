@@ -5,6 +5,8 @@
  * live flat (Docker, for historical reasons) or under `cloud` (cloud backends).
  */
 
+import type { BoxRuntimeState } from './provider.js';
+
 /** Sandbox backend a box runs on. Open-ended so future providers need no core change. */
 export type ProviderName = 'docker' | 'daytona' | 'hetzner' | (string & {});
 
@@ -100,6 +102,15 @@ export interface CloudBoxFields {
    * checkpoint a box is currently running.
    */
   snapshotRef?: string;
+  /**
+   * Last lifecycle state agentbox itself drove this box to (running on
+   * create/start/resume, paused on pause/stop/vercel-checkpoint). `listBoxes`
+   * shows this for cloud boxes so `agentbox list` stays instant — no SDK probe.
+   * It reflects the last *host-initiated* op, not the authoritative live state
+   * (a platform-side stop won't update it); `agentbox list --live` probes for
+   * the real state. Absent on pre-feature records → treated as `running`.
+   */
+  lastState?: BoxRuntimeState;
 }
 
 export interface GitWorktreeRecord {

@@ -550,6 +550,30 @@ async function runCheckpointRpc(
       stderr: 'relay: AGENTBOX_CLI_ENTRY not set; cannot run checkpoint host-side\n',
     };
   }
+  // Vercel checkpoints stop + reboot the box: `sb.snapshot()` powers off the
+  // microVM (resume is lazy on the next SDK call). When an interactive wrapper
+  // is attached, warn + require confirmation before we yank the box out from
+  // under it. Other backends snapshot without stopping (docker `docker commit`,
+  // hetzner no-pause, daytona), so they stay prompt-free. No attached wrapper →
+  // proceed (a headless caller already knows the box will reboot).
+  if (
+    deps.backendName === 'vercel' &&
+    deps.prompts &&
+    deps.subscribers &&
+    deps.subscribers.forBox(deps.boxId).length > 0
+  ) {
+    const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, {
+      kind: 'confirm',
+      message: `Create checkpoint on ${deps.boxName ?? deps.boxId}? The vercel box will stop and reboot.`,
+      detail: params.name ? `checkpoint: ${params.name}` : '(auto-named)',
+      defaultAnswer: 'n',
+      context: { command: 'checkpoint create', argv: params.name ? [params.name] : [] },
+    });
+    if (verdict.answer !== 'y') {
+      return { exitCode: 10, stdout: '', stderr: 'checkpoint denied by user\n' };
+    }
+  }
+
   const argv = [process.execPath, entry, 'checkpoint', 'create', deps.boxId];
   if (params.name) argv.push('--name', params.name);
   // --merged is docker-image-layer specific (flatten). For cloud snapshots

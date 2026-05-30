@@ -26,6 +26,7 @@ import {
   deleteVercelSnapshot,
   DEFAULT_BOX_IMAGE_REF,
 } from './backend.js';
+import { recordBox } from '@agentbox/sandbox-core';
 import { prepareVercelProvider } from './prepare.js';
 import { buildVercelAttach } from './build-attach.js';
 
@@ -59,6 +60,13 @@ const vercelCheckpoint: ProviderCheckpoint = {
     // NOTE: snapshotting stops the source sandbox; persistent mode resumes it
     // on the next call. Surfaced to the user in `agentbox checkpoint` docs.
     const snapshotId = await snapshotVercelSandbox(box.cloud.sandboxId);
+    // The box is now stopped — persist it so the fast `agentbox list` path
+    // doesn't show a stale `running` after a checkpoint. Best-effort.
+    try {
+      await recordBox({ ...box, cloud: { ...box.cloud, lastState: 'paused' } });
+    } catch {
+      // not worth failing the checkpoint over a state-record write
+    }
     const info = await writeCloudCheckpointManifest(box.projectRoot, BACKEND_NAME, name, {
       snapshotName: snapshotId,
       sourceBoxId: box.id,

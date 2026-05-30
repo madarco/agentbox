@@ -1,0 +1,3 @@
+# Generated at build time by scripts/stage-runtime.mjs from the repo-root
+# README so the published package has a landing page. Not a source of truth.
+README.md

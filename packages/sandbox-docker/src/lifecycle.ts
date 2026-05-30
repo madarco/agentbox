@@ -106,11 +106,14 @@ export async function listBoxes(): Promise<ListedBox[]> {
   return Promise.all(
     boxes.map(async (b): Promise<ListedBox> => {
       // Cloud boxes don't have a host Docker container — skip every Docker
-      // probe (inspect / exec / shell-session). Their state is optimistically
-      // 'running' (a real probe would round-trip the cloud SDK on every list;
-      // tracked for Phase 6); endpoints come from the cloud.previewUrls map
-      // populated at create/start; agent activity rides the persisted status
-      // snapshot the host poller mirrors from the in-sandbox relay.
+      // probe (inspect / exec / shell-session). State is the last host-driven
+      // lifecycle state persisted on `cloud.lastState` (create/start/resume ->
+      // running, pause/stop/checkpoint -> paused), so `list` stays instant with
+      // no SDK round-trip; `agentbox list --live` probes for the authoritative
+      // state. Pre-feature records (no lastState) fall back to 'running'.
+      // Endpoints come from the cloud.previewUrls map populated at create/start;
+      // agent activity rides the persisted status snapshot the host poller
+      // mirrors from the in-sandbox relay.
       if (b.provider && b.provider !== 'docker') {
         const persisted = await readBoxStatus(b);
         const webPort = b.cloud?.webPort ?? 0;
@@ -157,7 +160,7 @@ export async function listBoxes(): Promise<ListedBox[]> {
         };
         return {
           ...b,
-          state: 'running',
+          state: b.cloud?.lastState ?? 'running',
           endpoints,
           claudeActivity: persisted?.claude.state,
           claudeSessionTitle: persisted?.claude.sessionTitle,

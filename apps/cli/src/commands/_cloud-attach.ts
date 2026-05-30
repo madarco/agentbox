@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { appendFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { spinner } from '@clack/prompts';
 import { DEFAULT_RELAY_PORT } from '@agentbox/sandbox-docker';
 import type { BoxRecord } from '@agentbox/core';
@@ -9,6 +12,27 @@ import { pasteHostClipboardImage } from '../lib/paste-image.js';
 import { clipboardCaptureAvailable } from '../lib/host-clipboard.js';
 
 const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
+/** Give up reconnecting a dropped attach after this long (box likely gone). */
+const RECONNECT_TIMEOUT_MS = 5 * 60_000;
+
+/** setTimeout that also resolves early if the signal aborts (no rejection). */
+function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const t = setTimeout(resolve, ms);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(t);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
 
 /**
  * Attach to (or create) a tmux session inside a cloud sandbox over SSH and
@@ -98,6 +122,9 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   if (!provider.buildAttach) {
     throw new Error(`provider '${provider.name}' does not support interactive attach`);
   }
+  // Captured for the reconnect closure (TS won't preserve the narrowing above
+  // inside a later-invoked callback).
+  const buildAttach = provider.buildAttach.bind(provider);
   // Ensure the box is running before we attach. A cloud box can be stopped
   // out from under an attach — most notably `checkpoint --set-default`, which
   // snapshots and stops the sandbox. Without this, buildAttach runs against a
@@ -144,7 +171,7 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     }
   }
 
-  const spec = await provider.buildAttach(box, 'agent', {
+  let spec = await provider.buildAttach(box, 'agent', {
     sessionName: args.sessionName,
     command,
   });
@@ -152,6 +179,50 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   // or a Linux desktop with xclip/wl-paste). Otherwise Ctrl+V forwards verbatim.
   const canPaste =
     args.mode === 'claude' && (await clipboardCaptureAvailable());
+
+  // Re-establish the attach after the wrapper decides the box dropped (a vercel
+  // checkpoint reboot, or a connection blip). Keep trying `provider.start` —
+  // which resumes a stopped box and no-ops a running one — until it succeeds or
+  // the deadline lapses. We deliberately DON'T bail on consecutive failures: a
+  // box mid-snapshot rejects `start` for the whole (multi-minute) capture, and
+  // that's indistinguishable from a destroyed box by error alone — so we lean on
+  // the time budget (and the user's Ctrl+C, which aborts the signal) instead. On
+  // a reboot this lands in a freshly-created tmux session (the snapshot is
+  // filesystem-only); a blip on a still-running box re-attaches the same live
+  // session. Returns null to give up (cancelled or timed out).
+  const reconnect = async (
+    signal: AbortSignal,
+  ): Promise<{ command: string; argv: string[]; env?: Record<string, string> } | null> => {
+    const deadline = Date.now() + RECONNECT_TIMEOUT_MS;
+    let backoff = 500;
+    for (;;) {
+      if (signal.aborted || Date.now() > deadline) return null;
+      try {
+        box = await provider.start(box);
+        break;
+      } catch {
+        await abortableSleep(backoff, signal);
+        backoff = Math.min(backoff * 2, 5000);
+      }
+    }
+    if (signal.aborted) return null;
+    // Mint the fresh attach FIRST, then release the previous one's per-call
+    // resources (SSH tunnel / token). Order matters: if buildAttach throws,
+    // `spec` still points at the old spec (uncleaned), so the outer `finally`
+    // cleans it exactly once — building-then-cleaning avoids the double-cleanup
+    // that the reverse order would cause on a buildAttach failure.
+    const prev = spec;
+    spec = await buildAttach(box, 'agent', { sessionName: args.sessionName, command });
+    if (prev.cleanup) {
+      try {
+        await prev.cleanup();
+      } catch {
+        // best-effort
+      }
+    }
+    return { command: spec.argv[0]!, argv: spec.argv.slice(1), env: spec.env };
+  };
+
   try {
     const code = await runWrappedAttach({
       container: box.name,
@@ -165,6 +236,19 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
       mode: args.mode,
       detachable: true,
       openIn: safeOpenIn,
+      reconnect,
+      onError: (msg) => {
+        // Non-fatal wrapper diagnostics (reconnect failures, give-ups, etc.) —
+        // logged to a file because writing to stderr would corrupt the PTY.
+        try {
+          appendFileSync(
+            join(homedir(), '.agentbox', 'logs', 'attach.log'),
+            `${new Date().toISOString()} [${box.name}] ${msg}\n`,
+          );
+        } catch {
+          // best-effort
+        }
+      },
       onPasteImage: canPaste
         ? () => pasteHostClipboardImage(provider, box)
         : undefined,

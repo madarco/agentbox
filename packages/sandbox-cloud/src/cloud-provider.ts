@@ -270,6 +270,22 @@ export function createCloudProvider(
     }
   }
 
+  /**
+   * Persist the last host-driven lifecycle state so `agentbox list`/`top`/the
+   * dashboard can show it without a live SDK probe. `pause`/`stop` persist
+   * `paused` (matches vercel/hetzner's stopped→paused; daytona's authoritative
+   * `stopped` only shows under `--live`). Best-effort — a state-write failure
+   * must not fail the lifecycle op itself.
+   */
+  async function persistLastState(box: BoxRecord, lastState: BoxRuntimeState): Promise<void> {
+    if (!box.cloud) return;
+    try {
+      await recordBox({ ...box, cloud: { ...box.cloud, lastState } });
+    } catch {
+      // listBoxes falls back to the previous value; not worth failing stop/pause.
+    }
+  }
+
   // Re-ensure a freshly-woken cloud box. A resumed/restarted sandbox boots
   // fresh: its in-box processes are gone and (on some backends) preview URLs
   // rotate. Refresh the web/service/relay preview URLs, re-register host
@@ -380,6 +396,9 @@ export function createCloudProvider(
         previewUrls: Object.keys(mergedPreviews).length > 0 ? mergedPreviews : undefined,
         relayPreviewUrl: relayPreview?.url ?? box.cloud?.relayPreviewUrl,
         relayPreviewToken: relayPreview?.token ?? box.cloud?.relayPreviewToken,
+        // reEnsureCloudBox only runs on a freshly-woken box (start/resume), so
+        // the box is now running — persist it for the fast `agentbox list` path.
+        lastState: 'running',
       },
     };
     await recordBox(next);
@@ -868,6 +887,7 @@ export function createCloudProvider(
             relayPreviewToken: relayPreview?.token,
             bridgeToken,
             snapshotRef: resolvedCheckpointRef,
+            lastState: 'running',
           },
           createdAt: new Date().toISOString(),
         };
@@ -894,6 +914,7 @@ export function createCloudProvider(
 
     async pause(box: BoxRecord): Promise<void> {
       await backend.pause(handleFor(box));
+      await persistLastState(box, 'paused');
     },
 
     async resume(box: BoxRecord): Promise<void> {
@@ -909,6 +930,7 @@ export function createCloudProvider(
 
     async stop(box: BoxRecord): Promise<void> {
       await backend.stop(handleFor(box));
+      await persistLastState(box, 'paused');
     },
 
     async destroy(box: BoxRecord): Promise<void> {

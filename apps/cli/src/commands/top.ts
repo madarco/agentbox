@@ -10,6 +10,7 @@ import {
 import type { BoxResourceStats } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { fmtBytes, fmtPercent } from '../fmt.js';
+import { applyLiveCloudStates } from '../lib/cloud-state.js';
 import { watchRender } from '../watch.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -18,6 +19,7 @@ interface TopOptions {
   once?: boolean;
   json?: boolean;
   interval?: string;
+  live?: boolean;
 }
 
 const COLS = ['BOX', 'STATE', 'CPU%', 'MEM USAGE / LIMIT', 'MEM%', 'PIDS', 'DISK', 'NET I/O'];
@@ -74,6 +76,9 @@ async function snapshot(
   opts: TopOptions,
 ): Promise<{ boxes: ListedBox[]; stats: BoxResourceStats[] }> {
   const boxes = await selectBoxes(idOrName, opts);
+  // Default cloud state is the fast persisted value from listBoxes; `--live`
+  // overrides it with an authoritative SDK probe.
+  if (opts.live) await applyLiveCloudStates(boxes);
   const stats = await Promise.all(
     boxes.map((b) => {
       // Skip the docker-only `boxResourceStats` for cloud boxes — it would
@@ -133,6 +138,7 @@ export const topCommand = new Command('top')
   .option('--once', 'print a single snapshot instead of watching')
   .option('-j, --json', 'machine-readable JSON (implies --once)')
   .option('--interval <seconds>', 'refresh interval', '2')
+  .option('--live', 'probe live cloud state via the provider SDK (slower; default: last host-known)')
   .action(async (idOrName: string | undefined, opts: TopOptions) => {
     try {
       if (opts.json) {

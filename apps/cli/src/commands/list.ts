@@ -4,11 +4,13 @@ import { listBoxes, type ListedBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { pathToFileURL } from 'node:url';
 import { hyperlink } from '../hyperlink.js';
+import { applyLiveCloudStates } from '../lib/cloud-state.js';
 import { withWatchOptions, watchRender, type WatchableOptions } from '../watch.js';
 
 interface ListOptions extends WatchableOptions {
   json?: boolean;
   global?: boolean;
+  live?: boolean;
 }
 
 /** A table cell: the (possibly OSC-8-wrapped) text to print + its visible width. */
@@ -98,6 +100,10 @@ function workspaceCell(path: string, target: number, stream: NodeJS.WriteStream)
  * it would put a spurious `claude:unknown` on nearly every row.
  */
 function agentSummary(b: ListedBox): string {
+  // A non-running box can't have a live agent; its persisted status.json (the
+  // source of these fields) is just the last snapshot before it stopped, so
+  // showing `claude:idle` next to `paused`/`stopped` would be contradictory.
+  if (b.state !== 'running') return '-';
   const agents: string[] = [];
   if (b.claudeActivity && b.claudeActivity !== 'unknown') {
     agents.push(`claude:${b.claudeActivity}`);
@@ -178,15 +184,24 @@ function renderTable(boxes: ListedBox[], stream: NodeJS.WriteStream): string {
  */
 async function scopedBoxes(
   all: boolean,
+  live: boolean,
 ): Promise<{ boxes: ListedBox[]; projectRoot: string; scoped: boolean }> {
   const boxes = await listBoxes();
-  if (all) return { boxes, projectRoot: '', scoped: false };
+  if (all) {
+    // Default: cloud state is the fast persisted `cloud.lastState` from
+    // listBoxes. `--live` overrides it with an authoritative SDK probe.
+    if (live) await applyLiveCloudStates(boxes);
+    return { boxes, projectRoot: '', scoped: false };
+  }
   const { root } = await findProjectRoot(process.cwd());
-  return { boxes: boxes.filter((b) => b.projectRoot === root), projectRoot: root, scoped: true };
+  const scoped = boxes.filter((b) => b.projectRoot === root);
+  // Probe only the scoped boxes — don't round-trip every cloud box on the host.
+  if (live) await applyLiveCloudStates(scoped);
+  return { boxes: scoped, projectRoot: root, scoped: true };
 }
 
-async function buildListText(all: boolean): Promise<string> {
-  const { boxes, projectRoot, scoped } = await scopedBoxes(all);
+async function buildListText(all: boolean, live: boolean): Promise<string> {
+  const { boxes, projectRoot, scoped } = await scopedBoxes(all, live);
   if (boxes.length === 0) {
     if (scoped) {
       return `no boxes in this project (${projectRoot}) — run \`agentbox create\`, or \`agentbox list --global\` to see all`;
@@ -205,21 +220,26 @@ export const listCommand = withWatchOptions(
     .alias('ls')
     .description('List agent boxes in the current project (-g for all)')
     .option('-j, --json', 'machine-readable JSON output')
-    .option('-g, --global', 'include boxes from all projects'),
+    .option('-g, --global', 'include boxes from all projects')
+    .option(
+      '--live',
+      'probe live cloud state via the provider SDK (slower; default: last host-known state)',
+    ),
 ).action(async (opts: ListOptions) => {
   if (opts.json && opts.watch) {
     log.error('cannot combine --json with --watch');
     process.exit(2);
   }
   const all = opts.global ?? false;
+  const live = opts.live ?? false;
   if (opts.watch) {
-    await watchRender(() => buildListText(all), opts.interval);
+    await watchRender(() => buildListText(all, live), opts.interval);
     return;
   }
   if (opts.json) {
-    const { boxes } = await scopedBoxes(all);
+    const { boxes } = await scopedBoxes(all, live);
     process.stdout.write(JSON.stringify(boxes, null, 2) + '\n');
     return;
   }
-  process.stdout.write((await buildListText(all)) + '\n');
+  process.stdout.write((await buildListText(all, live)) + '\n');
 });
