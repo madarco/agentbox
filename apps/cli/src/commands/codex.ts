@@ -454,11 +454,6 @@ export const codexCommand = new Command('codex')
           : undefined;
 
     if (opts.initialPrompt && opts.initialPrompt.length > 0) {
-      if (isCloud) {
-        log.error('-i / --initial-prompt is currently docker-only (cloud sessions only start on attach).');
-        cmdLog.close();
-        process.exit(2);
-      }
       try {
         await assertAgentCredsAvailable({
           agent: 'codex',

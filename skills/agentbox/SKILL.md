@@ -11,7 +11,7 @@ If you find yourself *inside* a box (`/workspace` exists and `AGENTBOX_RELAY_URL
 
 ## What AgentBox is, in one paragraph
 
-AgentBox spins up one isolated sandbox per agent run — a local Docker container (default), a Daytona cloud sandbox (`--provider daytona`), or a Hetzner VPS (`--provider hetzner`). Each box has its own `/workspace`, but the host's `.git/` is shared, so commits made inside the box land on the host immediately. The agent inside the box has **no host credentials** — `git push`, opening URLs in the host browser, capturing checkpoints, and all other host-side operations flow through a small host process called the **relay** that runs alongside the CLI.
+AgentBox spins up one isolated sandbox per agent run — a local Docker container (default), or a Hetzner VPS (`--provider hetzner`), or Vercel Sandbox (`--provider vercel`), or a partial support on Daytona cloud sandbox (`--provider daytona`). Each box has its own `/workspace`, but the host's `.git/` is shared, so commits made inside the box land on the host immediately. The agent inside the box has **no host credentials** — `git push`, opening URLs in the host browser, capturing checkpoints, and all other host-side operations flow through a small host process called the **relay** that runs alongside the CLI.
 
 ## The two starting commands
 
@@ -26,7 +26,7 @@ agentbox create --provider hetzner    # cloud VPS (requires `agentbox prepare --
 agentbox create --attach              # drop into a shell inside the box after create
 ```
 
-Useful flags: `-n <name>` (friendly box name), `--provider docker|daytona|hetzner`, `--attach`, `-w <path>` (workspace to mount; defaults to `cwd`), `--snapshot <ref>` (start from a checkpoint).
+Useful flags: `-n <name>` (friendly box name), `--provider docker|daytona|hetzner|vercel`, `--attach`, `-w <path>` (workspace to mount; defaults to `cwd`), `--snapshot <ref>` (start from a checkpoint).
 
 Non-docker providers require a one-time `agentbox prepare --provider <name>` to bake the base image / snapshot.
 
@@ -64,7 +64,7 @@ agentbox dashboard                    # TUI with status + leader-key actions
 agentbox claude attach <name|n>       # reattach to a specific box
 ```
 
-Caveats: `-i` is currently **docker-only** (cloud sessions only start on attach, so background-mode has no place to seed the prompt). The host must have valid Claude Code credentials.
+`-i` works on every provider — pass `--provider daytona|hetzner|vercel` (or set `box.provider`) and the queued job creates a cloud box and pre-starts the seeded agent session detached, same as docker. The host must have valid agent credentials. Extra args after `--` are forwarded to the in-box agent (e.g. `agentbox claude -i "<prompt>" --provider vercel -- --permission-mode=plan`).
 
 ## Git through the host relay
 
@@ -105,7 +105,7 @@ If a PR op appears to hang, tell the user to check the dashboard footer for the 
 | `agentbox url [n\|name]` | Open the box's web app URL (`<box-name>.localhost` via Portless) in the host browser. |
 | `agentbox screen [n\|name]` | Open the box's **own** Chromium via VNC — useful for OAuth flows the agent inside the box initiates. |
 | `agentbox code [n\|name]` | Open VS Code / Cursor pointed at the box. |
-| `agentbox prepare --provider <name>` | One-time base image / snapshot build for `daytona` or `hetzner`. With no `--provider`, prints status across all providers. |
+| `agentbox prepare --provider <name>` | One-time base image / snapshot build for `daytona` or `hetzner` or `vercel`. With no `--provider`, prints status across all providers. |
 | `agentbox prune --provider <name>` | Clean up orphan boxes / images / snapshots for a provider (docker + daytona supported; hetzner pending). |
 
 Per-project numeric index (`1`, `2`, …) and friendly name (`review`, `smoke`) both work wherever `<box>` is accepted. Index `1` is the first box created in the current workspace.
@@ -114,7 +114,7 @@ Per-project numeric index (`1`, `2`, …) and friendly name (`review`, `smoke`) 
 
 1. **Never assume the host needs SSH keys forwarded into a box** — git is handled by the relay, by design.
 2. **Use `-i` whenever the user asks for parallel agent work** rather than spawning multiple foreground sessions. Then point them at `agentbox dashboard` to watch progress.
-3. **Pick the provider deliberately.** `docker` is the fast default. `--provider hetzner` gives a real VPS (heavier, isolated, requires `agentbox prepare --provider hetzner` once). `--provider daytona` is the managed cloud option.
+3. **Pick the provider deliberately.** `docker` is the fast default. `--provider hetzner` gives a real VPS (heavier, isolated, requires `agentbox prepare --provider hetzner` once). `--provider vercel` is the managed cloud option.
 4. **Cross-check before recommending a command.** If a flag isn't listed here, run `agentbox <command> --help` (it's safe and read-only) before suggesting it to the user.
 5. **`/agentbox-setup` is a different skill.** It runs *inside* a box to generate `/workspace/agentbox.yaml`. Don't conflate the two.
 

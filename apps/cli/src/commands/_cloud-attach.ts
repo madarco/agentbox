@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { spinner } from '@clack/prompts';
 import { DEFAULT_RELAY_PORT } from '@agentbox/sandbox-docker';
-import type { BoxRecord } from '@agentbox/core';
+import type { BoxRecord, Provider } from '@agentbox/core';
 import type { AttachOpenIn } from '@agentbox/config';
 import { providerForBox } from '../provider/registry.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
@@ -159,16 +159,7 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   // finds it via `tmux has-session` and just attaches. (Inline attach runs the
   // full command itself, so it doesn't need this.)
   if (safeOpenIn && safeOpenIn !== 'same' && args.extraArgs && args.extraArgs.length > 0) {
-    const pre = await provider.buildAttach(box, 'agent', {
-      sessionName: args.sessionName,
-      command,
-      detached: true,
-    });
-    try {
-      await runDetached(pre.argv, pre.env);
-    } finally {
-      if (pre.cleanup) await pre.cleanup();
-    }
+    await startDetachedSession(provider, box, args.sessionName, command);
   }
 
   let spec = await provider.buildAttach(box, 'agent', {
@@ -257,6 +248,61 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   } finally {
     if (spec.cleanup) await spec.cleanup();
   }
+}
+
+/**
+ * Create + configure the agent's tmux session running `command` without
+ * attaching (the `detached` buildAttach mode). Shared by the new-tab attach
+ * pre-start and the background (`-i`) queue worker. `runDetached` swallows the
+ * exit code; a real launch failure surfaces on the subsequent attach.
+ */
+async function startDetachedSession(
+  provider: Provider,
+  box: BoxRecord,
+  sessionName: string,
+  command: string,
+): Promise<void> {
+  if (!provider.buildAttach) {
+    throw new Error(`provider '${provider.name}' does not support detached sessions`);
+  }
+  const spec = await provider.buildAttach(box, 'agent', {
+    sessionName,
+    command,
+    detached: true,
+  });
+  try {
+    await runDetached(spec.argv, spec.env);
+  } finally {
+    if (spec.cleanup) await spec.cleanup();
+  }
+}
+
+/**
+ * Provision-time entry point for background (`-i`) cloud jobs: resolve the
+ * provider, ensure the box is running, then pre-start a detached agent tmux
+ * session seeded with `extraArgs` (the seed prompt as first positional + the
+ * user's post-`--` args). Mirrors the `probeState`/`start` guard in
+ * `cloudAgentAttach` so a box that came up paused still gets its session. A
+ * later `agentbox <agent> attach` finds the running session via
+ * `tmux has-session` and just attaches.
+ */
+export async function cloudAgentStartDetached(args: {
+  box: BoxRecord;
+  binary: string;
+  sessionName: string;
+  extraArgs?: string[];
+}): Promise<void> {
+  const provider = await providerForBox(args.box);
+  let box = args.box;
+  const state = await provider.probeState(box);
+  if (state === 'missing') {
+    throw new Error(`cloud sandbox for ${box.name} is missing; was it destroyed?`);
+  }
+  if (state !== 'running') {
+    box = await provider.start(box);
+  }
+  const command = buildCloudAttachInnerCommand(args.binary, args.extraArgs);
+  await startDetachedSession(provider, box, args.sessionName, command);
 }
 
 /**

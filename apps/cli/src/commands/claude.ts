@@ -508,16 +508,11 @@ export const claudeCommand = new Command('claude')
     const isCloud = providerName !== 'docker';
 
     // -i / --initial-prompt: background mode. Write a queue manifest and exit;
-    // the relay's queue loop spawns the worker as a slot frees. Docker-only
-    // for v1 — the cloud `cloudAgentCreate` path starts the tmux session
-    // lazily on first attach, so a "create but don't attach" cloud run has no
-    // chance to seed the prompt.
+    // the relay's queue loop spawns the worker as a slot frees. Works on every
+    // provider — the worker creates the box and pre-starts the seeded session
+    // (docker bakes the prompt into `tmux new-session`; cloud pre-starts a
+    // detached tmux session via `buildAttach({ detached: true })`).
     if (opts.initialPrompt && opts.initialPrompt.length > 0) {
-      if (isCloud) {
-        log.error('-i / --initial-prompt is currently docker-only (cloud sessions only start on attach).');
-        cmdLog.close();
-        process.exit(2);
-      }
       try {
         await assertAgentCredsAvailable({
           agent: 'claude-code',

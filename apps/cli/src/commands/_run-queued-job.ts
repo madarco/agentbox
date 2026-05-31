@@ -1,10 +1,15 @@
 /**
  * Internal worker the relay's queue loop spawns as a detached child to run a
- * queued `-i` job. Hidden from `--help`. Reads a queue manifest by id, runs
- * the same `createBox` + `startXxxSession` codepath the foreground claude /
- * codex / opencode commands run in non-`-i` mode, then exits when tmux is up.
+ * queued `-i` job. Hidden from `--help`. Reads a queue manifest by id, then
+ * runs the same create + session-start codepath the foreground claude / codex
+ * / opencode commands run in non-`-i` mode, then exits when tmux is up.
  * **Never** attaches — the in-box session keeps running for the user to
  * re-attach later.
+ *
+ * Docker bakes the seeded prompt straight into `tmux new-session` at create
+ * time (`runDockerJob`). Cloud providers (daytona/hetzner/vercel) create the
+ * box, then pre-start a detached tmux session seeded with the same prompt via
+ * `cloudAgentStartDetached` → `buildAttach({ detached: true })` (`runCloudJob`).
  */
 
 import { Command } from 'commander';
@@ -30,6 +35,8 @@ import { resolveLimits } from '../limits.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from '../lib/skip-permissions.js';
+import { providerForCreate } from '../provider/registry.js';
+import { cloudAgentStartDetached } from './_cloud-attach.js';
 
 export const runQueuedJobCommand = new Command('_run-queued-job')
   .description('internal: run a queued background agent job (do not invoke directly)')
@@ -50,16 +57,18 @@ export const runQueuedJobCommand = new Command('_run-queued-job')
       // manually we still run, but the relay's accounting will be off — that
       // is the user's problem (and exactly why this command is hidden).
 
-      // Run the create + session path. Cloud paths are intentionally NOT
-      // supported here (the cloud agent attach starts the tmux session lazily
-      // on first attach; with no attach there's nowhere to seed the prompt).
-      // The submit-side already rejected cloud in that case.
-      // The worker records boxId on the outer `job` the instant the box is
-      // created (via onBoxCreated), so the catch block below preserves the
-      // box attribution even if the session start throws afterwards.
-      await runDockerJob(job, log, (boxId) => {
+      // Run the create + session path, routed by provider. The worker records
+      // boxId on the outer `job` the instant the box is created (via
+      // onBoxCreated), so the catch block below preserves the box attribution
+      // even if the session start throws afterwards.
+      const onBoxCreated = (boxId: string): void => {
         if (job) job = { ...job, boxId };
-      });
+      };
+      if ((job.providerName || 'docker') === 'docker') {
+        await runDockerJob(job, log, onBoxCreated);
+      } else {
+        await runCloudJob(job, log, onBoxCreated);
+      }
 
       const done: QueueJob = {
         ...job,
@@ -104,9 +113,6 @@ async function runDockerJob(
   });
   const projectRoot = (await findProjectRoot(opts.workspace)).root;
   const providerName = job.providerName || cfg.effective.box.provider || 'docker';
-  if (providerName !== 'docker') {
-    throw new Error(`worker only supports docker provider (got "${providerName}")`);
-  }
   const providerDefault = resolveDefaultCheckpoint(cfg.effective, providerName);
   const checkpointRef =
     opts.snapshot && opts.snapshot.length > 0
@@ -215,6 +221,90 @@ async function runDockerJob(
   } else {
     throw new Error(`unknown agent kind: ${String(job.agent satisfies QueueAgentKind)}`);
   }
+}
+
+/**
+ * Cloud (daytona/hetzner/vercel) variant of the queue worker. Mirrors the
+ * foreground cloud-create path (`cloudAgentCreate`): `provider.create` does the
+ * credential-volume seed, git-bundle workspace seed, and ctl daemon. We then
+ * pre-start a detached agent tmux session seeded with the same prompt+args the
+ * docker path bakes into `tmux new-session`. Carry / env-file import / explicit
+ * branch selection are omitted (the docker `-i` worker omits them too).
+ */
+async function runCloudJob(
+  job: QueueJob,
+  log: ReturnType<typeof openCommandLog>,
+  onBoxCreated: (boxId: string) => void,
+): Promise<void> {
+  const opts = job.createOpts;
+  const cfg = await loadEffectiveConfig(opts.workspace, {
+    cliOverrides: buildOverridesFromJob(job),
+  });
+  const projectRoot = (await findProjectRoot(opts.workspace)).root;
+  const providerName = job.providerName || cfg.effective.box.provider || 'docker';
+  const provider = await providerForCreate({ flag: providerName, config: cfg.effective });
+
+  const providerDefault = resolveDefaultCheckpoint(cfg.effective, providerName);
+  const checkpointRef =
+    opts.snapshot && opts.snapshot.length > 0
+      ? opts.snapshot
+      : providerDefault.length > 0
+        ? providerDefault
+        : undefined;
+
+  // browser.default = 'playwright' | 'both' implies installing playwright even
+  // if box.withPlaywright wasn't explicitly set (mirrors the foreground path).
+  const withPlaywright =
+    cfg.effective.box.withPlaywright || cfg.effective.browser.default !== 'agent-browser';
+
+  log.write(`creating cloud box (${providerName}) for agent=${job.agent}`);
+  const result = await provider.create({
+    workspacePath: opts.workspace,
+    name: opts.name && opts.name.length > 0 ? opts.name : undefined,
+    checkpointRef,
+    image: cfg.effective.box.image,
+    withPlaywright,
+    withEnv: cfg.effective.box.withEnv,
+    vnc: { enabled: cfg.effective.box.vnc },
+    limits: resolveLimits(cfg.effective.box, opts),
+    projectRoot,
+    onLog: (line) => log.write(line),
+  });
+  log.write(`box created: ${result.record.id}`);
+
+  // Record boxId before the session starts so a crash mid-launch is still
+  // attributable to a box and the working-agent gate can join it to its box.
+  onBoxCreated(result.record.id);
+  await writeJob({ ...job, boxId: result.record.id });
+
+  const promptedArgs = buildPromptArgs(job.agent, job.prompt, job.agentArgs);
+
+  let binary: string;
+  let sessionName: string;
+  let extraArgs: string[];
+  if (job.agent === 'claude-code') {
+    binary = 'claude';
+    sessionName = cfg.effective.claude.sessionName;
+    extraArgs = applyClaudeSkipPermissions(promptedArgs, cfg.effective);
+  } else if (job.agent === 'codex') {
+    binary = 'codex';
+    sessionName = cfg.effective.codex.sessionName;
+    extraArgs = applyCodexSkipPermissions(promptedArgs, cfg.effective);
+  } else if (job.agent === 'opencode') {
+    binary = 'opencode';
+    sessionName = cfg.effective.opencode.sessionName;
+    extraArgs = promptedArgs;
+  } else {
+    throw new Error(`unknown agent kind: ${String(job.agent satisfies QueueAgentKind)}`);
+  }
+
+  log.write(`starting detached ${job.agent} session`);
+  await cloudAgentStartDetached({
+    box: result.record,
+    binary,
+    sessionName,
+    extraArgs,
+  });
 }
 
 function buildOverridesFromJob(job: QueueJob): Partial<UserConfig> {

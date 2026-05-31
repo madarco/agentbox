@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildCloudAttachInnerCommand } from '../src/commands/_cloud-attach.js';
+import { buildPromptArgs } from '../src/lib/queue/build-prompt-args.js';
 
 /**
  * The launcher embeds args as base64. To verify the round-trip we extract the
@@ -65,5 +66,16 @@ describe('buildCloudAttachInnerCommand', () => {
   it('uses the same binary name in the exec line', () => {
     expect(buildCloudAttachInnerCommand('opencode', ['-m', 'gpt-5'])).toContain('exec opencode');
     expect(buildCloudAttachInnerCommand('codex', ['-m', 'gpt-5'])).toContain('exec codex');
+  });
+
+  // Contract the cloud `-i` queue worker (runCloudJob) depends on: it builds
+  // the launcher args via `buildPromptArgs(prompt, userArgs)` and hands them to
+  // `cloudAgentStartDetached` → `buildCloudAttachInnerCommand`. The seed prompt
+  // must land as the first positional and post-`--` args (e.g.
+  // `--permission-mode=plan`) must be forwarded verbatim.
+  it('forwards a seeded prompt + custom args through the launcher in order', () => {
+    const args = buildPromptArgs('claude-code', 'fix the failing test', ['--permission-mode=plan']);
+    const cmd = buildCloudAttachInnerCommand('claude', args);
+    expect(decodeArgs(cmd)).toEqual(['fix the failing test', '--permission-mode=plan']);
   });
 });
