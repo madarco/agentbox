@@ -1,0 +1,20 @@
+{
+	"name": "AgentBox",
+	"short_name": "AgentBox",
+	"description": "Isolated sandboxes for coding agents",
+	"icons": [
+		{
+			"src": "/public/favicon-32x32.png",
+			"type": "image/png",
+			"sizes": "32x32"
+		},
+		{
+			"src": "/public/favicon-256x256.png",
+			"type": "image/png",
+			"sizes": "256x256"
+		}
+	],
+	"theme_color": "#f6f6f3",
+	"background_color": "#f6f6f3",
+	"display": "standalone"
+}
