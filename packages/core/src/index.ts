@@ -51,3 +51,4 @@ export type {
   CloudVolumeMount,
 } from './cloud-backend.js';
 export { AmbiguousBoxError, BoxNotFoundError } from './errors.js';
+export { BOX_ID_PREFIX, generateBoxId } from './identity.js';

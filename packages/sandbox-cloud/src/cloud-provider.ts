@@ -11,8 +11,8 @@
  * "no relay configured" error.
  */
 
-import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
+import { generateBoxId } from '@agentbox/core';
 import type {
   AttachKind,
   AttachSpec,
@@ -248,7 +248,7 @@ export function createCloudProvider(
     name: string;
     branch: string;
   } {
-    const id = randomBytes(4).toString('hex');
+    const id = generateBoxId();
     const name = req.name ?? `${basename(req.workspacePath)}-${id}`;
     return {
       id,

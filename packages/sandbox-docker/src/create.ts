@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import { mkdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
@@ -73,7 +72,7 @@ import {
   type BoxRecord,
   type GitWorktreeRecord,
 } from './state.js';
-import type { ResolvedCarryEntry } from '@agentbox/core';
+import { generateBoxId, type ResolvedCarryEntry } from '@agentbox/core';
 import { createSnapshot, snapshotPathFor } from './snapshot.js';
 import { resolveCheckpoint } from './checkpoint.js';
 import {
@@ -259,10 +258,6 @@ function persistableLimits(
   if (lim.pidsLimit && lim.pidsLimit > 0) out.pidsLimit = Math.floor(lim.pidsLimit);
   if (lim.disk) out.disk = lim.disk;
   return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function generateBoxId(): string {
-  return randomBytes(4).toString('hex');
 }
 
 export function sanitizeBasename(workspacePath: string): string {
