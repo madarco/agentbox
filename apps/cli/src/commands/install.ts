@@ -19,9 +19,17 @@
 
 import { confirm, intro, isCancel, log, note, outro, select, spinner } from '@clack/prompts';
 import { Command } from 'commander';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   formatCompact,
@@ -216,8 +224,37 @@ function resolveHostSkillsDir(): string {
   throw new Error(`could not locate bundled host skills; tried:\n  ${candidates.join('\n  ')}`);
 }
 
+function isSymlink(target: string): boolean {
+  try {
+    return lstatSync(target).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when the bundled skills resolve inside a source checkout rather than an
+ * installed package. Every distribution path — `npm i -g`, pnpm global, the
+ * npx cache — lives under a `node_modules` segment; a dev clone
+ * (`<repo>/apps/cli/share/host-skills`) does not. We key on the source
+ * *location*, not `detectExecutionMethod`, because a global install invoked
+ * directly carries no `npm_config_user_agent` and would misreport as `direct`.
+ * In a checkout we symlink skills so source edits are picked up live (mirroring
+ * the `pnpm register` bin symlink); a published install must copy, since its
+ * source dir is transient and a symlink would dangle on upgrade.
+ */
+function isSourceCheckout(srcDir: string): boolean {
+  return !srcDir.split(sep).includes('node_modules');
+}
+
 function writableReason(target: string, force: boolean): 'new' | 'managed' | 'forced' | 'skip' {
-  if (!existsSync(target)) return 'new';
+  if (!existsSync(target)) {
+    // A dangling symlink (e.g. left by an earlier source-checkout run whose
+    // source moved) has no resolvable target but still occupies the path; treat
+    // it as ours to replace rather than as a user-authored file.
+    if (isSymlink(target)) return 'managed';
+    return 'new';
+  }
   const existing = readFileSync(target, 'utf8');
   if (existing.includes(MANAGED_SENTINEL) || existing.includes(LEGACY_INFO_MARKER)) {
     return 'managed';
@@ -239,13 +276,17 @@ export interface InstallHostSkillsResult {
   blocked: string[];
 }
 
-/** Idempotent copy of the bundled host skill files. Used by both
- *  `agentbox install --skills-only` and the wizard. */
+/** Idempotently install the bundled host skill files. Used by both
+ *  `agentbox install --skills-only` and the wizard. In a source checkout the
+ *  targets are symlinked to the bundled source (live edits); an installed
+ *  package copies the contents. See {@link isSourceCheckout}. */
 export function installHostSkills(opts: InstallHostSkillsOptions = {}): InstallHostSkillsResult {
   const force = opts.force === true;
   const dryRun = opts.dryRun === true;
   const quiet = opts.quiet === true;
   const srcDir = resolveHostSkillsDir();
+  // Source checkout → symlink (live edits); installed package → copy.
+  const link = isSourceCheckout(srcDir);
 
   const written: string[] = [];
   const blocked: string[] = [];
@@ -267,12 +308,22 @@ export function installHostSkills(opts: InstallHostSkillsOptions = {}): InstallH
       continue;
     }
     if (dryRun) {
-      if (!quiet) log.info(`would write ${t.dest} (${reason})`);
+      if (!quiet) log.info(`would ${link ? 'link' : 'write'} ${t.dest} (${reason})`);
       written.push(t.dest);
       continue;
     }
     mkdirSync(dirname(t.dest), { recursive: true });
-    writeFileSync(t.dest, readFileSync(src, 'utf8'));
+    if (link) {
+      // Unlink first so symlinkSync doesn't throw EEXIST and so a stale/broken
+      // link from a prior run is cleared — the unlink-then-link `ln -sf` does.
+      rmSync(t.dest, { force: true });
+      symlinkSync(resolve(srcDir, t.src), t.dest);
+    } else {
+      // Drop an existing symlink (e.g. left by an earlier source-checkout run)
+      // before writing — else writeFileSync follows it and clobbers the source.
+      if (isSymlink(t.dest)) rmSync(t.dest, { force: true });
+      writeFileSync(t.dest, readFileSync(src, 'utf8'));
+    }
     written.push(t.dest);
   }
 
