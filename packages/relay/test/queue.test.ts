@@ -2,6 +2,7 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  countInFlightCreateJobs,
   countWorkingSlots,
   defaultCountWorkingBoxes,
   loadQueue,
@@ -273,6 +274,49 @@ describe('defaultCountWorkingBoxes', () => {
     } finally {
       await rm(join(QUEUE_DIR, `${id}.json`), { force: true });
     }
+  });
+});
+
+describe('countInFlightCreateJobs', () => {
+  // A pid that's essentially never alive — process.kill(pid, 0) → ESRCH.
+  const DEAD_PID = 2_147_483_646;
+
+  it('counts a running job whose box is not yet accounted for', () => {
+    // No boxId yet (worker hasn't created the box) → in-flight, occupies a slot.
+    const jobs = [job({ id: 'a', status: 'running', startedAt: '2024-01-01T00:00:01.000Z' })];
+    expect(countInFlightCreateJobs(jobs, new Set())).toBe(1);
+  });
+
+  it('does not count a running job once its box id is accounted for', () => {
+    // boxId present AND in the accounted set → counted via its box, not here.
+    const jobs = [job({ id: 'a', status: 'running', boxId: 'box1' })];
+    expect(countInFlightCreateJobs(jobs, new Set(['box1']))).toBe(0);
+    // Same job, box NOT in the set → still in-flight, counted.
+    expect(countInFlightCreateJobs(jobs, new Set(['other']))).toBe(1);
+  });
+
+  it('ignores non-running jobs', () => {
+    const jobs = [
+      job({ id: 'q', status: 'queued' }),
+      job({ id: 'd', status: 'done' }),
+      job({ id: 'f', status: 'failed' }),
+    ];
+    expect(countInFlightCreateJobs(jobs, new Set())).toBe(0);
+  });
+
+  it('skips a running job whose worker pid is dead', () => {
+    const jobs = [job({ id: 'a', status: 'running', pid: DEAD_PID })];
+    expect(countInFlightCreateJobs(jobs, new Set())).toBe(0);
+  });
+
+  it('sums multiple in-flight jobs', () => {
+    const jobs = [
+      job({ id: 'a', status: 'running' }),
+      job({ id: 'b', status: 'running', boxId: 'reg', pid: undefined }),
+      job({ id: 'c', status: 'running' }),
+    ];
+    // 'b' is deduped via its box; 'a' and 'c' are in-flight.
+    expect(countInFlightCreateJobs(jobs, new Set(['reg']))).toBe(2);
   });
 });
 
