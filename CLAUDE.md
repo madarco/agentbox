@@ -44,7 +44,7 @@ When verifying a change:
   then `tail -f ~/.agentbox/logs/create.log` until you see the BEGIN/END
   markers for each step. If a step's END never arrives, you've found the
   hang — inspect that step rather than killing the whole command.
-- **Test projects**: use the `examples/` directory mainly, or `../agentbox-test-repo` to test push/pull on a test repo setup on GitHub, and `../agentbox-test-repo-gh` for the same repo but with https origin using `gh` tool.
+- **Test projects**: use the `examples/` directory mainly, or `../agentbox-test-repo` to test push/pull on a test repo setup on GitHub, and `../agentbox-test-repo-gh` for the same repo but with https origin using `gh` tool. Also `../express-server` can be used to test the setup wizard since it doesn't have an `agentbox.yaml` file.
 - **Use Agentbox inside Agentbox**: start a container with `agentbox claude --shared-docker-cache --carry-yes` to have a box ready with agentbox compiled and in the path and reuse docker cache for faster builds. For Images build use `docker build --network=host -t agentbox/box:dev -f apps/cli/runtime/docker/Dockerfile.box apps/cli/runtime/docker` instead of `agentbox prepare` because the box runs without `CAP_SYS_PTRACE`.
 
 ## Conventions
