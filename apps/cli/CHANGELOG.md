@@ -9,6 +9,40 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.11.0] - 2026-05-31
+
+### Added
+
+- Linux host support: `agentbox doctor` now reports accurate checks on Linux
+  (warns on unsupported OS, distinguishes a stopped Docker daemon from the user
+  not being in the `docker` group), and all host URL/file opens — cloud login
+  dashboards, `agentbox url` / `screen` / `code` / `open`, the dashboard's
+  VNC/web/code launchers, and box-initiated "open link on host" — go through
+  `xdg-open` on Linux instead of macOS-only `open`. Attaching in a new terminal
+  works on Linux when running inside tmux.
+- A single recap card is now shown when you launch an agent
+  (`agentbox claude` / `codex` / `opencode`) on any provider: one bordered card
+  with the box name (and source checkpoint), project folder, the from→to branch
+  mapping, and the detach/reattach hint — replacing the scattered status rows.
+
+### Changed
+
+- The `# yaml-language-server: $schema` hints in `agentbox.yaml` and the
+  user-config schema now point at `agent-box.sh/schema` (the previous
+  `agentbox.dev` domain was never owned).
+
+### Fixed
+
+- Box ids are now prefixed with `b` so they are never all-digits. Previously
+  ~2.3% of generated ids came out as decimal-only (e.g. `26524695`) and were
+  unresolvable, since a bare integer is treated as a per-project index — which
+  broke any command that targets a box by id.
+- Vercel: Ctrl+V clipboard-image paste now works. The box bake now builds xclip
+  from source (it isn't in the AL2023 repos), and the host-side input router
+  intercepts the enhanced-keyboard (kitty / modifyOtherKeys) encoding of Ctrl+V,
+  not just the raw byte. Vercel boxes need a re-run of
+  `agentbox prepare --provider vercel`.
+
 ## [0.10.1] - 2026-05-30
 
 ### Changed
