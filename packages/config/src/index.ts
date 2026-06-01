@@ -58,6 +58,11 @@ export {
 } from './size.js';
 
 export {
+  boxImageConfigKey,
+  resolveBoxImage,
+} from './image.js';
+
+export {
   bumpProjectGcCounter,
   listProjectsConfigured,
   pruneOrphanProjectConfigs,

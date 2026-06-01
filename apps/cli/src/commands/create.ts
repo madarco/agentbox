@@ -4,6 +4,7 @@ import {
   findProjectRoot,
   loadEffectiveConfig,
   pruneOrphanProjectConfigs,
+  resolveBoxImage,
   resolveBoxSize,
   resolveDefaultCheckpoint,
   type UserConfig,
@@ -73,7 +74,8 @@ interface CreateOptions {
 function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
   const box: NonNullable<UserConfig['box']> = {};
   if (opts.hostSnapshot !== undefined) box.hostSnapshot = opts.hostSnapshot;
-  if (opts.image !== undefined) box.image = opts.image;
+  // --image is resolved at the call site (alongside --snapshot / --size) so a
+  // CLI flag beats project-level per-provider `box.image<Provider>` keys.
   if (opts.withPlaywright === true) box.withPlaywright = true;
   if (opts.withEnv === true) box.withEnv = true;
   if (opts.vnc === false) box.vnc = false;
@@ -229,6 +231,15 @@ export const createCommand = new Command('create')
     );
     const effectiveSize =
       opts.size && opts.size.length > 0 ? opts.size : sizeDefault;
+    // Box image: same precedence pattern as --size. `--image` wins; otherwise
+    // the cascaded box.image / box.image<Provider> (written by `agentbox
+    // prepare --provider X`).
+    const imageDefault = resolveBoxImage(
+      cfg.effective,
+      providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel',
+    );
+    const effectiveImage =
+      opts.image && opts.image.length > 0 ? opts.image : imageDefault;
 
     // Cloud providers that use the Daytona public-URL path don't need
     // Portless; the URL is already reachable from anywhere. The wizard's
@@ -356,7 +367,7 @@ export const createCommand = new Command('create')
         workspacePath: opts.workspace,
         name: opts.name,
         checkpointRef,
-        image: cfg.effective.box.image,
+        image: effectiveImage,
         allowPull: opts.build ? false : undefined,
         imageRegistry: cfg.effective.box.imageRegistry,
         withPlaywright,

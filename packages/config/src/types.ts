@@ -54,6 +54,15 @@ export interface UserConfig {
     isolateCodexConfig?: boolean;
     isolateOpencodeConfig?: boolean;
     image?: string;
+    /**
+     * Per-provider override of `image`. Written by `agentbox prepare
+     * --provider <name>` so a daytona prepare can't poison a hetzner create.
+     * Resolved before falling back to the generic.
+     */
+    imageDocker?: string;
+    imageDaytona?: string;
+    imageHetzner?: string;
+    imageVercel?: string;
     imageRegistry?: string;
     dockerCacheShared?: boolean;
     memory?: number;
@@ -158,6 +167,10 @@ export interface EffectiveConfig {
     isolateCodexConfig: boolean;
     isolateOpencodeConfig: boolean;
     image: string;
+    imageDocker: string;
+    imageDaytona: string;
+    imageHetzner: string;
+    imageVercel: string;
     imageRegistry: string;
     dockerCacheShared: boolean;
     memory: number;
@@ -281,6 +294,10 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     isolateCodexConfig: false,
     isolateOpencodeConfig: false,
     image: 'agentbox/box:dev',
+    imageDocker: '',
+    imageDaytona: '',
+    imageHetzner: '',
+    imageVercel: '',
     // Mirrors BOX_IMAGE_REGISTRY in @agentbox/sandbox-docker. Empty disables the
     // registry pull (always build the docker base image locally).
     imageRegistry: 'ghcr.io/madarco/agentbox/box',
@@ -499,7 +516,31 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
   {
     key: 'box.image',
     type: 'string',
-    description: 'Box image ref (advanced).',
+    description: 'Generic box image ref (fallback). Used as fallback when no per-provider override is set; the default `agentbox/box:dev` is treated as a sentinel by cloud backends (boot from their prepared base snapshot instead).',
+    advanced: true,
+  },
+  {
+    key: 'box.imageDocker',
+    type: 'string',
+    description: 'Per-provider override of `box.image` for docker (local docker image ref, e.g. `agentbox/box:dev`). Wins over the generic when set.',
+    advanced: true,
+  },
+  {
+    key: 'box.imageDaytona',
+    type: 'string',
+    description: 'Per-provider override of `box.image` for daytona (named snapshot, e.g. `agentbox-base-<fingerprint>`). Written by `agentbox prepare --provider daytona`.',
+    advanced: true,
+  },
+  {
+    key: 'box.imageHetzner',
+    type: 'string',
+    description: 'Per-provider override of `box.image` for hetzner (image description, e.g. `agentbox-base-<fingerprint>`). Written by `agentbox prepare --provider hetzner`.',
+    advanced: true,
+  },
+  {
+    key: 'box.imageVercel',
+    type: 'string',
+    description: 'Per-provider override of `box.image` for vercel (snapshot id, e.g. `snap_…`). Written by `agentbox prepare --provider vercel`.',
     advanced: true,
   },
   {

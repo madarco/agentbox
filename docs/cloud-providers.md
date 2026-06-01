@@ -49,6 +49,21 @@ just implements the SDK primitives (`provision`, `exec`, `uploadFile`,
 
 This split is why "add a new cloud" is small: only the SDK shim differs.
 
+### 1.1 Per-provider base-image pins
+
+Each provider's `agentbox prepare --provider X` writes the resulting
+identifier into a per-provider config key — `box.imageDocker` /
+`box.imageDaytona` / `box.imageHetzner` / `box.imageVercel` — never the
+generic `box.image`. Reads resolve per-provider first, then fall back to
+`box.image`, then to the built-in `agentbox/box:dev` sentinel. This
+prevents the cross-provider footgun where running `prepare --provider
+vercel` would pin a `snap_…` id into the generic key and then break
+subsequent `create --provider hetzner` calls (Hetzner doesn't know that
+id). `--image <ref>` on `create` is resolved at the call site and wins
+over both the per-provider and generic keys. As a one-shot migration,
+any `prepare` that finds a stale non-default `box.image` in project
+config unsets it and logs a warning.
+
 ## 2. The Daytona shape
 
 ### 2.0 Sizing
