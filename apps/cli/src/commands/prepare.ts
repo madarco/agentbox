@@ -292,34 +292,36 @@ export async function runPrepare(
             `Run \`agentbox config set --project ${configKey} ${result.snapshotName}\` manually.`,
         );
       }
-      // One-shot migration: pre-fix builds all wrote to the generic
-      // `box.image`, so any non-default value still there was set by a
-      // previous prepare for SOME provider and is now poisoning the others.
-      // Clean it up so the resolver falls back to the right per-provider
-      // key going forward. Manual docker overrides survive via the warning.
-      try {
-        const cfg = await loadEffectiveConfig(cwd).catch(() => null);
-        const projectImage = cfg?.layers.project.values.box?.image;
-        if (
-          typeof projectImage === 'string' &&
-          projectImage.length > 0 &&
-          projectImage !== DEFAULT_BOX_IMAGE
-        ) {
-          const cleared = await unsetConfigValue('project', 'box.image', cwd);
-          if (cleared.existed) {
-            log.warn(
-              `migrated stale \`box.image\` from a previous prepare (was \`${projectImage}\`); ` +
-                `re-set manually if you actually meant it: \`agentbox config set --project box.image <ref>\``,
-            );
-          }
-        }
-      } catch (err) {
-        // Best-effort migration — don't fail the prepare command on it.
-        const msg = err instanceof Error ? err.message : String(err);
-        log.warn(`could not migrate stale box.image (continuing): ${msg}`);
-      }
     } else {
       sp.stop(`${providerName.slice(0, 1).toUpperCase() + providerName.slice(1)} provider ready`);
+    }
+    // One-shot migration of stale generic `box.image`. Pre-fix builds wrote
+    // every cloud prepare's snapshot id into the shared key, so any
+    // non-default value still there is poisoning every provider that
+    // doesn't recognize it. Runs after ANY successful prepare (including
+    // docker, which doesn't write a snapshot name itself) so the cleanup
+    // happens the first time the user re-prepares anywhere. Manual
+    // docker overrides survive via the warning + one-line re-set hint.
+    try {
+      const cfg = await loadEffectiveConfig(cwd).catch(() => null);
+      const projectImage = cfg?.layers.project.values.box?.image;
+      if (
+        typeof projectImage === 'string' &&
+        projectImage.length > 0 &&
+        projectImage !== DEFAULT_BOX_IMAGE
+      ) {
+        const cleared = await unsetConfigValue('project', 'box.image', cwd);
+        if (cleared.existed) {
+          log.warn(
+            `migrated stale \`box.image\` from a previous prepare (was \`${projectImage}\`); ` +
+              `re-set manually if you actually meant it: \`agentbox config set --project box.image <ref>\``,
+          );
+        }
+      }
+    } catch (err) {
+      // Best-effort migration — don't fail the prepare command on it.
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`could not migrate stale box.image (continuing): ${msg}`);
     }
 
     if (!opts.suppressStatus) {
