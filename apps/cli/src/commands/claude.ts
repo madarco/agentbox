@@ -61,6 +61,7 @@ import {
   type ResolvedTeleport,
   type ResumeMode,
 } from '../session-teleport/index.js';
+import { resolvePlanTeleport } from '../session-teleport/plan.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { makeProgressReporter } from '../lib/progress.js';
 import { printLaunchRecap } from '../lib/launch-recap.js';
@@ -202,6 +203,8 @@ interface ClaudeCreateOptions {
   continue?: boolean;
   /** `--resume <id>`: teleport and resume the specified host claude session by id. */
   resume?: string;
+  /** `--plan <path>`: copy a host plan file into the box, start in plan mode, seed a resume prompt. */
+  plan?: string;
 }
 
 function buildClaudeCliOverrides(opts: ClaudeCreateOptions): Partial<UserConfig> {
@@ -450,6 +453,10 @@ export const claudeCommand = new Command('claude')
     '--resume <id>',
     'teleport the specified host Claude Code session id into the box and resume from it',
   )
+  .option(
+    '--plan <path>',
+    'copy a Claude Code plan file (e.g. ~/.claude/plans/<slug>.md) into the box, launch claude with --permission-mode plan, and seed a "resume the plan" prompt',
+  )
   .argument(
     '[claude-args...]',
     "extra args passed to claude inside the box; place after `--`, e.g. `agentbox claude -- --model sonnet`",
@@ -475,6 +482,13 @@ export const claudeCommand = new Command('claude')
       cmdLog.close();
       process.exit(2);
     }
+    // --plan seeds an interactive "resume the plan" turn, which is incompatible
+    // with -i's background-queue mode (the same reason resume + -i is rejected).
+    if (opts.plan && opts.initialPrompt && opts.initialPrompt.length > 0) {
+      log.error('--plan cannot be combined with -i / --initial-prompt (--plan already seeds an interactive "resume the plan" turn).');
+      cmdLog.close();
+      process.exit(2);
+    }
     // Pre-flight: resolve the host session BEFORE any box work so a missing
     // session id fails fast (the user doesn't pay for a doomed box).
     let resumePrepared: ResolvedTeleport | null = null;
@@ -484,6 +498,25 @@ export const claudeCommand = new Command('claude')
           agent: 'claude',
           hostCwd: opts.workspace,
           mode: resumeMode,
+          log: (line) => cmdLog.write(line),
+        });
+      } catch (err) {
+        if (err instanceof TeleportError) {
+          log.error(err.message);
+          cmdLog.close();
+          process.exit(2);
+        }
+        throw err;
+      }
+    }
+    // Pre-flight the plan file too: a bad --plan path should fail before any box
+    // work. forwardArgs is empty; the plan drives prompt + permission-mode below.
+    let planPrepared: ResolvedTeleport | null = null;
+    if (opts.plan) {
+      try {
+        planPrepared = await resolvePlanTeleport({
+          planPath: opts.plan,
+          hostCwd: opts.workspace,
           log: (line) => cmdLog.write(line),
         });
       } catch (err) {
@@ -626,7 +659,19 @@ export const claudeCommand = new Command('claude')
       withEnv: cfg.effective.box.withEnv,
     });
     let effectiveClaudeArgs = claudeArgs;
-    if (wiz.action === 'launch-with-prompt' && wiz.initialPrompt) {
+    // --plan: enter plan mode and seed a "resume the plan" turn. Adding
+    // --permission-mode before applyClaudeSkipPermissions makes the latter treat
+    // it as a conflict and skip --dangerously-skip-permissions (plan mode wins).
+    if (planPrepared) {
+      const hasPermissionMode = effectiveClaudeArgs.some(
+        (a) => a === '--permission-mode' || a.startsWith('--permission-mode='),
+      );
+      if (!hasPermissionMode) {
+        effectiveClaudeArgs = [...effectiveClaudeArgs, '--permission-mode', 'plan'];
+      }
+      const planPrompt = `Resume the plan at ~/.claude/plans/${planPrepared.sessionId}`;
+      effectiveClaudeArgs = buildPromptArgs('claude-code', planPrompt, effectiveClaudeArgs);
+    } else if (wiz.action === 'launch-with-prompt' && wiz.initialPrompt) {
       effectiveClaudeArgs = buildPromptArgs('claude-code', wiz.initialPrompt, claudeArgs);
     }
     // Auto-accept tool use by default (boxes are isolated). One injection here
@@ -685,26 +730,37 @@ export const claudeCommand = new Command('claude')
         verbose: opts.verbose === true,
         openIn: cfg.effective.attach.openIn,
         attach: opts.attach !== false,
-        beforeStart: resumePrepared
-          ? async (box) => {
-              try {
-                await uploadTeleport({
-                  box,
-                  provider,
-                  resolved: resumePrepared!,
-                  log: (line) => cmdLog.write(line),
-                });
-                return { agentArgsPrefix: resumePrepared!.forwardArgs };
-              } catch (err) {
-                if (err instanceof TeleportError) {
-                  log.error(err.message);
-                  cmdLog.close();
-                  process.exit(2);
+        beforeStart:
+          resumePrepared || planPrepared
+            ? async (box) => {
+                try {
+                  if (resumePrepared) {
+                    await uploadTeleport({
+                      box,
+                      provider,
+                      resolved: resumePrepared,
+                      log: (line) => cmdLog.write(line),
+                    });
+                  }
+                  if (planPrepared) {
+                    await uploadTeleport({
+                      box,
+                      provider,
+                      resolved: planPrepared,
+                      log: (line) => cmdLog.write(line),
+                    });
+                  }
+                  return { agentArgsPrefix: resumePrepared?.forwardArgs ?? [] };
+                } catch (err) {
+                  if (err instanceof TeleportError) {
+                    log.error(err.message);
+                    cmdLog.close();
+                    process.exit(2);
+                  }
+                  throw err;
                 }
-                throw err;
               }
-            }
-          : undefined,
+            : undefined,
       });
       return;
     }
@@ -789,6 +845,34 @@ export const claudeCommand = new Command('claude')
         } catch (err) {
           if (err instanceof TeleportError) {
             s.stop('teleport failed');
+            log.error(err.message);
+            log.info(
+              `The box ${result.record.container} is up but unused. Destroy it with: agentbox destroy ${result.record.container} -y`,
+            );
+            cmdLog.close();
+            process.exit(2);
+          }
+          throw err;
+        }
+      }
+
+      if (planPrepared) {
+        s.message('uploading plan into box');
+        cmdLog.write('uploading plan into box');
+        try {
+          const provider = await providerForBox(result.record);
+          await uploadTeleport({
+            box: result.record,
+            provider,
+            resolved: planPrepared,
+            log: (line) => {
+              s.message(clampSpinnerLine(line));
+              cmdLog.write(line);
+            },
+          });
+        } catch (err) {
+          if (err instanceof TeleportError) {
+            s.stop('plan upload failed');
             log.error(err.message);
             log.info(
               `The box ${result.record.container} is up but unused. Destroy it with: agentbox destroy ${result.record.container} -y`,

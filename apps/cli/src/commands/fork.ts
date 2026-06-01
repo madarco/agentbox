@@ -29,6 +29,7 @@ interface ForkOptions {
   attachIn?: string;
   carryYes?: boolean;
   agent?: string;
+  plan?: string;
 }
 
 /** fork's attach modes: claude's split|window|tab|same plus `background`
@@ -119,7 +120,10 @@ export const forkCommand = new Command('fork')
     '--session <id>',
     'host agent session id to resume (default: the newest session for this cwd; claude refuses if several were used recently). Ignored for --agent opencode.',
   )
-  .option('--provider <name>', "sandbox backend: 'docker' (default), 'daytona', or 'hetzner'")
+  .option(
+    '--provider <name>',
+    "sandbox backend: 'docker' (default), 'daytona', or 'hetzner', or 'vercel'",
+  )
   .option('-n, --name <name>', 'box name (default: fork-<HHMMSS>)')
   .option(
     '--attach-in <mode>',
@@ -128,6 +132,10 @@ export const forkCommand = new Command('fork')
   .option(
     '--carry-yes',
     "auto-approve agentbox.yaml's carry: block (fork skips carry by default — it does not silently re-copy host files into the new box)",
+  )
+  .option(
+    '--plan <path>',
+    'copy a Claude Code plan file (e.g. ~/.claude/plans/<slug>.md) into the box, start claude in plan mode, and seed a "resume the plan" prompt. Claude only.',
   )
   .action(async (opts: ForkOptions) => {
     // Box→box guard: AGENTBOX_RELAY_URL is only set inside a box. Fork teleports
@@ -153,6 +161,13 @@ export const forkCommand = new Command('fork')
       process.exit(2);
     }
 
+    // --plan resumes a Claude Code plan; codex/opencode have no plan-mode equivalent.
+    const plan = opts.plan?.trim();
+    if (plan && agent !== 'claude') {
+      log.error('--plan is only supported with --agent claude (plan mode is Claude-specific).');
+      process.exit(2);
+    }
+
     // Tolerate an LLM passing `--provider ""` (or whitespace): treat a blank
     // value as "not passed" so it falls through to the default docker provider.
     const provider = opts.provider?.trim();
@@ -173,6 +188,7 @@ export const forkCommand = new Command('fork')
       '-n',
       opts.name ?? defaultForkName(),
       ...(provider ? ['--provider', provider] : []),
+      ...(plan ? ['--plan', plan] : []),
       ...sessionArgs,
       ...resolveAttachArgs(attachIn),
     ];
