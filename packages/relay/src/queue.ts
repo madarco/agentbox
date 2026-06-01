@@ -82,6 +82,8 @@ export interface QueueJobCreateOpts {
   withPlaywright?: boolean;
   withEnv?: boolean;
   vnc?: boolean;
+  /** `--no-resync` → false; resync the box with the host on (checkpoint) create. */
+  resync?: boolean;
   sharedDockerCache?: boolean;
   portless?: boolean;
   sessionName?: string;

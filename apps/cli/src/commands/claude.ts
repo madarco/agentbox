@@ -40,6 +40,8 @@ import {
   MissingAgentCredsError,
 } from '../lib/queue/assert-creds.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
+import { maybeResyncWorkspace } from '../lib/resync-start.js';
+import { buildResyncWarning } from '../lib/resync-warning.js';
 import { applyClaudeSkipPermissions } from '../lib/skip-permissions.js';
 import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
@@ -92,6 +94,7 @@ function pickCreateOpts(opts: ClaudeCreateOptions): import('@agentbox/relay').Qu
     withPlaywright: opts.withPlaywright,
     withEnv: opts.withEnv,
     vnc: opts.vnc,
+    resync: opts.resync,
     sharedDockerCache: opts.sharedDockerCache,
     portless: opts.portless,
     sessionName: opts.sessionName,
@@ -168,6 +171,7 @@ interface ClaudeCreateOptions {
   /** --carry <mode>: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
   carry?: 'skip' | 'ask';
   vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
+  resync?: boolean; // commander: --no-resync => false; default true (config box.resyncOnStart)
   sharedDockerCache?: boolean;
   portless?: boolean; // commander: --portless / --no-portless => true / false / undefined
   sessionName?: string;
@@ -400,6 +404,10 @@ export const claudeCommand = new Command('claude')
     'copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at create time (gitignore-bypassing)',
   )
   .option('--no-vnc', 'disable the per-box Xvnc + noVNC web client (on by default)')
+  .option(
+    '--no-resync',
+    "do not sync the box with the host on start (default: merge the host's current branch + overlay its uncommitted/untracked changes, keeping the box's version on conflict)",
+  )
   .option(
     '--shared-docker-cache',
     "use the shared 'agentbox-docker-cache' volume for in-box docker images (preserved on destroy; only one box can run at a time when set)",
@@ -800,6 +808,7 @@ export const claudeCommand = new Command('claude')
         checkpointRef,
         fromBranch,
         useBranch,
+        resyncOnStart: opts.resync,
         image: cfg.effective.box.image,
         claudeConfig: { isolate: cfg.effective.box.isolateClaudeConfig },
         claudeEnv: resolved.env,
@@ -893,6 +902,20 @@ export const claudeCommand = new Command('claude')
         }
       }
 
+      // On-create resync conflicts (checkpoint-restore path): inject the
+      // warning as the opening turn when no other seed is set, else surface it
+      // on stderr (a plan/wizard/resume seed already owns the first turn).
+      const createResyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
+      let pendingCreateResyncWarn: string | null = null;
+      if (createResyncWarning) {
+        const hasSeed =
+          Boolean(planPrepared) ||
+          (wiz.action === 'launch-with-prompt' && Boolean(wiz.initialPrompt)) ||
+          Boolean(resumePrepared);
+        if (hasSeed) pendingCreateResyncWarn = createResyncWarning;
+        else effectiveClaudeArgs = buildPromptArgs('claude-code', createResyncWarning, effectiveClaudeArgs);
+      }
+
       s.message('starting claude session');
       await startClaudeSession({
         container: result.record.container,
@@ -900,6 +923,7 @@ export const claudeCommand = new Command('claude')
         sessionName,
         boxName: result.record.name,
       });
+      if (pendingCreateResyncWarn) log.warn(pendingCreateResyncWarn);
 
       const nSuffix =
         typeof result.record.projectIndex === 'number'
@@ -954,6 +978,7 @@ interface ClaudeStartOptions {
   sessionName?: string;
   /** Inherited from the parent `claude` command via optsWithGlobals. */
   dangerouslySkipPermissions?: boolean;
+  resync?: boolean; // commander: --no-resync => false; default true (config box.resyncOnStart)
   syncConfig?: boolean; // commander: --no-sync-config => false; default true
   attachIn?: string; // raw `--attach-in <mode>` value, validated below.
   inline?: boolean; // -i / --inline: shortcut for --attach-in same.
@@ -981,6 +1006,7 @@ async function startOrAttachClaude(
     };
   }
   if (attachIn !== undefined) cliOverrides.attach = { openIn: attachIn };
+  if (opts.resync !== undefined) cliOverrides.box = { resyncOnStart: opts.resync };
   const cfg = await loadEffectiveConfig(box.workspacePath, { cliOverrides });
   const sessionName = cfg.effective.claude.sessionName;
   const openIn = cfg.effective.attach.openIn;
@@ -1036,6 +1062,7 @@ async function startOrAttachClaude(
 
   // Auto-unpause/start. `startBox` relaunches
   // ctl/vnc/dockerd because those processes die with the container.
+  const wasDown = insp.state === 'paused' || insp.state === 'stopped';
   if (insp.state === 'paused') {
     s.message('unpausing box');
     await unpauseBox(box.id);
@@ -1043,6 +1070,18 @@ async function startOrAttachClaude(
     s.message('starting box');
     await startBox(box.id);
   }
+
+  // Resync the workspace with the host (merge host's current branch + overlay
+  // its uncommitted/untracked changes, box wins on conflict). Gated to docker
+  // and to the down→up transition: a box that was already running may have a
+  // live agent session whose files we must not mutate underneath it. We're
+  // past the `existing.running` early-return, so this agent isn't live.
+  const resyncWarning = await maybeResyncWorkspace({
+    box,
+    enabled: cfg.effective.box.resyncOnStart && wasDown,
+    projectRoot: cfg.projectRoot,
+    spinner: s,
+  });
 
   // Re-sync the host's ~/.claude into the box volume so any updates the user
   // made on the host (new MCP servers, refreshed OAuth state in _claude.json,
@@ -1110,6 +1149,13 @@ async function startOrAttachClaude(
     }
   }
 
+  // Inject the resync conflict warning as the agent's opening turn. A resumed
+  // session rides `--resume <id>` with no clean first user turn, so surface the
+  // warning on stderr after the spinner stops instead.
+  if (resyncWarning && !resumePrepared) {
+    effectiveArgs = buildPromptArgs('claude-code', resyncWarning, effectiveArgs);
+  }
+
   s.message('starting claude session');
   await startClaudeSession({
     container: box.container,
@@ -1119,6 +1165,7 @@ async function startOrAttachClaude(
   });
 
   s.stop(`box ${box.container} ready`);
+  if (resyncWarning && resumePrepared) log.warn(resyncWarning);
   logPrune(rebuild);
   for (const f of rebuild.failed) {
     log.warn(`plugin install failed for ${f.dir}; claude may still load it. stderr:\n${f.stderr.trim()}`);

@@ -43,6 +43,7 @@ import {
   collectRepoCarryOver,
   gitWorktreePathFor,
   removeInBoxWorktree,
+  resyncWorkspaceFromHost,
   seedWorkspace,
   seedWorkspaceFromDir,
   type RepoCarryOver,
@@ -72,7 +73,7 @@ import {
   type BoxRecord,
   type GitWorktreeRecord,
 } from './state.js';
-import { generateBoxId, type ResolvedCarryEntry } from '@agentbox/core';
+import { generateBoxId, type ResolvedCarryEntry, type ResyncResult } from '@agentbox/core';
 import { createSnapshot, snapshotPathFor } from './snapshot.js';
 import { resolveCheckpoint } from './checkpoint.js';
 import {
@@ -132,6 +133,13 @@ export interface CreateBoxOptions {
    * `fromBranch` (enforced by the CLI).
    */
   useBranch?: string;
+  /**
+   * When starting from a checkpoint, merge the host's current branch into the
+   * restored worktree and overlay the host's uncommitted/untracked changes
+   * (box wins on conflict). Defaults to true. No effect on a non-checkpoint
+   * fresh create (which already forks from HEAD + carry-over).
+   */
+  resyncOnStart?: boolean;
   image?: string;
   /** Try the registry before building the base image. Defaults to true. */
   allowPull?: boolean;
@@ -241,6 +249,8 @@ export interface CreateBoxOptions {
 export interface CreatedBox {
   record: BoxRecord;
   imageBuilt: boolean;
+  /** Conflicts from the on-create resync (checkpoint-restore path). Absent when no resync ran. */
+  resync?: ResyncResult;
 }
 
 /**
@@ -338,6 +348,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   let checkpointImage: string | undefined;
   let checkpointSource: BoxRecord['checkpointSource'];
   let restoredWorktrees: GitWorktreeRecord[] | undefined;
+  let resyncResult: ResyncResult | undefined;
   if (opts.checkpointRef) {
     const projectRootForCkpt = opts.projectRoot ?? workspace;
     const head = await resolveCheckpoint(projectRootForCkpt, opts.checkpointRef);
@@ -896,6 +907,23 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       log,
     );
     log('re-bound /workspace from checkpoint image');
+    // The restored worktree is at the checkpoint's (stale) state. Merge the
+    // host's current branch in + overlay the host's uncommitted/untracked
+    // changes so the box matches a fresh create from current HEAD (box wins on
+    // conflict). Non-checkpoint creates already fork from HEAD + carry-over.
+    if (opts.resyncOnStart !== false) {
+      const repos = await resyncWorkspaceFromHost({
+        container: containerName,
+        worktrees: restoredWorktrees,
+        onLog: log,
+      });
+      resyncResult = {
+        repos,
+        hadConflicts: repos.some(
+          (r) => r.mergeConflicts.length > 0 || r.overlaySkipped.length > 0,
+        ),
+      };
+    }
   } else {
     log('using /workspace from checkpoint image (no worktrees recorded; no rebind)');
   }
@@ -1097,5 +1125,5 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   };
   await recordBox(record);
 
-  return { record, imageBuilt: built };
+  return { record, imageBuilt: built, resync: resyncResult };
 }

@@ -49,6 +49,7 @@ export interface UserConfig {
     sizeVercel?: string;
     withPlaywright?: boolean;
     withEnv?: boolean;
+    resyncOnStart?: boolean;
     vnc?: boolean;
     isolateClaudeConfig?: boolean;
     isolateCodexConfig?: boolean;
@@ -162,6 +163,7 @@ export interface EffectiveConfig {
     sizeVercel: string;
     withPlaywright: boolean;
     withEnv: boolean;
+    resyncOnStart: boolean;
     vnc: boolean;
     isolateClaudeConfig: boolean;
     isolateCodexConfig: boolean;
@@ -289,6 +291,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     sizeVercel: '',
     withPlaywright: false,
     withEnv: false,
+    resyncOnStart: true,
     vnc: true,
     isolateClaudeConfig: false,
     isolateCodexConfig: false,
@@ -492,6 +495,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'bool',
     description:
       'Copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at box create time (gitignore-bypassing).',
+  },
+  {
+    key: 'box.resyncOnStart',
+    type: 'bool',
+    description:
+      "Merge the host's current branch into the box and overlay the host's uncommitted/untracked changes when starting an agent session (keeps the box's version on conflict and warns the agent).",
   },
   {
     key: 'box.vnc',

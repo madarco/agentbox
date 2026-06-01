@@ -106,6 +106,13 @@ export interface CreateBoxRequest {
    * before any provider work.
    */
   useBranch?: string;
+  /**
+   * When starting from a checkpoint, merge the host's current branch into the
+   * restored worktree + overlay its uncommitted/untracked changes (box wins on
+   * conflict). Defaults to true. Docker-honored; cloud providers ignore it for
+   * now (Phase 2).
+   */
+  resyncOnStart?: boolean;
   /** Provider-specific knobs (docker: sharedCache/portless; daytona: resources/region). */
   providerOptions?: Record<string, unknown>;
   onLog?: (line: string) => void;
@@ -115,6 +122,32 @@ export interface CreatedBox {
   record: BoxRecord;
   /** True when the provider had to build/provision the base image just now. */
   imageBuilt?: boolean;
+  /**
+   * Result of the on-create workspace resync (the checkpoint-restore path
+   * merges the box up to the host's current branch). Absent when no resync
+   * ran (e.g. a non-checkpoint fresh create, which already forks from HEAD).
+   */
+  resync?: ResyncResult;
+}
+
+/**
+ * Outcome of a host→box workspace resync (`Provider.resyncWorkspace`): merge
+ * the host's current branch into the box's per-box branch and overlay the
+ * host's uncommitted/untracked changes, favoring the box on conflict. Conflicts
+ * are not left as markers — the host change is skipped and the box's version
+ * kept — and reported here so the caller can warn the agent.
+ */
+export interface ResyncResult {
+  repos: {
+    /** Agent-visible worktree path (`/workspace` or `/workspace/<sub>`). */
+    containerPath: string;
+    /** Paths where merging host commits conflicted; box version kept. */
+    mergeConflicts: string[];
+    /** Paths where overlaying host uncommitted/untracked was skipped to keep the box version. */
+    overlaySkipped: string[];
+  }[];
+  /** True if any repo skipped a host change to keep the box version. */
+  hadConflicts: boolean;
 }
 
 export interface InspectedBox {
@@ -258,6 +291,16 @@ export interface Provider {
   resume(box: BoxRecord): Promise<void>;
   stop(box: BoxRecord): Promise<void>;
   destroy(box: BoxRecord, opts?: { keepSnapshot?: boolean }): Promise<void>;
+
+  /**
+   * Resync the box's workspace with the host's current state: merge the host's
+   * checked-out branch into the box's per-box branch and overlay the host's
+   * uncommitted/untracked changes, keeping the box's version on conflict. The
+   * CLI calls this on agent-session starts (gated by `box.resyncOnStart`).
+   * Optional — providers that can't reach a live host workspace omit it and the
+   * CLI skips resync for that provider.
+   */
+  resyncWorkspace?(box: BoxRecord): Promise<ResyncResult>;
 
   // ---- query ----
   inspect(box: BoxRecord): Promise<InspectedBox>;

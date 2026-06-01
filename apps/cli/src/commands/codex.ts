@@ -42,6 +42,9 @@ import {
 } from '../lib/queue/assert-creds.js';
 import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
+import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
+import { maybeResyncWorkspace } from '../lib/resync-start.js';
+import { buildResyncWarning } from '../lib/resync-warning.js';
 import { applyCodexSkipPermissions } from '../lib/skip-permissions.js';
 import {
   ATTACH_IN_HELP,
@@ -85,6 +88,7 @@ function pickCodexCreateOpts(opts: CodexCreateOptions): import('@agentbox/relay'
     withPlaywright: opts.withPlaywright,
     withEnv: opts.withEnv,
     vnc: opts.vnc,
+    resync: opts.resync,
     sharedDockerCache: opts.sharedDockerCache,
     portless: opts.portless,
     sessionName: opts.sessionName,
@@ -145,6 +149,7 @@ interface CodexCreateOptions {
   /** --carry <mode>: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
   carry?: 'skip' | 'ask';
   vnc?: boolean; // commander: --no-vnc => false; default true
+  resync?: boolean; // commander: --no-resync => false; default true (config box.resyncOnStart)
   sharedDockerCache?: boolean;
   portless?: boolean; // commander: --portless / --no-portless => true / false / undefined
   sessionName?: string;
@@ -343,6 +348,10 @@ export const codexCommand = new Command('codex')
     'copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at create time (gitignore-bypassing)',
   )
   .option('--no-vnc', 'disable the per-box Xvnc + noVNC web client (on by default)')
+  .option(
+    '--no-resync',
+    "do not sync the box with the host on start (default: merge the host's current branch + overlay its uncommitted/untracked changes, keeping the box's version on conflict)",
+  )
   .option(
     '--shared-docker-cache',
     "use the shared 'agentbox-docker-cache' volume for in-box docker images (preserved on destroy; only one box can run at a time when set)",
@@ -627,6 +636,7 @@ export const codexCommand = new Command('codex')
         checkpointRef,
         fromBranch,
         useBranch,
+        resyncOnStart: opts.resync,
         image: cfg.effective.box.image,
         codexConfig: { isolate: cfg.effective.box.isolateCodexConfig },
         withPlaywright,
@@ -687,6 +697,13 @@ export const codexCommand = new Command('codex')
         }
       }
 
+      // On-create resync conflicts (checkpoint-restore path): inject as codex's
+      // opening turn, unless a resumed session already owns the first turn.
+      const createResyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
+      if (createResyncWarning && !resumePrepared) {
+        effectiveCodexArgs = buildPromptArgs('codex', createResyncWarning, effectiveCodexArgs);
+      }
+
       s.message('starting codex session');
       await startCodexSession({
         container: result.record.container,
@@ -699,6 +716,7 @@ export const codexCommand = new Command('codex')
           ? `  ·  n ${String(result.record.projectIndex)}`
           : '';
       s.stop(`box ready${nSuffix}`);
+      if (createResyncWarning && resumePrepared) log.warn(createResyncWarning);
 
       await printLaunchRecap({
         record: result.record,
@@ -742,6 +760,7 @@ interface CodexStartOptions {
   sessionName?: string;
   /** Inherited from the parent `codex` command via optsWithGlobals. */
   dangerouslySkipPermissions?: boolean;
+  resync?: boolean; // commander: --no-resync => false; default true (config box.resyncOnStart)
   syncConfig?: boolean; // commander: --no-sync-config => false; default true
   attachIn?: string; // raw `--attach-in <mode>` value, validated below.
   inline?: boolean; // -i / --inline: shortcut for --attach-in same.
@@ -769,6 +788,7 @@ async function startOrAttachCodex(
     };
   }
   if (attachIn !== undefined) cliOverrides.attach = { openIn: attachIn };
+  if (opts.resync !== undefined) cliOverrides.box = { resyncOnStart: opts.resync };
   const cfg = await loadEffectiveConfig(box.workspacePath, { cliOverrides });
   const sessionName = cfg.effective.codex.sessionName;
   const openIn = cfg.effective.attach.openIn;
@@ -806,6 +826,7 @@ async function startOrAttachCodex(
   s.start('preparing box');
 
   // Auto-unpause/start. `startBox` relaunches ctl/vnc/dockerd.
+  const wasDown = insp.state === 'paused' || insp.state === 'stopped';
   if (insp.state === 'paused') {
     s.message('unpausing box');
     await unpauseBox(box.id);
@@ -813,6 +834,15 @@ async function startOrAttachCodex(
     s.message('starting box');
     await startBox(box.id);
   }
+
+  // Resync the workspace with the host (docker-only, down→up transition only so
+  // we never mutate files under a live agent). See claude.ts for the rationale.
+  const resyncWarning = await maybeResyncWorkspace({
+    box,
+    enabled: cfg.effective.box.resyncOnStart && wasDown,
+    projectRoot: cfg.projectRoot,
+    spinner: s,
+  });
 
   // Re-sync host ~/.codex into the box volume (default; opt out with
   // --no-sync-config). Skipped for `codex attach`, and for boxes that have no
@@ -860,10 +890,17 @@ async function startOrAttachCodex(
     }
   }
 
+  // Inject the resync conflict warning as codex's opening turn (resume rides
+  // `--resume`, so surface it on stderr after the spinner stops instead).
+  if (resyncWarning && !resumePrepared) {
+    effectiveArgs = buildPromptArgs('codex', resyncWarning, effectiveArgs);
+  }
+
   s.message('starting codex session');
   await startCodexSession({ container: box.container, codexArgs: effectiveArgs, sessionName });
 
   s.stop(`box ${box.container} ready`);
+  if (resyncWarning && resumePrepared) log.warn(resyncWarning);
 
   if (!wantAttach) {
     outro(

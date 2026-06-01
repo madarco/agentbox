@@ -42,6 +42,8 @@ import {
 } from '../lib/queue/assert-creds.js';
 import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
+import { maybeResyncWorkspace } from '../lib/resync-start.js';
+import { buildResyncWarning } from '../lib/resync-warning.js';
 import {
   ATTACH_IN_HELP,
   INLINE_HELP,
@@ -78,6 +80,7 @@ function pickOpencodeCreateOpts(opts: OpencodeCreateOptions): import('@agentbox/
     withPlaywright: opts.withPlaywright,
     withEnv: opts.withEnv,
     vnc: opts.vnc,
+    resync: opts.resync,
     sharedDockerCache: opts.sharedDockerCache,
     portless: opts.portless,
     sessionName: opts.sessionName,
@@ -134,6 +137,7 @@ interface OpencodeCreateOptions {
   /** --carry <mode>: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
   carry?: 'skip' | 'ask';
   vnc?: boolean; // commander: --no-vnc => false; default true
+  resync?: boolean; // commander: --no-resync => false; default true (config box.resyncOnStart)
   sharedDockerCache?: boolean;
   portless?: boolean; // commander: --portless / --no-portless => true / false / undefined
   sessionName?: string;
@@ -329,6 +333,10 @@ export const opencodeCommand = new Command('opencode')
     'copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at create time (gitignore-bypassing)',
   )
   .option('--no-vnc', 'disable the per-box Xvnc + noVNC web client (on by default)')
+  .option(
+    '--no-resync',
+    "do not sync the box with the host on start (default: merge the host's current branch + overlay its uncommitted/untracked changes, keeping the box's version on conflict)",
+  )
   .option(
     '--shared-docker-cache',
     "use the shared 'agentbox-docker-cache' volume for in-box docker images (preserved on destroy; only one box can run at a time when set)",
@@ -583,6 +591,7 @@ export const opencodeCommand = new Command('opencode')
         checkpointRef,
         fromBranch,
         useBranch,
+        resyncOnStart: opts.resync,
         image: cfg.effective.box.image,
         opencodeConfig: { isolate: cfg.effective.box.isolateOpencodeConfig },
         withPlaywright,
@@ -619,12 +628,14 @@ export const opencodeCommand = new Command('opencode')
         opencodeArgs,
         sessionName,
       });
+      const createResyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
 
       const nSuffix =
         typeof result.record.projectIndex === 'number'
           ? `  ·  n ${String(result.record.projectIndex)}`
           : '';
       s.stop(`box ready${nSuffix}`);
+      if (createResyncWarning) log.warn(createResyncWarning);
 
       await printLaunchRecap({
         record: result.record,
@@ -666,6 +677,7 @@ export const opencodeCommand = new Command('opencode')
 
 interface OpencodeStartOptions {
   sessionName?: string;
+  resync?: boolean; // commander: --no-resync => false; default true (config box.resyncOnStart)
   syncConfig?: boolean; // commander: --no-sync-config => false; default true
   attachIn?: string; // raw `--attach-in <mode>` value, validated below.
   inline?: boolean; // -i / --inline: shortcut for --attach-in same.
@@ -686,6 +698,7 @@ async function startOrAttachOpencode(
   const cliOverrides: Partial<UserConfig> = {};
   if (opts.sessionName) cliOverrides.opencode = { sessionName: opts.sessionName };
   if (attachIn !== undefined) cliOverrides.attach = { openIn: attachIn };
+  if (opts.resync !== undefined) cliOverrides.box = { resyncOnStart: opts.resync };
   const cfg = await loadEffectiveConfig(box.workspacePath, { cliOverrides });
   const sessionName = cfg.effective.opencode.sessionName;
   const openIn = cfg.effective.attach.openIn;
@@ -718,6 +731,7 @@ async function startOrAttachOpencode(
   s.start('preparing box');
 
   // Auto-unpause/start. `startBox` relaunches ctl/vnc/dockerd.
+  const wasDown = insp.state === 'paused' || insp.state === 'stopped';
   if (insp.state === 'paused') {
     s.message('unpausing box');
     await unpauseBox(box.id);
@@ -725,6 +739,16 @@ async function startOrAttachOpencode(
     s.message('starting box');
     await startBox(box.id);
   }
+
+  // Resync the workspace with the host (docker-only, down→up transition only).
+  // OpenCode's interactive launch takes no seed prompt, so any conflict warning
+  // is surfaced on stderr rather than injected.
+  const resyncWarning = await maybeResyncWorkspace({
+    box,
+    enabled: cfg.effective.box.resyncOnStart && wasDown,
+    projectRoot: cfg.projectRoot,
+    spinner: s,
+  });
 
   // Re-sync the host's OpenCode config/auth into the box volume (default; opt
   // out with --no-sync-config). Skipped for `opencode attach`, and for boxes
@@ -749,6 +773,7 @@ async function startOrAttachOpencode(
   await startOpencodeSession({ container: box.container, opencodeArgs, sessionName });
 
   s.stop(`box ${box.container} ready`);
+  if (resyncWarning) log.warn(resyncWarning);
 
   if (!wantAttach) {
     outro(

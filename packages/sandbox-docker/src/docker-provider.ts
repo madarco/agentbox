@@ -60,6 +60,7 @@ export const dockerProvider: Provider = {
       checkpointRef: req.checkpointRef,
       fromBranch: req.fromBranch,
       useBranch: req.useBranch,
+      resyncOnStart: req.resyncOnStart,
       image: req.image,
       allowPull: req.allowPull,
       imageRegistry: req.imageRegistry,
@@ -83,6 +84,7 @@ export const dockerProvider: Provider = {
     return {
       record: { ...result.record, provider: 'docker' },
       imageBuilt: result.imageBuilt,
+      resync: result.resync,
     };
   },
 

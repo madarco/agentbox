@@ -1,4 +1,5 @@
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -705,8 +706,47 @@ export interface CopyCarryOptions {
 export interface CopyCarryResult {
   copied: number;
   errors: string[];
-  /** Audit summary for BoxRecord.carry. */
-  applied: Array<{ src: string; dest: string; bytes: number }>;
+  /** Audit summary for BoxRecord.carry. `hash` is the host source content hash at copy time. */
+  applied: Array<{ src: string; dest: string; bytes: number; hash?: string }>;
+}
+
+/**
+ * Content hash of a carry source, used by the on-start resync to re-copy only
+ * entries whose host source changed. Files hash their bytes; dirs hash a
+ * deterministic manifest of (relpath, size, mtime). Returns undefined on a read
+ * error (treated as "changed" so a re-copy is attempted). `missing` → undefined.
+ */
+export async function carrySourceHash(entry: ResolvedCarryEntry): Promise<string | undefined> {
+  if (entry.kind === 'missing') return undefined;
+  try {
+    if (entry.kind === 'file') {
+      return createHash('sha256').update(await readFile(entry.absSrc)).digest('hex');
+    }
+    // Hash file *content* (not mtime) so a touch with identical content doesn't
+    // trigger a spurious re-copy. Carry sources are size-capped, so reading them
+    // is cheap.
+    const h = createHash('sha256');
+    const walk = async (dir: string, rel: string): Promise<void> => {
+      const names = (await readdir(dir)).sort();
+      for (const name of names) {
+        const abs = join(dir, name);
+        const relPath = rel ? `${rel}/${name}` : name;
+        const st = await stat(abs);
+        if (st.isDirectory()) {
+          h.update(`d\0${relPath}\n`);
+          await walk(abs, relPath);
+        } else {
+          h.update(`f\0${relPath}\0`);
+          h.update(await readFile(abs));
+          h.update('\n');
+        }
+      }
+    };
+    await walk(entry.absSrc, '');
+    return h.digest('hex');
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -741,7 +781,12 @@ export async function copyCarryPathsToBox(opts: CopyCarryOptions): Promise<CopyC
     try {
       await copyOneEntry(opts.container, entry);
       copied += 1;
-      applied.push({ src: entry.absSrc, dest: entry.absDest, bytes: entry.bytes ?? 0 });
+      applied.push({
+        src: entry.absSrc,
+        dest: entry.absDest,
+        bytes: entry.bytes ?? 0,
+        hash: await carrySourceHash(entry),
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`${where}: ${msg}`);

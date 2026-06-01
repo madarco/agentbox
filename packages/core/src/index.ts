@@ -37,6 +37,7 @@ export type {
   Provider,
   ProviderCheckpoint,
   ResolvedCarryEntry,
+  ResyncResult,
 } from './provider.js';
 export type {
   CloudBackend,

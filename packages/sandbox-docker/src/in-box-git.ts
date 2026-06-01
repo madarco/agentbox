@@ -1,5 +1,6 @@
 import { execa } from 'execa';
-import { execInBox } from './docker.js';
+import type { GitWorktreeRecord } from '@agentbox/core';
+import { execInBox, type DockerExecResult } from './docker.js';
 import type { DetectedGitRepo } from './git-worktree.js';
 import { GitWorktreeError } from './git-worktree.js';
 
@@ -489,4 +490,215 @@ export async function removeInBoxWorktree(args: {
 function ctParent(p: string): string {
   const i = p.lastIndexOf('/');
   return i <= 0 ? '/' : p.slice(0, i);
+}
+
+export interface ResyncWorkspaceOptions {
+  container: string;
+  /** The box's recorded worktrees (root + nested). */
+  worktrees: GitWorktreeRecord[];
+  onLog?: (line: string) => void;
+}
+
+/** Per-repo outcome of a resync — conflicts where the box's version was kept. */
+export interface RepoResyncResult {
+  containerPath: string;
+  /** Paths where merging host commits conflicted; box version kept (host change shadowed). */
+  mergeConflicts: string[];
+  /** Paths where overlaying host uncommitted/untracked was skipped to keep the box version. */
+  overlaySkipped: string[];
+}
+
+/** vscode-user git inside a box worktree, capturing exit/stdout/stderr. */
+async function gitIn(container: string, ct: string, args: string[]): Promise<DockerExecResult> {
+  return execInBox(container, ['git', '-C', ct, ...args], { user: 'vscode' });
+}
+
+/** Split a `-z` (NUL-delimited) git output into non-empty entries. */
+function splitNul(s: string): string[] {
+  return s.split('\0').filter((p) => p.length > 0);
+}
+
+/** Conflicted (unmerged) paths in the box worktree, if any. */
+async function unmergedPaths(container: string, ct: string): Promise<string[]> {
+  const r = await gitIn(container, ct, ['diff', '--name-only', '--diff-filter=U', '-z']);
+  return r.exitCode === 0 ? splitNul(r.stdout) : [];
+}
+
+/**
+ * Resync each box worktree with the host's current state: merge the host's
+ * checked-out branch into the box's per-box branch, then overlay the host's
+ * uncommitted (stash) + untracked changes. The box wins every conflict — the
+ * host change is skipped (no markers left), and the affected paths are returned
+ * so the caller can warn the agent.
+ *
+ * Docker-only: the host `.git/` is bind-mounted, so the host's branch ref is
+ * already present in the box and the merge needs no fetch (the same property
+ * create-time carry-over relies on). Best-effort throughout — a step that fails
+ * is logged and skipped rather than aborting the box start.
+ */
+export async function resyncWorkspaceFromHost(
+  opts: ResyncWorkspaceOptions,
+): Promise<RepoResyncResult[]> {
+  const log = opts.onLog ?? (() => {});
+  const results: RepoResyncResult[] = [];
+
+  for (const w of opts.worktrees) {
+    const ct = w.containerPath;
+    const hostMain = w.hostMainRepo;
+    const boxBranch = w.branch;
+    const res: RepoResyncResult = { containerPath: ct, mergeConflicts: [], overlaySkipped: [] };
+
+    // --- host state (host-side git; no side effects on the worktree) ---
+    const hostBranchProbe = await execa(
+      'git',
+      ['-C', hostMain, 'symbolic-ref', '--short', '-q', 'HEAD'],
+      { reject: false },
+    );
+    const hostRef =
+      hostBranchProbe.exitCode === 0 && hostBranchProbe.stdout.trim()
+        ? hostBranchProbe.stdout.trim()
+        : (await execa('git', ['-C', hostMain, 'rev-parse', 'HEAD'], { reject: false })).stdout.trim();
+    if (!hostRef) {
+      log(`resync: ${ct}: could not resolve host ref; skipping`);
+      results.push(res);
+      continue;
+    }
+    const stash = await execa('git', ['-C', hostMain, 'stash', 'create'], { reject: false });
+    const hostStashSha = stash.exitCode === 0 ? stash.stdout.trim() || null : null;
+    const untracked = await execa(
+      'git',
+      ['-C', hostMain, 'ls-files', '--others', '--exclude-standard', '-z'],
+      { reject: false },
+    );
+    const hostUntracked = untracked.exitCode === 0 ? splitNul(untracked.stdout) : [];
+
+    // --- merge host commits into the box branch (skip when merging self) ---
+    if (hostRef !== boxBranch) {
+      // Stash the box's own uncommitted tracked changes so the merge can run;
+      // restored on top afterward (box keeps them). Untracked box files stay.
+      const status = await gitIn(opts.container, ct, ['status', '--porcelain']);
+      const boxDirty = status.stdout
+        .split('\n')
+        .some((line) => line.length > 0 && !line.startsWith('??'));
+      let boxStashed = false;
+      if (boxDirty) {
+        const push = await gitIn(opts.container, ct, ['stash', 'push', '-m', 'agentbox-resync']);
+        boxStashed = push.exitCode === 0;
+      }
+
+      const newCommits = await gitIn(opts.container, ct, [
+        'rev-list',
+        '--count',
+        `${boxBranch}..${hostRef}`,
+      ]);
+      const n = newCommits.exitCode === 0 ? newCommits.stdout.trim() : '?';
+      const merge = await gitIn(opts.container, ct, ['merge', '--no-commit', hostRef]);
+      const mergeInProgress =
+        (await gitIn(opts.container, ct, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])).exitCode === 0;
+      const conflicts = await unmergedPaths(opts.container, ct);
+      if (conflicts.length > 0) {
+        await gitIn(opts.container, ct, ['checkout', '--ours', '--', ...conflicts]);
+        await gitIn(opts.container, ct, ['add', '--', ...conflicts]);
+        res.mergeConflicts.push(...conflicts);
+      }
+      if (mergeInProgress) {
+        await gitIn(opts.container, ct, [
+          '-c',
+          'user.name=agentbox',
+          '-c',
+          'user.email=agentbox@users.noreply.github.com',
+          'commit',
+          '--no-edit',
+        ]);
+        log(
+          `resync: ${ct}: merged ${n} new host commit(s) from ${hostRef}` +
+            (conflicts.length > 0 ? ` (${String(conflicts.length)} conflict(s) kept box version)` : ''),
+        );
+      } else if (merge.exitCode === 0) {
+        log(`resync: ${ct}: ${n === '0' ? 'already up to date' : `fast-forwarded to ${hostRef}`}`);
+      } else {
+        // Hard failure (e.g. an untracked box file would be overwritten). Leave
+        // the box untouched.
+        await gitIn(opts.container, ct, ['merge', '--abort']);
+        log(`resync: ${ct}: merge skipped (${(merge.stderr || merge.stdout).trim().split('\n')[0]})`);
+      }
+
+      if (boxStashed) {
+        const pop = await gitIn(opts.container, ct, ['stash', 'pop']);
+        if (pop.exitCode !== 0) {
+          // Box's uncommitted edits clash with the merged host change. Keep the
+          // box's version (stash side = --theirs), drop the dangling stash.
+          const popConflicts = await unmergedPaths(opts.container, ct);
+          for (const p of popConflicts) {
+            await gitIn(opts.container, ct, ['checkout', '--theirs', '--', p]);
+            await gitIn(opts.container, ct, ['reset', '-q', '--', p]);
+          }
+          await gitIn(opts.container, ct, ['stash', 'drop']);
+        }
+      }
+    }
+
+    // --- overlay host uncommitted (stash) on top, box wins on conflict ---
+    if (hostStashSha) {
+      const apply = await gitIn(opts.container, ct, ['stash', 'apply', hostStashSha]);
+      if (apply.exitCode !== 0) {
+        const conflicts = await unmergedPaths(opts.container, ct);
+        for (const p of conflicts) {
+          // ours = box working tree, theirs = host stash → keep box, unstage.
+          await gitIn(opts.container, ct, ['checkout', '--ours', '--', p]);
+          await gitIn(opts.container, ct, ['reset', '-q', '--', p]);
+        }
+        if (conflicts.length > 0) res.overlaySkipped.push(...conflicts);
+      }
+    }
+
+    // --- overlay host untracked files, skipping any the box already has ---
+    if (hostUntracked.length > 0) {
+      // Filter to paths that don't already exist in the box worktree (box wins).
+      // `ct` is passed as $1 (never interpolated) so a worktree path with spaces
+      // is safe; `bash` for `read -d ''` (NUL), which dash lacks. `|| [ -n "$f" ]`
+      // processes the final entry (the NUL-joined input has no trailing NUL, so
+      // `read` returns non-zero at EOF on the last field). The trailing `exit 0`
+      // makes success deterministic — otherwise the loop's status reflects the
+      // last `[ -e ]` test, so a non-existent last path would look like failure.
+      const filter = await execa(
+        'docker',
+        [
+          'exec',
+          '-i',
+          '--user',
+          'vscode',
+          opts.container,
+          'bash',
+          '-c',
+          'cd "$1" || exit 2; while IFS= read -r -d "" f || [ -n "$f" ]; do [ -e "$f" ] && printf "%s\\0" "$f"; done; exit 0',
+          'bash',
+          ct,
+        ],
+        { input: hostUntracked.join('\0'), reject: false },
+      );
+      const existing = new Set(filter.exitCode === 0 ? splitNul(filter.stdout) : []);
+      const toCopy = hostUntracked.filter((p) => !existing.has(p));
+      for (const p of hostUntracked) if (existing.has(p)) res.overlaySkipped.push(p);
+      if (toCopy.length > 0) {
+        const tarOut = await execa('tar', ['-C', hostMain, '--null', '-T', '-', '-cf', '-'], {
+          input: toCopy.join('\0'),
+          encoding: 'buffer',
+          reject: false,
+        });
+        if (tarOut.exitCode === 0) {
+          await execa(
+            'docker',
+            ['exec', '-i', '--user', 'vscode', opts.container, 'tar', '-C', ct, '-xf', '-'],
+            { input: tarOut.stdout as Buffer, reject: false },
+          );
+          log(`resync: ${ct}: copied ${String(toCopy.length)} untracked host file(s)`);
+        }
+      }
+    }
+
+    results.push(res);
+  }
+
+  return results;
 }

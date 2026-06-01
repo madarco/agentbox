@@ -1,7 +1,7 @@
 import { execa } from 'execa';
 import { readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { BoxState } from '@agentbox/core';
+import type { BoxState, ResyncResult } from '@agentbox/core';
 import { AmbiguousBoxError, BoxNotFoundError } from '@agentbox/core';
 import type {
   AgentActivityState,
@@ -17,7 +17,7 @@ import {
   type OpencodeSessionInfo,
 } from './opencode.js';
 import { listShellSessions, type ShellSessionSummary } from './shell-session.js';
-import { bindWorktrees, removeInBoxWorktree } from './in-box-git.js';
+import { bindWorktrees, removeInBoxWorktree, resyncWorkspaceFromHost } from './in-box-git.js';
 import {
   cursorServerVolumeName,
   SHARED_CURSOR_EXTENSIONS_VOLUME,
@@ -262,6 +262,26 @@ export async function stopBox(idOrName: string): Promise<BoxRecord> {
 
 export interface StartedBox {
   record: BoxRecord;
+}
+
+/**
+ * Resync a box's worktrees with the host: merge the host's current branch into
+ * each per-box branch and overlay the host's uncommitted/untracked changes,
+ * keeping the box's version on conflict. Returns the conflicts so the CLI can
+ * warn the agent. No-op (empty result) for boxes with no git worktrees. The
+ * caller is responsible for gating (config + "no live agent session"); this
+ * mutates the worktree and must not run under a running agent.
+ */
+export async function resyncBox(
+  idOrName: string,
+  onLog?: (line: string) => void,
+): Promise<ResyncResult> {
+  const box = await resolveBox(idOrName);
+  const worktrees = box.gitWorktrees ?? [];
+  if (worktrees.length === 0) return { repos: [], hadConflicts: false };
+  const repos = await resyncWorkspaceFromHost({ container: box.container, worktrees, onLog });
+  const hadConflicts = repos.some((r) => r.mergeConflicts.length > 0 || r.overlaySkipped.length > 0);
+  return { repos, hadConflicts };
 }
 
 /**

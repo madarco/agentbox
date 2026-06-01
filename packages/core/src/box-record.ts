@@ -199,7 +199,12 @@ export interface BoxRecord {
    */
   carry?: {
     count: number;
-    entries: Array<{ src: string; dest: string; bytes: number }>;
+    /**
+     * `hash` is a content hash of the host source at copy time, used by the
+     * on-start resync to re-copy only entries whose host source changed.
+     * Absent on records written before resync existed (treated as "changed").
+     */
+    entries: Array<{ src: string; dest: string; bytes: number; hash?: string }>;
   };
   /** VNC stack (Xvnc + websockify + noVNC) is enabled for this box. */
   vncEnabled?: boolean;

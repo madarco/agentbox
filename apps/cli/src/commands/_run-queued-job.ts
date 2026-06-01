@@ -34,6 +34,7 @@ import { resolveClaudeAuth } from '../auth.js';
 import { resolveLimits } from '../limits.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
+import { buildResyncWarning, prependResyncWarning } from '../lib/resync-warning.js';
 import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from '../lib/skip-permissions.js';
 import { providerForCreate } from '../provider/registry.js';
 import { cloudAgentStartDetached } from './_cloud-attach.js';
@@ -167,6 +168,7 @@ async function runDockerJob(
     // undefined so the create path skips the live prompt.
     portless: opts.portless,
     portlessStateDir: cfg.effective.portless.stateDir || undefined,
+    resyncOnStart: opts.resync,
     limits: resolveLimits(cfg.effective.box, opts),
     // carry: entries the submitter resolved + approved on the host; applied here
     // at box-create time (the worker runs on the host, so it can read the files).
@@ -184,7 +186,12 @@ async function runDockerJob(
   onBoxCreated(result.record.id);
   await writeJob({ ...job, boxId: result.record.id });
 
-  const promptedArgs = buildPromptArgs(job.agent, job.prompt, job.agentArgs);
+  // On-create resync conflicts (checkpoint-restore path): prepend the warning to
+  // the queued prompt so the background agent opens on it.
+  const resyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
+  if (resyncWarning) log.write(resyncWarning);
+  const prompt = prependResyncWarning(resyncWarning, job.prompt);
+  const promptedArgs = buildPromptArgs(job.agent, prompt, job.agentArgs);
 
   if (job.agent === 'claude-code') {
     log.write(`checking plugin native deps`);

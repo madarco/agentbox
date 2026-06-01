@@ -23,6 +23,7 @@ import { openCommandLog } from '../lib/log-file.js';
 import { makeProgressReporter } from '../lib/progress.js';
 import { maybePromptPortless, setupPortlessHost } from '../portless-prompt.js';
 import { providerForCreate } from '../provider/registry.js';
+import { buildResyncWarning } from '../lib/resync-warning.js';
 import { resolveLimits } from '../limits.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import {
@@ -53,6 +54,7 @@ interface CreateOptions {
   /** --carry <mode>: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
   carry?: 'skip' | 'ask';
   vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
+  resync?: boolean; // commander: --no-resync => false; default true (config box.resyncOnStart)
   sharedDockerCache?: boolean;
   portless?: boolean; // commander: --portless / --no-portless => true / false / undefined
   memory?: string;
@@ -160,6 +162,10 @@ export const createCommand = new Command('create')
     'copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at create time (gitignore-bypassing)',
   )
   .option('--no-vnc', 'disable the per-box Xvnc + noVNC web client (on by default)')
+  .option(
+    '--no-resync',
+    "when starting from a checkpoint, do not merge the host's current branch + overlay its uncommitted/untracked changes (default: do, keeping the box's version on conflict)",
+  )
   .option(
     '--shared-docker-cache',
     "use the shared 'agentbox-docker-cache' volume for in-box docker images (preserved on destroy; only one box can run at a time when set)",
@@ -379,6 +385,7 @@ export const createCommand = new Command('create')
         bundleDepth: cfg.effective.box.bundleDepth,
         fromBranch,
         useBranch,
+        resyncOnStart: opts.resync,
         projectRoot,
         onLog: (line) => {
           s.message(line);
@@ -402,6 +409,8 @@ export const createCommand = new Command('create')
         },
       });
       s.stop(`box ${result.record.container} ready`);
+      const createResyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
+      if (createResyncWarning) log.warn(createResyncWarning);
 
       log.info(`id:        ${result.record.id}`);
       if (typeof result.record.projectIndex === 'number') {

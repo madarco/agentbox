@@ -23,6 +23,7 @@
         "sizeVercel": { "type": "string", "minLength": 1 },
         "withPlaywright": { "type": "boolean" },
         "withEnv": { "type": "boolean" },
+        "resyncOnStart": { "type": "boolean" },
         "vnc": { "type": "boolean" },
         "isolateClaudeConfig": { "type": "boolean" },
         "isolateCodexConfig": { "type": "boolean" },
