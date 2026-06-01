@@ -17,7 +17,7 @@ import {
   type UserConfig,
 } from '@agentbox/config';
 import { readState, STATE_DIR, STATE_FILE } from '@agentbox/sandbox-core';
-import type { BoxRecord } from '@agentbox/core';
+import type { BoxRecord, ResolvedCarryEntry } from '@agentbox/core';
 import type { BoxRegistry } from './registry.js';
 import type { BoxStatusStore } from './status-store.js';
 
@@ -91,6 +91,12 @@ export interface QueueJobCreateOpts {
   cpus?: string;
   pidsLimit?: string;
   disk?: string;
+  /**
+   * carry: entries the submitter resolved + approved on the host (the same gate
+   * the foreground create runs). Plain host-path metadata — serialized into the
+   * job and applied by the worker, which reads the host files at create time.
+   */
+  carry?: ResolvedCarryEntry[];
 }
 
 export interface QueueConfig {

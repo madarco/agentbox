@@ -27,7 +27,7 @@ interface ForkOptions {
   provider?: string;
   name?: string;
   attachIn?: string;
-  carryYes?: boolean;
+  carry?: string;
   agent?: string;
   plan?: string;
 }
@@ -130,8 +130,9 @@ export const forkCommand = new Command('fork')
     'where to open the forked session: window | tab | split | background | same (default: tab). Falls back to background outside tmux/iTerm.',
   )
   .option(
-    '--carry-yes',
-    "auto-approve agentbox.yaml's carry: block (fork skips carry by default — it does not silently re-copy host files into the new box)",
+    '--carry <mode>',
+    "carry: block handling — 'send' (default) copies agentbox.yaml's declared host files into the box; 'skip' disables it. Host→box copy is safe (the host is trusted; the box is the untrusted side).",
+    'send',
   )
   .option(
     '--plan <path>',
@@ -168,6 +169,12 @@ export const forkCommand = new Command('fork')
       process.exit(2);
     }
 
+    const carryMode = opts.carry ?? 'send';
+    if (carryMode !== 'send' && carryMode !== 'skip') {
+      log.error(`--carry: expected 'send' or 'skip', got "${opts.carry ?? ''}"`);
+      process.exit(2);
+    }
+
     // Tolerate an LLM passing `--provider ""` (or whitespace): treat a blank
     // value as "not passed" so it falls through to the default docker provider.
     const provider = opts.provider?.trim();
@@ -182,7 +189,10 @@ export const forkCommand = new Command('fork')
 
     const subArgv = [
       '-y',
-      ...(opts.carryYes ? ['--carry-yes'] : ['--carry', 'skip']),
+      // Host is trusted, the box is the unsafe side, so host→box carry is safe:
+      // fork sends the declared carry: block by default (--carry-yes auto-approves
+      // the same gate create uses). `--carry skip` opts out.
+      ...(carryMode === 'skip' ? ['--carry', 'skip'] : ['--carry-yes']),
       '-w',
       opts.workspace,
       '-n',
