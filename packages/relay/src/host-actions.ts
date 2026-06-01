@@ -33,7 +33,7 @@ import {
   PR_CREATE_NO_HEAD_REFUSAL,
   prCreateNeedsHead,
   refuseCheckoutByDefault,
-  refuseGhApiWrite,
+  refuseGhApiCall,
   refuseMergeBypass,
   runHostGh,
   type GhApiRpcParams,
@@ -448,8 +448,8 @@ async function runGhApiRpc(
   const args = Array.isArray(params.args)
     ? params.args.filter((a): a is string => typeof a === 'string')
     : [];
-  const writeRefusal = refuseGhApiWrite(args);
-  if (writeRefusal) return writeRefusal;
+  const callRefusal = refuseGhApiCall(endpoint, args);
+  if (callRefusal) return callRefusal;
   const ghReady = await assertGhReady();
   if (ghReady) return ghReady;
   const lookup = await lookupCloudBox(deps.boxId);

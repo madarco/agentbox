@@ -63,22 +63,45 @@ export function isGhRunOp(value: string): value is GhRunOp {
 /** Read-only `gh run` ops never trigger the host confirmation prompt. */
 export const GH_RUN_READ_ONLY_OPS: ReadonlySet<GhRunOp> = new Set(['list', 'view']);
 
+// The PR review-comment endpoints. GET lists inline review comments; POST adds
+// one (the thing `gh pr comment` can't do). `…/comments/:id/replies` replies to
+// a review comment. The optional trailing `(\?…)` lets agents embed GET query
+// params in the path (e.g. `…/comments?per_page=50`) rather than via field flags.
+const PR_REVIEW_COMMENT = /^repos\/[^/]+\/[^/]+\/pulls\/\d+\/comments(\?.*)?$/;
+const PR_REVIEW_COMMENT_REPLY =
+  /^repos\/[^/]+\/[^/]+\/pulls\/\d+\/comments\/\d+\/replies(\?.*)?$/;
+
 /**
- * Allowlist of `gh api` endpoint patterns the relay will proxy. Read-only by
- * design (see `refuseGhApiWrite`); this list is meant to grow one deliberate
- * entry at a time. The optional trailing `(\?…)` lets agents embed GET query
- * params in the path (e.g. `…/comments?per_page=50`) rather than via field
- * flags, which the write guard rejects.
+ * `gh api` endpoints on which POST (create a comment) is proxied — unprompted,
+ * since comments are low-risk. Kept separate from the read allowlist so adding
+ * a read-only endpoint there later doesn't widen the POST surface.
  */
-export const GH_API_ALLOWED_ENDPOINTS: readonly RegExp[] = [
-  /^repos\/[^/]+\/[^/]+\/pulls\/\d+\/comments(\?.*)?$/,
+export const GH_API_WRITE_ALLOWED_ENDPOINTS: readonly RegExp[] = [
+  PR_REVIEW_COMMENT,
+  PR_REVIEW_COMMENT_REPLY,
 ];
 
-/** True when `endpoint` matches an allowlisted `gh api` pattern. */
+/**
+ * Allowlist of `gh api` endpoint patterns the relay will proxy at all (the
+ * overall gate). Superset of the write-allowed list; meant to grow one
+ * deliberate entry at a time. GET is allowed on every entry; POST only on the
+ * write-allowed subset (see `refuseGhApiCall`).
+ */
+export const GH_API_ALLOWED_ENDPOINTS: readonly RegExp[] = [...GH_API_WRITE_ALLOWED_ENDPOINTS];
+
+/** True when `endpoint` matches an allowlisted `gh api` pattern (proxied at all). */
 export function isAllowedGhApiEndpoint(endpoint: string): boolean {
-  // Normalize a leading slash so `/repos/...` and `repos/...` both match.
-  const normalized = endpoint.replace(/^\/+/, '');
-  return GH_API_ALLOWED_ENDPOINTS.some((re) => re.test(normalized));
+  return GH_API_ALLOWED_ENDPOINTS.some((re) => re.test(normalizeGhApiEndpoint(endpoint)));
+}
+
+/** True when POST is permitted on `endpoint` (the comment endpoints). */
+export function isWriteAllowedGhApiEndpoint(endpoint: string): boolean {
+  return GH_API_WRITE_ALLOWED_ENDPOINTS.some((re) => re.test(normalizeGhApiEndpoint(endpoint)));
+}
+
+/** Strip a leading slash so `/repos/...` and `repos/...` both match. */
+function normalizeGhApiEndpoint(endpoint: string): string {
+  return endpoint.replace(/^\/+/, '');
 }
 
 /** Ready-to-send refusal when a `gh api` endpoint isn't on the allowlist. */
@@ -86,65 +109,83 @@ export const GH_API_ENDPOINT_REFUSAL: GitRpcResult = {
   exitCode: 65,
   stdout: '',
   stderr:
-    'gh api: endpoint not allowlisted. Proxied endpoints (read-only): ' +
-    'repos/:owner/:repo/pulls/:number/comments\n',
+    'gh api: endpoint not allowlisted. Proxied: GET on ' +
+    'repos/:owner/:repo/pulls/:number/comments (and /:id/replies); POST to those ' +
+    'endpoints to add a review comment.\n',
 };
 
 /**
- * Returns a ready-to-send refusal when a `gh api` invocation would mutate, or
- * `null` when it's a safe read. `gh api` defaults to GET but silently switches
- * to POST when given field flags (`-f`/`-F`/`--field`/`--raw-field`/`--input`),
- * so we reject those as well as any explicit non-GET `--method`/`-X`.
+ * Endpoint-aware `gh api` policy. Returns a ready-to-send refusal, or `null`
+ * when the call may proceed. The caller has already checked the endpoint is on
+ * `GH_API_ALLOWED_ENDPOINTS`.
+ *
+ * - GET → allowed everywhere on the allowlist.
+ * - POST → allowed only on the write-allowed comment endpoints (unprompted).
+ * - PATCH/PUT/DELETE/etc. → refused.
+ * - `--input` → refused: the host `gh` runs with stdin ignored and a box-side
+ *   file path wouldn't exist on the host, so it can't cross the relay. Agents
+ *   pass fields via `-f`/`-F`.
+ *
+ * `gh` uses Go's pflag, which accepts a short flag's value glued on (`-XPOST`,
+ * `-fbody=hi`) and the `=` form (`-X=POST`, `--method=POST`) as well as the
+ * space-separated form. The box-side shim is the convenience gate; this relay
+ * guard is the security boundary for a direct `agentbox-ctl` call, so it
+ * recognizes every spelling.
  */
-export function refuseGhApiWrite(args: string[]): GitRpcResult | null {
+export function refuseGhApiCall(endpoint: string, args: string[]): GitRpcResult | null {
   const refuse = (reason: string): GitRpcResult => ({
     exitCode: 65,
     stdout: '',
-    stderr: `gh api: ${reason} — only read-only (GET) calls are proxied\n`,
+    stderr: `gh api: ${reason}\n`,
   });
-  // `gh` uses Go's pflag, which accepts a short flag's value glued on
-  // (`-XPOST`, `-fbody=hi`) and the `=` form (`-X=POST`, `--method=POST`) in
-  // addition to the space-separated form. The box-side shim's positive flag
-  // allowlist rejects all of these, but this relay-side guard is the last
-  // line of defense for a direct `agentbox-ctl` call — so it must recognize
-  // every spelling, not just the exact-match one.
+
+  let explicitMethod: string | null = null;
+  let hasFieldFlag = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? '';
     // --method / -X with a separately-tokenized value.
     if (arg === '-X' || arg === '--method') {
-      const value = (args[i + 1] ?? '').toLowerCase();
-      if (value !== 'get') return refuse(`non-GET method '${args[i + 1] ?? ''}'`);
+      explicitMethod = args[i + 1] ?? '';
       i++; // consumed the value
       continue;
     }
     // --method=VALUE / -X=VALUE / -XVALUE (glued short form).
-    const methodGlued =
-      arg.startsWith('--method=')
-        ? arg.slice('--method='.length)
-        : arg.startsWith('-X') && arg.length > 2
-          ? arg.slice(2).replace(/^=/, '')
-          : null;
-    if (methodGlued !== null) {
-      if (methodGlued.toLowerCase() !== 'get') return refuse(`non-GET method '${methodGlued}'`);
+    if (arg.startsWith('--method=')) {
+      explicitMethod = arg.slice('--method='.length);
       continue;
     }
-    // Field flags in any spelling — these auto-switch gh api to POST. No
-    // read-only flag starts with -f / -F, so a prefix match is safe and
-    // catches the glued short forms (`-fbody=hi`, `-Fkey=val`).
+    if (arg.startsWith('-X') && arg.length > 2) {
+      explicitMethod = arg.slice(2).replace(/^=/, '');
+      continue;
+    }
+    // `--input` (stdin/file body) can't traverse the relay — refuse outright.
+    if (arg === '--input' || arg.startsWith('--input=')) {
+      return refuse("'--input' (stdin/file body) isn't supported through the relay; use -f/-F fields");
+    }
+    // Field flags in any spelling auto-switch gh api to POST. No read-only flag
+    // starts with -f / -F, so a prefix match is safe and catches glued forms
+    // (`-fbody=hi`, `-Fkey=val`).
     if (
       arg.startsWith('-f') ||
       arg.startsWith('-F') ||
       arg === '--field' ||
       arg === '--raw-field' ||
-      arg === '--input' ||
       arg.startsWith('--field=') ||
-      arg.startsWith('--raw-field=') ||
-      arg.startsWith('--input=')
+      arg.startsWith('--raw-field=')
     ) {
-      return refuse(`field flag '${arg}' makes the request mutating`);
+      hasFieldFlag = true;
     }
   }
-  return null;
+
+  const method = (explicitMethod ?? (hasFieldFlag ? 'POST' : 'GET')).toUpperCase();
+  if (method === 'GET') return null;
+  if (method === 'POST') {
+    if (isWriteAllowedGhApiEndpoint(endpoint)) return null;
+    return refuse(
+      `POST is only proxied to PR review-comment endpoints (repos/:o/:r/pulls/:n/comments[/:id/replies]), not '${endpoint}'`,
+    );
+  }
+  return refuse(`method '${method}' is not proxied — only GET, and POST to comment endpoints, are allowed`);
 }
 
 /**

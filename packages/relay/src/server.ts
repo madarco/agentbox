@@ -12,12 +12,12 @@ import {
   GH_RUN_READ_ONLY_OPS,
   injectPrCreateHead,
   isAllowedGhApiEndpoint,
+  refuseGhApiCall,
   isGhPrOp,
   isGhRunOp,
   PR_CREATE_NO_HEAD_REFUSAL,
   prCreateNeedsHead,
   refuseCheckoutByDefault,
-  refuseGhApiWrite,
   refuseMergeBypass,
   runHostGh,
   type GhApiRpcParams,
@@ -1244,10 +1244,10 @@ async function handleGhRunRpc(
 }
 
 /**
- * `gh.api`: read-only, allowlisted REST calls. Runs `gh api <endpoint> …` in
- * the host main repo. The endpoint must match `GH_API_ALLOWED_ENDPOINTS` and
- * the argv must not mutate (`refuseGhApiWrite`). Read-only ⇒ no prompt, same
- * as `gh pr view`.
+ * `gh.api`: allowlisted REST calls. Runs `gh api <endpoint> …` in the host main
+ * repo. The endpoint must match `GH_API_ALLOWED_ENDPOINTS`; `refuseGhApiCall`
+ * then enforces the method policy (GET anywhere on the allowlist, POST only on
+ * the comment endpoints). No prompt — reads and comment POSTs are both silent.
  */
 async function handleGhApiRpc(
   reg: BoxRegistration,
@@ -1267,8 +1267,8 @@ async function handleGhApiRpc(
   const args = Array.isArray(params?.args)
     ? params.args.filter((a): a is string => typeof a === 'string')
     : [];
-  const writeRefusal = refuseGhApiWrite(args);
-  if (writeRefusal) return writeRefusal;
+  const callRefusal = refuseGhApiCall(endpoint, args);
+  if (callRefusal) return callRefusal;
   const ghReady = await assertGhReady();
   if (ghReady) return ghReady;
   return runHostGh(['api', endpoint, ...args], worktree.hostMainRepo);

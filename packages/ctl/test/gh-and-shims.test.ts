@@ -367,23 +367,40 @@ describe('gh-shim arg whitelist + branch injection', () => {
     }
   });
 
-  it('api rejects a mutating method flag at the shim boundary', () => {
+  it('api forwards POST method + field flags to ctl (relay enforces the policy)', () => {
     const env = makeStubShell();
     try {
-      const out = runShim(GH_SHIM, ['api', 'repos/o/r/pulls/5/comments', '-X', 'POST'], env);
-      expect(out.code).toBe(2);
-      expect(out.stderr).toMatch(/read-only/);
+      const out = runShim(
+        GH_SHIM,
+        ['api', 'repos/o/r/pulls/5/comments', '-X', 'POST', '-f', 'body=hi'],
+        env,
+      );
+      expect(out.code).toBe(0);
+      expect(out.stdout.trim()).toBe(
+        'STUB: gh api repos/o/r/pulls/5/comments -- -X POST -f body=hi',
+      );
     } finally {
       env.cleanup();
     }
   });
 
-  it('api rejects field flags that would auto-POST', () => {
+  it('api forwards field flags (field-implied POST) to ctl', () => {
     const env = makeStubShell();
     try {
       const out = runShim(GH_SHIM, ['api', 'repos/o/r/pulls/5/comments', '-f', 'body=hi'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout.trim()).toBe('STUB: gh api repos/o/r/pulls/5/comments -- -f body=hi');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('api rejects --input at the shim (stdin/file body cannot cross the relay)', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['api', 'repos/o/r/pulls/5/comments', '--input', '-'], env);
       expect(out.code).toBe(2);
-      expect(out.stderr).toMatch(/read-only/);
+      expect(out.stderr).toMatch(/--input/);
     } finally {
       env.cleanup();
     }

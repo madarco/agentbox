@@ -6,8 +6,9 @@ import {
   isAllowedGhApiEndpoint,
   isGhPrOp,
   isGhRunOp,
+  isWriteAllowedGhApiEndpoint,
   prCreateNeedsHead,
-  refuseGhApiWrite,
+  refuseGhApiCall,
 } from '../src/gh.js';
 
 describe('injectPrCreateHead', () => {
@@ -124,6 +125,10 @@ describe('isAllowedGhApiEndpoint', () => {
     expect(isAllowedGhApiEndpoint('repos/o/r/pulls/5/comments?per_page=50')).toBe(true);
   });
 
+  it('matches the review-comment replies endpoint', () => {
+    expect(isAllowedGhApiEndpoint('repos/o/r/pulls/5/comments/42/replies')).toBe(true);
+  });
+
   it('rejects sibling / unrelated endpoints', () => {
     expect(isAllowedGhApiEndpoint('repos/o/r/issues/5/comments')).toBe(false);
     expect(isAllowedGhApiEndpoint('repos/o/r/pulls/5/merge')).toBe(false);
@@ -133,39 +138,54 @@ describe('isAllowedGhApiEndpoint', () => {
   });
 });
 
-describe('refuseGhApiWrite', () => {
-  it('passes read-only argv', () => {
-    expect(refuseGhApiWrite([])).toBeNull();
-    expect(refuseGhApiWrite(['--jq', '.[].body'])).toBeNull();
-    expect(refuseGhApiWrite(['--paginate'])).toBeNull();
-    expect(refuseGhApiWrite(['-X', 'GET'])).toBeNull();
-    expect(refuseGhApiWrite(['--method=get'])).toBeNull();
+describe('isWriteAllowedGhApiEndpoint', () => {
+  it('covers the PR review-comment endpoints (with leading slash variance)', () => {
+    expect(isWriteAllowedGhApiEndpoint('repos/o/r/pulls/5/comments')).toBe(true);
+    expect(isWriteAllowedGhApiEndpoint('/repos/o/r/pulls/5/comments')).toBe(true);
+    expect(isWriteAllowedGhApiEndpoint('repos/o/r/pulls/5/comments/42/replies')).toBe(true);
   });
 
-  it('refuses an explicit non-GET method', () => {
-    expect(refuseGhApiWrite(['-X', 'POST'])?.exitCode).toBe(65);
-    expect(refuseGhApiWrite(['--method', 'patch'])?.exitCode).toBe(65);
-    expect(refuseGhApiWrite(['--method=DELETE'])?.exitCode).toBe(65);
+  it('excludes non-comment and conversation-comment endpoints', () => {
+    expect(isWriteAllowedGhApiEndpoint('repos/o/r/pulls/5')).toBe(false);
+    expect(isWriteAllowedGhApiEndpoint('repos/o/r/issues/5/comments')).toBe(false);
+  });
+});
+
+describe('refuseGhApiCall', () => {
+  const COMMENTS = 'repos/o/r/pulls/5/comments';
+  const REPLIES = 'repos/o/r/pulls/5/comments/42/replies';
+
+  it('allows GET (default and explicit) on an allowlisted endpoint', () => {
+    expect(refuseGhApiCall(COMMENTS, [])).toBeNull();
+    expect(refuseGhApiCall(COMMENTS, ['--jq', '.[].body'])).toBeNull();
+    expect(refuseGhApiCall(COMMENTS, ['--paginate'])).toBeNull();
+    expect(refuseGhApiCall(COMMENTS, ['-X', 'GET'])).toBeNull();
+    expect(refuseGhApiCall(COMMENTS, ['--method=get'])).toBeNull();
+    expect(refuseGhApiCall(COMMENTS, ['-XGET'])).toBeNull();
   });
 
-  it('refuses combined/glued short-flag method forms (pflag accepts them)', () => {
-    expect(refuseGhApiWrite(['-XPOST'])?.exitCode).toBe(65);
-    expect(refuseGhApiWrite(['-X=POST'])?.exitCode).toBe(65);
-    // -XGET glued is still a read — must pass.
-    expect(refuseGhApiWrite(['-XGET'])).toBeNull();
-    expect(refuseGhApiWrite(['-X=get'])).toBeNull();
+  it('allows POST to comment endpoints (explicit, field-implied, and glued forms)', () => {
+    expect(refuseGhApiCall(COMMENTS, ['-X', 'POST', '-f', 'body=hi'])).toBeNull();
+    expect(refuseGhApiCall(COMMENTS, ['-f', 'body=hi'])).toBeNull(); // field-implied POST
+    expect(refuseGhApiCall(COMMENTS, ['-fbody=hi'])).toBeNull(); // glued field
+    expect(refuseGhApiCall(COMMENTS, ['-XPOST', '-Fline=10'])).toBeNull();
+    expect(refuseGhApiCall(REPLIES, ['-f', 'body=hi'])).toBeNull();
   });
 
-  it('refuses field flags that auto-switch gh api to POST', () => {
-    expect(refuseGhApiWrite(['-f', 'body=hi'])?.exitCode).toBe(65);
-    expect(refuseGhApiWrite(['-F', 'in_reply_to=1'])?.exitCode).toBe(65);
-    expect(refuseGhApiWrite(['--field', 'body=hi'])?.exitCode).toBe(65);
-    expect(refuseGhApiWrite(['--raw-field=body=hi'])?.exitCode).toBe(65);
-    expect(refuseGhApiWrite(['--input', '-'])?.exitCode).toBe(65);
+  it('refuses POST to an endpoint not on the write allowlist', () => {
+    expect(refuseGhApiCall('repos/o/r/pulls/5', ['-X', 'POST'])?.exitCode).toBe(65);
+    expect(refuseGhApiCall('repos/o/r/issues/5/comments', ['-f', 'body=hi'])?.exitCode).toBe(65);
   });
 
-  it('refuses glued short-flag field forms (-fkey=val / -Fkey=val)', () => {
-    expect(refuseGhApiWrite(['-fbody=hi'])?.exitCode).toBe(65);
-    expect(refuseGhApiWrite(['-Fin_reply_to=1'])?.exitCode).toBe(65);
+  it('refuses non-GET/POST methods even on comment endpoints', () => {
+    expect(refuseGhApiCall(COMMENTS, ['-X', 'PATCH', '-f', 'body=hi'])?.exitCode).toBe(65);
+    expect(refuseGhApiCall(COMMENTS, ['-X', 'DELETE'])?.exitCode).toBe(65);
+    expect(refuseGhApiCall(COMMENTS, ['--method=put'])?.exitCode).toBe(65);
+  });
+
+  it('refuses --input (stdin/file body cannot cross the relay)', () => {
+    expect(refuseGhApiCall(COMMENTS, ['--input', '-'])?.exitCode).toBe(65);
+    expect(refuseGhApiCall(COMMENTS, ['--input=/tmp/x'])?.exitCode).toBe(65);
+    expect(refuseGhApiCall(COMMENTS, ['--input', '-'])?.stderr).toMatch(/--input/);
   });
 });

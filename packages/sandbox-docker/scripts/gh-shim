@@ -223,18 +223,20 @@ handle_api() {
     die "'gh api' requires a positional <endpoint> (e.g. repos/:owner/:repo/pulls/:number/comments)"
   fi
   shift
-  # Read-only subset: reject any flag that would mutate. `gh api` auto-switches
-  # to POST when given field flags, so those are rejected alongside an explicit
-  # non-GET --method/-X. The relay enforces this again server-side.
+  # GET reads are proxied for any allowlisted endpoint; POST is proxied only to
+  # the PR review-comment endpoints (the relay enforces the endpoint + method
+  # policy). `--input` (stdin/file body) can't cross the relay — the host `gh`
+  # runs with stdin ignored — so reject it locally and point at -f/-F fields.
   local arg
   for arg in "$@"; do
     case "$arg" in
-      -X|--method|--method=*|-f|-F|--field|--field=*|--raw-field|--raw-field=*|--input|--input=*)
-        die "'gh api' is proxied read-only; mutating flag '$arg' is not allowed"
+      --input|--input=*)
+        die "'gh api --input' (stdin/file body) isn't supported through the relay; use -f/-F fields"
         ;;
     esac
   done
-  strict_flags "gh api" "--jq|-q|--paginate|--cache|--hostname|-H|--header" "$@"
+  strict_flags "gh api" \
+    "--method|-X|-f|-F|--field|--raw-field|--jq|-q|--paginate|--cache|--hostname|-H|--header" "$@"
   exec "$CTL" gh api "$endpoint" -- "$@"
 }
 

@@ -104,13 +104,13 @@ interface GhApiRpcParams {
 
 const apiCommand = new Command('api')
   .description(
-    'Read-only `gh api` for an allowlisted subset of endpoints (host runs `gh api`; mutating calls are rejected).',
+    'Allowlisted `gh api` (host runs `gh api`): GET on proxied endpoints, plus POST to add a PR review comment. Other methods are rejected.',
   )
   .option('--cwd <path>', 'container path identifying which registered worktree to use')
   .allowExcessArguments(true)
   .allowUnknownOption(true)
   .argument('<endpoint>', 'REST endpoint, e.g. repos/:owner/:repo/pulls/:number/comments')
-  .argument('[args...]', 'extra flags forwarded to `gh api` verbatim (e.g. `--jq`, `--paginate`).')
+  .argument('[args...]', 'extra flags forwarded to `gh api` verbatim (e.g. `--jq`, `-f body=…`).')
   .action(async (endpoint: string, args: string[], opts: { cwd?: string }) => {
     const params: GhApiRpcParams = { path: opts.cwd ?? process.cwd(), endpoint };
     if (args.length > 0) params.args = args;

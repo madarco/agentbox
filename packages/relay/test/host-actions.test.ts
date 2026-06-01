@@ -131,12 +131,12 @@ describe('executeCloudAction routing', () => {
     expect(result.stderr).toContain('not allowlisted');
   });
 
-  it('gh.api on an allowed endpoint with a mutating flag is refused (exit 65)', async () => {
+  it('gh.api DELETE on a comment endpoint is refused (only GET + POST proxied)', async () => {
     const result = await executeCloudAction(
-      action('gh.api', { endpoint: 'repos/o/r/pulls/5/comments', args: ['-X', 'POST'] }),
+      action('gh.api', { endpoint: 'repos/o/r/pulls/5/comments', args: ['-X', 'DELETE'] }),
       makeDeps(),
     );
     expect(result.exitCode).toBe(65);
-    expect(result.stderr).toContain('read-only');
+    expect(result.stderr).toMatch(/DELETE|not proxied/);
   });
 });
