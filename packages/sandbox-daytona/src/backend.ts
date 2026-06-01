@@ -157,6 +157,22 @@ function resolveImage(ref: string): string | Image {
   return Image.fromDockerfile(ctx.dockerfile);
 }
 
+/**
+ * Parse a `cpu-memory-disk` GB size spec (e.g. `4-8-20`) into Daytona's
+ * `resources` shape. Returns `undefined` on any malformed input — three
+ * positive integer slots are required.
+ */
+export function parseDaytonaSize(
+  spec: string | undefined,
+): { cpu: number; memory: number; disk: number } | undefined {
+  if (!spec) return undefined;
+  const parts = spec.trim().split('-');
+  if (parts.length !== 3) return undefined;
+  const nums = parts.map((p) => Number(p));
+  if (nums.some((n) => !Number.isInteger(n) || n <= 0)) return undefined;
+  return { cpu: nums[0]!, memory: nums[1]!, disk: nums[2]! };
+}
+
 export const daytonaBackend: CloudBackend = {
   name: 'daytona',
 
@@ -175,8 +191,22 @@ export const daytonaBackend: CloudBackend = {
         //     `onSnapshotCreateLogs` for streaming the Dockerfile build.
         // TypeScript can't infer the right overload from a union literal, so
         // split the call.
+        // A `--size` / `box.sizeDaytona` like `4-8-20` overrides the default
+        // resources. Note: Daytona rejects `resources` on the snapshot path
+        // (stripped below), so this only takes effect when creating from an
+        // image — snapshot-resume keeps the snapshot's baked-in resources.
+        let sizeResources: { cpu: number; memory: number; disk: number } | undefined;
+        if (req.size && req.size.length > 0) {
+          sizeResources = parseDaytonaSize(req.size);
+          if (!sizeResources) {
+            req.onLog?.(
+              `daytona: ignoring invalid size '${req.size}' (expected 'cpu-memory-disk' GB, e.g. '4-8-20')`,
+            );
+          }
+        }
+        const resources = sizeResources ?? req.resources;
         const baseParams = {
-          ...(req.resources ? { resources: req.resources } : {}),
+          ...(resources ? { resources } : {}),
           envVars: req.env,
           ...(req.volumes && req.volumes.length > 0
             ? { volumes: req.volumes.map(toDaytonaVolumeMount) }

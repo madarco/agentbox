@@ -53,6 +53,11 @@ export {
 } from './checkpoint.js';
 
 export {
+  boxSizeConfigKey,
+  resolveBoxSize,
+} from './size.js';
+
+export {
   bumpProjectGcCounter,
   listProjectsConfigured,
   pruneOrphanProjectConfigs,

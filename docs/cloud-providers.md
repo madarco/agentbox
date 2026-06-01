@@ -51,6 +51,18 @@ This split is why "add a new cloud" is small: only the SDK shim differs.
 
 ## 2. The Daytona shape
 
+### 2.0 Sizing
+
+Default sandbox shape is **2 vCPU / 4 GB RAM / 8 GB disk**. Override via
+`--size <cpu-mem-disk>` on `agentbox create` (GB units, e.g. `4-8-20`), or
+`box.sizeDaytona` / `box.size` in config. Precedence: `--size` >
+`box.sizeDaytona` > `box.size` > built-in. **Caveat:** Daytona rejects
+`resources` on the snapshot-resume path, so a custom size only takes
+effect on the from-image create (i.e. first prepare/build); subsequent
+snapshot-based creates inherit the snapshot's baked resources. Invalid
+specs (anything other than three positive integers separated by `-`) are
+logged and ignored, falling back to the default.
+
 ### 2.1 Workspace seeding
 
 `seedCloudWorkspace` (`packages/sandbox-cloud/src/workspace-seed.ts`) ships
@@ -259,6 +271,12 @@ The `CloudBackend` interface is the same, but the implementation
 - **One VPS per box** (1:1, like Daytona). Default `cx23` (2 vCPU / 4 GB / 40 GB
   x86, ~€4/mo while running). Default location `nbg1`. Both configurable
   per provision request.
+- **Per-box VM size** — set via `--size <server-type>` on `agentbox create`,
+  or `box.sizeHetzner` (per-provider override) / `box.size` (generic
+  fallback) in config. Precedence: `--size` > `box.sizeHetzner` >
+  `box.size` > built-in `cx23`. Value is passed straight through as
+  Hetzner's `server_type` (e.g. `cx33`, `cx43`); unknown types fail
+  create with the API's `invalid_input`.
 - **Per-box ed25519 SSH key** minted at `provision` time into
   `~/.agentbox/boxes/<sandboxId>/ssh/{id_ed25519,id_ed25519.pub,known_hosts}`.
   Private key never leaves the host. Pubkey is injected via cloud-init's

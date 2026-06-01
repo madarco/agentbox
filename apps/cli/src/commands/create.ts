@@ -4,6 +4,7 @@ import {
   findProjectRoot,
   loadEffectiveConfig,
   pruneOrphanProjectConfigs,
+  resolveBoxSize,
   resolveDefaultCheckpoint,
   type UserConfig,
 } from '@agentbox/config';
@@ -59,6 +60,8 @@ interface CreateOptions {
   disk?: string;
   /** --bundle-depth <n>: cap commits in the cloud-seed git bundle. 0 = full history. */
   bundleDepth?: number;
+  /** --size <spec>: VM size for cloud providers. Hetzner: server type (cx33); Daytona: cpu-mem-disk GB (4-8-20). */
+  size?: string;
   /** --from-branch <ref>: base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. */
   fromBranch?: string;
   /** -b / --use-branch <name>: reuse an existing branch directly instead of forking agentbox/<name>. */
@@ -169,6 +172,10 @@ export const createCommand = new Command('create')
   .option('--pids-limit <n>', 'max process count (PIDs cgroup); unset = unlimited')
   .option('--disk <size>', 'best-effort container writable-layer size (e.g. 10g); no-op on overlay2/macOS')
   .option(
+    '--size <spec>',
+    'VM size for cloud providers. Hetzner: server type (e.g. cx33). Daytona: cpu-mem-disk GB (e.g. 4-8-20). Overrides box.size / box.size<Provider>.',
+  )
+  .option(
     '--bundle-depth <n>',
     'cap commits shipped in the cloud-seed git bundle (daytona, hetzner). 0 = full history. Unset = adaptive (200 commits, re-bundle at 100 if >20 MB). Ignored for docker.',
     (v) => {
@@ -213,6 +220,15 @@ export const createCommand = new Command('create')
       opts,
       resolveDefaultCheckpoint(cfg.effective, providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel'),
     );
+    // VM size: `--size` flag wins; otherwise the cascaded box.size /
+    // box.size<Provider>. Resolved here (not in buildCliOverrides) so a CLI
+    // override beats a project-level per-provider key.
+    const sizeDefault = resolveBoxSize(
+      cfg.effective,
+      providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel',
+    );
+    const effectiveSize =
+      opts.size && opts.size.length > 0 ? opts.size : sizeDefault;
 
     // Cloud providers that use the Daytona public-URL path don't need
     // Portless; the URL is already reachable from anywhere. The wizard's
@@ -362,6 +378,7 @@ export const createCommand = new Command('create')
           sharedCache: cfg.effective.box.dockerCacheShared,
           portless: portlessEnabled,
           portlessStateDir: cfg.effective.portless.stateDir || undefined,
+          ...(effectiveSize ? { size: effectiveSize } : {}),
           // Vercel-only sizing (box.vercelVcpus / vercelTimeoutMs). The cloud
           // scaffold reads these as overrides; other providers ignore them.
           ...(provider.name === 'vercel'

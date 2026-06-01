@@ -33,6 +33,13 @@ export interface CloudProvisionRequest {
   snapshot?: string;
   resources?: { cpu?: number; memory?: number; disk?: number };
   /**
+   * Backend-interpreted size string. Hetzner reads it as a server type
+   * (e.g. `cx33`); Daytona parses it as `cpu-memory-disk` GB (e.g. `4-8-20`)
+   * and overrides `resources` when valid. Backends without a size knob ignore
+   * the field.
+   */
+  size?: string;
+  /**
    * Max session length in ms before the backend auto-snapshots/stops the
    * sandbox. Backends that don't model a session timeout ignore it; Vercel
    * maps it to `Sandbox.create({ timeout })`.
