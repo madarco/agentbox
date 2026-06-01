@@ -30,7 +30,13 @@ import type {
   Provider,
   ProviderCheckpoint,
 } from '@agentbox/core';
-import { allocateProjectIndex, readState, recordBox, removeBoxRecord } from '@agentbox/sandbox-core';
+import {
+  allocateProjectIndex,
+  readCliStamp,
+  readState,
+  recordBox,
+  removeBoxRecord,
+} from '@agentbox/sandbox-core';
 import {
   buildTmuxConfigShellSnippet,
   ensureRelay,
@@ -52,6 +58,7 @@ import { seedDynamicConfig } from './dynamic-sync.js';
 import { seedGitIdentity } from './git-identity.js';
 import {
   cloudSnapshotName,
+  currentCloudBaseFingerprint,
   listCloudCheckpoints,
   removeCloudCheckpointDir,
   resolveCloudCheckpoint,
@@ -61,11 +68,7 @@ import { isSnapshotGoneError } from './snapshot-error.js';
 import { uploadEnvFiles } from './env-files.js';
 import { uploadCarryPaths } from './carry.js';
 import { readExposedServicePorts } from './expose-ports.js';
-import {
-  downloadFromCloudBox,
-  pullCloudDirContents,
-  uploadToCloudBox,
-} from './cloud-cp.js';
+import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
 import { launchCloudCtlDaemon } from './ctl-launch.js';
 import { launchCloudDockerdDaemon } from './dockerd-launch.js';
 import { quoteShellArgv } from './shell.js';
@@ -134,11 +137,7 @@ function parsePortlessUrl(url: string): { proxyPort: number; tls: boolean } | un
     const u = new URL(url);
     if (!u.hostname.endsWith('.localhost')) return undefined;
     const tls = u.protocol === 'https:';
-    const proxyPort = u.port
-      ? Number.parseInt(u.port, 10)
-      : tls
-        ? 443
-        : 80;
+    const proxyPort = u.port ? Number.parseInt(u.port, 10) : tls ? 443 : 80;
     if (!Number.isFinite(proxyPort)) return undefined;
     return { proxyPort, tls };
   } catch {
@@ -468,7 +467,9 @@ export function createCloudProvider(
     async create(req: CreateBoxRequest): Promise<CreatedBox> {
       const log = req.onLog ?? (() => {});
       const { id, name, branch } = mintBox(req);
-      const image = opts.provisionImage ? await opts.provisionImage(req) : (req.image ?? FALLBACK_IMAGE);
+      const image = opts.provisionImage
+        ? await opts.provisionImage(req)
+        : (req.image ?? FALLBACK_IMAGE);
       // Per-create overrides (currently vercel's box.vercelVcpus / vercelTimeoutMs,
       // threaded through providerOptions). Fall back to the provider's static
       // defaults so daytona/hetzner are unaffected.
@@ -507,7 +508,9 @@ export function createCloudProvider(
       try {
         await ensureRelay({ onLog: log });
       } catch (err) {
-        log(`relay ensure failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+        log(
+          `relay ensure failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
 
       // Resolve any cloud checkpoint the caller requested. When found, we
@@ -520,7 +523,11 @@ export function createCloudProvider(
       let snapshotName: string | undefined;
       let resolvedCheckpointRef: string | undefined;
       if (req.checkpointRef && req.projectRoot) {
-        const found = await resolveCloudCheckpoint(req.projectRoot, backend.name, req.checkpointRef);
+        const found = await resolveCloudCheckpoint(
+          req.projectRoot,
+          backend.name,
+          req.checkpointRef,
+        );
         if (found) {
           snapshotName = found.manifest.snapshotName;
           resolvedCheckpointRef = found.name;
@@ -684,7 +691,9 @@ export function createCloudProvider(
         // before the supervisor launches, mirroring the docker provider.
         // The host CLI already resolved + got user approval before threading
         // entries into req.carry.
-        let carrySummary: { count: number; entries: Array<{ src: string; dest: string; bytes: number }> } | undefined;
+        let carrySummary:
+          | { count: number; entries: Array<{ src: string; dest: string; bytes: number }> }
+          | undefined;
         if (req.carry && req.carry.length > 0) {
           log(`carry: copying ${String(req.carry.length)} host path(s) into the box`);
           const result = await uploadCarryPaths({
@@ -723,9 +732,12 @@ export function createCloudProvider(
           log('launching in-box dockerd');
           try {
             const dockerd = await launchCloudDockerdDaemon({ backend, handle, timeoutMs: 60_000 });
-            if (!dockerd.up) log(`dockerd did not become ready (continuing): ${dockerd.reason ?? 'unknown'}`);
+            if (!dockerd.up)
+              log(`dockerd did not become ready (continuing): ${dockerd.reason ?? 'unknown'}`);
           } catch (err) {
-            log(`dockerd daemon launch failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+            log(
+              `dockerd daemon launch failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+            );
           }
         }
 
@@ -1216,8 +1228,7 @@ const RESERVED_CLOUD_PORTS = new Set<number>([CLOUD_WEB_PROXY_PORT, CLOUD_VNC_PO
 async function firstExposedServicePort(box: BoxRecord): Promise<number | undefined> {
   // The box's own WebProxy port (e.g. Vercel's 8080) is reserved too — it's the
   // web aggregator, not a user service port.
-  const reserved = (p: number): boolean =>
-    RESERVED_CLOUD_PORTS.has(p) || p === box.cloud?.webPort;
+  const reserved = (p: number): boolean => RESERVED_CLOUD_PORTS.has(p) || p === box.cloud?.webPort;
   const fromRecord = Object.keys(box.cloud?.previewUrls ?? {})
     .map(Number)
     .filter((p) => Number.isInteger(p) && !reserved(p));
@@ -1263,6 +1274,9 @@ function makeCloudCheckpoint(backend: CloudBackend): ProviderCheckpoint {
         snapshotName,
         sourceBoxId: box.id,
         sourceBoxName: box.name,
+        baseProvider: backend.name,
+        baseFingerprint: currentCloudBaseFingerprint(backend.name),
+        cliVersion: readCliStamp().cliVersion,
       });
       return { ref: info.name };
     },

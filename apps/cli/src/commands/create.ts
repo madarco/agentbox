@@ -89,10 +89,7 @@ function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
   return out;
 }
 
-function resolveUseSnapshot(
-  opts: CreateOptions,
-  configDefault: boolean | undefined,
-): boolean {
+function resolveUseSnapshot(opts: CreateOptions, configDefault: boolean | undefined): boolean {
   // host-snapshot used to be on by default because the snapshot was the
   // overlay lower (the box read directly from it). With the new model the
   // snapshot is only the tar-pipe source for the no-git case, so default off:
@@ -108,10 +105,7 @@ function resolveUseSnapshot(
  * Checkpoint to start from: explicit `--snapshot <ref>` wins, else the
  * project's `box.defaultCheckpoint` (empty string = none).
  */
-function resolveCheckpointRef(
-  opts: CreateOptions,
-  configDefault: string,
-): string | undefined {
+function resolveCheckpointRef(opts: CreateOptions, configDefault: string): string | undefined {
   if (opts.snapshot && opts.snapshot.length > 0) return opts.snapshot;
   return configDefault.length > 0 ? configDefault : undefined;
 }
@@ -140,11 +134,16 @@ async function attachShell(record: BoxRecord): Promise<never> {
 }
 
 export const createCommand = new Command('create')
-  .description('Create and start a new agent box (Docker container with /workspace seeded via in-container git worktree)')
+  .description(
+    'Create and start a new agent box (Docker container with /workspace seeded via in-container git worktree)',
+  )
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
   .option('-n, --name <name>', 'friendly box name (default: <workspace-basename>-<id>)')
   .option('--provider <name>', "sandbox backend: 'docker' (default) or 'daytona' (cloud)")
-  .option('--host-snapshot', 'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)')
+  .option(
+    '--host-snapshot',
+    'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)',
+  )
   .option('--no-host-snapshot', 'bind the live workspace directly (host edits leak into reads)')
   .option(
     '--snapshot <ref>',
@@ -178,7 +177,10 @@ export const createCommand = new Command('create')
   .option('--memory <size>', 'memory ceiling (e.g. 512m, 2g); unset = unlimited')
   .option('--cpus <n>', 'CPU count cap (fractional ok, e.g. 1.5); unset = unlimited')
   .option('--pids-limit <n>', 'max process count (PIDs cgroup); unset = unlimited')
-  .option('--disk <size>', 'best-effort container writable-layer size (e.g. 10g); no-op on overlay2/macOS')
+  .option(
+    '--disk <size>',
+    'best-effort container writable-layer size (e.g. 10g); no-op on overlay2/macOS',
+  )
   .option(
     '--size <spec>',
     'VM size for cloud providers. Hetzner: server type (e.g. cx33). Daytona: cpu-mem-disk GB (e.g. 4-8-20). Overrides box.size / box.size<Provider>.',
@@ -188,7 +190,8 @@ export const createCommand = new Command('create')
     'cap commits shipped in the cloud-seed git bundle (daytona, hetzner). 0 = full history. Unset = adaptive (200 commits, re-bundle at 100 if >20 MB). Ignored for docker.',
     (v) => {
       const n = Number.parseInt(v, 10);
-      if (!Number.isInteger(n) || n < 0) throw new Error(`--bundle-depth: expected a non-negative integer, got "${v}"`);
+      if (!Number.isInteger(n) || n < 0)
+        throw new Error(`--bundle-depth: expected a non-negative integer, got "${v}"`);
       return n;
     },
   )
@@ -198,7 +201,7 @@ export const createCommand = new Command('create')
   )
   .option(
     '-b, --use-branch <name>',
-    "reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.",
+    'reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.',
   )
   .option('-y, --yes', 'skip prompts, accept defaults')
   .option(
@@ -226,7 +229,10 @@ export const createCommand = new Command('create')
     const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
     const checkpointRef = resolveCheckpointRef(
       opts,
-      resolveDefaultCheckpoint(cfg.effective, providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel'),
+      resolveDefaultCheckpoint(
+        cfg.effective,
+        providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel',
+      ),
     );
     // VM size: `--size` flag wins; otherwise the cascaded box.size /
     // box.size<Provider>. Resolved here (not in buildCliOverrides) so a CLI
@@ -235,8 +241,7 @@ export const createCommand = new Command('create')
       cfg.effective,
       providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel',
     );
-    const effectiveSize =
-      opts.size && opts.size.length > 0 ? opts.size : sizeDefault;
+    const effectiveSize = opts.size && opts.size.length > 0 ? opts.size : sizeDefault;
     // Box image: same precedence pattern as --size. `--image` wins; otherwise
     // the cascaded box.image / box.image<Provider> (written by `agentbox
     // prepare --provider X`).
@@ -244,8 +249,7 @@ export const createCommand = new Command('create')
       cfg.effective,
       providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel',
     );
-    const effectiveImage =
-      opts.image && opts.image.length > 0 ? opts.image : imageDefault;
+    const effectiveImage = opts.image && opts.image.length > 0 ? opts.image : imageDefault;
 
     // Cloud providers that use the Daytona public-URL path don't need
     // Portless; the URL is already reachable from anywhere. The wizard's
@@ -305,9 +309,15 @@ export const createCommand = new Command('create')
       yes: !!opts.yes,
       command: 'create',
       checkpointRef,
+      checkpointFromDefault: !(opts.snapshot && opts.snapshot.length > 0),
       provider: providerName,
       withEnv: cfg.effective.box.withEnv,
     });
+    // Drop a stale/dead default checkpoint so the box provisions from the
+    // current base. On the docker switch-to-claude re-dispatch below the
+    // default isn't forwarded as `--snapshot`, so the inner `agentbox claude`
+    // re-evaluates and discards it too — no extra signal needed.
+    const effectiveCheckpointRef = wiz.discardCheckpoint ? undefined : checkpointRef;
     if (wiz.action === 'switch-to-claude' && isDocker) {
       // Docker: hand off to `agentbox claude` whose default action creates +
       // attaches in one go. For non-docker providers we fall through to the
@@ -372,7 +382,7 @@ export const createCommand = new Command('create')
       const result = await provider.create({
         workspacePath: opts.workspace,
         name: opts.name,
-        checkpointRef,
+        checkpointRef: effectiveCheckpointRef,
         image: effectiveImage,
         allowPull: opts.build ? false : undefined,
         imageRegistry: cfg.effective.box.imageRegistry,

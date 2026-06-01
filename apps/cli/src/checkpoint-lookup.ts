@@ -1,47 +1,123 @@
 /**
- * Provider-aware checkpoint existence check used by the wizard. The default
+ * Provider-aware checkpoint evaluation used by the wizard. The default
  * checkpoint name lives in a single config field (`box.defaultCheckpoint`),
- * but the actual artifact may exist for Docker, for Daytona, both, or
- * neither. The wizard consults this helper before announcing "starting from
- * checkpoint …" — if the named checkpoint doesn't exist for the active
- * provider, the wizard falls through to the normal setup flow instead of
- * misleadingly skipping it.
+ * but the actual artifact may exist for Docker, for a cloud backend, both, or
+ * neither — and even when it exists it may be *stale* (captured against a base
+ * image/snapshot that has since been rebuilt) or *orphaned* (its underlying
+ * Docker image / cloud snapshot is gone).
  *
- * For cloud providers the local manifest is only half the story: the provider
- * snapshot it points at can expire or be deleted out-of-band. We probe the
- * backend for liveness and prune the dangling manifest when it's gone, so the
- * wizard re-asks the setup wizard (start-from-scratch) rather than booting
- * from a snapshot that would 410 mid-create.
+ * `evaluateCheckpoint` collapses all of that into three states so the wizard
+ * can decide whether to silently skip setup (`fresh`), re-prompt the user to
+ * recreate it (`stale`), or fall through to normal setup (`missing`). Without
+ * this, a stale checkpoint would announce "starting from checkpoint …; skipping
+ * setup" and then quietly rebuild the base image while booting from the old
+ * layers — the exact confusion this module exists to prevent.
  */
 
 import type { ProviderName } from '@agentbox/core';
-import { resolveCheckpoint } from '@agentbox/sandbox-docker';
-import { probeCloudCheckpoint, resolveCloudCheckpoint } from '@agentbox/sandbox-cloud';
+import {
+  computeDockerContextFingerprint,
+  imageExists,
+  readPreparedDockerState,
+  resolveCheckpoint,
+} from '@agentbox/sandbox-docker';
+import {
+  currentCloudBaseFingerprint,
+  probeCloudCheckpoint,
+  resolveCloudCheckpoint,
+} from '@agentbox/sandbox-cloud';
 import { cloudBackendForProvider } from './provider/cloud-backend.js';
 
-export async function checkpointExistsForProvider(
+export type CheckpointStatus =
+  /** No manifest, a dead/expired cloud snapshot, or an orphaned Docker image — not bootable. */
+  | { state: 'missing' }
+  /** Bootable, but its base image/snapshot is older than the current one (or unverifiable). */
+  | { state: 'stale'; reason: string }
+  /** Bootable and captured against the current base. */
+  | { state: 'fresh' };
+
+function short(sha: string): string {
+  return sha.slice(0, 12);
+}
+
+async function evaluateDockerCheckpoint(
+  projectRoot: string,
+  ref: string,
+): Promise<CheckpointStatus> {
+  const head = await resolveCheckpoint(projectRoot, ref);
+  if (!head) return { state: 'missing' };
+  // The checkpoint *image* is the docker-run base. A manifest with no backing
+  // image (pruned out-of-band) can't boot — treat as missing so the wizard
+  // falls through to a fresh setup rather than offering "use it anyway".
+  if (!(await imageExists(head.manifest.image))) return { state: 'missing' };
+
+  const fp = head.manifest.baseFingerprint;
+  if (head.manifest.schema === 2 || !fp) {
+    return {
+      state: 'stale',
+      reason: 'captured before checkpoint versioning; base image unverifiable',
+    };
+  }
+  const current =
+    readPreparedDockerState()?.base?.contextSha256 ??
+    (await computeDockerContextFingerprint())?.contextSha256;
+  if (current && fp !== current) {
+    return {
+      state: 'stale',
+      reason: `base image updated since capture (captured ${short(fp)}, current ${short(current)})`,
+    };
+  }
+  return { state: 'fresh' };
+}
+
+async function evaluateCloudCheckpoint(
   provider: ProviderName,
   projectRoot: string,
   ref: string,
-): Promise<boolean> {
-  if (provider === 'docker') {
-    return (await resolveCheckpoint(projectRoot, ref)) !== null;
-  }
-  // v1: every cloud backend ships its checkpoints under the
-  // `~/.agentbox/cloud-checkpoints/<backend>/…` tree. The provider name is
-  // also the backend name so the lookup is a 1:1 mapping.
-  if ((await resolveCloudCheckpoint(projectRoot, provider, ref)) === null) return false;
-  // Manifest present — confirm the provider snapshot it points at is still
-  // bootable. A gone snapshot is pruned here so the next read sees nothing and
-  // the create path provisions from the base image. A probe failure (network /
-  // creds) is treated as "assume live": we never strand a usable checkpoint on
-  // a transient error.
+): Promise<CheckpointStatus> {
+  const found = await resolveCloudCheckpoint(projectRoot, provider, ref);
+  if (!found) return { state: 'missing' };
+  // Confirm the provider snapshot is still bootable. A gone snapshot is pruned
+  // here so the next read sees nothing. A probe failure (network / creds) is
+  // treated as "assume live": never strand a usable checkpoint on a transient
+  // error.
   try {
     const backend = await cloudBackendForProvider(provider);
-    if (!backend) return true;
-    const { live } = await probeCloudCheckpoint(backend, projectRoot, ref);
-    return live;
+    if (backend) {
+      const { live } = await probeCloudCheckpoint(backend, projectRoot, ref);
+      if (!live) return { state: 'missing' };
+    }
   } catch {
-    return true;
+    // assume live
   }
+
+  const fp = found.manifest.baseFingerprint;
+  if (found.manifest.schema < 2 || !fp) {
+    return {
+      state: 'stale',
+      reason: 'captured before checkpoint versioning; base snapshot unverifiable',
+    };
+  }
+  const current = currentCloudBaseFingerprint(provider);
+  if (current && fp !== current) {
+    return {
+      state: 'stale',
+      reason: `base snapshot updated since capture (captured ${short(fp)}, current ${short(current)})`,
+    };
+  }
+  return { state: 'fresh' };
+}
+
+/**
+ * Classify `ref` for the active provider. `docker` resolves against the local
+ * checkpoint store + image engine; cloud backends resolve the manifest, probe
+ * snapshot liveness, then compare base fingerprints.
+ */
+export async function evaluateCheckpoint(
+  provider: ProviderName,
+  projectRoot: string,
+  ref: string,
+): Promise<CheckpointStatus> {
+  if (provider === 'docker') return evaluateDockerCheckpoint(projectRoot, ref);
+  return evaluateCloudCheckpoint(provider, projectRoot, ref);
 }

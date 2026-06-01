@@ -6,14 +6,8 @@ export {
   renderInnerCommand,
   type CreateCloudProviderOptions,
 } from './cloud-provider.js';
-export {
-  launchCloudCtlDaemon,
-  type LaunchCloudCtlArgs,
-} from './ctl-launch.js';
-export {
-  launchCloudDockerdDaemon,
-  type CloudDockerdLaunchResult,
-} from './dockerd-launch.js';
+export { launchCloudCtlDaemon, type LaunchCloudCtlArgs } from './ctl-launch.js';
+export { launchCloudDockerdDaemon, type CloudDockerdLaunchResult } from './dockerd-launch.js';
 export {
   seedCloudWorkspace,
   type SeedCloudWorkspaceArgs,
@@ -29,11 +23,7 @@ export {
   type EnsureAgentVolumesResult,
   type SeedAgentVolumesOptions,
 } from './agent-credentials.js';
-export {
-  uploadEnvFiles,
-  type UploadEnvFilesArgs,
-  type UploadEnvFilesResult,
-} from './env-files.js';
+export { uploadEnvFiles, type UploadEnvFilesArgs, type UploadEnvFilesResult } from './env-files.js';
 export { seedDynamicConfig, type SeedDynamicConfigOptions } from './dynamic-sync.js';
 export { seedGitIdentity, type SeedGitIdentityOptions } from './git-identity.js';
 export { bashScript, quoteShellArg, quoteShellArgv } from './shell.js';
@@ -52,6 +42,7 @@ export {
   CLOUD_CHECKPOINTS_ROOT,
   CLOUD_SNAPSHOT_NAME_PREFIX,
   cloudSnapshotName,
+  currentCloudBaseFingerprint,
   listCloudCheckpoints,
   probeCloudCheckpoint,
   removeCloudCheckpointDir,

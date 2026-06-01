@@ -19,6 +19,7 @@ import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { CloudBackend } from '@agentbox/core';
 import { hashProjectPath, projectDirSegment, sanitizeMnemonic } from '@agentbox/config';
+import { type PreparedProviderKind, readPreparedStateRaw } from '@agentbox/sandbox-core';
 
 export const CLOUD_CHECKPOINTS_ROOT = join(homedir(), '.agentbox', 'cloud-checkpoints');
 
@@ -30,7 +31,15 @@ export const CLOUD_CHECKPOINTS_ROOT = join(homedir(), '.agentbox', 'cloud-checkp
 export const CLOUD_SNAPSHOT_NAME_PREFIX = 'agentbox-ckpt-';
 
 export interface CloudCheckpointManifest {
-  schema: 1;
+  /**
+   * Schema history:
+   *   1 — original fields (no base fingerprint; staleness unverifiable)
+   *   2 — adds `baseProvider`, `baseFingerprint`, `cliVersion` so the wizard
+   *       can tell a checkpoint captured against a now-rebuilt base snapshot
+   *       from a fresh one. A legacy schema-1 manifest has no fingerprint and
+   *       is treated as "stale / unverifiable" by `evaluateCheckpoint`.
+   */
+  schema: 1 | 2;
   /** User-facing, project-scoped name (e.g. "setup"). */
   name: string;
   /** Cloud backend the snapshot lives in (e.g. "daytona"). */
@@ -42,6 +51,19 @@ export interface CloudCheckpointManifest {
   snapshotName: string;
   sourceBoxId: string;
   sourceBoxName: string;
+  /**
+   * Cloud provider whose base-snapshot fingerprint this checkpoint was
+   * captured against. Schema-2+ only.
+   */
+  baseProvider?: string;
+  /**
+   * Build-context fingerprint of the base snapshot at capture time (the
+   * provider's `prepared-state` `contextSha256`). Schema-2+ only; missing →
+   * legacy schema-1 → "unverifiable / stale".
+   */
+  baseFingerprint?: string;
+  /** CLI version that captured the checkpoint. Schema-2+ only. */
+  cliVersion?: string;
   createdAt: string;
 }
 
@@ -76,7 +98,7 @@ async function readManifest(dir: string): Promise<CloudCheckpointManifest | null
   try {
     const raw = await readFile(join(dir, 'manifest.json'), 'utf8');
     const m = JSON.parse(raw) as CloudCheckpointManifest;
-    if (m.schema !== 1) return null;
+    if (m.schema !== 1 && m.schema !== 2) return null;
     return m;
   } catch {
     return null;
@@ -121,6 +143,9 @@ export interface WriteCloudManifestFields {
   snapshotName: string;
   sourceBoxId: string;
   sourceBoxName: string;
+  baseProvider?: string;
+  baseFingerprint?: string;
+  cliVersion?: string;
 }
 
 export async function writeCloudCheckpointManifest(
@@ -132,16 +157,36 @@ export async function writeCloudCheckpointManifest(
   const dir = checkpointDir(backend, projectRoot, name);
   await mkdir(dir, { recursive: true });
   const manifest: CloudCheckpointManifest = {
-    schema: 1,
+    schema: 2,
     name,
     backend,
     snapshotName: fields.snapshotName,
     sourceBoxId: fields.sourceBoxId,
     sourceBoxName: fields.sourceBoxName,
+    baseProvider: fields.baseProvider,
+    baseFingerprint: fields.baseFingerprint,
+    cliVersion: fields.cliVersion,
     createdAt: new Date().toISOString(),
   };
   await writeFile(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
   return { name, dir, manifest };
+}
+
+/**
+ * Current base-snapshot build-context fingerprint for a cloud provider, read
+ * from its `~/.agentbox/<provider>-prepared.json`. Returns `undefined` when no
+ * prepared state exists or it predates fingerprinting — callers then can't
+ * verify staleness and must not falsely flag a checkpoint as stale.
+ */
+export function currentCloudBaseFingerprint(provider: string): string | undefined {
+  try {
+    const raw = readPreparedStateRaw(provider as PreparedProviderKind) as {
+      base?: { contextSha256?: string };
+    } | null;
+    return raw?.base?.contextSha256;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function removeCloudCheckpointDir(

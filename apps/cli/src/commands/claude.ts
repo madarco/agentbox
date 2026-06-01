@@ -35,10 +35,7 @@ import {
 import { Command } from 'commander';
 import { resolveClaudeAuth, type ResolvedClaudeAuth } from '../auth.js';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
-import {
-  assertAgentCredsAvailable,
-  MissingAgentCredsError,
-} from '../lib/queue/assert-creds.js';
+import { assertAgentCredsAvailable, MissingAgentCredsError } from '../lib/queue/assert-creds.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { maybeResyncWorkspace } from '../lib/resync-start.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
@@ -147,9 +144,7 @@ async function attachClaudeWrapped(
     detachNotice: formatDetachNotice(reattach),
     onError,
     openIn,
-    onPasteImage: canPaste
-      ? () => pasteHostClipboardImage(provider, box)
-      : undefined,
+    onPasteImage: canPaste ? () => pasteHostClipboardImage(provider, box) : undefined,
   });
   process.exit(code);
 }
@@ -369,7 +364,10 @@ export const claudeCommand = new Command('claude')
   // Mirror create's surface so users can swap the verb without re-learning flags.
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
   .option('-n, --name <name>', 'friendly box name (default: <workspace-basename>-<id>)')
-  .option('--host-snapshot', 'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)')
+  .option(
+    '--host-snapshot',
+    'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)',
+  )
   .option('--no-host-snapshot', 'tar-pipe directly from the live host workspace at create time')
   .option(
     '--snapshot <ref>',
@@ -422,17 +420,14 @@ export const claudeCommand = new Command('claude')
   .option('--cpus <n>', 'CPU count cap (fractional ok, e.g. 1.5); unset = unlimited')
   .option('--pids-limit <n>', 'max process count (PIDs cgroup); unset = unlimited')
   .option('--disk <size>', 'best-effort writable-layer size (e.g. 10g); no-op on overlay2/macOS')
-  .option(
-    '--provider <name>',
-    "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
-  )
+  .option('--provider <name>', "sandbox backend: 'docker' (default) or 'daytona' for a cloud box")
   .option(
     '--from-branch <ref>',
     "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
   )
   .option(
     '-b, --use-branch <name>',
-    "reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.",
+    'reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.',
   )
   .option(
     '-v, --verbose',
@@ -443,7 +438,7 @@ export const claudeCommand = new Command('claude')
   .option('-d, --no-attach', NO_ATTACH_HELP)
   .option(
     '-i, --initial-prompt <text>',
-    'seed the claude session with this initial user turn and run in background (no attach). Jobs go through the host-wide queue (queue.maxConcurrent). NOTE: this is NOT claude\'s own `-p` headless print mode — for that, pass `-- -p ...`.',
+    "seed the claude session with this initial user turn and run in background (no attach). Jobs go through the host-wide queue (queue.maxConcurrent). NOTE: this is NOT claude's own `-p` headless print mode — for that, pass `-- -p ...`.",
   )
   .option(
     '--max-running <n>',
@@ -467,7 +462,7 @@ export const claudeCommand = new Command('claude')
   )
   .argument(
     '[claude-args...]',
-    "extra args passed to claude inside the box; place after `--`, e.g. `agentbox claude -- --model sonnet`",
+    'extra args passed to claude inside the box; place after `--`, e.g. `agentbox claude -- --model sonnet`',
   )
   .action(async (claudeArgs: string[], opts: ClaudeCreateOptions) => {
     const cmdLog = openCommandLog('claude');
@@ -486,14 +481,18 @@ export const claudeCommand = new Command('claude')
     if (opts.continue === true) resumeMode = { kind: 'continue' };
     else if (opts.resume) resumeMode = { kind: 'resume', id: opts.resume };
     if (resumeMode && opts.initialPrompt && opts.initialPrompt.length > 0) {
-      log.error('-i / --initial-prompt cannot be combined with -c / --resume (seeding a new turn into a resumed session is not supported).');
+      log.error(
+        '-i / --initial-prompt cannot be combined with -c / --resume (seeding a new turn into a resumed session is not supported).',
+      );
       cmdLog.close();
       process.exit(2);
     }
     // --plan seeds an interactive "resume the plan" turn, which is incompatible
     // with -i's background-queue mode (the same reason resume + -i is rejected).
     if (opts.plan && opts.initialPrompt && opts.initialPrompt.length > 0) {
-      log.error('--plan cannot be combined with -i / --initial-prompt (--plan already seeds an interactive "resume the plan" turn).');
+      log.error(
+        '--plan cannot be combined with -i / --initial-prompt (--plan already seeds an interactive "resume the plan" turn).',
+      );
       cmdLog.close();
       process.exit(2);
     }
@@ -672,9 +671,14 @@ export const claudeCommand = new Command('claude')
       yes: !!opts.yes,
       command: 'claude',
       checkpointRef,
+      checkpointFromDefault: !(opts.snapshot && opts.snapshot.length > 0),
       provider: providerName,
       withEnv: cfg.effective.box.withEnv,
     });
+    // The wizard may discard a stale/dead default checkpoint (recreate, or a
+    // non-interactive run): boot from the current base instead of the old
+    // artifact. An explicit `--snapshot` is never discarded.
+    const effectiveCheckpointRef = wiz.discardCheckpoint ? undefined : checkpointRef;
     let effectiveClaudeArgs = claudeArgs;
     // --plan: enter plan mode and seed a "resume the plan" turn. Adding
     // --permission-mode before applyClaudeSkipPermissions makes the latter treat
@@ -728,7 +732,7 @@ export const claudeCommand = new Command('claude')
         request: {
           workspacePath: opts.workspace,
           name: opts.name,
-          checkpointRef,
+          checkpointRef: effectiveCheckpointRef,
           image: cfg.effective.box.image,
           withPlaywright,
           withEnv: cfg.effective.box.withEnv,
@@ -805,7 +809,7 @@ export const claudeCommand = new Command('claude')
         workspacePath: opts.workspace,
         name: opts.name,
         useSnapshot,
-        checkpointRef,
+        checkpointRef: effectiveCheckpointRef,
         fromBranch,
         useBranch,
         resyncOnStart: opts.resync,
@@ -913,7 +917,12 @@ export const claudeCommand = new Command('claude')
           (wiz.action === 'launch-with-prompt' && Boolean(wiz.initialPrompt)) ||
           Boolean(resumePrepared);
         if (hasSeed) pendingCreateResyncWarn = createResyncWarning;
-        else effectiveClaudeArgs = buildPromptArgs('claude-code', createResyncWarning, effectiveClaudeArgs);
+        else
+          effectiveClaudeArgs = buildPromptArgs(
+            'claude-code',
+            createResyncWarning,
+            effectiveClaudeArgs,
+          );
       }
 
       s.message('starting claude session');
@@ -932,7 +941,9 @@ export const claudeCommand = new Command('claude')
       s.stop(`box ready${nSuffix}`);
       logPrune(rebuild);
       for (const f of rebuild.failed) {
-        log.warn(`plugin install failed for ${f.dir}; claude may still load it. stderr:\n${f.stderr.trim()}`);
+        log.warn(
+          `plugin install failed for ${f.dir}; claude may still load it. stderr:\n${f.stderr.trim()}`,
+        );
       }
       maybeShowInstallHint();
 
@@ -943,7 +954,7 @@ export const claudeCommand = new Command('claude')
         workspacePath: opts.workspace,
         fromBranch,
         useBranch,
-        checkpointRef,
+        checkpointRef: effectiveCheckpointRef,
         attaching: opts.attach !== false,
       });
       if (opts.attach === false) {
@@ -1168,7 +1179,9 @@ async function startOrAttachClaude(
   if (resyncWarning && resumePrepared) log.warn(resyncWarning);
   logPrune(rebuild);
   for (const f of rebuild.failed) {
-    log.warn(`plugin install failed for ${f.dir}; claude may still load it. stderr:\n${f.stderr.trim()}`);
+    log.warn(
+      `plugin install failed for ${f.dir}; claude may still load it. stderr:\n${f.stderr.trim()}`,
+    );
   }
 
   if (!wantAttach) {
@@ -1252,7 +1265,7 @@ const claudeStartCommand = new Command('start')
   )
   .argument(
     '[claude-args...]',
-    "extra args passed to claude when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox claude start 1 -- --model sonnet`",
+    'extra args passed to claude when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox claude start 1 -- --model sonnet`',
   )
   .action(async function (this: Command, idOrName: string | undefined, claudeArgs: string[]) {
     const opts = this.optsWithGlobals() as ClaudeStartOptions;
