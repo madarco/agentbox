@@ -159,20 +159,23 @@ export function refuseGhApiCall(endpoint: string, args: string[]): GitRpcResult 
       continue;
     }
     // `--input` (stdin/file body) can't traverse the relay — refuse outright.
+    // Its spaced value (if any) is irrelevant; we return before consuming it.
     if (arg === '--input' || arg.startsWith('--input=')) {
       return refuse("'--input' (stdin/file body) isn't supported through the relay; use -f/-F fields");
     }
-    // Field flags in any spelling auto-switch gh api to POST. No read-only flag
-    // starts with -f / -F, so a prefix match is safe and catches glued forms
-    // (`-fbody=hi`, `-Fkey=val`).
-    if (
-      arg.startsWith('-f') ||
-      arg.startsWith('-F') ||
-      arg === '--field' ||
-      arg === '--raw-field' ||
-      arg.startsWith('--field=') ||
-      arg.startsWith('--raw-field=')
-    ) {
+    // Field flags auto-switch gh api to POST. The SPACED forms take the next
+    // token as their value, so consume it — otherwise a method-looking value
+    // (e.g. `-f -X=GET`, where pflag binds `-X=GET` as `-f`'s value and POSTs)
+    // would be misread as a real `--method` next iteration and downgrade the
+    // detected method to GET, slipping a POST past a future read-only endpoint.
+    if (arg === '-f' || arg === '-F' || arg === '--field' || arg === '--raw-field') {
+      hasFieldFlag = true;
+      i++; // consume the value token
+      continue;
+    }
+    // Glued field forms carry their value inline (`-fbody=hi`, `--field=…`). No
+    // read-only flag starts with -f / -F, so the prefix match is safe.
+    if (arg.startsWith('-f') || arg.startsWith('-F') || arg.startsWith('--field=') || arg.startsWith('--raw-field=')) {
       hasFieldFlag = true;
     }
   }

@@ -177,6 +177,16 @@ describe('refuseGhApiCall', () => {
     expect(refuseGhApiCall('repos/o/r/issues/5/comments', ['-f', 'body=hi'])?.exitCode).toBe(65);
   });
 
+  it('treats a method-looking token bound to a field flag as POST, not GET', () => {
+    // pflag binds `-X=GET` as `-f`'s value (so gh POSTs); the parser must
+    // consume the field value and not misread it as `--method GET`. On a
+    // non-write endpoint that means refusal, not a silent GET bypass.
+    expect(refuseGhApiCall('repos/o/r/pulls/5', ['-f', '-X=GET'])?.exitCode).toBe(65);
+    expect(refuseGhApiCall('repos/o/r/pulls/5', ['--field', '-X=GET'])?.exitCode).toBe(65);
+    // And on a write-allowed endpoint it's correctly allowed (POST).
+    expect(refuseGhApiCall('repos/o/r/pulls/5/comments', ['-f', '-X=GET'])).toBeNull();
+  });
+
   it('refuses non-GET/POST methods even on comment endpoints', () => {
     expect(refuseGhApiCall(COMMENTS, ['-X', 'PATCH', '-f', 'body=hi'])?.exitCode).toBe(65);
     expect(refuseGhApiCall(COMMENTS, ['-X', 'DELETE'])?.exitCode).toBe(65);
