@@ -5,7 +5,7 @@ description: Launch Claude Code, Codex, or OpenCode in a box and attach, detach,
 
 AgentBox runs **Claude Code**, **OpenAI Codex**, and **OpenCode** inside a box, in a detachable tmux session — so you can leave the agent working, detach, and reattach later.
 
-The three agent verbs (`claude`, `codex`, `opencode`) share the same surface as `agentbox create` — the same flags, plus session-resume and attach controls. Each one creates the box if it doesn't already exist, starts the agent, and attaches you. This page assumes you've read [core concepts](/docs/core-concepts); the project-teleport mechanics live in [teleport a project](/docs/teleport-a-project).
+The three agent verbs (`claude`, `codex`, `opencode`) each create the box if it doesn't already exist, start the agent, and attach you. They share all `agentbox create` flags — see [CLI commands](/docs/cli) — plus session-resume and attach controls. This page assumes you've read [core concepts](/docs/core-concepts); the project-teleport mechanics live in [teleport a project](/docs/teleport-a-project).
 
 <Callout title="NOTE">
 `<box>` is optional almost everywhere — it defaults to the single box for the current project. Otherwise pass its short index (`1`, `2`, …), name, or id prefix.
@@ -18,13 +18,10 @@ The three agent verbs (`claude`, `codex`, `opencode`) share the same surface as 
 ```bash
 agentbox claude                       # create a box + start Claude Code, then attach
 agentbox claude -n alpha              # name the box
-agentbox claude -w /path/to/project   # target a different workspace
 agentbox claude -- --model sonnet     # pass extra args through to claude
 ```
 
-Pass-through args go after `--` — e.g. `agentbox claude -- --model sonnet`. Name a box with `-n`, point at another directory with `-w`.
-
-The first run pulls or builds the `agentbox/box:dev` image (~1 GB, one-time) and offers a setup wizard that installs project deps and your dev server. See [local Docker](/docs/local-docker) for the image and [services and tasks](/docs/services-and-tasks) for the wizard.
+Name a box with `-n`, target another directory with `-w`, and put pass-through args after `--`. The first run pulls or builds the `agentbox/box:dev` image (~1 GB, one-time) and offers a setup wizard that installs project deps and your dev server. See [local Docker](/docs/local-docker) for the image and [services and tasks](/docs/services-and-tasks) for the wizard.
 
 ```console
 $ agentbox claude
@@ -37,10 +34,6 @@ attaching — Control+a d to detach, leaves claude running
 
 <Figure caption="Claude Code running inside a box, attached over tmux." />
 
-<Callout title="TIP">
-Every agent verb mirrors `agentbox create`'s flags — resource caps (`--memory` / `--cpus` / `--pids-limit` / `--disk`), `--with-env`, `--from-branch`, `-b/--use-branch`, `--snapshot`, and `--host-snapshot` / `--no-host-snapshot`. See [cli](/docs/cli) for the full reference and [sync and git](/docs/sync-and-git) for the branch flags.
-</Callout>
-
 ## Detach and reattach
 
 The agent runs in a detachable tmux session whose prefix is **`Control+a`** (not the usual `Ctrl-b`). Press `Control+a` then `d` to detach — the agent keeps running in the box.
@@ -50,16 +43,10 @@ Reattach with the `attach` subcommand, or resync your host config and reattach w
 ```bash
 # detach from inside the session: press Control+a then d
 agentbox claude attach 1              # reattach to box 1's Claude session
-agentbox claude attach                # the project's only box
 agentbox claude start mybox           # start a session (resyncs host ~/.claude)
-agentbox claude start mybox --no-sync-config   # skip the resync (faster)
-agentbox claude attach 1 --attach-in tab       # open in a new iTerm/tmux tab
-agentbox claude --no-attach -n bg     # start in the background, don't attach
 ```
 
-`attach` starts a session if none is running and auto-unpauses a stopped box, but **never resyncs your host `~/.claude`**. `start` does the resync — use it when new skills, plugins, or a fresh login should flow into the box (skip it with `--no-sync-config`).
-
-`--attach-in <mode>` controls where the session opens: `split`, `window`, `tab`, or `same`. It's only effective inside tmux or iTerm2, and falls back to inline otherwise. `--inline` is a shortcut for `--attach-in same`; on `attach` the `-i` short form means inline, while on the create-style verbs `-i` is `--initial-prompt`. `-d` / `--no-attach` starts the session without attaching, prints the box ref, and exits — see [background and parallel](/docs/background-and-parallel).
+`attach` starts a session if none is running and auto-unpauses a stopped box, but **never resyncs your host `~/.claude`**. `start` does the resync — use it when new skills, plugins, or a fresh login should flow into the box. For `--attach-in`, `--no-attach`, and the other attach controls, see [CLI commands](/docs/cli).
 
 <Callout type="warn" title="HEADS UP">
 `attach` never resyncs your host `~/.claude` (skills, plugins, login). After installing a new skill or signing in on the host, use `claude start` (or a fresh `agentbox claude`) so the box picks it up.
@@ -72,16 +59,12 @@ Codex and OpenCode follow the identical flow — `agentbox codex` / `agentbox op
 ```bash
 agentbox codex                        # OpenAI Codex in a box
 agentbox opencode                     # OpenCode in a box
-agentbox codex -n review --isolate-codex-config
-agentbox claude --no-dangerously-skip-permissions   # keep approval prompts on
 agentbox dashboard                    # switch between running boxes/agents
 ```
 
-Auto-approve (`--dangerously-skip-permissions`) is on by default because the box is isolated from your host. For Codex it launches with `--dangerously-bypass-approvals-and-sandbox`. Pass `--no-dangerously-skip-permissions` to keep the agent's own approval prompts.
+Auto-approve is on by default because the box is isolated from your host; pass `--no-dangerously-skip-permissions` to keep the agent's own approval prompts. Each agent shares an identity volume across boxes by default — opt out per box with `--isolate-claude-config` (and the codex/opencode equivalents). See [configuration](/docs/configuration) and [CLI commands](/docs/cli).
 
-Each agent shares an identity volume across boxes by default; opt out with `--isolate-claude-config`, `--isolate-codex-config`, or `--isolate-opencode-config` for a per-box volume seeded from the host (removed on destroy). See [configuration](/docs/configuration).
-
-You can run different agents in different boxes for the same project and switch between them with `agentbox dashboard`. Session resume support differs: Claude and Codex resume; OpenCode does not yet (resume starts a fresh box).
+You can run different agents in different boxes for the same project and switch between them with `agentbox dashboard`. Claude and Codex resume sessions; OpenCode does not yet (resume starts a fresh box).
 
 <Callout title="WHY">
 Auto-approve is safe to default on because the box can't touch your machine — it's isolated from the host. The agent works without stopping to ask, and you keep your laptop clean.
@@ -93,16 +76,12 @@ Auto-approve is safe to default on because the box can't touch your machine — 
 
 ```bash
 agentbox fork                         # fork the newest host Claude session into a new box
-agentbox fork --session <id>          # pick a specific session
 agentbox fork --agent codex           # fork a Codex session instead
-agentbox fork --attach-in window      # open the fork in a new window
-agentbox fork --plan ~/.claude/plans/my-feature.md   # resume a plan in a box (claude)
 agentbox fork --provider hetzner      # fork into a cloud box
+agentbox fork --name review           # name the box
 ```
 
-`--agent` is `claude` (default), `codex`, or `opencode` — OpenCode starts a fresh box since resume isn't supported. `--session` picks which host session to resume (default: the newest for this cwd; Claude refuses if several were used in the last 5 minutes and asks you to pass `--session`). `--attach-in` adds `background` to the mode set and defaults to `tab`, falling back to background — not inline — outside tmux/iTerm, since fork is often driven from another agent.
-
-`--name` defaults to `fork-<HHMMSS>`. `--provider` selects `docker` (default), `daytona`, `hetzner`, or `vercel`. `--plan <path>` copies a Claude plan file in, launches plan mode, and seeds a resume prompt (Claude only). `--carry` is `send` (default, copies the `agentbox.yaml` `carry:` files) or `skip` — see [agentbox.yaml](/docs/agentbox-yaml). Fork is also the `/agentbox` slash command inside a host Claude session.
+`--agent` is `claude` (default), `codex`, or `opencode` (OpenCode starts a fresh box since resume isn't supported). `--provider` selects `docker` (default), `daytona`, `hetzner`, or `vercel`. For `--session`, `--plan`, `--carry`, and the other flags, see [CLI commands](/docs/cli). Fork is also the `/agentbox` slash command inside a host Claude session.
 
 <Callout type="warn" title="HEADS UP">
 `agentbox fork` runs on the host only — it teleports a host session into a fresh box, so it refuses when `AGENTBOX_RELAY_URL` is set (inside a box). Box→box fork isn't supported yet.
@@ -112,15 +91,11 @@ agentbox fork --provider hetzner      # fork into a cloud box
 
 ## First-run auth
 
-macOS Keychain doesn't transfer into containers, so credentials are handled on the host and seeded into every box.
-
-On the first `agentbox claude` with no credentials, AgentBox offers an interactive sign-in — confirm `Sign in with your Claude subscription? (saved and reused by every box)`. It signs in against the shared `agentbox-claude-config` volume and mirrors the result to a host backup, so every future box is seeded. Skip it with `-y` (or in CI) and claude will prompt you to `/login` inside the box.
+Credentials are handled on the host and seeded into every box (macOS Keychain doesn't transfer into containers). On the first `agentbox claude` with no credentials, AgentBox offers an interactive sign-in that's saved and reused by every future box. Skip it with `-y` (or in CI) and claude will prompt you to `/login` inside the box.
 
 ```bash
 agentbox claude login                 # sign in once, reused by every box
-agentbox claude login -- --console    # forward args to `claude auth login`
 agentbox codex login                  # device-auth flow for Codex
-agentbox codex login -- --api-key     # API-key flow instead
 agentbox opencode login -- --provider anthropic
 ```
 
@@ -130,9 +105,7 @@ $ agentbox claude
 ✔ Signed in with your Claude subscription — saved for future boxes.
 ```
 
-Setting `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` (Claude) or `OPENAI_API_KEY` (Codex) on the host forwards it into the box at create time, and the sign-in offer is skipped when auth came from env. Host `~/.claude` stays the source of truth — every `create` / `claude` rsyncs it into the shared volume, so skills, plugins, MCP, and login flow into the next box.
-
-Cloud providers have no shared volume, so the login is captured to `~/.agentbox/claude-credentials.json` and pushed into the box on create; AgentBox re-offers sign-in when the saved token looks expired. See [hetzner](/docs/hetzner), [daytona](/docs/daytona), and [vercel](/docs/vercel).
+Setting `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` (Claude) or `OPENAI_API_KEY` (Codex) on the host forwards it into the box and skips the sign-in offer. Host `~/.claude` stays the source of truth — every `create` / `claude` syncs it in, so skills, plugins, MCP, and login flow into the next box. Cloud providers capture the login to `~/.agentbox` and push it in on create — see [hetzner](/docs/hetzner), [daytona](/docs/daytona), and [vercel](/docs/vercel).
 
 <Callout title="TIP">
 Sign in once on the host. Install a skill or sign in there, and the next box picks it up automatically. See [configuration](/docs/configuration) and [sync and git](/docs/sync-and-git).

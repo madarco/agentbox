@@ -13,60 +13,34 @@ Switch one box with `--provider daytona`, or pin a project with `box.provider: d
 
 ## Set up
 
-`agentbox daytona login` prompts for your `DAYTONA_API_KEY` (required) and `DAYTONA_ORGANIZATION_ID` (optional), and persists them to `~/.agentbox/secrets.env`. Credentials are read only from that file or the shell env — your project `.env` is never harvested.
+`agentbox daytona login` prompts for your `DAYTONA_API_KEY` (required) and `DAYTONA_ORGANIZATION_ID` (optional), and persists them to `~/.agentbox/secrets.env`. Your project `.env` is never harvested.
 
 ```bash
 agentbox daytona login
 ```
 
-```bash
-# check what's configured (masked), without changing anything
-agentbox daytona login --status
-```
-
-`agentbox daytona` is also sugar: `agentbox daytona create|claude|codex|opencode` is the same command with `--provider daytona`. The first time you use `--provider daytona`, the login prompt fires automatically, so you can skip running it explicitly.
+`agentbox daytona create|claude|codex|opencode` is sugar for the same command with `--provider daytona`. The first time you use `--provider daytona`, the login prompt fires automatically.
 
 ## Prepare image
 
-Unlike Docker, Daytona does **not** auto-build the box image on first `create`. Run `agentbox prepare --provider daytona` once per org. It uses the Daytona snapshot API to build server-side (no sandbox is provisioned), and bakes your agent **static config** — plugins, skills, marketplaces, settings, Codex `config.toml` + `prompts/`, OpenCode `config/` — into the snapshot, minus the renewable token files.
+Unlike Docker, Daytona does **not** auto-build the box image on first `create`. Run `agentbox prepare --provider daytona` once per org: it builds a **base snapshot** server-side (runtime + your agent static config — plugins, skills, settings, Codex/OpenCode config) and pins it into project config as `box.image`, so later creates boot in seconds.
 
 ```bash
-# one-off, ~7 min — bakes Dockerfile.box + agent static config into a snapshot
+# one-off, ~7 min — bakes the base snapshot
 agentbox prepare --provider daytona
 ```
 
-The result is pinned into project config as `box.image`, so later creates boot from it in seconds.
-
-```bash
-# custom snapshot name, and rebuild even if one already exists
-agentbox prepare --provider daytona --name agentbox-base --force
-```
-
-```bash
-# inventory: snapshots, volumes, and which one is pinned
-agentbox prepare
-```
-
-`prepare` also takes `-y, --yes` (skip the cost/time prompt) and `--status` (show status without preparing).
+See [CLI commands](/docs/cli) for all flags.
 
 <Callout type="warn" title="HEADS UP">
-Without `prepare`, every first box in a new project eats a ~7-minute cold Dockerfile build on Daytona (Playwright + Chromium). Daytona's internal layer cache often helps on repeats in the same org, but there is no guarantee. Run `prepare` once.
+Without `prepare`, every first box in a new project eats a ~7-minute cold Dockerfile build on Daytona (Playwright + Chromium). Run `prepare` once.
 </Callout>
 
-There are two distinct snapshot tiers: this **base snapshot** (`box.image`, shared org-wide, just runtime + agent config) versus a **project setup snapshot** captured later with `agentbox checkpoint create`, which includes `/workspace`. See [checkpoints & pausing](/docs/checkpoints-and-pausing).
+The base snapshot is shared org-wide and holds only runtime + agent config. A later **project setup snapshot** captured with `agentbox checkpoint create` also includes `/workspace`. See [checkpoints & pausing](/docs/checkpoints-and-pausing).
 
 ## Workspace seeding
 
-Docker bind-mounts your `.git/`; Daytona can't, so each box is seeded from a host shallow git clone. On a fresh branch `agentbox/<box-name>`, AgentBox tars the cloned `.git/`, ships it, extracts into `/workspace`, repoints `origin` at your real upstream, materializes the tree, then re-applies your **uncommitted** changes and **untracked-not-ignored** files over a side channel.
-
-History is capped at the last **200 commits** by default (adaptive — it redoes at 100 if the tar exceeds 20 MB). Override per create, or set `box.bundleDepth`.
-
-```bash
-# cap (or uncap) the git history shipped into the box
-agentbox create --provider daytona --bundle-depth 0   # 0 = full history
-```
-
-Every box reseeds — it's a per-box cost by design, since each `/workspace` is isolated on its own branch. Booting from a checkpoint skips the seed entirely. See [teleport a project](/docs/teleport-a-project).
+Docker bind-mounts your `.git/`; Daytona can't, so each box is seeded from a host git clone plus your uncommitted and untracked files. Booting from a checkpoint skips the seed entirely. See [teleport a project](/docs/teleport-a-project) for how files reach the box.
 
 <Callout title="WHY">
 `git push` from inside a Daytona box works without your SSH keys ever entering the sandbox — pushes tunnel back through the host relay. See [sync & git](/docs/sync-and-git).
@@ -74,44 +48,28 @@ Every box reseeds — it's a per-box cost by design, since each `/workspace` is 
 
 ## Credentials & resync
 
-Agent state is split two ways. *Static config* is baked into the snapshot at `prepare` time (above). *Renewable credentials* (`.credentials.json` for Claude, `auth.json` for Codex/OpenCode) live on a single per-org Daytona volume, `agentbox-credentials`, mounted by subpath under `/home/vscode/.agentbox-creds/{claude,codex,opencode}/`; baked symlinks in the box resolve each agent's token path through the mount.
+Agent *static config* is baked into the snapshot at `prepare` time. *Renewable tokens* (Claude `.credentials.json`, Codex/OpenCode `auth.json`) live on a shared per-org volume, kept separate so they refresh without republishing the snapshot.
 
-The split exists because Daytona volumes are S3-backed FUSE mounts — extracting a ~22 MB `~/.claude` (~2.5k files) took 10+ minutes, while the snapshot is regular ext4 (seconds). The credentials payload is tiny.
-
-After re-authing an agent on the host, run `agentbox daytona resync` to re-upload the tokens. No snapshot republish is needed — the static-config snapshot is untouched.
+After re-authing an agent on the host, run `agentbox daytona resync` to re-upload the tokens.
 
 ```bash
 # re-upload all agent credentials after a host re-auth
 agentbox daytona resync
 ```
 
-```bash
-# just refresh Claude's token
-agentbox daytona resync --agent claude
-```
-
-`-a, --agent <name>` takes `claude | codex | opencode | all` (default `all`). `resync` spins up a throwaway sandbox, force-reseeds the selected volumes, then destroys it. See [run an agent](/docs/run-an-agent) for logging agents in on the host first.
-
-<Callout type="warn" title="HEADS UP">
-If you published a base snapshot before the static-config bake existed, re-run `agentbox prepare --provider daytona` so the snapshot carries your plugins, skills, and settings. Legacy per-agent volumes (`agentbox-claude-config`, …) are abandoned — delete them in the Daytona dashboard to reclaim space.
-</Callout>
+See [run an agent](/docs/run-an-agent) for logging agents in on the host first, and [CLI commands](/docs/cli) for all flags.
 
 ## Preview URLs
 
-Cloud boxes run the same `@agentbox/relay` in box mode (binding `0.0.0.0:8788`), and the host's poller long-polls an in-box bridge URL. You mostly interact with three preview-URL flavors:
+Cloud boxes run the same `@agentbox/relay` in box mode, reached over preview URLs:
 
-- **Signed** — `https://{port}-{token}.proxy.daytona.work`; the token is in the URL, so a browser attaches by click. Used by `agentbox url` and `agentbox screen`. Default **1h** TTL, up to **24h** via `--ttl <seconds>`.
-- **Header-token** — a standard preview URL plus an `x-daytona-preview-token` header, used by programmatic clients (the poller, cp/upload helpers).
-- **Per-service** — every `services.*.expose.port` in `agentbox.yaml` gets its own URL, in addition to the WebProxy URL on port **8080**.
+- **Signed** — token embedded in the URL; a browser attaches by click. Used by `agentbox url` and `agentbox screen`.
+- **Header-token** — used by programmatic clients (the poller, cp/upload helpers).
+- **Per-service** — every `services.*.expose.port` in `agentbox.yaml` gets its own URL, alongside the WebProxy URL on port **8080**.
 
 ```bash
 # open / print the box's web preview URL
 agentbox url
-```
-
-```bash
-# print only, with a longer signed-URL lifetime (max 86400 = 24h)
-agentbox url --print --ttl 7200
 ```
 
 ```bash
@@ -125,7 +83,7 @@ AgentBox gives the host browser and the in-box agent **symmetric** `https://<box
 
 ## Checkpoints & snapshots
 
-Cloud checkpoints map to Daytona snapshots. Each user-facing checkpoint is an org-scoped snapshot plus a local host manifest under `~/.agentbox/cloud-checkpoints/daytona/`. The box must be running to capture one, so AgentBox resumes or starts it first.
+Cloud checkpoints map to Daytona snapshots, each paired with a local host manifest. The box must be running to capture one, so AgentBox resumes or starts it first.
 
 ```bash
 # capture /workspace state (deps installed, DB seeded, …) and make it the default
@@ -139,41 +97,19 @@ agentbox checkpoint create --set-default
 agentbox create --provider daytona --checkpoint setup
 ```
 
-Two differences from Docker: there is no `--merged` (Daytona snapshots are flattened by construction) and no `--replace` (deletes are async — use `agentbox checkpoint rm <name>` then recreate). Set the default later with `agentbox checkpoint set-default --provider daytona <ref>`. Full mechanics live in [checkpoints & pausing](/docs/checkpoints-and-pausing).
+Two differences from Docker: there is no `--merged` (Daytona snapshots are flattened by construction) and no `--replace` (deletes are async — `checkpoint rm` then recreate). Full mechanics live in [checkpoints & pausing](/docs/checkpoints-and-pausing).
 
 ## Caveats
 
-- **Custom `--size` only applies on the from-image create.** Override the default shape with `--size <cpu-mem-disk>` (GB, e.g. `4-8-20`) or `box.sizeDaytona` / `box.size`. Daytona rejects `resources` on the snapshot-resume path, so snapshot-based creates inherit the snapshot's baked size. Invalid specs are logged and ignored.
+- **Custom `--size` only applies on the from-image create** — snapshot-based creates inherit the snapshot's baked size, so bake the size you want at first create or `prepare` time.
 - **No base image auto-build** — `prepare --provider daytona` is required, unlike Docker.
-- **No live stats** — `agentbox top` and `dashboard` render `—` for cloud CPU/mem (Daytona's SDK exposes no per-sandbox metrics) and no live attach pane.
-- **Destroy lag in the dashboard** — `sb.delete()` returns immediately and local state clears, but the Daytona web UI lags ~30s. Cosmetic; the resource is gone.
-- **`download.env|config|claude` not implemented for cloud** — those live in per-agent volumes that need a separate route; `download.workspace` works.
+- **No live stats** — `agentbox top` and `dashboard` render `—` for cloud CPU/mem and no live attach pane.
+- **Destroy lag in the dashboard** — the resource is gone immediately, but the Daytona web UI lags ~30s (cosmetic).
+- **`download.env|config|claude` not implemented for cloud** — `download.workspace` works.
 
 ```bash
 # find and clean up Daytona sandboxes AgentBox no longer tracks
 agentbox prune --provider daytona
 ```
 
-`prune` lists every sandbox the credentials can see, cross-references local state, and offers to delete the ones AgentBox created but no longer tracks.
-
-<Callout type="warn" title="HEADS UP">
-A custom `--size` is silently ignored once you boot from a snapshot. Bake the size you want at first create or `prepare` time.
-</Callout>
-
-## Command reference
-
-Every command honors `box.provider`, so once a project pins Daytona the whole CLI routes there.
-
-| Command | What it does on Daytona |
-|---|---|
-| `agentbox daytona login [--status]` | Set up, rotate, or inspect credentials |
-| `agentbox daytona resync [--agent <name>]` | Re-upload agent tokens into the shared volume |
-| `agentbox prepare --provider daytona` | Bake the base snapshot (runtime + agent static config) |
-| `agentbox create --provider daytona` | Provision a box (seed `/workspace`, ctl, VNC) |
-| `agentbox claude` / `codex` / `opencode` | Attach an agent over SSH + tmux |
-| `agentbox shell` | Interactive shell over SSH |
-| `agentbox url` / `screen` | Signed preview URL (web / noVNC on 6080) |
-| `agentbox checkpoint create / ls / rm / set-default` | Daytona snapshots + on-disk manifests |
-| `agentbox prune --provider daytona` | Orphan cleanup |
-
-Flag-level detail is in the [CLI reference](/docs/cli); the per-provider config keys (`box.imageDaytona`, `box.sizeDaytona`, `box.defaultCheckpointDaytona`, `box.bundleDepth`, `box.provider`) are in [configuration](/docs/configuration).
+Every command honors `box.provider`, so once a project pins Daytona the whole CLI routes there. Flag-level detail is in the [CLI reference](/docs/cli); the per-provider config keys (`box.imageDaytona`, `box.sizeDaytona`, `box.defaultCheckpointDaytona`, `box.bundleDepth`, `box.provider`) are in [configuration](/docs/configuration).

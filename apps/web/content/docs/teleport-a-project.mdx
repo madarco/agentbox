@@ -27,7 +27,7 @@ To provision in the cloud, pass `--provider` and follow the setup on the provide
 agentbox create --provider hetzner
 ```
 
-Later you refer to a box by index (`1`, `2`), name, or id prefix — see the [CLI reference](/docs/cli). Progress is teed to a log; the command prints `log: <path>` at startup, and `~/.agentbox/logs/latest.log` always points at the most recent run, which is handy for checking whether a create is still making progress.
+Later you refer to a box by index (`1`, `2`), name, or id prefix. See [CLI commands](/docs/cli) for all flags.
 
 <Callout title="TIP">`agentbox create` only provisions the box. To create a box **and** launch an agent in one step, use `agentbox claude`, `agentbox codex`, or `agentbox opencode` — see [run an agent](/docs/run-an-agent).</Callout>
 
@@ -35,26 +35,19 @@ Later you refer to a box by index (`1`, `2`), name, or id prefix — see the [CL
 
 ## How your files get in
 
-On local Docker, the box's `/workspace` is an in-container **git worktree** — `git worktree add -b agentbox/<box-name> <path> HEAD` — against your host's `.git/`, which is **bind-mounted read-write** into the container at the identical absolute path. The consequence: commits made inside the box land in your host's `.git/` immediately. No working copy is written to the host; `/workspace` lives only in the container's writable layer.
+On local Docker, the box's `/workspace` is a **git worktree** on its own branch (`agentbox/<box-name>`), backed by your host's `.git/`, so commits made inside the box land on your host immediately. No working copy is written to the host — `/workspace` and all build artifacts (`node_modules`, `.next`, `target`, `.venv`) live only in the container, survive pause / stop / start, and are wiped on `destroy`. For monorepos, each detected repo gets its own branch.
 
-For monorepos, each detected repo gets its own branch — `agentbox/<box-name>` at the root, `agentbox/<box-name>--<sub>` for a first-level subdirectory.
+Cloud providers can't bind-mount your `.git`. Instead the workspace is seeded from a host `git bundle` (plus your uncommitted work — see below), and push / pull flow through the host relay.
 
-Build artifacts like `node_modules`, `.next`, `target`, and `.venv` all land in the container's writable layer. They survive pause / stop / start and are wiped on `destroy`. The box never writes to your host filesystem directly. See [checkpoints and pausing](/docs/checkpoints-and-pausing) for warm starts, and [sync and git](/docs/sync-and-git) / [access your box](/docs/access-your-box) for getting work back out.
-
-Cloud providers can't bind-mount your `.git`. Instead the workspace is seeded from a host `git bundle` (plus your uncommitted work — see below), and push / pull flow through the host relay. The provider pages and [sync and git](/docs/sync-and-git) cover that path.
+See [checkpoints and pausing](/docs/checkpoints-and-pausing) for warm starts, and [sync and git](/docs/sync-and-git) / [access your box](/docs/access-your-box) for getting work back out.
 
 <Callout type="warn" title="HEADS UP">The box's `/workspace` is **not** a folder on your machine — it lives inside the container. Use `agentbox open` or `agentbox download` to bring files back to the host. See [access your box](/docs/access-your-box) and [sync and git](/docs/sync-and-git).</Callout>
 
 ## Carry-over
 
-Your uncommitted work comes along automatically, in two pieces:
+Your uncommitted work comes along automatically — both tracked-but-uncommitted changes and untracked files. The agent starts from exactly the state you'd see in `git status`, on a fresh branch, fully isolated from your host checkout.
 
-- **Tracked-but-uncommitted changes** via `git stash create` — this writes a stash commit into your `.git/` object DB **without** touching your working tree or your stash list. The in-box worktree replays it with `git stash apply --index <sha>`, falling back to apply-without-index on conflict.
-- **Untracked files** via `git ls-files --others --exclude-standard` — enumerated, tarred host-side, and extracted into the box.
-
-The agent starts from exactly the state you'd see in `git status`, on a fresh branch, fully isolated from your host checkout.
-
-One boundary: **gitignored files are not carried** — the untracked enumeration uses `--exclude-standard`. That's what `--with-env` and the `carry:` block are for (next section).
+One boundary: **gitignored files are not carried.** That's what `--with-env` and the `carry:` block are for (next section).
 
 <Callout title="WHY">Carry-over is non-destructive. `git stash create` never alters your host working tree or stash list — your machine looks exactly the same after `create` as before.</Callout>
 
@@ -62,52 +55,24 @@ One boundary: **gitignored files are not carried** — the untracked enumeration
 
 Because gitignored files are excluded from carry-over, secrets and local env files don't reach the box by default. That's deliberate.
 
-`--with-env` copies host env/config files into `/workspace` **after** seeding, bypassing `.gitignore`. It runs once at create time, lands in the container's writable layer (so it survives stop / start), is best-effort (it warns, never throws), and is recorded on the box record (visible in `agentbox status --inspect`).
+`--with-env` copies host env/config files (`.env*`, `.envrc`, and similar) into `/workspace` after seeding, bypassing `.gitignore`. The same flag works on the agent launchers and maps to the config key `box.withEnv` — see [configuration](/docs/configuration) for the key and [environment](/docs/environment) for the exact patterns.
 
 ```bash
 agentbox create --with-env
 ```
 
-The same flag works on the agent launchers, and maps to the config key `box.withEnv`:
-
-```bash
-agentbox claude --with-env
-```
-
-The exact patterns copied are `.env*`, `.envrc`, `.dev.vars`, `secrets.toml`, `local.settings.json`, `appsettings.*.json`, and `agentbox.yaml`. It's the reverse of `agentbox download env` (box→host) — see [sync and git](/docs/sync-and-git) and the [config key](/docs/configuration).
-
 For **arbitrary** host files outside those patterns, use the `carry:` block in `agentbox.yaml` instead — see [agentbox.yaml](/docs/agentbox-yaml).
 
 <Callout type="warn" title="HEADS UP">`--with-env` copies secrets into the box, bypassing `.gitignore`. Only use it for boxes you trust with those values. For per-file host→box copies with a one-time approval prompt, use the `carry:` block — see [agentbox.yaml](/docs/agentbox-yaml).</Callout>
 
-## Non-git projects
-
-If the workspace has no `.git`, there's no worktree to add. AgentBox seeds `/workspace` by tarring the workspace host-side and extracting it into the box, owned by the in-box `vscode` user (uid 1000).
-
-`--host-snapshot` stabilizes the source: it APFS-clones (`cp -c`) the workspace into a per-box scratch dir first, then tars from the clone, so host edits during create can't corrupt the seed. It's **off by default** (`--no-host-snapshot` binds the live workspace directly; config key `box.hostSnapshot`). The clone path is APFS-only today.
-
-```bash
-agentbox create --host-snapshot
-```
-
-<Callout title="NOTE">Most projects are git repos and use the worktree path — you only reach for `--host-snapshot` on plain directories, when you want a stable byte-for-byte source during create. This is separate from [checkpoints](/docs/checkpoints-and-pausing), which capture box-side warm state.</Callout>
-
 ## Choosing a branch
 
-By default each box gets a **fresh** per-box branch `agentbox/<box-name>`, forked from the host `HEAD`. If that name already exists it bumps to `-2`, `-3`, and so on, so boxes never collide.
-
-`--from-branch <ref>` bases the box's per-box branch on a different ref — a branch, tag, or SHA — instead of `HEAD`. Branch and tag names are fetched from `origin` first.
+By default each box gets a **fresh** per-box branch `agentbox/<box-name>`, forked from the host `HEAD` (bumping to `-2`, `-3`, … if the name exists, so boxes never collide). Pass `--from-branch <ref>` to fork off a different branch, tag, or SHA, or `-b, --use-branch <name>` to reuse an existing branch directly. See [CLI commands](/docs/cli) for all flags.
 
 ```bash
 agentbox create --from-branch main
 ```
 
-`-b, --use-branch <name>` reuses an **existing** branch directly instead of forking `agentbox/<box-name>`; commits and pushes flow straight to it. On local Docker it fails if the host already has that branch checked out (a worktree conflict).
-
-```bash
-agentbox create -b feature/login
-```
-
 Whichever you pick, `git push` from inside the box goes through the host relay with your credentials — see [sync and git](/docs/sync-and-git).
 
-<Callout type="warn" title="HEADS UP">`-b/--use-branch` and `--from-branch` are mutually exclusive. `--use-branch` reuses an existing branch (and on local Docker fails if it's already checked out on the host); `--from-branch` forks a new `agentbox/<name>` branch off a base ref.</Callout>
+<Callout type="warn" title="HEADS UP">`-b/--use-branch` and `--from-branch` are mutually exclusive, and on local Docker `--use-branch` fails if that branch is already checked out on the host.</Callout>

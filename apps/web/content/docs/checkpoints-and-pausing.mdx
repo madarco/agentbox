@@ -18,14 +18,7 @@ agentbox pause alpha     # docker pause — 0 CPU, RAM stays mapped
 agentbox unpause alpha   # docker unpause — resumes mid-instruction
 ```
 
-```console
-$ agentbox pause alpha
-paused agentbox-alpha
-$ agentbox unpause alpha
-unpaused agentbox-alpha
-```
-
-The `<box>` argument is optional — it defaults to the only box in the current project, otherwise resolves by project index, id, id prefix, name, or container name (see [CLI](/docs/cli) for the rules).
+The `<box>` argument is optional — it defaults to the only box in the current project, otherwise resolves by name, id, or project index (see [CLI commands](/docs/cli) for all flags).
 
 <Callout title="TIP">
 Pausing is the right move when juggling boxes in parallel — see [Background & parallel runs](/docs/background-and-parallel). A paused box keeps its full RAM working set, so resuming is instant but it still consumes memory. `stop` a box you won't touch for a while. On [Daytona](/docs/daytona), `pause` instead archives the sandbox to cold storage — it uses no quota while archived, but the first resume is slower.
@@ -44,15 +37,7 @@ agentbox stop alpha    # docker stop — writable layer (node_modules included) 
 agentbox start alpha   # docker start — relaunches ctl/dockerd/vnc daemons
 ```
 
-```console
-$ agentbox stop alpha
-stopped agentbox-alpha
-restart with: agentbox start alpha
-$ agentbox start alpha
-started agentbox-alpha
-```
-
-On cloud providers, `stop` leaves the sandbox in your account with disk preserved; `start` re-resolves preview URLs, relaunches in-sandbox daemons, and re-registers with the host relay.
+On cloud providers, `stop` leaves the sandbox in your account with disk preserved; `start` re-resolves preview URLs and re-registers with the host relay.
 
 <Callout type="warn" title="HEADS UP">
 Stopping kills any running agent process and live services inside the box — only on-disk state survives. If a Claude or Codex session was running, you'll start a fresh one on next attach. To freeze a running agent in place instead, use `pause`.
@@ -60,87 +45,38 @@ Stopping kills any running agent process and live services inside the box — on
 
 ## Checkpoints
 
-A checkpoint captures a box's accumulated state — all of `/workspace` (deps installed, project built, build caches) plus everything else the agent wrote into the writable layer — so a *new* box can start warm instead of from bare host code.
-
-Under the hood it's a `docker commit` of the box's container into a project-scoped image tag. Only metadata lives on the host, at `~/.agentbox/checkpoints/<projectHash>/<name>/manifest.json`; the captured filesystem is a regular Docker image. Before committing, a cleanup pass strips the apt cache, `/tmp`, `/var/log`, and bash history, while keeping `~/.npm`, `~/.cache`, and `/var/lib/docker` — warm state worth carrying.
-
-Names auto-assign as `<box-name>-<n>` (monotonic per box), or override with `--name`. There are two shapes:
-
-- **Layered** (default) — a new image layer on top of the box's current image. Fast.
-- **Flattened** (`--merged`) — a single self-contained `FROM scratch` image. Auto-triggered when the lineage depth reaches `checkpoint.maxLayers` (default `3`) to cap layer growth.
+A checkpoint captures a box's accumulated state — all of `/workspace` (deps installed, project built, build caches) plus everything else the agent wrote into the writable layer — so a *new* box can start warm instead of from bare host code. Under the hood it's a `docker commit` into a project-scoped image; only metadata lives on the host.
 
 The primary workflow: after the setup wizard runs or a PR merges, capture a checkpoint with `--set-default` so every future box in the project inherits the warm state.
 
 ```bash
-# Capture the current state of box `alpha`
-agentbox checkpoint create alpha
-
-# Name it, and pin it as the default for new boxes in this project
-agentbox checkpoint create alpha --name warm --set-default
-
-# Force a flattened, self-contained image instead of a layered delta
-agentbox checkpoint create alpha --merged
-
-# Re-capture over an existing name (idempotent retry)
-agentbox checkpoint create alpha --name warm --replace
-
-# List this project's checkpoints (docker + cloud); -g for every project
-agentbox checkpoint ls
-agentbox checkpoint ls -g
-
-# Pin / unpin the project default after the fact
-agentbox checkpoint set-default warm
-agentbox checkpoint set-default --clear
-
-# Delete a checkpoint (manifest + image tag)
-agentbox checkpoint rm warm
+# Capture box `alpha` and pin it as the default for new boxes in this project
+agentbox checkpoint create alpha --set-default
 ```
 
-Capturing pauses the container briefly (`docker commit` freezes it), so attached sessions show a "checkpoint in progress" notice. In-box agents trigger capture through the host relay, so no host credentials leak into the box:
-
-```bash
-# inside a box — routes through the host relay, no host creds in the box
-agentbox-ctl checkpoint --name warm --set-default
-```
+See [CLI commands](/docs/cli) for the rest (`ls`, `set-default`, `rm`, `--name`, `--merged`, `--replace`). In-box agents capture through the host relay (`agentbox-ctl checkpoint`), so no host credentials leak into the box.
 
 ```console
 $ agentbox checkpoint create alpha --set-default
 checkpoint alpha-1 (layered) -> /Users/you/.agentbox/checkpoints/<hash>/alpha-1  [project default]
-$ agentbox checkpoint ls
-alpha-1  docker (layered)  from alpha  2026-06-01T12:00:00.000Z *default
 ```
 
 <Callout title="TIP">
 `--set-default` writes the per-provider config key `box.defaultCheckpointDocker` (cloud providers get their own — `...Daytona`, `...Hetzner`, `...Vercel`). The bare `box.defaultCheckpoint` is the cross-provider fallback. See [Configuration](/docs/configuration).
 </Callout>
 
-<Callout type="warn" title="HEADS UP">
-On [Vercel](/docs/vercel), capturing a checkpoint stops and reboots the box — the live agent/tmux process doesn't survive (on-disk state does), and you'll be prompted to confirm (`-y` to skip). `--merged` is Docker-only; cloud snapshots are always flattened.
-</Callout>
-
 ## Warm starts
 
-The payoff of a checkpoint is booting a new box *from* it instead of building from scratch. Workspace seeding is skipped entirely — the checkpoint image already has `/workspace` populated, so there's no `git worktree add` and no tar pipe.
+The payoff of a checkpoint is booting a new box *from* it instead of building from scratch — workspace seeding is skipped entirely since the image already has `/workspace` populated. Two ways to start warm:
 
-There are two ways to start warm:
+- **Explicit** — `agentbox create --snapshot <ref>` (also works on `claude` / `codex` / `opencode`); overrides any configured default.
+- **Implicit** — once a checkpoint is `set-default`, every plain `agentbox create` in that project starts from it automatically.
 
-1. **Explicit** — `agentbox create --snapshot <ref>` (the same `--snapshot` flag works on `agentbox claude` / `codex` / `opencode`). This overrides any configured default.
-2. **Implicit** — once a checkpoint is `set-default`, every plain `agentbox create` in that project starts from it automatically.
-
-By default, starting from a checkpoint still merges the host's **current branch** and overlays your uncommitted and untracked changes on top of the captured state (the box's version wins on conflict). `--no-resync` opts out and uses the checkpoint's frozen tree as-is.
+By default, starting from a checkpoint still merges the host's current branch and overlays your uncommitted changes on top of the captured state. `--no-resync` uses the frozen tree as-is.
 
 ```bash
 # Start a fresh box from an explicit checkpoint
 agentbox create --snapshot warm -n beta
-
-# Launch Claude Code in a box that boots from the same checkpoint
-agentbox claude --snapshot warm -n cc
-
-# Don't re-merge the host's current branch / uncommitted changes
-agentbox create --snapshot warm --no-resync -n frozen
-
-# With a project default already pinned, a plain create starts warm
-agentbox create -n gamma
 ```
 
 <Callout title="NOTE">
@@ -158,22 +94,12 @@ The writable layer is the agent's diff against the base image: it persists acros
 | Stopped | `agentbox stop` | 0 | writable layer (`/workspace`, `node_modules`, in-box `.env`) |
 | Destroyed | `agentbox destroy` | container + per-box volumes purged | only checkpoints (project assets) |
 
-`agentbox destroy <box>` removes the container, per-box volumes, the per-box host-snapshot dir, and the per-box run dir — but per-box checkpoint images stay, since they're cross-box project assets. `-y` skips the confirm.
-
-To reclaim checkpoint images, `agentbox prune --all` reaps `agentbox-ckpt-*` image tags not referenced by any surviving box record or on-disk manifest. `agentbox checkpoint rm <ref>` deletes one explicitly (manifest + image tag).
+`agentbox destroy <box>` purges the container and all per-box state, but checkpoint images stay — they're cross-box project assets. To reclaim them, `agentbox prune --all` reaps unreferenced checkpoint images, or `agentbox checkpoint rm <ref>` deletes one explicitly.
 
 ```bash
 agentbox destroy alpha          # purge container + per-box volumes (checkpoints kept)
-agentbox prune --all            # also reap unreferenced agentbox-ckpt-* images
-agentbox checkpoint rm warm     # delete one checkpoint (manifest + image tag)
+agentbox prune --all            # also reap unreferenced checkpoint images
 ```
-
-```console
-$ agentbox checkpoint rm warm -y
-removed docker checkpoint warm
-```
-
-The `checkpoint.maxLayers` knob (default `3`) controls when layered checkpoints auto-flatten — see [Configuration](/docs/configuration).
 
 <Callout type="warn" title="HEADS UP">
 `agentbox destroy` is irreversible for box-side state. Anything in the writable layer that wasn't committed to git, pushed, downloaded, or checkpointed is gone. Capture a checkpoint, or `git push` / `agentbox download` first — see [Sync & git](/docs/sync-and-git).

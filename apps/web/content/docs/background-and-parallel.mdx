@@ -5,13 +5,11 @@ description: Run many boxes at once and queue background agent runs with -i
 
 AgentBox is built for fan-out. Every box is fully isolated — its own container and its own `agentbox/<box-name>` branch in a worktree (see [core concepts](/docs/core-concepts)) — so several agents can work the same repo at once without stepping on each other.
 
-There are two distinct capabilities here, and it's worth keeping them apart. **Running boxes in parallel** means you launch several agent sessions yourself, foreground or detached. The **`-i` background queue** lets you submit prompts that the host relay schedules and runs unattended, capped so you don't melt your laptop or burn quota.
+There are two distinct capabilities here. **Running boxes in parallel** means you launch several agent sessions yourself, foreground or detached. The **`-i` background queue** lets you submit prompts that the host relay schedules and runs unattended, capped so you don't melt your laptop or burn quota.
 
 ## Run boxes in parallel
 
-Each `agentbox claude` / `codex` / `opencode` call spins up a separate box: separate container, separate `agentbox/<box-name>` branch, separate `/workspace` worktree. They never share state.
-
-Give boxes explicit names with `-n <name>` so the set is legible in `ls` and `top`. Without a name, a box defaults to `<workspace-basename>-<id>`.
+Each `agentbox claude` / `codex` / `opencode` call spins up a separate box — separate container, branch, and `/workspace` worktree. They never share state. Give boxes explicit names with `-n <name>` so the set stays legible in `ls` and `top`.
 
 ```bash
 # Three independent boxes on the same repo, each on its own branch
@@ -20,12 +18,10 @@ agentbox claude -n flaky-test-fix
 agentbox codex  -n perf-pass
 ```
 
-It's one agent per box, but a box can hold multiple shell sessions — see [access your box](/docs/access-your-box) for `agentbox shell --new` and `shell ls`.
-
-The trick that makes parallelism practical without the queue is detaching. `Ctrl+a d` detaches the tmux session and leaves the agent running; reattach later with `agentbox claude attach <box>`. Launch one, detach, launch the next.
+It's one agent per box, but a box can hold multiple shell sessions — see [access your box](/docs/access-your-box). To launch many without the queue, detach each as you go: `Ctrl+a d` leaves the agent running, and `agentbox claude attach <box>` reattaches later.
 
 <Callout type="warn" title="HEADS UP">
-These run with **no concurrency cap** — they all start immediately, and each one consumes CPU, RAM, and agent quota. If you want AgentBox to pace the runs for you, use the `-i` background queue below.
+These run with **no concurrency cap** — they all start immediately and each consumes CPU, RAM, and agent quota. To have AgentBox pace the runs for you, use the `-i` background queue below.
 </Callout>
 
 <Figure caption="agentbox ls showing three boxes, each on its own agentbox/<name> branch" />
@@ -38,16 +34,14 @@ These run with **no concurrency cap** — they all start immediately, and each o
 agentbox claude -n nightly-deps -i "Upgrade all dependencies and fix the build"
 ```
 
-Jobs go through the host-wide FIFO queue, capped by `queue.maxConcurrent`. The relay's scheduler starts each job as a slot frees. If the relay isn't running it's started automatically; if it's briefly unreachable the manifest still lands on disk and the next relay tick picks it up.
-
-On submit you get the job id — the handle for `queue show` and `queue cancel` — and the path to its log:
+Jobs go through a host-wide FIFO queue, capped by `queue.maxConcurrent`. The relay's scheduler starts each job as a slot frees, starting the relay automatically if needed. On submit you get the job id (the handle for `queue show` / `queue cancel`) and a path to its log:
 
 ```console
 $ agentbox codex -n changelog -i "Draft the v0.13 changelog from git log"
 job a1b2c3d4e5f6a1b2c3 queued (2/5 running); log: ~/.agentbox/queue/a1b2c3d4e5f6a1b2c3.log
 ```
 
-Credentials for the chosen agent must already be on the host — the background worker can't do an interactive login. If they're missing, submission fails loud. Authenticate first (`agentbox codex login`, `agentbox opencode login`; see [run an agent](/docs/run-an-agent)).
+Credentials for the chosen agent must already be on the host — the background worker can't do an interactive login. If they're missing, submission fails loud. Authenticate first (see [run an agent](/docs/run-an-agent)).
 
 <Callout type="warn" title="NOT PRINT MODE">
 `-i` is `--initial-prompt` (the background queue), **not** Claude's own `-p` headless print mode. To use print mode, pass it through after `--`:
@@ -57,53 +51,34 @@ agentbox claude -- -p "Summarize the open PRs"
 ```
 </Callout>
 
-A few restrictions: `-i` cannot be combined with `-c` / `--resume` (any agent), nor with `--plan` (claude). Per-job, you can override the global caps — `--max-running <n>` overrides `queue.maxConcurrent` and `--max-working <n>` overrides `queue.maxWorking`. Both are only honored when `-i` is set.
-
-```bash
-# Let this job ignore the global cap and run even when 5 are already up
-agentbox claude -n hotfix -i "Patch the regression in checkout" --max-running 8
-```
-
-One naming note: on the top-level create command, `-i` means `--initial-prompt`. On the `attach` / `start` subcommands of `codex` / `opencode`, the short `-i` instead means `--inline` — different flag, same letter. See [run an agent](/docs/run-an-agent).
+`-i` can't combine with `-c` / `--resume` or `--plan`. Per-job, `--max-running` and `--max-working` override the global caps. See [CLI commands](/docs/cli) for all flags.
 
 ## Tune the queue
 
-The queue is configured with **global** config keys. The relay is host-wide, so project and workspace config layers are intentionally ignored for the queue — always use `--global`. Changes take effect on the next relay tick, no restart needed.
+The queue is configured with **global** config keys (the relay is host-wide, so project and workspace layers are intentionally ignored — always use `--global`). Changes take effect on the next relay tick, no restart.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `queue.enabled` | `true` | Run `-i` jobs through the host-wide FIFO queue. |
-| `queue.maxConcurrent` | `5` | Max simultaneously **running boxes** (all providers) before `-i` jobs queue. Override: `--max-running`. |
-| `queue.maxWorking` | `0` (off) | Max agents actively **working** (quota-consuming) at once. `0` falls back to the running-box gate. Override: `--max-working`. |
-| `queue.idleGraceSeconds` | `15` | Seconds an agent must stay non-working before it frees its working slot. Only used when `queue.maxWorking > 0`. |
+| `queue.maxConcurrent` | `5` | Max simultaneously **running boxes** (all providers) before `-i` jobs queue. |
+| `queue.maxWorking` | `0` (off) | Max agents actively **working** (quota-consuming) at once; `0` falls back to the running-box gate. |
+| `queue.idleGraceSeconds` | `15` | Seconds an agent must stay non-working before it frees its working slot. |
 
-The default is a **running-box** cap: how many boxes are up. Turn on `queue.maxWorking` for a smarter **working-agent** cap — paused or idle boxes don't count against you, so you can keep more boxes alive (cheaply — see [checkpoints and pausing](/docs/checkpoints-and-pausing)) while still bounding active quota burn.
+The default caps **running boxes**. Turn on `queue.maxWorking` for a smarter **working-agent** cap — paused or idle boxes don't count, so you can keep more boxes alive cheaply (see [checkpoints and pausing](/docs/checkpoints-and-pausing)) while still bounding active quota burn. Because `maxConcurrent` counts boxes across all providers, cloud `-i` jobs on [Daytona](/docs/daytona), [Hetzner](/docs/hetzner), or [Vercel](/docs/vercel) share the same gate.
 
 ```bash
 # Allow 3 boxes running at once before -i jobs wait their turn
 agentbox config set --global queue.maxConcurrent 3
-
-# Switch to the working-agent gate: at most 2 agents thinking at once
-agentbox config set --global queue.maxWorking 2
 ```
 
-Because `maxConcurrent` counts boxes **across all providers**, cloud `-i` jobs on [Daytona](/docs/daytona), [Hetzner](/docs/hetzner), or [Vercel](/docs/vercel) share the same gate as local ones. For the full key reference and config precedence, see [configuration](/docs/configuration).
+For the full key reference and config precedence, see [configuration](/docs/configuration).
 
 ## Manage the queue
 
-`agentbox queue` inspects and manages background `-i` jobs.
-
-| Command | What it does |
-| --- | --- |
-| `queue list [--all]` | List queued + running jobs; `--all` includes `done`/`failed`/`cancelled`. |
-| `queue show <id> [--tail <n>]` | Dump the full job manifest (JSON) and tail its log (`--tail`, default 50). |
-| `queue cancel <id>` | Cancel a job — only flips `queued` → `cancelled`. Does **not** kill a running job. |
-| `queue clear [--done\|--failed\|--cancelled\|--all]` | Sweep terminal-state manifests from `~/.agentbox/queue/`. |
-| `queue wait-for <event> [...]` | Block until a queue/box event fires (scripting gate). |
+`agentbox queue` inspects and manages background `-i` jobs: `queue list` shows queued + running jobs, `queue show <id>` dumps the manifest and tails the log, `queue cancel <id>` cancels a *queued* job, `queue clear` sweeps terminal-state manifests, and `queue wait-for <event>` blocks until a queue/box event fires (the scripting gate). See [CLI commands](/docs/cli) for all flags.
 
 ```bash
 agentbox queue list            # active jobs (queued + running)
-agentbox queue list --all      # include done/failed/cancelled
 agentbox queue show <id>       # manifest + tail the job log
 agentbox queue cancel <id>     # cancel a *queued* job (not a running one)
 ```
@@ -120,16 +95,12 @@ b7c8d9e0f1a2b3c4d5  queued   claude  nightly-deps  docker    5    30s   Upgrade 
 queue.maxConcurrent = 5 (queue.enabled=true)
 ```
 
-`queue wait-for` blocks until an event fires, then exits — the building block for "submit a batch, then wait until they all finish". Events are `new-box`, `empty-queue`, `box-paused`, `box-running`, `box-stopped`, and `job-done`. The `box-*` events need `--box <ref>`; `job-done` needs `--job <id>`. `--timeout <ms>` defaults to `600000` (10 min) and exit code 1 means it timed out; `--json` emits `{ matched, elapsedMs, ... }`.
+`queue wait-for` is the building block for "submit a batch, then wait until they all finish":
 
 ```bash
-# Fire a batch, then block until the queue drains
 agentbox claude -n a -i "task one"
 agentbox claude -n b -i "task two"
 agentbox queue wait-for empty-queue --timeout 1800000
-
-# Tidy up finished manifests
-agentbox queue clear --all
 ```
 
 <Callout type="warn" title="CANCEL VS DESTROY">
@@ -138,19 +109,15 @@ agentbox queue clear --all
 
 ## Monitor everything at once
 
-Three complementary views for a parallel fleet.
+Three complementary views for a parallel fleet:
 
 ```bash
-agentbox ls              # boxes in this project
-agentbox ls -g           # every box, all projects
-agentbox top             # live cpu/mem/disk for every box
-agentbox top -p          # narrow to this project
+agentbox ls              # box inventory for this project (-g for all projects)
+agentbox top             # live htop-style cpu/mem/disk across boxes (-p for this project)
 agentbox dashboard       # full-screen multi-box TUI
 ```
 
-**`agentbox ls`** (alias of `list`) is the box inventory — state, branch, web/VNC endpoints, and a shell count. It's scoped to the current project by default; `-g` / `--global` shows boxes from every project, and `-j` / `--json` is machine-readable. Use it to see what's alive and grab the [web/VNC links](/docs/web-apps-and-tunnels).
-
-**`agentbox top`** is a live, htop-style resource monitor across boxes — CPU, mem, pids, disk, net I/O — auto-refreshing. It defaults to every box on the host; `-p` / `--project` narrows to the cwd's project, and a `[box]` arg targets one. Use `--once` for a single snapshot, `-j` / `--json` (implies `--once`), `--interval <seconds>` (default 2), and `--live` to probe live cloud state.
+**`agentbox ls`** (alias of `list`) is the box inventory — state, branch, web/VNC endpoints, and a shell count. **`agentbox top`** is a live resource monitor across boxes, auto-refreshing. **`agentbox dashboard`** is the full-screen TUI: box list on the left, the selected box's live agent session on the right. See [CLI commands](/docs/cli) for all flags.
 
 ```console
 $ agentbox top --once
@@ -164,16 +131,8 @@ SYSTEM: ~/.agentbox: 3.4GiB - checkpoints: 1.1GiB
 
 Per-box live CPU/mem metrics are docker-only; cloud boxes show `—` for those columns.
 
-<Callout title="TIP">
-`agentbox top --once -j` gives you a JSON snapshot — handy for a status script or a tmux statusline across your fleet.
-</Callout>
-
-**`agentbox dashboard`** is the full-screen TUI: the box list on the left, the selected box's live agent session on the right. It's the best way to drive several boxes from one screen.
-
 <Figure caption="agentbox dashboard: box list on the left, the selected box's live agent session on the right" />
 
 <Callout title="NOTE">
 The `dashboard` compositor is Claude-only today. `agentbox codex` / `opencode` runs work in parallel but aren't shown in the dashboard panes yet — use `agentbox top` / `agentbox ls` to monitor those.
 </Callout>
-
-See the [CLI reference](/docs/cli) for the full command surface.

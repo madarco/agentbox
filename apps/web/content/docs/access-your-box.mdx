@@ -13,41 +13,30 @@ Most access commands auto-unpause a paused box and start a stopped one before co
 
 ## Shell
 
-`agentbox shell [box]` drops you into `bash -l` as `vscode` in `/workspace`.
+`agentbox shell [box]` drops you into `bash -l` as `vscode` in `/workspace`, inside a detachable tmux session. `Ctrl+a d` detaches without killing it, and closing the terminal doesn't kill it either — reattach later with `agentbox shell attach [box]`.
 
-By default the shell runs inside a detachable tmux session. `Ctrl+a d` detaches without killing it; closing the terminal does not kill it either. Reattach later with `agentbox shell attach [box]`.
-
-A box can hold many shells (the agent is still exactly one per box). The default session is `shell`; `--new` opens an auto-numbered `shell-2`, `shell-3`, …; `-n <label>` opens or attaches a named shell.
+A box can hold many shells (the agent is still exactly one per box): `--new` opens an auto-numbered shell, `-n <label>` opens or attaches a named one.
 
 ```bash
 # interactive detachable shell (Ctrl+a d to detach)
 agentbox shell mybox
-
-# reattach later
-agentbox shell attach mybox
 
 # a second, named shell in the same box
 agentbox shell mybox -n logs
 
 # run a one-shot command (no tmux, machine-readable output)
 agentbox shell mybox -- npm run build
-
-# list / kill shells
-agentbox shell ls mybox
-agentbox shell kill mybox -n logs
 ```
 
-A one-shot `-- <cmd>` is never tmux-wrapped, so stdout stays clean for scripts. Other flags: `--no-tmux` (plain `docker exec`, dies with the terminal; config key `shell.tmux: false`), `--no-login` (plain `bash`), and `--user <name>` (default `vscode`).
+A one-shot `-- <cmd>` is never tmux-wrapped, so stdout stays clean for scripts. See [CLI commands](/docs/cli) for all flags.
 
 <Callout title="TIP">
-Same detach chord as the agent: `Ctrl+a d`. The shell list is derived live from `tmux list-sessions` — no hidden state file. See [Background and parallel](/docs/background-and-parallel) for juggling many boxes.
+Same detach chord as the agent: `Ctrl+a d`. See [Background and parallel](/docs/background-and-parallel) for juggling many boxes.
 </Callout>
 
 ## VS Code / Cursor
 
-`agentbox code [box]` opens VS Code or Cursor Desktop attached to the box via the Dev Containers extension. The box's `/workspace` opens as a remote folder.
-
-It auto-detects your IDE (prefers `code`, falls back to `cursor` when `code` isn't on PATH). Force a flavor with `--ide vscode` or `--ide cursor`. The command wakes the box, waits for readiness, then launches — pass `--no-wait` to skip the wait or `--print` to get the `vscode-remote://` URI instead of launching.
+`agentbox code [box]` opens VS Code or Cursor Desktop attached to the box via the Dev Containers extension, with `/workspace` as a remote folder. It auto-detects your IDE (prefers `code`, falls back to `cursor`); force a flavor with `--ide`. See [CLI commands](/docs/cli) for all flags.
 
 ```bash
 # open the box in your IDE (auto-detects code, falls back to cursor)
@@ -55,35 +44,29 @@ agentbox code mybox
 
 # force a flavor
 agentbox code mybox --ide cursor
-
-# print the remote URI instead of launching
-agentbox code mybox --print
 ```
 
-It also writes `/workspace/.vscode/tasks.json` so the IDE auto-opens terminal panels tailing each service's log. That file is sentinel-protected; use `--regen-tasks` to overwrite a user-owned one, or `--no-auto-terminals` to skip it. The panels come from the [services and tasks](/docs/services-and-tasks) you declare in `agentbox.yaml`.
+It also writes `/workspace/.vscode/tasks.json` so the IDE auto-opens terminal panels tailing each service's log, from the [services and tasks](/docs/services-and-tasks) you declare in `agentbox.yaml`.
 
 <Callout type="warn" title="HEADS UP">
-The first attach to a fresh box downloads the IDE server (~70MB, keyed to your desktop IDE version). It's a one-time cost per box; later attaches are instant. Both server volume sets are mounted, so either IDE can attach to any box.
+The first attach to a fresh box downloads the IDE server (~70MB, keyed to your desktop IDE version). It's a one-time cost per box; later attaches are instant.
 </Callout>
 
 <Figure caption="Cursor attached to a box's /workspace via Dev Containers, with service-log terminal panels auto-opened" />
 
 ## Web app URL
 
-`agentbox url [box]` opens the box's web app in your host browser. This works even when no service declares `expose:` — every box reserves the web port (`:80` inside) at create time, so the URL is always openable (you'll just get a connection error until something listens).
+`agentbox url [box]` opens the box's web app in your host browser. This works even when no service declares `expose:` — every box reserves the web port at create time, so the URL is always openable (you'll just get a connection error until something listens).
 
 ```bash
 # open the box's web app in your browser
 agentbox url mybox
 
-# force the loopback URL (Docker Desktop / OrbStack)
-agentbox url mybox --loopback
-
 # just print the URL (pipe into scripts)
 agentbox url mybox --print
 ```
 
-The URL form depends on the engine: OrbStack gives an `.orb.local` DNS name, Docker Desktop gives a Portless `<box-name>.localhost` or auto-allocated `127.0.0.1` URL, and cloud providers return a native preview HTTPS URL. `--loopback` forces the `127.0.0.1` form (ignored for cloud); `--ttl <seconds>` is cloud-only signed-URL expiry.
+The URL form depends on the engine (OrbStack `.orb.local`, Docker Desktop Portless `<box-name>.localhost`, cloud preview HTTPS). See [CLI commands](/docs/cli) for `--loopback`, `--ttl`, and other flags.
 
 <Callout title="WHY">
 On Docker Desktop, AgentBox uses [Portless](https://portless.sh) so the box's web app gets the same `<box-name>.localhost` URL from inside the box and on the host — one origin for OAuth, CORS, and `allowedDevOrigins`. The full story is in [Web apps and tunnels](/docs/web-apps-and-tunnels).
@@ -91,9 +74,7 @@ On Docker Desktop, AgentBox uses [Portless](https://portless.sh) so the box's we
 
 ## Live screen
 
-`agentbox screen [box]` opens the box's live desktop in your browser over noVNC. This is where you watch the in-box headed Chromium the agent drives, or any other GUI process.
-
-Every box runs Xvnc on display `:1` plus noVNC on container `:6080`, with `DISPLAY=:1` baked in. The per-box VNC password is embedded in the auto-connect URL, so the browser jumps straight to the desktop.
+`agentbox screen [box]` opens the box's live desktop in your browser over noVNC. This is where you watch the in-box headed Chromium the agent drives, or any other GUI process. The per-box VNC password is embedded in the auto-connect URL, so the browser jumps straight to the desktop.
 
 ```bash
 # watch the box's desktop (in-box browser, GUI apps) in your browser
@@ -103,7 +84,7 @@ agentbox screen mybox
 agentbox screen mybox --print
 ```
 
-This is distinct from `agentbox url`: `url` opens the web app on `:80`, while `screen` opens the desktop on `:6080`. If you created the box with `--no-vnc`, `screen` refuses with a "VNC is disabled" message. `--loopback` and `--ttl <seconds>` (cloud only) work the same as for `url`.
+This is distinct from `agentbox url`: `url` opens the web app, while `screen` opens the desktop. A box created with `--no-vnc` has no screen. The shared `--loopback` / `--ttl` flags are in [CLI commands](/docs/cli).
 
 <Figure caption="noVNC view of a box's desktop with the agent-driven Chromium open" />
 
@@ -111,9 +92,7 @@ The deeper VNC and agent-browser story lives in [Browser and screen](/docs/brows
 
 ## Open files
 
-`agentbox open [box]` opens the box's `/workspace` in Finder. The merged `/workspace` is an overlay that only exists inside the container, so `open` first rsyncs it to a per-box host directory (`~/.agentbox/boxes/<id>/workspace`) and then launches Finder.
-
-The export is a snapshot, refreshed on demand — re-run to re-sync. `--no-refresh` opens whatever's already on disk, `--include-node-modules` adds the (large) `node_modules` to the export, and `--path` prints the host path instead of launching Finder (`--print` is a kept alias).
+`agentbox open [box]` opens the box's `/workspace` in Finder. The merged `/workspace` only exists inside the container, so `open` first rsyncs it to a per-box host directory and then launches Finder. The export is a snapshot, refreshed on demand — re-run to re-sync. See [CLI commands](/docs/cli) for flags like `--no-refresh`, `--include-node-modules`, and `--path`.
 
 ```bash
 # rsync /workspace and open it in Finder
@@ -139,7 +118,7 @@ agentbox dashboard
 agentbox dashboard --project
 ```
 
-Switch boxes with `Control+Option+↑/↓`. Everything else is a `Ctrl+a` leader chord — press `Ctrl+a` to show the which-key menu in the footer, then a single key: `c` code, `s` screen, `u` url, `p` pause, `t` stop, `d` destroy, `q` quit. These shell out to the same `agentbox code` / `screen` / `url` commands above, so they inherit the same behavior.
+Switch boxes with `Control+Option+↑/↓`. Everything else is a `Ctrl+a` leader chord — press `Ctrl+a` to show the which-key menu in the footer, then a single key (`c` code, `s` screen, `u` url, `p` pause, and so on). These shell out to the same commands above, so they inherit the same behavior.
 
 <Figure caption="The dashboard: box sidebar on the left, the selected box's live agent session on the right, chord hints in the footer" />
 

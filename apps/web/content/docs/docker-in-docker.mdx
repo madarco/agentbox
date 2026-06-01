@@ -12,28 +12,19 @@ Docker-in-Docker is on by default — no flag needed. The box images bake `docke
 The in-container `vscode` user is in the `docker` group, so the agent runs `docker` with no `sudo`.
 
 ```bash
-agentbox shell mybox -- docker version
 agentbox shell mybox -- docker run --rm hello-world
 agentbox shell mybox -- bash -lc 'cd /workspace && docker compose up -d'
 ```
 
 The inner daemon never touches your host Docker daemon. Use [`agentbox shell`](/docs/access-your-box) to drive it, let an [agent](/docs/run-an-agent) use it directly, or prefer the supervisor for long-lived processes — see [services-and-tasks](/docs/services-and-tasks) for Compose vs the supervisor.
 
-<Callout title="TIP">
-No `sudo` needed — the `vscode` user is in the `docker` group inside every box.
-</Callout>
-
 <Callout title="WHY">
-AgentBox never runs the outer container with `--privileged`. It grants only the capabilities DinD needs (`SYS_ADMIN`, `NET_ADMIN`, `/dev/fuse`, `seccomp=unconfined`, `--cgroupns=private`), which is exactly why the same setup works on cloud providers that reject privileged containers.
+AgentBox never runs the outer container with `--privileged`. It grants only the capabilities DinD needs, which is exactly why the same setup works on cloud providers that reject privileged containers.
 </Callout>
 
 ## Storage driver
 
-The storage driver is chosen at runtime by `agentbox-dockerd-start` — it is not pinned in the image. The resolved `storage-driver` is written into `/etc/docker/daemon.json` before `dockerd` launches (the baked `daemon.json` carries only `iptables: true`).
-
-The logic: if `/var/lib/docker` is already populated, reuse the driver it was initialized with — `dockerd` can't switch a populated data root. On a fresh data root, probe kernel-native `overlay2` (mount a test overlay on the data-root filesystem and execute a binary from the merged dir); use it if it works, otherwise fall back to `fuse-overlayfs`.
-
-`overlay2` is preferred because `fuse-overlayfs` is broken on recent kernels. The start script also does two in-box remounts with its `SYS_ADMIN` capability — `mount -o remount,rw /sys/fs/cgroup` (so `dockerd` can create its cgroup slice) and `mount -o remount,rw /proc/sys` (so it can disable IPv6 on the veth during bridge setup). Both engines bind those read-only into containers under default hardening; the box remounts them in its own namespaces, never the host's.
+The storage driver is chosen automatically at runtime, not pinned in the image: the box prefers kernel-native `overlay2` and falls back to `fuse-overlayfs` only when the kernel can't support it. You don't configure anything.
 
 ```bash
 agentbox shell mybox -- docker info --format '{{.Driver}}'
@@ -42,7 +33,7 @@ agentbox shell mybox -- docker info --format '{{.Driver}}'
 That prints `overlay2` on most hosts, but the result is host-dependent.
 
 <Callout type="warn" title="HEADS UP">
-Don't try to force `fuse-overlayfs` — it's broken on recent kernels (notably Docker Desktop's 6.x linuxkit kernel), where inner `docker run` fails at `execve()` with `exec ...: invalid argument`. AgentBox auto-selects `overlay2` whenever the kernel supports it for exactly this reason. The host engine matters here — see [local-docker](/docs/local-docker).
+Don't try to force `fuse-overlayfs` — it's broken on recent kernels (notably Docker Desktop's 6.x linuxkit kernel), where inner `docker run` fails at `execve()`. AgentBox auto-selects `overlay2` whenever the kernel supports it for exactly this reason. The host engine matters here — see [local-docker](/docs/local-docker).
 </Callout>
 
 ## Shared build cache
@@ -57,37 +48,27 @@ agentbox create --shared-docker-cache -n cached-box   # uses agentbox-docker-cac
 agentbox config set box.dockerCacheShared true --global
 ```
 
-`box.dockerCacheShared` works in any config layer — see [configuration](/docs/configuration) for precedence.
+`box.dockerCacheShared` works in any config layer — see [configuration](/docs/configuration) for precedence and [CLI commands](/docs/cli) for all flags.
 
 <Callout type="warn" title="HEADS UP">
-The shared cache is mutually exclusive at runtime: `dockerd` holds an exclusive lock on `/var/lib/docker`, so only one box can mount `agentbox-docker-cache` at a time. It's great for serial workflows but will conflict if you run boxes in [parallel](/docs/background-and-parallel).
-</Callout>
-
-<Callout title="TIP">
-`--shared-docker-cache` is also handy for dogfooding AgentBox inside AgentBox, where rebuilding images repeatedly would otherwise repull every layer.
+The shared cache is mutually exclusive at runtime: only one box can mount `agentbox-docker-cache` at a time. It's great for serial workflows but will conflict if you run boxes in [parallel](/docs/background-and-parallel).
 </Callout>
 
 ## Cloud parity & limits
 
-Daytona and Hetzner get the same DinD setup as the default docker provider. Vercel cannot run nested containers at all.
+[Daytona](/docs/daytona) and [Hetzner](/docs/hetzner) get the same DinD setup as the default docker provider — `dockerd` is auto-launched with no opt-in, and the data root lives on the sandbox/VPS filesystem (wiped with the box on `destroy`). [Vercel](/docs/vercel) cannot run nested containers at all.
 
-| Provider | DinD | Notes |
-|----------|------|-------|
-| docker (default) | Yes | Per-box `agentbox-docker-<id>` volume; `--shared-docker-cache` available |
-| daytona | Yes | Auto-launched, no opt-in; data root on sandbox FS; no shared-cache option |
-| hetzner | Yes | DinD inside the VPS; baked into the prepare snapshot |
-| vercel | No | No `CAP_SYS_ADMIN` + seccomp blocks `clone`/`unshare` — impossible |
-
-On [daytona](/docs/daytona), `dockerd` is launched automatically at `create` and re-launched on `start` (the same `agentbox-dockerd-start` script), so it just works with no opt-in command. The data root is the sandbox's own filesystem, wiped with the box on `destroy`. The same applies to [hetzner](/docs/hetzner): the one-time `agentbox prepare --provider hetzner` snapshot bakes the helper, and DinD runs inside the VPS (systemd's `docker.service`/`docker.socket` are disabled — the AgentBox helper drives `dockerd`).
+| Provider | DinD |
+|----------|------|
+| docker (default) | Yes — per-box volume; `--shared-docker-cache` available |
+| daytona | Yes — auto-launched; no shared-cache option |
+| hetzner | Yes — runs inside the VPS, baked into the prepare snapshot |
+| vercel | No — `CAP_SYS_ADMIN` + seccomp block nested containers |
 
 ```bash
 agentbox shell <cloud-box> -- docker info
 ```
 
-<Callout type="warn" title="HEADS UP">
-The [vercel](/docs/vercel) provider can't run Docker-in-Docker at all — there's no `CAP_SYS_ADMIN` and seccomp blocks the `clone`/`unshare` syscalls a nested daemon needs. The provider sets `launchDockerd: false`, so in-box `docker` is unavailable by design. If your workflow depends on `docker` inside the box, choose docker, daytona, or hetzner.
-</Callout>
-
 <Callout title="NOTE">
-`--shared-docker-cache` is a docker-provider feature only. On daytona and hetzner the data root lives on the sandbox/VPS filesystem and is wiped with the box on `destroy`.
+`--shared-docker-cache` is a docker-provider feature only. The Vercel provider sets `launchDockerd: false`, so if your workflow needs `docker` inside the box, choose docker, daytona, or hetzner.
 </Callout>

@@ -7,41 +7,23 @@ Every box ships with `agentbox-ctl`, a small supervisor that reads `/workspace/a
 
 ## agentbox.yaml
 
-The file lives at your project root and is read at `/workspace/agentbox.yaml` inside the box. The supervisor relaunches with the container, so it restarts on every `agentbox start`.
-
-Two top-level maps matter here: `services:` (long-running) and `tasks:` (one-shot). Unit names must match `[A-Za-z0-9_-]+`. The file also accepts `ide:`, `defaults:`, and a top-level `carry:` block, which the supervisor ignores — see the [agentbox.yaml reference](/docs/agentbox-yaml).
+The file lives at your project root and is read at `/workspace/agentbox.yaml` inside the box. Two top-level maps matter here: `services:` (long-running) and `tasks:` (one-shot).
 
 ```yaml
 # agentbox.yaml — at the project root
+tasks:
+  install:
+    command: pnpm install --frozen-lockfile
 services:
   web:
     command: pnpm dev
-    cwd: apps/web                # relative to /workspace
-    env:
-      PORT: '3000'
-  worker:
-    command: ['node', 'dist/worker.js']
-    restart: always              # always | on-failure (default) | never
-    backoff:
-      initial_ms: 1000
-      max_ms: 60000
-      factor: 2
+    cwd: apps/web              # relative to /workspace
+    needs: [install]          # waits for the install task to finish
+    ready_when:
+      http: http://127.0.0.1:3000/health
 ```
 
-Service and task fields:
-
-| Field | Applies to | Notes |
-| --- | --- | --- |
-| `command` | both | Shell string (run via `bash -c`) or argv array. Required, non-empty. |
-| `cwd` | both | Working directory; relative paths resolve against `/workspace`. |
-| `env` | both | Map of extra env vars; scalar values, coerced to strings. |
-| `needs` | both | Units that must finish first (see [Dependencies](#dependencies)). |
-| `autostart` | service | Start when the daemon boots. Default `true`. |
-| `restart` | service | `always` \| `on-failure` (default) \| `never`. |
-| `backoff` | service | `initial_ms` (500), `max_ms` (30000), `factor` (2). |
-| `ready_when` | service | Readiness probe (see [Readiness](#readiness)). |
-
-A missing or empty `agentbox.yaml` is fine — it does not fail `create`. And `agentbox create` validates the host's file *before* any container work, so a broken file fails early with a formatted message.
+For the full set of service and task fields, see the [agentbox.yaml reference](/docs/agentbox-yaml).
 
 <Callout title="TIP">
 The setup wizard writes a starter `agentbox.yaml` for you on first create — see [teleport a project](/docs/teleport-a-project). Hand-edit it afterward.
@@ -51,73 +33,27 @@ The setup wizard writes a starter `agentbox.yaml` for you on first create — se
 
 **Services** are long-running processes — dev servers, workers, databases. They get a restart policy, backoff, autostart, readiness probes, and `expose`.
 
-**Tasks** are one-shot units that run to completion, intended to run *before* dependent services via `needs:`. A task supports only `command`, `cwd`, `env`, and `needs` — no `restart`, `autostart`, `backoff`, or `ready_when`. The canonical task is a setup step like rebuilding `node_modules` inside the Linux box so host binaries don't leak in.
+**Tasks** are one-shot units that run to completion, intended to run *before* dependent services via `needs:`. A task supports only `command`, `cwd`, `env`, and `needs`. The canonical task is a setup step like rebuilding `node_modules` inside the Linux box so host binaries don't leak in.
 
-```yaml
-# agentbox.yaml
-tasks:
-  install:
-    command: pnpm install --frozen-lockfile
-services:
-  web:
-    command: pnpm dev
-    needs: [install]          # waits for the install task to finish
-    cwd: apps/web
-```
-
-Each unit moves through a small state machine:
-
-- **Tasks:** `pending → waiting → running → done | failed | skipped`
-- **Services:** `pending → waiting → starting → running → ready | unhealthy | crashed | backoff | stopped`
-
-`waiting` is distinct from `starting`, so a blocked unit surfaces its `blockedOn` in `agentbox status`. Crashed services restart with exponential backoff, and per-service output is captured to `/var/log/agentbox/<service>.log`.
+Crashed services restart with exponential backoff, and per-service output is captured to `/var/log/agentbox/<service>.log`. A blocked unit sits in `waiting` and surfaces its `blockedOn` in `agentbox status`.
 
 <Callout type="warn" title="HEADS UP">
-Putting `restart`, `autostart`, `backoff`, or `ready_when` under a task is a config error and fails validation. Those keys belong on services only.
+`restart`, `autostart`, `backoff`, and `ready_when` belong on services only — putting them under a task is a config error and fails validation.
 </Callout>
 
 ## Readiness
 
-`ready_when:` declares a per-service readiness probe. **Exactly one** of `port`, `log_match`, or `http` must be present.
-
-- `port` — TCP connect to `127.0.0.1:<port>` (override with `host:`, default `127.0.0.1`).
-- `log_match` — regex matched against the service's stdout/stderr; the first match flips it to `ready`.
-- `http` — GET the URL and wait for `expect_status` (default: any 2xx). `expect_status` is only valid with `http:`.
-
-Tuning knobs: `interval_ms` (default 500, ignored for `log_match`), `initial_delay_ms` (default 0), `timeout_ms` (default 60000), and `on_timeout`. `on_timeout: kill` (the default) re-enters the restart policy; `on_timeout: mark_unhealthy` leaves the process running but flags it — the escape hatch for legitimately slow cold starts.
-
-Readiness gates dependents — a `needs:` dependent won't start until this service is `ready` — and it gates the published web URL.
-
-```yaml
-services:
-  web:
-    command: pnpm dev
-    ready_when:
-      http: http://127.0.0.1:3000/health
-      expect_status: 200
-      timeout_ms: 90000
-      on_timeout: mark_unhealthy
-  db:
-    command: postgres
-    ready_when:
-      port: 5432
-  worker:
-    command: node dist/worker.js
-    ready_when:
-      log_match: "listening on"
-```
+Gate dependents on a service being live with a `ready_when:` probe (`port`, `log_match`, or `http`) — see [agentbox.yaml](/docs/agentbox-yaml). A `needs:` dependent won't start until the service is `ready`, and readiness also gates the published web URL.
 
 <Callout title="TIP">
-Slow first compile? Use `on_timeout: mark_unhealthy` (or raise `timeout_ms` / set `initial_delay_ms`) instead of letting the probe kill and restart the service.
+Slow first compile? Use `on_timeout: mark_unhealthy` (or raise `timeout_ms`) instead of letting the probe kill and restart the service.
 </Callout>
 
 The `expose:` key turns a ready service into the box's web URL — see [web apps & tunnels](/docs/web-apps-and-tunnels).
 
 ## Dependencies
 
-`needs:` on any unit lists tasks or services that must reach their terminal-good state before this unit starts. That forms a **DAG**, and independent units launch in **parallel**.
-
-"Terminal-good state" means `done` for a task and `ready` for a service — a service with a `ready_when` probe must be `ready`, not merely `running`. While blocked, a unit sits in `waiting`, and `agentbox status` surfaces what it is `blockedOn`.
+`needs:` on any unit lists tasks or services that must reach their terminal-good state before this unit starts. That forms a **DAG**, and independent units launch in **parallel**. "Terminal-good state" means `done` for a task and `ready` for a service.
 
 ```yaml
 tasks:
@@ -139,23 +75,12 @@ services:
 <Figure caption="needs forms a DAG: install → migrate, db runs in parallel, and web waits on both." />
 
 <Callout type="warn" title="HEADS UP">
-A `needs:` referencing a name that doesn't exist, or a dependency cycle, is rejected at config load. `agentbox create` aborts before touching Docker, and `agentbox-ctl validate` reports it.
+A `needs:` referencing a name that doesn't exist, or a dependency cycle, is rejected at config load — `agentbox create` aborts before touching Docker.
 </Callout>
 
 ## Status & logs
 
-From the host, inspect and tail units with `agentbox status` and `agentbox logs`:
-
-```bash
-agentbox status mybox                  # table of services + tasks + state + pid + restarts
-agentbox status mybox --json           # machine-readable (alias: -j)
-agentbox status mybox --inspect        # box info (volumes, limits, paths) instead of unit status
-agentbox logs mybox web                # last 200 lines (default --tail 200)
-agentbox logs mybox web -f             # stream live (alias: --follow)
-agentbox logs mybox --daemon -f        # the supervisor's own stdout/stderr
-```
-
-If you pass a single positional to `agentbox logs web`, it's treated as the **service** and the box is auto-picked from the current project.
+From the host, inspect and tail units with `agentbox status` and `agentbox logs`; inside the box, talk to the daemon directly with `agentbox-ctl` (`status`, `logs`, `restart`, `reload`, …). See [CLI commands](/docs/cli) for the full surface.
 
 ```console
 $ agentbox status mybox
@@ -166,20 +91,7 @@ TASK     STATE
 install  done
 ```
 
-Inside the box, talk to the daemon directly with `agentbox-ctl`:
-
-```bash
-agentbox-ctl status                    # services + tasks
-agentbox-ctl logs worker -f
-agentbox-ctl restart web               # restart a service
-agentbox-ctl stop web                  # stop a service (daemon stays up)
-agentbox-ctl start web                 # start a previously-stopped service
-agentbox-ctl reload                    # re-read agentbox.yaml and diff-apply (no box restart)
-agentbox-ctl run-task install          # re-run a task (no-op if done unless --force)
-agentbox-ctl wait-ready --timeout 60000  # block until all autostart units are ready
-```
-
-Host `status` and `logs` reach the daemon by shelling into the container (`docker exec`), not via the bind-mounted socket — Docker Desktop and OrbStack's VM boundary breaks a `connect()` from macOS even though the socket file is visible. So both need the box running. The supervisor also posts `service-state` / `task-state` events to the host relay on transitions (`ready`, `crashed`, `backoff`, `unhealthy`, `done`, `failed`); see [background & parallel](/docs/background-and-parallel) for how those surface.
+The supervisor also posts `service-state` / `task-state` events to the host relay on transitions; see [background & parallel](/docs/background-and-parallel) for how those surface.
 
 <Callout title="TIP">
 After editing `agentbox.yaml` in a running box, `agentbox-ctl reload` applies the diff in place — no `stop`/`start`, no box restart. This is also how a freshly-added `expose:` web service goes live.
@@ -187,29 +99,6 @@ After editing `agentbox.yaml` in a running box, `agentbox-ctl reload` applies th
 
 ## Schema & editor support
 
-A JSON Schema ships with `@agentbox/ctl`. Add the `yaml-language-server` modeline to the top of `agentbox.yaml`, and any YAML-LSP editor (VS Code with the Red Hat **YAML** extension, JetBrains, Cursor, neovim) gives you key completion, hover docs, and inline error squiggles.
-
-```yaml
-# yaml-language-server: $schema=<path-or-url-to-schema>
-```
-
-Three ways to point at it:
-
-1. **Inside the agentbox repo** — nothing to do; `.vscode/settings.json` already maps it.
-2. **Your own project with `@agentbox/ctl` installed** — `# yaml-language-server: $schema=./node_modules/@agentbox/ctl/schema/agentbox.schema.json`.
-3. **Anywhere else** — point at the hosted copy: `https://agent-box.sh/schema/agentbox.schema.json`.
-
-The schema can't express cross-field rules — for example `max_ms >= initial_ms` — so those are enforced by the runtime validator. Run it without booting a container:
-
-```bash
-agentbox-ctl validate                  # validates /workspace/agentbox.yaml
-agentbox-ctl validate /tmp/x.yaml      # validate an arbitrary file
-```
-
-Exit code 0 prints `OK: N service(s)`; exit code 2 prints the first error (e.g. `services.web.backoff.max_ms must be >= initial_ms`). `agentbox create` runs this same validator on the host before any container work.
-
-<Callout title="TIP">
-Wire the schema modeline once and your editor catches typos — unknown keys, wrong enum values, a missing `command` — before you ever boot a box.
-</Callout>
+A JSON Schema ships with `@agentbox/ctl`. Add the `yaml-language-server` modeline to the top of `agentbox.yaml` and any YAML-LSP editor gives you key completion, hover docs, and inline error squiggles. See [agentbox.yaml](/docs/agentbox-yaml) for the modeline and `agentbox-ctl validate` details.
 
 For the full file reference (including `carry:`, `ide:`, and `defaults:`), see [agentbox.yaml](/docs/agentbox-yaml). The `defaults:` block ties into [layered configuration](/docs/configuration), and the [CLI reference](/docs/cli) lists every `agentbox status` and `agentbox logs` flag.

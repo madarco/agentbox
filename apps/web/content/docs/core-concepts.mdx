@@ -11,7 +11,7 @@ AgentBox gives each coding-agent run its own isolated Linux sandbox — a **box*
 
 A box is one isolated sandbox per agent run, named `agentbox-<id|name>`. Its shape differs by provider — a local container for Docker, a remote VPS, sandbox, or microVM for the clouds — but the CLI talks to all of them through one `Provider` interface.
 
-Each box is disposable. `create` spins one up; `destroy` (alias `rm`) wipes it, including its per-box volumes. The workspace lives in the box's writable layer, so it survives **pause** and **stop**, and is discarded only on **destroy**.
+Each box is disposable. `create` spins one up; `destroy` wipes it, including its per-box volumes. The workspace lives in the box's writable layer, so it survives **pause** and **stop**, and is discarded only on **destroy**.
 
 | State | Trigger | Cost |
 | --- | --- | --- |
@@ -20,35 +20,23 @@ Each box is disposable. `create` spins one up; `destroy` (alias `rm`) wipes it, 
 | Stopped | Explicit, or idle | 0 |
 | Destroyed | You discard the box | Container + per-box volumes purged |
 
-A box resolves by id, unique id prefix, or name, so `agentbox destroy abc1` works on any unambiguous prefix.
-
 ```bash
 agentbox create -n alpha     # spin one up
-agentbox list                # see it (alias: ls)
-agentbox pause alpha         # freeze: 0 CPU, RAM stays mapped
-agentbox unpause alpha       # sub-second resume
-agentbox destroy alpha       # discard it (alias: rm; -y skips the prompt)
+agentbox destroy alpha       # discard it
 ```
 
 <Callout title="TIP">A box survives `stop`/`start` — `/workspace` lives in the container's writable layer. Only `destroy` throws it away.</Callout>
 
-See [Local Docker](/docs/local-docker) for the lifecycle in detail and [the CLI reference](/docs/cli) for `destroy`/`prune`.
+See [Local Docker](/docs/local-docker) for the lifecycle in detail and [the CLI reference](/docs/cli) for all commands and flags (a box also resolves by unique id prefix or name).
 
 ## The workspace
 
-Inside every box, `/workspace` is where the agent works.
+Inside every box, `/workspace` is where the agent works — a **git worktree on a fresh per-box branch** `agentbox/<box-name>`, so commits land in your real `.git` but never touch your checked-out branch or working tree. Your uncommitted state comes along too: AgentBox replays a host `git stash` plus your untracked files into the box, so the agent starts from what you actually have, not just `HEAD`.
 
-On the Docker provider, `/workspace` is a **git worktree on a fresh per-box branch** `agentbox/<box-name>`, created in-container against your host repo's `.git/`, which is bind-mounted read-write at its identical host path. Commits the agent makes land in your host's `.git` immediately — but on an isolated branch, never on your checked-out branch or working tree.
-
-Your uncommitted state comes along too. At create time AgentBox replays a host `git stash` plus a tar of untracked files into the box, so the agent starts from what you actually have, not just `HEAD`. If the directory isn't a git repo, the workspace is seeded by a tar-pipe of the host directory instead.
-
-Build artifacts like `node_modules`, `.next`, `target`, and `.venv` live in the box's writable layer — isolated per box and rebuilt **inside the Linux box** by the generated `agentbox.yaml` install task, so host-native binaries never leak in.
-
-Cloud providers reach the same end state differently: instead of a bind-mounted `.git`, they ship a **git bundle** plus the stash and untracked tar, extracted in-sandbox — still a branch `agentbox/<box-name>` with your uncommitted state.
+Build artifacts like `node_modules`, `.next`, `target`, and `.venv` live in the box's writable layer — isolated per box and rebuilt **inside the Linux box**, so host-native binaries never leak in.
 
 ```bash
 agentbox open mybox          # rsync /workspace to a host dir, open in Finder
-agentbox open mybox --path   # just print the host path (no Finder)
 ```
 
 <Callout type="warn" title="HEADS UP">The agent commits to a per-box branch `agentbox/<box-name>` against your real `.git` — your checked-out branch and working tree are never touched. Pushing those commits to a remote goes through the host relay (below).</Callout>
@@ -66,7 +54,7 @@ Four backends sit behind one `Provider` interface. The whole CLI — `shell`, `c
 | `daytona` | Daytona Cloud sandbox | The workload outgrows the laptop, teammates need to attach, or you want snapshot-ready remote envs. |
 | `vercel` | Vercel Sandbox (Firecracker microVM) | Fast snapshot-based env with public HTTPS preview URLs and persistent pause/resume. No in-box `docker`; region `iad1` only. |
 
-Switch with `--provider <name>` on `create`/`claude`/`codex`/`opencode`, or pin a project default with the `box.provider` config key.
+Switch with `--provider <name>` on any create command, or pin a project default with the `box.provider` config key.
 
 ```bash
 agentbox create --provider hetzner -n remote   # one box on a Hetzner VPS
@@ -79,47 +67,36 @@ One per provider: [Local Docker](/docs/local-docker), [Hetzner](/docs/hetzner), 
 
 ## Checkpoints & pausing
 
-These are two distinct "warm start" mechanisms — keep them separate.
+These are two distinct "warm start" mechanisms.
 
-**Pause/resume** is the core efficiency trick. Inactive boxes are paused, not stopped: the cgroup freezer holds them at 0 CPU while RAM stays mapped and pageable. `unpause` resumes instantly, and language servers pick up mid-instruction with no cache rehydration. Switching boxes pauses the outgoing one and unpauses the incoming one — sub-second.
+**Pause/resume** is the core efficiency trick. Inactive boxes are paused, not stopped: they sit at 0 CPU while RAM stays mapped and pageable, so `unpause` resumes in sub-second time and language servers pick up mid-instruction. Switching boxes pauses the outgoing one and unpauses the incoming one. On the clouds this maps to each platform's native primitive.
 
-On the clouds, pause/resume maps to the platform primitive: Vercel auto-snapshots on stop and auto-resumes; Hetzner pause is a poweroff, which keeps billing while stopped (unlike Docker's free pause).
-
-**Checkpoints** are different: a checkpoint captures a box's accumulated state — `/workspace` with its `node_modules`, build caches, and in-box `.env` files, plus the rest of the writable layer — so a *new* box starts warm instead of from bare host code. Docker uses `docker commit` (layered, with a periodic `FROM scratch` flatten); the clouds use their native snapshot.
-
-The common use: after the setup wizard or a merged PR, `agentbox checkpoint create <box> --set-default` makes every future box in the project inherit the warm state. Restore with `agentbox create --snapshot <ref>` (or the project's `box.defaultCheckpoint`) — `/workspace` is already populated, no seeding.
+**Checkpoints** are different: a checkpoint captures a box's accumulated state — `/workspace` with its `node_modules`, build caches, and in-box `.env` files — so a *new* box starts warm instead of from bare host code. The common use: after the setup wizard or a merged PR, `agentbox checkpoint create <box> --set-default` makes every future box in the project inherit that warm state.
 
 ```bash
 agentbox pause mybox                              # 0 CPU, RAM stays mapped
-agentbox unpause mybox                            # sub-second resume
 agentbox checkpoint create mybox --set-default    # capture warm state as the project default
 agentbox create --snapshot mybox -n warm          # new box, warm from a checkpoint
 ```
 
-<Callout type="warn" title="HEADS UP">`pause`/`unpause` keep the *same* box warm. A *checkpoint* is a saved snapshot new boxes boot from. And `--host-snapshot` is a third, unrelated thing — a frozen copy of your host files used only while seeding a box.</Callout>
+<Callout type="warn" title="HEADS UP">`pause`/`unpause` keep the *same* box warm. A *checkpoint* is a saved snapshot new boxes boot from — different things.</Callout>
 
 Full mechanics, flags, and per-provider checkpoint keys: [Checkpoints &amp; pausing](/docs/checkpoints-and-pausing). Why pause matters for parallel work: [Background &amp; parallel](/docs/background-and-parallel).
 
 ## The host relay
 
-Boxes are isolated and carry no SSH keys or git credentials by design. So how does `git push` work? Through the **host relay**.
-
-The relay is a small host node process (not a container) named `agentbox-relay`, started lazily on your first `create`/`claude` and reused by every box. It's a singleton, survives `destroy`/`prune`, and listens on `:8787`. Inside the box, the agent talks to an in-box endpoint on `127.0.0.1:8788` (`AGENTBOX_RELAY_URL`), authed by a per-box bearer token (`AGENTBOX_RELAY_TOKEN`). For Docker that endpoint forwards to the host relay; for the clouds, the host's poller long-polls a bridge.
+Boxes are isolated and carry no SSH keys or git credentials by design. So how does `git push` work? Through the **host relay** — a small host process, started lazily on your first run and reused by every box.
 
 The relay carries two directions:
 
-- **Box → host events** — the in-box supervisor posts service and task state transitions (`ready`, `crashed`, `done`, `failed`, …) so the host can show status.
-- **Box → host actions** the box can't do itself — `git push` / `pull` / `fetch`, GitHub PR ops (`gh pr create|view|comment|review|merge`), file `cp`, workspace download, checkpoint capture, and "open this URL in my host browser." The host runs these with **your** identity — SSH agent, `~/.gitconfig`, `gh` auth — so keys never enter the box.
+- **Box → host events** — the in-box supervisor posts service and task state transitions (`ready`, `crashed`, `done`, …) so the host can show status.
+- **Box → host actions** the box can't do itself — `git push`/`pull`/`fetch`, GitHub PR ops, file `cp`, workspace download, checkpoint capture, and "open this URL in my host browser." The host runs these with **your** identity — SSH agent, `~/.gitconfig`, `gh` auth — so keys never enter the box.
 
 Inside a box, the agent invokes these through `agentbox-ctl`:
 
 ```console
 $ agentbox-ctl git push
 # the host relay runs `git push` with your SSH key — no creds in the box
-```
-
-```bash
-agentbox relay status     # is the relay up? (also: stop | start | restart)
 ```
 
 <Callout title="WHY">This is the whole point: credentials live on the host. The agent asks the host to push or open a PR, the host does it as you, and the result streams back. Nothing secret crosses into the box.</Callout>
@@ -130,9 +107,9 @@ Push/pull/PR detail: [Sync &amp; git](/docs/sync-and-git). The supervisor and ev
 
 AgentBox runs three coding agents in a box: **Claude Code** (`agentbox claude`), **Codex** (`agentbox codex`), and **OpenCode** (`agentbox opencode`). Each command is create + start-the-agent + attach in one step.
 
-The agent runs inside a detachable tmux session. Detach and it keeps running; reattach whenever you want. The tmux prefix is `Ctrl+a`, so detach is `Ctrl+a d` and reattach is `agentbox claude attach <box>`. Pass agent flags through after `--`.
+The agent runs inside a detachable tmux session. Detach and it keeps running; reattach whenever you want. The tmux prefix is `Ctrl+a`, so detach is `Ctrl+a d`. Pass agent flags through after `--`.
 
-Credentials stay on the host and are synced in. For Claude Code the host's `~/.claude` — auth, skills, plugins, settings, MCP config — is the source of truth, synced into the box on every create (additive; the host stays authoritative). A first run without a token offers `claude setup-token`, saved to `~/.agentbox/auth.json` and later forwarded as `CLAUDE_CODE_OAUTH_TOKEN`; host `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` are forwarded too.
+Credentials stay on the host and are synced in — for Claude Code the host's `~/.claude` (auth, skills, plugins, settings, MCP config) is the source of truth, synced into the box on every create. See [Run an agent](/docs/run-an-agent) for per-agent auth handling.
 
 Because each agent gets its own box and tmux session, you can run many in parallel and queue background runs.
 
@@ -140,8 +117,6 @@ Because each agent gets its own box and tmux session, you can run many in parall
 agentbox claude -n cc              # create + start Claude Code, attach via tmux
 # (in tmux) press Ctrl+a d to detach — the agent keeps running
 agentbox claude attach cc          # reattach later
-agentbox codex -n cx               # same flow for Codex
-agentbox opencode -n oc            # ...and OpenCode
 agentbox claude -n one-off -- --model sonnet   # pass-through args after --
 ```
 

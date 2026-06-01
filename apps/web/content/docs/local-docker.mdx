@@ -21,11 +21,7 @@ npm -g install @madarco/agentbox
 agentbox install
 ```
 
-`agentbox install` is the interactive wizard (also used to configure cloud providers — optional here). Verify your host is ready with:
-
-```bash
-agentbox doctor
-```
+`agentbox install` is the interactive wizard. Verify your host is ready with `agentbox doctor`.
 
 <Callout title="TIP">
 On macOS, OrbStack is recommended — it's lighter than Docker Desktop and enables per-box `.orb.local` web URLs and Portless integration with no extra setup.
@@ -35,71 +31,33 @@ Installation basics are also covered in [teleport-a-project](/docs/teleport-a-pr
 
 ## First-run image
 
-The box image is `agentbox/box:dev`. On first use the CLI **pulls** it from GHCR (`ghcr.io/madarco/agentbox/box`, tagged `sha-<build-context fingerprint>`) and retags it locally. Only on a pull miss does it **build locally** from the Dockerfile.
-
-This is governed by the `box.imageRegistry` config key (default `ghcr.io/madarco/agentbox/box`; an **empty string means always build locally**). The first box pays the one-time ~1 GB cost; later boxes reuse the cached image and start fast.
+On first use the CLI **pulls** the `agentbox/box:dev` image from public GHCR (no `docker login` needed) and retags it locally; only on a pull miss does it **build locally**. The first box pays the one-time ~1 GB cost — later boxes reuse the cached image and start fast.
 
 ```bash
 # First box pulls (or builds) agentbox/box:dev automatically
 agentbox claude
 ```
 
-```bash
-# Force a local build instead of pulling
-agentbox create --build
-```
-
-```bash
-# Always build locally for this project (no registry pull)
-agentbox config set box.imageRegistry "" --project
-```
-
-<Callout title="NOTE">
-The pull is anonymous from a public GHCR package — no `docker login` needed. If the registry is unreachable, the CLI falls back to a local build automatically.
-</Callout>
-
-See [configuration](/docs/configuration) for `box.imageRegistry`. Cloud providers bake their images differently via `agentbox prepare` (see [cli](/docs/cli)).
+Use `--build` to force a local build, or set `box.imageRegistry` to an empty string to always build locally — see [configuration](/docs/configuration) for all flags. Cloud providers bake their images differently via `agentbox prepare` (see [cli](/docs/cli)).
 
 ## Resource limits
 
-Docker boxes default to **unlimited**. You can cap memory, CPU, PIDs, and (best-effort) disk per box. Flags override config; config keys set project or global defaults.
-
-| Flag | Config key | Default | Notes |
-| --- | --- | --- | --- |
-| `--memory <size>` | `box.memory` (MiB int) | unlimited | e.g. `512m`, `2g`; key is MiB integers |
-| `--cpus <n>` | `box.cpus` (int cores) | unlimited | fractional ok via flag (`1.5`); key is whole cores |
-| `--pids-limit <n>` | `box.pidsLimit` (int) | unlimited | max process count (PIDs cgroup) |
-| `--disk <size>` | `box.disk` (string) | unlimited | best-effort; **no-op on overlay2 / macOS** |
-
-Note the unit asymmetry: the `--memory` flag takes byte/k/m/g strings, while the `box.memory` key is MiB integers. For fractional CPU caps, use the `--cpus` flag.
+Docker boxes default to **unlimited**. Cap a box's resources with `--memory`, `--cpus`, `--disk` — see [configuration](/docs/configuration) for all keys and defaults.
 
 ```bash
-# Cap a single box at create time
-agentbox create --memory 4g --cpus 2 --pids-limit 512
+agentbox create --memory 4g --cpus 2
 ```
 
-```bash
-# Set a project-wide default ceiling (MiB and whole cores)
-agentbox config set box.memory 4096 --project
-agentbox config set box.cpus 2 --project
-```
-
-<Callout type="warn" title="HEADS UP">
-`--disk` (and `box.disk`) is best-effort and a **no-op on overlay2 and the macOS docker engines** — don't rely on it as a hard cap on macOS.
-</Callout>
-
-Watch live per-box usage (cpu/mem/pids/disk) for a box, project, or all boxes with `agentbox top`. The full precedence (CLI flag > workspace `defaults:` > per-project > global > built-in) is in [configuration](/docs/configuration); cloud sizing uses `box.size` / `--size` on [hetzner](/docs/hetzner) and [daytona](/docs/daytona).
+Watch live per-box usage (cpu/mem/pids/disk) with `agentbox top`. Cloud sizing uses `box.size` / `--size` on [hetzner](/docs/hetzner) and [daytona](/docs/daytona).
 
 ## Pause and resume
 
-Inactive boxes are **`docker pause`d**, not stopped — the cgroup freezer drops them to 0 CPU while RAM stays mapped but pageable. `docker unpause` resumes instantly: the VS Code server and TS server pick up mid-instruction with no cache rehydration. Switching is sub-second.
+Inactive boxes are **`docker pause`d**, not stopped — RAM stays mapped, so `docker unpause` resumes instantly with no cache rehydration. Switching is sub-second. `agentbox stop` / `agentbox start` also work; `/workspace` survives both.
 
 ```bash
 agentbox pause 1
 agentbox unpause 1
 ```
-
-`agentbox stop` / `agentbox start` also work — `/workspace` lives in the container's writable layer, so it survives stop/start; `start` only needs to relaunch ctl, dockerd, and Xvnc.
 
 <Callout title="TIP">
 Switching agents? Just attach to another box — AgentBox pauses the one you leave and unpauses the one you enter. See [background-and-parallel](/docs/background-and-parallel) and [access-your-box](/docs/access-your-box).
@@ -107,32 +65,30 @@ Switching agents? Just attach to another box — AgentBox pauses the one you lea
 
 ## Shared docker cache
 
-Each box runs its own in-box `dockerd` with a per-box data-root volume (`agentbox-docker-<id>`). The `--shared-docker-cache` flag (config key `box.dockerCacheShared`) instead routes all boxes to one shared `agentbox-docker-cache` volume — **preserved on destroy/prune** for faster rebuilds.
+Each box runs its own in-box `dockerd`. The `--shared-docker-cache` flag instead routes all boxes to one shared volume that's **preserved on destroy/prune**, for faster rebuilds.
 
 ```bash
 agentbox claude --shared-docker-cache
 ```
 
 <Callout type="warn" title="HEADS UP">
-With `--shared-docker-cache` (or `box.dockerCacheShared`), only one box may run at a time — the shared volume can't be safely mounted by concurrent boxes.
+With `--shared-docker-cache`, only one box may run at a time — the shared volume can't be safely mounted by concurrent boxes.
 </Callout>
 
 In-box docker details live in [docker-in-docker](/docs/docker-in-docker).
 
 ## Web URLs
 
-`agentbox url <box>` opens the box's web app. On **OrbStack** that's `http://<container>.orb.local`; with **Portless** registered it's `https://<name>.localhost`; otherwise `http://127.0.0.1:<webHostPort>`. The `--loopback` flag forces the `127.0.0.1` form.
+`agentbox url <box>` opens the box's web app at its OrbStack `.orb.local`, Portless `.localhost`, or loopback address — see [web-apps-and-tunnels](/docs/web-apps-and-tunnels) for the full URL and expose model.
 
 ```bash
 agentbox url 1
 ```
 
-Control the Portless alias (`https://<name>.localhost`, Docker Desktop) with `--portless` / `--no-portless` on create. See [web-apps-and-tunnels](/docs/web-apps-and-tunnels) for the full URL and expose model, and [browser-and-screen](/docs/browser-and-screen) for `agentbox screen` (noVNC).
-
 ## Lifecycle and state
 
-`/workspace` is **not a volume** — it lives in the container's writable layer, so `node_modules`, `.next`, `target`, and `.venv` all land there. It survives pause and stop, and is wiped on `agentbox destroy`.
+`/workspace` lives in the container's writable layer (not a volume), so `node_modules`, `.next`, `target`, and `.venv` all land there. It survives pause and stop, and is wiped on `agentbox destroy`.
 
-Capture warm state to start future boxes fast with `agentbox checkpoint create <box> --set-default` (a `docker commit`). To carry `node_modules` and build caches into every new box, checkpoint after your setup wizard runs. See [checkpoints-and-pausing](/docs/checkpoints-and-pausing).
+Capture warm state to start future boxes fast with `agentbox checkpoint create <box> --set-default`. Checkpoint after your setup wizard runs to carry build caches into every new box. See [checkpoints-and-pausing](/docs/checkpoints-and-pausing).
 
-The bind-mounted host `.git/` means commits land on the host immediately; pushes go through the host relay, so no credentials live in the box (see [sync-and-git](/docs/sync-and-git)). Inspect a box's files on the host with `agentbox open` (rsync `/workspace` to a host scratch dir, then Finder) or `agentbox download` (gitignore-aware copy back).
+The bind-mounted host `.git/` means commits land on the host immediately; pushes go through the host relay, so no credentials live in the box (see [sync-and-git](/docs/sync-and-git)). Inspect a box's files on the host with `agentbox open` or `agentbox download`.
