@@ -4,3 +4,4 @@
 next-env.d.ts
 /public/schema/
 /lib/version-fallback.json
+/.playwright-cli/

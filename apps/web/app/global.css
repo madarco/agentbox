@@ -133,17 +133,17 @@ kbd {
  * Chrome surfaces — match the mockup: blurred sticky top bar, paper sidebar.
  * ------------------------------------------------------------------------- */
 
-/* Sticky top navbar (notebook layout uses #nd-subnav): translucent paper + blur. */
+/* Sticky top navbar (notebook layout uses #nd-subnav): translucent paper + blur.
+ * The layout already draws the bottom border on the inner nav row, so don't add
+ * another here (that produced a double line). */
 #nd-subnav {
   background: rgba(246, 246, 243, 0.86);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--agb-line);
 }
 
 .dark #nd-subnav {
   background: rgba(20, 22, 26, 0.8);
-  border-bottom-color: var(--color-fd-border);
 }
 
 /* Sidebar shares the body background (paper), not white. */
