@@ -50,7 +50,7 @@ import {
 } from './_attach-in.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
-import { runCarryGate } from '../lib/carry-gate.js';
+import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { providerForCreate } from '../provider/registry.js';
 import { prepareTeleport, TeleportError } from '../session-teleport/index.js';
@@ -445,13 +445,21 @@ export const opencodeCommand = new Command('opencode')
       }
       const maxRunningOverride = parseMaxOption('--max-running', opts.maxRunning);
       const maxWorkingOverride = parseMaxOption('--max-working', opts.maxWorking);
+      // Carry gate runs here on the host (same gate as the foreground path); the
+      // approved entries ride the queue job and the worker applies them.
+      const carryForQueue = await runQueuedCarryGate({
+        projectRoot,
+        opts,
+        onLog: (line) => cmdLog.write(line),
+        onClose: () => cmdLog.close(),
+      });
       const result = await submitQueueJob({
         agent: 'opencode',
         boxName: opts.name ?? '',
         providerName,
         prompt: opts.initialPrompt,
         agentArgs: opencodeArgs,
-        createOpts: pickOpencodeCreateOpts(opts),
+        createOpts: { ...pickOpencodeCreateOpts(opts), carry: carryForQueue },
         maxRunningOverride,
         maxWorkingOverride,
       });

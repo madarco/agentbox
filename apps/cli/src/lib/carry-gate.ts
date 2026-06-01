@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { log } from '@clack/prompts';
 import { loadCarrySection } from '@agentbox/ctl';
 import type { ResolvedCarryEntry } from '@agentbox/core';
 import { promptForCarry } from '../carry-prompt.js';
@@ -32,7 +33,7 @@ export type CarryGateResult =
  * cap, etc.) so the caller can abort *before* the box is created.
  */
 export async function runCarryGate(args: CarryGateArgs): Promise<CarryGateResult> {
-  const log = args.onLog ?? (() => {});
+  const emit = args.onLog ?? (() => {});
   const yamlPath = join(args.projectRoot, 'agentbox.yaml');
 
   const items = await loadCarrySection(yamlPath);
@@ -58,8 +59,42 @@ export async function runCarryGate(args: CarryGateArgs): Promise<CarryGateResult
 
   if (decision === 'cancel') return { decision: 'cancel' };
   if (decision === 'skip-this-run') {
-    log(`carry: skipped for this box (${String(resolved.entries.length)} entry/entries not copied)`);
+    emit(`carry: skipped for this box (${String(resolved.entries.length)} entry/entries not copied)`);
     return { decision: 'skip', entries: [] };
   }
   return { decision: 'approve', entries: resolved.entries };
+}
+
+/**
+ * `-i` (queued background run) variant: run the same host-side gate the
+ * foreground create runs, but instead of threading the result through inline
+ * branches, return the approved entries (empty on skip) and exit the process on
+ * cancel / hard error — the queue submitter has nothing to clean up yet. The
+ * approved entries are serialized into the queue job and applied by the worker.
+ */
+export async function runQueuedCarryGate(args: {
+  projectRoot: string;
+  opts: { yes?: boolean; carryYes?: boolean; carry?: string };
+  onLog?: (line: string) => void;
+  onClose?: () => void;
+}): Promise<ResolvedCarryEntry[]> {
+  try {
+    const gate = await runCarryGate({
+      projectRoot: args.projectRoot,
+      yes: !!args.opts.yes,
+      carryYesFlag: args.opts.carryYes ? true : undefined,
+      carrySkipFlag: args.opts.carry === 'skip' ? true : undefined,
+      onLog: args.onLog,
+    });
+    if (gate.decision === 'cancel') {
+      log.warn('carry: cancelled — not queuing the job');
+      args.onClose?.();
+      process.exit(0);
+    }
+    return gate.decision === 'approve' ? gate.entries : [];
+  } catch (err) {
+    log.error(err instanceof Error ? err.message : String(err));
+    args.onClose?.();
+    process.exit(1);
+  }
 }

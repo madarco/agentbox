@@ -168,6 +168,9 @@ async function runDockerJob(
     portless: opts.portless,
     portlessStateDir: cfg.effective.portless.stateDir || undefined,
     limits: resolveLimits(cfg.effective.box, opts),
+    // carry: entries the submitter resolved + approved on the host; applied here
+    // at box-create time (the worker runs on the host, so it can read the files).
+    carry: opts.carry,
     projectRoot,
     onLog: (line) => log.write(line),
   });
@@ -228,8 +231,9 @@ async function runDockerJob(
  * foreground cloud-create path (`cloudAgentCreate`): `provider.create` does the
  * credential-volume seed, git-bundle workspace seed, and ctl daemon. We then
  * pre-start a detached agent tmux session seeded with the same prompt+args the
- * docker path bakes into `tmux new-session`. Carry / env-file import / explicit
- * branch selection are omitted (the docker `-i` worker omits them too).
+ * docker path bakes into `tmux new-session`. carry: rides the job (resolved +
+ * approved on the host at submit) and is applied here; env-file import / explicit
+ * branch selection are still omitted (the docker `-i` worker omits them too).
  */
 async function runCloudJob(
   job: QueueJob,
@@ -267,6 +271,9 @@ async function runCloudJob(
     withEnv: cfg.effective.box.withEnv,
     vnc: { enabled: cfg.effective.box.vnc },
     limits: resolveLimits(cfg.effective.box, opts),
+    // carry: entries the submitter resolved + approved on the host; the cloud
+    // worker runs on the host too, so it reads the files and uploads them.
+    carry: opts.carry,
     projectRoot,
     onLog: (line) => log.write(line),
   });

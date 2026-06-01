@@ -191,11 +191,30 @@ export {
   stageOpencodeStaticForUpload,
   stageOpencodeCredentialsForUpload,
   stageOpencodeStateForUpload,
+  encodeClaudeProjectsKey,
+  resolveClaudeMemoryDir,
+  BOX_CLAUDE_PROJECT_DIR,
   type StageClaudeOptions,
   type StageCodexOptions,
   type StageOpencodeOptions,
   type StageResult,
 } from './host-stage.js';
+export {
+  BOX_WORKFLOWS_DIR,
+  BOX_MEMORY_DIR,
+  BOX_DYNAMIC_SYNC_MANIFEST,
+  buildHostSyncManifest,
+  computeSyncDelta,
+  stageDynamicSyncTarball,
+  type DynamicSyncManifest,
+  type DynamicSyncSet,
+  type DynamicSyncSetName,
+  type DynamicSyncDelta,
+  type DynamicSyncUpload,
+  type DynamicSyncDeletion,
+  type HostSyncManifest,
+  type StagedTarball,
+} from './dynamic-sync.js';
 export { EXCLUDE_DIRS, SNAPSHOTS_ROOT, snapshotPathFor } from './snapshot.js';
 export {
   CHECKPOINTS_ROOT,

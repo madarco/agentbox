@@ -101,6 +101,25 @@ carry:
     dest: ~/.local/share/opencode/auth.json
     mode: 0o600
     optional: true
+  # Per-provider base-snapshot pointers. With these, `agentbox prepare`
+  # inside the box can skip-fast (existing snapshot detected) and just
+  # exercise the post-prepare config write + migration — no bake needed.
+  - src: ~/.agentbox/hetzner-prepared.json
+    dest: ~/.agentbox/hetzner-prepared.json
+    mode: 0o600
+    optional: true
+  - src: ~/.agentbox/vercel-prepared.json
+    dest: ~/.agentbox/vercel-prepared.json
+    mode: 0o600
+    optional: true
+  - src: ~/.agentbox/daytona-prepared.json
+    dest: ~/.agentbox/daytona-prepared.json
+    mode: 0o600
+    optional: true
+  - src: ~/.agentbox/docker-prepared.json
+    dest: ~/.agentbox/docker-prepared.json
+    mode: 0o600
+    optional: true
 
 tasks:
   # Idempotent dep install. Re-runs on every supervisor restart, so guard

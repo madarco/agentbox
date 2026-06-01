@@ -48,6 +48,7 @@ import {
   seedAgentVolumesIfFresh,
   seedOpencodeModelState,
 } from './agent-credentials.js';
+import { seedDynamicConfig } from './dynamic-sync.js';
 import {
   cloudSnapshotName,
   listCloudCheckpoints,
@@ -484,6 +485,13 @@ export function createCloudProvider(
         typeof networkPolicyOpt === 'string' && networkPolicyOpt.trim() !== ''
           ? networkPolicyOpt.trim()
           : undefined;
+      // Generic VM-size string, resolved per-provider by the call site
+      // (`resolveBoxSize` + `--size` flag). Each backend interprets it natively
+      // (hetzner: server type; daytona: cpu-mem-disk GB); empty/undefined ⇒
+      // backend uses its built-in default.
+      const sizeOpt = req.providerOptions?.['size'];
+      const size =
+        typeof sizeOpt === 'string' && sizeOpt.trim() !== '' ? sizeOpt.trim() : undefined;
 
       // Per-box tokens: `relayToken` authenticates the in-box agent to its
       // in-sandbox relay (`/events`, `/rpc` bearer); `bridgeToken` separately
@@ -559,6 +567,7 @@ export function createCloudProvider(
           image,
           snapshot,
           resources,
+          size,
           timeoutMs,
           exposePorts: exposeServicePorts,
           networkPolicy,
@@ -636,6 +645,14 @@ export function createCloudProvider(
         // credentials volume, so it is absent from `agentVolumes.agents` above
         // yet still needs the model seeded.
         await seedOpencodeModelState(backend, handle, { onLog: log });
+
+        // Seed the host's dynamic Claude config — global ~/.claude/workflows/
+        // and this project's memory/ — incrementally on every create. Runs on
+        // both fresh and checkpoint boots: the box carries a per-file manifest,
+        // so a snapshot boot only re-uploads what changed on the host since.
+        // Static config (plugins/skills/settings) is baked into the snapshot;
+        // these two trees change between runs and ship per-box, like credentials.
+        await seedDynamicConfig(backend, handle, { workspacePath: req.workspacePath, onLog: log });
 
         // Copy the env/config files the setup wizard collected (`.env`,
         // `secrets.toml`, `agentbox.yaml`, …) into `/workspace`. The Docker

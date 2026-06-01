@@ -305,13 +305,16 @@ export const hetznerBackend: CloudBackend = {
       });
 
       // 6. Create the server.
-      progress(`creating VPS '${req.name}' from image ${String(imageRef)} (cx22 / nbg1 unless overridden)`);
+      const serverType = (req.size && req.size.trim()) || HETZNER_DEFAULT_SERVER_TYPE;
+      progress(
+        `creating VPS '${req.name}' from image ${String(imageRef)} (${serverType} / ${HETZNER_DEFAULT_LOCATION})`,
+      );
       const created = await withHetznerRetry(
         { method: 'createServer', retryOnAmbiguous: false, attemptTimeoutMs: 120_000 },
         () =>
           c.createServer({
             name: `agentbox-${req.name}-${stamp}`,
-            server_type: HETZNER_DEFAULT_SERVER_TYPE,
+            server_type: serverType,
             image: imageRef,
             location: HETZNER_DEFAULT_LOCATION,
             user_data: cloudInit,

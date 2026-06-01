@@ -35,6 +35,18 @@ export interface UserConfig {
     defaultCheckpointDaytona?: string;
     defaultCheckpointHetzner?: string;
     defaultCheckpointVercel?: string;
+    /**
+     * Generic VM-size fallback for cloud providers. Provider-interpreted:
+     * Hetzner = server type string (e.g. `cx33`); Daytona = `cpu-memory-disk`
+     * GB spec (e.g. `4-8-20`). Per-provider `size{Provider}` wins over this.
+     * Docker/Vercel ignore it (Docker uses `memory`/`cpus`/`disk`; Vercel uses
+     * `vercelVcpus`).
+     */
+    size?: string;
+    sizeDocker?: string;
+    sizeDaytona?: string;
+    sizeHetzner?: string;
+    sizeVercel?: string;
     withPlaywright?: boolean;
     withEnv?: boolean;
     vnc?: boolean;
@@ -42,6 +54,15 @@ export interface UserConfig {
     isolateCodexConfig?: boolean;
     isolateOpencodeConfig?: boolean;
     image?: string;
+    /**
+     * Per-provider override of `image`. Written by `agentbox prepare
+     * --provider <name>` so a daytona prepare can't poison a hetzner create.
+     * Resolved before falling back to the generic.
+     */
+    imageDocker?: string;
+    imageDaytona?: string;
+    imageHetzner?: string;
+    imageVercel?: string;
     imageRegistry?: string;
     dockerCacheShared?: boolean;
     memory?: number;
@@ -134,6 +155,11 @@ export interface EffectiveConfig {
     defaultCheckpointDaytona: string;
     defaultCheckpointHetzner: string;
     defaultCheckpointVercel: string;
+    size: string;
+    sizeDocker: string;
+    sizeDaytona: string;
+    sizeHetzner: string;
+    sizeVercel: string;
     withPlaywright: boolean;
     withEnv: boolean;
     vnc: boolean;
@@ -141,6 +167,10 @@ export interface EffectiveConfig {
     isolateCodexConfig: boolean;
     isolateOpencodeConfig: boolean;
     image: string;
+    imageDocker: string;
+    imageDaytona: string;
+    imageHetzner: string;
+    imageVercel: string;
     imageRegistry: string;
     dockerCacheShared: boolean;
     memory: number;
@@ -252,6 +282,11 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     defaultCheckpointDaytona: '',
     defaultCheckpointHetzner: '',
     defaultCheckpointVercel: '',
+    size: '',
+    sizeDocker: '',
+    sizeDaytona: '',
+    sizeHetzner: '',
+    sizeVercel: '',
     withPlaywright: false,
     withEnv: false,
     vnc: true,
@@ -259,6 +294,10 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     isolateCodexConfig: false,
     isolateOpencodeConfig: false,
     image: 'agentbox/box:dev',
+    imageDocker: '',
+    imageDaytona: '',
+    imageHetzner: '',
+    imageVercel: '',
     // Mirrors BOX_IMAGE_REGISTRY in @agentbox/sandbox-docker. Empty disables the
     // registry pull (always build the docker base image locally).
     imageRegistry: 'ghcr.io/madarco/agentbox/box',
@@ -403,6 +442,40 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     advanced: true,
   },
   {
+    key: 'box.size',
+    type: 'string',
+    description:
+      'Default VM size for cloud providers. Provider-interpreted: hetzner = server type (e.g. `cx33`); daytona = `cpu-memory-disk` GB (e.g. `4-8-20`). Used as fallback when no per-provider override is set. Docker/Vercel ignore it.',
+  },
+  {
+    key: 'box.sizeDocker',
+    type: 'string',
+    description:
+      'Per-provider override of `box.size` for docker. Reserved — docker sizing is controlled via `box.memory` / `box.cpus` / `box.disk`.',
+    advanced: true,
+  },
+  {
+    key: 'box.sizeDaytona',
+    type: 'string',
+    description:
+      'Per-provider override of `box.size` for daytona. `cpu-memory-disk` GB spec (e.g. `4-8-20`). Only honored on the image/Dockerfile create path; Daytona rejects custom resources on snapshot-resume.',
+    advanced: true,
+  },
+  {
+    key: 'box.sizeHetzner',
+    type: 'string',
+    description:
+      'Per-provider override of `box.size` for hetzner. Server type string (e.g. `cx23`, `cx33`, `cx43`).',
+    advanced: true,
+  },
+  {
+    key: 'box.sizeVercel',
+    type: 'string',
+    description:
+      'Per-provider override of `box.size` for vercel. Reserved — vercel sizing is controlled via `box.vercelVcpus`.',
+    advanced: true,
+  },
+  {
     key: 'checkpoint.maxLayers',
     type: 'int',
     description:
@@ -443,7 +516,31 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
   {
     key: 'box.image',
     type: 'string',
-    description: 'Box image ref (advanced).',
+    description: 'Generic box image ref (fallback). Used as fallback when no per-provider override is set; the default `agentbox/box:dev` is treated as a sentinel by cloud backends (boot from their prepared base snapshot instead).',
+    advanced: true,
+  },
+  {
+    key: 'box.imageDocker',
+    type: 'string',
+    description: 'Per-provider override of `box.image` for docker (local docker image ref, e.g. `agentbox/box:dev`). Wins over the generic when set.',
+    advanced: true,
+  },
+  {
+    key: 'box.imageDaytona',
+    type: 'string',
+    description: 'Per-provider override of `box.image` for daytona (named snapshot, e.g. `agentbox-base-<fingerprint>`). Written by `agentbox prepare --provider daytona`.',
+    advanced: true,
+  },
+  {
+    key: 'box.imageHetzner',
+    type: 'string',
+    description: 'Per-provider override of `box.image` for hetzner (image description, e.g. `agentbox-base-<fingerprint>`). Written by `agentbox prepare --provider hetzner`.',
+    advanced: true,
+  },
+  {
+    key: 'box.imageVercel',
+    type: 'string',
+    description: 'Per-provider override of `box.image` for vercel (snapshot id, e.g. `snap_…`). Written by `agentbox prepare --provider vercel`.',
     advanced: true,
   },
   {

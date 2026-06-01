@@ -52,6 +52,13 @@ export {
   resolveDefaultCheckpoint,
 } from './checkpoint.js';
 
+export { resolveBoxSize } from './size.js';
+
+export {
+  boxImageConfigKey,
+  resolveBoxImage,
+} from './image.js';
+
 export {
   bumpProjectGcCounter,
   listProjectsConfigured,

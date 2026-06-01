@@ -158,6 +158,9 @@ export interface StageClaudeOptions {
 
 const CLAUDE_RUNTIME_EXCLUDES = [
   'projects',
+  // workflows/ are seeded per-box at create time (incremental, like memory),
+  // not frozen into the prepare-time snapshot — see seedDynamicConfig.
+  'workflows',
   'sessions',
   'history.jsonl',
   'file-history',
@@ -175,6 +178,48 @@ const CLAUDE_RUNTIME_EXCLUDES = [
   'mcp-needs-auth-cache.json',
   'stats-cache.json',
 ];
+
+/**
+ * Claude Code keys per-project state (memory, sessions, history) under
+ * `~/.claude/projects/<encoded>/`, where `<encoded>` is the project's absolute
+ * path with every non-alphanumeric char replaced by `-`. Inside every box the
+ * workspace is `/workspace`, so its key is always `-workspace`. We duplicate
+ * the rule here (rather than importing apps/cli's `encodeClaudeProjectsDir`)
+ * because host-stage must not depend on the CLI package.
+ */
+export function encodeClaudeProjectsKey(absPath: string): string {
+  return absPath.replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+/** In-box Claude project dir for `/workspace` (fixed for every box). */
+export const BOX_CLAUDE_PROJECT_DIR = '/home/vscode/.claude/projects/-workspace';
+
+/**
+ * Resolve the host's `~/.claude/projects/<encode(hostWorkspace)>/memory` dir,
+ * or `null` when it's absent or empty (so callers no-op rather than seed an
+ * empty tree). `hostHome` is overridable for tests.
+ */
+export async function resolveClaudeMemoryDir(
+  hostWorkspace: string,
+  hostHome: string = homedir(),
+): Promise<string | null> {
+  if (hostWorkspace.length === 0) return null;
+  const memDir = join(
+    hostHome,
+    '.claude',
+    'projects',
+    encodeClaudeProjectsKey(hostWorkspace),
+    'memory',
+  );
+  if (!(await pathExists(memDir))) return null;
+  try {
+    const entries = await readdir(memDir);
+    if (entries.length === 0) return null;
+  } catch {
+    return null;
+  }
+  return memDir;
+}
 
 /**
  * Filtered tarball of `~/.claude/` (+ `~/.claude.json` as `_claude.json` at

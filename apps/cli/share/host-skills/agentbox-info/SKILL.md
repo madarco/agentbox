@@ -68,9 +68,11 @@ agentbox claude attach <name|n>       # reattach to a specific box
 
 `-i` works on every provider — pass `--provider daytona|hetzner|vercel` (or set `box.provider`) and the queued job creates a cloud box and pre-starts the seeded agent session detached, same as docker. The host must have valid agent credentials. Extra args after `--` are forwarded to the in-box agent (e.g. `agentbox claude -i "<prompt>" --provider vercel -- --permission-mode=plan`).
 
+`-i` honors the project's `carry:` block: the carry gate runs on the host when you submit (it prompts there, since you're at the terminal), and the approved files ride the queued job and land in the box at create time. Auto-approve non-interactively with `--carry-yes` (or `AGENTBOX_CARRY_YES=1`); skip with `--carry skip` (or `AGENTBOX_CARRY=skip`).
+
 ## Forking the current session into a box
 
-From host Claude, run the **`/agentbox`** slash command (optional arg: `docker` | `daytona` | `hetzner`) to snapshot the *current* Claude Code session into a brand-new box that resumes it. With tmux or iTerm it opens in a new terminal tab; otherwise it starts in the background. The host session is unaffected — you get two parallel timelines. The underlying CLI is `agentbox fork` (`agentbox fork --help`); `/agentbox` requires `agentbox install` to have been run once. This is distinct from `-i`, which seeds a *new* prompt rather than resuming the live conversation.
+From host Claude, run the **`/agentbox`** slash command (optional arg: `docker` | `daytona` | `hetzner`) to snapshot the *current* Claude Code session into a brand-new box that resumes it. With tmux or iTerm it opens in a new terminal tab; otherwise it starts in the background. The host session is unaffected — you get two parallel timelines. The underlying CLI is `agentbox fork` (`agentbox fork --help`); `/agentbox` requires `agentbox install` to have been run once. This is distinct from `-i`, which seeds a *new* prompt rather than resuming the live conversation. Fork **sends** the project's `carry:` block by default (the host is trusted; the box is the untrusted side, so host→box copy is safe) — opt out with `agentbox fork --carry skip`.
 
 ## Driving one agent from another (`drive`, `agent`, `queue wait-for`)
 

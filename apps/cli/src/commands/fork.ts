@@ -27,8 +27,9 @@ interface ForkOptions {
   provider?: string;
   name?: string;
   attachIn?: string;
-  carryYes?: boolean;
+  carry?: string;
   agent?: string;
+  plan?: string;
 }
 
 /** fork's attach modes: claude's split|window|tab|same plus `background`
@@ -119,15 +120,23 @@ export const forkCommand = new Command('fork')
     '--session <id>',
     'host agent session id to resume (default: the newest session for this cwd; claude refuses if several were used recently). Ignored for --agent opencode.',
   )
-  .option('--provider <name>', "sandbox backend: 'docker' (default), 'daytona', or 'hetzner'")
+  .option(
+    '--provider <name>',
+    "sandbox backend: 'docker' (default), 'daytona', or 'hetzner', or 'vercel'",
+  )
   .option('-n, --name <name>', 'box name (default: fork-<HHMMSS>)')
   .option(
     '--attach-in <mode>',
     'where to open the forked session: window | tab | split | background | same (default: tab). Falls back to background outside tmux/iTerm.',
   )
   .option(
-    '--carry-yes',
-    "auto-approve agentbox.yaml's carry: block (fork skips carry by default — it does not silently re-copy host files into the new box)",
+    '--carry <mode>',
+    "carry: block handling — 'send' (default) copies agentbox.yaml's declared host files into the box; 'skip' disables it. Host→box copy is safe (the host is trusted; the box is the untrusted side).",
+    'send',
+  )
+  .option(
+    '--plan <path>',
+    'copy a Claude Code plan file (e.g. ~/.claude/plans/<slug>.md) into the box, start claude in plan mode, and seed a "resume the plan" prompt. Claude only.',
   )
   .action(async (opts: ForkOptions) => {
     // Box→box guard: AGENTBOX_RELAY_URL is only set inside a box. Fork teleports
@@ -153,6 +162,19 @@ export const forkCommand = new Command('fork')
       process.exit(2);
     }
 
+    // --plan resumes a Claude Code plan; codex/opencode have no plan-mode equivalent.
+    const plan = opts.plan?.trim();
+    if (plan && agent !== 'claude') {
+      log.error('--plan is only supported with --agent claude (plan mode is Claude-specific).');
+      process.exit(2);
+    }
+
+    const carryMode = opts.carry ?? 'send';
+    if (carryMode !== 'send' && carryMode !== 'skip') {
+      log.error(`--carry: expected 'send' or 'skip', got "${opts.carry ?? ''}"`);
+      process.exit(2);
+    }
+
     // Tolerate an LLM passing `--provider ""` (or whitespace): treat a blank
     // value as "not passed" so it falls through to the default docker provider.
     const provider = opts.provider?.trim();
@@ -167,12 +189,16 @@ export const forkCommand = new Command('fork')
 
     const subArgv = [
       '-y',
-      ...(opts.carryYes ? ['--carry-yes'] : ['--carry', 'skip']),
+      // Host is trusted, the box is the unsafe side, so host→box carry is safe:
+      // fork sends the declared carry: block by default (--carry-yes auto-approves
+      // the same gate create uses). `--carry skip` opts out.
+      ...(carryMode === 'skip' ? ['--carry', 'skip'] : ['--carry-yes']),
       '-w',
       opts.workspace,
       '-n',
       opts.name ?? defaultForkName(),
       ...(provider ? ['--provider', provider] : []),
+      ...(plan ? ['--plan', plan] : []),
       ...sessionArgs,
       ...resolveAttachArgs(attachIn),
     ];
