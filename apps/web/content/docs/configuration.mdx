@@ -200,9 +200,9 @@ The permission-skip defaults are on precisely because each box is a throwaway sa
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `attach.openIn` | enum `split`/`window`/`tab`/`same` | `split` | where `agentbox claude\|codex\|opencode` opens the attached session under tmux or iTerm2 |
+| `attach.openIn` | enum `split`/`window`/`tab`/`same` | `split` | where `agentbox claude\|codex\|opencode` opens the attached session under tmux, cmux, or iTerm2 |
 
-`split` uses a tmux split-window / iTerm2 vertical split; `window` and `tab` open a new tmux window or tab. Outside tmux/iTerm2 every value behaves like `same`. See [access your box](/docs/access-your-box).
+`split` uses a tmux split-window / cmux new-split / iTerm2 vertical split; `window` and `tab` open a new tmux window, cmux workspace, or iTerm2 tab/window. Outside tmux/cmux/iTerm2 every value behaves like `same`. See [access your box](/docs/access-your-box).
 
 ## code / shell
 

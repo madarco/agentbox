@@ -16,6 +16,28 @@ describe('detectHostTerminal', () => {
     expect(detectHostTerminal({ TERM_PROGRAM: 'iTerm.app' })).toBe('iterm2');
   });
 
+  it('returns "cmux" when CMUX_SOCKET_PATH is set and TMUX is unset', () => {
+    expect(
+      detectHostTerminal({
+        CMUX_SOCKET_PATH: '/Users/x/Library/Application Support/cmux/cmux.sock',
+        TERM_PROGRAM: 'ghostty',
+      }),
+    ).toBe('cmux');
+  });
+
+  it('returns "tmux" when both TMUX and CMUX_SOCKET_PATH are set (tmux wins)', () => {
+    expect(
+      detectHostTerminal({
+        TMUX: '/private/tmp/tmux-501/default,12345,0',
+        CMUX_SOCKET_PATH: '/Users/x/Library/Application Support/cmux/cmux.sock',
+      }),
+    ).toBe('tmux');
+  });
+
+  it('returns "unknown" for standalone ghostty (no CMUX_* vars)', () => {
+    expect(detectHostTerminal({ TERM_PROGRAM: 'ghostty' })).toBe('unknown');
+  });
+
   it('treats an empty TMUX value as unset', () => {
     expect(detectHostTerminal({ TMUX: '', TERM_PROGRAM: 'iTerm.app' })).toBe('iterm2');
   });

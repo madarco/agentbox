@@ -74,7 +74,7 @@ Auto-approve is safe to default on because the box can't touch your machine — 
 
 The fastest way to fork is from **inside** the agent: run the **`/agentbox [provider]`** skill from Claude Code, Codex, or OpenCode. It teleports your *current* session — the full conversation, **and** the active plan if you're in plan mode — into a fresh box and resumes it there, so you can branch off an isolated copy without losing context or re-explaining yourself. The provider argument is optional (`/agentbox`, `/agentbox hetzner`, `/agentbox vercel`, …) and defaults to local Docker.
 
-Under the hood the skill calls `agentbox fork`, which you can also run directly on the host. It opens the box in a new terminal tab under iTerm or tmux; otherwise it runs in the background. The skill, and the other AgentBox-provided skills, are covered in [AgentBox Skills](/docs/skills).
+Under the hood the skill calls `agentbox fork`, which you can also run directly on the host. It opens the box in a new terminal tab under iTerm, tmux, or cmux; otherwise it runs in the background. The skill, and the other AgentBox-provided skills, are covered in [AgentBox Skills](/docs/skills).
 
 ```bash
 agentbox fork                         # fork the newest host Claude session into a new box
