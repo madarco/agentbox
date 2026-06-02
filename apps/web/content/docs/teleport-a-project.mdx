@@ -7,34 +7,41 @@ description: How agentbox create copies your project into an isolated box, and h
 inside an isolated box. Your host checkout stays exactly as it is, and your
 machine keeps the credentials.
 
-See [core concepts](/docs/core-concepts) for the box, worktree, and branch model.
-To provision a box and launch an agent in one step, use
-[run an agent](/docs/run-an-agent): `agentbox claude`, `codex`, and `opencode` do
-everything `create` does first.
+This page explains that **teleport mechanism**. In practice you usually don't run
+`agentbox create` directly — run `agentbox claude`, `agentbox codex`, or
+`agentbox opencode` instead. They teleport your project exactly the same way
+(every flag on this page works with them) and then launch the agent in one step,
+so the examples below use `agentbox claude`. Reach for plain `agentbox create`
+only when you want the box on its own, with no agent.
+
+See [core concepts](/docs/core-concepts) for the box, worktree, and branch model,
+and [run an agent](/docs/run-an-agent) for the agent commands.
 
 ## Create a box
 
-From your project directory, `agentbox create` provisions one isolated box: a
-local Docker container, or a remote sandbox with `--provider`. It detects git
-repos, picks a fresh per-box branch, captures your uncommitted work, starts the
-box, and seeds `/workspace`.
+From your project directory, `agentbox claude` (or `codex`/`opencode`) provisions
+one isolated box — a local Docker container, or a remote sandbox with
+`--provider` — and launches the agent. It detects git repos, picks a fresh
+per-box branch, captures your uncommitted work, starts the box, and seeds
+`/workspace`. Plain `agentbox create` runs the same provisioning without
+launching an agent.
 
 ```bash
-agentbox create
+agentbox claude
 ```
 
 Name the box with `-n, --name` (the default is `<workspace-basename>-<id>`), and
 choose where it runs with `--provider`:
 
 ```bash
-agentbox create -n my-feature
-agentbox create --provider hetzner   # or daytona, vercel; local docker is the default
+agentbox claude -n my-feature
+agentbox claude --provider hetzner   # or daytona, vercel; local docker is the default
 ```
 
 Refer to a box later by index (`1`, `2`), name, or id prefix. See
 [CLI commands](/docs/cli) for all flags.
 
-<Callout title="TIP">`agentbox create` only provisions the box. To create a box and launch an agent in one step, use `agentbox claude`, `agentbox codex`, or `agentbox opencode`. See [run an agent](/docs/run-an-agent).</Callout>
+<Callout title="TIP">`agentbox claude`, `agentbox codex`, and `agentbox opencode` provision the box **and** launch the agent in one step — these are what you'll normally run. Use plain `agentbox create` when you want just the box, with no agent. See [run an agent](/docs/run-an-agent).</Callout>
 
 {/* DIAGRAM /diagrams/teleport-a-project.png — nano-banana-pro, home-diagram style ref. Recipe + prompt in apps/web/images.md → Phase D. */}
 <Figure src="/diagrams/teleport-a-project.png" caption="agentbox create gives the box a writable copy of your repo on its own branch; your host checkout is untouched." />
@@ -94,7 +101,7 @@ untracked files, so the agent starts from exactly the state you'd see in
 `git status`, on a fresh branch. Gitignored files are the one exception, which is
 what the wizard's env import and the `carry:` block are for.
 
-<Callout title="WHY">Carry-over is non-destructive. It never alters your host working tree or stash list, so your machine looks the same after `create` as before.</Callout>
+<Callout title="WHY">Carry-over is non-destructive. It never alters your host working tree or stash list, so your machine looks the same after creating the box as before.</Callout>
 
 ## Choosing a branch
 
@@ -104,7 +111,7 @@ or `-b, --use-branch <name>` to reuse an existing branch. See
 [CLI commands](/docs/cli) for all flags.
 
 ```bash
-agentbox create --from-branch main
+agentbox claude --from-branch main
 ```
 
 ## Teleport a session (fork)
