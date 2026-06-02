@@ -80,9 +80,9 @@ describe('lifecycle CLI surface', () => {
     );
   });
 
-  it('install takes --force and --dry-run, no subcommands', () => {
+  it('install takes --force and --dry-run, plus a `cmux` subcommand', () => {
     expect(installCommand.name()).toBe('install');
-    expect(installCommand.commands).toHaveLength(0);
+    expect(installCommand.commands.map((c) => c.name())).toEqual(['cmux']);
     const longs = installCommand.options.map((o) => o.long);
     expect(longs).toEqual(expect.arrayContaining(['--force', '--dry-run']));
   });

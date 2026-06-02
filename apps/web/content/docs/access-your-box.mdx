@@ -59,6 +59,25 @@ If you use [cmux](https://cmux.com), you can add a tab-bar button and shortcut t
 
 `agentbox shell` with no argument auto-picks the only box in the current directory's project; outside an AgentBox project it exits non-zero and the `|| exec $SHELL -l` fallback opens an ordinary shell. This adds a **"Shell in box"** button to the surface tab bar plus a `Cmd+Shift+T` shortcut, leaving cmux's standard `Cmd+T` (new surface) untouched. If you'd rather it *be* `Cmd+T`, set the action's `shortcut` to `cmd+t` and add `"shortcuts": { "bindings": { "newSurface": "cmd+shift+t" } }` to move the built-in off it.
 
+### cmux: a sidebar dock panel with your box list
+
+cmux's [custom dock](https://cmux.com/docs/dock) pins commands to the right sidebar. `agentbox install cmux` adds a panel there that runs `agentbox list --cmux --watch` — a compact, sidebar-tuned view (two lines per box: name, then a colored status) — so your boxes and what each agent is doing stay visible while you work:
+
+```bash
+# add the AgentBox panel to ~/.config/cmux/dock.json, then reload the dock
+agentbox install cmux
+
+# preview the JSON it would write, without touching anything
+agentbox install cmux --dry-run
+
+# start the panel in all-projects scope instead of the current project
+agentbox install cmux -g
+```
+
+It upserts a single `agentbox` control and leaves any other dock controls (lazygit, logs, …) in place; re-running just updates it. Inside the panel, press **`g`** to toggle between the current project and all projects (`q` or `Ctrl+C` to exit) — the dock has no checkbox widget, so the scope toggle lives in the live view. `-g` only sets the panel's starting scope.
+
+<Callout title="Enable the Dock first">cmux's Dock is a **beta feature, off by default**. After running `agentbox install cmux`, turn it on in **cmux Settings → Beta features → Dock**, then open the right sidebar and switch it to the **Dock** tab. Writing `dock.json` alone won't make the panel appear until the beta feature is enabled.</Callout>
+
 ## Web app URL
 
 `agentbox url [box]` opens the box's web app in your host browser. This works even when no service declares `expose:` — every box reserves the web port at create time, so the URL is always openable (you'll just get a connection error until something listens).

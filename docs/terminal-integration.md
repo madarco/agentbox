@@ -118,6 +118,47 @@ This is the load-bearing gotcha. cmux *does* have a per-workspace status pill
 - What cmux **always** renders for any workspace is its **colour**,
   **description**, and **title** — so we drive those instead.
 
+## cmux custom dock (`agentbox install cmux`)
+
+cmux can pin a **custom dock** to the right sidebar: a list of "controls", each a
+shell command rendered in its own Ghostty-backed terminal section, declared in
+JSON at `~/.config/cmux/dock.json` (personal, honoring `$XDG_CONFIG_HOME`) — see
+https://cmux.com/docs/dock. `agentbox install cmux` upserts one control with
+`id: agentbox` that runs `agentbox list --cmux --watch`, so the live box list
+sits in the sidebar. Implementation: `apps/cli/src/commands/install-cmux.ts`
+(`cmuxDockPath`, `upsertAgentboxControl`).
+
+- **`--cmux` is the compact sidebar format.** A ~22-col Ghostty section can't fit
+  the wide `list` table, so `--cmux` (in `list.ts`) renders 2 short lines per box
+  — `<index> <name>` then an indented coloured glyph + agent + activity — plus a
+  one-line `[ ] all projects · g` toggle and short empty messages. It also passes
+  `hideStatusLine: true` to `watchRender` to drop the `watching every …` chrome.
+  The glyph/colour map mirrors `mapActivityToWorkspace` (blue=working,
+  amber=needs-input, red=error, dim=idle); colour is dropped on `NO_COLOR` / a
+  non-TTY. Renderer helpers are pure and unit-tested in `test/list-cmux.test.ts`.
+
+- **Dock is a cmux *beta* feature, off by default.** Writing `dock.json` is
+  necessary but not sufficient: the user must enable it under cmux Settings ->
+  Beta features -> Dock, then switch the right sidebar to the Dock tab
+  (`cmux right-sidebar dock` reports `mode 'dock' is not available` until the
+  beta toggle is on). The CLI can't flip that toggle, so the command's success
+  note tells the user to. Schema/location were verified against `cmux docs dock`
+  (`~/.config/cmux/dock.json`, top-level `controls[]`).
+
+- **Idempotent + sibling-safe.** The `agentbox` control is updated in place on
+  re-run; any other controls (lazygit, logs, …) are preserved. `--dry-run`
+  prints the resulting JSON without writing; `--force` backs up an unparseable
+  `dock.json` to `dock.json.bak` and writes fresh.
+- **Scope is an in-panel toggle, not a flag.** The dock schema has no checkbox
+  widget, so the project-vs-all-projects scope lives inside the live view:
+  `agentbox list --watch` renders a `[ ] all projects   ·   press g to toggle`
+  header and the `g` key flips it (raw-mode key capture in `watchRender`, wired
+  from `list.ts`). `q`/Ctrl-C exits. `agentbox install cmux -g` only bakes the
+  panel's *initial* scope.
+- **Project scope depends on the dock command's cwd.** cmux runs dock commands
+  in the login shell; the non-`-g` view scopes by `findProjectRoot(cwd)`, so if
+  that cwd isn't the focused project the all-projects view is the reliable one.
+
 ## Gotchas
 
 - **`set-status` is stored-but-hidden for box workspaces** — see above. Don't
@@ -130,7 +171,10 @@ This is the load-bearing gotcha. cmux *does* have a per-workspace status pill
   direct child of the cmux surface shell) is authorized. **Consequence: the drive
   harness cannot validate the cmux status feature — only a real cmux surface
   can.** Verify by attaching in an actual cmux tab and watching the workspace
-  colour/description, not via `pnpm drive`.
+  colour/description, not via `pnpm drive`. The same limit applies to the custom
+  dock: the harness can verify the live `agentbox list --watch` view + `g` toggle
+  in a plain PTY, but cmux dock *rendering* and keystroke routing into a focused
+  dock panel can only be confirmed in a real cmux surface.
 - **Exit 0 ≠ visible.** `cmux set-status`/`workspace-action` return 0 even when
   the result isn't rendered (hidden pill) or targets a stale workspace id. Use
   `cmux list-status` / `cmux list-workspaces --json` to check ground truth, and a
