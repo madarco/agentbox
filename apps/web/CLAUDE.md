@@ -27,10 +27,17 @@ documentation. Deployed on Vercel as a single Next.js app.
 - `lib/` — `source.ts` (Fumadocs loader), `layout.shared.tsx` (nav/brand/badge),
   `version.ts` (npm-registry fetch + fallback), generated `version-fallback.json`.
 - `components/version-badge.tsx` — the version pill (docs nav).
+- `components/figure.tsx` — `<Figure src? caption />`: a docs screenshot/diagram;
+  renders a dashed placeholder until a `src` is added.
 - `public/` — Next public root: `home.html` (the marketing page) + assets
-  (`logo.svg`, favicons, `cover.jpg`, …) + generated `schema/`.
+  (`logo.svg`, favicons, `cover.jpg`, …) + generated `schema/` + `screenshots/`
+  (docs figure images).
 - `scripts/copy-schema.mjs` — prebuild step (see Build).
 - `next.config.mjs` — `createMDX()` + rewrites.
+- [`images.md`](./images.md) — **how to (re)capture every docs figure**: the one
+  test environment to provision (boxes across docker/hetzner/vercel from
+  `examples/express-ready`, with example prompts), the inline render + window-capture
+  tooling, and the image catalog ordered by capture phase.
 
 ## Rewrites — important
 
@@ -70,4 +77,6 @@ Latest AgentBox version, shown on both home and docs. Source of truth is
 - Theme via the `--color-fd-*` overrides + `--agb-*` tokens in `app/global.css`;
   reuse the existing tokens, don't invent new colors.
 - New docs pages: add a `.md` under `content/docs/` and list it in `meta.json`.
+- Docs figures: use `<Figure caption="…" />` (placeholder) and fill `src` from
+  `public/screenshots/`; capture/recapture per [`images.md`](./images.md).
 - No emojis in output unless asked.
