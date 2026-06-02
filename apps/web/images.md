@@ -27,7 +27,7 @@ Use the /screenshot skill to capture screenshots of terminal windows and GUI win
 | diagram — services DAG | services-and-tasks (`needs` DAG) | done (2026-06-02, `/diagrams/services-and-tasks.png`, nano-banana-pro) | D |
 | diagram — sync/git | sync-and-git (commits land / relay) | done (2026-06-02, `/diagrams/sync-and-git.png`, nano-banana-pro) | D |
 | diagram — teleport | teleport-a-project (repo → branch) | done (2026-06-02, `/diagrams/teleport-a-project.png`, nano-banana-pro) | D |
-| `hetzner-token.png` | hetzner (API token console) | TODO (external) | E |
+| `hetzner_api.jpg` | hetzner (API token console) | done (2026-06-02, captured manually from the Hetzner console) | E |
 
 ---
 
