@@ -22,7 +22,7 @@ Use the /screenshot skill to capture screenshots of terminal windows and GUI win
 | `claude-tui.png` | run-an-agent, cli | done (2026-06-02) | C |
 | `cursor.png` | access-your-box (Cursor / Dev Containers) | done (2026-06-02) | C |
 | `push-approval.png` | sync-and-git (push approval) | done (2026-06-02, gh pr create approval band, agent-driven) | C |
-| diagram — core-concepts | core-concepts (box/relay model) | TODO (draw) | D |
+| diagram — core-concepts | core-concepts (box/relay model) | done (2026-06-02, `/diagrams/core-concepts.png`, nano-banana-pro) | D |
 | diagram — configuration | configuration (resolution order) | TODO (draw) | D |
 | diagram — services DAG | services-and-tasks (`needs` DAG) | TODO (draw) | D |
 | diagram — sync/git | sync-and-git (commits land / relay) | TODO (draw) | D |
@@ -383,13 +383,36 @@ python3 "$SK/take_screenshot.py" --mode temp --window-id "$WID"
 > harmless. Close/delete them later if you want, or answer `n` to deny and
 > capture the band without the side effects.
 
-### Phase D — Diagrams (TODO — draw separately, not from the environment)
+### Phase D — Diagrams (illustrations, not screenshots)
 
-These are illustrations, not screenshots. Draw on-brand (paper `#f6f6f3`, ink
-`#16181c`, accent `#128a4f`, IBM Plex). Save under `public/screenshots/` (or
-`public/diagrams/`) and add `src=` to the figure.
+On-brand (paper `#f6f6f3`, ink `#16181c`, accent `#128a4f`, IBM Plex). Save under
+`public/diagrams/` and add `src=` to the figure.
 
-- **core-concepts** — one box per agent run; credentials + git stay on the host; boxes call back through the relay.
+**Recipe that worked for core-concepts (AI-generated, reusable for the rest):**
+the **nano-banana-pro** skill (Google Gemini 3 Pro Image) renders crisp,
+correctly-spelled labels — good enough for these card-and-arrow diagrams. Drive
+it from an Opus subagent so it can QA + iterate:
+
+```bash
+uv run ~/.claude/skills/nano-banana-pro/scripts/generate_image.py \
+  --prompt "<detailed spec: flat technical diagram, paper bg #f4f3ee, forest-green
+    #1f7a4d accents, thin line icons, rounded cards, monospace type, the exact panels/
+    cards/labels/arrows, 'crisp legible correctly-spelled text', 16:9>" \
+  --filename /tmp/core-concepts.png --resolution 2K        # GEMINI_API_KEY in env
+# Optional: --input-image <home-page diagram> as a STYLE ref — but it tends to
+# over-copy the source labels; describing the style in the prompt worked better.
+```
+
+Then **read the PNG back to QA the text** (the skill says don't, but label QA
+matters here), regenerate up to ~4× tweaking the prompt, and downscale/quantize
+before committing (2K output is ~3.5MB; resize to ~1600px wide + `Image.quantize(256)`
+→ ~1MB, no visible quality loss). The home-page interactive diagram in
+`public/home.html` is the canonical style reference.
+
+- **core-concepts** — DONE (`/diagrams/core-concepts.png`). Host panel (git/SSH
+  creds + ~/.claude + host relay) ── teleport→ / ←relay 🔒 ── Box panel (agent as
+  root, /workspace, no keys/no host net), with faint stacked outlines behind Box
+  for "one per agent run".
 - **configuration** — config layer precedence: CLI > workspace > project > global > committed defaults > built-in.
 - **services-and-tasks** — the `needs` DAG: install → migrate; db runs in parallel; web waits on both.
 - **sync-and-git** — commits land in the shared host repo instantly; only network ops route through the relay.
