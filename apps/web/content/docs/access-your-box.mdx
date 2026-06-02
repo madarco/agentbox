@@ -34,6 +34,31 @@ A one-shot `-- <cmd>` is never tmux-wrapped, so stdout stays clean for scripts. 
 Same detach chord as the agent: `Ctrl+a d`. See [Background and parallel](/docs/background-and-parallel) for juggling many boxes.
 </Callout>
 
+While attached to any box session, **`Ctrl+a t` opens a fresh shell in the *same* box in a new tab** — a cmux surface in the current workspace, a new tmux window, or a new iTerm2 tab, depending on your terminal.
+
+### cmux: a button + shortcut that opens into the box
+
+If you use [cmux](https://cmux.com), you can add a tab-bar button and shortcut that opens a shell in the current project's box (and behaves normally everywhere else). Add this to `~/.config/cmux/cmux.json` and run `cmux reload-config`:
+
+```jsonc
+{
+  "actions": {
+    "agentbox-shell": {
+      "type": "command",
+      "title": "Shell in box",
+      // Auto-pick the project's box; fall back to a normal login shell elsewhere.
+      "command": "agentbox shell || exec $SHELL -l",
+      "target": "newTabInCurrentPane",
+      "icon": { "type": "symbol", "name": "terminal" },
+      "shortcut": "cmd+shift+t"
+    }
+  },
+  "ui": { "surfaceTabBar": { "buttons": ["cmux.newTerminal", "agentbox-shell"] } }
+}
+```
+
+`agentbox shell` with no argument auto-picks the only box in the current directory's project; outside an AgentBox project it exits non-zero and the `|| exec $SHELL -l` fallback opens an ordinary shell. This adds a **"Shell in box"** button to the surface tab bar plus a `Cmd+Shift+T` shortcut, leaving cmux's standard `Cmd+T` (new surface) untouched. If you'd rather it *be* `Cmd+T`, set the action's `shortcut` to `cmd+t` and add `"shortcuts": { "bindings": { "newSurface": "cmd+shift+t" } }` to move the built-in off it.
+
 ## Web app URL
 
 `agentbox url [box]` opens the box's web app in your host browser. This works even when no service declares `expose:` — every box reserves the web port at create time, so the URL is always openable (you'll just get a connection error until something listens).

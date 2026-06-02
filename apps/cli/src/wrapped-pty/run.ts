@@ -124,11 +124,14 @@ const ACTION_FLASH: Record<Exclude<LeaderAction, 'detach'>, string> = {
   screen: 'Opening noVNC viewer…',
   code: 'Launching VS Code / Cursor…',
   url: 'Opening box URL…',
+  shell: 'Opening shell in box…',
 };
 
-/** Per-action `agentbox` subcommand: `<sub> <boxId> <...flags>`. */
+/** Per-action `agentbox` subcommand: `<sub> <boxId> <...flags>`. These are
+ *  fire-and-forget host actions spawned detached. `shell` is NOT here — it needs
+ *  an interactive new terminal, so `runAction` handles it via `spawnInNewTerminal`. */
 const ACTION_CMD: Record<
-  Exclude<LeaderAction, 'detach'>,
+  Exclude<LeaderAction, 'detach' | 'shell'>,
   { sub: string; flags: string[] }
 > = {
   screen: { sub: 'screen', flags: [] },
@@ -448,17 +451,20 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   wireOutput();
 
   // Ctrl+a leader chord map — keys mirror the dashboard's (`c`/`s`/`u`).
-  // A detachable (tmux-backed) session also gets `d: detach`; a plain
+  // `t: shell` opens another shell in the *same* box, in a new tab. A
+  // detachable (tmux-backed) session also gets `d: detach`; a plain
   // `--no-tmux` shell has nothing to detach from.
   const leaderChords: Record<string, LeaderAction> = detachable
-    ? { c: 'code', s: 'screen', u: 'url', d: 'detach' }
-    : { c: 'code', s: 'screen', u: 'url' };
+    ? { c: 'code', s: 'screen', u: 'url', t: 'shell', d: 'detach' }
+    : { c: 'code', s: 'screen', u: 'url', t: 'shell' };
 
   // Run a Ctrl+a leader action. `detach` writes the tmux detach sequence to
   // the pty (`\x02` = Ctrl+b, tmux's secondary prefix; `d` = detach-client) —
-  // the attach process then exits 0 and teardown runs normally. The other
-  // actions shell out to the real `agentbox` subcommand, detached, so the
-  // long-running open/launch never blocks (or corrupts) this terminal.
+  // the attach process then exits 0 and teardown runs normally. `shell` opens a
+  // fresh shell in the same box in a new terminal tab (cmux new-surface / tmux
+  // new-window / iTerm tab). The other actions shell out to the real `agentbox`
+  // subcommand, detached, so the long-running open/launch never blocks (or
+  // corrupts) this terminal.
   const runAction = (name: LeaderAction): void => {
     if (name === 'detach') {
       if (!reconnecting) {
@@ -468,20 +474,44 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       return;
     }
     const cliEntry = process.argv[1];
-    if (typeof cliEntry === 'string' && cliEntry.length > 0) {
-      const cmd = ACTION_CMD[name];
-      try {
-        spawn(
-          process.execPath,
-          [cliEntry, cmd.sub, opts.boxId, ...cmd.flags],
-          { detached: true, stdio: 'ignore' },
-        ).unref();
-      } catch (e) {
-        // Best-effort — the footer flash still shows. Surface for inspection.
-        logErr(`leader-action spawn (${name}) failed: ${(e as Error).message}`);
+    if (name === 'shell') {
+      // A new shell needs its own interactive terminal, so open a new tab rather
+      // than the detached fire-and-forget spawn the other actions use. `--new`
+      // gives a fresh auto-numbered shell each press (Cmd+T-style).
+      const host = detectHostTerminal();
+      if (typeof cliEntry === 'string' && cliEntry.length > 0 && host !== 'unknown') {
+        void spawnInNewTerminal({
+          host,
+          mode: 'tab',
+          argv: [process.execPath, cliEntry, 'shell', opts.boxId, '--new'],
+          cwd: process.cwd(),
+          title: `${opts.boxName} shell`,
+        })
+          .then((r) => {
+            if (!r.launched && r.error) logErr(`leader-action shell: ${r.error}`);
+          })
+          .catch((e) => logErr(`leader-action shell failed: ${(e as Error).message}`));
       }
+      // Outside cmux/tmux/iTerm we can't open a new interactive tab — hint the
+      // command instead of silently doing nothing.
+      flashMessage =
+        host === 'unknown' ? `Run: agentbox shell ${opts.boxId} --new` : ACTION_FLASH.shell;
+    } else {
+      if (typeof cliEntry === 'string' && cliEntry.length > 0) {
+        const cmd = ACTION_CMD[name];
+        try {
+          spawn(
+            process.execPath,
+            [cliEntry, cmd.sub, opts.boxId, ...cmd.flags],
+            { detached: true, stdio: 'ignore' },
+          ).unref();
+        } catch (e) {
+          // Best-effort — the footer flash still shows. Surface for inspection.
+          logErr(`leader-action spawn (${name}) failed: ${(e as Error).message}`);
+        }
+      }
+      flashMessage = ACTION_FLASH[name];
     }
-    flashMessage = ACTION_FLASH[name];
     if (flashTimer) clearTimeout(flashTimer);
     flashTimer = setTimeout(() => {
       flashTimer = null;

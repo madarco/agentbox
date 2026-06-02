@@ -68,6 +68,7 @@ describe('renderFooter — idle (claude mode)', () => {
     expect(out).toContain('c: code');
     expect(out).toContain('s: screen');
     expect(out).toContain('u: url');
+    expect(out).toContain('t: shell');
     expect(out).toContain('d: detach');
     // the collapsed `Actions` label is replaced by the chords
     expect(out).not.toContain('Actions');
@@ -95,6 +96,7 @@ describe('renderFooter — idle (shell mode)', () => {
     expect(out).toContain('c: code');
     expect(out).toContain('s: screen');
     expect(out).toContain('u: url');
+    expect(out).toContain('t: shell');
     // a plain (--no-tmux) shell has nothing to detach from
     expect(out).not.toContain('detach');
   });

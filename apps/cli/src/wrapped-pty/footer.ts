@@ -93,12 +93,14 @@ const DETACHABLE_LEADER_HINTS: ReadonlyArray<readonly [string, string]> = [
   ['c', 'code'],
   ['s', 'screen'],
   ['u', 'url'],
+  ['t', 'shell'],
   ['d', 'detach'],
 ];
 const PLAIN_LEADER_HINTS: ReadonlyArray<readonly [string, string]> = [
   ['c', 'code'],
   ['s', 'screen'],
   ['u', 'url'],
+  ['t', 'shell'],
 ];
 
 /**
