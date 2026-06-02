@@ -654,7 +654,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'attach.cmuxStatus',
     type: 'bool',
     description:
-      "When attached inside cmux, reflect the box agent's live activity on its cmux workspace (colour + description: blue=working, amber=needs input, idle clears; restored on detach) and highlight the box's own tab when the agent needs input so it stands out among sibling tabs. cmux only; no-op in other terminals.",
+      "When attached inside cmux, reflect the box agent's live activity on its cmux workspace (colour + description: blue=working, amber=needs input, idle clears; restored on detach) and, when the agent needs input, flag the box's own tab via a cmux notification (tab badge + reorder + desktop notification) so it stands out among sibling tabs. cmux only; no-op in other terminals.",
   },
   {
     key: 'code.ide',

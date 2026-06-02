@@ -700,13 +700,13 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       const nextTitle = body?.sessionTitle?.trim() || undefined;
       const nextActivity = body?.state || undefined;
       // Reflect the agent's activity on the box's cmux workspace on each
-      // transition (colour + description), and highlight the box's own tab when
-      // it first crosses into a needs-input state so it stands out among sibling
-      // tabs in the same workspace (cmux clears the highlight on focus).
+      // transition (colour + description), and flag the box's own tab when it
+      // first crosses into a needs-input state so it stands out among sibling
+      // tabs in the same workspace (cmux clears the flag on focus).
       if (cmuxOn && nextActivity !== lastActivity) {
         applyCmuxAgentState(opts.mode, nextActivity);
         if (isAttentionState(nextActivity) && !isAttentionState(lastActivity)) {
-          markCmuxTabAttention();
+          markCmuxTabAttention(opts.mode, opts.boxName, nextActivity);
         }
       }
       // Mirror the live title to the host terminal/tab, falling back to the box

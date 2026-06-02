@@ -84,6 +84,20 @@ export function isAttentionState(activity: AgentActivityState | undefined): bool
   );
 }
 
+/** Short reason phrase for an attention state, shown in the tab notification. */
+function attentionReason(activity: AgentActivityState | undefined): string {
+  switch (activity) {
+    case 'end-plan':
+      return 'plan ready';
+    case 'error':
+      return 'error';
+    case 'question':
+    case 'waiting':
+    default:
+      return 'needs input';
+  }
+}
+
 /**
  * True when attached inside a live cmux surface. cmux exports `CMUX_SOCKET_PATH`
  * for the in-surface shell; we key on it directly (rather than
@@ -167,13 +181,26 @@ export function applyCmuxAgentState(
 }
 
 /**
- * Highlight the box's own cmux tab so it stands out among sibling tabs in the
- * same workspace (boxes opened with `--attach-in tab`). `mark-unread` targets the
- * caller's tab by default ($CMUX_TAB_ID → $CMUX_SURFACE_ID) and cmux clears it
- * automatically when the user focuses the tab to answer.
+ * Flag the box's own cmux tab when its agent needs input, so it stands out among
+ * sibling tabs in the same workspace (boxes opened with `--attach-in tab`). Uses
+ * `cmux notify --surface $CMUX_SURFACE_ID` — cmux's native needs-input path:
+ * it badges the tab (even the workspace's selected tab, unlike bare
+ * `tab-action mark-unread`), reorders it up, and shows a desktop notification.
+ * cmux clears the badge when the user focuses the tab to answer.
  */
-export function markCmuxTabAttention(): void {
-  runCmux(['tab-action', '--action', 'mark-unread']);
+export function markCmuxTabAttention(
+  mode: CmuxAgentMode,
+  boxName: string,
+  activity: AgentActivityState | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const label = mode === 'shell' ? 'shell' : AGENT_LABEL[mode];
+  const argv = ['notify', '--title', boxName, '--body', `${label} · ${attentionReason(activity)}`];
+  // Target this box's own surface explicitly (notify resolves surface UUIDs
+  // globally); falls back to the caller's workspace if the env var is absent.
+  const surface = env['CMUX_SURFACE_ID'];
+  if (surface && surface.length > 0) argv.push('--surface', surface);
+  runCmux(argv);
 }
 
 /** Restore the workspace's colour + description captured at attach time. */

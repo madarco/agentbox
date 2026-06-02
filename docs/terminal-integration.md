@@ -81,15 +81,23 @@ Boxes opened with `--attach-in tab` are **tabs (surfaces) in one workspace**, so
 the per-workspace colour/description can't say *which* tab needs input — it just
 reflects whichever box changed state last. To disambiguate, when an agent first
 crosses into a needs-input state (`isAttentionState`: question / waiting /
-end-plan / error) the wrapper runs `cmux tab-action --action mark-unread`
-(`markCmuxTabAttention`), which highlights **the box's own tab** (no `--tab` flag
-— cmux defaults to the caller's `$CMUX_TAB_ID`/`$CMUX_SURFACE_ID`). Fired once per
-entry into needs-input (guarded by `isAttentionState(next) && !isAttentionState(prev)`),
-not every poll. cmux clears the unread badge automatically when the user focuses
-the tab to answer — there is no per-tab `mark-read` CLI, and focus-clear is the
-intended UX, so we don't restore it on detach. The tab itself already shows the
-box/session name (the wrapper's OSC-0 title) plus cmux's own activity spinner, so
-the badge is purely the "this one needs you" cue. Same `attach.cmuxStatus` gate.
+end-plan / error) the wrapper runs `cmux notify --surface $CMUX_SURFACE_ID`
+(`markCmuxTabAttention`, title = box name, body = e.g. `claude · needs input`),
+which flags **the box's own tab**. Fired once per entry into needs-input (guarded
+by `isAttentionState(next) && !isAttentionState(prev)`), not every poll. cmux
+clears the flag automatically when the user focuses the tab to answer. Same
+`attach.cmuxStatus` gate.
+
+**Why `notify`, not `tab-action mark-unread`:** `mark-unread` only badges a
+**non-selected** tab — marking the workspace's currently-selected tab is a no-op
+(treated as read). Since the box that needs input is frequently the selected tab
+in its (possibly background) workspace, `mark-unread` silently did nothing in
+exactly the case that matters. `notify` is cmux's native needs-input path: it
+badges any tab (selected or not), reorders it up, and shows a desktop
+notification. The desktop popup is the accepted trade-off for a reliable flag
+(verified live — `mark-unread` on a selected tab: no badge; `notify` on the same
+tab: badge). `notify` requires the **surface UUID** (refs like `surface:3` are
+rejected); the attach process has it as `$CMUX_SURFACE_ID`.
 
 ### Why colour/description and **not** `cmux set-status` pills
 
@@ -145,10 +153,11 @@ This is the load-bearing gotcha. cmux *does* have a per-workspace status pill
 In a **real cmux tab** (not the drive harness): `agentbox claude --attach-in
 window` (or `--inline`) against an `examples/` box; give the agent a task and
 watch its workspace turn Blue/"working" then Amber/"needs input", and revert on
-detach. For the per-tab highlight, open two boxes as tabs in one workspace
-(`agentbox claude --attach-in tab` twice); while focused on one tab, make the
-other ask a question and confirm its tab shows cmux's unread badge, which clears
-when you focus it. `agentbox config set attach.cmuxStatus false` disables it.
+detach. For the per-tab flag, open two boxes as tabs in one workspace
+(`agentbox claude --attach-in tab` twice); make one ask a question and confirm
+its tab gets cmux's badge + a desktop notification (and reorders up), which
+clears when you focus it — including when that box is the selected tab in its
+workspace. `agentbox config set attach.cmuxStatus false` disables it.
 Outside cmux (tmux/iTerm2/plain shell) there must be zero `cmux` calls.
 
 Unit tests: `apps/cli/test/cmux-status.test.ts` (pure state→colour/description
