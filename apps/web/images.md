@@ -16,7 +16,7 @@ Use the /screenshot skill to capture screenshots of terminal windows and GUI win
 | Image | Used by (doc figures) | Status | Phase |
 |-------|------------------------|--------|-------|
 | `web-app.png` | web-apps-and-tunnels | done (2026-06-02) | A |
-| `novnc-desktop.png` | access-your-box, browser-and-screen | done (2026-06-02, improved: in-box browser shows the app) | A |
+| `novnc-desktop.png` | access-your-box, browser-and-screen | done (2026-06-02, in-box browser shows the app; wrapped in a fake browser chrome → browser-in-browser) | A |
 | `agentbox-ls.png` | background-and-parallel | done (2026-06-02, recaptured) | B |
 | `dashboard.png` | access-your-box, background-and-parallel, cli | done (2026-06-02, recaptured) | C |
 | `claude-tui.png` | run-an-agent, cli | done (2026-06-02) | C |
@@ -239,8 +239,28 @@ agentbox screen web --print       # starts the in-box Chromium on the app; print
 playwright-cli --session=v open "<that URL>"
 # wait ~5s for the noVNC canvas to connect and Chromium to paint the home page, then:
 playwright-cli --session=v resize 1044 800
-playwright-cli --session=v screenshot
+playwright-cli --session=v screenshot   # raw 1044x800 desktop canvas -> /tmp/novnc-inner.png
 ```
+
+> **Then wrap it in a fake browser chrome (browser-in-browser).** The raw canvas
+> alone doesn't read as "noVNC in your host browser," so the final
+> `novnc-desktop.png` nests the desktop capture inside an on-brand browser frame
+> (traffic lights + a `web — Desktop (noVNC)` tab + an address bar showing
+> `https://vnc-web.localhost/vnc.html?autoconnect=1&password=••••••`). The result
+> shows the box's own Chromium *inside* the host browser tab. Build it the same
+> way as the §2a terminal card — an HTML wrapper served over http, screenshotted
+> with playwright:
+>
+> ```bash
+> cp apps/web/public/screenshots/novnc-desktop.png /tmp/novnc-inner.png  # the raw canvas
+> # write /tmp/novnc-frame.html: a .win card (rounded, shadow) on paper #f6f6f3 with
+> #   a tab strip (3 traffic lights + green-favicon tab) + a toolbar (nav glyphs +
+> #   address pill, green lock) + <img src="novnc-inner.png">. Accent #128a4f, IBM Plex.
+> ( cd /tmp && python3 -m http.server 8899 >/dev/null 2>&1 & )
+> playwright-cli --session=f open "http://localhost:8899/novnc-frame.html"
+> playwright-cli --session=f resize 1140 1000 && playwright-cli --session=f screenshot
+> # crop to 1140x978 (even 44px paper margin) -> novnc-desktop.png
+> ```
 
 ### Phase B — Rendered terminal
 

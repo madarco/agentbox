@@ -66,7 +66,7 @@ agentbox screen mybox --print
 
 This is distinct from `agentbox url`: `url` opens the web app, while `screen` opens the desktop. A box created with `--no-vnc` has no screen. The shared `--loopback` / `--ttl` flags are in [CLI commands](/docs/cli).
 
-{/* SCREENSHOT /screenshots/novnc-desktop.png — REPRO: agentbox screen <box> --print to get the noVNC URL (https://<box>.localhost/vnc.html?autoconnect=1&password=...), open it in a headless browser, wait for the canvas to connect, screenshot (~1044x800 to trim borders). */}
+{/* SCREENSHOT /screenshots/novnc-desktop.png — REPRO: agentbox screen <box> --print to get the noVNC URL (https://<box>.localhost/vnc.html?autoconnect=1&password=...), open it in a headless browser, wait for the canvas to connect, screenshot the ~1044x800 canvas, then wrap that capture in a fake browser chrome (browser-in-browser). Full recipe in apps/web/images.md → Phase A. */}
 <Figure src="/screenshots/novnc-desktop.png" caption="noVNC view of a box's desktop, with the in-box Chromium open." />
 
 The deeper VNC and agent-browser story lives in [Browser and screen](/docs/browser-and-screen).

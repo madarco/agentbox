@@ -54,7 +54,7 @@ agentbox create -n headless --no-vnc
 `--no-vnc` disables the desktop for the box's whole lifetime — `agentbox screen` then refuses with a "VNC is disabled" message. Recreate the box to re-enable it.
 </Callout>
 
-{/* SCREENSHOT /screenshots/novnc-desktop.png — REPRO: agentbox screen <box> --print to get the noVNC URL (https://<box>.localhost/vnc.html?autoconnect=1&password=...), open it in a headless browser, wait for the canvas to connect, screenshot (~1044x800 to trim borders). */}
+{/* SCREENSHOT /screenshots/novnc-desktop.png — REPRO: agentbox screen <box> --print to get the noVNC URL (https://<box>.localhost/vnc.html?autoconnect=1&password=...), open it in a headless browser, wait for the canvas to connect, screenshot the ~1044x800 canvas, then wrap that capture in a fake browser chrome (browser-in-browser). Full recipe in apps/web/images.md → Phase A. */}
 <Figure src="/screenshots/novnc-desktop.png" caption="agentbox screen opens the box's desktop in your browser over noVNC, with the box's headed Chromium shown." />
 
 This works end-to-end on the cloud providers too ([daytona](/docs/daytona), [vercel](/docs/vercel), [hetzner](/docs/hetzner)): the same noVNC desktop, reached via the provider's preview URL.
