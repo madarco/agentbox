@@ -87,7 +87,7 @@ Passing a branch to `pull` checks it out, then pulls latest — the clean way to
 For HTTPS remotes, run `gh auth login` and `gh auth setup-git` on the host once so plain `git push` uses gh's token via git's credential helpers — no relay change needed. See [teleport a project](/docs/teleport-a-project).
 
 <Callout type="warn" title="HEADS UP">
-The box never holds your SSH keys or tokens — but plain `git push` inside the box still works. A `git` (and `gh`) shim on the box's `PATH` transparently routes the network ops through the host relay, which runs them on your machine with your credentials and prompts you to approve writes; only the output streams back, so you never type `agentbox-ctl` yourself. One constraint: let the shim use the box's own branch — run a bare `git push`, not `git push <remote> <branch>` (an explicit refspec is rejected).
+Plain `git push` inside the box just works: a `git`/`gh` shim routes network ops through the host relay, which runs them with your credentials and asks you to approve writes. Keys and tokens never enter the box. (Use a bare `git push`, not `git push <remote> <branch>`.)
 </Callout>
 
 {/* DIAGRAM /diagrams/sync-and-git.png — nano-banana-pro, home-diagram style ref. Recipe + prompt in apps/web/images.md → Phase D. */}
