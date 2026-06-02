@@ -475,25 +475,23 @@ Verbatim prompts:
   Arrows: install -> migrate (upper row), then migrate -> web AND db -> web (two arrows converging into 'web', showing web waits on both). A small outlined pill caption 'needs: forms a DAG'. Landscape 16:9, generous whitespace. All text crisp, sharp and correctly spelled.
   ```
 
-- **sync-and-git** — DONE (`/diagrams/sync-and-git.png`). **Provider-aware** (the
-  first version was wrong — it claimed commits always land in the *host* shared
-  `.git`, which is Docker-only). Two side-by-side panels: **Local Docker** —
-  `/workspace` worktree ──solid→ host `.git` (bind-mounted), commit lands on the
-  host instantly; **Cloud** (daytona/hetzner/vercel) — `box .git` seeded from a
-  git bundle, commit lands instantly *inside the box*, then ──dashed via host
-  relay🔒→ host/remote. Bottom caption: remote writes always go through the relay
-  with your approval.
+- **sync-and-git** — DONE (`/diagrams/sync-and-git.png`). **Single cloud-scenario**
+  diagram with two arrows (an earlier "commits land in the *host* shared `.git`"
+  version was wrong — that's Docker-only; and a two-panel Docker-vs-cloud version
+  was dropped as too busy). A `Box` panel (cloud pill `daytona / hetzner / vercel`)
+  holds `/workspace` (worktree) and `box .git` (seeded from a git bundle) with a
+  SOLID `git commit — instant, local to the box` arrow between them; a DASHED
+  `git push — via the relay, you approve` arrow exits through a `host relay`🔒
+  card to `remote`.
 
   ```text
-  Use the provided image ONLY as a visual STYLE template — copy its exact aesthetic: warm light paper background, forest-green (#1f7a4d) thin line icons / labels / arrows, dark slate headings, muted grey secondary text, monospace IBM-Plex-style type, thin 1.5px soft-grey rounded-card borders, small outlined rounded pills. Do NOT keep any of the reference's text or labels; remove its top row of action chips. Redraw as a NEW diagram with this content: where a box's git commits land, compared by provider — TWO panels side by side.
+  Use the provided image ONLY as a visual STYLE template — copy its exact aesthetic: warm light paper background, forest-green (#1f7a4d) thin line icons / labels / arrows, dark slate headings, muted grey secondary text, monospace IBM-Plex-style type, thin 1.5px soft-grey rounded-card borders, small outlined rounded pills, dashed-border sub-cards and thin dashed arrows where noted. Do NOT keep any of the reference's text or labels; remove its top row of action chips. Redraw as a NEW single diagram of the cloud-box git flow, with TWO arrows — a local commit and a push.
 
-  LEFT panel titled 'Local Docker' with a small container line-icon and an outlined rounded pill reading 'shared .git'. Inside: a card with a folder icon labeled '/workspace' and grey subtext 'git worktree', then a SHORT THICK SOLID green arrow pointing RIGHT to a cylinder/database icon labeled 'host .git' with grey subtext 'bind-mounted from your host'. Beneath, one bold green line: 'git commit lands on your host instantly'.
+  A rounded panel on the LEFT titled 'Box' with a small cloud line-icon and an outlined rounded pill reading 'daytona / hetzner / vercel'. Inside the panel, two stacked sub-cards: a folder icon labeled '/workspace' with grey subtext 'git worktree', and below it a cylinder/database icon labeled 'box .git' with grey subtext 'seeded from a git bundle'. Between these two inner cards, a SHORT SOLID green arrow pointing down from '/workspace' to 'box .git', with a small green label beside it 'git commit — instant, local to the box'.
 
-  RIGHT panel titled 'Cloud' with a small cloud line-icon and an outlined rounded pill reading 'daytona / hetzner / vercel'. Inside: a card with a database icon labeled 'box .git' and grey subtext 'seeded from a git bundle'. Beneath it one bold green line: 'git commit lands instantly, inside the box'. Then a THIN DASHED green arrow leaves that card to the right, passes through a small rounded card 'host relay' (hub icon with a tiny padlock), and continues to a cloud icon labeled 'host / remote'; label this dashed path 'git push, via the relay'.
+  From the right edge of the Box panel, a THIN DASHED green arrow points RIGHT, passing through a small rounded card labeled 'host relay' (hub icon with a tiny padlock), and continues to a cloud icon labeled 'remote'. Label this dashed path 'git push — via the relay, you approve'.
 
-  At the very bottom, spanning both panels, a small outlined pill caption: 'remote writes (push / PR) always go through the relay, with your approval'.
-
-  Landscape 16:9, generous whitespace. All text crisp, sharp and correctly spelled.
+  Landscape 16:9, balanced, generous whitespace. All text crisp, sharp and correctly spelled.
   ```
 
 - **teleport-a-project** — DONE (`/diagrams/teleport-a-project.png`). Host repo
