@@ -209,6 +209,13 @@ kbd {
   margin-bottom: 18px;
 }
 
+/* Nudge the search box up ~5px on desktop (the sidebar layout); mobile keeps 40px. */
+@media (min-width: 768px) {
+  .agb-search {
+    margin-top: 35px;
+  }
+}
+
 .dark .agb-search {
   background: var(--color-fd-card);
   border-color: var(--color-fd-border);
