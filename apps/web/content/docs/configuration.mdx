@@ -31,7 +31,8 @@ The per-project `<hash>` is the first 16 hex chars of the SHA-1 of the project's
 
 `config set`/`unset`/`edit` only write the `--global` or `--project` files (project is the default). The committed `defaults:` block is hand-edited — see [agentbox.yaml](/docs/agentbox-yaml) for its full schema. `engine.kind` is the one key applied at CLI startup; every other key flows through the per-command effective-config load.
 
-<Figure caption="Config resolution order: the highest layer that sets a key wins; unset keys fall through to the built-in default." />
+{/* DIAGRAM /diagrams/configuration.png — nano-banana-pro, home-diagram style ref. Recipe + prompt in apps/web/images.md → Phase D. */}
+<Figure src="/diagrams/configuration.png" caption="Config resolution order: the highest layer that sets a key wins; unset keys fall through to the built-in default." />
 
 ## The config command
 

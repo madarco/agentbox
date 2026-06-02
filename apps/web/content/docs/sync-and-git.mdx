@@ -90,7 +90,8 @@ For HTTPS remotes, run `gh auth login` and `gh auth setup-git` on the host once 
 The box never holds your SSH keys or tokens. If a tool inside the box runs `git push` directly it fails for lack of credentials — route it through `agentbox-ctl git push`, which asks the host to do the push.
 </Callout>
 
-<Figure caption="Commits land in the shared host repo instantly; only network operations route through the host relay." />
+{/* DIAGRAM /diagrams/sync-and-git.png — nano-banana-pro, home-diagram style ref. Recipe + prompt in apps/web/images.md → Phase D. */}
+<Figure src="/diagrams/sync-and-git.png" caption="Commits land in the shared host repo instantly; only network operations route through the host relay." />
 
 ## Pull requests
 

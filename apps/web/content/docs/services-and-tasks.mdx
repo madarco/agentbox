@@ -72,7 +72,8 @@ services:
     needs: [migrate, db]      # waits for the migrate task AND the db service
 ```
 
-<Figure caption="needs forms a DAG: install → migrate, db runs in parallel, and web waits on both." />
+{/* DIAGRAM /diagrams/services-and-tasks.png — nano-banana-pro, home-diagram style ref. Recipe + prompt in apps/web/images.md → Phase D. */}
+<Figure src="/diagrams/services-and-tasks.png" caption="needs forms a DAG: install → migrate, db runs in parallel, and web waits on both." />
 
 <Callout type="warn" title="HEADS UP">
 A `needs:` referencing a name that doesn't exist, or a dependency cycle, is rejected at config load — `agentbox create` aborts before touching Docker.

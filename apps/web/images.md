@@ -23,10 +23,10 @@ Use the /screenshot skill to capture screenshots of terminal windows and GUI win
 | `cursor.png` | access-your-box (Cursor / Dev Containers) | done (2026-06-02) | C |
 | `push-approval.png` | sync-and-git (push approval) | done (2026-06-02, gh pr create approval band, agent-driven) | C |
 | diagram — core-concepts | core-concepts (box/relay model) | done (2026-06-02, `/diagrams/core-concepts.png`, nano-banana-pro) | D |
-| diagram — configuration | configuration (resolution order) | TODO (draw) | D |
-| diagram — services DAG | services-and-tasks (`needs` DAG) | TODO (draw) | D |
-| diagram — sync/git | sync-and-git (commits land / relay) | TODO (draw) | D |
-| diagram — teleport | teleport-a-project (repo → branch) | TODO (draw) | D |
+| diagram — configuration | configuration (resolution order) | done (2026-06-02, `/diagrams/configuration.png`, nano-banana-pro) | D |
+| diagram — services DAG | services-and-tasks (`needs` DAG) | done (2026-06-02, `/diagrams/services-and-tasks.png`, nano-banana-pro) | D |
+| diagram — sync/git | sync-and-git (commits land / relay) | done (2026-06-02, `/diagrams/sync-and-git.png`, nano-banana-pro) | D |
+| diagram — teleport | teleport-a-project (repo → branch) | done (2026-06-02, `/diagrams/teleport-a-project.png`, nano-banana-pro) | D |
 | `hetzner-token.png` | hetzner (API token console) | TODO (external) | E |
 
 ---
@@ -439,10 +439,77 @@ before committing (2K output is several MB; resize to ~1600px wide +
   PROMPT
   )"
   ```
-- **configuration** — config layer precedence: CLI > workspace > project > global > committed defaults > built-in.
-- **services-and-tasks** — the `needs` DAG: install → migrate; db runs in parallel; web waits on both.
-- **sync-and-git** — commits land in the shared host repo instantly; only network ops route through the relay.
-- **teleport-a-project** — host repo → box on its own `agentbox/<name>` branch; the host checkout is untouched.
+The four below are all **DONE**. Each was generated with the **same command** as
+core-concepts — `--input-image diagram-refs/home-diagram.png --resolution 2K`,
+run from `apps/web/` — only the `--prompt` and `--filename` differ. Then
+resized to 1600px wide + `Image.quantize(256, dither=NONE)` before committing.
+Verbatim prompts:
+
+- **configuration** — DONE (`/diagrams/configuration.png`). A vertical precedence
+  ladder, highest layer on top.
+
+  ```text
+  Use the provided image ONLY as a visual STYLE template — copy its exact aesthetic: warm light paper background, forest-green (#1f7a4d) thin line icons / labels / arrows, dark slate headings, muted grey secondary text, monospace IBM-Plex-style type, thin 1.5px soft-grey rounded-card borders, small outlined rounded pills. Do NOT keep any of the reference's text, labels, or its two-panel layout; remove its top row of action chips. Redraw as a NEW diagram with this content and layout.
+
+  A vertical PRECEDENCE LADDER: five horizontal rounded cards stacked vertically with small gaps, highest precedence at the TOP, lowest at the BOTTOM. Each card has a thin line icon on the left, a bold dark heading, and a smaller grey second line:
+  1 (top): flag icon, heading 'CLI flag', subtext 'the command you type, this run only'
+  2: document icon, heading 'workspace', subtext 'defaults: in agentbox.yaml, committed'
+  3: folder icon, heading 'per-project', subtext '~/.agentbox/projects/<hash>/config.yaml'
+  4: gear icon, heading 'global', subtext '~/.agentbox/config.yaml, this machine'
+  5 (bottom): cube icon, heading 'built-in', subtext 'BUILT_IN_DEFAULTS, the fallback'
+
+  Along the LEFT edge of the ladder, one long thin green arrow pointing DOWNWARD spanning all five cards, with a small rotated label 'first layer that sets a key wins, unset keys fall through'. A small outlined green pill at the top right reading 'highest wins'. Balanced composition, 4:3, generous whitespace. All text crisp, sharp and correctly spelled.
+  ```
+
+- **services-and-tasks** — DONE (`/diagrams/services-and-tasks.png`). Left-to-right
+  `needs` DAG, task vs service pills.
+
+  ```text
+  Use the provided image ONLY as a visual STYLE template — copy its exact aesthetic: warm light paper background, forest-green (#1f7a4d) thin line icons / labels / arrows, dark slate headings, muted grey secondary text, monospace IBM-Plex-style type, thin 1.5px soft-grey rounded-card borders, small outlined rounded pills. Do NOT keep any of the reference's text, labels, or its two-panel layout; remove its top row of action chips. Redraw as a NEW diagram with this content and layout.
+
+  A small left-to-right DEPENDENCY GRAPH (DAG) of four rounded node-cards connected by thin green arrows that point in the direction of dependency. Each node-card has a small icon, a bold name, and a tiny grey command line. Two of them carry a small outlined pill 'task' and two carry a small outlined pill 'service':
+  - 'install' (pill 'task', gear icon, 'pnpm install') on the far left, upper row
+  - 'migrate' (pill 'task', database-arrow icon, 'pnpm db:migrate') to its right, upper row
+  - 'db' (pill 'service', database icon, 'postgres, ready when :5432') on the far left, LOWER row, with NO incoming arrow (it starts in parallel)
+  - 'web' (pill 'service', globe icon, 'pnpm dev') on the far right, centered vertically
+  Arrows: install -> migrate (upper row), then migrate -> web AND db -> web (two arrows converging into 'web', showing web waits on both). A small outlined pill caption 'needs: forms a DAG'. Landscape 16:9, generous whitespace. All text crisp, sharp and correctly spelled.
+  ```
+
+- **sync-and-git** — DONE (`/diagrams/sync-and-git.png`). Two paths: commits land in
+  the shared `.git` instantly (solid); network ops go via the relay (dashed).
+
+  ```text
+  Use the provided image ONLY as a visual STYLE template — copy its exact aesthetic: warm light paper background, forest-green (#1f7a4d) thin line icons / labels / arrows, dark slate headings, muted grey secondary text, monospace IBM-Plex-style type, thin 1.5px soft-grey rounded-card borders, small outlined rounded pills. Do NOT keep any of the reference's text or labels; remove its top row of action chips. Redraw as a NEW diagram with this content showing TWO distinct paths.
+
+  On the LEFT, a rounded panel titled 'Box' (small cube icon) containing one sub-card: folder icon, '/workspace', 'git commit'.
+
+  PATH 1 (local, instant): from the Box, a SHORT THICK SOLID green arrow points right to a cylinder/database icon labeled 'host .git' with a small grey 'shared repo'. Next to this arrow a small green check and bold label 'commits land instantly'. Group this top path under a faint outlined pill 'local, no network'.
+
+  PATH 2 (network, via relay): BELOW, a THIN DASHED green arrow leaves the Box and passes through a small rounded card 'host relay' (hub icon with a tiny padlock), then continues to a cloud icon labeled 'remote'. Label this dashed path 'network ops: push, pull, PR'.
+
+  A small outlined pill caption at the bottom: 'commits = instant, network = via relay'. Landscape 16:9, generous whitespace. All text crisp, sharp and correctly spelled.
+  ```
+
+- **teleport-a-project** — DONE (`/diagrams/teleport-a-project.png`). Host repo
+  (untouched) ──teleport→ Box `/workspace` worktree on `agentbox/<name>`.
+
+  ```text
+  Use the provided image ONLY as a visual STYLE template — copy its exact aesthetic: warm light paper background, forest-green (#1f7a4d) thin line icons / labels / arrows, dark slate headings, muted grey secondary text, monospace IBM-Plex-style type, thin 1.5px soft-grey rounded-card borders, small outlined rounded pills, dashed-border sub-cards, and a thin dashed arrow. Do NOT keep any of the reference's text or labels; remove its top row of action chips. Redraw as a NEW two-panel diagram with this content.
+
+  LEFT panel titled 'Host repo' with a small monitor line-icon and an outlined rounded pill reading 'untouched'. Two stacked sub-cards:
+  - branch icon, line 1: 'your branch', line 2: 'working tree never modified'
+  - cylinder/database icon, line 1: '.git', line 2: 'shared with the box'
+  Below the cards, small grey note: 'uncommitted work = git stash + untracked files'.
+
+  BETWEEN the panels, one thick horizontal dashed arrow pointing RIGHT (Host to Box) labeled 'teleport', with a smaller muted sub-label 'stash + untracked copied in'.
+
+  RIGHT panel titled 'Box' with a small cube line-icon and an outlined rounded pill reading 'isolated'. Two stacked sub-cards:
+  - folder icon, line 1: '/workspace', line 2: 'writable git worktree'
+  - a branch-tag shaped pill reading 'branch: agentbox/<name>'
+  Below the cards, small grey note: 'commits land here, on this branch only'.
+
+  Landscape 16:9, generous whitespace. All text crisp, sharp and correctly spelled.
+  ```
 
 ### Phase E — External / manual (you)
 
