@@ -1,0 +1,57 @@
+---
+title: tmux
+description: How AgentBox uses tmux for detachable box sessions and where attached agents open — splits, windows, and the Ctrl+a chords
+---
+
+[tmux](https://github.com/tmux/tmux) is the portable backbone of AgentBox's terminal integration: it works the same on macOS and Linux, and it's what makes box sessions *detachable*. If `TMUX` is set, AgentBox uses tmux for placement even when it's nested inside another multiplexer like [cmux](/docs/integrations-cmux) — its CLI is the right primitive and is portable everywhere.
+
+## Detachable sessions
+
+`agentbox shell` and the agent commands run inside a tmux session, so closing the terminal — or detaching on purpose — never kills the box. `Ctrl+a d` detaches without stopping the agent; reattach later:
+
+```bash
+# attach the agent session
+agentbox claude mybox
+
+# Ctrl+a d to detach, then resume it later
+agentbox claude attach mybox
+
+# the same for a plain shell
+agentbox shell attach mybox
+```
+
+The tmux wrapping is controlled by the [`shell.tmux`](/docs/configuration) config key (default `true`). A one-shot `agentbox shell mybox -- <cmd>` is never tmux-wrapped, so stdout stays clean for scripts.
+
+## Where the session opens
+
+The [`attach.openIn`](/docs/configuration) config key (CLI flag `--attach-in`) decides where an attached session lands. Under tmux:
+
+| Mode | What happens |
+| --- | --- |
+| `split` *(default)* | `tmux split-window` in the current window |
+| `tab` | New tmux window |
+| `window` | New tmux window |
+| `same` | Inline in the current pane (no spawn) — same as `--inline` |
+
+```bash
+# open the agent session in a new tmux window, just this once
+agentbox claude mybox --attach-in tab
+
+# inline in the current pane
+agentbox claude mybox --inline
+```
+
+## The Ctrl+a chords
+
+While attached, `Ctrl+a` opens a which-key menu in the footer; press a single key to act on the box. These shell out to the same commands in [Access your box](/docs/access-your-box).
+
+| Keys | What it does |
+| --- | --- |
+| `Ctrl+a c` | Open the box in VS Code / Cursor |
+| `Ctrl+a s` | Open the box's live screen (noVNC) |
+| `Ctrl+a u` | Open the box's web app URL |
+| `Ctrl+a t` | Open a fresh shell in the *same* box — a new tmux window |
+| `Ctrl+a k` | Destroy the box (after a confirmation) |
+| `Ctrl+a d` | Detach the session (keeps running) |
+
+A literal `Ctrl+a` still reaches the session — press it twice (`Ctrl+a Ctrl+a`). For juggling many detached boxes at once, see [Background and parallel](/docs/background-and-parallel).

@@ -9,10 +9,10 @@
  * the live box list is pinned in the sidebar. Sibling controls (lazygit, logs,
  * …) are preserved untouched.
  *
- * The dock schema has no checkbox/widget primitive, so the project-vs-global
- * scope toggle lives *inside* the live list view: pressing `g` in
- * `agentbox list --watch` flips the scope (see list.ts / watch.ts). `--global`
- * here only bakes the panel's *initial* scope.
+ * The panel lists every box (global). A dock control runs from the config base
+ * (home for the global dock), not the focused project, so it can't follow the
+ * active cmux workspace — scoping to "the current project" isn't possible from a
+ * global dock, hence the all-boxes view.
  *
  * This is intentionally a subcommand namespace (`install cmux`) so future cmux
  * settings can hang off it.
@@ -86,7 +86,6 @@ export function upsertAgentboxControl(doc: DockDoc, opts: AgentboxControlOptions
 }
 
 interface InstallCmuxOptions {
-  global?: boolean;
   height?: string;
   title?: string;
   dryRun?: boolean;
@@ -102,17 +101,18 @@ function parseHeight(raw: string | undefined): number {
 
 export const installCmuxCommand = new Command('cmux')
   .description(
-    'Add an AgentBox panel to the cmux sidebar dock (~/.config/cmux/dock.json) showing the live box list. Press `g` in the panel to toggle all-projects scope.',
+    'Add an AgentBox panel to the cmux sidebar dock (~/.config/cmux/dock.json) showing the live list of all your boxes.',
   )
-  .option('-g, --global', "start the panel in all-projects scope (`agentbox list -g`)")
   .option('--height <points>', 'panel height in points', '320')
   .option('--title <text>', 'panel title shown in the dock header', 'AgentBox')
   .option('--dry-run', 'print the resulting dock.json without writing it')
   .option('--force', 'reset a dock.json that fails to parse (backed up to dock.json.bak)')
   .action((opts: InstallCmuxOptions) => {
     const dockPath = cmuxDockPath();
-    // `--cmux` renders the compact sidebar view; `--watch` keeps it live.
-    const command = `agentbox list${opts.global ? ' -g' : ''} --cmux --watch`;
+    // `--cmux` renders the compact sidebar view; `--watch` keeps it live. The
+    // panel lists every box (global): a dock control runs from home, not the
+    // focused project, so it can't scope to the active workspace.
+    const command = `agentbox list --cmux --watch`;
     const controlOpts: AgentboxControlOptions = {
       command,
       title: opts.title ?? 'AgentBox',
@@ -160,8 +160,7 @@ export const installCmuxCommand = new Command('cmux')
         `Panel command: ${command}\n\n` +
         'To see it:\n' +
         '  1. Enable Dock in cmux Settings -> Beta features -> Dock (it is off by default).\n' +
-        '  2. Open the right sidebar and switch it to the Dock tab.\n\n' +
-        'In the panel, press `g` to toggle all-projects scope.',
+        '  2. Open the right sidebar and switch it to the Dock tab.',
       'Installed',
     );
     outro('done');

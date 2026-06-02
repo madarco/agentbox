@@ -129,13 +129,28 @@ sits in the sidebar. Implementation: `apps/cli/src/commands/install-cmux.ts`
 (`cmuxDockPath`, `upsertAgentboxControl`).
 
 - **`--cmux` is the compact sidebar format.** A ~22-col Ghostty section can't fit
-  the wide `list` table, so `--cmux` (in `list.ts`) renders 2 short lines per box
-  — `<index> <name>` then an indented coloured glyph + agent + activity — plus a
-  one-line `[ ] all projects · g` toggle and short empty messages. It also passes
-  `hideStatusLine: true` to `watchRender` to drop the `watching every …` chrome.
-  The glyph/colour map mirrors `mapActivityToWorkspace` (blue=working,
-  amber=needs-input, red=error, dim=idle); colour is dropped on `NO_COLOR` / a
-  non-TTY. Renderer helpers are pure and unit-tested in `test/list-cmux.test.ts`.
+  the wide `list` table, so `--cmux` (in `list.ts`) groups boxes by project under
+  a dashed `── name ──` header and renders 2 short lines per box — `<index>
+  <name>` then an indented coloured glyph + agent + activity. The glyph/colour
+  map mirrors `mapActivityToWorkspace` (blue=working, amber=needs-input,
+  red=error, dim=idle); colour is dropped on `NO_COLOR` / a non-TTY. Renderer
+  helpers are pure and unit-tested in `test/list-cmux.test.ts`.
+- **Flicker-free refresh.** `--cmux` passes `hideStatusLine: true` to
+  `watchRender`, which drops the `watching every …` chrome *and* switches to an
+  in-place redraw (cursor-home + per-line clear-to-EOL + clear-to-end) instead of
+  the full-screen `2J`/`3J` wipe. cmux re-runs a dock control whenever the active
+  project changes (its config precedence is re-resolved per project — the dock
+  guidance says controls must be "safe to start repeatedly"), so the relaunch is
+  unavoidable; the in-place redraw keeps both that relaunch and the periodic
+  refresh from blank-flashing. Other watch callers keep the `2J`/`3J` path.
+
+- **The panel is always global (all boxes).** A dock control runs from the config
+  base — home for the global `~/.config/cmux/dock.json` — not the focused cmux
+  workspace, so `findProjectRoot(cwd)` can't follow the active project. Rather
+  than show an empty/wrong project scope, `--cmux` lists every box. (cmux *does*
+  expose the focused workspace's dir via `cmux rpc workspace.current`, but the
+  dock restarts on project switch and that path added complexity for little gain
+  — we chose the simple all-boxes view.)
 
 - **Dock is a cmux *beta* feature, off by default.** Writing `dock.json` is
   necessary but not sufficient: the user must enable it under cmux Settings ->
@@ -149,15 +164,11 @@ sits in the sidebar. Implementation: `apps/cli/src/commands/install-cmux.ts`
   re-run; any other controls (lazygit, logs, …) are preserved. `--dry-run`
   prints the resulting JSON without writing; `--force` backs up an unparseable
   `dock.json` to `dock.json.bak` and writes fresh.
-- **Scope is an in-panel toggle, not a flag.** The dock schema has no checkbox
-  widget, so the project-vs-all-projects scope lives inside the live view:
-  `agentbox list --watch` renders a `[ ] all projects   ·   press g to toggle`
-  header and the `g` key flips it (raw-mode key capture in `watchRender`, wired
-  from `list.ts`). `q`/Ctrl-C exits. `agentbox install cmux -g` only bakes the
-  panel's *initial* scope.
-- **Project scope depends on the dock command's cwd.** cmux runs dock commands
-  in the login shell; the non-`-g` view scopes by `findProjectRoot(cwd)`, so if
-  that cwd isn't the focused project the all-projects view is the reliable one.
+- **No per-project scope (see the always-global note above).** An earlier
+  version had an in-panel `g` toggle; it was dropped because a global dock can't
+  scope to the focused project anyway, so the panel just lists all boxes. The
+  non-cmux `agentbox list --watch` (wide terminal) keeps its `g` scope toggle —
+  that path still uses `watchRender`'s `onKey` raw-mode capture.
 
 ## Gotchas
 

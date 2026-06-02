@@ -118,14 +118,20 @@ export async function watchRender(
       body = `error: ${err instanceof Error ? err.message : String(err)}`;
     }
     const ts = new Date().toLocaleTimeString();
-    // 2J clear, 3J drop scrollback, H cursor home.
-    process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
     const trimmed = body.replace(/\n+$/, '');
-    process.stdout.write(
-      opts.hideStatusLine
-        ? `${trimmed}\n`
-        : `watching every ${intervalLabel} — ${ts} — ${hint}\n\n${trimmed}\n`,
-    );
+    if (opts.hideStatusLine) {
+      // In-place redraw: home, clear each line to EOL, then clear to end of
+      // screen. Avoids the full-screen 2J blank-flash so a narrow dock panel
+      // refreshes — and re-launches on a cmux workspace switch — without the
+      // jarring flicker a clear-then-paint produces.
+      process.stdout.write(
+        '\x1b[H' + trimmed.split('\n').map((l) => l + '\x1b[K').join('\n') + '\x1b[J',
+      );
+    } else {
+      // 2J clear, 3J drop scrollback, H cursor home.
+      process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
+      process.stdout.write(`watching every ${intervalLabel} — ${ts} — ${hint}\n\n${trimmed}\n`);
+    }
     await sleep(ms);
     if (exiting) {
       restore();

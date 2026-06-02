@@ -210,26 +210,58 @@ export function cmuxStatusCell(b: ListedBox, color: boolean): string {
   return color ? colorize(text, v.bucket) : text;
 }
 
-/** Two lines per box: `<index> <name>` then an indented status cell. */
+/** basename of a project root, for a group header (`other` for pre-feature
+ *  boxes with no recorded project). */
+function projectLabel(root: string): string {
+  if (!root) return 'other';
+  return root.split('/').filter(Boolean).pop() ?? root;
+}
+
+/** Dim, dashed group header: `── name ──`, head-truncated to the panel width. */
+function projectHeader(label: string, color: boolean, width: number): string {
+  const max = Math.max(1, width - 6); // room for the `── ` + ` ──` frame
+  const name = label.length > max ? label.slice(0, Math.max(1, max - 1)) + '…' : label;
+  const h = `── ${name} ──`;
+  return color ? colorize(h, 'dim') : h;
+}
+
+/** The panel is global, so group boxes by project under a dashed header, then
+ *  two lines per box: `<index> <name>` and an indented status cell. Groups keep
+ *  first-seen order and are separated by a blank line. */
 export function renderCmuxRows(boxes: ListedBox[], color: boolean, width: number): string {
-  const lines: string[] = [];
+  const groups = new Map<string, ListedBox[]>();
   for (const b of boxes) {
-    const idx = b.projectIndex ? `${String(b.projectIndex)} ` : '';
-    lines.push(`${idx}${tailKeep(b.name, Math.max(1, width - idx.length))}`);
-    lines.push('  ' + cmuxStatusCell(b, color));
+    const key = b.projectRoot ?? '';
+    const arr = groups.get(key);
+    if (arr) arr.push(b);
+    else groups.set(key, [b]);
+  }
+  const lines: string[] = [];
+  let first = true;
+  for (const [root, group] of groups) {
+    if (!first) lines.push('');
+    first = false;
+    lines.push(projectHeader(projectLabel(root), color, width));
+    for (const b of group) {
+      const idx = b.projectIndex ? `${String(b.projectIndex)} ` : '';
+      lines.push(`${idx}${tailKeep(b.name, Math.max(1, width - idx.length))}`);
+      lines.push('  ' + cmuxStatusCell(b, color));
+    }
   }
   return lines.join('\n');
 }
 
-/** Short empty-state message tuned for the narrow panel (fits ~22 cols without
- *  wrapping; the toggle line above already explains `g`). */
-export function cmuxEmptyMessage(scoped: boolean): string {
-  return scoped ? 'no boxes · g for all' : 'no boxes · create one';
+/** Short empty-state message tuned for the narrow panel (fits ~22 cols). */
+export function cmuxEmptyMessage(): string {
+  return 'no boxes · agentbox create';
 }
 
-async function buildCmuxText(all: boolean, live: boolean, color: boolean): Promise<string> {
-  const { boxes, scoped } = await scopedBoxes(all, live);
-  if (boxes.length === 0) return cmuxEmptyMessage(scoped);
+async function buildCmuxText(live: boolean, color: boolean): Promise<string> {
+  // The dock is global: a dock control runs from the config base (home), not
+  // the focused project, so per-project scoping can't follow the active
+  // workspace. Always show every box across all projects.
+  const { boxes } = await scopedBoxes(true, live);
+  if (boxes.length === 0) return cmuxEmptyMessage();
   // Re-read width each tick so a resized panel re-truncates.
   const width = process.stdout.columns ?? 30;
   return renderCmuxRows(boxes, color, width);
@@ -349,30 +381,14 @@ export const listCommand = withWatchOptions(
   const all = opts.global ?? false;
   const live = opts.live ?? false;
   if (opts.cmux) {
-    // Compact sidebar view: no watch chrome, a one-char-shorter toggle, and a
-    // colored 2-lines-per-box body. Colour is dropped on a non-TTY / NO_COLOR.
+    // Compact sidebar view: no watch chrome, a colored 2-lines-per-box body,
+    // always global (see buildCmuxText). Colour is dropped on non-TTY/NO_COLOR.
     const color = !!process.stdout.isTTY && !process.env.NO_COLOR;
     if (opts.watch) {
-      let scoped = all;
-      // Trailing blank line separates the toggle from the box list / empty note.
-      const header = (): string => `[${scoped ? 'x' : ' '}] all projects · g\n\n`;
-      await watchRender(
-        async () => header() + (await buildCmuxText(scoped, live, color)),
-        opts.interval,
-        {
-          hideStatusLine: true,
-          onKey: (k) => {
-            if (k === 'g') {
-              scoped = !scoped;
-              return 'redraw';
-            }
-            return 'ignore';
-          },
-        },
-      );
+      await watchRender(() => buildCmuxText(live, color), opts.interval, { hideStatusLine: true });
       return;
     }
-    process.stdout.write((await buildCmuxText(all, live, color)) + '\n');
+    process.stdout.write((await buildCmuxText(live, color)) + '\n');
     return;
   }
   if (opts.watch) {

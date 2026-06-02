@@ -66,38 +66,66 @@ describe('primaryAgent', () => {
 });
 
 describe('renderCmuxRows', () => {
-  it('emits two lines per box: name (with index) then indented status', () => {
+  it('emits a project header then two lines per box (name with index, status)', () => {
     const rows = renderCmuxRows(
-      [box({ name: 'api', projectIndex: 1, claudeActivity: 'working' })],
+      [box({ name: 'api', projectIndex: 1, projectRoot: '/Users/me/api', claudeActivity: 'working' })],
       false,
       40,
     );
-    expect(rows.split('\n')).toEqual(['1 api', '  ● claude working']);
+    expect(rows.split('\n')).toEqual(['── api ──', '1 api', '  ● claude working']);
+  });
+
+  it('groups boxes by project with a blank line between groups', () => {
+    const rows = renderCmuxRows(
+      [
+        box({ name: 'a1', projectIndex: 1, projectRoot: '/Users/me/alpha', claudeActivity: 'idle' }),
+        box({ name: 'a2', projectIndex: 2, projectRoot: '/Users/me/alpha', claudeActivity: 'idle' }),
+        box({ name: 'b1', projectIndex: 1, projectRoot: '/Users/me/beta', state: 'paused' }),
+      ],
+      false,
+      40,
+    );
+    expect(rows.split('\n')).toEqual([
+      '── alpha ──',
+      '1 a1',
+      '  ○ claude idle',
+      '2 a2',
+      '  ○ claude idle',
+      '',
+      '── beta ──',
+      '1 b1',
+      '  [paused]',
+    ]);
   });
 
   it('tail-truncates a long name to the panel width, keeping the suffix', () => {
     const rows = renderCmuxRows(
-      [box({ name: 'agentbox-test-repo-gh-bc322f148', projectIndex: 2, state: 'paused' })],
+      [
+        box({
+          name: 'agentbox-test-repo-gh-bc322f148',
+          projectIndex: 2,
+          projectRoot: '/Users/me/repo',
+          state: 'paused',
+        }),
+      ],
       false,
       12,
     );
-    const [nameLine, statusLine] = rows.split('\n');
+    const [, nameLine, statusLine] = rows.split('\n'); // [0] is the header
     expect(nameLine).toBe('2 …bc322f148'); // "2 " prefix + 10-col tail-kept name
     expect(nameLine!.length).toBe(12);
     expect(statusLine).toBe('  [paused]');
   });
 
-  it('omits the index prefix for a box without a projectIndex', () => {
+  it('labels boxes with no project root as "other"', () => {
     const rows = renderCmuxRows([box({ name: 'solo', claudeActivity: 'idle' })], false, 40);
-    expect(rows.split('\n')[0]).toBe('solo');
+    expect(rows.split('\n')[0]).toBe('── other ──');
+    expect(rows.split('\n')[1]).toBe('solo'); // no index prefix
   });
 });
 
 describe('cmuxEmptyMessage', () => {
-  it('nudges toward -g when scoped to a project', () => {
-    expect(cmuxEmptyMessage(true)).toBe('no boxes · g for all');
-  });
-  it('nudges toward create when already global', () => {
-    expect(cmuxEmptyMessage(false)).toBe('no boxes · create one');
+  it('nudges toward create (the panel is always global)', () => {
+    expect(cmuxEmptyMessage()).toBe('no boxes · agentbox create');
   });
 });
