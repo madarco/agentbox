@@ -21,7 +21,7 @@ Use the /screenshot skill to capture screenshots of terminal windows and GUI win
 | `dashboard.png` | access-your-box, background-and-parallel, cli | done (2026-06-02, recaptured) | C |
 | `claude-tui.png` | run-an-agent, cli | done (2026-06-02) | C |
 | `cursor.png` | access-your-box (Cursor / Dev Containers) | done (2026-06-02) | C |
-| `push-approval.png` | sync-and-git (push approval) | deferred — see notes (best-effort, fiddly to trigger headlessly) | C |
+| `push-approval.png` | sync-and-git (push approval) | done (2026-06-02, gh pr create approval band, agent-driven) | C |
 | diagram — core-concepts | core-concepts (box/relay model) | TODO (draw) | D |
 | diagram — configuration | configuration (resolution order) | TODO (draw) | D |
 | diagram — services DAG | services-and-tasks (`needs` DAG) | TODO (draw) | D |
@@ -333,33 +333,49 @@ python3 "$SK/take_screenshot.py" --mode temp --window-id "$WID"
 > always resolve the `--window-id` by the `[Container agentbox-…]` title, never
 > `--app "Cursor"` alone (that grabs an arbitrary one).
 
-**`push-approval.png`** (best-effort) → sync-and-git. The host approval is a
-relay gate, and it is **fiddly to trigger headlessly** — notes from the last
-attempt:
+**`push-approval.png`** → sync-and-git (the figure in the **Pull requests**
+section). The host relay gates outbound `git push` / `gh pr create` that the
+**in-box agent** initiates; the approval surfaces as a Y/N band in the attached
+session footer. **Let the agent drive it** — that's what reliably triggers the
+band (a bare `docker exec … agentbox-ctl git push` does not: the relay pushes
+the host main-repo HEAD, and the box's own `agentbox/<name>` branch is
+auto-allowed anyway).
 
-- **The gate only fires for NON-`agentbox/*` branches.** `host-actions.ts`:
-  `isAgentboxBranch = branch.startsWith('agentbox/')` bypasses the prompt — a
-  box pushing its own `agentbox/<name>` branch is "the box's whole job" and is
-  auto-allowed. So a vanilla box push never prompts; you must be on a
-  differently-named branch (`git checkout -b demo-feature` in the box) with a
-  genuinely new commit (else `git push` is "Everything up-to-date" and there's
-  nothing to approve).
-- **`express-ready`'s `/workspace` is NOT a git repo** (it's a sub-dir of this
-  monorepo, tar-seeded like the cloud boxes), so you can't trigger a push from
-  the hero box. Use a box on a real git repo with a remote —
-  `../agentbox-test-repo` (per the top-level CLAUDE.md).
-- **The approval band does NOT render over the full Claude TUI** — the TUI owns
-  the screen and overdraws the wrapped-pty footer; keystrokes (`y`/`n`) land in
-  Claude's composer instead of answering. Capture from an **`agentbox shell`**
-  wrapped-pty session (plain footer), not `agentbox claude`.
-- Triggering via a bare `docker exec … agentbox-ctl git push` was unreliable in
-  testing (the relay pushes the host main-repo HEAD, not always the box branch).
-  The reliable path is to let the **in-box agent** initiate the push to a
-  non-agentbox branch, watch the footer band appear in the attached
-  `agentbox shell`, screenshot, then answer `n` to deny.
+```bash
+# A box on a real git repo with a remote (NOT express-ready — its /workspace is
+# tar-seeded, not a git repo). Use ../agentbox-test-repo-gh (https origin + gh).
+PROJ=/Users/marco/Projects/AgentBox/agentbox-test-repo-gh
+WID=$(osascript \
+  -e 'tell application "iTerm" to activate' \
+  -e 'tell application "iTerm" to set b to (create window with default profile)' \
+  -e 'tell application "iTerm" to set bounds of b to {60, 90, 1200, 660}' \
+  -e "tell application \"iTerm\" to tell current session of b to write text \"cd $PROJ && AGENTBOX_CARRY=skip agentbox claude -n pr --attach-in same\"" \
+  -e 'tell application "iTerm" to id of b')
+# once attached, send the agent the task:
+docker exec agentbox-pr bash -lc "tmux send-keys -t claude 'Make the home page better and then push to a new branch and create a PR' Enter; sleep 1; tmux send-keys -t claude Enter"
+```
 
-Left as a placeholder for now — revisit with the `agentbox shell` + agent-driven
-flow above.
+The agent improves the page, commits, pushes, then runs `gh pr create` — and the
+host blocks on a **`[↑] GH PR CREATE — Allow gh pr create from box pr?`** band
+(`Y Yes · N No`). Poll for it, then capture by `--window-id`:
+
+```bash
+# poll the box's claude pane until the push/PR command is blocking (no exit code),
+# then screenshot the host window while the band is up:
+SK=~/.agents/skills/screenshot/scripts
+python3 "$SK/take_screenshot.py" --mode temp --window-id "$WID"
+# crop to ~1120px tall (drop the blue agentbox status line + gray iTerm bar so
+# the yellow approval band is the bottom of the frame), then answer in the
+# session: `y` to approve (completes the PR) or `n` to deny.
+```
+
+> **Gotchas:** the band renders *fine* over the full Claude TUI (it sits above
+> the status line — earlier doubt was just because no prompt was live). The
+> agent's first push to a literal non-agentbox branch (`git push origin <b> -u`)
+> errored on `refs/remotes/origin/HEAD`; it then fell back to a plain
+> `agentbox-ctl git push` (its `agentbox/pr` branch → auto-allowed, no prompt) —
+> so the **PR-create** is what actually surfaced the gate. That's on-message for
+> the Pull-requests figure, so we kept it.
 
 ### Phase D — Diagrams (TODO — draw separately, not from the environment)
 

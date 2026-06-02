@@ -114,7 +114,8 @@ Every relay write op — `git push`, `gh pr create`/`merge`/`comment`/…, and `
 Running a remote-write command yourself from the host auto-approves via a one-time token — no second prompt. The prompt exists for when the **agent inside the box** initiates the action.
 </Callout>
 
-<Figure caption="The agent can request a push; you approve it on the host." />
+{/* SCREENSHOT /screenshots/push-approval.png — REPRO: attach `agentbox claude` on a git repo with a remote (e.g. ../agentbox-test-repo-gh), prompt the agent to push to a new branch and open a PR; the host relay surfaces a Y/N approval band in the attached session footer when the agent runs git push / gh pr create. Capture by --window-id while it blocks, crop the iTerm status bar. Full recipe in apps/web/images.md → Phase C. */}
+<Figure src="/screenshots/push-approval.png" caption="The agent requests a push or pull request from inside the box; you approve it on the host (here, a gh pr create gated by the relay)." />
 
 ## Related
 
