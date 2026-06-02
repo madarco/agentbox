@@ -68,6 +68,7 @@
   .frame {
     max-width: 920px;
     margin: 0 auto;
+    position: relative;
     border-left: 1px solid var(--line);
     border-right: 1px solid var(--line);
     background: var(--paper);
@@ -92,7 +93,38 @@
   .top nav a:hover { color: var(--ink); }
   .top .src { color: var(--accent); }
   .top .src:hover { text-decoration: underline; }
-  @media (max-width: 640px){ .top nav { display: none; } }
+
+  /* mobile hamburger — hidden on desktop */
+  .menu-btn { display: none; }
+  .menu-btn .i-close { display: none; }
+
+  @media (max-width: 640px){
+    .menu-btn {
+      display: grid; place-items: center; width: 34px; height: 34px;
+      border: 1px solid var(--line); border-radius: 7px;
+      background: var(--panel); color: var(--ink-2); cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .menu-btn svg { width: 17px; height: 17px; }
+    header.top.open .menu-btn .i-open { display: none; }
+    header.top.open .menu-btn .i-close { display: block; }
+
+    /* nav becomes a full-width dropdown under the bar */
+    .top nav {
+      position: absolute; top: 56px; left: 0; right: 0; z-index: 40;
+      flex-direction: column; gap: 0;
+      background: var(--panel); border-bottom: 1px solid var(--line);
+      box-shadow: 0 16px 28px -20px rgba(20, 24, 30, .5);
+      max-height: 0; overflow: hidden; pointer-events: none;
+      transition: max-height .26s ease;
+    }
+    header.top.open nav { max-height: 320px; pointer-events: auto; }
+    .top nav a {
+      padding: 13px 22px; color: var(--ink-2);
+      border-top: 1px solid var(--line-2);
+    }
+    .top nav a:hover { background: var(--accent-soft); }
+  }
 
   /* ── META STRIP ── */
   .meta {
@@ -103,6 +135,12 @@
   .meta span { padding: 9px 18px; border-right: 1px solid var(--line); }
   .meta span:last-child { border-right: none; }
   .meta b { color: var(--ink); font-weight: 500; }
+  /* mobile: one simplified line — drop labels + the long envs list */
+  @media (max-width: 640px){
+    .meta { flex-wrap: nowrap; overflow: hidden; font-size: 11px; }
+    .meta span { padding: 8px 12px; white-space: nowrap; }
+    .meta .m-envs, .meta b { display: none; }
+  }
 
   /* ── HERO ── */
   .hero { padding-top: 64px; padding-bottom: 52px; }
@@ -442,6 +480,7 @@
   .sec-no { font-family: var(--mono); font-size: 12px; color: var(--accent); }
   .sec-head h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
   .sec-head .hint { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-left: auto; }
+  @media (max-width: 560px){ .sec-head { flex-wrap: wrap; } .sec-head .hint { margin-left: 0; flex-basis: 100%; } }
 
   /* feature list */
   .flist { display: flex; flex-direction: column; }
@@ -464,8 +503,9 @@
   @media (max-width: 560px){ .crow { grid-template-columns: 1fr; gap: 3px; } }
 
   /* providers compact */
-  .ptable { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .ptable { border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  @media (max-width: 640px){ .ptable table { min-width: 520px; } }
   th, td { text-align: left; padding: 12px 18px; border-bottom: 1px solid var(--line-2); }
   thead th { background: var(--panel); font-family: var(--mono); font-weight: 500; font-size: 12.5px; }
   thead th.col { color: var(--accent); }
@@ -477,7 +517,13 @@
 
   /* install */
   .inst { display: grid; grid-template-columns: 1fr 290px; gap: 28px; align-items: start; }
-  @media (max-width: 640px){ .inst { grid-template-columns: 1fr; } }
+  @media (max-width: 640px){
+    .inst { grid-template-columns: minmax(0, 1fr); }
+    .inst > div { min-width: 0; }
+    .inst .runline { max-width: 100%; }
+    .inst .runline .body { min-width: 0; flex-wrap: wrap; }
+    .inst .runline .k { flex-wrap: wrap; word-break: break-word; }
+  }
   .inst .note { color: var(--ink-2); font-size: 14px; line-height: 1.6; margin-top: 18px; }
   .req { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 18px 20px; }
   .req h4 { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-bottom: 14px; }
@@ -512,9 +558,9 @@
 <div class="frame">
 
   <!-- TOP BAR -->
-  <header class="top pad">
+  <header class="top pad" id="topbar">
     <a href="#top" class="brand"><span class="mark">▣</span> agentbox</a>
-    <nav>
+    <nav id="topnav">
       <a href="#how">how it works</a>
       <a href="#cli">cli</a>
       <a href="#providers">providers</a>
@@ -524,15 +570,19 @@
     <span class="top-right" style="display:flex;align-items:center;gap:14px;">
       <a class="ver" id="agbVer" href="https://www.npmjs.com/package/@madarco/agentbox" target="_blank" rel="noopener" style="display:none;color:var(--accent);border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:11.5px;line-height:1;text-decoration:none;white-space:nowrap;"></a>
       <a class="src" href="https://github.com/madarco/agentbox" target="_blank" rel="noopener">github ↗</a>
+      <button class="menu-btn" id="menuBtn" aria-label="Menu" aria-expanded="false" aria-controls="topnav">
+        <svg class="i-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        <svg class="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
     </span>
   </header>
 
   <!-- META STRIP -->
   <div class="meta pad">
-    <span><b>npm</b> @madarco/agentbox</span>
-    <span><b>license</b> MIT</span>
-    <span><b>envs</b> Local Docker · Vercel · Hetzner · Daytona</span>
-    <span><b>os</b> macOS · Linux</span>
+    <span class="m-npm"><b>npm</b> @madarco/agentbox</span>
+    <span class="m-license"><b>license</b> MIT</span>
+    <span class="m-envs"><b>envs</b> Local Docker · Vercel · Hetzner · Daytona</span>
+    <span class="m-os"><b>os</b> macOS · Linux</span>
   </div>
 
   <!-- HERO -->
@@ -922,6 +972,32 @@
       });
     });
   });
+
+  // mobile nav — hamburger toggles the dropdown
+  (function () {
+    var bar = document.getElementById('topbar');
+    var btn = document.getElementById('menuBtn');
+    var nav = document.getElementById('topnav');
+    if (!bar || !btn || !nav) return;
+    function setOpen(open) {
+      bar.classList.toggle('open', open);
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      setOpen(!bar.classList.contains('open'));
+    });
+    // close on link tap, outside click, or Escape
+    nav.addEventListener('click', function (e) {
+      if (e.target.closest('a')) setOpen(false);
+    });
+    document.addEventListener('click', function (e) {
+      if (bar.classList.contains('open') && !bar.contains(e.target)) setOpen(false);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') setOpen(false);
+    });
+  })();
 
   // animate the architecture diagram into view
   var dg = document.getElementById('dg');
