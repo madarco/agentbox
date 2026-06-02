@@ -519,6 +519,15 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
           }
         })
         .catch((e: unknown) => {
+          // The synthetic `local:kill` confirm has no relay `onResolved` to
+          // clear it, so a rejected capture (pty-exit / dispose) would otherwise
+          // leave `capturingPrompt` set — a reconnect would then inherit a dead
+          // kill banner and the `if (capturingPrompt) return` guard would block
+          // every future Ctrl+a k. Clear it ourselves if it's still ours.
+          if (capturingPrompt === ev) {
+            capturingPrompt = null;
+            applyBandChange();
+          }
           const msg = e instanceof Error ? e.message : String(e);
           if (msg !== 'resolved-elsewhere') logErr(`kill confirm rejected: ${msg}`);
         });
