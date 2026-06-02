@@ -3,6 +3,13 @@ import { readBoxStatus } from '@agentbox/sandbox-docker';
 import type { AttachOpenIn } from '@agentbox/config';
 import { loadPtyBackend } from '../pty/pty-backend.js';
 import { detectHostTerminal, spawnInNewTerminal } from '../terminal/host.js';
+import {
+  applyCmuxAgentState,
+  captureCmuxWorkspace,
+  cmuxStatusEnabled,
+  restoreCmuxWorkspace,
+  type CmuxWorkspaceState,
+} from '../terminal/cmux-status.js';
 import { popTerminalTitle, pushTerminalTitle, setTerminalTitle } from '../terminal/title.js';
 import {
   createInputRouter,
@@ -628,6 +635,14 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     },
   });
 
+  // When attached inside cmux, reflect the agent's activity on the box's cmux
+  // workspace (colour + description, set in the poll loop below) so the sidebar
+  // shows what each box is doing. Resolved (env + config) just before the first
+  // poll; `cmuxOrig` holds the workspace's prior colour/description to restore on
+  // detach.
+  let cmuxOn = false;
+  let cmuxOrig: CmuxWorkspaceState | null = null;
+
   // Poll the box's status.json for `claude.sessionTitle` so the idle
   // footer can show what claude set as its terminal title (mirrors the
   // dashboard's sidebar entry). Best-effort — paused/stopped boxes and
@@ -652,6 +667,11 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
               : status?.claude;
       const nextTitle = body?.sessionTitle?.trim() || undefined;
       const nextActivity = body?.state || undefined;
+      // Reflect the agent's activity on the box's cmux workspace on each
+      // transition (colour + description).
+      if (cmuxOn && nextActivity !== lastActivity) {
+        applyCmuxAgentState(opts.mode, nextActivity);
+      }
       // Mirror the live title to the host terminal/tab, falling back to the box
       // name until the agent sets one. Deduped so we don't spam the terminal.
       const desiredTitle = nextTitle ?? opts.boxName;
@@ -687,6 +707,10 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       logErr(`status poll failed: ${(e as Error).message}`);
     }
   };
+  if (opts.mode !== 'shell') {
+    cmuxOn = await cmuxStatusEnabled();
+    if (cmuxOn) cmuxOrig = captureCmuxWorkspace();
+  }
   void pollStatus();
   const statusTimer = setInterval(() => {
     void pollStatus();
@@ -822,6 +846,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   process.stdin.off('data', onStdinData);
   process.stdout.off('resize', onResize);
   clearInterval(statusTimer);
+  if (cmuxOn) restoreCmuxWorkspace(cmuxOrig);
   stopSpinner();
   if (flashTimer) clearTimeout(flashTimer);
   if (process.stdin.isTTY) process.stdin.setRawMode(false);

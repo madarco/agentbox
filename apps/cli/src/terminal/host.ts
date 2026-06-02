@@ -31,7 +31,7 @@ export function detectHostTerminal(env: NodeJS.ProcessEnv = process.env): HostTe
 
 /** Absolute path to the cmux control CLI when running inside cmux, else the
  *  bare `cmux` (which cmux also places on PATH). */
-function cmuxBinary(env: NodeJS.ProcessEnv = process.env): string {
+export function cmuxBinary(env: NodeJS.ProcessEnv = process.env): string {
   const bundled = env['CMUX_BUNDLED_CLI_PATH'];
   return bundled && bundled.length > 0 ? bundled : 'cmux';
 }

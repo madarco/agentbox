@@ -196,13 +196,16 @@ See [checkpoints and pausing](/docs/checkpoints-and-pausing).
 The permission-skip defaults are on precisely because each box is a throwaway sandbox the agent can't escape — that's the whole point of AgentBox. Turn them off per-box with `--no-dangerously-skip-permissions` if you want approval prompts. See [core concepts](/docs/core-concepts) and [run an agent](/docs/run-an-agent).
 </Callout>
 
-## attach.openIn
+## attach
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `attach.openIn` | enum `split`/`window`/`tab`/`same` | `split` | where `agentbox claude\|codex\|opencode` opens the attached session under tmux, cmux, or iTerm2 |
+| `attach.cmuxStatus` | bool | `true` | when attached inside cmux, reflect the box agent's activity on its cmux workspace (colour + description) |
 
 `split` uses a tmux split-window / cmux new-split / iTerm2 vertical split (same workspace). `tab` opens a new tmux window / a new cmux surface (a tab in the current pane, same workspace) / a new iTerm2 tab. `window` opens a new tmux window / a separate cmux workspace / a new iTerm2 window. Outside tmux/cmux/iTerm2 every value behaves like `same`. See [access your box](/docs/access-your-box).
+
+`attach.cmuxStatus` surfaces a box's agent state in the [cmux](https://cmux.com) sidebar. While you're attached inside a cmux surface, AgentBox reflects the agent's live activity on the box's cmux workspace via its colour and description — blue/"working" while the agent runs, amber/"needs input" when it asks a question or is waiting, and the tint clears when idle. The workspace's original colour and description are restored when you detach. (cmux only renders its status *pills* for workspaces running an agent it recognizes; a box runs the agent inside the container, so AgentBox drives the always-visible workspace colour/description instead.) No effect outside cmux; set to `false` to disable.
 
 ## code / shell
 

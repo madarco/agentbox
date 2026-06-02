@@ -91,6 +91,7 @@ export interface UserConfig {
   };
   attach?: {
     openIn?: AttachOpenIn;
+    cmuxStatus?: boolean;
   };
   code?: {
     ide?: IdeFlavor;
@@ -200,6 +201,7 @@ export interface EffectiveConfig {
   };
   attach: {
     openIn: AttachOpenIn;
+    cmuxStatus: boolean;
   };
   code: {
     ide: IdeFlavor;
@@ -330,6 +332,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   attach: {
     openIn: 'split',
+    cmuxStatus: true,
   },
   code: {
     ide: 'auto',
@@ -646,6 +649,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     enumValues: ['split', 'window', 'tab', 'same'] as const,
     description:
       'Where `agentbox claude|codex|opencode` opens the attached session when run from tmux, cmux, or iTerm2: `split` (tmux split-window / cmux new-split / iTerm2 vertical split, default — same workspace), `window` (tmux new-window / cmux new-workspace / new iTerm2 window), `tab` (tmux new-window / cmux new-surface tab in the current pane, same workspace / new iTerm2 tab), or `same` (attach inline in the current terminal). Outside tmux/cmux/iTerm2 every value behaves like `same`.',
+  },
+  {
+    key: 'attach.cmuxStatus',
+    type: 'bool',
+    description:
+      "When attached inside cmux, reflect the box agent's live activity on its cmux workspace (colour + description: blue=working, amber=needs input, idle clears) so the sidebar shows what each box is doing; restored on detach. cmux only; no-op in other terminals.",
   },
   {
     key: 'code.ide',
