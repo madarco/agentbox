@@ -53,7 +53,7 @@ agentbox url my-box --print
 
 `agentbox url` opens the web app; `--print` prints the URL instead of launching the browser. See [CLI commands](/docs/cli) for all flags.
 
-<Figure caption="The web app at https://my-box.localhost — the same URL resolves from the host browser and from the in-box browser shown via agentbox screen." />
+<Figure src="/screenshots/web-app.png" caption="The web app at https://my-box.localhost — the same URL resolves from the host browser and from the in-box browser shown via agentbox screen." />
 
 <Callout title="WHY">
 Same origin on both sides means OAuth callbacks and CORS just work. Point your provider's redirect URI at `https://<box-name>.localhost` and it resolves correctly whether the request comes from your host browser or the in-box browser.

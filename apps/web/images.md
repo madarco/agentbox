@@ -9,17 +9,19 @@ Images live in `apps/web/public/screenshots/` and are referenced from
 `<Figure src="/screenshots/<name>.png" />` in `content/docs/*.mdx`. Line numbers
 below are approximate — **match figures by caption**, not line.
 
+Use the /screenshot skill to capture screenshots of terminal windows and GUI windows.
+
 ## Status
 
 | Image | Used by (doc figures) | Status | Phase |
 |-------|------------------------|--------|-------|
-| `web-app.png` | web-apps-and-tunnels | TODO | A |
-| `novnc-desktop.png` | access-your-box, browser-and-screen | done (improve: show the app in the in-box browser) | A |
-| `agentbox-ls.png` | background-and-parallel | done | B |
-| `dashboard.png` | access-your-box, background-and-parallel, cli | done | C |
-| `claude-tui.png` | run-an-agent, cli | TODO | C |
-| `cursor.png` | access-your-box (Cursor / Dev Containers) | TODO | C |
-| `push-approval.png` | sync-and-git (push approval) | TODO (best-effort) | C |
+| `web-app.png` | web-apps-and-tunnels | done (2026-06-02) | A |
+| `novnc-desktop.png` | access-your-box, browser-and-screen | done (2026-06-02, improved: in-box browser shows the app) | A |
+| `agentbox-ls.png` | background-and-parallel | done (2026-06-02, recaptured) | B |
+| `dashboard.png` | access-your-box, background-and-parallel, cli | done (2026-06-02, recaptured) | C |
+| `claude-tui.png` | run-an-agent, cli | done (2026-06-02) | C |
+| `cursor.png` | access-your-box (Cursor / Dev Containers) | done (2026-06-02) | C |
+| `push-approval.png` | sync-and-git (push approval) | deferred — see notes (best-effort, fiddly to trigger headlessly) | C |
 | diagram — core-concepts | core-concepts (box/relay model) | TODO (draw) | D |
 | diagram — configuration | configuration (resolution order) | TODO (draw) | D |
 | diagram — services DAG | services-and-tasks (`needs` DAG) | TODO (draw) | D |
@@ -54,8 +56,23 @@ reflects (a background `-i` run is not live-mirrorable):
 osascript \
   -e 'tell application "iTerm" to activate' \
   -e 'tell application "iTerm" to set b to (create window with default profile)' \
-  -e "tell application \"iTerm\" to tell current session of b to write text \"cd $PWD && agentbox claude --provider docker -n web\""
+  -e 'tell application "iTerm" to set bounds of b to {60, 90, 1160, 770}' \
+  -e "tell application \"iTerm\" to tell current session of b to write text \"cd $PWD && AGENTBOX_CARRY=skip agentbox claude --provider docker -n web --attach-in same\""
 ```
+
+> **Two gotchas, both load-bearing for a clean capture (learned the hard way):**
+> 1. **`--attach-in same`** is mandatory. Without it the default is
+>    `attach.openIn=split`, so `agentbox claude` *splits the launching window* —
+>    the launching shell stays on the left, the Claude TUI on the right. That
+>    split is what looks like "opened in a tab." `same` makes the agent take
+>    over the whole window (one clean full-window TUI). `create window` already
+>    makes a real new window; the split came from the attach, not the window.
+> 2. **Set `bounds` before `write text`** so the TUI renders at the target size
+>    from the first paint (resizing a live TUI afterwards can leave reflow
+>    artifacts). `{60,90,1160,770}` ≈ 1100×680, a good 16:10-ish frame.
+> 3. **`AGENTBOX_CARRY=skip`** — `express-ready` declares an `optional` `carry:`
+>    block; without the marker staged it prompts, and a non-interactive/scripted
+>    launch hangs on that prompt. Skip it (or stage the marker + `--carry-yes`).
 
 Give the hero box a real task (`express-ready` is a tiny Express HTTP server, so
 "improve the home page" produces a visible result for the web-app and noVNC shots).
@@ -71,10 +88,20 @@ docker exec agentbox-web bash -lc "tmux send-keys -t '${SESS:-claude}' 'Improve 
 **plan** so the dashboard/ls can show an agent in plan mode:
 
 ```bash
-agentbox claude --provider hetzner -n api   -i "Plan a todo app: write a detailed implementation plan. Don't write any code yet."
-agentbox claude --provider vercel  -n cloud -i "Add a /health endpoint to server.js that returns 200 OK."
+# IMPORTANT: cloud -i jobs run in a queue worker whose cwd is NOT yours, so pass
+# an ABSOLUTE -w path. A relative -w (e.g. examples/express-ready) makes the
+# workspace `tar -C <rel>` fail with "could not chdir" and the create aborts
+# (after provisioning — see the orphan-cleanup note below). Docker tolerates a
+# relative -w; the cloud seeders do not.
+PROJ="$PWD"   # if you `cd examples/express-ready` first; else give the full path
+AGENTBOX_CARRY=skip agentbox claude --provider hetzner -n api   -w "$PROJ" -i "Plan a todo app: write a detailed implementation plan. Don't write any code yet."
+AGENTBOX_CARRY=skip agentbox claude --provider vercel  -n cloud -w "$PROJ" -i "Add a /health endpoint to server.js that returns 200 OK."
 
-agentbox ls                  # web (docker, improving the home page) + api (hetzner, planning) + cloud (vercel)
+agentbox ls --global         # web (docker, improving the home page) + api (hetzner, planning) + cloud (vercel)
+# -i jobs are queued; watch ~/.agentbox/logs/queue-<id>.log for FAIL/END. A
+# failed cloud create can orphan a VPS/firewall — if a job FAILs, verify with
+# `curl -H "Authorization: Bearer $HCLOUD_TOKEN" https://api.hetzner.cloud/v1/servers`
+# (delete any leftover server; unattached firewalls, applied_to=0, are free).
 ```
 
 > Let the **`web`** agent finish "improve the home page" (and the service restart)
@@ -152,11 +179,16 @@ Copy the printed PNG into `apps/web/public/screenshots/<name>.png`.
 Use the screenshot skill for colored TUIs (dashboard, Claude) and GUI apps (Cursor):
 
 ```bash
-SK=.claude/skills/screenshot/scripts
+# The skill scripts live under the agents-skills dir, NOT .claude/skills:
+SK=~/.agents/skills/screenshot/scripts
 bash "$SK/ensure_macos_permissions.sh"                      # once
 python3 "$SK/take_screenshot.py" --list-windows --app "iTerm"   # find the window id
 python3 "$SK/take_screenshot.py" --mode temp --window-id <ID>   # capture that window only
 ```
+
+> The `/screenshot` skill resolves the same scripts; if you shell out directly,
+> use `~/.agents/skills/screenshot/scripts` — the old `.claude/skills/...` path
+> does not exist on this host. `--mode temp` prints the saved PNG path to stdout.
 
 > **Caveat — capture by `--window-id`, never `--active-window` / "front window".**
 > Focus-based capture can grab (and resizing osascript can *resize*) your own
@@ -222,28 +254,82 @@ across docker/hetzner/vercel, agents working. Use the render flow in §2a; viewp
 dashboard pre-selected on the hero box (its live Claude shows in the right pane):
 
 ```bash
-osascript -e 'tell application "iTerm" to activate' \
+# Create the window, SIZE IT, then launch — capturing its id so the resize and
+# capture never touch "front window" (which could be your own session). The
+# dashboard is a single TUI (no attach), so it takes over the window cleanly —
+# no --attach-in needed here.
+WID=$(osascript \
+  -e 'tell application "iTerm" to activate' \
   -e 'tell application "iTerm" to set b to (create window with default profile)' \
-  -e "tell application \"iTerm\" to tell current session of b to write text \"cd $PWD && agentbox dashboard web\""
-# resize the new window for a compact frame:
-osascript -e 'tell application "iTerm" to set bounds of front window to {40, 80, 1320, 600}'
-# /clear the claude pane (removes the startup warning); then list-windows -> capture the AgentBox window id -> crop bottom ~8%.
+  -e 'tell application "iTerm" to set bounds of b to {40, 80, 1320, 600}' \
+  -e "tell application \"iTerm\" to tell current session of b to write text \"cd $PWD && agentbox dashboard web\"" \
+  -e 'tell application "iTerm" to id of b')
+echo "dashboard window id=$WID"      # use this exact id for --window-id below
+# /clear the claude pane (removes the startup warning); then capture by $WID -> crop bottom ~8%.
 ```
 
-**`claude-tui.png`** → run-an-agent, cli. The hero `agentbox claude -n web` window
-(Claude Code TUI inside the box). `/clear` first; capture by window id; crop.
-
-**`cursor.png`** → access-your-box (Cursor / Dev Containers). 
+**`claude-tui.png`** → run-an-agent, cli. The Claude Code TUI inside the box. Do
+**not** reuse the hero window if it came up as a split — open a dedicated
+full-window attach instead (`--attach-in same` takes over the window; the box's
+live session is unchanged by detach/reattach):
 
 ```bash
-agentbox code web                 # opens Cursor attached to the box's /workspace
-python3 .claude/skills/screenshot/scripts/take_screenshot.py --mode temp --app "Cursor"
-# crop window chrome as needed
+WID=$(osascript \
+  -e 'tell application "iTerm" to activate' \
+  -e 'tell application "iTerm" to set b to (create window with default profile)' \
+  -e 'tell application "iTerm" to set bounds of b to {60, 90, 1160, 770}' \
+  -e "tell application \"iTerm\" to tell current session of b to write text \"cd $PWD && agentbox claude attach web --attach-in same\"" \
+  -e 'tell application "iTerm" to id of b')
+echo "claude window id=$WID"
+# /clear first; capture by $WID; crop window chrome / status bar (~8%).
 ```
 
-**`push-approval.png`** (best-effort) → sync-and-git. Trigger a push from inside the
-box (`agentbox-ctl git push`) so the **host** shows the approval prompt; capture
-that terminal window.
+**`cursor.png`** → access-your-box (Cursor / Dev Containers).
+
+```bash
+agentbox code web --ide cursor    # opens Cursor attached to the box's /workspace
+# Dev Container attach takes ~30-60s. Wait until the box-attached window's
+# WORKSPACE tree populates (title: "workspace [Container agentbox-web (…)]" and
+# the green "Container agentbox-web" badge bottom-left) before capturing.
+SK=~/.agents/skills/screenshot/scripts
+WID=$(python3 "$SK/take_screenshot.py" --list-windows --app "Cursor" | grep -i 'container agentbox-web' | head -1 | awk '{print $1}')
+python3 "$SK/take_screenshot.py" --mode temp --window-id "$WID"
+```
+
+> **Do NOT run `cursor --reuse-window …` yourself to "open a file"** — a manual
+> folder-uri reload blanks the box-attached window (empties the editor and
+> forces a fresh dev-container reconnect). Just let `agentbox code` open it and
+> wait; capture the window as-is. The user has many Cursor windows open, so
+> always resolve the `--window-id` by the `[Container agentbox-…]` title, never
+> `--app "Cursor"` alone (that grabs an arbitrary one).
+
+**`push-approval.png`** (best-effort) → sync-and-git. The host approval is a
+relay gate, and it is **fiddly to trigger headlessly** — notes from the last
+attempt:
+
+- **The gate only fires for NON-`agentbox/*` branches.** `host-actions.ts`:
+  `isAgentboxBranch = branch.startsWith('agentbox/')` bypasses the prompt — a
+  box pushing its own `agentbox/<name>` branch is "the box's whole job" and is
+  auto-allowed. So a vanilla box push never prompts; you must be on a
+  differently-named branch (`git checkout -b demo-feature` in the box) with a
+  genuinely new commit (else `git push` is "Everything up-to-date" and there's
+  nothing to approve).
+- **`express-ready`'s `/workspace` is NOT a git repo** (it's a sub-dir of this
+  monorepo, tar-seeded like the cloud boxes), so you can't trigger a push from
+  the hero box. Use a box on a real git repo with a remote —
+  `../agentbox-test-repo` (per the top-level CLAUDE.md).
+- **The approval band does NOT render over the full Claude TUI** — the TUI owns
+  the screen and overdraws the wrapped-pty footer; keystrokes (`y`/`n`) land in
+  Claude's composer instead of answering. Capture from an **`agentbox shell`**
+  wrapped-pty session (plain footer), not `agentbox claude`.
+- Triggering via a bare `docker exec … agentbox-ctl git push` was unreliable in
+  testing (the relay pushes the host main-repo HEAD, not always the box branch).
+  The reliable path is to let the **in-box agent** initiate the push to a
+  non-agentbox branch, watch the footer band appear in the attached
+  `agentbox shell`, screenshot, then answer `n` to deny.
+
+Left as a placeholder for now — revisit with the `agentbox shell` + agent-driven
+flow above.
 
 ### Phase D — Diagrams (TODO — draw separately, not from the environment)
 

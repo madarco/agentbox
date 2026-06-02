@@ -55,7 +55,7 @@ Agent-specific: `--attach-in <split|window|tab|same>`, `-d, --no-attach`, `-i, -
 
 <Callout type="warn" title="HEADS UP">`-i` / `--initial-prompt` is AgentBox's background-queue prompt, not the agent's own `-p` print mode. To run the agent headless, pass it after `--` (e.g. `agentbox claude -- -p "..."`). Note also that `-i` means `--inline` on the `attach`/`start` subcommands.</Callout>
 
-<Figure caption="agentbox claude creates the box and drops you into a detachable Claude Code session." />
+<Figure src="/screenshots/claude-tui.png" caption="agentbox claude creates the box and drops you into a detachable Claude Code session." />
 
 These commands tee progress to `~/.agentbox/logs/<command>.log` and print `log: <path>` at startup; `~/.agentbox/logs/latest.log` always points at the most recent run.
 
