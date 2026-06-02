@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { cmuxStatusActive, mapActivityToWorkspace } from '../src/terminal/cmux-status.js';
+import {
+  cmuxStatusActive,
+  isAttentionState,
+  mapActivityToWorkspace,
+} from '../src/terminal/cmux-status.js';
 
 describe('mapActivityToWorkspace', () => {
   it('maps working/compacting to a blue "working" workspace', () => {
@@ -44,6 +48,21 @@ describe('mapActivityToWorkspace', () => {
     expect(mapActivityToWorkspace('claude', 'unknown')).toBeNull();
     expect(mapActivityToWorkspace('claude', undefined)).toBeNull();
     expect(mapActivityToWorkspace('shell', 'working')).toBeNull();
+  });
+});
+
+describe('isAttentionState', () => {
+  it('is true for states where the agent is blocked on the user', () => {
+    for (const s of ['question', 'waiting', 'end-plan', 'error'] as const) {
+      expect(isAttentionState(s)).toBe(true);
+    }
+  });
+
+  it('is false for working/idle/compacting/unknown/absent', () => {
+    for (const s of ['working', 'idle', 'compacting', 'unknown'] as const) {
+      expect(isAttentionState(s)).toBe(false);
+    }
+    expect(isAttentionState(undefined)).toBe(false);
   });
 });
 

@@ -71,6 +71,20 @@ export function mapActivityToWorkspace(
 }
 
 /**
+ * States where the agent is blocked on the user. When a box's tab is one of
+ * several in a workspace, this is what we flag (`markCmuxTabAttention`) so the
+ * specific tab that needs input stands out among its siblings.
+ */
+export function isAttentionState(activity: AgentActivityState | undefined): boolean {
+  return (
+    activity === 'question' ||
+    activity === 'waiting' ||
+    activity === 'end-plan' ||
+    activity === 'error'
+  );
+}
+
+/**
  * True when attached inside a live cmux surface. cmux exports `CMUX_SOCKET_PATH`
  * for the in-surface shell; we key on it directly (rather than
  * `detectHostTerminal`, which prefers tmux when nested) so it still works when a
@@ -150,6 +164,16 @@ export function applyCmuxAgentState(
   } else {
     runCmux(['workspace-action', '--action', 'clear-color']);
   }
+}
+
+/**
+ * Highlight the box's own cmux tab so it stands out among sibling tabs in the
+ * same workspace (boxes opened with `--attach-in tab`). `mark-unread` targets the
+ * caller's tab by default ($CMUX_TAB_ID → $CMUX_SURFACE_ID) and cmux clears it
+ * automatically when the user focuses the tab to answer.
+ */
+export function markCmuxTabAttention(): void {
+  runCmux(['tab-action', '--action', 'mark-unread']);
 }
 
 /** Restore the workspace's colour + description captured at attach time. */

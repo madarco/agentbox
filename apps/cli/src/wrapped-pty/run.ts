@@ -7,6 +7,8 @@ import {
   applyCmuxAgentState,
   captureCmuxWorkspace,
   cmuxStatusEnabled,
+  isAttentionState,
+  markCmuxTabAttention,
   restoreCmuxWorkspace,
   type CmuxWorkspaceState,
 } from '../terminal/cmux-status.js';
@@ -30,7 +32,7 @@ import {
 } from './footer.js';
 import { postAnswer, subscribePrompts, type PromptStream } from './prompt-client.js';
 import type { BoxNoticeEvent, PromptAskEvent } from '@agentbox/relay';
-import type { ClaudeQuestionPayload } from '@agentbox/ctl';
+import type { AgentActivityState, ClaudeQuestionPayload } from '@agentbox/ctl';
 
 export interface WrappedAttachOptions {
   /** Docker container name (only used for log lines). */
@@ -261,7 +263,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   });
   let footerState: FooterState = buildIdle();
   let lastSessionTitle: string | undefined;
-  let lastActivity: string | undefined;
+  let lastActivity: AgentActivityState | undefined;
   // Prompt + notice + question feed the alert band above the footer; flash +
   // leader stay in the footer. `recomputeFooter` keeps the footer at idle/flash;
   // `recomputeBand` derives the band visibility from prompt > notice > question.
@@ -698,9 +700,14 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       const nextTitle = body?.sessionTitle?.trim() || undefined;
       const nextActivity = body?.state || undefined;
       // Reflect the agent's activity on the box's cmux workspace on each
-      // transition (colour + description).
+      // transition (colour + description), and highlight the box's own tab when
+      // it first crosses into a needs-input state so it stands out among sibling
+      // tabs in the same workspace (cmux clears the highlight on focus).
       if (cmuxOn && nextActivity !== lastActivity) {
         applyCmuxAgentState(opts.mode, nextActivity);
+        if (isAttentionState(nextActivity) && !isAttentionState(lastActivity)) {
+          markCmuxTabAttention();
+        }
       }
       // Mirror the live title to the host terminal/tab, falling back to the box
       // name until the agent sets one. Deduped so we don't spam the terminal.
