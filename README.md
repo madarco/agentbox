@@ -6,8 +6,6 @@
 </h1>
 
 Run multiple agents in parallel, with a single command, on your PC, self-hosted, or in the cloud
-
-📚 **Full documentation: [agent-box.sh/docs](https://agent-box.sh/docs)**
 <br>
 
 <p align="center">
@@ -27,6 +25,7 @@ agentbox claude # launch a new VM with claude and your project inside
 - 💾 **Checkpoints** — Sub <1s startup of new boxes from a previous checkpoint, auto pause to save cost/resources when not in use.
 - 🔒 **Safe** - Your git credentials are kept on your local machine, with permission requests to push to the remote repository.
 
+Full [Documentation](https://agent-box.sh/docs)
 
 ### Complete setup:
 
@@ -153,8 +152,6 @@ Full documentation lives at **[agent-box.sh/docs](https://agent-box.sh/docs)**:
 - [Configuration](https://agent-box.sh/docs/configuration), [Services & tasks](https://agent-box.sh/docs/services-and-tasks), [Sync & git](https://agent-box.sh/docs/sync-and-git)
 - Cloud providers: [Hetzner](https://agent-box.sh/docs/hetzner), [Daytona](https://agent-box.sh/docs/daytona), [Vercel](https://agent-box.sh/docs/vercel)
 - Full [CLI reference](https://agent-box.sh/docs/cli)
-
-The docs are authored in [`apps/web/content/docs/`](./apps/web/content/docs).
 
 ## Development
 

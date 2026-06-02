@@ -20,3 +20,5 @@ coverage/
 .claude/scheduled_tasks.lock
 
 TODO.md
+
+.playwright-cli/
