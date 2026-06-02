@@ -1,0 +1,49 @@
+---
+title: iTerm2
+description: How AgentBox places attached agent sessions in iTerm2 on macOS — splits, tabs, windows, and the Ctrl+a chords
+---
+
+When you run `agentbox claude` (or `codex`, `opencode`, `shell`) from inside [iTerm2](https://iterm2.com) on macOS, AgentBox can open the attached session as a new split, tab, or window instead of taking over your current pane. iTerm2 is detected automatically (`TERM_PROGRAM=iTerm.app`) and driven via AppleScript — there's nothing to install.
+
+<Callout title="NOTE">
+iTerm2 placement is macOS-only. On any other terminal AgentBox falls back to an inline attach in the current pane. tmux and cmux have their own pages — see [tmux](/docs/integrations-tmux) and [cmux](/docs/integrations-cmux).
+</Callout>
+
+## Where the session opens
+
+The [`attach.openIn`](/docs/configuration) config key (CLI flag `--attach-in`) decides where the attached session lands. Under iTerm2:
+
+| Mode | What happens |
+| --- | --- |
+| `split` *(default)* | New vertical split in the current window |
+| `tab` | New iTerm2 tab |
+| `window` | New iTerm2 window |
+| `same` | Inline in the current pane (no spawn) — same as `--inline` |
+
+```bash
+# open the agent session in a new iTerm2 tab, just this once
+agentbox claude mybox --attach-in tab
+
+# inline in the current pane
+agentbox claude mybox --inline
+
+# make split-in-a-new-tab the default everywhere
+agentbox config set attach.openIn tab
+```
+
+The new pane re-invokes the full attach wrapper against the already-prepared session, carrying the working directory so project-scoped box references still resolve. See [Configuration](/docs/configuration) for the full precedence rules.
+
+## The Ctrl+a chords
+
+While attached to any box session, `Ctrl+a` opens a which-key menu in the footer; press a single key to act on the box. These shell out to the same commands documented in [Access your box](/docs/access-your-box).
+
+| Keys | What it does |
+| --- | --- |
+| `Ctrl+a c` | Open the box in VS Code / Cursor |
+| `Ctrl+a s` | Open the box's live screen (noVNC) |
+| `Ctrl+a u` | Open the box's web app URL |
+| `Ctrl+a t` | Open a fresh shell in the *same* box — a new iTerm2 tab |
+| `Ctrl+a k` | Destroy the box (after a confirmation) |
+| `Ctrl+a d` | Detach (tmux-backed sessions only) |
+
+A literal `Ctrl+a` still works inside the session — press it twice (`Ctrl+a Ctrl+a`).

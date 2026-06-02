@@ -14,7 +14,7 @@ export type BrowserKind = 'agent-browser' | 'playwright' | 'both';
 /** Sandbox backend new boxes are created on. */
 export type ProviderKind = 'docker' | 'daytona' | 'hetzner' | 'vercel';
 /** Where `agentbox claude|codex|opencode` opens the attached session when the host
- *  shell is running inside tmux or iTerm2. `same` keeps today's inline behavior. */
+ *  shell is running inside tmux, cmux, or iTerm2. `same` keeps today's inline behavior. */
 export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
 
 export interface UserConfig {
@@ -91,6 +91,7 @@ export interface UserConfig {
   };
   attach?: {
     openIn?: AttachOpenIn;
+    cmuxStatus?: boolean;
   };
   code?: {
     ide?: IdeFlavor;
@@ -200,6 +201,7 @@ export interface EffectiveConfig {
   };
   attach: {
     openIn: AttachOpenIn;
+    cmuxStatus: boolean;
   };
   code: {
     ide: IdeFlavor;
@@ -330,6 +332,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   attach: {
     openIn: 'split',
+    cmuxStatus: true,
   },
   code: {
     ide: 'auto',
@@ -645,7 +648,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'enum',
     enumValues: ['split', 'window', 'tab', 'same'] as const,
     description:
-      'Where `agentbox claude|codex|opencode` opens the attached session when run from tmux or iTerm2: `split` (tmux split-window / iTerm2 vertical split, default), `window` (tmux new-window / new iTerm2 window), `tab` (tmux new-window / new iTerm2 tab), or `same` (attach inline in the current terminal). Outside tmux/iTerm2 every value behaves like `same`.',
+      'Where `agentbox claude|codex|opencode` opens the attached session when run from tmux, cmux, or iTerm2: `split` (tmux split-window / cmux new-split / iTerm2 vertical split, default — same workspace), `window` (tmux new-window / cmux new-workspace / new iTerm2 window), `tab` (tmux new-window / cmux new-surface tab in the current pane, same workspace / new iTerm2 tab), or `same` (attach inline in the current terminal). Outside tmux/cmux/iTerm2 every value behaves like `same`.',
+  },
+  {
+    key: 'attach.cmuxStatus',
+    type: 'bool',
+    description:
+      "When attached inside cmux, reflect the box agent's live activity on its cmux workspace (colour + description: blue=working, amber=needs input, idle clears; restored on detach) and, when the agent needs input, flag the box's own tab via a cmux notification (tab badge + reorder + desktop notification) so it stands out among sibling tabs. cmux only; no-op in other terminals.",
   },
   {
     key: 'code.ide',

@@ -3,6 +3,15 @@ import { readBoxStatus } from '@agentbox/sandbox-docker';
 import type { AttachOpenIn } from '@agentbox/config';
 import { loadPtyBackend } from '../pty/pty-backend.js';
 import { detectHostTerminal, spawnInNewTerminal } from '../terminal/host.js';
+import {
+  applyCmuxAgentState,
+  captureCmuxWorkspace,
+  cmuxStatusEnabled,
+  isAttentionState,
+  markCmuxTabAttention,
+  restoreCmuxWorkspace,
+  type CmuxWorkspaceState,
+} from '../terminal/cmux-status.js';
 import { popTerminalTitle, pushTerminalTitle, setTerminalTitle } from '../terminal/title.js';
 import {
   createInputRouter,
@@ -23,7 +32,7 @@ import {
 } from './footer.js';
 import { postAnswer, subscribePrompts, type PromptStream } from './prompt-client.js';
 import type { BoxNoticeEvent, PromptAskEvent } from '@agentbox/relay';
-import type { ClaudeQuestionPayload } from '@agentbox/ctl';
+import type { AgentActivityState, ClaudeQuestionPayload } from '@agentbox/ctl';
 
 export interface WrappedAttachOptions {
   /** Docker container name (only used for log lines). */
@@ -112,16 +121,21 @@ const MAX_RAPID_RECONNECTS = 3;
  *  Kept short so a clean exit shortly after a checkpoint isn't misread. */
 const CHECKPOINT_DROP_GRACE_MS = 4000;
 
-/** Per-action confirmation text shown in the footer flash. */
-const ACTION_FLASH: Record<Exclude<LeaderAction, 'detach'>, string> = {
+/** Per-action confirmation text shown in the footer flash. `detach` and `kill`
+ *  manage their own footer state, so they're excluded. */
+const ACTION_FLASH: Record<Exclude<LeaderAction, 'detach' | 'kill'>, string> = {
   screen: 'Opening noVNC viewer…',
   code: 'Launching VS Code / Cursor…',
   url: 'Opening box URL…',
+  shell: 'Opening shell in box…',
 };
 
-/** Per-action `agentbox` subcommand: `<sub> <boxId> <...flags>`. */
+/** Per-action `agentbox` subcommand: `<sub> <boxId> <...flags>`. These are
+ *  fire-and-forget host actions spawned detached. `shell` and `kill` are NOT
+ *  here — `shell` needs an interactive new terminal and `kill` needs a confirm
+ *  first, so `runAction` handles both specially. */
 const ACTION_CMD: Record<
-  Exclude<LeaderAction, 'detach'>,
+  Exclude<LeaderAction, 'detach' | 'shell' | 'kill'>,
   { sub: string; flags: string[] }
 > = {
   screen: { sub: 'screen', flags: [] },
@@ -251,7 +265,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   });
   let footerState: FooterState = buildIdle();
   let lastSessionTitle: string | undefined;
-  let lastActivity: string | undefined;
+  let lastActivity: AgentActivityState | undefined;
   // Prompt + notice + question feed the alert band above the footer; flash +
   // leader stay in the footer. `recomputeFooter` keeps the footer at idle/flash;
   // `recomputeBand` derives the band visibility from prompt > notice > question.
@@ -277,6 +291,10 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // Set when the user deliberately detaches (Ctrl+a d) — that exit must end the
   // wrapper, never trigger a reconnect.
   let userDetached = false;
+  // Set when the user destroys the box from the footer (Ctrl+a k) — like
+  // `userDetached` it suppresses reconnect, and it also suppresses the
+  // reattach detach-notice (there's nothing left to reattach to).
+  let userKilled = false;
   // When a `checkpoint` notice last set / cleared (epoch ms; 0 = never). A pty
   // drop while one is active, or within CHECKPOINT_DROP_GRACE_MS of it clearing,
   // is a box reboot (snapshot stopped it) → reconnect; otherwise an exit-0 drop
@@ -441,17 +459,20 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   wireOutput();
 
   // Ctrl+a leader chord map — keys mirror the dashboard's (`c`/`s`/`u`).
-  // A detachable (tmux-backed) session also gets `d: detach`; a plain
-  // `--no-tmux` shell has nothing to detach from.
+  // `t: shell` opens another shell in the *same* box, in a new tab; `k: kill`
+  // destroys the box (after a confirm). A detachable (tmux-backed) session also
+  // gets `d: detach`; a plain `--no-tmux` shell has nothing to detach from.
   const leaderChords: Record<string, LeaderAction> = detachable
-    ? { c: 'code', s: 'screen', u: 'url', d: 'detach' }
-    : { c: 'code', s: 'screen', u: 'url' };
+    ? { c: 'code', s: 'screen', u: 'url', t: 'shell', k: 'kill', d: 'detach' }
+    : { c: 'code', s: 'screen', u: 'url', t: 'shell', k: 'kill' };
 
   // Run a Ctrl+a leader action. `detach` writes the tmux detach sequence to
   // the pty (`\x02` = Ctrl+b, tmux's secondary prefix; `d` = detach-client) —
-  // the attach process then exits 0 and teardown runs normally. The other
-  // actions shell out to the real `agentbox` subcommand, detached, so the
-  // long-running open/launch never blocks (or corrupts) this terminal.
+  // the attach process then exits 0 and teardown runs normally. `shell` opens a
+  // fresh shell in the same box in a new terminal tab (cmux new-surface / tmux
+  // new-window / iTerm tab). The other actions shell out to the real `agentbox`
+  // subcommand, detached, so the long-running open/launch never blocks (or
+  // corrupts) this terminal.
   const runAction = (name: LeaderAction): void => {
     if (name === 'detach') {
       if (!reconnecting) {
@@ -460,21 +481,97 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       }
       return;
     }
-    const cliEntry = process.argv[1];
-    if (typeof cliEntry === 'string' && cliEntry.length > 0) {
-      const cmd = ACTION_CMD[name];
-      try {
-        spawn(
-          process.execPath,
-          [cliEntry, cmd.sub, opts.boxId, ...cmd.flags],
-          { detached: true, stdio: 'ignore' },
-        ).unref();
-      } catch (e) {
-        // Best-effort — the footer flash still shows. Surface for inspection.
-        logErr(`leader-action spawn (${name}) failed: ${(e as Error).message}`);
-      }
+    if (name === 'kill') {
+      // Destroy the box, gated by a local y/N confirm rendered in the same alert
+      // band the relay prompts use. `capture()` resolves y/n/Esc locally — no
+      // relay round-trip (the `local:` id is filtered out of `onAnswer`'s POST).
+      if (capturingPrompt) return; // a confirm/prompt is already up
+      const ev: PromptAskEvent = {
+        id: 'local:kill',
+        kind: 'confirm',
+        message: `Destroy ${opts.boxName}? This wipes the box and all its data.`,
+        detail: 'This cannot be undone.',
+        defaultAnswer: 'n',
+        context: { command: 'destroy box' },
+      };
+      capturingPrompt = ev;
+      applyBandChange();
+      void router
+        .capture(ev)
+        .then((body) => {
+          if (body.answer !== 'y' || body.cancelled) return; // stay attached
+          // Don't reconnect when the box dies, and skip the reattach notice.
+          userDetached = true;
+          userKilled = true;
+          flashMessage = `Destroying ${opts.boxName}…`;
+          recomputeFooter();
+          redrawChrome();
+          const cli = process.argv[1];
+          if (typeof cli === 'string' && cli.length > 0) {
+            try {
+              spawn(process.execPath, [cli, 'destroy', opts.boxId, '-y'], {
+                detached: true,
+                stdio: 'ignore',
+              }).unref();
+            } catch (e) {
+              logErr(`leader-action kill spawn failed: ${(e as Error).message}`);
+            }
+          }
+        })
+        .catch((e: unknown) => {
+          // The synthetic `local:kill` confirm has no relay `onResolved` to
+          // clear it, so a rejected capture (pty-exit / dispose) would otherwise
+          // leave `capturingPrompt` set — a reconnect would then inherit a dead
+          // kill banner and the `if (capturingPrompt) return` guard would block
+          // every future Ctrl+a k. Clear it ourselves if it's still ours.
+          if (capturingPrompt === ev) {
+            capturingPrompt = null;
+            applyBandChange();
+          }
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg !== 'resolved-elsewhere') logErr(`kill confirm rejected: ${msg}`);
+        });
+      return;
     }
-    flashMessage = ACTION_FLASH[name];
+    const cliEntry = process.argv[1];
+    if (name === 'shell') {
+      // A new shell needs its own interactive terminal, so open a new tab rather
+      // than the detached fire-and-forget spawn the other actions use. `--new`
+      // gives a fresh auto-numbered shell each press (Cmd+T-style).
+      const host = detectHostTerminal();
+      if (typeof cliEntry === 'string' && cliEntry.length > 0 && host !== 'unknown') {
+        void spawnInNewTerminal({
+          host,
+          mode: 'tab',
+          argv: [process.execPath, cliEntry, 'shell', opts.boxId, '--new'],
+          cwd: process.cwd(),
+          title: `${opts.boxName} shell`,
+        })
+          .then((r) => {
+            if (!r.launched && r.error) logErr(`leader-action shell: ${r.error}`);
+          })
+          .catch((e) => logErr(`leader-action shell failed: ${(e as Error).message}`));
+      }
+      // Outside cmux/tmux/iTerm we can't open a new interactive tab — hint the
+      // command instead of silently doing nothing.
+      flashMessage =
+        host === 'unknown' ? `Run: agentbox shell ${opts.boxId} --new` : ACTION_FLASH.shell;
+    } else {
+      if (typeof cliEntry === 'string' && cliEntry.length > 0) {
+        const cmd = ACTION_CMD[name];
+        try {
+          spawn(
+            process.execPath,
+            [cliEntry, cmd.sub, opts.boxId, ...cmd.flags],
+            { detached: true, stdio: 'ignore' },
+          ).unref();
+        } catch (e) {
+          // Best-effort — the footer flash still shows. Surface for inspection.
+          logErr(`leader-action spawn (${name}) failed: ${(e as Error).message}`);
+        }
+      }
+      flashMessage = ACTION_FLASH[name];
+    }
     if (flashTimer) clearTimeout(flashTimer);
     flashTimer = setTimeout(() => {
       flashTimer = null;
@@ -539,8 +636,12 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     },
     onAnswer: (body) => {
       // Fire-and-forget; the relay-side route is idempotent. We don't
-      // block the input flow on the network roundtrip.
-      void postAnswer({ relayBaseUrl: opts.relayBaseUrl, body });
+      // block the input flow on the network roundtrip. `local:` ids are
+      // synthetic local confirms (e.g. Ctrl+a k) the relay never issued — skip
+      // the POST so we don't 404 the relay with an unknown prompt id.
+      if (!body.id.startsWith('local:')) {
+        void postAnswer({ relayBaseUrl: opts.relayBaseUrl, body });
+      }
       capturingPrompt = null;
       applyBandChange();
     },
@@ -628,6 +729,14 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     },
   });
 
+  // When attached inside cmux, reflect the agent's activity on the box's cmux
+  // workspace (colour + description, set in the poll loop below) so the sidebar
+  // shows what each box is doing. Resolved (env + config) just before the first
+  // poll; `cmuxOrig` holds the workspace's prior colour/description to restore on
+  // detach.
+  let cmuxOn = false;
+  let cmuxOrig: CmuxWorkspaceState | null = null;
+
   // Poll the box's status.json for `claude.sessionTitle` so the idle
   // footer can show what claude set as its terminal title (mirrors the
   // dashboard's sidebar entry). Best-effort — paused/stopped boxes and
@@ -652,6 +761,16 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
               : status?.claude;
       const nextTitle = body?.sessionTitle?.trim() || undefined;
       const nextActivity = body?.state || undefined;
+      // Reflect the agent's activity on the box's cmux workspace on each
+      // transition (colour + description), and flag the box's own tab when it
+      // first crosses into a needs-input state so it stands out among sibling
+      // tabs in the same workspace (cmux clears the flag on focus).
+      if (cmuxOn && nextActivity !== lastActivity) {
+        applyCmuxAgentState(opts.mode, nextActivity);
+        if (isAttentionState(nextActivity) && !isAttentionState(lastActivity)) {
+          markCmuxTabAttention(opts.mode, opts.boxName, nextActivity);
+        }
+      }
       // Mirror the live title to the host terminal/tab, falling back to the box
       // name until the agent sets one. Deduped so we don't spam the terminal.
       const desiredTitle = nextTitle ?? opts.boxName;
@@ -687,6 +806,10 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       logErr(`status poll failed: ${(e as Error).message}`);
     }
   };
+  if (opts.mode !== 'shell') {
+    cmuxOn = await cmuxStatusEnabled();
+    if (cmuxOn) cmuxOrig = captureCmuxWorkspace();
+  }
   void pollStatus();
   const statusTimer = setInterval(() => {
     void pollStatus();
@@ -822,6 +945,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   process.stdin.off('data', onStdinData);
   process.stdout.off('resize', onResize);
   clearInterval(statusTimer);
+  if (cmuxOn) restoreCmuxWorkspace(cmuxOrig);
   stopSpinner();
   if (flashTimer) clearTimeout(flashTimer);
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
@@ -843,7 +967,11 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // Restore the host terminal/tab title we saved at attach time.
   popTerminalTitle();
 
-  if (exitCode === 0 && opts.detachNotice) {
+  if (userKilled) {
+    // The box was destroyed from the footer — there's nothing to reattach to,
+    // so print a final confirmation instead of the reattach detach-notice.
+    process.stdout.write(`\x1b[1A\x1b[2K\rbox ${opts.boxName} destroyed\n`);
+  } else if (exitCode === 0 && opts.detachNotice) {
     // Match the cosmetic of the old attachClaudeSession: overwrite tmux's
     // own `[detached]` line if it's visible, then print the reattach hint.
     process.stdout.write('\x1b[1A\x1b[2K\r' + opts.detachNotice + '\n');

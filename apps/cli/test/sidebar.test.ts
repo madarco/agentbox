@@ -217,7 +217,7 @@ describe('statusLine', () => {
     const advanced = stripAnsi(statusLine(box, 200, undefined, ADVANCED_HINT_GROUPS));
     expect(advanced).toContain('t: stop');
     expect(advanced).toContain('p: pause');
-    expect(advanced).toContain('d: destroy');
+    expect(advanced).toContain('k: destroy');
     expect(advanced).toContain('c: code');
     expect(advanced).toHaveLength(200);
   });

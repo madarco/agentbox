@@ -94,9 +94,11 @@ export class InputParser {
           else if (c === 'c') this.onEvent({ type: 'action', name: 'code' });
           else if (c === 't') this.onEvent({ type: 'action', name: 'stop' });
           else if (c === 'p') this.onEvent({ type: 'action', name: 'pause' });
-          else if (c === 'd') this.onEvent({ type: 'action', name: 'destroy' });
+          // `k` (kill) destroys; matches the attach footer's Ctrl+a k and keeps
+          // `d` reserved for detach there, so the same chord never means two
+          // different things across the two UIs. Box switching is Control+Option+↑/↓.
+          else if (c === 'k') this.onEvent({ type: 'action', name: 'destroy' });
           else if (c === 'q') this.onEvent({ type: 'quit' });
-          else if (c === 'k') this.onEvent({ type: 'switch', dir: 'prev' });
           else if (c === 'j' || c === 'n' || c === 'N') this.onEvent({ type: 'switch', dir: 'next' });
           else {
             // Unrecognized chord: leader consumed, forward this byte only.

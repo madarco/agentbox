@@ -40,6 +40,7 @@ import {
   type ProviderName,
 } from '../lib/doctor-checks.js';
 import { markSetupComplete } from '../lib/first-run.js';
+import { installCmuxCommand } from './install-cmux.js';
 import { runPrepare } from './prepare.js';
 
 /** Marker on the line after the frontmatter of every skill we ship. Its
@@ -614,3 +615,10 @@ export const installCommand = new Command('install')
     });
     if (!ok) process.exit(1);
   });
+
+// `agentbox install cmux` — write the AgentBox panel into the cmux sidebar dock.
+// Positional options are required so flags shared with the parent (`--dry-run`,
+// `--force`) bind to the subcommand once `cmux` is seen, instead of being
+// consumed by `install`'s own same-named options.
+installCommand.enablePositionalOptions();
+installCommand.addCommand(installCmuxCommand);

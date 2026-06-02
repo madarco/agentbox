@@ -53,7 +53,7 @@ function leaderSetup(): LeaderSetup {
   const router = createInputRouter({
     onForward: (b) => forwarded.push(b),
     onAnswer: () => {},
-    leaderChords: { c: 'code', s: 'screen', u: 'url', d: 'detach' },
+    leaderChords: { c: 'code', s: 'screen', u: 'url', t: 'shell', k: 'kill', d: 'detach' },
     onLeaderChange: (open) => leaderEvents.push(open),
     onAction: (n) => actions.push(n),
     setTimer: (_ms, fn) => {
@@ -99,6 +99,20 @@ describe('input router (Ctrl+a leader)', () => {
     const s = leaderSetup();
     s.router.feed(Buffer.from([0x01, 0x53])); // ^A S
     expect(s.actions).toEqual(['screen']);
+  });
+
+  it('^A t dispatches the shell action', () => {
+    const s = leaderSetup();
+    s.router.feed(Buffer.from([0x01, 0x74])); // ^A t
+    expect(s.actions).toEqual(['shell']);
+    expect(fwd(s)).toBe('');
+  });
+
+  it('^A k dispatches the kill action', () => {
+    const s = leaderSetup();
+    s.router.feed(Buffer.from([0x01, 0x6b])); // ^A k
+    expect(s.actions).toEqual(['kill']);
+    expect(fwd(s)).toBe('');
   });
 
   it('double Ctrl+a sends one literal Ctrl+a and closes the menu', () => {

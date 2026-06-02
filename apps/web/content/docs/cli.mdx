@@ -119,7 +119,7 @@ agentbox wait 1
 
 | Command | Useful flags |
 | --- | --- |
-| `list` / `ls` | `-j, --json`, `-g, --global`, `--watch`, `--live` |
+| `list` / `ls` | `-j, --json`, `-g, --global`, `--watch`, `--live`, `--cmux` |
 | `status` | `-j, --json`, `--inspect` |
 | `top` | `--once`, `-j, --json`, `--interval <s>`, `--live` |
 | `logs` | `-n, --tail <n>`, `-f, --follow`, `--daemon` |
@@ -238,6 +238,7 @@ agentbox config edit
 # First-run wizard (auto-runs on first command; or run it explicitly)
 agentbox install
 agentbox install --skills-only   # just (re)install the host /agentbox skill
+agentbox install cmux            # add a box-list panel to the cmux sidebar dock
 
 # Diagnose system + provider readiness
 agentbox doctor
@@ -249,7 +250,7 @@ agentbox prepare -p hetzner
 agentbox prepare -p docker --build
 ```
 
-`install` is the first-run setup wizard (system check, pick a provider, log in, prepare its base image, install the host skill). `doctor` diagnoses system and provider readiness. `prepare` builds base images or snapshots — omit `--provider` for status only.
+`install` is the first-run setup wizard (system check, pick a provider, log in, prepare its base image, install the host skill). `install cmux` pins a live `agentbox list` panel (all your boxes) to the [cmux](https://cmux.com) sidebar dock — see [cmux integration](/docs/integrations-cmux#the-agentbox-dock-right-sidebar). `doctor` diagnoses system and provider readiness. `prepare` builds base images or snapshots — omit `--provider` for status only.
 
 <Callout title="TIP">`agentbox config get <key> --all` shows which layer each value comes from. See the full key reference in [Configuration](/docs/configuration).</Callout>
 

@@ -34,7 +34,7 @@ interface ActivePrompt {
 }
 
 /** Actions reachable from the Ctrl+a leader menu. */
-export type LeaderAction = 'screen' | 'code' | 'url' | 'detach';
+export type LeaderAction = 'screen' | 'code' | 'url' | 'shell' | 'kill' | 'detach';
 
 const KEY_ENTER = 0x0d;
 const KEY_LF = 0x0a;

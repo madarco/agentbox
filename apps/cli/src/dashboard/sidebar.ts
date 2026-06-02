@@ -327,7 +327,7 @@ export const ADVANCED_HINT_GROUPS: ReadonlyArray<readonly [string, string]> = [
   ['u', 'url'],
   ['t', 'stop'],
   ['p', 'pause'],
-  ['d', 'destroy'],
+  ['k', 'destroy'],
   ['q', 'quit'],
 ];
 

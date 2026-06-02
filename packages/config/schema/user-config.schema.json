@@ -72,6 +72,14 @@
         "sessionName": { "type": "string", "minLength": 1 }
       }
     },
+    "attach": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "openIn": { "enum": ["split", "window", "tab", "same"] },
+        "cmuxStatus": { "type": "boolean" }
+      }
+    },
     "code": {
       "type": "object",
       "additionalProperties": false,

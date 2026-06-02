@@ -1,5 +1,6 @@
 import { log } from '@clack/prompts';
 import { findProjectRoot } from '@agentbox/config';
+import type { AgentActivityState } from '@agentbox/ctl';
 import { listBoxes, type ListedBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { pathToFileURL } from 'node:url';
@@ -11,6 +12,7 @@ interface ListOptions extends WatchableOptions {
   json?: boolean;
   global?: boolean;
   live?: boolean;
+  cmux?: boolean;
 }
 
 /** A table cell: the (possibly OSC-8-wrapped) text to print + its visible width. */
@@ -120,6 +122,151 @@ function agentSummary(b: ListedBox): string {
   return agents.length > 0 ? agents.join(', ') : '-';
 }
 
+// ---- compact rendering for the cmux dock sidebar (`--cmux`) ----------------
+// A narrow (~22-col) Ghostty section can't fit the wide table, so we render two
+// short lines per box (name, then a coloured glyph + agent + activity) modeled
+// on the dashboard sidebar's `activityCell`. The colour map mirrors
+// `mapActivityToWorkspace` in terminal/cmux-status.ts (blue=working,
+// amber=needs-input, red=error, dim=idle).
+
+type CmuxAgent = 'claude' | 'codex' | 'opencode';
+
+/** 256-colour SGR codes, keyed by the activity colour bucket. */
+const CMUX_COLOR: Record<'blue' | 'amber' | 'red' | 'dim', string> = {
+  blue: '38;5;39',
+  amber: '38;5;214',
+  red: '38;5;196',
+  dim: '38;5;245',
+};
+
+function colorize(s: string, bucket: keyof typeof CMUX_COLOR): string {
+  return `\x1b[${CMUX_COLOR[bucket]}m${s}\x1b[0m`;
+}
+
+/** Truncate keeping the *tail* (the distinguishing `…-78b94c78` suffix of a box
+ *  name), prepending `…` when it had to cut. Mirrors the dashboard's
+ *  `ellipsizeHead`. */
+function tailKeep(s: string, max: number): string {
+  if (max <= 0) return '';
+  if (s.length <= max) return s;
+  if (max === 1) return '…';
+  return '…' + s.slice(s.length - (max - 1));
+}
+
+/** Resolve a box's primary agent + activity for the compact view. Priority
+ *  claude > codex > opencode, matching the dashboard's `resolveAgent`; `unknown`
+ *  is not positive evidence, so it never pins claude over a running codex. */
+export function primaryAgent(b: ListedBox): {
+  agent?: CmuxAgent;
+  activity?: AgentActivityState;
+} {
+  const real = (s?: string): boolean => !!s && s !== 'unknown';
+  if (real(b.claudeActivity) || b.claudeSessionTitle) {
+    return { agent: 'claude', activity: b.claudeActivity };
+  }
+  if (b.codexSession?.running || real(b.codexActivity)) {
+    return { agent: 'codex', activity: b.codexActivity };
+  }
+  if (b.opencodeSession?.running) return { agent: 'opencode' };
+  // No positive evidence — fall back to claude's fields (a plain box shows its
+  // glyph with no label).
+  return { agent: 'claude', activity: b.claudeActivity };
+}
+
+/** Glyph + short label + colour bucket for an activity state. */
+function activityView(a: AgentActivityState | undefined): {
+  glyph: string;
+  label: string;
+  bucket: keyof typeof CMUX_COLOR;
+} {
+  switch (a) {
+    case 'working':
+      return { glyph: '●', label: 'working', bucket: 'blue' };
+    case 'compacting':
+      return { glyph: '●', label: 'compacting', bucket: 'blue' };
+    case 'idle':
+      return { glyph: '○', label: 'idle', bucket: 'dim' };
+    case 'waiting':
+    case 'question':
+      return { glyph: '◐', label: 'needs input', bucket: 'amber' };
+    case 'end-plan':
+      return { glyph: '◐', label: 'plan ready', bucket: 'amber' };
+    case 'error':
+      return { glyph: '✖', label: 'error', bucket: 'red' };
+    default: // unknown / undefined — running but no hook has fired yet
+      return { glyph: '○', label: '', bucket: 'dim' };
+  }
+}
+
+/** The status line (line 2) for a box in the compact view. */
+export function cmuxStatusCell(b: ListedBox, color: boolean): string {
+  if (b.state !== 'running') {
+    const s = `[${b.state}]`;
+    return color ? colorize(s, 'dim') : s;
+  }
+  const { agent, activity } = primaryAgent(b);
+  const v = activityView(activity);
+  const text = `${v.glyph} ${agent ?? 'agent'}${v.label ? ' ' + v.label : ''}`;
+  return color ? colorize(text, v.bucket) : text;
+}
+
+/** basename of a project root, for a group header (`other` for pre-feature
+ *  boxes with no recorded project). */
+function projectLabel(root: string): string {
+  if (!root) return 'other';
+  return root.split('/').filter(Boolean).pop() ?? root;
+}
+
+/** Dim, dashed group header: `── name ──`, head-truncated to the panel width. */
+function projectHeader(label: string, color: boolean, width: number): string {
+  const max = Math.max(1, width - 6); // room for the `── ` + ` ──` frame
+  const name = label.length > max ? label.slice(0, Math.max(1, max - 1)) + '…' : label;
+  const h = `── ${name} ──`;
+  return color ? colorize(h, 'dim') : h;
+}
+
+/** The panel is global, so group boxes by project under a dashed header, then
+ *  two lines per box: `<index> <name>` and an indented status cell. Groups keep
+ *  first-seen order and are separated by a blank line. */
+export function renderCmuxRows(boxes: ListedBox[], color: boolean, width: number): string {
+  const groups = new Map<string, ListedBox[]>();
+  for (const b of boxes) {
+    const key = b.projectRoot ?? '';
+    const arr = groups.get(key);
+    if (arr) arr.push(b);
+    else groups.set(key, [b]);
+  }
+  const lines: string[] = [];
+  let first = true;
+  for (const [root, group] of groups) {
+    if (!first) lines.push('');
+    first = false;
+    lines.push(projectHeader(projectLabel(root), color, width));
+    for (const b of group) {
+      const idx = b.projectIndex ? `${String(b.projectIndex)} ` : '';
+      lines.push(`${idx}${tailKeep(b.name, Math.max(1, width - idx.length))}`);
+      lines.push('  ' + cmuxStatusCell(b, color));
+    }
+  }
+  return lines.join('\n');
+}
+
+/** Short empty-state message tuned for the narrow panel (fits ~22 cols). */
+export function cmuxEmptyMessage(): string {
+  return 'no boxes · agentbox create';
+}
+
+async function buildCmuxText(live: boolean, color: boolean): Promise<string> {
+  // The dock is global: a dock control runs from the config base (home), not
+  // the focused project, so per-project scoping can't follow the active
+  // workspace. Always show every box across all projects.
+  const { boxes } = await scopedBoxes(true, live);
+  if (boxes.length === 0) return cmuxEmptyMessage();
+  // Re-read width each tick so a resized panel re-truncates.
+  const width = process.stdout.columns ?? 30;
+  return renderCmuxRows(boxes, color, width);
+}
+
 function renderTable(boxes: ListedBox[], stream: NodeJS.WriteStream): string {
   const header = ['N', 'NAME', 'STATE', 'AGENT', 'SHELLS', 'PROVIDER', 'URL', 'WORKSPACE'];
   const wsCol = header.length - 1;
@@ -224,7 +371,8 @@ export const listCommand = withWatchOptions(
     .option(
       '--live',
       'probe live cloud state via the provider SDK (slower; default: last host-known state)',
-    ),
+    )
+    .option('--cmux', 'compact output for the cmux dock sidebar (narrow, 2 lines per box)'),
 ).action(async (opts: ListOptions) => {
   if (opts.json && opts.watch) {
     log.error('cannot combine --json with --watch');
@@ -232,8 +380,37 @@ export const listCommand = withWatchOptions(
   }
   const all = opts.global ?? false;
   const live = opts.live ?? false;
+  if (opts.cmux) {
+    // Compact sidebar view: no watch chrome, a colored 2-lines-per-box body,
+    // always global (see buildCmuxText). Colour is dropped on non-TTY/NO_COLOR.
+    const color = !!process.stdout.isTTY && !process.env.NO_COLOR;
+    if (opts.watch) {
+      await watchRender(() => buildCmuxText(live, color), opts.interval, { hideStatusLine: true });
+      return;
+    }
+    process.stdout.write((await buildCmuxText(live, color)) + '\n');
+    return;
+  }
   if (opts.watch) {
-    await watchRender(() => buildListText(all, live), opts.interval);
+    // The cmux dock has no checkbox widget, so the project-vs-global scope is a
+    // live toggle inside the watch view: `g` flips it, a checkbox header shows
+    // the current state. `scoped` is mutable so the toggle takes effect.
+    let scoped = all;
+    const checkbox = (): string =>
+      `[${scoped ? 'x' : ' '}] all projects   ·   press g to toggle\n`;
+    await watchRender(
+      async () => checkbox() + (await buildListText(scoped, live)),
+      opts.interval,
+      {
+        onKey: (k) => {
+          if (k === 'g') {
+            scoped = !scoped;
+            return 'redraw';
+          }
+          return 'ignore';
+        },
+      },
+    );
     return;
   }
   if (opts.json) {
