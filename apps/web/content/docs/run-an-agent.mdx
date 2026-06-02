@@ -38,7 +38,7 @@ attaching — Control+a d to detach, leaves claude running
 
 The agent runs in a detachable tmux session whose prefix is **`Control+a`** (not the usual `Ctrl-b`). Press `Control+a` then `d` to detach — the agent keeps running in the box.
 
-`Control+a` also opens an actions menu: `c` (VS Code / Cursor), `s` (noVNC screen), `u` (box URL), and **`t` (a fresh shell in the *same* box, opened in a new tab)**. The shell tab opens as a cmux surface in the current workspace, a new tmux window, or a new iTerm2 tab depending on your terminal.
+`Control+a` also opens an actions menu: `c` (VS Code / Cursor), `s` (noVNC screen), `u` (box URL), **`t` (a fresh shell in the *same* box, opened in a new tab)**, and **`k` (destroy the box, after a confirmation)**. The shell tab opens as a cmux surface in the current workspace, a new tmux window, or a new iTerm2 tab depending on your terminal.
 
 Reattach with the `attach` subcommand, or resync your host config and reattach with `start`.
 

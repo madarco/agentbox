@@ -34,7 +34,7 @@ A one-shot `-- <cmd>` is never tmux-wrapped, so stdout stays clean for scripts. 
 Same detach chord as the agent: `Ctrl+a d`. See [Background and parallel](/docs/background-and-parallel) for juggling many boxes.
 </Callout>
 
-While attached to any box session, **`Ctrl+a t` opens a fresh shell in the *same* box in a new tab** — a cmux surface in the current workspace, a new tmux window, or a new iTerm2 tab, depending on your terminal.
+While attached to any box session, **`Ctrl+a t` opens a fresh shell in the *same* box in a new tab** — a cmux surface in the current workspace, a new tmux window, or a new iTerm2 tab, depending on your terminal. **`Ctrl+a k` destroys the box** (after a confirmation) — the same key the dashboard uses, so it never collides with `Ctrl+a d` (detach).
 
 ### cmux: a button + shortcut that opens into the box
 

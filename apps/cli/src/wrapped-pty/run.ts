@@ -121,8 +121,9 @@ const MAX_RAPID_RECONNECTS = 3;
  *  Kept short so a clean exit shortly after a checkpoint isn't misread. */
 const CHECKPOINT_DROP_GRACE_MS = 4000;
 
-/** Per-action confirmation text shown in the footer flash. */
-const ACTION_FLASH: Record<Exclude<LeaderAction, 'detach'>, string> = {
+/** Per-action confirmation text shown in the footer flash. `detach` and `kill`
+ *  manage their own footer state, so they're excluded. */
+const ACTION_FLASH: Record<Exclude<LeaderAction, 'detach' | 'kill'>, string> = {
   screen: 'Opening noVNC viewer…',
   code: 'Launching VS Code / Cursor…',
   url: 'Opening box URL…',
@@ -130,10 +131,11 @@ const ACTION_FLASH: Record<Exclude<LeaderAction, 'detach'>, string> = {
 };
 
 /** Per-action `agentbox` subcommand: `<sub> <boxId> <...flags>`. These are
- *  fire-and-forget host actions spawned detached. `shell` is NOT here — it needs
- *  an interactive new terminal, so `runAction` handles it via `spawnInNewTerminal`. */
+ *  fire-and-forget host actions spawned detached. `shell` and `kill` are NOT
+ *  here — `shell` needs an interactive new terminal and `kill` needs a confirm
+ *  first, so `runAction` handles both specially. */
 const ACTION_CMD: Record<
-  Exclude<LeaderAction, 'detach' | 'shell'>,
+  Exclude<LeaderAction, 'detach' | 'shell' | 'kill'>,
   { sub: string; flags: string[] }
 > = {
   screen: { sub: 'screen', flags: [] },
@@ -289,6 +291,10 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // Set when the user deliberately detaches (Ctrl+a d) — that exit must end the
   // wrapper, never trigger a reconnect.
   let userDetached = false;
+  // Set when the user destroys the box from the footer (Ctrl+a k) — like
+  // `userDetached` it suppresses reconnect, and it also suppresses the
+  // reattach detach-notice (there's nothing left to reattach to).
+  let userKilled = false;
   // When a `checkpoint` notice last set / cleared (epoch ms; 0 = never). A pty
   // drop while one is active, or within CHECKPOINT_DROP_GRACE_MS of it clearing,
   // is a box reboot (snapshot stopped it) → reconnect; otherwise an exit-0 drop
@@ -453,12 +459,12 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   wireOutput();
 
   // Ctrl+a leader chord map — keys mirror the dashboard's (`c`/`s`/`u`).
-  // `t: shell` opens another shell in the *same* box, in a new tab. A
-  // detachable (tmux-backed) session also gets `d: detach`; a plain
-  // `--no-tmux` shell has nothing to detach from.
+  // `t: shell` opens another shell in the *same* box, in a new tab; `k: kill`
+  // destroys the box (after a confirm). A detachable (tmux-backed) session also
+  // gets `d: detach`; a plain `--no-tmux` shell has nothing to detach from.
   const leaderChords: Record<string, LeaderAction> = detachable
-    ? { c: 'code', s: 'screen', u: 'url', t: 'shell', d: 'detach' }
-    : { c: 'code', s: 'screen', u: 'url', t: 'shell' };
+    ? { c: 'code', s: 'screen', u: 'url', t: 'shell', k: 'kill', d: 'detach' }
+    : { c: 'code', s: 'screen', u: 'url', t: 'shell', k: 'kill' };
 
   // Run a Ctrl+a leader action. `detach` writes the tmux detach sequence to
   // the pty (`\x02` = Ctrl+b, tmux's secondary prefix; `d` = detach-client) —
@@ -473,6 +479,49 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
         userDetached = true;
         pty.write('\x02d');
       }
+      return;
+    }
+    if (name === 'kill') {
+      // Destroy the box, gated by a local y/N confirm rendered in the same alert
+      // band the relay prompts use. `capture()` resolves y/n/Esc locally — no
+      // relay round-trip (the `local:` id is filtered out of `onAnswer`'s POST).
+      if (capturingPrompt) return; // a confirm/prompt is already up
+      const ev: PromptAskEvent = {
+        id: 'local:kill',
+        kind: 'confirm',
+        message: `Destroy ${opts.boxName}? This wipes the box and all its data.`,
+        detail: 'This cannot be undone.',
+        defaultAnswer: 'n',
+        context: { command: 'destroy box' },
+      };
+      capturingPrompt = ev;
+      applyBandChange();
+      void router
+        .capture(ev)
+        .then((body) => {
+          if (body.answer !== 'y' || body.cancelled) return; // stay attached
+          // Don't reconnect when the box dies, and skip the reattach notice.
+          userDetached = true;
+          userKilled = true;
+          flashMessage = `Destroying ${opts.boxName}…`;
+          recomputeFooter();
+          redrawChrome();
+          const cli = process.argv[1];
+          if (typeof cli === 'string' && cli.length > 0) {
+            try {
+              spawn(process.execPath, [cli, 'destroy', opts.boxId, '-y'], {
+                detached: true,
+                stdio: 'ignore',
+              }).unref();
+            } catch (e) {
+              logErr(`leader-action kill spawn failed: ${(e as Error).message}`);
+            }
+          }
+        })
+        .catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg !== 'resolved-elsewhere') logErr(`kill confirm rejected: ${msg}`);
+        });
       return;
     }
     const cliEntry = process.argv[1];
@@ -578,8 +627,12 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     },
     onAnswer: (body) => {
       // Fire-and-forget; the relay-side route is idempotent. We don't
-      // block the input flow on the network roundtrip.
-      void postAnswer({ relayBaseUrl: opts.relayBaseUrl, body });
+      // block the input flow on the network roundtrip. `local:` ids are
+      // synthetic local confirms (e.g. Ctrl+a k) the relay never issued — skip
+      // the POST so we don't 404 the relay with an unknown prompt id.
+      if (!body.id.startsWith('local:')) {
+        void postAnswer({ relayBaseUrl: opts.relayBaseUrl, body });
+      }
       capturingPrompt = null;
       applyBandChange();
     },
@@ -905,7 +958,11 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // Restore the host terminal/tab title we saved at attach time.
   popTerminalTitle();
 
-  if (exitCode === 0 && opts.detachNotice) {
+  if (userKilled) {
+    // The box was destroyed from the footer — there's nothing to reattach to,
+    // so print a final confirmation instead of the reattach detach-notice.
+    process.stdout.write(`\x1b[1A\x1b[2K\rbox ${opts.boxName} destroyed\n`);
+  } else if (exitCode === 0 && opts.detachNotice) {
     // Match the cosmetic of the old attachClaudeSession: overwrite tmux's
     // own `[detached]` line if it's visible, then print the reattach hint.
     process.stdout.write('\x1b[1A\x1b[2K\r' + opts.detachNotice + '\n');

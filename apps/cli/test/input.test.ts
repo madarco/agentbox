@@ -45,29 +45,27 @@ describe('InputParser keymap', () => {
   const chords = (events: InputEvent[]): InputEvent[] =>
     events.filter((e) => e.type !== 'leader');
 
-  it('Ctrl-a leader: s/c/u → actions, q → quit, k/j → switch', () => {
+  it('Ctrl-a leader: s/c/u → actions, q → quit, j → switch next', () => {
     const h = harness();
     h.parser.feed(Buffer.from([0x01, 0x73])); // ^A s
     h.parser.feed(Buffer.from([0x01, 0x63])); // ^A c
     h.parser.feed(Buffer.from([0x01, 0x75])); // ^A u
     h.parser.feed(Buffer.from([0x01, 0x71])); // ^A q
-    h.parser.feed(Buffer.from([0x01, 0x6b])); // ^A k
     h.parser.feed(Buffer.from([0x01, 0x6a])); // ^A j
     expect(chords(h.events)).toEqual([
       { type: 'action', name: 'screen' },
       { type: 'action', name: 'code' },
       { type: 'action', name: 'url' },
       { type: 'quit' },
-      { type: 'switch', dir: 'prev' },
       { type: 'switch', dir: 'next' },
     ]);
   });
 
-  it('Ctrl-a leader: t/p/d → stop/pause/destroy (d no longer quit, p no longer prev)', () => {
+  it('Ctrl-a leader: t/p → stop/pause, k → destroy (d no longer destroy)', () => {
     const h = harness();
     h.parser.feed(Buffer.from([0x01, 0x74])); // ^A t
     h.parser.feed(Buffer.from([0x01, 0x70])); // ^A p
-    h.parser.feed(Buffer.from([0x01, 0x64])); // ^A d
+    h.parser.feed(Buffer.from([0x01, 0x6b])); // ^A k
     expect(chords(h.events)).toEqual([
       { type: 'action', name: 'stop' },
       { type: 'action', name: 'pause' },
