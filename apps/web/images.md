@@ -390,60 +390,54 @@ On-brand (paper `#f6f6f3`, ink `#16181c`, accent `#128a4f`, IBM Plex). Save unde
 
 **Recipe that worked for core-concepts (AI-generated, reusable for the rest):**
 the **nano-banana-pro** skill (Google Gemini 3 Pro Image) renders crisp,
-correctly-spelled labels — good enough for these card-and-arrow diagrams. Drive
-it from an Opus subagent so it can QA + iterate:
-
-```bash
-uv run ~/.claude/skills/nano-banana-pro/scripts/generate_image.py \
-  --prompt "<detailed spec: flat technical diagram, paper bg #f4f3ee, forest-green
-    #1f7a4d accents, thin line icons, rounded cards, monospace type, the exact panels/
-    cards/labels/arrows, 'crisp legible correctly-spelled text', 16:9>" \
-  --filename /tmp/core-concepts.png --resolution 2K        # GEMINI_API_KEY in env
-# Optional: --input-image <home-page diagram> as a STYLE ref — but it tends to
-# over-copy the source labels; describing the style in the prompt worked better.
-```
+correctly-spelled labels — good enough for these card-and-arrow diagrams. **Pass
+the home-page diagram as `--input-image`** so the output inherits its exact
+style (outlined pills, dashed sub-cards, line-icon set, green palette, stacked
+right-panel shadow). The reference is committed at
+**`apps/web/diagram-refs/home-diagram.png`** (a capture of the interactive
+diagram in `public/home.html`). The trick that stops it over-copying the source
+labels: tell it explicitly *"use the image ONLY as a visual STYLE template, do
+NOT keep any of its text/labels, remove its top action chips"*, then list the
+new content.
 
 Then **read the PNG back to QA the text** (the skill says don't, but label QA
 matters here), regenerate up to ~4× tweaking the prompt, and downscale/quantize
-before committing (2K output is ~3.5MB; resize to ~1600px wide + `Image.quantize(256)`
-→ ~1MB, no visible quality loss). The home-page interactive diagram in
-`public/home.html` is the canonical style reference.
+before committing (2K output is several MB; resize to ~1600px wide +
+`Image.quantize(256, dither=NONE)` → ~0.5-1MB, no visible quality loss).
 
-- **core-concepts** — DONE (`/diagrams/core-concepts.png`). Host panel (git/SSH
-  creds + ~/.claude + host relay) ── teleport→ / ←git push/PR 🔒 ── Box panel
-  (**agent has sudo**, /workspace, no keys/no host net), faint stacked outlines
-  behind Box for "one per agent run". Note the agent runs with **sudo, not root**,
-  and the diagram + arrow both state **git push / PR needs your approval on host**.
-
-  **No `--input-image`** (describing the style in the prompt beat using the
-  home-page diagram as a ref — that over-copied its labels). The human style
-  reference is `public/home.html`'s interactive diagram. Generated at 2K, then
-  resized to 1600px + `Image.quantize(256)` → ~960KB. **Exact command + verbatim
-  prompt used:**
+- **core-concepts** — DONE (`/diagrams/core-concepts.png`). Host panel
+  (workspace, ~/.claude, git creds "never leave the host", host relay "you
+  approve") ── teleport→ / ←git push/PR 🔒 "you approve on host" ── Box panel
+  (**agent has sudo** — not root, /workspace, no keys/no host net), faint stacked
+  outlines behind Box for "one per agent run". The diagram + the page text both
+  state **git push / PR needs your explicit approval on the host**. **Exact
+  command + verbatim prompt used** (run from `apps/web/`):
 
   ```bash
   uv run ~/.claude/skills/nano-banana-pro/scripts/generate_image.py \
+    --input-image diagram-refs/home-diagram.png \
+    --resolution 2K --filename /tmp/core-concepts.png \
     --prompt "$(cat <<'PROMPT'
-  A clean, flat technical architecture diagram in a minimal developer-docs style. Warm light paper background (#f4f3ee). Two large rounded-rectangle panels side by side with thin 1.5px soft-grey borders and very subtle shadows. Restrained palette: forest-green (#1f7a4d) for icons, labels and arrows; dark slate (#1b1f23) for headings; muted grey (#8a9098) for secondary text. Simple thin line icons, monospace IBM-Plex-style type, generous whitespace. No gradients, no 3D, no photorealism, no clutter. Landscape 16:9.
+  Use the provided image ONLY as a visual STYLE template — copy its exact aesthetic: warm light paper background, forest-green (#1f7a4d) thin line icons / labels / arrows, dark slate headings, muted grey secondary text, monospace IBM-Plex-style type, thin 1.5px soft-grey rounded-card borders, small outlined rounded pills, dashed-border sub-cards, the faint stacked duplicate-panel outlines behind the right panel, and the thin dashed arrow style. Do NOT keep any of the reference's text or labels, and remove its top row of action chips. Redraw it as a NEW two-panel diagram with the following content.
 
-  LEFT panel titled 'Host' with a small monitor line-icon and a small rounded green pill reading 'your machine'. Inside, three stacked sub-cards, each a thin line icon plus two short text lines:
-  - padlock icon, line 1: 'git credentials & SSH keys', line 2: 'never leave the host'
+  LEFT panel titled 'Host' with a small monitor line-icon and an outlined rounded pill reading 'your machine'. Four stacked sub-cards, each a thin line icon plus two short text lines:
+  - folder icon, line 1: 'workspace', line 2: 'your project files'
   - key icon, line 1: '~/.claude', line 2: 'credentials & sessions'
+  - padlock icon, line 1: 'git credentials & SSH keys', line 2: 'never leave the host'
   - hub icon, line 1: 'host relay', line 2: 'git push & PRs run here, you approve'
 
-  RIGHT panel titled 'Box' with a small cube line-icon and a small rounded green pill reading 'isolated'. Behind this panel draw two faint duplicate rounded-rectangle outlines, offset down and to the right, to suggest 'one box per agent run'. Inside the front panel, three stacked sub-cards:
+  RIGHT panel titled 'Box' with a small cube line-icon and an outlined rounded pill reading 'isolated'. Behind this panel draw two faint duplicate rounded-rectangle outlines, offset down and to the right, to suggest 'one box per agent run'. Three stacked sub-cards inside the front panel:
   - terminal icon, line 1: 'agent has sudo', line 2: 'full toolchain, no host access'
-  - folder icon, line 1: '/workspace', line 2: 'git worktree'
+  - folder icon (dashed border), line 1: '/workspace', line 2: 'git worktree'
   - shield icon, line 1: 'no keys, no host network'
 
-  BETWEEN the two panels, two short horizontal arrows stacked vertically in the gap:
-  - TOP arrow pointing RIGHT (Host to Box), green, labeled 'teleport'
-  - BOTTOM arrow pointing LEFT (Box to Host), green, labeled 'git push / PR' with a small padlock icon, and directly beneath it smaller muted text reading 'you approve on host'
+  BETWEEN the two panels, two short horizontal dashed arrows stacked vertically in the gap:
+  - TOP arrow pointing RIGHT (Host to Box), labeled 'teleport'
+  - BOTTOM arrow pointing LEFT (Box to Host), labeled 'git push / PR' with a small padlock icon, and directly beneath it smaller muted text reading 'you approve on host'
 
-  All text must be crisp, sharp and correctly spelled. Balanced composition with lots of breathing room.
+  All text crisp, sharp and correctly spelled. Balanced landscape 16:9 composition, generous whitespace.
   PROMPT
-  )" \
-    --filename /tmp/core-concepts.png --resolution 2K     # GEMINI_API_KEY in env
+  )"
   ```
 - **configuration** — config layer precedence: CLI > workspace > project > global > committed defaults > built-in.
 - **services-and-tasks** — the `needs` DAG: install → migrate; db runs in parallel; web waits on both.
