@@ -1,6 +1,6 @@
 {
   "name": "@madarco/agentbox",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Launch Claude Code, Codex, and other coding agents in isolated sandboxes",
   "license": "MIT",
   "author": "Marco D'Alia",

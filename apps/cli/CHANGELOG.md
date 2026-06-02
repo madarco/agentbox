@@ -9,6 +9,37 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.13.0] - 2026-06-02
+
+### Added
+
+- cmux terminal integration. `--attach-in` / `attach.openIn` now place the
+  attached session in cmux (`split` -> new-split, `tab` -> a surface in the
+  current workspace, `window` -> a separate workspace), alongside the existing
+  tmux and iTerm2 support.
+- While attached inside cmux, a box's live agent status is reflected on its
+  workspace colour and description (blue working, amber needs-input, cleared on
+  idle), restored on detach. When several boxes share a workspace as tabs, the
+  one needing input is flagged with a cmux notification. Gated by
+  `attach.cmuxStatus` (default on); no-op outside cmux.
+- `Ctrl+a t` in any attach session opens a fresh shell in the same box in a new
+  tab (cmux surface / tmux window / iTerm2 tab).
+- `Ctrl+a k` destroys the current box after a `y/N` confirmation, in both the
+  attach footer and the dashboard.
+- `agentbox install cmux` pins a live box list to cmux's right-sidebar Dock
+  (`--dry-run` / `--force` / `--height` / `--title`); the panel groups boxes by
+  project. `agentbox list --cmux` renders the same compact, sidebar-tuned view
+  directly. (cmux's Dock is a beta feature — enable it under Settings -> Beta
+  features -> Dock.)
+- A full documentation site at [agent-box.sh/docs](https://agent-box.sh/docs),
+  including a new Integrations section for iTerm2, tmux, and cmux.
+
+### Changed
+
+- The dashboard's destroy chord moved from `Ctrl+a d` to `Ctrl+a k`, so `k`
+  means "kill" in both the dashboard and an attach session and never collides
+  with detach. Box switching stays on `Control+Option+arrows`.
+
 ## [0.12.0] - 2026-06-01
 
 ### Breaking
