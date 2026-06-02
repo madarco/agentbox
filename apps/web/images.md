@@ -475,19 +475,25 @@ Verbatim prompts:
   Arrows: install -> migrate (upper row), then migrate -> web AND db -> web (two arrows converging into 'web', showing web waits on both). A small outlined pill caption 'needs: forms a DAG'. Landscape 16:9, generous whitespace. All text crisp, sharp and correctly spelled.
   ```
 
-- **sync-and-git** — DONE (`/diagrams/sync-and-git.png`). Two paths: commits land in
-  the shared `.git` instantly (solid); network ops go via the relay (dashed).
+- **sync-and-git** — DONE (`/diagrams/sync-and-git.png`). **Provider-aware** (the
+  first version was wrong — it claimed commits always land in the *host* shared
+  `.git`, which is Docker-only). Two side-by-side panels: **Local Docker** —
+  `/workspace` worktree ──solid→ host `.git` (bind-mounted), commit lands on the
+  host instantly; **Cloud** (daytona/hetzner/vercel) — `box .git` seeded from a
+  git bundle, commit lands instantly *inside the box*, then ──dashed via host
+  relay🔒→ host/remote. Bottom caption: remote writes always go through the relay
+  with your approval.
 
   ```text
-  Use the provided image ONLY as a visual STYLE template — copy its exact aesthetic: warm light paper background, forest-green (#1f7a4d) thin line icons / labels / arrows, dark slate headings, muted grey secondary text, monospace IBM-Plex-style type, thin 1.5px soft-grey rounded-card borders, small outlined rounded pills. Do NOT keep any of the reference's text or labels; remove its top row of action chips. Redraw as a NEW diagram with this content showing TWO distinct paths.
+  Use the provided image ONLY as a visual STYLE template — copy its exact aesthetic: warm light paper background, forest-green (#1f7a4d) thin line icons / labels / arrows, dark slate headings, muted grey secondary text, monospace IBM-Plex-style type, thin 1.5px soft-grey rounded-card borders, small outlined rounded pills. Do NOT keep any of the reference's text or labels; remove its top row of action chips. Redraw as a NEW diagram with this content: where a box's git commits land, compared by provider — TWO panels side by side.
 
-  On the LEFT, a rounded panel titled 'Box' (small cube icon) containing one sub-card: folder icon, '/workspace', 'git commit'.
+  LEFT panel titled 'Local Docker' with a small container line-icon and an outlined rounded pill reading 'shared .git'. Inside: a card with a folder icon labeled '/workspace' and grey subtext 'git worktree', then a SHORT THICK SOLID green arrow pointing RIGHT to a cylinder/database icon labeled 'host .git' with grey subtext 'bind-mounted from your host'. Beneath, one bold green line: 'git commit lands on your host instantly'.
 
-  PATH 1 (local, instant): from the Box, a SHORT THICK SOLID green arrow points right to a cylinder/database icon labeled 'host .git' with a small grey 'shared repo'. Next to this arrow a small green check and bold label 'commits land instantly'. Group this top path under a faint outlined pill 'local, no network'.
+  RIGHT panel titled 'Cloud' with a small cloud line-icon and an outlined rounded pill reading 'daytona / hetzner / vercel'. Inside: a card with a database icon labeled 'box .git' and grey subtext 'seeded from a git bundle'. Beneath it one bold green line: 'git commit lands instantly, inside the box'. Then a THIN DASHED green arrow leaves that card to the right, passes through a small rounded card 'host relay' (hub icon with a tiny padlock), and continues to a cloud icon labeled 'host / remote'; label this dashed path 'git push, via the relay'.
 
-  PATH 2 (network, via relay): BELOW, a THIN DASHED green arrow leaves the Box and passes through a small rounded card 'host relay' (hub icon with a tiny padlock), then continues to a cloud icon labeled 'remote'. Label this dashed path 'network ops: push, pull, PR'.
+  At the very bottom, spanning both panels, a small outlined pill caption: 'remote writes (push / PR) always go through the relay, with your approval'.
 
-  A small outlined pill caption at the bottom: 'commits = instant, network = via relay'. Landscape 16:9, generous whitespace. All text crisp, sharp and correctly spelled.
+  Landscape 16:9, generous whitespace. All text crisp, sharp and correctly spelled.
   ```
 
 - **teleport-a-project** — DONE (`/diagrams/teleport-a-project.png`). Host repo

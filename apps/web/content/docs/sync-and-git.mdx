@@ -91,7 +91,7 @@ The box never holds your SSH keys or tokens. If a tool inside the box runs `git 
 </Callout>
 
 {/* DIAGRAM /diagrams/sync-and-git.png — nano-banana-pro, home-diagram style ref. Recipe + prompt in apps/web/images.md → Phase D. */}
-<Figure src="/diagrams/sync-and-git.png" caption="Commits land in the shared host repo instantly; only network operations route through the host relay." />
+<Figure src="/diagrams/sync-and-git.png" caption="Commits are instant and local — on Docker they land in your host's shared .git; on cloud boxes they land in the box's own copy (seeded from a git bundle). Reaching a remote (push / PR) always goes through the host relay, with your approval." />
 
 ## Pull requests
 
