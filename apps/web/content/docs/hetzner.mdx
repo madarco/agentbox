@@ -1,27 +1,28 @@
 ---
 title: Hetzner
-description: A bare VPS per box with an auto-locked firewall, over pure OpenSSH
+description: Run your agents on a real, inexpensive Hetzner VPS with full root and Docker-in-Docker
 ---
 
-Use Hetzner when you want a real, inexpensive cloud VM you fully control. With `--provider hetzner`, each box is its own Hetzner Cloud VPS (1:1), reached over pure OpenSSH. No third-party agent runs inside the box — you own root.
+Run your agents on a real, inexpensive cloud VM you fully control — no local Docker needed. Each box is its own Hetzner Cloud VPS (1:1) you drive with the same `agentbox` commands as a local box, reached over pure OpenSSH (no third-party agent in the box — you own root).
 
-Pick Hetzner for bare-VPS control (full kernel, your own region), a Cloud Firewall locked to your egress IP, and full [Docker-in-Docker](/docs/docker-in-docker). Cost is roughly €4/mo per *running* box. The siblings: a managed-SDK sandbox is [Daytona](/docs/daytona); a Firecracker microVM with public HTTPS URLs but no in-box Docker is [Vercel](/docs/vercel); free and local is [local Docker](/docs/local-docker).
-
-The whole CLI surface (`shell`, `claude`, `url`, `cp`, `checkpoint`, …) routes on `box.provider` and works identically across backends — see [core concepts](/docs/core-concepts) and the [CLI reference](/docs/cli).
-
-<Callout title="TIP">
-Pin Hetzner project-wide with `box.provider: hetzner` in [`agentbox.yaml`](/docs/agentbox-yaml), or pass `--provider hetzner` per box. See [configuration](/docs/configuration).
-</Callout>
+Switch per box with `--provider hetzner`, or pin it project-wide with `box.provider: hetzner` in [`agentbox.yaml`](/docs/agentbox-yaml). Pick Hetzner for bare-VPS control (full kernel, your own region), a Cloud Firewall locked to your egress IP, and full [Docker-in-Docker](/docs/docker-in-docker). Cost is roughly €4/mo per *running* box. Comparing options? See [local-docker](/docs/local-docker), [daytona](/docs/daytona), [vercel](/docs/vercel), and [e2b](/docs/e2b).
 
 ## Set up
 
-`agentbox hetzner login` stores your `HCLOUD_TOKEN` — a **Read & Write** API token from a Hetzner project's **Security → API Tokens** page — to `~/.agentbox/secrets.env`. The token is project-scoped, so boxes are created in whichever Hetzner project minted it.
+The easiest path is the interactive wizard — it signs you in and bakes the base snapshot in one flow:
 
 ```bash
-agentbox hetzner login
+agentbox install        # then select hetzner
 ```
 
-First use of `--provider hetzner` triggers this login automatically, so the explicit step is optional. See [CLI commands](/docs/cli) for all flags.
+Paste a Hetzner Cloud API token when prompted — a **Read & Write** token from the target project's *Security → API Tokens* page (boxes will be created in whichever project minted it). Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider hetzner` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots ready in ~15-20s.
+
+For CI or scripted setup, run the explicit equivalents:
+
+```bash
+agentbox hetzner login                 # credentials only
+agentbox prepare --provider hetzner    # bake the base snapshot
+```
 
 <Callout title="NOTE">
 Mint the token under the specific Hetzner *project* you want boxes to live in, and make it **Read & Write**. Read-only tokens can't create servers.
@@ -29,6 +30,14 @@ Mint the token under the specific Hetzner *project* you want boxes to live in, a
 
 {/* SCREENSHOT /screenshots/hetzner_api.jpg — Hetzner Cloud console → Security → API tokens, the Read & Write token + Generate button (token value masked). Captured manually from the console. */}
 <Figure src="/screenshots/hetzner_api.jpg" caption="Mint a Read & Write API token under Security → API Tokens in the Hetzner console." />
+
+## Use it
+
+```bash
+agentbox hetzner claude
+```
+
+`agentbox hetzner create|claude|codex|opencode` is sugar for the same command with `--provider hetzner`.
 
 ## Prepare snapshot
 

@@ -1,25 +1,36 @@
 ---
 title: Daytona
-description: Managed cloud sandboxes seeded from a git bundle, with shared credential volumes
+description: Run your agents in a managed Daytona cloud sandbox seeded from your host repo
 ---
 
-Use Daytona when the work outgrows your laptop, a teammate needs to attach, or you want a snapshot-ready remote environment. A Daytona box is a managed cloud sandbox (default **2 vCPU / 4 GB RAM / 8 GB disk**) seeded from your host repo, with agent static config baked into a published snapshot and renewable tokens on a shared per-org volume.
+Run your agents in a managed Daytona cloud sandbox (default **2 vCPU / 4 GB RAM / 8 GB disk**) when the work outgrows your laptop or a teammate needs to attach — no local Docker needed. Each box is a remote Daytona sandbox you drive with the same `agentbox` commands as a local box, seeded from your host repo with renewable agent tokens on a shared per-org volume.
 
-Daytona is one of AgentBox's four backends — see [the provider model](/docs/core-concepts) and its siblings [local Docker](/docs/local-docker), [Hetzner](/docs/hetzner), and [Vercel](/docs/vercel).
-
-<Callout title="TIP">
-Switch one box with `--provider daytona`, or pin a project with `box.provider: daytona` in [`agentbox.yaml`](/docs/agentbox-yaml). The rest of the CLI (`shell`, `claude`, `url`, `cp`, `checkpoint`, …) routes on `box.provider` automatically. See [configuration](/docs/configuration).
-</Callout>
+Switch per box with `--provider daytona`, or pin it project-wide with `box.provider: daytona` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [vercel](/docs/vercel), and [e2b](/docs/e2b).
 
 ## Set up
 
-`agentbox daytona login` prompts for your `DAYTONA_API_KEY` (required) and `DAYTONA_ORGANIZATION_ID` (optional), and persists them to `~/.agentbox/secrets.env`. Your project `.env` is never harvested.
+The easiest path is the interactive wizard — it signs you in and bakes the base snapshot in one flow:
 
 ```bash
-agentbox daytona login
+agentbox install        # then select daytona
 ```
 
-`agentbox daytona create|claude|codex|opencode` is sugar for the same command with `--provider daytona`. The first time you use `--provider daytona`, the login prompt fires automatically.
+Approve the browser sign-in when prompted (or paste a `DAYTONA_API_KEY`; an optional `DAYTONA_ORGANIZATION_ID` can also be entered). Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider daytona` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots in seconds instead of eating a ~7-minute cold Dockerfile build.
+
+For CI or scripted setup, run the explicit equivalents:
+
+```bash
+agentbox daytona login                 # credentials only
+agentbox prepare --provider daytona    # bake the base snapshot
+```
+
+## Use it
+
+```bash
+agentbox daytona claude
+```
+
+`agentbox daytona create|claude|codex|opencode` is sugar for the same command with `--provider daytona`.
 
 ## Prepare image
 

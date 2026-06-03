@@ -1,18 +1,27 @@
 ---
 title: Vercel
-description: A Firecracker microVM per box with persistent snapshots and public preview URLs
+description: Run your agents in a fast Vercel cloud sandbox with public preview URLs and persistent pause/resume
 ---
 
-Use Vercel when you want a fast snapshot-based remote env with public HTTPS preview URLs and persistent pause/resume. Each box is one Vercel Sandbox — a Firecracker microVM on Amazon Linux 2023 — with first-class snapshots and a public `*.vercel.run` URL reachable from your browser and from inside the [box](/docs/core-concepts).
+Run your agents in a fast Vercel cloud sandbox with a public HTTPS preview URL and persistent pause/resume — no local Docker needed. Each box is a remote Vercel sandbox you drive with the same `agentbox` commands as a local box.
 
-Switch per box with `--provider vercel`, or pin it project-wide with `box.provider: vercel` in [`agentbox.yaml`](/docs/agentbox-yaml). The rest of the CLI (`shell`, `claude`, `url`, `cp`, `checkpoint`, …) routes on `box.provider` automatically. Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), and [daytona](/docs/daytona).
+Switch per box with `--provider vercel`, or pin it project-wide with `box.provider: vercel` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona), and [e2b](/docs/e2b).
 
 ## Set up
 
-The first time you use `--provider vercel` AgentBox prompts you to log in; you can also run it explicitly. Sign in with `agentbox vercel login` (CLI login is easiest; an access-token trio or OIDC also work for CI). Credentials are read only from your shell env or `~/.agentbox/secrets.env` — project-local `.env` files are never harvested.
+The easiest path is the interactive wizard — it signs you in and bakes the base snapshot in one flow:
 
 ```bash
-agentbox vercel login
+agentbox install        # then select vercel
+```
+
+Approve the browser CLI login when prompted (or paste an access-token trio / OIDC for CI — the access-token trio is best for long bakes since OIDC dev tokens expire on a ~12h cycle). Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider vercel` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots ready in seconds.
+
+For CI or scripted setup, run the explicit equivalents:
+
+```bash
+agentbox vercel login                 # credentials only
+agentbox prepare --provider vercel    # bake the base snapshot
 ```
 
 <Callout title="WHICH AUTH">
@@ -20,6 +29,14 @@ OIDC dev tokens expire on a ~12h cycle with no headless refresh. For long-runnin
 </Callout>
 
 See [environment](/docs/environment) for where the `VERCEL_*` vars and `~/.agentbox/secrets.env` live.
+
+## Use it
+
+```bash
+agentbox vercel claude
+```
+
+`agentbox vercel create|claude|codex|opencode` is sugar for the same command with `--provider vercel`.
 
 ## Prepare the base snapshot
 

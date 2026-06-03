@@ -1,21 +1,42 @@
 ---
 title: E2B
-description: A Firecracker microVM per box with a Dockerfile-baked base template, public preview URLs, and free pause/resume
+description: Run your agents in a fast E2B cloud sandbox with public preview URLs and free pause/resume
 ---
 
-Use E2B when you want a fast snapshot-based remote env with public HTTPS preview URLs **and you want to bake the base image straight from a Dockerfile** — uniquely among AgentBox's cloud providers, E2B's `prepare` drives the SDK's `Template.build()` from a Dockerfile rather than booting+snapshotting a vanilla base. Each box is one E2B Sandbox — a Firecracker microVM on Debian 12 — with first-class pause/resume, id-addressed `Sandbox.createSnapshot` checkpoints, and a public `*.e2b.app` URL reachable from your browser and from inside the [box](/docs/core-concepts).
+Run your agents in a fast E2B cloud sandbox with a public HTTPS preview URL and free pause/resume — no local Docker needed. Each box is a remote E2B sandbox you drive with the same `agentbox` commands as a local box.
 
-Switch per box with `--provider e2b`, or pin it project-wide with `box.provider: e2b` in [`agentbox.yaml`](/docs/agentbox-yaml). The rest of the CLI (`shell`, `claude`, `url`, `cp`, `checkpoint`, …) routes on `box.provider` automatically. Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona), and [vercel](/docs/vercel).
+Switch per box with `--provider e2b`, or pin it project-wide with `box.provider: e2b` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona), and [vercel](/docs/vercel).
+
+<Callout title="Nightly">
+E2B support is available in the **nightly** build of AgentBox.
+</Callout>
 
 ## Set up
 
-The first time you use `--provider e2b` AgentBox prompts you to log in; you can also run it explicitly. Sign in with `agentbox e2b login` — it prompts for `E2B_API_KEY` (mint at [e2b.dev/dashboard](https://e2b.dev/dashboard?tab=keys)) and persists it to `~/.agentbox/secrets.env`. Credentials are read only from your shell env or `~/.agentbox/secrets.env` — project-local `.env` files are never harvested.
+The easiest path is the interactive wizard — it signs you in and bakes the base image in one flow:
 
 ```bash
-agentbox e2b login
+agentbox install        # then select e2b
+```
+
+Paste an `E2B_API_KEY` (mint at [e2b.dev/dashboard](https://e2b.dev/dashboard?tab=keys)) when prompted. Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base template (a one-time `agentbox prepare --provider e2b` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots ready in seconds.
+
+For CI or scripted setup, run the explicit equivalents:
+
+```bash
+agentbox e2b login                 # credentials only
+agentbox prepare --provider e2b    # bake the base template
 ```
 
 See [environment](/docs/environment) for where the `E2B_API_KEY` and `~/.agentbox/secrets.env` live.
+
+## Use it
+
+```bash
+agentbox e2b claude
+```
+
+`agentbox e2b create|claude|codex|opencode` is sugar for the same command with `--provider e2b`.
 
 ## Prepare the base template (Dockerfile → `Template.build()`)
 
