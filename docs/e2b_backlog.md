@@ -317,6 +317,31 @@ shipped.
   relay and can launch boxes on other providers, so they can fully smoke-test.
 
 ## Changelog
+- 2026-06-03: E2B usability pass — onboarding seed + shell exec + VNC + tag.
+  Live-verified end-to-end against `agentbox-base:latest`.
+  - **Onboarding (the blocker)**: cloud creates were dropping into Claude's
+    first-run theme picker. Fixed by overlaying `~/.claude/_claude.json`
+    from the host's current `~/.claude.json` on every cloud create (across
+    e2b/vercel/hetzner/daytona) — see
+    `packages/sandbox-cloud/src/claude-json-overlay.ts`. The default
+    fallback (host has no `~/.claude.json`) now sets
+    `hasCompletedOnboarding: true`.
+  - **One-shot `agentbox shell`**: `agentbox shell <cloud-box> -- cmd`
+    used to hang because the cloud path always opened a PTY attach via
+    `provider.buildAttach`. One-shot now routes through `provider.exec`
+    (the same primitive used at create-time); interactive `agentbox shell`
+    still uses the PTY attach.
+  - **VNC**: two issues — Debian 12 (E2B's base) doesn't ship `vncpasswd`
+    (Ubuntu-only `tigervnc-tools`), and E2B's Python-venv websockify
+    startup needs ~7-9s to bind. Fix: graceful `-SecurityTypes None`
+    fallback in `agentbox-vnc-start` when `vncpasswd` is missing (signed
+    preview URL is the access boundary, same effective model), and
+    bump the cloud probe ceiling 5s → 15s in `vnc-launch.ts`. Other
+    providers (docker/hetzner/daytona/vercel) keep VncAuth.
+  - **Doubled `:latest:latest`**: `prepare` status read
+    `tmpl agentbox-base:latest:latest` because `info.name` (already
+    `"agentbox-base:latest"`) got `:${tag}` re-appended. Now stores
+    `info.name` verbatim.
 - 2026-06-03: Task 3 done — `agentbox prune --provider e2b` live-verified
   end-to-end (orphan spawned via the E2B SDK, `--dry-run` listed it, `-y`
   deleted it); doctor `--provider` help/error strings extended to include

@@ -38,14 +38,15 @@ export async function launchCloudVncDaemon(args: LaunchCloudVncArgs): Promise<vo
     `mkdir -p /var/log/agentbox 2>/dev/null || true`,
     `nohup /usr/local/bin/agentbox-vnc-start >> /var/log/agentbox/vnc-start.log 2>&1 &`,
     `disown`,
-    // Match the host-side probe in packages/sandbox-docker/src/vnc.ts: poll for
-    // ~5s, then give up. The script itself waits for Xvnc internally; this
-    // outer probe confirms websockify's public port came up too.
-    `for _ in $(seq 1 50); do`,
+    // Probe for websockify to bind 6080. ~15s ceiling: E2B's Python venv
+    // startup (websockify is a pure-python proxy launched from a venv) takes
+    // ~7-9s before the socket binds, so a 5s ceiling false-negatives every
+    // create. Docker/hetzner/daytona/vercel come up well inside this window.
+    `for _ in $(seq 1 150); do`,
     `  if (echo > /dev/tcp/127.0.0.1/6080) 2>/dev/null; then echo ready; exit 0; fi`,
     `  sleep 0.1`,
     `done`,
-    `echo "websockify did not bind 6080 within 5s" >&2`,
+    `echo "websockify did not bind 6080 within 15s" >&2`,
     `exit 1`,
   ].join('\n');
 

@@ -23,10 +23,22 @@ mkdir -p "$HOME/.vnc"
 # VncAuth truncates >8 chars at compare time, which is fine — the host writes
 # an 8-char password. Write to a temp file + rename so a failure (e.g.,
 # vncpasswd missing) doesn't leave an empty file that Xvnc would then reject.
-TMP_PASSWD="$(mktemp "$HOME/.vnc/passwd.XXXXXX")"
-printf '%s\n' "$PASS" | vncpasswd -f > "$TMP_PASSWD"
-chmod 600 "$TMP_PASSWD"
-mv "$TMP_PASSWD" "$HOME/.vnc/passwd"
+#
+# Debian 12 (E2B base) doesn't package vncpasswd at all — tigervnc-tools is
+# Ubuntu-only. When vncpasswd is missing, fall back to `-SecurityTypes None`
+# and rely on the cloud provider's signed preview URL as the access boundary
+# (same effective model: holding the URL = holding the credential). Other
+# providers (docker, hetzner, daytona, vercel) keep VncAuth.
+VNC_SECURITY_ARGS=(-SecurityTypes VncAuth -PasswordFile "$HOME/.vnc/passwd")
+if command -v vncpasswd >/dev/null 2>&1; then
+  TMP_PASSWD="$(mktemp "$HOME/.vnc/passwd.XXXXXX")"
+  printf '%s\n' "$PASS" | vncpasswd -f > "$TMP_PASSWD"
+  chmod 600 "$TMP_PASSWD"
+  mv "$TMP_PASSWD" "$HOME/.vnc/passwd"
+else
+  echo "agentbox-vnc-start: vncpasswd not installed; starting Xvnc with -SecurityTypes None (preview URL is the access boundary)" >&2
+  VNC_SECURITY_ARGS=(-SecurityTypes None)
+fi
 
 mkdir -p /var/log/agentbox 2>/dev/null || true
 
@@ -37,8 +49,7 @@ mkdir -p /var/log/agentbox 2>/dev/null || true
 # accept cut-text from noVNC, set both the X CLIPBOARD and PRIMARY selections.
 Xvnc :1 \
   -localhost \
-  -SecurityTypes VncAuth \
-  -PasswordFile "$HOME/.vnc/passwd" \
+  "${VNC_SECURITY_ARGS[@]}" \
   -geometry 1280x800 \
   -depth 24 \
   -AlwaysShared \
