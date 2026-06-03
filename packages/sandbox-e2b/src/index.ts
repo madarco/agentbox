@@ -12,7 +12,7 @@
  * `launchDockerd: false` because E2B microVMs can't run nested containers.
  */
 
-import type { Provider, ProviderCheckpoint } from '@agentbox/core';
+import type { AttachSpec, Provider, ProviderCheckpoint } from '@agentbox/core';
 import { createCloudProvider } from '@agentbox/sandbox-cloud';
 import { e2bBackend, DEFAULT_BOX_IMAGE_REF } from './backend.js';
 
@@ -46,9 +46,27 @@ const e2bCheckpointStub: ProviderCheckpoint = {
   },
 };
 
+/**
+ * Task 1 attach stub. The cloud scaffold's default `buildAttach` would call
+ * `backend.attachArgv` (E2B has no SSH so it omits it) and throw a generic
+ * "interactive attach not supported" mid-flow — including from the post-create
+ * wizard hand-off and the dashboard cloud pane. Override here so the failure
+ * mode is a single clear, Task-2-tagged error at the only entry point that
+ * matters (`agentbox shell` / `claude` / `codex` / `opencode` against an e2b
+ * box). Task 2 will replace this with an SDK-streaming tmux bridge (mirrors
+ * vercel's `buildVercelAttach`).
+ */
+async function e2bAttachNotImplemented(): Promise<AttachSpec> {
+  throw new Error(
+    'agentbox attach: interactive attach not yet implemented for e2b (Task 2 — see docs/e2b_backlog.md). ' +
+      'Use `agentbox e2b login --status`, `agentbox list`, `agentbox url <box>`, or destroy/recreate in the meantime.',
+  );
+}
+
 export const e2bProvider: Provider = {
   ...cloudProvider,
   checkpoint: e2bCheckpointStub,
+  buildAttach: e2bAttachNotImplemented,
 };
 
 export { e2bBackend, DEFAULT_BOX_IMAGE_REF };
