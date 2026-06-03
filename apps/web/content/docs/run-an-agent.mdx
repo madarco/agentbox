@@ -1,6 +1,6 @@
 ---
 title: Run an agent
-description: Launch Claude Code, Codex, or OpenCode in a box and attach, detach, or fork sessions
+description: Launch Claude Code, Codex, or OpenCode in a box and attach or detach sessions
 ---
 
 AgentBox runs **Claude Code**, **OpenAI Codex**, and **OpenCode** inside a box, in a detachable tmux session — so you can leave the agent working, detach, and reattach later.
@@ -71,27 +71,6 @@ You can run different agents in different boxes for the same project and switch 
 <Callout title="WHY">
 Auto-approve is safe to default on because the box can't touch your machine — it's isolated from the host. The agent works without stopping to ask, and you keep your laptop clean.
 </Callout>
-
-## Fork a session
-
-The fastest way to fork is from **inside** the agent: run the **`/agentbox [provider]`** skill from Claude Code, Codex, or OpenCode. It teleports your *current* session — the full conversation, **and** the active plan if you're in plan mode — into a fresh box and resumes it there, so you can branch off an isolated copy without losing context or re-explaining yourself. The provider argument is optional (`/agentbox`, `/agentbox hetzner`, `/agentbox vercel`, …) and defaults to local Docker.
-
-Under the hood the skill calls `agentbox fork`, which you can also run directly on the host. It opens the box in a new terminal tab under iTerm, tmux, or cmux; otherwise it runs in the background. The skill, and the other AgentBox-provided skills, are covered in [AgentBox Skills](/docs/skills).
-
-```bash
-agentbox fork                         # fork the newest host Claude session into a new box
-agentbox fork --agent codex           # fork a Codex session instead
-agentbox fork --provider hetzner      # fork into a cloud box
-agentbox fork --name review           # name the box
-```
-
-`--agent` is `claude` (default), `codex`, or `opencode` (OpenCode starts a fresh box since resume isn't supported). `--provider` selects `docker` (default), `daytona`, `hetzner`, or `vercel`. `--plan` carries an active Claude Code plan so the box opens in plan mode, ready to resume. For `--session`, `--carry`, and the other flags, see [CLI commands](/docs/cli).
-
-<Callout type="warn" title="HEADS UP">
-`agentbox fork` runs on the host only — it teleports a host session into a fresh box, so it refuses when `AGENTBOX_RELAY_URL` is set (inside a box). Box→box fork isn't supported yet.
-</Callout>
-
-`-c/--continue` and `--resume <id>` also exist directly on `agentbox claude` / `agentbox codex` to teleport the host session in at create time — see [teleport a project](/docs/teleport-a-project).
 
 ## First-run auth
 
