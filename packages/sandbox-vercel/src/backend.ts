@@ -41,12 +41,6 @@ import {
   Snapshot,
   type SandboxType,
 } from './sdk.js';
-import {
-  stageClaudeCredentialsForUpload,
-  stageCodexCredentialsForUpload,
-  stageOpencodeCredentialsForUpload,
-  type StageResult,
-} from '@agentbox/sandbox-cloud';
 import { withVercelRetry } from './retry.js';
 import { readPreparedState } from './prepared-state.js';
 
@@ -216,60 +210,6 @@ function buildRunCommand(
   };
 }
 
-/**
- * Push the host's renewable agent credentials (`.credentials.json` for claude,
- * `auth.json` for codex/opencode) into `/home/vscode/.agentbox-creds/<agent>/`
- * per-box at create time. Vercel has no shared-volume primitive, so the cloud
- * credential-volume path (`seedAgentVolumesIfFresh`) is a no-op here — this is
- * the equivalent of Hetzner's scp push (`pushHetznerAgentCredentials`), over the
- * Vercel SDK instead. The credential-pivot symlinks baked into the snapshot by
- * provision.sh route `~/.claude/.credentials.json` etc. through to this dir, so
- * the in-box agents find their tokens at the expected paths. Pushes on every
- * create (tokens are renewable). Best-effort: a failure means the in-box agent
- * falls back to interactive login, so the caller logs + continues.
- */
-async function pushVercelAgentCredentials(
-  sb: SandboxType,
-  log: (line: string) => void,
-): Promise<void> {
-  const specs: Array<{
-    kind: 'claude' | 'codex' | 'opencode';
-    stage: () => Promise<StageResult>;
-    dest: string;
-  }> = [
-    { kind: 'claude', stage: stageClaudeCredentialsForUpload, dest: '/home/vscode/.agentbox-creds/claude' },
-    { kind: 'codex', stage: stageCodexCredentialsForUpload, dest: '/home/vscode/.agentbox-creds/codex' },
-    { kind: 'opencode', stage: stageOpencodeCredentialsForUpload, dest: '/home/vscode/.agentbox-creds/opencode' },
-  ];
-  for (const spec of specs) {
-    const staged = await spec.stage();
-    for (const w of staged.warnings) log(`vercel: [${spec.kind}-creds] ${w}`);
-    try {
-      if (!staged.tarballPath) {
-        log(`vercel: ${spec.kind}: no host credentials to push (skipping)`);
-        continue;
-      }
-      const remote = `/tmp/agentbox-${spec.kind}-creds.tar.gz`;
-      await sb.writeFiles([{ path: remote, content: await readFile(staged.tarballPath) }]);
-      // Extract as vscode into the dest dir (created + chown'd by provision.sh's
-      // credential-pivot step). Plain mkdir/tar/rm — no $()/loops — so the exec
-      // wrapping is irrelevant.
-      const extract =
-        `sudo -u vscode mkdir -p ${spec.dest} && ` +
-        `sudo -u vscode tar -xzf ${remote} -C ${spec.dest} --no-same-permissions --no-same-owner -m && ` +
-        `rm -f ${remote}`;
-      const r = await sb.runCommand({ cmd: 'bash', args: ['-lc', extract], sudo: true });
-      if (r.exitCode !== 0) {
-        log(`vercel: WARN — ${spec.kind} credential extract failed (exit ${String(r.exitCode)})`);
-      } else {
-        log(`vercel: ${spec.kind}: credentials pushed`);
-      }
-    } finally {
-      await staged.cleanup();
-    }
-  }
-}
-
 export const vercelBackend: CloudBackend = {
   name: 'vercel',
 
@@ -293,7 +233,6 @@ export const vercelBackend: CloudBackend = {
       );
     }
     const networkPolicy = parseNetworkPolicy(req.networkPolicy);
-    const log = req.onLog ?? (() => {});
     // No-retry: Sandbox.create is billable and non-idempotent — a timeout after
     // the request reached the origin could leave a duplicate sandbox we can't
     // reference for cleanup.
@@ -320,17 +259,10 @@ export const vercelBackend: CloudBackend = {
         return { sandboxId: sb.name };
       },
     );
-    // Push renewable agent credentials per-box (outside the billable, no-retry
-    // create block so a push failure never affects create semantics).
-    try {
-      const sb = await getSandbox(handle.sandboxId);
-      await pushVercelAgentCredentials(sb, log);
-    } catch (err) {
-      log(
-        `vercel: WARN — agent credential push failed (${err instanceof Error ? err.message : String(err)}); ` +
-          'in-box claude/codex/opencode will prompt for interactive login',
-      );
-    }
+    // Agent credentials are seeded by `createCloudProvider`'s unified
+    // post-provision step (`seedAgentVolumesIfFresh`) via `uploadFile` + `exec`
+    // — the symlinks baked into provision.sh route ~/.claude/.credentials.json
+    // etc. through to `~/.agentbox-creds/<agent>/`.
     return handle;
   },
 

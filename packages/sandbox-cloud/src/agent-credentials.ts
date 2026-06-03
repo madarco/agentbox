@@ -141,11 +141,17 @@ export async function ensureAgentVolumesForCloud(
   opts: { onLog?: (line: string) => void } = {},
 ): Promise<EnsureAgentVolumesResult> {
   const log = opts.onLog ?? (() => {});
+  const allAgents = AGENT_SPECS.map((s) => s.kind);
   if (typeof backend.ensureVolume !== 'function') {
+    // Non-volume backends (e2b, vercel, hetzner) still get credentials seeded
+    // per-create — `seedAgentVolumesIfFresh` falls back to a direct upload+
+    // extract into the box-baked `~/.agentbox-creds/<agent>/` dirs. The mounts
+    // list stays empty (nothing to persist across boxes) but the agent list is
+    // populated so the seed actually runs.
     log(
-      `cloud backend '${backend.name}' has no volume primitive — agent credentials will not persist across boxes`,
+      `cloud backend '${backend.name}' has no volume primitive — agent credentials seeded per-create only`,
     );
-    return { mounts: [], env: buildForwardedEnv([]), agents: [] };
+    return { mounts: [], env: buildForwardedEnv(allAgents), agents: allAgents };
   }
 
   let volumeId: string;
@@ -163,8 +169,7 @@ export async function ensureAgentVolumesForCloud(
     mountPath: spec.credentialsMountPath,
     subpath: spec.credentialsSubpath,
   }));
-  const agents = AGENT_SPECS.map((s) => s.kind);
-  return { mounts, env: buildForwardedEnv(agents), agents };
+  return { mounts, env: buildForwardedEnv(allAgents), agents: allAgents };
 }
 
 function buildForwardedEnv(agents: CloudAgentKind[]): Record<string, string> {
@@ -239,8 +244,14 @@ async function seedCredentialsOne(
   opts: SeedAgentVolumesOptions,
 ): Promise<void> {
   const log = opts.onLog ?? (() => {});
+  // Non-volume backends (e2b, vercel, hetzner) have an ephemeral per-box FS:
+  // the `.agentbox-seeded-at` marker can't survive across boxes, and the host
+  // tokens are renewable, so we just push fresh every create. Volume backends
+  // (daytona) keep the marker-based idempotency so they don't re-upload into
+  // a volume already carrying credentials from a previous box.
+  const hasVolume = typeof backend.ensureVolume === 'function';
 
-  if (!opts.force) {
+  if (hasVolume && !opts.force) {
     const probe = await backend.exec(
       handle,
       `test -f ${spec.credentialsMountPath}/${SEED_MARKER}`,
@@ -276,21 +287,36 @@ async function seedCredentialsOne(
     const upDt = ((Date.now() - t0) / 1000).toFixed(1);
     process.stderr.write(`[agent-creds] ${spec.kind}: upload done in ${upDt}s\n`);
 
-    // Daytona volumes are S3-backed FUSE and reject chmod/utime. The
-    // credentials payload is one small file, so we extract straight into
-    // the mount with `cp` (not tar — tar would chmod the parent dir during
-    // delayed-set-stat and abort with EPERM). Two-step: tar into a local-fs
-    // staging dir, then cp the file across.
-    const stageDir = `/tmp/agentbox-creds-stage-${spec.kind}`;
-    const extractCmd =
-      `set -e; ` +
-      `rm -rf ${stageDir}; ` +
-      `mkdir -p ${stageDir}; ` +
-      `tar -xzf ${remoteTar} -C ${stageDir}; ` +
-      `cp -r ${stageDir}/. ${spec.credentialsMountPath}/; ` +
-      `rm -rf ${stageDir}; ` +
-      `date -u +%FT%TZ > ${spec.credentialsMountPath}/${SEED_MARKER}; ` +
-      `rm -f ${remoteTar}`;
+    const extractCmd = hasVolume
+      ? // Daytona volumes are S3-backed FUSE and reject chmod/utime. The
+        // credentials payload is one small file, so we extract straight into
+        // the mount with `cp` (not tar — tar would chmod the parent dir during
+        // delayed-set-stat and abort with EPERM). Two-step: tar into a local-fs
+        // staging dir, then cp the file across. Marker tracks idempotency.
+        (() => {
+          const stageDir = `/tmp/agentbox-creds-stage-${spec.kind}`;
+          return (
+            `set -e; ` +
+            `rm -rf ${stageDir}; ` +
+            `mkdir -p ${stageDir}; ` +
+            `tar -xzf ${remoteTar} -C ${stageDir}; ` +
+            `cp -r ${stageDir}/. ${spec.credentialsMountPath}/; ` +
+            `rm -rf ${stageDir}; ` +
+            `date -u +%FT%TZ > ${spec.credentialsMountPath}/${SEED_MARKER}; ` +
+            `rm -f ${remoteTar}`
+          );
+        })()
+      : // Ephemeral FS: extract straight into the box-baked `~/.agentbox-creds/
+        // <agent>/` dir. `sudo -u vscode` ensures the on-disk file ends up
+        // vscode-owned regardless of which user `backend.exec` runs as
+        // (e2b: vscode, vercel: vscode, hetzner: vscode via ssh — sudo
+        // works on all three because vscode has passwordless sudo). The
+        // `--no-same-permissions --no-same-owner -m` flags mirror what
+        // vercel/hetzner did in their old custom pushers.
+        `set -e; ` +
+        `sudo -u vscode mkdir -p ${spec.credentialsMountPath}; ` +
+        `sudo -u vscode tar -xzf ${remoteTar} -C ${spec.credentialsMountPath} --no-same-permissions --no-same-owner -m; ` +
+        `rm -f ${remoteTar}`;
     const extract = await backend.exec(handle, extractCmd);
     if (extract.exitCode !== 0) {
       const msg =
@@ -301,7 +327,7 @@ async function seedCredentialsOne(
       process.stderr.write(`[agent-creds] ${msg}\n`);
       return;
     }
-    log(`${spec.kind}: credentials seeded ✓`);
+    log(`${spec.kind}: credentials seeded`);
     process.stderr.write(`[agent-creds] ${spec.kind}: credentials seeded\n`);
   } finally {
     await staged.cleanup();

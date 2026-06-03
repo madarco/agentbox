@@ -253,6 +253,43 @@ shipped.
 - [x] Backlog finalized — "provider status: shipped" header above; deferred
       follow-ups summarized below.
 
+### Task 4 — credential seed unification + bypass-permissions accept  ·  status: DONE 2026-06-03
+Goal: fix two showstoppers that landed inside the post-ship `agentbox e2b claude`
+flow — E2B's `~/.agentbox-creds/<agent>/` ended up empty (Claude reported "Not
+logged in") and every fresh box hit Claude Code's one-time "Bypass Permissions
+mode … Yes, I accept" gate.
+- [x] **Bug 1 — credentials seeding.** `cloud-provider.ts`'s
+      `seedAgentVolumesIfFresh` was gated on `agentVolumes.agents.length > 0`,
+      and `ensureAgentVolumesForCloud` returned `agents: []` for any backend
+      without an `ensureVolume` primitive. Vercel and Hetzner each duplicated
+      the push in their own backends (`pushVercelAgentCredentials`,
+      `pushHetznerAgentCredentials`); E2B had no equivalent. Unified the path:
+      `ensureAgentVolumesForCloud` now returns the full agent list (`['claude',
+      'codex', 'opencode']`) for non-volume backends too, and
+      `seedCredentialsOne` branches on `backend.ensureVolume`: volume backends
+      keep the FUSE-friendly cp-via-staging + `.agentbox-seeded-at` marker;
+      ephemeral backends do `sudo -u vscode tar -xzf … --no-same-permissions
+      --no-same-owner -m` straight into the box-baked
+      `~/.agentbox-creds/<agent>/` dirs every create (tokens are renewable, the
+      box FS is ephemeral). Dropped the Vercel + Hetzner custom pushers.
+- [x] **Bug 2 — bypass-permissions accept gate.** Added
+      `"skipDangerousModePermissionPrompt": true` to
+      `packages/sandbox-docker/scripts/claude-managed-settings.json`. Disassembly
+      of `~/.local/share/claude/versions/2.1.150` showed the gate is suppressed
+      when any of `userSettings | localSettings | flagSettings | policySettings`
+      sets that key — `policySettings` is `/etc/claude-code/managed-settings.json`,
+      which the docker and cloud installers already bake. Docker boxes happened
+      to skip the gate because the host's `~/.claude/settings.json` (mounted via
+      the shared `agentbox-claude-config` volume) had the user-side equivalent;
+      cloud boxes had no such overlay. Policy precedence covers every provider.
+- [x] **Live verified on real E2B.** Fresh `agentbox prepare --provider e2b`,
+      then `create` from a tiny scratch repo; in-box
+      `~/.agentbox-creds/{claude,codex,opencode}/` carried the seeded files
+      (vscode-owned, 600 mode, content matching `~/.agentbox/<agent>-credentials.json`);
+      interactive `claude --dangerously-skip-permissions` landed straight at
+      the ready `❯` prompt — no "Bypass Permissions" accept screen, no theme
+      picker.
+
 #### Deferred follow-ups (intentional, not blocking)
 
 - **No `Template.list()` in the SDK.** `prune --provider e2b` enumerates

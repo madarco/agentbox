@@ -110,17 +110,18 @@ describe('ensureAgentVolumesForCloud', () => {
     expect(res.env['OPENCODE_CONFIG_DIR']).toBe('/home/vscode/.local/share/opencode/config');
   });
 
-  it('returns empty mounts when backend has no volume primitive', async () => {
+  it('returns empty mounts but full agents list when backend has no volume primitive', async () => {
     const { backend } = makeMockBackend({});
     delete (backend as { ensureVolume?: unknown }).ensureVolume;
     const logs: string[] = [];
     const res = await ensureAgentVolumesForCloud(backend, { onLog: (l) => logs.push(l) });
+    // Non-volume backends (e2b, vercel, hetzner) still get the seed: the
+    // unified seedAgentVolumesIfFresh falls back to a direct extract into the
+    // box-baked ~/.agentbox-creds/<agent>/ dirs. No volume to mount, but the
+    // agent list must be populated so the seed actually runs.
     expect(res.mounts).toEqual([]);
-    expect(res.agents).toEqual([]);
-    // Forwarded env keys still get included when any host env var is set; only
-    // OPENCODE_CONFIG_DIR (gated on opencode being in the agents list) is
-    // unconditionally absent.
-    expect(res.env['OPENCODE_CONFIG_DIR']).toBeUndefined();
+    expect(res.agents).toEqual(['claude', 'codex', 'opencode']);
+    expect(res.env['OPENCODE_CONFIG_DIR']).toBe('/home/vscode/.local/share/opencode/config');
     expect(logs.some((l) => l.includes('has no volume primitive'))).toBe(true);
   });
 });

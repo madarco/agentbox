@@ -35,11 +35,6 @@ import type {
   CloudSandboxSummary,
   CloudState,
 } from '@agentbox/core';
-import {
-  stageClaudeCredentialsForUpload,
-  stageCodexCredentialsForUpload,
-  stageOpencodeCredentialsForUpload,
-} from '@agentbox/sandbox-cloud';
 import { generateBoxCloudInit } from './cloud-init.js';
 import {
   HetznerApiError,
@@ -359,26 +354,11 @@ export const hetznerBackend: CloudBackend = {
       await ensureTunnel(sandboxId, state, vpsIp);
       progress('ssh up; ControlMaster open');
 
-      // 10. Push renewable agent credentials (.credentials.json for claude,
-      // auth.json for codex/opencode) into /home/vscode/.agentbox-creds/<agent>/
-      // via scp. Hetzner has no shared-volume primitive, so we can't reuse the
-      // Daytona path (`seedAgentVolumesIfFresh` returns empty mounts for
-      // backends without `ensureVolume`). The symlinks baked into the snapshot
-      // by install-box.sh route ~/.claude/.credentials.json etc. through to
-      // this dir, so the agents find their tokens at the expected paths.
-      // Best-effort: a failure here means the in-box agent falls back to
-      // interactive login (the current `claude --provider hetzner` failure
-      // mode), so we log + continue rather than aborting create.
-      const liveTarget = buildSshTarget(state, vpsIp, tunnels.controlPath(sandboxId));
-      try {
-        await pushHetznerAgentCredentials(liveTarget, onLog);
-      } catch (credErr) {
-        onLog(
-          `hetzner: WARN — agent credential push failed (${credErr instanceof Error ? credErr.message : String(credErr)}); ` +
-            `in-box claude/codex/opencode will prompt for interactive login`,
-        );
-      }
-
+      // Agent credentials are seeded by `createCloudProvider`'s unified
+      // post-provision step (`seedAgentVolumesIfFresh`) via `uploadFile` +
+      // `exec` over the live ControlMaster — the symlinks baked into
+      // install-box.sh route ~/.claude/.credentials.json etc. through to
+      // `~/.agentbox-creds/<agent>/`.
       return { sandboxId };
     } catch (err) {
       // Cleanup on failure: server + firewall + temp ssh dir.
@@ -701,70 +681,3 @@ export const hetznerBackend: CloudBackend = {
 /** Exposed for the CLI's `firewall sync` / `show` subcommands. */
 export { tunnels as _hetznerTunnels };
 
-/**
- * Push the host's renewable agent credentials (.credentials.json for claude,
- * auth.json for codex / opencode) into /home/vscode/.agentbox-creds/<agent>/
- * over the live ControlMaster. The base-snapshot symlinks route the agents'
- * expected paths through to this dir, so the in-box agents find their tokens
- * without prompting for login.
- *
- * Each stage helper returns `tarballPath: null` when there's nothing to push
- * (e.g. the user never logged in to that agent on the host) — we skip silently
- * in that case. Warnings (codex Keychain landmine, etc.) flow through `log`.
- */
-async function pushHetznerAgentCredentials(
-  target: SshTargetArgs,
-  log: (line: string) => void,
-): Promise<void> {
-  const specs: Array<{
-    kind: 'claude' | 'codex' | 'opencode';
-    stage: () => Promise<import('@agentbox/sandbox-cloud').StageResult>;
-    dest: string;
-  }> = [
-    { kind: 'claude', stage: stageClaudeCredentialsForUpload, dest: '/home/vscode/.agentbox-creds/claude' },
-    { kind: 'codex', stage: stageCodexCredentialsForUpload, dest: '/home/vscode/.agentbox-creds/codex' },
-    { kind: 'opencode', stage: stageOpencodeCredentialsForUpload, dest: '/home/vscode/.agentbox-creds/opencode' },
-  ];
-
-  for (const spec of specs) {
-    const staged = await spec.stage();
-    for (const w of staged.warnings) log(`hetzner: [${spec.kind}-creds] ${w}`);
-    try {
-      if (!staged.tarballPath) {
-        log(`hetzner: ${spec.kind}: no host credentials to push (skipping)`);
-        continue;
-      }
-      const remote = `/tmp/agentbox-${spec.kind}-creds.tar.gz`;
-      const argv = [
-        ...sshOptArgs(target),
-        staged.tarballPath,
-        `${target.user}@${target.host}:${remote}`,
-      ];
-      const scpRes = await execa('scp', argv, { reject: false, timeout: 120_000 });
-      if (scpRes.exitCode !== 0) {
-        throw new Error(
-          `scp ${spec.kind} credentials failed (exit ${String(scpRes.exitCode)}): ${scpRes.stderr ?? ''}`,
-        );
-      }
-      // Extract as vscode into the dest dir (which already exists as a
-      // chown'd dir from install-box.sh's credential-pivot step).
-      const extract = await execa(
-        'ssh',
-        [
-          ...sshOptArgs(target),
-          `${target.user}@${target.host}`,
-          `sudo -u vscode mkdir -p ${spec.dest} && sudo -u vscode tar -xzf ${remote} -C ${spec.dest} --no-same-permissions --no-same-owner -m && rm -f ${remote}`,
-        ],
-        { reject: false, timeout: 30_000 },
-      );
-      if (extract.exitCode !== 0) {
-        throw new Error(
-          `${spec.kind} credential extract failed (exit ${String(extract.exitCode)}): ${extract.stderr ?? ''}`,
-        );
-      }
-      log(`hetzner: ${spec.kind}: credentials pushed`);
-    } finally {
-      await staged.cleanup();
-    }
-  }
-}
