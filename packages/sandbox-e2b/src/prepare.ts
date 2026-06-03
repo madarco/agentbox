@@ -92,10 +92,16 @@ export async function prepareE2b(
   );
 
   // Skip-fast: existing template + matching fingerprint.
+  //
+  // Probe the persisted templateId itself, not TEMPLATE_NAME. If someone
+  // (or another bake) rebuilt the alias under a different id, the name still
+  // resolves but the stored id is stale and `Sandbox.create({ template: <stale id> })`
+  // 404s. `Template.exists` accepts both `name:tag` and `template-id:tag`
+  // forms, so we pass the exact id we'd later hand to `provision`.
   const existing = readPreparedState();
   if (!opts.force && existing.base) {
     if (existing.base.contextSha256 === contextSha) {
-      const stillThere = await templateExists(TEMPLATE_NAME, apiKey);
+      const stillThere = await templateExists(existing.base.templateId, apiKey);
       if (stillThere) {
         progress(
           `template ${existing.base.templateId} already exists (fingerprint ${contextSha.slice(0, 12)} matches); skipping (pass --force to rebuild)`,
