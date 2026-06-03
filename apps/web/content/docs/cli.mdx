@@ -11,7 +11,7 @@ This is the command catalog. Conceptual depth lives in the linked task pages —
 
 **Box references.** Almost every command takes an optional `[box]` argument: a project index (`1`, `2`, …), the box name, an id (or id prefix), or the container name. Omit it and AgentBox uses the only box in the current project. Paused or stopped boxes are auto-resumed when you act on them.
 
-**Provider sugar.** `agentbox <provider> <subcommand>` is rewritten to `--provider <provider>` before parsing. So `agentbox hetzner claude`, `agentbox vercel codex`, and `agentbox docker create` all work — they're identical to passing `--provider`.
+**Provider sugar.** `agentbox <provider> <subcommand>` is rewritten to `--provider <provider>` before parsing. So `agentbox hetzner claude`, `agentbox vercel codex`, `agentbox e2b create`, and `agentbox docker create` all work — they're identical to passing `--provider`.
 
 ## Create & run
 
@@ -265,11 +265,13 @@ The provider commands are both credential/management groups and sugar prefixes. 
 agentbox docker create
 agentbox hetzner claude
 agentbox vercel codex
+agentbox e2b claude
 
 # Log in / rotate credentials (saved to ~/.agentbox/secrets.env)
 agentbox hetzner login
 agentbox vercel login
 agentbox daytona login
+agentbox e2b login
 agentbox hetzner login --status   # show what's configured (masked)
 
 # Provider tools
@@ -278,9 +280,9 @@ agentbox hetzner firewall sync <box>
 agentbox daytona resync             # re-sync the credential volume
 ```
 
-`docker` is the default and is pure sugar (no login). Each cloud provider has a `login` subcommand (run by default); hetzner adds `firewall`, daytona adds `resync`.
+`docker` is the default and is pure sugar (no login). Each cloud provider has a `login` subcommand (run by default); hetzner adds `firewall`, daytona adds `resync`. E2B is the only cloud whose `prepare` builds the base image **directly from a Dockerfile** via the SDK's `Template.build()` — the others bake a one-time snapshot.
 
-See [Local Docker](/docs/local-docker), [Hetzner](/docs/hetzner), [Daytona](/docs/daytona), and [Vercel](/docs/vercel).
+See [Local Docker](/docs/local-docker), [Hetzner](/docs/hetzner), [Daytona](/docs/daytona), [Vercel](/docs/vercel), and [E2B](/docs/e2b).
 
 ## Maintenance
 

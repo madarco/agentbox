@@ -1,5 +1,18 @@
 # E2B provider — build-out backlog
 
+> **Provider status: shipped.** Tasks 1–3 are all merged into `main`; E2B is
+> a fully supported AgentBox cloud backend (`--provider e2b`) alongside
+> docker / daytona / hetzner / vercel. Public docs live at
+> [`/docs/e2b`](https://agent-box.sh/docs/e2b); the provider page
+> (`apps/web/content/docs/e2b.mdx`), `CLAUDE.md`,
+> `docs/cloud-providers.md` §3c, `docs/cloud-create-flow.md`, and the
+> README are kept in sync with each change.
+>
+> The standout differentiator vs. Daytona / Hetzner / Vercel: E2B is the
+> only AgentBox cloud whose `prepare` builds the base image **directly from
+> a Dockerfile** via the SDK's `Template.build()`. The others all bake a
+> one-time snapshot.
+
 Status tracker for adding **E2B** (`--provider e2b`) as a fifth AgentBox backend,
 alongside docker / daytona / hetzner / vercel.
 
@@ -214,13 +227,52 @@ attach works, checkpoints capture/restore. ALL smoke steps verified end-to-end.
   prompt. Likely a headless-terminal-vs-tmux passthrough mismatch in the
   drive harness rather than the attach helper itself. Filed for later.
 
-### Task 3 — prune + docs + polish  ·  status: NOT STARTED
-- [ ] `agentbox prune --provider e2b` (orphan sandbox/template cleanup via `Sandbox.list()`).
-- [ ] doctor checks for e2b (credentials, prepared template).
-- [ ] Docs: `docs/cloud-providers.md`, `docs/cloud-create-flow.md`, `CLAUDE.md`
-      provider list, and the public site `apps/web/content/docs/` (provider page,
-      CLI reference, `meta.json`).
-- [ ] Final pass on this backlog: mark done vs deferred, note caveats.
+### Task 3 — prune + docs + polish  ·  status: DONE 2026-06-03
+Goal: close the provider out — wire prune, finish doctor, propagate E2B
+everywhere the docs still said "four backends", and finalize the backlog as
+shipped.
+- [x] `agentbox prune --provider e2b` — `CLOUD_PRUNE_PROVIDERS` already
+      included `e2b` from Task 1; live-verified the orphan-sweep path
+      (sandbox spawned via the SDK with the `agentbox` marker tag, then
+      `prune --provider e2b --dry-run` and `-y` cleanly removed it).
+      Templates are sandbox-only — E2B's SDK exposes no `Template.list()`,
+      so prune covers sandboxes only (documented in the provider page).
+- [x] `agentbox doctor --provider e2b` — credentials + prepared-template
+      checks were added in Tasks 1–2; Task 3 fixed the stale `--provider`
+      help/error strings in `apps/cli/src/commands/doctor.ts` that still
+      listed only `docker | daytona | hetzner | vercel`.
+- [x] Internal docs synced: `CLAUDE.md` (five backends, ctl shipping list,
+      checkpoint primitive list, ops paragraph, doc-map),
+      `docs/cloud-providers.md` (intro table + §3c "The E2B shape" + §4 auth +
+      §8 file-map + footer), `docs/cloud-create-flow.md` (cross-provider
+      callout), `README.md` (provider table + login + prepare + docs link).
+- [x] Public site (Fumadocs) synced: new
+      `apps/web/content/docs/e2b.mdx` (mirrors `vercel.mdx`, leads with the
+      Dockerfile/`Template.build()` differentiator), `meta.json` providers
+      list updated, `cli.mdx` provider section updated.
+- [x] Backlog finalized — "provider status: shipped" header above; deferred
+      follow-ups summarized below.
+
+#### Deferred follow-ups (intentional, not blocking)
+
+- **No `Template.list()` in the SDK.** `prune --provider e2b` enumerates
+  sandboxes only; built templates have to be removed from the E2B
+  dashboard. Document this in the provider page; ship as-is.
+- **1-hour platform session cap on Hobby.** The attach helper caps
+  `timeoutMs` at **55 minutes** (see `packages/sandbox-e2b/src/attach-helper.ts`
+  + the staged `apps/cli/runtime/e2b/attach-helper.cjs`) to leave headroom
+  under the platform ceiling. Longer interactive sessions would need a
+  mid-session `Sandbox.setTimeout` keepalive that extends the lease — out
+  of scope for the launch.
+- **Drive harness display quirk** on the e2b shell attach (Task 2 finding).
+  A plain `script -q -c …` capture shows the prompt; the headless drive
+  harness shows an empty screen. Underlying PTY bridge works.
+- **No `e2bTimeoutMs` / `e2bNetworkPolicy` config keys.** Vercel exposes
+  parallels for its own SDK; on E2B both knobs are template-level (set at
+  `Template.build()` time) — there's no per-create override to bind a
+  config key to. Revisit if E2B's SDK grows per-create surface.
+- **`box.image` cross-provider migration** was already handled in Task 2
+  (per-provider `box.imageE2b` lives in `packages/config/src/types.ts`).
 
 ## Coordination notes (orchestrator)
 
@@ -233,6 +285,16 @@ attach works, checkpoints capture/restore. ALL smoke steps verified end-to-end.
   relay and can launch boxes on other providers, so they can fully smoke-test.
 
 ## Changelog
+- 2026-06-03: Task 3 done — `agentbox prune --provider e2b` live-verified
+  end-to-end (orphan spawned via the E2B SDK, `--dry-run` listed it, `-y`
+  deleted it); doctor `--provider` help/error strings extended to include
+  e2b; CLAUDE.md / docs/cloud-providers.md / docs/cloud-create-flow.md /
+  README.md propagated to "five backends"; new
+  `apps/web/content/docs/e2b.mdx` page added with the
+  Dockerfile/`Template.build()` differentiator front and center. Provider
+  marked as shipped; deferred follow-ups (templates not enumerable,
+  55-min/1-hr session ceiling, drive-harness display quirk,
+  no `e2bTimeoutMs`/`e2bNetworkPolicy` parallels) recorded above.
 - 2026-06-02: Backlog created; task breakdown + E2B↔CloudBackend mapping drafted.
 - 2026-06-02: Task 1 done — package + CloudBackend core, smoke-tested end-to-end.
   Open questions answered (preview URL is public by default; checkpoint deferred

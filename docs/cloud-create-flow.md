@@ -11,6 +11,17 @@ first box you ever create and the next one. Source of truth:
 `packages/sandbox-cloud/src/agent-credentials.ts`,
 `packages/sandbox-daytona/src/backend.ts`.
 
+> **Hetzner / Vercel / E2B follow the same flow.** The steps below
+> (mint-identity → reserve volumes → provision → workspace seed → credential
+> seed → env-upload → ctl/dockerd/VNC launch → preview URLs → relay register
+> → BoxRecord persist) are provider-agnostic; only the `provision` step
+> differs (Daytona snapshot vs. Hetzner snapshot vs. Vercel snapshot vs. E2B
+> custom template baked from a Dockerfile via `Template.build()`).
+> `agentbox prepare --provider e2b` is the one E2B-specific prerequisite,
+> and `box.imageE2b` pins the resulting template id — see
+> [`e2b_backlog.md`](./e2b_backlog.md). The `launchDockerd` step is skipped
+> for Vercel and E2B (Firecracker microVMs can't run nested containers).
+
 ## The flow (per box)
 
 Routed through `daytonaProvider` → `createCloudProvider(daytonaBackend)`

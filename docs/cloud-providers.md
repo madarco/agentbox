@@ -1,8 +1,8 @@
 # Cloud providers
 
-> _Status: v1 ships with Daytona + Hetzner + Vercel. The provider abstraction is generic — adding another cloud is ~150 lines (see §6)._
+> _Status: v1 ships with Daytona + Hetzner + Vercel + E2B. The provider abstraction is generic — adding another cloud is ~150 lines (see §6)._
 
-AgentBox runs on four backends today, behind a single `Provider` interface
+AgentBox runs on five backends today, behind a single `Provider` interface
 (`packages/core/src/provider.ts`):
 
 | Provider | Where the box lives | When to use it |
@@ -11,11 +11,13 @@ AgentBox runs on four backends today, behind a single `Provider` interface
 | `daytona` | Daytona Cloud sandbox | When the workload outgrows the laptop, when teammates need to attach, when you want a snapshot-ready remote env. |
 | `hetzner` | Hetzner Cloud VPS (1:1 per box) | When you want bare-VPS control (root, full kernel, your own region), pure OpenSSH (no third-party agent in the box), and a Cloud Firewall locked to your egress IP. ~€4/mo per running box. |
 | `vercel` | Vercel Sandbox (Firecracker microVM) | When you want a fast snapshot-based remote env with public HTTPS preview URLs and persistent pause/resume. No nested containers (no in-box `docker`); region `iad1` only. See §3b. |
+| `e2b` | E2B Sandbox (Firecracker microVM) | When you want a Firecracker microVM with public HTTPS preview URLs and **the base image built straight from a Dockerfile** (`Template.build()`) — the only cloud provider that bakes from a Dockerfile rather than a one-time snapshot. No nested containers, no SSH; 1-hour platform session cap on Hobby. See §3c. |
 
 Switch backends per box: `agentbox create --provider daytona` (or `--provider
-hetzner` / `--provider vercel`), or pin project-wide via `box.provider: <name>`
-in `agentbox.yaml`. The rest of the CLI surface (`shell`, `claude`, `url`, `cp`,
-`checkpoint`, …) routes on `box.provider` and Just Works for all four.
+hetzner` / `--provider vercel` / `--provider e2b`), or pin project-wide via
+`box.provider: <name>` in `agentbox.yaml`. The rest of the CLI surface (`shell`,
+`claude`, `url`, `cp`, `checkpoint`, …) routes on `box.provider` and Just Works
+for all five.
 
 ## 1. The provider abstraction
 
@@ -53,16 +55,16 @@ This split is why "add a new cloud" is small: only the SDK shim differs.
 
 Each provider's `agentbox prepare --provider X` writes the resulting
 identifier into a per-provider config key — `box.imageDocker` /
-`box.imageDaytona` / `box.imageHetzner` / `box.imageVercel` — never the
-generic `box.image`. Reads resolve per-provider first, then fall back to
-`box.image`, then to the built-in `agentbox/box:dev` sentinel. This
-prevents the cross-provider footgun where running `prepare --provider
-vercel` would pin a `snap_…` id into the generic key and then break
-subsequent `create --provider hetzner` calls (Hetzner doesn't know that
-id). `--image <ref>` on `create` is resolved at the call site and wins
-over both the per-provider and generic keys. As a one-shot migration,
-any `prepare` that finds a stale non-default `box.image` in project
-config unsets it and logs a warning.
+`box.imageDaytona` / `box.imageHetzner` / `box.imageVercel` /
+`box.imageE2b` — never the generic `box.image`. Reads resolve
+per-provider first, then fall back to `box.image`, then to the built-in
+`agentbox/box:dev` sentinel. This prevents the cross-provider footgun
+where running `prepare --provider vercel` would pin a `snap_…` id into
+the generic key and then break subsequent `create --provider hetzner`
+calls (Hetzner doesn't know that id). `--image <ref>` on `create` is
+resolved at the call site and wins over both the per-provider and
+generic keys. As a one-shot migration, any `prepare` that finds a stale
+non-default `box.image` in project config unsets it and logs a warning.
 
 ## 2. The Daytona shape
 
@@ -464,6 +466,56 @@ the shape in brief:
 - **Hard platform limits:** region `iad1` only, 32 GB fixed disk, 2048 MB RAM
   per vCPU, 45 min (Hobby) / 5 hr (Pro+) sessions.
 
+## 3c. The E2B shape
+
+E2B Sandbox is a Firecracker microVM on Debian 12 with `Sandbox.createSnapshot`
+checkpoints and public `{port}-{sandboxId}.e2b.app` preview URLs. Full
+build-out status lives in [`e2b_backlog.md`](./e2b_backlog.md); the shape in
+brief:
+
+- **Base via `Template.build()` from a Dockerfile — the key differentiator.**
+  Unlike Daytona's published snapshot, Hetzner's `create_image` snapshot, or
+  Vercel's `sb.snapshot()` (none of which accept a Dockerfile), E2B builds
+  the base image **directly from a Dockerfile**. `agentbox prepare --provider
+  e2b` drives the SDK's `Template.build()` using a TypeScript-described
+  template that reuses the staged docker runtime assets (Claude / Codex /
+  OpenCode, agentbox-ctl, the vscode user, VNC, tmux). The resulting
+  `templateId:tag` is persisted to `~/.agentbox/e2b-prepared.json` and to
+  `box.imageE2b`; every `create --provider e2b` boots from it in seconds.
+- **No nested containers.** Firecracker + seccomp on E2B blocks the
+  namespace syscalls a container runtime needs (same as Vercel), so the
+  provider passes `launchDockerd: false`; in-box `docker` is unavailable.
+- **Pause/resume is free.** `Sandbox.pause(id)` pauses; `Sandbox.connect(id)`
+  auto-resumes lazily on the next op. The provider's `state()`/`get()` use
+  the non-resuming `Sandbox.getInfo()` so existence checks don't wake (and
+  bill) a paused sandbox. `previewUrl()` is also resume-free — it constructs
+  the URL locally from `sandboxId + port + E2B_DOMAIN` rather than going
+  through `Sandbox.connect`.
+- **Preview URLs are public HTTPS.** `getHost(port)` returns
+  `{port}-{sandboxId}.e2b.app` over HTTPS with no token (verified via plain
+  `curl`). Like Daytona/Vercel, this reaches the host browser AND the in-box
+  bridge, so the Portless in-box mirror is skipped. The WebProxy runs on
+  port 8080. Optional `network: { allowPublicTraffic: false }` (not enabled
+  by default) gates the URL behind an `e2b-traffic-access-token` header;
+  Task 3 leaves it public to match Vercel.
+- **No SSH → SDK-streaming PTY attach.** `buildAttach` spawns
+  `attach-helper.cjs`, which `Sandbox.connect`s, opens a `pty.create({ cols,
+  rows, onData })` stream, and bridges stdin / stdout / `SIGWINCH` to the
+  host TTY. The helper caps `timeoutMs` at **55 minutes** to leave headroom
+  under E2B's 1-hour platform session cap on Hobby (longer sessions need a
+  mid-session `Sandbox.setTimeout` keepalive — deferred).
+- **Checkpoints are id-addressed (same shape as Vercel).** The provider
+  overrides `checkpoint.create` to call `Sandbox.createSnapshot(sandboxId,
+  { name })`, store the returned `snapshotId` in the cloud-checkpoint
+  manifest's `snapshotName` field, and restore via `Sandbox.create({
+  template: snapshotId })`. `createSnapshot` pauses the source while
+  capturing; the next op auto-resumes it.
+- **Hard platform limits:** template-level resources (vCPU / RAM / disk are
+  baked at `Template.build()` time; per-create overrides are advisory
+  metadata only), 1-hour session cap on Hobby, max upload chunk constraints
+  from the SDK (handled by the cloud scaffold). E2B itself runs in multiple
+  regions; the SDK chooses one transparently.
+
 ## 4. Authentication
 
 `agentbox daytona login` is the supported path. It prompts for
@@ -496,6 +548,13 @@ trio**: it doesn't expire on the 12h cycle and is the practical path for
 `prepare`, CI, and other headless/long jobs. Mint a token at
 `https://vercel.com/account/settings/tokens`; the team id is in the team's
 General settings and the project id in the project's General settings.
+
+`agentbox e2b login` is the E2B equivalent. It prompts for `E2B_API_KEY`
+(required; mint at `https://e2b.dev/dashboard?tab=keys`) and persists it to
+`~/.agentbox/secrets.env`. Like the other clouds, agentbox reads the key
+**only** from the shell env or `~/.agentbox/secrets.env` — project-local
+`.env`/`.env.local` are never harvested. First-time use of `--provider e2b`
+triggers the login prompt automatically.
 
 ## 5. Known caveats
 
@@ -599,6 +658,9 @@ failure flags either a backend bug or an abstraction gap.
 | Cloud backend interface | `packages/core/src/cloud-backend.ts` |
 | Cloud provider composition | `packages/sandbox-cloud/src/cloud-provider.ts` |
 | Daytona SDK shim | `packages/sandbox-daytona/src/backend.ts` |
+| Vercel SDK shim | `packages/sandbox-vercel/src/backend.ts` |
+| Hetzner SDK shim | `packages/sandbox-hetzner/src/backend.ts` |
+| E2B SDK shim | `packages/sandbox-e2b/src/backend.ts` |
 | Workspace seeding (bundle + carry-over) | `packages/sandbox-cloud/src/workspace-seed.ts` |
 | Agent credential volumes | `packages/sandbox-cloud/src/agent-credentials.ts` |
 | Cloud cp / download | `packages/sandbox-cloud/src/cloud-cp.ts` |
@@ -607,8 +669,12 @@ failure flags either a backend bug or an abstraction gap.
 | Cloud poller | `packages/relay/src/cloud-poller.ts` |
 | Retry / 504 backoff | `packages/sandbox-daytona/src/retry.ts`, `cloud-poller.ts` fast-mode |
 | Per-provider default checkpoint | `packages/config/src/checkpoint.ts` |
-| Orphan prune | `apps/cli/src/commands/prune.ts` `--provider daytona` |
+| Orphan prune | `apps/cli/src/commands/prune.ts` `--provider <daytona\|vercel\|e2b>` |
 | SSH alias management | `apps/cli/src/ssh-config.ts` |
 | Cloud E2E test | `apps/cli/test/cloud-e2e.test.ts` (gated on `DAYTONA_API_KEY`) |
 
-Track outstanding work in [`daytona-backlog.md`](./daytona-backlog.md).
+Track outstanding work in
+[`daytona-backlog.md`](./daytona-backlog.md),
+[`hertzner_backlog.md`](./hertzner_backlog.md),
+[`vercel-backlog.md`](./vercel-backlog.md), and
+[`e2b_backlog.md`](./e2b_backlog.md).

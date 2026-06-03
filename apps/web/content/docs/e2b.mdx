@@ -1,0 +1,117 @@
+---
+title: E2B
+description: A Firecracker microVM per box with a Dockerfile-baked base template, public preview URLs, and free pause/resume
+---
+
+Use E2B when you want a fast snapshot-based remote env with public HTTPS preview URLs **and you want to bake the base image straight from a Dockerfile** — uniquely among AgentBox's cloud providers, E2B's `prepare` drives the SDK's `Template.build()` from a Dockerfile rather than booting+snapshotting a vanilla base. Each box is one E2B Sandbox — a Firecracker microVM on Debian 12 — with first-class pause/resume, id-addressed `Sandbox.createSnapshot` checkpoints, and a public `*.e2b.app` URL reachable from your browser and from inside the [box](/docs/core-concepts).
+
+Switch per box with `--provider e2b`, or pin it project-wide with `box.provider: e2b` in [`agentbox.yaml`](/docs/agentbox-yaml). The rest of the CLI (`shell`, `claude`, `url`, `cp`, `checkpoint`, …) routes on `box.provider` automatically. Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona), and [vercel](/docs/vercel).
+
+## Set up
+
+The first time you use `--provider e2b` AgentBox prompts you to log in; you can also run it explicitly. Sign in with `agentbox e2b login` — it prompts for `E2B_API_KEY` (mint at [e2b.dev/dashboard](https://e2b.dev/dashboard?tab=keys)) and persists it to `~/.agentbox/secrets.env`. Credentials are read only from your shell env or `~/.agentbox/secrets.env` — project-local `.env` files are never harvested.
+
+```bash
+agentbox e2b login
+```
+
+See [environment](/docs/environment) for where the `E2B_API_KEY` and `~/.agentbox/secrets.env` live.
+
+## Prepare the base template (Dockerfile → `Template.build()`)
+
+<Callout title="WHAT MAKES E2B DIFFERENT">
+Daytona, Hetzner, and Vercel each bake their base by booting a vanilla image, running provisioning steps, then snapshotting. **E2B is the only AgentBox cloud provider that builds the base directly from a Dockerfile** via the SDK's `Template.build()`. That means a deterministic, layer-cached, code-first build rather than a stateful provisioning run.
+</Callout>
+
+`agentbox prepare --provider e2b` drives a TypeScript-described `Template.build()` that includes everything the box needs (agentbox-ctl, the vscode user, Claude / Codex / OpenCode, tmux, VNC). The resulting `templateId:tag` is recorded under the per-provider key `box.imageE2b` and to `~/.agentbox/e2b-prepared.json`; every `create --provider e2b` boots from it.
+
+```bash
+agentbox prepare --provider e2b
+```
+
+A repeat `prepare` reuses the existing template unless you pass `--force`. The bake takes a couple of minutes the first time; subsequent layer-cached builds are faster. See [CLI commands](/docs/cli) for all flags.
+
+## Create a box
+
+Once you're logged in and prepared, the flow is standard. The workspace is seeded from a host git bundle plus your stash and untracked files (see [teleport-a-project](/docs/teleport-a-project)). The box runs as user `vscode`, and `/workspace` is checked out on branch `agentbox/<box-name>`.
+
+```bash
+agentbox create --provider e2b
+```
+
+```bash
+# sugar: argv-prefix rewrite equivalent to --provider e2b
+agentbox e2b claude
+```
+
+`agentbox e2b create|claude|codex|opencode` all map to the same provider. From there, [run an agent](/docs/run-an-agent) and [access your box](/docs/access-your-box) as usual.
+
+## Limits
+
+| Limit | |
+| --- | --- |
+| Region | SDK-chosen (transparent) |
+| Disk / RAM / vCPU | Template-level — set at `Template.build()` time; per-create `--size` is advisory only |
+| Exposed ports | Any port via `sandbox.getHost(port)`; WebProxy runs on 8080 |
+| Session length | 1 hour (Hobby) — the attach helper caps at **55 minutes** for headroom |
+| Nested containers | none — `docker` unavailable in-box (Firecracker + seccomp) |
+| SSH | none — attach is an SDK-streaming PTY bridge over `pty.create` |
+
+<Callout type="warn" title="NO IN-BOX DOCKER">
+If your `agentbox.yaml` needs Docker-in-Docker — say a `postgres:16` service — use the [docker](/docs/local-docker), [hetzner](/docs/hetzner), or [daytona](/docs/daytona) provider instead. DinD is impossible on E2B for the same reason as on Vercel (Firecracker + seccomp). See [docker-in-docker](/docs/docker-in-docker).
+</Callout>
+
+## Pause / resume
+
+E2B sandboxes pause via `Sandbox.pause(id)` and auto-resume on the next `Sandbox.connect(id)` op. The provider's `state`/`get` use the non-resuming `Sandbox.getInfo()` so existence checks don't wake (and bill) a paused sandbox. `agentbox list` and `agentbox url` are both resume-free — `previewUrl` constructs the public hostname locally rather than going through `Sandbox.connect`.
+
+```bash
+agentbox pause <box>
+agentbox start <box>
+```
+
+The public `*.e2b.app` URL stays stable across a stop/start. `destroy` calls `Sandbox.kill()` and tears the sandbox down.
+
+## Checkpoints
+
+Cloud checkpoints map to E2B snapshots — `Sandbox.createSnapshot(sandboxId, { name })` returns an id-addressed reusable template (same shape as Vercel). `agentbox checkpoint create` captures it; `agentbox create --checkpoint <name>` boots from it with `/workspace` intact and skips workspace seeding. Pair `checkpoint create` with `box.defaultCheckpointE2b` so repeat creates boot from your project-ready snapshot.
+
+```bash
+agentbox checkpoint create --name setup
+agentbox create --provider e2b --checkpoint setup
+```
+
+<Callout type="warn" title="HEADS UP">
+`createSnapshot` pauses the source sandbox while capturing; the next op auto-resumes it. AgentBox self-heals a stale checkpoint: `create` probes liveness, prunes the dangling manifest, and falls back to the base template.
+</Callout>
+
+## Maintenance
+
+`agentbox prune --provider e2b` lists every E2B sandbox the configured `E2B_API_KEY` can see, cross-references against this CLI's local `state.json`, and offers to delete sandboxes you no longer track (typically left behind by an interrupted `create`). The orphan set is restricted to sandboxes that carry the agentbox marker tag, so manually-provisioned E2B sandboxes are never touched.
+
+```bash
+agentbox prune --provider e2b --dry-run
+agentbox prune --provider e2b -y
+```
+
+`agentbox doctor --provider e2b` checks the credential file + the prepared base template.
+
+## Caveats
+
+- **No live stats** — `agentbox top` / `dashboard` render `—` for cloud boxes, and `list` reports them optimistically as `running`.
+- **Privileged ports are rejected** — the WebProxy runs on 8080 (not 80); `agentbox url` resolves the 8080 domain.
+- **Push through the relay** — use `agentbox-ctl git push` from a box; the relay holds the credentials. See [sync-and-git](/docs/sync-and-git).
+- **E2B-only config keys are ignored by other providers** — `box.imageE2b` / `box.defaultCheckpointE2b` / `box.sizeE2b` only apply to e2b.
+- **Template-level resources** — vCPU/RAM/disk are baked at `Template.build()` time; per-create `--size` overrides are advisory metadata for the dashboard only.
+- **Templates are not enumerable** — the E2B SDK has no `Template.list()`, so `prune --provider e2b` covers sandboxes only. Remove built templates from the [E2B dashboard](https://e2b.dev/dashboard?tab=templates) if you need to.
+
+## Related
+
+- [core-concepts](/docs/core-concepts) — what a box, branch, and worktree are.
+- [teleport-a-project](/docs/teleport-a-project) — how `/workspace` is seeded.
+- [run-an-agent](/docs/run-an-agent) · [access-your-box](/docs/access-your-box) — work in a cloud box.
+- [web-apps-and-tunnels](/docs/web-apps-and-tunnels) — preview URLs, the 8080 WebProxy, `expose:` ports.
+- [checkpoints-and-pausing](/docs/checkpoints-and-pausing) — pause/resume and checkpoints.
+- [sync-and-git](/docs/sync-and-git) — relay-backed push/pull.
+- [services-and-tasks](/docs/services-and-tasks) — `agentbox.yaml` services and `expose`.
+- [cli](/docs/cli) · [agentbox-yaml](/docs/agentbox-yaml) · [configuration](/docs/configuration) · [environment](/docs/environment) — reference.
