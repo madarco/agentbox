@@ -281,6 +281,14 @@ shipped.
   and the CLI's top-level catch renders it as a one-line message instead
   of a raw stack trace. Same treatment for the parallel vercel/hetzner
   gates.
+- **Checkpoint manifest records `baseFingerprint`** (2026-06-03). The custom
+  `e2bCheckpoint.create` (mirrors `vercelCheckpoint.create`) now passes
+  `baseProvider`, `baseFingerprint`, and `cliVersion` to
+  `writeCloudCheckpointManifest` — matching the scaffold default that
+  daytona/hetzner inherit. Before, every e2b/vercel default checkpoint
+  tripped the wizard's "captured before checkpoint versioning; base
+  snapshot unverifiable" branch and stale-prompted forever; now the
+  fresh-vs-stale verdict is real for all four clouds.
 
 ## Coordination notes (orchestrator)
 

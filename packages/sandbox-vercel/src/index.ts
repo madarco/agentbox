@@ -15,6 +15,7 @@
 import type { BoxRecord, Provider, ProviderCheckpoint } from '@agentbox/core';
 import {
   createCloudProvider,
+  currentCloudBaseFingerprint,
   listCloudCheckpoints,
   removeCloudCheckpointDir,
   resolveCloudCheckpoint,
@@ -26,7 +27,7 @@ import {
   deleteVercelSnapshot,
   DEFAULT_BOX_IMAGE_REF,
 } from './backend.js';
-import { recordBox } from '@agentbox/sandbox-core';
+import { readCliStamp, recordBox } from '@agentbox/sandbox-core';
 import { prepareVercelProvider } from './prepare.js';
 import { buildVercelAttach } from './build-attach.js';
 
@@ -71,6 +72,9 @@ const vercelCheckpoint: ProviderCheckpoint = {
       snapshotName: snapshotId,
       sourceBoxId: box.id,
       sourceBoxName: box.name,
+      baseProvider: BACKEND_NAME,
+      baseFingerprint: currentCloudBaseFingerprint(BACKEND_NAME),
+      cliVersion: readCliStamp().cliVersion,
     });
     return { ref: info.name };
   },

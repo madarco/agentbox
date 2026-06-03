@@ -18,12 +18,13 @@
 import type { BoxRecord, Provider, ProviderCheckpoint } from '@agentbox/core';
 import {
   createCloudProvider,
+  currentCloudBaseFingerprint,
   listCloudCheckpoints,
   removeCloudCheckpointDir,
   resolveCloudCheckpoint,
   writeCloudCheckpointManifest,
 } from '@agentbox/sandbox-cloud';
-import { recordBox } from '@agentbox/sandbox-core';
+import { readCliStamp, recordBox } from '@agentbox/sandbox-core';
 import { e2bBackend, DEFAULT_BOX_IMAGE_REF } from './backend.js';
 import { Sandbox, resolveApiKey } from './sdk.js';
 import { withE2bRetry } from './retry.js';
@@ -119,6 +120,9 @@ const e2bCheckpoint: ProviderCheckpoint = {
       snapshotName: snapshotId,
       sourceBoxId: box.id,
       sourceBoxName: box.name,
+      baseProvider: BACKEND_NAME,
+      baseFingerprint: currentCloudBaseFingerprint(BACKEND_NAME),
+      cliVersion: readCliStamp().cliVersion,
     });
     return { ref: info.name };
   },
