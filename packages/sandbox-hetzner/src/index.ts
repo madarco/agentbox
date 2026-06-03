@@ -15,6 +15,7 @@ import type { Provider } from '@agentbox/core';
 import { createCloudProvider } from '@agentbox/sandbox-cloud';
 import { hetznerBackend, HETZNER_DEFAULT_BOX_IMAGE_REF } from './backend.js';
 import { prepareHetznerProvider } from './prepare.js';
+import { currentHetznerBaseFingerprintLive } from './prepared-state.js';
 
 const cloudProvider = createCloudProvider(hetznerBackend, {
   defaultResources: { cpu: 2, memory: 4, disk: 40 },
@@ -23,6 +24,7 @@ const cloudProvider = createCloudProvider(hetznerBackend, {
 export const hetznerProvider: Provider = {
   ...cloudProvider,
   prepare: prepareHetznerProvider,
+  baseFingerprint: () => currentHetznerBaseFingerprintLive(),
 };
 
 export { hetznerBackend, HETZNER_DEFAULT_BOX_IMAGE_REF };
@@ -63,6 +65,7 @@ export {
 } from './ssh-cli.js';
 export { pollUntil, type PollOptions } from './poll.js';
 export {
+  currentHetznerBaseFingerprintLive,
   preparedStatePath,
   readPreparedState,
   writePreparedState,

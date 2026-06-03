@@ -13,8 +13,9 @@
  * accepted today.
  */
 
-import { readPreparedStateRaw, writePreparedStateRaw, preparedStatePathFor } from '@agentbox/sandbox-core';
+import { computeContextSha256, readPreparedStateRaw, writePreparedStateRaw, preparedStatePathFor } from '@agentbox/sandbox-core';
 import { UserFacingError } from '@agentbox/core';
+import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets.js';
 
 const SCHEMA = 1 as const;
 
@@ -63,6 +64,29 @@ export function updatePreparedState(mutate: (s: PreparedE2bState) => void): void
   const s = readPreparedState();
   mutate(s);
   writePreparedState(s);
+}
+
+/**
+ * Compute the CURRENT build-context fingerprint for the e2b base template
+ * (the SHA over every file `prepare` would copy into the Template build).
+ * Side-effect-free — never builds. Returns `undefined` when the runtime
+ * assets can't be resolved (dev tree without `pnpm -w build`) so the CLI
+ * can degrade to "can't tell, don't nag" rather than flag a false stale.
+ *
+ * Used by `evaluateBaseFreshness` to compare against the stored value in
+ * `e2b-prepared.json.base.contextSha256`. Must produce a byte-identical
+ * hash to the one `prepare` writes — both go through the same
+ * `resolveRuntimeAssets` + `computeContextSha256` chain.
+ */
+export async function currentE2bBaseFingerprintLive(): Promise<string | undefined> {
+  try {
+    const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
+    return await computeContextSha256(
+      assets.map((a) => ({ rel: a.name, abs: a.localPath })),
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 /**

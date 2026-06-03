@@ -18,6 +18,7 @@ import {
   readVercelCredStatus,
   secretsPath,
 } from './credentials.js';
+import { readPreparedState } from './prepared-state.js';
 import { detectSbx, installSbxHint } from './sbx-cli.js';
 
 interface LoginOpts {
@@ -98,6 +99,15 @@ const loginSub = new Command('login')
         return;
       }
       await ensureVercelCredentials({ force: true });
+      // Credentials alone don't get a user a working box — they also need a
+      // baked base snapshot. Nudge toward `prepare` so the login → first-create
+      // path doesn't hit the (otherwise-clean) "no Vercel base snapshot found"
+      // error from `ensureVercelBaseSnapshot`. No layering break.
+      if (readPreparedState().base === undefined) {
+        log.info(
+          'Base snapshot not built yet — run `agentbox prepare --provider vercel` (or `agentbox install`) to bake it.',
+        );
+      }
     } catch (err) {
       reportError(err);
     }

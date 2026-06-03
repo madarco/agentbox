@@ -77,6 +77,22 @@ export async function computeDaytonaContextFingerprint(): Promise<DaytonaFingerp
   return { contextSha256: await computeContextSha256(files), files };
 }
 
+/**
+ * Compute the CURRENT build-context fingerprint for the daytona base snapshot.
+ * Side-effect-free wrapper around `computeDaytonaContextFingerprint` that
+ * returns just the SHA (or `undefined` when assets can't be resolved). Used
+ * by the CLI's `evaluateBaseFreshness` to compare against the stored
+ * `daytona-prepared.json.base.contextSha256`.
+ */
+export async function currentDaytonaBaseFingerprintLive(): Promise<string | undefined> {
+  try {
+    const fp = await computeDaytonaContextFingerprint();
+    return fp?.contextSha256;
+  } catch {
+    return undefined;
+  }
+}
+
 export function readPreparedDaytonaState(): PreparedDaytonaState | null {
   const raw = readPreparedStateRaw('daytona');
   if (raw === null || typeof raw !== 'object') return null;

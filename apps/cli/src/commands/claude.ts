@@ -69,6 +69,8 @@ import { openCommandLog } from '../lib/log-file.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
 import { maybeRunSetupWizard } from '../wizard.js';
+import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
+import { runPrepare } from './prepare.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { pasteHostClipboardImage } from '../lib/paste-image.js';
 import { clipboardCaptureAvailable } from '../lib/host-clipboard.js';
@@ -666,6 +668,12 @@ export const claudeCommand = new Command('claude')
     // First-run wizard: when no agentbox.yaml exists, offer to inject an
     // initial user-message so claude reads /agentbox-setup and writes one.
     // Skipped when starting from a checkpoint (it already carries the config).
+    //
+    // Base freshness: cloud providers store a fingerprint of the baked
+    // runtime; if the local install no longer matches, the wizard offers to
+    // rebuild before creating. Docker self-heals via `ensureImage`, so its
+    // baseStatus is always `fresh` and the wizard is a no-op here.
+    const baseStatus = await evaluateBaseFreshness(providerName);
     const wiz = await maybeRunSetupWizard({
       workspace: opts.workspace,
       yes: !!opts.yes,
@@ -674,7 +682,21 @@ export const claudeCommand = new Command('claude')
       checkpointFromDefault: !(opts.snapshot && opts.snapshot.length > 0),
       provider: providerName,
       withEnv: cfg.effective.box.withEnv,
+      baseStatus,
     });
+    // Stale base: user opted in to rebuilding it. Re-bakes the snapshot /
+    // template and refreshes its stored fingerprint, so the subsequent box
+    // boots from the fresh base. Runs *before* checkpoint discard so a
+    // failure aborts cleanly without leaving a half-created box.
+    if (wiz.rebuildBase) {
+      log.warn(`${providerName} base image is outdated; rebuilding before create…`);
+      await runPrepare(providerName, {
+        force: true,
+        cwd: opts.workspace,
+        suppressTip: true,
+        suppressStatus: true,
+      });
+    }
     // The wizard may discard a stale/dead default checkpoint (recreate, or a
     // non-interactive run): boot from the current base instead of the old
     // artifact. An explicit `--snapshot` is never discarded.

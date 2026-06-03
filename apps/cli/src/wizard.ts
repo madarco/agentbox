@@ -3,7 +3,7 @@ import { findProjectRoot } from '@agentbox/config';
 import type { ProviderName } from '@agentbox/core';
 import { DEFAULT_ENV_PATTERNS, scanHostEnvFiles } from '@agentbox/sandbox-docker';
 import { basename } from 'node:path';
-import { type CheckpointStatus, evaluateCheckpoint } from './checkpoint-lookup.js';
+import { type BaseStatus, type CheckpointStatus, evaluateCheckpoint } from './checkpoint-lookup.js';
 
 /**
  * In-box absolute path to the setup guide markdown (baked into the box image
@@ -51,6 +51,14 @@ export interface WizardOutcome {
    * provisions from the current base instead of a dead/outdated artifact.
    */
   discardCheckpoint?: boolean;
+  /**
+   * Set when the provider's base image / snapshot is out of date and the
+   * user opted in to recreating it. The caller runs `runPrepare(provider, {
+   * force: true })` BEFORE `createBox`/`provider.create` so the box boots
+   * from the fresh base. Implies `discardCheckpoint`: a stale base
+   * invalidates any artifact captured against it.
+   */
+  rebuildBase?: boolean;
 }
 
 interface WizardArgs {
@@ -87,6 +95,15 @@ interface WizardArgs {
    * env-file multiselect is suppressed in that case — the user pre-decided.
    */
   withEnv?: boolean;
+  /**
+   * Freshness of the target provider's base image / snapshot
+   * (`evaluateBaseFreshness(provider)`). A `stale` base must be re-prompted
+   * to rebuild before booting any box — outranks even a fresh checkpoint and
+   * an existing agentbox.yaml, since they all share the same base. `unknown`
+   * / `unprepared` / `fresh` (or omitted) → silent no-op. Non-interactive
+   * runs warn loudly and proceed on the existing base — never auto-bake.
+   */
+  baseStatus?: BaseStatus;
 }
 
 /**
@@ -138,10 +155,47 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
 
   const fromDefault = args.checkpointFromDefault !== false;
 
+  // Stale CLOUD base: every box on this provider boots from it, so re-prompt
+  // BEFORE the agentbox.yaml early-return AND before the fresh-checkpoint
+  // short-circuit (both would silently boot incompatible boxes on an old base).
+  // `fromDefault === false` (explicit `--snapshot`) is a deliberate restore —
+  // no base-rebuild hijack; create-time warning only.
+  const baseStale = args.baseStatus?.state === 'stale' && fromDefault;
+  let rebuildBase = false;
+  if (baseStale) {
+    const provider = args.provider ?? 'docker';
+    const mins = rebuildMinutesFor(provider);
+    const yamlSuffix = proj.hasAgentboxYaml ? '' : ' and run Setup Wizard';
+    const rebuild = await confirm({
+      message:
+        `The ${provider} base image is out of date — its baked runtime no longer matches your current install. ` +
+        `Recreate the base${yamlSuffix}? (rebuilds the base — ~${mins} min — then starts fresh)`,
+      initialValue: true,
+    });
+    if (isCancel(rebuild) || !rebuild) {
+      // Boot on the old base — keep any checkpoint as-is (the user opted in
+      // to the existing artifact). Mirrors the "use it anyway" arm below.
+      return {
+        action: 'proceed',
+        discardCheckpoint: discardOnMissing(status, fromDefault),
+      };
+    }
+    rebuildBase = true;
+    // hasAgentboxYaml + base rebuild: the project's already configured, so
+    // skip the setup wizard branch and just rebuild + proceed.
+    if (proj.hasAgentboxYaml) {
+      return {
+        action: 'proceed',
+        rebuildBase: true,
+        discardCheckpoint: true,
+      };
+    }
+  }
+
   // An existing agentbox.yaml means the project is already configured; don't
   // nag. Still drop a dead *default* checkpoint so create doesn't try to boot
   // a pruned image/snapshot (a stale-but-bootable one is kept — the create
-  // path warns about it).
+  // path warns about it). A stale base was handled above (early-returned).
   if (proj.hasAgentboxYaml) {
     return { action: 'proceed', discardCheckpoint: discardOnMissing(status, fromDefault) };
   }
@@ -150,17 +204,20 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
   // when it was captured — skip the "generate one?" prompt entirely. "Usable"
   // = fresh, or a stale snapshot the user pinned explicitly via `--snapshot`
   // (kept as-is; the create path warns). A stale *default* is re-prompted
-  // below; a missing one falls through to normal setup.
-  if (status.state === 'fresh' || (status.state === 'stale' && !fromDefault)) {
+  // below; a missing one falls through to normal setup. Skipped when the user
+  // already opted in to rebuilding the base — the old checkpoint's gone with it.
+  if (!rebuildBase && (status.state === 'fresh' || (status.state === 'stale' && !fromDefault))) {
     log.info(`starting from checkpoint "${args.checkpointRef}"; skipping agentbox.yaml setup`);
     return { action: 'proceed' };
   }
 
   // Stale default checkpoint: don't silently boot the old base layers. Offer
-  // to recreate (re-run setup on the current base) or use it anyway.
-  let discardCheckpoint = false;
-  let recreateChosen = false;
-  if (status.state === 'stale' && fromDefault) {
+  // to recreate (re-run setup on the current base) or use it anyway. Skipped
+  // when `rebuildBase` is already true — the base rebuild implies a discard,
+  // and recreateChosen below short-circuits the second "set up?" confirm.
+  let discardCheckpoint = rebuildBase;
+  let recreateChosen = rebuildBase;
+  if (!rebuildBase && status.state === 'stale' && fromDefault) {
     const recreate = await confirm({
       message: `Snapshot "${args.checkpointRef}" is stale (${status.reason}). Start from base and run Setup Wizard? (No = use it anyway)`,
       initialValue: true,
@@ -171,7 +228,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
     }
     discardCheckpoint = true;
     recreateChosen = true;
-  } else if (status.state === 'missing') {
+  } else if (!rebuildBase && status.state === 'missing') {
     // No bootable artifact for this provider — drop a dead default ref so
     // create provisions fresh, then fall through to normal setup.
     discardCheckpoint = discardOnMissing(status, fromDefault) ?? false;
@@ -209,6 +266,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
         action: 'proceed',
         envFilesToImport,
         discardCheckpoint: discardCheckpoint || undefined,
+        rebuildBase: rebuildBase || undefined,
       };
     }
   }
@@ -225,6 +283,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
       action: 'switch-to-claude',
       envFilesToImport,
       discardCheckpoint: discardCheckpoint || undefined,
+      rebuildBase: rebuildBase || undefined,
     };
   }
 
@@ -233,7 +292,31 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
     initialPrompt: buildSetupInitialPrompt(proj.root),
     envFilesToImport,
     discardCheckpoint: discardCheckpoint || undefined,
+    rebuildBase: rebuildBase || undefined,
   };
+}
+
+/**
+ * Rough rebuild-time estimate per provider, shown in the merged stale-base
+ * prompt. Order-of-magnitude only — the user just needs to know if this is
+ * "a couple minutes" or "go grab coffee". Numbers come from the
+ * provider backlog docs and live verification (e2b: SDK Template.build of
+ * the agentbox base; vercel: AL2023 provision.sh; hetzner: cloud-init + scp;
+ * daytona: docker Image.build).
+ */
+function rebuildMinutesFor(provider: ProviderName): string {
+  switch (provider) {
+    case 'e2b':
+      return '2';
+    case 'daytona':
+      return '7';
+    case 'vercel':
+      return '25';
+    case 'hetzner':
+      return '35–50';
+    default:
+      return '1';
+  }
 }
 
 /**
@@ -258,6 +341,12 @@ function discardOnMissing(status: CheckpointStatus, fromDefault: boolean): boole
  * stale/missing *default* is discarded. With no usable snapshot and no
  * agentbox.yaml, `claude` runs setup (`launch-with-prompt`) while `create`
  * makes a bare box (`proceed`).
+ *
+ * Stale CLOUD base in -y / non-TTY: warn loudly and PROCEED on the existing
+ * base. Never auto-bake an expensive snapshot in a scripted run; tell the
+ * user to run `agentbox prepare --provider X --force`. Do not discard the
+ * checkpoint solely for base staleness either — the checkpoint's still
+ * bootable; the user can deal with it during their next interactive session.
  */
 function nonInteractiveOutcome(
   args: WizardArgs,
@@ -265,6 +354,13 @@ function nonInteractiveOutcome(
   status: CheckpointStatus,
   envFilesToImport: string[] | undefined,
 ): WizardOutcome {
+  if (args.baseStatus?.state === 'stale') {
+    const provider = args.provider ?? 'docker';
+    log.warn(
+      `${provider} base image is out of date (${args.baseStatus.reason}); booting on the existing base. ` +
+        `Run \`agentbox prepare --provider ${provider} --force\` to rebuild.`,
+    );
+  }
   const fromDefault = args.checkpointFromDefault !== false;
   const usableAsIs = status.state === 'fresh' || (status.state === 'stale' && !fromDefault);
   // Drop a dead default ref always (it can't boot). Drop a stale default only

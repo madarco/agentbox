@@ -18,6 +18,7 @@ import {
   readE2bCredStatus,
   secretsPath,
 } from './credentials.js';
+import { readPreparedState } from './prepared-state.js';
 
 interface LoginOpts {
   status?: boolean;
@@ -62,6 +63,17 @@ const loginSub = new Command('login')
         return;
       }
       await ensureE2bCredentials({ force: true });
+      // Credentials alone don't get a user a working box — they also need a
+      // baked base template. Nudge the user toward `prepare` here so the
+      // login → first-create path doesn't hit the (otherwise-clean) "no base
+      // template found" error from `ensureE2bBaseTemplate`. No layering break
+      // (provider package stays free of the `runPrepare` dependency); the
+      // `agentbox install` wizard already calls `runPrepare` directly.
+      if (readPreparedState().base === undefined) {
+        log.info(
+          'Base template not built yet — run `agentbox prepare --provider e2b` (or `agentbox install`) to bake it.',
+        );
+      }
     } catch (err) {
       reportError(err);
     }

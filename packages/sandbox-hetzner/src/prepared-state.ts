@@ -17,7 +17,8 @@
  * Schema versioned so future shape changes can migrate.
  */
 
-import { preparedStatePathFor, readPreparedStateRaw, writePreparedStateRaw } from '@agentbox/sandbox-core';
+import { computeContextSha256, preparedStatePathFor, readPreparedStateRaw, writePreparedStateRaw } from '@agentbox/sandbox-core';
+import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets.js';
 
 /**
  * Schema history:
@@ -129,4 +130,27 @@ export function updatePreparedState(mutate: (s: PreparedHetznerState) => void): 
   const s = readPreparedState();
   mutate(s);
   writePreparedState(s);
+}
+
+/**
+ * Compute the CURRENT build-context fingerprint for the hetzner base snapshot
+ * (the SHA over every file `prepare` would scp into the prepare VPS).
+ * Side-effect-free — never builds. Returns `undefined` when the runtime
+ * assets can't be resolved (dev tree without `pnpm -w build`) so the CLI
+ * can degrade to "can't tell, don't nag".
+ *
+ * Used by `evaluateBaseFreshness` to compare against the stored value in
+ * `hetzner-prepared.json.base.contextSha256`. Must produce a byte-identical
+ * hash to the one `prepare` writes — both go through the same
+ * `resolveRuntimeAssets` + `computeContextSha256` chain.
+ */
+export async function currentHetznerBaseFingerprintLive(): Promise<string | undefined> {
+  try {
+    const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
+    return await computeContextSha256(
+      assets.map((a) => ({ rel: a.name, abs: a.localPath })),
+    );
+  } catch {
+    return undefined;
+  }
 }

@@ -30,6 +30,7 @@ import {
 import { readCliStamp, recordBox } from '@agentbox/sandbox-core';
 import { prepareVercelProvider } from './prepare.js';
 import { buildVercelAttach } from './build-attach.js';
+import { currentVercelBaseFingerprintLive } from './prepared-state.js';
 
 const BACKEND_NAME = 'vercel';
 
@@ -100,6 +101,7 @@ export const vercelProvider: Provider = {
   prepare: prepareVercelProvider,
   buildAttach: buildVercelAttach,
   checkpoint: vercelCheckpoint,
+  baseFingerprint: () => currentVercelBaseFingerprintLive(),
 };
 
 export { vercelBackend, DEFAULT_BOX_IMAGE_REF };
@@ -119,6 +121,7 @@ export {
   type PrepareVercelResult,
 } from './prepare.js';
 export {
+  currentVercelBaseFingerprintLive,
   ensureVercelBaseSnapshot,
   preparedStatePath,
   readPreparedState,

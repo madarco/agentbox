@@ -30,6 +30,7 @@ import { Sandbox, resolveApiKey } from './sdk.js';
 import { withE2bRetry } from './retry.js';
 import { prepareE2bProvider } from './prepare.js';
 import { buildE2bAttach } from './build-attach.js';
+import { currentE2bBaseFingerprintLive } from './prepared-state.js';
 
 const BACKEND_NAME = 'e2b';
 
@@ -148,6 +149,7 @@ export const e2bProvider: Provider = {
   prepare: prepareE2bProvider,
   buildAttach: buildE2bAttach,
   checkpoint: e2bCheckpoint,
+  baseFingerprint: () => currentE2bBaseFingerprintLive(),
 };
 
 export { e2bBackend, DEFAULT_BOX_IMAGE_REF };
@@ -175,6 +177,7 @@ export {
   type PrepareE2bResult,
 } from './prepare.js';
 export {
+  currentE2bBaseFingerprintLive,
   ensureE2bBaseTemplate,
   preparedStatePath,
   readPreparedState,

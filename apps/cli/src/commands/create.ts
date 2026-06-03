@@ -33,6 +33,8 @@ import {
   WIZARD_AUTOLAUNCH_ENV,
   WIZARD_ENV_FILES_ENV,
 } from '../wizard.js';
+import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
+import { runPrepare } from './prepare.js';
 import { claudeCommand } from './claude.js';
 
 interface CreateOptions {
@@ -304,6 +306,12 @@ export const createCommand = new Command('create')
     // `agentbox claude` so the agent can interactively generate one. The
     // wizard runs for every provider — it's the env-file picker + first-run
     // claude offer, both of which are useful for cloud boxes too.
+    //
+    // Base freshness: cloud providers store a fingerprint of the baked
+    // runtime; if the local install no longer matches, the wizard offers to
+    // rebuild before creating. Docker self-heals via `ensureImage`, so its
+    // baseStatus is always `fresh` and the wizard is a no-op here.
+    const baseStatus = await evaluateBaseFreshness(providerName);
     const wiz = await maybeRunSetupWizard({
       workspace: opts.workspace,
       yes: !!opts.yes,
@@ -312,7 +320,21 @@ export const createCommand = new Command('create')
       checkpointFromDefault: !(opts.snapshot && opts.snapshot.length > 0),
       provider: providerName,
       withEnv: cfg.effective.box.withEnv,
+      baseStatus,
     });
+    // Stale base: user opted in to rebuilding it. Re-bakes the snapshot /
+    // template and refreshes its stored fingerprint, so the subsequent
+    // create boots from the fresh base. Runs *before* checkpoint discard so
+    // a failure aborts cleanly without leaving a half-created box.
+    if (wiz.rebuildBase) {
+      log.warn(`${providerName} base image is outdated; rebuilding before create…`);
+      await runPrepare(providerName, {
+        force: true,
+        cwd: opts.workspace,
+        suppressTip: true,
+        suppressStatus: true,
+      });
+    }
     // Drop a stale/dead default checkpoint so the box provisions from the
     // current base. On the docker switch-to-claude re-dispatch below the
     // default isn't forwarded as `--snapshot`, so the inner `agentbox claude`

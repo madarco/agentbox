@@ -29,6 +29,7 @@ import {
 } from './credentials.js';
 import { detectEgressIp } from './egress-ip.js';
 import { normalizeSourceCidr, syncFirewallSource } from './firewall.js';
+import { readPreparedState } from './prepared-state.js';
 
 interface LoginOpts {
   status?: boolean;
@@ -57,6 +58,15 @@ const loginSub = new Command('login')
         return;
       }
       await ensureHetznerCredentials({ force: true });
+      // Credentials alone don't get a user a working box — they also need a
+      // baked base snapshot. Nudge toward `prepare` so the login → first-create
+      // path doesn't hit the (otherwise-clean) "no base snapshot" error from
+      // the snapshot resolver. No layering break.
+      if (readPreparedState().base === undefined) {
+        log.info(
+          'Base snapshot not built yet — run `agentbox prepare --provider hetzner` (or `agentbox install`) to bake it.',
+        );
+      }
     } catch (err) {
       reportError(err);
     }

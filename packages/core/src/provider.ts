@@ -359,4 +359,22 @@ export interface Provider {
    * omit it and the CLI surfaces a clear "prepare not supported" error.
    */
   prepare?(opts: PrepareOptions): Promise<PrepareResult>;
+  /**
+   * Compute the CURRENT build-context fingerprint for this provider's base
+   * image / snapshot WITHOUT building anything. Side-effect-free: resolves
+   * the same runtime assets `prepare` would bake in, hashes them, and
+   * returns the SHA-256.
+   *
+   * The CLI compares this against the stored fingerprint in
+   * `~/.agentbox/<provider>-prepared.json` (`base.contextSha256`) to decide
+   * whether the user's local install has drifted from the baked base — i.e.
+   * a CLI/runtime upgrade that changed any baked file. Staleness is decided
+   * PURELY by content hash; CLI version strings stored alongside are
+   * informational and MUST NOT influence freshness decisions.
+   *
+   * Returns `undefined` when the assets can't be resolved (e.g. a dev tree
+   * without `pnpm -w build`); callers degrade to "don't nag" rather than
+   * flag a false stale.
+   */
+  baseFingerprint?(): Promise<string | undefined>;
 }

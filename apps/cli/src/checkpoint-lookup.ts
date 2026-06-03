@@ -26,7 +26,7 @@ import {
   probeCloudCheckpoint,
   resolveCloudCheckpoint,
 } from '@agentbox/sandbox-cloud';
-import { cloudBackendForProvider } from './provider/cloud-backend.js';
+import { cloudBackendForProvider, currentCloudBaseFingerprintLive } from './provider/cloud-backend.js';
 
 export type CheckpointStatus =
   /** No manifest, a dead/expired cloud snapshot, or an orphaned Docker image — not bootable. */
@@ -120,4 +120,52 @@ export async function evaluateCheckpoint(
 ): Promise<CheckpointStatus> {
   if (provider === 'docker') return evaluateDockerCheckpoint(projectRoot, ref);
   return evaluateCloudCheckpoint(provider, projectRoot, ref);
+}
+
+/**
+ * Cloud base-image / base-snapshot freshness, derived purely from the
+ * `contextSha256` of the baked runtime files. The CLI re-prompts at
+ * `create`/`claude` time so a stale base (a CLI upgrade that altered any
+ * baked file) doesn't silently boot incompatible boxes on an old snapshot.
+ *
+ * **Checksum-only.** CLI version strings stored alongside the fingerprint
+ * are informational and MUST NOT influence the decision: a CLI bump that
+ * doesn't change any baked file produces an identical hash → `fresh`.
+ */
+export type BaseStatus =
+  /** No prepared base on disk — the ensure-gate inside `provision` raises the hard error. */
+  | { state: 'unprepared' }
+  /**
+   * Can't compute the live fingerprint (e.g. a dev tree with no built ctl
+   * bundle). Inert: callers must not prompt for a rebuild they can't verify.
+   */
+  | { state: 'unknown' }
+  /** Stored fingerprint differs from current — the baked runtime is out of date. */
+  | { state: 'stale'; reason: string }
+  /** Stored fingerprint matches current. */
+  | { state: 'fresh' };
+
+/**
+ * Decide whether the provider's base image / snapshot is still up to date
+ * with the CURRENT runtime context. Docker self-heals via `ensureImage` and
+ * is always `fresh` here. Cloud providers compare the stored
+ * `<provider>-prepared.json.base.contextSha256` (via
+ * `currentCloudBaseFingerprint`) against a freshly-computed one (via
+ * `currentCloudBaseFingerprintLive`), which the provider package builds the
+ * same way `prepare` does — so both values are byte-identical when nothing
+ * has changed.
+ */
+export async function evaluateBaseFreshness(provider: ProviderName): Promise<BaseStatus> {
+  if (provider === 'docker') return { state: 'fresh' };
+  const stored = currentCloudBaseFingerprint(provider);
+  if (!stored) return { state: 'unprepared' };
+  const current = await currentCloudBaseFingerprintLive(provider).catch(() => undefined);
+  if (!current) return { state: 'unknown' };
+  if (stored !== current) {
+    return {
+      state: 'stale',
+      reason: `baked runtime differs (base ${short(stored)}, current ${short(current)})`,
+    };
+  }
+  return { state: 'fresh' };
 }
