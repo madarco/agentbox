@@ -28,7 +28,9 @@ export function resolveDefaultCheckpoint(
         ? cfg.box.defaultCheckpointHetzner
         : provider === 'vercel'
           ? cfg.box.defaultCheckpointVercel
-          : cfg.box.defaultCheckpointDocker;
+          : provider === 'e2b'
+            ? cfg.box.defaultCheckpointE2b
+            : cfg.box.defaultCheckpointDocker;
   if (perProvider && perProvider.length > 0) return perProvider;
   return cfg.box.defaultCheckpoint;
 }
@@ -45,10 +47,12 @@ export function defaultCheckpointConfigKey(
   | 'box.defaultCheckpointDocker'
   | 'box.defaultCheckpointDaytona'
   | 'box.defaultCheckpointHetzner'
-  | 'box.defaultCheckpointVercel' {
+  | 'box.defaultCheckpointVercel'
+  | 'box.defaultCheckpointE2b' {
   if (provider === 'docker') return 'box.defaultCheckpointDocker';
   if (provider === 'daytona') return 'box.defaultCheckpointDaytona';
   if (provider === 'hetzner') return 'box.defaultCheckpointHetzner';
   if (provider === 'vercel') return 'box.defaultCheckpointVercel';
+  if (provider === 'e2b') return 'box.defaultCheckpointE2b';
   return 'box.defaultCheckpoint';
 }

@@ -48,6 +48,10 @@ export default defineConfig({
     // @vercel/sandbox bundles undici, which uses dynamic `require('assert')`
     // etc. — same ESM `__require` breakage. External + real dep, like daytona.
     '@vercel/sandbox',
+    // `e2b`'s Template builder calls `dynamicRequire('node:url')` in its
+    // constructor (`getCallerDirectory`), which esbuild's `__require` shim
+    // throws on under ESM. External + real dep, like daytona/vercel.
+    'e2b',
   ],
   noExternal: [/^@agentbox\//],
   banner: {

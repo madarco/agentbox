@@ -420,6 +420,7 @@ const rmSub = new Command('rm')
         ['box.defaultCheckpointDaytona', projectBox?.defaultCheckpointDaytona, cfg.effective.box.defaultCheckpointDaytona],
         ['box.defaultCheckpointHetzner', projectBox?.defaultCheckpointHetzner, cfg.effective.box.defaultCheckpointHetzner],
         ['box.defaultCheckpointVercel', projectBox?.defaultCheckpointVercel, cfg.effective.box.defaultCheckpointVercel],
+        ['box.defaultCheckpointE2b', projectBox?.defaultCheckpointE2b, cfg.effective.box.defaultCheckpointE2b],
       ] as const;
       for (const [key, projectValue, effectiveValue] of defKeys) {
         if (projectValue === ref) {
@@ -517,7 +518,8 @@ async function runCloudCheckpointCreate(box: BoxRecord, opts: CreateOpts): Promi
 
     log.info(`capturing cloud snapshot '${name}' (this may take a few minutes)`);
     const result = await provider.checkpoint.create(box, name);
-    log.success(`checkpoint ${result.ref} (daytona snapshot) captured`);
+    const providerLabel = box.provider ?? 'cloud';
+    log.success(`checkpoint ${result.ref} (${providerLabel} snapshot) captured`);
     if (opts.setDefault) {
       // Cloud snapshots aren't usable by docker boxes — pin the daytona-
       // specific default so `agentbox create --provider docker` in the same

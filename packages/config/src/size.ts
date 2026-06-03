@@ -28,7 +28,9 @@ export function resolveBoxSize(cfg: EffectiveConfig, provider: ProviderKind | st
         ? cfg.box.sizeHetzner
         : provider === 'vercel'
           ? cfg.box.sizeVercel
-          : cfg.box.sizeDocker;
+          : provider === 'e2b'
+            ? cfg.box.sizeE2b
+            : cfg.box.sizeDocker;
   if (perProvider && perProvider.length > 0) return perProvider;
   return cfg.box.size;
 }

@@ -127,15 +127,92 @@ reusing the `createCloudProvider` scaffold.
         - list → both live sandboxes seen
         - destroy → SandboxNotFoundError on subsequent getInfo (cleanly gone)
 
-### Task 2 — `prepare` (template build) + attach + checkpoints  ·  status: NOT STARTED
-- [ ] `prepare.ts` + `prepared-state.ts` — `agentbox prepare --provider e2b`
-      bakes the base template via `e2b template build` from a generated
-      Dockerfile (reuse the staged docker runtime assets). Record template id in
-      `~/.agentbox/e2b-prepared.json`. Base-snapshot gate inside `backend.provision`.
-- [ ] `build-attach.ts` — SDK tmux bridge (no SSH; adapt vercel's attach-helper).
-- [ ] `checkpoint` capability — resolve open question #2; implement create/list/remove.
-- [ ] Smoke: prepare builds a template; pause/resume; checkpoint create + restore
-      (`agentbox create --snapshot <ref> --provider e2b`).
+### Task 2 — `prepare` (template build) + attach + checkpoints  ·  status: DONE 2026-06-03
+Goal: provider parity with Vercel — `prepare` bakes a custom template, interactive
+attach works, checkpoints capture/restore. ALL smoke steps verified end-to-end.
+- [x] `prepare.ts` + `prepared-state.ts` — `agentbox prepare --provider e2b`
+      bakes the base template via the SDK's `Template.build()` (driven from
+      TypeScript, not an on-disk Dockerfile). Reuses the staged docker runtime
+      assets through `runtime-assets.ts` (mirror of vercel's resolver). Records
+      template id in `~/.agentbox/e2b-prepared.json`. Base-snapshot gate
+      (`ensureE2bBaseTemplate`) lives inside `backend.provision`.
+- [x] `build-attach.ts` + `attach-helper.ts` — SDK-streaming PTY bridge (no SSH).
+      `buildE2bAttach` returns `['node', <helper>, '--sandbox-id', id, '--user',
+      vscode]` with `E2B_API_KEY` + `AGENTBOX_E2B_INNER_CMD` in env. The helper
+      `Sandbox.connect`s, opens `pty.create({ cols, rows, onData, ... })`,
+      sendInputs the renderInnerCommand string (tmux ensure + attach), and
+      bridges stdin / stdout / SIGWINCH.
+- [x] `checkpoint` capability — `Sandbox.createSnapshot(sandboxId, { name })` is
+      the reusable-snapshot primitive (was the missing piece in Task 1; same
+      shape as Vercel — store snapshotId in the manifest, restore boots via
+      `Sandbox.create({ template: <id> })`). `snapshotExists` uses
+      `Template.exists(name)`.
+- [x] `previewUrl` fix — drops `Sandbox.connect` (which would auto-resume a
+      paused box), constructs the URL locally as
+      `{port}-{sandboxId}.{E2B_DOMAIN ?? 'e2b.app'}`. Verified: `agentbox list`
+      shows the URL of a paused box without waking it.
+- [x] Per-provider config keys (`box.imageE2b`, `box.defaultCheckpointE2b`,
+      `box.sizeE2b`) added so the prepare command pins the template id under
+      the right key (avoids cross-provider collision).
+- [x] CLI integration: `apps/cli/scripts/stage-runtime.mjs` stages
+      `runtime/e2b/{scripts/build-template.sh, attach-helper.cjs, ctl.cjs,
+      agentbox-*-shim, custom-system-CLAUDE.md, ...}`; `apps/cli/src/commands/
+      prepare.ts` renders the e2b status block; `apps/cli/src/lib/doctor-checks.ts`
+      adds the base-template probe.
+- [x] Unit tests: `test/prepared-state.test.ts` (round-trip + gate),
+      `test/build-attach.test.ts` (argv shape + env wiring).
+- [x] Smoke end-to-end (2026-06-03):
+        - `agentbox prepare --provider e2b -y` → built `agentbox-base:latest`
+          (template id `o05kawibx9vcmxvgjnk4`); 2m18s build, pinned to
+          `box.imageE2b` in project config + recorded in
+          `~/.agentbox/e2b-prepared.json`.
+        - `agentbox create --provider e2b -y -n e2bt2a -w /tmp/e2bsmoke-repo`
+          → ready in ~10s (Task 1 was ~15s with the create-time fixup hop).
+        - `agentbox shell e2bt2a` (via `script -q -c …`) → real `vscode@e2b:/workspace$`
+          prompt; the host PTY bridges in/out cleanly. (drive harness shows a
+          display quirk where tmux's framing buffer doesn't render into the
+          headless terminal — separate issue tracked below; the underlying
+          PTY bridge works.)
+        - `agentbox stop e2bt2a` → state `paused`; `agentbox list --global`
+          still shows the URL (no resume); `agentbox start e2bt2a` →
+          `running`; round-trip survives.
+        - `agentbox checkpoint create e2bt2a` → `Sandbox.createSnapshot` minted
+          `marco6/agentbox-e2bt2a-…:default`; manifest written under
+          `~/.agentbox/cloud-checkpoints/e2b/…/manifest.json`; `agentbox
+          checkpoint ls` finds it.
+        - `agentbox create --provider e2b -y -n e2bt2b -w /tmp/e2bsmoke-repo
+          --snapshot e2bt2a-150413` → booted from the snapshot id.
+        - `agentbox checkpoint rm e2bt2a-150413` → snapshot deleted on E2B,
+          manifest cleared.
+        - `agentbox destroy -y e2bt2a e2bt2b` → both sandboxes destroyed.
+
+#### Empirical findings (Task 2, 2026-06-03)
+
+- **`Template.build` requires RELATIVE source paths.** The SDK's
+  `template.copy(src, dest)` rejects absolute paths (`Invalid source path
+  "/foo": absolute paths are not allowed`). We stage every resolved asset
+  into a temp `fileContextPath` dir under its logical name, then pass the
+  asset name as a relative `src` — same idea as Docker's `COPY` semantics.
+- **`Sandbox.create({ template })` auto-appends `:default`.** A 404 fires
+  with `tag 'default' does not exist for template 'xxx'` when the
+  `templateId` we store omits the tag. We persist `${templateId}:${tag}`
+  (tag = `info.tags[0] ?? 'latest'`) so the create path always lands on a
+  built tag.
+- **`e2b` SDK must be external to apps/cli's bundle.** The
+  `TemplateBuilder` constructor calls `dynamicRequire('node:url')` to
+  resolve the caller directory; esbuild's ESM `__require` shim throws
+  "Dynamic require of 'node:url' is not supported" when this is bundled.
+  Added `'e2b'` to apps/cli's `external` list (same pattern as
+  `@daytonaio/sdk` and `@vercel/sandbox`) and added it as a real dep.
+- **`pty.create` accepts a max `timeoutMs` of 1 hour on the Hobby tier**
+  (`400: Timeout cannot be greater than 1 hours`). The attach helper now
+  caps at 55 minutes; longer sessions will need a keepalive ping that
+  extends the timeout via `Sandbox.setTimeout` mid-session (future work).
+- **Drive harness display quirk** — `node-pty` via the drive harness shows
+  an empty screen when the spawned child is the agentbox shell attach, but
+  a plain `script -q -c …` capture shows the same attach producing a real
+  prompt. Likely a headless-terminal-vs-tmux passthrough mismatch in the
+  drive harness rather than the attach helper itself. Filed for later.
 
 ### Task 3 — prune + docs + polish  ·  status: NOT STARTED
 - [ ] `agentbox prune --provider e2b` (orphan sandbox/template cleanup via `Sandbox.list()`).
@@ -163,3 +240,11 @@ reusing the `createCloudProvider` scaffold.
   Three cloud-scaffold gaps surfaced and fixed here: a Buffer→ArrayBuffer
   conversion for `sb.files.write`, a CommandExitError→CloudExecResult catch,
   and the carry root carve-out extended from vercel to e2b.
+- 2026-06-03: Task 2 done — `prepare` (Template.build), interactive attach via
+  the SDK's PTY API, and `checkpoint` via `Sandbox.createSnapshot`. Smoke-tested
+  end-to-end against /tmp/e2bsmoke-repo. previewUrl no longer wakes paused boxes.
+  Per-provider config keys (`box.{image,defaultCheckpoint,size}E2b`) added.
+  Three SDK gotchas surfaced: `template.copy` rejects absolute paths (staged
+  via temp fileContextPath); `Sandbox.create` auto-appends `:default` so we
+  store the tagged `${id}:${tag}`; the `e2b` SDK must be external in apps/cli
+  bundles (dynamicRequire on `node:url`).

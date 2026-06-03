@@ -149,6 +149,62 @@ async function daytonaStatus(): Promise<DaytonaStatusResult> {
   }
 }
 
+interface E2bStatusUnknown {
+  configured: false;
+  reason?: string;
+}
+interface E2bStatusOk {
+  configured: true;
+  templateId?: string;
+  templateName?: string;
+  createdAt?: string;
+  cliVersion?: string;
+  contextSha256?: string;
+}
+type E2bStatusResult = E2bStatusUnknown | E2bStatusOk;
+
+async function e2bStatus(): Promise<E2bStatusResult> {
+  try {
+    const mod = await import('@agentbox/sandbox-e2b');
+    const cred = mod.readE2bCredStatus();
+    if (cred.auth === 'none') {
+      return { configured: false, reason: 'not configured — run `agentbox e2b login`' };
+    }
+    const prepared = mod.readPreparedState();
+    if (!prepared.base) return { configured: true };
+    return {
+      configured: true,
+      templateId: prepared.base.templateId,
+      templateName: prepared.base.templateName,
+      createdAt: prepared.base.createdAt,
+      cliVersion: prepared.base.cliVersion,
+      contextSha256: prepared.base.contextSha256,
+    };
+  } catch (err) {
+    return {
+      configured: false,
+      reason: err instanceof Error ? err.message.split('\n')[0] : String(err),
+    };
+  }
+}
+
+function renderE2b(status: E2bStatusResult, pinnedImage?: string): string[] {
+  const out: string[] = ['e2b:'];
+  if (!status.configured) {
+    out.push(`  ${status.reason ?? '(not configured)'}`);
+    return out;
+  }
+  if (!status.templateId) {
+    out.push('  no agentbox template — run `agentbox prepare --provider e2b`');
+    return out;
+  }
+  const pinned = pinnedImage && pinnedImage === status.templateId ? '  (pinned in project)' : '';
+  out.push(
+    `  tmpl   ${pad(status.templateName ?? status.templateId, 40)} ${pad(status.cliVersion ?? '—', 10)}  ${humanAge(status.createdAt)}${pinned}`,
+  );
+  return out;
+}
+
 function renderDaytona(status: DaytonaStatusResult, pinnedImage?: string): string[] {
   const out: string[] = ['daytona:'];
   if (!status.configured) {
@@ -197,6 +253,7 @@ async function showStatus(opts: { onlyProvider?: string }): Promise<void> {
 
   const wantDocker = !opts.onlyProvider || opts.onlyProvider === 'docker';
   const wantDaytona = !opts.onlyProvider || opts.onlyProvider === 'daytona';
+  const wantE2b = !opts.onlyProvider || opts.onlyProvider === 'e2b';
 
   if (wantDocker) {
     const status = await dockerStatus();
@@ -206,6 +263,16 @@ async function showStatus(opts: { onlyProvider?: string }): Promise<void> {
     if (lines.length > 0) lines.push('');
     const status = await daytonaStatus();
     lines.push(...renderDaytona(status, pinned));
+  }
+  if (wantE2b) {
+    if (lines.length > 0) lines.push('');
+    const status = await e2bStatus();
+    // Use the per-provider pin (box.imageE2b) so the marker tracks the right key.
+    const e2bPinned =
+      typeof cfg?.effective.box.imageE2b === 'string' && cfg.effective.box.imageE2b.length > 0
+        ? cfg.effective.box.imageE2b
+        : undefined;
+    lines.push(...renderE2b(status, e2bPinned));
   }
   if (pinned) {
     lines.push('');

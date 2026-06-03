@@ -35,6 +35,7 @@ export interface UserConfig {
     defaultCheckpointDaytona?: string;
     defaultCheckpointHetzner?: string;
     defaultCheckpointVercel?: string;
+    defaultCheckpointE2b?: string;
     /**
      * Generic VM-size fallback for cloud providers. Provider-interpreted:
      * Hetzner = server type string (e.g. `cx33`); Daytona = `cpu-memory-disk`
@@ -47,6 +48,7 @@ export interface UserConfig {
     sizeDaytona?: string;
     sizeHetzner?: string;
     sizeVercel?: string;
+    sizeE2b?: string;
     withPlaywright?: boolean;
     withEnv?: boolean;
     resyncOnStart?: boolean;
@@ -64,6 +66,7 @@ export interface UserConfig {
     imageDaytona?: string;
     imageHetzner?: string;
     imageVercel?: string;
+    imageE2b?: string;
     imageRegistry?: string;
     dockerCacheShared?: boolean;
     memory?: number;
@@ -157,11 +160,13 @@ export interface EffectiveConfig {
     defaultCheckpointDaytona: string;
     defaultCheckpointHetzner: string;
     defaultCheckpointVercel: string;
+    defaultCheckpointE2b: string;
     size: string;
     sizeDocker: string;
     sizeDaytona: string;
     sizeHetzner: string;
     sizeVercel: string;
+    sizeE2b: string;
     withPlaywright: boolean;
     withEnv: boolean;
     resyncOnStart: boolean;
@@ -174,6 +179,7 @@ export interface EffectiveConfig {
     imageDaytona: string;
     imageHetzner: string;
     imageVercel: string;
+    imageE2b: string;
     imageRegistry: string;
     dockerCacheShared: boolean;
     memory: number;
@@ -286,11 +292,13 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     defaultCheckpointDaytona: '',
     defaultCheckpointHetzner: '',
     defaultCheckpointVercel: '',
+    defaultCheckpointE2b: '',
     size: '',
     sizeDocker: '',
     sizeDaytona: '',
     sizeHetzner: '',
     sizeVercel: '',
+    sizeE2b: '',
     withPlaywright: false,
     withEnv: false,
     resyncOnStart: true,
@@ -303,6 +311,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     imageDaytona: '',
     imageHetzner: '',
     imageVercel: '',
+    imageE2b: '',
     // Mirrors BOX_IMAGE_REGISTRY in @agentbox/sandbox-docker. Empty disables the
     // registry pull (always build the docker base image locally).
     imageRegistry: 'ghcr.io/madarco/agentbox/box',
@@ -448,6 +457,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     advanced: true,
   },
   {
+    key: 'box.defaultCheckpointE2b',
+    type: 'string',
+    description:
+      'Per-provider override of `box.defaultCheckpoint` for e2b. Wins over the global when set; set via `agentbox checkpoint set-default --provider e2b`.',
+    advanced: true,
+  },
+  {
     key: 'box.size',
     type: 'string',
     description:
@@ -479,6 +495,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'string',
     description:
       'Per-provider override of `box.size` for vercel. Reserved — vercel sizing is controlled via `box.vercelVcpus`.',
+    advanced: true,
+  },
+  {
+    key: 'box.sizeE2b',
+    type: 'string',
+    description:
+      'Per-provider override of `box.size` for e2b. Reserved — e2b sizing is template-level (set at `agentbox prepare --provider e2b` time via --vcpus / --memory).',
     advanced: true,
   },
   {
@@ -553,6 +576,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.imageVercel',
     type: 'string',
     description: 'Per-provider override of `box.image` for vercel (snapshot id, e.g. `snap_…`). Written by `agentbox prepare --provider vercel`.',
+    advanced: true,
+  },
+  {
+    key: 'box.imageE2b',
+    type: 'string',
+    description: 'Per-provider override of `box.image` for e2b (template id or `name:tag`, e.g. `agentbox-base:latest`). Written by `agentbox prepare --provider e2b`.',
     advanced: true,
   },
   {

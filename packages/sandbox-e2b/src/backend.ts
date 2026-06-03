@@ -4,26 +4,30 @@
  * into a full `Provider` by `@agentbox/sandbox-cloud`'s `createCloudProvider`.
  *
  * Platform shape this backend is built around:
- *   - The default `base` template is a vanilla Debian 12 microVM. It ships
- *     node 20, bash, git, sudo, but NOT `agentbox-ctl`, NOT a `vscode` user,
- *     and NOT a `/workspace` dir. `provision()` performs a one-shot create-
- *     time "fixup" — upload the ctl bundle + create the vscode user + chown
- *     `/workspace` — so the rest of the cloud scaffold's hardcoded
- *     `vscode`/`/usr/local/bin/agentbox-ctl`/`/workspace` references work.
- *     Task 2 will replace this with a baked custom template via
- *     `e2b template build` (`agentbox prepare --provider e2b`).
+ *   - Boxes boot from the prepared base template baked by `agentbox prepare
+ *     --provider e2b` (Template.build → custom Debian image with agentbox-ctl,
+ *     the vscode user, /workspace, claude/codex/opencode, tmux, Chromium).
+ *     `backend.provision` gates on `ensureE2bBaseTemplate()` (mirrors the
+ *     hetzner/vercel pattern: `prepare` itself sidesteps the gate so a cold
+ *     install can bootstrap). A snapshot ref (cloud checkpoint) wins over
+ *     the prepared base.
  *   - No nested containers (Firecracker microVM); the provider sets
  *     `launchDockerd: false`.
- *   - Preview URLs (`sandbox.getHost(port)`) are public HTTPS by default
- *     (allowPublicTraffic=true); no header token needed. Same shape as Vercel.
+ *   - Preview URLs (`{port}-{sandboxId}.{E2B_DOMAIN}`) are public HTTPS by
+ *     default (allowPublicTraffic=true); no header token needed. We construct
+ *     the URL string locally so `previewUrl` doesn't have to `Sandbox.connect`
+ *     (which would auto-resume a paused box).
  *   - `Sandbox.getInfo` is a NON-resuming static API; `state()`/`get()` use it
  *     to check existence cheaply without waking a paused sandbox. Auto-resume
  *     happens only inside `Sandbox.connect` (used by ops that need a live
  *     handle: exec, file ops, pause, destroy).
  *   - `Sandbox.pause` is the canonical pause API (`betaPause` is deprecated).
- *   - No SSH — `attachArgv` is intentionally omitted; the cloud scaffold's
- *     exec-driven tmux pump is used for `agentbox shell` until Task 2 ships
- *     a SDK-streaming attach helper.
+ *   - `Sandbox.createSnapshot` is the reusable-snapshot primitive; the
+ *     provider overrides the whole `checkpoint` capability in index.ts to
+ *     store the resulting snapshot id (matching vercel's id-addressed shape).
+ *   - No SSH — the provider overrides `buildAttach` with an SDK-streaming
+ *     PTY bridge (`buildE2bAttach`); the legacy `attachArgv` slot stays
+ *     unset.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -39,23 +43,23 @@ import type {
   CloudState,
 } from '@agentbox/core';
 import type { SandboxInfo, SandboxState } from './sdk.js';
-import { Sandbox, resolveApiKey } from './sdk.js';
+import { Sandbox, Template, resolveApiKey } from './sdk.js';
 import { withE2bRetry } from './retry.js';
-import { resolveRuntimeAssets, findStagedCliRuntimeRoot } from './runtime-assets.js';
+import { ensureE2bBaseTemplate, readPreparedState } from './prepared-state.js';
 
 /**
  * Sentinel image ref the cloud-provider hands us when no --image was passed.
- * Mirrors docker's docker-image ref convention so callers can pass `--image`
- * a Vercel/Daytona-style ref (or leave it default to boot from E2B's `base`).
- * Task 2 will swap this for the baked template id from `~/.agentbox/e2b-prepared.json`.
+ * Mirrors docker's convention; the actual template id is read from the
+ * prepared-state file by `provision`.
  */
 export const DEFAULT_BOX_IMAGE_REF = 'agentbox/box:dev';
-/** E2B's public default template — boots fast, has node 20 + git + sudo. */
-const E2B_BASE_TEMPLATE = 'base';
 
-/** Box user agentbox standardizes on (matches docker/vercel — created in the fixup script). */
+/** Box user agentbox standardizes on (matches docker/vercel — created by build-template.sh). */
 const BOX_USER = 'vscode';
 const BOX_OWNER = 'vscode:vscode';
+
+/** Default E2B preview hostname. Override via the SDK's `E2B_DOMAIN` env. */
+const DEFAULT_E2B_DOMAIN = 'e2b.app';
 
 /**
  * Per-box session timeout the SDK enforces. Past it, E2B auto-terminates the
@@ -111,61 +115,6 @@ function isNotFound(err: unknown): boolean {
 }
 
 /**
- * Build the per-box fixup script that runs once at create-time to make the
- * vanilla E2B base template look like the cloud scaffold expects:
- *   - create the `vscode` user (uid auto-assigned — 1000 is taken by E2B's
- *     own `code` group on this template), grant passwordless sudo.
- *   - own `/workspace`, `/run/agentbox`, `/var/log/agentbox` so the ctl
- *     daemon (run as vscode) can write its socket + log file.
- *   - install the uploaded `agentbox-ctl` bundle to `/usr/local/bin` (where
- *     `launchCloudCtlDaemon` expects it). Idempotent on resume so the script
- *     can be re-run cheaply if needed.
- */
-function buildFixupScript(): string {
-  return [
-    'set -e',
-    'id -u vscode 2>/dev/null || sudo -n useradd -m -s /bin/bash vscode',
-    "echo 'vscode ALL=(ALL) NOPASSWD: ALL' | sudo -n tee /etc/sudoers.d/agentbox-vscode > /dev/null",
-    'sudo -n chmod 0440 /etc/sudoers.d/agentbox-vscode',
-    'sudo -n mkdir -p /workspace /run/agentbox /var/log/agentbox',
-    'sudo -n chown vscode:vscode /workspace /run/agentbox /var/log/agentbox',
-    'sudo -n cp /tmp/agentbox-ctl /usr/local/bin/agentbox-ctl',
-    'sudo -n chmod 0755 /usr/local/bin/agentbox-ctl',
-    'rm -f /tmp/agentbox-ctl',
-    'echo agentbox-fixup-ok',
-  ].join('\n');
-}
-
-/**
- * Stage the runtime payload (just `agentbox-ctl` for Task 1) into the box and
- * run the fixup script. All `files.write` calls happen before any exec so the
- * vscode user / `/workspace` exist before the cloud scaffold's first exec.
- */
-async function seedE2bRuntime(
-  sb: InstanceType<typeof Sandbox>,
-  log: (line: string) => void,
-): Promise<void> {
-  const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
-  log(`e2b: uploading ${String(assets.length)} runtime asset(s)`);
-  for (const a of assets) {
-    const data = await readFile(a.localPath);
-    await sb.files.write([{ path: a.remotePath, data: bufferToArrayBuffer(data) }]);
-  }
-  const script = buildFixupScript();
-  await sb.files.write([{ path: '/tmp/agentbox-fixup.sh', data: script }]);
-  // Run as the default user `user` (E2B base) — the script uses `sudo -n`
-  // for the root-required steps. user already has passwordless sudo
-  // (groups=user,sudo) per the probe.
-  const r = await sb.commands.run('bash /tmp/agentbox-fixup.sh', { timeoutMs: 60_000 });
-  if (r.exitCode !== 0) {
-    throw new Error(
-      `e2b fixup failed (exit ${String(r.exitCode)}): ${r.stderr || r.stdout}`,
-    );
-  }
-  log('e2b: runtime ready');
-}
-
-/**
  * Sanitize a box name for use as the `metadata.name` value. E2B accepts
  * arbitrary strings (probed) but we strip control chars defensively so a name
  * with embedded newlines can't break log parsing or response shapes.
@@ -187,10 +136,22 @@ export const e2bBackend: CloudBackend = {
   async provision(req: CloudProvisionRequest): Promise<CloudHandle> {
     const apiKey = resolveApiKey();
     const log = req.onLog ?? (() => {});
-    // Snapshot id wins (Task 2 checkpoint restore); else the E2B base template.
-    // Task 1 doesn't accept Docker-style image refs — they'd be meaningless on
-    // E2B until `prepare` bakes a custom template.
-    const template = req.snapshot ?? E2B_BASE_TEMPLATE;
+    // Resolve the template to boot from: an explicit cloud-checkpoint snapshot
+    // (req.snapshot) wins, else the prepared base template id. We don't fall
+    // back to E2B's stock `base` template — every box must have the agentbox
+    // runtime baked in. The gate throws an actionable "run `agentbox prepare`"
+    // error when no template is recorded yet (mirrors the hetzner/vercel
+    // pattern: `prepare` itself sidesteps the gate by calling `prepareE2b`
+    // directly, never `provision`).
+    if (req.snapshot === undefined) {
+      ensureE2bBaseTemplate();
+    }
+    const template = req.snapshot ?? readPreparedState().base?.templateId;
+    if (!template) {
+      throw new Error(
+        'e2b provision: no template available — `agentbox prepare --provider e2b` must run first',
+      );
+    }
 
     // No-retry: Sandbox.create is billable and non-idempotent — a timeout
     // after the request reached the origin could leave a duplicate sandbox we
@@ -208,19 +169,7 @@ export const e2bBackend: CloudBackend = {
           timeoutMs: req.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         }),
     );
-    log(`e2b: created sandbox ${sb.sandboxId}`);
-    try {
-      await seedE2bRuntime(sb, log);
-    } catch (err) {
-      // The sandbox is billable until killed; if fixup blows up, kill it
-      // before throwing so we don't leak.
-      try {
-        await sb.kill();
-      } catch {
-        // best-effort cleanup
-      }
-      throw err;
-    }
+    log(`e2b: created sandbox ${sb.sandboxId} (template ${template})`);
     return { sandboxId: sb.sandboxId };
   },
 
@@ -418,19 +367,37 @@ export const e2bBackend: CloudBackend = {
   },
 
   async previewUrl(h: CloudHandle, port: number): Promise<CloudPreviewUrl> {
-    const apiKey = resolveApiKey();
-    return withE2bRetry({ method: 'previewUrl', retryOnAmbiguous: true }, async () => {
-      const sb = await Sandbox.connect(h.sandboxId, { apiKey });
-      // getHost returns a `{port}-{sandboxId}.{domain}` hostname. By default
-      // (allowPublicTraffic=true) the URL is reachable with no token; we
-      // don't wire `trafficAccessToken` for Task 1.
-      return { url: `https://${sb.getHost(port)}`, token: undefined };
-    });
+    // E2B's `sandbox.getHost(port)` is just string interpolation of
+    // `${port}-${sandboxId}.${sandboxDomain}` — calling it via Sandbox.connect
+    // would auto-resume a paused box (the SDK's documented behavior). The
+    // domain defaults to `e2b.app` with `E2B_DOMAIN` as the override (matches
+    // the SDK's `ConnectionConfig` default), so we construct the URL locally
+    // and never wake the box for a UI/dashboard URL fetch.
+    const domain = process.env.E2B_DOMAIN ?? DEFAULT_E2B_DOMAIN;
+    return { url: `https://${String(port)}-${h.sandboxId}.${domain}`, token: undefined };
   },
 
   // Fewer params than the interface's (h, port, expiresInSeconds) is fine —
   // E2B preview URLs are already public + browser-usable; no per-URL TTL.
   async signedPreviewUrl(h: CloudHandle, port: number): Promise<CloudPreviewUrl> {
     return this.previewUrl(h, port);
+  },
+
+  /**
+   * Probe whether a snapshot (i.e. a template id) is still bootable. E2B's
+   * snapshot ids look like `template-id:tag` or `team-slug/name:tag` — both
+   * accepted by `Template.exists(name)`. Returns false on any lookup failure
+   * (treated by the cloud-provider as "gone" so it falls back to a from-base
+   * boot rather than 410ing the user).
+   */
+  async snapshotExists(snapshotName: string): Promise<boolean> {
+    const apiKey = resolveApiKey();
+    return withE2bRetry({ method: 'snapshotExists', retryOnAmbiguous: true }, async () => {
+      try {
+        return await Template.exists(snapshotName, { apiKey });
+      } catch {
+        return false;
+      }
+    });
   },
 };
