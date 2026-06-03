@@ -66,6 +66,38 @@ resolved at the call site and wins over both the per-provider and
 generic keys. As a one-shot migration, any `prepare` that finds a stale
 non-default `box.image` in project config unsets it and logs a warning.
 
+### 1.2 Create-time base-freshness check
+
+`prepare` stamps a SHA over the baked-runtime files
+(`base.contextSha256` in `~/.agentbox/<provider>-prepared.json`). Every
+`create` / `claude` recomputes that SHA from the current install
+(`evaluateBaseFreshness`) and compares. A mismatch surfaces in the
+existing setup wizard:
+
+- **TTY** → merged confirm offers to rebuild via
+  `runPrepare(force: true)` before the create.
+- **`-y` / non-TTY** → loud warn (`▲`), then proceed on the existing
+  base; the user is told to run
+  `agentbox prepare --provider X --force`. No auto-bake in scripted runs.
+- **Docker** → silent: `ensureImage` self-heals inline on its own
+  mismatch.
+
+Staleness is decided **purely** by content checksum — a CLI patch that
+doesn't change any baked file produces an identical SHA, so the base
+stays `fresh`. See `docs/cloud-create-flow.md` → "Stale base detection
+at create" for the full state machine.
+
+### 1.3 Login → prepare nudge
+
+Each cloud's `agentbox <provider> login` only persists credentials.
+Without a baked base, the next `create` trips the "no base
+template/snapshot" error. To avoid that, each provider's `login` checks
+for a baked base on success and, when none is recorded, prints a
+one-line nudge: *"Base &lt;template|snapshot&gt; not built yet — run
+`agentbox prepare --provider X` (or `agentbox install`) to bake it."*
+The `agentbox install` wizard already calls `runPrepare` directly, so
+users who go through `install` skip both the error and the nudge.
+
 ## 2. The Daytona shape
 
 ### 2.0 Sizing

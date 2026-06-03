@@ -205,6 +205,40 @@ If you want to skip even the workspace seed, use
 carries `/workspace`, and step 4 is skipped
 (`cloud-provider.ts:218`).
 
+## Stale base detection at create
+
+`agentbox prepare --provider X` stamps the build-context fingerprint into
+`~/.agentbox/<provider>-prepared.json`'s `base.contextSha256` — a SHA over
+every file that gets baked into the base image / snapshot (the staged
+`agentbox-ctl` bundle, the agent helpers, the dockerfile context, etc.).
+On every `agentbox create` / `agentbox claude`, the CLI recomputes that
+SHA from the same inputs (`evaluateBaseFreshness` in
+`apps/cli/src/checkpoint-lookup.ts`) and compares. A mismatch means the
+local install has drifted from the baked base — typically a CLI upgrade
+that changed one of the baked files.
+
+**Checksum-only.** The CLI version strings stored next to the fingerprint
+are informational; they never influence the decision. A CLI patch that
+doesn't change any baked file produces an identical checksum, so the
+base stays `fresh` and no prompt fires.
+
+What happens when a stale base is detected:
+
+- **TTY** — the wizard merges a confirm into the existing "checkpoint is
+  stale, recreate?" path: *"The &lt;provider&gt; base image is out of date — its
+  baked runtime no longer matches your current install. Recreate the base
+  and run Setup Wizard? (rebuilds the base — ~N min — then starts
+  fresh)"*. **Yes** runs `runPrepare(force: true)` before the create, then
+  proceeds with a fresh base + discarded checkpoint. **No** boots on the
+  existing base (the checkpoint is kept as-is).
+- **`-y` / non-TTY** — logs a loud `▲` warning naming the provider and
+  pointing at `agentbox prepare --provider X --force`, then proceeds on the
+  existing base. Never auto-bakes an expensive snapshot in a scripted run.
+- **`--snapshot <ref>` (interactive)** — no rebuild hijack; the explicit
+  snapshot is a deliberate restore. The non-interactive warn still fires.
+- **Docker** — silent: `ensureImage` already self-heals on a mismatch by
+  rebuilding `agentbox/box:dev` inline before container start.
+
 ## Cloud checkpoints
 
 Cloud checkpoints work in three layers: a Daytona-native snapshot primitive,

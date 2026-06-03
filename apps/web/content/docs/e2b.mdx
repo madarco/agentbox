@@ -31,6 +31,8 @@ agentbox prepare --provider e2b
 
 A repeat `prepare` reuses the existing template unless you pass `--force`. The bake takes a couple of minutes the first time; subsequent layer-cached builds are faster. See [CLI commands](/docs/cli) for all flags.
 
+When you upgrade AgentBox, `create --provider e2b` notices if the new install would bake a different runtime (the comparison is checksum-based on the baked files — CLI version strings on their own don't count) and offers to rebuild the template inline; with `-y` or non-TTY it instead prints a loud warning and boots on the existing template. `agentbox e2b login` also nudges you toward `agentbox prepare --provider e2b` on the first successful login, so the login-only path doesn't silently leave you to trip the "no base template" error on `create`.
+
 ## Create a box
 
 Once you're logged in and prepared, the flow is standard. The workspace is seeded from a host git bundle plus your stash and untracked files (see [teleport-a-project](/docs/teleport-a-project)). The box runs as user `vscode`, and `/workspace` is checked out on branch `agentbox/<box-name>`.

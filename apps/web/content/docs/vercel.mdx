@@ -31,6 +31,8 @@ agentbox prepare --provider vercel
 
 A repeat `prepare` reuses the existing snapshot unless you pass `--force`. The bake takes a few minutes; the base snapshot is around 1.3 GB. See [CLI commands](/docs/cli) for all flags.
 
+When you upgrade AgentBox, `create --provider vercel` notices if the new install would bake a different snapshot (the comparison is checksum-based on the baked files — CLI version strings on their own don't count) and offers to rebake inline; with `-y` or non-TTY it instead warns loudly and boots on the existing snapshot. `agentbox vercel login` also nudges you toward `agentbox prepare --provider vercel` on the first successful login.
+
 <Callout title="TIP">
 Run `prepare` with the access-token trio in env — the bake can outlive a 12h OIDC dev token.
 </Callout>

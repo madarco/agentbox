@@ -289,6 +289,22 @@ shipped.
   tripped the wizard's "captured before checkpoint versioning; base
   snapshot unverifiable" branch and stale-prompted forever; now the
   fresh-vs-stale verdict is real for all four clouds.
+- **Login nudge + create-time base-freshness check** (2026-06-03). Two paper-
+  cuts off the e2b first-run path:
+  - `agentbox e2b login` now prints a one-line nudge pointing at
+    `agentbox prepare --provider e2b` when no base template is recorded yet,
+    so the login-only path doesn't silently leave the next `create` to trip
+    the (newly-clean) "no base template found" error.
+  - `agentbox create --provider e2b` / `agentbox claude --provider e2b` now
+    detect a stale base template at create time. Decision is made purely on
+    `contextSha256` — the SHA over the baked runtime files (CLI version
+    strings are informational and never gate freshness, so a CLI patch
+    that touches nothing baked stays `fresh`). TTY → merged "rebuild the
+    base?" confirm; `-y`/non-TTY → loud warn + boot on the existing base
+    (no auto-bake). Verified live: fresh-base TTY skips the prompt; mutating
+    one hex char of `base.contextSha256` fires the prompt; `-y` mode warns
+    and proceeds. Same plumbing covers daytona/hetzner/vercel via the new
+    `Provider.baseFingerprint?()` capability.
 
 ## Coordination notes (orchestrator)
 

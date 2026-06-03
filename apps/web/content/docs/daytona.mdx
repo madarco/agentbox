@@ -30,6 +30,8 @@ Unlike Docker, Daytona does **not** auto-build the box image on first `create`. 
 agentbox prepare --provider daytona
 ```
 
+When you upgrade AgentBox, `create --provider daytona` notices if the new install would bake a different snapshot (the comparison is checksum-based on the baked files — CLI version strings on their own don't count) and offers to rebake inline; with `-y` or non-TTY it instead warns loudly and boots on the existing snapshot. `agentbox daytona login` also nudges you toward `agentbox prepare --provider daytona` on the first successful login.
+
 See [CLI commands](/docs/cli) for all flags.
 
 <Callout type="warn" title="HEADS UP">
