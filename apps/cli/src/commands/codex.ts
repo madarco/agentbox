@@ -411,7 +411,6 @@ export const codexCommand = new Command('codex')
   )
   .action(async (codexArgs: string[], opts: CodexCreateOptions) => {
     const cmdLog = openCommandLog('codex');
-    process.stderr.write(`log: ${cmdLog.path}\n`);
     intro('Starting Codex in a box...');
 
     let resumeMode: ResumeMode | null = null;

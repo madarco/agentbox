@@ -468,7 +468,6 @@ export const claudeCommand = new Command('claude')
   )
   .action(async (claudeArgs: string[], opts: ClaudeCreateOptions) => {
     const cmdLog = openCommandLog('claude');
-    process.stderr.write(`log: ${cmdLog.path}\n`);
     intro('Starting Claude in a box...');
 
     // -c / --continue / --resume <id>: handled by agentbox (the teleport runs

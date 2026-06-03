@@ -221,7 +221,6 @@ export const createCommand = new Command('create')
   )
   .action(async (opts: CreateOptions) => {
     const cmdLog = openCommandLog('create');
-    process.stderr.write(`log: ${cmdLog.path}\n`);
     intro('Setting up a new box...');
 
     const cfg = await loadEffectiveConfig(opts.workspace, {

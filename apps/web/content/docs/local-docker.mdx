@@ -3,7 +3,7 @@ title: Local Docker
 description: The default provider — one local container per box, isolated by a per-box git branch
 ---
 
-Local Docker is the default — no `--provider` flag needed. `agentbox claude` and `agentbox create` use it out of the box.
+Local Docker is the default — no `--provider` flag needed. `agentbox claude` and `agentbox create` use it out of the box. Everything runs on your own machine, so a box is free and instant but only lives while your laptop is on and shares its CPU/RAM.
 
 Each box is one local container. `/workspace` is an in-container git worktree on branch `agentbox/<box-name>`, and the host's `.git/` is bind-mounted so commits land on the host immediately. It's fast, free, and fully local. It's the docker row of the provider matrix — see [core-concepts](/docs/core-concepts) for the box model, or reach for a cloud alternative with [hetzner](/docs/hetzner), [daytona](/docs/daytona), or [vercel](/docs/vercel).
 
@@ -92,3 +92,15 @@ agentbox url 1
 Capture warm state to start future boxes fast with `agentbox checkpoint create <box> --set-default`. Checkpoint after your setup wizard runs to carry build caches into every new box. See [checkpoints-and-pausing](/docs/checkpoints-and-pausing).
 
 The bind-mounted host `.git/` means commits land on the host immediately; pushes go through the host relay, so no credentials live in the box (see [sync-and-git](/docs/sync-and-git)). Inspect a box's files on the host with `agentbox open` or `agentbox download`.
+
+## Specs
+
+| Spec | |
+| --- | --- |
+| Base image | `agentbox/box:dev` (Debian-based) |
+| Build method | Pulled from GHCR by build-context fingerprint; built locally on a pull miss (`--build` forces) |
+| Docker-in-Docker | Yes (always-on in-box `dockerd`) |
+| SSH | None — local Docker exec + TTY bridge |
+| Arch | Host-native (arm64 on Apple Silicon, amd64 on Intel/Linux) |
+| Live snapshots | Instant `docker pause`/`unpause` (cgroup freezer); checkpoints are layered `docker commit` |
+| Preview URL | `https://<box-name>.localhost` (Portless) + mapped loopback ports |

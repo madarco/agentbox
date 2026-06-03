@@ -3,7 +3,7 @@ title: Hetzner
 description: Run your agents on a real, inexpensive Hetzner VPS with full root and Docker-in-Docker
 ---
 
-Run your agents on a real, inexpensive cloud VM you fully control — no local Docker needed. Each box is its own Hetzner Cloud VPS (1:1) you drive with the same `agentbox` commands as a local box, reached over pure OpenSSH (no third-party agent in the box — you own root).
+Run your agents on a real, inexpensive cloud VM you fully control — no local Docker needed. Each box is its own Hetzner Cloud VPS (1:1) you drive with the same `agentbox` commands as a local box, reached over pure OpenSSH (no third-party agent in the box — you own root). Heads up: a Hetzner box is a real VPS that bills ~€4/mo even when stopped — pause is poweroff/poweron, not free — and its firewall locks to your current egress IP.
 
 Switch per box with `--provider hetzner`, or pin it project-wide with `box.provider: hetzner` in [`agentbox.yaml`](/docs/agentbox-yaml). Pick Hetzner for bare-VPS control (full kernel, your own region), a Cloud Firewall locked to your egress IP, and full [Docker-in-Docker](/docs/docker-in-docker). Cost is roughly €4/mo per *running* box. Comparing options? See [local-docker](/docs/local-docker), [daytona](/docs/daytona), [vercel](/docs/vercel), and [e2b](/docs/e2b).
 
@@ -113,6 +113,18 @@ agentbox checkpoint create smoke setup
 <Callout title="TIP">
 Because Hetzner checkpoints are full-disk snapshots, capturing one after your project's setup lets later boxes boot ready-to-go and skip workspace seeding.
 </Callout>
+
+## Specs
+
+| Spec | |
+| --- | --- |
+| Base image | Ubuntu 24.04 snapshot |
+| Build method | Baked snapshot — install script on a throwaway VPS then `create_image` (`agentbox prepare --provider hetzner`); no Dockerfile |
+| Docker-in-Docker | Yes (full root, unmodified) |
+| SSH | Yes — one persistent OpenSSH ControlMaster per box |
+| Arch | x86_64 (amd64) |
+| Live snapshots | `create_image` snapshots (no-pause default); pause = poweroff/poweron and a stopped VPS still bills ~€4/mo |
+| Preview URL | SSH local port forward via `ssh -O forward`, mirrored to `https://<box-name>.localhost` (Portless) |
 
 ## Caveats
 

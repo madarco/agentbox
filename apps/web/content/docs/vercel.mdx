@@ -3,7 +3,7 @@ title: Vercel
 description: Run your agents in a fast Vercel cloud sandbox with public preview URLs and persistent pause/resume
 ---
 
-Run your agents in a fast Vercel cloud sandbox with a public HTTPS preview URL and persistent pause/resume — no local Docker needed. Each box is a remote Vercel sandbox you drive with the same `agentbox` commands as a local box.
+Run your agents in a fast Vercel cloud sandbox with a public HTTPS preview URL and persistent pause/resume — no local Docker needed. Each box is a remote Vercel sandbox you drive with the same `agentbox` commands as a local box. It runs on Firecracker, so there's no [Docker-in-Docker](/docs/docker-in-docker), and capturing a checkpoint stops the VM first (pause auto-snapshots on stop).
 
 Switch per box with `--provider vercel`, or pin it project-wide with `box.provider: vercel` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona), and [e2b](/docs/e2b).
 
@@ -125,6 +125,18 @@ agentbox create --provider vercel --checkpoint setup
 <Callout type="warn" title="HEADS UP">
 `checkpoint create` stops the source box to capture the snapshot (it auto-resumes on the next call), so expect a brief pause on a running box. AgentBox self-heals a stale checkpoint: `create` probes liveness, prunes the dangling manifest, and falls back to the base snapshot.
 </Callout>
+
+## Specs
+
+| Spec | |
+| --- | --- |
+| Base image | Amazon Linux 2023 |
+| Build method | Baked snapshot — `provision.sh` then `sandbox.snapshot()` (`agentbox prepare --provider vercel`); no Dockerfile |
+| Docker-in-Docker | None (Firecracker + seccomp) |
+| SSH | None — attach uses the Vercel CLI PTY |
+| Arch | x86_64 (amd64) |
+| Live snapshots | Yes, but capturing one stops the VM first (persistent boxes auto-snapshot on stop, auto-resume on start) |
+| Preview URL | Public HTTPS `sandbox.domain(port)` → `https://<box>.vercel.run` (no token); ≤4 ports |
 
 ## Caveats
 

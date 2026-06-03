@@ -354,6 +354,32 @@ mode … Yes, I accept" gate.
   relay and can launch boxes on other providers, so they can fully smoke-test.
 
 ## Changelog
+- 2026-06-03: Cold-attach "blank pane looks hung" fix (shared cloud path).
+  Symptom: `agentbox e2b claude` reached `box ready`, showed the recap panel,
+  then the attach sat on a featureless blank screen long enough that the user
+  Ctrl+C'd; a later `agentbox claude attach <n>` rendered fine. Investigated
+  live against a running box and ruled out the usual suspects:
+  - The PTY bridge is fine — attaching to an existing session paints the first
+    byte in ~275ms and the full frame within seconds.
+  - tmux is fine — a session whose program delays its first draw correctly
+    receives the frame the instant the program paints (no redraw bug).
+  - The dashboard probe is fine — `tmux list-sessions -F '#{session_name}'`
+    runs as `vscode` and returns `claude`; `agentbox list` shows
+    `claude:working`. The earlier "dashboard shows no agent session" was the
+    same transient cold-start window (session not yet created / not yet drawn).
+  - claude itself is fast on e2b — native-installer binary, `--version` 99ms,
+    warm interactive first-paint ~750ms; box has free RAM, no swap.
+  Root cause: the freshly-attached tmux client shows a blank pane during the
+  agent's **cold first-run** (238MB binary fault-in + first-time
+  config/plugin/skill/MCP init), which on the 2-vCPU microVM is several
+  seconds with **zero feedback**. Fix: `buildCloudAttachInnerCommand`
+  (`apps/cli/src/commands/_cloud-attach.ts`) now prints
+  `agentbox: starting <agent> (first paint may take a few seconds)...` into the
+  pane before `exec`-ing the agent, so the attach is never blank. Plain ASCII
+  (no escape codes) so it survives every shell-quoting layer; the agent clears
+  it on first draw. Applies to every cloud provider (e2b/vercel are the slowest
+  cold-starters so they benefit most). Verified live: banner paints at ~380ms
+  against a 6s slow-start stand-in. Tests in `test/cloud-attach.test.ts`.
 - 2026-06-03: E2B usability pass — onboarding seed + shell exec + VNC + tag.
   Live-verified end-to-end against `agentbox-base:latest`.
   - **Onboarding (the blocker)**: cloud creates were dropping into Claude's

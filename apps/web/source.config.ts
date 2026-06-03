@@ -28,6 +28,13 @@ export default defineConfig({
             if (terminalLangs.has(this.options.lang)) {
               node.properties['data-terminal'] = '';
             }
+            // Box-drawing / block-element art (the Claude Code welcome panel)
+            // needs a font that renders those glyphs at a single cell width —
+            // IBM Plex Mono lacks them and falls back per-glyph, breaking
+            // alignment. Flag such blocks so the CSS swaps in a system mono.
+            if (/[─-▟]/.test(this.source)) {
+              node.properties['data-monoart'] = '';
+            }
           },
         },
       ],

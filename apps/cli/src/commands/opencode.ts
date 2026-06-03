@@ -396,7 +396,6 @@ export const opencodeCommand = new Command('opencode')
   )
   .action(async (opencodeArgs: string[], opts: OpencodeCreateOptions) => {
     const cmdLog = openCommandLog('opencode');
-    process.stderr.write(`log: ${cmdLog.path}\n`);
     intro('Starting OpenCode in a box...');
 
     // OpenCode session teleport is not yet supported (v1 stub). Detect resume

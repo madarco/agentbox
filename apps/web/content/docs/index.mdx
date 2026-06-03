@@ -38,6 +38,17 @@ Install AgentBox globally and run the one-time setup. The setup step wires up
 npm -g i @madarco/agentbox && agentbox install
 ```
 
+During `agentbox install` you'll be prompted to log in to any cloud providers you
+want to use (Vercel, Hetzner, Daytona, E2B) — this is **not** needed for the
+default local Docker provider. You'll then be asked to build the base image for
+each selected provider (e.g. the local Ubuntu Docker image, the Vercel base
+sandbox, the E2B template, etc.) so the first box starts fast.
+
+<Callout title="NOTE">
+  You can run `agentbox install` again at any time to add more providers — each
+  run only logs in and builds the base image for the providers you pick.
+</Callout>
+
 ## Launch your first box
 
 One command teleports your current project into a fresh box and attaches an agent
@@ -49,17 +60,41 @@ $ agentbox claude
 ↳ teleporting ./my-app → /workspace
 ↳ injecting ~/.claude credentials & sessions
 ✓ box 1 ready in 0.8s · claude code attached
-claude@box-1:~/workspace$
+
+╭─ Claude Code v2.1.161 ───────────────────────────────────╮
+│                                                          │
+│                   Welcome back, User!                    │
+│                                                          │
+│                        ▐▛███▜▌                           │
+│                       ▝▜█████▛▘                          │
+│                         ▘▘ ▝▝                            │
+│                                                          │
+│        Opus 4.8 (1M context) · Claude Max ·              │
+│        user@example.com's Organization                   │
+│        ~/workspace                                       │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
 ```
+
+The first time you launch a box in a project, you'll be asked to complete the
+setup wizard. It creates an `agentbox.yaml` file describing how to install and run
+your project, and captures a snapshot of the box with all your project's
+dependencies already installed — so the next box boots fast. You can optionally
+commit `agentbox.yaml` to your repo to share it with your team, or simply ask the
+agent to download it into your local machine.
 
 That's it — you're now inside an isolated box with your files mounted two-way at
 `/workspace` and Claude Code running in a detachable tmux session. Detach any time
-with `Ctrl-b d`; the agent keeps working.
+with `Ctrl+b d`; the agent keeps working.
 
 On Cloud boxes, the workspace is synced with the box but the git credentials are kept
 on your computer, and each write operation needs to be authorized from the footer.
 
 ### Watch it work
+
+Detach with `Ctrl+b` followed by `d` in rapid succession. Then you can reattach
+with `agentbox claude attach 1`, where `1` is the number assigned in sequence to
+every box in the same project.
 
 You can attach to any running Claude / Codex / OpenCode session, and also open the box's live screen to follow the agent's browser and IDE in real time.
 

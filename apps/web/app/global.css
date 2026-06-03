@@ -470,3 +470,12 @@ figure.shiki[data-terminal]::before {
 figure.shiki[data-terminal] > div:first-child {
   top: 6px;
 }
+
+/* Box-drawing / block-art blocks (the Claude Code welcome panel): IBM Plex
+ * Mono has no glyphs for ─ │ █ ▐ … so the browser falls back per-glyph to a
+ * font with a different advance width, shredding the alignment. A system mono
+ * stack renders every glyph at one cell width, so the art lines up. */
+figure.shiki[data-monoart] code,
+figure.shiki[data-monoart] code span {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace !important;
+}

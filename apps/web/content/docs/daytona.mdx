@@ -3,7 +3,7 @@ title: Daytona
 description: Run your agents in a managed Daytona cloud sandbox seeded from your host repo
 ---
 
-Run your agents in a managed Daytona cloud sandbox (default **2 vCPU / 4 GB RAM / 8 GB disk**) when the work outgrows your laptop or a teammate needs to attach — no local Docker needed. Each box is a remote Daytona sandbox you drive with the same `agentbox` commands as a local box, seeded from your host repo with renewable agent tokens on a shared per-org volume.
+Run your agents in a managed Daytona cloud sandbox (default **2 vCPU / 4 GB RAM / 8 GB disk**) when the work outgrows your laptop or a teammate needs to attach — no local Docker needed. Each box is a remote Daytona sandbox you drive with the same `agentbox` commands as a local box, seeded from your host repo with renewable agent tokens on a shared per-org volume. Heads up: Daytona's snapshot/checkpoint path is still slow and experimental, and a running box bills per-second (no free pause).
 
 Switch per box with `--provider daytona`, or pin it project-wide with `box.provider: daytona` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [vercel](/docs/vercel), and [e2b](/docs/e2b).
 
@@ -111,6 +111,18 @@ agentbox create --provider daytona --checkpoint setup
 ```
 
 Two differences from Docker: there is no `--merged` (Daytona snapshots are flattened by construction) and no `--replace` (deletes are async — `checkpoint rm` then recreate). Full mechanics live in [checkpoints & pausing](/docs/checkpoints-and-pausing).
+
+## Specs
+
+| Spec | |
+| --- | --- |
+| Base image | Daytona snapshot baked from `Dockerfile.box` |
+| Build method | Server-side snapshot via `agentbox prepare --provider daytona` (~7 min); no first-create auto-build |
+| Docker-in-Docker | Yes (CAP_SYS_ADMIN; dockerd at create + start) |
+| SSH | None — in-box bridge relay long-polled by the host (SSH-token attach for interactive sessions) |
+| Arch | x86_64 (amd64) |
+| Live snapshots | Slow/experimental snapshots (`_experimental_createSnapshot`); no native pause — a running box bills per-second |
+| Preview URL | Signed CloudFront `https://{port}-{token}.proxy.daytona.work` (1h TTL, up to 24h via `--ttl`) |
 
 ## Caveats
 

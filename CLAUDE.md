@@ -25,9 +25,9 @@
 ## Testing / verifying
 
 `create`, `claude`, `codex`, and `opencode` tee their progress to a file at
-`~/.agentbox/logs/<command>.log`. The command prints `log: <path>` to stderr at
-startup, and `~/.agentbox/logs/latest.log` always points at the most recent run.
-The log is rotated 1-deep — the previous run is at `<command>.log.prev`.
+`~/.agentbox/logs/<command>.log`, and `~/.agentbox/logs/latest.log` always points
+at the most recent run. The log is rotated 1-deep — the previous run is at
+`<command>.log.prev`.
 
 When verifying a change:
 

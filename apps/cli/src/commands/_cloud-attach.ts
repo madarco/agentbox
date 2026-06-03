@@ -78,16 +78,39 @@ export interface CloudAgentAttachArgs {
 }
 
 /**
+ * Printed in the agent's tmux pane the instant the session's command starts,
+ * BEFORE the agent binary paints its first frame. On a cold cloud sandbox the
+ * agent CLI (node cold-start + a large seed prompt + TUI init) can take several
+ * seconds to draw — and a tmux client that attaches during that window sees a
+ * featureless blank pane (verified: tmux pushes the frame correctly once the
+ * program draws, so the gap is pure program-startup latency, not a redraw bug).
+ * Without this line the run looks hung and users Ctrl+C then re-attach. The
+ * agent clears the screen on startup, so the line vanishes the moment real
+ * output arrives. Shared by every cloud provider; e2b/vercel microVMs are the
+ * slowest cold-starters so they benefit most.
+ *
+ * No escape sequences (plain text) on purpose: this string threads through
+ * several shell-quoting layers (single-quoted `bash -lc` body, the outer
+ * `shellSingle` wrap in `renderInnerCommand`, then the provider transport), and
+ * plain ASCII is the one thing guaranteed to survive all of them intact.
+ */
+function agentStartBanner(binary: string): string {
+  return `printf "  agentbox: starting ${binary} (first paint may take a few seconds)...\\r\\n"; `;
+}
+
+/**
  * Render the inner shell command tmux runs inside the cloud sandbox. Exported
  * so unit tests can exercise the base64 round-trip without spinning up SSH.
  *
- * Empty `extraArgs` keeps the no-args path identical to the pre-args
- * behaviour — `bash -lc 'exec <binary>'` with a backslash-space so the outer
- * shell-quoting layers don't split `exec` from the binary name.
+ * Both paths run `agentStartBanner` first so the freshly-attached pane is never
+ * blank during the agent's cold-start. The body is single-quoted (`bash -lc
+ * '…'`) in both branches so the outer `shellSingle` wrap composes the same way;
+ * `exec <binary>` still replaces the shell so the agent keeps PID 2 (Ctrl-c in
+ * the agent tears the session down cleanly).
  */
 export function buildCloudAttachInnerCommand(binary: string, extraArgs?: string[]): string {
   if (!extraArgs || extraArgs.length === 0) {
-    return `bash -lc exec\\ ${binary}`;
+    return `bash -lc '${agentStartBanner(binary)}exec ${binary}'`;
   }
   // One arg per line, base64-encoded. The launcher runs `mapfile -t A` against
   // the decoded stream, then `exec <binary> "${A[@]}"` so each arg lands as
@@ -114,7 +137,7 @@ export function buildCloudAttachInnerCommand(binary: string, extraArgs?: string[
   // in renderInnerCommand re-escapes any internal `'` as `'\''`; this body has
   // no single quotes (it uses double quotes around the here-string), so it
   // composes fine.
-  return `bash -lc 'mapfile -t A <<< "$(echo ${blob} | base64 -d)"; exec ${binary} "\${A[@]}"'`;
+  return `bash -lc '${agentStartBanner(binary)}mapfile -t A <<< "$(echo ${blob} | base64 -d)"; exec ${binary} "\${A[@]}"'`;
 }
 
 export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void> {

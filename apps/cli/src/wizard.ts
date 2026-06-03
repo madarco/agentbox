@@ -168,7 +168,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
     const yamlSuffix = proj.hasAgentboxYaml ? '' : ' and run Setup Wizard';
     const rebuild = await confirm({
       message:
-        `The ${provider} base image is out of date — its baked runtime no longer matches your current install. ` +
+        `The ${provider} base image is out of date. ` +
         `Recreate the base${yamlSuffix}? (rebuilds the base — ~${mins} min — then starts fresh)`,
       initialValue: true,
     });

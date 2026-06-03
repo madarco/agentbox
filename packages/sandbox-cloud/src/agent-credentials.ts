@@ -347,7 +347,6 @@ async function seedCredentialsOne(
     }
     const sizeKB = (tarSize / 1024).toFixed(1);
     log(`${spec.kind}: uploading ${sizeKB} KB credentials tarball`);
-    process.stderr.write(`[agent-creds] ${spec.kind}: uploading ${sizeKB} KB...\n`);
     const t0 = Date.now();
     const remoteTar = `/tmp/agentbox-${spec.kind}-creds.tar.gz`;
     try {
@@ -361,11 +360,10 @@ async function seedCredentialsOne(
         `${spec.kind}: credentials upload failed (${err instanceof Error ? err.message : String(err)}); ` +
         `agent falls back to interactive login`;
       log(msg);
-      process.stderr.write(`[agent-creds] ${msg}\n`);
       return;
     }
     const upDt = ((Date.now() - t0) / 1000).toFixed(1);
-    process.stderr.write(`[agent-creds] ${spec.kind}: upload done in ${upDt}s\n`);
+    log(`${spec.kind}: upload done in ${upDt}s`);
 
     const extractCmd = hasVolume
       ? // Daytona volumes are S3-backed FUSE and reject chmod/utime. The
@@ -404,11 +402,9 @@ async function seedCredentialsOne(
         `agent falls back to interactive login. ` +
         `stdout: ${extract.stdout.slice(-200)} stderr: ${extract.stderr.slice(-200)}`;
       log(msg);
-      process.stderr.write(`[agent-creds] ${msg}\n`);
       return;
     }
     log(`${spec.kind}: credentials seeded`);
-    process.stderr.write(`[agent-creds] ${spec.kind}: credentials seeded\n`);
   } finally {
     await staged.cleanup();
   }

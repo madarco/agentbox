@@ -18,11 +18,21 @@ function decodeArgs(cmd: string): string[] {
 }
 
 describe('buildCloudAttachInnerCommand', () => {
-  it('preserves the no-args fast path', () => {
-    // Identical to the pre-args behaviour so an unchanged contract stays
-    // wire-compatible with any caller that relied on the literal shape.
-    expect(buildCloudAttachInnerCommand('claude')).toBe('bash -lc exec\\ claude');
-    expect(buildCloudAttachInnerCommand('codex', [])).toBe('bash -lc exec\\ codex');
+  it('runs the start banner then execs the agent on the no-args path', () => {
+    // The pane prints a "starting" line before the agent paints (so a cold
+    // cloud attach is never blank), then `exec`s the binary so it keeps PID 2.
+    const cmd = buildCloudAttachInnerCommand('claude');
+    expect(cmd).toBe(
+      `bash -lc 'printf "  agentbox: starting claude (first paint may take a few seconds)...\\r\\n"; exec claude'`,
+    );
+    expect(buildCloudAttachInnerCommand('codex', [])).toContain('exec codex');
+  });
+
+  it('prints the start banner before the agent on the args path too', () => {
+    const cmd = buildCloudAttachInnerCommand('claude', ['--model', 'sonnet']);
+    expect(cmd).toContain('agentbox: starting claude');
+    // banner must precede the mapfile launcher so it paints during cold-start.
+    expect(cmd.indexOf('agentbox: starting')).toBeLessThan(cmd.indexOf('mapfile -t A'));
   });
 
   it('encodes a single simple arg', () => {
