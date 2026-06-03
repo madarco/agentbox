@@ -9,11 +9,11 @@
  * the SDK throws a generic "401 unauthorized" deep inside an op.
  */
 
-import { Sandbox } from 'e2b';
+import { Sandbox, Template } from 'e2b';
 import { ensureE2bEnvLoaded } from './env-loader.js';
 
-export { Sandbox };
-export type { SandboxOpts, SandboxInfo, SandboxState, SandboxListOpts } from 'e2b';
+export { Sandbox, Template };
+export type { SandboxOpts, SandboxInfo, SandboxState, SandboxListOpts, LogEntry, BuildInfo } from 'e2b';
 
 /**
  * Return the configured E2B API key. Throws an actionable error when nothing

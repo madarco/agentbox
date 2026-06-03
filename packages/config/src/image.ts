@@ -24,7 +24,9 @@ export function resolveBoxImage(cfg: EffectiveConfig, provider: ProviderKind | s
         ? cfg.box.imageHetzner
         : provider === 'vercel'
           ? cfg.box.imageVercel
-          : cfg.box.imageDocker;
+          : provider === 'e2b'
+            ? cfg.box.imageE2b
+            : cfg.box.imageDocker;
   if (perProvider && perProvider.length > 0) return perProvider;
   return cfg.box.image;
 }
@@ -42,10 +44,12 @@ export function boxImageConfigKey(
   | 'box.imageDocker'
   | 'box.imageDaytona'
   | 'box.imageHetzner'
-  | 'box.imageVercel' {
+  | 'box.imageVercel'
+  | 'box.imageE2b' {
   if (provider === 'docker') return 'box.imageDocker';
   if (provider === 'daytona') return 'box.imageDaytona';
   if (provider === 'hetzner') return 'box.imageHetzner';
   if (provider === 'vercel') return 'box.imageVercel';
+  if (provider === 'e2b') return 'box.imageE2b';
   return 'box.image';
 }

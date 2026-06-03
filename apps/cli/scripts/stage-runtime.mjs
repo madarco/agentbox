@@ -26,6 +26,7 @@ const dockerCtx = join(runtime, 'docker');
 const hetznerCtx = join(runtime, 'hetzner');
 const daytonaCtx = join(runtime, 'daytona');
 const vercelCtx = join(runtime, 'vercel');
+const e2bCtx = join(runtime, 'e2b');
 
 // Copies that land directly under runtime/ (not part of the docker context).
 const direct = [
@@ -140,6 +141,31 @@ for (const [srcRel, destRel, exec] of vercelFiles) {
   copy(srcRel, join(vercelCtx, destRel), exec);
 }
 
+// E2B provider — assets uploaded during Template.build via `template.copy`
+// (resolved by packages/sandbox-e2b/src/runtime-assets.ts under
+// runtime/e2b/<...>) + the PTY attach helper bundle the provider's
+// `buildAttach` spawns at runtime. The e2b package is bundled into
+// dist/index.js, so unlike the monorepo its dist/ isn't shipped — stage these
+// explicitly. build-template.sh lands at runtime/e2b/scripts/build-template.sh
+// because findStagedCliRuntimeRoot() anchors on that path.
+const e2bFiles = [
+  ['packages/sandbox-e2b/scripts/build-template.sh', 'scripts/build-template.sh', true],
+  ['packages/sandbox-e2b/dist/attach-helper.cjs', 'attach-helper.cjs', false],
+  ['packages/ctl/dist/bin.cjs', 'ctl.cjs', true],
+  ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
+  ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
+  ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
+  ['packages/sandbox-docker/scripts/gh-shim', 'gh-shim', true],
+  ['packages/sandbox-docker/scripts/git-shim', 'git-shim', true],
+  ['packages/sandbox-e2b/scripts/custom-system-CLAUDE.md', 'custom-system-CLAUDE.md', false],
+  ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
+  ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
+  ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
+];
+for (const [srcRel, destRel, exec] of e2bFiles) {
+  copy(srcRel, join(e2bCtx, destRel), exec);
+}
+
 // README — npm reads the published package's README only from the package
 // root (apps/cli/), and there's no package.json field to point elsewhere.
 // Mirror the repo-root README here so npmjs.com has a landing page, rewriting
@@ -170,6 +196,6 @@ if (missing > 0) {
   );
 } else {
   console.log(
-    '[stage-runtime] staged runtime/ (relay bin + docker build context + hetzner install assets + daytona overlay + vercel assets)',
+    '[stage-runtime] staged runtime/ (relay bin + docker build context + hetzner install assets + daytona overlay + vercel assets + e2b assets)',
   );
 }

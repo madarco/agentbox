@@ -23,7 +23,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve as pathResolve } from 'node:path';
 
-export type PreparedProviderKind = 'docker' | 'daytona' | 'hetzner' | 'vercel';
+export type PreparedProviderKind = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b';
 
 /**
  * The cross-provider record. `TImage` is the provider's opaque image

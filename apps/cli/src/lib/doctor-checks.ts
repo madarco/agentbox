@@ -347,9 +347,21 @@ async function e2bChecks(): Promise<CheckResult[]> {
             status: 'ok',
             detail: `${cred.auth} (${cred.source})`,
           };
-    // Task 1 boots from the default `base` template at create-time; no prepared
-    // snapshot to probe yet. Task 2 adds `agentbox prepare --provider e2b`.
-    return [credRes];
+
+    const prepared = mod.readPreparedState();
+    const tmplRes: CheckResult = prepared.base?.templateId
+      ? {
+          label: 'base template',
+          status: 'ok',
+          detail: `${prepared.base.templateName ?? prepared.base.templateId} (${prepared.base.cliVersion ?? '—'})`,
+        }
+      : {
+          label: 'base template',
+          status: 'warn',
+          detail: 'not baked',
+          hint: '`agentbox prepare --provider e2b`',
+        };
+    return [credRes, tmplRes];
   } catch (err) {
     return [
       {
