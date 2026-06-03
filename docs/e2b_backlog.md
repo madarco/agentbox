@@ -274,6 +274,14 @@ shipped.
 - **`box.image` cross-provider migration** was already handled in Task 2
   (per-provider `box.imageE2b` lives in `packages/config/src/types.ts`).
 
+#### Post-ship polish
+
+- **Clean prepare-gate error output** (2026-06-03). The "no E2B base
+  template found" gate now throws `UserFacingError` (from `@agentbox/core`)
+  and the CLI's top-level catch renders it as a one-line message instead
+  of a raw stack trace. Same treatment for the parallel vercel/hetzner
+  gates.
+
 ## Coordination notes (orchestrator)
 
 - Each task is assigned to an agent via

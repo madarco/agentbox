@@ -13,6 +13,7 @@
  */
 
 import { readPreparedStateRaw, writePreparedStateRaw, preparedStatePathFor } from '@agentbox/sandbox-core';
+import { UserFacingError } from '@agentbox/core';
 
 const SCHEMA = 1 as const;
 
@@ -69,7 +70,7 @@ export function updatePreparedState(mutate: (s: PreparedVercelState) => void): v
 export function ensureVercelBaseSnapshot(): void {
   const state = readPreparedState();
   if (state.base !== undefined) return;
-  throw new Error(
+  throw new UserFacingError(
     'no Vercel base snapshot found.\n' +
       'Run `agentbox prepare --provider vercel` first — Vercel cannot build images ' +
       'from a Dockerfile, so the base snapshot is a one-time prerequisite for cloud boxes.',

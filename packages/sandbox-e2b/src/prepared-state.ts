@@ -14,6 +14,7 @@
  */
 
 import { readPreparedStateRaw, writePreparedStateRaw, preparedStatePathFor } from '@agentbox/sandbox-core';
+import { UserFacingError } from '@agentbox/core';
 
 const SCHEMA = 1 as const;
 
@@ -73,7 +74,7 @@ export function updatePreparedState(mutate: (s: PreparedE2bState) => void): void
 export function ensureE2bBaseTemplate(): void {
   const state = readPreparedState();
   if (state.base !== undefined) return;
-  throw new Error(
+  throw new UserFacingError(
     'no E2B base template found.\n' +
       'Run `agentbox prepare --provider e2b` first — it bakes a custom template ' +
       'with the agentbox runtime (agentbox-ctl, vscode user, claude/codex/opencode, tmux) ' +

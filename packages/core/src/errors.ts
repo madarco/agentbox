@@ -7,6 +7,20 @@
 
 import type { BoxRecord } from './box-record.js';
 
+/**
+ * Marker class for expected, actionable failures that the CLI should render
+ * to the user as a clean message (no stack trace) — e.g. "you skipped a
+ * required `agentbox prepare` step". The top-level CLI catch in
+ * `apps/cli/src/index.ts` detects this via `instanceof` and falls back to the
+ * `name` field so bundling / dual-publish boundaries can't lose the marker.
+ */
+export class UserFacingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UserFacingError';
+  }
+}
+
 export class BoxNotFoundError extends Error {
   constructor(public readonly query: string) {
     super(`no agentbox matches "${query}"`);

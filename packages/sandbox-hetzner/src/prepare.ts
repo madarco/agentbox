@@ -31,6 +31,7 @@
 
 import { join } from 'node:path';
 import type { Provider } from '@agentbox/core';
+import { UserFacingError } from '@agentbox/core';
 import { computeContextSha256, readCliStamp } from '@agentbox/sandbox-core';
 import {
   stageClaudeStaticForUpload,
@@ -408,7 +409,7 @@ export const prepareHetznerProvider: NonNullable<Provider['prepare']> = (req) =>
 export async function ensureHetznerBaseSnapshot(): Promise<void> {
   const state = readPreparedState();
   if (state.base !== undefined) return;
-  throw new Error(
+  throw new UserFacingError(
     'no Hetzner base snapshot found.\n' +
       'Run `agentbox prepare --provider hetzner` first (Hetzner cannot build images from a Dockerfile,\n' +
       'so the base snapshot is a one-time prerequisite for cloud boxes on this backend).',

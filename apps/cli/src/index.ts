@@ -38,6 +38,7 @@ import { forkCommand } from './commands/fork.js';
 import { installCommand, runInstallWizard } from './commands/install.js';
 import { doctorCommand } from './commands/doctor.js';
 import { isFirstRun } from './lib/first-run.js';
+import { printCliError } from './lib/print-cli-error.js';
 import { gitCommand } from './commands/git.js';
 import { listCommand } from './commands/list.js';
 import { logsCommand } from './commands/logs.js';
@@ -162,6 +163,6 @@ if (isFirstRun() && isFirstRunHookEligible(argv)) {
 }
 
 program.parseAsync(argv).catch((err: unknown) => {
-  console.error(err);
+  printCliError(err, process.stderr);
   process.exit(1);
 });
