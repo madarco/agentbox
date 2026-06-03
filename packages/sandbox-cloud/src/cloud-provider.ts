@@ -51,6 +51,7 @@ import {
 import {
   ensureAgentVolumesForCloud,
   extractCloudAgentCredentials,
+  refreshAgentCredentialsBackup,
   seedAgentVolumesIfFresh,
   seedOpencodeModelState,
 } from './agent-credentials.js';
@@ -635,6 +636,15 @@ export function createCloudProvider(
             onLog: log,
           });
         }
+
+        // Refresh the host-side credential backups from the docker shared
+        // volumes BEFORE seeding — only the docker create path keeps them
+        // current, so cloud creates would otherwise push whatever access
+        // token the docker volume last extracted (often expired by the time
+        // the user attaches). Best-effort: when there's no docker on the host
+        // or no shared volume, the helper is a noop and the seed proceeds
+        // with whatever backup exists.
+        await refreshAgentCredentialsBackup({ onLog: log });
 
         // Seed agent credentials into the box. Volume backends (daytona)
         // mount a per-org volume at `~/.agentbox-creds/<agent>/` and the seed

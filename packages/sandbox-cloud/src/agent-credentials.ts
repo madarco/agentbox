@@ -36,7 +36,15 @@ import {
   CREDENTIALS_BACKUP_FILE,
   CODEX_CREDENTIALS_BACKUP_FILE,
   OPENCODE_CREDENTIALS_BACKUP_FILE,
+  DEFAULT_BOX_IMAGE,
+  SHARED_CLAUDE_VOLUME,
+  SHARED_CODEX_VOLUME,
+  SHARED_OPENCODE_VOLUME,
+  extractCodexCredentials,
+  extractOpencodeCredentials,
+  hostClaudeBackupExpired,
   isRealAgentCredential,
+  syncClaudeCredentials,
   type StageResult,
 } from '@agentbox/sandbox-docker';
 import type { CloudBackend, CloudHandle, CloudVolumeMount } from '@agentbox/core';
@@ -232,9 +240,68 @@ export async function seedAgentVolumesIfFresh(
   handle: CloudHandle,
   opts: SeedAgentVolumesOptions = {},
 ): Promise<void> {
+  const log = opts.onLog ?? (() => {});
   const wanted = new Set<CloudAgentKind>(opts.agents ?? AGENT_SPECS.map((s) => s.kind));
   const specs = AGENT_SPECS.filter((s) => wanted.has(s.kind));
-  await Promise.all(specs.map((spec) => seedCredentialsOne(backend, handle, spec, opts)));
+  // Best-effort per agent: one agent's seed failure (transient SDK error,
+  // missing host creds for that agent) must never sink `agentbox create`.
+  // Matches the prior vercel/hetzner custom pushers, which caught + warned.
+  // The in-box agent then falls back to interactive login.
+  await Promise.allSettled(
+    specs.map((spec) =>
+      seedCredentialsOne(backend, handle, spec, opts).catch((err) => {
+        log(
+          `${spec.kind}: credentials seed failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }),
+    ),
+  );
+}
+
+/**
+ * Refresh the host-side credential backups (`~/.agentbox/{claude,codex,opencode}-credentials.json`)
+ * from the live docker shared volumes BEFORE cloud creates seed from them.
+ *
+ * Why this exists: `agentbox create --provider <cloud>` reads the host backups
+ * to seed cloud boxes, but only the docker create path keeps them current
+ * (`syncClaudeCredentials` runs at `packages/sandbox-docker/src/create.ts:593`).
+ * Without this refresh, cloud creates push whatever access token the docker
+ * volume last extracted — often expired by the time the user actually attaches
+ * → in-box `claude` says "401 Invalid authentication credentials" even though
+ * the box's `.credentials.json` is present.
+ *
+ * Best-effort: every helper already swallows its own failures (no docker on
+ * the host, missing volume, etc.) and returns a noop result. We only nudge —
+ * the seed still runs against whatever backup exists.
+ *
+ * Gated on `hostClaudeBackupExpired`: when the claude backup's `expiresAt` is
+ * in the future we skip the docker round-trip entirely (`docker run` against
+ * the shared volume is ~1-2s and almost always a noop on fresh tokens).
+ */
+export async function refreshAgentCredentialsBackup(opts: {
+  onLog?: (line: string) => void;
+} = {}): Promise<void> {
+  const log = opts.onLog ?? (() => {});
+  if (!(await hostClaudeBackupExpired())) {
+    return;
+  }
+  log('claude: host credentials backup expired — refreshing from docker shared volume');
+  const image = DEFAULT_BOX_IMAGE;
+  try {
+    const r = await syncClaudeCredentials({ volume: SHARED_CLAUDE_VOLUME }, { image, isolate: false });
+    if (r.direction === 'extracted') {
+      log('claude: refreshed host credentials backup from docker shared volume');
+    } else if (r.direction === 'noop') {
+      log('claude: no docker shared volume to refresh from (continuing with existing backup)');
+    }
+  } catch {
+    /* best-effort — syncClaudeCredentials already swallows internally */
+  }
+  // codex + opencode are extract-only (no docker bind mount of the host's real
+  // ~/.codex into the box like claude has), so always try when the docker
+  // volume exists. Both helpers return { copied: false } on any error.
+  try { await extractCodexCredentials(SHARED_CODEX_VOLUME, image); } catch { /* best-effort */ }
+  try { await extractOpencodeCredentials(SHARED_OPENCODE_VOLUME, image); } catch { /* best-effort */ }
 }
 
 async function seedCredentialsOne(
@@ -283,7 +350,20 @@ async function seedCredentialsOne(
     process.stderr.write(`[agent-creds] ${spec.kind}: uploading ${sizeKB} KB...\n`);
     const t0 = Date.now();
     const remoteTar = `/tmp/agentbox-${spec.kind}-creds.tar.gz`;
-    await backend.uploadFile(handle, staged.tarballPath, remoteTar);
+    try {
+      await backend.uploadFile(handle, staged.tarballPath, remoteTar);
+    } catch (err) {
+      // Match the per-agent best-effort the old vercel/hetzner pushers had:
+      // a single agent's upload failure (transient SDK error, network blip)
+      // must not sink `agentbox create`. Log and fall through; the in-box
+      // agent then falls back to interactive login.
+      const msg =
+        `${spec.kind}: credentials upload failed (${err instanceof Error ? err.message : String(err)}); ` +
+        `agent falls back to interactive login`;
+      log(msg);
+      process.stderr.write(`[agent-creds] ${msg}\n`);
+      return;
+    }
     const upDt = ((Date.now() - t0) / 1000).toFixed(1);
     process.stderr.write(`[agent-creds] ${spec.kind}: upload done in ${upDt}s\n`);
 
