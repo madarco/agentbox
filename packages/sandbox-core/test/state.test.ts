@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BoxRecord } from '@agentbox/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readState, recordBox, removeBoxRecord, writeState } from '../src/state.js';
+import {
+  readState,
+  recordBox,
+  removeBoxRecord,
+  reserveProjectIndex,
+  writeState,
+} from '../src/state.js';
 
 describe('state.ts', () => {
   let dir: string;
@@ -278,39 +284,31 @@ describe('state.ts', () => {
     for (const i of [0, 2, 4, 6, 8]) expect(ids.has(`seed${String(i)}`)).toBe(false);
   });
 
-  it('recordBox de-duplicates a clashing projectIndex within a project', async () => {
-    // Two concurrent creates can both allocate the same index (each read state
-    // before either recorded); the second write must be bumped to stay unique.
-    const a: BoxRecord = {
-      id: 'idx00001',
-      name: 'idx-a',
-      container: 'agentbox-idx-a',
+  it('reserveProjectIndex hands out distinct indices to concurrent reservations', async () => {
+    // The reservation is what makes the index race-free: each create reserves +
+    // persists atomically *before* it bakes the index into its dirs, so two
+    // concurrent creates in one project can't claim the same number (which would
+    // otherwise force a record-vs-dir desync).
+    const mk = (id: string): BoxRecord => ({
+      id,
+      name: id,
+      container: `agentbox-${id}`,
       image: 'agentbox/box:dev',
       workspacePath: '/repo',
-      snapshotDir: null,
-      projectRoot: '/repo',
-      projectIndex: 1,
       createdAt: '2026-05-12T12:00:00.000Z',
-    };
-    const b: BoxRecord = { ...a, id: 'idx00002', name: 'idx-b', container: 'agentbox-idx-b' };
-    await recordBox(a, file);
-    await recordBox(b, file); // same projectIndex 1 → must bump to 2
+    });
+    const ids = ['r0', 'r1', 'r2', 'r3', 'r4'];
+    const indices = await Promise.all(ids.map((id) => reserveProjectIndex(mk(id), '/repo', file)));
 
-    const reloaded = await readState(file);
-    const byId = Object.fromEntries(reloaded.boxes.map((x) => [x.id, x.projectIndex]));
-    expect(byId['idx00001']).toBe(1);
-    expect(byId['idx00002']).toBe(2);
+    // Every reservation got a distinct index, and the persisted record carries it.
+    expect(new Set(indices).size).toBe(ids.length);
+    expect([...indices].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
+    const persisted = (await readState(file)).boxes;
+    expect(persisted).toHaveLength(ids.length);
+    expect(new Set(persisted.map((b) => b.projectIndex)).size).toBe(ids.length);
 
-    // A different project keeps its own index space.
-    const other: BoxRecord = {
-      ...a,
-      id: 'idx00003',
-      name: 'other',
-      container: 'agentbox-other',
-      projectRoot: '/other',
-      projectIndex: 1,
-    };
-    await recordBox(other, file);
-    expect((await readState(file)).boxes.find((x) => x.id === 'idx00003')?.projectIndex).toBe(1);
+    // A different project has its own index space, starting at 1.
+    const other = await reserveProjectIndex(mk('other1'), '/other', file);
+    expect(other).toBe(1);
   });
 });

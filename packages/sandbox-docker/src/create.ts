@@ -69,10 +69,10 @@ import {
 } from './portless.js';
 import { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
 import {
-  allocateProjectIndex,
   readState,
   recordBox,
   removeBoxRecord,
+  reserveProjectIndex,
   type BoxRecord,
   type GitWorktreeRecord,
 } from './state.js';
@@ -442,14 +442,21 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     throw new Error(`container ${containerName} already exists; remove it first`);
   }
 
-  // Per-project monotonic index. Allocated *here* so it can flow into the
+  // Per-project monotonic index. Reserved *atomically* here (under the state
+  // lock, persisting a minimal record that claims it) so it can flow into the
   // box / snapshot dir segments (`<id>-<n>-<mnemonic>`) and the
-  // `AGENTBOX_PROJECT_INDEX` container env var. Pre-feature legacy boxes
-  // never pass `projectRoot`; those records keep `projectIndex` undefined and
-  // the dir segments fall back to `<id>-<mnemonic>`.
+  // `AGENTBOX_PROJECT_INDEX` env var with no risk of a concurrent create
+  // claiming the same number and forcing a later bump that would desync the
+  // recorded index from the dir already created from it. The full record is
+  // written over this reservation by the provisional + final recordBox below.
+  // Pre-feature legacy boxes never pass `projectRoot`; those keep `projectIndex`
+  // undefined and the dir segments fall back to `<id>-<mnemonic>`.
   let projectIndex: number | undefined;
   if (opts.projectRoot) {
-    projectIndex = allocateProjectIndex(await readState(), opts.projectRoot);
+    projectIndex = await reserveProjectIndex(
+      { id, name, container: containerName, image: imageRef, workspacePath: workspace, createdAt },
+      opts.projectRoot,
+    );
   }
 
   // Repo detection + host-side carry-over capture. Branches are picked here
@@ -994,10 +1001,12 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       log,
     );
     log('re-bound /workspace from checkpoint image (fresh per-box worktree)');
-    // Each fresh branch was forked from the host's base ref; resync merges the
-    // host's current branch in + overlays the host's uncommitted/untracked
-    // changes so the box matches a fresh create from HEAD (box wins on
-    // conflict). The baked working-tree deviations survive as uncommitted work.
+    // Each fresh branch was forked from the host's base ref, and
+    // regenerateRestoredWorktrees already `reset --hard`ed the tracked tree to
+    // it (the checkpoint's stale tracked deviations are dropped; gitignored warm
+    // artifacts like node_modules are kept). Resync then merges the host's
+    // current branch in + overlays the host's uncommitted/untracked changes, so
+    // the box matches a fresh create from HEAD (box wins on conflict).
     if (opts.resyncOnStart !== false) {
       const repos = await resyncWorkspaceFromHost({
         container: containerName,

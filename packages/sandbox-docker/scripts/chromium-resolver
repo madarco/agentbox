@@ -30,12 +30,23 @@ newest_chrome() {
 real="$(newest_chrome)"
 if [ -z "$real" ]; then
   echo "agentbox: no Chromium yet; installing via Playwright (one-time)..." >&2
-  if [ -x /workspace/node_modules/.bin/playwright ]; then
-    ( cd /workspace && ./node_modules/.bin/playwright install chromium ) >&2
-  else
-    playwright install chromium >&2
+  # Serialize concurrent first-launches: without a lock, two simultaneous
+  # agent-browser launches would both run `playwright install` into the same
+  # ~/.cache/ms-playwright, and one could exec a half-extracted binary. flock
+  # makes the second waiter re-check the cache and skip the redundant install.
+  mkdir -p "$HOME/.cache" 2>/dev/null
+  exec 9>"$HOME/.cache/agentbox-chromium-install.lock"
+  flock 9
+  real="$(newest_chrome)" # another launch may have installed it while we waited
+  if [ -z "$real" ]; then
+    if [ -x /workspace/node_modules/.bin/playwright ]; then
+      ( cd /workspace && ./node_modules/.bin/playwright install chromium ) >&2
+    else
+      playwright install chromium >&2
+    fi
+    real="$(newest_chrome)"
   fi
-  real="$(newest_chrome)"
+  flock -u 9
 fi
 
 if [ -z "$real" ] || [ ! -x "$real" ]; then

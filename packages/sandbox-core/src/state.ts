@@ -127,37 +127,44 @@ export async function recordBox(box: BoxRecord, path: string = STATE_FILE): Prom
     (box.provider ?? 'docker') === 'docker' && !box.docker
       ? { ...box, docker: projectDockerFields(box) }
       : box;
-  await mutateState((state) => {
-    const others = state.boxes.filter((b) => b.id !== toWrite.id);
-    return {
+  await mutateState(
+    (state) => ({
       version: 1,
-      boxes: [...others, dedupeProjectIndex(toWrite, others)],
-    };
-  }, path);
+      boxes: [...state.boxes.filter((b) => b.id !== toWrite.id), toWrite],
+    }),
+    path,
+  );
 }
 
 /**
- * Ensure `box`'s `projectIndex` is unique within its project. Two concurrent
- * creates each read `state` before either records, so both can call
- * `allocateProjectIndex` and get the same number; here — under the state lock,
- * with every already-recorded box visible — we detect a clash with a *different*
- * box in the same project and bump to the next free index. The box dir segments
- * are `<id>-<n>-<mnemonic>` (id-prefixed, so always unique on disk regardless of
- * `n`); only the displayed / `agentbox <cmd> <n>`-resolvable index needs to be
- * distinct, so correcting it at record time is sufficient.
+ * Atomically allocate the next per-project index AND persist `record` claiming
+ * it, under the state lock. Returns the reserved index (also stamped onto the
+ * persisted record).
+ *
+ * Callers bake this index into on-disk paths (`<id>-<n>-<mnemonic>` box dir,
+ * socket, snapshot), and host helpers re-derive those paths from the *recorded*
+ * index — so the index must be settled before the paths are built. Allocating
+ * with an unlocked `readState` and bumping a clash at record time would desync
+ * the recorded index from the box's actual directory (status/ctl reads would
+ * then miss it). Reserving up front, under the lock, guarantees the index a
+ * create uses for its dirs is exactly the one in state.json, with no two
+ * concurrent creates in the same project claiming the same number.
  */
-function dedupeProjectIndex(box: BoxRecord, others: BoxRecord[]): BoxRecord {
-  if (box.projectRoot === undefined || typeof box.projectIndex !== 'number') return box;
-  const taken = new Set<number>();
-  let max = 0;
-  for (const b of others) {
-    if (b.projectRoot !== box.projectRoot) continue;
-    if (typeof b.projectIndex !== 'number') continue;
-    taken.add(b.projectIndex);
-    if (b.projectIndex > max) max = b.projectIndex;
-  }
-  if (!taken.has(box.projectIndex)) return box;
-  return { ...box, projectIndex: max + 1 };
+export async function reserveProjectIndex(
+  record: BoxRecord,
+  projectRoot: string,
+  path: string = STATE_FILE,
+): Promise<number> {
+  let index = 1;
+  await mutateState((state) => {
+    index = allocateProjectIndex(state, projectRoot);
+    const reserved: BoxRecord = { ...record, projectRoot, projectIndex: index };
+    return {
+      version: 1,
+      boxes: [...state.boxes.filter((b) => b.id !== record.id), reserved],
+    };
+  }, path);
+  return index;
 }
 
 /**

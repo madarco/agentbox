@@ -8,6 +8,7 @@ export {
   readState,
   recordBox,
   removeBoxRecord,
+  reserveProjectIndex,
   resolveBoxRef,
   writeState,
 } from './state.js';

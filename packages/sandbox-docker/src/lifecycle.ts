@@ -559,24 +559,21 @@ export async function destroyBox(
     }
   }
   // Deregister each in-container worktree from the host main repo. Skip
-  // when this box was checkpoint-restored: its `gitWorktrees` were inherited
-  // from the source box via the checkpoint manifest, and the same
-  // `gitWorktreePath` may still be in use by the source (or by sibling
-  // restores). Removing the registration here would break those. The
-  // registration is cosmetically `prunable` on the host anyway (the path is
-  // container-only) and can be reaped with `git worktree prune` when the
-  // user is sure no box references it.
-  const ownsWorktrees = !box.checkpointImage;
-  if (ownsWorktrees) {
-    for (const w of box.gitWorktrees ?? []) {
-      try {
-        await removeInBoxWorktree({
-          hostMainRepo: w.hostMainRepo,
-          gitWorktreePath: w.gitWorktreePath,
-        });
-      } catch {
-        // best-effort
-      }
+  // Every docker box — including checkpoint-restored ones — now owns a FRESH,
+  // per-box worktree + branch (checkpoint restore mints its own via
+  // regenerateRestoredWorktrees rather than reusing the source's), so the host
+  // `.git/worktrees/<name>` registration is this box's to clean up. Skipping it
+  // (the old `!checkpointImage` gate, from when restores shared the source's
+  // worktree) would leak a registration per restore. Best-effort + container-
+  // only paths, so it resolves to a `git worktree prune` on the host.
+  for (const w of box.gitWorktrees ?? []) {
+    try {
+      await removeInBoxWorktree({
+        hostMainRepo: w.hostMainRepo,
+        gitWorktreePath: w.gitWorktreePath,
+      });
+    } catch {
+      // best-effort
     }
   }
   const beforeContainer = await inspectContainerStatus(box.container);
