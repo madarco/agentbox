@@ -24,7 +24,8 @@ export function buildResyncWarning(r: ResyncResult): string | null {
     "[agentbox] I synced this box with the host's latest workspace (new commits + the " +
     "host's uncommitted/untracked changes). These files had conflicting host changes that " +
     "I SKIPPED to keep your box's version — review them if the host edits matter:\n" +
-    unique.map((f) => `  - ${f}`).join('\n')
+    unique.map((f) => `  - ${f}`).join('\n') +
+    '\nAgentbox.yaml services DID NOT RUN. Start them manually with `agentbox-ctl reload` once the conflicts are resolved.'
   );
 }
 
