@@ -79,6 +79,32 @@ services:
 A `needs:` referencing a name that doesn't exist, or a dependency cycle, is rejected at config load — `agentbox create` aborts before touching Docker.
 </Callout>
 
+## Seeding & stateful data
+
+Tasks must be **idempotent**, because they re-run more often than you'd expect:
+
+- On `stop`/`start` the supervisor is relaunched from scratch, so it re-runs every task from `pending`.
+- On a new box from a [checkpoint](/docs/checkpoints-and-pausing) the tasks run again on the warm filesystem.
+- Only `pause`/`unpause` skips them — the daemon is frozen and thawed, not restarted.
+
+For deps, guard the install task with a marker file in `/workspace` (e.g. `node_modules/.agentbox-installed`) so warm boots are a fast no-op — `/workspace` is part of the writable layer, so the marker is honest there.
+
+A **marker is the wrong guard for a containerized database's seed**, though. A [docker-in-docker](/docs/docker-in-docker) DB keeps its data in a per-box volume that checkpoints don't capture, so a box launched from a checkpoint has the marker (restored from `/workspace`) but an empty DB — and the seed wrongly skips. Gate the seed on the **actual data** instead: query the DB for a sentinel table/row and seed only when it's absent. That's a no-op once data exists (warm `stop`/`start`) and correctly re-seeds an empty DB (fresh checkpoint box).
+
+```yaml
+tasks:
+  seed:
+    command: |
+      set -e
+      export PGPASSWORD=postgres
+      if psql -h 127.0.0.1 -p 5432 -U postgres -d app -tAc \
+          "SELECT EXISTS (SELECT 1 FROM users LIMIT 1)" 2>/dev/null | grep -q t; then
+        echo "data present — skip"; exit 0
+      fi
+      pnpm db:seed
+    needs: [install, migrate]
+```
+
 ## Status & logs
 
 From the host, inspect and tail units with `agentbox status` and `agentbox logs`; inside the box, talk to the daemon directly with `agentbox-ctl` (`status`, `logs`, `restart`, `reload`, …). See [CLI commands](/docs/cli) for the full surface.

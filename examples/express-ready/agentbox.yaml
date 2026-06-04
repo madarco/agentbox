@@ -30,9 +30,40 @@ tasks:
       echo "carry OK: $(cat ~/carried-marker.txt)"
 
 services:
+  # Docker-in-docker smoke fixture: runs a postgres:17-alpine container inside
+  # the box via the box's own dockerd. The box pulls the image over the network
+  # on first boot (a few seconds). This both demonstrates the DinD service
+  # pattern and regression-guards the "dockerd is ready before the supervisor
+  # starts services" ordering — without that, this service would race a
+  # not-yet-ready /var/run/docker.sock on create/restart. The named container
+  # survives box stop/start: on restart we `docker start` it instead of
+  # re-running. (Don't `docker exec` it for health checks — nested exec fails
+  # inside a box with a setns error; the TCP ready_when probe is enough.)
+  postgres:
+    command: |
+      set -e
+      if docker container inspect agentbox_express_db >/dev/null 2>&1; then
+        docker start agentbox_express_db >/dev/null
+        exec docker logs -f agentbox_express_db
+      else
+        exec docker run --name agentbox_express_db \
+          -p 5432:5432 \
+          -e POSTGRES_PASSWORD=postgres \
+          -e POSTGRES_DB=app \
+          postgres:17-alpine
+      fi
+    ready_when:
+      port: 5432
+      timeout_ms: 90000
+    restart: always
+    backoff:
+      initial_ms: 1000
+      max_ms: 10000
+      factor: 2
+
   web:
     command: 'set -a; [ -f .env ] && . ./.env; set +a; node server.js'
-    needs: [install]
+    needs: [install, postgres]
     env:
       PORT: '3000'
       GREETING: 'hello from agentbox'

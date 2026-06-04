@@ -48,7 +48,42 @@ Look at `/workspace`:
 - No cycles in `needs:`.
 - **Always generate a dependency-install task** and make it the root of the `needs:` graph (every service that needs deps gets `needs: [install, …]`). Future boxes start from a snapshot of the final filesystem so they won't need this, but updates or moving to a cloud provider might need to rebuild the container from scratch. The filesystem can be then later captured by `agentbox-ctl checkpoint --set-default`. The task must be **idempotent and self-healing**: `agentbox-ctl` re-runs pending tasks on every box stop/start (the daemon dies with the container and is relaunched), so a plain `rm -rf node_modules && install` would wipe + reinstall on every start. Guard the rebuild with a marker file *inside* `node_modules` (the `.agentbox-installed` convention AgentBox uses internally): rebuild only when the marker is absent (fresh box), and be a fast no-op once it exists. Detect the package manager from the lockfile — never hardcode `pnpm`. See the worked example below.
 - **Add a comment to the beginning** of the file to explain what you did and what issues you encountered, so that future run might use this information in case the project evolves and you need to update the agentbox.yaml file.
--
+
+### Stateful services: data persistence & re-seeding (read this for databases)
+
+**A checkpoint does NOT capture docker-in-docker data.** `agentbox checkpoint` is a `docker commit` of the box's writable filesystem (the system + `/workspace`). The in-box `dockerd` keeps its storage in a *separate* per-box volume (`/var/lib/docker`), which is **not** part of that image — it's fresh on every new box and wiped on `agentbox destroy`. So a database or cache you run as a **docker container** (e.g. `docker run … postgres`) starts **empty on every new box** created from a checkpoint (every `agentbox claude` / `agentbox create`), even though `/workspace` and any marker files you wrote were restored. (A DB run as a **native process** with its data dir on the box filesystem — e.g. `postgres -D /var/lib/postgresql/data` — *is* captured by the checkpoint, since it lives in the writable layer.)
+
+**Consequence for migrate/seed tasks of a containerized DB: do not gate them on a filesystem marker.** A marker like `node_modules/.agentbox-installed` is correct for deps (they live in `/workspace`, which the checkpoint captures), but **wrong** for DB data living in a docker volume: the marker is restored from the checkpoint while the DB is empty, so a marker-guarded seed wrongly skips and the app boots against an empty database. Instead, **gate on the actual data** — connect to the DB and check whether a sentinel table/row exists, and seed only when it's missing:
+
+```yaml
+  seed:
+    # Re-seed when the DB is empty. The postgres data lives in the in-box
+    # docker volume, which is NOT captured by `agentbox checkpoint` — so a box
+    # started from a checkpoint has the workspace warm but an empty DB. We can't
+    # use a filesystem marker here (it would be restored while the DB is blank);
+    # instead probe the DB and seed only if the data is absent. Fast no-op once
+    # the data is present.
+    command: |
+      set -e
+      export PGPASSWORD=postgres
+      # Probe for existing data. If the table is missing the query errors,
+      # stderr is suppressed, stdout is empty, the grep fails — so we seed.
+      if psql -h 127.0.0.1 -p 5432 -U postgres -d app -tAc \
+          "SELECT EXISTS (SELECT 1 FROM users LIMIT 1)" 2>/dev/null | grep -q t; then
+        echo "data present — skip seed"
+        exit 0
+      fi
+      pnpm db:seed
+    needs: [install, migrate]
+```
+
+**Lifecycle nuance (this is why the data check, not a marker, is right):**
+
+- **Box stop → start** (`agentbox stop`/`start`): the supervisor daemon dies with the container and is relaunched, so it **re-runs all tasks** from `pending`. The per-box docker volume *does* survive stop/start, so the DB still has data — the data check makes the seed a fast no-op.
+- **New box from a checkpoint** (`agentbox claude`/`create`): tasks run and the DB volume is empty → the check fails → the seed runs. Correct.
+- **Resume after pause** (`agentbox pause`/`unpause`): the daemon is frozen and thawed, **not** restarted, so tasks do **not** re-run at all — nothing to seed, the running DB is untouched.
+
+(Migrations are usually safe to re-run as-is: migration tools track applied migrations in their own table, which on a fresh box is empty, so they simply re-apply. Only the *data* seed needs the existence check.) Install the DB client the seed/migrate tasks need (e.g. `postgresql-client`) in the `install` task — don't `docker exec` the DB container for these checks (nested `docker exec` fails inside a box with a `setns` error); reach it over TCP with the client tools instead.
 
 ## 3. Wire readiness probes (services only)
 
@@ -184,6 +219,7 @@ Tell the user (verbatim):
 ## 9. Checkpoint the warm state - DON't SKIP THIS STEP
 
 Checkpoint (snapshot) this box writable layer: once the box is warmed up (deps installed, services ready), checkpoint it with `agentbox-ctl checkpoint --name setup --replace --set-default` so future boxes start ready.
+Remember the checkpoint captures the writable layer (`/workspace` + system), **not** docker-in-docker volumes — so a containerized DB's data does not carry into new boxes. That's expected; the data-existence-gated seed task from section 2 re-seeds those automatically. (If you need the data itself to persist into new boxes, run the DB as a native process with its data dir on the box filesystem, or bind a `/workspace` path as the container's data volume so it lands in the checkpoint.)
 Run this command exactly once. The `--name setup --replace` makes it idempotent — if it ever needs to run again it overwrites the existing `setup` checkpoint instead of stacking duplicates.
 On all providers except Vercel, this doesn't need to be confirmed by the user. It will pause the container for several seconds so warn the user about it and write Done when it's done.
 On Vercel: this actually STOPS the sandbox, so warn the user about it. Also the system will ask confirmation.

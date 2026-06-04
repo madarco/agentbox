@@ -405,19 +405,10 @@ export function createCloudProvider(
       },
     };
     await recordBox(next);
-    // Re-launch the ctl daemon — it dies with the sandbox.
-    await launchCloudCtlDaemon({
-      backend,
-      handle: h,
-      boxId: box.id,
-      boxName: box.name,
-      relayUrl: `http://127.0.0.1:${String(8788)}`,
-      relayToken: box.relayToken ?? '',
-      bridgeToken: box.cloud?.bridgeToken,
-      webProxyPort: backend.webProxyPort,
-    });
-    // Re-launch in-box dockerd — also dies with the sandbox. Best-effort,
-    // mirrors the docker provider's lifecycle.ts:276 relaunch. Skipped for
+    // Re-launch in-box dockerd — it dies with the sandbox. Done BEFORE the ctl
+    // supervisor (mirrors the docker provider's startBox) so a docker-based
+    // agentbox.yaml service doesn't race a not-yet-ready socket on resume.
+    // launchCloudDockerdDaemon blocks until ready. Best-effort. Skipped for
     // backends that can't run nested containers (vercel).
     if (opts.launchDockerd !== false) {
       try {
@@ -429,6 +420,17 @@ export function createCloudProvider(
         // best-effort
       }
     }
+    // Re-launch the ctl daemon — it dies with the sandbox.
+    await launchCloudCtlDaemon({
+      backend,
+      handle: h,
+      boxId: box.id,
+      boxName: box.name,
+      relayUrl: `http://127.0.0.1:${String(8788)}`,
+      relayToken: box.relayToken ?? '',
+      bridgeToken: box.cloud?.bridgeToken,
+      webProxyPort: backend.webProxyPort,
+    });
     // Re-launch the VNC stack — Xvnc + websockify die with the sandbox.
     // Best-effort: a failure here shouldn't block start; `agentbox screen`
     // surfaces the missing daemon with a clear error.
@@ -735,20 +737,11 @@ export function createCloudProvider(
           }
         }
 
-        log('launching agentbox-ctl daemon');
-        await launchCloudCtlDaemon({
-          backend,
-          handle,
-          boxId: id,
-          boxName: name,
-          relayUrl: `http://127.0.0.1:${String(8788)}`,
-          relayToken,
-          bridgeToken,
-          webProxyPort: backend.webProxyPort,
-        });
-
         // Always-on in-box dockerd, matching the Docker provider
-        // (packages/sandbox-docker/src/create.ts:788). The image already bakes
+        // (packages/sandbox-docker/src/create.ts). Launched (and awaited ready)
+        // BEFORE the ctl supervisor: the supervisor starts agentbox.yaml
+        // services as soon as it's up, so a docker-based service must not race a
+        // not-yet-ready socket. The image already bakes
         // /usr/local/bin/agentbox-dockerd-start; Daytona sandboxes ship with
         // CAP_SYS_ADMIN so it starts cleanly. Best-effort — a slow or failed
         // start shouldn't fail create; `agentbox start` re-launches it on
@@ -766,6 +759,18 @@ export function createCloudProvider(
             );
           }
         }
+
+        log('launching agentbox-ctl daemon');
+        await launchCloudCtlDaemon({
+          backend,
+          handle,
+          boxId: id,
+          boxName: name,
+          relayUrl: `http://127.0.0.1:${String(8788)}`,
+          relayToken,
+          bridgeToken,
+          webProxyPort: backend.webProxyPort,
+        });
 
         // Mint the per-box VNC password and start the in-sandbox VNC stack
         // when VNC is opted in (default-on, matching Docker). Best-effort —

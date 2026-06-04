@@ -327,14 +327,17 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
   // (see ensureHomeOwnedByVscode). Best-effort; safe to repeat.
   await ensureHomeOwnedByVscode(box.container);
 
+  if (box.dockerVolume) {
+    // The daemon died with the container; relaunch it BEFORE the ctl supervisor
+    // (mirrors create.ts) so a docker-based agentbox.yaml service doesn't race a
+    // not-yet-ready socket on restart. launchDockerdDaemon blocks until ready.
+    await launchDockerdDaemon(box.container);
+  }
   if (box.socketPath) {
     // The daemon died with the container; relaunch it. Best-effort, same as
     // create.ts — a missing config or other startup issue shouldn't block
     // resumption of the box itself.
     await launchCtlDaemon(box.container, box.socketPath);
-  }
-  if (box.dockerVolume) {
-    await launchDockerdDaemon(box.container);
   }
   if (box.vncEnabled) {
     // Xvnc + websockify both die with the container. The password is already

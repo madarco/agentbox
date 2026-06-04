@@ -1027,21 +1027,25 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   await repairIdeOwnership(containerName);
   log('.vscode-server + .cursor-server ownership verified');
 
-  const ctl = await launchCtlDaemon(containerName, socketPath);
-  if (ctl.up) log('agentbox-ctl daemon up');
-  else log(`agentbox-ctl daemon did not become reachable: ${ctl.reason}`);
-
-  // dockerd: always-on, mirrors launchVncDaemon. Best-effort — a slow start
-  // shouldn't fail box creation; `agentbox start` will relaunch on restart
-  // (the daemon dies with the container). The storage driver is selected at
-  // runtime by agentbox-dockerd-start (overlay2, with a fuse-overlayfs
-  // fallback) — see /var/log/agentbox/dockerd.log inside the box.
+  // dockerd: always-on, mirrors launchVncDaemon. Launched (and awaited ready)
+  // BEFORE the ctl supervisor: the supervisor starts agentbox.yaml services as
+  // soon as it's up, so a `docker run`/`docker compose` service must not race a
+  // not-yet-ready /var/run/docker.sock. launchDockerdDaemon blocks until the
+  // socket is accept()-able. Best-effort — a slow start shouldn't fail box
+  // creation; `agentbox start` will relaunch on restart (the daemon dies with
+  // the container). The storage driver is selected at runtime by
+  // agentbox-dockerd-start (overlay2, with a fuse-overlayfs fallback) — see
+  // /var/log/agentbox/dockerd.log inside the box.
   const dockerd = await launchDockerdDaemon(containerName);
   if (dockerd.up) {
     log(`dockerd up (data root=${dockerVolume})`);
   } else {
     log(`dockerd did not become ready: ${dockerd.reason}`);
   }
+
+  const ctl = await launchCtlDaemon(containerName, socketPath);
+  if (ctl.up) log('agentbox-ctl daemon up');
+  else log(`agentbox-ctl daemon did not become reachable: ${ctl.reason}`);
 
   if (opts.withPlaywright) {
     log('installing @playwright/cli@latest (--with-playwright)');

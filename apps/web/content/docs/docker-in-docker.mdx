@@ -7,7 +7,9 @@ Every AgentBox box ships its own `dockerd`, so an agent can `docker build`, `doc
 
 ## Running Docker inside a box
 
-Docker-in-Docker is on by default — no flag needed. The box images bake `docker.io` + `iptables`, and an in-box `dockerd` is launched automatically once the supervisor comes up (`agentbox-dockerd-start`). It is relaunched on `agentbox start`, since `dockerd` dies with the container.
+Docker-in-Docker is on by default — no flag needed. The box images bake `docker.io` + `iptables`, and an in-box `dockerd` is launched automatically (`agentbox-dockerd-start`). It is relaunched on `agentbox start`, since `dockerd` dies with the container.
+
+`dockerd` is brought up **and awaited ready before the supervisor starts your services**, on both create and restart. That ordering means a `docker run` / `docker compose` declared as a [service](/docs/services-and-tasks) in `agentbox.yaml` is safe — it never races a not-yet-ready `/var/run/docker.sock`. (`examples/express-ready` ships a `postgres` service that relies on exactly this.)
 
 The in-container `vscode` user is in the `docker` group, so the agent runs `docker` with no `sudo`.
 
@@ -39,6 +41,10 @@ Don't try to force `fuse-overlayfs` — it's broken on recent kernels (notably D
 ## Shared build cache
 
 By default the data root `/var/lib/docker` is a per-box named volume, `agentbox-docker-<id>`, wiped on `agentbox destroy` — a clean slate per box.
+
+<Callout type="warn" title="HEADS UP">
+This volume is **not** captured by [checkpoints](/docs/checkpoints-and-pausing). A checkpoint is a `docker commit` of the writable layer (`/workspace` + system); the inner `dockerd`'s storage lives outside it. So a database or cache you run as a **container** starts **empty on every new box** created from a checkpoint — even though `/workspace` and any marker files were restored. It *does* survive `stop`/`start` (same volume), but not a fresh box. Gate migrate/seed tasks on the actual data (query the DB for a sentinel row), not on a filesystem marker — see [services & tasks](/docs/services-and-tasks). To persist the data itself, run the DB as a native process with its data dir on the box filesystem, or bind a `/workspace` path in as the container's data volume.
+</Callout>
 
 To make pulled image layers and build cache persist across boxes, opt into the shared cache. This swaps to the shared `agentbox-docker-cache` volume, which is preserved on `destroy` and allowlisted in `prune --all`.
 

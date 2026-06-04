@@ -47,6 +47,10 @@ Stopping kills any running agent process and live services inside the box — on
 
 A checkpoint captures a box's accumulated state — all of `/workspace` (deps installed, project built, build caches) plus everything else the agent wrote into the writable layer — so a *new* box can start warm instead of from bare host code. Under the hood it's a `docker commit` into a project-scoped image; only metadata lives on the host.
 
+<Callout type="warn" title="HEADS UP">
+The writable layer is what's captured — **not** [docker-in-docker](/docs/docker-in-docker) volumes. A database or cache run as a *container* starts empty on a box launched from a checkpoint (its data lives in the separate per-box `/var/lib/docker` volume). Re-seed it on boot by querying the DB for existing data rather than trusting a restored marker file — see [services & tasks](/docs/services-and-tasks).
+</Callout>
+
 The primary workflow: after the setup wizard runs or a PR merges, capture a checkpoint with `--set-default` so every future box in the project inherits the warm state.
 
 ```bash
