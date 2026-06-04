@@ -18,6 +18,10 @@ function stubProvider(
   const calls: ExecCall[] = [];
   const provider = {
     name: 'docker',
+    async probeState(): Promise<'running'> {
+      return 'running';
+    },
+    async resume(): Promise<void> {},
     async exec(_box: BoxRecord, argv: string[], opts?: ExecOptions): Promise<ExecResult> {
       calls.push({ argv, opts });
       return await responder(argv);

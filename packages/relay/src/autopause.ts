@@ -6,6 +6,7 @@ import {
   parseUserConfig,
   type UserConfig,
 } from '@agentbox/config';
+import { readActiveAgent, type WorkingAgentState } from './queue.js';
 import type { BoxRegistry, EventBuffer } from './registry.js';
 import type { BoxStatusStore } from './status-store.js';
 
@@ -124,14 +125,14 @@ export function startAutopauseLoop(deps: AutopauseLoopDeps): AutopauseLoopHandle
       for (const reg of registry.list()) {
         if (!reg.containerName) continue; // pre-feature box; can't pause it
         const state = await inspectStatus(reg.containerName);
-        const claude = readClaude(statusStore.get(reg.boxId));
+        const active = readPauseState(statusStore.get(reg.boxId));
         const idleMs =
-          claude.state === 'idle' && claude.updatedAt ? msSince(claude.updatedAt) : null;
+          active.state === 'idle' && active.updatedAt ? msSince(active.updatedAt) : null;
         entries.push({
           boxId: reg.boxId,
           containerName: reg.containerName,
           running: state === 'running',
-          claudeState: claude.state,
+          claudeState: active.state,
           idleMs,
           createdAt: reg.createdAt ? toEpoch(reg.createdAt) : 0,
         });
@@ -205,15 +206,35 @@ interface ClaudeSnap {
   updatedAt: string | null;
 }
 
-function readClaude(snap: Record<string, unknown> | undefined): ClaudeSnap {
-  const c = snap && typeof snap === 'object' ? (snap as { claude?: unknown }).claude : undefined;
-  if (!c || typeof c !== 'object') return { state: null, updatedAt: null };
-  const o = c as Record<string, unknown>;
-  const state =
-    o.state === 'working' || o.state === 'idle' || o.state === 'waiting' || o.state === 'unknown'
-      ? o.state
-      : null;
-  return { state, updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : null };
+/**
+ * Coarse activity state for the pause decision, across ALL agents
+ * (claude/codex/opencode) — not just claude. Reuses the queue loop's
+ * multi-agent reader so a box where codex/opencode is working isn't paused
+ * because claude happens to be idle or absent. Any active state (working,
+ * compacting, waiting, end-plan, question, error) maps to a non-`idle` value,
+ * so only a box whose live agent has settled to `idle` becomes a candidate.
+ */
+function readPauseState(snap: Record<string, unknown> | undefined): ClaudeSnap {
+  const active = readActiveAgent(snap);
+  return { state: coarsePauseState(active.state), updatedAt: active.updatedAt };
+}
+
+function coarsePauseState(s: WorkingAgentState | null): ClaudeState | null {
+  switch (s) {
+    case 'idle':
+      return 'idle';
+    case 'waiting':
+      return 'waiting';
+    case 'working':
+    case 'compacting':
+      return 'working';
+    case null:
+      return null;
+    // end-plan / question / error / unknown: a live session expecting attention
+    // — never auto-pause it (maps to a non-idle, non-candidate state).
+    default:
+      return 'unknown';
+  }
 }
 
 function msSince(iso: string): number | null {

@@ -22,6 +22,15 @@ export async function resolveDriveSession(
   box: BoxRecord,
   explicit: string | undefined,
 ): Promise<ResolvedSession> {
+  // A paused box has a frozen tmux server, so every drive op would fail with
+  // "no agent tmux session". Auto-unpause first (mirrors `agentbox shell`),
+  // which is the safety net for a box autopause froze mid-session. The notice
+  // goes to stderr so `drive snapshot --json` stdout stays machine-readable.
+  if ((await provider.probeState(box)) === 'paused') {
+    process.stderr.write(`drive: box ${box.name} is paused; unpausing\n`);
+    await provider.resume(box);
+  }
+
   const sessions = await listSessions(provider, box);
 
   if (explicit !== undefined && explicit !== '') {
