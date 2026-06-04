@@ -109,20 +109,17 @@ All three feed the same status pipeline; `agent state` / `agent wait-for` work t
 agentbox agent state 1                # → working | idle | waiting | end-plan | question | prompt | compacting | error
 agentbox agent state 1 --json         # full BoxStatusClaude (state, updatedAt, sessionTitle, plan?, question?)
 
-agentbox agent wait-for prompt 1 --timeout 600000      # block until Claude is at the input box, no pending plan/question
-agentbox agent wait-for end-plan 1                     # Claude just called ExitPlanMode; user has to approve
-agentbox agent wait-for question 1                     # AskUserQuestion picker is up
-agentbox agent wait-for idle 1                         # Stop hook fired (turn complete)
-agentbox agent wait-for compacting 1                   # Claude is summarizing context (PreCompact fired)
-agentbox agent wait-for error 1                        # Claude's turn ended with a failure (StopFailure)
-
 agentbox agent get-plan-question 1            # print the plan body OR question + options (human)
 agentbox agent get-plan-question 1 --json     # structured payload
 ```
 
-The `prompt` state is derived: `idle` AND tmux session alive AND no pending plan/question — i.e. "ready for the next user message". Use it as the natural sync point after sending a new prompt.
+**For orchestration, `agent wait-for input-needed` is the tool to reach for.** It is the single sync point that wakes whenever the agent needs *you* — whether the turn **finished and it's ready for the next message**, or it's **blocked** on a question, a plan to approve, a permission prompt, or an error. It matches every state except `working` / `compacting`, and prints the concrete state it matched so you can branch on *why* it woke:
 
-The `end-plan` and `question` matchers tolerate the race where Claude's `Notification:permission_prompt` hook flips the raw state to `waiting` immediately after the matcher hook fires — both states still match while the plan/question payload is pending, and only the matching `PostToolUse` (handled internally with `--clear-pending`) resets them.
+```sh
+agentbox agent wait-for input-needed 1 --timeout 600000   # → prints: prompt | end-plan | question | waiting | error
+```
+
+Prefer it over waiting on one specific transition — a narrow `wait-for end-plan` hangs to its timeout if the agent instead asks a question, hits a permission prompt, finishes, or errors. The granular states are still waitable when you *know* exactly what to expect: `prompt` (ready for next message), `idle` (Stop hook fired), `end-plan`, `question`, `waiting`, `compacting`, `error` — e.g. `agentbox agent wait-for prompt 1`.
 
 ### `agentbox queue wait-for <event>` — queue + box lifecycle
 
@@ -137,42 +134,37 @@ agentbox queue wait-for job-done --job b45f1603841bd2b5  # terminal status (done
 
 All wait-for commands exit 0 on match, exit 1 on timeout, and accept `--json` for parseable output.
 
-### Recipe: queue a plan, then act per turn
+### Recipe: drive a Claude Code from another Claude Code
 
-This is the canonical "drive a Claude Code from another Claude Code" loop. You queue an initial planning prompt, wait for the plan to land, capture it, decide, send the next message, repeat.
+Queue a prompt, then loop on `wait-for input-needed` and act on whatever it reports — that one waiter handles every "the agent needs me" case, so the loop never hangs on an unexpected state.
 
 ```sh
-# 1. Kick off a box with a planning prompt.
+# 1. Kick off a box with a planning prompt, in background.
 agentbox claude -n design -i "Plan how to add an OAuth login flow to apps/web, then enter plan mode. Don't start coding."
 
-# 2. Wait until Claude is at the ExitPlanMode approval prompt.
-agentbox agent wait-for end-plan design --timeout 600000
+# 2. Wait until the agent needs you, and branch on what it reports.
+STATE=$(agentbox agent wait-for input-needed design --timeout 1200000)
+case "$STATE" in
+  end-plan|question) agentbox agent get-plan-question design   # read the plan / question
+                     agentbox drive keypress design "<Enter>" ;;  # approve / answer (option 1 pre-highlighted)
+  waiting)           agentbox drive keypress design "<Enter>" ;;  # approve the tool/permission
+  prompt|idle)       agentbox claude -i "Write the OAuth provider unit tests in apps/web/test/auth/" ;; # turn done — fan out more
+  error)             echo "agent errored — inspect with: agentbox drive snapshot design" ;;
+esac
 
-# 3. Read the plan back as text (or JSON) and decide.
-PLAN=$(agentbox agent get-plan-question design)
-echo "$PLAN"
-
-# 4. Approve via tmux — option 1 ("Yes, and use auto mode") is already highlighted.
-agentbox drive keypress design "<Enter>"
-
-# 5. Wait for the turn to finish.
-agentbox agent wait-for prompt design --timeout 1200000
-
-# 6. Fan out follow-up work to a fresh box, in background, while reviewing this one.
-agentbox claude -i "Write the OAuth provider unit tests in apps/web/test/auth/"
-
-# 7. Block until everything settles before reporting back.
+# 3. Block until the whole batch settles before reporting back.
 agentbox queue wait-for empty-queue --timeout 3600000
 ```
 
-The same shape covers `agent wait-for question` + `agent get-plan-question` (read the choices, send the answer index via `drive keypress 1 "<Down><Enter>"`, then `wait-for prompt`).
+Wrap step 2 in a loop to babysit a box across many turns. Use the narrow `wait-for <state>` forms only when a step must gate on one specific transition.
 
 ### Quick mental model
 
-- `drive` = "send keystrokes / read screen" — provider-uniform tmux capture-pane / send-keys.
-- `agent` = "what is the Claude TUI currently doing" — hook-driven, race-free, machine-readable.
-- `queue wait-for` = "block on queue or box lifecycle transitions" — poll-based, no new endpoint.
-- All three commands are **stateless** — safe to invoke from any script, any agent, in parallel.
+- `agent wait-for input-needed` = the orchestration sync point — "wake me when the agent needs me" (done OR blocked). Reach for this first.
+- `agent` (`state` / `get-plan-question` / narrow `wait-for`) = "what is the agent currently doing" — hook-driven, race-free, machine-readable.
+- `drive` = "send keystrokes / read screen" — provider-uniform tmux capture-pane / send-keys; how you act once `wait-for` returns.
+- `queue wait-for` = "block on queue or box lifecycle transitions" (`empty-queue`, `box-running`, `job-done`, …) — settle a whole batch.
+- All commands are **stateless** — safe to invoke from any script, any agent, in parallel.
 - `--json` everywhere. Default human text is for the operator; an agent should pass `--json`.
 
 ## Git through the host relay

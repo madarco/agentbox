@@ -4,6 +4,7 @@ import {
   AGENT_WAIT_STATES,
   derivedAgentState,
   isAgentWaitState,
+  isInputNeeded,
   isPromptReady,
   matchesAgentWaitState,
 } from '../src/lib/wait/agent-state.js';
@@ -101,6 +102,46 @@ describe('derivedAgentState', () => {
   it('renders the raw state otherwise', () => {
     expect(derivedAgentState(claude({ state: 'working' }))).toBe('working');
     expect(derivedAgentState(claude({ state: 'waiting' }))).toBe('waiting');
+  });
+});
+
+describe('isInputNeeded / wait-for input-needed', () => {
+  it("includes 'input-needed' in the waitable union", () => {
+    expect(isAgentWaitState('input-needed')).toBe(true);
+  });
+
+  it('matches every state where the agent wants a human', () => {
+    // Blocked mid-turn.
+    expect(isInputNeeded(claude({ state: 'waiting' }))).toBe(true);
+    expect(isInputNeeded(claude({ state: 'end-plan', plan: PLAN }))).toBe(true);
+    expect(isInputNeeded(claude({ state: 'question', question: QUESTION }))).toBe(true);
+    // Sticky-payload race: plan/question survive a 'waiting' flicker.
+    expect(isInputNeeded(claude({ state: 'waiting', plan: PLAN }))).toBe(true);
+    expect(isInputNeeded(claude({ state: 'waiting', question: QUESTION }))).toBe(true);
+    // Turn finished — prompt ready for the next message.
+    expect(isInputNeeded(claude())).toBe(true);
+    // Errored.
+    expect(isInputNeeded(claude({ state: 'error' }))).toBe(true);
+  });
+
+  it('does NOT match while the agent is still busy', () => {
+    expect(isInputNeeded(claude({ state: 'working' }))).toBe(false);
+    expect(isInputNeeded(claude({ state: 'compacting' }))).toBe(false);
+  });
+
+  it('does NOT match a busy state even when a stale plan/question payload lingers', () => {
+    expect(isInputNeeded(claude({ state: 'working', plan: PLAN }))).toBe(false);
+    expect(isInputNeeded(claude({ state: 'working', question: QUESTION }))).toBe(false);
+    expect(isInputNeeded(claude({ state: 'compacting', plan: PLAN }))).toBe(false);
+  });
+
+  it('does NOT match idle when the session is down (nothing to give input to)', () => {
+    expect(isInputNeeded(claude({ state: 'idle', sessionRunning: false }))).toBe(false);
+  });
+
+  it('is reachable through matchesAgentWaitState', () => {
+    expect(matchesAgentWaitState(claude({ state: 'question', question: QUESTION }), 'input-needed')).toBe(true);
+    expect(matchesAgentWaitState(claude({ state: 'working' }), 'input-needed')).toBe(false);
   });
 });
 

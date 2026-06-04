@@ -12,6 +12,7 @@ export const AGENT_WAIT_STATES = [
   'prompt',
   'compacting',
   'error',
+  'input-needed',
 ] as const;
 export type AgentWaitState = (typeof AGENT_WAIT_STATES)[number];
 
@@ -34,7 +35,33 @@ export function isPromptReady(claude: BoxStatusClaude): boolean {
   );
 }
 
+/**
+ * `input-needed` means "the orchestrator needs to take action": the agent has
+ * stopped making autonomous progress and wants a human — whether because the
+ * task finished and the prompt is ready for the next message, or because the
+ * subagent is blocked (permission prompt, plan to approve, question to answer,
+ * or an error). The only states that do NOT match are `working` / `compacting`,
+ * where the agent is still busy. It's the robust single waiter to race instead
+ * of chaining `wait-for end-plan` / `wait-for question` / `wait-for prompt`.
+ */
+export function isInputNeeded(claude: BoxStatusClaude): boolean {
+  // While the agent is busy it never "needs input" — even if a stale plan /
+  // question payload is still attached (the payload guards below would
+  // otherwise match through a `working` / `compacting` state).
+  if (claude.state === 'working' || claude.state === 'compacting') return false;
+  return (
+    claude.state === 'waiting' ||
+    claude.state === 'end-plan' ||
+    claude.state === 'question' ||
+    claude.state === 'error' ||
+    claude.plan !== undefined ||
+    claude.question !== undefined ||
+    isPromptReady(claude)
+  );
+}
+
 export function matchesAgentWaitState(claude: BoxStatusClaude, target: AgentWaitState): boolean {
+  if (target === 'input-needed') return isInputNeeded(claude);
   if (target === 'prompt') return isPromptReady(claude);
   if (target === 'end-plan') {
     // ExitPlanMode triggers Notification:permission_prompt → state=waiting

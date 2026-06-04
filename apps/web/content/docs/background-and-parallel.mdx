@@ -96,22 +96,7 @@ b7c8d9e0f1a2b3c4d5  queued   claude  nightly-deps  docker    5    30s   Upgrade 
 queue.maxConcurrent = 5 (queue.enabled=true)
 ```
 
-`queue wait-for <event>` is the building block for "submit a batch, then wait until they all finish" — it blocks until a queue or box lifecycle event fires, exits `0` on match and `1` on timeout, and takes `--timeout <ms>` (default 600000) plus `--json`. The events are:
-
-| Event | Fires when | Needs |
-| --- | --- | --- |
-| `empty-queue` | no queued or running jobs remain | — |
-| `new-box` | any new box gets registered | — |
-| `box-running` | the box enters `running` | `--box <ref>` |
-| `box-paused` | the box enters `paused` | `--box <ref>` |
-| `box-stopped` | the box stops or goes missing | `--box <ref>` |
-| `job-done` | the job reaches a terminal status (done/failed/cancelled) | `--job <id>` |
-
-```bash
-agentbox claude -i "task one"
-agentbox claude -i "task two"
-agentbox queue wait-for empty-queue --timeout 1800000
-```
+`queue wait-for <event>` blocks on queue and box *lifecycle* transitions (`empty-queue`, `box-running`/`box-paused`/`box-stopped`, `job-done`, …) — useful to settle a whole batch. See [CLI commands](/docs/cli) for the full event list and flags. For driving a single agent's turn, reach for `agent wait-for` below — that's the primary orchestration gate.
 
 <Callout type="warn" title="CANCEL VS DESTROY">
 `queue cancel` only stops jobs still in `queued`. A **running** job keeps going — stop it by destroying its box with `agentbox destroy <box>` (the error message tells you the box name).
@@ -143,10 +128,11 @@ agentbox drive resize 1 200 60
 
 ### `agentbox agent` — monitor the agent's live state
 
-Where `drive` reads raw pixels, `agentbox agent` reports *what the agent is doing*, hook-driven and race-free. The state is one of `working | idle | waiting | end-plan | question | prompt | compacting | error` — so you can watch a box flip from **working** to **idle**, or block until it's **waiting** for input.
+Where `drive` reads raw pixels, `agentbox agent` reports *what the agent is doing*, hook-driven and race-free. The state is one of `working | idle | waiting | end-plan | question | prompt | compacting | error | input-needed` — so you can watch a box flip from **working** to **idle**, or block until it needs you.
 
 ```bash
 agentbox agent state 1                              # → working | idle | waiting | end-plan | ...
+agentbox agent wait-for input-needed 1              # wake whenever the agent needs you: question, plan, permission, done, or error
 agentbox agent wait-for idle 1 --timeout 1200000    # block until the turn completes (Stop hook)
 agentbox agent wait-for prompt 1                    # block until it's ready for the next message
 agentbox agent wait-for end-plan 1                  # Claude just called ExitPlanMode; awaits approval
@@ -154,9 +140,23 @@ agentbox agent wait-for question 1                  # an AskUserQuestion picker 
 agentbox agent get-plan-question 1                  # read the pending plan body or question + options
 ```
 
+**`input-needed` is the most important orchestration event** — the single signal that *you* (or the orchestrating agent) need to take action. It fires whenever the agent stops working and wants a human, whether because the **task finished and the prompt is ready** for the next message, or because the **subagent is blocked** on a question, a plan to approve, a permission prompt, or an error. It's the robust replacement for chaining separate `wait-for end-plan` / `wait-for question` / `wait-for prompt` calls — each of those hangs until *its* timeout if the agent happens to reach a *different* state. `wait-for input-needed` also prints the concrete state it matched (`prompt` / `end-plan` / `question` / `waiting` / `error`), so a script can branch on *why* it woke.
+
+| State | `agent wait-for` matches when |
+| --- | --- |
+| **`input-needed`** | **the agent needs you for anything — a question, plan approval, permission prompt, finished turn (prompt ready), or an error (i.e. any state except `working` / `compacting`)** |
+| `prompt` | idle, session up, no pending plan/question — ready for the next message |
+| `idle` | the turn finished (Stop hook fired) |
+| `end-plan` | ExitPlanMode fired — a plan awaits approval |
+| `question` | an AskUserQuestion picker is up |
+| `waiting` | a tool/permission prompt is pending |
+| `working` | the agent is actively working |
+| `compacting` | the context is being compacted |
+| `error` | the turn ended in an error |
+
 ### Putting it together
 
-`-i` to launch, `agent wait-for` to sync on a turn, `drive` to act, and `queue wait-for` to settle the batch compose into a "drive one agent from another" loop:
+`-i` to launch, `agent wait-for` to sync on the agent's turn (the primary gate — `input-needed` to wake on anything, or a specific state when you know what to expect), `drive` to act, and `queue wait-for` to settle the batch compose into a "drive one agent from another" loop:
 
 ```bash
 # 1. Kick off a box with a planning prompt, in the background.
@@ -175,7 +175,7 @@ agentbox claude -i "Write the OAuth provider unit tests in apps/web/test/auth/"
 agentbox queue wait-for empty-queue --timeout 3600000
 ```
 
-The mental model: **`drive`** sends keystrokes and reads the screen, **`agent`** tells you what the agent's TUI is doing, and **`queue wait-for`** blocks on queue and box lifecycle transitions. For the full flag tables, see [CLI commands](/docs/cli).
+The mental model: **`agent wait-for`** is the primary gate — it blocks until the agent's turn reaches a state you care about (`input-needed` wakes on any), **`drive`** sends keystrokes and reads the screen, **`agent state`** tells you what the agent's TUI is doing, and **`queue wait-for`** settles the whole batch on queue and box lifecycle transitions. For the full flag tables, see [CLI commands](/docs/cli).
 
 ## Monitor everything at once
 
