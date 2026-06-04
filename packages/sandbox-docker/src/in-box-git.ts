@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { execa } from 'execa';
 import type { GitWorktreeRecord } from '@agentbox/core';
 import { execInBox, type DockerExecResult } from './docker.js';
@@ -635,6 +638,29 @@ function splitNul(s: string): string[] {
   return s.split('\0').filter((p) => p.length > 0);
 }
 
+/**
+ * Sentinel token emitted by the box-side probe for a path that exists but is
+ * NOT a plain file (dir/symlink) — always a conflict so we never clobber it.
+ */
+const NON_REGULAR_TOKEN = '-';
+
+/**
+ * Classify a host untracked file against what the box already has at that path.
+ * `boxToken` is the box-side probe result: undefined when the path is absent in
+ * the box (safe to copy), {@link NON_REGULAR_TOKEN} when it exists but isn't a
+ * plain file, otherwise the sha256 of the box file's contents. `hostHash` is the
+ * sha256 of the host file. A byte-identical file is a no-op (neither copied nor
+ * reported); anything else that already exists is a conflict the box keeps.
+ */
+export function classifyUntrackedOverlay(
+  boxToken: string | undefined,
+  hostHash: string,
+): 'copy' | 'identical' | 'conflict' {
+  if (boxToken === undefined) return 'copy';
+  if (boxToken === NON_REGULAR_TOKEN) return 'conflict';
+  return boxToken === hostHash ? 'identical' : 'conflict';
+}
+
 /** Conflicted (unmerged) paths in the box worktree, if any. */
 async function unmergedPaths(container: string, ct: string): Promise<string[]> {
   const r = await gitIn(container, ct, ['diff', '--name-only', '--diff-filter=U', '-z']);
@@ -769,12 +795,19 @@ export async function resyncWorkspaceFromHost(
       }
     }
 
-    // --- overlay host untracked files, skipping any the box already has ---
+    // --- overlay host untracked files; box wins only when it actually differs ---
     if (hostUntracked.length > 0) {
-      // Filter to paths that don't already exist in the box worktree (box wins).
-      // `ct` is passed as $1 (never interpolated) so a worktree path with spaces
-      // is safe; `bash` for `read -d ''` (NUL), which dash lacks.
-      const filter = await execa(
+      // Probe the box for each host path. A path absent in the box is copied; a
+      // path present and byte-identical is a no-op (NOT a conflict — this is the
+      // common case right after create-time seeding copied these same untracked
+      // files in); a path present but differing (or a non-regular file we won't
+      // clobber) is the box's version we keep and report.
+      //
+      // For each existing path we emit `<token>\0<path>\0`: the file's sha256
+      // (fed on stdin so filenames with spaces/newlines are safe), or `-` for a
+      // non-regular file. `ct` is passed as $1 (never interpolated) so a worktree
+      // path with spaces is safe; `bash` for `read -d ''` (NUL), which dash lacks.
+      const probe = await execa(
         'docker',
         [
           'exec',
@@ -784,15 +817,47 @@ export async function resyncWorkspaceFromHost(
           opts.container,
           'bash',
           '-c',
-          'cd "$1" && while IFS= read -r -d "" f; do [ -e "$f" ] && printf "%s\\0" "$f"; done',
+          'cd "$1" && while IFS= read -r -d "" f; do ' +
+            'if [ -f "$f" ] && [ ! -L "$f" ]; then ' +
+            'printf "%s\\0%s\\0" "$(sha256sum < "$f" | cut -d" " -f1)" "$f"; ' +
+            'elif [ -e "$f" ]; then printf "%s\\0%s\\0" "-" "$f"; fi; done',
           'bash',
           ct,
         ],
         { input: hostUntracked.join('\0'), reject: false },
       );
-      const existing = new Set(filter.exitCode === 0 ? splitNul(filter.stdout) : []);
-      const toCopy = hostUntracked.filter((p) => !existing.has(p));
-      for (const p of hostUntracked) if (existing.has(p)) res.overlaySkipped.push(p);
+      const boxTokens = new Map<string, string>();
+      if (probe.exitCode === 0) {
+        const flat = splitNul(probe.stdout);
+        for (let i = 0; i + 1 < flat.length; i += 2) {
+          const token = flat[i];
+          const path = flat[i + 1];
+          if (token !== undefined && path !== undefined) boxTokens.set(path, token);
+        }
+      }
+      const toCopy: string[] = [];
+      let identical = 0;
+      for (const p of hostUntracked) {
+        const boxToken = boxTokens.get(p);
+        let hostHash = '';
+        if (boxToken !== undefined && boxToken !== NON_REGULAR_TOKEN) {
+          try {
+            hostHash = createHash('sha256').update(await readFile(join(hostMain, p))).digest('hex');
+          } catch {
+            // Host file vanished/unreadable since `ls-files` — can't copy it and
+            // the box already has its own version; keep the box's, don't report.
+            identical++;
+            continue;
+          }
+        }
+        const verdict = classifyUntrackedOverlay(boxToken, hostHash);
+        if (verdict === 'copy') toCopy.push(p);
+        else if (verdict === 'conflict') res.overlaySkipped.push(p);
+        else identical++;
+      }
+      if (identical > 0) {
+        log(`resync: ${ct}: ${String(identical)} untracked host file(s) already identical in box (no-op)`);
+      }
       if (toCopy.length > 0) {
         const tarOut = await execa('tar', ['-C', hostMain, '--null', '-T', '-', '-cf', '-'], {
           input: toCopy.join('\0'),
