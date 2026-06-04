@@ -436,6 +436,123 @@ export async function seedWorkspace(opts: SeedWorkspaceOptions): Promise<void> {
 }
 
 /**
+ * One restored worktree's regeneration plan. A docker checkpoint bakes the
+ * *source* box's branch + worktree path into the manifest, but neither its
+ * `.git` worktree metadata (host-side, bind-mounted) nor its branch ref
+ * (also host-side) is captured in the image. Restoring those verbatim is
+ * unsafe — see {@link regenerateRestoredWorktrees}.
+ */
+export interface RestoreWorktreePlan {
+  hostMainRepo: string;
+  kind: 'root' | 'nested';
+  /** Container path the baked content currently sits at (manifest's gitWorktreePath). */
+  bakedGitWorktreePath: string;
+  /** Fresh, per-box-unique branch (allocated host-side via pickFreshBranch). */
+  freshBranch: string;
+  /** Fresh, per-box-unique worktree path the baked content is renamed to. */
+  freshGitWorktreePath: string;
+}
+
+/**
+ * Re-attach each baked `/workspace` worktree to a FRESH per-box branch when
+ * restoring from a checkpoint.
+ *
+ * A docker checkpoint bakes the source box's worktree *content* into the image
+ * but not its `.git` worktree metadata (that lived on the host, bind-mounted)
+ * nor its branch ref (also host-side). The manifest only records the source
+ * branch + path. Reusing them verbatim is the shared-worktree bug: every box
+ * from one checkpoint would share a single branch + index (commits clobber
+ * each other; `index.lock` fights), and once the source box was destroyed its
+ * host worktree metadata is pruned, leaving the baked `/workspace/.git` gitfile
+ * dangling ("fatal: not a git repository").
+ *
+ * So per worktree we: rename the baked content dir to a fresh unique path (an
+ * O(1) rename within the container's writable layer — no copy), mint a fresh
+ * branch at the host's base ref, author fresh worktree metadata under the
+ * bind-mounted host `.git/worktrees/`, repoint the worktree's gitfile at it,
+ * and rebuild the index from the branch tip (working tree untouched, so the
+ * baked deviations survive as uncommitted changes). Mirrors the manual repair
+ * documented for the shared-worktree bug.
+ *
+ * Runs as `vscode` against the bind-mounted host `.git` (same as seedWorkspace).
+ */
+export async function regenerateRestoredWorktrees(opts: {
+  container: string;
+  plans: RestoreWorktreePlan[];
+  /** Base ref for the *root* worktree's fresh branch (default HEAD). Nested → HEAD. */
+  fromBranch?: string;
+  onLog?: (line: string) => void;
+}): Promise<void> {
+  const log = opts.onLog ?? (() => {});
+  // Positional args ($1..$6) so paths/branches with odd chars never re-parse.
+  const script = [
+    'set -e',
+    'OLD="$1"; NEW="$2"; MAIN="$3"; BR="$4"; BASE="$5"; META="$6"',
+    // Rename baked content to the fresh unique path (rename, not copy).
+    '[ "$OLD" = "$NEW" ] || mv "$OLD" "$NEW"',
+    // Fresh branch at the base ref; -f is safe because pickFreshBranch already
+    // guaranteed BR is unused on the host.
+    'git -C "$MAIN" branch -f "$BR" "$BASE"',
+    // Author worktree metadata under the bind-mounted host .git.
+    'mkdir -p "$META"',
+    'printf "../..\\n" > "$META/commondir"',
+    'printf "%s\\n" "$NEW/.git" > "$META/gitdir"',
+    'printf "ref: refs/heads/%s\\n" "$BR" > "$META/HEAD"',
+    // Point the worktree's gitfile at the fresh metadata dir.
+    'printf "gitdir: %s\\n" "$META" > "$NEW/.git"',
+    // Reset tracked files to the fork base so the box starts CLEAN at the host
+    // base ref — same git state as a fresh create. The baked tree was captured
+    // on the source box's (possibly divergent/older) branch, so its tracked
+    // deviations are staleness, not work; resetting drops that noise. The
+    // gitignored warm artifacts (node_modules, .next, build caches) are
+    // untouched by reset --hard — that warm state is the checkpoint's value.
+    'git -C "$NEW" reset -q --hard HEAD',
+    // Boxes carry no signing key; mirror seedWorkspace's per-worktree config so
+    // host commit.gpgsign=true doesn't break in-box commits. extensions.
+    // worktreeConfig writes the SHARED (bind-mounted) .git/config, so concurrent
+    // boxes race on .git/config.lock — retry through the contention rather than
+    // aborting (best-effort, like seedWorkspace). The per-worktree gpgsign write
+    // needs the extension enabled first, so it follows the retry.
+    'set +e',
+    'for i in 1 2 3 4 5 6 7 8; do git -C "$MAIN" config extensions.worktreeConfig true && break; sleep 0.25; done',
+    'git -C "$NEW" config --worktree commit.gpgsign false',
+    'exit 0',
+  ].join('\n');
+  for (const p of opts.plans) {
+    const baseRef = p.kind === 'root' ? (opts.fromBranch ?? 'HEAD') : 'HEAD';
+    const metaDir = `${p.hostMainRepo}/.git/worktrees/${fsSafeBranch(p.freshBranch)}`;
+    const r = await execa(
+      'docker',
+      [
+        'exec',
+        '--user',
+        'vscode',
+        opts.container,
+        'bash',
+        '-c',
+        script,
+        'bash',
+        p.bakedGitWorktreePath,
+        p.freshGitWorktreePath,
+        p.hostMainRepo,
+        p.freshBranch,
+        baseRef,
+        metaDir,
+      ],
+      { reject: false },
+    );
+    if (r.exitCode !== 0) {
+      throw new GitWorktreeError(
+        `regenerate worktree for ${p.freshBranch} failed: ${r.stderr || r.stdout}`,
+      );
+    }
+    log(
+      `restored worktree ${p.freshGitWorktreePath} on fresh branch ${p.freshBranch} (base ${baseRef})`,
+    );
+  }
+}
+
+/**
  * Tar-pipe a host source dir into the container's /workspace. Used for the
  * no-git case (no detected repos), and for the `--host-snapshot` flow where
  * the source is the APFS clone instead of the live workspace.

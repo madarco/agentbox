@@ -4,9 +4,11 @@ export {
   allocateProjectIndex,
   autoPickProjectBox,
   findBox,
+  mutateState,
   readState,
   recordBox,
   removeBoxRecord,
+  reserveProjectIndex,
   resolveBoxRef,
   writeState,
 } from './state.js';

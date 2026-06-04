@@ -149,6 +149,24 @@ cold, without baking anything into the base image. Code: `checkpoint.ts`
 - `resolveCheckpoint(projectRoot, ref)` reads the manifest and returns the
   image tag plus lineage. `create.ts` passes the tag to `runBox` as the base
   image and skips `seedWorkspace` entirely.
+- **Fresh per-box worktree (not the manifest's).** The manifest records the
+  *source* box's branch + worktree path, but reusing them verbatim is unsafe:
+  every box from one checkpoint would share a single branch + index (commits
+  clobber each other; `index.lock` fights), and once the source box is destroyed
+  its host `.git/worktrees/<name>` metadata is pruned, leaving the baked
+  `/workspace/.git` gitfile dangling (`fatal: not a git repository`). So restore
+  allocates a **fresh, unique `agentbox/<box-name>` branch** (host-side
+  `pickFreshBranch`, before `docker run`, like the non-checkpoint path) and,
+  after `docker run`, `regenerateRestoredWorktrees` (`in-box-git.ts`) renames the
+  baked content dir to the fresh path (an O(1) in-container rename), mints a
+  fresh branch at the host base ref, authors fresh `.git/worktrees/<fresh>`
+  metadata, repoints the gitfile, and `git reset --hard HEAD` so the box starts
+  **clean at the host base ref** (same git state as a fresh create). The baked
+  tracked tree was the source box's possibly-stale/divergent branch, so its
+  deviations are dropped; the gitignored warm artifacts (`node_modules`,
+  `.next`, build caches) are untouched by the reset — that warm state is the
+  checkpoint's value. `resyncWorkspaceFromHost` then overlays the host's current
+  uncommitted/untracked work, matching the non-checkpoint carry-over.
 - `BoxRecord.checkpointImage` mirrors `record.image` for plain-vs-checkpoint
   disambiguation (used by `prune --all` to allowlist still-referenced
   checkpoint tags).

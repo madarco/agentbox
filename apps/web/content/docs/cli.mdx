@@ -69,6 +69,10 @@ agentbox shell 1
 agentbox shell 1 -n logs     # a second, named shell
 agentbox shell 1 --new
 
+# One-shot command after `--`:
+agentbox shell 1 -- ls /workspace               # multi-token: run as a literal argv
+agentbox shell 1 -- 'cd web && npm run build'   # single quoted string: run as a shell snippet
+
 # Open the box's web app / desktop / IDE
 agentbox url 2
 agentbox screen 2
@@ -84,6 +88,8 @@ agentbox dashboard
 `url` opens the box's web app in your browser even with no `expose:` service. `screen` opens the in-box desktop over noVNC. `code` opens the box in VS Code or Cursor via Dev Containers. `dashboard` shows a box list alongside the selected box's live session.
 
 Add `--print` to `url`, `screen`, or `code` to print the URL instead of opening it. `url`/`screen` accept `--loopback` (docker: use `127.0.0.1` instead of the OrbStack/Portless URL) and `--ttl <seconds>` (cloud signed-URL expiry). `shell` has `attach`, `ls`, and `kill` subcommands.
+
+A one-shot command after `--` is run under the box's login shell. A single quoted argument is treated as a shell snippet (so `&&`, pipes, redirections, and `$VAR` are interpreted by the box); multiple tokens are passed through verbatim as a literal argv (like `docker exec`), so quoting and format strings such as `curl -w '%{http_code}'` reach the command intact — no double-parsing.
 
 <Callout title="TIP">`agentbox screen` needs VNC, which is on by default — boxes created with `--no-vnc` can't use it.</Callout>
 
@@ -147,7 +153,7 @@ agentbox destroy 1
 agentbox rm 1 -y
 ```
 
-`pause`/`unpause` is the cheap context switch (docker freezes the cgroup, sub-second resume; cloud archives and rehydrates, slower). `stop`/`start` is a full stop that preserves the upper volume, including `node_modules`. `destroy` (alias `rm`) wipes the box and its writable layer; `--keep-snapshot` leaves the snapshot dir under `~/.agentbox/snapshots/` in place.
+`pause`/`unpause` is the cheap context switch (docker freezes the cgroup, sub-second resume; cloud archives and rehydrates, slower). `stop`/`start` is a full stop that preserves the upper volume, including `node_modules`. `destroy` (alias `rm`) wipes the box and its writable layer; `--keep-snapshot` leaves the snapshot dir under `~/.agentbox/snapshots/` in place. If the name/id matches no tracked box but a leftover `agentbox-<name>` container exists, `destroy` removes that orphan container directly (then suggests `prune -y` for any leftover volumes).
 
 <Callout title="TIP">Prefer `pause`/`unpause` to switch between boxes — it frees CPU and RAM while frozen and resumes instantly on docker. Use `stop` when you want the box off but kept.</Callout>
 

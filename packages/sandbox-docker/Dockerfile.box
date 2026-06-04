@@ -268,16 +268,20 @@ RUN npm install -g opencode-ai
 #     the noble transition. If the base image moves back to jammy these will
 #     need the un-suffixed names.
 #
-#  2. Get an actual Chromium binary. `agent-browser install` would normally
-#     download Chrome for Testing, but Chrome for Testing has no Linux ARM64
-#     build (Apple Silicon hosts run linux/arm64 containers) and Noble's
-#     `chromium-browser` apt package is a snap stub that won't run inside a
-#     container. The reliable cross-arch source is Playwright's bundled
-#     Chromium, so we install playwright globally just for its
-#     `playwright install chromium` downloader, then point agent-browser at
-#     the resulting binary via AGENT_BROWSER_EXECUTABLE_PATH. agent-browser
-#     honours that env var (priority: CLI flag > env > config file >
-#     built-in default; see agent-browser's README).
+#  2. Provide a Chromium *lazily*, shared with the project's Playwright. We do
+#     NOT bake a Chromium download into the image: Playwright pins an exact
+#     build per playwright version, so a baked browser goes stale the instant a
+#     project pins a different Playwright — its `playwright install` fetches a
+#     different build and anything waiting on the baked path hangs. Instead,
+#     `AGENT_BROWSER_EXECUTABLE_PATH` points at the `chromium-resolver` script
+#     (installed as /usr/local/bin/chromium below), which reuses the project's
+#     Playwright Chromium when present and otherwise installs one on first use
+#     with the project's pinned Playwright (matching build), falling back to the
+#     box's global Playwright. agent-browser honours that env var (priority: CLI
+#     flag > env > config file > built-in default; see agent-browser's README).
+#     Chrome-for-Testing has no linux/arm64 build and Noble's chromium apt
+#     package is a snap stub, so Playwright's downloader stays the only reliable
+#     cross-arch source — we just invoke it lazily instead of at build time.
 #
 # Runtime state (sessions, auth cookies under ~/.agent-browser/) lives in the
 # container's writable layer, preserved across pause/unpause/stop/start and
@@ -290,6 +294,8 @@ RUN apt-get update \
         fonts-liberation xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
+# agent-browser + a global playwright (the latter is only the lazy fallback
+# Chromium downloader for projects that don't pin their own Playwright).
 RUN npm install -g agent-browser playwright
 
 # Portless CLI (https://portless.sh). Only the client — the box never runs the
@@ -299,22 +305,11 @@ RUN npm install -g agent-browser playwright
 # Requires Node 24+ — hence the setup_24.x bump above.
 RUN npm install -g portless
 
-# Download Chromium as `vscode` so the ms-playwright cache lands in vscode's
-# home (the user agent-browser runs as). The downloaded binary lives at
-# `chromium-XXXX/chrome-linux*/chrome`, where XXXX is a Playwright-internal
-# revision number that changes between releases — and the inner dir is
-# `chrome-linux` for old releases and `chrome-linux64` (or `chrome-linux/arm64`)
-# for current Chrome-for-Testing builds. Glob both. We resolve once and write
-# a stable symlink so AGENT_BROWSER_EXECUTABLE_PATH can point at something
-# predictable.
-USER vscode
-RUN playwright install chromium \
-    && CHROME_BIN="$(ls /home/vscode/.cache/ms-playwright/chromium-*/chrome-linux*/chrome 2>/dev/null | sort | tail -1)" \
-    && test -n "$CHROME_BIN" \
-    && ln -sf "$CHROME_BIN" /tmp/chromium-link \
-    && test -x "$(readlink /tmp/chromium-link)"
-USER root
-RUN mv /tmp/chromium-link /usr/local/bin/chromium
+# /usr/local/bin/chromium is a resolver (not a baked binary): on first launch it
+# reuses the project's Playwright Chromium or installs one on demand, then execs
+# it. See the script header and the rationale in the browser-support note above.
+COPY packages/sandbox-docker/scripts/chromium-resolver /usr/local/bin/chromium
+RUN chmod +x /usr/local/bin/chromium
 
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chromium
 

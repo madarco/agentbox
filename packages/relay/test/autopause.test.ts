@@ -137,6 +137,46 @@ describe('startAutopauseLoop', () => {
     expect((evs[0]!.payload as { action: string }).action).toBe('paused');
   });
 
+  it('does not pause when another agent (codex) is working even if claude is idle', async () => {
+    const registry = new BoxRegistry();
+    registry.register({
+      boxId: 'b1',
+      token: 't',
+      name: 'b1',
+      registeredAt: new Date().toISOString(),
+      containerName: 'agentbox-b1',
+      createdAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+    });
+    const events = new EventBuffer();
+    let pauseCalls = 0;
+    // claude has gone idle, but codex is actively working — the box must stay up.
+    const statusStore = {
+      get: (): BoxStatusSnapshot => ({
+        schema: 1,
+        boxId: 'b1',
+        claude: { state: 'idle', updatedAt: new Date(Date.now() - 30 * 60_000).toISOString() },
+        codex: { state: 'working', updatedAt: new Date().toISOString() },
+      }),
+    } as unknown as BoxStatusStore;
+
+    const loop = startAutopauseLoop({
+      registry,
+      statusStore,
+      events,
+      log: () => {},
+      intervalMs: 5,
+      loadConfig: async () => ({ enabled: true, maxRunningBoxes: 0, idleMinutes: 5 }),
+      inspectStatus: async (): Promise<ContainerState> => 'running',
+      pause: async () => {
+        pauseCalls += 1;
+      },
+    });
+
+    await new Promise((r) => setTimeout(r, 30));
+    await loop.stop();
+    expect(pauseCalls).toBe(0);
+  });
+
   it('does nothing when disabled and stop() halts further ticks', async () => {
     const registry = new BoxRegistry();
     registry.register({

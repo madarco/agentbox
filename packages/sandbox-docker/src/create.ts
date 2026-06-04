@@ -42,11 +42,13 @@ import {
   chownGitBindParents,
   collectRepoCarryOver,
   gitWorktreePathFor,
+  regenerateRestoredWorktrees,
   removeInBoxWorktree,
   resyncWorkspaceFromHost,
   seedWorkspace,
   seedWorkspaceFromDir,
   type RepoCarryOver,
+  type RestoreWorktreePlan,
 } from './in-box-git.js';
 import {
   CONTAINER_EXPORT_MERGED,
@@ -67,9 +69,10 @@ import {
 } from './portless.js';
 import { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
 import {
-  allocateProjectIndex,
   readState,
   recordBox,
+  removeBoxRecord,
+  reserveProjectIndex,
   type BoxRecord,
   type GitWorktreeRecord,
 } from './state.js';
@@ -439,14 +442,21 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     throw new Error(`container ${containerName} already exists; remove it first`);
   }
 
-  // Per-project monotonic index. Allocated *here* so it can flow into the
+  // Per-project monotonic index. Reserved *atomically* here (under the state
+  // lock, persisting a minimal record that claims it) so it can flow into the
   // box / snapshot dir segments (`<id>-<n>-<mnemonic>`) and the
-  // `AGENTBOX_PROJECT_INDEX` container env var. Pre-feature legacy boxes
-  // never pass `projectRoot`; those records keep `projectIndex` undefined and
-  // the dir segments fall back to `<id>-<mnemonic>`.
+  // `AGENTBOX_PROJECT_INDEX` env var with no risk of a concurrent create
+  // claiming the same number and forcing a later bump that would desync the
+  // recorded index from the dir already created from it. The full record is
+  // written over this reservation by the provisional + final recordBox below.
+  // Pre-feature legacy boxes never pass `projectRoot`; those keep `projectIndex`
+  // undefined and the dir segments fall back to `<id>-<mnemonic>`.
   let projectIndex: number | undefined;
   if (opts.projectRoot) {
-    projectIndex = allocateProjectIndex(await readState(), opts.projectRoot);
+    projectIndex = await reserveProjectIndex(
+      { id, name, container: containerName, image: imageRef, workspacePath: workspace, createdAt },
+      opts.projectRoot,
+    );
   }
 
   // Repo detection + host-side carry-over capture. Branches are picked here
@@ -459,8 +469,38 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // resolve to a path that doesn't exist in the new container.
   const repoCarryOvers: RepoCarryOver[] = [];
   const gitWorktreeRecords: GitWorktreeRecord[] = [];
+  // Checkpoint restore: the manifest's worktree records carry the *source*
+  // box's branch + path. Reusing them verbatim is the shared-worktree bug —
+  // every box from one checkpoint would share a single branch + index, and the
+  // baked /workspace/.git gitfile dangles once the source box's host worktree
+  // metadata was pruned. So mint a FRESH per-box branch + unique worktree path
+  // here (host-side, before docker run, like the non-checkpoint path) and
+  // regenerate the in-box worktree over the baked content after run.
+  const restoreWorktreePlans: RestoreWorktreePlan[] = [];
   if (checkpointImage && restoredWorktrees && restoredWorktrees.length > 0) {
-    gitWorktreeRecords.push(...restoredWorktrees);
+    for (const w of restoredWorktrees) {
+      const branchBase =
+        w.kind === 'root'
+          ? `agentbox/${name}`
+          : `agentbox/${name}--${w.relPathFromWorkspace.replace(/[^A-Za-z0-9._-]+/g, '_')}`;
+      const freshBranch = await pickFreshBranch(w.hostMainRepo, branchBase);
+      const freshGitWorktreePath = gitWorktreePathFor(freshBranch);
+      restoreWorktreePlans.push({
+        hostMainRepo: w.hostMainRepo,
+        kind: w.kind,
+        bakedGitWorktreePath: w.gitWorktreePath,
+        freshBranch,
+        freshGitWorktreePath,
+      });
+      gitWorktreeRecords.push({
+        kind: w.kind,
+        hostMainRepo: w.hostMainRepo,
+        containerPath: w.containerPath,
+        gitWorktreePath: freshGitWorktreePath,
+        branch: freshBranch,
+        relPathFromWorkspace: w.relPathFromWorkspace,
+      });
+    }
   }
   if (!checkpointImage) {
     const repos = await detectGitRepos(workspace);
@@ -803,6 +843,44 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     }
   }
 
+  // Everything about the box that's known before `docker run`. Recorded
+  // provisionally right after the container starts (below) so a failure during
+  // the rest of finalization (seed, ctl/vnc/dockerd launch, port publish,
+  // portless) still leaves a state.json record — destroy/prune resolve the box
+  // by its real name from state.json instead of relying on the orphan-container
+  // fallback, and the late-known fields (ports, portless, carry) are merged in
+  // by the final `recordBox` on success.
+  const baseRecord: BoxRecord = {
+    id,
+    name,
+    container: containerName,
+    image: imageRef,
+    workspacePath: workspace,
+    snapshotDir,
+    socketPath,
+    claudeConfigVolume: claudeSpec.volume,
+    codexConfigVolume,
+    opencodeConfigVolume,
+    vscodeServerVolume: vscodeServerVolumeName(id),
+    cursorServerVolume: cursorServerVolumeName(id),
+    relayToken: relayUp ? relayToken : undefined,
+    gitWorktrees: gitWorktreeRecords.length > 0 ? gitWorktreeRecords : undefined,
+    withPlaywright: opts.withPlaywright ? true : undefined,
+    withEnv: opts.withEnv ? true : undefined,
+    vncEnabled: vncEnabled ? true : undefined,
+    vncContainerPort: vncEnabled ? VNC_CONTAINER_PORT : undefined,
+    vncPassword: vncPassword,
+    webContainerPort: WEB_CONTAINER_PORT,
+    dockerVolume,
+    dockerCacheShared: dockerCacheShared || undefined,
+    projectRoot: opts.projectRoot,
+    projectIndex,
+    checkpointImage,
+    checkpointSource,
+    resourceLimits: persistableLimits(effectiveLimits),
+    createdAt,
+  };
+
   await runBox({
     name: containerName,
     image: imageRef,
@@ -822,6 +900,11 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     },
   });
   log(`container ${containerName} started`);
+
+  // Provisional registration: the box now exists, so persist it before the
+  // remaining finalization steps. If create dies past this point, the record
+  // (with the real name) is already in state.json for destroy/prune to find.
+  await recordBox(baseRecord);
 
   // Flip the in-container parent dir of each bind-mounted `.git` to
   // vscode-owned. Docker auto-creates the intermediates (e.g. the project root
@@ -878,6 +961,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         if (opts.useBranch !== undefined) {
           log(`seedWorkspace failed for --use-branch ${opts.useBranch}; cleaning up the box`);
           await execa('docker', ['rm', '-f', containerName], { reject: false });
+          // Drop the provisional record written after runBox so we don't leave
+          // a dangling state.json entry pointing at the now-removed container.
+          await removeBoxRecord(id);
           for (const w of gitWorktreeRecords) {
             await removeInBoxWorktree({
               hostMainRepo: w.hostMainRepo,
@@ -893,28 +979,38 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       const source = snapshotDir ?? workspace;
       await seedWorkspaceFromDir({ container: containerName, hostSource: source, onLog: log });
     }
-  } else if (restoredWorktrees && restoredWorktrees.length > 0) {
-    // gitWorktreeRecords was populated above (pre-`docker run`) so the .git
-    // bind-mounts in extraVolumes are wired. The /workspace bind itself
-    // can't be set up until the container is running, so we apply it here.
+  } else if (restoreWorktreePlans.length > 0) {
+    // gitWorktreeRecords was populated above (pre-`docker run`) with FRESH
+    // per-box branches/paths, so the .git bind-mounts in extraVolumes are
+    // wired. The container is now running, so regenerate each baked worktree
+    // onto its fresh branch (rename + fresh metadata + reindex), then apply the
+    // /workspace bind mount(s) onto the fresh paths.
+    await regenerateRestoredWorktrees({
+      container: containerName,
+      plans: restoreWorktreePlans,
+      fromBranch: opts.fromBranch,
+      onLog: log,
+    });
     await bindWorktrees(
       containerName,
-      restoredWorktrees.map((w) => ({
+      gitWorktreeRecords.map((w) => ({
         kind: w.kind,
         containerPath: w.containerPath,
         gitWorktreePath: w.gitWorktreePath,
       })),
       log,
     );
-    log('re-bound /workspace from checkpoint image');
-    // The restored worktree is at the checkpoint's (stale) state. Merge the
-    // host's current branch in + overlay the host's uncommitted/untracked
-    // changes so the box matches a fresh create from current HEAD (box wins on
-    // conflict). Non-checkpoint creates already fork from HEAD + carry-over.
+    log('re-bound /workspace from checkpoint image (fresh per-box worktree)');
+    // Each fresh branch was forked from the host's base ref, and
+    // regenerateRestoredWorktrees already `reset --hard`ed the tracked tree to
+    // it (the checkpoint's stale tracked deviations are dropped; gitignored warm
+    // artifacts like node_modules are kept). Resync then merges the host's
+    // current branch in + overlays the host's uncommitted/untracked changes, so
+    // the box matches a fresh create from HEAD (box wins on conflict).
     if (opts.resyncOnStart !== false) {
       const repos = await resyncWorkspaceFromHost({
         container: containerName,
-        worktrees: restoredWorktrees,
+        worktrees: gitWorktreeRecords,
         onLog: log,
       });
       resyncResult = {
@@ -1086,42 +1182,17 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     }
   }
 
+  // Final record: the provisional base plus the fields only known after the
+  // container was up (published host ports, portless aliases, applied carry).
   const record: BoxRecord = {
-    id,
-    name,
-    container: containerName,
-    image: imageRef,
-    workspacePath: workspace,
-    snapshotDir,
-    socketPath,
-    claudeConfigVolume: claudeSpec.volume,
-    codexConfigVolume,
-    opencodeConfigVolume,
-    vscodeServerVolume: vscodeServerVolumeName(id),
-    cursorServerVolume: cursorServerVolumeName(id),
-    relayToken: relayUp ? relayToken : undefined,
-    gitWorktrees: gitWorktreeRecords.length > 0 ? gitWorktreeRecords : undefined,
-    withPlaywright: opts.withPlaywright ? true : undefined,
-    withEnv: opts.withEnv ? true : undefined,
+    ...baseRecord,
     carry: carrySummary,
-    vncEnabled: vncEnabled ? true : undefined,
-    vncContainerPort: vncEnabled ? VNC_CONTAINER_PORT : undefined,
     vncHostPort: vncHostPort ?? undefined,
-    vncPassword: vncPassword,
-    webContainerPort: WEB_CONTAINER_PORT,
     webHostPort: webHostPort ?? undefined,
     portlessAlias: portlessAliasName,
     portlessUrl,
     portlessVncAlias: portlessVncAliasName,
     portlessVncUrl,
-    dockerVolume,
-    dockerCacheShared: dockerCacheShared || undefined,
-    projectRoot: opts.projectRoot,
-    projectIndex,
-    checkpointImage,
-    checkpointSource,
-    resourceLimits: persistableLimits(effectiveLimits),
-    createdAt,
   };
   await recordBox(record);
 

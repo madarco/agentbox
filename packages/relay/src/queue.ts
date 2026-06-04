@@ -414,6 +414,7 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
   let ticking = false;
   let stopped = false;
   let warnedNoWorkingDeps = false;
+  let lastSweepAt = 0;
   let inFlight: Promise<void> = recoverOrphanedWorkers(log, onStatusChange).catch((err) => {
     log(`queue: orphan recovery failed: ${err instanceof Error ? err.message : String(err)}`);
   });
@@ -424,6 +425,16 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
     try {
       const cfg = await loadConfig();
       if (!cfg.enabled) return;
+
+      // Throttled hygiene sweep of stale terminal manifests (runs regardless of
+      // whether anything is queued, so a finished burst gets cleaned up).
+      const now = Date.now();
+      if (now - lastSweepAt >= SWEEP_INTERVAL_MS) {
+        lastSweepAt = now;
+        await sweepTerminalJobs(log, now).catch((err) => {
+          log(`queue: sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
 
       const jobs = await loadQueue();
       const hasQueued = jobs.some((j) => j.status === 'queued');
@@ -557,6 +568,32 @@ async function recoverOrphanedWorkers(
     onChange?.(failed);
     log(`queue: recovered orphan job ${j.id} (pid ${String(j.pid ?? '?')} not alive) -> failed`);
   }
+}
+
+/** Terminal job manifests older than this are swept so `queue list` and the
+ *  scheduler don't accumulate unbounded done/failed/cancelled entries (they
+ *  never gate concurrency, but they pollute listings and were never cleaned). */
+export const TERMINAL_RETENTION_MS = 60 * 60 * 1_000;
+const SWEEP_INTERVAL_MS = 60 * 1_000;
+const TERMINAL_STATUSES: readonly QueueJobStatus[] = ['done', 'failed', 'cancelled'];
+
+/**
+ * Delete terminal (done/failed/cancelled) job manifests whose terminal flip is
+ * older than {@link TERMINAL_RETENTION_MS}. Recent terminal jobs are kept so
+ * `agentbox queue list` still shows just-finished history. Best-effort: a
+ * delete failure is logged-by-omission and retried next sweep.
+ */
+async function sweepTerminalJobs(log: (line: string) => void, now: number): Promise<void> {
+  const jobs = await loadQueue();
+  let swept = 0;
+  for (const j of jobs) {
+    if (!TERMINAL_STATUSES.includes(j.status)) continue;
+    const since = Date.parse(j.finishedAt ?? j.createdAt);
+    if (Number.isNaN(since) || now - since < TERMINAL_RETENTION_MS) continue;
+    await deleteJob(j.id);
+    swept += 1;
+  }
+  if (swept > 0) log(`queue: swept ${String(swept)} stale terminal manifest(s)`);
 }
 
 function processAlive(pid: number): boolean {

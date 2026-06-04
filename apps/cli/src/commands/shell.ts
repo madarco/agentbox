@@ -59,6 +59,28 @@ function detachSuffix(sessionName: string): string {
   return label === DEFAULT_SHELL_SESSION ? '' : ` -n ${label}`;
 }
 
+/**
+ * `bash` argv for a one-shot `agentbox shell <box> -- <cmd...>`.
+ *
+ * A single token is a shell snippet — `bash -lc "<snippet>"` — so
+ * `-- "cd x && npm test"` and `-- 'echo $HOME'` keep working (the box's shell
+ * interprets operators/expansions). Multiple tokens are an argv that must reach
+ * the box verbatim: joining them into one string and re-parsing through
+ * `bash -c` double-parses the user's quoting (this is the bug — it mangled
+ * `-- bash -lc "echo 'x' > f"` and split `-- curl -w "...%{http_code}..."`).
+ * We instead hand the tokens to `exec "$@"` as positional params so each is
+ * delivered literally, while still running under the login shell (`-l`) so the
+ * profile's PATH is in scope before the exec.
+ *
+ * Mirrors how `docker exec <c> <argv...>` / execve treat an explicit argv,
+ * with the single-string convenience preserved for shell one-liners.
+ */
+export function oneShotBashArgv(cmd: string[], login: boolean): string[] {
+  const flag = login ? '-lc' : '-c';
+  if (cmd.length <= 1) return ['bash', flag, cmd[0] ?? ''];
+  return ['bash', flag, 'exec "$@"', 'bash', ...cmd];
+}
+
 /** Compact relative time, e.g. `3m ago`; `-` when unknown. */
 function fmtAgo(iso: string | null): string {
   if (!iso) return '-';
@@ -228,7 +250,7 @@ export const shellCommand = new Command('shell')
         // `whoami`. exec is the same primitive used at create-time and for
         // file ops; it returns when the command exits.
         if (oneShot) {
-          const argv = ['bash', login ? '-lc' : '-c', effectiveCmd.join(' ')];
+          const argv = oneShotBashArgv(effectiveCmd, login);
           const r = await provider.exec(box, argv, { user });
           if (r.stdout) process.stdout.write(r.stdout);
           if (r.stderr) process.stderr.write(r.stderr);
@@ -286,9 +308,14 @@ export const shellCommand = new Command('shell')
       // runs, and the interactive `--no-tmux` shell. One-shot/piped use is
       // never tmux-wrapped: machine-readable stdout and heredocs must stay
       // clean.
-      const bashArgs: string[] = [];
-      if (login) bashArgs.push('-l');
-      if (effectiveCmd.length > 0) bashArgs.push('-c', effectiveCmd.join(' '));
+      // One-shot (`-- cmd…`) runs the command argv verbatim (see oneShotBashArgv);
+      // no cmd → an interactive `bash`/`bash -l` shell.
+      const bashInvocation =
+        effectiveCmd.length > 0
+          ? oneShotBashArgv(effectiveCmd, login)
+          : login
+            ? ['bash', '-l']
+            : ['bash'];
       const ttyFlag = isInteractive ? '-it' : '-i';
       const plainArgv = [
         'exec',
@@ -298,8 +325,7 @@ export const shellCommand = new Command('shell')
         '--user',
         user,
         box.container,
-        'bash',
-        ...bashArgs,
+        ...bashInvocation,
       ];
 
       // One-shot exec (`agentbox shell box -- cmd…`) and any piped use both

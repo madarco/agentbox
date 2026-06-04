@@ -248,6 +248,8 @@ agentbox config set queue.maxConcurrent 3 --global
 agentbox config set autopause.idleMinutes 10 --global
 ```
 
+Auto-pause only ever targets a box whose live agent has settled to **idle** for `idleMinutes`. A box where **any** agent (Claude, Codex, or OpenCode) is working, compacting, or waiting on you is never auto-paused. If a box does get paused while you still need it, `agentbox drive …`, `agentbox shell`, and `agentbox unpause` all resume it on demand (drive auto-unpauses before it reaches the session).
+
 See [background and parallel](/docs/background-and-parallel) and [checkpoints and pausing](/docs/checkpoints-and-pausing).
 
 ## cloud / engine / portless / relay / vnc / maintenance

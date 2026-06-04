@@ -1,5 +1,8 @@
 import { confirm, isCancel, log } from '@clack/prompts';
-import { destroyBox } from '@agentbox/sandbox-docker';
+import { execa } from 'execa';
+import { findProjectRoot } from '@agentbox/config';
+import { readState, resolveBoxRef } from '@agentbox/sandbox-core';
+import { destroyBox, portlessUnalias } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
@@ -9,6 +12,38 @@ import { handleLifecycleError } from './_errors.js';
 interface DestroyOptions {
   yes?: boolean;
   keepSnapshot?: boolean;
+}
+
+/**
+ * Force-remove an orphan docker container that has no `state.json` record —
+ * e.g. a create that died after `docker run` but before `recordBox`, or a box
+ * whose record was lost. Returns the removed container name, or null when no
+ * matching container exists (so the caller can fall through to the normal
+ * not-found error). Tries `agentbox-<ref>` and, if the user passed a full
+ * container name, `<ref>` verbatim.
+ */
+async function destroyOrphanContainer(ref: string): Promise<string | null> {
+  const candidates = ref.startsWith('agentbox-') ? [ref] : [`agentbox-${ref}`, ref];
+  for (const name of candidates) {
+    const found = await execa(
+      'docker',
+      ['ps', '-a', '--filter', `name=^${name}$`, '--format', '{{.Names}}'],
+      { reject: false },
+    );
+    if (found.exitCode === 0 && found.stdout.trim() === name) {
+      const rm = await execa('docker', ['rm', '-f', name], { reject: false });
+      if (rm.exitCode === 0) {
+        // Best-effort: drop the portless aliases this box would have registered
+        // (`<name>` web + `vnc-<name>`). We have no state record to read them
+        // from, but they're derived from the box name, so unalias by convention.
+        const boxName = name.startsWith('agentbox-') ? name.slice('agentbox-'.length) : name;
+        await portlessUnalias(boxName).catch(() => {});
+        await portlessUnalias(`vnc-${boxName}`).catch(() => {});
+        return name;
+      }
+    }
+  }
+  return null;
 }
 
 export const destroyCommand = new Command('destroy')
@@ -22,6 +57,22 @@ export const destroyCommand = new Command('destroy')
   .option('--keep-snapshot', "don't delete the snapshot dir under ~/.agentbox/snapshots/")
   .action(async (idOrName: string | undefined, opts: DestroyOptions) => {
     try {
+      // Resolve-by-container fallback: an explicit ref that matches no state
+      // record may still be a live orphan container (create died before
+      // recordBox, or its record was lost). Try to clean it up directly
+      // instead of failing with "no agentbox matches".
+      if (idOrName !== undefined) {
+        const project = await findProjectRoot(process.cwd());
+        const hit = resolveBoxRef(idOrName, await readState(), project.root);
+        if (hit.kind === 'none') {
+          const removed = await destroyOrphanContainer(idOrName);
+          if (removed) {
+            log.warn(`no state record for "${idOrName}"; removed orphan container ${removed}`);
+            log.info('run `agentbox prune -y` to clean any leftover volumes');
+            return;
+          }
+        }
+      }
       const box = await resolveBoxOrExit(idOrName);
 
       if (!opts.yes) {

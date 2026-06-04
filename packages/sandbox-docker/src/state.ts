@@ -11,6 +11,7 @@ export {
   readState,
   recordBox,
   removeBoxRecord,
+  reserveProjectIndex,
   resolveBoxRef,
   writeState,
 } from '@agentbox/sandbox-core';

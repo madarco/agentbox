@@ -7,7 +7,7 @@ Every box ships a real headed browser and a live VNC desktop. A coding agent can
 
 ## Give the agent a browser
 
-Vercel's [`agent-browser`](https://github.com/vercel-labs/agent-browser) is baked into the box image, so every box (docker, daytona, hetzner, vercel) has a working browser with no setup. It drives Playwright's bundled Chromium.
+Vercel's [`agent-browser`](https://github.com/vercel-labs/agent-browser) is baked into the box image, so every box (docker, daytona, hetzner, vercel) has a working browser with no setup. The Chromium it drives is provided by Playwright — fetched on first browser use (and reused from the project's own pinned Playwright build when present), so agent-browser and the project's Playwright share a single, current Chromium rather than a stale baked-in one.
 
 The agent calls `agent-browser` directly from inside the box, and any GUI process renders to the box's VNC display — which is what you see through `agentbox screen` below.
 
@@ -28,7 +28,7 @@ The agent calls `agent-browser` itself — you don't have to. Sessions, auth, an
 
 ## Playwright
 
-The Playwright runtime ships in the image (it provides the Chromium that `agent-browser` drives). Add `--with-playwright` to also install the standalone Playwright CLI in the box:
+The Playwright runtime ships in the image; the Chromium itself is installed on first browser use (reusing the project's pinned Playwright build when present, so `agent-browser` and the project's tests share one binary — no version-mismatched, baked-in browser to go stale). Add `--with-playwright` to also install the standalone Playwright CLI in the box:
 
 ```bash
 agentbox claude --with-playwright

@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BoxRecord } from '@agentbox/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readState, recordBox, removeBoxRecord, writeState } from '../src/state.js';
+import {
+  readState,
+  recordBox,
+  removeBoxRecord,
+  reserveProjectIndex,
+  writeState,
+} from '../src/state.js';
 
 describe('state.ts', () => {
   let dir: string;
@@ -230,5 +236,79 @@ describe('state.ts', () => {
     // No-op on unknown id.
     const removedAgain = await removeBoxRecord('aaaaaaaa', file);
     expect(removedAgain).toBe(false);
+  });
+
+  it('concurrent recordBox calls do not lose records or corrupt the file', async () => {
+    // Mirrors the failure mode of several parallel `agentbox create` processes
+    // writing state.json at once: the unlocked read-modify-write used to drop
+    // records (last writer wins) and could leave a half-overwritten file.
+    const boxes: BoxRecord[] = Array.from({ length: 25 }, (_, i) => ({
+      id: `box${String(i).padStart(4, '0')}`,
+      name: `n${String(i)}`,
+      container: `agentbox-n${String(i)}`,
+      image: 'agentbox/box:dev',
+      workspacePath: '/tmp/ws',
+      snapshotDir: null,
+      createdAt: '2026-05-12T12:00:00.000Z',
+    }));
+    await Promise.all(boxes.map((b) => recordBox(b, file)));
+
+    const reloaded = await readState(file);
+    expect(reloaded.boxes).toHaveLength(boxes.length);
+    expect(new Set(reloaded.boxes.map((b) => b.id)).size).toBe(boxes.length);
+  });
+
+  it('concurrent record + remove stays consistent (no lost survivors)', async () => {
+    const seed: BoxRecord[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `seed${String(i)}`,
+      name: `s${String(i)}`,
+      container: `agentbox-s${String(i)}`,
+      image: 'agentbox/box:dev',
+      workspacePath: '/tmp/ws',
+      snapshotDir: null,
+      createdAt: '2026-05-12T12:00:00.000Z',
+    }));
+    for (const b of seed) await recordBox(b, file);
+
+    // Remove the even ids while concurrently adding new ones.
+    const removals = seed.filter((_, i) => i % 2 === 0).map((b) => removeBoxRecord(b.id, file));
+    const additions = Array.from({ length: 5 }, (_, i) =>
+      recordBox({ ...seed[0]!, id: `new${String(i)}`, name: `x${String(i)}` }, file),
+    );
+    await Promise.all([...removals, ...additions]);
+
+    const ids = new Set((await readState(file)).boxes.map((b) => b.id));
+    // All odd seeds survive, all 5 new ones present, no even seeds left.
+    for (const i of [1, 3, 5, 7, 9]) expect(ids.has(`seed${String(i)}`)).toBe(true);
+    for (const i of [0, 1, 2, 3, 4]) expect(ids.has(`new${String(i)}`)).toBe(true);
+    for (const i of [0, 2, 4, 6, 8]) expect(ids.has(`seed${String(i)}`)).toBe(false);
+  });
+
+  it('reserveProjectIndex hands out distinct indices to concurrent reservations', async () => {
+    // The reservation is what makes the index race-free: each create reserves +
+    // persists atomically *before* it bakes the index into its dirs, so two
+    // concurrent creates in one project can't claim the same number (which would
+    // otherwise force a record-vs-dir desync).
+    const mk = (id: string): BoxRecord => ({
+      id,
+      name: id,
+      container: `agentbox-${id}`,
+      image: 'agentbox/box:dev',
+      workspacePath: '/repo',
+      createdAt: '2026-05-12T12:00:00.000Z',
+    });
+    const ids = ['r0', 'r1', 'r2', 'r3', 'r4'];
+    const indices = await Promise.all(ids.map((id) => reserveProjectIndex(mk(id), '/repo', file)));
+
+    // Every reservation got a distinct index, and the persisted record carries it.
+    expect(new Set(indices).size).toBe(ids.length);
+    expect([...indices].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
+    const persisted = (await readState(file)).boxes;
+    expect(persisted).toHaveLength(ids.length);
+    expect(new Set(persisted.map((b) => b.projectIndex)).size).toBe(ids.length);
+
+    // A different project has its own index space, starting at 1.
+    const other = await reserveProjectIndex(mk('other1'), '/other', file);
+    expect(other).toBe(1);
   });
 });

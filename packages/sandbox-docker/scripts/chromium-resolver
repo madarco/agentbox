@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# agentbox: resolve the Chromium that agent-browser drives.
+#
+# We deliberately do NOT bake a Chromium into the box image. Playwright pins an
+# exact Chromium build per playwright version, so a baked browser goes stale the
+# moment a project pins a different Playwright — the project's `playwright
+# install` then fetches a *different* build, and anything waiting on the baked
+# one (a hard-coded ms-playwright path) hangs forever. Instead we reuse the
+# *project's* Playwright Chromium — the exact build its own tests use — so
+# agent-browser and Playwright share a single binary that is always correct.
+#
+# `AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chromium` points at this script,
+# so every agent-browser launch runs it. Resolution is effectively cached: once
+# a build exists the hot path is just an `ls` + `exec` (no download).
+#
+#   1. newest installed Playwright Chromium under ~/.cache/ms-playwright; else
+#   2. install one with the project's pinned Playwright (matching build), or the
+#      box's global Playwright as a fallback when the project has none; then
+#   3. exec the real binary with the args agent-browser passed.
+#
+# Chrome-for-Testing has no linux/arm64 build and Noble's chromium apt package
+# is a snap stub, so Playwright's downloader stays the only reliable cross-arch
+# source — we just invoke it lazily, with the project's version, instead of
+# baking a fixed one.
+
+newest_chrome() {
+  ls -d "$HOME"/.cache/ms-playwright/chromium-*/chrome-linux*/chrome 2>/dev/null | sort -V | tail -1
+}
+
+real="$(newest_chrome)"
+if [ -z "$real" ]; then
+  echo "agentbox: no Chromium yet; installing via Playwright (one-time)..." >&2
+  # Serialize concurrent first-launches: without a lock, two simultaneous
+  # agent-browser launches would both run `playwright install` into the same
+  # ~/.cache/ms-playwright, and one could exec a half-extracted binary. flock
+  # makes the second waiter re-check the cache and skip the redundant install.
+  mkdir -p "$HOME/.cache" 2>/dev/null
+  exec 9>"$HOME/.cache/agentbox-chromium-install.lock"
+  flock 9
+  real="$(newest_chrome)" # another launch may have installed it while we waited
+  if [ -z "$real" ]; then
+    if [ -x /workspace/node_modules/.bin/playwright ]; then
+      ( cd /workspace && ./node_modules/.bin/playwright install chromium ) >&2
+    else
+      playwright install chromium >&2
+    fi
+    real="$(newest_chrome)"
+  fi
+  flock -u 9
+fi
+
+if [ -z "$real" ] || [ ! -x "$real" ]; then
+  echo "agentbox: could not resolve a Chromium binary (Playwright install failed?)." >&2
+  exit 127
+fi
+
+exec "$real" "$@"
