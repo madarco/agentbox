@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { readBoxStatus } from '@agentbox/sandbox-docker';
+import { serviceStatusLabel } from './service-status.js';
 import type { AttachOpenIn } from '@agentbox/config';
 import { loadPtyBackend } from '../pty/pty-backend.js';
 import { detectHostTerminal, spawnInNewTerminal } from '../terminal/host.js';
@@ -254,11 +255,16 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // Actions`, expanding to the chord menu while the leader is open). Session
   // title + claude activity come from the per-box status.json polled below.
   let leaderActive = false;
-  const buildIdle = (sessionTitle?: string, claudeActivity?: string): FooterState => ({
+  const buildIdle = (
+    sessionTitle?: string,
+    claudeActivity?: string,
+    boxServiceStatus?: string,
+  ): FooterState => ({
     kind: 'idle',
     boxName: opts.boxName,
     sessionTitle,
     claudeActivity,
+    boxServiceStatus,
     mode: opts.mode,
     detachable,
     leaderActive,
@@ -266,6 +272,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   let footerState: FooterState = buildIdle();
   let lastSessionTitle: string | undefined;
   let lastActivity: AgentActivityState | undefined;
+  let lastServiceStatus: string | undefined;
   // Prompt + notice + question feed the alert band above the footer; flash +
   // leader stay in the footer. `recomputeFooter` keeps the footer at idle/flash;
   // `recomputeBand` derives the band visibility from prompt > notice > question.
@@ -353,7 +360,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     } else if (flashMessage) {
       footerState = { kind: 'flash', message: flashMessage };
     } else {
-      footerState = buildIdle(lastSessionTitle, lastActivity);
+      footerState = buildIdle(lastSessionTitle, lastActivity, lastServiceStatus);
     }
   };
 
@@ -761,6 +768,9 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
               : status?.claude;
       const nextTitle = body?.sessionTitle?.trim() || undefined;
       const nextActivity = body?.state || undefined;
+      // Aggregate agentbox.yaml service status (mode-independent — it's about
+      // the box, not the agent). Drives the footer's `(...)` slot when present.
+      const nextServiceStatus = serviceStatusLabel(status) ?? undefined;
       // Reflect the agent's activity on the box's cmux workspace on each
       // transition (colour + description), and flag the box's own tab when it
       // first crosses into a needs-input state so it stands out among sibling
@@ -793,9 +803,15 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
         questionPayload = nextQuestion;
         applyBandChange();
       }
-      if (nextTitle === lastSessionTitle && nextActivity === lastActivity) return;
+      if (
+        nextTitle === lastSessionTitle &&
+        nextActivity === lastActivity &&
+        nextServiceStatus === lastServiceStatus
+      )
+        return;
       lastSessionTitle = nextTitle;
       lastActivity = nextActivity;
+      lastServiceStatus = nextServiceStatus;
       if (footerState.kind === 'idle') {
         recomputeFooter();
         redrawChrome();

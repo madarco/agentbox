@@ -99,6 +99,20 @@ detached (no "current" pane):
 XTPOPTITLE (`CSI 22;2 t` / `CSI 23;2 t`) to save/restore the user's title across
 the attach.
 
+## Wrapper footer status slot
+
+The attach footer renders ` agentbox ▸ <box> (<state>) — <title>   <hints>`
+(`apps/cli/src/wrapped-pty/footer.ts` → dashboard `statusLine`). The `(<state>)`
+slot shows the box's **aggregate `agentbox.yaml` service status** when the box
+declares services — `starting N/M…` while they boot, `service error` if one
+crashed / went unhealthy / a setup task failed, `ready` once all are up. When
+attached you can already see the agent; what you can't see is whether the
+background services have come up, so service status wins the slot. It's derived
+by `serviceStatusLabel` (`apps/cli/src/wrapped-pty/service-status.ts`) from the
+same `status.json` the footer polls every 3s. Boxes with **no** services fall
+back to the agent activity (`idle`/`working`/…) for claude, or the
+`(shell)`/`(codex)`/`(opencode)` mode label otherwise.
+
 ## cmux sidebar: box agent status (`attach.cmuxStatus`)
 
 `apps/cli/src/terminal/cmux-status.ts`. When attached **inside cmux**, the

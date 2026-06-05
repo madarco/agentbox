@@ -34,6 +34,8 @@ A one-shot `-- <cmd>` is never tmux-wrapped, so stdout stays clean for scripts. 
 Same detach chord as the agent: `Ctrl+a d`. See [Background and parallel](/docs/background-and-parallel) for juggling many boxes.
 </Callout>
 
+The footer's `(<state>)` slot — next to the box name — shows your `agentbox.yaml` **service status**: `starting N/M…` while services boot in the background, `service error` if one crashed, `ready` once they're all up. (Boxes with no services show the agent's activity there instead.) It's the answer to "are my services up yet?" without leaving the session.
+
 While attached to any box session, **`Ctrl+a t` opens a fresh shell in the *same* box in a new tab** — a cmux surface in the current workspace, a new tmux window, or a new iTerm2 tab, depending on your terminal. **`Ctrl+a k` destroys the box** (after a confirmation) — the same key the dashboard uses, so it never collides with `Ctrl+a d` (detach). For per-terminal setup — where sessions open, the full chord list, and the cmux sidebar — see the integration pages for [iTerm2](/docs/integrations-iterm2), [tmux](/docs/integrations-tmux), and [cmux](/docs/integrations-cmux).
 
 ### cmux: a button + shortcut that opens into the box

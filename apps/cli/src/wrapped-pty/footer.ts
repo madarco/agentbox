@@ -19,6 +19,12 @@ export type FooterState =
       /** Claude activity hint shown in `(<state>)` after the name. Same field
        *  the dashboard sidebar uses (`working` / `idle` / `waiting` / etc.). */
       claudeActivity?: string;
+      /** Aggregate agentbox.yaml service status (`starting N/M…` / `service
+       *  error` / `ready`). When set it REPLACES the agent-activity / mode label
+       *  in the `(...)` slot — when attached, "are my services up?" beats the
+       *  agent state you're already looking at. Undefined when the box declares
+       *  no services (then the agent-activity / mode label shows as before). */
+      boxServiceStatus?: string;
       /** Mode drives the state label: claude shows claude activity, the
        *  others show `(shell)` / `(codex)` / `(opencode)`. */
       mode: 'claude' | 'shell' | 'codex' | 'opencode';
@@ -156,11 +162,12 @@ export function renderFooter(state: FooterState, cols: number): string {
     };
     const isClaude = state.mode === 'claude';
     const detachable = state.detachable ?? isClaude;
-    // Shell/codex modes have no claude activity to surface — passing
-    // `stateLabel` overrides statusLine's default (which would otherwise show
-    // `(unknown)` because `claudeActivity` is undefined and the container is
-    // running).
-    const stateLabel = isClaude ? undefined : state.mode === 'shell' ? 'shell' : state.mode;
+    // Shell/codex modes have no claude activity to surface — the mode label
+    // overrides statusLine's default (which would otherwise show `(unknown)`
+    // because `claudeActivity` is undefined and the container is running). The
+    // box's aggregate service status wins the slot over both when present.
+    const modeLabel = isClaude ? undefined : state.mode === 'shell' ? 'shell' : state.mode;
+    const stateLabel = state.boxServiceStatus ?? modeLabel;
     if (state.leaderActive) {
       const leaderHints = detachable ? DETACHABLE_LEADER_HINTS : PLAIN_LEADER_HINTS;
       return statusLine(sidebarBox, cols, stateLabel, leaderHints);

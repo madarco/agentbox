@@ -104,6 +104,52 @@ describe('renderFooter — idle (shell mode)', () => {
   });
 });
 
+describe('renderFooter — idle (box service status)', () => {
+  it('shows the service status in the slot during startup, hiding agent activity', () => {
+    const out = visible(
+      renderFooter(
+        {
+          kind: 'idle',
+          boxName: 'smoke',
+          mode: 'claude',
+          claudeActivity: 'working',
+          boxServiceStatus: 'starting 2/3…',
+        },
+        100,
+      ),
+    );
+    expect(out).toContain('(starting 2/3…)');
+    // the agent activity is replaced, not shown alongside
+    expect(out).not.toContain('(working)');
+  });
+
+  it('shows `(service error)` over the agent activity', () => {
+    const out = visible(
+      renderFooter(
+        { kind: 'idle', boxName: 'smoke', mode: 'claude', claudeActivity: 'idle', boxServiceStatus: 'service error' },
+        100,
+      ),
+    );
+    expect(out).toContain('(service error)');
+    expect(out).not.toContain('(idle)');
+  });
+
+  it('shows `(ready)` and wins over the shell mode label too', () => {
+    const out = visible(
+      renderFooter({ kind: 'idle', boxName: 'smoke', mode: 'shell', boxServiceStatus: 'ready' }, 80),
+    );
+    expect(out).toContain('(ready)');
+    expect(out).not.toContain('(shell)');
+  });
+
+  it('falls back to the agent activity when no service status is known', () => {
+    const out = visible(
+      renderFooter({ kind: 'idle', boxName: 'smoke', mode: 'claude', claudeActivity: 'working' }, 100),
+    );
+    expect(out).toContain('(working)');
+  });
+});
+
 describe('renderFooter — idle (tmux-backed shell)', () => {
   const idle: FooterState = {
     kind: 'idle',
