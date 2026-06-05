@@ -1,13 +1,52 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildSetupInitialPrompt,
   IN_BOX_SETUP_GUIDE_PATH,
+  maybeRunSetupWizard,
   parseEnvFilesFromEnv,
   passthroughFlags,
   serializeEnvFilesForEnv,
+  WIZARD_AUTOLAUNCH_ENV,
+  WIZARD_ENV_FILES_ENV,
+  WIZARD_RECREATE_ENV,
 } from '../src/wizard.js';
 
 const NUL = String.fromCharCode(0);
+
+describe('maybeRunSetupWizard — create→claude autolaunch handoff', () => {
+  afterEach(() => {
+    delete process.env[WIZARD_AUTOLAUNCH_ENV];
+    delete process.env[WIZARD_RECREATE_ENV];
+    delete process.env[WIZARD_ENV_FILES_ENV];
+  });
+
+  it('carries the stale-checkpoint recreate across the handoff (discard + run setup)', async () => {
+    // The outer `agentbox create` pass set these before re-dispatching to
+    // `agentbox claude`. The inner pass must honor the recreate the user
+    // already confirmed — not silently keep the stale checkpoint.
+    process.env[WIZARD_AUTOLAUNCH_ENV] = '1';
+    process.env[WIZARD_RECREATE_ENV] = '1';
+    const outcome = await maybeRunSetupWizard({
+      workspace: process.cwd(),
+      yes: false,
+      command: 'claude',
+    });
+    expect(outcome.action).toBe('launch-with-prompt');
+    expect(outcome.discardCheckpoint).toBe(true);
+    expect(outcome.initialPrompt).toBeTruthy();
+  });
+
+  it('non-claude command in autolaunch is a no-op proceed', async () => {
+    process.env[WIZARD_AUTOLAUNCH_ENV] = '1';
+    process.env[WIZARD_RECREATE_ENV] = '1';
+    const outcome = await maybeRunSetupWizard({
+      workspace: process.cwd(),
+      yes: false,
+      command: 'create',
+    });
+    expect(outcome.action).toBe('proceed');
+  });
+});
 
 describe('passthroughFlags', () => {
   it('returns empty for an empty options object', () => {

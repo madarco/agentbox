@@ -59,6 +59,15 @@ export interface WizardOutcome {
    * invalidates any artifact captured against it.
    */
   rebuildBase?: boolean;
+  /**
+   * Set when the user explicitly chose to recreate a stale *default* checkpoint
+   * (vs merely dropping a dead/missing one). On the docker `switch-to-claude`
+   * handoff the caller forwards this via {@link WIZARD_RECREATE_ENV} so the
+   * inner autolaunch pass runs setup + recaptures the snapshot, instead of
+   * `nonInteractiveOutcome` silently keeping the stale checkpoint for a
+   * configured project.
+   */
+  recreate?: boolean;
 }
 
 interface WizardArgs {
@@ -123,6 +132,16 @@ export const WIZARD_AUTOLAUNCH_ENV = 'AGENTBOX_WIZARD_AUTOLAUNCH';
 export const WIZARD_ENV_FILES_ENV = 'AGENTBOX_WIZARD_ENV_FILES';
 
 /**
+ * Sentinel set by `agentbox create` on the docker `switch-to-claude` handoff
+ * when the user chose to recreate a stale default checkpoint. Without it the
+ * re-dispatched `agentbox claude` re-enters non-interactively via
+ * `nonInteractiveOutcome`, which keeps a stale default checkpoint for a
+ * configured project — silently discarding the recreate the user just
+ * confirmed. The inner pass reads this and runs setup (which re-snapshots).
+ */
+export const WIZARD_RECREATE_ENV = 'AGENTBOX_WIZARD_RECREATE';
+
+/**
  * Patterns scanned for the wizard's env-file multiselect. Same set as
  * `--with-env` minus `agentbox.yaml`: the wizard fires precisely *because*
  * there's no agentbox.yaml on the host, so it can never be a match.
@@ -138,6 +157,18 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
     if (args.command !== 'claude') return { action: 'proceed' };
     const envFiles = parseEnvFilesFromEnv(process.env[WIZARD_ENV_FILES_ENV]);
     const proj = await findProjectRoot(args.workspace);
+    // The outer `agentbox create` pass already prompted and the user chose to
+    // recreate a stale default checkpoint. Honor it here — discard the stale
+    // snapshot and run setup (which recaptures it) — instead of letting
+    // `nonInteractiveOutcome` keep it for a configured project.
+    if (process.env[WIZARD_RECREATE_ENV] === '1') {
+      return {
+        action: 'launch-with-prompt',
+        initialPrompt: buildSetupInitialPrompt(proj.root),
+        envFilesToImport: envFiles,
+        discardCheckpoint: true,
+      };
+    }
     return nonInteractiveOutcome(args, proj, await checkpointStatus(args, proj.root), envFiles);
   }
 
@@ -192,29 +223,15 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
     }
   }
 
-  // An existing agentbox.yaml means the project is already configured; don't
-  // nag. Still drop a dead *default* checkpoint so create doesn't try to boot
-  // a pruned image/snapshot (a stale-but-bootable one is kept — the create
-  // path warns about it). A stale base was handled above (early-returned).
-  if (proj.hasAgentboxYaml) {
-    return { action: 'proceed', discardCheckpoint: discardOnMissing(status, fromDefault) };
-  }
-
-  // A usable checkpoint carries node_modules/env *and* the agentbox.yaml from
-  // when it was captured — skip the "generate one?" prompt entirely. "Usable"
-  // = fresh, or a stale snapshot the user pinned explicitly via `--snapshot`
-  // (kept as-is; the create path warns). A stale *default* is re-prompted
-  // below; a missing one falls through to normal setup. Skipped when the user
-  // already opted in to rebuilding the base — the old checkpoint's gone with it.
-  if (!rebuildBase && (status.state === 'fresh' || (status.state === 'stale' && !fromDefault))) {
-    log.info(`starting from checkpoint "${args.checkpointRef}"; skipping agentbox.yaml setup`);
-    return { action: 'proceed' };
-  }
-
-  // Stale default checkpoint: don't silently boot the old base layers. Offer
-  // to recreate (re-run setup on the current base) or use it anyway. Skipped
-  // when `rebuildBase` is already true — the base rebuild implies a discard,
-  // and recreateChosen below short-circuits the second "set up?" confirm.
+  // Stale DEFAULT checkpoint: the box would boot the old base layers and miss
+  // any base-image update (a CLI upgrade, an edited managed prompt, ...).
+  // Prompt BEFORE the agentbox.yaml early-return — this is about base
+  // freshness, NOT whether the project is configured (mirrors the stale-cloud-
+  // base prompt above). On "recreate" we discard the stale checkpoint and fall
+  // through to the setup flow, which recaptures a fresh `--set-default`
+  // snapshot on the current base (fast when an agentbox.yaml already exists);
+  // on "use it anyway" we keep it as a warm start. Skipped when a base rebuild
+  // was already chosen (it implies a discard).
   let discardCheckpoint = rebuildBase;
   let recreateChosen = rebuildBase;
   if (!rebuildBase && status.state === 'stale' && fromDefault) {
@@ -228,9 +245,35 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
     }
     discardCheckpoint = true;
     recreateChosen = true;
-  } else if (!rebuildBase && status.state === 'missing') {
-    // No bootable artifact for this provider — drop a dead default ref so
-    // create provisions fresh, then fall through to normal setup.
+  }
+
+  // An existing agentbox.yaml means the project is already configured; don't
+  // nag with the setup wizard — UNLESS we're recreating a stale checkpoint,
+  // which must run setup so it captures a fresh snapshot on the current base.
+  // Still drop a dead *default* checkpoint so create doesn't try to boot a
+  // pruned image/snapshot. A stale base was handled above (early-returned).
+  if (proj.hasAgentboxYaml && !recreateChosen) {
+    return { action: 'proceed', discardCheckpoint: discardOnMissing(status, fromDefault) };
+  }
+
+  // A usable checkpoint carries node_modules/env *and* the agentbox.yaml from
+  // when it was captured — skip the "generate one?" prompt entirely. "Usable"
+  // = fresh, or a stale snapshot the user pinned explicitly via `--snapshot`
+  // (kept as-is; the create path warns). A stale *default* was handled above;
+  // a missing one falls through to normal setup. Skipped when rebuilding the
+  // base or recreating (the old checkpoint's gone with it).
+  if (
+    !rebuildBase &&
+    !recreateChosen &&
+    (status.state === 'fresh' || (status.state === 'stale' && !fromDefault))
+  ) {
+    log.info(`starting from checkpoint "${args.checkpointRef}"; skipping agentbox.yaml setup`);
+    return { action: 'proceed' };
+  }
+
+  // Missing default checkpoint: drop the dead ref so create provisions fresh,
+  // then fall through to normal setup.
+  if (!rebuildBase && !recreateChosen && status.state === 'missing') {
     discardCheckpoint = discardOnMissing(status, fromDefault) ?? false;
   }
 
@@ -284,6 +327,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
       envFilesToImport,
       discardCheckpoint: discardCheckpoint || undefined,
       rebuildBase: rebuildBase || undefined,
+      recreate: recreateChosen || undefined,
     };
   }
 
@@ -293,6 +337,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
     envFilesToImport,
     discardCheckpoint: discardCheckpoint || undefined,
     rebuildBase: rebuildBase || undefined,
+    recreate: recreateChosen || undefined,
   };
 }
 

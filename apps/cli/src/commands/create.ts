@@ -32,6 +32,7 @@ import {
   serializeEnvFilesForEnv,
   WIZARD_AUTOLAUNCH_ENV,
   WIZARD_ENV_FILES_ENV,
+  WIZARD_RECREATE_ENV,
 } from '../wizard.js';
 import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
 import { runPrepare } from './prepare.js';
@@ -336,8 +337,11 @@ export const createCommand = new Command('create')
     }
     // Drop a stale/dead default checkpoint so the box provisions from the
     // current base. On the docker switch-to-claude re-dispatch below the
-    // default isn't forwarded as `--snapshot`, so the inner `agentbox claude`
-    // re-evaluates and discards it too — no extra signal needed.
+    // default isn't forwarded as `--snapshot`; the inner `agentbox claude`
+    // re-evaluates a *missing/dead* default and discards it too. A *stale*
+    // default that the user chose to RECREATE is forwarded explicitly via
+    // WIZARD_RECREATE_ENV, because the inner non-interactive pass would
+    // otherwise keep a stale checkpoint for a configured project.
     const effectiveCheckpointRef = wiz.discardCheckpoint ? undefined : checkpointRef;
     if (wiz.action === 'switch-to-claude' && isDocker) {
       // Docker: hand off to `agentbox claude` whose default action creates +
@@ -345,12 +349,14 @@ export const createCommand = new Command('create')
       // normal create flow below and attach claude post-create, because
       // `agentbox claude`'s default action ignores --provider.
       process.env[WIZARD_AUTOLAUNCH_ENV] = '1';
+      if (wiz.recreate) process.env[WIZARD_RECREATE_ENV] = '1';
       const serialized = serializeEnvFilesForEnv(wiz.envFilesToImport);
       if (serialized !== undefined) process.env[WIZARD_ENV_FILES_ENV] = serialized;
       try {
         await claudeCommand.parseAsync(passthroughFlags(opts), { from: 'user' });
       } finally {
         delete process.env[WIZARD_AUTOLAUNCH_ENV];
+        delete process.env[WIZARD_RECREATE_ENV];
         delete process.env[WIZARD_ENV_FILES_ENV];
       }
       return;
