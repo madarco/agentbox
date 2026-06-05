@@ -8,6 +8,7 @@ import {
   type QueueAgentKind,
   type QueueJob,
   type QueueJobCreateOpts,
+  type QueueJobOpenTerminal,
 } from '@agentbox/relay';
 import { DEFAULT_RELAY_PORT, ensureRelay } from '@agentbox/sandbox-docker';
 
@@ -22,6 +23,12 @@ export interface SubmitQueueJobInput {
   maxRunningOverride?: number;
   /** Per-invocation override of queue.maxWorking. */
   maxWorkingOverride?: number;
+  /**
+   * Host-terminal targeting captured at submit time (when `queue.openIn` is not
+   * `none`). Carried on the job so the worker opens a fresh terminal onto the
+   * box once it is ready. Absent → open nothing.
+   */
+  openTerminal?: QueueJobOpenTerminal;
 }
 
 export interface SubmitQueueJobResult {
@@ -67,6 +74,7 @@ export async function submitQueueJob(
     createOpts: input.createOpts,
     maxConcurrent: ceiling,
     ...(maxWorking !== undefined ? { maxWorking } : {}),
+    ...(input.openTerminal !== undefined ? { openTerminal: input.openTerminal } : {}),
     createdAt: new Date().toISOString(),
     logPath: queueLogPath(id),
   };

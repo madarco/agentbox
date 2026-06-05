@@ -26,6 +26,29 @@ export const QUEUE_DIR = join(STATE_DIR, 'queue');
 export type QueueJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 export type QueueAgentKind = 'claude-code' | 'codex' | 'opencode';
 
+/**
+ * Host-terminal targeting captured on the submitting host when `queue.openIn`
+ * is not `none`, carried on the job so the worker can open a fresh terminal
+ * onto the box the moment it is ready. The relay treats this as opaque
+ * pass-through; the CLI worker (`_run-queued-job`) is what reads and acts on it.
+ *
+ * The targeting is captured at submit time because the relay daemon is
+ * long-lived and idempotent — its own env reflects whatever terminal first
+ * started it, not this submit's terminal.
+ */
+export interface QueueJobOpenTerminal {
+  host: 'tmux' | 'cmux' | 'iterm2';
+  mode: 'split' | 'window' | 'tab';
+  /** Submitting shell's cwd, so the new pane resolves project-scoped refs. */
+  cwd: string;
+  /** tmux server socket (`$TMUX`) + the pane to split (`$TMUX_PANE`). */
+  tmuxSocket?: string;
+  tmuxPane?: string;
+  /** cmux control socket (`$CMUX_SOCKET_PATH`) + bundled CLI path. */
+  cmuxSocket?: string;
+  cmuxBundledCli?: string;
+}
+
 /** On-disk job manifest. Read/written under `~/.agentbox/queue/<id>.json`. */
 export interface QueueJob {
   id: string;
@@ -55,6 +78,11 @@ export interface QueueJob {
    * avoid double-counting the in-flight startup slot once the box registers.
    */
   boxId?: string;
+  /**
+   * Host-terminal targeting for `queue.openIn`. Set at submit time when the
+   * submitting shell ran inside a supported terminal; absent → open nothing.
+   */
+  openTerminal?: QueueJobOpenTerminal;
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;

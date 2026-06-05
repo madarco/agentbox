@@ -15,6 +15,7 @@ export {
   type KeyType,
   type LoadedConfig,
   type ProviderKind,
+  type QueueOpenIn,
   type UserConfig,
 } from './types.js';
 

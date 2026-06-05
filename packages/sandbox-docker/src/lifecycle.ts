@@ -411,6 +411,7 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
         createdAt: box.createdAt,
         projectIndex: box.projectIndex,
         worktrees: box.gitWorktrees,
+        autoApproveHostActions: box.autoApproveHostActions,
       });
     } catch {
       // best-effort

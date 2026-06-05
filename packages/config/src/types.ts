@@ -16,6 +16,11 @@ export type ProviderKind = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b';
 /** Where `agentbox claude|codex|opencode` opens the attached session when the host
  *  shell is running inside tmux, cmux, or iTerm2. `same` keeps today's inline behavior. */
 export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
+/** Where a background `-i` (queued) run opens the box once the worker has created
+ *  it. `none` (default) opens nothing — the historical behavior. The open is
+ *  driven by the host relay's queue worker when the box becomes ready, not at
+ *  submit time, so there is no `same` (inline) mode here. */
+export type QueueOpenIn = 'none' | 'split' | 'window' | 'tab';
 
 export interface UserConfig {
   /**
@@ -134,6 +139,7 @@ export interface UserConfig {
     maxConcurrent?: number;
     maxWorking?: number;
     idleGraceSeconds?: number;
+    openIn?: QueueOpenIn;
   };
   cloud?: {
     useCurrentBranch?: boolean;
@@ -248,6 +254,7 @@ export interface EffectiveConfig {
     maxConcurrent: number;
     maxWorking: number;
     idleGraceSeconds: number;
+    openIn: QueueOpenIn;
   };
   cloud: {
     useCurrentBranch: boolean;
@@ -383,6 +390,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     maxConcurrent: 5,
     maxWorking: 0,
     idleGraceSeconds: 15,
+    openIn: 'none',
   },
   cloud: {
     useCurrentBranch: false,
@@ -808,6 +816,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       'Seconds an agent must stay non-working before it frees its working slot (debounce against brief idle flaps between turns). Only used when queue.maxWorking > 0.',
+  },
+  {
+    key: 'queue.openIn',
+    type: 'enum',
+    enumValues: ['none', 'split', 'window', 'tab'] as const,
+    description:
+      'When a background `-i` job finishes creating its box, where the host relay opens an attached terminal onto it: `none` (default — open nothing, just queue), `split`, `window`, or `tab`. Honored only when the submitting shell runs inside tmux, cmux, or iTerm2 (the targeting is captured at submit time). cmux opens a new workspace for every mode; iTerm2 opens relative to the frontmost window. Unlike `attach.openIn` there is no `same` mode — the box is created asynchronously, so it is always a fresh terminal.',
   },
   {
     key: 'cloud.useCurrentBranch',
