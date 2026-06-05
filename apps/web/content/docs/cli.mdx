@@ -131,7 +131,7 @@ agentbox wait 1
 | `logs` | `-n, --tail <n>`, `-f, --follow`, `--daemon` |
 | `wait` | `--timeout <ms>`, `--units <names...>`, `-j, --json` |
 
-The `agent` group is a scripting surface for the agent's live state: `agent state`, `agent wait-for <state>`, and `agent get-plan-question`, all with `--json`. It also exposes the **host-action approvals** an orchestrator answers on a box's behalf: `agent approvals [box]` lists pending confirmations (git push, cp, gh PR writes, checkpoint) with their full command + argv, and `agent approve <id>` (or `--deny` / `--cancel`) answers one. Pair it with `agentbox drive` (snapshot the screen / send keystrokes) to drive one agent from another — see [Orchestration & queue boxes](/docs/background-and-parallel).
+The `agent` group is a scripting surface for the agent's live state: `agent state`, `agent wait-for <state>`, and `agent get-plan-question`, all with `--json`. It also unifies **approvals** an orchestrator answers on a box's behalf: `agent approvals [box]` lists everything the box is blocked on — relay host-action confirms (git push, cp, gh PR writes, checkpoint) **and** the agent's in-TUI prompts (plan approval, question, tool permission) — each with an id, and `agent approve <id>` (with `--option`/`--deny`) answers that exact one. The id is a safety token: a prompt that changed since you listed it is refused, not mis-answered. Pair it with `agentbox drive` (snapshot the screen / send keystrokes) to drive one agent from another — see [Orchestration & queue boxes](/docs/background-and-parallel).
 
 <Callout title="TIP">Most inspect commands take `-j/--json` for scripting; `top` and `list` also offer `--live` to probe real cloud state (slower) instead of last-known host state.</Callout>
 
