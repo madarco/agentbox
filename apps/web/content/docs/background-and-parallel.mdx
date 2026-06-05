@@ -180,23 +180,31 @@ agentbox queue wait-for empty-queue --timeout 3600000
 
 The mental model: **`agent wait-for`** is the primary gate — it blocks until the agent's turn reaches a state you care about (`input-needed` wakes on any), **`drive`** sends keystrokes and reads the screen, **`agent state`** tells you what the agent's TUI is doing, and **`queue wait-for`** settles the whole batch on queue and box lifecycle transitions. For the full flag tables, see [CLI commands](/docs/cli).
 
-### Approve host actions on a box's behalf
+### Approve what a box is blocked on
 
-When a box wants to do something it has no credentials for — `git push`, copy a file to/from the host, open a PR, capture a checkpoint — the [host relay](/docs/sync-and-git) raises a **confirmation** and blocks the box until someone answers it. Normally that's the human in the attached `agentbox claude` footer. An **unattended orchestrator** answers it instead, deliberately:
+A box blocks on two kinds of approval, and `agent approvals` / `agent approve` cover **both**:
+
+- **Relay host-action approvals** — things the box has no credentials for (`git push`, copy a file to/from the host, open a PR, capture a checkpoint). The [host relay](/docs/sync-and-git) raises a confirmation; normally the human answers it in the attached `agentbox claude` footer.
+- **In-TUI agent prompts** — the agent's own dialogs: a Claude plan-mode approval, an `AskUserQuestion`, a tool-permission prompt. These used to require hand-crafted `drive keypress` sends.
+
+An **unattended orchestrator** answers either kind, deliberately, with one surface:
 
 ```bash
-# List what a box is waiting on — with the exact command + argv it wants to run.
+# List everything the box is blocked on — each row carries an id and a kind.
 agentbox agent approvals design --json
-# [{ "id": "…", "command": "git push", "argv": ["origin","HEAD"], "message": "Allow git push from box design?" }]
+# [{ "id": "…uuid…",            "kind": "host-action", "command": "git push", "argv": ["origin","HEAD"] },
+#  { "id": "tui:design:plan:…", "kind": "plan",        "plan": "# Plan: …" }]
 
-# Approve one by id (or --deny / --cancel to reject).
+# Answer that exact prompt. Default approves (or picks the first/recommended option).
 agentbox agent approve <id>
+agentbox agent approve <id> --option 2          # in-TUI question/plan: pick option 2 (or --option "Risk first")
+agentbox agent approve <id> --deny              # reject (relay: deny; in-TUI: Escape)
 
-# Block until an approval appears, then act on it.
+# Block until something is pending, then act on it.
 agentbox agent approvals design --wait 600000
 ```
 
-Only a host process can answer (the relay's approval endpoint is loopback-only — a box can't reach it), so the orchestrator answering grants nothing it doesn't already have: it already holds your git and file credentials. The value of `approvals` is that the orchestrator **sees the exact action** before approving it, rather than rubber-stamping whatever the box asks — which is what keeps a prompt-injected box from laundering a malicious push through your credentials.
+The **id is a safety token**. `approve <id>` answers the specific prompt you listed; if a *different* prompt has since taken its place, the recomputed id won't match and the approve is **refused** — it never answers the wrong thing. So the loop is always `approvals` → read the `command`/`argv`/options → `approve <id>`, one at a time, never blanket-approving whatever the box asks. For relay approvals that also keeps a prompt-injected box from laundering a malicious push through your credentials (only a host process can answer — the relay endpoint is loopback-only); the orchestrator already holds your git and file credentials, so answering grants nothing new. In-TUI keystroke mapping is best-effort and TUI-version-sensitive — if an approve doesn't take, fall back to [`drive`](/docs/cli).
 
 For a fully-unattended run over **trusted** boxes, opt into blanket auto-approval per box:
 
