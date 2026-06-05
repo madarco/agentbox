@@ -121,6 +121,24 @@ export class StatusReporter {
     this.schedulePush();
   }
 
+  /**
+   * Screen-scraper safety net: promote a *stuck* `working` to `waiting` when the
+   * Claude tmux pane shows a prompt the hooks missed (MCP tool dialogs have no
+   * hook; the `Notification:permission_prompt` hook can fire late or drop).
+   * Deliberately promote-ONLY — it acts solely when the current state is
+   * `working`, so it never clobbers the richer hook-driven `end-plan`/`question`
+   * (sticky) or `idle`/`compacting`/`error`. The next real hook
+   * (`UserPromptSubmit`/`PreToolUse`) overwrites `waiting`→`working` when the
+   * agent resumes, so no demote path is needed. Returns true if it promoted.
+   */
+  markScreenWaiting(): boolean {
+    if (this.claudeState !== 'working') return false;
+    this.claudeState = 'waiting';
+    this.claudeUpdatedAt = new Date().toISOString();
+    this.schedulePush();
+    return true;
+  }
+
   setCodexState(state: AgentActivityState): void {
     this.codexState = state;
     this.codexUpdatedAt = new Date().toISOString();
