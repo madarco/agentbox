@@ -59,6 +59,15 @@ export interface WizardOutcome {
    * invalidates any artifact captured against it.
    */
   rebuildBase?: boolean;
+  /**
+   * Set when the user explicitly chose to recreate a stale *default* checkpoint
+   * (vs merely dropping a dead/missing one). On the docker `switch-to-claude`
+   * handoff the caller forwards this via {@link WIZARD_RECREATE_ENV} so the
+   * inner autolaunch pass runs setup + recaptures the snapshot, instead of
+   * `nonInteractiveOutcome` silently keeping the stale checkpoint for a
+   * configured project.
+   */
+  recreate?: boolean;
 }
 
 interface WizardArgs {
@@ -123,6 +132,16 @@ export const WIZARD_AUTOLAUNCH_ENV = 'AGENTBOX_WIZARD_AUTOLAUNCH';
 export const WIZARD_ENV_FILES_ENV = 'AGENTBOX_WIZARD_ENV_FILES';
 
 /**
+ * Sentinel set by `agentbox create` on the docker `switch-to-claude` handoff
+ * when the user chose to recreate a stale default checkpoint. Without it the
+ * re-dispatched `agentbox claude` re-enters non-interactively via
+ * `nonInteractiveOutcome`, which keeps a stale default checkpoint for a
+ * configured project — silently discarding the recreate the user just
+ * confirmed. The inner pass reads this and runs setup (which re-snapshots).
+ */
+export const WIZARD_RECREATE_ENV = 'AGENTBOX_WIZARD_RECREATE';
+
+/**
  * Patterns scanned for the wizard's env-file multiselect. Same set as
  * `--with-env` minus `agentbox.yaml`: the wizard fires precisely *because*
  * there's no agentbox.yaml on the host, so it can never be a match.
@@ -138,6 +157,18 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
     if (args.command !== 'claude') return { action: 'proceed' };
     const envFiles = parseEnvFilesFromEnv(process.env[WIZARD_ENV_FILES_ENV]);
     const proj = await findProjectRoot(args.workspace);
+    // The outer `agentbox create` pass already prompted and the user chose to
+    // recreate a stale default checkpoint. Honor it here — discard the stale
+    // snapshot and run setup (which recaptures it) — instead of letting
+    // `nonInteractiveOutcome` keep it for a configured project.
+    if (process.env[WIZARD_RECREATE_ENV] === '1') {
+      return {
+        action: 'launch-with-prompt',
+        initialPrompt: buildSetupInitialPrompt(proj.root),
+        envFilesToImport: envFiles,
+        discardCheckpoint: true,
+      };
+    }
     return nonInteractiveOutcome(args, proj, await checkpointStatus(args, proj.root), envFiles);
   }
 
@@ -296,6 +327,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
       envFilesToImport,
       discardCheckpoint: discardCheckpoint || undefined,
       rebuildBase: rebuildBase || undefined,
+      recreate: recreateChosen || undefined,
     };
   }
 
@@ -305,6 +337,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
     envFilesToImport,
     discardCheckpoint: discardCheckpoint || undefined,
     rebuildBase: rebuildBase || undefined,
+    recreate: recreateChosen || undefined,
   };
 }
 
