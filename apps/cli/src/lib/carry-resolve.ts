@@ -1,6 +1,7 @@
 import { realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, relative, resolve } from 'node:path';
+import { BUILT_IN_DEFAULTS } from '@agentbox/config';
 import type { CarryItem } from '@agentbox/ctl';
 import { effectiveExcludes, isPathExcluded, toTarExcludes } from './dir-breakdown.js';
 
@@ -37,7 +38,11 @@ export interface ResolveOptions {
   projectRoot: string;
   /** Resolved $HOME for the user. Injected so tests can stub it. */
   homeDir?: string;
-  /** Per-entry size cap in bytes; env override AGENTBOX_CARRY_MAX_BYTES. Default 50 MiB. */
+  /**
+   * Per-entry size cap in bytes (after excludes). Callers pass the effective
+   * `box.cpMaxBytes` so carry and `agentbox cp` share one limit; defaults to the
+   * built-in `box.cpMaxBytes` when omitted.
+   */
   maxBytes?: number;
 }
 
@@ -45,8 +50,6 @@ export interface ResolveResult {
   entries: ResolvedCarryEntry[];
   errors: string[];
 }
-
-const DEFAULT_MAX_BYTES = 50 * 1024 * 1024;
 
 const DENYLIST_DEST_PREFIXES = ['/proc', '/sys', '/dev'];
 const DENYLIST_DEST_EXACT = new Set(['/etc/passwd', '/etc/shadow']);
@@ -56,7 +59,7 @@ export async function resolveCarry(
   opts: ResolveOptions,
 ): Promise<ResolveResult> {
   const home = opts.homeDir ?? homedir();
-  const cap = opts.maxBytes ?? readMaxBytesFromEnv() ?? DEFAULT_MAX_BYTES;
+  const cap = opts.maxBytes ?? BUILT_IN_DEFAULTS.box.cpMaxBytes;
   const projectRoot = opts.projectRoot;
 
   const entries: ResolvedCarryEntry[] = [];
@@ -73,14 +76,6 @@ export async function resolveCarry(
   }
 
   return { entries, errors };
-}
-
-function readMaxBytesFromEnv(): number | undefined {
-  const raw = process.env.AGENTBOX_CARRY_MAX_BYTES;
-  if (!raw) return undefined;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return undefined;
-  return Math.floor(n);
 }
 
 interface OneCtx {
@@ -154,7 +149,7 @@ async function resolveOne(item: CarryItem, ctx: OneCtx): Promise<ResolvedCarryEn
     const bytes = await dirSizeCapped(absSrc, ctx.cap, tokens);
     if (bytes > ctx.cap) {
       throw new Error(
-        `${ctx.where}: dir "${absSrc}" exceeds ${String(ctx.cap)} bytes after excludes (add carry exclude: patterns, set AGENTBOX_CARRY_MAX_BYTES, or narrow the path)`,
+        `${ctx.where}: dir "${absSrc}" exceeds ${String(ctx.cap)} bytes after excludes (add carry exclude: patterns, raise box.cpMaxBytes, or narrow the path)`,
       );
     }
     return {
@@ -175,7 +170,7 @@ async function resolveOne(item: CarryItem, ctx: OneCtx): Promise<ResolvedCarryEn
   if (st.isFile()) {
     if (st.size > ctx.cap) {
       throw new Error(
-        `${ctx.where}: file "${absSrc}" is ${String(st.size)} bytes, exceeds cap ${String(ctx.cap)} (set AGENTBOX_CARRY_MAX_BYTES to raise)`,
+        `${ctx.where}: file "${absSrc}" is ${String(st.size)} bytes, exceeds cap ${String(ctx.cap)} (raise box.cpMaxBytes)`,
       );
     }
     return {

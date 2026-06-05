@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { loadEffectiveConfig } from '@agentbox/config';
 import { loadCarrySection } from '@agentbox/ctl';
 import {
   carrySourceHash,
@@ -39,7 +40,11 @@ export async function resyncCarryFiles(args: {
 
   // Resolve (incl. safety checks). On a hard resolver error we skip resync
   // rather than block the box start — the create-time gate is the gating point.
-  const resolved = await resolveCarry(items, { projectRoot: args.projectRoot });
+  const cfg = await loadEffectiveConfig(args.projectRoot);
+  const resolved = await resolveCarry(items, {
+    projectRoot: args.projectRoot,
+    maxBytes: cfg.effective.box.cpMaxBytes,
+  });
   if (resolved.errors.length > 0) {
     log(`carry: resync skipped (resolve errors: ${resolved.errors.length})`);
     return { recopied: 0, skippedNew: 0 };

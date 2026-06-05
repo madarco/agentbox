@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { CarryItem } from '@agentbox/ctl';
 import { resolveCarry } from '../src/lib/carry-resolve.js';
 
@@ -11,10 +11,6 @@ let home: string;
 beforeEach(async () => {
   workspace = await mkdtemp(join(tmpdir(), 'carry-resolve-'));
   home = await mkdtemp(join(tmpdir(), 'carry-home-'));
-});
-
-afterEach(async () => {
-  delete process.env.AGENTBOX_CARRY_MAX_BYTES;
 });
 
 function item(src: string, dest?: string, extra: Partial<CarryItem> = {}): CarryItem {
@@ -138,12 +134,11 @@ describe('resolveCarry', () => {
     expect(res.entries[0]?.bytes).toBe(5);
   });
 
-  it('AGENTBOX_CARRY_MAX_BYTES env override applies', async () => {
+  it('maxBytes (box.cpMaxBytes) cap applies', async () => {
     await writeFile(join(workspace, 'big'), Buffer.alloc(200));
-    process.env.AGENTBOX_CARRY_MAX_BYTES = '100';
     const res = await resolveCarry(
       [item('./big', '/dst')],
-      { projectRoot: workspace, homeDir: home },
+      { projectRoot: workspace, homeDir: home, maxBytes: 100 },
     );
     expect(res.errors[0]).toMatch(/exceeds/);
   });

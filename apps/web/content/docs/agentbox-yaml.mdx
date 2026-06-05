@@ -282,7 +282,7 @@ carry:
 
 The canonical use case is developing AgentBox inside an AgentBox: carry `~/.agentbox/secrets.env` and `~/.agentbox/claude-credentials.json` so the in-box CLI is already authenticated.
 
-When copying a directory, heavy regenerable dirs (`.git`, `node_modules`, `bin`, `obj`, `packages`, `dist`, `.next`, `target`) are dropped by default; `exclude:` adds to that set. The host resolver blocks `..` traversal, denies `/proc|/sys|/dev|/etc/passwd|/etc/shadow`, caps each entry at 50 MiB **after excludes** (raise with `AGENTBOX_CARRY_MAX_BYTES`), and flags symlinks that escape `$HOME` and the project root. On `create`, `claude`, `codex`, and `opencode` the host prompts once — listing each src→dest with size, mode, and symlink warnings — before copying.
+When copying a directory, heavy regenerable dirs (`.git`, `node_modules`, `bin`, `obj`, `packages`, `dist`, `.next`, `target`) are dropped by default; `exclude:` adds to that set. The host resolver blocks `..` traversal, denies `/proc|/sys|/dev|/etc/passwd|/etc/shadow`, caps each entry at `box.cpMaxBytes` (default 100 MiB) **after excludes** — the same limit `agentbox cp` uses — and flags symlinks that escape `$HOME` and the project root. On `create`, `claude`, `codex`, and `opencode` the host prompts once — listing each src→dest with size, mode, and symlink warnings — before copying.
 
 ```bash
 # auto-approve every carry entry for this box
@@ -295,7 +295,7 @@ agentbox claude --carry skip
 You can also set `AGENTBOX_CARRY_YES=1` or `AGENTBOX_CARRY=skip`. Note that `-y`/`--yes` does **not** auto-approve carry — a non-TTY `-y` with non-empty entries fails loud and asks for the explicit env var. `agentbox fork` is the exception: it sends carry by default (opt out with `agentbox fork --carry skip`).
 
 <Callout type="warn" title="HEADS UP">
-`carry` deliberately bypasses `.gitignore` and copies host files into the box. Treat the box as the untrusted side and only carry what the agent genuinely needs (credentials, env files). The per-entry cap is 50 MiB unless you raise `AGENTBOX_CARRY_MAX_BYTES`.
+`carry` deliberately bypasses `.gitignore` and copies host files into the box. Treat the box as the untrusted side and only carry what the agent genuinely needs (credentials, env files). The per-entry cap is `box.cpMaxBytes` (default 100 MiB), the same limit `agentbox cp` enforces.
 </Callout>
 
 Mark credential entries `optional: true` so a box still comes up when a given file or agent isn't installed on the host. For how non-carry env files reach the box, see [environment](/docs/environment); for how git state is seeded, see [sync and git](/docs/sync-and-git) and [teleport a project](/docs/teleport-a-project).

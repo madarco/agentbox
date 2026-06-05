@@ -202,7 +202,8 @@ write back to the host):
   `user`, `optional`, and `exclude:` (a list of tar globs / bare dir names to drop
   when copying a directory). Heavy regenerable dirs (`.git`, `node_modules`, `bin`,
   `obj`, `packages`, `dist`, `.next`, `target`) are dropped by default; `exclude:`
-  is additive. Carry sources have a size cap (default 50 MiB after excludes).
+  is additive. Each carry entry is capped at `box.cpMaxBytes` (default 100 MiB
+  after excludes) — the same limit `agentbox cp` enforces.
 - **`agentbox-ctl cp fromHost <hostPath> <boxPath>`** (ad-hoc, from inside the box)
   — for a one-off copy. Prompts the user on the host to approve.
 
