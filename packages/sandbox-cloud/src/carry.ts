@@ -101,8 +101,9 @@ async function uploadOneEntry(args: UploadOneArgs): Promise<void> {
   // 1. Tar the host source on disk so backend.uploadFile (which takes a path,
   //    not a stream) has something to send.
   const localTar = join(args.stageDir, `carry-${String(args.index)}.tar`);
+  const excludeArgs = isDir ? (entry.exclude ?? []).map((p) => `--exclude=${p}`) : [];
   const tarArgs = isDir
-    ? ['-C', entry.absSrc, '-cf', localTar, '.']
+    ? ['-C', entry.absSrc, '-cf', localTar, ...excludeArgs, '.']
     : ['-C', dirnameUnix(entry.absSrc), '-cf', localTar, basenameUnix(entry.absSrc)];
   const packed = await execa('tar', tarArgs, { reject: false });
   if (packed.exitCode !== 0) {

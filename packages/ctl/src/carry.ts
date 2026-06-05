@@ -19,6 +19,12 @@ export interface CarryItem {
    * the carried files are always agent-readable. Set 0 to keep root-owned.
    */
   user?: number;
+  /**
+   * Extra paths to drop when carrying a directory (tar glob like `*​/cache` or a
+   * bare dir name). Additive on top of the host CLI's default heavy-dir excludes
+   * (`.git`, `node_modules`, ...). Ignored for file entries.
+   */
+  exclude?: string[];
   optional: boolean;
 }
 
@@ -29,7 +35,22 @@ export class CarryConfigError extends Error {
   }
 }
 
-const ITEM_KEYS = new Set(['src', 'dest', 'mode', 'user', 'optional']);
+const ITEM_KEYS = new Set(['src', 'dest', 'mode', 'user', 'exclude', 'optional']);
+
+function parseExclude(raw: unknown, where: string): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new CarryConfigError(`${where}.exclude must be a list of glob/name strings`);
+  }
+  const out: string[] = [];
+  for (const [i, v] of raw.entries()) {
+    if (typeof v !== 'string' || v.trim().length === 0) {
+      throw new CarryConfigError(`${where}.exclude[${String(i)}] must be a non-empty string`);
+    }
+    out.push(v.trim());
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 function parseUser(raw: unknown, where: string): number | undefined {
   if (raw === undefined || raw === null) return undefined;
@@ -171,6 +192,7 @@ function parseMapping(raw: Record<string, unknown>, where: string): CarryItem {
 
   const mode = parseMode(raw.mode, where);
   const user = parseUser(raw.user, where);
+  const exclude = parseExclude(raw.exclude, where);
 
   let optional = false;
   if (raw.optional !== undefined && raw.optional !== null) {
@@ -183,6 +205,7 @@ function parseMapping(raw: Record<string, unknown>, where: string): CarryItem {
   const out: CarryItem = { src, dest, optional };
   if (mode !== undefined) out.mode = mode;
   if (user !== undefined) out.user = user;
+  if (exclude !== undefined) out.exclude = exclude;
   return out;
 }
 

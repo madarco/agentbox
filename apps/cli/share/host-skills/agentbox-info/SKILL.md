@@ -227,6 +227,7 @@ If a PR op appears to hang, tell the user to check the dashboard footer for the 
 | `agentbox code [n\|name]` | Open VS Code / Cursor pointed at the box. |
 | `agentbox prepare --provider <name>` | One-time base image / snapshot build for `daytona` or `hetzner` or `vercel`. With no `--provider`, prints status across all providers. |
 | `agentbox prune --provider <name>` | Clean up orphan boxes / images / snapshots for a provider (docker + daytona supported; hetzner pending). |
+| `agentbox cp <src> <dst>` | Copy a file/dir host↔box (`box:/path` prefix picks direction). Heavy dirs (`.git`, `node_modules`, build output) are dropped by default; add `--exclude=<glob\|name>` or `--no-default-excludes`. Uploads over `box.cpMaxBytes` (100 MB, post-exclude) are **blocked** with a size breakdown — trim with `--exclude`, copy heavy folders one at a time, or pass `--yes`. |
 
 Per-project numeric index (`1`, `2`, …) and friendly name (`review`, `smoke`) both work wherever `<box>` is accepted. Index `1` is the first box created in the current workspace.
 

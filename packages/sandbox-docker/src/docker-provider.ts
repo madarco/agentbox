@@ -138,8 +138,9 @@ export const dockerProvider: Provider = {
     box: BoxRecord,
     hostSrc: string,
     boxDst: string,
+    exclude?: string[],
   ): Promise<{ finalPath: string }> {
-    const r = await uploadToBox(box, hostSrc, boxDst);
+    const r = await uploadToBox(box, hostSrc, boxDst, exclude);
     return { finalPath: r.finalPath };
   },
 
@@ -147,8 +148,9 @@ export const dockerProvider: Provider = {
     box: BoxRecord,
     boxSrc: string,
     hostDst: string,
+    exclude?: string[],
   ): Promise<{ finalPath: string }> {
-    const r = await downloadFromBox(box, boxSrc, hostDst);
+    const r = await downloadFromBox(box, boxSrc, hostDst, exclude);
     return { finalPath: r.finalPath };
   },
 

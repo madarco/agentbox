@@ -323,6 +323,12 @@ export interface CpRpcParams {
   hostPath: string;
   /** Defaults true; relay always uses `docker exec tar` (recursive). */
   recursive?: boolean;
+  /** tar glob patterns / bare dir names to exclude, forwarded to `agentbox cp --exclude`. */
+  exclude?: string[];
+  /** false → forward `--no-default-excludes` (keep heavy dirs the host CLI drops). */
+  defaultExcludes?: boolean;
+  /** true → forward `--yes` (copy past the host's size limit). */
+  yes?: boolean;
 }
 
 export interface BrowserOpenRpcParams {

@@ -44,6 +44,12 @@ export interface ResolvedCarryEntry {
   user?: number;
   optional: boolean;
   symlinkInfo?: 'safe' | 'outside-home';
+  /**
+   * tar `--exclude` patterns (already expanded) applied when packing a `dir`
+   * entry, so heavy/regenerable subtrees (node_modules, .git, ...) don't ride
+   * along. Set by the host resolver; ignored for `file`/`missing` entries.
+   */
+  exclude?: string[];
 }
 
 export interface CreateBoxRequest {
@@ -331,8 +337,18 @@ export interface Provider {
   // ---- optional capabilities (the CLI feature-detects these) ----
   /** Build the argv the CLI's PTY wrapper attaches to (shell/agent/logs). */
   buildAttach?(box: BoxRecord, kind: AttachKind, opts?: BuildAttachOptions): Promise<AttachSpec>;
-  uploadPath?(box: BoxRecord, hostSrc: string, boxDst: string): Promise<{ finalPath: string }>;
-  downloadPath?(box: BoxRecord, boxSrc: string, hostDst: string): Promise<{ finalPath: string }>;
+  uploadPath?(
+    box: BoxRecord,
+    hostSrc: string,
+    boxDst: string,
+    exclude?: string[],
+  ): Promise<{ finalPath: string }>;
+  downloadPath?(
+    box: BoxRecord,
+    boxSrc: string,
+    hostDst: string,
+    exclude?: string[],
+  ): Promise<{ finalPath: string }>;
   /**
    * Pull the *contents* of an in-box directory into a host directory —
    * `/workspace/*` → `<hostDst>/*`, not `<hostDst>/<srcBasename>/*`. Used by
