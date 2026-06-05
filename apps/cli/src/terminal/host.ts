@@ -211,6 +211,10 @@ async function spawnInCmux(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTerm
   let lastError = '';
   for (const createArgv of attempts) {
     const created = await runQuiet(bin, createArgv, args.env);
+    // Only a failed *create* (e.g. a stale `--surface` id) is worth retrying the
+    // next target for — it left no pane behind. Once the create succeeds a pane
+    // exists, so a later parse/send failure is terminal: retrying would stack an
+    // orphan empty split/tab on top of it.
     if (created.code !== 0) {
       lastError = `cmux ${createArgv.join(' ')} exited ${String(created.code)}: ${created.stderr.trim()}`;
       continue;
@@ -219,14 +223,20 @@ async function spawnInCmux(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTerm
     // it explicitly so we don't race on which surface is focused.
     const surfaceRef = parseCmuxRef(created.stdout);
     if (!surfaceRef) {
-      lastError = `cmux ${createArgv[0]} gave no surface ref: ${created.stdout.trim()}`;
-      continue;
+      return {
+        launched: false,
+        note: '',
+        error: `cmux ${createArgv[0]} gave no surface ref: ${created.stdout.trim()}`,
+      };
     }
     // `\n` is interpreted by `cmux send` as Enter, which runs the typed command.
     const sent = await runQuiet(bin, ['send', '--surface', surfaceRef, `${cmdLine}\n`], args.env);
     if (sent.code !== 0) {
-      lastError = `cmux send exited ${String(sent.code)}: ${sent.stderr.trim()}`;
-      continue;
+      return {
+        launched: false,
+        note: '',
+        error: `cmux send exited ${String(sent.code)}: ${sent.stderr.trim()}`,
+      };
     }
     return { launched: true, note: `Attached in new ${noteKind}.` };
   }
