@@ -81,10 +81,24 @@ export interface SpawnInNewTerminalArgs {
    */
   tmuxTarget?: string;
   /**
-   * Force cmux to open a new top-level workspace for every mode. Set by the
-   * queue worker, which has no reliable focused surface to split/tab into.
+   * cmux surface UUID to split (`split` mode). The queue worker captures the
+   * submitting shell's `$CMUX_SURFACE_ID` so it can split the original pane
+   * without a focused surface; falls through to `cmuxTargetWorkspace` if the
+   * surface is gone by the time the worker fires.
    */
-  cmuxWorkspaceOnly?: boolean;
+  cmuxTargetSurface?: string;
+  /**
+   * cmux workspace UUID to target (`$CMUX_WORKSPACE_ID`). Used as the `split`
+   * fallback and as the `tab` target so a detached worker lands in the parent
+   * workspace instead of a new one.
+   */
+  cmuxTargetWorkspace?: string;
+  /**
+   * When the targeted cmux attempts (surface / workspace) all fail or no id was
+   * captured, degrade to a new top-level workspace instead of erroring. Set by
+   * the queue worker, which has no reliable focused surface to split/tab into.
+   */
+  cmuxWorkspaceFallback?: boolean;
 }
 
 export interface SpawnInNewTerminalResult {
@@ -152,87 +166,107 @@ async function spawnInTmux(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTerm
  * cmux concept map (https://cmux.com): a *workspace* is a top-level tab in the
  * workspace bar; a *pane* is a split region inside a workspace; a *surface* is a
  * tab inside a pane. So:
- *   - `split`  → new-split    (a split region in the current workspace)
- *   - `tab`    → new-surface  (a tab in the current pane — stays in this workspace)
+ *   - `split`  → new-split    (a split region in a workspace)
+ *   - `tab`    → new-surface  (a tab in a pane — stays in the same workspace)
  *   - `window` → new-workspace (a separate top-level workspace)
  * `split` and `tab` keep the agent in the project's current workspace, which is
  * what you usually want; `window` is the explicit "somewhere separate" choice.
+ *
+ * The foreground attach path has a focused surface, so `new-split`/`new-surface`
+ * land relative to it (no target flags). The queue worker is detached — it has
+ * no focus — so it passes the submitting shell's surface/workspace ids and we
+ * target them explicitly: for `split` we try `--surface <id>` (the original
+ * pane), then `--workspace <id>` (the parent workspace); for `tab` we target
+ * `--workspace <id>` (new-surface has no `--surface` flag). When every targeted
+ * attempt fails (or no id was captured) and `cmuxWorkspaceFallback` is set, we
+ * degrade to a new workspace rather than erroring.
  */
 async function spawnInCmux(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTerminalResult> {
   const bin = cmuxBinary(args.env);
 
-  // `window` always means a separate workspace; the queue worker forces every
-  // mode here (`cmuxWorkspaceOnly`) because a detached spawner has no focused
-  // surface to split/tab into.
-  if (args.mode === 'window' || args.cmuxWorkspaceOnly) {
-    // A separate top-level cmux workspace. `new-workspace` carries cwd + command
-    // atomically (it types `--command` + Enter into the new workspace's shell,
-    // which parses the shell-quoting we applied in `cmdStr`).
-    const r = await runQuiet(
-      bin,
-      [
-        'new-workspace',
-        '--name',
-        args.title,
-        '--cwd',
-        args.cwd,
-        '--command',
-        shellJoin(args.argv),
-        '--focus',
-        'true',
-      ],
-      args.env,
-    );
-    if (r.code !== 0) {
-      return {
-        launched: false,
-        note: '',
-        error: `cmux new-workspace exited ${String(r.code)}: ${r.stderr.trim()}`,
-      };
-    }
-    return { launched: true, note: 'Attached in new cmux workspace.' };
-  }
+  if (args.mode === 'window') return newCmuxWorkspace(bin, args);
 
-  // `split` and `tab` both stay in the current workspace and have no
-  // --cwd/--command, so we mirror the iTerm2 approach: create the surface, then
-  // type `cd <cwd> && exec <cmd>` into it. `new-split right` matches tmux's `-h`
-  // / iTerm2's vertical split (side-by-side); `new-surface` adds a tab to the
-  // current pane.
-  const createArgv =
-    args.mode === 'split'
-      ? ['new-split', 'right', '--focus', 'true']
-      : ['new-surface', '--focus', 'true'];
+  // `split` and `tab` stay in a workspace and have no --cwd/--command, so we
+  // mirror the iTerm2 approach: create the surface, then type
+  // `cd <cwd> && exec <cmd>` into it. `new-split right` matches tmux's `-h` /
+  // iTerm2's vertical split (side-by-side); `new-surface` adds a tab to a pane.
+  const base = args.mode === 'split' ? ['new-split', 'right'] : ['new-surface'];
   const noteKind = args.mode === 'split' ? 'cmux split' : 'cmux tab';
 
-  const created = await runQuiet(bin, createArgv, args.env);
-  if (created.code !== 0) {
-    return {
-      launched: false,
-      note: '',
-      error: `cmux ${createArgv[0]} exited ${String(created.code)}: ${created.stderr.trim()}`,
-    };
+  // Prioritized create attempts. Surface first (split only — new-surface has no
+  // --surface flag), then the parent workspace, then — foreground only — the
+  // focus-relative attempt that matches the pre-targeting behavior exactly.
+  const attempts: string[][] = [];
+  if (args.mode === 'split' && args.cmuxTargetSurface) {
+    attempts.push([...base, '--surface', args.cmuxTargetSurface, '--focus', 'true']);
   }
-  // cmux prints the created surface ref (e.g. `surface:2`) on stdout. Target it
-  // explicitly so we don't race on which surface is focused.
-  const surfaceRef = parseCmuxRef(created.stdout);
-  if (!surfaceRef) {
-    return {
-      launched: false,
-      note: '',
-      error: `cmux ${createArgv[0]} gave no surface ref: ${created.stdout.trim()}`,
-    };
+  if (args.cmuxTargetWorkspace) {
+    attempts.push([...base, '--workspace', args.cmuxTargetWorkspace, '--focus', 'true']);
   }
+  if (!args.cmuxWorkspaceFallback) {
+    attempts.push([...base, '--focus', 'true']);
+  }
+
   const cmdLine = `cd ${shellQuote(args.cwd)} && exec ${shellJoin(args.argv)}`;
-  // `\n` is interpreted by `cmux send` as Enter, which runs the typed command.
-  const sent = await runQuiet(bin, ['send', '--surface', surfaceRef, `${cmdLine}\n`], args.env);
-  if (sent.code !== 0) {
+  let lastError = '';
+  for (const createArgv of attempts) {
+    const created = await runQuiet(bin, createArgv, args.env);
+    if (created.code !== 0) {
+      lastError = `cmux ${createArgv.join(' ')} exited ${String(created.code)}: ${created.stderr.trim()}`;
+      continue;
+    }
+    // cmux prints the created surface ref (e.g. `surface:2`) on stdout. Target
+    // it explicitly so we don't race on which surface is focused.
+    const surfaceRef = parseCmuxRef(created.stdout);
+    if (!surfaceRef) {
+      lastError = `cmux ${createArgv[0]} gave no surface ref: ${created.stdout.trim()}`;
+      continue;
+    }
+    // `\n` is interpreted by `cmux send` as Enter, which runs the typed command.
+    const sent = await runQuiet(bin, ['send', '--surface', surfaceRef, `${cmdLine}\n`], args.env);
+    if (sent.code !== 0) {
+      lastError = `cmux send exited ${String(sent.code)}: ${sent.stderr.trim()}`;
+      continue;
+    }
+    return { launched: true, note: `Attached in new ${noteKind}.` };
+  }
+
+  // Detached worker: no targeted attempt landed, so open a separate workspace
+  // rather than erroring. Foreground callers surface the failure instead.
+  if (args.cmuxWorkspaceFallback) return newCmuxWorkspace(bin, args);
+  return { launched: false, note: '', error: lastError };
+}
+
+/** Open `<command>` in a fresh top-level cmux workspace. `new-workspace` carries
+ *  cwd + command atomically (it types `--command` + Enter into the new
+ *  workspace's shell, which parses the shell-quoting we applied). */
+async function newCmuxWorkspace(
+  bin: string,
+  args: SpawnInNewTerminalArgs,
+): Promise<SpawnInNewTerminalResult> {
+  const r = await runQuiet(
+    bin,
+    [
+      'new-workspace',
+      '--name',
+      args.title,
+      '--cwd',
+      args.cwd,
+      '--command',
+      shellJoin(args.argv),
+      '--focus',
+      'true',
+    ],
+    args.env,
+  );
+  if (r.code !== 0) {
     return {
       launched: false,
       note: '',
-      error: `cmux send exited ${String(sent.code)}: ${sent.stderr.trim()}`,
+      error: `cmux new-workspace exited ${String(r.code)}: ${r.stderr.trim()}`,
     };
   }
-  return { launched: true, note: `Attached in new ${noteKind}.` };
+  return { launched: true, note: 'Attached in new cmux workspace.' };
 }
 
 /** Pull the first cmux ref (e.g. `surface:2`) out of CLI stdout. */

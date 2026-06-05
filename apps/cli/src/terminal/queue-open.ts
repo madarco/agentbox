@@ -37,6 +37,8 @@ export function captureOpenTerminalContext(
       host,
       cmuxSocket: env['CMUX_SOCKET_PATH'],
       cmuxBundledCli: cmuxBinary(env),
+      cmuxSurfaceId: env['CMUX_SURFACE_ID'],
+      cmuxWorkspaceId: env['CMUX_WORKSPACE_ID'],
     };
   }
   // iTerm2: osascript drives the app via Apple events, no captured handle.
@@ -47,8 +49,10 @@ export function captureOpenTerminalContext(
  * Open the terminal described by a captured context, running `argv` in it. Runs
  * on the host from the queue worker once the box is ready. Rebuilds the env from
  * the captured socket(s) since the worker's own env points at the relay's
- * originating terminal, not this job's. cmux always opens a new workspace (the
- * worker has no focused surface to split/tab into).
+ * originating terminal, not this job's. For cmux the worker has no focused
+ * surface, so it targets the captured surface/workspace by id (split → original
+ * surface, then parent workspace; tab → parent workspace), degrading to a new
+ * workspace only when no id resolves.
  */
 export function spawnQueuedOpenTerminal(
   ctx: QueueJobOpenTerminal,
@@ -77,7 +81,9 @@ export function spawnQueuedOpenTerminal(
       cwd: ctx.cwd,
       title,
       env,
-      cmuxWorkspaceOnly: true,
+      cmuxTargetSurface: ctx.cmuxSurfaceId,
+      cmuxTargetWorkspace: ctx.cmuxWorkspaceId,
+      cmuxWorkspaceFallback: true,
     });
   }
   return spawnInNewTerminal({ host: 'iterm2', mode: ctx.mode, argv, cwd: ctx.cwd, title });

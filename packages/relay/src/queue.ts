@@ -47,6 +47,11 @@ export interface QueueJobOpenTerminal {
   /** cmux control socket (`$CMUX_SOCKET_PATH`) + bundled CLI path. */
   cmuxSocket?: string;
   cmuxBundledCli?: string;
+  /** Submitting surface + workspace UUIDs (`$CMUX_SURFACE_ID` /
+   *  `$CMUX_WORKSPACE_ID`), so the worker can split the original pane (or, failing
+   *  that, the parent workspace) instead of opening a new top-level workspace. */
+  cmuxSurfaceId?: string;
+  cmuxWorkspaceId?: string;
 }
 
 /** On-disk job manifest. Read/written under `~/.agentbox/queue/<id>.json`. */

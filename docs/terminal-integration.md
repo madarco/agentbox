@@ -71,16 +71,22 @@ Flow:
 Per-host targeting differs from the foreground path because the worker is
 detached (no "current" pane):
 
-| mode     | tmux                          | cmux            | iTerm2            |
-| -------- | ----------------------------- | --------------- | ----------------- |
-| `split`  | `split-window -h -t <pane>`   | `new-workspace` | `split vertically` |
-| `tab`    | `new-window -t <pane>`        | `new-workspace` | `create tab`       |
-| `window` | `new-window -t <pane>`        | `new-workspace` | `create window`    |
+| mode     | tmux                          | cmux                                    | iTerm2            |
+| -------- | ----------------------------- | --------------------------------------- | ----------------- |
+| `split`  | `split-window -h -t <pane>`   | `new-split --surface`→`--workspace`→`new-workspace` | `split vertically` |
+| `tab`    | `new-window -t <pane>`        | `new-surface --workspace`→`new-workspace` | `create tab`       |
+| `window` | `new-window -t <pane>`        | `new-workspace`                         | `create window`    |
 
 - tmux targets the captured `$TMUX_PANE` so the split/window lands in the
   submitting pane's session and shows up live in the attached client.
-- cmux always opens a **new workspace** (every mode) — a detached worker has no
-  reliable focused surface to split/tab into. **Caveat:** cmux's default
+- cmux targets the captured `$CMUX_SURFACE_ID` / `$CMUX_WORKSPACE_ID` instead of
+  the focused surface (a detached worker has none): `split` tries
+  `new-split right --surface <id>` (the original pane), then
+  `new-split right --workspace <id>` (the parent workspace); `tab` targets
+  `new-surface --workspace <id>` (cmux's `new-surface` has no `--surface` flag).
+  When every targeted attempt fails or no id was captured, it degrades to
+  `new-workspace`. The created surface ref is then driven via `cmux send` exactly
+  as before. **Caveat:** cmux's default
   `socketControlMode: cmuxOnly` only trusts cmux-initiated processes, so it
   rejects the worker's socket connection (the failure surfaces as a broken-pipe
   in the queue log). cmux opens require `socketControlMode: automation` (or

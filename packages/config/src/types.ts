@@ -832,7 +832,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'enum',
     enumValues: ['none', 'split', 'window', 'tab'] as const,
     description:
-      'When a background `-i` job finishes creating its box, where the host relay opens an attached terminal onto it: `none` (default — open nothing, just queue), `split`, `window`, or `tab`. Honored only when the submitting shell runs inside tmux, cmux, or iTerm2 (the targeting is captured at submit time). cmux opens a new workspace for every mode; iTerm2 opens relative to the frontmost window. Unlike `attach.openIn` there is no `same` mode — the box is created asynchronously, so it is always a fresh terminal.',
+      'When a background `-i` job finishes creating its box, where the host relay opens an attached terminal onto it: `none` (default — open nothing, just queue), `split`, `window`, or `tab`. Honored only when the submitting shell runs inside tmux, cmux, or iTerm2 (the targeting is captured at submit time). Under cmux, `split` splits the pane you submitted from (falling back to the parent workspace, then a new workspace), `tab` adds a tab in the parent workspace, and `window` opens a separate workspace; iTerm2 opens relative to the frontmost window. Unlike `attach.openIn` there is no `same` mode — the box is created asynchronously, so it is always a fresh terminal.',
   },
   {
     key: 'cloud.useCurrentBranch',
