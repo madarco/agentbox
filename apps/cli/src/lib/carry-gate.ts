@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { log } from '@clack/prompts';
+import { loadEffectiveConfig } from '@agentbox/config';
 import { loadCarrySection } from '@agentbox/ctl';
 import type { ResolvedCarryEntry } from '@agentbox/core';
 import { promptForCarry } from '../carry-prompt.js';
@@ -39,7 +40,11 @@ export async function runCarryGate(args: CarryGateArgs): Promise<CarryGateResult
   const items = await loadCarrySection(yamlPath);
   if (items.length === 0) return { decision: 'approve', entries: [] };
 
-  const resolved = await resolveCarry(items, { projectRoot: args.projectRoot });
+  const cfg = await loadEffectiveConfig(args.projectRoot);
+  const resolved = await resolveCarry(items, {
+    projectRoot: args.projectRoot,
+    maxBytes: cfg.effective.box.cpMaxBytes,
+  });
   if (resolved.errors.length > 0) {
     const msg = ['carry: refused to proceed:', ...resolved.errors.map((e) => `  - ${e}`)].join('\n');
     throw new Error(msg);

@@ -663,7 +663,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.cpMaxBytes',
     type: 'int',
     description:
-      'Max bytes a single `agentbox cp` upload may copy (after default + --exclude trimming) before it is blocked with a size breakdown. Pass --yes to override. Default 104857600 (100 MiB).',
+      'Max bytes a single host→box copy may transfer after excludes, shared by `agentbox cp` (blocked with a size breakdown unless --yes) and each `carry:` entry (rejected at resolve time). Default 104857600 (100 MiB).',
     advanced: true,
   },
   {
