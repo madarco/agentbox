@@ -80,7 +80,12 @@ detached (no "current" pane):
 - tmux targets the captured `$TMUX_PANE` so the split/window lands in the
   submitting pane's session and shows up live in the attached client.
 - cmux always opens a **new workspace** (every mode) — a detached worker has no
-  reliable focused surface to split/tab into.
+  reliable focused surface to split/tab into. **Caveat:** cmux's default
+  `socketControlMode: cmuxOnly` only trusts cmux-initiated processes, so it
+  rejects the worker's socket connection (the failure surfaces as a broken-pipe
+  in the queue log). cmux opens require `socketControlMode: automation` (or
+  `password`) in `~/.config/cmux/cmux.json` + `cmux reload-config`. `config set
+  queue.openIn` prints this caveat. tmux/iTerm2 are unaffected.
 - iTerm2 opens relative to the **frontmost** window (no stable submit-time handle
   is captured in v1).
 - Unknown host terminal at submit → nothing is captured and nothing opens.
