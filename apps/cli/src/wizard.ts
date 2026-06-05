@@ -18,8 +18,27 @@ import { type BaseStatus, type CheckpointStatus, evaluateCheckpoint } from './ch
  */
 export const IN_BOX_SETUP_GUIDE_PATH = '/usr/local/share/agentbox/setup-guide.md';
 
-export function buildSetupInitialPrompt(workspace: string): string {
+export function buildSetupInitialPrompt(workspace: string, hasAgentboxYaml = false): string {
   const name = basename(workspace);
+  // Recreate path: the project is already configured but its stale snapshot was
+  // discarded, so the box booted from a fresh base with no dependencies / system
+  // setup installed. Reuse the existing agentbox.yaml — don't regenerate it.
+  if (hasAgentboxYaml) {
+    return (
+      `The user reopened the agentbox sandbox for "${name}". The workspace already has a /workspace/agentbox.yaml, ` +
+      `but the previous snapshot was stale so the box was rebuilt from a fresh base image — its dependencies and ` +
+      `system setup are NOT installed yet. ` +
+      `Please run the /agentbox-setup skill (or read ${IN_BOX_SETUP_GUIDE_PATH} if the skill is not loaded), then ` +
+      `reuse the existing /workspace/agentbox.yaml: verify the declared tasks and services still fit the project, ` +
+      `(re)install dependencies and any system packages the setup needs on this fresh base, and update agentbox.yaml ` +
+      `only if something is missing or wrong — do not regenerate it from scratch. ` +
+      `Then run \`agentbox-ctl reload\` from inside the box so the already-running supervisor re-applies the config ` +
+      `and immediately runs the declared tasks and autostarts the services (no box restart needed). ` +
+      `When the box is warm, capture it with \`agentbox checkpoint --set-default\` so future boxes skip this rebuild. ` +
+      `Finally, summarise what you verified and changed, and remind the user how to land any agentbox.yaml change on ` +
+      `the host (commit through the bind-mounted .git, or "agentbox download env" on the host).`
+    );
+  }
   return (
     `The user just opened a new agentbox sandbox for "${name}" but the workspace has no agentbox.yaml yet. ` +
     `Please run the /agentbox-setup skill (or read ${IN_BOX_SETUP_GUIDE_PATH} if the skill is not loaded), ` +
@@ -164,7 +183,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
     if (process.env[WIZARD_RECREATE_ENV] === '1') {
       return {
         action: 'launch-with-prompt',
-        initialPrompt: buildSetupInitialPrompt(proj.root),
+        initialPrompt: buildSetupInitialPrompt(proj.root, proj.hasAgentboxYaml),
         envFilesToImport: envFiles,
         discardCheckpoint: true,
       };
@@ -333,7 +352,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
 
   return {
     action: 'launch-with-prompt',
-    initialPrompt: buildSetupInitialPrompt(proj.root),
+    initialPrompt: buildSetupInitialPrompt(proj.root, proj.hasAgentboxYaml),
     envFilesToImport,
     discardCheckpoint: discardCheckpoint || undefined,
     rebuildBase: rebuildBase || undefined,
@@ -425,7 +444,7 @@ function nonInteractiveOutcome(
   if (args.command === 'claude') {
     return {
       action: 'launch-with-prompt',
-      initialPrompt: buildSetupInitialPrompt(proj.root),
+      initialPrompt: buildSetupInitialPrompt(proj.root, proj.hasAgentboxYaml),
       envFilesToImport,
       discardCheckpoint,
     };

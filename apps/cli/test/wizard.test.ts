@@ -106,6 +106,23 @@ describe('buildSetupInitialPrompt', () => {
     const prompt = buildSetupInitialPrompt('/x/y');
     expect(prompt).toContain('agentbox-ctl reload');
   });
+
+  describe('when an agentbox.yaml already exists (stale-checkpoint recreate)', () => {
+    it('frames the prompt as reusing the existing config, not a fresh one', () => {
+      const prompt = buildSetupInitialPrompt('/Users/me/repos/optima', true);
+      expect(prompt).toContain('optima');
+      expect(prompt).not.toContain('no agentbox.yaml yet');
+      expect(prompt).toMatch(/already has a \/workspace\/agentbox\.yaml/);
+      expect(prompt).toContain('do not regenerate it from scratch');
+    });
+
+    it('still references the skill and reloads the supervisor', () => {
+      const prompt = buildSetupInitialPrompt('/x/y', true);
+      expect(prompt).toContain('/agentbox-setup');
+      expect(prompt).toContain(IN_BOX_SETUP_GUIDE_PATH);
+      expect(prompt).toContain('agentbox-ctl reload');
+    });
+  });
 });
 
 describe('serializeEnvFilesForEnv / parseEnvFilesFromEnv', () => {
