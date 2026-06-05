@@ -182,11 +182,13 @@ export class StatusReporter {
 
   private async snapshot(): Promise<BoxStatus> {
     const probePorts = this.supervisor.serviceProbePorts(); // serviceName -> port
+    const probed = this.supervisor.probedServices(); // serviceName (port OR log_match)
     const exposes = this.supervisor.serviceExposes(); // serviceName -> expose
     const services = this.supervisor.list().map((s) => ({
       name: s.name,
       state: s.state,
       port: probePorts.get(s.name) ?? null,
+      ...(probed.has(s.name) ? { probed: true } : {}),
       ...(exposes.has(s.name) ? { expose: exposes.get(s.name) } : {}),
     }));
     const tasks = this.supervisor.listTasks().map((t) => ({ name: t.name, state: t.state }));

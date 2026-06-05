@@ -1,4 +1,4 @@
-import type { BoxStatus } from '@agentbox/ctl';
+import type { BoxStatus, BoxStatusServiceEntry } from '@agentbox/ctl';
 
 /**
  * Coarse box-service health for the attach footer's `(...)` slot. Returns null
@@ -29,11 +29,17 @@ export function serviceStatusLabel(status: BoxStatus | null): string | null {
     tasks.some((t) => t.state === 'failed');
   if (errored) return 'service error';
 
+  // A probed service (`ready_when`) sits in `running` while its probe warms up
+  // and only reaches `ready` once it passes — so `running` counts as up ONLY
+  // for unprobed services (whose terminal up-state is `running`).
+  const isUp = (s: BoxStatusServiceEntry): boolean =>
+    s.state === 'ready' || (s.state === 'running' && !s.probed);
   const counted = services.filter((s) => s.state !== 'stopped');
   const total = counted.length;
-  const up = counted.filter((s) => s.state === 'ready' || s.state === 'running').length;
+  const up = counted.filter(isUp).length;
   const settling =
     services.some((s) => s.state === 'pending' || s.state === 'waiting' || s.state === 'starting') ||
+    services.some((s) => s.state === 'running' && Boolean(s.probed)) ||
     tasks.some((t) => t.state === 'pending' || t.state === 'waiting' || t.state === 'running');
 
   // Services-less, task-only box: no count to show.

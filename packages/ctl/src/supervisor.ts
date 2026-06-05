@@ -585,6 +585,21 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
   }
 
   /**
+   * Set of service names that declare a `ready_when` probe of any kind (port or
+   * log_match). A probed service is only "up" once it reaches `ready`; an
+   * unprobed one is up at `running`. The status reporter surfaces this so the
+   * host can tell a warming-up `running` service from a settled one.
+   */
+  probedServices(): Set<string> {
+    const out = new Set<string>();
+    for (const u of this.units.values()) {
+      if (u.kind !== 'service') continue;
+      if ((u as ServiceRunner).spec.readyWhen) out.add(u.name);
+    }
+    return out;
+  }
+
+  /**
    * Map of service name -> `expose:` mapping, for the (at most one) service
    * that declares it. The status reporter surfaces this so the host knows the
    * web service even when `agentbox.yaml` lives only inside the box.

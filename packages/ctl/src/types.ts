@@ -136,6 +136,14 @@ export interface BoxStatusServiceEntry {
   /** Configured `ready_when` port for this service, else null. */
   port: number | null;
   /**
+   * Whether the service declares a `ready_when` probe (port OR log_match). A
+   * probed service stays in `running` until its probe passes and only then
+   * becomes `ready`, so `running` does NOT mean "up" for it — readers should
+   * treat a probed `running` service as still warming up. Additive field:
+   * absent (older snapshots) means treat as unprobed (i.e. `running` is up).
+   */
+  probed?: boolean;
+  /**
    * The service's `expose:` mapping (container `as` → in-box `port`) when it is
    * the designated web service, else absent. Additive field — snapshots written
    * before this existed simply lack it (schema stays 1; treat absent as none).

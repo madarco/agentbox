@@ -3,14 +3,14 @@ import type { BoxStatus, BoxStatusServiceEntry, BoxStatusTaskEntry } from '@agen
 import { serviceStatusLabel } from '../../src/wrapped-pty/service-status.js';
 
 function status(
-  services: Array<Pick<BoxStatusServiceEntry, 'name' | 'state'>>,
+  services: Array<Pick<BoxStatusServiceEntry, 'name' | 'state'> & { probed?: boolean }>,
   tasks: BoxStatusTaskEntry[] = [],
 ): BoxStatus {
   return {
     schema: 1,
     boxId: 'b',
     timestamp: '2026-01-01T00:00:00.000Z',
-    services: services.map((s) => ({ ...s, port: null })),
+    services: services.map((s) => ({ port: null, ...s })),
     tasks,
     ports: [],
     claude: { state: 'idle', updatedAt: null, sessionRunning: false },
@@ -44,6 +44,30 @@ describe('serviceStatusLabel', () => {
         ]),
       ),
     ).toBe('ready');
+  });
+
+  it('treats a probed service in `running` as still warming up (not yet up)', () => {
+    // ready_when probe: `running` means the process started but the probe
+    // hasn't passed, so it must not count toward `ready`.
+    expect(serviceStatusLabel(status([{ name: 'a', state: 'running', probed: true }]))).toBe(
+      'starting 0/1…',
+    );
+    expect(
+      serviceStatusLabel(
+        status([
+          { name: 'a', state: 'ready' },
+          { name: 'b', state: 'running', probed: true },
+        ]),
+      ),
+    ).toBe('starting 1/2…');
+  });
+
+  it('counts a probed service as up only once it reaches `ready`', () => {
+    expect(serviceStatusLabel(status([{ name: 'a', state: 'ready', probed: true }]))).toBe('ready');
+  });
+
+  it('counts an unprobed `running` service as up', () => {
+    expect(serviceStatusLabel(status([{ name: 'a', state: 'running' }]))).toBe('ready');
   });
 
   it('escalates a crashed/unhealthy/backoff service to `service error`', () => {

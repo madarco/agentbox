@@ -17,6 +17,7 @@ interface StubSupervisor extends EventEmitter {
   list(): never[];
   listTasks(): never[];
   serviceProbePorts(): Map<string, number>;
+  probedServices(): Set<string>;
   serviceExposes(): Map<string, { port: number; as: number }>;
 }
 
@@ -26,6 +27,7 @@ function stubSupervisor(): StubSupervisor {
     list: (): never[] => [],
     listTasks: (): never[] => [],
     serviceProbePorts: (): Map<string, number> => new Map(),
+    probedServices: (): Set<string> => new Set(),
     serviceExposes: (): Map<string, { port: number; as: number }> => new Map(),
   }) as StubSupervisor;
 }
