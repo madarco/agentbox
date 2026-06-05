@@ -31,9 +31,63 @@
       "type": "object",
       "description": "Host-side AgentBox layered-config defaults for this project. Same shape as ~/.agentbox/config.yaml. The supervisor ignores this; @agentbox/config validates it strictly when loaded. See https://agent-box.sh/schema/user-config.schema.json for the full key set.",
       "additionalProperties": true
-    }
+    },
+    "carry": { "$ref": "#/$defs/carry" }
   },
   "$defs": {
+    "carry": {
+      "type": "array",
+      "description": "Host-applied declarative host→box file copy, read by the agentbox CLI at create time (NOT by the supervisor). Bypasses .gitignore. Each entry is a {src,dest,...} mapping or a \"src=dest\" shorthand string. The host prompts once to approve before copying; auto-approve with --carry-yes, skip with --carry skip. When copying a directory, heavy regenerable dirs (.git, node_modules, bin, obj, packages, dist, .next, target) are dropped by default. Use case: develop AgentBox inside an AgentBox by carrying ~/.agentbox/secrets.env + ~/.agentbox/claude-credentials.json.",
+      "items": { "$ref": "#/$defs/carryItem" }
+    },
+    "carryItem": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "Shorthand: \"src\" (mirror src→src; src must be absolute or ~/) or \"src=dest\"."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["src"],
+          "properties": {
+            "src": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Host path. Must start with /, ~/, or ./ (~/ = host home; ./ = project root)."
+            },
+            "dest": {
+              "type": "string",
+              "minLength": 1,
+              "description": "In-box destination. Must start with / or ~/ (~/ expands to /home/vscode). Defaults to src when omitted (not allowed when src starts with ./)."
+            },
+            "mode": {
+              "description": "Octal file mode applied in-box, e.g. \"0600\", \"0o600\", or 384.",
+              "oneOf": [
+                { "type": "string", "minLength": 1 },
+                { "type": "integer", "minimum": 0 }
+              ]
+            },
+            "user": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535,
+              "description": "Numeric uid that owns the copied file in-box (default 1000 = vscode; 0 keeps it root-owned)."
+            },
+            "exclude": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "description": "tar globs (e.g. \"*/cache\") or bare dir names to drop when copying a directory. Additive on top of the default heavy-dir excludes."
+            },
+            "optional": {
+              "type": "boolean",
+              "description": "true skips a missing src silently instead of erroring."
+            }
+          }
+        }
+      ]
+    },
     "command": {
       "description": "Shell string (run via `bash -c`) or argv array. Non-empty.",
       "oneOf": [

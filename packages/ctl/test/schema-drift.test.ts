@@ -22,6 +22,11 @@ interface Fixture {
   // accepts them. Those rows are documented here but skipped from the agreement
   // assertion.
   runtimeOnly?: true;
+  // `schemaOnly` is the mirror image: the JSON schema rejects, but the runtime
+  // supervisor accepts. Used for `carry:` — the supervisor only whitelists the
+  // top-level key (the host CLI parses its contents), so it never validates
+  // carry item shape, while the schema does.
+  schemaOnly?: true;
 }
 
 const VALID: Fixture[] = [
@@ -189,6 +194,33 @@ defaults:
 services:
   web:
     command: pnpm dev
+`,
+  },
+  // Top-level `carry:` block — host-applied (read by the agentbox CLI, not the
+  // supervisor). The schema documents/validates the item shape; the supervisor
+  // only whitelists the key (see schemaOnly fixtures below).
+  {
+    name: 'carry shorthand string entry',
+    yaml: `carry:\n  - ~/.agentbox/secrets.env\n`,
+  },
+  {
+    name: 'carry mapping with dest + exclude',
+    yaml: `
+carry:
+  - src: ./legacy
+    dest: ~/legacy
+    exclude: ["*/cache", ".git"]
+    optional: true
+`,
+  },
+  {
+    name: 'carry mapping with mode + user',
+    yaml: `
+carry:
+  - src: ~/.agentbox/secrets.env
+    dest: ~/.agentbox/secrets.env
+    mode: "0600"
+    user: 1000
 `,
   },
 ];
@@ -484,6 +516,28 @@ services:
 `,
     runtimeOnly: true,
   },
+  // carry: the schema validates item shape; the supervisor only whitelists the
+  // top-level key, so it accepts these (schema-only rejections).
+  {
+    name: 'carry item missing src (schema-only)',
+    yaml: `carry:\n  - dest: ~/x\n`,
+    schemaOnly: true,
+  },
+  {
+    name: 'carry item with unknown key (schema-only)',
+    yaml: `carry:\n  - src: ./a\n    dest: ~/a\n    bogus: 1\n`,
+    schemaOnly: true,
+  },
+  {
+    name: 'carry exclude not an array (schema-only)',
+    yaml: `carry:\n  - src: ./a\n    dest: ~/a\n    exclude: "nope"\n`,
+    schemaOnly: true,
+  },
+  {
+    name: 'carry not an array (schema-only)',
+    yaml: `carry: 42\n`,
+    schemaOnly: true,
+  },
 ];
 
 function runtimeAccepts(yaml: string): boolean {
@@ -514,6 +568,15 @@ describe('JSON Schema ↔ runtime validator agreement', () => {
         expect(runtimeAccepts(f.yaml)).toBe(false);
         // Schema accepts — documented gap (cross-field rule).
         expect(schemaAccepts(f.yaml)).toBe(true);
+      });
+      continue;
+    }
+    if (f.schemaOnly) {
+      it(`schema-only reject: ${f.name}`, () => {
+        // Runtime accepts — the supervisor whitelists `carry:` but never
+        // validates its item shape (the host CLI does, separately).
+        expect(runtimeAccepts(f.yaml)).toBe(true);
+        expect(schemaAccepts(f.yaml)).toBe(false);
       });
       continue;
     }
