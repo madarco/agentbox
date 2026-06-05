@@ -201,11 +201,28 @@ const setCommand = new Command('set')
         );
       } else {
         process.stdout.write(`${key} = ${fmtValue(r.coerced)}   (wrote ${r.path})\n`);
+        warnOnSet(key, r.coerced);
       }
     } catch (err) {
       handleError(err);
     }
   });
+
+/**
+ * Print key-specific caveats after a successful `config set`. Kept here (not in
+ * the config package) because it's about CLI/runtime behavior, not the value's
+ * validity.
+ */
+function warnOnSet(key: string, value: unknown): void {
+  if (key === 'queue.openIn' && value !== 'none') {
+    process.stderr.write(
+      'note: queue.openIn only opens a terminal when you submit the `-i` job from inside tmux, cmux, or iTerm2.\n' +
+        "      cmux: the box is opened by the relay's queue worker, a cmux-external process, so cmux's default\n" +
+        '      `socketControlMode: cmuxOnly` blocks it. Set `socketControlMode` to `automation` (or `password`)\n' +
+        '      in ~/.config/cmux/cmux.json and run `cmux reload-config` for cmux opens to work.\n',
+    );
+  }
+}
 
 const unsetCommand = new Command('unset')
   .description('Remove a config key from the global or per-project file (default: --project)')

@@ -253,6 +253,10 @@ agentbox config set queue.openIn split --global
 
 By default a background `-i` run just queues and prints its job line. Set `queue.openIn` to `split`, `window`, or `tab` and the host relay opens an attached terminal onto the box the moment its worker finishes creating it — no need to find the box and `attach` by hand. It only fires when the submitting shell is inside tmux, cmux, or iTerm2; cmux opens a new workspace for every mode, and iTerm2 opens relative to the frontmost window. Unlike `attach.openIn` there is no `same` mode (the box is created asynchronously, so it is always a fresh terminal).
 
+<Callout type="warn" title="cmux: allow socket control">
+The box is opened by the relay's queue **worker**, a detached host process — not a cmux-initiated one. cmux's default `socketControlMode: cmuxOnly` only trusts processes cmux itself started, so it blocks the worker and nothing opens. To use `queue.openIn` under cmux, set `socketControlMode` to `automation` (or `password`) in `~/.config/cmux/cmux.json` and run `cmux reload-config`. tmux and iTerm2 need no such change.
+</Callout>
+
 Auto-pause only ever targets a box whose live agent has settled to **idle** for `idleMinutes`. A box where **any** agent (Claude, Codex, or OpenCode) is working, compacting, or waiting on you is never auto-paused. If a box does get paused while you still need it, `agentbox drive …`, `agentbox shell`, and `agentbox unpause` all resume it on demand (drive auto-unpauses before it reaches the session).
 
 See [background and parallel](/docs/background-and-parallel) and [checkpoints and pausing](/docs/checkpoints-and-pausing).
