@@ -48,29 +48,41 @@ async function guardUploadSize(
 
   const absSrc = resolve(hostSrc);
   const measured = await measureCopy(absSrc, tokens);
-  if (!measured.isDir || opts.yes || measured.totalBytes <= maxBytes) {
+  if (opts.yes || measured.totalBytes <= maxBytes) {
     return tarPatterns;
   }
 
-  const dropped = opts.defaultExcludes
-    ? ` after default excludes (${effectiveExcludes([], true).join(', ')})`
-    : '';
+  const dropped =
+    measured.isDir && opts.defaultExcludes
+      ? ` after default excludes (${effectiveExcludes([], true).join(', ')})`
+      : '';
   const lines: string[] = [
     `${hostSrc} is ${fmtBytes(measured.totalBytes)}${dropped}, over the ${fmtBytes(maxBytes)} per-copy limit.`,
-    'Biggest remaining folders/subfolders:',
-    ...measured.treeLines,
-    'Each copy must be under the limit. To proceed, EITHER:',
-    '  - copy the heavy folders one at a time, e.g.:',
   ];
-  for (const child of measured.topChildren.slice(0, 3)) {
-    lines.push(`      agentbox cp ${hostSrc}/${child.path} ${boxDst}`);
+  if (measured.isDir) {
+    // Directory: show where the weight is and how to split / trim it.
+    lines.push(
+      'Biggest remaining folders/subfolders:',
+      ...measured.treeLines,
+      'Each copy must be under the limit. To proceed, EITHER:',
+      '  - copy the heavy folders one at a time, e.g.:',
+    );
+    for (const child of measured.topChildren.slice(0, 3)) {
+      lines.push(`      agentbox cp ${hostSrc}/${child.path} ${boxDst}`);
+    }
+    lines.push(
+      '  - or drop what you do not need:',
+      `      agentbox cp ${hostSrc} ${boxDst} --exclude=<dir>`,
+      '  - or copy the whole thing anyway:',
+      `      agentbox cp ${hostSrc} ${boxDst} --yes`,
+    );
+  } else {
+    // Single file: can't split or exclude — only override.
+    lines.push(
+      'A single file cannot be split or trimmed. To copy it anyway:',
+      `      agentbox cp ${hostSrc} ${boxDst} --yes`,
+    );
   }
-  lines.push(
-    '  - or drop what you do not need:',
-    `      agentbox cp ${hostSrc} ${boxDst} --exclude=<dir>`,
-    '  - or copy the whole thing anyway:',
-    `      agentbox cp ${hostSrc} ${boxDst} --yes`,
-  );
   throw new Error(lines.join('\n'));
 }
 
