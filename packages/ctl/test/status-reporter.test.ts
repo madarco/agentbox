@@ -219,3 +219,53 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
     expect(latestClaude(relay.posted)?.state).toBe('working');
   });
 });
+
+describe('StatusReporter.markScreenWaiting (promote-only safety net)', () => {
+  function makeReporter(): { reporter: StatusReporter; relay: ReturnType<typeof stubRelay> } {
+    const sup = stubSupervisor();
+    const relay = stubRelay();
+    type ReporterOpts = ConstructorParameters<typeof StatusReporter>[0];
+    const reporter = new StatusReporter({
+      supervisor: sup as unknown as ReporterOpts['supervisor'],
+      relay: relay as unknown as ReporterOpts['relay'],
+      boxId: 'b1',
+      sessionName: 'claude',
+      debounceMs: 0,
+      periodicMs: 60_000,
+    });
+    return { reporter, relay };
+  }
+
+  it('promotes a stuck working -> waiting (and is then a no-op)', async () => {
+    const { reporter, relay } = makeReporter();
+    reporter.setClaudeState('working');
+    expect(reporter.markScreenWaiting()).toBe(true);
+    await flushDebounce(reporter, relay);
+    expect(latestClaude(relay.posted)?.state).toBe('waiting');
+    // Already promoted — a second call doesn't re-fire (state is no longer working).
+    expect(reporter.markScreenWaiting()).toBe(false);
+  });
+
+  it('never clobbers a richer or non-working hook state', () => {
+    for (const setup of [
+      (r: StatusReporter) =>
+        r.setClaudeState('end-plan', { plan: { plan: 'X', capturedAt: '2026-05-27T00:00:00.000Z' } }),
+      (r: StatusReporter) =>
+        r.setClaudeState('question', {
+          question: { questions: [{ question: 'q', options: [{ label: 'a' }] }], capturedAt: '2026-05-27T00:00:00.000Z' },
+        }),
+      (r: StatusReporter) => r.setClaudeState('idle'),
+      (r: StatusReporter) => r.setClaudeState('compacting'),
+      (r: StatusReporter) => r.setClaudeState('error'),
+    ]) {
+      const { reporter } = makeReporter();
+      setup(reporter);
+      expect(reporter.markScreenWaiting()).toBe(false);
+    }
+  });
+
+  it('is a no-op from the initial unknown state', () => {
+    const { reporter } = makeReporter();
+    expect(reporter.markScreenWaiting()).toBe(false);
+  });
+});

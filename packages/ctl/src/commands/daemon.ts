@@ -6,6 +6,7 @@ import {
 } from '@agentbox/relay';
 import { loadConfig } from '../config.js';
 import { startCodexScraper, type CodexScraperHandle } from '../codex-scraper.js';
+import { startClaudeScraper, type ClaudeScraperHandle } from '../claude-scraper.js';
 import { Supervisor } from '../supervisor.js';
 import { startServer } from '../socket.js';
 import { StatusReporter } from '../status-reporter.js';
@@ -71,6 +72,17 @@ export const daemonCommand = new Command('daemon')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(`agentbox-ctl: codex scraper failed to start: ${msg}\n`);
+    }
+
+    // Promote-only safety net for Claude: if its hooks miss a prompt (MCP
+    // dialogs, a dropped Notification hook), the tmux pane shows it — flip a
+    // stuck `working`→`waiting` so `agent wait-for input-needed` still wakes.
+    let claudeScraper: ClaudeScraperHandle | null = null;
+    try {
+      claudeScraper = startClaudeScraper({ reporter });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`agentbox-ctl: claude scraper failed to start: ${msg}\n`);
     }
 
     const server = await startServer({
@@ -157,6 +169,7 @@ export const daemonCommand = new Command('daemon')
     const shutdown = async (signal: string): Promise<void> => {
       process.stdout.write(`agentbox-ctl: ${signal} — shutting down\n`);
       if (codexScraper) codexScraper.stop();
+      if (claudeScraper) claudeScraper.stop();
       reporter.stop();
       reporter.flush();
       server.close();
