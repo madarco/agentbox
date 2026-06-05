@@ -192,6 +192,35 @@ services:
       factor: 2
 ```
 
+## 6b. Bringing extra host files/folders into the box
+
+Two ways to copy host files in (both COPY — never a live mount, so the box can't
+write back to the host):
+
+- **`carry:` block** (declarative, in `agentbox.yaml`) — for files/dirs every box
+  should get at create time. Each entry is `{ src, dest }` with optional `mode`,
+  `user`, `optional`, and `exclude:` (a list of tar globs / bare dir names to drop
+  when copying a directory). Heavy regenerable dirs (`.git`, `node_modules`, `bin`,
+  `obj`, `packages`, `dist`, `.next`, `target`) are dropped by default; `exclude:`
+  is additive. Carry sources have a size cap (default 50 MiB after excludes).
+- **`agentbox-ctl cp fromHost <hostPath> <boxPath>`** (ad-hoc, from inside the box)
+  — for a one-off copy. Prompts the user on the host to approve.
+
+**The per-copy size limit (important for large/legacy folders).** A single copy is
+blocked above `box.cpMaxBytes` (default **100 MB**) *after* default excludes, so it
+fails loud instead of silently hanging. When blocked you get a `du`-style tree of
+the biggest remaining folders/subfolders. To get under the limit, EITHER:
+
+- **drop what the box can regenerate** (the default excludes already remove
+  `node_modules`/`.git`/build output; add more with `--exclude=<glob-or-name>`), OR
+- **copy the heavy folders one at a time** so each copy is under the limit, OR
+- pass `--yes` to copy the whole thing anyway (only when you really need it all).
+
+Example: a 2.4 GB legacy folder is mostly `packages/` (NuGet) + `.git`; those are
+excluded by default, and what's left can be split:
+`agentbox-ctl cp fromHost ../legacy/src /workspace/legacy/src` then
+`... cp fromHost ../legacy/Database /workspace/legacy/Database`.
+
 ## 7. Validate before handing off
 
 - check with `agentbox-ctl reload` and then `agentbox-ctl status` that everything is running as expected.

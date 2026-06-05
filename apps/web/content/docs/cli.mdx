@@ -167,9 +167,10 @@ agentbox download 1
 agentbox download 1 --dry-run
 agentbox download 1 --with-env
 
-# Copy single files (direction inferred from the box: prefix)
+# Copy files/dirs (direction inferred from the box: prefix)
 agentbox cp mybox:/workspace/.env      # download to cwd
 agentbox cp ./local.txt mybox:/workspace/   # upload
+agentbox cp ./dir mybox:/workspace/ --exclude=.git --exclude="*/cache"  # upload, trimmed
 
 # Git/gh through the host relay (your credentials stay on the host)
 agentbox git push 1
@@ -180,7 +181,9 @@ agentbox git status 1
 agentbox git pr create 1
 ```
 
-`download` pulls `/workspace` back into your host workspace, honouring `.gitignore`. It has typed subcommands for agent state: `download env`, `download claude`, `download codex`, `download opencode`, `download config`. `cp` copies individual files in either direction, like `docker cp`. `git` runs git/gh operations against the box from the host through the relay, so push and fetch use your host credentials and the box never sees them.
+`download` pulls `/workspace` back into your host workspace, honouring `.gitignore`. It has typed subcommands for agent state: `download env`, `download claude`, `download codex`, `download opencode`, `download config`. `cp` copies files or directories in either direction, like `docker cp`. `git` runs git/gh operations against the box from the host through the relay, so push and fetch use your host credentials and the box never sees them.
+
+`cp` drops heavy, regenerable directories by default (`.git`, `node_modules`, `bin`, `obj`, `packages`, `dist`, `.next`, `target`) — keep them with `--no-default-excludes`, or add more with repeatable `--exclude=<glob|name>`. An upload whose size (after excludes) exceeds `box.cpMaxBytes` (default 100 MB) is **blocked** and prints a `du`-style tree of the biggest remaining folders so you can decide what to drop; trim it with `--exclude`, copy the heavy folders one at a time, or pass `--yes` to copy it all anyway.
 
 Useful flags: `download` takes `--dry-run`, `--no-respect-gitignore`, `--include-node-modules`, `--with-env`, `--pattern <glob>`; `git push`/`fetch` take `--remote <name>` (default `origin`) and forward extra args like `--force-with-lease`.
 

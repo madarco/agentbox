@@ -1157,16 +1157,18 @@ export function createCloudProvider(
       box: BoxRecord,
       hostSrc: string,
       boxDst: string,
+      exclude?: string[],
     ): Promise<{ finalPath: string }> {
-      return uploadToCloudBox(backend, handleFor(box), hostSrc, boxDst);
+      return uploadToCloudBox(backend, handleFor(box), hostSrc, boxDst, exclude);
     },
 
     async downloadPath(
       box: BoxRecord,
       boxSrc: string,
       hostDst: string,
+      exclude?: string[],
     ): Promise<{ finalPath: string }> {
-      return downloadFromCloudBox(backend, handleFor(box), boxSrc, hostDst);
+      return downloadFromCloudBox(backend, handleFor(box), boxSrc, hostDst, exclude);
     },
 
     async downloadDirContents(

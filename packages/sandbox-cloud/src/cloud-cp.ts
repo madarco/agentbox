@@ -42,6 +42,7 @@ export async function uploadToCloudBox(
   handle: CloudHandle,
   hostSrc: string,
   boxDst: string,
+  exclude?: string[],
 ): Promise<CloudCpResult> {
   const srcAbs = hostResolve(hostSrc);
   if (!existsSync(srcAbs)) throw new Error(`source not found: ${hostSrc}`);
@@ -67,7 +68,8 @@ export async function uploadToCloudBox(
   try {
     // COPYFILE_DISABLE silences macOS BSD tar's `._*` resource-fork stubs
     // that would otherwise litter the box's filesystem on every upload.
-    await execa('tar', ['-C', srcParent, '-czf', localTar, srcBasename], {
+    const excludeArgs = (exclude ?? []).map((p) => `--exclude=${p}`);
+    await execa('tar', ['-C', srcParent, '-czf', localTar, ...excludeArgs, srcBasename], {
       env: { ...process.env, COPYFILE_DISABLE: '1' },
     });
     await backend.uploadFile(handle, localTar, REMOTE_UP_TAR);
@@ -157,6 +159,7 @@ export async function downloadFromCloudBox(
   handle: CloudHandle,
   boxSrc: string,
   hostDst: string,
+  exclude?: string[],
 ): Promise<CloudCpResult> {
   const srcBasename = posix.basename(boxSrc);
   const srcParent = posix.dirname(boxSrc);
@@ -178,10 +181,13 @@ export async function downloadFromCloudBox(
   const stage = await mkdtemp(hostJoin(tmpdir(), 'agentbox-cp-down-'));
   const localTar = hostJoin(stage, 'payload.tar.gz');
   try {
+    const excludeArgs = (exclude ?? [])
+      .map((p) => `--exclude=${quoteShellArg(p)}`)
+      .join(' ');
     const packScript = [
       `set -euo pipefail`,
       `cd ${quoteShellArg(srcParent)}`,
-      `tar -czf ${quoteShellArg(REMOTE_DOWN_TAR)} ${quoteShellArg(srcBasename)}`,
+      `tar -czf ${quoteShellArg(REMOTE_DOWN_TAR)} ${excludeArgs} ${quoteShellArg(srcBasename)}`,
     ].join('\n');
     const r = await backend.exec(handle, bashScript(packScript));
     if (r.exitCode !== 0) {

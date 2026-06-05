@@ -45,7 +45,8 @@
         "bundleDepth": { "type": "integer", "minimum": 0 },
         "vercelVcpus": { "type": "integer", "minimum": 1 },
         "vercelTimeoutMs": { "type": "integer", "minimum": 1 },
-        "vercelNetworkPolicy": { "type": "string" }
+        "vercelNetworkPolicy": { "type": "string" },
+        "cpMaxBytes": { "type": "integer", "minimum": 1 }
       }
     },
     "checkpoint": {

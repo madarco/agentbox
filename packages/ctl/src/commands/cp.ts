@@ -5,6 +5,33 @@ interface CpRpcParams {
   boxPath: string;
   hostPath: string;
   recursive?: boolean;
+  /** tar glob patterns / bare dir names to exclude from the copy. */
+  exclude?: string[];
+  /** false to keep the heavy dirs the host CLI drops by default. */
+  defaultExcludes?: boolean;
+  /** true to copy even when the source is over the host's size limit. */
+  yes?: boolean;
+}
+
+interface CpCliOptions {
+  recursive: boolean;
+  exclude: string[];
+  defaultExcludes: boolean;
+  yes: boolean;
+}
+
+function collectExclude(val: string, acc: string[]): string[] {
+  acc.push(val);
+  return acc;
+}
+
+function buildCpParams(boxPath: string, hostPath: string, opts: CpCliOptions): CpRpcParams {
+  const params: CpRpcParams = { boxPath, hostPath };
+  if (opts.recursive === false) params.recursive = false;
+  if (opts.exclude.length > 0) params.exclude = opts.exclude;
+  if (opts.defaultExcludes === false) params.defaultExcludes = false;
+  if (opts.yes) params.yes = true;
+  return params;
 }
 
 /**
@@ -29,10 +56,11 @@ export const cpCommand = new Command('cp')
       .argument('<boxPath>', 'source path inside the container')
       .argument('<hostPath>', 'destination path on the host')
       .option('--no-recursive', 'reserved; current implementation is always recursive (docker cp -a)')
-      .action(async (boxPath: string, hostPath: string, opts: { recursive: boolean }) => {
-        const params: CpRpcParams = { boxPath, hostPath };
-        if (opts.recursive === false) params.recursive = false;
-        const code = await postRpcAndExit('cp.toHost', params, {
+      .option('--exclude <pattern>', 'exclude paths matching <pattern> (repeatable)', collectExclude, [])
+      .option('--no-default-excludes', 'keep heavy dirs the host drops by default (.git, node_modules, ...)')
+      .option('-y, --yes', 'copy even if the source is over the host size limit')
+      .action(async (boxPath: string, hostPath: string, opts: CpCliOptions) => {
+        const code = await postRpcAndExit('cp.toHost', buildCpParams(boxPath, hostPath, opts), {
           errorPrefix: 'agentbox-ctl cp',
         });
         process.exit(code);
@@ -44,10 +72,11 @@ export const cpCommand = new Command('cp')
       .argument('<hostPath>', 'source path on the host')
       .argument('<boxPath>', 'destination path inside the container')
       .option('--no-recursive', 'reserved; current implementation is always recursive (docker cp -a)')
-      .action(async (hostPath: string, boxPath: string, opts: { recursive: boolean }) => {
-        const params: CpRpcParams = { boxPath, hostPath };
-        if (opts.recursive === false) params.recursive = false;
-        const code = await postRpcAndExit('cp.fromHost', params, {
+      .option('--exclude <pattern>', 'exclude paths matching <pattern> (repeatable)', collectExclude, [])
+      .option('--no-default-excludes', 'keep heavy dirs the host drops by default (.git, node_modules, ...)')
+      .option('-y, --yes', 'copy even if the source is over the host size limit')
+      .action(async (hostPath: string, boxPath: string, opts: CpCliOptions) => {
+        const code = await postRpcAndExit('cp.fromHost', buildCpParams(boxPath, hostPath, opts), {
           errorPrefix: 'agentbox-ctl cp',
         });
         process.exit(code);

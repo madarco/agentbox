@@ -7,6 +7,7 @@ import { sanitizeMnemonic } from '@agentbox/config';
 import { hostOpenCommand } from '@agentbox/sandbox-core';
 import type { ResolvedCarryEntry } from '@agentbox/core';
 import type { BoxStatus } from '@agentbox/ctl';
+import { streamTarPipe } from './box-cp.js';
 import { execInBox } from './docker.js';
 import type { BoxRecord } from './state.js';
 
@@ -723,14 +724,17 @@ export async function carrySourceHash(entry: ResolvedCarryEntry): Promise<string
       return createHash('sha256').update(await readFile(entry.absSrc)).digest('hex');
     }
     // Hash file *content* (not mtime) so a touch with identical content doesn't
-    // trigger a spurious re-copy. Carry sources are size-capped, so reading them
-    // is cheap.
+    // trigger a spurious re-copy. Skip the same paths the copy step excludes so
+    // the hash tracks only what actually lands in the box (and so resync isn't
+    // dragged through heavy excluded subtrees like node_modules).
+    const exclude = entry.exclude ?? [];
     const h = createHash('sha256');
     const walk = async (dir: string, rel: string): Promise<void> => {
       const names = (await readdir(dir)).sort();
       for (const name of names) {
-        const abs = join(dir, name);
         const relPath = rel ? `${rel}/${name}` : name;
+        if (carryRelExcluded(relPath, exclude)) continue;
+        const abs = join(dir, name);
         const st = await stat(abs);
         if (st.isDirectory()) {
           h.update(`d\0${relPath}\n`);
@@ -747,6 +751,31 @@ export async function carrySourceHash(entry: ResolvedCarryEntry): Promise<string
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Mirror the tar `--exclude` patterns on `entry.exclude` for the source-hash
+ * walk so it tracks the same fileset the copy step packs. Bare names (and the
+ * `*​/name` form `toTarExcludes` emits) match a path component; richer globs are
+ * matched against the full relpath.
+ */
+function carryRelExcluded(relPath: string, patterns: string[]): boolean {
+  if (patterns.length === 0) return false;
+  const segs = relPath.split('/');
+  for (const p of patterns) {
+    const isGlob = p.includes('*') || p.includes('?');
+    if (!isGlob) {
+      if (segs.includes(p)) return true;
+    } else if (p.startsWith('*/') && !/[*?/]/.test(p.slice(2))) {
+      if (segs.includes(p.slice(2))) return true;
+    } else {
+      const re = new RegExp(
+        `^${p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`,
+      );
+      if (re.test(relPath)) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -839,15 +868,13 @@ async function copyOneEntry(container: string, entry: ResolvedCarryEntry): Promi
     // Tar the directory contents (cd in + tar .) so they extract at the
     // dest without a duplicated basename layer. --no-same-permissions /
     // --no-same-owner so macOS attrs don't leak into the linux box.
-    const packed = await execa(
+    // Stream the tarball straight into the box (see streamTarPipe — a buffered
+    // round-trip hits execa's 100 MB maxBuffer and silently fails on any
+    // sizable carry source). `exclude` drops heavy/regenerable subtrees.
+    const excludeArgs = (entry.exclude ?? []).map((p) => `--exclude=${p}`);
+    const [packed, extract] = await streamTarPipe(
       'tar',
-      ['-C', entry.absSrc, '-cf', '-', '.'],
-      { encoding: 'buffer', reject: false },
-    );
-    if (packed.exitCode !== 0) {
-      throw new Error(`tar pack failed: ${String(packed.stderr).slice(0, 300)}`);
-    }
-    const extract = await execa(
+      ['-C', entry.absSrc, '-cf', '-', ...excludeArgs, '.'],
       'docker',
       [
         'exec',
@@ -864,8 +891,10 @@ async function copyOneEntry(container: string, entry: ResolvedCarryEntry): Promi
         '--no-same-owner',
         '-m',
       ],
-      { input: packed.stdout as Buffer, reject: false },
     );
+    if (packed.exitCode !== 0) {
+      throw new Error(`tar pack failed: ${String(packed.stderr).slice(0, 300)}`);
+    }
     if (extract.exitCode !== 0) {
       throw new Error(`tar extract failed: ${String(extract.stderr).slice(0, 300)}`);
     }

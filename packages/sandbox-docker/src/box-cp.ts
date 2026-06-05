@@ -36,10 +36,53 @@ export interface BoxCpResult {
   warn?: string;
 }
 
+/** `--exclude=<pat>` args for each tar pattern (already expanded by the caller). */
+function tarExcludeArgs(exclude: string[] | undefined): string[] {
+  return (exclude ?? []).map((p) => `--exclude=${p}`);
+}
+
+/**
+ * Stream a tar producer into a tar consumer without buffering. execa buffers
+ * each subprocess' stdout into memory by default and caps it at 100 MB
+ * (`maxBuffer`), which silently kills the producer ("tar: Write error") on any
+ * sizable copy — so we disable stdout buffering on the producer and pipe the
+ * raw stream into the consumer's stdin. stderr stays buffered for diagnostics.
+ * Returns both results; callers check exit codes producer-first.
+ */
+interface ProcOutcome {
+  exitCode: number | undefined;
+  stderr: string | Uint8Array | undefined;
+}
+
+export async function streamTarPipe(
+  producerFile: string,
+  producerArgs: string[],
+  consumerFile: string,
+  consumerArgs: string[],
+  producerEnv?: NodeJS.ProcessEnv,
+): Promise<[ProcOutcome, ProcOutcome]> {
+  const producer = execa(producerFile, producerArgs, {
+    reject: false,
+    buffer: { stdout: false },
+    ...(producerEnv ? { env: producerEnv } : {}),
+  });
+  const consumer = execa(consumerFile, consumerArgs, {
+    reject: false,
+    buffer: { stdout: false },
+  });
+  producer.stdout?.pipe(consumer.stdin!);
+  const [p, c] = await Promise.all([producer, consumer]);
+  return [
+    { exitCode: p.exitCode, stderr: p.stderr },
+    { exitCode: c.exitCode, stderr: c.stderr },
+  ];
+}
+
 export async function uploadToBox(
   box: BoxRecord,
   hostSrc: string,
   boxDst: string,
+  exclude?: string[],
 ): Promise<BoxCpResult> {
   const srcAbs = resolve(hostSrc);
   if (!existsSync(srcAbs)) throw new Error(`source not found: ${hostSrc}`);
@@ -80,22 +123,22 @@ export async function uploadToBox(
     throw new Error(`mkdir -p ${boxParent} in box failed: ${asText(mk.stderr).slice(0, 300)}`);
   }
 
+  // Stream the tarball straight from host `tar` into the box's `tar -xf -`
+  // instead of buffering it (see streamTarPipe — execa's 100 MB maxBuffer
+  // otherwise silently fails large copies with "tar: Write error").
   // COPYFILE_DISABLE silences macOS BSD tar's `._*` resource-fork stubs.
-  const packed = await execa('tar', ['-C', srcParent, '-cf', '-', srcBasename], {
-    encoding: 'buffer',
-    reject: false,
-    env: { ...process.env, COPYFILE_DISABLE: '1' },
-  });
+  const [packed, extracted] = await streamTarPipe(
+    'tar',
+    ['-C', srcParent, '-cf', '-', ...tarExcludeArgs(exclude), srcBasename],
+    'docker',
+    ['exec', '-i', '--user', 'root', box.container, 'tar', '-xf', '-', '-C', boxParent],
+    { ...process.env, COPYFILE_DISABLE: '1' },
+  );
   if (packed.exitCode !== 0) {
     throw new Error(`tar pack failed: ${asText(packed.stderr).slice(0, 300)}`);
   }
-  const extract = await execa(
-    'docker',
-    ['exec', '-i', '--user', 'root', box.container, 'tar', '-xf', '-', '-C', boxParent],
-    { input: packed.stdout as Buffer, reject: false },
-  );
-  if (extract.exitCode !== 0) {
-    throw new Error(`tar extract in box failed: ${asText(extract.stderr).slice(0, 300)}`);
+  if (extracted.exitCode !== 0) {
+    throw new Error(`tar extract in box failed: ${asText(extracted.stderr).slice(0, 300)}`);
   }
 
   if (finalName !== srcBasename) {
@@ -130,6 +173,7 @@ export async function downloadFromBox(
   box: BoxRecord,
   boxSrc: string,
   hostDst: string,
+  exclude?: string[],
 ): Promise<BoxCpResult> {
   const srcBasename = posix.basename(boxSrc);
   const srcParent = posixDirname(boxSrc);
@@ -148,20 +192,18 @@ export async function downloadFromBox(
   mkdirSync(hostParent, { recursive: true });
   const finalPath = posix.join(hostParent, finalName);
 
-  const packed = await execa(
+  // Stream box `tar` → host `tar -xf -` (see streamTarPipe for why we don't buffer).
+  const [packed, extracted] = await streamTarPipe(
     'docker',
-    ['exec', box.container, 'tar', '-C', srcParent, '-cf', '-', srcBasename],
-    { encoding: 'buffer', reject: false },
+    ['exec', box.container, 'tar', '-C', srcParent, '-cf', '-', ...tarExcludeArgs(exclude), srcBasename],
+    'tar',
+    ['-xf', '-', '-C', hostParent],
   );
   if (packed.exitCode !== 0) {
     throw new Error(`tar pack in box failed: ${asText(packed.stderr).slice(0, 300)}`);
   }
-  const extract = await execa('tar', ['-xf', '-', '-C', hostParent], {
-    input: packed.stdout as Buffer,
-    reject: false,
-  });
-  if (extract.exitCode !== 0) {
-    throw new Error(`tar extract on host failed: ${asText(extract.stderr).slice(0, 300)}`);
+  if (extracted.exitCode !== 0) {
+    throw new Error(`tar extract on host failed: ${asText(extracted.stderr).slice(0, 300)}`);
   }
 
   if (finalName !== srcBasename) {

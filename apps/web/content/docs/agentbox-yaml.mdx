@@ -263,6 +263,7 @@ See [configuration](/docs/configuration) for the full key set and precedence. No
 | `dest` | Must start with `/` or `~/`. `~/` expands to `/home/vscode`. |
 | `mode` | Octal — accepts `0o600`, `"0600"`, or `"600"`. |
 | `user` | Numeric uid that owns the file in-box (default `1000` = `vscode`; `0` keeps it root-owned). |
+| `exclude` | List of tar globs / bare dir names to drop when copying a **directory** (additive on top of the defaults below). |
 | `optional` | `true` skips a missing `src` silently instead of erroring. |
 
 A shorthand string form `"src=dest"` (or just `"src"` to mirror) is also accepted.
@@ -273,11 +274,15 @@ carry:
     dest: ~/carried-marker.txt
     mode: 0o600
     optional: true
+  - src: ../legacy-app
+    dest: ~/legacy-app
+    exclude:
+      - "*/cache"
 ```
 
 The canonical use case is developing AgentBox inside an AgentBox: carry `~/.agentbox/secrets.env` and `~/.agentbox/claude-credentials.json` so the in-box CLI is already authenticated.
 
-The host resolver blocks `..` traversal, denies `/proc|/sys|/dev|/etc/passwd|/etc/shadow`, caps each entry at 50 MiB (raise with `AGENTBOX_CARRY_MAX_BYTES`), and flags symlinks that escape `$HOME` and the project root. On `create`, `claude`, `codex`, and `opencode` the host prompts once — listing each src→dest with size, mode, and symlink warnings — before copying.
+When copying a directory, heavy regenerable dirs (`.git`, `node_modules`, `bin`, `obj`, `packages`, `dist`, `.next`, `target`) are dropped by default; `exclude:` adds to that set. The host resolver blocks `..` traversal, denies `/proc|/sys|/dev|/etc/passwd|/etc/shadow`, caps each entry at 50 MiB **after excludes** (raise with `AGENTBOX_CARRY_MAX_BYTES`), and flags symlinks that escape `$HOME` and the project root. On `create`, `claude`, `codex`, and `opencode` the host prompts once — listing each src→dest with size, mode, and symlink warnings — before copying.
 
 ```bash
 # auto-approve every carry entry for this box

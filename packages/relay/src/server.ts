@@ -461,14 +461,28 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           send(res, 400, { error: 'cp.* requires {boxPath, hostPath} strings' });
           return;
         }
+        if (
+          params.exclude !== undefined &&
+          (!Array.isArray(params.exclude) || params.exclude.some((p) => typeof p !== 'string'))
+        ) {
+          send(res, 400, { error: 'cp.* exclude must be an array of strings' });
+          return;
+        }
         const direction = body.method === 'cp.toHost' ? 'box -> host' : 'host -> box';
+        const pathDetail =
+          body.method === 'cp.toHost'
+            ? `${params.boxPath} -> ${params.hostPath}`
+            : `${params.hostPath} -> ${params.boxPath}`;
+        const detailParts = [pathDetail];
+        if (params.exclude && params.exclude.length > 0) {
+          detailParts.push(`exclude: ${params.exclude.join(', ')}`);
+        }
+        if (params.defaultExcludes === false) detailParts.push('(default excludes off)');
+        if (params.yes) detailParts.push('(over size limit — confirmed)');
         const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
           kind: 'confirm',
           message: `Allow cp (${direction}) on ${reg.name}?`,
-          detail:
-            body.method === 'cp.toHost'
-              ? `${params.boxPath} -> ${params.hostPath}`
-              : `${params.hostPath} -> ${params.boxPath}`,
+          detail: detailParts.join('\n'),
           defaultAnswer: 'n',
           context: {
             command: body.method,
@@ -1336,10 +1350,14 @@ async function handleCpRpc(
   // `agentbox cp` is positional: <src> [dst]. Direction is encoded by which
   // arg carries the `<boxName>:` prefix.
   const boxRef = `${reg.name}:${params.boxPath}`;
+  const flags: string[] = [];
+  for (const pat of params.exclude ?? []) flags.push('--exclude', pat);
+  if (params.defaultExcludes === false) flags.push('--no-default-excludes');
+  if (params.yes) flags.push('--yes');
   const argv =
     method === 'cp.toHost'
-      ? [process.execPath, entry, 'cp', boxRef, params.hostPath]
-      : [process.execPath, entry, 'cp', params.hostPath, boxRef];
+      ? [process.execPath, entry, 'cp', boxRef, params.hostPath, ...flags]
+      : [process.execPath, entry, 'cp', params.hostPath, boxRef, ...flags];
   return runHostCommand(argv, CP_RPC_TIMEOUT_MS);
 }
 

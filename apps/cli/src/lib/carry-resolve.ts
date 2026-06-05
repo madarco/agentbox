@@ -1,7 +1,8 @@
 import { realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, normalize, resolve } from 'node:path';
+import { isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import type { CarryItem } from '@agentbox/ctl';
+import { effectiveExcludes, isPathExcluded, toTarExcludes } from './dir-breakdown.js';
 
 /**
  * One fully resolved carry entry, ready for the prompt and the per-provider
@@ -27,6 +28,8 @@ export interface ResolvedCarryEntry {
   user?: number;
   optional: boolean;
   symlinkInfo?: 'safe' | 'outside-home';
+  /** tar `--exclude` patterns applied when packing a dir entry. */
+  exclude?: string[];
 }
 
 export interface ResolveOptions {
@@ -144,10 +147,14 @@ async function resolveOne(item: CarryItem, ctx: OneCtx): Promise<ResolvedCarryEn
   }
 
   if (st.isDirectory()) {
-    const bytes = await dirSizeCapped(absSrc, ctx.cap);
+    // Default heavy-dir excludes + the entry's own patterns, applied to both
+    // the size accounting and the copy step so the cap weighs only what lands.
+    const tokens = effectiveExcludes(item.exclude ?? [], true);
+    const tarPatterns = toTarExcludes(tokens);
+    const bytes = await dirSizeCapped(absSrc, ctx.cap, tokens);
     if (bytes > ctx.cap) {
       throw new Error(
-        `${ctx.where}: dir "${absSrc}" exceeds ${String(ctx.cap)} bytes (set AGENTBOX_CARRY_MAX_BYTES to raise the cap or narrow the path)`,
+        `${ctx.where}: dir "${absSrc}" exceeds ${String(ctx.cap)} bytes after excludes (add carry exclude: patterns, set AGENTBOX_CARRY_MAX_BYTES, or narrow the path)`,
       );
     }
     return {
@@ -159,6 +166,7 @@ async function resolveOne(item: CarryItem, ctx: OneCtx): Promise<ResolvedCarryEn
       bytes,
       ...(item.mode !== undefined ? { mode: item.mode } : {}),
       ...(item.user !== undefined ? { user: item.user } : {}),
+      ...(tarPatterns.length > 0 ? { exclude: tarPatterns } : {}),
       optional,
       ...(symlinkInfo ? { symlinkInfo } : {}),
     };
@@ -243,7 +251,7 @@ async function realpathSafe(p: string): Promise<string> {
   }
 }
 
-async function dirSizeCapped(dir: string, cap: number): Promise<number> {
+async function dirSizeCapped(dir: string, cap: number, exclude: string[] = []): Promise<number> {
   let total = 0;
   const seen = new Set<string>();
   async function walk(d: string): Promise<void> {
@@ -258,6 +266,10 @@ async function dirSizeCapped(dir: string, cap: number): Promise<number> {
     for (const name of names) {
       if (total > cap) return;
       const full = join(d, name);
+      // Skip excluded paths so the cap weighs only what actually copies. The
+      // relpath is computed against the carry root with posix separators.
+      const rel = relative(dir, full).split(/[\\/]/).join('/');
+      if (exclude.length > 0 && isPathExcluded(rel, exclude)) continue;
       let st: Awaited<ReturnType<typeof stat>>;
       try {
         st = await stat(full);

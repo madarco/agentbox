@@ -83,6 +83,7 @@ export interface UserConfig {
     vercelVcpus?: number;
     vercelTimeoutMs?: number;
     vercelNetworkPolicy?: string;
+    cpMaxBytes?: number;
   };
   checkpoint?: {
     maxLayers?: number;
@@ -198,6 +199,7 @@ export interface EffectiveConfig {
     vercelVcpus: number;
     vercelTimeoutMs: number;
     vercelNetworkPolicy: string;
+    cpMaxBytes: number;
   };
   checkpoint: {
     maxLayers: number;
@@ -334,6 +336,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     vercelVcpus: 2,
     vercelTimeoutMs: 2_700_000,
     vercelNetworkPolicy: '',
+    cpMaxBytes: 100 * 1024 * 1024,
   },
   checkpoint: {
     maxLayers: 3,
@@ -655,6 +658,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       'Max session length (ms) for new --provider vercel boxes before the VM auto-snapshots; persistent mode auto-resumes on the next call. Default 2700000 (45 min, the Hobby ceiling). Vercel-only.',
+  },
+  {
+    key: 'box.cpMaxBytes',
+    type: 'int',
+    description:
+      'Max bytes a single `agentbox cp` upload may copy (after default + --exclude trimming) before it is blocked with a size breakdown. Pass --yes to override. Default 104857600 (100 MiB).',
+    advanced: true,
   },
   {
     key: 'box.vercelNetworkPolicy',
