@@ -180,9 +180,64 @@ tracked under "Open follow-ups" below.
 
 `integration.<service>.<op>` is dispatched identically on docker and cloud because the wire shape is method-agnostic. The cloud path long-polls `/bridge/poll`, runs `executeCloudAction → runIntegrationRpc`, which reuses the exact handler. The Hetzner / Daytona / Vercel / E2B image flows all ship the `ntn` / `notion` shim (see "In-box surface" above). No provider-specific code in the integrations spine.
 
+## Linear
+
+The Linear path of the integrations foundation, shipped under LT1 (descriptor-only — no relay/ctl core change, validating the abstraction the Notion work built). The connector descriptor lives in `packages/integrations/src/connectors/linear.ts`; in-box shim at `packages/sandbox-docker/scripts/linear-shim`. Backed by `@schpet/linear-cli` (the `linear` binary, v2). Tracker: [`linear_backlog.md`](./linear_backlog.md).
+
+### Op surface
+
+`packages/integrations/src/connectors/linear.ts` carries the current allowlist. Same starter-conservative shape as Notion's: reads pass through, writes go through `askPrompt`.
+
+| Op             | Class           | Host argv                          | Notes                                                                                  |
+| -------------- | --------------- | ---------------------------------- | -------------------------------------------------------------------------------------- |
+| `whoami`       | read            | `linear auth whoami`               | identity only — **never** `linear auth token` (see below).                             |
+| `issue.list`   | read            | `linear issue list`                |                                                                                        |
+| `issue.view`   | read            | `linear issue view`                |                                                                                        |
+| `issue.query`  | read            | `linear issue query`               | structured filters.                                                                    |
+| `team.list`    | read            | `linear team list`                 |                                                                                        |
+| `api`          | read            | `linear api <query>`               | GraphQL query passthrough; `refuseGraphqlNonQuery` rejects `mutation` / `subscription`. |
+| `issue.create` | write (gated)   | `linear issue create`              |                                                                                        |
+| `issue.update` | write (gated)   | `linear issue update`              | status/title/etc.                                                                      |
+| `issue.comment`| write (gated)   | `linear issue comment create`      |                                                                                        |
+
+### The auth-token exclusion (key security invariant)
+
+`linear auth token` PRINTS the raw API token to stdout. It is **never** on the allowlist:
+
+- The shim **hard-rejects** `linear auth token` with `'auth token' leaks the raw API key — refused. Use 'linear whoami' for identity.` (exit 2). Same hard-reject for `auth login` / `auth logout` / `auth migrate` / `auth default` — the host owns auth state.
+- The connector exposes no op that maps to `auth token`. The only auth-family op is `whoami`, which maps to `linear auth whoami` (identity only).
+- The relay's allowlist (the connector's `ops` map) denies any RPC whose op isn't on the list, so even if the shim were bypassed, the relay would refuse.
+
+Three defenses, all in series. A box agent can't reach `linear auth token` through any of them.
+
+`issue delete` / `team delete` / `team create` are similarly off-list (destructive; start conservative, widen deliberately).
+
+### The GraphQL mutation gate (`refuseGraphqlNonQuery`)
+
+Linear's `api` subcommand is a raw GraphQL endpoint — one POST that serves both queries (read) and mutations (write). The `api` op is a read passthrough, so it carries `refuseCall: refuseGraphqlNonQuery`. The predicate:
+
+- Walks the positional argv (any non-`-` token), strips leading whitespace and `# …` line comments.
+- If the first remaining keyword is `mutation` or `subscription` → refuses with exit 65 and a `linear api: only GraphQL queries are proxied …` message.
+- `query …` and the anonymous `{ … }` shorthand pass.
+- `--input` / `--input=…` is refused — stdin/file bodies can't traverse the relay anyway.
+
+The match is case-insensitive (defensive — GraphQL is case-sensitive in spec, but the cost of guarding is zero). The parser is not a GraphQL validator; it's a write-shape detector. Writes go through the dedicated gated `issue.*` ops, never `api`.
+
+### Enable flag
+
+`integrations.linear.enabled` (typed config, default **false**) lives next to the Notion flag in `packages/config/src/types.ts`. Same layering, same disabled-default rationale.
+
+```bash
+agentbox config set --project integrations.linear.enabled true
+```
+
+### env / credentials
+
+Linear stores plaintext credentials at `~/.config/linear/credentials.toml` (keyring is opt-in, not used). Unlike `ntn` (which needs `NOTION_KEYRING=0` to read file-based auth on Linux boxes), `linear` already reads the toml on every host by default — so the connector declares **no** `env` block. `mergeConnectorEnv` would only allow `LINEAR_*` keys anyway. The `agentbox.yaml` `carry:` block ships the file into nested boxes that run their own relay.
+
 ## Open follow-ups
 
-- **Linear / Trello / ClickUp** — see [`integrations_backlog.md`](./integrations_backlog.md). Each is a new descriptor + a small shim; no relay change. ClickUp will be the one custom REST connector (no good CLI on PyPI / npm).
+- **Trello / ClickUp** — see [`integrations_backlog.md`](./integrations_backlog.md). Each is a new descriptor + a small shim; no relay change. ClickUp will be the one custom REST connector (no good CLI on PyPI / npm).
 - **`comment.add`** — deferred; needs a Notion-API-aware payload translator that maps CLI flags to the structured `POST /v1/comments` body.
 - **Least-privilege tokens** — Notion capability toggles for the host token; Trello supports `scope=read` (when we add it); Linear personal keys inherit full user perms (OAuth-only for read-scope tokens). Document on each service's user-facing page.
 - **Host-initiated tokens** — the relay already accepts `params.hostInitiated` and validates it against `HostInitiatedTokens` (scope + params-hash bound). The host-CLI mint path that issues those tokens isn't wired yet for integrations; once it is, a host-typed `agentbox-ctl integration notion page.create …` can skip the prompt by minting a token first (same shape as the existing `gh.pr.*` and `cp.*` host-initiated paths).

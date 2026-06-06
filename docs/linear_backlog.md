@@ -47,7 +47,7 @@ e2e. v2.0.0 surface (richer than the plan assumed):
 
 ## Tasks
 
-### LT1 — Connector + shim + config + doctor + unit tests + docs  — **status: not started**
+### LT1 — Connector + shim + config + doctor + unit tests + docs  — **status: done (2026-06-06)**
 - `packages/integrations/src/connectors/linear.ts` (+ register in `registry.ts`;
   widen the `IntegrationService` union in `types.ts` to include `'linear'`).
 - `refuseGraphqlNonQuery` (or similar) for the `api` op — refuse mutation/subscription.
@@ -92,5 +92,45 @@ e2e. v2.0.0 surface (richer than the plan assumed):
   authed against `waldosai` (admin, accounts@waldos.ai). Connector surface
   scouted; security notes captured (auth-token leak, destructive deletes,
   GraphQL mutation gate). Linear carry entries added to `agentbox.yaml`.
+- 2026-06-06: **LT1 shipped.** Descriptor-only, no relay/ctl core changes.
+  - Connector at `packages/integrations/src/connectors/linear.ts` with ops
+    `whoami` (`auth whoami`), `issue.list`/`issue.view`/`issue.query`,
+    `team.list`, `api` (+ `refuseGraphqlNonQuery` GraphQL mutation/subscription
+    gate), `issue.create`/`issue.update`/`issue.comment` (gated writes).
+    `IntegrationService` union widened to include `'linear'`.
+  - Shim at `packages/sandbox-docker/scripts/linear-shim` (installed at
+    `/usr/local/bin/linear`, no symlink alias). Strict allowlist; hard-
+    rejects `auth token` (raw-API-key leak), `auth login/logout/migrate/
+    default`, `issue/team delete`, `team create`. Staged across all five
+    providers (docker COPY, hetzner install-box.sh, vercel provision.sh,
+    e2b build-template.sh, daytona is shim-less by design) via
+    `stage-runtime.mjs` + each provider's `runtime-assets.ts`.
+  - Typed config flag `integrations.linear.enabled` (default `false`) added
+    to `UserConfig` / `EffectiveConfig` / `BUILT_IN_DEFAULTS` /
+    `KEY_REGISTRY` in `packages/config/src/types.ts`.
+  - Doctor: zero-line change — `ALL_CONNECTORS` drives `integrationsChecks`,
+    so the Linear row appears automatically with the right install/login
+    hints from the connector descriptor.
+  - Unit tests (pure, no docker/network):
+    - `packages/integrations/test/registry.test.ts` — registry resolves
+      `linear`, op classification, argv shapes, `refuseGraphqlNonQuery`
+      cases (mutation refused, query allowed, anonymous `{…}` allowed,
+      leading whitespace + `# comment` tolerated, `--input` refused,
+      case-insensitive keyword match).
+    - `packages/ctl/test/gh-and-shims.test.ts` — `linear-shim` allowlist
+      tests including the explicit `auth token` rejection and the
+      destructive-op refusals.
+    - `apps/cli/test/doctor-integrations.test.ts` — updated for
+      multi-connector iteration.
+    - `packages/relay/test/*` — updated the two existing tests that used
+      `linear` as the "unknown service" example (now `trello`).
+  - `pnpm typecheck && pnpm test && pnpm build && pnpm lint` all green.
+  - Docs updated in the same change: `docs/integrations.md` (design + the
+    GraphQL gate + auth-token exclusion notes), new public page at
+    `apps/web/content/docs/integrations-linear.mdx` + meta.json entry,
+    `apps/web/content/docs/configuration.mdx` row, `cli.mdx` doctor
+    pointer, `docs/host-relay.md` bullet extension, `docs/features.md`
+    "what works today" bullet. Live e2e against the Waldosai workspace
+    is LT2 — deliberately not run in LT1.
 </content>
 </invoke>

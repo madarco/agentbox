@@ -22,6 +22,7 @@
     "integrations-cmux",
     "---Services---",
     "integrations-notion",
+    "integrations-linear",
     "---Providers---",
     "local-docker",
     "hetzner",

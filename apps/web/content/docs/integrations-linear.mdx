@@ -1,0 +1,102 @@
+---
+title: Linear
+description: Let your box read and write Linear issues through the host's authenticated linear CLI — your API token never enters the box
+---
+
+AgentBox can proxy Linear calls from inside a box to the host's authenticated `linear` CLI (`@schpet/linear-cli`). The box agent can list and view issues, run filtered queries, and (with your approval for each write) create or update issues and post comments — without your Linear API token ever entering the box. Same model as `agentbox-ctl git push`, `agentbox-ctl git pr create`, and the [Notion integration](/docs/integrations-notion).
+
+<Callout title="HOW IT WORKS">
+The box runs a tiny `linear` shim. Calls go through `agentbox-ctl integration linear <op>` to the **host relay**, which runs the host's real `linear` and ships the result back. Reads pass straight through. Writes raise a one-line confirm in your terminal first.
+</Callout>
+
+## Prerequisites
+
+The integration wraps [`@schpet/linear-cli`](https://github.com/schpet/linear-cli) (the `linear` binary, v2). Install it on the **host** (not in the box):
+
+```bash
+npm install -g @schpet/linear-cli
+linear auth login            # opens the browser, stores auth in ~/.config/linear/credentials.toml
+```
+
+Then verify with `agentbox doctor`:
+
+```text
+integrations:
+  [info] linear             disabled  (enable with `agentbox config set --project integrations.linear.enabled true`)
+```
+
+The integration is **off by default**, so even with `linear` installed the box can't call it until you opt in. Doctor's `info` line confirms `linear` is detected; flip the flag to graduate it to a usable state.
+
+## Enable it for this project
+
+```bash
+agentbox config set --project integrations.linear.enabled true
+```
+
+`--project` scopes it to the current project (config file under `~/.agentbox/projects/<hash>/`). Drop `--project` for global. Run `agentbox doctor` again — the row should now read:
+
+```text
+integrations:
+  [ ok ] linear             linear/2.0.0 (…) · authed
+```
+
+If you see `[warn]  not logged in`, run `linear auth login` on the host. If you see `[warn]  linear not installed`, the host install didn't put `linear` on `PATH`.
+
+## What works inside the box
+
+The in-box shim exposes a strict allowlist. Anything outside the list — including `linear auth token`, `linear issue delete`, and any of `project` / `cycle` / `milestone` / `label` / `document` / `schema` — is rejected with a clear message.
+
+| In-box command | Class | What happens |
+| --- | --- | --- |
+| `linear whoami` (or `linear auth whoami`) | read | Passes through; prints the authed host user. |
+| `linear issue list` | read | Lists issues for the authed user/team; pass through filters with `--`. |
+| `linear issue view <id>` | read | Detail view for one issue. |
+| `linear issue query …` | read | Structured filter query. |
+| `linear team list` | read | Lists teams. |
+| `linear api '<query>'` | read | GraphQL query passthrough — `mutation` / `subscription` are **refused** (exit 65). |
+| `linear issue create …` | write | **Prompts** the host for approval; on `y` the host runs `linear issue create` and ships back the result. |
+| `linear issue update …` | write | **Prompts** the host for approval; covers status/title/etc. |
+| `linear issue comment create …` | write | **Prompts** the host for approval; posts a comment. |
+
+Reads are unprompted; every write raises a one-line confirm in your attached terminal (or in `agentbox agent approvals` for orchestrators driving boxes headlessly — see [Background & parallel](/docs/background-and-parallel)).
+
+```bash
+# Inside the box — these all flow through the host relay:
+linear whoami
+linear issue list --me
+linear issue view ABC-42
+linear api '{ teams { id name } }'                   # GraphQL query, passes
+linear issue create --title "Draft from the box"     # prompts on the host
+```
+
+<Callout type="warn" title="auth token is hard-rejected">
+`linear auth token` PRINTS the raw API token to stdout. The shim explicitly refuses it with `'auth token' leaks the raw API key — refused. Use 'linear whoami' for identity.`, and the connector exposes no op that maps to it. The whole point of the integration is to keep the token on the host — proxying `auth token` would defeat that. Same for `auth login` / `auth logout` / `auth migrate` / `auth default` (host owns auth state).
+</Callout>
+
+## Security model
+
+| Concern | What AgentBox does |
+| --- | --- |
+| Where the Linear token lives | **Host only** — in `~/.config/linear/credentials.toml`. The box has no access to it. (The carry block ships the file into nested-box relay hosts only — never to the agent's process env.) |
+| What the box can do unprompted | **Reads only** (`whoami`, `issue list/view/query`, `team list`, `api` GraphQL **queries**). |
+| What needs your approval | **Every write** (`issue.create`, `issue.update`, `issue.comment`), and **any `mutation` / `subscription` GraphQL operation** through `api` is refused outright with exit 65. |
+| Where the approval lives | The host relay raises a confirm prompt; you answer in the attached terminal (`y` / `n`) or via `agentbox agent approve <id>` from an orchestrator. |
+| Inside the box, does the agent ever see the token? | **No.** `printenv \| grep -i linear` inside a box returns nothing — only `AGENTBOX_RELAY_TOKEN`, which only authenticates to the box-local relay endpoint. |
+| Destructive ops | `issue delete` / `team delete` / `team create` are **off the allowlist**. Start conservative; widen deliberately if a real flow needs them. |
+| `auth token` | **Hard-rejected by the shim**, with no connector op exposing it. Three defenses (shim, connector allowlist, relay dispatch), all in series. |
+| Auditability | Every approved write is logged as a relay event (visible via `/admin/events`, `agentbox agent`, the dashboard). |
+
+The integration is **off by default** for every new project. You flip it on per project once you've installed and authed `linear` on the host.
+
+<Callout title="WHY this shape">
+The box is the untrusted side. Tokens in the box would survive `agentbox download`, leak into commits if the agent mishandles them, and undermine the entire sandbox premise. Keeping the token on the host and putting the gate at the host boundary is the same model AgentBox uses for `git push`, `gh pr create`, and the [Notion integration](/docs/integrations-notion) — one model, audited in one place.
+</Callout>
+
+## Limitations and roadmap
+
+- **GraphQL query-only `api` passthrough.** `mutation` / `subscription` are refused; use the dedicated `issue.*` write ops instead. This guards against an agent slipping a write past the read classification.
+- **No destructive ops.** `issue delete` / `team delete` / `team create` are off-list by default.
+- **Allowlist starts conservative.** As real agent flows surface needs, the op set will widen — file an issue with the failing call if something's missing.
+- **Trello / ClickUp** are still on the integrations roadmap; their connectors will appear in `agentbox doctor` the same way once they ship.
+
+See also [CLI commands](/docs/cli) for `agentbox doctor`, [Configuration](/docs/configuration) for the `integrations.linear.enabled` flag, and [Background & parallel](/docs/background-and-parallel) for the host-action approval surface.
