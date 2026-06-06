@@ -82,8 +82,8 @@ For `integration.<service>.<op>`:
 | ------------- | ----- | ------------------------ | -------------------------------------------------------------------------------------- |
 | `whoami`      | read  | `ntn whoami`             | dedicated op so the agent doesn't need to widen the `api` allowlist.                   |
 | `api`         | read  | `ntn api <args>`         | `GET`-only; `refuseApiNonGet` rejects `-X`/`--method`/`-f`/`-F` (Go pflag-style).      |
-| `page.create` | write | `ntn page create <args>` | gated by `askPrompt`.                                                                  |
-| `page.update` | write | `ntn page update <args>` | gated; covers archive + props.                                                         |
+| `page.create` | write | `ntn pages create <args>` | gated by `askPrompt`. (User-facing shim form: `ntn pages create …`.)                   |
+| `page.update` | write | `ntn pages update <args>` | gated; covers archive + props. (User-facing shim form: `ntn pages update …`.)         |
 
 `comment.add` is intentionally absent — `ntn` exposes no top-level `comment` subcommand. The only path is `ntn api v1/comments -X POST -f …`, which the `api` op refuses (GET-only). Comment creation needs a Notion-API-aware payload assembler that maps CLI flags to the structured `POST /v1/comments` body; tracked as a follow-up in [`notion_backlog.md`](./notion_backlog.md). The in-box shim rejects `notion comment add …` with a clear "deferred" message.
 

@@ -51,8 +51,8 @@ The in-box shim exposes a strict allowlist. Anything outside the list is rejecte
 | --- | --- | --- |
 | `ntn whoami` | read | Passes through; prints the authed host user. |
 | `ntn api v1/<path>` | read | `GET`-only passthrough — `v1/search`, `v1/pages/<id>`, etc. Non-GET (`-X POST`, `-f`, `-F`, `--input`) is refused with exit 65. |
-| `ntn page create …` | write | **Prompts** the host for approval; on `y` the host runs `ntn page create` and ships back the result. |
-| `ntn page update …` | write | **Prompts** the host for approval; covers props and archive. |
+| `ntn pages create …` | write | **Prompts** the host for approval; on `y` the host runs `ntn pages create` and ships back the result. |
+| `ntn pages update …` | write | **Prompts** the host for approval; covers props and archive. |
 
 `notion` is a symlink to `ntn` — either name works. Reads are unprompted; every write raises a one-line confirm in your attached terminal (or in `agentbox agent approvals` for orchestrators driving boxes headlessly — see [Background & parallel](/docs/background-and-parallel)).
 
@@ -61,7 +61,7 @@ The in-box shim exposes a strict allowlist. Anything outside the list is rejecte
 ntn whoami
 ntn api v1/search -f "query=design doc"
 ntn api v1/pages/abc123                            # GET passthrough
-ntn page create -p <db-id> -t "Draft from the box" # prompts on the host
+ntn pages create -p <db-id> -t "Draft from the box" # prompts on the host
 ```
 
 <Callout type="warn" title="comment creation is deferred">
