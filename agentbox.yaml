@@ -101,6 +101,26 @@ carry:
     dest: ~/.local/share/opencode/auth.json
     mode: 0o600
     optional: true
+  # Notion CLI (`ntn`) file-based auth, so a box that creates NESTED boxes can
+  # act as their relay host and shell out to `ntn` for the integration's e2e
+  # test. macOS `ntn` keeps its token in the keychain (uncarryable); the box is
+  # Linux, so we carry file-based auth instead — bootstrap once on the host with
+  # `NOTION_KEYRING=0 ntn login` (writes ~/.config/notion/auth.json), and the
+  # in-box connector/test runs `ntn` with `NOTION_KEYRING=0` so it reads the
+  # file. All optional: a host without the file-auth still gets a working box
+  # (top-level boxes test through the host's own keychain-authed `ntn`).
+  - src: ~/.config/notion/auth.json
+    dest: ~/.config/notion/auth.json
+    mode: 0o600
+    optional: true
+  - src: ~/.config/notion/config.json
+    dest: ~/.config/notion/config.json
+    mode: 0o600
+    optional: true
+  - src: ~/.config/notion/workspaces.json
+    dest: ~/.config/notion/workspaces.json
+    mode: 0o600
+    optional: true
   # Per-provider base-snapshot pointers. With these, `agentbox prepare`
   # inside the box can skip-fast (existing snapshot detected) and just
   # exercise the post-prepare config write + migration — no bake needed.
