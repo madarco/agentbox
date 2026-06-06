@@ -34,7 +34,7 @@ Reference implementations to copy: `packages/relay/src/gh.ts`,
 
 ## Tasks
 
-### T1 — Shared foundation + Notion core plumbing  ⬜ not started
+### T1 — Shared foundation + Notion core plumbing  ✅ done
 The working vertical slice: `agentbox-ctl integration notion <op>` round-trips
 through the relay to host `ntn`, with read/write classification + write gating.
 - `packages/integrations/` package: `types.ts` (IntegrationOp, IntegrationConnector),
@@ -82,3 +82,8 @@ Make a box agent able to type `notion …`.
 ## Status log
 - 2026-06-06: Backlog created; host-side carry for `ntn` file-auth added to
   `agentbox.yaml`. Top-level box testing uses the host's keychain-authed `ntn`.
+- 2026-06-06: T1 shipped — `@agentbox/integrations` package with Notion
+  descriptor, `packages/relay/src/integrations.ts` (host exec + readiness
+  probe), generic `integration.<svc>.<op>` dispatch wired into both
+  `server.ts` (docker) and `host-actions.ts` (cloud), and `agentbox-ctl
+  integration` command tree. PR pending.

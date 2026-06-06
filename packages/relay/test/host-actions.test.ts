@@ -139,4 +139,39 @@ describe('executeCloudAction routing', () => {
     expect(result.exitCode).toBe(65);
     expect(result.stderr).toMatch(/DELETE|not proxied/);
   });
+
+  // Integration.* routing: same shape parity with docker so an agent's
+  // misnamed call yields the same envelope on either provider.
+  it('integration.notion. (malformed shape) returns exit 64', async () => {
+    const result = await executeCloudAction(action('integration.notion.'), makeDeps());
+    expect(result.exitCode).toBe(64);
+    expect(result.stderr).toContain('unknown integration method shape');
+  });
+
+  it('integration.linear.api (unknown service, allowlist-default) returns exit 64', async () => {
+    const result = await executeCloudAction(
+      action('integration.linear.api', { args: ['v1/issues'] }),
+      makeDeps(),
+    );
+    expect(result.exitCode).toBe(64);
+    expect(result.stderr).toContain('unknown integration service');
+  });
+
+  it('integration.notion.bogus (op not on allowlist) returns exit 65', async () => {
+    const result = await executeCloudAction(
+      action('integration.notion.bogus', { args: [] }),
+      makeDeps(),
+    );
+    expect(result.exitCode).toBe(65);
+    expect(result.stderr).toContain('not on allowlist');
+  });
+
+  it('integration.notion.api with -X DELETE refused (read classification stays honest)', async () => {
+    const result = await executeCloudAction(
+      action('integration.notion.api', { args: ['-X', 'DELETE', 'v1/blocks/abc'] }),
+      makeDeps(),
+    );
+    expect(result.exitCode).toBe(65);
+    expect(result.stderr).toMatch(/notion api/);
+  });
 });

@@ -48,6 +48,16 @@ export {
 export { BoxNotices } from './notices.js';
 export { hashRpcParams, HostInitiatedTokens } from './host-initiated.js';
 export {
+  _resetIntegrationReadyCacheForTests,
+  assertIntegrationReady,
+  makeIntegrationOpRefusal,
+  parseIntegrationMethod,
+  refuseIntegrationCall,
+  runHostIntegration,
+  type IntegrationRpcParams,
+  type ParsedIntegrationMethod,
+} from './integrations.js';
+export {
   assertGhReady,
   checkoutGuards,
   GH_API_ALLOWED_ENDPOINTS,

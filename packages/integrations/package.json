@@ -1,8 +1,8 @@
 {
-  "name": "@agentbox/ctl",
+  "name": "@agentbox/integrations",
   "version": "0.0.0",
   "private": true,
-  "description": "In-container supervisor daemon and CLI for AgentBox",
+  "description": "Connector descriptors (Notion, …) for AgentBox's host-side relay-gated integrations. Pure data + helpers; consumed by @agentbox/relay (host exec + write gating) and @agentbox/ctl (in-box command surface).",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,15 +11,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./bin": "./dist/bin.cjs"
-  },
-  "bin": {
-    "agentbox-ctl": "./dist/bin.cjs"
+    }
   },
   "files": [
-    "dist",
-    "schema"
+    "dist"
   ],
   "scripts": {
     "build": "tsup",
@@ -29,16 +24,8 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
-  "dependencies": {
-    "@agentbox/core": "workspace:*",
-    "@agentbox/integrations": "workspace:*",
-    "@agentbox/relay": "workspace:*",
-    "commander": "^12.1.0",
-    "yaml": "^2.6.1"
-  },
   "devDependencies": {
     "@types/node": "^22.10.1",
-    "ajv": "^8.17.1",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

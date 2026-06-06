@@ -207,6 +207,9 @@ importers:
       '@agentbox/core':
         specifier: workspace:*
         version: link:../core
+      '@agentbox/integrations':
+        specifier: workspace:*
+        version: link:../integrations
       '@agentbox/relay':
         specifier: workspace:*
         version: link:../relay
@@ -233,6 +236,21 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
 
+  packages/integrations:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.1
+        version: 22.19.19
+      tsup:
+        specifier: ^8.3.5
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
+
   packages/relay:
     dependencies:
       '@agentbox/config':
@@ -241,6 +259,9 @@ importers:
       '@agentbox/core':
         specifier: workspace:*
         version: link:../core
+      '@agentbox/integrations':
+        specifier: workspace:*
+        version: link:../integrations
       '@agentbox/sandbox-core':
         specifier: workspace:*
         version: link:../sandbox-core
