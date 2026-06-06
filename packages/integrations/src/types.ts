@@ -12,7 +12,7 @@
  * allowlist is denied by the relay (mirrors `gh api`'s endpoint refusal).
  */
 
-export type IntegrationService = 'notion';
+export type IntegrationService = 'notion' | 'linear';
 
 export interface IntegrationOp {
   /** Reads bypass the host confirm prompt; writes always gate via askPrompt. */

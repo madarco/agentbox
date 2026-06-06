@@ -163,6 +163,16 @@ RUN chmod +x /usr/local/bin/gh /usr/local/bin/git
 COPY packages/sandbox-docker/scripts/ntn-shim /usr/local/bin/ntn
 RUN chmod +x /usr/local/bin/ntn && ln -s /usr/local/bin/ntn /usr/local/bin/notion
 
+# `linear` (Linear CLI — @schpet/linear-cli) shim — same shape as ntn-shim,
+# routes a strict subset of `linear` subcommands through the host relay
+# (the host's `linear` runs the call; the box never sees the Linear API
+# token). `linear auth token` (which would print the raw token to stdout)
+# is explicitly rejected by the shim. Disabled by default; flip
+# `integrations.linear.enabled` to enable. See
+# packages/sandbox-docker/scripts/linear-shim and docs/linear_backlog.md.
+COPY packages/sandbox-docker/scripts/linear-shim /usr/local/bin/linear
+RUN chmod +x /usr/local/bin/linear
+
 # Setup guide for the first-run wizard. This baked copy is the single source
 # of the /agentbox-setup skill: seedSetupSkillIntoVolume()
 # (packages/sandbox-docker/src/claude.ts) copies it into the box's

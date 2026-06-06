@@ -80,18 +80,25 @@ describe('doctor — integrations group', () => {
   it('renders info / "disabled" when the flag is off (default)', async () => {
     emptyPath();
     const results = await integrationsChecks(disabled);
-    expect(results).toHaveLength(1);
-    const row = results[0]!;
-    expect(row.label).toBe('notion');
-    expect(row.status).toBe('info');
-    expect(row.detail).toBe('disabled');
-    expect(row.hint).toContain('integrations.notion.enabled true');
+    // One row per registered connector (notion, linear, …). All should
+    // surface as `info`/disabled when no flag has been flipped — disabling
+    // an integration is a setting, not a problem.
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    for (const row of results) {
+      expect(row.status).toBe('info');
+      expect(row.detail).toBe('disabled');
+      expect(row.hint).toContain(`integrations.${row.label}.enabled true`);
+    }
+    const notion = results.find((r) => r.label === 'notion');
+    expect(notion).toBeDefined();
+    const linear = results.find((r) => r.label === 'linear');
+    expect(linear).toBeDefined();
   });
 
   it('renders warn / "not installed" when enabled but ntn is missing', async () => {
     emptyPath();
     const results = await integrationsChecks(enabled);
-    const row = results[0]!;
+    const row = results.find((r) => r.label === 'notion')!;
     expect(row.status).toBe('warn');
     expect(row.detail).toMatch(/not installed/);
     expect(row.hint).toMatch(/install ntn/);
@@ -101,7 +108,7 @@ describe('doctor — integrations group', () => {
     await stageStub();
     delete process.env.NTN_TEST_AUTH;
     const results = await integrationsChecks(enabled);
-    const row = results[0]!;
+    const row = results.find((r) => r.label === 'notion')!;
     expect(row.status).toBe('warn');
     expect(row.detail).toBe('not logged in');
     expect(row.hint).toBe('ntn login');
@@ -111,7 +118,7 @@ describe('doctor — integrations group', () => {
     await stageStub();
     process.env.NTN_TEST_AUTH = 'ok';
     const results = await integrationsChecks(enabled);
-    const row = results[0]!;
+    const row = results.find((r) => r.label === 'notion')!;
     expect(row.status).toBe('ok');
     expect(row.detail).toContain('ntn version 0.42.0');
     expect(row.detail).toContain('authed');
@@ -122,6 +129,8 @@ describe('doctor — integrations group', () => {
     const broken: IntegrationsConfigLoader = () =>
       Promise.reject(new Error('malformed yaml'));
     const results = await integrationsChecks(broken);
-    expect(results[0]?.status).toBe('info');
+    // Every row falls back to disabled (info), regardless of which connectors
+    // are registered — a broken config is treated as "not enabled".
+    for (const row of results) expect(row.status).toBe('info');
   });
 });

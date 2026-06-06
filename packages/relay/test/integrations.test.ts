@@ -303,7 +303,7 @@ esac
     const r = await fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
       body: {
-        method: 'integration.linear.api',
+        method: 'integration.trello.api',
         params: { path: '/workspace', args: ['v1/issues'] },
       },
     });

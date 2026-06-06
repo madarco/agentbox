@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# agentbox `linear` shim — translates a strict subset of `linear`
+# (@schpet/linear-cli, v2) subcommands into `agentbox-ctl integration
+# linear <op>` so the host's authenticated `linear` runs the operation and
+# only the result crosses back into the box. The in-box agent never sees a
+# Linear API token.
+#
+# Installed at /usr/local/bin/linear (real `linear` is not in the box).
+#
+# This shim ships only what documented agent flows need; anything outside
+# the subset below is rejected with a clear error. Add ops deliberately —
+# the relay is gated by `integrations.linear.enabled` and an explicit op
+# allowlist in @agentbox/integrations.
+#
+# Three classes of upstream subcommand are EXPLICITLY rejected even though
+# they exist on the host CLI, because proxying them would defeat the
+# security model:
+#   - `auth token` PRINTS the raw API token to stdout — proxying it would
+#     hand the box the host's Linear credential. The only auth-family op
+#     we proxy is `auth whoami` (identity only), via `linear whoami`.
+#   - `auth login/logout/migrate/default` would mutate host auth state.
+#   - `issue delete` / `team delete` / `team create` are destructive and
+#     off-list (widen deliberately, as gated writes, only if needed).
+
+set -euo pipefail
+
+# Path is a constant in production; the env override exists purely to let
+# unit tests substitute a stub `agentbox-ctl` on PATH without rewriting the
+# shim. Mirrors gh-shim / git-shim / ntn-shim.
+CTL="${AGENTBOX_CTL_PATH:-/usr/local/bin/agentbox-ctl}"
+
+die() {
+  printf 'agentbox linear shim: %s\n' "$*" >&2
+  exit 2
+}
+
+handle_auth() {
+  local sub="${1-}"; shift || true
+  case "$sub" in
+    whoami)
+      exec "$CTL" integration linear whoami -- "$@"
+      ;;
+    token)
+      die "'auth token' leaks the raw API key — refused. Use 'linear whoami' for identity."
+      ;;
+    login|logout|migrate|default)
+      die "'auth $sub' is not proxied (the host owns auth; run it on the host)."
+      ;;
+    '')
+      die "missing subcommand for 'auth'. Supported: whoami"
+      ;;
+    *)
+      die "unsupported 'auth $sub' (allowed: whoami)"
+      ;;
+  esac
+}
+
+handle_issue_comment() {
+  local sub="${1-}"; shift || true
+  case "$sub" in
+    create)
+      exec "$CTL" integration linear issue.comment -- "$@"
+      ;;
+    '')
+      die "missing subcommand for 'issue comment'. Supported: create"
+      ;;
+    *)
+      die "unsupported 'issue comment $sub' (allowed: create)"
+      ;;
+  esac
+}
+
+handle_issue() {
+  local sub="${1-}"; shift || true
+  case "$sub" in
+    list)
+      exec "$CTL" integration linear issue.list -- "$@"
+      ;;
+    view)
+      exec "$CTL" integration linear issue.view -- "$@"
+      ;;
+    query)
+      exec "$CTL" integration linear issue.query -- "$@"
+      ;;
+    create)
+      exec "$CTL" integration linear issue.create -- "$@"
+      ;;
+    update)
+      exec "$CTL" integration linear issue.update -- "$@"
+      ;;
+    comment)
+      handle_issue_comment "$@"
+      ;;
+    delete)
+      die "'issue delete' is not proxied (destructive; off-list by default)."
+      ;;
+    '')
+      die "missing subcommand for 'issue'. Supported: list, view, query, create, update, comment create"
+      ;;
+    *)
+      die "unsupported 'issue $sub' (allowed: list, view, query, create, update, comment create)"
+      ;;
+  esac
+}
+
+handle_team() {
+  local sub="${1-}"; shift || true
+  case "$sub" in
+    list)
+      exec "$CTL" integration linear team.list -- "$@"
+      ;;
+    create|delete)
+      die "'team $sub' is not proxied (destructive; off-list by default)."
+      ;;
+    '')
+      die "missing subcommand for 'team'. Supported: list"
+      ;;
+    *)
+      die "unsupported 'team $sub' (allowed: list)"
+      ;;
+  esac
+}
+
+# Top-level dispatch. `linear`'s real subcommands are
+# `auth issue team project cycle milestone initiative label document api schema`;
+# we expose only the read-safe ones plus a few gated writes (no destructive
+# ops, no auth token).
+if [ $# -eq 0 ]; then
+  die "no subcommand. Supported: whoami, auth whoami, issue {list,view,query,create,update,comment create}, team list, api <query>, --version"
+fi
+
+case "$1" in
+  --version|-v)
+    # Tools that sniff "linear --version" succeed with our shim line. The
+    # real version lives host-side and is reported by the relay's
+    # readiness probe (`assertIntegrationReady`).
+    printf 'linear version 0.0.0 (agentbox-shim)\n'
+    ;;
+  --help|-h)
+    printf 'agentbox linear shim — strict subset.\n' >&2
+    printf 'Supported: whoami, auth whoami, issue {list,view,query,create,update,comment create}, team list, api <query>, --version\n' >&2
+    printf 'Anything else is rejected. Run host `linear --help` for full upstream docs.\n' >&2
+    ;;
+  whoami)
+    shift
+    exec "$CTL" integration linear whoami -- "$@"
+    ;;
+  auth)
+    shift
+    handle_auth "$@"
+    ;;
+  issue)
+    shift
+    handle_issue "$@"
+    ;;
+  team)
+    shift
+    handle_team "$@"
+    ;;
+  api)
+    shift
+    if [ $# -eq 0 ] || [ "${1:0:1}" = "-" ]; then
+      die "'api' requires a positional <query> (e.g. '{ teams { id } }')"
+    fi
+    # The relay's refuseGraphqlNonQuery enforces query-only by rejecting
+    # any source whose first keyword is `mutation`/`subscription`, so we
+    # don't duplicate that check here. Writes go through the dedicated
+    # issue.* ops.
+    exec "$CTL" integration linear api -- "$@"
+    ;;
+  *)
+    die "'$1' is not proxied (supported: whoami, issue {list,view,query,create,update,comment create}, team list, api <query>, --version)"
+    ;;
+esac

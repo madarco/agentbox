@@ -6,3 +6,4 @@ export type {
 } from './types.js';
 export { ALL_CONNECTORS, getConnector } from './registry.js';
 export { notionConnector } from './connectors/notion.js';
+export { linearConnector } from './connectors/linear.js';

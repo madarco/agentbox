@@ -22,6 +22,7 @@ function makeFakeRepo(): string {
     'packages/sandbox-docker/scripts/gh-shim',
     'packages/sandbox-docker/scripts/git-shim',
     'packages/sandbox-docker/scripts/ntn-shim',
+    'packages/sandbox-docker/scripts/linear-shim',
     'packages/sandbox-hetzner/scripts/custom-system-CLAUDE.md',
     'packages/sandbox-docker/scripts/claude-managed-settings.json',
     'packages/sandbox-docker/scripts/agentbox-codex-hooks.json',

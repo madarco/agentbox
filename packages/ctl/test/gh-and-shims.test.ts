@@ -9,6 +9,7 @@ const REPO_ROOT = join(import.meta.dirname, '..', '..', '..');
 const GH_SHIM = join(REPO_ROOT, 'packages/sandbox-docker/scripts/gh-shim');
 const GIT_SHIM = join(REPO_ROOT, 'packages/sandbox-docker/scripts/git-shim');
 const NTN_SHIM = join(REPO_ROOT, 'packages/sandbox-docker/scripts/ntn-shim');
+const LINEAR_SHIM = join(REPO_ROOT, 'packages/sandbox-docker/scripts/linear-shim');
 
 interface StubShellEnv {
   tmpDir: string;
@@ -734,6 +735,226 @@ describe('ntn-shim subcommand allowlist', () => {
     const env = makeStubShell();
     try {
       const out = runShim(NTN_SHIM, [], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/no subcommand/);
+    } finally {
+      env.cleanup();
+    }
+  });
+});
+
+describe('linear-shim subcommand allowlist', () => {
+  it('whoami forwards to integration linear whoami', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(LINEAR_SHIM, ['whoami'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: integration linear whoami --');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('auth whoami (formal form) forwards to integration linear whoami', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(LINEAR_SHIM, ['auth', 'whoami'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: integration linear whoami --');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('auth token is hard-rejected with the leak warning (key security invariant)', () => {
+    // `linear auth token` PRINTS the raw API token to stdout. Proxying it
+    // through the shim would defeat the whole point: tokens must never enter
+    // the box. The shim's rejection is the first of three defenses (shim +
+    // connector allowlist + relay dispatch); this is the one that the agent
+    // hits first.
+    const env = makeStubShell();
+    try {
+      const out = runShim(LINEAR_SHIM, ['auth', 'token'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/leaks the raw API key/);
+      expect(out.stdout).toBe('');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it.each([['login'], ['logout'], ['migrate'], ['default']])(
+    'auth %s is rejected (host owns auth state)',
+    (sub) => {
+      const env = makeStubShell();
+      try {
+        const out = runShim(LINEAR_SHIM, ['auth', sub], env);
+        expect(out.code).toBe(2);
+        expect(out.stderr).toMatch(/is not proxied/);
+        expect(out.stdout).toBe('');
+      } finally {
+        env.cleanup();
+      }
+    },
+  );
+
+  it('issue list / view / query forward as reads', () => {
+    const env = makeStubShell();
+    try {
+      expect(runShim(LINEAR_SHIM, ['issue', 'list', '--me'], env).stdout).toContain(
+        'STUB: integration linear issue.list -- --me',
+      );
+      expect(runShim(LINEAR_SHIM, ['issue', 'view', 'ABC-1'], env).stdout).toContain(
+        'STUB: integration linear issue.view -- ABC-1',
+      );
+      expect(runShim(LINEAR_SHIM, ['issue', 'query', '--team', 'ABC'], env).stdout).toContain(
+        'STUB: integration linear issue.query -- --team ABC',
+      );
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('issue create / update forward as gated writes', () => {
+    const env = makeStubShell();
+    try {
+      expect(
+        runShim(LINEAR_SHIM, ['issue', 'create', '--title', 'hi'], env).stdout,
+      ).toContain('STUB: integration linear issue.create -- --title hi');
+      expect(
+        runShim(LINEAR_SHIM, ['issue', 'update', 'ABC-1', '--state', 'done'], env).stdout,
+      ).toContain('STUB: integration linear issue.update -- ABC-1 --state done');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('issue comment create forwards to integration linear issue.comment', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(
+        LINEAR_SHIM,
+        ['issue', 'comment', 'create', 'ABC-1', '--body', 'hi'],
+        env,
+      );
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain(
+        'STUB: integration linear issue.comment -- ABC-1 --body hi',
+      );
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('issue comment with no subcommand is rejected', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(LINEAR_SHIM, ['issue', 'comment'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/missing subcommand for 'issue comment'/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('issue delete is rejected (off-list, destructive)', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(LINEAR_SHIM, ['issue', 'delete', 'ABC-1'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/'issue delete' is not proxied/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('team list forwards as a read', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(LINEAR_SHIM, ['team', 'list'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: integration linear team.list --');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it.each([['create'], ['delete']])(
+    'team %s is rejected (off-list, destructive)',
+    (sub) => {
+      const env = makeStubShell();
+      try {
+        const out = runShim(LINEAR_SHIM, ['team', sub, 'Foo'], env);
+        expect(out.code).toBe(2);
+        expect(out.stderr).toMatch(/is not proxied/);
+      } finally {
+        env.cleanup();
+      }
+    },
+  );
+
+  it('api forwards the positional query intact (relay enforces query-only)', () => {
+    // The shim does NOT replicate refuseGraphqlNonQuery — that's the relay's
+    // job. It must hand through whatever the agent typed so the relay sees
+    // the real query and can refuse, instead of the agent thinking the call
+    // succeeded silently.
+    const env = makeStubShell();
+    try {
+      const out = runShim(LINEAR_SHIM, ['api', '{ teams { id } }'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: integration linear api -- { teams { id } }');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('api with no positional is rejected', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(LINEAR_SHIM, ['api'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/'api' requires a positional <query>/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it.each([
+    ['project'],
+    ['cycle'],
+    ['milestone'],
+    ['initiative'],
+    ['label'],
+    ['document'],
+    ['schema'],
+  ])('unsupported top-level subcommand %s is rejected with the allowed list', (sub) => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(LINEAR_SHIM, [sub], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/is not proxied/);
+      expect(out.stderr).toMatch(/whoami, issue \{list,view,query,create,update,comment create\}/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('--version prints the shim version line', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(LINEAR_SHIM, ['--version'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toMatch(/^linear version /);
+      expect(out.stdout).toContain('agentbox-shim');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('no args fails with the supported-subcommands hint', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(LINEAR_SHIM, [], env);
       expect(out.code).toBe(2);
       expect(out.stderr).toMatch(/no subcommand/);
     } finally {

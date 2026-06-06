@@ -148,9 +148,9 @@ describe('executeCloudAction routing', () => {
     expect(result.stderr).toContain('unknown integration method shape');
   });
 
-  it('integration.linear.api (unknown service, allowlist-default) returns exit 64', async () => {
+  it('integration.trello.api (unknown service, allowlist-default) returns exit 64', async () => {
     const result = await executeCloudAction(
-      action('integration.linear.api', { args: ['v1/issues'] }),
+      action('integration.trello.api', { args: ['v1/issues'] }),
       makeDeps(),
     );
     expect(result.exitCode).toBe(64);

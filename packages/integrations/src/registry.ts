@@ -1,3 +1,4 @@
+import { linearConnector } from './connectors/linear.js';
 import { notionConnector } from './connectors/notion.js';
 import type { IntegrationConnector } from './types.js';
 
@@ -7,7 +8,7 @@ import type { IntegrationConnector } from './types.js';
  * not present is denied. Mirrors `packages/core/src/provider.ts`'s
  * registry pattern for the provider abstraction.
  */
-export const ALL_CONNECTORS: readonly IntegrationConnector[] = [notionConnector];
+export const ALL_CONNECTORS: readonly IntegrationConnector[] = [notionConnector, linearConnector];
 
 /** Lookup by `IntegrationConnector.service`. Returns `null` for unknown. */
 export function getConnector(service: string): IntegrationConnector | null {
