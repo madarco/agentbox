@@ -42,13 +42,13 @@ describe('notion connector', () => {
       'v1/users/me',
     ]);
     expect(notionConnector.ops['page.create']?.buildArgv?.(['--parent', 'db_id'])).toEqual([
-      'page',
+      'pages',
       'create',
       '--parent',
       'db_id',
     ]);
     expect(notionConnector.ops['page.update']?.buildArgv?.(['page_id', '--archive'])).toEqual([
-      'page',
+      'pages',
       'update',
       'page_id',
       '--archive',

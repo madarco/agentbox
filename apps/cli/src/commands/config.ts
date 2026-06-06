@@ -69,22 +69,27 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+// Walk every dot-segment, not just the first one — `integrations.notion.enabled`
+// must reach the deepest leaf, not be split as `integrations` + `notion.enabled`.
+// Same shape as `readLeaf` in packages/config/src/load.ts.
+function walkKey(obj: Record<string, unknown> | undefined, key: string): unknown {
+  let cur: unknown = obj;
+  for (const seg of key.split('.')) {
+    if (cur === undefined || cur === null || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  return cur;
+}
+
 function leafValue(loaded: LoadedConfig, key: string): unknown {
-  const idx = key.indexOf('.');
-  const branch = key.slice(0, idx);
-  const leaf = key.slice(idx + 1);
-  return (loaded.effective as unknown as Record<string, Record<string, unknown>>)[branch]?.[leaf];
+  return walkKey(loaded.effective as unknown as Record<string, unknown>, key);
 }
 
 function rawLeafFromValues(
   values: Record<string, unknown> | undefined,
   key: string,
 ): unknown {
-  if (!values) return undefined;
-  const idx = key.indexOf('.');
-  const b = (values as Record<string, unknown>)[key.slice(0, idx)];
-  if (!b || typeof b !== 'object') return undefined;
-  return (b as Record<string, unknown>)[key.slice(idx + 1)];
+  return walkKey(values, key);
 }
 
 function describeSource(source: ConfigSource, loaded: LoadedConfig): string {

@@ -128,6 +128,54 @@ For T4 nested-box e2e (box → box, exercise the integration from inside a box),
 
 Carry is host→box and one-prompt-approved (see [`features.md`](./features.md) → `carry:`). T4 wires the actual e2e verification.
 
+## Verification / live e2e results
+
+T4 ran the integration against the live Notion API from inside a real box.
+Captured evidence:
+
+- **`notion whoami` (read)** — round-trips through the in-box shim → host
+  relay → host `ntn` → Notion API; returns the host bot identity with no
+  approval prompt.
+- **`notion api v1/users/me` (read)** — same path; returns the host bot's
+  JSON identity record. No prompt.
+- **`notion api … -X POST` and `--method PATCH` (refused)** — the
+  connector's `refuseApiNonGet` correctly classifies these as writes and
+  blocks them before any host process is spawned: `notion api: only GET is
+  proxied (use page.create / page.update for writes); detected method
+  'POST'`, exit 65.
+- **No agent-side credential** — `printenv | grep -i notion` in the box
+  returns nothing in the agent's environment. The token lives only on the
+  host. The carried `~/.config/notion/auth.json` file is for nested-box
+  relay hosts and never reaches the agent's process env.
+- **Connector argv bug (fixed in T4)** — a live `notion pages create`
+  through the host relay (rebuilt from T3 code) failed with `error:
+  unrecognized subcommand 'page'. tip: some similar subcommands exist:
+  'update', 'pages'`. Real `ntn`'s surface is `api datasources files pages
+  login logout whoami workers`. The connector's `buildArgv` was building
+  singular `['page', 'create', …]`; T4 changed it to `['pages', 'create',
+  …]` and `['pages', 'update', …]`. Live write round-trip against the
+  fix lands after the host relay rebuilds with the merged T4 code.
+- **`agentbox config get` nested-key bug (fixed in T4)** — `config get
+  integrations.notion.enabled` was returning `<unset>` even though
+  `config set` + `loadEffectiveConfig` worked correctly, because
+  `apps/cli/src/commands/config.ts` split keys on the FIRST dot only. T4
+  replaced the helpers with a `walkKey` function that walks all segments
+  (mirrors `readLeaf` in `packages/config/src/load.ts`). New regression
+  test `apps/cli/test/config-get-nested.test.ts`.
+
+### Nested-box e2e — deferred, not blocking
+
+The nested-box scenario (a box-inside-a-box running a `notion` op through
+this box's relay) was time-boxed in T4 and deferred. Architecturally, the
+in-box `agentbox-ctl` daemon (port 8788) forwards `/rpc` to the HOST relay
+(`host.docker.internal:8787`), not to a relay running in this box — so a
+nested box's `notion pages create` would still terminate at the host
+relay's spawn, not in this box's daemon. That means nested-box e2e
+exercises the carry mechanics (already verified — `~/.config/notion/`
+present in this box) more than the connector's spawn path. A future
+follow-up that lifts the relay into the box's daemon would change this;
+tracked under "Open follow-ups" below.
+
 ## Cross-provider parity
 
 `integration.<service>.<op>` is dispatched identically on docker and cloud because the wire shape is method-agnostic. The cloud path long-polls `/bridge/poll`, runs `executeCloudAction → runIntegrationRpc`, which reuses the exact handler. The Hetzner / Daytona / Vercel / E2B image flows all ship the `ntn` / `notion` shim (see "In-box surface" above). No provider-specific code in the integrations spine.

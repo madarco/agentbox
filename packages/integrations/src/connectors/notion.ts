@@ -45,11 +45,11 @@ export const notionConnector: IntegrationConnector = {
     },
     'page.create': {
       write: true,
-      buildArgv: (args) => ['page', 'create', ...args],
+      buildArgv: (args) => ['pages', 'create', ...args],
     },
     'page.update': {
       write: true,
-      buildArgv: (args) => ['page', 'update', ...args],
+      buildArgv: (args) => ['pages', 'update', ...args],
     },
   },
 };

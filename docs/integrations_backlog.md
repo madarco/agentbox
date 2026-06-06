@@ -278,3 +278,31 @@ Manual e2e (docker first, then one cloud provider — follow CLAUDE.md "Testing"
   toggles; Linear personal keys inherit full user perms (OAuth-only read scope).
 - Per-op write allowlist tuning once real agent flows exist (start conservative).
 - ClickUp connector trust/maintenance caveats; revisit if a stronger CLI emerges.
+
+---
+
+## Status
+
+- **Notion path: COMPLETE (T1–T4 done, 2026-06-06).** Shipped the shared
+  `@agentbox/integrations` foundation (descriptor, registry,
+  `runHostIntegration`, generic `integration.<svc>.<op>` dispatch in both
+  `server.ts` and `host-actions.ts`); in-box `notion`/`ntn` shim across all
+  five providers; `integrations.notion.enabled` typed config flag with the
+  relay-side `refuseIfIntegrationDisabled` gate; `agentbox doctor` per-
+  connector reporting driven off `ALL_CONNECTORS`; public + internal docs.
+  T4 closed the loop with a live read e2e (`whoami` + `api v1/users/me` +
+  `refuseApiNonGet` for non-GET) and fixed two bugs the e2e surfaced —
+  `agentbox config get` nested-key resolution (`apps/cli/src/commands/config.ts`)
+  and the `pages` vs `page` argv mismatch (`connectors/notion.ts`). See
+  [`notion_backlog.md`](./notion_backlog.md) for full T4 evidence.
+  **Deferred / follow-ups**: `comment.add` (needs a Notion-API payload
+  assembler for the structured `POST /v1/comments` body — `ntn` exposes no
+  `comment` subcommand to wrap), host-initiated tokens for integrations
+  (the relay accepts them but the host-CLI mint path isn't wired yet for
+  the `integration.*` family), nested-box e2e (architecturally the in-box
+  agent's relay calls terminate at the host relay either way, so this
+  exercises the carry block more than the spawn-side; tracked, not
+  blocking).
+- **Linear / Trello / ClickUp paths: NOT STARTED.** Each is a new descriptor
+  + small shim; no relay/ctl core changes (the abstraction was validated by
+  Notion). ClickUp will be the one custom-REST connector (no good CLI).

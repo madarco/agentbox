@@ -140,7 +140,7 @@ describe('relay /rpc integration.* flow', () => {
     stubLog = join(stubDir, 'invocations.log');
     stubEnvLog = join(stubDir, 'env.log');
     // The stub records argv + the NOTION_KEYRING env value. `--version`
-    // satisfies the readiness probe; `api …` and `page create …` etc.
+    // satisfies the readiness probe; `api …` and `pages create …` etc.
     // echo their argv and exit 0 so the relay's runHostIntegration
     // produces a stable, asserted stdout.
     const script = `#!/usr/bin/env bash
@@ -269,7 +269,7 @@ esac
     expect(r.status).toBe(200);
     const body = r.body as { exitCode: number; stdout: string };
     expect(body.exitCode).toBe(0);
-    expect(body.stdout).toContain('stub: ntn page create --parent db_id');
+    expect(body.stdout).toContain('stub: ntn pages create --parent db_id');
   });
 
   it('op not on allowlist refuses with exit 65', async () => {

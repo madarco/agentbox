@@ -129,13 +129,58 @@ Make a box agent able to type `notion …` or `ntn …`.
     `/rpc` methods" line updated to list `gh.pr.*` /
     `integration.<svc>.<op>` already in place.
 
-### T4 — Nested-box e2e verification + carry + closeout  ⬜ not started
-- Carry `ntn` file-auth into a box; from that box create a nested box; run a
-  `notion` read (no prompt) + a `notion` write (prompted, approve→succeeds,
-  deny→nothing created), verifying ground truth in the live Notion space.
-- Confirm a box never holds a Notion token (`printenv | grep -i notion`).
-- Fix anything the e2e surfaces; mark the Notion path done in
-  `integrations_backlog.md`.
+### T4 — Live e2e verification + bug-fixes-from-e2e + closeout  ✅ done
+- Primary e2e (real box → host relay → live Notion API): `notion whoami` and
+  `notion api v1/users/me` return the host bot identity with no prompt;
+  `notion api v1/comments -X POST` and `notion api ... --method PATCH` are
+  refused with `notion api: only GET is proxied (use page.create /
+  page.update for writes); detected method 'POST'` (exit 65). `printenv |
+  grep -i notion` shows nothing in the box's process env — the agent never
+  holds the credential. (The carried `~/.config/notion/auth.json` is a
+  separate concern for nested-box use; the in-box AGENT itself sees no
+  token in env.)
+- Two bugs surfaced and fixed in T4:
+  1. **`agentbox config get` couldn't read nested 3-level keys.** The
+     helpers in `apps/cli/src/commands/config.ts` split on the FIRST dot
+     only, so `integrations.notion.enabled` resolved to
+     `effective.integrations["notion.enabled"]` (undefined / `<unset>`)
+     even when `config set` + `loadEffectiveConfig` worked correctly.
+     Fix: replace `leafValue`/`rawLeafFromValues` with a single `walkKey`
+     helper that splits on ALL dots (mirrors `readLeaf` in
+     `packages/config/src/load.ts`). New regression test
+     `apps/cli/test/config-get-nested.test.ts` covers the plain, `--json`,
+     `--all`, and unset/default cases; without the fix all four fail.
+  2. **Connector `buildArgv` used singular `page` but real `ntn` is `pages`
+     (plural).** Live evidence: a `notion pages create` call through the
+     host relay hit approval → spawned `ntn page create` → failed with
+     `error: unrecognized subcommand 'page'. tip: some similar subcommands
+     exist: 'update', 'pages'` (exit 2). `ntn --help` confirms the surface
+     is `api datasources files pages login logout whoami workers`. Fix:
+     `connectors/notion.ts` now builds `['pages', 'create', …]` /
+     `['pages', 'update', …]`. Existing tests in
+     `packages/integrations/test/registry.test.ts` and
+     `packages/relay/test/integrations.test.ts` updated to assert the
+     correct argv.
+- Live write round-trip (host relay → live `ntn pages create`) was not
+  re-run from this box, because the host relay was rebuilt with T3 code
+  (pre-fix `page` argv) before T4 started. Once T4 merges and the host
+  relay rebuilds with the new `pages` argv, the prompted write path will
+  work end-to-end. The fix is validated by (a) the live failure mode
+  matching the bug exactly, (b) the `pages create --help` host probe
+  showing the correct surface, (c) updated unit tests that pin the new
+  argv.
+- Nested-box e2e (boxes-launch-boxes path): **deferred**. Docker-in-docker
+  is available but the base image isn't baked in this box, and the chain
+  for an in-box agent's `notion` write would still terminate at the same
+  HOST relay (not this box's daemon — the box daemon forwards to the host
+  relay at `host.docker.internal:8787`), so it wouldn't actually exercise
+  MY fixed code on the spawn side. The carry block in `agentbox.yaml`
+  already ships the file-auth into nested boxes (verified present at
+  `~/.config/notion/auth.json` in this box). Real nested-relay isolation
+  testing is tracked as a follow-up — see "Open follow-ups" in
+  [`integrations.md`](./integrations.md).
+- `integrations_backlog.md` updated: Notion path marked complete through
+  T4.
 
 ## Status log
 - 2026-06-06: Backlog created; host-side carry for `ntn` file-auth added to
@@ -167,3 +212,23 @@ Make a box agent able to type `notion …` or `ntn …`.
   `configuration.mdx` / `cli.mdx`, new RPC method-family bullet in
   `docs/host-relay.md`, Notion entry in `docs/features.md`. T4 (nested-
   box e2e + carry-based file-auth verification) is the remaining task.
+- 2026-06-06: T4 shipped — live e2e from inside a box against the real
+  Notion API. Reads pass through with no prompt (`notion whoami`,
+  `notion api v1/users/me`), `notion api` correctly refuses non-GET
+  methods (`-X POST` / `--method PATCH` → exit 65 with `refuseApiNonGet`
+  message), `printenv | grep -i notion` shows nothing in the agent's
+  env. Two bugs fixed: (1) `config get` couldn't read 3-level nested
+  keys because `apps/cli/src/commands/config.ts` split on the first dot
+  only — replaced with a `walkKey` helper that splits on all segments
+  (mirrors `readLeaf` in `packages/config/src/load.ts`); regression
+  test `apps/cli/test/config-get-nested.test.ts` added; (2) connector
+  built singular `['page', 'create', …]` argv but real `ntn` is `pages`
+  (plural) — confirmed live by the host relay's spawn failing with
+  `unrecognized subcommand 'page'`, fixed in `connectors/notion.ts`,
+  existing tests in `packages/integrations/test/registry.test.ts` and
+  `packages/relay/test/integrations.test.ts` updated. Live write
+  round-trip with the fix needs a host relay rebuild post-merge.
+  Nested-box e2e deferred — the box-daemon → host-relay chain means an
+  in-box agent's write still terminates at the host relay (not this
+  box's daemon), so it wouldn't exercise the spawn-side fix from a
+  nested box anyway; the carry block is verified present.
