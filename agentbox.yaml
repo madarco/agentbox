@@ -121,6 +121,21 @@ carry:
     dest: ~/.config/notion/workspaces.json
     mode: 0o600
     optional: true
+  # Linear CLI (`@schpet/linear-cli`, the `linear` binary) auth, so a box that
+  # creates NESTED boxes can act as their relay host and shell out to `linear`
+  # for the integration's e2e test. The CLI stores a plaintext API token at
+  # ~/.config/linear/credentials.toml by default (keyring migration is opt-in
+  # and not used here), so the file carries directly — no keyring env toggle
+  # needed (unlike `ntn`). All optional: a host without the file still gets a
+  # working box (top-level boxes test through the host's own authed `linear`).
+  - src: ~/.config/linear/credentials.toml
+    dest: ~/.config/linear/credentials.toml
+    mode: 0o600
+    optional: true
+  - src: ~/.config/linear/linear.toml
+    dest: ~/.config/linear/linear.toml
+    mode: 0o600
+    optional: true
   # Per-provider base-snapshot pointers. With these, `agentbox prepare`
   # inside the box can skip-fast (existing snapshot detected) and just
   # exercise the post-prepare config write + migration — no bake needed.
