@@ -50,23 +50,26 @@ The in-box shim exposes a strict allowlist. Anything outside the list — includ
 | --- | --- | --- |
 | `linear whoami` (or `linear auth whoami`) | read | Passes through; prints the authed host user. |
 | `linear issue list` | read | Lists issues for the authed user/team; pass through filters with `--`. |
+| `linear issue mine` | read | v2-native "issues assigned to me" (replaces the older `issue list --me`). |
 | `linear issue view <id>` | read | Detail view for one issue. |
 | `linear issue query …` | read | Structured filter query. |
 | `linear team list` | read | Lists teams. |
-| `linear api '<query>'` | read | GraphQL query passthrough — `mutation` / `subscription` are **refused** (exit 65). |
+| `linear api '<query>'` | read | GraphQL query passthrough — `mutation` / `subscription` are **refused** (exit 65). `--variable key=@<path>` is also refused (exfiltration vector). |
 | `linear issue create …` | write | **Prompts** the host for approval; on `y` the host runs `linear issue create` and ships back the result. |
 | `linear issue update …` | write | **Prompts** the host for approval; covers status/title/etc. |
-| `linear issue comment create …` | write | **Prompts** the host for approval; posts a comment. |
+| `linear issue comment add …` | write | **Prompts** the host for approval; posts a comment. (Upstream uses `add`, not `create`.) |
 
 Reads are unprompted; every write raises a one-line confirm in your attached terminal (or in `agentbox agent approvals` for orchestrators driving boxes headlessly — see [Background & parallel](/docs/background-and-parallel)).
 
 ```bash
 # Inside the box — these all flow through the host relay:
 linear whoami
-linear issue list --me
+linear issue mine
 linear issue view ABC-42
 linear api '{ teams { id name } }'                   # GraphQL query, passes
+linear api --paginate '{ teams { id } }'             # pre-positional flags work
 linear issue create --title "Draft from the box"     # prompts on the host
+linear issue comment add ABC-42 --body "from box"    # prompts on the host (v2 uses `add`)
 ```
 
 <Callout type="warn" title="auth token is hard-rejected">

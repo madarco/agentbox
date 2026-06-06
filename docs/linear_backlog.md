@@ -132,5 +132,3 @@ e2e. v2.0.0 surface (richer than the plan assumed):
     pointer, `docs/host-relay.md` bullet extension, `docs/features.md`
     "what works today" bullet. Live e2e against the Waldosai workspace
     is LT2 — deliberately not run in LT1.
-</content>
-</invoke>

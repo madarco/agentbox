@@ -142,6 +142,7 @@ describe('linear connector', () => {
     const ops = linearConnector.ops;
     expect(ops.whoami?.write).toBe(false);
     expect(ops['issue.list']?.write).toBe(false);
+    expect(ops['issue.mine']?.write).toBe(false);
     expect(ops['issue.view']?.write).toBe(false);
     expect(ops['issue.query']?.write).toBe(false);
     expect(ops['team.list']?.write).toBe(false);
@@ -154,7 +155,15 @@ describe('linear connector', () => {
   it('shapes argv so the connector — not the call site — owns the host CLI surface', () => {
     const ops = linearConnector.ops;
     expect(ops.whoami?.buildArgv?.([])).toEqual(['auth', 'whoami']);
-    expect(ops['issue.list']?.buildArgv?.(['--me'])).toEqual(['issue', 'list', '--me']);
+    expect(ops['issue.list']?.buildArgv?.(['--limit', '5'])).toEqual([
+      'issue',
+      'list',
+      '--limit',
+      '5',
+    ]);
+    // `issue mine` is the v2-native "issues assigned to me" read; the older
+    // `issue list --me` path was dropped upstream.
+    expect(ops['issue.mine']?.buildArgv?.([])).toEqual(['issue', 'mine']);
     expect(ops['issue.view']?.buildArgv?.(['ABC-1'])).toEqual(['issue', 'view', 'ABC-1']);
     expect(ops['issue.query']?.buildArgv?.(['--team', 'ABC'])).toEqual([
       'issue',
@@ -177,13 +186,13 @@ describe('linear connector', () => {
       '--state',
       'done',
     ]);
-    // `issue comment create` is dotted as `issue.comment` on the wire, but
-    // the host argv must hit `linear issue comment create …` — the connector
-    // expands the dotted op into the three-segment host argv exactly here.
+    // `issue.comment` maps to `linear issue comment add` — `@schpet/linear-cli`
+    // v2 uses `add`, not `create`. The connector expands the dotted op into
+    // the three-segment host argv exactly here.
     expect(ops['issue.comment']?.buildArgv?.(['ABC-1', '--body', 'hi'])).toEqual([
       'issue',
       'comment',
-      'create',
+      'add',
       'ABC-1',
       '--body',
       'hi',
@@ -195,6 +204,7 @@ describe('linear connector', () => {
       [
         'whoami',
         'issue.list',
+        'issue.mine',
         'issue.view',
         'issue.query',
         'team.list',
@@ -259,6 +269,35 @@ describe('linear api refuseCall — keeps write:false honest (GraphQL gate)', ()
     expect(refuse(['--input', '-'])?.exitCode).toBe(65);
     expect(refuse(['--input=/tmp/x'])?.exitCode).toBe(65);
     expect(refuse(['--input=/tmp/x'])?.stderr).toMatch(/--input/);
+  });
+
+  it('refuses --variable key=@<path> (host-file load is an exfiltration channel)', () => {
+    // `--variable key=@/host/path` reads the file and sends contents as a
+    // GraphQL variable — the box could echo the variable back through the
+    // query response, an exfiltration channel.
+    expect(refuse(['--variable', 'key=@/etc/passwd', '{ x }'])?.exitCode).toBe(65);
+    expect(refuse(['--variable=key=@/etc/passwd', '{ x }'])?.exitCode).toBe(65);
+    expect(refuse(['--variable', '@/etc/passwd', '{ x }'])?.exitCode).toBe(65);
+    expect(refuse(['--variable', 'key=@/etc/passwd'])?.stderr).toMatch(/host-file load/);
+  });
+
+  it('allows plain --variable key=value (non-@ values pass)', () => {
+    expect(refuse(['--variable', 'key=value', '{ x }'])).toBeNull();
+    expect(refuse(['--variable=key=value', '{ x }'])).toBeNull();
+  });
+
+  it('consumes --variable / --variables-json values so the JSON is not misread as a positional', () => {
+    // The JSON payload to --variables-json must NOT be classified as a
+    // positional GraphQL source — otherwise a perfectly benign query whose
+    // variables JSON starts with the literal "mutation" would be refused.
+    expect(refuse(['--variables-json', '"mutation"', '{ teams { id } }'])).toBeNull();
+    expect(refuse(['--variables-json=mutation literal', '{ teams { id } }'])).toBeNull();
+    // The --variable VALUE comes as the next token — if we didn't consume
+    // it, a value of "mutation" would refuse.
+    expect(refuse(['--variable', 'mutation', '{ teams { id } }'])).toBeNull();
+    // Order doesn't matter: flag-first still picks up the positional after
+    // the consumed value.
+    expect(refuse(['--paginate', '--variables-json', '{}', '{ teams { id } }'])).toBeNull();
   });
 
   it('is case-insensitive on the operation keyword', () => {

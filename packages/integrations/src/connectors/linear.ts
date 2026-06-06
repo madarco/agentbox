@@ -50,6 +50,13 @@ export const linearConnector: IntegrationConnector = {
       write: false,
       buildArgv: (args) => ['issue', 'list', ...args],
     },
+    'issue.mine': {
+      // The v2-native read for "issues assigned to me" — the README directs
+      // users here in place of the older `issue list --me`. Listed as a
+      // separate op so the shim doesn't reject the canonical form.
+      write: false,
+      buildArgv: (args) => ['issue', 'mine', ...args],
+    },
     'issue.view': {
       write: false,
       buildArgv: (args) => ['issue', 'view', ...args],
@@ -76,8 +83,11 @@ export const linearConnector: IntegrationConnector = {
       buildArgv: (args) => ['issue', 'update', ...args],
     },
     'issue.comment': {
+      // Maps to `linear issue comment add` — `@schpet/linear-cli` v2 uses
+      // `add` (not `create`); `add`'s sibling subcommands are `list`,
+      // `update`, `delete`.
       write: true,
-      buildArgv: (args) => ['issue', 'comment', 'create', ...args],
+      buildArgv: (args) => ['issue', 'comment', 'add', ...args],
     },
   },
 };
@@ -89,26 +99,68 @@ export const linearConnector: IntegrationConnector = {
  * classification would be a hole the agent could slip writes through.
  *
  * `linear-cli`'s `api` subcommand takes the GraphQL query as a positional
- * argument. We scan every positional (any non-flag arg), strip leading
- * whitespace and `# …` line comments, and if the first remaining keyword
- * resolves to `mutation` or `subscription` we refuse. `query …` and the
- * anonymous `{ … }` shorthand pass.
+ * argument and accepts `--variable key=value` (repeatable; the value may
+ * be `@/path` to load from a host file — see below), `--variables-json
+ * <json>`, `--paginate`, and `--silent`. We:
  *
- * `--input` (stdin/file body) can't traverse the relay anyway — we refuse
- * it with a clearer message, matching `refuseApiNonGet`.
+ *   1. Refuse `--variable key=@<path>` (and the `=` and `--variable=`
+ *      glued forms) because they would let the box trigger arbitrary
+ *      host-file reads — the file contents become GraphQL variables and
+ *      can be echoed back through the response, an exfiltration channel.
+ *   2. Refuse `--input` for parity with `refuseApiNonGet`, even though
+ *      `linear api` doesn't currently accept it — if a future version
+ *      adds it, the guard pre-empts the stdin/file-body shape.
+ *   3. Walk argv consuming value-bearing flags (`--variable`,
+ *      `--variables-json`) so their JSON/key=value payload isn't
+ *      misread as an operation keyword.
+ *   4. For every remaining positional (non-flag) token, strip leading
+ *      whitespace + `# …` line comments and reject the call if the
+ *      first identifier is `mutation` or `subscription`.
+ *
+ * `query …` and the anonymous `{ … }` shorthand pass. Empty/flag-only
+ * argv passes (the host CLI emits its own usage error).
  */
 function refuseGraphqlNonQuery(args: readonly string[]): IntegrationOpRefusal | null {
   const refuse = (reason: string): IntegrationOpRefusal => ({
     exitCode: 65,
     stderr: `linear api: ${reason}\n`,
   });
+  // `--variable` and `--variables-json` each take the next argv token as
+  // their value — the loop consumes them explicitly below so a JSON
+  // payload starting with `mutation`/`subscription` isn't misread as the
+  // GraphQL operation.
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? '';
     if (arg === '--input' || arg.startsWith('--input=')) {
       return refuse("'--input' (stdin/file body) isn't supported through the relay");
     }
-  }
-  for (const arg of args) {
+    // `--variable key=@/host/path` reads from a host file — refuse the
+    // `@`-prefixed value form regardless of split/glued/equals shape.
+    if (arg === '--variable') {
+      const next = args[i + 1] ?? '';
+      if (variableValueIsFileLoad(next)) {
+        return refuse(
+          "'--variable key=@<path>' (host-file load) isn't supported through the relay",
+        );
+      }
+      i++; // consume the value
+      continue;
+    }
+    if (arg.startsWith('--variable=')) {
+      if (variableValueIsFileLoad(arg.slice('--variable='.length))) {
+        return refuse(
+          "'--variable=key=@<path>' (host-file load) isn't supported through the relay",
+        );
+      }
+      continue;
+    }
+    if (arg === '--variables-json') {
+      i++; // consume the JSON value; don't treat it as a positional
+      continue;
+    }
+    if (arg.startsWith('--variables-json=')) {
+      continue;
+    }
     if (arg.startsWith('-')) continue;
     const op = firstGraphqlOperationKeyword(arg);
     if (op === 'mutation' || op === 'subscription') {
@@ -118,6 +170,18 @@ function refuseGraphqlNonQuery(args: readonly string[]): IntegrationOpRefusal | 
     }
   }
   return null;
+}
+
+/**
+ * True when a `--variable` value uses linear-cli's `@<path>` host-file load
+ * syntax. The value shape is `key=@<path>`; bare `@<path>` (no `key=`) is
+ * also refused defensively in case a future linear-cli release widens the
+ * syntax.
+ */
+function variableValueIsFileLoad(value: string): boolean {
+  const eq = value.indexOf('=');
+  if (eq === -1) return value.startsWith('@');
+  return value.slice(eq + 1).startsWith('@');
 }
 
 /**

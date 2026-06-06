@@ -58,14 +58,14 @@ handle_auth() {
 handle_issue_comment() {
   local sub="${1-}"; shift || true
   case "$sub" in
-    create)
+    add)
       exec "$CTL" integration linear issue.comment -- "$@"
       ;;
     '')
-      die "missing subcommand for 'issue comment'. Supported: create"
+      die "missing subcommand for 'issue comment'. Supported: add"
       ;;
     *)
-      die "unsupported 'issue comment $sub' (allowed: create)"
+      die "unsupported 'issue comment $sub' (allowed: add)"
       ;;
   esac
 }
@@ -75,6 +75,9 @@ handle_issue() {
   case "$sub" in
     list)
       exec "$CTL" integration linear issue.list -- "$@"
+      ;;
+    mine)
+      exec "$CTL" integration linear issue.mine -- "$@"
       ;;
     view)
       exec "$CTL" integration linear issue.view -- "$@"
@@ -95,10 +98,10 @@ handle_issue() {
       die "'issue delete' is not proxied (destructive; off-list by default)."
       ;;
     '')
-      die "missing subcommand for 'issue'. Supported: list, view, query, create, update, comment create"
+      die "missing subcommand for 'issue'. Supported: list, mine, view, query, create, update, comment add"
       ;;
     *)
-      die "unsupported 'issue $sub' (allowed: list, view, query, create, update, comment create)"
+      die "unsupported 'issue $sub' (allowed: list, mine, view, query, create, update, comment add)"
       ;;
   esac
 }
@@ -126,7 +129,7 @@ handle_team() {
 # we expose only the read-safe ones plus a few gated writes (no destructive
 # ops, no auth token).
 if [ $# -eq 0 ]; then
-  die "no subcommand. Supported: whoami, auth whoami, issue {list,view,query,create,update,comment create}, team list, api <query>, --version"
+  die "no subcommand. Supported: whoami, auth whoami, issue {list,mine,view,query,create,update,comment add}, team list, api <query>, --version"
 fi
 
 case "$1" in
@@ -138,7 +141,7 @@ case "$1" in
     ;;
   --help|-h)
     printf 'agentbox linear shim — strict subset.\n' >&2
-    printf 'Supported: whoami, auth whoami, issue {list,view,query,create,update,comment create}, team list, api <query>, --version\n' >&2
+    printf 'Supported: whoami, auth whoami, issue {list,mine,view,query,create,update,comment add}, team list, api <query>, --version\n' >&2
     printf 'Anything else is rejected. Run host `linear --help` for full upstream docs.\n' >&2
     ;;
   whoami)
@@ -159,16 +162,20 @@ case "$1" in
     ;;
   api)
     shift
-    if [ $# -eq 0 ] || [ "${1:0:1}" = "-" ]; then
+    # `linear api` accepts pre-positional flags (`--variable`,
+    # `--variables-json`, `--paginate`, `--silent`) before the GraphQL
+    # query, so we don't require the FIRST arg to be a non-flag — only
+    # that some arg is present. The relay's refuseGraphqlNonQuery
+    # enforces query-only by rejecting any positional whose first
+    # keyword is `mutation`/`subscription` (and any `--variable
+    # key=@<path>` host-file load), so we don't duplicate that check
+    # here. Writes go through the dedicated issue.* ops.
+    if [ $# -eq 0 ]; then
       die "'api' requires a positional <query> (e.g. '{ teams { id } }')"
     fi
-    # The relay's refuseGraphqlNonQuery enforces query-only by rejecting
-    # any source whose first keyword is `mutation`/`subscription`, so we
-    # don't duplicate that check here. Writes go through the dedicated
-    # issue.* ops.
     exec "$CTL" integration linear api -- "$@"
     ;;
   *)
-    die "'$1' is not proxied (supported: whoami, issue {list,view,query,create,update,comment create}, team list, api <query>, --version)"
+    die "'$1' is not proxied (supported: whoami, issue {list,mine,view,query,create,update,comment add}, team list, api <query>, --version)"
     ;;
 esac

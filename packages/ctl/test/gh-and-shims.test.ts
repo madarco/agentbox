@@ -798,11 +798,16 @@ describe('linear-shim subcommand allowlist', () => {
     },
   );
 
-  it('issue list / view / query forward as reads', () => {
+  it('issue list / mine / view / query forward as reads', () => {
     const env = makeStubShell();
     try {
-      expect(runShim(LINEAR_SHIM, ['issue', 'list', '--me'], env).stdout).toContain(
-        'STUB: integration linear issue.list -- --me',
+      expect(runShim(LINEAR_SHIM, ['issue', 'list', '--limit', '5'], env).stdout).toContain(
+        'STUB: integration linear issue.list -- --limit 5',
+      );
+      // `issue mine` is the v2-native "issues assigned to me" read — the
+      // older `list --me` was dropped upstream, so we route mine explicitly.
+      expect(runShim(LINEAR_SHIM, ['issue', 'mine'], env).stdout).toContain(
+        'STUB: integration linear issue.mine --',
       );
       expect(runShim(LINEAR_SHIM, ['issue', 'view', 'ABC-1'], env).stdout).toContain(
         'STUB: integration linear issue.view -- ABC-1',
@@ -829,18 +834,32 @@ describe('linear-shim subcommand allowlist', () => {
     }
   });
 
-  it('issue comment create forwards to integration linear issue.comment', () => {
+  it('issue comment add forwards to integration linear issue.comment', () => {
+    // `@schpet/linear-cli` v2 uses `comment add`, NOT `comment create`. Both
+    // sides (shim subcommand match + connector buildArgv) say `add`; the
+    // dotted wire op stays `issue.comment` for stability.
     const env = makeStubShell();
     try {
       const out = runShim(
         LINEAR_SHIM,
-        ['issue', 'comment', 'create', 'ABC-1', '--body', 'hi'],
+        ['issue', 'comment', 'add', 'ABC-1', '--body', 'hi'],
         env,
       );
       expect(out.code).toBe(0);
       expect(out.stdout).toContain(
         'STUB: integration linear issue.comment -- ABC-1 --body hi',
       );
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('issue comment create is rejected (v2 uses `add`)', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(LINEAR_SHIM, ['issue', 'comment', 'create'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/unsupported 'issue comment create'/);
     } finally {
       env.cleanup();
     }
@@ -908,7 +927,24 @@ describe('linear-shim subcommand allowlist', () => {
     }
   });
 
-  it('api with no positional is rejected', () => {
+  it('api accepts pre-positional flags (linear api --paginate "<query>")', () => {
+    // `linear api` legitimately accepts --variable / --variables-json /
+    // --paginate / --silent BEFORE the positional query. The shim's
+    // "requires positional" check used to refuse any leading flag — fixed
+    // to just require at least one arg.
+    const env = makeStubShell();
+    try {
+      const out = runShim(LINEAR_SHIM, ['api', '--paginate', '{ teams { id } }'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain(
+        'STUB: integration linear api -- --paginate { teams { id } }',
+      );
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('api with no args at all is rejected', () => {
     const env = makeStubShell();
     try {
       const out = runShim(LINEAR_SHIM, ['api'], env);
@@ -933,7 +969,9 @@ describe('linear-shim subcommand allowlist', () => {
       const out = runShim(LINEAR_SHIM, [sub], env);
       expect(out.code).toBe(2);
       expect(out.stderr).toMatch(/is not proxied/);
-      expect(out.stderr).toMatch(/whoami, issue \{list,view,query,create,update,comment create\}/);
+      expect(out.stderr).toMatch(
+        /whoami, issue \{list,mine,view,query,create,update,comment add\}/,
+      );
     } finally {
       env.cleanup();
     }

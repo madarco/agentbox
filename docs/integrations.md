@@ -192,13 +192,14 @@ The Linear path of the integrations foundation, shipped under LT1 (descriptor-on
 | -------------- | --------------- | ---------------------------------- | -------------------------------------------------------------------------------------- |
 | `whoami`       | read            | `linear auth whoami`               | identity only — **never** `linear auth token` (see below).                             |
 | `issue.list`   | read            | `linear issue list`                |                                                                                        |
+| `issue.mine`   | read            | `linear issue mine`                | v2-native "issues assigned to me" (the old `list --me` path was dropped upstream).     |
 | `issue.view`   | read            | `linear issue view`                |                                                                                        |
 | `issue.query`  | read            | `linear issue query`               | structured filters.                                                                    |
 | `team.list`    | read            | `linear team list`                 |                                                                                        |
-| `api`          | read            | `linear api <query>`               | GraphQL query passthrough; `refuseGraphqlNonQuery` rejects `mutation` / `subscription`. |
+| `api`          | read            | `linear api <query>`               | GraphQL query passthrough; `refuseGraphqlNonQuery` rejects `mutation` / `subscription` and any `--variable key=@<path>` host-file load. |
 | `issue.create` | write (gated)   | `linear issue create`              |                                                                                        |
 | `issue.update` | write (gated)   | `linear issue update`              | status/title/etc.                                                                      |
-| `issue.comment`| write (gated)   | `linear issue comment create`      |                                                                                        |
+| `issue.comment`| write (gated)   | `linear issue comment add`         | `@schpet/linear-cli` v2 uses `add` (not `create`).                                     |
 
 ### The auth-token exclusion (key security invariant)
 
@@ -216,10 +217,11 @@ Three defenses, all in series. A box agent can't reach `linear auth token` throu
 
 Linear's `api` subcommand is a raw GraphQL endpoint — one POST that serves both queries (read) and mutations (write). The `api` op is a read passthrough, so it carries `refuseCall: refuseGraphqlNonQuery`. The predicate:
 
-- Walks the positional argv (any non-`-` token), strips leading whitespace and `# …` line comments.
-- If the first remaining keyword is `mutation` or `subscription` → refuses with exit 65 and a `linear api: only GraphQL queries are proxied …` message.
-- `query …` and the anonymous `{ … }` shorthand pass.
+- Walks argv, **consuming the value** after value-bearing flags (`--variable`, `--variables-json`) so their payload isn't misread as a positional GraphQL source.
+- For every remaining positional, strips leading whitespace + `# …` line comments and refuses if the first keyword is `mutation` or `subscription` (exit 65, `linear api: only GraphQL queries are proxied …`).
+- `query …` and the anonymous `{ … }` shorthand pass; empty/flag-only argv passes (the host CLI emits its own usage error).
 - `--input` / `--input=…` is refused — stdin/file bodies can't traverse the relay anyway.
+- **`--variable key=@<path>` is refused.** linear-cli's `@<path>` syntax reads from a host file and sends the contents as a GraphQL variable, which the box could echo back through the query response — an exfiltration channel. The guard rejects every split/glued/equals shape of the flag.
 
 The match is case-insensitive (defensive — GraphQL is case-sensitive in spec, but the cost of guarding is zero). The parser is not a GraphQL validator; it's a write-shape detector. Writes go through the dedicated gated `issue.*` ops, never `api`.
 
