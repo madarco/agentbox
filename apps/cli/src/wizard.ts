@@ -375,9 +375,9 @@ function rebuildMinutesFor(provider: ProviderName): string {
     case 'daytona':
       return '7';
     case 'vercel':
-      return '25';
+      return '5-10';
     case 'hetzner':
-      return '35–50';
+      return '7-10';
     default:
       return '1';
   }
