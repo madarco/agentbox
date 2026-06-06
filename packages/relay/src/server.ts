@@ -32,6 +32,7 @@ import {
   assertIntegrationReady,
   makeIntegrationOpRefusal,
   parseIntegrationMethod,
+  refuseIfIntegrationDisabled,
   refuseIntegrationCall,
   runHostIntegration,
   type IntegrationRpcParams,
@@ -1407,6 +1408,21 @@ async function handleIntegrationRpc(
 
   const callRefusal = refuseIntegrationCall(opDesc, args);
   if (callRefusal) return callRefusal;
+
+  // Layered enablement gate — the in-box shim and ctl both transparently
+  // forward to here, so this one check covers every caller. Reads the
+  // worktree's project config so a single project can opt in without
+  // flipping it globally. Placed after `refuseIntegrationCall` so the
+  // ordering matches the cloud handler (`runIntegrationRpc` in
+  // host-actions.ts) — keeps the wire envelope identical across providers
+  // for the malformed-args-to-disabled-integration edge case. Runs before
+  // `assertIntegrationReady`, the prompt, and the host spawn so a disabled
+  // integration is never user-visible as a permission prompt.
+  const enableRefusal = await refuseIfIntegrationDisabled(
+    parsed.service,
+    worktree.hostMainRepo,
+  );
+  if (enableRefusal) return enableRefusal;
 
   const ready = await assertIntegrationReady(connector);
   if (ready) return ready;

@@ -71,4 +71,27 @@ describe('set/unset roundtrip', () => {
       setConfigValue('global', 'code.timeoutMs', 'banana', tmpCwd, { raw: true }),
     ).rejects.toThrow();
   });
+
+  it('roundtrips a 3-level dotted key (integrations.notion.enabled)', async () => {
+    await setConfigValue('project', 'integrations.notion.enabled', 'true', tmpCwd, {
+      raw: true,
+    });
+    const yaml = parseYaml(await readFile(projectConfigFile(tmpCwd), 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(yaml['integrations']).toEqual({ notion: { enabled: true } });
+    const loaded = await loadEffectiveConfig(tmpCwd);
+    expect(loaded.effective.integrations.notion.enabled).toBe(true);
+    expect(loaded.sources['integrations.notion.enabled']).toBe('project');
+
+    await unsetConfigValue('project', 'integrations.notion.enabled', tmpCwd);
+    const after =
+      (parseYaml(await readFile(projectConfigFile(tmpCwd), 'utf8')) as
+        | Record<string, unknown>
+        | null) ?? {};
+    // Both the deepest leaf AND the empty `notion` / `integrations` parents
+    // must be pruned so the YAML stays tidy.
+    expect(after).not.toHaveProperty('integrations');
+  });
 });

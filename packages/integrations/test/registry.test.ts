@@ -28,14 +28,15 @@ describe('notion connector', () => {
     expect(notionConnector.env).toMatchObject({ NOTION_KEYRING: '0' });
   });
 
-  it('classifies api as read and the page/comment ops as write', () => {
+  it('classifies whoami/api as read and the page ops as write', () => {
+    expect(notionConnector.ops.whoami?.write).toBe(false);
     expect(notionConnector.ops.api?.write).toBe(false);
     expect(notionConnector.ops['page.create']?.write).toBe(true);
     expect(notionConnector.ops['page.update']?.write).toBe(true);
-    expect(notionConnector.ops['comment.add']?.write).toBe(true);
   });
 
   it('shapes argv so the connector — not the call site — owns the host CLI surface', () => {
+    expect(notionConnector.ops.whoami?.buildArgv?.([])).toEqual(['whoami']);
     expect(notionConnector.ops.api?.buildArgv?.(['v1/users/me'])).toEqual([
       'api',
       'v1/users/me',
@@ -52,18 +53,11 @@ describe('notion connector', () => {
       'page_id',
       '--archive',
     ]);
-    expect(notionConnector.ops['comment.add']?.buildArgv?.(['--page', 'pid', 'hi'])).toEqual([
-      'comment',
-      'add',
-      '--page',
-      'pid',
-      'hi',
-    ]);
   });
 
   it('has no ops beyond the conservative starter allowlist', () => {
     expect(Object.keys(notionConnector.ops).sort()).toEqual(
-      ['api', 'comment.add', 'page.create', 'page.update'].sort(),
+      ['api', 'page.create', 'page.update', 'whoami'].sort(),
     );
   });
 });

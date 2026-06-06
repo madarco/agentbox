@@ -4,11 +4,18 @@ import type { IntegrationConnector, IntegrationOpRefusal } from '../types.js';
  * Notion connector — wraps the official `ntn` CLI (beta, first-party).
  *
  * The op allowlist is intentionally minimal (start conservative, widen as
- * real agent flows surface needs). One read passthrough (`ntn api …` for
- * GETs against the v1 REST surface) plus three gated writes. The `api`
- * passthrough is GET-only — `refuseApiNonGet` parses `-X`/`--method`/`-f`/`-F`
- * (and their glued forms) the same way `refuseGhApiCall` does, so an
- * agent can't slip a POST/PATCH/DELETE past the "read" classification.
+ * real agent flows surface needs). Two read passthroughs (`ntn whoami` and
+ * `ntn api …` for GETs against the v1 REST surface) plus two gated writes.
+ * The `api` passthrough is GET-only — `refuseApiNonGet` parses
+ * `-X`/`--method`/`-f`/`-F` (and their glued forms) the same way
+ * `refuseGhApiCall` does, so an agent can't slip a POST/PATCH/DELETE past
+ * the "read" classification.
+ *
+ * Comment creation is intentionally absent: `ntn` exposes no top-level
+ * `comment` subcommand (the official surface is `api datasources files
+ * pages login logout whoami workers`), and Notion's REST POST `/v1/comments`
+ * takes a structured JSON body that doesn't trivially map from CLI flags.
+ * Adding it is tracked as a focused follow-up — see `docs/notion_backlog.md`.
  *
  * `NOTION_KEYRING=0` is forced in the env so `ntn` reads file-based auth
  * (`~/.config/notion/auth.json`). On the macOS host this var is harmless
@@ -25,6 +32,10 @@ export const notionConnector: IntegrationConnector = {
   },
   env: { NOTION_KEYRING: '0' },
   ops: {
+    whoami: {
+      write: false,
+      buildArgv: (args) => ['whoami', ...args],
+    },
     api: {
       write: false,
       buildArgv: (args) => ['api', ...args],
@@ -37,10 +48,6 @@ export const notionConnector: IntegrationConnector = {
     'page.update': {
       write: true,
       buildArgv: (args) => ['page', 'update', ...args],
-    },
-    'comment.add': {
-      write: true,
-      buildArgv: (args) => ['comment', 'add', ...args],
     },
   },
 };
@@ -103,6 +110,6 @@ function refuseApiNonGet(args: readonly string[]): IntegrationOpRefusal | null {
   const method = (explicitMethod ?? (hasFieldFlag ? 'POST' : 'GET')).toUpperCase();
   if (method === 'GET') return null;
   return refuse(
-    `only GET is proxied (use page.create / page.update / comment.add for writes); detected method '${method}'`,
+    `only GET is proxied (use page.create / page.update for writes); detected method '${method}'`,
   );
 }

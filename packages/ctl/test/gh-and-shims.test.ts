@@ -8,6 +8,7 @@ import { postRpc } from '../src/relay-rpc.js';
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..');
 const GH_SHIM = join(REPO_ROOT, 'packages/sandbox-docker/scripts/gh-shim');
 const GIT_SHIM = join(REPO_ROOT, 'packages/sandbox-docker/scripts/git-shim');
+const NTN_SHIM = join(REPO_ROOT, 'packages/sandbox-docker/scripts/ntn-shim');
 
 interface StubShellEnv {
   tmpDir: string;
@@ -576,6 +577,165 @@ describe('git-shim arg whitelist + passthrough', () => {
       const out = runShim(GIT_SHIM, ['status'], env);
       expect(out.code).toBe(0);
       expect(out.stdout).toMatch(/On branch agentbox\/test-branch/);
+    } finally {
+      env.cleanup();
+    }
+  });
+});
+
+describe('ntn-shim subcommand allowlist', () => {
+  it('whoami forwards to integration notion whoami', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(NTN_SHIM, ['whoami'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: integration notion whoami --');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('api endpoint forwards to integration notion api', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(NTN_SHIM, ['api', 'v1/users/me'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: integration notion api -- v1/users/me');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('api forwards write-shaped argv intact (relay enforces GET-only)', () => {
+    // The shim does NOT replicate refuseApiNonGet — that's the relay's job.
+    // It must hand through -X POST / -f field=value so the relay sees the
+    // real argv and can refuse, instead of the agent thinking the call
+    // succeeded silently.
+    const env = makeStubShell();
+    try {
+      const out = runShim(
+        NTN_SHIM,
+        ['api', 'v1/pages', '-X', 'POST', '-f', 'title=hi'],
+        env,
+      );
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain(
+        'STUB: integration notion api -- v1/pages -X POST -f title=hi',
+      );
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('api with no endpoint is rejected', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(NTN_SHIM, ['api'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/'api' requires a positional <endpoint>/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('pages create forwards to integration notion page.create', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(
+        NTN_SHIM,
+        ['pages', 'create', '--parent', 'db_id', '--title', 'hi'],
+        env,
+      );
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain(
+        'STUB: integration notion page.create -- --parent db_id --title hi',
+      );
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('pages update forwards to integration notion page.update', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(NTN_SHIM, ['pages', 'update', 'page_id', '--archive'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain(
+        'STUB: integration notion page.update -- page_id --archive',
+      );
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('pages list is rejected', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(NTN_SHIM, ['pages', 'list'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/unsupported 'pages list'/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('pages with no subcommand is rejected', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(NTN_SHIM, ['pages'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/missing subcommand for 'pages'/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('comment add is rejected with the deferred message', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(NTN_SHIM, ['comment', 'add', '--page', 'pid'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/comment ops not supported yet/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it.each([['login'], ['logout'], ['datasources'], ['workers'], ['files']])(
+    'unsupported subcommand %s is rejected with the allowed list',
+    (sub) => {
+      const env = makeStubShell();
+      try {
+        const out = runShim(NTN_SHIM, [sub], env);
+        expect(out.code).toBe(2);
+        expect(out.stderr).toMatch(/is not proxied/);
+        expect(out.stderr).toMatch(
+          /whoami, api <endpoint>, pages \{create,update\}/,
+        );
+      } finally {
+        env.cleanup();
+      }
+    },
+  );
+
+  it('--version prints the shim version line', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(NTN_SHIM, ['--version'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toMatch(/^ntn version /);
+      expect(out.stdout).toContain('agentbox-shim');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('no args fails with the supported-subcommands hint', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(NTN_SHIM, [], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/no subcommand/);
     } finally {
       env.cleanup();
     }

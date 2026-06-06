@@ -45,6 +45,7 @@ import {
   assertIntegrationReady,
   makeIntegrationOpRefusal,
   parseIntegrationMethod,
+  refuseIfIntegrationDisabled,
   refuseIntegrationCall,
   runHostIntegration,
   type IntegrationRpcParams,
@@ -516,6 +517,22 @@ async function runIntegrationRpc(
   const callRefusal = refuseIntegrationCall(opDesc, args);
   if (callRefusal) return callRefusal;
 
+  // Cloud boxes don't register worktrees the same way docker boxes do; the
+  // closest analogue is `lookupCloudBox`'s `workspacePath` (the host-side
+  // path the cloud provider records as the box's project root). Use it to
+  // read the layered config and fire the enablement gate — same envelope
+  // shape the docker handler returns. Placed after `refuseIntegrationCall`
+  // so the structural / op-level checks (which don't need the box record)
+  // still short-circuit cleanly on a malformed registry; the gate runs
+  // before `assertIntegrationReady`, the prompt, and the host spawn so a
+  // disabled integration is never user-visible as a permission prompt.
+  const lookup = await lookupCloudBox(deps.boxId);
+  const enableRefusal = await refuseIfIntegrationDisabled(
+    parsed.service,
+    lookup.workspacePath,
+  );
+  if (enableRefusal) return enableRefusal;
+
   const ready = await assertIntegrationReady(connector);
   if (ready) return ready;
 
@@ -549,9 +566,9 @@ async function runIntegrationRpc(
     }
   }
 
-  const lookup = await lookupCloudBox(deps.boxId);
   return runHostIntegration(connector, opDesc, args, lookup.workspacePath);
 }
+
 
 /**
  * Mirror an in-box `browser.open` notification on the host. The action runs

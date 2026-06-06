@@ -92,4 +92,38 @@ describe('layered merge precedence', () => {
     expect(r.layers.workspace.values).toEqual({});
     expect(r.effective.engine.kind).toBe('docker-desktop');
   });
+
+  // Nested 3-level path (branch.subbranch.leaf) — the parser, merger, and
+  // writer all needed teaching to walk dotted leaves. Worth its own cascade
+  // test so a future refactor doesn't silently regress the integrations
+  // surface.
+  it('integrations.notion.enabled defaults to false', async () => {
+    const r = await loadEffectiveConfig(tmpCwd);
+    expect(r.effective.integrations.notion.enabled).toBe(false);
+    expect(r.sources['integrations.notion.enabled']).toBe('default');
+  });
+
+  it('integrations.notion.enabled cascades global → project → cli', async () => {
+    await writeYamlAt(
+      GLOBAL_CONFIG_FILE,
+      'integrations:\n  notion:\n    enabled: true\n',
+    );
+    const fromGlobal = await loadEffectiveConfig(tmpCwd);
+    expect(fromGlobal.effective.integrations.notion.enabled).toBe(true);
+    expect(fromGlobal.sources['integrations.notion.enabled']).toBe('global');
+
+    await writeYamlAt(
+      projectConfigFile(tmpCwd),
+      'integrations:\n  notion:\n    enabled: false\n',
+    );
+    const fromProject = await loadEffectiveConfig(tmpCwd);
+    expect(fromProject.effective.integrations.notion.enabled).toBe(false);
+    expect(fromProject.sources['integrations.notion.enabled']).toBe('project');
+
+    const fromCli = await loadEffectiveConfig(tmpCwd, {
+      cliOverrides: { integrations: { notion: { enabled: true } } },
+    });
+    expect(fromCli.effective.integrations.notion.enabled).toBe(true);
+    expect(fromCli.sources['integrations.notion.enabled']).toBe('cli');
+  });
 });

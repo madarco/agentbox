@@ -135,23 +135,7 @@ export function parseUserConfigObject(doc: unknown, where: string): Partial<User
     if (!isPlainObject(branchRaw)) {
       throw new UserConfigError(`${where}.${branchName}: must be a mapping`);
     }
-    const branchOut: Record<string, unknown> = {};
-    for (const [leafName, leafRaw] of Object.entries(branchRaw)) {
-      const desc = branchSpec.leaves.get(leafName);
-      if (!desc) {
-        const renamedTo = RENAMED_KEYS.get(`${branchName}.${leafName}`);
-        if (renamedTo) {
-          throw new UserConfigError(
-            `${where}.${branchName}.${leafName} was renamed to ${renamedTo} — update your config`,
-          );
-        }
-        throw new UserConfigError(
-          `${where}.${branchName}: unknown key "${leafName}" (known: ${[...branchSpec.leaves.keys()].join(', ')})`,
-        );
-      }
-      if (leafRaw === undefined) continue;
-      branchOut[leafName] = coerceTypedValue(leafRaw, desc, `${where}.${desc.key}`);
-    }
+    const branchOut = parseBranchObject(branchSpec, branchName, branchRaw, '', where);
     if (Object.keys(branchOut).length > 0) {
       // We've validated that each branch matches one of UserConfig's known
       // sub-objects; the indexed write keeps the union type happy.
@@ -159,6 +143,57 @@ export function parseUserConfigObject(doc: unknown, where: string): Partial<User
     }
   }
   return out;
+}
+
+/**
+ * Validate a YAML branch sub-tree against `branchSpec`'s registered leaf paths.
+ * Handles nested keys like `integrations.notion.enabled` — the branch is
+ * `integrations`, the leaf path is `notion.enabled`, so the YAML can be
+ * written as a nested mapping. `qualifiedPrefix` is the dotted path walked so
+ * far within the branch (empty at top level).
+ */
+function parseBranchObject(
+  branchSpec: BranchSpec,
+  branchName: string,
+  raw: Record<string, unknown>,
+  qualifiedPrefix: string,
+  where: string,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(raw)) {
+    if (value === undefined) continue;
+    const qualified = qualifiedPrefix ? `${qualifiedPrefix}.${name}` : name;
+    const desc = branchSpec.leaves.get(qualified);
+    if (desc) {
+      out[name] = coerceTypedValue(value, desc, `${where}.${desc.key}`);
+      continue;
+    }
+    // Not a leaf — descend if it's a mapping AND a deeper leaf is registered
+    // beneath this path. Otherwise the key is unknown / not in the registry.
+    if (isPlainObject(value) && branchHasLeafBelow(branchSpec, qualified)) {
+      const sub = parseBranchObject(branchSpec, branchName, value, qualified, where);
+      if (Object.keys(sub).length > 0) out[name] = sub;
+      continue;
+    }
+    const renamedTo = RENAMED_KEYS.get(`${branchName}.${qualified}`);
+    if (renamedTo) {
+      throw new UserConfigError(
+        `${where}.${branchName}.${qualified} was renamed to ${renamedTo} — update your config`,
+      );
+    }
+    throw new UserConfigError(
+      `${where}.${branchName}: unknown key "${qualified}" (known: ${[...branchSpec.leaves.keys()].join(', ')})`,
+    );
+  }
+  return out;
+}
+
+function branchHasLeafBelow(branchSpec: BranchSpec, prefix: string): boolean {
+  const needle = `${prefix}.`;
+  for (const leaf of branchSpec.leaves.keys()) {
+    if (leaf.startsWith(needle)) return true;
+  }
+  return false;
 }
 
 /**

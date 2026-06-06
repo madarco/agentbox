@@ -149,6 +149,11 @@ export interface UserConfig {
     pruneProjectConfigs?: boolean;
     pruneProjectConfigsEvery?: number;
   };
+  integrations?: {
+    notion?: {
+      enabled?: boolean;
+    };
+  };
 }
 
 /**
@@ -264,6 +269,11 @@ export interface EffectiveConfig {
   maintenance: {
     pruneProjectConfigs: boolean;
     pruneProjectConfigsEvery: number;
+  };
+  integrations: {
+    notion: {
+      enabled: boolean;
+    };
   };
 }
 
@@ -401,6 +411,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   maintenance: {
     pruneProjectConfigs: true,
     pruneProjectConfigsEvery: 50,
+  },
+  integrations: {
+    notion: { enabled: false },
   },
 };
 
@@ -850,6 +863,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'maintenance.pruneProjectConfigsEvery',
     type: 'int',
     description: 'Run the orphan project-config sweep every N successful `agentbox create`.',
+  },
+  {
+    key: 'integrations.notion.enabled',
+    type: 'bool',
+    description:
+      'Enable the in-box Notion integration shim (`ntn`/`notion` commands routed via the host relay). When false (default), the relay refuses dispatch with a clear "disabled" error and no host process is touched.',
   },
 ];
 

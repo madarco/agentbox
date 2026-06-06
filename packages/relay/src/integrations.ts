@@ -13,6 +13,7 @@
 
 import { spawn } from 'node:child_process';
 import type { IntegrationConnector, IntegrationOp } from '@agentbox/integrations';
+import { loadEffectiveConfig } from '@agentbox/config';
 import type { GitRpcResult } from './types.js';
 
 /** Wire params for every `integration.<service>.<op>` method. Mirrors GhPrRpcParams. */
@@ -272,4 +273,43 @@ export function refuseIntegrationCall(
   const refusal = op.refuseCall?.(args);
   if (!refusal) return null;
   return { exitCode: refusal.exitCode, stdout: '', stderr: refusal.stderr };
+}
+
+/**
+ * Returns null when the integration is enabled for the box's project (so the
+ * dispatch may proceed), else a ready-to-send refusal envelope. Re-reads the
+ * layered config fresh on every call so toggling
+ * `integrations.<svc>.enabled` takes effect without bouncing the relay —
+ * same approach `loadAutopauseConfig` uses for the autopause loop.
+ *
+ * Layered (cli/workspace/project/global/default) so a single project can opt
+ * in without globally enabling Notion. Defaults to disabled — every
+ * integration ships in the image but is inert until flipped on.
+ *
+ * Injectable `loader` keeps unit tests off-disk.
+ */
+export async function refuseIfIntegrationDisabled(
+  service: string,
+  cwd: string,
+  loader: (cwd: string) => Promise<{
+    effective: { integrations?: Record<string, { enabled?: boolean } | undefined> };
+  }> = loadEffectiveConfig,
+): Promise<GitRpcResult | null> {
+  let enabled = false;
+  try {
+    const cfg = await loader(cwd);
+    enabled = cfg.effective.integrations?.[service]?.enabled === true;
+  } catch {
+    // A malformed config file should fail closed — the box can't do anything
+    // useful with a half-loaded config, and the agent gets a clear message
+    // either way.
+  }
+  if (enabled) return null;
+  return {
+    exitCode: 65,
+    stdout: '',
+    stderr:
+      `${service} integration is disabled — enable with ` +
+      `\`agentbox config set --project integrations.${service}.enabled true\`\n`,
+  };
 }

@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# agentbox `ntn` shim — translates a strict subset of `ntn` (the official
+# Notion CLI) subcommands into `agentbox-ctl integration notion <op>` so the
+# host's authenticated `ntn` runs the operation and only the result crosses
+# back into the box. The in-box agent never sees a Notion token.
+#
+# Installed at /usr/local/bin/ntn (real `ntn` is not in the box). The same
+# shim is symlinked as /usr/local/bin/notion — the per-service surface name
+# from docs/integrations_backlog.md — both invocations behave identically.
+#
+# This shim ships only what documented agent flows need; anything outside
+# the subset below is rejected with a clear error. Add ops deliberately —
+# the relay is gated by `integrations.notion.enabled` and an explicit op
+# allowlist in @agentbox/integrations.
+
+set -euo pipefail
+
+# Path is a constant in production; the env override exists purely to let
+# unit tests substitute a stub `agentbox-ctl` on PATH without rewriting the
+# shim. Mirrors gh-shim / git-shim.
+CTL="${AGENTBOX_CTL_PATH:-/usr/local/bin/agentbox-ctl}"
+
+die() {
+  printf 'agentbox notion shim: %s\n' "$*" >&2
+  exit 2
+}
+
+handle_pages() {
+  local op="${1-}"; shift || true
+  case "$op" in
+    create)
+      exec "$CTL" integration notion page.create -- "$@"
+      ;;
+    update)
+      exec "$CTL" integration notion page.update -- "$@"
+      ;;
+    '')
+      die "missing subcommand for 'pages'. Supported: create, update"
+      ;;
+    *)
+      die "unsupported 'pages $op' (allowed: create, update)"
+      ;;
+  esac
+}
+
+# Top-level dispatch. `ntn`'s real subcommands are
+# `api datasources files pages login logout whoami workers`; we expose only
+# the read-safe ones plus `pages {create,update}`.
+if [ $# -eq 0 ]; then
+  die "no subcommand. Supported: whoami, api <endpoint>, pages {create,update}, --version"
+fi
+
+case "$1" in
+  --version|-v)
+    # Tools that sniff "ntn version" succeed with our shim line. The real
+    # version lives host-side and is reported by the relay's readiness probe
+    # (`assertIntegrationReady`).
+    printf 'ntn version 0.0.0 (agentbox-shim)\n'
+    ;;
+  --help|-h)
+    printf 'agentbox notion shim — strict subset.\n' >&2
+    printf 'Supported: whoami, api <endpoint>, pages {create, update}, --version\n' >&2
+    printf 'Anything else is rejected. Run host `ntn --help` for full upstream docs.\n' >&2
+    ;;
+  whoami)
+    shift
+    exec "$CTL" integration notion whoami -- "$@"
+    ;;
+  api)
+    shift
+    if [ $# -eq 0 ] || [ "${1:0:1}" = "-" ]; then
+      die "'api' requires a positional <endpoint> (e.g. v1/users/me)"
+    fi
+    # The relay's refuseApiNonGet enforces GET-only by parsing
+    # -X/--method/-f/-F, so we don't duplicate that check here. Writes go
+    # through the dedicated page.* ops.
+    exec "$CTL" integration notion api -- "$@"
+    ;;
+  pages)
+    shift
+    handle_pages "$@"
+    ;;
+  comment|comments)
+    # The T1 connector intentionally has no comment op — `ntn` exposes no
+    # top-level `comment` subcommand and Notion's REST POST /v1/comments
+    # takes a structured JSON body that doesn't trivially map from CLI
+    # flags. Tracked as a focused follow-up in docs/notion_backlog.md.
+    die "comment ops not supported yet (deferred from T2; see docs/notion_backlog.md)"
+    ;;
+  *)
+    die "'$1' is not proxied (supported: whoami, api <endpoint>, pages {create,update}, --version)"
+    ;;
+esac

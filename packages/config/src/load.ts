@@ -175,9 +175,12 @@ function readLeaf(
   branch: string,
   leaf: string,
 ): unknown {
-  const b = (obj as Record<string, unknown>)[branch];
-  if (b === undefined || b === null || typeof b !== 'object') return undefined;
-  return (b as Record<string, unknown>)[leaf];
+  let cur: unknown = (obj as Record<string, unknown>)[branch];
+  for (const seg of leaf.split('.')) {
+    if (cur === undefined || cur === null || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  return cur;
 }
 
 function writeLeaf(
@@ -186,7 +189,20 @@ function writeLeaf(
   leaf: string,
   value: unknown,
 ): void {
-  const b = (obj as unknown as Record<string, Record<string, unknown>>)[branch];
-  if (!b) return; // BUILT_IN_DEFAULTS guarantees the branch exists
-  b[leaf] = value;
+  let cur: Record<string, unknown> | undefined =
+    (obj as unknown as Record<string, Record<string, unknown>>)[branch];
+  if (!cur) return; // BUILT_IN_DEFAULTS guarantees the branch exists
+  const segs = leaf.split('.');
+  for (let i = 0; i < segs.length - 1; i++) {
+    const seg = segs[i]!;
+    const next = cur[seg];
+    if (next === undefined || next === null || typeof next !== 'object') {
+      // BUILT_IN_DEFAULTS guarantees nested sub-objects exist for every
+      // registered key path, so this is unreachable in practice; defaulting
+      // to a fresh sub-object keeps the function total.
+      cur[seg] = {};
+    }
+    cur = cur[seg] as Record<string, unknown>;
+  }
+  cur[segs[segs.length - 1]!] = value;
 }

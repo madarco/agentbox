@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { startRelayServer, type RelayServerHandle } from '../src/server.js';
 import {
   parseIntegrationMethod,
+  refuseIfIntegrationDisabled,
   refuseIntegrationCall,
   runHostIntegration,
 } from '../src/integrations.js';
@@ -153,6 +154,16 @@ esac
     const stubPath = join(stubDir, 'ntn');
     await writeFile(stubPath, script, 'utf8');
     await chmod(stubPath, 0o755);
+    // Workspace-layer agentbox.yaml that enables the Notion integration —
+    // disabled by default, so without this every dispatch hits the relay's
+    // host-side gate and returns exit 65. Lives in `stubDir` because that's
+    // the `hostMainRepo` we register below; `loadEffectiveConfig` reads
+    // <hostMainRepo>/agentbox.yaml's `defaults:` block as the workspace layer.
+    await writeFile(
+      join(stubDir, 'agentbox.yaml'),
+      'defaults:\n  integrations:\n    notion:\n      enabled: true\n',
+      'utf8',
+    );
     prevPath = process.env.PATH;
     process.env.PATH = `${stubDir}:${prevPath ?? ''}`;
     prevPrompt = process.env.AGENTBOX_PROMPT;
@@ -370,5 +381,78 @@ esac
     const body = r.body as { exitCode: number; stderr: string };
     expect(body.exitCode).toBe(127);
     expect(body.stderr).toMatch(/ntn not installed/);
+  });
+
+  it('disabled integration short-circuits with exit 65 and no host spawn', async () => {
+    await registerBox();
+    // Replace the workspace agentbox.yaml from beforeEach with one that
+    // explicitly disables the integration. The relay re-reads the config
+    // per call, so this takes effect immediately.
+    await writeFile(
+      join(stubDir, 'agentbox.yaml'),
+      'defaults:\n  integrations:\n    notion:\n      enabled: false\n',
+      'utf8',
+    );
+    process.env.AGENTBOX_PROMPT = 'off';
+    const r = await fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: {
+        method: 'integration.notion.api',
+        params: { path: '/workspace', args: ['v1/users/me'] },
+      },
+    });
+    expect(r.status).toBe(500);
+    const body = r.body as { exitCode: number; stderr: string };
+    expect(body.exitCode).toBe(65);
+    expect(body.stderr).toMatch(/notion integration is disabled/);
+    expect(body.stderr).toMatch(/integrations\.notion\.enabled true/);
+    // The host stub was never spawned for the disabled call. (The earlier
+    // readiness probe DOES run via `assertIntegrationReady` once per
+    // cache window — but the gate fires before that for *this* call;
+    // verify by checking the api endpoint argv never lands in the log.)
+    const log = await readFile(stubLog, 'utf8').catch(() => '');
+    expect(log.split('\n').some((l) => l.trim() === 'api v1/users/me')).toBe(false);
+  });
+});
+
+describe('refuseIfIntegrationDisabled', () => {
+  // Pure unit test of the gate logic — uses the injected loader so it
+  // doesn't depend on the filesystem. The relay /rpc tests above cover
+  // the wiring; this one nails down the branches.
+  const makeLoader = (
+    integrations?: Record<string, { enabled?: boolean } | undefined>,
+  ): (() => Promise<{
+    effective: { integrations?: Record<string, { enabled?: boolean } | undefined> };
+  }>) => () => Promise.resolve({ effective: { integrations } });
+
+  it('returns null when the service is enabled', async () => {
+    const out = await refuseIfIntegrationDisabled(
+      'notion',
+      '/tmp',
+      makeLoader({ notion: { enabled: true } }),
+    );
+    expect(out).toBeNull();
+  });
+
+  it('returns the disabled refusal when the service slot is missing', async () => {
+    const out = await refuseIfIntegrationDisabled('notion', '/tmp', makeLoader(undefined));
+    expect(out?.exitCode).toBe(65);
+    expect(out?.stderr).toMatch(/notion integration is disabled/);
+  });
+
+  it('returns the disabled refusal when the flag is false', async () => {
+    const out = await refuseIfIntegrationDisabled(
+      'notion',
+      '/tmp',
+      makeLoader({ notion: { enabled: false } }),
+    );
+    expect(out?.exitCode).toBe(65);
+  });
+
+  it('fails closed when the loader throws (malformed config → disabled)', async () => {
+    const out = await refuseIfIntegrationDisabled('notion', '/tmp', () => {
+      throw new Error('yaml parse error');
+    });
+    expect(out?.exitCode).toBe(65);
   });
 });

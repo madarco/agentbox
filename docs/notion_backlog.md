@@ -52,17 +52,45 @@ through the relay to host `ntn`, with read/write classification + write gating.
 - Unit tests: op read/write classification; allowlist denies unknown ops;
   dispatch gates writes (askPrompt called) and not reads; denied → exit 10.
 
-### T2 — In-box `notion` shim + image provisioning + config flags  ⬜ not started
-Make a box agent able to type `notion …`.
-- `packages/sandbox-docker/scripts/notion-shim` (gh-shim pattern: strict
-  subcommand/flag allowlist → `agentbox-ctl integration notion <op> -- "$@"`).
-- Stage it: add to `contextFiles` + `execBitFiles` in
-  `apps/cli/scripts/stage-runtime.mjs`; COPY in `Dockerfile.box` near the
-  `gh-shim`/`git-shim` COPY; mirror into
-  `packages/sandbox-hetzner/scripts/install-box.sh` and the cloud runtime lists.
-- Config: add `integrations` block to `packages/config/src/types.ts`
-  (`integrations.notion.enabled`, default off) + `BUILT_IN_DEFAULTS`. Disabled →
-  shim not installed / ctl refuses.
+### T2 — In-box `notion` shim + image provisioning + config flags  ✅ done
+Make a box agent able to type `notion …` or `ntn …`.
+- `packages/sandbox-docker/scripts/ntn-shim` (gh-shim pattern: strict
+  subcommand allowlist → `agentbox-ctl integration notion <op> -- "$@"`).
+  Installed on PATH as `/usr/local/bin/ntn`; `/usr/local/bin/notion` is a
+  symlink to it. Same shim for both invocations.
+- Staged: `contextFiles` + `execBitFiles` in `apps/cli/scripts/stage-runtime.mjs`
+  plus the `hetznerFiles` / `vercelFiles` / `e2bFiles` lists; COPY'd in
+  `Dockerfile.box` next to the `gh-shim`/`git-shim` COPY; mirrored into
+  `packages/sandbox-hetzner/scripts/install-box.sh`,
+  `packages/sandbox-vercel/scripts/provision.sh`, and
+  `packages/sandbox-e2b/scripts/build-template.sh` (plus each provider's
+  `src/runtime-assets.ts` so the staged file gets uploaded). Daytona stays
+  shim-less (matches its T1 gh/git decision).
+- Config: added `integrations.notion.enabled` (default **false**) to
+  `packages/config/src/types.ts` — `UserConfig`, `EffectiveConfig`,
+  `BUILT_IN_DEFAULTS`, and `KEY_REGISTRY`. Parser/merger/writer were taught
+  to walk 3-level nested keys (`branch.subbranch.leaf`) so the YAML stays
+  natural. Set with `agentbox config set --project integrations.notion.enabled true`.
+- Gate placement: the **relay** (`refuseIfIntegrationDisabled` in
+  `packages/relay/src/integrations.ts`, wired into BOTH
+  `handleIntegrationRpc` in `server.ts` (docker) and `runIntegrationRpc`
+  in `host-actions.ts` (cloud — daytona/hetzner/vercel/e2b) per the
+  "fix across all providers" rule). One check covers every caller
+  (shim / `notion` alias / direct `agentbox-ctl integration` / future
+  host-initiated tokens) and re-reads the layered config per call so a
+  flag flip takes effect without bouncing the relay (same approach as
+  `loadAutopauseConfig`). Disabled → exit 65 with a `agentbox config set …`
+  hint; no host process is touched.
+- Connector cleanup (minimal): the T1 `comment.add` op is **dropped**.
+  `ntn` exposes no top-level `comment` subcommand — the only host path
+  would be `ntn api v1/comments -X POST -f …`, which the T1 `api` op
+  refuses (GET-only). The op also had no callers (T1 just merged, no shim
+  yet), so a forward-only drop is cleaner than carrying dead surface
+  through. The shim refuses `notion comment add …` with a clear
+  "deferred from T2" message; comments are tracked as a focused
+  follow-up (will need a Notion-API-aware payload assembly that maps
+  flag args to the structured POST body). Added a `whoami` read op so
+  `ntn whoami` doesn't have to widen the `api` allowlist.
 
 ### T3 — `agentbox doctor` detection + docs  ⬜ not started
 - `agentbox doctor`: report `ntn` presence + auth (`ntn whoami` / `ntn doctor`),
@@ -87,3 +115,11 @@ Make a box agent able to type `notion …`.
   probe), generic `integration.<svc>.<op>` dispatch wired into both
   `server.ts` (docker) and `host-actions.ts` (cloud), and `agentbox-ctl
   integration` command tree. PR pending.
+- 2026-06-06: T2 shipped — `ntn-shim` + `notion` symlink on PATH across
+  docker/hetzner/vercel/e2b; `integrations.notion.enabled` (default false)
+  added to the typed config (with nested-key support in parser/merger/
+  writer); host-side enable gate in `handleIntegrationRpc` returning exit
+  65 with a config-hint when disabled; connector cleanup (dropped
+  `comment.add`, added `whoami` read op). Comments deferred to a focused
+  follow-up — they need a Notion-API-aware payload translator that maps
+  CLI flags to the structured `POST /v1/comments` body.

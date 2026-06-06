@@ -272,26 +272,36 @@ function stampSchema(doc: Partial<UserConfig>): void {
 }
 
 function setLeaf(doc: Partial<UserConfig>, key: string, value: unknown): void {
-  const idx = key.indexOf('.');
-  const branch = key.slice(0, idx);
-  const leaf = key.slice(idx + 1);
-  const root = doc as unknown as Record<string, Record<string, unknown>>;
-  if (!root[branch] || typeof root[branch] !== 'object') {
-    root[branch] = {};
+  const segs = key.split('.');
+  let cur = doc as unknown as Record<string, unknown>;
+  for (let i = 0; i < segs.length - 1; i++) {
+    const seg = segs[i]!;
+    const next = cur[seg];
+    if (!next || typeof next !== 'object') {
+      cur[seg] = {};
+    }
+    cur = cur[seg] as Record<string, unknown>;
   }
-  root[branch][leaf] = value;
+  cur[segs[segs.length - 1]!] = value;
 }
 
 function unsetLeaf(doc: Partial<UserConfig>, key: string): boolean {
-  const idx = key.indexOf('.');
-  const branch = key.slice(0, idx);
-  const leaf = key.slice(idx + 1);
-  const root = doc as unknown as Record<string, Record<string, unknown>>;
-  const b = root[branch];
-  if (!b || typeof b !== 'object' || !(leaf in b)) return false;
-  delete b[leaf];
-  if (Object.keys(b).length === 0) {
-    delete root[branch];
+  const segs = key.split('.');
+  const path: Record<string, unknown>[] = [doc as unknown as Record<string, unknown>];
+  for (let i = 0; i < segs.length - 1; i++) {
+    const seg = segs[i]!;
+    const next = path[path.length - 1]![seg];
+    if (!next || typeof next !== 'object') return false;
+    path.push(next as Record<string, unknown>);
+  }
+  const leafSeg = segs[segs.length - 1]!;
+  const leafContainer = path[path.length - 1]!;
+  if (!(leafSeg in leafContainer)) return false;
+  delete leafContainer[leafSeg];
+  // Prune empty parent objects from leaf-most up so the YAML stays tidy.
+  for (let i = path.length - 1; i > 0; i--) {
+    if (Object.keys(path[i]!).length > 0) break;
+    delete path[i - 1]![segs[i - 1]!];
   }
   return true;
 }

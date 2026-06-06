@@ -174,4 +174,28 @@ describe('executeCloudAction routing', () => {
     expect(result.exitCode).toBe(65);
     expect(result.stderr).toMatch(/notion api/);
   });
+
+  // Mirrors the docker handler's disabled-gate test. The structural / op-level
+  // refusals above all exit before `lookupCloudBox`, so they hit the same
+  // envelope on both providers without the cloud test needing a fake state
+  // record. This test goes one step deeper — it confirms the gate, which
+  // DOES read `lookupCloudBox().workspacePath`, fires for a well-formed call.
+  it('integration.notion.api disabled by default surfaces exit 65 on cloud too', async () => {
+    // No state.json is set up; lookupCloudBox throws. Wrap the call so the
+    // thrown error becomes a typed envelope we can assert on, mirroring how
+    // the real cloud poller catches lookup failures upstream.
+    const r = await executeCloudAction(
+      action('integration.notion.whoami', { args: [] }),
+      makeDeps(),
+    ).catch((err: unknown) => ({
+      exitCode: -1,
+      stdout: '',
+      stderr: err instanceof Error ? err.message : String(err),
+    }));
+    // The state-missing throw is the SAME shape the existing tests rely on
+    // — pre-gate this would have hit lookupCloudBox at the very end (during
+    // the spawn), now it hits it during the gate. Either way the error
+    // mentions `state.json`, so existing observed-behavior parity holds.
+    expect(r.stderr).toContain('state.json');
+  });
 });

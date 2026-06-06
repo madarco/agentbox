@@ -154,6 +154,15 @@ COPY packages/sandbox-docker/scripts/gh-shim /usr/local/bin/gh
 COPY packages/sandbox-docker/scripts/git-shim /usr/local/bin/git
 RUN chmod +x /usr/local/bin/gh /usr/local/bin/git
 
+# `ntn` (Notion CLI) shim — same shape as gh-shim, routes a strict subset
+# of `ntn` subcommands through the host relay (the host's `ntn` runs the
+# call; the box never sees the Notion token). Symlinked as `notion` per
+# docs/integrations_backlog.md's per-service surface naming. Disabled by
+# default; flip `integrations.notion.enabled` to enable. See
+# packages/sandbox-docker/scripts/ntn-shim and docs/notion_backlog.md.
+COPY packages/sandbox-docker/scripts/ntn-shim /usr/local/bin/ntn
+RUN chmod +x /usr/local/bin/ntn && ln -s /usr/local/bin/ntn /usr/local/bin/notion
+
 # Setup guide for the first-run wizard. This baked copy is the single source
 # of the /agentbox-setup skill: seedSetupSkillIntoVolume()
 # (packages/sandbox-docker/src/claude.ts) copies it into the box's
