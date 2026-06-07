@@ -42,7 +42,8 @@ through the relay to host `ntn`, with read/write classification + write gating.
 - `packages/integrations/` package: `types.ts` (IntegrationOp, IntegrationConnector),
   `registry.ts` (getConnector, ALL_CONNECTORS), `connectors/notion.ts`.
   - Notion ops (start minimal, allowlist-only): **read** `api` (GET passthrough,
-    e.g. `ntn api v1/search`, `ntn api v1/pages/<id>`); **write** `page.create`,
+    e.g. `ntn api v1/users/me`, `ntn api v1/pages/<id>` — POST endpoints like
+    `v1/search` are refused by the GET-only gate); **write** `page.create`,
     `page.update` (archive/props), `comment.add` — all gated.
 - `packages/relay/src/integrations.ts`: `runHostIntegration`,
   `assertIntegrationReady`, generic `integration.<svc>.<op>` dispatch (reuse

@@ -50,7 +50,7 @@ The in-box shim exposes a strict allowlist. Anything outside the list is rejecte
 | In-box command | Class | What happens |
 | --- | --- | --- |
 | `ntn whoami` | read | Passes through; prints the authed host user. |
-| `ntn api v1/<path>` | read | `GET`-only passthrough — `v1/search`, `v1/pages/<id>`, etc. Non-GET (`-X POST`, `-f`, `-F`, `--input`) is refused with exit 65. |
+| `ntn api v1/<path>` | read | `GET`-only passthrough (e.g. `v1/users/me`, `v1/pages/<id>`, `v1/databases/<id>`). Non-GET — `-X POST`, `-f`, `-F`, `--input` — is refused with exit 65, so Notion's `POST` endpoints (`v1/search`, `v1/databases/<id>/query`) are **not** reachable through this op. |
 | `ntn pages create …` | write | **Prompts** the host for approval; on `y` the host runs `ntn pages create` and ships back the result. |
 | `ntn pages update …` | write | **Prompts** the host for approval; covers props and archive. |
 
@@ -59,8 +59,10 @@ The in-box shim exposes a strict allowlist. Anything outside the list is rejecte
 ```bash
 # Inside the box — these all flow through the host relay:
 ntn whoami
-ntn api v1/search -f "query=design doc"
-ntn api v1/pages/abc123                            # GET passthrough
+ntn api v1/pages/abc123                             # GET passthrough
+ntn api v1/databases/def456                         # GET passthrough
+# Note: search is POST /v1/search (needs -f / a body), which the GET-only
+# `api` op refuses — find pages by id, or search host-side.
 ntn pages create -p <db-id> -t "Draft from the box" # prompts on the host
 ```
 
