@@ -237,10 +237,30 @@ agentbox config set --project integrations.linear.enabled true
 
 Linear stores plaintext credentials at `~/.config/linear/credentials.toml` (keyring is opt-in, not used). Unlike `ntn` (which needs `NOTION_KEYRING=0` to read file-based auth on Linux boxes), `linear` already reads the toml on every host by default — so the connector declares **no** `env` block. `mergeConnectorEnv` would only allow `LINEAR_*` keys anyway. The `agentbox.yaml` `carry:` block ships the file into nested boxes that run their own relay.
 
+### Verification / live e2e results
+
+LT2 ran the integration against the live `waldosai` workspace from inside a real AgentBox box. Captured evidence:
+
+- **`linear whoami` (read)** — round-trips through the in-box shim → host relay → host `linear` v2.0.0 → Linear API; returns `Workspace: waldosai … User: Marco D'Alia … Role: admin` with no approval prompt.
+- **`linear issue mine/list --team WAL` and `linear team list` (reads)** — same path; exit 0, no prompt. `team list` returns `WAL Waldosai` (the team key used for the writes).
+- **`linear api '{ viewer { id name email } }'` (read)** — the GraphQL passthrough returns the viewer JSON. `refuseGraphqlNonQuery` correctly classifies the `{ … }` shorthand as a query (`anonymous`) and lets it through.
+- **`linear api 'mutation { … }'` (refused)** — exits 65 with `linear api: only GraphQL queries are proxied (use issue.create / issue.update / issue.comment for writes); detected operation 'mutation'`. Refused before any host process is spawned; reproduces through both the shim path and the direct `agentbox-ctl integration linear api` path (the gate lives in the connector, not the shim).
+- **`linear auth token` (refused at the shim)** — exits 2 with `'auth token' leaks the raw API key — refused. Use 'linear whoami' for identity.`. The relay's op allowlist would also refuse it (no op maps to `auth token`); the shim is the first of three defenses.
+- **Gated writes — three approve→succeed→ground-truth-read cycles.**
+  - `linear issue create --team WAL --title "agentbox LT2 e2e …" -d "…"` created **WAL-5** (URL `linear.app/waldosai/issue/WAL-5/…`). `linear issue view WAL-5` confirms title + description + Backlog state.
+  - `linear issue comment add WAL-5 -b "agentbox LT2 e2e comment via host relay (gated write)"` added the comment. `linear api '{ issue(id:"WAL-5") { … comments { nodes { body } } } }'` confirms the comment body matches verbatim.
+  - `linear issue update WAL-5 -s "Canceled"` moved the state. Post-update `linear issue view WAL-5` shows `**State:** Canceled`.
+- **No agent-side credential** — `printenv | grep -E '^LINEAR'` inside the box returns nothing. The only token-shaped env var is `AGENTBOX_RELAY_TOKEN`. The carried `~/.config/linear/credentials.toml` sits on disk for the nested-box case (see below) but is not consumed during the primary e2e — the host's own `linear` reads its own `~/.config/linear/` host-side.
+- **No source changes needed.** LT1's connector + shim + gate worked unchanged against the live host CLI — no LT4-style argv drift this round.
+
+### Nested-box e2e — deferred, not blocking
+
+The nested-box scenario (a box-inside-a-box running a `linear` op through this box's relay) was time-boxed in LT2 and deferred for the same architectural reason as Notion. The in-box `agentbox-ctl` daemon forwards `/rpc` to the HOST relay (`host.docker.internal:8787`), not to a relay running in this box — so a nested box's `linear issue create` would still terminate at the host relay's spawn, not in this box's daemon. That means nested-box e2e exercises the carry mechanics (already verified — `~/.config/linear/credentials.toml` present in this box) more than the connector's spawn path. Installing the real `linear` in this box would also break the primary e2e by shadowing: npm's global prefix here is `/usr`, so `npm i -g @schpet/linear-cli` lands the real binary at `/usr/bin/linear`, but the shim at `/usr/local/bin/linear` precedes it on `$PATH` and keeps winning resolution — the in-box agent would still hit the shim, and the daemon would need a separately-shaped PATH (or an absolute `hostBin` path) to reach the real binary, which is out of scope here. A future follow-up that lifts the relay into the box's daemon would change this; tracked under "Open follow-ups" below alongside the Notion entry.
+
 ## Open follow-ups
 
 - **Trello / ClickUp** — see [`integrations_backlog.md`](./integrations_backlog.md). Each is a new descriptor + a small shim; no relay change. ClickUp will be the one custom REST connector (no good CLI on PyPI / npm).
 - **`comment.add`** — deferred; needs a Notion-API-aware payload translator that maps CLI flags to the structured `POST /v1/comments` body.
 - **Least-privilege tokens** — Notion capability toggles for the host token; Trello supports `scope=read` (when we add it); Linear personal keys inherit full user perms (OAuth-only for read-scope tokens). Document on each service's user-facing page.
 - **Host-initiated tokens** — the relay already accepts `params.hostInitiated` and validates it against `HostInitiatedTokens` (scope + params-hash bound). The host-CLI mint path that issues those tokens isn't wired yet for integrations; once it is, a host-typed `agentbox-ctl integration notion page.create …` can skip the prompt by minting a token first (same shape as the existing `gh.pr.*` and `cp.*` host-initiated paths).
-- **Nested-box e2e** — T4 in [`notion_backlog.md`](./notion_backlog.md). Verify the carry-based file-auth path against a real Notion workspace.
+- **Nested-box e2e** — deferred for both Notion (T4) and Linear (LT2) for the same architectural reason (in-box `agentbox-ctl` forwards `/rpc` to the original host relay, so a nested-box's `/rpc` terminates at the host's spawn regardless). Lifting the relay into the box's daemon would change this — tracked here, not blocking either path. The carry-based file-auth mechanics are already verified (the carried files land at the expected per-service paths).

@@ -305,6 +305,33 @@ Manual e2e (docker first, then one cloud provider — follow CLAUDE.md "Testing"
   agent's relay calls terminate at the host relay either way, so this
   exercises the carry block more than the spawn-side; tracked, not
   blocking).
-- **Linear / Trello / ClickUp paths: NOT STARTED.** Each is a new descriptor
+- **Linear path: COMPLETE (LT1–LT2 done, 2026-06-07).** Validated the
+  Notion-built abstraction: LT1 was descriptor-only (no relay/ctl core
+  change), and LT2 added zero source edits — the connector + shim + gate
+  worked unchanged against the live `waldosai` workspace. Shipped surface:
+  the `linear` connector with 9 ops (`whoami`, `issue.list/mine/view/query`,
+  `team.list`, `api` with `refuseGraphqlNonQuery` rejecting GraphQL
+  mutation/subscription + `--variable key=@<path>` host-file loads,
+  `issue.create/update/comment` as gated writes); `linear-shim` at
+  `/usr/local/bin/linear` with hard-rejects for `auth token` (raw API
+  key leak), `auth login/logout/migrate/default`, `issue/team delete`,
+  `team create`; `integrations.linear.enabled` typed config flag (default
+  false); `agentbox doctor` row (auto from `ALL_CONNECTORS`); cross-
+  provider staging (docker COPY, hetzner install-box.sh, vercel
+  provision.sh, e2b build-template.sh; daytona shim-less by design).
+  LT2 e2e captured live evidence: reads (`whoami`, `issue mine/list`,
+  `team list`, `api { viewer … }`) pass with no prompt; the GraphQL
+  mutation gate exits 65 with a clear refusal; the shim refuses `auth
+  token` with exit 2; **WAL-5** was created → commented → moved to
+  `Canceled` via three approve→succeed→ground-truth-read cycles; and
+  `printenv | grep -E '^LINEAR'` returns nothing inside the box.
+  **Deferred / follow-ups**: nested-box e2e (same architectural reason
+  as Notion — the in-box `agentbox-ctl` forwards `/rpc` to the original
+  host relay, not to a relay in this box; documented in
+  `docs/integrations.md`); host-initiated tokens for integrations
+  (same status as Notion). See [`linear_backlog.md`](./linear_backlog.md)
+  for full LT2 evidence.
+- **Trello / ClickUp paths: NOT STARTED.** Each is a new descriptor
   + small shim; no relay/ctl core changes (the abstraction was validated by
-  Notion). ClickUp will be the one custom-REST connector (no good CLI).
+  Notion and re-confirmed by Linear). ClickUp will be the one custom-REST
+  connector (no good CLI).
