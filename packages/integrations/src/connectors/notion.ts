@@ -66,6 +66,24 @@ const READ_POST_ENDPOINTS: readonly RegExp[] = [
 ];
 
 /**
+ * The only flags `ntn api` accepts that take NO value and are safe for a
+ * read-only proxy. The gate is fail-closed: every other flag is refused, so an
+ * unrecognized value-consuming flag can't have its value misparsed as the
+ * endpoint (see `refuseUnsafeApiCall`). Value-consuming flags (`-X/--method`,
+ * `-d/--data`, `--notion-version`, `--file`) are handled explicitly before this.
+ */
+const SAFE_API_BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
+  '--spec',
+  '--docs',
+  '-h',
+  '--help',
+  '-v',
+  '--verbose',
+  '-V',
+  '--version',
+]);
+
+/**
  * Reject any `ntn api` call that isn't a read. A read is: GET to any endpoint,
  * or POST to one of {@link READ_POST_ENDPOINTS} (search + database/data-source
  * `/query` — POST in the Notion API but semantically reads). Everything else —
@@ -131,14 +149,26 @@ function refuseUnsafeApiCall(args: readonly string[]): IntegrationOpRefusal | nu
       return refuse("'--input' (stdin/file body) isn't supported through the relay; use -d <JSON>");
     }
 
-    // Value-consuming option we forward unchanged.
+    // `--notion-version <VERSION>` — value-consuming; forwarded unchanged.
     if (arg === '--notion-version') {
       i++;
       continue;
     }
+    if (arg.startsWith('--notion-version=')) continue;
 
-    // Any other flag (boolean: --spec/--docs/-h/-v, or unknown): ignore.
-    if (arg.startsWith('-')) continue;
+    // Remaining flags are fail-closed: only a known-safe boolean set passes.
+    // Anything else is refused rather than ignored, so an unrecognized
+    // value-consuming flag — e.g. ntn's global `--workers-config-file <path>`
+    // or the hidden `--env <env>`, both accepted after `api` — can't have its
+    // value silently misread as the endpoint and smuggle a write past the gate
+    // (`api --workers-config-file v1/search v1/pages` POSTs to v1/pages).
+    if (arg.startsWith('-')) {
+      if (SAFE_API_BOOLEAN_FLAGS.has(arg)) continue;
+      return refuse(
+        `unsupported option '${arg}' (read-only api accepts a path, inline inputs, ` +
+          `-d <JSON>, -X GET/POST, --notion-version, --spec, --docs)`,
+      );
+    }
 
     // First bare positional is the API path; the rest are inline inputs.
     if (endpoint === null) {
@@ -160,6 +190,11 @@ function refuseUnsafeApiCall(args: readonly string[]): IntegrationOpRefusal | nu
   }
   if (endpoint === null) {
     return refuse('could not determine the API endpoint for a non-GET call');
+  }
+  // Defense in depth: ntn resolves `.`/`..` before routing, so reject any
+  // traversal segment rather than trusting the anchored regexes alone.
+  if (endpoint.split('/').some((seg) => seg === '.' || seg === '..')) {
+    return refuse(`path traversal segments ('.' / '..') are not allowed in '${endpoint}'`);
   }
   if (READ_POST_ENDPOINTS.some((re) => re.test(endpoint!))) return null;
   return refuse(

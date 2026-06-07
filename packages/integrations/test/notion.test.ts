@@ -14,6 +14,10 @@ describe('notion api gate (refuseUnsafeApiCall)', () => {
       [['v1/databases/abc', 'page_size==50']], // GET with a query param, not a body
       [['v1/users/me', '-X', 'GET']],
       [['v1/users/me', 'Accept:application/json']], // header, not a body
+      [['v1/databases/abc', '--spec']], // read-only doc dump flags pass
+      [['v1/pages/abc', '--docs']],
+      [['v1/users/me', '-v']], // verbose boolean passes
+      [['v1/databases/abc', '--notion-version=2022-06-28']], // glued value flag
     ])('GET %j', (args) => {
       expect(allowed(args)).toBe(true);
     });
@@ -44,7 +48,13 @@ describe('notion api gate (refuseUnsafeApiCall)', () => {
       [['v1/databases/abc', '-XPOST']], // POST to a non-/query db endpoint
       [['v1/data_sources/abc/blah', '-d', '{}']], // POST to a non-read path
       [['v1/search/../pages', '-d', '{}']], // traversal can't reach the allowlist
+      [['v1/databases/../query', 'foo:=1']], // `..` segment refused even if regex-shaped
       [['-X', 'POST']], // non-GET with no endpoint → fail closed
+      // Global value-consuming flags accepted after `api` must NOT have their
+      // value misread as the endpoint (the real write bypass the gate closes):
+      [['--workers-config-file', 'v1/search', 'v1/pages', '-d', '{}']],
+      [['--env', 'prod', 'v1/pages', 'title=x']],
+      [['--workers-config-file=foo', 'v1/pages', '-d', '{}']], // glued form too
     ])('%j', (args) => {
       const r = refuseCall(args);
       expect(r).not.toBeNull();
