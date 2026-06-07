@@ -48,19 +48,19 @@ export interface ExposeSpec {
 }
 
 /**
- * Declarative idempotence for a task. The supervisor re-runs every task from
- * `pending` on each box start; `idempotent` lets it skip a task that has
- * already succeeded.
+ * Declarative "run once" for a task. The supervisor re-runs every task from
+ * `pending` on each box start; `run_once` lets it skip a task that has already
+ * succeeded.
  *
- * - `{ kind: 'marker' }` (from `idempotent: true`) — the supervisor stores a
+ * - `{ kind: 'marker' }` (from `run_once: true`) — the supervisor stores a
  *   marker keyed by a hash of the resolved command; a warm boot skips while the
  *   hash matches, and editing the command re-runs.
- * - `{ kind: 'check', command }` (from `idempotent: { check: ... }`) — run the
+ * - `{ kind: 'check', command }` (from `run_once: { check: ... }`) — run the
  *   probe before launching; exit 0 means already satisfied (skip). No marker:
  *   the probe is the source of truth (right for data that lives outside the
  *   checkpointed filesystem, e.g. a containerized DB).
  */
-export type TaskIdempotent = { kind: 'marker' } | { kind: 'check'; command: string };
+export type RunOnceSpec = { kind: 'marker' } | { kind: 'check'; command: string };
 
 export interface TaskSpec {
   name: string;
@@ -68,7 +68,7 @@ export interface TaskSpec {
   cwd?: string;
   env?: Record<string, string>;
   needs: string[];
-  idempotent?: TaskIdempotent;
+  runOnce?: RunOnceSpec;
 }
 
 export interface ServiceSpec {
@@ -561,23 +561,23 @@ function parseService(name: string, raw: unknown): ServiceSpec {
   return { name, command, cwd, env, autostart, restart, backoff, needs, readyWhen, expose };
 }
 
-const TASK_KEYS = new Set(['command', 'cwd', 'env', 'needs', 'idempotent']);
+const TASK_KEYS = new Set(['command', 'cwd', 'env', 'needs', 'run_once']);
 
-function parseIdempotent(raw: unknown, where: string): TaskIdempotent | undefined {
+function parseRunOnce(raw: unknown, where: string): RunOnceSpec | undefined {
   if (raw === undefined || raw === null || raw === false) return undefined;
   if (raw === true) return { kind: 'marker' };
   if (isPlainObject(raw)) {
     const keys = Object.keys(raw);
     if (keys.length !== 1 || keys[0] !== 'check') {
-      throw new ConfigError(`${where}.idempotent object form must be exactly { check: <command> }`);
+      throw new ConfigError(`${where}.run_once object form must be exactly { check: <command> }`);
     }
     const check = raw.check;
     if (typeof check !== 'string' || check.trim().length === 0) {
-      throw new ConfigError(`${where}.idempotent.check must be a non-empty command string`);
+      throw new ConfigError(`${where}.run_once.check must be a non-empty command string`);
     }
     return { kind: 'check', command: check };
   }
-  throw new ConfigError(`${where}.idempotent must be true or { check: <command> }`);
+  throw new ConfigError(`${where}.run_once must be true or { check: <command> }`);
 }
 
 function parseTask(name: string, raw: unknown): TaskSpec {
@@ -590,9 +590,9 @@ function parseTask(name: string, raw: unknown): TaskSpec {
   const cwd = raw.cwd === undefined ? undefined : assertString(raw.cwd, `${where}.cwd`);
   const env = parseEnv(raw.env, where);
   const needs = parseNeeds(raw.needs, `${where}.needs`);
-  const idempotent = parseIdempotent(raw.idempotent, where);
+  const runOnce = parseRunOnce(raw.run_once, where);
   const spec: TaskSpec = { name, command, cwd, env, needs };
-  if (idempotent !== undefined) spec.idempotent = idempotent;
+  if (runOnce !== undefined) spec.runOnce = runOnce;
   return spec;
 }
 

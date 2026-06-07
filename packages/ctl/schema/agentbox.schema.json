@@ -251,7 +251,7 @@
         "cwd": { "type": "string" },
         "env": { "$ref": "#/$defs/env" },
         "needs": { "$ref": "#/$defs/needs" },
-        "idempotent": {
+        "run_once": {
           "description": "Skip the task when already satisfied. `true` stores a marker keyed by a hash of the command (re-runs when the command changes). `{ check: <command> }` runs a probe first and skips when it exits 0 (right for state outside the checkpointed filesystem, e.g. a containerized DB).",
           "oneOf": [
             { "type": "boolean" },

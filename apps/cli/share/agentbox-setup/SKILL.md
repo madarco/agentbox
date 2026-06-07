@@ -46,7 +46,7 @@ Look at `/workspace`:
 - **Tasks** = one-shot. `pnpm install`, DB migrations, codegen, fixture loaders, install apt packages. Wire dependent services with `needs:` so they wait for the task to finish successfully.
 - Names: must match `[A-Za-z0-9_-]+`. Task names and service names share a namespace — no collisions.
 - No cycles in `needs:`.
-- **Always generate a dependency-install task** and make it the root of the `needs:` graph (every service that needs deps gets `needs: [install, …]`). Future boxes start from a snapshot of the final filesystem so they won't need this, but updates or moving to a cloud provider might need to rebuild the container from scratch. The filesystem can be then later captured by `agentbox-ctl checkpoint --set-default`. The task must be **idempotent**: `agentbox-ctl` re-runs pending tasks on every box stop/start (the daemon dies with the container and is relaunched), so an unguarded install would reinstall on every start. The clean way is the **`idempotent: true`** field — the supervisor stores a marker keyed by a hash of the command and skips warm boots automatically (the marker lives at `/var/lib/agentbox/tasks/<name>`, on the box rootfs, captured by checkpoints, never polluting `/workspace`). Editing the command re-runs it. Detect the package manager from the lockfile — never hardcode `pnpm`. See the worked example below.
+- **Always generate a dependency-install task** and make it the root of the `needs:` graph (every service that needs deps gets `needs: [install, …]`). Future boxes start from a snapshot of the final filesystem so they won't need this, but updates or moving to a cloud provider might need to rebuild the container from scratch. The filesystem can be then later captured by `agentbox-ctl checkpoint --set-default`. The task must be **idempotent**: `agentbox-ctl` re-runs pending tasks on every box stop/start (the daemon dies with the container and is relaunched), so an unguarded install would reinstall on every start. The clean way is the **`run_once: true`** field — the supervisor stores a marker keyed by a hash of the command and skips warm boots automatically (the marker lives at `/var/lib/agentbox/tasks/<name>`, on the box rootfs, captured by checkpoints, never polluting `/workspace`). Editing the command re-runs it. Detect the package manager from the lockfile — never hardcode `pnpm`. See the worked example below.
 - **Add a comment to the beginning** of the file to explain what you did and what issues you encountered, so that future run might use this information in case the project evolves and you need to update the agentbox.yaml file.
 
 ### Stateful services: data persistence & re-seeding (read this for databases)
@@ -78,7 +78,7 @@ reload` to apply.) Install the DB client the migrate/seed tasks need (e.g.
 
 **A checkpoint does NOT capture docker-in-docker data.** `agentbox checkpoint` is a `docker commit` of the box's writable filesystem (the system + `/workspace`). The in-box `dockerd` keeps its storage in a *separate* per-box volume (`/var/lib/docker`), which is **not** part of that image — it's fresh on every new box and wiped on `agentbox destroy`. So a database or cache you run as a **docker container** (e.g. `docker run … postgres`) starts **empty on every new box** created from a checkpoint (every `agentbox claude` / `agentbox create`), even though `/workspace` and any marker files you wrote were restored. (A DB run as a **native process** with its data dir on the box filesystem — e.g. `postgres -D /var/lib/postgresql/data` — *is* captured by the checkpoint, since it lives in the writable layer.)
 
-**Consequence for migrate/seed tasks of a containerized DB: do NOT use `idempotent: true` (the marker form).** A command-hash marker is correct for deps (they live in `/workspace`, which the checkpoint captures), but **wrong** for DB data living in a docker volume: the marker is restored from the checkpoint while the DB is empty, so a marker-guarded seed wrongly skips and the app boots against an empty database. Instead use the **`idempotent: { check: <cmd> }`** form — the probe runs first and the seed runs unless the probe exits 0, and **no marker is written** (the DB is the source of truth). Gate on the actual data:
+**Consequence for migrate/seed tasks of a containerized DB: do NOT use `run_once: true` (the marker form).** A command-hash marker is correct for deps (they live in `/workspace`, which the checkpoint captures), but **wrong** for DB data living in a docker volume: the marker is restored from the checkpoint while the DB is empty, so a marker-guarded seed wrongly skips and the app boots against an empty database. Instead use the **`run_once: { check: <cmd> }`** form — the probe runs first and the seed runs unless the probe exits 0, and **no marker is written** (the DB is the source of truth). Gate on the actual data:
 
 ```yaml
   seed:
@@ -90,7 +90,7 @@ reload` to apply.) Install the DB client the migrate/seed tasks need (e.g.
     # the data is present.
     command: pnpm db:seed
     needs: [install, migrate]
-    idempotent:
+    run_once:
       check: |
         export PGPASSWORD=postgres
         psql -h 127.0.0.1 -p 5432 -U postgres -d app -tAc \
@@ -168,7 +168,7 @@ tasks:
   # Idempotent install. /workspace is the container's writable filesystem, so
   # node_modules persists across pause/stop/start and is captured by
   # `agentbox checkpoint`. The host's node_modules is macOS-native and is
-  # never copied in, so the first Linux install runs; `idempotent: true` then
+  # never copied in, so the first Linux install runs; `run_once: true` then
   # skips it on every subsequent box start (the supervisor stores a marker
   # keyed by a hash of the command). Adjust the lockfile detection to the
   # project's package manager.
@@ -180,7 +180,7 @@ tasks:
         corepack enable >/dev/null 2>&1 || true
         pnpm install --frozen-lockfile || pnpm install
       fi
-    idempotent: true
+    run_once: true
 
   migrate:
     command: pnpm db:migrate
@@ -277,7 +277,7 @@ On Vercel: this actually STOPS the sandbox, so warn the user about it. Also the 
 
 - Service like flask, nextjs, BETTER_AUTH_URL, NEXT_PUBLIC_APP_URL should use the `<boxname>.localhost` url for the local development so that on the host it will use the same url as the box. Render this automatically instead of hand-writing `sed` — see section 6c.
 
-- The `install` task above uses `idempotent: true`, so it is a no-op on warm boots. Do **not** wrap it in a manual marker check too. To force a one-off rebuild, run `agentbox-ctl run-task install --force` (which bypasses the idempotent marker), or edit the command (a changed command invalidates the hash and re-runs).
+- The `install` task above uses `run_once: true`, so it is a no-op on warm boots. Do **not** wrap it in a manual marker check too. To force a one-off rebuild, run `agentbox-ctl run-task install --force` (which bypasses the run_once marker), or edit the command (a changed command invalidates the hash and re-runs).
 
 ## 11. Pin URLs / render config files (env, secrets)
 
@@ -295,12 +295,12 @@ Many apps hard-code a hostname (e.g. `optima.localhost`) or read a gitignored `.
   tasks:
     env:
       # The render is idempotent (the rules re-pin the same lines every boot), so
-      # no `idempotent:` guard is needed — it self-corrects on a checkpoint-started
+      # no `run_once:` guard is needed — it self-corrects on a checkpoint-started
       # box that carries a different box's host in .env.
       command: agentbox-ctl render apps/saas/env.example --out apps/saas/.env --env --rules box-host
   ```
 
-  Note: an `idempotent: { check: <cmd> }` probe runs verbatim via `bash -c` with the box env — use shell vars like `$AGENTBOX_BOX_NAME`, NOT `{{…}}` placeholders (those are only expanded by `render`/carry, never by the supervisor).
+  Note: an `run_once: { check: <cmd> }` probe runs verbatim via `bash -c` with the box env — use shell vars like `$AGENTBOX_BOX_NAME`, NOT `{{…}}` placeholders (those are only expanded by `render`/carry, never by the supervisor).
 
   **Generated secrets:** put `{{AGENTBOX_AUTO_SECRET}}` in the template for a value like `BETTER_AUTH_SECRET` instead of shelling out to `openssl rand`. Unnamed → a fresh 32-byte base64url secret each render (stable when you render the template→`.env` once). `{{AGENTBOX_AUTO_SECRET:better-auth}}` → generated once, persisted at `/var/lib/agentbox/secrets/<name>`, reused on every render (stable even if you render every boot). Example `env.example` line: `BETTER_AUTH_SECRET="{{AGENTBOX_AUTO_SECRET:better-auth}}"`.
 

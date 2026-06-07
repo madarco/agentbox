@@ -29,7 +29,7 @@ function lineCount(path: string): number {
   return readFileSync(path, 'utf8').split('\n').filter((l) => l.length > 0).length;
 }
 
-describe('idempotent tasks', () => {
+describe('run_once tasks', () => {
   let dir: string;
   let stateDir: string;
 
@@ -46,7 +46,7 @@ describe('idempotent tasks', () => {
 
   it('marker form: skips on a warm boot, leaving the command unrun', async () => {
     const ran = join(dir, 'ran');
-    const task = { name: 't', command: `: > '${ran}'`, needs: [], idempotent: { kind: 'marker' } as const };
+    const task = { name: 't', command: `: > '${ran}'`, needs: [], runOnce: { kind: 'marker' } as const };
 
     const sup1 = mk();
     await sup1.init(taskCfg(task));
@@ -66,7 +66,7 @@ describe('idempotent tasks', () => {
   it('marker form: re-runs when the command changes', async () => {
     const sup1 = mk();
     await sup1.init(
-      taskCfg({ name: 't', command: 'true', needs: [], idempotent: { kind: 'marker' } }),
+      taskCfg({ name: 't', command: 'true', needs: [], runOnce: { kind: 'marker' } }),
     );
     await waitForTaskDone(sup1, 't');
     await sup1.stopAll();
@@ -74,7 +74,7 @@ describe('idempotent tasks', () => {
     const ran2 = join(dir, 'ran2');
     const sup2 = mk();
     await sup2.init(
-      taskCfg({ name: 't', command: `: > '${ran2}'`, needs: [], idempotent: { kind: 'marker' } }),
+      taskCfg({ name: 't', command: `: > '${ran2}'`, needs: [], runOnce: { kind: 'marker' } }),
     );
     await waitForTaskDone(sup2, 't');
     expect(existsSync(ran2)).toBe(true); // changed command invalidated the marker
@@ -88,7 +88,7 @@ describe('idempotent tasks', () => {
       name: 't',
       command: `echo x >> '${runs}'`,
       needs: [],
-      idempotent: { kind: 'check', command: `test -f '${satisfied}'` } as const,
+      runOnce: { kind: 'check', command: `test -f '${satisfied}'` } as const,
     };
 
     // Probe fails (no satisfied file) → task runs.
@@ -115,7 +115,7 @@ describe('idempotent tasks', () => {
     const blocker = join(dir, 'blocker');
     await writeFile(blocker, '');
     const badStateDir = join(blocker, 'agentbox');
-    const task = { name: 't', command: `: > '${ran}'`, needs: [], idempotent: { kind: 'marker' } as const };
+    const task = { name: 't', command: `: > '${ran}'`, needs: [], runOnce: { kind: 'marker' } as const };
 
     const sup1 = new Supervisor({ workspace: dir, logDir: dir, stateDir: badStateDir });
     await sup1.init(taskCfg(task));
@@ -137,7 +137,7 @@ describe('idempotent tasks', () => {
       name: 't',
       command: `echo x >> '${runs}'`,
       needs: [],
-      idempotent: { kind: 'marker' } as const,
+      runOnce: { kind: 'marker' } as const,
     };
     const sup = mk();
     await sup.init(taskCfg(task));

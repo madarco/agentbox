@@ -307,7 +307,7 @@ export interface ClaudeSessionStatus {
 export const DEFAULT_SOCKET_PATH = '/run/agentbox/ctl.sock';
 export const DEFAULT_CONFIG_PATH = '/workspace/agentbox.yaml';
 export const DEFAULT_LOG_DIR = '/var/log/agentbox';
-// Where idempotent-task completion markers live. On the box rootfs (survives
+// Where run_once task completion markers live. On the box rootfs (survives
 // pause/stop/start and is captured by `docker commit` checkpoints) but NOT under
 // /workspace, so markers never show up as untracked git changes.
 export const DEFAULT_STATE_DIR = '/var/lib/agentbox';

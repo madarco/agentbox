@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { DEFAULT_LOG_DIR, DEFAULT_STATE_DIR } from './types.js';
 
 /**
- * Resolve a writable base directory for supervisor/render state (idempotent-task
+ * Resolve a writable base directory for supervisor/render state (run_once task
  * markers, generated secrets). Prefer `want` (default /var/lib/agentbox — box
  * rootfs, checkpoint-captured, off /workspace), but the daemon runs as a
  * non-root user and that dir is root-owned on stock images, so fall back to

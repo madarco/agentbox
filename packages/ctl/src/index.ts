@@ -68,7 +68,7 @@ export {
   type RestartPolicy,
   type ServiceSpec,
   type TaskSpec,
-  type TaskIdempotent,
+  type RunOnceSpec,
 } from './config.js';
 export {
   parseCarryRaw,

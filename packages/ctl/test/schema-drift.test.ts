@@ -224,16 +224,16 @@ carry:
 `,
   },
   {
-    name: 'task with idempotent: true',
-    yaml: `tasks:\n  install:\n    command: pnpm install\n    idempotent: true\n`,
+    name: 'task with run_once: true',
+    yaml: `tasks:\n  install:\n    command: pnpm install\n    run_once: true\n`,
   },
   {
-    name: 'task with idempotent check',
+    name: 'task with run_once check',
     yaml: `
 tasks:
   seed:
     command: pnpm db:seed
-    idempotent:
+    run_once:
       check: "psql -tAc 'select 1' | grep -q 1"
 `,
   },
@@ -633,12 +633,12 @@ services:
     yaml: `services:\n  db:\n    image: postgres:17-alpine\n    container_name: "bad name"\n`,
   },
   {
-    name: 'idempotent as a string',
-    yaml: `tasks:\n  build:\n    command: pnpm build\n    idempotent: "yes"\n`,
+    name: 'run_once as a string',
+    yaml: `tasks:\n  build:\n    command: pnpm build\n    run_once: "yes"\n`,
   },
   {
-    name: 'idempotent object with unknown key',
-    yaml: `tasks:\n  build:\n    command: pnpm build\n    idempotent:\n      probe: foo\n`,
+    name: 'run_once object with unknown key',
+    yaml: `tasks:\n  build:\n    command: pnpm build\n    run_once:\n      probe: foo\n`,
   },
   {
     name: 'replacements rule missing to',

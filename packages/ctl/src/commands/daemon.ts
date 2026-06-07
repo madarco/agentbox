@@ -48,7 +48,7 @@ export const daemonCommand = new Command('daemon')
   .option('--socket <path>', 'unix socket path', DEFAULT_SOCKET_PATH)
   .option('--config <path>', 'path to agentbox.yaml', DEFAULT_CONFIG_PATH)
   .option('--log-dir <path>', 'where per-service log files are written', DEFAULT_LOG_DIR)
-  .option('--state-dir <path>', 'where idempotent-task markers are written', DEFAULT_STATE_DIR)
+  .option('--state-dir <path>', 'where run_once task markers are written', DEFAULT_STATE_DIR)
   .option('--workspace <path>', 'cwd for service processes', '/workspace')
   .action(async (opts: DaemonOptions) => {
     const cfg = await loadConfig(opts.config);

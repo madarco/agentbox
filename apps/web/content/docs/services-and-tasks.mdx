@@ -87,22 +87,20 @@ Tasks must be **idempotent**, because they re-run more often than you'd expect:
 - On a new box from a [checkpoint](/docs/checkpoints-and-pausing) the tasks run again on the warm filesystem.
 - Only `pause`/`unpause` skips them — the daemon is frozen and thawed, not restarted.
 
-For deps, guard the install task with a marker file in `/workspace` (e.g. `node_modules/.agentbox-installed`) so warm boots are a fast no-op — `/workspace` is part of the writable layer, so the marker is honest there.
+For deps, declare [`run_once: true`](/docs/agentbox-yaml#tasks) — the supervisor stores a command-hash marker on the box rootfs and skips warm boots automatically (no hand-written marker file).
 
-A **marker is the wrong guard for a containerized database's seed**, though. A [docker-in-docker](/docs/docker-in-docker) DB keeps its data in a per-box volume that checkpoints don't capture, so a box launched from a checkpoint has the marker (restored from `/workspace`) but an empty DB — and the seed wrongly skips. Gate the seed on the **actual data** instead: query the DB for a sentinel table/row and seed only when it's absent. That's a no-op once data exists (warm `stop`/`start`) and correctly re-seeds an empty DB (fresh checkpoint box).
+A **command-hash marker is the wrong guard for a containerized database's seed**, though. A [docker-in-docker](/docs/docker-in-docker) DB keeps its data in a per-box volume that checkpoints don't capture, so a box launched from a checkpoint has the marker but an empty DB — and the seed wrongly skips. Use the `run_once: { check }` form instead, gating on the **actual data**: the probe queries the DB for a sentinel row and the seed runs unless it exits 0. That's a no-op once data exists (warm `stop`/`start`) and correctly re-seeds an empty DB (fresh checkpoint box).
 
 ```yaml
 tasks:
   seed:
-    command: |
-      set -e
-      export PGPASSWORD=postgres
-      if psql -h 127.0.0.1 -p 5432 -U postgres -d app -tAc \
-          "SELECT EXISTS (SELECT 1 FROM users LIMIT 1)" 2>/dev/null | grep -q t; then
-        echo "data present — skip"; exit 0
-      fi
-      pnpm db:seed
+    command: pnpm db:seed
     needs: [install, migrate]
+    run_once:
+      check: |
+        export PGPASSWORD=postgres
+        psql -h 127.0.0.1 -p 5432 -U postgres -d app -tAc \
+          "SELECT EXISTS (SELECT 1 FROM users LIMIT 1)" 2>/dev/null | grep -q t
 ```
 
 ## Status & logs

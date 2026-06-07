@@ -44,7 +44,7 @@ class Ring<T> {
 export interface RunnerOptions {
   logDir: string;
   cwd: string;
-  /** Directory for idempotent-task completion markers. */
+  /** Directory for run_once task completion markers. */
   stateDir: string;
   spawn?: typeof spawn;
   setTimer?: (fn: () => void, ms: number) => NodeJS.Timeout;
@@ -472,7 +472,7 @@ export class TaskRunner extends EventEmitter<TaskRunnerEvents> implements Unit {
     return join(this.opts.stateDir, 'tasks', this.spec.name);
   }
 
-  /** Run the `idempotent.check` probe. Resolves true when it exits 0. */
+  /** Run the `run_once.check` probe. Resolves true when it exits 0. */
   private runCheck(command: string, cwd: string): Promise<boolean> {
     return new Promise((resolve) => {
       let child: ChildProcess;
@@ -485,7 +485,7 @@ export class TaskRunner extends EventEmitter<TaskRunnerEvents> implements Unit {
       } catch (err) {
         this.appendEvent(
           'stderr',
-          `[ctl] idempotent check spawn failed: ${err instanceof Error ? err.message : String(err)}`,
+          `[ctl] run_once check spawn failed: ${err instanceof Error ? err.message : String(err)}`,
         );
         resolve(false);
         return;
@@ -503,11 +503,11 @@ export class TaskRunner extends EventEmitter<TaskRunnerEvents> implements Unit {
   }
 
   /** Returns a human reason if the task is already satisfied (skip), else null. */
-  private async idempotentSkipReason(cwd: string): Promise<string | null> {
-    const idem = this.spec.idempotent;
-    if (!idem) return null;
-    if (idem.kind === 'check') {
-      return (await this.runCheck(idem.command, cwd)) ? 'check passed' : null;
+  private async runOnceSkipReason(cwd: string): Promise<string | null> {
+    const ro = this.spec.runOnce;
+    if (!ro) return null;
+    if (ro.kind === 'check') {
+      return (await this.runCheck(ro.command, cwd)) ? 'check passed' : null;
     }
     try {
       const have = (await readFile(this.markerPath(), 'utf8')).trim();
@@ -526,7 +526,7 @@ export class TaskRunner extends EventEmitter<TaskRunnerEvents> implements Unit {
     } catch (err) {
       this.appendEvent(
         'stderr',
-        `[ctl] could not write idempotent marker: ${err instanceof Error ? err.message : String(err)}`,
+        `[ctl] could not write run_once marker: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
@@ -537,16 +537,16 @@ export class TaskRunner extends EventEmitter<TaskRunnerEvents> implements Unit {
     const force = this.forceNext;
     this.forceNext = false;
 
-    // Idempotency gate: skip the command entirely if already satisfied. `force`
-    // (run-task --force) bypasses it. Note: for non-idempotent tasks there is no
+    // run_once gate: skip the command entirely if already satisfied. `force`
+    // (run-task --force) bypasses it. Note: for tasks without run_once there is no
     // await here, so launch stays synchronous through to `setState('running')`.
-    if (spec.idempotent && !force) {
+    if (spec.runOnce && !force) {
       this.evaluating = true;
       try {
-        const reason = await this.idempotentSkipReason(cwd);
+        const reason = await this.runOnceSkipReason(cwd);
         if (reason) {
           this.ensureLogStream();
-          this.appendEvent('stdout', `[ctl] idempotent: ${reason} — skip`);
+          this.appendEvent('stdout', `[ctl] run_once: ${reason} — skip`);
           this.startedAt = new Date();
           this.finishedAt = new Date();
           this.lastExitCode = 0;
@@ -599,7 +599,7 @@ export class TaskRunner extends EventEmitter<TaskRunnerEvents> implements Unit {
       this.finishedAt = new Date();
       this.child = null;
       this.appendEvent('stderr', `[ctl] exited code=${String(code)} signal=${signal ?? 'none'}`);
-      if (code === 0 && spec.idempotent?.kind === 'marker') {
+      if (code === 0 && spec.runOnce?.kind === 'marker') {
         void this.writeMarker(cwd);
       }
       this.setState(code === 0 ? 'done' : 'failed');
@@ -625,7 +625,7 @@ export class TaskRunner extends EventEmitter<TaskRunnerEvents> implements Unit {
 export interface SupervisorOptions {
   workspace: string;
   logDir: string;
-  /** Directory for idempotent-task markers (default {@link DEFAULT_STATE_DIR}). */
+  /** Directory for run_once task markers (default {@link DEFAULT_STATE_DIR}). */
   stateDir?: string;
   spawn?: typeof spawn;
   /**
@@ -747,7 +747,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
   }
 
   /**
-   * Pick a writable directory for idempotent-task markers. Prefer the configured
+   * Pick a writable directory for run_once task markers. Prefer the configured
    * stateDir (default /var/lib/agentbox), but the daemon runs as a non-root user
    * and that path is root-owned on stock images, so fall back to a dir under
    * logDir — always daemon-writable, on the box rootfs (captured by checkpoints),
@@ -758,7 +758,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
       this.opts.stateDir ?? DEFAULT_STATE_DIR,
       this.opts.logDir,
       'tasks',
-      (m) => process.stderr.write(`[ctl] idempotent markers: ${m}\n`),
+      (m) => process.stderr.write(`[ctl] run_once markers: ${m}\n`),
     );
   }
 
@@ -1129,7 +1129,7 @@ function normalizeTask(t: TaskSpec): unknown {
     cwd: t.cwd ?? null,
     env: t.env ?? null,
     needs: [...t.needs].sort(),
-    idempotent: t.idempotent ?? null,
+    runOnce: t.runOnce ?? null,
   };
 }
 
