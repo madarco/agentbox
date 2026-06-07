@@ -19,12 +19,13 @@ In-repo examples use a local relative path instead; published projects use the U
 
 ## Top-level keys
 
-All four top-level keys are optional, and unknown keys are rejected (`additionalProperties: false`). A missing or empty `agentbox.yaml` is completely fine — `create` does not fail without one.
+All top-level keys are optional, and unknown keys are rejected (`additionalProperties: false`). A missing or empty `agentbox.yaml` is completely fine — `create` does not fail without one.
 
 | Key | Read by | Purpose |
 | --- | --- | --- |
 | `services` | supervisor | Long-running processes (map of name → spec). |
 | `tasks` | supervisor | One-shot units that run to completion before dependents. |
+| `replacements` | supervisor + host | Named reusable text-substitution rule-sets — see [replacements](#replacements). |
 | `ide` | host (`agentbox code`) | VS Code attach customizations; the supervisor ignores it. |
 | `defaults` | host (`@agentbox/config`) | Project-level AgentBox config defaults. |
 
@@ -93,29 +94,39 @@ Use the array form of `command` to avoid shell quoting; use the string form (`ba
 
 ## Tasks
 
-A task is a one-shot unit that runs to completion. It accepts **only** four fields: `command`, `cwd`, `env`, and `needs`. Tasks cannot have `restart`, `autostart`, `backoff`, or `ready_when` — the schema rejects them. That is the key distinction from services.
+A task is a one-shot unit that runs to completion. It accepts **only** five fields: `command`, `cwd`, `env`, `needs`, and `idempotent`. Tasks cannot have `restart`, `autostart`, `backoff`, or `ready_when` — the schema rejects them. That is the key distinction from services.
 
 A task moves through `pending → waiting → running → done`, and can land in `failed` or `skipped`. Tasks run before dependent services via `needs:`. Typical use: install deps, build, seed a database.
 
-Make tasks **idempotent** — they re-run on every supervisor restart (which happens on box start, not just create). Guard slow paths with a marker file, as in the repo-root `agentbox.yaml`:
+Tasks **re-run on every supervisor restart** (which happens on box start, not just create). So a task must be idempotent. The `idempotent` field makes the supervisor skip an already-satisfied task for you — no more hand-rolled marker checks:
 
 ```yaml
 tasks:
   install:
-    command: |
-      set -e
-      MARKER=node_modules/.agentbox-installed
-      if [ -f "$MARKER" ]; then
-        echo "deps already installed (marker present) — skipping"
-        exit 0
-      fi
-      corepack enable >/dev/null 2>&1 || true
-      pnpm install --frozen-lockfile || pnpm install
-      touch "$MARKER"
+    command: pnpm install --frozen-lockfile
+    idempotent: true            # skip while the command is unchanged
 
   build:
     command: pnpm build
     needs: [install]
+```
+
+`idempotent` takes two forms:
+
+| Form | Behavior |
+| --- | --- |
+| `idempotent: true` | The supervisor stores a marker keyed by a **hash of the resolved command**. A warm boot skips while the hash matches; editing the command invalidates it and re-runs. The marker lives at `/var/lib/agentbox/tasks/<name>` (box rootfs — captured by checkpoints, never under `/workspace`). |
+| `idempotent: { check: <cmd> }` | Run the probe before launching; **exit 0 means already satisfied** (skip). No marker is written — the probe is the source of truth. Use this when the thing you'd guard on lives **outside** the checkpointed filesystem (e.g. a containerized database, whose data is in the in-box docker volume, not the checkpoint). |
+
+```yaml
+tasks:
+  seed:
+    command: pnpm db:seed
+    needs: [migrate]
+    # Probe the DB itself — a file marker would be restored from the checkpoint
+    # while the containerized DB starts empty, wrongly skipping the seed.
+    idempotent:
+      check: "psql -tAc \"select 1 from \\\"user\\\" limit 1\" | grep -q 1"
 ```
 
 Re-run a task in-box:
@@ -125,10 +136,10 @@ $ agentbox-ctl run-task install
 $ agentbox-ctl run-task install --force
 ```
 
-`run-task` resets the task to pending so the scheduler reruns it; it is a no-op on an already-`done` task unless you pass `--force`.
+`run-task` resets the task to pending so the scheduler reruns it; it is a no-op on an already-`done` task unless you pass `--force`. `--force` also bypasses the `idempotent` skip (marker or check) and, for the marker form, rewrites the marker.
 
 <Callout type="warn" title="HEADS UP">
-Tasks re-run on every daemon start, not just at create. A non-idempotent task (an unguarded `git init`, a destructive migration) will fire repeatedly — guard it with a marker file.
+Tasks re-run on every daemon start, not just at create. A non-idempotent task (an unguarded `git init`, a destructive migration) will fire repeatedly — declare `idempotent:` (or guard it yourself). Prefer the `{ check }` form for state that a checkpoint does not capture (containerized DB data), where a filesystem marker would desync.
 </Callout>
 
 ## ready_when
@@ -265,6 +276,9 @@ See [configuration](/docs/configuration) for the full key set and precedence. No
 | `user` | Numeric uid that owns the file in-box (default `1000` = `vscode`; `0` keeps it root-owned). |
 | `exclude` | List of tar globs / bare dir names to drop when copying a **directory** (additive on top of the defaults below). |
 | `optional` | `true` skips a missing `src` silently instead of erroring. |
+| `replaceEnvs` | `true` substitutes `{{AGENTBOX_*}}` placeholders in the file content host-side before copying (**file entries only**). See [replacements](#replacements). |
+| `replace` | Inline replacement rules applied (in order) before copying (**file only**). |
+| `rules` | Names of top-level [`replacements:`](#replacements) rule-sets to apply (**file only**). |
 
 A shorthand string form `"src=dest"` (or just `"src"` to mirror) is also accepted.
 
@@ -299,6 +313,62 @@ You can also set `AGENTBOX_CARRY_YES=1` or `AGENTBOX_CARRY=skip`. Note that `-y`
 </Callout>
 
 Mark credential entries `optional: true` so a box still comes up when a given file or agent isn't installed on the host. For how non-carry env files reach the box, see [environment](/docs/environment); for how git state is seeded, see [sync and git](/docs/sync-and-git) and [teleport a project](/docs/teleport-a-project).
+
+## replacements
+
+`replacements` declares **reusable, named text-substitution rule-sets** that both the `carry:` block (host-side) and the in-box `agentbox-ctl render` CLI can reference by name. Each rule is `{ from, to }` with optional `regex` / `flags`; `to` may contain `{{AGENTBOX_*}}` placeholders.
+
+```yaml
+replacements:
+  box-host:
+    # Repoint a hard-coded hostname at this box's published URL.
+    - from: '\.optima\.localhost'
+      to: '.{{AGENTBOX_BOX_NAME}}.localhost'
+      regex: true
+```
+
+Two ways to apply substitutions:
+
+**1. Carry-time (host→box files).** A `carry:` file entry can opt into `replaceEnvs: true` (placeholder substitution) and/or `replace:` (inline rules) and/or `rules:` (named refs). The file is rendered host-side into a temp copy before the copy — the original host file is never modified, and the box name is known by then:
+
+```yaml
+carry:
+  - src: ~/secrets/.env.prod
+    dest: /workspace/apps/saas/.env
+    replaceEnvs: true
+    rules: [box-host]
+```
+
+**2. In-box (files already in the workspace).** `agentbox-ctl render` is a declarative `sed` replacement — handy for rendering a gitignored `.env` from a committed `env.example` on every boot:
+
+```yaml
+tasks:
+  env:
+    command: agentbox-ctl render apps/saas/env.example --out apps/saas/.env --env --rules box-host
+    idempotent:
+      check: "grep -q '{{AGENTBOX_BOX_HOST}}' apps/saas/.env"
+```
+
+### Placeholders
+
+`replaceEnvs` / `--env` substitute a fixed **whitelist** of `{{...}}` placeholders (a stray `{{FOO}}` is left untouched, and secrets are never substitutable):
+
+| Placeholder | Value |
+| --- | --- |
+| `{{AGENTBOX_BOX_NAME}}` | The box name. |
+| `{{AGENTBOX_BOX_HOST}}` | The published portless host, `<box-name>.localhost`. |
+| `{{AGENTBOX_BOX_ID}}` | The box id. |
+| `{{AGENTBOX_BOX_KIND}}` | `docker` or `cloud`. |
+| `{{AGENTBOX_HOST_WORKSPACE}}` | Host workspace path. |
+| `{{AGENTBOX_PROJECT_ROOT}}` | Project root. |
+
+Arbitrary substitutions go through explicit `replace:` / `rules:` rules, not the placeholder whitelist.
+
+`agentbox-ctl render <src>` flags: `--out <path>` (or `--in-place`, else stdout), `--env` (placeholder substitution), `--rules <names>` (comma-separated `replacements:` refs), `--rule 'from=>to'` (literal, repeatable), and `--rule-regex 'pat=>repl'` (regex, repeatable).
+
+<Callout title="TIP">
+Reach for `replaceEnvs`/`render` instead of hand-written `sed`: an `env` task that pins `BETTER_AUTH_URL`/`NEXT_PUBLIC_APP_URL` to `https://{{AGENTBOX_BOX_HOST}}` becomes a one-liner, and the box and host browser then resolve the app at the same URL.
+</Callout>
 
 ## Validating the file
 

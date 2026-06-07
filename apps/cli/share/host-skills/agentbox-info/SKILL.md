@@ -237,7 +237,7 @@ Per-project numeric index (`1`, `2`, …) and friendly name (`review`, `smoke`) 
 2. **Use `-i` whenever the user asks for parallel agent work** rather than spawning multiple foreground sessions. Then point them at `agentbox dashboard` to watch progress.
 3. **Pick the provider deliberately.** `docker` is the fast default. `--provider hetzner` gives a real VPS (heavier, isolated, requires `agentbox prepare --provider hetzner` once). `--provider vercel` is the managed cloud option.
 4. **Cross-check before recommending a command.** If a flag isn't listed here, run `agentbox <command> --help` (it's safe and read-only) before suggesting it to the user.
-5. **`/agentbox-setup` is a different skill.** It runs *inside* a box to generate `/workspace/agentbox.yaml`. Don't conflate it with `/agentbox` (host-side fork) or this reference skill.
+5. **`/agentbox-setup` is a different skill.** It runs *inside* a box to generate `/workspace/agentbox.yaml`. Don't conflate it with `/agentbox` (host-side fork) or this reference skill. When authoring `agentbox.yaml`, prefer the declarative `idempotent: true` / `idempotent: { check }` task field over hand-rolled marker/probe guards, and `agentbox-ctl render` / carry `replaceEnvs` over `sed` for pinning env URLs to `{{AGENTBOX_BOX_HOST}}`.
 
 ## Reference
 
