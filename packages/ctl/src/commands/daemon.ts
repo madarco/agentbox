@@ -18,6 +18,7 @@ import {
   DEFAULT_CLAUDE_SESSION_NAME,
   DEFAULT_CONFIG_PATH,
   DEFAULT_LOG_DIR,
+  DEFAULT_STATE_DIR,
   DEFAULT_SOCKET_PATH,
 } from '../types.js';
 
@@ -38,6 +39,7 @@ interface DaemonOptions {
   socket: string;
   config: string;
   logDir: string;
+  stateDir: string;
   workspace: string;
 }
 
@@ -46,13 +48,19 @@ export const daemonCommand = new Command('daemon')
   .option('--socket <path>', 'unix socket path', DEFAULT_SOCKET_PATH)
   .option('--config <path>', 'path to agentbox.yaml', DEFAULT_CONFIG_PATH)
   .option('--log-dir <path>', 'where per-service log files are written', DEFAULT_LOG_DIR)
+  .option('--state-dir <path>', 'where idempotent-task markers are written', DEFAULT_STATE_DIR)
   .option('--workspace <path>', 'cwd for service processes', '/workspace')
   .action(async (opts: DaemonOptions) => {
     const cfg = await loadConfig(opts.config);
     // Cloud backends that can't expose port 80 (Vercel) set AGENTBOX_WEB_PROXY_PORT
     // so the WebProxy binds a reachable non-privileged port. Unset → default 80.
     const webProxyPort = Number(process.env.AGENTBOX_WEB_PROXY_PORT) || undefined;
-    const sup = new Supervisor({ workspace: opts.workspace, logDir: opts.logDir, webProxyPort });
+    const sup = new Supervisor({
+      workspace: opts.workspace,
+      logDir: opts.logDir,
+      stateDir: opts.stateDir,
+      webProxyPort,
+    });
     await sup.init(cfg);
     const reporter = new StatusReporter({
       supervisor: sup,

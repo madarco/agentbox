@@ -32,7 +32,18 @@
       "description": "Host-side AgentBox layered-config defaults for this project. Same shape as ~/.agentbox/config.yaml. The supervisor ignores this; @agentbox/config validates it strictly when loaded. See https://agent-box.sh/schema/user-config.schema.json for the full key set.",
       "additionalProperties": true
     },
-    "carry": { "$ref": "#/$defs/carry" }
+    "carry": { "$ref": "#/$defs/carry" },
+    "replacements": {
+      "type": "object",
+      "description": "Named reusable replacement rule-sets. Reference them by name from `carry[].rules` (host-side) and `agentbox-ctl render --rules` (in-box). Each value is an ordered list of {from,to,regex?} rules; `to` may contain {{AGENTBOX_*}} placeholders.",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[A-Za-z0-9_-]+$": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/replaceRule" }
+        }
+      }
+    }
   },
   "$defs": {
     "carry": {
@@ -83,10 +94,49 @@
             "optional": {
               "type": "boolean",
               "description": "true skips a missing src silently instead of erroring."
+            },
+            "replaceEnvs": {
+              "type": "boolean",
+              "description": "Substitute {{AGENTBOX_*}} whitelist placeholders in the file content host-side before copying. File entries only."
+            },
+            "replace": {
+              "type": "array",
+              "description": "Inline replacement rules applied (in order) before copying. File entries only.",
+              "items": { "$ref": "#/$defs/replaceRule" }
+            },
+            "rules": {
+              "type": "array",
+              "description": "Names of top-level `replacements:` rule-sets to apply before copying. File entries only.",
+              "items": { "type": "string", "minLength": 1 }
             }
           }
         }
       ]
+    },
+    "replaceRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "description": "A single text substitution. `to` may contain {{AGENTBOX_*}} placeholders.",
+      "properties": {
+        "from": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Literal substring to replace, or a JS regex source when `regex: true`."
+        },
+        "to": {
+          "type": "string",
+          "description": "Replacement text. Supports {{AGENTBOX_*}} placeholders (and $1 backrefs when `regex: true`)."
+        },
+        "regex": {
+          "type": "boolean",
+          "description": "Treat `from` as a JS regex (with `flags`). Default false (literal)."
+        },
+        "flags": {
+          "type": "string",
+          "description": "Regex flags (default `g`). Ignored unless `regex` is true."
+        }
+      }
     },
     "command": {
       "description": "Shell string (run via `bash -c`) or argv array. Non-empty.",
@@ -173,7 +223,25 @@
         "command": { "$ref": "#/$defs/command" },
         "cwd": { "type": "string" },
         "env": { "$ref": "#/$defs/env" },
-        "needs": { "$ref": "#/$defs/needs" }
+        "needs": { "$ref": "#/$defs/needs" },
+        "idempotent": {
+          "description": "Skip the task when already satisfied. `true` stores a marker keyed by a hash of the command (re-runs when the command changes). `{ check: <command> }` runs a probe first and skips when it exits 0 (right for state outside the checkpointed filesystem, e.g. a containerized DB).",
+          "oneOf": [
+            { "type": "boolean" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["check"],
+              "properties": {
+                "check": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Probe command (run via `bash -c`). Exit 0 = already satisfied, skip the task."
+                }
+              }
+            }
+          ]
+        }
       }
     },
     "backoff": {

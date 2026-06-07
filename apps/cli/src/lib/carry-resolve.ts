@@ -2,7 +2,7 @@ import { realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import { BUILT_IN_DEFAULTS } from '@agentbox/config';
-import type { CarryItem } from '@agentbox/ctl';
+import { resolveRuleRefs, type CarryItem, type ReplaceRule } from '@agentbox/ctl';
 import { effectiveExcludes, isPathExcluded, toTarExcludes } from './dir-breakdown.js';
 
 /**
@@ -31,6 +31,10 @@ export interface ResolvedCarryEntry {
   symlinkInfo?: 'safe' | 'outside-home';
   /** tar `--exclude` patterns applied when packing a dir entry. */
   exclude?: string[];
+  /** Substitute `{{AGENTBOX_*}}` placeholders host-side before copy (file only). */
+  replaceEnvs?: boolean;
+  /** Final replacement rules (named refs already expanded). File only. */
+  replace?: ReplaceRule[];
 }
 
 export interface ResolveOptions {
@@ -44,6 +48,8 @@ export interface ResolveOptions {
    * built-in `box.cpMaxBytes` when omitted.
    */
   maxBytes?: number;
+  /** Top-level `replacements:` rule-sets, for expanding carry `rules:` refs. */
+  replacements?: Record<string, ReplaceRule[]>;
 }
 
 export interface ResolveResult {
@@ -61,6 +67,7 @@ export async function resolveCarry(
   const home = opts.homeDir ?? homedir();
   const cap = opts.maxBytes ?? BUILT_IN_DEFAULTS.box.cpMaxBytes;
   const projectRoot = opts.projectRoot;
+  const replacements = opts.replacements ?? {};
 
   const entries: ResolvedCarryEntry[] = [];
   const errors: string[] = [];
@@ -68,7 +75,7 @@ export async function resolveCarry(
   for (const [i, item] of items.entries()) {
     const where = `carry[${String(i)}]`;
     try {
-      const entry = await resolveOne(item, { projectRoot, home, cap, where });
+      const entry = await resolveOne(item, { projectRoot, home, cap, where, replacements });
       entries.push(entry);
     } catch (err) {
       errors.push(err instanceof Error ? err.message : String(err));
@@ -83,6 +90,7 @@ interface OneCtx {
   home: string;
   cap: number;
   where: string;
+  replacements: Record<string, ReplaceRule[]>;
 }
 
 async function resolveOne(item: CarryItem, ctx: OneCtx): Promise<ResolvedCarryEntry> {
@@ -98,12 +106,28 @@ async function resolveOne(item: CarryItem, ctx: OneCtx): Promise<ResolvedCarryEn
   const rawDest = item.dest;
   const absDest = item.dest;
 
+  // Expand named rule-set refs + inline rules into a single ordered list.
+  const hasReplaceOpts = !!(item.replaceEnvs || item.replace || item.rules);
+  const replaceRules: ReplaceRule[] = [
+    ...resolveRuleRefs(item.rules ?? [], ctx.replacements, `${ctx.where}.rules`),
+    ...(item.replace ?? []),
+  ];
+  const replaceFields =
+    hasReplaceOpts && (item.replaceEnvs || replaceRules.length > 0)
+      ? {
+          ...(item.replaceEnvs ? { replaceEnvs: true } : {}),
+          ...(replaceRules.length > 0 ? { replace: replaceRules } : {}),
+        }
+      : {};
+
   let st: Awaited<ReturnType<typeof stat>>;
   try {
     st = await stat(absSrc);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       if (optional) {
+        // A missing optional entry is skipped at transfer time, so replace
+        // options are moot — don't carry them onto the tombstone.
         return {
           rawSrc,
           rawDest,
@@ -142,6 +166,11 @@ async function resolveOne(item: CarryItem, ctx: OneCtx): Promise<ResolvedCarryEn
   }
 
   if (st.isDirectory()) {
+    if (hasReplaceOpts) {
+      throw new Error(
+        `${ctx.where}: replaceEnvs/replace/rules are file-only (src "${absSrc}" is a directory)`,
+      );
+    }
     // Default heavy-dir excludes + the entry's own patterns, applied to both
     // the size accounting and the copy step so the cap weighs only what lands.
     const tokens = effectiveExcludes(item.exclude ?? [], true);
@@ -184,6 +213,7 @@ async function resolveOne(item: CarryItem, ctx: OneCtx): Promise<ResolvedCarryEn
       ...(item.user !== undefined ? { user: item.user } : {}),
       optional,
       ...(symlinkInfo ? { symlinkInfo } : {}),
+      ...replaceFields,
     };
   }
 

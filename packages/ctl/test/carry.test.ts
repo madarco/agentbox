@@ -157,6 +157,41 @@ describe('parseCarryRaw', () => {
   });
 });
 
+describe('carry replace options', () => {
+  it('parses replaceEnvs + inline replace + rules refs', () => {
+    const [item] = parseCarryRaw([
+      {
+        src: '~/secrets/.env.prod',
+        dest: '/workspace/apps/saas/.env',
+        replaceEnvs: true,
+        rules: ['box-host'],
+        replace: [{ from: 'optima.localhost', to: '{{AGENTBOX_BOX_HOST}}' }],
+      },
+    ]);
+    expect(item?.replaceEnvs).toBe(true);
+    expect(item?.rules).toEqual(['box-host']);
+    expect(item?.replace).toEqual([{ from: 'optima.localhost', to: '{{AGENTBOX_BOX_HOST}}' }]);
+  });
+
+  it('rejects replaceEnvs of the wrong type', () => {
+    expect(() => parseCarryRaw([{ src: './a', dest: '~/a', replaceEnvs: 'yes' }])).toThrow(
+      CarryConfigError,
+    );
+  });
+
+  it('rejects a replace rule missing to', () => {
+    expect(() => parseCarryRaw([{ src: './a', dest: '~/a', replace: [{ from: 'x' }] }])).toThrow(
+      CarryConfigError,
+    );
+  });
+
+  it('rejects an invalid regex in a replace rule', () => {
+    expect(() =>
+      parseCarryRaw([{ src: './a', dest: '~/a', replace: [{ from: '(', to: 'y', regex: true }] }]),
+    ).toThrow(CarryConfigError);
+  });
+});
+
 describe('config schema drift', () => {
   // Ensures `carry` is tolerated as a top-level key in the supervisor's
   // parseConfig — the supervisor MUST not reject yaml that declares it,

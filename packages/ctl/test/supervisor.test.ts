@@ -24,7 +24,7 @@ function taskSpec(over: Partial<TaskSpec> & { name: string; command: string | st
 }
 
 function cfg(services: ServiceSpec[], tasks: TaskSpec[] = []): CtlConfig {
-  return { services, tasks };
+  return { services, tasks, replacements: {} };
 }
 
 async function waitFor<T>(fn: () => T | null | undefined, timeoutMs = 2000): Promise<T> {

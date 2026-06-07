@@ -30,6 +30,7 @@ export {
   DEFAULT_CLAUDE_SESSION_NAME,
   DEFAULT_CONFIG_PATH,
   DEFAULT_LOG_DIR,
+  DEFAULT_STATE_DIR,
   DEFAULT_SOCKET_PATH,
 } from './types.js';
 export {
@@ -67,6 +68,7 @@ export {
   type RestartPolicy,
   type ServiceSpec,
   type TaskSpec,
+  type TaskIdempotent,
 } from './config.js';
 export {
   parseCarryRaw,
@@ -75,3 +77,20 @@ export {
   CarryConfigError,
   type CarryItem,
 } from './carry.js';
+export {
+  applyReplacements,
+  substitutePlaceholders,
+  placeholderContextFromEnv,
+  parseReplaceRule,
+  parseReplaceRules,
+  parseReplacements,
+  parseReplacementsSection,
+  loadReplacementsSection,
+  resolveRuleRefs,
+  parseRuleArg,
+  PLACEHOLDER_KEYS,
+  ReplaceError,
+  type ReplaceRule,
+  type ApplyReplacementsOptions,
+  type PlaceholderKey,
+} from './replace.js';

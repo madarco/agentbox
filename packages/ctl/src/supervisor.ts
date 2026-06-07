@@ -1,7 +1,8 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createWriteStream, type WriteStream } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   describeCommand,
@@ -10,6 +11,7 @@ import {
   type ServiceSpec,
   type TaskSpec,
 } from './config.js';
+import { DEFAULT_STATE_DIR } from './types.js';
 import { startProbe, type ProbeHandle } from './probe.js';
 import { RelayClient } from './relay-client.js';
 import { WebProxy } from './web-proxy.js';
@@ -41,6 +43,8 @@ class Ring<T> {
 export interface RunnerOptions {
   logDir: string;
   cwd: string;
+  /** Directory for idempotent-task completion markers. */
+  stateDir: string;
   spawn?: typeof spawn;
   setTimer?: (fn: () => void, ms: number) => NodeJS.Timeout;
   clearTimer?: (h: NodeJS.Timeout) => void;
@@ -374,6 +378,11 @@ export class TaskRunner extends EventEmitter<TaskRunnerEvents> implements Unit {
   private logStream: WriteStream | null = null;
   private readonly ring = new Ring<LogEvent>(RING_SIZE);
   private readonly spawnFn: typeof spawn;
+  // True while the async idempotency gate is evaluating, so the scheduler won't
+  // launch the task twice before its first state transition lands.
+  private evaluating = false;
+  // Set by a forced re-run (run-task --force) to bypass the idempotency gate.
+  private forceNext = false;
 
   constructor(
     public readonly spec: TaskSpec,
@@ -417,15 +426,18 @@ export class TaskRunner extends EventEmitter<TaskRunnerEvents> implements Unit {
 
   start(): void {
     if (this.state !== 'pending' && this.state !== 'waiting') return;
-    this.launch();
+    if (this.evaluating) return;
+    void this.launch();
   }
 
   /**
    * Force the task back to pending so the scheduler can re-run it. Used by
-   * reload when the spec changed, and (PR 5) by the run-task wire op.
+   * reload when the spec changed, and by the run-task wire op. `force` bypasses
+   * the idempotency gate on the next launch (run-task --force).
    */
-  resetForRerun(): void {
-    if (this.state === 'running') return;
+  resetForRerun(force = false): void {
+    if (this.state === 'running' || this.evaluating) return;
+    this.forceNext = force;
     this.state = 'pending';
     this.startedAt = null;
     this.finishedAt = null;
@@ -439,18 +451,113 @@ export class TaskRunner extends EventEmitter<TaskRunnerEvents> implements Unit {
     this.emit('state', next);
   }
 
-  private launch(): void {
+  private ensureLogStream(): void {
+    if (this.logStream) return;
+    this.logStream = createWriteStream(join(this.opts.logDir, `${this.spec.name}.log`), {
+      flags: 'a',
+    });
+    this.logStream.on('error', (err) => {
+      this.appendEvent('stderr', `[ctl] log write error: ${err.message}`);
+    });
+  }
+
+  /** SHA-256 of the resolved command + cwd + env — invalidates on any change. */
+  private commandHash(cwd: string): string {
+    const payload = JSON.stringify({ command: this.spec.command, cwd, env: this.spec.env ?? null });
+    return createHash('sha256').update(payload).digest('hex');
+  }
+
+  private markerPath(): string {
+    return join(this.opts.stateDir, 'tasks', this.spec.name);
+  }
+
+  /** Run the `idempotent.check` probe. Resolves true when it exits 0. */
+  private runCheck(command: string, cwd: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      let child: ChildProcess;
+      try {
+        child = this.spawnFn('bash', ['-c', command], {
+          cwd,
+          env: { ...process.env, PATH: loginShellPath(), ...(this.spec.env ?? {}) },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch (err) {
+        this.appendEvent(
+          'stderr',
+          `[ctl] idempotent check spawn failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        resolve(false);
+        return;
+      }
+      const onLine = (stream: 'stdout' | 'stderr') => (chunk: Buffer) => {
+        for (const line of chunk.toString('utf8').split(/\r?\n/)) {
+          if (line.length > 0) this.appendEvent(stream, `[check] ${line}`);
+        }
+      };
+      child.stdout?.on('data', onLine('stdout'));
+      child.stderr?.on('data', onLine('stderr'));
+      child.on('error', () => resolve(false));
+      child.on('exit', (code) => resolve(code === 0));
+    });
+  }
+
+  /** Returns a human reason if the task is already satisfied (skip), else null. */
+  private async idempotentSkipReason(cwd: string): Promise<string | null> {
+    const idem = this.spec.idempotent;
+    if (!idem) return null;
+    if (idem.kind === 'check') {
+      return (await this.runCheck(idem.command, cwd)) ? 'check passed' : null;
+    }
+    try {
+      const have = (await readFile(this.markerPath(), 'utf8')).trim();
+      if (have === this.commandHash(cwd)) return 'marker matches';
+    } catch {
+      // missing/unreadable marker → run the task
+    }
+    return null;
+  }
+
+  private async writeMarker(cwd: string): Promise<void> {
+    const marker = this.markerPath();
+    try {
+      await mkdir(join(this.opts.stateDir, 'tasks'), { recursive: true });
+      await writeFile(marker, `${this.commandHash(cwd)}\n`, 'utf8');
+    } catch (err) {
+      this.appendEvent(
+        'stderr',
+        `[ctl] could not write idempotent marker: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  private async launch(): Promise<void> {
     const spec = this.spec;
     const cwd = resolveCwd(spec.cwd, this.opts.cwd);
+    const force = this.forceNext;
+    this.forceNext = false;
 
-    if (!this.logStream) {
-      this.logStream = createWriteStream(join(this.opts.logDir, `${spec.name}.log`), {
-        flags: 'a',
-      });
-      this.logStream.on('error', (err) => {
-        this.appendEvent('stderr', `[ctl] log write error: ${err.message}`);
-      });
+    // Idempotency gate: skip the command entirely if already satisfied. `force`
+    // (run-task --force) bypasses it. Note: for non-idempotent tasks there is no
+    // await here, so launch stays synchronous through to `setState('running')`.
+    if (spec.idempotent && !force) {
+      this.evaluating = true;
+      try {
+        const reason = await this.idempotentSkipReason(cwd);
+        if (reason) {
+          this.ensureLogStream();
+          this.appendEvent('stdout', `[ctl] idempotent: ${reason} — skip`);
+          this.startedAt = new Date();
+          this.finishedAt = new Date();
+          this.lastExitCode = 0;
+          this.setState('done');
+          return;
+        }
+      } finally {
+        this.evaluating = false;
+      }
     }
+
+    this.ensureLogStream();
 
     const { bin, args } = spawnArgs(spec.command);
 
@@ -491,6 +598,9 @@ export class TaskRunner extends EventEmitter<TaskRunnerEvents> implements Unit {
       this.finishedAt = new Date();
       this.child = null;
       this.appendEvent('stderr', `[ctl] exited code=${String(code)} signal=${signal ?? 'none'}`);
+      if (code === 0 && spec.idempotent?.kind === 'marker') {
+        void this.writeMarker(cwd);
+      }
       this.setState(code === 0 ? 'done' : 'failed');
     });
     child.on('error', (err) => {
@@ -514,6 +624,8 @@ export class TaskRunner extends EventEmitter<TaskRunnerEvents> implements Unit {
 export interface SupervisorOptions {
   workspace: string;
   logDir: string;
+  /** Directory for idempotent-task markers (default {@link DEFAULT_STATE_DIR}). */
+  stateDir?: string;
   spawn?: typeof spawn;
   /**
    * Port the in-box WebProxy binds (forwarding to the `expose:` service).
@@ -636,6 +748,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     const runner = new ServiceRunner(spec, {
       logDir: this.opts.logDir,
       cwd: this.opts.workspace,
+      stateDir: this.opts.stateDir ?? DEFAULT_STATE_DIR,
       spawn: this.opts.spawn,
     });
     runner.on('log', (ev) => this.emit('log', ev));
@@ -649,6 +762,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     const runner = new TaskRunner(spec, {
       logDir: this.opts.logDir,
       cwd: this.opts.workspace,
+      stateDir: this.opts.stateDir ?? DEFAULT_STATE_DIR,
       spawn: this.opts.spawn,
     });
     runner.on('log', (ev) => this.emit('log', ev));
@@ -721,7 +835,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     if (!t) throw new Error(`unknown task: ${name}`);
     if (t.getState() === 'done' && !force) return t.getStatus();
     if (t.getState() === 'running') return t.getStatus();
-    t.resetForRerun();
+    t.resetForRerun(force);
     this.schedule();
     return t.getStatus();
   }
@@ -993,6 +1107,7 @@ function normalizeTask(t: TaskSpec): unknown {
     cwd: t.cwd ?? null,
     env: t.env ?? null,
     needs: [...t.needs].sort(),
+    idempotent: t.idempotent ?? null,
   };
 }
 

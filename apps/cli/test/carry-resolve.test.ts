@@ -162,4 +162,43 @@ describe('resolveCarry', () => {
     );
     expect(res.entries[0]?.mode).toBe(0o600);
   });
+
+  it('expands named rule-set refs + inline rules onto a file entry', async () => {
+    await writeFile(join(home, 'e'), 'x');
+    const res = await resolveCarry(
+      [item('~/e', '/workspace/e', { replaceEnvs: true, rules: ['host'], replace: [{ from: 'a', to: 'b' }] })],
+      {
+        projectRoot: workspace,
+        homeDir: home,
+        replacements: { host: [{ from: 'optima', to: '{{AGENTBOX_BOX_NAME}}' }] },
+      },
+    );
+    expect(res.errors).toEqual([]);
+    expect(res.entries[0]?.replaceEnvs).toBe(true);
+    expect(res.entries[0]?.replace).toEqual([
+      { from: 'optima', to: '{{AGENTBOX_BOX_NAME}}' },
+      { from: 'a', to: 'b' },
+    ]);
+  });
+
+  it('rejects replace options on a directory entry', async () => {
+    await mkdir(join(home, 'd'));
+    await writeFile(join(home, 'd', 'f'), 'x');
+    const res = await resolveCarry([item('~/d', '/workspace/d', { replaceEnvs: true })], {
+      projectRoot: workspace,
+      homeDir: home,
+    });
+    expect(res.entries).toHaveLength(0);
+    expect(res.errors[0]).toMatch(/file-only/);
+  });
+
+  it('errors on an unknown rule-set ref', async () => {
+    await writeFile(join(home, 'e'), 'x');
+    const res = await resolveCarry([item('~/e', '/workspace/e', { rules: ['ghost'] })], {
+      projectRoot: workspace,
+      homeDir: home,
+    });
+    expect(res.entries).toHaveLength(0);
+    expect(res.errors[0]).toMatch(/unknown replacements rule-set/);
+  });
 });

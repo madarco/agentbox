@@ -223,6 +223,50 @@ carry:
     user: 1000
 `,
   },
+  {
+    name: 'task with idempotent: true',
+    yaml: `tasks:\n  install:\n    command: pnpm install\n    idempotent: true\n`,
+  },
+  {
+    name: 'task with idempotent check',
+    yaml: `
+tasks:
+  seed:
+    command: pnpm db:seed
+    idempotent:
+      check: "psql -tAc 'select 1' | grep -q 1"
+`,
+  },
+  {
+    name: 'top-level replacements block',
+    yaml: `
+replacements:
+  box-host:
+    - from: '\\.optima\\.localhost'
+      to: '.{{AGENTBOX_BOX_NAME}}.localhost'
+      regex: true
+services:
+  web:
+    command: pnpm dev
+`,
+  },
+  {
+    name: 'carry mapping with replaceEnvs + replace + rules',
+    yaml: `
+replacements:
+  box-host:
+    - from: optima.localhost
+      to: '{{AGENTBOX_BOX_HOST}}'
+carry:
+  - src: ~/secrets/.env.prod
+    dest: /workspace/apps/saas/.env
+    replaceEnvs: true
+    rules: [box-host]
+    replace:
+      - from: PLACEHOLDER
+        to: '{{AGENTBOX_BOX_NAME}}'
+`,
+  },
 ];
 
 const INVALID: Fixture[] = [
@@ -536,6 +580,37 @@ services:
   {
     name: 'carry not an array (schema-only)',
     yaml: `carry: 42\n`,
+    schemaOnly: true,
+  },
+  {
+    name: 'idempotent as a string',
+    yaml: `tasks:\n  build:\n    command: pnpm build\n    idempotent: "yes"\n`,
+  },
+  {
+    name: 'idempotent object with unknown key',
+    yaml: `tasks:\n  build:\n    command: pnpm build\n    idempotent:\n      probe: foo\n`,
+  },
+  {
+    name: 'replacements rule missing to',
+    yaml: `replacements:\n  r:\n    - from: a\n`,
+  },
+  {
+    name: 'replacements rule unknown key',
+    yaml: `replacements:\n  r:\n    - from: a\n      to: b\n      bogus: 1\n`,
+  },
+  {
+    name: 'replacements invalid regex (validator-only)',
+    yaml: `replacements:\n  r:\n    - from: "(unclosed"\n      to: b\n      regex: true\n`,
+    runtimeOnly: true,
+  },
+  {
+    name: 'carry replace rule missing to (schema-only)',
+    yaml: `carry:\n  - src: ./a\n    dest: ~/a\n    replace:\n      - from: x\n`,
+    schemaOnly: true,
+  },
+  {
+    name: 'carry replaceEnvs wrong type (schema-only)',
+    yaml: `carry:\n  - src: ./a\n    dest: ~/a\n    replaceEnvs: "yes"\n`,
     schemaOnly: true,
   },
 ];

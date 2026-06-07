@@ -3,8 +3,8 @@ import { ConfigError, parseConfig } from '../src/config.js';
 
 describe('parseConfig', () => {
   it('returns empty services for empty or absent doc', () => {
-    expect(parseConfig('')).toEqual({ services: [], tasks: [] });
-    expect(parseConfig('services: {}')).toEqual({ services: [], tasks: [] });
+    expect(parseConfig('')).toEqual({ services: [], tasks: [], replacements: {} });
+    expect(parseConfig('services: {}')).toEqual({ services: [], tasks: [], replacements: {} });
   });
 
   it('parses a minimal service with shell-string command', () => {

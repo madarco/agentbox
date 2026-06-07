@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { parse as parseYaml } from 'yaml';
+import { parseReplacements, type ReplaceRule } from './replace.js';
 
 export type RestartPolicy = 'always' | 'on-failure' | 'never';
 export type ProbeOnTimeout = 'kill' | 'mark_unhealthy';
@@ -46,12 +47,28 @@ export interface ExposeSpec {
   as: number;
 }
 
+/**
+ * Declarative idempotence for a task. The supervisor re-runs every task from
+ * `pending` on each box start; `idempotent` lets it skip a task that has
+ * already succeeded.
+ *
+ * - `{ kind: 'marker' }` (from `idempotent: true`) — the supervisor stores a
+ *   marker keyed by a hash of the resolved command; a warm boot skips while the
+ *   hash matches, and editing the command re-runs.
+ * - `{ kind: 'check', command }` (from `idempotent: { check: ... }`) — run the
+ *   probe before launching; exit 0 means already satisfied (skip). No marker:
+ *   the probe is the source of truth (right for data that lives outside the
+ *   checkpointed filesystem, e.g. a containerized DB).
+ */
+export type TaskIdempotent = { kind: 'marker' } | { kind: 'check'; command: string };
+
 export interface TaskSpec {
   name: string;
   command: string | string[];
   cwd?: string;
   env?: Record<string, string>;
   needs: string[];
+  idempotent?: TaskIdempotent;
 }
 
 export interface ServiceSpec {
@@ -71,6 +88,8 @@ export interface ServiceSpec {
 export interface CtlConfig {
   services: ServiceSpec[];
   tasks: TaskSpec[];
+  /** Named reusable replacement rule-sets (top-level `replacements:` block). */
+  replacements: Record<string, ReplaceRule[]>;
 }
 
 export const DEFAULT_BACKOFF: BackoffSpec = {
@@ -401,7 +420,24 @@ function parseService(name: string, raw: unknown): ServiceSpec {
   return { name, command, cwd, env, autostart, restart, backoff, needs, readyWhen, expose };
 }
 
-const TASK_KEYS = new Set(['command', 'cwd', 'env', 'needs']);
+const TASK_KEYS = new Set(['command', 'cwd', 'env', 'needs', 'idempotent']);
+
+function parseIdempotent(raw: unknown, where: string): TaskIdempotent | undefined {
+  if (raw === undefined || raw === null || raw === false) return undefined;
+  if (raw === true) return { kind: 'marker' };
+  if (isPlainObject(raw)) {
+    const keys = Object.keys(raw);
+    if (keys.length !== 1 || keys[0] !== 'check') {
+      throw new ConfigError(`${where}.idempotent object form must be exactly { check: <command> }`);
+    }
+    const check = raw.check;
+    if (typeof check !== 'string' || check.trim().length === 0) {
+      throw new ConfigError(`${where}.idempotent.check must be a non-empty command string`);
+    }
+    return { kind: 'check', command: check };
+  }
+  throw new ConfigError(`${where}.idempotent must be true or { check: <command> }`);
+}
 
 function parseTask(name: string, raw: unknown): TaskSpec {
   const where = `tasks.${name}`;
@@ -413,7 +449,10 @@ function parseTask(name: string, raw: unknown): TaskSpec {
   const cwd = raw.cwd === undefined ? undefined : assertString(raw.cwd, `${where}.cwd`);
   const env = parseEnv(raw.env, where);
   const needs = parseNeeds(raw.needs, `${where}.needs`);
-  return { name, command, cwd, env, needs };
+  const idempotent = parseIdempotent(raw.idempotent, where);
+  const spec: TaskSpec = { name, command, cwd, env, needs };
+  if (idempotent !== undefined) spec.idempotent = idempotent;
+  return spec;
 }
 
 function assertString(raw: unknown, where: string): string {
@@ -434,7 +473,10 @@ function assertBool(raw: unknown, where: string): boolean {
 // layer via @agentbox/ctl/carry, applied at create time). The supervisor never
 // reads it — listing it here only suppresses the unknown-key error so a project
 // yaml that declares `carry:` still parses cleanly inside the box.
-const TOP_LEVEL_KEYS = new Set(['services', 'tasks', 'ide', 'defaults', 'carry']);
+// `replacements` is the top-level reusable replacement-rule block, consumed by
+// the in-box `agentbox-ctl render` CLI and host-side `carry:` rule refs. We
+// parse + validate it here (regex compile-check) so a typo fails loud in-box.
+const TOP_LEVEL_KEYS = new Set(['services', 'tasks', 'ide', 'defaults', 'carry', 'replacements']);
 
 function validateUnitGraph(tasks: TaskSpec[], services: ServiceSpec[]): void {
   const names = new Set<string>();
@@ -500,7 +542,7 @@ export function parseConfig(text: string): CtlConfig {
   } catch (err) {
     throw new ConfigError(`yaml parse error: ${err instanceof Error ? err.message : String(err)}`);
   }
-  if (doc === null || doc === undefined) return { services: [], tasks: [] };
+  if (doc === null || doc === undefined) return { services: [], tasks: [], replacements: {} };
   if (!isPlainObject(doc)) {
     throw new ConfigError('top-level config must be a mapping');
   }
@@ -557,7 +599,14 @@ export function parseConfig(text: string): CtlConfig {
     );
   }
 
-  return { services, tasks };
+  let replacements: Record<string, ReplaceRule[]>;
+  try {
+    replacements = parseReplacements(doc.replacements);
+  } catch (err) {
+    throw new ConfigError(err instanceof Error ? err.message : String(err));
+  }
+
+  return { services, tasks, replacements };
 }
 
 export async function loadConfig(path: string): Promise<CtlConfig> {
@@ -566,7 +615,7 @@ export async function loadConfig(path: string): Promise<CtlConfig> {
     text = await readFile(path, 'utf8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { services: [], tasks: [] };
+      return { services: [], tasks: [], replacements: {} };
     }
     throw err;
   }

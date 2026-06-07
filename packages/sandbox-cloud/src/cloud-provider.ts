@@ -36,6 +36,7 @@ import {
   readState,
   recordBox,
   removeBoxRecord,
+  renderCarryEntries,
 } from '@agentbox/sandbox-core';
 import {
   buildTmuxConfigShellSnippet,
@@ -726,10 +727,21 @@ export function createCloudProvider(
           | undefined;
         if (req.carry && req.carry.length > 0) {
           log(`carry: copying ${String(req.carry.length)} host path(s) into the box`);
+          const entries = await renderCarryEntries(
+            req.carry,
+            {
+              name,
+              id,
+              kind: 'cloud',
+              hostWorkspace: req.workspacePath,
+              projectRoot: req.projectRoot,
+            },
+            log,
+          );
           const result = await uploadCarryPaths({
             backend,
             handle,
-            entries: req.carry,
+            entries,
             onLog: log,
           });
           log(`carry: copied ${String(result.copied)}/${String(req.carry.length)} entry/entries`);

@@ -20,6 +20,11 @@ export {
 } from './git-detect.js';
 export { hostOpenCommand } from './host-open.js';
 export {
+  carryPlaceholderContext,
+  renderCarryEntries,
+  type CarryBoxContext,
+} from './carry-render.js';
+export {
   computeContextSha256,
   DOCKER_CONTEXT_FILE_MAP,
   preparedStatePathFor,

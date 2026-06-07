@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { ConfigError, loadConfig } from '@agentbox/ctl';
+import { renderCarryEntries } from '@agentbox/sandbox-core';
 import { loadEffectiveConfig } from '@agentbox/config';
 import {
   buildClaudeMounts,
@@ -1114,9 +1115,14 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   let carrySummary: BoxRecord['carry'] | undefined;
   if (opts.carry && opts.carry.length > 0) {
     log(`carry: copying ${String(opts.carry.length)} host path(s) into the box`);
+    const entries = await renderCarryEntries(
+      opts.carry,
+      { name, id, kind: 'docker', hostWorkspace: workspace, projectRoot: opts.projectRoot },
+      log,
+    );
     const result = await copyCarryPathsToBox({
       container: containerName,
-      entries: opts.carry,
+      entries,
       onLog: log,
     });
     log(`carry: copied ${String(result.copied)}/${String(opts.carry.length)} entry/entries`);

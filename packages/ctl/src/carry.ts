@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { parse as parseYaml } from 'yaml';
+import { parseReplaceRules, type ReplaceRule } from './replace.js';
 
 /**
  * One entry from the host-side `carry:` block in `agentbox.yaml`.
@@ -26,6 +27,15 @@ export interface CarryItem {
    */
   exclude?: string[];
   optional: boolean;
+  /**
+   * Substitute `{{AGENTBOX_*}}` whitelist placeholders in the file content
+   * host-side before copying. File entries only.
+   */
+  replaceEnvs?: boolean;
+  /** Inline replacement rules applied (in order) before copying. File only. */
+  replace?: ReplaceRule[];
+  /** Names of top-level `replacements:` rule-sets to apply. File only. */
+  rules?: string[];
 }
 
 export class CarryConfigError extends Error {
@@ -35,7 +45,32 @@ export class CarryConfigError extends Error {
   }
 }
 
-const ITEM_KEYS = new Set(['src', 'dest', 'mode', 'user', 'exclude', 'optional']);
+const ITEM_KEYS = new Set([
+  'src',
+  'dest',
+  'mode',
+  'user',
+  'exclude',
+  'optional',
+  'replaceEnvs',
+  'replace',
+  'rules',
+]);
+
+function parseRulesRefs(raw: unknown, where: string): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new CarryConfigError(`${where}.rules must be a list of replacements rule-set names`);
+  }
+  const out: string[] = [];
+  for (const [i, v] of raw.entries()) {
+    if (typeof v !== 'string' || v.trim().length === 0) {
+      throw new CarryConfigError(`${where}.rules[${String(i)}] must be a non-empty string`);
+    }
+    out.push(v.trim());
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 function parseExclude(raw: unknown, where: string): string[] | undefined {
   if (raw === undefined || raw === null) return undefined;
@@ -202,10 +237,31 @@ function parseMapping(raw: Record<string, unknown>, where: string): CarryItem {
     optional = raw.optional;
   }
 
+  let replaceEnvs: boolean | undefined;
+  if (raw.replaceEnvs !== undefined && raw.replaceEnvs !== null) {
+    if (typeof raw.replaceEnvs !== 'boolean') {
+      throw new CarryConfigError(`${where}.replaceEnvs must be a boolean`);
+    }
+    replaceEnvs = raw.replaceEnvs;
+  }
+  let replace: ReplaceRule[] | undefined;
+  if (raw.replace !== undefined && raw.replace !== null) {
+    try {
+      const rules = parseReplaceRules(raw.replace, `${where}.replace`);
+      if (rules.length > 0) replace = rules;
+    } catch (err) {
+      throw new CarryConfigError(err instanceof Error ? err.message : String(err));
+    }
+  }
+  const rules = parseRulesRefs(raw.rules, where);
+
   const out: CarryItem = { src, dest, optional };
   if (mode !== undefined) out.mode = mode;
   if (user !== undefined) out.user = user;
   if (exclude !== undefined) out.exclude = exclude;
+  if (replaceEnvs !== undefined) out.replaceEnvs = replaceEnvs;
+  if (replace !== undefined) out.replace = replace;
+  if (rules !== undefined) out.rules = rules;
   return out;
 }
 

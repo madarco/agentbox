@@ -8,6 +8,7 @@
 
 import type { BoxRecord, ProviderName } from './box-record.js';
 import type { BoxEndpoints } from './endpoints.js';
+import type { ReplaceRule } from './replace.js';
 import type { BoxResourceStats } from './types.js';
 
 /** Coarse lifecycle state, identical across providers. */
@@ -50,6 +51,17 @@ export interface ResolvedCarryEntry {
    * along. Set by the host resolver; ignored for `file`/`missing` entries.
    */
   exclude?: string[];
+  /**
+   * Substitute `{{AGENTBOX_*}}` whitelist placeholders in the file content
+   * before copying (host-side). File entries only.
+   */
+  replaceEnvs?: boolean;
+  /**
+   * Custom replacement rules applied (in order) to the file content before
+   * copying. Named `replacements:` rule-sets are already expanded into this
+   * list by the host resolver. File entries only.
+   */
+  replace?: ReplaceRule[];
 }
 
 export interface CreateBoxRequest {

@@ -35,6 +35,7 @@ describe('socket protocol', () => {
     sup = new Supervisor({ workspace: dir, logDir: dir });
     await sup.init({
       tasks: [],
+      replacements: {},
       services: [
         spec({
           name: 'svc',
