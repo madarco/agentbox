@@ -389,15 +389,34 @@ async function e2bChecks(): Promise<CheckResult[]> {
  * check has a single, easy-to-read branch. Wrapped in try/catch in case a
  * future execa release reverts to throwing on spawn errors.
  */
+// Doctor probes a connector's auth state by running its CLI (e.g. `ntn api
+// v1/users/me`, `linear auth whoami`) — network calls that can stall, and that
+// would block on an interactive prompt. Keep doctor snappy and un-hangable:
+// cap each probe with a short timeout and never inherit stdin. (The relay uses
+// a far longer budget for *real* ops; this is just a health check.)
+const INTEGRATION_PROBE_TIMEOUT_MS = 10_000;
+
 async function probeIntegrationBin(
   bin: string,
   args: readonly string[],
 ): Promise<{ exitCode: number; stdout: string; stderr: string; missing: boolean }> {
   try {
-    const r = await execa(bin, [...args], { reject: false });
+    const r = await execa(bin, [...args], {
+      reject: false,
+      timeout: INTEGRATION_PROBE_TIMEOUT_MS,
+      stdin: 'ignore',
+    });
     const code = (r as { code?: string }).code;
     if (code === 'ENOENT') {
       return { exitCode: 127, stdout: '', stderr: r.stderr ?? '', missing: true };
+    }
+    if ((r as { timedOut?: boolean }).timedOut) {
+      return {
+        exitCode: 124,
+        stdout: '',
+        stderr: `timed out after ${String(INTEGRATION_PROBE_TIMEOUT_MS)}ms`,
+        missing: false,
+      };
     }
     return {
       exitCode: r.exitCode ?? 1,
