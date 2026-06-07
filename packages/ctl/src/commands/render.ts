@@ -42,14 +42,7 @@ export const renderCommand = new Command('render')
   .option('--config <path>', 'agentbox.yaml to read replacements: from', DEFAULT_CONFIG_PATH)
   .option('--state-dir <path>', 'where named {{AGENTBOX_AUTO_SECRET:x}} secrets persist', DEFAULT_STATE_DIR)
   .action(async (src: string, opts: RenderOptions) => {
-    const raw = await readFile(src, 'utf8');
-
-    // Resolve {{AGENTBOX_AUTO_SECRET}} tokens first (generate / persist), then
-    // the placeholder + rule substitutions.
-    const content = await resolveAutoSecrets(raw, {
-      stateDir: opts.stateDir,
-      onLog: (msg) => process.stderr.write(`agentbox-ctl render: ${msg}\n`),
-    });
+    const content = await readFile(src, 'utf8');
 
     const rules: ReplaceRule[] = [];
     if (opts.rules) {
@@ -65,11 +58,18 @@ export const renderCommand = new Command('render')
     for (const arg of opts.rule) rules.push(parseRuleArg(arg, false));
     for (const arg of opts.ruleRegex) rules.push(parseRuleArg(arg, true));
 
-    const result = applyReplacements(content, {
+    const replaced = applyReplacements(content, {
       env: opts.env,
       rules,
       context: placeholderContextFromEnv(),
       onWarn: (msg) => process.stderr.write(`agentbox-ctl render: ${msg}\n`),
+    });
+
+    // Secret expansion runs last, so a rule may emit an
+    // {{AGENTBOX_AUTO_SECRET}} token that this pass then resolves.
+    const result = await resolveAutoSecrets(replaced, {
+      stateDir: opts.stateDir,
+      onLog: (msg) => process.stderr.write(`agentbox-ctl render: ${msg}\n`),
     });
 
     if (opts.inPlace) {
