@@ -69,7 +69,7 @@ e2e. v2.0.0 surface (richer than the plan assumed):
 - `pnpm typecheck && pnpm test && pnpm build` green → `/simplify` → `/review high`
   → PR into `add-ticketing-integrations` → fix bugbot → merge.
 
-### LT2 — Live e2e against Waldosai + nested-box best-effort + closeout  — **status: not started**
+### LT2 — Live e2e against Waldosai + nested-box best-effort + closeout  — **status: done (2026-06-07)**
 - Orchestrator prep (host): rebuild + restart relay with LT1 merged; set
   `integrations.linear.enabled=true` in host project config.
 - Primary e2e from inside a box: `linear whoami` (read, no prompt) → `linear
@@ -136,3 +136,71 @@ e2e. v2.0.0 surface (richer than the plan assumed):
     pointer, `docs/host-relay.md` bullet extension, `docs/features.md`
     "what works today" bullet. Live e2e against the Waldosai workspace
     is LT2 — deliberately not run in LT1.
+- 2026-06-07: **LT2 shipped.** Live e2e against the `waldosai` workspace,
+  no code changes — the LT1 surface worked unchanged. Evidence captured
+  from inside an AgentBox box (in-box agent → host relay → host `linear`
+  v2.0.0 → Linear API):
+  - **Reads pass with no prompt.** `linear whoami` returns
+    `Workspace: waldosai … User: Marco D'Alia … Role: admin`. `linear
+    issue mine --team WAL --sort priority` and `linear issue list --team
+    WAL --sort priority` both exit 0 (empty result on `unstarted`, a
+    valid filtered read). `linear team list` returns `WAL Waldosai`
+    (UUID `09ca67e1-ccd7-499b-b2fa-63220d56ce08`). `linear api '{ viewer
+    { id name email } }'` returns `{"data":{"viewer":{"id":"85d5fa14-…",
+    "name":"Marco D'Alia","email":"accounts@waldos.ai"}}}` — the
+    `refuseGraphqlNonQuery` predicate correctly classifies the `{ … }`
+    shorthand as a query and passes it.
+  - **GraphQL mutation refused locally.** `linear api 'mutation {
+    issueDelete(id: "x") { success } }'` exits 65 with `linear api: only
+    GraphQL queries are proxied (use issue.create / issue.update /
+    issue.comment for writes); detected operation 'mutation'` — refused
+    before any host process is spawned (verified via both the shim path
+    and the direct `agentbox-ctl integration linear api` path; the gate
+    lives in the connector, not the shim).
+  - **`linear auth token` refused at the shim.** Exits 2 with
+    `'auth token' leaks the raw API key — refused. Use 'linear whoami'
+    for identity.`. The relay's op allowlist would also refuse it (no op
+    maps to `auth token`); the shim is the first of three defenses.
+  - **Gated writes work end-to-end.** `linear issue create --team WAL
+    --title "agentbox LT2 e2e 20260607T000618Z" -d "…"` round-tripped
+    through the relay's `askPrompt` → orchestrator approve → host
+    `linear` → Linear API; created **WAL-5**
+    (https://linear.app/waldosai/issue/WAL-5/agentbox-lt2-e2e-20260607t000618z).
+    Ground-truth read via `linear issue view WAL-5` confirms title +
+    description + Backlog state. `linear issue comment add WAL-5 -b
+    "agentbox LT2 e2e comment via host relay (gated write)"` added the
+    comment (URL with `#comment-3e8fe4e2` fragment). Ground-truth `linear
+    api '{ issue(id:"WAL-5") { … comments { nodes { body } } } }'`
+    confirms the comment body matches. `linear issue update WAL-5 -s
+    "Canceled"` moved the state; the post-update `linear issue view
+    WAL-5` shows `**State:** Canceled` and the comment thread. Three
+    gated writes, three approve→succeed→ground-truth-read cycles.
+  - **No-token assertion.** `printenv | grep -E '^LINEAR'` returns
+    nothing (`(no LINEAR_* keys present)`). The only token-shaped env
+    var in the box is `AGENTBOX_RELAY_TOKEN`. The carried
+    `~/.config/linear/credentials.toml` is on disk (it's for the
+    nested-box scenario where THIS box would host a nested-box's relay)
+    but no agent process reads it during the primary e2e — the host's
+    own `linear` does, host-side, via its own `~/.config/linear/`.
+  - **Nested-box e2e — deferred, same architectural reason as Notion.**
+    The in-box `agentbox-ctl` daemon forwards `/rpc` to the original
+    host relay (`host.docker.internal:8787`), not to a relay running in
+    this box. So a nested box's `linear issue create` would still
+    terminate at the **original** host's relay spawn, not in this box's
+    daemon — exercising the carry mechanics, not a different connector
+    spawn path. Also: installing the real `linear` in this box would
+    shadow the shim — `npm i -g @schpet/linear-cli` lands the binary at
+    `/usr/bin/linear` (npm prefix here is `/usr`), but the shim at
+    `/usr/local/bin/linear` precedes `/usr/bin` on `$PATH` and keeps
+    winning resolution, so the in-box agent would still hit the shim
+    and the daemon would need a separately-shaped PATH (or an absolute
+    `hostBin` path) to reach the real binary — out of scope here. Documented in `docs/integrations.md` under "Linear →
+    Nested-box e2e — deferred, not blocking" mirroring the Notion
+    sub-section. The carry block + `mergeConnectorEnv` namespace guard
+    are validated by the LT1 unit tests; a real nested-box round-trip
+    would require lifting the relay into the box's daemon (cross-cutting
+    follow-up tracked under both connectors' "Nested-box e2e" notes).
+  - No source changes needed — LT1's connector + shim + gate worked
+    as-shipped against the live host CLI. The pre-merge unit tests
+    matched live behaviour exactly (no LT4-style `pages` vs `page`
+    drift).
