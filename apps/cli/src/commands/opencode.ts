@@ -34,7 +34,7 @@ import {
   type BoxRecord,
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
-import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import { reattachRef, resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import {
   assertAgentCredsAvailable,
   MissingAgentCredsError,
@@ -66,11 +66,6 @@ import { maybePromptPortless } from '../portless-prompt.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
 
-/** Ref shown in the detach notice: the per-project index `n` when set, else the name. */
-function reattachRef(r: { projectIndex?: number; name: string }): string {
-  return typeof r.projectIndex === 'number' ? String(r.projectIndex) : r.name;
-}
-
 function pickOpencodeCreateOpts(opts: OpencodeCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
   return {
     workspace: opts.workspace,
@@ -100,7 +95,7 @@ const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
  * channel `agentbox claude`/`codex` use for host-action prompts), then exit
  * with the inner pty's code.
  */
-async function attachOpencodeWrapped(
+export async function attachOpencodeWrapped(
   box: { id: string; name: string; container: string; projectIndex?: number },
   sessionName: string | undefined,
   reattach: string,

@@ -39,15 +39,15 @@ The agent runs in a detachable tmux session whose prefix is **`Control+a`** (not
 
 `Control+a` also opens an actions menu: `c` (VS Code / Cursor), `s` (noVNC screen), `u` (box URL), **`t` (a fresh shell in the *same* box, opened in a new tab)**, and **`k` (destroy the box, after a confirmation)**. The shell tab opens as a cmux surface in the current workspace, a new tmux window, or a new iTerm2 tab depending on your terminal.
 
-Reattach with the `attach` subcommand, or resync your host config and reattach with `start`.
+Reattach with `agentbox attach` — it picks the running agent session in the box automatically. Resync your host config and (re)start a session with `agentbox claude start` (or `codex start` / `opencode start`).
 
 ```bash
 # detach from inside the session: press Control+a then d
-agentbox claude attach 1              # reattach to box 1's Claude session
+agentbox attach 1                     # reattach to whichever agent is running on box 1
 agentbox claude start mybox           # start a session (resyncs host ~/.claude)
 ```
 
-`attach` starts a session if none is running and auto-unpauses a stopped box, but **never resyncs your host `~/.claude`**. `start` does the resync — use it when new skills, plugins, or a fresh login should flow into the box. For `--attach-in`, `--no-attach`, and the other attach controls, see [CLI commands](/docs/cli).
+`agentbox attach` is agent-agnostic — if multiple agent sessions live in the same box it prompts you to pick. It never auto-starts: when nothing is running it prints a warning and exits non-zero. To start a fresh session use the agent's own command (`agentbox claude`, `codex`, `opencode`) — `start` also resyncs your host config so new skills, plugins, or a fresh login flow into the box. For `--attach-in`, `--no-attach`, and the other attach controls, see [CLI commands](/docs/cli).
 
 <Callout type="warn" title="HEADS UP">
 `attach` never resyncs your host `~/.claude` (skills, plugins, login). After installing a new skill or signing in on the host, use `claude start` (or a fresh `agentbox claude`) so the box picks it up.

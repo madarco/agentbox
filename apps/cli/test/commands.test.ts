@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { attachCommand } from '../src/commands/attach.js';
 import { checkpointCommand } from '../src/commands/checkpoint.js';
 import { claudeCommand } from '../src/commands/claude.js';
 import { createCommand } from '../src/commands/create.js';
@@ -167,6 +168,16 @@ describe('lifecycle CLI surface', () => {
     const attach = claudeCommand.commands.find((c) => c.name() === 'attach');
     expect(attach).toBeDefined();
     expect(attach!.options.map((o) => o.long)).toContain('--session-name');
+  });
+
+  it('attach is a top-level command with optional [box] and --session-name / --attach-in / --inline', () => {
+    expect(attachCommand.name()).toBe('attach');
+    expect(attachCommand.registeredArguments).toHaveLength(1);
+    expect(attachCommand.registeredArguments[0]!.required).toBe(false);
+    const longs = attachCommand.options.map((o) => o.long);
+    expect(longs).toEqual(
+      expect.arrayContaining(['--session-name', '--attach-in', '--inline']),
+    );
   });
 
   it('shell takes [box] + variadic [cmd...] and exposes the multi-shell flags', () => {

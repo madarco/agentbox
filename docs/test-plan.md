@@ -135,6 +135,12 @@ A regression checklist that an AI (or human) can drive end-to-end to declare Age
   - **Signal:** screen shows Claude TUI; sending `<C-a>d` cleanly detaches without killing the session.
   - **Note:** Tmux reattach works without spawning a duplicate.
 
+- [ ] **ATTACH-001** `agentbox attach` is agent-agnostic: probes for any live agent session, picks/prompts, never auto-starts.
+  - **Providers:** [all]
+  - **Run:** with claude-smoke running, `node apps/cli/dist/index.js attach claude-smoke < /dev/null` (probe + dispatch). Then `node apps/cli/dist/index.js shell claude-smoke -- tmux kill-session -t claude` and rerun `attach`.
+  - **Signal:** first run attaches to the claude session; second run prints `no agent session running in claude-smoke` to stderr and exits 1 (no spinner, no box prep). With both `claude` and `codex` tmux sessions live, a TTY run prompts a Clack picker; non-TTY picks the newest by `#{session_created}`.
+  - **Note:** The pre-probe in `apps/cli/src/commands/attach.ts` is the only thing preventing cloud `cloudAgentAttach` from auto-creating the session — verify the empty-session case on at least one cloud backend.
+
 - [ ] **CLAUDE-003** `claude start` resumes a stopped/paused box and launches session.
   - **Providers:** [all]
   - **Run:** `node apps/cli/dist/index.js stop claude-smoke` then `node apps/cli/dist/index.js claude start claude-smoke`.

@@ -23,7 +23,7 @@ A representative loop:
 node apps/cli/dist/index.js create -y -n smoke              # tail logs/latest.log
 node apps/cli/dist/index.js checkpoint create smoke --set-default
 node apps/cli/dist/index.js claude --host-snapshot -y -n cc -- --model sonnet
-# (in tmux) Ctrl+a d to detach; reattach with `agentbox claude attach cc`
+# (in tmux) Ctrl+a d to detach; reattach with `agentbox attach cc`
 node apps/cli/dist/index.js status smoke --inspect
 node apps/cli/dist/index.js destroy smoke -y
 node apps/cli/dist/index.js destroy cc -y

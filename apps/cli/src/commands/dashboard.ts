@@ -146,7 +146,7 @@ export const dashboardCommand = new Command('dashboard')
         log.error(
           'agentbox dashboard is unavailable here (native terminal backend failed to load)',
         );
-        log.info('use `agentbox claude` / `agentbox claude attach` instead');
+        log.info('use `agentbox claude` / `agentbox attach` instead');
         process.exit(2);
       }
 

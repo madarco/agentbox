@@ -18,7 +18,7 @@ agentbox claude
 agentbox codex
 ```
 
-It's one agent per box, but a box can hold multiple shell sessions — see [access your box](/docs/access-your-box). To launch many without the queue, detach each as you go: `Ctrl+a d` leaves the agent running, and `agentbox claude attach <box>` reattaches later.
+It's one agent per box, but a box can hold multiple shell sessions — see [access your box](/docs/access-your-box). To launch many without the queue, detach each as you go: `Ctrl+a d` leaves the agent running, and `agentbox attach <box>` reattaches later.
 
 <Callout type="warn" title="HEADS UP">
 These run with **no concurrency cap** — they all start immediately and each consumes CPU, RAM, and agent quota. To have AgentBox pace the runs for you, use the `-i` background queue below.
@@ -44,7 +44,7 @@ job a1b2c3d4e5f6a1b2c3 queued (2/5 running); log: ~/.agentbox/queue/a1b2c3d4e5f6
 
 Credentials for the chosen agent must already be on the host — the background worker can't do an interactive login. If they're missing, submission fails loud. Authenticate first (see [run an agent](/docs/run-an-agent)).
 
-By default a queued run opens nothing — attach later with `agentbox claude attach <box>`. To have the box pop open automatically the moment its worker finishes creating it, set [`queue.openIn`](/docs/configuration#queue--autopause) to `split`, `window`, or `tab` (when you submit from inside tmux, cmux, or iTerm2). The relay opens an attached terminal onto the box for you — no need to watch for it to come up.
+By default a queued run opens nothing — attach later with `agentbox attach <box>`. To have the box pop open automatically the moment its worker finishes creating it, set [`queue.openIn`](/docs/configuration#queue--autopause) to `split`, `window`, or `tab` (when you submit from inside tmux, cmux, or iTerm2). The relay opens an attached terminal onto the box for you — no need to watch for it to come up.
 
 <Callout type="warn" title="NOT PRINT MODE">
 `-i` is `--initial-prompt` (the background queue), **not** Claude's own `-p` headless print mode. The difference: `-i` seeds a real, **interactive** agent session you can attach to, drive, and resume — it just starts detached. `-p` is the non-interactive print mode that runs once and exits. To use print mode, pass it through after `--`:

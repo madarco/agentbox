@@ -775,7 +775,7 @@
       <div class="crow"><code>agentbox claude</code><span>Create a sandboxed box and launch Claude Code in a detachable tmux session.</span></div>
       <div class="crow"><code>agentbox &lt;provider&gt; claude</code><span>Launch sandboxed boxes on <b>Vercel</b>, <b>Hetzner</b>, <b>Daytona</b> or local <b>Docker</b>.</span></div>
       <div class="crow"><code>agentbox &lt;provider&gt; codex</code><span>Same, for <b>Codex</b> and <b>Open Code</b> — any agent, any provider.</span></div>
-      <div class="crow"><code>agentbox claude attach 2</code><span>Reattach to a running Claude session on box <span class="mono">2</span>.</span></div>
+      <div class="crow"><code>agentbox attach 2</code><span>Reattach to the running agent session on box <span class="mono">2</span> (claude, codex, or opencode — whichever is live).</span></div>
 
       <div class="cgroup-h">access</div>
       <div class="crow"><code>agentbox url</code><span>Open a box's web app URL in the browser.</span></div>
@@ -879,7 +879,7 @@
       { t: 'out', s: '⬡ provisioning box on vercel…', c: 'dim' },
       { t: 'out', s: '✓ box 2 ready · codex attached', c: 'ok' },
       { t: 'gap' },
-      { t: 'cmd', s: 'agentbox codex attach 2' },
+      { t: 'cmd', s: 'agentbox attach 2' },
       { t: 'out', s: '↳ reattaching to running session…', c: 'dim' },
       { t: 'out', s: '✓ resumed codex on box 2', c: 'ok' },
       { t: 'gap' },

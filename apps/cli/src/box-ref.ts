@@ -121,3 +121,10 @@ export async function resolveBoxOrExit(
   }
   throw new BoxNotFoundError(ref);
 }
+
+/** Ref shown in the detach notice / `attach` example: the per-project index `n`
+ *  when set (resolves from inside the project dir), else the globally-unique
+ *  name. Used by every per-agent attach command + the top-level `attach`. */
+export function reattachRef(r: { projectIndex?: number; name: string }): string {
+  return typeof r.projectIndex === 'number' ? String(r.projectIndex) : r.name;
+}

@@ -27,13 +27,16 @@ agentbox codex
 agentbox opencode
 ```
 
-Each agent command has three subcommands: `attach` reattaches to a running session (never re-syncs config), `start` (re)starts a session in an existing box (rsyncs host config unless `--no-sync-config`), and `login` runs that agent's auth flow.
+The agent-agnostic `agentbox attach [box]` reattaches to whichever agent session is running in the box (it prompts when more than one is live). It never auto-starts: when nothing is running it prints a warning and exits non-zero. Each agent command also exposes its own `attach` / `start` / `login` subcommands: per-agent `attach` reattaches *and* starts a session if none is running (never re-syncs config), `start` (re)starts a session in an existing box (rsyncs host config unless `--no-sync-config`), and `login` runs that agent's auth flow.
 
 ```bash
 # Create a box and drop into a shell once it's ready
 agentbox create --attach
 
-# Reattach to / restart a session in box 1
+# Reattach to whichever agent is running on box 1
+agentbox attach 1
+
+# Per-agent: reattach (auto-starts if none running) / restart a session
 agentbox claude attach 1
 agentbox claude start 1
 

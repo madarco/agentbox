@@ -15,7 +15,7 @@ export const HELP_GROUPS: HelpGroup[] = [
   { title: 'Create & run', commands: ['create', 'claude', 'fork', 'codex', 'opencode'] },
   {
     title: 'Access',
-    commands: ['dashboard', 'url', 'screen', 'code', 'shell', 'open', 'logs', 'drive'],
+    commands: ['dashboard', 'attach', 'url', 'screen', 'code', 'shell', 'open', 'logs', 'drive'],
   },
   { title: 'Inspect', commands: ['list', 'status', 'top', 'agent'] },
   { title: 'Lifecycle', commands: ['start', 'stop', 'destroy', 'pause', 'unpause'] },

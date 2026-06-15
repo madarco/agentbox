@@ -34,7 +34,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveClaudeAuth, type ResolvedClaudeAuth } from '../auth.js';
-import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import { reattachRef, resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import { assertAgentCredsAvailable, MissingAgentCredsError } from '../lib/queue/assert-creds.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { maybeResyncWorkspace } from '../lib/resync-start.js';
@@ -77,12 +77,6 @@ import { pasteHostClipboardImage } from '../lib/paste-image.js';
 import { clipboardCaptureAvailable } from '../lib/host-clipboard.js';
 import { handleLifecycleError } from './_errors.js';
 
-/** Ref shown in the detach notice: the per-project index `n` when set
- *  (resolves from inside the project dir), else the globally-unique name. */
-function reattachRef(r: { projectIndex?: number; name: string }): string {
-  return typeof r.projectIndex === 'number' ? String(r.projectIndex) : r.name;
-}
-
 /** Project an agent-create options struct down to what the queue worker needs. */
 function pickCreateOpts(opts: ClaudeCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
   return {
@@ -124,7 +118,7 @@ const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
  * transparently to plain spawnSync inside `runWrappedAttach` when stdio
  * isn't a TTY or node-pty isn't installed.
  */
-async function attachClaudeWrapped(
+export async function attachClaudeWrapped(
   box: BoxRecord,
   sessionName: string | undefined,
   reattach: string,
