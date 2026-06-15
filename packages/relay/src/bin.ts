@@ -17,18 +17,36 @@ program
   .description('Run the HTTP relay in the foreground')
   .option('--port <number>', 'port to listen on', String(DEFAULT_RELAY_PORT))
   .option('--host <addr>', 'bind address', '0.0.0.0')
-  .action(async (opts: { port: string; host: string }) => {
+  .option(
+    '--control-box',
+    'run as an always-on control box: gate /admin and /remote on AGENTBOX_RELAY_ADMIN_TOKEN instead of loopback',
+  )
+  .action(async (opts: { port: string; host: string; controlBox?: boolean }) => {
     const port = Number.parseInt(opts.port, 10);
     if (!Number.isFinite(port) || port <= 0 || port > 65535) {
       process.stderr.write(`agentbox-relay: invalid port "${opts.port}"\n`);
       process.exit(2);
     }
+    // In control-box mode the admin token comes from the box's root-only env
+    // file (sourced into this process); fail fast with a clear message rather
+    // than letting createRelayServer throw a generic error.
+    const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '';
+    if (opts.controlBox && adminToken.length === 0) {
+      process.stderr.write(
+        'agentbox-relay: --control-box requires AGENTBOX_RELAY_ADMIN_TOKEN to be set\n',
+      );
+      process.exit(2);
+    }
     const handle = await startRelayServer({
       port,
       host: opts.host,
+      controlBox: opts.controlBox === true,
+      adminToken,
       logger: (line) => process.stdout.write(`agentbox-relay: ${line}\n`),
     });
-    process.stdout.write(`agentbox-relay: listening on ${opts.host}:${String(port)}\n`);
+    process.stdout.write(
+      `agentbox-relay: listening on ${opts.host}:${String(port)}${opts.controlBox ? ' (control-box mode)' : ''}\n`,
+    );
 
     const autopause = startAutopauseLoop({
       registry: handle.registry,

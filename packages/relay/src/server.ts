@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { executeCloudAction, refreshCloudPreviewUrl } from './host-actions.js';
 import { HostActionQueue } from './host-action-queue.js';
@@ -82,6 +83,20 @@ export interface RelayServerOptions {
    * in-box agent cannot impersonate the host poller.
    */
   bridgeToken?: string;
+  /**
+   * Control-box mode: this `host`-mode relay runs on an always-on cloud box
+   * exposed publicly (behind the provider's HTTPS proxy) rather than on a
+   * laptop's loopback. When set, `/admin/*` (and `/remote/*`) are gated by a
+   * bearer match against `adminToken` instead of the source-IP loopback check
+   * — the provider proxy can present requests as loopback, so loopback is NOT
+   * trusted here. Requires a non-empty `adminToken` (enforced at startup).
+   */
+  controlBox?: boolean;
+  /**
+   * Bearer required on `/admin/*` and `/remote/*` when `controlBox` is set.
+   * Ignored otherwise (the laptop relay stays loopback-gated).
+   */
+  adminToken?: string;
 }
 
 export interface RelayServerHandle {
@@ -180,6 +195,14 @@ function isLoopbackAddress(addr: string | undefined): boolean {
   );
 }
 
+/** Constant-time string compare; false on length mismatch (never throws). */
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const ab = Buffer.from(a, 'utf8');
+  const bb = Buffer.from(b, 'utf8');
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
+
 /**
  * Build the relay HTTP server. Routes:
  *   POST /events                — bearer auth (box token), appends to ring buffer.
@@ -235,6 +258,15 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     throw new Error("relay mode='box' requires a non-empty bridgeToken");
   }
   const bridgeToken = opts.bridgeToken ?? '';
+  // Control-box mode gates /admin/* (and /remote/*) on a bearer instead of
+  // source-IP loopback, because the relay is reachable from the internet via
+  // the provider's HTTPS proxy. Fail closed: refuse to boot in control-box
+  // mode without a token rather than silently leaving admin loopback-open.
+  const controlBox = opts.controlBox ?? false;
+  const adminToken = opts.adminToken ?? '';
+  if (controlBox && adminToken.length === 0) {
+    throw new Error('relay controlBox mode requires a non-empty adminToken');
+  }
 
   // Host-mode pollers for cloud-tagged boxes; started on /admin/register-box,
   // stopped on /admin/forget-box. Lazy import to keep host-mode startup free
@@ -349,8 +381,22 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     // 0.0.0.0 so containers can reach /events and /rpc via host.docker.internal,
     // but admin operations (register-box, forget-box, list events, etc.) are
     // for the host CLI and must not be exposed to boxes.
-    if (url.pathname.startsWith('/admin/')) {
-      if (!isLoopbackAddress(req.socket.remoteAddress)) {
+    //
+    // In control-box mode the relay is exposed publicly behind the provider's
+    // HTTPS proxy, which can present requests as loopback — so loopback is NOT
+    // trusted. Admin (and /remote/*) require a valid admin bearer instead.
+    if (url.pathname.startsWith('/admin/') || url.pathname.startsWith('/remote/')) {
+      if (controlBox) {
+        if (!timingSafeEqualStr(bearerToken(req), adminToken)) {
+          send(res, 401, { error: 'invalid admin token' });
+          return;
+        }
+      } else if (url.pathname.startsWith('/remote/')) {
+        // /remote/* is a control-box-only surface; off the control box it does
+        // not exist (avoid advertising a half-wired endpoint on laptop relays).
+        send(res, 404, { error: 'not found', route });
+        return;
+      } else if (!isLoopbackAddress(req.socket.remoteAddress)) {
         send(res, 403, { error: 'admin endpoints are loopback-only' });
         return;
       }
