@@ -1,4 +1,4 @@
-import { confirm, isCancel, log } from '@clack/prompts';
+import { confirm, log } from '../lib/prompt.js';
 import { Command } from 'commander';
 import {
   DEFAULT_BOX_IMAGE,
@@ -60,7 +60,7 @@ export const downloadOpencodeCommand = new Command('opencode')
           message: `Download ${preview.newItems.length} OpenCode item(s) into ~/.config + ~/.local/share opencode? (existing items are never overwritten)`,
           initialValue: false,
         });
-        if (isCancel(ok) || !ok) {
+        if (!ok) {
           log.info('cancelled');
           return;
         }

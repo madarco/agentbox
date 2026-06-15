@@ -1,4 +1,4 @@
-import { confirm, isCancel, log, multiselect } from '@clack/prompts';
+import { confirm, log, multiselect } from './lib/prompt.js';
 import { findProjectRoot } from '@agentbox/config';
 import type { ProviderName } from '@agentbox/core';
 import { DEFAULT_ENV_PATTERNS, scanHostEnvFiles } from '@agentbox/sandbox-docker';
@@ -222,7 +222,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
         `Recreate the base${yamlSuffix}? (rebuilds the base — ~${mins} min — then starts fresh)`,
       initialValue: true,
     });
-    if (isCancel(rebuild) || !rebuild) {
+    if (!rebuild) {
       // Boot on the old base — keep any checkpoint as-is (the user opted in
       // to the existing artifact). Mirrors the "use it anyway" arm below.
       return {
@@ -258,7 +258,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
       message: `Snapshot "${args.checkpointRef}" is stale (${status.reason}). Start from base and run Setup Wizard? (No = use it anyway)`,
       initialValue: true,
     });
-    if (isCancel(recreate) || !recreate) {
+    if (!recreate) {
       // Use it anyway — keep the checkpoint, skip setup (create path warns).
       return { action: 'proceed' };
     }
@@ -310,7 +310,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
         initialValues: found,
         required: false,
       });
-      if (!isCancel(picked) && Array.isArray(picked) && picked.length > 0) {
+      if (picked.length > 0) {
         envFilesToImport = picked;
       }
     }
@@ -323,7 +323,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
       message: 'New project: run setup wizard? Will install dependencies and setup agentbox.yaml',
       initialValue: true,
     });
-    if (isCancel(go) || !go) {
+    if (!go) {
       return {
         action: 'proceed',
         envFilesToImport,

@@ -1,4 +1,4 @@
-import { isCancel, log, select } from '@clack/prompts';
+import { log, select } from './lib/prompt.js';
 import { fmtBytes } from './fmt.js';
 import type { ResolvedCarryEntry } from './lib/carry-resolve.js';
 
@@ -67,7 +67,6 @@ export async function promptForCarry(args: CarryPromptArgs): Promise<CarryDecisi
     initialValue: 'approve',
   });
 
-  if (isCancel(choice)) return 'cancel';
   return choice;
 }
 

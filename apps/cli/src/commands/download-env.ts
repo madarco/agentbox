@@ -1,4 +1,4 @@
-import { confirm, isCancel, log } from '@clack/prompts';
+import { confirm, log } from '../lib/prompt.js';
 import { Command } from 'commander';
 import {
   DEFAULT_ENV_PATTERNS,
@@ -94,7 +94,7 @@ export const downloadEnvCommand = new Command('env')
           message: `Download ${preview.changes.length} env/config file(s) into ${box.workspacePath}? (existing files will be overwritten)`,
           initialValue: false,
         });
-        if (isCancel(ok) || !ok) {
+        if (!ok) {
           log.info('cancelled');
           return;
         }

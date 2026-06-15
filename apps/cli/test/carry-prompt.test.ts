@@ -3,6 +3,7 @@ import { promptForCarry } from '../src/carry-prompt.js';
 import type { ResolvedCarryEntry } from '../src/lib/carry-resolve.js';
 
 vi.mock('@clack/prompts', () => ({
+  cancel: vi.fn(),
   isCancel: (v: unknown) => v === SYMBOL_CANCEL,
   log: { message: vi.fn() },
   select: vi.fn(),
@@ -77,10 +78,20 @@ describe('promptForCarry', () => {
     ).toBe('cancel');
   });
 
-  it('Ctrl-C (isCancel) maps to cancel', async () => {
+  it('Ctrl-C (isCancel) hard-exits with code 130', async () => {
     select.mockResolvedValueOnce(SYMBOL_CANCEL);
-    expect(
-      await promptForCarry({ resolved: [entry()], isTTY: true }),
-    ).toBe('cancel');
+    const exitSpy = vi
+      .spyOn(process, 'exit')
+      .mockImplementation((code?: string | number | null) => {
+        throw new Error(`exit:${String(code)}`);
+      });
+    try {
+      await expect(promptForCarry({ resolved: [entry()], isTTY: true })).rejects.toThrow(
+        'exit:130',
+      );
+      expect(exitSpy).toHaveBeenCalledWith(130);
+    } finally {
+      exitSpy.mockRestore();
+    }
   });
 });

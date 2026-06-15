@@ -1,4 +1,4 @@
-import { confirm, isCancel, log } from '@clack/prompts';
+import { confirm, log } from '../lib/prompt.js';
 import { Command } from 'commander';
 import {
   DEFAULT_ENV_PATTERNS,
@@ -82,7 +82,7 @@ export const downloadCommand = new Command('download')
             message: `Overwrite ${box.workspacePath} with the cloud box's /workspace contents?`,
             initialValue: false,
           });
-          if (isCancel(ok) || !ok) {
+          if (!ok) {
             log.info('cancelled');
             return;
           }
@@ -153,7 +153,7 @@ export const downloadCommand = new Command('download')
           message: `Download ${preview.changes.length} changed file(s)${opts.withEnv ? ' (incl. env/config)' : ''} into ${box.workspacePath}?`,
           initialValue: false,
         });
-        if (isCancel(ok) || !ok) {
+        if (!ok) {
           log.info('cancelled');
           return;
         }

@@ -1,4 +1,4 @@
-import { confirm, intro, isCancel, log, outro, spinner } from '@clack/prompts';
+import { confirm, intro, log, outro, spinner } from '../lib/prompt.js';
 import {
   findProjectRoot,
   loadEffectiveConfig,
@@ -286,7 +286,7 @@ async function maybeRunClaudeLogin(args: {
       ? "You're on a legacy API token (shows as 'Claude API'). Sign in with your Claude subscription instead?"
       : 'Sign in with your Claude subscription? (saved and reused by every box)';
   const answer = await confirm({ message, initialValue: true });
-  if (isCancel(answer) || !answer) {
+  if (!answer) {
     log.info('Skipped sign-in — claude will prompt you to /login inside the box.');
     return;
   }
@@ -339,7 +339,7 @@ async function maybeRunCloudClaudeLogin(args: {
     ? 'Your saved Claude login looks expired. Sign in again? (saved and reused by every box)'
     : 'Sign in with your Claude subscription? (saved and reused by every box)';
   const answer = await confirm({ message, initialValue: true });
-  if (isCancel(answer) || !answer) {
+  if (!answer) {
     log.info('Skipped sign-in — claude will prompt you to /login inside the box.');
     return;
   }

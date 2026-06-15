@@ -1,4 +1,4 @@
-import { confirm, isCancel, log } from '@clack/prompts';
+import { confirm, log } from '../lib/prompt.js';
 import { Command } from 'commander';
 import { basename } from 'node:path';
 import {
@@ -380,7 +380,7 @@ const rmSub = new Command('rm')
 
       if (!opts.yes) {
         const ok = await confirm({ message: `Delete checkpoint ${ref}?`, initialValue: false });
-        if (isCancel(ok) || !ok) {
+        if (!ok) {
           log.info('cancelled');
           return;
         }
@@ -484,7 +484,7 @@ async function runCloudCheckpointCreate(box: BoxRecord, opts: CreateOpts): Promi
       message: 'Create checkpoint? The vercel box will stop and reboot.',
       initialValue: false,
     });
-    if (isCancel(ok) || !ok) {
+    if (!ok) {
       log.info('cancelled');
       return;
     }

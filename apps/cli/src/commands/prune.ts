@@ -1,4 +1,4 @@
-import { confirm, isCancel, log } from '@clack/prompts';
+import { confirm, log } from '../lib/prompt.js';
 import { pruneOrphanProjectConfigs } from '@agentbox/config';
 import type { CloudBackend, CloudSandboxSummary } from '@agentbox/core';
 import { readState } from '@agentbox/sandbox-core';
@@ -113,7 +113,7 @@ export const pruneCommand = new Command('prune')
 
       if (!opts.yes) {
         const ok = await confirm({ message: 'Proceed with prune?', initialValue: true });
-        if (isCancel(ok) || !ok) {
+        if (!ok) {
           log.info('cancelled');
           return;
         }
@@ -189,7 +189,7 @@ async function pruneCloud(provider: CloudPruneProvider, opts: PruneOptions): Pro
       message: `Delete ${String(orphans.length)} orphan sandbox(es)?`,
       initialValue: false,
     });
-    if (isCancel(ok) || !ok) {
+    if (!ok) {
       log.info('cancelled');
       return;
     }
