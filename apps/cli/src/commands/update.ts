@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { confirm, intro, isCancel, log, outro, spinner } from '@clack/prompts';
+import { confirm, intro, log, outro, spinner } from '../lib/prompt.js';
 import {
   DEFAULT_BOX_IMAGE,
   ensureRelay,
@@ -88,7 +88,7 @@ export const updateCommand = new Command('self-update')
 
       if (!opts.yes) {
         const ok = await confirm({ message: 'Proceed with update?', initialValue: true });
-        if (isCancel(ok) || !ok) {
+        if (!ok) {
           log.info('cancelled');
           return;
         }

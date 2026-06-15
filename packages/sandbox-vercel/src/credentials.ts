@@ -10,6 +10,7 @@ import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { hostOpenCommand } from '@agentbox/sandbox-core';
 import {
+  cancel,
   confirm,
   isCancel,
   intro,
@@ -22,6 +23,16 @@ import {
   text,
 } from '@clack/prompts';
 import { ensureVercelEnvLoaded, reloadVercelEnv } from './env-loader.js';
+
+// Ctrl+C at a prompt resolves with the cancel symbol; turn that into a real
+// quit so the command never silently continues as if the user answered "No".
+function exitOnCancel<T>(v: T | symbol): T {
+  if (isCancel(v)) {
+    cancel('Cancelled.');
+    process.exit(130);
+  }
+  return v as T;
+}
 import { hasUsableCredentials } from './sdk.js';
 import { cliStorePaths, isNearExpiry, readCliAuth, readCliCurrentTeam } from './cli-store.js';
 import { detectSbx, installSbx, installSbxHint, loginSbx, resetSbxCache } from './sbx-cli.js';
@@ -76,19 +87,17 @@ export async function ensureVercelCredentials(
     'Credentials required',
   );
 
-  const mode = await select({
-    message: 'How do you want to authenticate?',
-    options: [
-      { value: 'cli', label: 'Sign in with Vercel (browser) — recommended for interactive use' },
-      { value: 'token', label: 'Access token (VERCEL_TOKEN + team + project) — best for CI / headless' },
-      { value: 'oidc', label: 'OIDC token (VERCEL_OIDC_TOKEN in env / secrets.env) — short interactive work' },
-    ],
-    initialValue: 'cli',
-  });
-  if (isCancel(mode)) {
-    log.warn('Vercel setup cancelled — re-run `agentbox vercel login` when ready.');
-    return;
-  }
+  const mode = exitOnCancel(
+    await select({
+      message: 'How do you want to authenticate?',
+      options: [
+        { value: 'cli', label: 'Sign in with Vercel (browser) — recommended for interactive use' },
+        { value: 'token', label: 'Access token (VERCEL_TOKEN + team + project) — best for CI / headless' },
+        { value: 'oidc', label: 'OIDC token (VERCEL_OIDC_TOKEN in env / secrets.env) — short interactive work' },
+      ],
+      initialValue: 'cli',
+    }),
+  );
 
   if (mode === 'cli') {
     await runCliLogin();
@@ -116,7 +125,6 @@ export async function ensureVercelCredentials(
   }
 
   const creds = await promptForTokenTrio();
-  if (creds === null) return;
   persistCredentials(creds);
   log.success(`Vercel credentials saved to ${secretsPath()}`);
   await ensureSbxInstalled();
@@ -129,40 +137,35 @@ interface TokenTrio {
   projectId: string;
 }
 
-async function promptForTokenTrio(): Promise<TokenTrio | null> {
-  const openIt = await confirm({
-    message: `Open ${DASHBOARD_TOKENS_URL} to create a token?`,
-    initialValue: true,
-  });
-  if (isCancel(openIt)) return null;
+async function promptForTokenTrio(): Promise<TokenTrio> {
+  const openIt = exitOnCancel(
+    await confirm({
+      message: `Open ${DASHBOARD_TOKENS_URL} to create a token?`,
+      initialValue: true,
+    }),
+  );
   if (openIt) openDashboard();
 
-  const token = await password({
-    message: 'Paste your Vercel access token',
-    validate: (v) => (v && v.trim().length > 0 ? undefined : 'Cannot be empty'),
-  });
-  if (isCancel(token)) {
-    log.warn('Vercel setup cancelled.');
-    return null;
-  }
-  const teamId = await text({
-    message: 'Team ID (team settings → General)',
-    placeholder: 'team_...',
-    validate: (v) => (v && v.trim().length > 0 ? undefined : 'Cannot be empty'),
-  });
-  if (isCancel(teamId)) {
-    log.warn('Vercel setup cancelled.');
-    return null;
-  }
-  const projectId = await text({
-    message: 'Project ID (project settings → General)',
-    placeholder: 'prj_...',
-    validate: (v) => (v && v.trim().length > 0 ? undefined : 'Cannot be empty'),
-  });
-  if (isCancel(projectId)) {
-    log.warn('Vercel setup cancelled.');
-    return null;
-  }
+  const token = exitOnCancel(
+    await password({
+      message: 'Paste your Vercel access token',
+      validate: (v) => (v && v.trim().length > 0 ? undefined : 'Cannot be empty'),
+    }),
+  );
+  const teamId = exitOnCancel(
+    await text({
+      message: 'Team ID (team settings → General)',
+      placeholder: 'team_...',
+      validate: (v) => (v && v.trim().length > 0 ? undefined : 'Cannot be empty'),
+    }),
+  );
+  const projectId = exitOnCancel(
+    await text({
+      message: 'Project ID (project settings → General)',
+      placeholder: 'prj_...',
+      validate: (v) => (v && v.trim().length > 0 ? undefined : 'Cannot be empty'),
+    }),
+  );
   return { token: token.trim(), teamId: teamId.trim(), projectId: projectId.trim() };
 }
 
@@ -258,7 +261,7 @@ async function ensureSbxInstalled(): Promise<{ bin: string } | null> {
       message: `The Vercel sandbox CLI (needed for interactive attach) isn't installed. Install it now? (${installSbxHint()})`,
       initialValue: true,
     });
-    if (isCancel(doInstall) || !doInstall) {
+    if (!doInstall) {
       log.warn(
         `Install it with \`${installSbxHint()}\` to use \`agentbox shell|claude|codex|opencode\` on Vercel boxes.`,
       );
@@ -358,25 +361,27 @@ async function resolveProjectId(token: string, teamId: string): Promise<string |
   const preferred =
     projects.find((p) => p.name === 'agentbox') ??
     projects.find((p) => p.name === 'vercel-sandbox-default-project');
-  const choice = await select({
-    message: 'Which Vercel project should sandboxes run under?',
-    options: [
-      ...projects.map((p) => ({ value: p.id, label: p.name })),
-      { value: CREATE, label: 'Create a new project…' },
-    ],
-    initialValue: preferred ? preferred.id : CREATE,
-  });
-  if (isCancel(choice)) return null;
+  const choice = exitOnCancel(
+    await select({
+      message: 'Which Vercel project should sandboxes run under?',
+      options: [
+        ...projects.map((p) => ({ value: p.id, label: p.name })),
+        { value: CREATE, label: 'Create a new project…' },
+      ],
+      initialValue: preferred ? preferred.id : CREATE,
+    }),
+  );
 
   if (choice !== CREATE) return choice;
 
-  const name = await text({
-    message: 'New project name',
-    placeholder: 'agentbox',
-    defaultValue: 'agentbox',
-    validate: (v) => (v && v.trim().length > 0 ? undefined : 'Cannot be empty'),
-  });
-  if (isCancel(name)) return null;
+  const name = exitOnCancel(
+    await text({
+      message: 'New project name',
+      placeholder: 'agentbox',
+      defaultValue: 'agentbox',
+      validate: (v) => (v && v.trim().length > 0 ? undefined : 'Cannot be empty'),
+    }),
+  );
   try {
     const created = await createProject(token, teamId, name.trim() || 'agentbox');
     return created.id;

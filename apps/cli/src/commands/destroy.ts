@@ -1,4 +1,4 @@
-import { confirm, isCancel, log } from '@clack/prompts';
+import { confirm, log } from '../lib/prompt.js';
 import { execa } from 'execa';
 import { findProjectRoot } from '@agentbox/config';
 import { readState, resolveBoxRef } from '@agentbox/sandbox-core';
@@ -89,7 +89,7 @@ export const destroyCommand = new Command('destroy')
           message: 'Destroy this box?',
           initialValue: false,
         });
-        if (isCancel(ok) || !ok) {
+        if (!ok) {
           log.info('cancelled');
           return;
         }

@@ -10,8 +10,29 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
-import { confirm, isCancel, intro, log, note, outro, password, spinner, text } from '@clack/prompts';
+import {
+  cancel,
+  confirm,
+  isCancel,
+  intro,
+  log,
+  note,
+  outro,
+  password,
+  spinner,
+  text,
+} from '@clack/prompts';
 import { ensureDaytonaEnvLoaded } from './env-loader.js';
+
+// Ctrl+C at a prompt resolves with the cancel symbol; turn that into a real
+// quit so the command never silently continues as if the user answered "No".
+function exitOnCancel<T>(v: T | symbol): T {
+  if (isCancel(v)) {
+    cancel('Cancelled.');
+    process.exit(130);
+  }
+  return v as T;
+}
 
 const DASHBOARD_KEYS_URL = 'https://app.daytona.io/dashboard/keys';
 
@@ -53,21 +74,18 @@ export async function ensureDaytonaCredentials(
     'API key required',
   );
 
-  const open = await confirm({
-    message: `Open ${DASHBOARD_KEYS_URL} in your browser?`,
-    initialValue: true,
-  });
-  if (isCancel(open)) {
-    log.warn('Daytona setup cancelled — re-run `agentbox daytona login` when ready.');
-    return;
-  }
+  const open = exitOnCancel(
+    await confirm({
+      message: `Open ${DASHBOARD_KEYS_URL} in your browser?`,
+      initialValue: true,
+    }),
+  );
   if (open) openDashboard();
 
   // One retry on auth failure (typos are the common case). Beyond that we bail
   // and surface the validation error; the user can re-run `agentbox daytona login`.
   for (let attempt = 0; attempt < 2; attempt++) {
     const creds = await promptForCredentials();
-    if (creds === null) return;
 
     const result = await validateCredentials(creds);
     if (result.ok) {
@@ -104,35 +122,31 @@ interface Credentials {
   organizationId?: string;
 }
 
-async function promptForCredentials(): Promise<Credentials | null> {
-  const key = await password({
-    message: 'Paste your Daytona API key (or JWT token)',
-    validate(v) {
-      if (!v || v.trim().length === 0) return 'Cannot be empty';
-      return undefined;
-    },
-  });
-  if (isCancel(key)) {
-    log.warn('Daytona setup cancelled.');
-    return null;
-  }
+async function promptForCredentials(): Promise<Credentials> {
+  const key = exitOnCancel(
+    await password({
+      message: 'Paste your Daytona API key (or JWT token)',
+      validate(v) {
+        if (!v || v.trim().length === 0) return 'Cannot be empty';
+        return undefined;
+      },
+    }),
+  );
   const trimmed = key.trim();
 
   // JWTs start with `eyJ` (base64-encoded `{"`). API keys don't, and don't need
   // an org ID — the SDK derives it from the key. Only ask for org ID for JWTs.
   if (trimmed.startsWith('eyJ')) {
-    const org = await text({
-      message: 'Paste your Daytona organization ID',
-      placeholder: 'org_...',
-      validate(v) {
-        if (!v || v.trim().length === 0) return 'Cannot be empty';
-        return undefined;
-      },
-    });
-    if (isCancel(org)) {
-      log.warn('Daytona setup cancelled.');
-      return null;
-    }
+    const org = exitOnCancel(
+      await text({
+        message: 'Paste your Daytona organization ID',
+        placeholder: 'org_...',
+        validate(v) {
+          if (!v || v.trim().length === 0) return 'Cannot be empty';
+          return undefined;
+        },
+      }),
+    );
     return { jwtToken: trimmed, organizationId: org.trim() };
   }
 

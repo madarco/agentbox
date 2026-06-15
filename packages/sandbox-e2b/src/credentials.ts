@@ -20,6 +20,7 @@ import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { hostOpenCommand } from '@agentbox/sandbox-core';
 import {
+  cancel,
   confirm,
   intro,
   isCancel,
@@ -30,6 +31,16 @@ import {
 } from '@clack/prompts';
 import { ensureE2bEnvLoaded, reloadE2bEnv } from './env-loader.js';
 import { hasUsableCredentials } from './sdk.js';
+
+// Ctrl+C at a prompt resolves with the cancel symbol; turn that into a real
+// quit so the command never silently continues as if the user answered "No".
+function exitOnCancel<T>(v: T | symbol): T {
+  if (isCancel(v)) {
+    cancel('Cancelled.');
+    process.exit(130);
+  }
+  return v as T;
+}
 
 const DASHBOARD_KEYS_URL = 'https://e2b.dev/dashboard?tab=keys';
 
@@ -60,24 +71,20 @@ export async function ensureE2bCredentials(
     'Credentials required',
   );
 
-  const openIt = await confirm({
-    message: `Open ${DASHBOARD_KEYS_URL} to create a key?`,
-    initialValue: true,
-  });
-  if (isCancel(openIt)) {
-    log.warn('E2B setup cancelled.');
-    return;
-  }
+  const openIt = exitOnCancel(
+    await confirm({
+      message: `Open ${DASHBOARD_KEYS_URL} to create a key?`,
+      initialValue: true,
+    }),
+  );
   if (openIt) openDashboard();
 
-  const key = await password({
-    message: 'Paste your E2B API key',
-    validate: (v) => (v && v.trim().length > 0 ? undefined : 'Cannot be empty'),
-  });
-  if (isCancel(key)) {
-    log.warn('E2B setup cancelled.');
-    return;
-  }
+  const key = exitOnCancel(
+    await password({
+      message: 'Paste your E2B API key',
+      validate: (v) => (v && v.trim().length > 0 ? undefined : 'Cannot be empty'),
+    }),
+  );
 
   persistCredentials({ apiKey: key.trim() });
   reloadE2bEnv();

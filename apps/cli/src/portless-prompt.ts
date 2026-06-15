@@ -1,4 +1,4 @@
-import { confirm, isCancel, log, spinner } from '@clack/prompts';
+import { confirm, log, spinner } from './lib/prompt.js';
 import { setConfigValue } from '@agentbox/config';
 import {
   detectPortless,
@@ -82,8 +82,6 @@ export async function maybePromptPortless(args: PortlessPromptArgs): Promise<boo
       '(installs the portless CLI and starts a local proxy if needed)',
     initialValue: true,
   });
-  // Cancel (Ctrl-C) leaves the key unset so the prompt reappears next time.
-  if (isCancel(answer)) return false;
 
   try {
     await setConfigValue('global', 'portless.enabled', answer, args.cwd, { raw: false });

@@ -10,9 +10,29 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
-import { confirm, isCancel, intro, log, note, outro, password, spinner } from '@clack/prompts';
+import {
+  cancel,
+  confirm,
+  isCancel,
+  intro,
+  log,
+  note,
+  outro,
+  password,
+  spinner,
+} from '@clack/prompts';
 import { makeHetznerClient } from './client.js';
 import { ensureHetznerEnvLoaded } from './env-loader.js';
+
+// Ctrl+C at a prompt resolves with the cancel symbol; turn that into a real
+// quit so the command never silently continues as if the user answered "No".
+function exitOnCancel<T>(v: T | symbol): T {
+  if (isCancel(v)) {
+    cancel('Cancelled.');
+    process.exit(130);
+  }
+  return v as T;
+}
 
 const DASHBOARD_KEYS_URL = 'https://console.hetzner.cloud/projects';
 
@@ -59,20 +79,17 @@ export async function ensureHetznerCredentials(
     'API token required',
   );
 
-  const open = await confirm({
-    message: `Open ${DASHBOARD_KEYS_URL} in your browser?`,
-    initialValue: true,
-  });
-  if (isCancel(open)) {
-    log.warn('Hetzner setup cancelled — re-run `agentbox hetzner login` when ready.');
-    return;
-  }
+  const open = exitOnCancel(
+    await confirm({
+      message: `Open ${DASHBOARD_KEYS_URL} in your browser?`,
+      initialValue: true,
+    }),
+  );
   if (open) openDashboard();
 
   // One retry on auth failure (typos / expired token are the common case).
   for (let attempt = 0; attempt < 2; attempt++) {
     const creds = await promptForCredentials();
-    if (creds === null) return;
 
     const result = await validateCredentials(creds);
     if (result.ok) {
@@ -106,18 +123,16 @@ interface Credentials {
   endpoint?: string;
 }
 
-async function promptForCredentials(): Promise<Credentials | null> {
-  const token = await password({
-    message: 'Paste your Hetzner Cloud API token',
-    validate(v) {
-      if (!v || v.trim().length === 0) return 'Cannot be empty';
-      return undefined;
-    },
-  });
-  if (isCancel(token)) {
-    log.warn('Hetzner setup cancelled.');
-    return null;
-  }
+async function promptForCredentials(): Promise<Credentials> {
+  const token = exitOnCancel(
+    await password({
+      message: 'Paste your Hetzner Cloud API token',
+      validate(v) {
+        if (!v || v.trim().length === 0) return 'Cannot be empty';
+        return undefined;
+      },
+    }),
+  );
   return { token: token.trim() };
 }
 

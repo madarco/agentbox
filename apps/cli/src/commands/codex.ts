@@ -1,7 +1,7 @@
 import { access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { confirm, intro, isCancel, log, outro, spinner } from '@clack/prompts';
+import { confirm, intro, log, outro, spinner } from '../lib/prompt.js';
 import {
   findProjectRoot,
   loadEffectiveConfig,
@@ -233,7 +233,7 @@ async function maybeRunCodexLogin(args: { image: string; yes: boolean }): Promis
     message: 'Sign in to Codex? (saved and reused by every box)',
     initialValue: true,
   });
-  if (isCancel(answer) || !answer) {
+  if (!answer) {
     log.info('Skipped sign-in — codex will prompt you to sign in inside the box.');
     return;
   }
@@ -285,7 +285,7 @@ async function maybeRunCloudCodexLogin(args: { image: string; yes: boolean }): P
     message: 'Sign in to Codex? (saved and reused by every box)',
     initialValue: true,
   });
-  if (isCancel(answer) || !answer) {
+  if (!answer) {
     log.info('Skipped sign-in — codex will prompt you to sign in inside the box.');
     return;
   }

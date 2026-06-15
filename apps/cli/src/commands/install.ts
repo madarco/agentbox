@@ -17,7 +17,7 @@
  * when `~/.agentbox/setup-complete.json` is absent.
  */
 
-import { confirm, intro, isCancel, log, note, outro, select, spinner } from '@clack/prompts';
+import { confirm, intro, log, note, outro, select, spinner } from '../lib/prompt.js';
 import { Command } from 'commander';
 import {
   existsSync,
@@ -376,7 +376,6 @@ async function runProviderLogin(name: ProviderName): Promise<boolean> {
     if (status.configured) {
       log.info('daytona: already configured');
       const rotate = await confirm({ message: 'Re-authenticate Daytona?', initialValue: false });
-      if (isCancel(rotate)) return false;
       if (rotate) await mod.ensureDaytonaCredentials({ force: true });
       return true;
     }
@@ -389,7 +388,6 @@ async function runProviderLogin(name: ProviderName): Promise<boolean> {
     if (status.source !== 'none') {
       log.info('hetzner: already configured');
       const rotate = await confirm({ message: 'Re-authenticate Hetzner?', initialValue: false });
-      if (isCancel(rotate)) return false;
       if (rotate) await mod.ensureHetznerCredentials({ force: true });
       return true;
     }
@@ -402,7 +400,6 @@ async function runProviderLogin(name: ProviderName): Promise<boolean> {
     if (status.auth !== 'none') {
       log.info(`vercel: already configured (${status.auth})`);
       const rotate = await confirm({ message: 'Re-authenticate Vercel?', initialValue: false });
-      if (isCancel(rotate)) return false;
       if (rotate) await mod.ensureVercelCredentials({ force: true });
       return true;
     }
@@ -415,7 +412,6 @@ async function runProviderLogin(name: ProviderName): Promise<boolean> {
   if (status.auth !== 'none') {
     log.info(`e2b: already configured (${status.auth})`);
     const rotate = await confirm({ message: 'Re-authenticate E2B?', initialValue: false });
-    if (isCancel(rotate)) return false;
     if (rotate) await mod.ensureE2bCredentials({ force: true });
     return true;
   }
@@ -465,7 +461,7 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
     log.error(`system check failed: ${hardFail.label} — ${hardFail.detail}`);
     log.info('run `agentbox doctor` for full detail');
     const cont = await confirm({ message: 'Continue anyway?', initialValue: false });
-    if (isCancel(cont) || !cont) {
+    if (!cont) {
       outro('aborted');
       return false;
     }
@@ -490,10 +486,6 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
         hint: PROVIDER_HINTS[p],
       })),
     });
-    if (isCancel(picked)) {
-      outro('cancelled');
-      return false;
-    }
     providerName = picked;
   }
 
@@ -512,10 +504,6 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
       ? 'Build the box image now? (~1GB, a few minutes)'
       : `Bake the ${providerName} base snapshot now? (a few minutes, uses cloud time)`;
   const wantPrepare = opts.yes ? true : await confirm({ message: prepareMsg, initialValue: true });
-  if (isCancel(wantPrepare)) {
-    outro('cancelled');
-    return false;
-  }
   if (wantPrepare) {
     try {
       await runPrepare(providerName, {

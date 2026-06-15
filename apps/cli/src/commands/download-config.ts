@@ -1,4 +1,4 @@
-import { confirm, isCancel, log } from '@clack/prompts';
+import { confirm, log } from '../lib/prompt.js';
 import { Command } from 'commander';
 import { inspectBox, pullToHost, startBox, unpauseBox } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
@@ -80,7 +80,7 @@ export const downloadConfigCommand = new Command('config')
           message: `Download ${preview.changes.length} config file(s) into ${box.workspacePath}? (existing files will be overwritten)`,
           initialValue: false,
         });
-        if (isCancel(ok) || !ok) {
+        if (!ok) {
           log.info('cancelled');
           return;
         }
