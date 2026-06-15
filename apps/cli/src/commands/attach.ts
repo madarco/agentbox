@@ -168,15 +168,22 @@ async function dispatchDocker(
   box: BoxRecord,
   winner: LiveAgentSession,
   openIn: ReturnType<typeof resolveAttachInOption>,
-): Promise<never> {
+): Promise<void> {
   const ref = reattachRef(box);
-  if (winner.kind === 'claude') {
-    await attachClaudeWrapped(box, winner.sessionName, ref, undefined, openIn);
+  // Each wrapper ends in process.exit; the void return is what TS sees
+  // because awaiting Promise<never> doesn't terminate control flow at the
+  // type level.
+  switch (winner.kind) {
+    case 'claude':
+      await attachClaudeWrapped(box, winner.sessionName, ref, undefined, openIn);
+      return;
+    case 'codex':
+      await attachCodexWrapped(box, winner.sessionName, ref, undefined, openIn);
+      return;
+    case 'opencode':
+      await attachOpencodeWrapped(box, winner.sessionName, ref, undefined, openIn);
+      return;
   }
-  if (winner.kind === 'codex') {
-    await attachCodexWrapped(box, winner.sessionName, ref, undefined, openIn);
-  }
-  await attachOpencodeWrapped(box, winner.sessionName, ref, undefined, openIn);
 }
 
 export const attachCommand = new Command('attach')
