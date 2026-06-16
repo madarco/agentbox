@@ -58,6 +58,13 @@ export {
   type PostgresStoreOptions,
   SCHEMA_SQL,
 } from './store/postgres-store.js';
+export { RemoteStore, type RemoteStoreOptions } from './store/remote-store.js';
+export {
+  applyStoreOp,
+  isStoreRpcMethod,
+  type StoreRpcRequest,
+  type StoreRpcResponse,
+} from './store/store-rpc.js';
 export { makeStore } from './store/index.js';
 export {
   askPrompt,

@@ -4,6 +4,7 @@ import { leaseTokenResult } from '../lease.js';
 import { gateApproval } from '../permission.js';
 import { isValidBoxStatus } from '../status-store.js';
 import type { Store } from '../store/store.js';
+import { applyStoreOp, isStoreRpcMethod, type StoreRpcRequest } from '../store/store-rpc.js';
 import { resolveWorktree } from '../worktree.js';
 import type {
   BoxRegistration,
@@ -243,6 +244,18 @@ export async function handleRelayRequest(
     }
     const hit = await store.answerPrompt(body.id, body.answer, body.cancelled);
     return hit ? ok(null, 204) : err(404, 'no pending prompt with that id');
+  }
+
+  if (req.method === 'POST' && req.path === '/admin/store') {
+    // Generic Store RPC for a federated laptop relay's RemoteStore. Admin-gated
+    // (checked above); the method name is an explicit allow-list.
+    const body = parseJson<StoreRpcRequest>(req.bodyText);
+    if (!body || typeof body.method !== 'string' || !Array.isArray(body.args)) {
+      return err(400, 'expected {method, args}');
+    }
+    if (!isStoreRpcMethod(body.method)) return err(400, `unknown store op: ${body.method}`);
+    const result = await applyStoreOp(store, body.method, body.args);
+    return ok({ result: result ?? null });
   }
 
   if (req.method === 'POST' && req.path === '/remote/boxes') {
