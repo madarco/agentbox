@@ -97,9 +97,18 @@ box --(push directly with leased token)--> GitHub
 - [x] **Setup CLI — `agentbox control-plane`.** `setup` runs the GitHub App
   **manifest flow** (localhost callback → browser → code exchange) and writes the
   deploy env + admin token; `set-url` / `status`. Tested e2e against a fake GitHub.
-- [ ] **Phase 6 — Dashboard pages + remaining docs.** App-Router dashboard over
-  the Postgres Store; finish docs sync (`host-relay.md`, `cloud-providers.md`,
-  public `apps/web/content/docs/`).
+- [x] **Phase 6 — Dashboard pages + docs sync.** A token-gated App-Router
+  dashboard at `/` (`apps/control-plane/app/page.tsx` + `layout.tsx`): a pure
+  client view that reuses the admin-bearer auth (token in `sessionStorage`, sent
+  as the Bearer on every `/admin/*` fetch — no new server session), showing
+  pending approvals (approve/deny via `/admin/prompts/answer`), the box registry,
+  and recent events; polls every 4s. Coexists with the `/[...path]` API route
+  handler (the catch-all is required, so `/` is free). Docs synced: new public
+  `control-plane.mdx` reference page (+ nav entry, `agentbox control-plane` CLI
+  commands in `cli.mdx`, `relay.controlBoxUrl` row in `configuration.mdx`), a
+  hosted-control-plane section in `docs/host-relay.md`, and the stale
+  `agentbox control-box` command references removed from `config/types.ts` +
+  `host-actions.ts`. (`cloud-providers.md` already had no control-box refs.)
 
 ## Live validation (2026-06-16)
 
@@ -126,6 +135,9 @@ The plane is deployed and validated on real infrastructure:
   lease → clone → `provider.create()` → completion end to end against the live
   Vercel+Neon plane. (Run with docker as a no-cost local target; see the Phase 5
   docker caveat — the box was destroyed afterward.)
+- **Dashboard live:** the token-gated dashboard deployed to the same Vercel plane
+  (`/` serves the admin-token form, `/healthz` + `/admin/registry` still answer
+  200/401) — the page and the `/[...path]` API route coexist in the serverless env.
 
 ## Security notes
 
