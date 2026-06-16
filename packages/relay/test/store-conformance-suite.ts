@@ -161,5 +161,42 @@ export function runStoreConformance(name: string, setup: () => Promise<Store>): 
         expect(p3?.cancelled).toBe(true);
       });
     });
+
+    describe('create-job queue', () => {
+      const job = (id: string) => ({
+        id,
+        status: 'queued' as const,
+        request: { repoUrl: 'https://github.com/acme/widgets.git', provider: 'e2b' },
+        createdAt: new Date(Date.now() + Number(id.slice(1))).toISOString(),
+      });
+
+      it('enqueues, claims atomically (oldest first, once), and completes', async () => {
+        if (!store.enqueueCreateJob || !store.claimNextCreateJob || !store.completeCreateJob || !store.getCreateJob) {
+          return; // store without create-job support (e.g. RemoteStore)
+        }
+        await store.enqueueCreateJob(job('j1'));
+        await store.enqueueCreateJob(job('j2'));
+
+        const first = await store.claimNextCreateJob('w1');
+        expect(first?.id).toBe('j1');
+        expect(first?.status).toBe('running');
+        expect(first?.claimedBy).toBe('w1');
+
+        // The same job is not handed to a second claimer.
+        const second = await store.claimNextCreateJob('w2');
+        expect(second?.id).toBe('j2');
+
+        // Queue now empty.
+        expect(await store.claimNextCreateJob('w3')).toBeNull();
+
+        await store.completeCreateJob('j1', 'done', { boxId: 'box-123' });
+        const done = await store.getCreateJob('j1');
+        expect(done?.status).toBe('done');
+        expect(done?.result?.boxId).toBe('box-123');
+
+        await store.completeCreateJob('j2', 'failed', { error: 'boom' });
+        expect((await store.getCreateJob('j2'))?.status).toBe('failed');
+      });
+    });
   });
 }

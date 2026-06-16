@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import type { GitHubAppLeaser } from '../github-app.js';
 import { leaseTokenResult } from '../lease.js';
 import { gateApproval } from '../permission.js';
@@ -6,6 +6,7 @@ import { isValidBoxStatus } from '../status-store.js';
 import type { Store } from '../store/store.js';
 import { applyStoreOp, isStoreRpcMethod, type StoreRpcRequest } from '../store/store-rpc.js';
 import { resolveWorktree } from '../worktree.js';
+import type { CreateJobRequest } from '../store/store.js';
 import type {
   BoxRegistration,
   GitRpcParams,
@@ -259,8 +260,36 @@ export async function handleRelayRequest(
   }
 
   if (req.method === 'POST' && req.path === '/remote/boxes') {
-    // Box creation from the control plane — Phase 5 (durable worker + origin-clone).
-    return err(501, 'remote box creation not yet implemented');
+    // Enqueue a durable create job; a worker (self-host loop / Vercel cron)
+    // drains it and clones the repo into a fresh cloud box via a leased token.
+    if (!store.enqueueCreateJob) return err(501, 'create-job queue not available on this store');
+    const body = parseJson<CreateJobRequest>(req.bodyText);
+    if (!body || typeof body.repoUrl !== 'string' || typeof body.provider !== 'string') {
+      return err(400, 'expected {repoUrl, provider, branch?, name?, agent?, prompt?}');
+    }
+    const id = randomUUID();
+    await store.enqueueCreateJob({
+      id,
+      status: 'queued',
+      request: {
+        repoUrl: body.repoUrl,
+        provider: body.provider,
+        branch: body.branch,
+        name: body.name,
+        agent: body.agent,
+        prompt: body.prompt,
+      },
+      createdAt: new Date().toISOString(),
+    });
+    log(`enqueued create job ${id} (${body.provider} ${body.repoUrl})`);
+    return ok({ jobId: id }, 202);
+  }
+
+  if (req.method === 'GET' && req.path.startsWith('/remote/boxes/')) {
+    if (!store.getCreateJob) return err(501, 'create-job queue not available on this store');
+    const id = decodeURIComponent(req.path.slice('/remote/boxes/'.length));
+    const job = await store.getCreateJob(id);
+    return job ? ok(job) : err(404, 'no such job');
   }
 
   return err(404, 'not found');

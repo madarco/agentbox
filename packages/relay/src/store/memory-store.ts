@@ -2,7 +2,7 @@ import { BoxRegistry, EventBuffer } from '../registry.js';
 import { BoxStatusStore } from '../status-store.js';
 import type { BoxStatusSnapshot } from '../status-store.js';
 import type { BoxRegistration, GitRpcResult, RelayEvent } from '../types.js';
-import type { PromptRow, Store } from './store.js';
+import type { CreateJobRow, PromptRow, Store } from './store.js';
 
 export interface MemoryStoreParts {
   registry?: BoxRegistry;
@@ -24,6 +24,7 @@ export class MemoryStore implements Store {
   readonly events: EventBuffer;
   readonly statusStore: BoxStatusStore;
   private readonly prompts = new Map<string, PromptRow>();
+  private readonly createJobs = new Map<string, CreateJobRow>();
 
   constructor(parts: MemoryStoreParts = {}) {
     this.registry = parts.registry ?? new BoxRegistry();
@@ -116,6 +117,43 @@ export class MemoryStore implements Store {
   setPromptResult(promptId: string, result: GitRpcResult): Promise<void> {
     const row = this.prompts.get(promptId);
     if (row) row.result = result;
+    return Promise.resolve();
+  }
+
+  enqueueCreateJob(job: CreateJobRow): Promise<void> {
+    this.createJobs.set(job.id, { ...job });
+    return Promise.resolve();
+  }
+
+  getCreateJob(id: string): Promise<CreateJobRow | null> {
+    const job = this.createJobs.get(id);
+    return Promise.resolve(job ? { ...job } : null);
+  }
+
+  claimNextCreateJob(workerId: string): Promise<CreateJobRow | null> {
+    // Oldest queued first; single-process so no real concurrency to guard.
+    const queued = [...this.createJobs.values()]
+      .filter((j) => j.status === 'queued')
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const job = queued[0];
+    if (!job) return Promise.resolve(null);
+    job.status = 'running';
+    job.claimedBy = workerId;
+    job.startedAt = new Date().toISOString();
+    return Promise.resolve({ ...job });
+  }
+
+  completeCreateJob(
+    id: string,
+    status: 'done' | 'failed',
+    result: { boxId?: string; error?: string },
+  ): Promise<void> {
+    const job = this.createJobs.get(id);
+    if (job) {
+      job.status = status;
+      job.result = result;
+      job.finishedAt = new Date().toISOString();
+    }
     return Promise.resolve();
   }
 }

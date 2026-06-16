@@ -28,6 +28,36 @@ export interface PromptRow {
   expiresAt?: string;
 }
 
+/** What `POST /remote/boxes` asks the control plane to create. */
+export interface CreateJobRequest {
+  /** Repo origin URL the new box's workspace is cloned from (via a leased token). */
+  repoUrl: string;
+  /** Cloud provider to create the box on (e.g. 'e2b', 'vercel', 'daytona', 'hetzner'). */
+  provider: string;
+  /** Base branch to fork the box's `agentbox/<name>` branch from (default: repo HEAD). */
+  branch?: string;
+  /** Desired box name (default: generated). */
+  name?: string;
+  /** Agent to launch (e.g. 'claude'); informational for the worker. */
+  agent?: string;
+  /** Initial prompt to queue for the agent, if any. */
+  prompt?: string;
+}
+
+/** A durable box-creation job (the hosted plane's create queue). */
+export interface CreateJobRow {
+  id: string;
+  status: 'queued' | 'running' | 'done' | 'failed';
+  request: CreateJobRequest;
+  /** Set when done/failed. */
+  result?: { boxId?: string; error?: string };
+  /** Worker id that claimed it (running). */
+  claimedBy?: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
 /**
  * The relay's persisted-state seam.
  *
@@ -84,4 +114,16 @@ export interface Store {
   listPendingPrompts(boxId: string): Promise<PromptRow[]>;
   /** Cache the executed result of an approved action (idempotent re-polls). */
   setPromptResult(promptId: string, result: GitRpcResult): Promise<void>;
+
+  // --- box-create job queue (Phase 5; hosted plane only, hence optional —
+  // the federated laptop's RemoteStore omits these, only the plane creates boxes) ---
+  enqueueCreateJob?(job: CreateJobRow): Promise<void>;
+  getCreateJob?(id: string): Promise<CreateJobRow | null>;
+  /** Atomically claim the oldest queued job (→ running), or null when none. */
+  claimNextCreateJob?(workerId: string): Promise<CreateJobRow | null>;
+  completeCreateJob?(
+    id: string,
+    status: 'done' | 'failed',
+    result: { boxId?: string; error?: string },
+  ): Promise<void>;
 }

@@ -2,7 +2,7 @@ import type { Pool } from 'pg';
 import type { BoxStatusSnapshot } from '../status-store.js';
 import type { BoxRegistration, GitRpcResult, RelayEvent } from '../types.js';
 import { RELAY_EVENT_RING_SIZE } from '../types.js';
-import type { PromptRow, Store } from './store.js';
+import type { CreateJobRow, PromptRow, Store } from './store.js';
 
 /**
  * Postgres-backed {@link Store} for the hosted control plane (Vercel-managed
@@ -61,6 +61,18 @@ CREATE TABLE IF NOT EXISTS prompts (
   expires_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS prompts_box_pending_idx ON prompts (box_id) WHERE status = 'pending';
+
+CREATE TABLE IF NOT EXISTS create_jobs (
+  id          text PRIMARY KEY,
+  status      text NOT NULL DEFAULT 'queued',
+  request     jsonb NOT NULL,
+  result      jsonb,
+  claimed_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  started_at  timestamptz,
+  finished_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS create_jobs_queued_idx ON create_jobs (created_at) WHERE status = 'queued';
 `;
 
 export interface PostgresStoreOptions {
@@ -299,6 +311,83 @@ export class PostgresStore implements Store {
       JSON.stringify(result),
     ]);
   }
+
+  // --- box-create job queue ---
+
+  async enqueueCreateJob(job: CreateJobRow): Promise<void> {
+    await this.query(
+      `INSERT INTO create_jobs (id, status, request, result, claimed_by, created_at, started_at, finished_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (id) DO NOTHING`,
+      [
+        job.id,
+        job.status,
+        JSON.stringify(job.request),
+        job.result ? JSON.stringify(job.result) : null,
+        job.claimedBy ?? null,
+        job.createdAt,
+        job.startedAt ?? null,
+        job.finishedAt ?? null,
+      ],
+    );
+  }
+
+  async getCreateJob(id: string): Promise<CreateJobRow | null> {
+    const rows = await this.query<CreateJobDbRow>(
+      `SELECT id, status, request, result, claimed_by, created_at, started_at, finished_at
+       FROM create_jobs WHERE id = $1`,
+      [id],
+    );
+    return rows[0] ? rowToJob(rows[0]) : null;
+  }
+
+  async claimNextCreateJob(workerId: string): Promise<CreateJobRow | null> {
+    // Atomic claim: lock the oldest queued row, skip ones a sibling worker holds.
+    const rows = await this.query<CreateJobDbRow>(
+      `UPDATE create_jobs SET status = 'running', claimed_by = $1, started_at = now()
+       WHERE id = (
+         SELECT id FROM create_jobs WHERE status = 'queued'
+         ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
+       )
+       RETURNING id, status, request, result, claimed_by, created_at, started_at, finished_at`,
+      [workerId],
+    );
+    return rows[0] ? rowToJob(rows[0]) : null;
+  }
+
+  async completeCreateJob(
+    id: string,
+    status: 'done' | 'failed',
+    result: { boxId?: string; error?: string },
+  ): Promise<void> {
+    await this.query(
+      `UPDATE create_jobs SET status = $2, result = $3, finished_at = now() WHERE id = $1`,
+      [id, status, JSON.stringify(result)],
+    );
+  }
+}
+
+interface CreateJobDbRow {
+  id: string;
+  status: CreateJobRow['status'];
+  request: CreateJobRow['request'];
+  result: CreateJobRow['result'] | null;
+  claimed_by: string | null;
+  created_at: Date;
+  started_at: Date | null;
+  finished_at: Date | null;
+}
+
+function rowToJob(r: CreateJobDbRow): CreateJobRow {
+  return {
+    id: r.id,
+    status: r.status,
+    request: r.request,
+    result: r.result ?? undefined,
+    claimedBy: r.claimed_by ?? undefined,
+    createdAt: new Date(r.created_at).toISOString(),
+    startedAt: r.started_at ? new Date(r.started_at).toISOString() : undefined,
+    finishedAt: r.finished_at ? new Date(r.finished_at).toISOString() : undefined,
+  };
 }
 
 interface PromptDbRow {

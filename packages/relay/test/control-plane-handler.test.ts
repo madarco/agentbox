@@ -159,8 +159,18 @@ describe('hosted control-plane handler', () => {
     expect((events.body as { events: unknown[] }).events).toHaveLength(1);
   });
 
-  it('remote box creation is 501 (Phase 5)', async () => {
-    const r = await handleRelayRequest(req('POST', '/remote/boxes', { bearer: ADMIN, body: {} }), deps(new MemoryStore()));
-    expect(r.status).toBe(501);
+  it('remote box creation enqueues a job (202); bad body is 400', async () => {
+    const store = new MemoryStore();
+    const bad = await handleRelayRequest(req('POST', '/remote/boxes', { bearer: ADMIN, body: {} }), deps(store));
+    expect(bad.status).toBe(400);
+    const good = await handleRelayRequest(
+      req('POST', '/remote/boxes', {
+        bearer: ADMIN,
+        body: { repoUrl: 'https://github.com/acme/widgets.git', provider: 'e2b' },
+      }),
+      deps(store),
+    );
+    expect(good.status).toBe(202);
+    expect(typeof (good.body as { jobId: string }).jobId).toBe('string');
   });
 });
