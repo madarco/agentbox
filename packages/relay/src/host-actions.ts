@@ -1226,7 +1226,7 @@ async function pushBundleWithPat(args: PushBundleWithPatArgs): Promise<HostActio
       exitCode: 64,
       stdout: '',
       stderr:
-        'control-box git.push needs a GitHub token but none is configured — run `agentbox control-box set-token`.\n',
+        'control-box git.push needs a GitHub token but none is configured — set GH_TOKEN in the relay environment (or prefer the control plane, which leases per-repo tokens via a GitHub App).\n',
     };
   }
   // Probe the box's origin URL (the box was seeded from origin). An SSH origin

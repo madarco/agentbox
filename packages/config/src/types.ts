@@ -123,10 +123,12 @@ export interface UserConfig {
   relay?: {
     port?: number;
     /**
-     * Public HTTPS URL of an always-on control-box relay. When set, newly
-     * created cloud boxes route their host-actions (git push, PR, …) through
-     * it instead of a laptop-local relay, so they keep working with the laptop
-     * off. Empty/unset = laptop-local relay (the default).
+     * Public HTTPS URL of a deployed control plane (the hosted Next.js +
+     * Postgres app). When set, newly created cloud boxes point at it for their
+     * centralized concerns — git-token leasing, permission state, the box
+     * registry/events — and push to GitHub directly with a leased token, so
+     * they keep working with the laptop off. Empty/unset = laptop-local relay
+     * (the default). Set via `agentbox control-plane set-url`.
      */
     controlBoxUrl?: string;
   };
@@ -799,7 +801,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'relay.controlBoxUrl',
     type: 'string',
     description:
-      'Public HTTPS URL of an always-on control-box relay. When set, new cloud boxes route host-actions (git push, PR) through it so they keep working with the laptop off. Set via `agentbox control-box create`.',
+      'Public HTTPS URL of a deployed control plane (hosted Next.js + Postgres app). When set, new cloud boxes point at it for git-token leasing, permission state, and the box registry/events, and push to GitHub directly with a leased token so they keep working with the laptop off. Set via `agentbox control-plane set-url`.',
   },
   {
     key: 'vnc.containerPort',
