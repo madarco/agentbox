@@ -35,6 +35,38 @@ export function sshOnlyInboundRule(sourceCidr: string): HetznerFirewallRule[] {
   ];
 }
 
+/**
+ * Inbound rules for a control-plane VPS: SSH locked to the host's egress IP,
+ * but HTTP(S) open to the world (cloud boxes from arbitrary IPs reach the plane,
+ * and Caddy needs :80/:443 for the Let's Encrypt ACME challenge + serving). The
+ * Next app's own port is never exposed — Caddy fronts it on the compose network.
+ */
+export function controlPlaneInboundRules(hostCidr: string): HetznerFirewallRule[] {
+  return [
+    {
+      direction: 'in',
+      protocol: 'tcp',
+      port: '22',
+      source_ips: [hostCidr],
+      description: 'agentbox control plane: SSH from host egress IP only',
+    },
+    {
+      direction: 'in',
+      protocol: 'tcp',
+      port: '80',
+      source_ips: ['0.0.0.0/0', '::/0'],
+      description: 'agentbox control plane: HTTP (ACME challenge + redirect)',
+    },
+    {
+      direction: 'in',
+      protocol: 'tcp',
+      port: '443',
+      source_ips: ['0.0.0.0/0', '::/0'],
+      description: 'agentbox control plane: HTTPS',
+    },
+  ];
+}
+
 export interface CreateFirewallOptions {
   /** Human-readable name persisted with the firewall (visible in the Hetzner dashboard). */
   name: string;

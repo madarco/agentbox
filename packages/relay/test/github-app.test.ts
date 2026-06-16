@@ -99,4 +99,27 @@ describe('GitHubAppLeaser', () => {
     const leaser = new GitHubAppLeaser(cfg, { fetchImpl });
     await expect(leaser.leaseRepoToken('acme', 'widgets')).rejects.toThrow(/not installed/);
   });
+
+  describe('isRepoInstalled', () => {
+    it('returns true on a 200 installation lookup (no token minted)', async () => {
+      const calls: Call[] = [];
+      const leaser = new GitHubAppLeaser(cfg, {
+        fetchImpl: makeFetch(calls, new Date().toISOString()),
+      });
+      expect(await leaser.isRepoInstalled('acme', 'widgets')).toBe(true);
+      expect(calls.some((c) => c.url.endsWith('/access_tokens'))).toBe(false);
+    });
+
+    it('returns false on a 404 (not installed)', async () => {
+      const fetchImpl = (async () => new Response('no', { status: 404 })) as unknown as typeof fetch;
+      const leaser = new GitHubAppLeaser(cfg, { fetchImpl });
+      expect(await leaser.isRepoInstalled('acme', 'widgets')).toBe(false);
+    });
+
+    it('throws on a non-404 error (e.g. 500)', async () => {
+      const fetchImpl = (async () => new Response('boom', { status: 500 })) as unknown as typeof fetch;
+      const leaser = new GitHubAppLeaser(cfg, { fetchImpl });
+      await expect(leaser.isRepoInstalled('acme', 'widgets')).rejects.toThrow(/500/);
+    });
+  });
 });

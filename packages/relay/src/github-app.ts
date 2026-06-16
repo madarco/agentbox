@@ -109,7 +109,11 @@ export class GitHubAppLeaser {
     };
   }
 
-  private async installationId(owner: string, repo: string): Promise<number> {
+  /**
+   * Resolve the installation id for `owner/repo`, or null when the App is not
+   * installed on it (404). Caches positive lookups. Non-404 errors throw.
+   */
+  private async lookupInstallationId(owner: string, repo: string): Promise<number | null> {
     const key = `${owner}/${repo}`;
     const cached = this.installationIds.get(key);
     if (cached !== undefined) return cached;
@@ -117,15 +121,25 @@ export class GitHubAppLeaser {
     const res = await this.fetchImpl(`${this.apiBase}/repos/${owner}/${repo}/installation`, {
       headers: this.headers(jwt),
     });
+    if (res.status === 404) return null;
     if (!res.ok) {
-      throw new Error(
-        `GitHub App is not installed on ${owner}/${repo} (GET installation → ${String(res.status)})`,
-      );
+      throw new Error(`GET installation for ${key} → ${String(res.status)}`);
     }
     const body = (await res.json()) as { id?: number };
     if (typeof body.id !== 'number') throw new Error('installation response missing id');
     this.installationIds.set(key, body.id);
     return body.id;
+  }
+
+  private async installationId(owner: string, repo: string): Promise<number> {
+    const id = await this.lookupInstallationId(owner, repo);
+    if (id === null) throw new Error(`GitHub App is not installed on ${owner}/${repo}`);
+    return id;
+  }
+
+  /** Whether the App is installed on `owner/repo` — no token is minted. */
+  async isRepoInstalled(owner: string, repo: string): Promise<boolean> {
+    return (await this.lookupInstallationId(owner, repo)) !== null;
   }
 
   /**

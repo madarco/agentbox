@@ -219,6 +219,21 @@ export async function handleRelayRequest(
     return ok({ events: await store.listEvents(since, box ?? undefined) });
   }
 
+  if (req.method === 'GET' && req.path === '/admin/app/repo-installed') {
+    // Whether the GitHub App is installed on owner/repo — lets a CLI without a
+    // local App key (a laptop pointed at this plane) decide whether to prompt
+    // the user to authorize the repo. No token is minted.
+    if (!leaser) return err(503, 'no GitHub App configured on this control plane');
+    const owner = req.query.get('owner') ?? '';
+    const repo = req.query.get('repo') ?? '';
+    if (!owner || !repo) return err(400, 'missing owner/repo query params');
+    try {
+      return ok({ installed: await leaser.isRepoInstalled(owner, repo) });
+    } catch (e) {
+      return err(502, `installation check failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   if (req.method === 'GET' && req.path === '/admin/registry') {
     const redacted = (await store.listBoxes()).map((r) => ({
       boxId: r.boxId,

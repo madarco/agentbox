@@ -44,7 +44,12 @@ export {
   type PrepareHetznerOptions,
   type PrepareHetznerResult,
 } from './prepare.js';
-export { generateBoxCloudInit, generatePrepareCloudInit, type BoxCloudInitOptions, type PrepareCloudInitOptions } from './cloud-init.js';
+export { generateBoxCloudInit, generatePrepareCloudInit, controlPlaneCloudInit, type BoxCloudInitOptions, type PrepareCloudInitOptions, type ControlPlaneCloudInitOptions } from './cloud-init.js';
+export {
+  deployControlPlaneToHetzner,
+  type ControlPlaneHetznerDeployOptions,
+  type ControlPlaneHetznerDeployResult,
+} from './control-plane-deploy.js';
 export {
   RUNTIME_ASSETS,
   candidatesFor,

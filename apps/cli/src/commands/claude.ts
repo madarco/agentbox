@@ -6,6 +6,7 @@ import {
   type AttachOpenIn,
   type UserConfig,
 } from '@agentbox/config';
+import { ensureProjectRepoOnControlPlane } from '../control-plane/ensure-repo-installed.js';
 import {
   buildClaudeAttachArgv,
   buildClaudeLoginRunArgv,
@@ -542,6 +543,14 @@ export const claudeCommand = new Command('claude')
     // (provider-agnostic) setup wizard.
     const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
     const isCloud = providerName !== 'docker';
+
+    // When a control plane is configured, make sure this project's repo is
+    // authorized on its GitHub App so the box can lease push tokens.
+    await ensureProjectRepoOnControlPlane({
+      controlPlaneUrl: cfg.effective.relay.controlPlaneUrl,
+      projectRoot,
+      yes: !!opts.yes,
+    });
 
     // -i / --initial-prompt: background mode. Write a queue manifest and exit;
     // the relay's queue loop spawns the worker as a slot frees. Works on every

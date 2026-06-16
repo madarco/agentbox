@@ -159,6 +159,28 @@ describe('hosted control-plane handler', () => {
     expect((events.body as { events: unknown[] }).events).toHaveLength(1);
   });
 
+  it('reports App install status; 503 without a leaser', async () => {
+    const store = new MemoryStore();
+    const installed = await handleRelayRequest(
+      req('GET', '/admin/app/repo-installed', { bearer: ADMIN, query: 'owner=acme&repo=widgets' }),
+      deps(store, fakeLeaser()),
+    );
+    expect(installed.status).toBe(200);
+    expect((installed.body as { installed: boolean }).installed).toBe(true);
+
+    const noLeaser = await handleRelayRequest(
+      req('GET', '/admin/app/repo-installed', { bearer: ADMIN, query: 'owner=acme&repo=widgets' }),
+      deps(store),
+    );
+    expect(noLeaser.status).toBe(503);
+
+    const noParams = await handleRelayRequest(
+      req('GET', '/admin/app/repo-installed', { bearer: ADMIN }),
+      deps(store, fakeLeaser()),
+    );
+    expect(noParams.status).toBe(400);
+  });
+
   it('remote box creation enqueues a job (202); bad body is 400', async () => {
     const store = new MemoryStore();
     const bad = await handleRelayRequest(req('POST', '/remote/boxes', { bearer: ADMIN, body: {} }), deps(store));
