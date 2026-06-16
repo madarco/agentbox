@@ -41,6 +41,8 @@ import {
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
 import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
+import { MemoryStore } from './store/memory-store.js';
+import type { Store } from './store/store.js';
 import { DEFAULT_BOX_RELAY_PORT } from './types.js';
 import type {
   BoxRegistration,
@@ -98,10 +100,19 @@ export interface RelayServerOptions {
    * Ignored otherwise (the laptop relay stays loopback-gated).
    */
   adminToken?: string;
+  /**
+   * Persisted-state backend. Defaults to an in-memory store wrapping the
+   * relay's historical in-memory structures (the laptop relay + tests). A
+   * hosted control plane injects a Postgres-backed store; a federated laptop
+   * relay injects a RemoteStore. See `./store/store.ts`.
+   */
+  store?: Store;
 }
 
 export interface RelayServerHandle {
   server: Server;
+  /** The persisted-state backend the handlers use (memory by default). */
+  store: Store;
   registry: BoxRegistry;
   events: EventBuffer;
   statusStore: BoxStatusStore;
@@ -229,10 +240,19 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const prompts = new PendingPrompts();
   const subscribers = new PromptSubscribers();
   const notices = new BoxNotices(subscribers);
+  // The persisted-state seam. Defaults to a MemoryStore wrapping the concrete
+  // instances above, so the laptop relay + tests behave exactly as before; a
+  // hosted control plane injects a Postgres-backed store instead. Handlers go
+  // through `store.*`; the concrete instances stay exposed on the handle for
+  // the autopause / queue loops (bin.ts) and the unit tests that read them.
+  const store: Store = opts.store ?? new MemoryStore({ registry, events, statusStore });
   // Per-box `box.autoApproveHostActions`: when a box registered with the flag,
   // host-action confirms resolve to 'y' without a prompt, but every bypass
   // lands in the event ring buffer (visible via `/admin/events`) so it's
-  // auditable. Wired here because registry + events are now in scope.
+  // auditable. Reads the concrete registry/events synchronously (not the async
+  // store): `askPrompt` broadcasts to SSE subscribers synchronously, so this
+  // gate must stay sync. The MemoryStore wraps these same instances, so the
+  // sync policy view and the async store view never diverge on the laptop relay.
   prompts.setAutoApprovePolicy({
     shouldAutoApprove: (boxId) => registry.get(boxId)?.autoApproveHostActions === true,
     audit: (boxId, params) => {
@@ -303,8 +323,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       // caller reclaim (kill by `pid`) and respawn instead of reusing it.
       send(res, 200, {
         ok: true,
-        boxes: registry.size(),
-        events: events.size(),
+        boxes: await store.countBoxes(),
+        events: await store.countEvents(),
         pid: process.pid,
         cliEntry: Boolean(process.env.AGENTBOX_CLI_ENTRY),
         // The spawning CLI's version/commit (inherited via env at spawn time).
@@ -335,13 +355,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
       if (route === 'GET /bridge/poll') {
         const since = Number.parseInt(url.searchParams.get('since') ?? '0', 10) || 0;
-        const newEvents = events.since(since);
+        const newEvents = await store.listEvents(since);
         const lastId = newEvents.length > 0 ? newEvents[newEvents.length - 1]!.id : since;
         const actions = hostActions.drain();
         // A box-mode relay only ever has one registered box (itself). The
         // status snapshot — if any has been pushed — belongs to that box.
-        const only = registry.list()[0];
-        const status = only ? statusStore.get(only.boxId) ?? null : null;
+        const only = (await store.listBoxes())[0];
+        const status = only ? (await store.getStatus(only.boxId)) ?? null : null;
         const reply: BridgePollResponse = {
           actions,
           events: newEvents,
@@ -404,7 +424,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     }
 
     if (route === 'POST /events') {
-      const reg = authBox(req, res, registry);
+      const reg = await authBox(req, res);
       if (!reg) return;
       const body = await readJsonBody<PostEventBody>(req);
       if (!body || typeof body.type !== 'string' || body.type.length === 0) {
@@ -419,12 +439,12 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           send(res, 400, { error: 'invalid box-status payload' });
           return;
         }
-        await statusStore.set(reg.boxId, reg.name, reg.projectIndex, body.payload);
+        await store.setStatus(reg.boxId, reg.name, reg.projectIndex, body.payload);
         log(`box-status box=${reg.boxId}`);
         send(res, 202, { ok: true });
         return;
       }
-      const ev = events.append({
+      const ev = await store.appendEvent({
         boxId: reg.boxId,
         type: body.type,
         ts: typeof body.ts === 'string' ? body.ts : undefined,
@@ -436,7 +456,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     }
 
     if (route === 'POST /rpc') {
-      const reg = authBox(req, res, registry);
+      const reg = await authBox(req, res);
       if (!reg) return;
       const body = await readJsonBody<PostRpcBody>(req);
       if (!body || typeof body.method !== 'string' || body.method.length === 0) {
@@ -701,7 +721,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // The box already opened the link in its own browser; this RPC is
         // just a notification. Record the event and answer at once — never
         // block the box on the host user's decision.
-        events.append({ boxId: reg.boxId, type: 'browser-open', payload: { url } });
+        await store.appendEvent({ boxId: reg.boxId, type: 'browser-open', payload: { url } });
         send(res, 200, { exitCode: 0, stdout: '', stderr: '' });
         // Offer to mirror the link to the host browser: a non-blocking,
         // auto-expiring confirm prompt in the footer/dashboard. Skipped under
@@ -743,7 +763,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         }
         return;
       }
-      events.append({
+      await store.appendEvent({
         boxId: reg.boxId,
         type: 'rpc-unknown',
         payload: { method: body.method },
@@ -810,7 +830,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             : undefined,
         autoApproveHostActions: body.autoApproveHostActions === true,
       };
-      registry.register(reg);
+      await store.registerBox(reg);
       log(
         `registered ${kind} box ${reg.boxId} (${reg.name})` +
           (worktrees && worktrees.length > 0 ? ` with ${String(worktrees.length)} worktree(s)` : ''),
@@ -826,14 +846,19 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             previewUrl: reg.previewUrl,
             bridgeToken: reg.bridgeToken,
             previewToken: reg.previewToken,
-            onEvents: (evs) => {
+            onEvents: async (evs) => {
               for (const ev of evs) {
-                events.append({ boxId: reg.boxId, type: ev.type, payload: ev.payload, ts: ev.ts });
+                await store.appendEvent({
+                  boxId: reg.boxId,
+                  type: ev.type,
+                  payload: ev.payload,
+                  ts: ev.ts,
+                });
               }
             },
             onStatus: (status) => {
               if (isValidBoxStatus(status)) {
-                void statusStore.set(reg.boxId, reg.name, reg.projectIndex, status);
+                void store.setStatus(reg.boxId, reg.name, reg.projectIndex, status);
               }
             },
             // Drained host-only RPCs (git.push, …) run on the host via the
@@ -887,8 +912,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 400, { error: 'expected {boxId}' });
         return;
       }
-      const existed = registry.forget(body.boxId);
-      statusStore.delete(body.boxId);
+      const existed = await store.forgetBox(body.boxId);
+      await store.deleteStatus(body.boxId);
       if (pollers) await pollers.stop(body.boxId);
       log(`forgot box ${body.boxId} (existed=${String(existed)})`);
       send(res, 204, null);
@@ -897,7 +922,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
 
     if (route === 'GET /admin/box-status') {
       const box = url.searchParams.get('box') ?? '';
-      const status = box ? statusStore.get(box) : undefined;
+      const status = box ? await store.getStatus(box) : undefined;
       if (!status) {
         send(res, 404, { error: 'no status for box', box });
         return;
@@ -909,7 +934,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     if (route === 'GET /admin/events') {
       const since = Number.parseInt(url.searchParams.get('since') ?? '0', 10) || 0;
       const box = url.searchParams.get('box') ?? undefined;
-      const list = events.since(since, box ?? undefined);
+      const list = await store.listEvents(since, box ?? undefined);
       send(res, 200, { events: list });
       return;
     }
@@ -917,7 +942,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     if (route === 'GET /admin/registry') {
       // Redact tokens; callers on the admin path don't need them and we don't
       // want them showing up in logs if someone curls this.
-      const redacted = registry.list().map((r) => ({
+      const redacted = (await store.listBoxes()).map((r) => ({
         boxId: r.boxId,
         name: r.name,
         registeredAt: r.registeredAt,
@@ -1117,17 +1142,16 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     send(res, 404, { error: 'not found', route });
   }
 
-  function authBox(
+  async function authBox(
     req: IncomingMessage,
     res: ServerResponse,
-    reg: BoxRegistry,
-  ): BoxRegistration | null {
+  ): Promise<BoxRegistration | null> {
     const token = bearerToken(req);
     if (token.length === 0) {
       send(res, 401, { error: 'missing bearer token' });
       return null;
     }
-    const match = reg.authenticate(token);
+    const match = await store.authenticateBox(token);
     if (!match) {
       send(res, 401, { error: 'unknown box token' });
       return null;
@@ -1137,6 +1161,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
 
   return {
     server,
+    store,
     registry,
     events,
     statusStore,

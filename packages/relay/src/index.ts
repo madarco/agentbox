@@ -37,6 +37,8 @@ export type {
 export { HostActionQueue } from './host-action-queue.js';
 export { CloudBoxPoller, CloudBoxPollers, type CloudBoxPollerDeps } from './cloud-poller.js';
 export { BoxRegistry, EventBuffer } from './registry.js';
+export { type Store } from './store/store.js';
+export { MemoryStore, type MemoryStoreParts } from './store/memory-store.js';
 export {
   askPrompt,
   type AutoApprovePolicy,
