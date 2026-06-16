@@ -17,6 +17,7 @@ import { dockerCommand } from '../src/commands/docker.js';
 import { hetznerCommand } from '@agentbox/sandbox-hetzner/cli';
 import { vercelCommand } from '@agentbox/sandbox-vercel/cli';
 import { e2bCommand } from '@agentbox/sandbox-e2b/cli';
+import { isloCommand } from '@agentbox/sandbox-islo/cli';
 import { destroyCommand } from '../src/commands/destroy.js';
 import { doctorCommand } from '../src/commands/doctor.js';
 import { downloadCommand } from '../src/commands/download.js';
@@ -87,6 +88,7 @@ function buildProgram(): Command {
     dockerCommand,
     vercelCommand,
     e2bCommand,
+    isloCommand,
     gitCommand,
     doctorCommand,
     updateCommand,

@@ -8,9 +8,9 @@
 import type { EffectiveConfig } from '@agentbox/config';
 import type { BoxRecord, Provider, ProviderName } from '@agentbox/core';
 
-export type KnownProviderName = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b';
+export type KnownProviderName = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b' | 'islo';
 
-const KNOWN: readonly KnownProviderName[] = ['docker', 'daytona', 'hetzner', 'vercel', 'e2b'];
+const KNOWN: readonly KnownProviderName[] = ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'islo'];
 
 export function isKnownProvider(name: string): name is KnownProviderName {
   return (KNOWN as readonly string[]).includes(name);
@@ -62,6 +62,11 @@ export async function getProvider(name: ProviderName): Promise<Provider> {
       const mod = await import('@agentbox/sandbox-e2b');
       await mod.ensureE2bCredentials();
       return mod.e2bProvider;
+    }
+    case 'islo': {
+      const mod = await import('@agentbox/sandbox-islo');
+      await mod.ensureIsloCredentials();
+      return mod.isloProvider;
     }
     default:
       throw new Error(`unknown sandbox provider: ${String(name)}`);

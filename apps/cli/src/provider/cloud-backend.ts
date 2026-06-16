@@ -17,6 +17,8 @@ export async function cloudBackendForProvider(
       return (await import('@agentbox/sandbox-vercel')).vercelBackend;
     case 'e2b':
       return (await import('@agentbox/sandbox-e2b')).e2bBackend;
+    case 'islo':
+      return (await import('@agentbox/sandbox-islo')).isloBackend;
     default:
       return null;
   }
@@ -44,6 +46,8 @@ export async function currentCloudBaseFingerprintLive(
       return (await import('@agentbox/sandbox-vercel')).currentVercelBaseFingerprintLive();
     case 'e2b':
       return (await import('@agentbox/sandbox-e2b')).currentE2bBaseFingerprintLive();
+    case 'islo':
+      return undefined;
     default:
       return undefined;
   }

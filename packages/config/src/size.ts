@@ -3,13 +3,14 @@
  *
  * Precedence (highest wins):
  *   1. `box.size<Provider>` — per-provider override
- *      (`sizeDocker` / `sizeDaytona` / `sizeHetzner` / `sizeVercel`).
+ *      (`sizeDocker` / `sizeDaytona` / `sizeHetzner` / `sizeVercel` / ...).
  *   2. `box.size` — generic fallback.
  *   3. '' — no preference; backend uses its built-in default.
  *
  * Interpretation is provider-specific:
  *   - hetzner: server type string (e.g. `cx33`).
  *   - daytona: `cpu-memory-disk` GB spec (e.g. `4-8-20`).
+ *   - islo: `cpu-memory-disk` GB spec (e.g. `2-4-20`).
  *   - docker / vercel: reserved (docker uses memory/cpus/disk; vercel uses
  *     vercelVcpus). The keys exist for surface uniformity.
  *
@@ -30,7 +31,9 @@ export function resolveBoxSize(cfg: EffectiveConfig, provider: ProviderKind | st
           ? cfg.box.sizeVercel
           : provider === 'e2b'
             ? cfg.box.sizeE2b
-            : cfg.box.sizeDocker;
+            : provider === 'islo'
+              ? cfg.box.sizeIslo
+              : cfg.box.sizeDocker;
   if (perProvider && perProvider.length > 0) return perProvider;
   return cfg.box.size;
 }

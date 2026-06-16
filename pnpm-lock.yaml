@@ -106,6 +106,9 @@ importers:
       '@agentbox/sandbox-hetzner':
         specifier: workspace:*
         version: link:../../packages/sandbox-hetzner
+      '@agentbox/sandbox-islo':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-islo
       '@agentbox/sandbox-vercel':
         specifier: workspace:*
         version: link:../../packages/sandbox-vercel
@@ -486,6 +489,40 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
 
+  packages/sandbox-islo:
+    dependencies:
+      '@agentbox/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agentbox/sandbox-cloud':
+        specifier: workspace:*
+        version: link:../sandbox-cloud
+      '@agentbox/sandbox-core':
+        specifier: workspace:*
+        version: link:../sandbox-core
+      '@clack/prompts':
+        specifier: ^0.9.0
+        version: 0.9.1
+      '@islo-labs/sdk':
+        specifier: ^0.0.24
+        version: 0.0.24
+      commander:
+        specifier: ^12.1.0
+        version: 12.1.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.1
+        version: 22.19.19
+      tsup:
+        specifier: ^8.3.5
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
+
   packages/sandbox-vercel:
     dependencies:
       '@agentbox/config':
@@ -685,6 +722,7 @@ packages:
 
   '@daytonaio/sdk@0.179.0':
     resolution: {integrity: sha512-KZErEaClqW9arLb1xI78R/9T0eOGWSShcruszgwXP6MR53mVAFmmhQ/OOGFXpV+xQ8HYB1HYl0FcK2CTaxHNgA==}
+    deprecated: 'Moved to @daytona/sdk, same API, no breaking changes. Please update: npm uninstall @daytonaio/sdk && npm i @daytona/sdk'
 
   '@emnapi/runtime@1.10.0':
     resolution: {integrity: sha512-ewvYlk86xUoGI0zQRNq/mC+16R1QeDlKQy21Ki3oSYXNgLb45GV1P6A0M+/s6nyCuNDqe5VpaY84BzXGwVbwFA==}
@@ -1382,6 +1420,10 @@ packages:
 
   '@isaacs/fs-minipass@4.0.1':
     resolution: {integrity: sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w==}
+    engines: {node: '>=18.0.0'}
+
+  '@islo-labs/sdk@0.0.24':
+    resolution: {integrity: sha512-3rrMv+KIYj3yfOM3Qq5R3DUJ3Hy3dVul9hopmuCQYLy8wjsm45oe0/whWaykmdUkCw/NOLftP4v+oySJ316avA==}
     engines: {node: '>=18.0.0'}
 
   '@jridgewell/gen-mapping@0.3.13':
@@ -5437,6 +5479,8 @@ snapshots:
   '@isaacs/fs-minipass@4.0.1':
     dependencies:
       minipass: 7.1.3
+
+  '@islo-labs/sdk@0.0.24': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:

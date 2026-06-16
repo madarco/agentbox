@@ -29,14 +29,14 @@ export interface CheckResult {
 }
 
 export interface CheckGroup {
-  /** Group title: 'system' | 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b'. */
+  /** Group title: 'system' | 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b' | 'islo'. */
   title: string;
   results: CheckResult[];
 }
 
-export type ProviderName = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b';
+export type ProviderName = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b' | 'islo';
 
-const ALL_PROVIDERS: ProviderName[] = ['docker', 'daytona', 'hetzner', 'vercel', 'e2b'];
+const ALL_PROVIDERS: ProviderName[] = ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'islo'];
 const NODE_MIN_MAJOR = 20;
 const NODE_MIN_MINOR = 10;
 
@@ -381,6 +381,48 @@ async function e2bChecks(): Promise<CheckResult[]> {
   }
 }
 
+async function isloChecks(): Promise<CheckResult[]> {
+  try {
+    const mod = await import('@agentbox/sandbox-islo');
+    const cred = mod.readIsloCredStatus();
+    const credRes: CheckResult =
+      cred.auth === 'none'
+        ? {
+            label: 'credentials',
+            status: 'warn',
+            detail: 'API key not configured',
+            hint: '`agentbox islo login` or set ISLO_API_KEY',
+          }
+        : {
+            label: 'credentials',
+            status: 'ok',
+            detail: `${cred.auth} (${cred.source})`,
+          };
+    return [
+      credRes,
+      {
+        label: 'base url',
+        status: 'ok',
+        detail: cred.baseUrl,
+      },
+      {
+        label: 'ssh attach',
+        status: 'info',
+        detail: 'requires Islo SSH setup',
+        hint: '`islo ssh --setup`',
+      },
+    ];
+  } catch (err) {
+    return [
+      {
+        label: 'credentials',
+        status: 'warn',
+        detail: errSummary(err),
+      },
+    ];
+  }
+}
+
 /**
  * Probe a binary, treating ENOENT (missing on PATH) as a distinct outcome
  * from a non-zero exit. `execa({reject:false})` returns a result envelope
@@ -553,6 +595,9 @@ export async function runProviderChecks(name: ProviderName): Promise<CheckGroup>
       break;
     case 'e2b':
       results = await e2bChecks();
+      break;
+    case 'islo':
+      results = await isloChecks();
       break;
   }
   return { title: name, results };

@@ -35,7 +35,7 @@ import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
 /** Cloud backends that store snapshots under ~/.agentbox/cloud-checkpoints/<backend>/. */
-const CLOUD_BACKENDS = ['daytona', 'hetzner', 'vercel', 'e2b'] as const;
+const CLOUD_BACKENDS = ['daytona', 'hetzner', 'vercel', 'e2b', 'islo'] as const;
 type CloudBackend = (typeof CLOUD_BACKENDS)[number];
 
 /** Lazily resolve a cloud provider's checkpoint capability (dynamic import keeps SDKs out of the hot path). */
@@ -49,6 +49,8 @@ async function cloudProviderFor(backend: CloudBackend): Promise<import('@agentbo
       return (await import('@agentbox/sandbox-vercel')).vercelProvider;
     case 'e2b':
       return (await import('@agentbox/sandbox-e2b')).e2bProvider;
+    case 'islo':
+      return (await import('@agentbox/sandbox-islo')).isloProvider;
   }
 }
 
@@ -307,7 +309,7 @@ const setDefaultSub = new Command('set-default')
   .option('--clear', 'unset the project default instead of setting one')
   .option(
     '--provider <name>',
-    'set the default for only this provider (docker|daytona|hetzner|vercel); without it, sets the cross-provider fallback',
+    'set the default for only this provider (docker|daytona|hetzner|vercel|e2b|islo); without it, sets the cross-provider fallback',
   )
   .action(async (ref: string | undefined, opts: { clear?: boolean; provider?: string }) => {
     try {
@@ -421,6 +423,7 @@ const rmSub = new Command('rm')
         ['box.defaultCheckpointHetzner', projectBox?.defaultCheckpointHetzner, cfg.effective.box.defaultCheckpointHetzner],
         ['box.defaultCheckpointVercel', projectBox?.defaultCheckpointVercel, cfg.effective.box.defaultCheckpointVercel],
         ['box.defaultCheckpointE2b', projectBox?.defaultCheckpointE2b, cfg.effective.box.defaultCheckpointE2b],
+        ['box.defaultCheckpointIslo', projectBox?.defaultCheckpointIslo, cfg.effective.box.defaultCheckpointIslo],
       ] as const;
       for (const [key, projectValue, effectiveValue] of defKeys) {
         if (projectValue === ref) {

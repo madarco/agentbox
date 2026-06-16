@@ -1,0 +1,45 @@
+{
+  "name": "@agentbox/sandbox-islo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Islo sandbox provider — CloudBackend over the Islo HTTP API",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "eslint src test",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@agentbox/core": "workspace:*",
+    "@agentbox/sandbox-cloud": "workspace:*",
+    "@agentbox/sandbox-core": "workspace:*",
+    "@clack/prompts": "^0.9.0",
+    "@islo-labs/sdk": "^0.0.24",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

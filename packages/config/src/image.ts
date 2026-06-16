@@ -3,7 +3,7 @@
  *
  * Precedence (highest wins):
  *   1. `box.image<Provider>` — per-provider override
- *      (`imageDocker` / `imageDaytona` / `imageHetzner` / `imageVercel`).
+ *      (`imageDocker` / `imageDaytona` / `imageHetzner` / `imageVercel` / ...).
  *   2. `box.image` — generic fallback (defaults to `agentbox/box:dev`,
  *      which cloud backends recognize as a sentinel meaning "boot from
  *      the provider's prepared base snapshot").
@@ -26,7 +26,9 @@ export function resolveBoxImage(cfg: EffectiveConfig, provider: ProviderKind | s
           ? cfg.box.imageVercel
           : provider === 'e2b'
             ? cfg.box.imageE2b
-            : cfg.box.imageDocker;
+            : provider === 'islo'
+              ? cfg.box.imageIslo
+              : cfg.box.imageDocker;
   if (perProvider && perProvider.length > 0) return perProvider;
   return cfg.box.image;
 }
@@ -45,11 +47,13 @@ export function boxImageConfigKey(
   | 'box.imageDaytona'
   | 'box.imageHetzner'
   | 'box.imageVercel'
-  | 'box.imageE2b' {
+  | 'box.imageE2b'
+  | 'box.imageIslo' {
   if (provider === 'docker') return 'box.imageDocker';
   if (provider === 'daytona') return 'box.imageDaytona';
   if (provider === 'hetzner') return 'box.imageHetzner';
   if (provider === 'vercel') return 'box.imageVercel';
   if (provider === 'e2b') return 'box.imageE2b';
+  if (provider === 'islo') return 'box.imageIslo';
   return 'box.image';
 }

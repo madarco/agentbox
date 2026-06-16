@@ -337,6 +337,7 @@ const PROVIDER_HINTS: Record<ProviderName, string> = {
   daytona: 'approve a browser sign-in link',
   vercel: 'installs the Vercel sandbox CLI, then a browser sign-in',
   e2b: 'paste an API key from the E2B dashboard',
+  islo: 'paste an Islo API key; run `islo ssh --setup` for interactive attach',
 };
 
 const PROVIDER_LABEL: Record<ProviderName, string> = {
@@ -345,6 +346,7 @@ const PROVIDER_LABEL: Record<ProviderName, string> = {
   daytona: 'Daytona (cloud sandbox)',
   vercel: 'Vercel (cloud microVM)',
   e2b: 'E2B (cloud microVM)',
+  islo: 'Islo (agent computer)',
 };
 
 function ensureTty(): boolean {

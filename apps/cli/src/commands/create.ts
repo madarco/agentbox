@@ -142,7 +142,10 @@ export const createCommand = new Command('create')
   )
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
   .option('-n, --name <name>', 'friendly box name (default: <workspace-basename>-<id>)')
-  .option('--provider <name>', "sandbox backend: 'docker' (default) or 'daytona' (cloud)")
+  .option(
+    '--provider <name>',
+    'sandbox backend: docker (default), daytona, hetzner, vercel, e2b, or islo',
+  )
   .option(
     '--host-snapshot',
     'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)',
@@ -186,11 +189,11 @@ export const createCommand = new Command('create')
   )
   .option(
     '--size <spec>',
-    'VM size for cloud providers. Hetzner: server type (e.g. cx33). Daytona: cpu-mem-disk GB (e.g. 4-8-20). Overrides box.size / box.size<Provider>.',
+    'VM size for cloud providers. Hetzner: server type (e.g. cx33). Daytona/Islo: cpu-mem-disk GB (e.g. 4-8-20). Overrides box.size / box.size<Provider>.',
   )
   .option(
     '--bundle-depth <n>',
-    'cap commits shipped in the cloud-seed git bundle (daytona, hetzner). 0 = full history. Unset = adaptive (200 commits, re-bundle at 100 if >20 MB). Ignored for docker.',
+    'cap commits shipped in the cloud-seed git bundle (cloud providers). 0 = full history. Unset = adaptive (200 commits, re-bundle at 100 if >20 MB). Ignored for docker.',
     (v) => {
       const n = Number.parseInt(v, 10);
       if (!Number.isInteger(n) || n < 0)
@@ -233,7 +236,7 @@ export const createCommand = new Command('create')
       opts,
       resolveDefaultCheckpoint(
         cfg.effective,
-        providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel',
+        providerName,
       ),
     );
     // VM size: `--size` flag wins; otherwise the cascaded box.size /
@@ -241,7 +244,7 @@ export const createCommand = new Command('create')
     // override beats a project-level per-provider key.
     const sizeDefault = resolveBoxSize(
       cfg.effective,
-      providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel',
+      providerName,
     );
     const effectiveSize = opts.size && opts.size.length > 0 ? opts.size : sizeDefault;
     // Box image: same precedence pattern as --size. `--image` wins; otherwise
@@ -249,7 +252,7 @@ export const createCommand = new Command('create')
     // prepare --provider X`).
     const imageDefault = resolveBoxImage(
       cfg.effective,
-      providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel',
+      providerName,
     );
     const effectiveImage = opts.image && opts.image.length > 0 ? opts.image : imageDefault;
 
@@ -381,7 +384,7 @@ export const createCommand = new Command('create')
         cfg.effective.box.withPlaywright || cfg.effective.browser.default !== 'agent-browser';
       // --provider flag wins over box.provider config. The registry hands back
       // a DockerProvider for 'docker' and (once Phase 5 wires it) a cloud
-      // provider for 'daytona'; everything below is provider-neutral.
+      // provider for cloud backends; everything below is provider-neutral.
       const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });
       let fromBranch: string | undefined;
       let useBranch: string | undefined;
@@ -441,6 +444,11 @@ export const createCommand = new Command('create')
                 vcpus: cfg.effective.box.vercelVcpus,
                 timeoutMs: cfg.effective.box.vercelTimeoutMs,
                 networkPolicy: cfg.effective.box.vercelNetworkPolicy,
+              }
+            : {}),
+          ...(provider.name === 'islo'
+            ? {
+                networkPolicy: cfg.effective.box.isloGatewayProfile,
               }
             : {}),
         },

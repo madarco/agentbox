@@ -12,7 +12,7 @@ export type IdeFlavor = 'vscode' | 'cursor' | 'auto';
 export type EngineKind = 'orbstack' | 'docker-desktop' | 'other' | 'auto';
 export type BrowserKind = 'agent-browser' | 'playwright' | 'both';
 /** Sandbox backend new boxes are created on. */
-export type ProviderKind = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b';
+export type ProviderKind = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b' | 'islo';
 /** Where `agentbox claude|codex|opencode` opens the attached session when the host
  *  shell is running inside tmux, cmux, or iTerm2. `same` keeps today's inline behavior. */
 export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
@@ -41,6 +41,7 @@ export interface UserConfig {
     defaultCheckpointHetzner?: string;
     defaultCheckpointVercel?: string;
     defaultCheckpointE2b?: string;
+    defaultCheckpointIslo?: string;
     /**
      * Generic VM-size fallback for cloud providers. Provider-interpreted:
      * Hetzner = server type string (e.g. `cx33`); Daytona = `cpu-memory-disk`
@@ -54,6 +55,7 @@ export interface UserConfig {
     sizeHetzner?: string;
     sizeVercel?: string;
     sizeE2b?: string;
+    sizeIslo?: string;
     withPlaywright?: boolean;
     withEnv?: boolean;
     resyncOnStart?: boolean;
@@ -73,6 +75,7 @@ export interface UserConfig {
     imageHetzner?: string;
     imageVercel?: string;
     imageE2b?: string;
+    imageIslo?: string;
     imageRegistry?: string;
     dockerCacheShared?: boolean;
     memory?: number;
@@ -83,6 +86,7 @@ export interface UserConfig {
     vercelVcpus?: number;
     vercelTimeoutMs?: number;
     vercelNetworkPolicy?: string;
+    isloGatewayProfile?: string;
     cpMaxBytes?: number;
   };
   checkpoint?: {
@@ -177,12 +181,14 @@ export interface EffectiveConfig {
     defaultCheckpointHetzner: string;
     defaultCheckpointVercel: string;
     defaultCheckpointE2b: string;
+    defaultCheckpointIslo: string;
     size: string;
     sizeDocker: string;
     sizeDaytona: string;
     sizeHetzner: string;
     sizeVercel: string;
     sizeE2b: string;
+    sizeIslo: string;
     withPlaywright: boolean;
     withEnv: boolean;
     resyncOnStart: boolean;
@@ -197,6 +203,7 @@ export interface EffectiveConfig {
     imageHetzner: string;
     imageVercel: string;
     imageE2b: string;
+    imageIslo: string;
     imageRegistry: string;
     dockerCacheShared: boolean;
     memory: number;
@@ -207,6 +214,7 @@ export interface EffectiveConfig {
     vercelVcpus: number;
     vercelTimeoutMs: number;
     vercelNetworkPolicy: string;
+    isloGatewayProfile: string;
     cpMaxBytes: number;
   };
   checkpoint: {
@@ -320,12 +328,14 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     defaultCheckpointHetzner: '',
     defaultCheckpointVercel: '',
     defaultCheckpointE2b: '',
+    defaultCheckpointIslo: '',
     size: '',
     sizeDocker: '',
     sizeDaytona: '',
     sizeHetzner: '',
     sizeVercel: '',
     sizeE2b: '',
+    sizeIslo: '',
     withPlaywright: false,
     withEnv: false,
     resyncOnStart: true,
@@ -340,6 +350,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     imageHetzner: '',
     imageVercel: '',
     imageE2b: '',
+    imageIslo: '',
     // Mirrors BOX_IMAGE_REGISTRY in @agentbox/sandbox-docker. Empty disables the
     // registry pull (always build the docker base image locally).
     imageRegistry: 'ghcr.io/madarco/agentbox/box',
@@ -352,6 +363,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     vercelVcpus: 2,
     vercelTimeoutMs: 2_700_000,
     vercelNetworkPolicy: '',
+    isloGatewayProfile: '',
     cpMaxBytes: 100 * 1024 * 1024,
   },
   checkpoint: {
@@ -446,9 +458,9 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
   {
     key: 'box.provider',
     type: 'enum',
-    enumValues: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b'] as const,
+    enumValues: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'islo'] as const,
     description:
-      'Sandbox backend new boxes are created on: local Docker containers, Daytona Cloud sandboxes, Hetzner Cloud VPSes, Vercel Sandboxes, or E2B microVMs.',
+      'Sandbox backend new boxes are created on: local Docker containers, Daytona Cloud sandboxes, Hetzner Cloud VPSes, Vercel Sandboxes, E2B microVMs, or Islo agent computers.',
   },
   {
     key: 'box.hostSnapshot',
@@ -498,6 +510,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     advanced: true,
   },
   {
+    key: 'box.defaultCheckpointIslo',
+    type: 'string',
+    description:
+      'Per-provider override of `box.defaultCheckpoint` for islo. Wins over the global when set; set via `agentbox checkpoint set-default --provider islo`.',
+    advanced: true,
+  },
+  {
     key: 'box.size',
     type: 'string',
     description:
@@ -536,6 +555,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'string',
     description:
       'Per-provider override of `box.size` for e2b. Reserved — e2b sizing is template-level (set at `agentbox prepare --provider e2b` time via --vcpus / --memory).',
+    advanced: true,
+  },
+  {
+    key: 'box.sizeIslo',
+    type: 'string',
+    description:
+      'Per-provider override of `box.size` for islo. Uses `cpu-memory-disk` GB spec (e.g. `2-4-20`); memory is converted to MB for the Islo API.',
     advanced: true,
   },
   {
@@ -625,6 +651,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     advanced: true,
   },
   {
+    key: 'box.imageIslo',
+    type: 'string',
+    description:
+      'Per-provider override of `box.image` for islo (container image ref). Empty/default uses the published AgentBox image `ghcr.io/madarco/agentbox/box:latest`.',
+    advanced: true,
+  },
+  {
     key: 'box.imageRegistry',
     type: 'string',
     description:
@@ -691,6 +724,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'string',
     description:
       "Egress lock for new --provider vercel boxes: 'allow-all' (default, unset), 'deny-all', or a comma-separated domain allowlist (e.g. 'github.com,*.npmjs.org') that denies everything else. Vercel-only; ignored by other providers.",
+  },
+  {
+    key: 'box.isloGatewayProfile',
+    type: 'string',
+    description:
+      'Gateway profile name for new --provider islo boxes. Use this for Islo network policy and credential injection; empty uses the Islo project/default profile.',
   },
   {
     key: 'claude.sessionName',
