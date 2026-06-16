@@ -53,10 +53,17 @@ async function api(
   return json;
 }
 
-/** Validate the token and return the authenticated user (probe / status). */
-export async function getUser(token: string): Promise<{ id: string; username?: string }> {
+/**
+ * Validate the token and return the authenticated user (probe / status).
+ * `defaultTeamId` is the team the account (and the `sbx` CLI's default sandbox
+ * project) is scoped to — the CLI-login flow falls back to it when the CLI store
+ * records no selected team.
+ */
+export async function getUser(
+  token: string,
+): Promise<{ id: string; username?: string; defaultTeamId?: string }> {
   const json = (await api(token, '/v2/user')) as {
-    user?: { id: string; username?: string };
+    user?: { id: string; username?: string; defaultTeamId?: string };
   };
   const user = json.user;
   if (!user?.id) throw new Error('Vercel /v2/user returned no user');
