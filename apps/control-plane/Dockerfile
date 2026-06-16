@@ -8,9 +8,10 @@ WORKDIR /repo
 RUN corepack enable
 COPY . .
 RUN pnpm install --frozen-lockfile
-# Build the relay (the app's workspace dep) then the Next app.
-RUN pnpm --filter @agentbox/relay build \
-  && pnpm --filter @agentbox/control-plane build
+# Build the app + its workspace deps in dependency order via turbo. The relay
+# bundles @agentbox/config / sandbox-core / integrations, so those packages must
+# build (emit dist/) before the relay does — `--filter` pulls in `^build` deps.
+RUN pnpm turbo run build --filter=@agentbox/control-plane
 
 FROM node:22-slim AS runtime
 WORKDIR /repo
