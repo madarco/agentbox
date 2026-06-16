@@ -38,6 +38,12 @@ import {
   runHostIntegration,
   type IntegrationRpcParams,
 } from './integrations.js';
+import { parseGitRemote, repoSlugFromRemote, toAuthedHttpsUrl } from './git-pat.js';
+import {
+  GitHubAppLeaser,
+  loadGitHubAppConfig,
+  type GitHubAppConfig,
+} from './github-app.js';
 import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
@@ -114,6 +120,13 @@ export interface RelayServerOptions {
    * long-lived laptop relay, today's behavior). See `./permission.ts`.
    */
   promptMode?: PromptMode;
+  /**
+   * GitHub App config for `git.lease-token` (the hosted plane mints repo-scoped
+   * installation tokens and leases them to boxes). Defaults to
+   * {@link loadGitHubAppConfig} (`GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY`).
+   * Null/absent → `git.lease-token` returns a clear "not configured" error.
+   */
+  githubApp?: GitHubAppConfig | null;
 }
 
 export interface RelayServerHandle {
@@ -300,6 +313,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   // long-lived process and keeps blocking (today's behavior).
   const promptMode: PromptMode = opts.promptMode ?? (controlBox ? 'poll' : 'block');
   const gateDeps: GateDeps = { mode: promptMode, store, prompts, subscribers };
+  // GitHub App leaser for `git.lease-token` (hosted plane). Off when no App is
+  // configured — the laptop relay never needs it (it pushes host-side / cloud
+  // boxes reach it via the poller).
+  const githubAppConfig = opts.githubApp === undefined ? loadGitHubAppConfig() : opts.githubApp;
+  const leaser = githubAppConfig ? new GitHubAppLeaser(githubAppConfig) : null;
 
   // Host-mode pollers for cloud-tagged boxes; started on /admin/register-box,
   // stopped on /admin/forget-box. Lazy import to keep host-mode startup free
@@ -576,6 +594,35 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         const result = await handleGitRpc(reg, body.method, body.params as GitRpcParams | undefined);
         const status = result.exitCode === 0 ? 200 : 500;
         send(res, status, result);
+        return;
+      }
+      if (body.method === 'git.lease-token') {
+        // The hosted-plane equivalent of git.push: instead of the relay pushing,
+        // it leases a repo-scoped GitHub-App token and the box pushes directly.
+        // Same gate as git.push — agentbox/* branches auto-allow, others need a
+        // human (poll-parked on the hosted plane).
+        const params = body.params as GitRpcParams | undefined;
+        const worktree = resolveWorktree(reg, params?.path ?? '/workspace');
+        const isAgentboxBranch = worktree?.branch.startsWith('agentbox/') ?? false;
+        if (!isAgentboxBranch) {
+          const gate = await gateApproval(gateDeps, reg.boxId, 'git.lease-token', body.params, {
+            kind: 'confirm',
+            message: `Allow box ${reg.name} to lease a push token for ${reg.originUrl ?? 'its repo'}?`,
+            detail: `branch ${worktree?.branch ?? '(unregistered)'}`,
+            defaultAnswer: 'n',
+            context: { command: 'git lease-token', cwd: params?.path },
+          });
+          if (gate.kind === 'pending') {
+            send(res, 202, { status: 'pending', promptId: gate.promptId });
+            return;
+          }
+          if (gate.kind === 'deny') {
+            send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
+            return;
+          }
+        }
+        const result = await leaseTokenAction(reg);
+        send(res, result.exitCode === 0 ? 200 : 500, result);
         return;
       }
       if (body.method === 'cp.toHost' || body.method === 'cp.fromHost') {
@@ -881,6 +928,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             ? body.bridgeToken
             : undefined,
         autoApproveHostActions: body.autoApproveHostActions === true,
+        originUrl:
+          typeof body.originUrl === 'string' && body.originUrl.length > 0
+            ? body.originUrl
+            : undefined,
       };
       await store.registerBox(reg);
       log(
@@ -1214,9 +1265,64 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   }
 
   /**
+   * Mint a repo-scoped GitHub-App installation token for the box and return it
+   * (in `stdout` as JSON: `{ token, expiresAt, remoteUrl, repo }`). The repo is
+   * resolved from the box's REGISTERED origin URL — never from box-supplied
+   * params — so a box can only ever lease a token for its own repo.
+   */
+  async function leaseTokenAction(reg: BoxRegistration): Promise<GitRpcResult> {
+    if (!leaser) {
+      return {
+        exitCode: 64,
+        stdout: '',
+        stderr: 'git.lease-token: no GitHub App configured on this relay\n',
+      };
+    }
+    const origin = reg.originUrl;
+    if (!origin) {
+      return {
+        exitCode: 64,
+        stdout: '',
+        stderr: `git.lease-token: box ${reg.boxId} has no registered origin URL\n`,
+      };
+    }
+    let owner = '';
+    let repo = '';
+    let slug = '';
+    try {
+      const { path } = parseGitRemote(origin);
+      const [o, r] = path.replace(/\.git$/, '').split('/');
+      owner = o ?? '';
+      repo = r ?? '';
+      slug = repoSlugFromRemote(origin);
+    } catch {
+      return { exitCode: 65, stdout: '', stderr: `git.lease-token: unrecognized origin ${origin}\n` };
+    }
+    if (!owner || !repo) {
+      return { exitCode: 65, stdout: '', stderr: `git.lease-token: cannot derive owner/repo from ${origin}\n` };
+    }
+    try {
+      const leased = await leaser.leaseRepoToken(owner, repo);
+      const payload = {
+        token: leased.token,
+        expiresAt: leased.expiresAt,
+        remoteUrl: toAuthedHttpsUrl(origin, leased.token),
+        repo: slug,
+      };
+      return { exitCode: 0, stdout: JSON.stringify(payload), stderr: '' };
+    } catch (err) {
+      return {
+        exitCode: 1,
+        stdout: '',
+        stderr: `git.lease-token: ${err instanceof Error ? err.message : String(err)}\n`,
+      };
+    }
+  }
+
+  /**
    * Run a host action that has already cleared its approval gate (poll mode:
    * the box reached `/rpc/status` after a `y`). No re-gating here. Extended per
-   * method as the hosted plane grows (git.lease-token in Phase 3, …).
+   * method as the hosted plane grows.
    */
   async function dispatchApprovedAction(
     reg: BoxRegistration,
@@ -1225,6 +1331,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   ): Promise<GitRpcResult> {
     if (method === 'git.push' || method === 'git.fetch') {
       return handleGitRpc(reg, method, params as GitRpcParams | undefined);
+    }
+    if (method === 'git.lease-token') {
+      return leaseTokenAction(reg);
     }
     return {
       exitCode: 64,

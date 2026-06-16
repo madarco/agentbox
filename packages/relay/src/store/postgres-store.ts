@@ -121,7 +121,7 @@ export class PostgresStore implements Store {
   // --- boxes ---
 
   async registerBox(reg: BoxRegistration): Promise<void> {
-    const originUrl = firstOriginUrl(reg);
+    const originUrl = reg.originUrl ?? null;
     await this.query(
       `INSERT INTO boxes (box_id, token, origin_url, data)
        VALUES ($1, $2, $3, $4)
@@ -349,15 +349,4 @@ function rowToEvent(r: EventRow): RelayEvent {
     payload: r.payload ?? undefined,
     receivedAt: new Date(r.received_at).toISOString(),
   };
-}
-
-/**
- * The repo origin URL for the box, denormalized into its own column so the
- * GitHub-App lease path (Phase 3) can resolve owner/repo from the *registered*
- * origin without trusting box-supplied params. Picks the first registered
- * worktree's main-repo remote when known; null otherwise.
- */
-function firstOriginUrl(reg: BoxRegistration): string | null {
-  const fromReg = (reg as { originUrl?: unknown }).originUrl;
-  return typeof fromReg === 'string' && fromReg.length > 0 ? fromReg : null;
 }

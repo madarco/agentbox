@@ -177,29 +177,46 @@ function getRpcStatus(promptId: string, prefix: string): Promise<RpcStatusReply 
  *  - relay returned non-2xx with no parseable body → 1
  *  - relay returned 2xx with no parseable body → 0
  */
+/**
+ * POST + (on a 202, poll /rpc/status) → the final `{exitCode,stdout,stderr}`,
+ * WITHOUT writing stdout/stderr. Callers that just forward use
+ * {@link postRpcAndExit}; callers that need to consume the result body (e.g.
+ * `git.lease-token`, whose stdout is the lease JSON) use this directly.
+ */
+export async function postRpcAwait<TParams>(
+  method: string,
+  params: TParams,
+  opts: PostRpcOptions = {},
+): Promise<RelayRpcResult> {
+  const prefix = opts.errorPrefix ?? 'agentbox-ctl rpc';
+  const out = await postRpc(method, params, opts);
+  if (out.internalExitCode !== null) {
+    // postRpc already wrote the env/transport error to stderr.
+    return { exitCode: out.internalExitCode, stdout: '', stderr: '' };
+  }
+  if (out.status === 202) return pollParkedResult(out.raw, prefix);
+  if (out.parsed) return out.parsed;
+  if (out.status >= 200 && out.status < 300) return { exitCode: 0, stdout: '', stderr: '' };
+  return {
+    exitCode: 1,
+    stdout: '',
+    stderr: `${prefix}: relay returned ${String(out.status)}: ${out.raw}\n`,
+  };
+}
+
 export async function postRpcAndExit<TParams>(
   method: string,
   params: TParams,
   opts: PostRpcOptions = {},
 ): Promise<number> {
-  const prefix = opts.errorPrefix ?? 'agentbox-ctl rpc';
-  const out = await postRpc(method, params, opts);
-  if (out.internalExitCode !== null) return out.internalExitCode;
-  // Poll mode: the hosted relay parked this action for host approval.
-  if (out.status === 202) {
-    return pollParkedAction(out.raw, prefix);
-  }
-  if (out.parsed) {
-    if (out.parsed.stdout) process.stdout.write(out.parsed.stdout);
-    if (out.parsed.stderr) process.stderr.write(out.parsed.stderr);
-    return out.parsed.exitCode;
-  }
-  process.stderr.write(`${prefix}: relay returned ${String(out.status)}: ${out.raw}\n`);
-  return out.status >= 200 && out.status < 300 ? 0 : 1;
+  const result = await postRpcAwait(method, params, opts);
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  return result.exitCode;
 }
 
-/** Poll /rpc/status until the host answers the parked approval, then surface the result. */
-async function pollParkedAction(raw202: string, prefix: string): Promise<number> {
+/** Poll /rpc/status until the host answers the parked approval; return the result. */
+async function pollParkedResult(raw202: string, prefix: string): Promise<RelayRpcResult> {
   let promptId = '';
   try {
     const v = JSON.parse(raw202) as { promptId?: unknown };
@@ -208,8 +225,7 @@ async function pollParkedAction(raw202: string, prefix: string): Promise<number>
     /* handled below */
   }
   if (!promptId) {
-    process.stderr.write(`${prefix}: relay parked the action but returned no promptId\n`);
-    return 1;
+    return { exitCode: 1, stdout: '', stderr: `${prefix}: relay parked the action but returned no promptId\n` };
   }
   process.stderr.write(`${prefix}: waiting for approval on the host…\n`);
   const deadline = Date.now() + POLL_MAX_MS;
@@ -217,12 +233,9 @@ async function pollParkedAction(raw202: string, prefix: string): Promise<number>
     await delay(POLL_INTERVAL_MS + Math.floor(Math.random() * 400));
     const reply = await getRpcStatus(promptId, prefix);
     if (reply && reply.status === 'done' && reply.result) {
-      if (reply.result.stdout) process.stdout.write(reply.result.stdout);
-      if (reply.result.stderr) process.stderr.write(reply.result.stderr);
-      return reply.result.exitCode;
+      return reply.result;
     }
     // null (transient transport error) or pending → keep polling.
   }
-  process.stderr.write(`${prefix}: timed out waiting for host approval\n`);
-  return 124;
+  return { exitCode: 124, stdout: '', stderr: `${prefix}: timed out waiting for host approval\n` };
 }

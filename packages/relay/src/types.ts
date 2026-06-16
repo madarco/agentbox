@@ -75,6 +75,13 @@ export interface BoxRegistration {
    * relay event so the bypass is auditable.
    */
   autoApproveHostActions?: boolean;
+  /**
+   * The box repo's origin remote URL (any git URL shape). The hosted control
+   * plane resolves owner/repo from THIS registered value when leasing a
+   * GitHub-App token (never from box-supplied RPC params). Absent for boxes
+   * without a git origin.
+   */
+  originUrl?: string;
 }
 
 export interface BoxWorktree {
@@ -146,6 +153,8 @@ export interface RegisterBoxBody {
    * prompts auto-resolve to `y` (audited via a relay event).
    */
   autoApproveHostActions?: boolean;
+  /** The box repo's origin remote URL (for GitHub-App lease repo resolution). */
+  originUrl?: string;
 }
 
 /**

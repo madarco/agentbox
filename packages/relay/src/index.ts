@@ -62,6 +62,14 @@ export {
 export { BoxNotices } from './notices.js';
 export { hashRpcParams, HostInitiatedTokens } from './host-initiated.js';
 export {
+  appJwt,
+  GitHubAppLeaser,
+  loadGitHubAppConfig,
+  type GitHubAppConfig,
+  type GitHubAppLeaserOptions,
+  type LeasedToken,
+} from './github-app.js';
+export {
   _resetIntegrationReadyCacheForTests,
   assertIntegrationReady,
   makeIntegrationOpRefusal,

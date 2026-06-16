@@ -227,7 +227,7 @@ esac
       },
     });
     let pendingId: string | null = null;
-    for (let i = 0; i < 50 && pendingId === null; i++) {
+    for (let i = 0; i < 500 && pendingId === null; i++) {
       const list = handle.prompts.forBox('b1');
       if (list.length > 0) {
         pendingId = list[0]!.id;

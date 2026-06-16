@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander';
 import { spawn } from 'node:child_process';
-import { postRpcAndExit } from '../relay-rpc.js';
+import { postRpcAndExit, postRpcAwait } from '../relay-rpc.js';
 import { buildPrCommand } from './pr-subcommands.js';
 
 /**
@@ -65,6 +65,58 @@ function runLocalGit(args: string[], cwd: string): Promise<number> {
   });
 }
 
+/** Run a local `git` command and capture its trimmed stdout ('' on failure). */
+function captureGit(args: string[], cwd: string): Promise<string> {
+  return new Promise((resolve) => {
+    const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    child.stdout.on('data', (c: Buffer) => (out += c.toString('utf8')));
+    child.on('close', () => resolve(out.trim()));
+    child.on('error', () => resolve(''));
+  });
+}
+
+/**
+ * Control-plane push: instead of the relay pushing host-side, the box leases a
+ * repo-scoped GitHub-App token from the control plane and pushes directly.
+ * Used when AGENTBOX_GIT_LEASE=1 (set by the in-box daemon when the relay is a
+ * hosted control plane). The token lives in the remote URL config for the push
+ * only and is scrubbed (origin restored) in `finally` — never in the push argv.
+ */
+async function leaseAndPush(opts: CommonOptions, extra: string[]): Promise<number> {
+  const prefix = 'agentbox-ctl git';
+  const cwd = opts.cwd ?? process.cwd();
+  const lease = await postRpcAwait('git.lease-token', buildParams(opts, []), { errorPrefix: prefix });
+  if (lease.exitCode !== 0) {
+    if (lease.stderr) process.stderr.write(lease.stderr);
+    return lease.exitCode;
+  }
+  let remoteUrl = '';
+  try {
+    const parsed = JSON.parse(lease.stdout) as { remoteUrl?: unknown };
+    if (typeof parsed.remoteUrl === 'string') remoteUrl = parsed.remoteUrl;
+  } catch {
+    /* handled below */
+  }
+  if (!remoteUrl) {
+    process.stderr.write(`${prefix}: lease response missing remoteUrl\n`);
+    return 1;
+  }
+  const remote = opts.remote ?? 'origin';
+  const branch = await captureGit(['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
+  if (!branch) {
+    process.stderr.write(`${prefix}: could not resolve current branch\n`);
+    return 1;
+  }
+  const originalUrl = await captureGit(['remote', 'get-url', remote], cwd);
+  await runLocalGit(['remote', 'set-url', remote, remoteUrl], cwd);
+  try {
+    return await runLocalGit(['push', remote, branch, ...extra], cwd);
+  } finally {
+    if (originalUrl) await runLocalGit(['remote', 'set-url', remote, originalUrl], cwd);
+  }
+}
+
 /**
  * True when the box has a git committer identity configured (`user.email`).
  * Docker boxes bind-mount the host `~/.gitconfig`, so they do; cloud boxes
@@ -99,9 +151,14 @@ export const gitCommand = new Command('git')
         "extra flags appended to the host-built `git push <remote> <branch>` (e.g. `--force-with-lease`, `--tags`). Do NOT re-pass the remote or branch — they are taken from --remote and the registered worktree; appending them as positionals makes git treat them as refspecs and fail with `refs/remotes/origin/HEAD cannot be resolved to branch`. Use --remote to change the remote.",
       )
       .action(async (args: string[], opts: CommonOptions) => {
-        const code = await postRpcAndExit('git.push', buildParams(opts, args), {
-          errorPrefix: 'agentbox-ctl git',
-        });
+        // Control-plane boxes lease a token and push directly; everyone else
+        // routes the push through the relay (host creds / cloud poller).
+        const code =
+          process.env.AGENTBOX_GIT_LEASE === '1'
+            ? await leaseAndPush(opts, args)
+            : await postRpcAndExit('git.push', buildParams(opts, args), {
+                errorPrefix: 'agentbox-ctl git',
+              });
         process.exit(code);
       }),
   )

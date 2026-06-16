@@ -679,6 +679,12 @@ export interface RegisterBoxArgs {
    * without a prompt, recording each bypass as a relay event.
    */
   autoApproveHostActions?: boolean;
+  /**
+   * The box repo's origin remote URL. The hosted control plane resolves
+   * owner/repo from this when leasing a GitHub-App push token. Absent for
+   * boxes without a git origin.
+   */
+  originUrl?: string;
 }
 
 export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void> {
@@ -701,6 +707,7 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     previewToken: args.previewToken,
     bridgeToken: args.bridgeToken,
     autoApproveHostActions: args.autoApproveHostActions,
+    originUrl: args.originUrl,
   });
 }
 

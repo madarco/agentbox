@@ -49,7 +49,6 @@ import { prepareCommand } from './commands/prepare.js';
 import { pruneCommand } from './commands/prune.js';
 import { queueCommand } from './commands/queue.js';
 import { relayCommand } from './commands/relay.js';
-import { controlBoxCommand } from './commands/control-box.js';
 import { runQueuedJobCommand } from './commands/_run-queued-job.js';
 import { screenCommand } from './commands/screen.js';
 import { shellCommand } from './commands/shell.js';
@@ -108,7 +107,6 @@ program.addCommand(checkpointCommand);
 program.addCommand(configCommand);
 program.addCommand(queueCommand);
 program.addCommand(relayCommand);
-program.addCommand(controlBoxCommand);
 // Internal worker spawned by the relay's queue scheduler. Hidden from
 // `--help` (it shows nothing user-facing — see _run-queued-job.ts).
 program.addCommand(runQueuedJobCommand, { hidden: true });
