@@ -10,6 +10,11 @@
     "pnpm": ">=9"
   },
   "packageManager": "pnpm@9.15.0",
+  "pnpm": {
+    "overrides": {
+      "e2b>chalk": "^4.1.2"
+    }
+  },
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
