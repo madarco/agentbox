@@ -298,15 +298,19 @@ async function runCliLogin(): Promise<void> {
     return;
   }
 
-  const harvested = harvestCliCredentials();
-  if (!harvested) {
-    log.warn('Sign-in finished but no credentials were found in the Vercel CLI store. Try again.');
+  const auth = readCliAuth();
+  if (!auth) {
+    log.warn('Sign-in finished but no access token was found in the Vercel CLI store. Try again.');
     return;
   }
 
   // Validate the token early so a bad/expired session fails here, not mid-op.
+  // The same call yields the account's default team, which scopes sandboxes when
+  // the CLI store records no selected team (the current `sbx` CLI no longer
+  // writes `currentTeam` to its config.json).
+  let user: { id: string; username?: string; defaultTeamId?: string };
   try {
-    await getUser(harvested.token);
+    user = await getUser(auth.token);
   } catch (err) {
     log.warn(
       `The Vercel session looks invalid (${err instanceof Error ? err.message : String(err)}). ` +
@@ -315,29 +319,38 @@ async function runCliLogin(): Promise<void> {
     return;
   }
 
-  const projectId = await resolveProjectId(harvested.token, harvested.teamId);
+  const teamId = resolveCliTeamId(user.defaultTeamId);
+  if (!teamId) {
+    log.warn(
+      'Signed in, but could not determine a Vercel team to scope sandboxes to. ' +
+        'Set VERCEL_TEAM_ID in `~/.agentbox/secrets.env` and re-run `agentbox vercel login`.',
+    );
+    return;
+  }
+
+  const projectId = await resolveProjectId(auth.token, teamId);
   if (projectId === null) {
     log.warn('No project selected — re-run `agentbox vercel login` to finish setup.');
     return;
   }
 
-  persistCliCredentials({ teamId: harvested.teamId, projectId });
+  persistCliCredentials({ teamId, projectId });
   reloadVercelEnv();
   log.success(`Signed in with Vercel — credentials managed by the sandbox CLI (saved scope to ${secretsPath()}).`);
   outro('Setup complete.');
 }
 
 /**
- * Read the live token + team id from the Vercel CLI store. teamId prefers an
- * already-cached `VERCEL_TEAM_ID` (e.g. from a prior login) and falls back to
- * the CLI's `currentTeam`. Null when the CLI isn't logged in.
+ * Resolve the team id sandboxes run under, in precedence order:
+ *   1. `VERCEL_TEAM_ID` — a prior login's cache or a user override.
+ *   2. the CLI store's `currentTeam` — older `vercel`/`sandbox` CLIs wrote it.
+ *   3. the account's default team — the current `sbx` CLI records no selected
+ *      team, so we fall back to the team its OAuth token defaults to (the same
+ *      team `sbx login` scopes its default sandbox project to).
+ * Null when none is available.
  */
-function harvestCliCredentials(): { token: string; teamId: string } | null {
-  const auth = readCliAuth();
-  if (!auth) return null;
-  const teamId = process.env.VERCEL_TEAM_ID ?? readCliCurrentTeam();
-  if (!teamId) return null;
-  return { token: auth.token, teamId };
+function resolveCliTeamId(defaultTeamId?: string): string | null {
+  return process.env.VERCEL_TEAM_ID ?? readCliCurrentTeam() ?? defaultTeamId ?? null;
 }
 
 /**

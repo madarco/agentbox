@@ -66,6 +66,15 @@ implementation (per the project convention), not as end-of-PR cleanup.
     login we list the team's projects (`vercel-rest.ts`) and the user picks one
     (clack select, pre-selecting `agentbox`/`vercel-sandbox-default-project`, with
     a create-new option) — cached as `VERCEL_PROJECT_ID`.
+  - **Team resolution (fixed 2026-06-16).** The current `sbx`/`sandbox` CLI no
+    longer writes `currentTeam` to its `config.json`, so the post-login harvest
+    used to dead-end with "no credentials were found in the Vercel CLI store"
+    even on a successful sign-in. `runCliLogin` now resolves the team in
+    precedence order `VERCEL_TEAM_ID` → CLI `currentTeam` → the account's
+    `defaultTeamId` (from `GET /v2/user`, which `getUser` now surfaces) — the
+    same team `sbx login` scopes its default sandbox project to. Verified live
+    against the real CLI store + API (`currentTeam` null, `defaultTeamId` carried
+    the team through).
   - Store path resolver is platform-aware (macOS `~/Library/Application Support`,
     Linux `$XDG_DATA_HOME`/`~/.local/share`, Windows `%APPDATA%`) with an
     `AGENTBOX_VERCEL_CLI_DIR` override for tests.

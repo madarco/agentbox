@@ -27,6 +27,13 @@ describe('getUser', () => {
     expect((init as RequestInit).headers).toMatchObject({ Authorization: 'Bearer vca_x' });
   });
 
+  it('surfaces defaultTeamId — the CLI-login team fallback when the store has no currentTeam', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { user: { id: 'u1', username: 'me', defaultTeamId: 'team_abc' } }),
+    );
+    await expect(getUser('vca_x')).resolves.toMatchObject({ defaultTeamId: 'team_abc' });
+  });
+
   it('throws with the API message on failure', async () => {
     fetchMock.mockResolvedValue(jsonResponse(403, { error: { message: 'Not authorized' } }));
     await expect(getUser('vca_x')).rejects.toThrow(/403.*Not authorized/);

@@ -354,6 +354,23 @@ mode … Yes, I accept" gate.
   relay and can launch boxes on other providers, so they can fully smoke-test.
 
 ## Changelog
+- 2026-06-17: Fix `ERR_REQUIRE_ESM` crash on Node < 20.19 (e.g. 20.18, which
+  our `engines.node >=20.10` permits). The `e2b` SDK ships **no `exports` map**
+  (only `main`→CJS / `module`→ESM), so an ESM `import 'e2b'` falls back to the
+  CJS `dist/index.js`, which `require("chalk")`. Its declared `chalk@^5.3.0`
+  resolves to the ESM-only chalk@5, and on Node < 20.19 (before `require(esm)`
+  was unflagged) that `require` throws `ERR_REQUIRE_ESM` — crashing the whole
+  CLI at command registration (`cli.ts` → `credentials.ts` → `sdk.ts` →
+  `import 'e2b'`), so **every** `agentbox` command died, not just e2b ones.
+  Fix: a scoped pnpm override `e2b>chalk: ^4.1.2` in the root `package.json`
+  pins **e2b's** chalk to the CJS chalk@4 (same `red`/`hex`/`gray`/`dim` API
+  e2b uses), so `require("chalk")` works on every supported Node. chalk is the
+  only pure-ESM (no `require` condition) package e2b's CJS build requires — its
+  other ESM deps (`@bufbuild/protobuf`, `@connectrpc/*`, `openapi-fetch`) are
+  dual-package. The rest of the monorepo keeps chalk@5. Verified live on Node
+  v20.18.0: `import 'e2b'`, `agentbox daytona login`, `agentbox e2b login
+  --status`, and `agentbox --help` all load cleanly. Do not remove the override
+  on a dep cleanup — newer e2b (2.30.1) still has the broken packaging.
 - 2026-06-03: Cold-attach "blank pane looks hung" fix (shared cloud path).
   Symptom: `agentbox e2b claude` reached `box ready`, showed the recap panel,
   then the attach sat on a featureless blank screen long enough that the user
