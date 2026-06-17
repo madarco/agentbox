@@ -1,7 +1,7 @@
 ---
-description: Curate a CHANGELOG.md entry from commits since the last release; with a bump arg, also version, commit, push, and publish to npm
+description: Curate a CHANGELOG.md entry from commits since the last release; with a bump arg, also version, commit, and push the tag — then hand the npm publish to the user (they publish manually)
 argument-hint: "[patch|minor|major]"
-allowed-tools: Bash(git describe:*), Bash(git log:*), Bash(git tag:*), Bash(git rev-list:*), Bash(git rev-parse:*), Bash(git status:*), Bash(git add:*), Bash(git commit:*), Bash(git push:*), Bash(node:*), Bash(npm version:*), Bash(npm publish:*), Bash(npm view:*), Bash(cp:*), Bash(pnpm:*), Read, Edit
+allowed-tools: Bash(git describe:*), Bash(git log:*), Bash(git tag:*), Bash(git rev-list:*), Bash(git rev-parse:*), Bash(git status:*), Bash(git add:*), Bash(git commit:*), Bash(git push:*), Bash(node:*), Bash(npm version:*), Bash(npm view:*), Bash(cp:*), Bash(pnpm:*), Read, Edit
 ---
 
 You are writing the next release-notes entry for `@madarco/agentbox`. The
@@ -63,8 +63,13 @@ changelog is at `apps/cli/CHANGELOG.md` (Keep a Changelog format). Produce
 If `$ARGUMENTS` did **not** name a bump (`patch` / `minor` / `major`), stop here so
 the user can review and edit the changelog before releasing — do not bump or push.
 
-Otherwise continue. **This publishes to a public registry and is irreversible**, so
-get the user's explicit go-ahead at step 6.4 before publishing.
+Otherwise continue. **The user publishes to npm manually** — your job is to do
+everything up to and including pushing the tag, then hand the publish command to
+the user. Do **not** run `npm publish` yourself: 2FA auth requires either a live
+web-auth URL or a fresh TOTP code, and the web-auth URL gets **redacted to `***`**
+when it passes through the tool-output channel (and piping the command to
+`tail`/anything makes npm treat the session as non-interactive and bail with
+`EOTP`). So the publish must run in the user's own terminal.
 
 1. **Bump `package.json` (no commit, no tag yet).** Section 5 just edited the
    changelog, so the tree is dirty and a plain `npm version` would abort with
@@ -79,33 +84,37 @@ get the user's explicit go-ahead at step 6.4 before publishing.
    git tag v<next-version>
    ```
    (Stage whatever actually changed — add the root `CHANGELOG.md` too if you edited it.)
+   Note `npm version` runs a `version` script that already `git add`s the
+   changelog, so it may be staged for you. Before tagging, check `git tag -l
+   v<next-version>` — if a tag already exists (e.g. a concurrent session prepared
+   the release on another branch), **stop and ask the user** how to reconcile;
+   don't blindly move it.
 
 3. **Push the commit and tag.** Check the current branch first (`git rev-parse
    --abbrev-ref HEAD`). If it is not `main`, tell the user and confirm they want to
-   release from this branch. Then: `git push --follow-tags`.
+   release from this branch. Then push the commit and the tag. `git push
+   --follow-tags` only pushes **annotated** tags — the lightweight `git tag
+   v<next-version>` above is **not** pushed by it, so push the tag explicitly:
+   ```
+   git push
+   git push origin v<next-version>
+   ```
+   Verify with `git ls-remote --tags origin v<next-version>`.
 
-4. **Confirm before publishing.** Restate package (`@madarco/agentbox`), the new
-   version, and the branch. Verify the version is not already on the registry
-   (`npm view @madarco/agentbox@<next-version> version` should print nothing). Get
-   an explicit go-ahead.
+4. **Hand the publish to the user.** Verify the version is not already on the
+   registry (`npm view @madarco/agentbox@<next-version> version` should print
+   nothing / 404). Then restate package (`@madarco/agentbox`), the new version,
+   the branch, and the pushed tag/commit, and give the user the exact command to
+   run **in their own terminal** (the `! ` prefix runs it in this session so the
+   web-auth URL lands unredacted):
+   ```
+   ! cd apps/cli && npm publish --auth-type=web
+   ```
+   `prepublishOnly` rebuilds the whole workspace first, so this also runs the full
+   build. npm will print a clickable web-auth URL (or, with classic TOTP, prompt
+   for a 6-digit code — re-run with `--otp=<code>`); it completes the publish
+   automatically once auth lands. Do **not** run this for them.
 
-5. **Publish and surface the MFA link.** From the package dir (`prepublishOnly`
-   rebuilds the whole workspace first, so this also runs the full build):
-   `cd apps/cli && npm publish --auth-type=web`
-   - With 2FA enabled, npm prints a web-auth URL:
-     ```
-     npm notice Authenticate your account at:
-     npm notice https://www.npmjs.com/auth/cli/XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-     ```
-     **Show that full URL to the user immediately and prominently** ("Open this to
-     authorize the publish: <url>"). Keep the command running in the **foreground** —
-     npm completes the publish automatically once the browser approval lands. Do not
-     cancel or background it.
-   - **Classic TOTP fallback:** if npm instead asks for a one-time password
-     (`This operation requires a one-time password`), ask the user for the 6-digit
-     code and re-run with `--otp=<code>`.
-
-6. **Confirm success.** `npm view @madarco/agentbox version` should now show
-   <next-version>. Report the published version, the pushed tag, and the commit. If
-   `npm publish` fails (already-published version, auth, build), report the exact
-   error and stop — do not retry blindly.
+5. **Optionally confirm afterward.** If the user reports the publish succeeded,
+   `npm view @madarco/agentbox version` should show <next-version>. Report the
+   published version, the pushed tag, and the commit.
