@@ -20,6 +20,7 @@
     "integrations-iterm2",
     "integrations-tmux",
     "integrations-cmux",
+    "integrations-herdr",
     "---Services---",
     "integrations-notion",
     "integrations-linear",

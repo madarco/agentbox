@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import type { AttachOpenIn } from '@agentbox/config';
+import { herdrRequest } from './herdr-socket.js';
 
-export type HostTerminal = 'tmux' | 'cmux' | 'iterm2' | 'unknown';
+export type HostTerminal = 'tmux' | 'cmux' | 'herdr' | 'iterm2' | 'unknown';
 
 /**
  * Identify the user's host terminal from env vars. tmux wins over everything
@@ -17,13 +18,20 @@ export type HostTerminal = 'tmux' | 'cmux' | 'iterm2' | 'unknown';
  * don't recognize native emulators (gnome-terminal / alacritty / konsole) yet:
  * outside these the caller falls back to attaching in the current terminal. See
  * docs/linux-host-backlog.md.
+ *
+ * Herdr (https://herdr.dev) is a multiplexer that runs *inside* a host terminal,
+ * so `TERM_PROGRAM` reflects the outer emulator (e.g. iTerm2). It must therefore
+ * be checked *before* iTerm2 — keyed on its `HERDR_SOCKET_PATH` — or attach
+ * would spawn iTerm2 windows instead of Herdr panes.
  */
 export function detectHostTerminal(env: NodeJS.ProcessEnv = process.env): HostTerminal {
   const tmux = env['TMUX'];
-  // tmux can run inside cmux; if it's active its verbs are the right primitive.
+  // tmux can run inside cmux/herdr; if it's active its verbs are the right primitive.
   if (tmux && tmux.length > 0) return 'tmux';
   const cmuxSocket = env['CMUX_SOCKET_PATH'];
   if (cmuxSocket && cmuxSocket.length > 0) return 'cmux';
+  const herdrSocket = env['HERDR_SOCKET_PATH'];
+  if (herdrSocket && herdrSocket.length > 0) return 'herdr';
   const termProgram = env['TERM_PROGRAM'];
   if (termProgram === 'iTerm.app') return 'iterm2';
   return 'unknown';
@@ -99,6 +107,16 @@ export interface SpawnInNewTerminalArgs {
    * the queue worker, which has no reliable focused surface to split/tab into.
    */
   cmuxWorkspaceFallback?: boolean;
+  /**
+   * Herdr pane id to split (`split` mode). The queue worker captures the
+   * submitting shell's `$HERDR_PANE_ID`; the foreground path passes its own.
+   */
+  herdrTargetPane?: string;
+  /**
+   * Herdr workspace id (`$HERDR_WORKSPACE_ID`). Used as the `tab` target so a
+   * new tab lands in the submitting workspace.
+   */
+  herdrTargetWorkspace?: string;
 }
 
 export interface SpawnInNewTerminalResult {
@@ -124,6 +142,7 @@ export async function spawnInNewTerminal(
 ): Promise<SpawnInNewTerminalResult> {
   if (args.host === 'tmux') return spawnInTmux(args);
   if (args.host === 'cmux') return spawnInCmux(args);
+  if (args.host === 'herdr') return spawnInHerdr(args);
   return spawnInITerm2(args);
 }
 
@@ -283,6 +302,93 @@ async function newCmuxWorkspace(
 function parseCmuxRef(stdout: string): string | undefined {
   const m = stdout.match(/\b(?:surface|pane):\d+\b/);
   return m ? m[0] : undefined;
+}
+
+/** Read a string field off a nested object in a Herdr reply, if present. */
+function herdrField(
+  result: Record<string, unknown> | null,
+  parent: string,
+  key: string,
+): string | undefined {
+  const obj = result?.[parent];
+  if (obj && typeof obj === 'object') {
+    const v = (obj as Record<string, unknown>)[key];
+    if (typeof v === 'string' && v.length > 0) return v;
+  }
+  return undefined;
+}
+
+/**
+ * Pull the new pane id (e.g. `w1:p2`) out of a Herdr create reply. The pane
+ * lives under `pane` for `pane.split` and under `root_pane` for
+ * `tab.create`/`workspace.create` (verified live against Herdr 0.7); a regex
+ * over the serialized reply is the last-ditch fallback.
+ */
+function extractHerdrPaneId(result: Record<string, unknown> | null): string | undefined {
+  if (!result) return undefined;
+  const direct = result['pane_id'];
+  if (typeof direct === 'string' && /:p\d+$/.test(direct)) return direct;
+  for (const parent of ['pane', 'root_pane'] as const) {
+    const id = herdrField(result, parent, 'pane_id');
+    if (id && /:p\d+$/.test(id)) return id;
+  }
+  const m = JSON.stringify(result).match(/"([^"]*:p\d+)"/);
+  return m ? m[1] : undefined;
+}
+
+/**
+ * Open `<command>` in a new Herdr pane via the socket API
+ * (https://herdr.dev/docs/socket-api):
+ *   - `split`  → `pane.split`       (a split region beside the current pane)
+ *   - `tab`    → `tab.create`       (a new tab in the current workspace)
+ *   - `window` → `workspace.create` (a separate top-level workspace)
+ * Each create returns a new pane id; we then type `cd <cwd> && exec <cmd>` into
+ * it (mirroring the cmux / iTerm2 paths) so the new pane lands in the host
+ * pane's cwd and replaces its shell with the agentbox process. Herdr has no
+ * `pane.focus`, so we focus the new tab/workspace via `tab.focus`/
+ * `workspace.focus` (a split stays beside the visible current pane). On any
+ * failure (no socket, error reply, no pane id) we return `launched:false` so the
+ * caller falls back to inline attach.
+ */
+async function spawnInHerdr(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTerminalResult> {
+  const env = args.env;
+  let result: Record<string, unknown> | null;
+  let noteKind: string;
+  if (args.mode === 'split') {
+    const params: Record<string, unknown> = { direction: 'right', ratio: 0.5 };
+    if (args.herdrTargetPane) params['pane_id'] = args.herdrTargetPane;
+    result = await herdrRequest('pane.split', params, env);
+    noteKind = 'Herdr split';
+  } else if (args.mode === 'tab') {
+    const params: Record<string, unknown> = {};
+    if (args.herdrTargetWorkspace) params['workspace_id'] = args.herdrTargetWorkspace;
+    result = await herdrRequest('tab.create', params, env);
+    noteKind = 'Herdr tab';
+  } else {
+    result = await herdrRequest('workspace.create', { cwd: args.cwd, label: args.title }, env);
+    noteKind = 'Herdr workspace';
+  }
+
+  const paneId = extractHerdrPaneId(result);
+  if (!paneId) {
+    return { launched: false, note: '', error: `herdr ${args.mode} gave no pane id` };
+  }
+  // `\n` runs the typed command. `cd && exec` lands in the host cwd and replaces
+  // the new pane's shell with the attach process.
+  const text = `cd ${shellQuote(args.cwd)} && exec ${shellJoin(args.argv)}\n`;
+  const sent = await herdrRequest('pane.send_text', { pane_id: paneId, text }, env);
+  if (sent === null) {
+    return { launched: false, note: '', error: 'herdr pane.send_text failed' };
+  }
+  // Best-effort focus of the new surface (no-op for split — Herdr has no pane focus).
+  if (args.mode === 'tab') {
+    const tabId = herdrField(result, 'tab', 'tab_id');
+    if (tabId) void herdrRequest('tab.focus', { tab_id: tabId }, env);
+  } else if (args.mode === 'window') {
+    const wsId = herdrField(result, 'workspace', 'workspace_id');
+    if (wsId) void herdrRequest('workspace.focus', { workspace_id: wsId }, env);
+  }
+  return { launched: true, note: `Attached in new ${noteKind}.` };
 }
 
 async function spawnInITerm2(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTerminalResult> {

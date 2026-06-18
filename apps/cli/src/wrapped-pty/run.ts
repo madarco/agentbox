@@ -13,6 +13,12 @@ import {
   restoreCmuxWorkspace,
   type CmuxWorkspaceState,
 } from '../terminal/cmux-status.js';
+import {
+  clearHerdrAgentState,
+  herdrStatusEnabled,
+  notifyHerdrApprovalPrompt,
+  reportHerdrAgentState,
+} from '../terminal/herdr-status.js';
 import { popTerminalTitle, pushTerminalTitle, setTerminalTitle } from '../terminal/title.js';
 import {
   createInputRouter,
@@ -699,6 +705,9 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     onPrompt: (ev: PromptAskEvent) => {
       capturingPrompt = ev;
       applyBandChange();
+      // Special highlight for AgentBox's own host-relay approval prompts: Herdr
+      // can't know about these (they're not the box agent), so surface a toast.
+      if (herdrOn) notifyHerdrApprovalPrompt(opts.boxName, ev);
       // capture() returns a Promise that resolves with the answer body; the
       // input-router's onAnswer callback already POSTs and resets the band.
       // We just need to await so unhandled rejections (router.abort) don't
@@ -743,6 +752,11 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // detach.
   let cmuxOn = false;
   let cmuxOrig: CmuxWorkspaceState | null = null;
+  // When attached inside Herdr, report the box agent's activity to its pane so
+  // Herdr treats it like a normal agent pane (its native needs-input handling
+  // included). No capture/restore: the agent association is ours, reset to idle
+  // on detach.
+  let herdrOn = false;
 
   // Poll the box's status.json for `claude.sessionTitle` so the idle
   // footer can show what claude set as its terminal title (mirrors the
@@ -780,6 +794,12 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
         if (isAttentionState(nextActivity) && !isAttentionState(lastActivity)) {
           markCmuxTabAttention(opts.mode, opts.boxName, nextActivity);
         }
+      }
+      // Mirror the agent's activity onto the Herdr pane on each transition.
+      // Herdr surfaces needs-input itself from the `blocked` state, so (unlike
+      // cmux) there's no separate attention notification here.
+      if (herdrOn && nextActivity !== lastActivity) {
+        reportHerdrAgentState(opts.mode, nextActivity, opts.boxName);
       }
       // Mirror the live title to the host terminal/tab, falling back to the box
       // name until the agent sets one. Deduped so we don't spam the terminal.
@@ -825,6 +845,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   if (opts.mode !== 'shell') {
     cmuxOn = await cmuxStatusEnabled();
     if (cmuxOn) cmuxOrig = captureCmuxWorkspace();
+    herdrOn = await herdrStatusEnabled();
   }
   void pollStatus();
   const statusTimer = setInterval(() => {
@@ -962,6 +983,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   process.stdout.off('resize', onResize);
   clearInterval(statusTimer);
   if (cmuxOn) restoreCmuxWorkspace(cmuxOrig);
+  if (herdrOn) clearHerdrAgentState(opts.mode, opts.boxName);
   stopSpinner();
   if (flashTimer) clearTimeout(flashTimer);
   if (process.stdin.isTTY) process.stdin.setRawMode(false);

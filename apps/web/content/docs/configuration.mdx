@@ -201,12 +201,15 @@ The permission-skip defaults are on precisely because each box is a throwaway sa
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `attach.openIn` | enum `split`/`window`/`tab`/`same` | `split` | where `agentbox claude\|codex\|opencode` opens the attached session under tmux, cmux, or iTerm2 |
+| `attach.openIn` | enum `split`/`window`/`tab`/`same` | `split` | where `agentbox claude\|codex\|opencode` opens the attached session under tmux, cmux, Herdr, or iTerm2 |
 | `attach.cmuxStatus` | bool | `true` | when attached inside cmux, reflect the box agent's activity on its cmux workspace (colour + description) |
+| `attach.herdrStatus` | bool | `true` | when attached inside Herdr, report the box agent's activity to its Herdr pane (so it looks like a normal agent) and highlight AgentBox's own approval prompts |
 
-`split` uses a tmux split-window / cmux new-split / iTerm2 vertical split (same workspace). `tab` opens a new tmux window / a new cmux surface (a tab in the current pane, same workspace) / a new iTerm2 tab. `window` opens a new tmux window / a separate cmux workspace / a new iTerm2 window. Outside tmux/cmux/iTerm2 every value behaves like `same`. See [access your box](/docs/access-your-box).
+`split` uses a tmux split-window / cmux new-split / Herdr `pane.split` / iTerm2 vertical split (same workspace). `tab` opens a new tmux window / a new cmux surface (a tab in the current pane, same workspace) / a new Herdr tab / a new iTerm2 tab. `window` opens a new tmux window / a separate cmux workspace / a new Herdr workspace / a new iTerm2 window. Outside tmux/cmux/Herdr/iTerm2 every value behaves like `same`. See [access your box](/docs/access-your-box).
 
 `attach.cmuxStatus` surfaces a box's agent state in the [cmux](https://cmux.com) sidebar. While you're attached inside a cmux surface, AgentBox reflects the agent's live activity on the box's cmux workspace via its colour and description — blue/"working" while the agent runs, amber/"needs input" when it asks a question or is waiting, and the tint clears when idle. The workspace's original colour and description are restored when you detach. When you open several boxes from one project as tabs in the same workspace (`--attach-in tab`), AgentBox also **flags the individual tab** whose agent needs input via a cmux notification (tab badge + reorder + a desktop notification), so you can tell which box is waiting; the flag clears when you focus that tab. (cmux only renders its status *pills* for workspaces running an agent it recognizes; a box runs the agent inside the container, so AgentBox drives the always-visible workspace colour/description and the per-tab highlight instead.) No effect outside cmux; set to `false` to disable.
+
+`attach.herdrStatus` makes a box look like a *normal* agent inside [Herdr](https://herdr.dev). While you're attached inside a Herdr pane, AgentBox reports the box agent's live activity to that pane (working / blocked / idle), so Herdr applies its native agent treatment — **including its own needs-input handling**. The one thing Herdr can't see is AgentBox's own host-relay **approval prompts** (git push, PR, checkpoint, …), so those get an explicit Herdr notification. No effect outside Herdr; set to `false` to disable. See [Herdr integration](/docs/integrations-herdr).
 
 ## code / shell
 
@@ -256,7 +259,7 @@ agentbox config set --project integrations.linear.enabled true
 | `queue.maxConcurrent` | int | `5` | max simultaneously-running boxes before `-i` jobs queue; override with `--max-running <n>` |
 | `queue.maxWorking` | int | `0` (off) | max agents actively working at once before `-i` jobs queue; override with `--max-working <n>` |
 | `queue.idleGraceSeconds` | int | `15` | debounce before an agent frees its working slot; only used when `maxWorking > 0` |
-| `queue.openIn` | enum `none`/`split`/`window`/`tab` | `none` | when a background `-i` job's box becomes ready, open an attached terminal onto it (a tmux/cmux split, window, or tab); `none` opens nothing |
+| `queue.openIn` | enum `none`/`split`/`window`/`tab` | `none` | when a background `-i` job's box becomes ready, open an attached terminal onto it (a tmux/cmux/Herdr split, window, or tab); `none` opens nothing |
 | `autopause.enabled` | bool | `true` | let the relay periodically pause idle boxes when more than `maxRunningBoxes` run |
 | `autopause.maxRunningBoxes` | int | `5` | target ceiling of running boxes before idle ones get paused |
 | `autopause.idleMinutes` | int | `5` | minutes a box must be continuously idle before it's eligible for auto-pause |
@@ -267,7 +270,7 @@ agentbox config set autopause.idleMinutes 10 --global
 agentbox config set queue.openIn split --global
 ```
 
-By default a background `-i` run just queues and prints its job line. Set `queue.openIn` to `split`, `window`, or `tab` and the host relay opens an attached terminal onto the box the moment its worker finishes creating it — no need to find the box and `attach` by hand. It only fires when the submitting shell is inside tmux, cmux, or iTerm2. Under cmux, `split` splits the pane you submitted from (falling back to the parent workspace, then a new workspace), `tab` adds a tab in the parent workspace, and `window` opens a separate workspace; iTerm2 opens relative to the frontmost window. Unlike `attach.openIn` there is no `same` mode (the box is created asynchronously, so it is always a fresh terminal).
+By default a background `-i` run just queues and prints its job line. Set `queue.openIn` to `split`, `window`, or `tab` and the host relay opens an attached terminal onto the box the moment its worker finishes creating it — no need to find the box and `attach` by hand. It only fires when the submitting shell is inside tmux, cmux, Herdr, or iTerm2. Under cmux, `split` splits the pane you submitted from (falling back to the parent workspace, then a new workspace), `tab` adds a tab in the parent workspace, and `window` opens a separate workspace; under Herdr, `split` splits the pane you submitted from, `tab` adds a tab in the parent workspace, and `window` opens a separate workspace; iTerm2 opens relative to the frontmost window. Unlike `attach.openIn` there is no `same` mode (the box is created asynchronously, so it is always a fresh terminal).
 
 <Callout type="warn" title="cmux: allow socket control">
 The box is opened by the relay's queue **worker**, a detached host process — not a cmux-initiated one. cmux's default `socketControlMode: cmuxOnly` only trusts processes cmux itself started, so it blocks the worker and nothing opens. To use `queue.openIn` under cmux, set `socketControlMode` to `automation` (or `password`) in `~/.config/cmux/cmux.json` and run `cmux reload-config`. tmux and iTerm2 need no such change.

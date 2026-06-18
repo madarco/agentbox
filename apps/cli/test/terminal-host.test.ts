@@ -38,6 +38,29 @@ describe('detectHostTerminal', () => {
     expect(detectHostTerminal({ TERM_PROGRAM: 'ghostty' })).toBe('unknown');
   });
 
+  it('returns "herdr" when HERDR_SOCKET_PATH is set, even under iTerm2', () => {
+    // Herdr runs inside a host terminal, so TERM_PROGRAM reflects the outer
+    // emulator; Herdr must win over iTerm2 or attach spawns iTerm2 windows.
+    expect(
+      detectHostTerminal({ HERDR_SOCKET_PATH: '/tmp/herdr.sock', TERM_PROGRAM: 'iTerm.app' }),
+    ).toBe('herdr');
+  });
+
+  it('returns "cmux" when both cmux and Herdr sockets are set (cmux wins)', () => {
+    expect(
+      detectHostTerminal({
+        CMUX_SOCKET_PATH: '/tmp/cmux.sock',
+        HERDR_SOCKET_PATH: '/tmp/herdr.sock',
+      }),
+    ).toBe('cmux');
+  });
+
+  it('returns "tmux" when TMUX and HERDR_SOCKET_PATH are both set (tmux wins)', () => {
+    expect(
+      detectHostTerminal({ TMUX: '/tmp/tmux-0/default,1,0', HERDR_SOCKET_PATH: '/tmp/herdr.sock' }),
+    ).toBe('tmux');
+  });
+
   it('treats an empty TMUX value as unset', () => {
     expect(detectHostTerminal({ TMUX: '', TERM_PROGRAM: 'iTerm.app' })).toBe('iterm2');
   });

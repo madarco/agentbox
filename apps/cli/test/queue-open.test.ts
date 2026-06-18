@@ -52,6 +52,29 @@ describe('captureOpenTerminalContext', () => {
     });
   });
 
+  it('captures the Herdr socket + pane + workspace for a Herdr host', () => {
+    expect(
+      captureOpenTerminalContext(
+        'split',
+        {
+          HERDR_SOCKET_PATH: '/Users/x/.config/herdr/herdr.sock',
+          HERDR_PANE_ID: 'w1:p1',
+          HERDR_WORKSPACE_ID: 'w1',
+          // Herdr runs inside iTerm2 — detection must still pick Herdr.
+          TERM_PROGRAM: 'iTerm.app',
+        },
+        CWD,
+      ),
+    ).toEqual({
+      host: 'herdr',
+      mode: 'split',
+      cwd: CWD,
+      herdrSocket: '/Users/x/.config/herdr/herdr.sock',
+      herdrPaneId: 'w1:p1',
+      herdrWorkspaceId: 'w1',
+    });
+  });
+
   it('captures an iTerm2 host with no extra handle (osascript drives it)', () => {
     expect(captureOpenTerminalContext('tab', { TERM_PROGRAM: 'iTerm.app' }, CWD)).toEqual({
       host: 'iterm2',

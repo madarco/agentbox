@@ -1,0 +1,69 @@
+---
+title: Herdr
+description: AgentBox in Herdr — boxes appear as normal agents, Herdr handles needs-input natively, AgentBox approval prompts get their own highlight, and boxes open as Herdr splits/tabs/workspaces
+---
+
+[Herdr](https://herdr.dev) is a terminal multiplexer with a local JSON-RPC socket API. When you run AgentBox inside Herdr, a box behaves like a *normal* agent pane:
+
+- the box agent (Claude / Codex / OpenCode) shows up with Herdr's native agent treatment — working / blocked / idle
+- Herdr's own **needs-input** handling fires when the agent asks a question, because AgentBox reports the state transparently
+- AgentBox's own **approval prompts** (git push, PR, checkpoint, …) — which Herdr can't otherwise see — get an explicit Herdr notification
+- attached sessions open as Herdr splits, tabs, or workspaces via `--attach-in`
+
+<Figure caption="A box in Herdr: the pane reports its agent as a normal Claude agent (working → blocked → idle), and AgentBox raises a Herdr notification when one of its own approval prompts needs an answer." />
+
+## A box looks like a normal agent
+
+While you're attached to a box inside Herdr, AgentBox reports the agent's live activity to its **pane** (`pane.report_agent`), so Herdr treats it exactly like a locally-running agent:
+
+| Agent state                 | Herdr agent state |
+| --------------------------- | ----------------- |
+| Working / compacting        | `working`         |
+| Asking a question / waiting | `blocked`         |
+| Plan ready                  | `blocked`         |
+| Error                       | `blocked`         |
+| Idle                        | `idle`            |
+
+Because the box reports as a normal agent, **Herdr handles needs-input itself** from the `blocked` state — its usual badge / notification, the same as a local agent. On detach the pane resets to idle. This is controlled by [`attach.herdrStatus`](/docs/configuration) (default `true`); set it to `false` to turn it off. It's a no-op outside Herdr.
+
+<Callout title="Why this is the inverse of the cmux integration">
+  cmux won't draw its agent pill for a box (it sees a container process), so AgentBox there drives the
+  workspace colour by hand. Herdr has a first-class agent model and an open socket, so AgentBox simply
+  reports the state and lets Herdr do the rest — including needs-input.
+</Callout>
+
+## A highlight for AgentBox's own prompts
+
+Some prompts don't come from the agent at all — they come from AgentBox's **host relay**: approving a `git push`, a PR, a checkpoint, a file copy. Herdr has no way to know about these, so AgentBox raises an explicit Herdr notification (with the `request` sound) the moment one appears, titled with the box name. That keeps AgentBox-specific approvals from blending into the normal agent flow.
+
+## Boxes as splits, tabs, or workspaces
+
+The [`attach.openIn`](/docs/configuration) config key (CLI flag `--attach-in`) decides where an attached session lands. Under Herdr:
+
+| Mode                | What happens                                               |
+| ------------------- | --------------------------------------------------------- |
+| `split` _(default)_ | New split beside the current pane (`pane.split`)          |
+| `tab`               | New tab in the current workspace (`tab.create`)           |
+| `window`            | Separate Herdr workspace (`workspace.create`)             |
+| `same`              | Inline in the current pane (no spawn) — same as `--inline` |
+
+```bash
+# open the box as a tab in the current workspace
+agentbox claude mybox --attach-in tab
+
+# make that the default everywhere
+agentbox config set attach.openIn tab
+```
+
+This also works for background `-i` runs: set [`queue.openIn`](/docs/configuration) and the box opens in Herdr the moment its worker finishes creating it.
+
+## How it talks to Herdr
+
+AgentBox detects Herdr from the `HERDR_SOCKET_PATH` / `HERDR_PANE_ID` environment variables that Herdr injects into managed panes, and talks to Herdr's [socket API](https://herdr.dev/docs/socket-api) directly — there's no extra binary to install. Detection is checked **before** iTerm2 (Herdr runs inside an emulator, so `TERM_PROGRAM` reflects the outer one), and every socket call is best-effort: if Herdr is unreachable, the attach is unaffected.
+
+<Callout title="Coming next: a Herdr plugin">
+  A future release will add a Herdr plugin with custom buttons/actions and a live boxes list, mirroring
+  the AgentBox Dock in cmux.
+</Callout>
+
+See [Access your box](/docs/access-your-box) for the other ways to reach a box, and [Configuration](/docs/configuration) for the `attach.openIn` and `attach.herdrStatus` keys.
