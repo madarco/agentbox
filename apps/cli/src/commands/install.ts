@@ -40,6 +40,7 @@ import {
   type ProviderName,
 } from '../lib/doctor-checks.js';
 import { markSetupComplete } from '../lib/first-run.js';
+import { maybePromptStar } from '../lib/star-prompt.js';
 import { installCmuxCommand } from './install-cmux.js';
 import { runPrepare } from './prepare.js';
 
@@ -560,6 +561,8 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
       ? '✨ Setup complete — continuing with your command…'
       : '✨ Setup complete',
   );
+
+  await maybePromptStar({ trigger: 'install' });
   return true;
 }
 
