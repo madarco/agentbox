@@ -9,6 +9,28 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.18.0] - 2026-06-18
+
+### Added
+
+- **Herdr integration.** Running `agentbox claude|codex|opencode` inside
+  [Herdr](https://herdr.dev) now feels native: each box shows up as a normal
+  agent in Herdr's sidebar with live status (working / idle), a pending
+  host-relay approval (git push / PR / checkpoint) highlights the box as
+  **blocked** and raises a Herdr notification, and `attach.openIn` /
+  `queue.openIn` open boxes as Herdr splits, tabs, or workspaces — defaulting to
+  a new **tab** under Herdr. New `attach.herdrStatus` config key (default on)
+  controls the status reporting.
+- **Herdr plugin** — `agentbox install herdr` (or, from Herdr,
+  `herdr plugin install madarco/agentbox/herdr-plugin`) installs a plugin that
+  adds a **boxes overlay** (`prefix a`), a **new box** shortcut
+  (`prefix shift a`), and **Ctrl+click** a box to open its web app.
+- **Paste screenshots into a box under Herdr.** Pressing **Ctrl+V** with an
+  image on the clipboard while attached to a box's Claude now ships the image
+  into the box and attaches it (`[Image #1]`) — works on docker and cloud boxes.
+- **GitHub star prompt** — a one-time nudge to star the project, shown after
+  `agentbox install` / `agentbox update`.
+
 ## [0.17.1] - 2026-06-17
 
 ### Fixed
