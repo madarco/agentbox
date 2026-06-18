@@ -45,14 +45,14 @@ agentbox claude
 agentbox hetzner claude # or vercel, daytona
 
 # Ctrl+a d to detach, claude keep going, to reconnect later:
-agentbox claude attach 1
+agentbox attach 1
 
 # To open a persistent shell inside the box:
 agentbox shell 1
 
 # Create a second box:
 agentbox claude
-agentbox claude attach 2
+agentbox attach 2
 agentbox shell 2
 
 # Open your web project on a .local url tunnel on your pc
