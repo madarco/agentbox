@@ -309,9 +309,17 @@ Manifest contents:
 - `[[panes]]` `boxes` (placement `overlay`) → `agentbox list --herdr --watch`.
 - `[[actions]]` `boxes` (opens the pane via `herdr plugin pane open`), `new`
   (`agentbox herdr new`), `link` (`agentbox herdr link`).
-- `[[keys.command]]` `prefix+a` → `agentbox.boxes`, `prefix+shift+a` →
-  `agentbox.new`. (`prefix+b` is Herdr's own `toggle_sidebar`, so it's avoided.)
 - `[[link_handlers]]` `^agentbox://` → action `link`.
+
+**Keybindings live in the user's `config.toml`, not the manifest.** Verified
+against Herdr 0.7: manifest `[[keys.command]]` entries are ignored (they don't
+appear in `herdr plugin list` and never fire). So `install herdr` splices a
+managed `[[keys.command]]` block into `~/.config/herdr/config.toml`
+(`herdrConfigPath`) — idempotently, between `# >>> agentbox … >>>` sentinels via
+`upsertHerdrKeybindings` — binding `prefix+a` → `agentbox.boxes` and
+`prefix+shift+a` → `agentbox.new` with `type = "plugin_action"`, then runs
+`herdr server reload-config`. (`prefix+b` is Herdr's own `toggle_sidebar`, so
+it's avoided.) `herdr config reset-keys` (or re-running) removes the block.
 
 The plugin's runtime entry points live in `apps/cli/src/commands/herdr.ts`
 (hidden command group `agentbox herdr`):

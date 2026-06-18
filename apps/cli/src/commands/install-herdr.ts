@@ -20,9 +20,9 @@
 import { intro, log, note, outro } from '@clack/prompts';
 import { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { AGENTBOX_VERSION } from '../version.js';
 
 /** Directory the generated plugin lives in (stable across package upgrades). */
@@ -31,10 +31,62 @@ export function herdrPluginDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(home, 'herdr', 'plugin');
 }
 
+/** Herdr's config file. `HERDR_CONFIG_PATH` overrides; else XDG/`~/.config`. */
+export function herdrConfigPath(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env['HERDR_CONFIG_PATH'];
+  if (override && override.length > 0) return override;
+  const xdg = env['XDG_CONFIG_HOME'];
+  const base = xdg && xdg.length > 0 ? xdg : join(homedir(), '.config');
+  return join(base, 'herdr', 'config.toml');
+}
+
 /** The herdr control binary: the in-session path when available, else PATH. */
 export function herdrBinary(env: NodeJS.ProcessEnv = process.env): string {
   const b = env['HERDR_BIN_PATH'];
   return b && b.length > 0 ? b : 'herdr';
+}
+
+const KEY_BEGIN = '# >>> agentbox install herdr (managed) >>>';
+const KEY_END = '# <<< agentbox install herdr (managed) <<<';
+
+/**
+ * The keybinding block for `~/.config/herdr/config.toml`. Plugin manifests
+ * **cannot** declare keybindings (verified against Herdr 0.7 — manifest
+ * `[[keys.command]]` is ignored); custom keys live in the user's config.toml and
+ * bind to a plugin action via `type = "plugin_action"`.
+ */
+export function herdrKeybindingsBlock(): string {
+  return `${KEY_BEGIN}
+# Remove this block (or run \`herdr config reset-keys\`) to drop the shortcuts.
+[[keys.command]]
+key = "prefix+a"
+type = "plugin_action"
+command = "agentbox.boxes"
+description = "AgentBox: boxes overlay"
+
+[[keys.command]]
+key = "prefix+shift+a"
+type = "plugin_action"
+command = "agentbox.new"
+description = "AgentBox: new box"
+${KEY_END}`;
+}
+
+/**
+ * Idempotently splice our managed keybinding block into an existing config.toml
+ * body: strip any prior managed block, then append the fresh one. Pure — tested.
+ */
+export function upsertHerdrKeybindings(existing: string, block: string): string {
+  const stripped = existing.replace(
+    new RegExp(`\\n*${escapeRe(KEY_BEGIN)}[\\s\\S]*?${escapeRe(KEY_END)}\\n*`, 'g'),
+    '\n',
+  );
+  const head = stripped.replace(/\s+$/, '');
+  return (head.length > 0 ? `${head}\n\n` : '') + block + '\n';
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export interface HerdrManifestPaths {
@@ -92,17 +144,8 @@ title = "AgentBox: open box link"
 contexts = ["workspace"]
 command = ${tomlArgv([...ab, 'herdr', 'link'])}
 
-[[keys.command]]
-key = "prefix+a"
-type = "plugin_action"
-command = "agentbox.boxes"
-description = "AgentBox: boxes overlay"
-
-[[keys.command]]
-key = "prefix+shift+a"
-type = "plugin_action"
-command = "agentbox.new"
-description = "AgentBox: new box"
+# NOTE: keybindings are NOT declared here — Herdr ignores manifest keys. They are
+# added to the user's config.toml by \`agentbox install herdr\` instead.
 
 [[link_handlers]]
 id = "web"
@@ -130,41 +173,52 @@ export const installHerdrCommand = new Command('herdr')
       herdrBin: herdrBinary(),
     });
 
+    const file = join(dir, 'herdr-plugin.toml');
+    const cfgPath = herdrConfigPath();
+    const keyBlock = herdrKeybindingsBlock();
+
     if (opts.dryRun) {
       intro('agentbox install herdr (dry run)');
       process.stdout.write(manifest);
-      outro(`would write ${join(dir, 'herdr-plugin.toml')} and run \`herdr plugin link ${dir}\``);
+      process.stdout.write(`\n# --- appended to ${cfgPath} ---\n${keyBlock}\n`);
+      outro(`would write ${file}, edit ${cfgPath}, and run \`herdr plugin link ${dir}\``);
       return;
     }
 
     mkdirSync(dir, { recursive: true });
-    const file = join(dir, 'herdr-plugin.toml');
     writeFileSync(file, manifest);
+
+    // Keybindings live in the user's config.toml (Herdr ignores manifest keys).
+    // Splice our managed block in idempotently, preserving the rest of the file.
+    const existingCfg = existsSync(cfgPath) ? readFileSync(cfgPath, 'utf8') : '';
+    mkdirSync(dirname(cfgPath), { recursive: true });
+    writeFileSync(cfgPath, upsertHerdrKeybindings(existingCfg, keyBlock));
 
     intro('AgentBox Herdr plugin');
 
-    // Register (or re-register) the plugin. Best-effort: if `herdr` isn't on
-    // PATH (not installed / not in a Herdr session) we still wrote the manifest,
-    // so tell the user the one command to run by hand.
+    // Register (or re-register) the plugin and reload so the keys take effect.
+    // Best-effort: if `herdr` isn't on PATH (not installed / not in a Herdr
+    // session) we still wrote the files, so tell the user the commands to run.
     const bin = herdrBinary();
     const linked = spawnSync(bin, ['plugin', 'link', dir], { stdio: 'ignore' });
     if (linked.status === 0) {
-      // Pick up the new keybindings/handlers in the running server.
       spawnSync(bin, ['server', 'reload-config'], { stdio: 'ignore' });
     } else {
       log.warn(
         `could not run \`${bin} plugin link\` (is Herdr installed / running?).\n` +
-          `Run it yourself:  herdr plugin link ${dir}`,
+          `Run it yourself:  herdr plugin link ${dir} && herdr server reload-config`,
       );
     }
 
     note(
       `Wrote ${file}\n` +
+        `Added shortcuts to ${cfgPath}\n` +
         (linked.status === 0 ? `Linked with: herdr plugin link ${dir}\n` : '') +
-        '\nShortcuts (under Herdr prefix, default Ctrl+b):\n' +
+        '\nShortcuts (under Herdr prefix, default Ctrl+b — press the prefix, then the key):\n' +
         '  prefix a        boxes overlay (all boxes)\n' +
         '  prefix shift a  new box in the current project\n' +
         '\nCtrl+click a box name in the overlay to open its web app.\n' +
+        '(remove the shortcuts with `herdr config reset-keys`, or by re-running.)\n' +
         '\nTip: set the sidebar agent panel scope to "all" (agent_panel_scope = "all"\n' +
         'in ~/.config/herdr/config.toml, or toggle it in the sidebar) so attached\n' +
         'boxes stay visible when you switch projects.',
