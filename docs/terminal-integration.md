@@ -294,6 +294,45 @@ design is the inverse: we **proxy state transparently** and let Herdr do the res
   `HERDR_ENV=1` + `HERDR_SOCKET_PATH` + `HERDR_PANE_ID` (`herdrStatusActive`), so
   it works even when a tmux is nested inside Herdr.
 
+## Herdr plugin (`agentbox install herdr`)
+
+`apps/cli/src/commands/install-herdr.ts` generates a Herdr plugin
+(https://herdr.dev/docs/plugins) and links it. Unlike `install cmux` (which
+writes a JSON dock entry), the manifest is **generated** because Herdr runs
+plugin commands as a bare argv with no shell expansion — so every `command`
+argv gets absolute paths baked in (`process.execPath` + `process.argv[1]` for the
+agentbox calls; resolved `HERDR_BIN_PATH` for the pane-open). `buildHerdrManifest`
+is pure (unit-tested); the manifest is written to `~/.agentbox/herdr/plugin/` and
+registered with `herdr plugin link` (+ best-effort `herdr server reload-config`).
+
+Manifest contents:
+- `[[panes]]` `boxes` (placement `overlay`) → `agentbox list --herdr --watch`.
+- `[[actions]]` `boxes` (opens the pane via `herdr plugin pane open`), `new`
+  (`agentbox herdr new`), `link` (`agentbox herdr link`).
+- `[[keys.command]]` `prefix+a` → `agentbox.boxes`, `prefix+shift+a` →
+  `agentbox.new`. (`prefix+b` is Herdr's own `toggle_sidebar`, so it's avoided.)
+- `[[link_handlers]]` `^agentbox://` → action `link`.
+
+The plugin's runtime entry points live in `apps/cli/src/commands/herdr.ts`
+(hidden command group `agentbox herdr`):
+- `herdr new` reads `HERDR_PLUGIN_CONTEXT_JSON` for the cwd and reuses the phase-1
+  `spawnInNewTerminal({host:'herdr', mode:'tab'})` to open a box session in a tab.
+- `herdr link` parses `HERDR_PLUGIN_CLICKED_URL` (`agentbox://web/<box>`, via the
+  pure `parseHerdrLink`), finds the box's exposed web endpoint
+  (`ListedBox.endpoints`), and opens it with `hostOpenCommand()` — or, when no web
+  app is exposed, fires a `notification.show` and does nothing.
+
+`agentbox list --herdr` is the `--cmux` compact renderer with box names wrapped in
+**OSC 8 hyperlinks** to `agentbox://web/<name>` (forced on — the Herdr overlay
+always supports OSC 8 and the link is what drives Ctrl+click). 
+
+**Native sidebar vs the overlay.** Herdr's sidebar agent panel
+(`agent_panel_scope = "all"`) already lists *attached* boxes globally (phase-1
+reporting feeds it) — that's the always-visible view of active boxes. Plugins
+**cannot** add to the sidebar (v1 panes are only overlay/split/tab/zoomed) and the
+sidebar only shows boxes with a live pane, so the full roster (incl. paused) is
+the keyboard-toggled overlay instead.
+
 ## Gotchas
 
 - **`set-status` is stored-but-hidden for box workspaces** — see above. Don't

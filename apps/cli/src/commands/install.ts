@@ -42,6 +42,7 @@ import {
 import { markSetupComplete } from '../lib/first-run.js';
 import { maybePromptStar } from '../lib/star-prompt.js';
 import { installCmuxCommand } from './install-cmux.js';
+import { installHerdrCommand } from './install-herdr.js';
 import { runPrepare } from './prepare.js';
 
 /** Marker on the line after the frontmatter of every skill we ship. Its
@@ -628,3 +629,4 @@ export const installCommand = new Command('install')
 // consumed by `install`'s own same-named options.
 installCommand.enablePositionalOptions();
 installCommand.addCommand(installCmuxCommand);
+installCommand.addCommand(installHerdrCommand);

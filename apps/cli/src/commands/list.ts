@@ -13,6 +13,7 @@ interface ListOptions extends WatchableOptions {
   global?: boolean;
   live?: boolean;
   cmux?: boolean;
+  herdr?: boolean;
 }
 
 /** A table cell: the (possibly OSC-8-wrapped) text to print + its visible width. */
@@ -227,8 +228,15 @@ function projectHeader(label: string, color: boolean, width: number): string {
 
 /** The panel is global, so group boxes by project under a dashed header, then
  *  two lines per box: `<index> <name>` and an indented status cell. Groups keep
- *  first-seen order and are separated by a blank line. */
-export function renderCmuxRows(boxes: ListedBox[], color: boolean, width: number): string {
+ *  first-seen order and are separated by a blank line. When `linkNames` is set
+ *  (the Herdr overlay), each box name is an OSC 8 hyperlink to
+ *  `agentbox://web/<name>` so a Ctrl+click opens the box's web app. */
+export function renderCmuxRows(
+  boxes: ListedBox[],
+  color: boolean,
+  width: number,
+  linkNames = false,
+): string {
   const groups = new Map<string, ListedBox[]>();
   for (const b of boxes) {
     const key = b.projectRoot ?? '';
@@ -244,7 +252,11 @@ export function renderCmuxRows(boxes: ListedBox[], color: boolean, width: number
     lines.push(projectHeader(projectLabel(root), color, width));
     for (const b of group) {
       const idx = b.projectIndex ? `${String(b.projectIndex)} ` : '';
-      lines.push(`${idx}${tailKeep(b.name, Math.max(1, width - idx.length))}`);
+      const disp = tailKeep(b.name, Math.max(1, width - idx.length));
+      // force OSC 8: the Herdr overlay always supports it and the link is what
+      // drives Ctrl+click routing, so don't gate on terminal detection.
+      const name = linkNames ? hyperlink(disp, `agentbox://web/${b.name}`, undefined, true) : disp;
+      lines.push(`${idx}${name}`);
       lines.push('  ' + cmuxStatusCell(b, color));
     }
   }
@@ -256,15 +268,15 @@ export function cmuxEmptyMessage(): string {
   return 'no boxes · agentbox create';
 }
 
-async function buildCmuxText(live: boolean, color: boolean): Promise<string> {
-  // The dock is global: a dock control runs from the config base (home), not
-  // the focused project, so per-project scoping can't follow the active
-  // workspace. Always show every box across all projects.
+async function buildCmuxText(live: boolean, color: boolean, linkNames = false): Promise<string> {
+  // The dock/overlay is global: it runs from the config base (home), not the
+  // focused project, so per-project scoping can't follow the active workspace.
+  // Always show every box across all projects.
   const { boxes } = await scopedBoxes(true, live);
   if (boxes.length === 0) return cmuxEmptyMessage();
   // Re-read width each tick so a resized panel re-truncates.
   const width = process.stdout.columns ?? 30;
-  return renderCmuxRows(boxes, color, width);
+  return renderCmuxRows(boxes, color, width, linkNames);
 }
 
 function renderTable(boxes: ListedBox[], stream: NodeJS.WriteStream): string {
@@ -372,7 +384,11 @@ export const listCommand = withWatchOptions(
       '--live',
       'probe live cloud state via the provider SDK (slower; default: last host-known state)',
     )
-    .option('--cmux', 'compact output for the cmux dock sidebar (narrow, 2 lines per box)'),
+    .option('--cmux', 'compact output for the cmux dock sidebar (narrow, 2 lines per box)')
+    .option(
+      '--herdr',
+      'compact output for the Herdr boxes overlay (like --cmux; box names link to the box web app)',
+    ),
 ).action(async (opts: ListOptions) => {
   if (opts.json && opts.watch) {
     log.error('cannot combine --json with --watch');
@@ -380,15 +396,20 @@ export const listCommand = withWatchOptions(
   }
   const all = opts.global ?? false;
   const live = opts.live ?? false;
-  if (opts.cmux) {
-    // Compact sidebar view: no watch chrome, a colored 2-lines-per-box body,
-    // always global (see buildCmuxText). Colour is dropped on non-TTY/NO_COLOR.
+  if (opts.cmux || opts.herdr) {
+    // Compact sidebar/overlay view: no watch chrome, a colored 2-lines-per-box
+    // body, always global (see buildCmuxText). Colour is dropped on
+    // non-TTY/NO_COLOR. The Herdr overlay additionally links box names to
+    // `agentbox://web/<name>` so a Ctrl+click opens the box web app.
     const color = !!process.stdout.isTTY && !process.env.NO_COLOR;
+    const linkNames = !!opts.herdr;
     if (opts.watch) {
-      await watchRender(() => buildCmuxText(live, color), opts.interval, { hideStatusLine: true });
+      await watchRender(() => buildCmuxText(live, color, linkNames), opts.interval, {
+        hideStatusLine: true,
+      });
       return;
     }
-    process.stdout.write((await buildCmuxText(live, color)) + '\n');
+    process.stdout.write((await buildCmuxText(live, color, linkNames)) + '\n');
     return;
   }
   if (opts.watch) {

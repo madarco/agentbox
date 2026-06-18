@@ -63,9 +63,41 @@ This also works for background `-i` runs: set [`queue.openIn`](/docs/configurati
 
 AgentBox detects Herdr from the `HERDR_SOCKET_PATH` / `HERDR_PANE_ID` environment variables that Herdr injects into managed panes, and talks to Herdr's [socket API](https://herdr.dev/docs/socket-api) directly — there's no extra binary to install. Detection is checked **before** iTerm2 (Herdr runs inside an emulator, so `TERM_PROGRAM` reflects the outer one), and every socket call is best-effort: if Herdr is unreachable, the attach is unaffected.
 
-<Callout title="Coming next: a Herdr plugin">
-  A future release will add a Herdr plugin with custom buttons/actions and a live boxes list, mirroring
-  the AgentBox Dock in cmux.
+## The Herdr plugin
+
+`agentbox install herdr` installs a [Herdr plugin](https://herdr.dev/docs/plugins) that adds a boxes overlay, two shortcuts, and a Ctrl+click handler:
+
+```bash
+agentbox install herdr            # generate + link the plugin
+agentbox install herdr --dry-run  # print the generated herdr-plugin.toml, change nothing
+```
+
+It writes `~/.agentbox/herdr/plugin/herdr-plugin.toml` (with absolute paths baked in — Herdr runs plugin commands without shell expansion) and registers it with `herdr plugin link`. Re-run any time to update it.
+
+### Boxes overlay + shortcuts
+
+Under Herdr's prefix (default `Ctrl+b`):
+
+| Keys | What it does |
+| --- | --- |
+| `prefix a` | Open the **boxes overlay** — a live list of *all* your boxes (`agentbox list --herdr --watch`), grouped by project. |
+| `prefix shift a` | **New box** — open `agentbox` in a new Herdr tab for the current project. |
+
+The overlay lists every box (global), including paused/background ones. To open it from anywhere, just press `prefix a` again — it works from any workspace.
+
+### Ctrl+click a box → its web app
+
+In the overlay, each box name is a link. **Ctrl+click** it to open the box's web app (the service you `expose:` in `agentbox.yaml`) in your browser. If the box exposes no web app, Herdr shows a notification and does nothing.
+
+### Boxes in the native sidebar (no plugin needed)
+
+Herdr's own sidebar has an **agent panel**. Set its scope to **all** (`agent_panel_scope = "all"` in `~/.config/herdr/config.toml`, or toggle it in the sidebar) and every box you're *attached to* shows up there globally — across all workspaces — because AgentBox already reports each box as an agent (see above). That's the most "always visible" view of active boxes.
+
+<Callout title="Why an overlay, not a pinned sidebar panel">
+  Herdr v1 plugins can't add panels to the sidebar or menus — plugin panes are only terminal panes
+  (overlay/split/tab/zoomed), and the native sidebar only shows boxes with a live pane. So the full
+  roster (incl. paused boxes) lives in the keyboard-toggled overlay, while the native sidebar agent
+  panel covers active boxes.
 </Callout>
 
 See [Access your box](/docs/access-your-box) for the other ways to reach a box, and [Configuration](/docs/configuration) for the `attach.openIn` and `attach.herdrStatus` keys.

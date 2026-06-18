@@ -251,6 +251,7 @@ agentbox config edit
 agentbox install
 agentbox install --skills-only   # just (re)install the host /agentbox skill
 agentbox install cmux            # add a box-list panel to the cmux sidebar dock
+agentbox install herdr           # install the Herdr plugin (boxes overlay, shortcuts, Ctrl+click)
 
 # Diagnose system + provider readiness
 agentbox doctor
@@ -262,7 +263,7 @@ agentbox prepare -p hetzner
 agentbox prepare -p docker --build
 ```
 
-`install` is the first-run setup wizard (system check, pick a provider, log in, prepare its base image, install the host skill). `install cmux` pins a live `agentbox list` panel (all your boxes) to the [cmux](https://cmux.com) sidebar dock — see [cmux integration](/docs/integrations-cmux#the-agentbox-dock-right-sidebar). `doctor` diagnoses system and provider readiness — and reports each service integration ([Notion](/docs/integrations-notion), [Linear](/docs/integrations-linear)): host CLI installed? authed? enabled per project? `prepare` builds base images or snapshots — omit `--provider` for status only.
+`install` is the first-run setup wizard (system check, pick a provider, log in, prepare its base image, install the host skill). `install cmux` pins a live `agentbox list` panel (all your boxes) to the [cmux](https://cmux.com) sidebar dock — see [cmux integration](/docs/integrations-cmux#the-agentbox-dock-right-sidebar). `install herdr` installs a [Herdr](https://herdr.dev) plugin with a boxes overlay, shortcuts, and Ctrl+click — see [Herdr integration](/docs/integrations-herdr#the-herdr-plugin). `doctor` diagnoses system and provider readiness — and reports each service integration ([Notion](/docs/integrations-notion), [Linear](/docs/integrations-linear)): host CLI installed? authed? enabled per project? `prepare` builds base images or snapshots — omit `--provider` for status only.
 
 <Callout title="TIP">`agentbox config get <key> --all` shows which layer each value comes from. See the full key reference in [Configuration](/docs/configuration).</Callout>
 

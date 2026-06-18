@@ -50,6 +50,7 @@ import { pruneCommand } from './commands/prune.js';
 import { queueCommand } from './commands/queue.js';
 import { relayCommand } from './commands/relay.js';
 import { runQueuedJobCommand } from './commands/_run-queued-job.js';
+import { herdrCommand } from './commands/herdr.js';
 import { screenCommand } from './commands/screen.js';
 import { shellCommand } from './commands/shell.js';
 import { startCommand } from './commands/start.js';
@@ -110,6 +111,8 @@ program.addCommand(relayCommand);
 // Internal worker spawned by the relay's queue scheduler. Hidden from
 // `--help` (it shows nothing user-facing — see _run-queued-job.ts).
 program.addCommand(runQueuedJobCommand, { hidden: true });
+// Internal entry points invoked by the Herdr plugin (`agentbox install herdr`).
+program.addCommand(herdrCommand, { hidden: true });
 program.addCommand(daytonaCommand);
 program.addCommand(hetznerCommand);
 program.addCommand(vercelCommand);
