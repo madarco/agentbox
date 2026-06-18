@@ -93,7 +93,18 @@ const linkCommand = new Command('link')
       spawnSync(hostOpenCommand(), [webUrl], { stdio: 'ignore' });
       return;
     }
-    // Box exists but exposes no web app: notify and do nothing (chosen behavior).
+    // No resolved web URL. A paused/stopped box can't serve one until it's up —
+    // say so rather than implying it has no web app. (We don't auto-resume from a
+    // click; `agentbox url <box>` does that explicitly.)
+    if (box.state !== 'running') {
+      herdrSend('notification.show', {
+        title: box.name,
+        body: `box is ${box.state} — start it, then click again`,
+        sound: 'request',
+      });
+      return;
+    }
+    // Box is running but exposes no web app: notify and do nothing.
     herdrSend('notification.show', {
       title: box.name,
       body: 'no web app exposed (add a service `expose:` in agentbox.yaml)',

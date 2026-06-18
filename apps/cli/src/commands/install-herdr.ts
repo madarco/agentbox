@@ -266,12 +266,17 @@ export const installHerdrCommand = new Command('herdr')
 
     intro('AgentBox Herdr plugin');
 
-    // Register (or re-register) the plugin. unlink-then-link makes re-runs and a
-    // GitHub→local transition clean (both use id `agentbox`). Best-effort: if
-    // `herdr` isn't on PATH we still wrote the files, so tell the user the cmds.
+    // Register (or re-register) the plugin. Link first; only if that fails (an
+    // existing `agentbox` plugin from a Herdr install can block the link by id)
+    // unlink and retry — so a successful link is never preceded by a destructive
+    // unlink that could leave the user with no plugin. Best-effort: if `herdr`
+    // isn't on PATH we still wrote the files, so tell the user the commands.
     const bin = herdrBinary();
-    spawnSync(bin, ['plugin', 'unlink', 'agentbox'], { stdio: 'ignore' });
-    const linked = spawnSync(bin, ['plugin', 'link', dir], { stdio: 'ignore' });
+    let linked = spawnSync(bin, ['plugin', 'link', dir], { stdio: 'ignore' });
+    if (linked.status !== 0) {
+      spawnSync(bin, ['plugin', 'unlink', 'agentbox'], { stdio: 'ignore' });
+      linked = spawnSync(bin, ['plugin', 'link', dir], { stdio: 'ignore' });
+    }
     if (linked.status === 0) {
       spawnSync(bin, ['server', 'reload-config'], { stdio: 'ignore' });
     } else {
