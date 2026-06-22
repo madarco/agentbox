@@ -105,6 +105,15 @@ export {
   type ContainerState,
 } from './autopause.js';
 export {
+  selectBoxesToRenew,
+  startCloudKeepaliveLoop,
+  type CloudKeepaliveLoopDeps,
+  type CloudKeepaliveLoopHandle,
+  type KeepaliveAgentState,
+  type KeepaliveScanEntry,
+  type RenewDecision,
+} from './cloud-keepalive.js';
+export {
   countWorkingSlots,
   defaultCountRunningBoxes,
   defaultCountWorkingBoxes,
