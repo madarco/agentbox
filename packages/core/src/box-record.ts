@@ -111,6 +111,14 @@ export interface CloudBoxFields {
    * the real state. Absent on pre-feature records → treated as `running`.
    */
   lastState?: BoxRuntimeState;
+  /**
+   * Effective per-session timeout (ms) the sandbox was created with, when the
+   * backend models one (vercel `Sandbox.create({ timeout })`). Recorded so the
+   * host keepalive loop can seed its tracked death-time accurately (the
+   * effective value can be project/workspace-overridden, not the global
+   * default). Absent on backends without a session timeout / pre-feature records.
+   */
+  sessionTimeoutMs?: number;
 }
 
 export interface GitWorktreeRecord {

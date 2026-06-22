@@ -276,7 +276,7 @@ On Vercel: this actually STOPS the sandbox, so warn the user about it. Also the 
 
 - For Nextjs/Vite/Tasnstack projects, makes sure to forward also websocket for hot reload.
 
-- Service like flask, nextjs, BETTER_AUTH_URL, NEXT_PUBLIC_APP_URL should use the `<boxname>.localhost` url for the local development so that on the host it will use the same url as the box. Render this automatically instead of hand-writing `sed` — see section 6c.
+- Service like flask, nextjs, BETTER_AUTH_URL, NEXT_PUBLIC_APP_URL should use the env-init `{{AGENTBOX_BOX_HOST}}` in agentbox.yaml so it will be automatically replaced.
 
 - The `install` task above uses `run_once: true`, so it is a no-op on warm boots. Do **not** wrap it in a manual marker check too. To force a one-off rebuild, run `agentbox-ctl run-task install --force` (which bypasses the run_once marker), or edit the command (a changed command invalidates the hash and re-runs).
 

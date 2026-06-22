@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   selectBoxesToRenew,
   startCloudKeepaliveLoop,
+  type CloudBoxLookup,
   type KeepaliveScanEntry,
 } from '../src/cloud-keepalive.js';
 import { BoxRegistry } from '../src/registry.js';
@@ -39,6 +40,14 @@ describe('selectBoxesToRenew', () => {
     ]);
   });
 
+  it('renews an active box even with no activity timestamp at all', () => {
+    // Active sessions reported without updatedAt must still be kept alive.
+    const e = entry({ boxId: 'a', agentState: 'active', lastActivityMs: null });
+    expect(selectBoxesToRenew([e], WINDOW, NOW)).toEqual([
+      { boxId: 'a', backend: 'vercel', targetDeadlineEpochMs: NOW + WINDOW },
+    ]);
+  });
+
   it('renews an idle box still within the window, anchored at lastActivity + window', () => {
     const e = entry({ boxId: 'a', agentState: 'idle', lastActivityMs: NOW - WINDOW + 1 });
     expect(selectBoxesToRenew([e], WINDOW, NOW)).toEqual([
@@ -51,13 +60,13 @@ describe('selectBoxesToRenew', () => {
     expect(selectBoxesToRenew([e], WINDOW, NOW)).toEqual([]);
   });
 
-  it('skips boxes with no activity signal', () => {
-    expect(
-      selectBoxesToRenew([entry({ boxId: 'a', lastActivityMs: null })], WINDOW, NOW),
-    ).toEqual([]);
-    expect(
-      selectBoxesToRenew([entry({ boxId: 'b', agentState: null })], WINDOW, NOW),
-    ).toEqual([]);
+  it('skips an idle box with no activity timestamp', () => {
+    const e = entry({ boxId: 'a', agentState: 'idle', lastActivityMs: null });
+    expect(selectBoxesToRenew([e], WINDOW, NOW)).toEqual([]);
+  });
+
+  it('skips boxes with no agent state', () => {
+    expect(selectBoxesToRenew([entry({ boxId: 'b', agentState: null })], WINDOW, NOW)).toEqual([]);
   });
 
   it('idle target is now-independent (restart-robust)', () => {
@@ -84,6 +93,13 @@ describe('startCloudKeepaliveLoop', () => {
   }
 
   const CFG: AutopauseConfig = { enabled: true, maxRunningBoxes: 5, idleMinutes: 5 };
+  // Lookup that seeds the tracked deadline at exactly NOW (createdAt=NOW, timeout=0)
+  // so an active box's target (NOW+WINDOW) clears the renew gate.
+  const lookupAtNow = async (): Promise<CloudBoxLookup> => ({
+    sandboxId: 'sb-123',
+    createdAtMs: NOW,
+    createTimeoutMs: 0,
+  });
 
   function registerCloud(reg: BoxRegistry, boxId: string, backend = 'vercel'): void {
     reg.register({
@@ -118,8 +134,7 @@ describe('startCloudKeepaliveLoop', () => {
       now: () => NOW,
       loadConfig: async () => CFG,
       resolveBackend: async () => backend,
-      lookupSandboxId: async () => 'sb-123',
-      vercelCreateTimeoutMs: async () => 0, // seed tracked deadline = createdAt(=NOW)
+      lookupBox: lookupAtNow,
     });
 
     await got.promise;
@@ -130,7 +145,6 @@ describe('startCloudKeepaliveLoop', () => {
 
   it('skips docker boxes and backends without renewTimeout', async () => {
     const registry = new BoxRegistry();
-    // docker box (no renewal)
     registry.register({
       boxId: 'd1',
       token: 't',
@@ -140,9 +154,8 @@ describe('startCloudKeepaliveLoop', () => {
       containerName: 'agentbox-d1',
       createdAt: new Date(NOW).toISOString(),
     });
-    // cloud box whose backend lacks renewTimeout
     registerCloud(registry, 'c1', 'daytona');
-    let calls = 0;
+    let lookups = 0;
     const backend = { name: 'daytona' } as unknown as CloudBackend; // no renewTimeout
 
     const loop = startCloudKeepaliveLoop({
@@ -153,25 +166,26 @@ describe('startCloudKeepaliveLoop', () => {
       now: () => NOW,
       loadConfig: async () => CFG,
       resolveBackend: async () => backend,
-      lookupSandboxId: async () => {
-        calls++;
-        return 'sb-x';
+      lookupBox: async () => {
+        lookups++;
+        return { sandboxId: 'sb-x', createdAtMs: NOW, createTimeoutMs: 0 };
       },
-      vercelCreateTimeoutMs: async () => 0,
     });
 
     await new Promise((r) => setTimeout(r, 40));
     await loop.stop();
-    expect(calls).toBe(0);
+    expect(lookups).toBe(0);
   });
 
-  it('does not crash when renewTimeout throws', async () => {
+  it('does not advance the tracked deadline when renewTimeout throws (retries later)', async () => {
     const registry = new BoxRegistry();
     registerCloud(registry, 'b1');
+    const targets: number[] = [];
     const attempted = deferred<void>();
     const backend: CloudBackend = {
       name: 'vercel',
-      renewTimeout: async () => {
+      renewTimeout: async (_h: CloudHandle, target: number) => {
+        targets.push(target);
         attempted.resolve();
         throw new Error('plan cap reached');
       },
@@ -185,14 +199,17 @@ describe('startCloudKeepaliveLoop', () => {
       now: () => NOW,
       loadConfig: async () => CFG,
       resolveBackend: async () => backend,
-      lookupSandboxId: async () => 'sb-123',
-      vercelCreateTimeoutMs: async () => 0,
+      lookupBox: lookupAtNow,
     });
 
     await attempted.promise;
     // The loop must keep scheduling after a renew failure.
     await new Promise((r) => setTimeout(r, 20));
     await expect(loop.stop()).resolves.toBeUndefined();
+    // FAILURE_BACKOFF_MS (5m) > our fixed clock delta, so the box is backed off
+    // and not retried every tick — at most one attempt in this window.
+    expect(targets.length).toBeGreaterThanOrEqual(1);
+    expect(targets.every((t) => t === NOW + WINDOW)).toBe(true);
   });
 
   it('does nothing when disabled', async () => {
@@ -214,8 +231,7 @@ describe('startCloudKeepaliveLoop', () => {
       now: () => NOW,
       loadConfig: async () => ({ ...CFG, enabled: false }),
       resolveBackend: async () => backend,
-      lookupSandboxId: async () => 'sb-123',
-      vercelCreateTimeoutMs: async () => 0,
+      lookupBox: lookupAtNow,
     });
 
     await new Promise((r) => setTimeout(r, 40));

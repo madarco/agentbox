@@ -6,21 +6,25 @@
  * Sibling to `startAutopauseLoop` (and modeled on it): a host-wide sweep on a
  * timer that reads each box's live agent state from the `BoxStatusStore` and
  * acts. Where autopause *pauses* idle docker boxes, this *keeps alive* active
- * cloud boxes by pushing their death-time out to `lastActivity + window`. The
- * window REUSES the autopause idle threshold (`autopause.idleMinutes`) — per
- * the design, there is no separate keepalive knob; an idle box stops being
- * renewed once it's been quiet for the window and lapses at its current
- * deadline, mirroring autopause's idle semantics.
+ * cloud boxes by pushing their death-time out. The window REUSES the autopause
+ * idle threshold (`autopause.idleMinutes`) — per the design, there is no
+ * separate keepalive knob.
+ *
+ *   - active agent -> hold the death-time a full window ahead of NOW.
+ *   - idle agent   -> let it lapse a window after it went idle, then stop.
  *
  * The additive-vs-absolute SDK split (vercel `extendTimeout` adds to the
  * current deadline and can't read remaining; e2b `setTimeout` sets TTL from
- * now) is resolved here by tracking each box's intended deadline in memory and
+ * now) is resolved by tracking each box's intended deadline in memory and
  * handing the backend BOTH the absolute target and our tracked current
- * deadline. See `CloudBackend.renewTimeout`.
+ * deadline. See `CloudBackend.renewTimeout`. The tracked deadline is seeded
+ * from the box's RECORDED effective create timeout (`cloud.sessionTimeoutMs`)
+ * so a project/workspace override doesn't desync the seed.
  *
  * Plan caps (vercel Hobby ~45m, Pro+ ~5h; e2b team plan) bound how far a box
- * can be extended — a renew past the cap throws and is swallowed here, so the
- * box lapses normally. The feature mainly benefits Pro+ plans, where the
+ * can be extended — a renew past the cap throws and is swallowed here, after
+ * which the box is briefly backed off (so we don't hammer the API / log) and
+ * lapses normally. The feature mainly benefits Pro+ plans, where the
  * conservative 45-min create default otherwise kills long sessions early.
  */
 
@@ -56,7 +60,7 @@ export interface KeepaliveScanEntry {
 export interface RenewDecision {
   boxId: string;
   backend: string;
-  /** Absolute death-time we want this box held at: `lastActivity + window`. */
+  /** Absolute death-time we want this box held at. */
   targetDeadlineEpochMs: number;
 }
 
@@ -68,16 +72,15 @@ export interface RenewDecision {
  *   - idle, < window since it went idle -> lapse `window` after it went idle
  *     (`lastActivityMs + windowMs`, where `lastActivityMs` is the fresh
  *     working->idle transition time).
- *   - idle >= window, or no activity signal, or a wedged agent (error/unknown)
- *     -> skip (let the box lapse / let the create-time timeout govern).
+ *   - idle >= window, no agent state, or a wedged agent (error/unknown) -> skip.
  *
- * The active case anchors on `now`, NOT on `lastActivityMs`: the in-box status
- * reporter bumps `updatedAt` on state changes (per-tool-call), not during a
- * long single `working` operation (a 30-min test run), so a stale `updatedAt`
- * would freeze the target below the tracked deadline and the box would be
- * killed mid-work — the exact failure this feature exists to prevent. Anchoring
- * the active case on `now` keeps a working box alive regardless of `updatedAt`
- * staleness; the idle case stays `now`-independent so an idle box still lapses.
+ * The active case anchors on `now`, NOT on `lastActivityMs`, and does NOT
+ * require `lastActivityMs`: the in-box status reporter bumps `updatedAt` on
+ * state changes (per-tool-call), not during a long single `working` op (a
+ * 30-min test run), so a stale/absent `updatedAt` must not freeze the target
+ * below the tracked deadline — that would kill the box mid-work, the exact
+ * failure this feature prevents. The idle case stays `now`-independent so an
+ * idle box still lapses.
  */
 export function selectBoxesToRenew(
   entries: KeepaliveScanEntry[],
@@ -86,11 +89,15 @@ export function selectBoxesToRenew(
 ): RenewDecision[] {
   const out: RenewDecision[] = [];
   for (const e of entries) {
-    if (e.lastActivityMs == null || e.agentState == null) continue;
+    if (e.agentState == null) continue;
     let target: number | null = null;
     if (e.agentState === 'active') {
       target = now + windowMs;
-    } else if (e.agentState === 'idle' && now - e.lastActivityMs < windowMs) {
+    } else if (
+      e.agentState === 'idle' &&
+      e.lastActivityMs != null &&
+      now - e.lastActivityMs < windowMs
+    ) {
       target = e.lastActivityMs + windowMs;
     }
     if (target != null) {
@@ -122,6 +129,15 @@ function coarseKeepaliveState(s: WorkingAgentState | null): KeepaliveAgentState 
   }
 }
 
+/** What the box-record lookup yields for seeding + the renew call. */
+export interface CloudBoxLookup {
+  sandboxId: string;
+  /** Box creation time as epoch ms, or null when unparseable. */
+  createdAtMs: number | null;
+  /** Recorded effective create timeout (ms), or null when not recorded. */
+  createTimeoutMs: number | null;
+}
+
 export interface CloudKeepaliveLoopDeps {
   registry: BoxRegistry;
   statusStore: BoxStatusStore;
@@ -130,10 +146,10 @@ export interface CloudKeepaliveLoopDeps {
   loadConfig?: () => Promise<AutopauseConfig>;
   /** Injectable for tests; defaults to `resolveCloudBackend`. */
   resolveBackend?: (name: string) => Promise<CloudBackend>;
-  /** Injectable for tests; defaults to the state.json sandboxId lookup. */
-  lookupSandboxId?: (boxId: string) => Promise<string | null>;
-  /** Injectable for tests; defaults to the global `box.vercelTimeoutMs`. */
-  vercelCreateTimeoutMs?: () => Promise<number>;
+  /** Injectable for tests; defaults to the state.json box lookup. */
+  lookupBox?: (boxId: string) => Promise<CloudBoxLookup | null>;
+  /** Injectable for tests; fallback create timeout when a record lacks one. */
+  fallbackCreateTimeoutMs?: (backend: string) => Promise<number>;
   /** Injectable for tests; defaults to `Date.now`. */
   now?: () => number;
   intervalMs?: number;
@@ -145,24 +161,26 @@ export interface CloudKeepaliveLoopHandle {
 }
 
 const DEFAULT_INTERVAL_MS = 60_000;
-/** e2b create-timeout seed (it has no config key; ignores the seed at call time). */
-const E2B_CREATE_TIMEOUT_MS = 45 * 60_000;
+/** After a failed renew, skip the box for this long (avoid cap hammering / log spam). */
+const FAILURE_BACKOFF_MS = 5 * 60_000;
 
 export function startCloudKeepaliveLoop(
   deps: CloudKeepaliveLoopDeps,
 ): CloudKeepaliveLoopHandle {
   const loadConfig = deps.loadConfig ?? loadAutopauseConfig;
   const resolveBackend = deps.resolveBackend ?? resolveCloudBackend;
-  const lookupSandboxId = deps.lookupSandboxId ?? defaultLookupSandboxId;
-  const vercelCreateTimeoutMs = deps.vercelCreateTimeoutMs ?? defaultVercelCreateTimeoutMs;
+  const lookupBox = deps.lookupBox ?? defaultLookupBox;
+  const fallbackCreateTimeoutMs = deps.fallbackCreateTimeoutMs ?? defaultFallbackCreateTimeoutMs;
   const nowFn = deps.now ?? Date.now;
   const intervalMs = deps.intervalMs ?? DEFAULT_INTERVAL_MS;
   const { registry, statusStore, log } = deps;
 
   // Per-box intended death-time we've pushed the session to. Seeded lazily from
-  // `createdAt + create-timeout`; in-memory only — a relay restart re-seeds
-  // (at worst one corrective over-extend, bounded by the plan cap).
+  // the recorded `createdAt + create-timeout`; in-memory only — a relay restart
+  // re-seeds (at worst one corrective over-extend, bounded by the plan cap).
   const tracked = new Map<string, number>();
+  // Per-box "don't attempt before" time, set after a failed renew.
+  const backoffUntil = new Map<string, number>();
   // Resolved backends cached across ticks (one dynamic import per provider).
   const backendCache = new Map<string, CloudBackend | null>();
 
@@ -193,13 +211,11 @@ export function startCloudKeepaliveLoop(
 
       const live = new Set<string>();
       const entries: KeepaliveScanEntry[] = [];
-      const createdAt = new Map<string, string | undefined>();
       for (const reg of registry.list()) {
         if (reg.kind !== 'cloud' || !reg.backend) continue;
         const backend = await resolveCached(reg.backend);
         if (!backend || typeof backend.renewTimeout !== 'function') continue;
         live.add(reg.boxId);
-        createdAt.set(reg.boxId, reg.createdAt);
         const active = readActiveAgent(statusStore.get(reg.boxId));
         entries.push({
           boxId: reg.boxId,
@@ -209,39 +225,50 @@ export function startCloudKeepaliveLoop(
         });
       }
 
-      // Drop tracking for boxes that are gone (destroyed / forgotten).
+      // Drop per-box state for boxes that are gone (destroyed / forgotten).
       for (const id of [...tracked.keys()]) if (!live.has(id)) tracked.delete(id);
+      for (const id of [...backoffUntil.keys()]) if (!live.has(id)) backoffUntil.delete(id);
 
       const decisions = selectBoxesToRenew(entries, windowMs, now);
       for (const d of decisions) {
+        const until = backoffUntil.get(d.boxId);
+        if (until != null && now < until) continue; // recently failed — wait
+
+        const lookup = await lookupBox(d.boxId);
+        if (!lookup) continue;
+
+        // Seed the tracked deadline from the recorded effective create timeout
+        // (falls back to a provider default for pre-feature records).
         let current = tracked.get(d.boxId);
         if (current == null) {
-          const createMs = toEpoch(createdAt.get(d.boxId)) ?? now;
+          const createMs = lookup.createdAtMs ?? now;
           const createTimeoutMs =
-            d.backend === 'vercel' ? await vercelCreateTimeoutMs() : E2B_CREATE_TIMEOUT_MS;
+            lookup.createTimeoutMs ?? (await fallbackCreateTimeoutMs(d.backend));
           current = createMs + createTimeoutMs;
           tracked.set(d.boxId, current);
         }
         // Only renew when the target meaningfully exceeds the tracked deadline,
-        // so we don't churn the SDK for sub-tick gains or extend an idle box
-        // that's still riding its create timeout.
+        // so we don't churn the SDK for sub-tick gains or extend a box still
+        // riding its create timeout.
         if (d.targetDeadlineEpochMs <= current + intervalMs) continue;
+
         try {
-          const sandboxId = await lookupSandboxId(d.boxId);
-          if (!sandboxId) continue;
           const backend = await resolveCached(d.backend);
           if (!backend?.renewTimeout) continue;
-          await backend.renewTimeout({ sandboxId }, d.targetDeadlineEpochMs, current);
+          await backend.renewTimeout({ sandboxId: lookup.sandboxId }, d.targetDeadlineEpochMs, current);
+          // Only advance the tracked deadline on SUCCESS — a failed extend did
+          // not actually move the real deadline, so we must not record it.
           tracked.set(d.boxId, d.targetDeadlineEpochMs);
+          backoffUntil.delete(d.boxId);
           log(
             `cloud-keepalive: renewed box ${d.boxId} (${d.backend}) ` +
               `+${String(Math.round((d.targetDeadlineEpochMs - now) / 60_000))}m`,
           );
         } catch (err) {
-          // Plan-cap rejection or a transient SDK error. Advance the tracked
-          // deadline anyway so we don't hammer the cap every tick; a still-
-          // active agent's later (higher) target will retry next tick.
-          tracked.set(d.boxId, d.targetDeadlineEpochMs);
+          // Plan-cap rejection or a transient SDK error. Leave `tracked`
+          // unchanged (so we retry once the backoff lapses) and back the box
+          // off briefly to avoid hammering the cap / spamming the log.
+          backoffUntil.set(d.boxId, now + FAILURE_BACKOFF_MS);
           const msg = err instanceof Error ? err.message : String(err);
           log(`cloud-keepalive: renew box ${d.boxId} (${d.backend}) failed: ${msg}`);
         }
@@ -276,21 +303,29 @@ function toEpoch(iso: string | undefined): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
-/** Resolve a box's cloud sandboxId from `~/.agentbox/state.json`. */
-async function defaultLookupSandboxId(boxId: string): Promise<string | null> {
+/** Resolve a box's cloud sandboxId + create facts from `~/.agentbox/state.json`. */
+async function defaultLookupBox(boxId: string): Promise<CloudBoxLookup | null> {
   const state = await readState();
   const hit = findBox(boxId, state);
   if (hit.kind !== 'ok') return null;
-  return hit.box.cloud?.sandboxId ?? null;
+  const sandboxId = hit.box.cloud?.sandboxId;
+  if (!sandboxId) return null;
+  return {
+    sandboxId,
+    createdAtMs: toEpoch(hit.box.createdAt),
+    createTimeoutMs: hit.box.cloud?.sessionTimeoutMs ?? null,
+  };
 }
 
 /**
- * Global `box.vercelTimeoutMs` — the create-time session timeout, used to seed
- * a vercel box's tracked deadline. Global-only (the relay is host-wide), falls
- * back to the built-in default. A close estimate is enough: the renew gate
- * tolerates seed drift, and an inaccurate seed self-corrects on the next renew.
+ * Fallback create timeout for a box record that predates `sessionTimeoutMs`.
+ * Vercel reads the global `box.vercelTimeoutMs`; other backends use the shared
+ * 45-min default (matches the backends' `DEFAULT_TIMEOUT_MS`). A close estimate
+ * is enough — the renew gate tolerates seed drift and self-corrects.
  */
-async function defaultVercelCreateTimeoutMs(): Promise<number> {
+async function defaultFallbackCreateTimeoutMs(backend: string): Promise<number> {
+  const generic = 45 * 60_000;
+  if (backend !== 'vercel') return generic;
   const fallback = BUILT_IN_DEFAULTS.box.vercelTimeoutMs;
   try {
     const global: Partial<UserConfig> = parseUserConfig(
