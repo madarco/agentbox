@@ -70,6 +70,7 @@ export {
   stageClaudeCredentialsForUpload,
   stageCodexStaticForUpload,
   stageCodexCredentialsForUpload,
+  stageAgentsStaticForUpload,
   stageOpencodeStaticForUpload,
   stageOpencodeCredentialsForUpload,
   CREDENTIALS_BACKUP_FILE,

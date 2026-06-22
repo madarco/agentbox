@@ -3,7 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { buildTmuxSessionArgs, CONTAINER_USER, findUnsyncableSymlinks } from './claude.js';
+import { buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
 import { sanitizeCodexConfigForBox, MINIMAL_TRUSTED_CODEX_CONFIG } from './codex-config.js';
 import { ensureVolume, volumeExists } from './docker.js';
 
@@ -114,20 +114,7 @@ export async function ensureCodexVolume(
   const hostCodex = join(homedir(), '.codex');
   const willSync = opts.syncFromHost && (await pathExists(hostCodex));
   if (willSync) {
-    // Codex's user-skills convention mirrors claude's: ~/.codex/skills/<name>
-    // is a RELATIVE symlink to ../../.agents/skills/<name>. Bind-mount the
-    // host's ~/.agents at /.agents so `--copy-unsafe-links` dereferences each
-    // into a real directory in the volume; without this the box gets dangling
-    // symlinks and codex silently drops those skills. Symlinks that are broken
-    // or point outside the mounted trees are `--exclude`d so the sync can't
-    // abort with "symlink has no referent".
-    const hostAgents = join(homedir(), '.agents');
-    const hasAgents = await pathExists(hostAgents);
-    const reachableRoots = hasAgents ? [hostCodex, hostAgents] : [hostCodex];
-    const unsyncable = await findUnsyncableSymlinks(hostCodex, reachableRoots);
-    const symlinkExcludes = unsyncable.map((rel) => ` --exclude=/${rel}`).join('');
-
-    const args = [
+    await execa('docker', [
       'run',
       '--rm',
       '--user',
@@ -136,14 +123,9 @@ export async function ensureCodexVolume(
       `${spec.volume}:/dst`,
       '-v',
       `${hostCodex}:/src:ro`,
-    ];
-    if (hasAgents) args.push('-v', `${hostAgents}:/.agents:ro`);
-    args.push(
       opts.image,
       'sh',
       '-c',
-      // --copy-unsafe-links: dereference skills symlinks (-> ~/.agents) into real
-      //   dirs (see above).
       // --exclude=hooks.json: the AgentBox activity hooks file is box-owned
       // (seeded by seedCodexHooks); never let the host copy clobber it.
       // The session-state DBs / indexes are excluded so a teleported session
@@ -155,17 +137,24 @@ export async function ensureCodexVolume(
       // --delete only adds/updates. The globs are no-ops with `-f` when absent,
       // and never touch box-owned `sessions/` (the teleported rollouts) or
       // `hooks.json`.
-      'rsync -a --copy-unsafe-links' +
-        ' --exclude=sessions --exclude=log --exclude=history.jsonl --exclude=hooks.json' +
+      //
+      // --exclude=skills: ~/.codex/skills/<x> are symlinks into ~/.agents/skills,
+      // which the box mounts from its own volume (agents.ts / ensureAgentsVolume),
+      // so codex reads ~/.agents/skills directly — the per-codex copies are
+      // redundant. Excluding them also avoids an rsync "could not make way for new
+      // symlink" failure when the shared volume already holds them as real dirs
+      // from an earlier deref. The trailing `find` purges those stale non-system
+      // skill dirs from the volume while keeping codex's runtime-managed `.system`.
+      'rsync -a --exclude=sessions --exclude=log --exclude=history.jsonl --exclude=hooks.json' +
+        ' --exclude=skills' +
         ' --exclude=state_*.sqlite* --exclude=logs_*.sqlite* --exclude=session_index.jsonl' +
         ' --exclude=external_agent_session_imports.json --exclude=shell_snapshots' +
-        symlinkExcludes +
         ' /src/ /dst/' +
         ' && rm -rf /dst/state_*.sqlite* /dst/logs_*.sqlite* /dst/session_index.jsonl' +
         ' /dst/external_agent_session_imports.json /dst/shell_snapshots' +
+        ' && { [ -d /dst/skills ] && find /dst/skills -mindepth 1 -maxdepth 1 ! -name .system -exec rm -rf {} + || true; }' +
         ' && chown -R 1000:1000 /dst',
-    );
-    await execa('docker', args);
+    ]);
     await sanitizeVolumeCodexConfig(spec.volume, opts.image);
     return { created, synced: true };
   }

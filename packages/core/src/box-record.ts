@@ -31,6 +31,8 @@ export interface DockerBoxFields {
   claudeConfigVolume?: string;
   /** Docker volume mounted at /home/vscode/.codex inside the box. */
   codexConfigVolume?: string;
+  /** Docker volume mounted at /home/vscode/.agents inside the box (Agent Skills). */
+  agentsConfigVolume?: string;
   /** Docker volume mounted at /home/vscode/.local/share/opencode. */
   opencodeConfigVolume?: string;
   /** Per-box volume holding `.vscode-server`. */
@@ -182,6 +184,8 @@ export interface BoxRecord {
   claudeConfigVolume?: string;
   /** Docker volume mounted at /home/vscode/.codex inside the box. Docker only. */
   codexConfigVolume?: string;
+  /** Docker volume mounted at /home/vscode/.agents inside the box (Agent Skills). Docker only. */
+  agentsConfigVolume?: string;
   /** Docker volume mounted at /home/vscode/.local/share/opencode. Docker only. */
   opencodeConfigVolume?: string;
   /** Per-box volume holding `.vscode-server`. Docker only. */

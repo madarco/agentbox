@@ -83,6 +83,16 @@ export {
   type StartCodexSessionOptions,
 } from './codex.js';
 export {
+  buildAgentsMounts,
+  ensureAgentsVolume,
+  resolveAgentsVolume,
+  SHARED_AGENTS_VOLUME,
+  type AgentsConfigSpec,
+  type AgentsMountResult,
+  type EnsureAgentsVolumeOptions,
+  type EnsureAgentsVolumeResult,
+} from './agents.js';
+export {
   buildOpencodeAttachArgv,
   buildOpencodeLoginRunArgv,
   buildOpencodeMounts,
@@ -189,6 +199,7 @@ export {
   stageClaudeCredentialsForUpload,
   stageCodexStaticForUpload,
   stageCodexCredentialsForUpload,
+  stageAgentsStaticForUpload,
   stageOpencodeStaticForUpload,
   stageOpencodeCredentialsForUpload,
   stageOpencodeStateForUpload,

@@ -20,6 +20,12 @@ import {
   type CodexMountResult,
 } from './codex.js';
 import {
+  buildAgentsMounts,
+  ensureAgentsVolume,
+  resolveAgentsVolume,
+  type AgentsMountResult,
+} from './agents.js';
+import {
   buildOpencodeMounts,
   ensureOpencodeVolume,
   seedOpencodePlugin,
@@ -672,6 +678,26 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     codexConfigVolume = codexSpec.volume;
   }
 
+  // Agents skills volume (~/.agents). Codex discovers skills from
+  // ~/.agents/skills directly, and the ~/.codex/skills symlinks point back into
+  // it, so the box needs it to see the same skill set as the host. Mounted
+  // whenever the host has a ~/.agents; shared across boxes (skills only, no
+  // auth). Same host-authoritative additive sync as the other agent volumes.
+  let agentsMounts: AgentsMountResult | undefined;
+  let agentsConfigVolume: string | undefined;
+  if (await pathExists(join(homedir(), '.agents'))) {
+    const agentsSpec = resolveAgentsVolume();
+    const agentsEnsured = await ensureAgentsVolume(agentsSpec, {
+      syncFromHost: true,
+      image: ensureRef,
+    });
+    if (agentsEnsured.synced) log(`synced ${agentsSpec.volume} from ~/.agents`);
+    else if (agentsEnsured.created) log(`created empty volume ${agentsSpec.volume}`);
+    else log(`reusing volume ${agentsSpec.volume}`);
+    agentsMounts = buildAgentsMounts(agentsSpec);
+    agentsConfigVolume = agentsSpec.volume;
+  }
+
   // OpenCode config volume. Mounted when the caller wants opencode
   // (`agentbox opencode` passes `opencodeConfig`) OR the host already uses
   // OpenCode (`~/.config/opencode` or `~/.local/share/opencode` exists). One
@@ -717,6 +743,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   const extraVolumes = await buildIdentityMounts();
   extraVolumes.push(...claudeMounts.extraVolumes);
   if (codexMounts) extraVolumes.push(...codexMounts.extraVolumes);
+  if (agentsMounts) extraVolumes.push(...agentsMounts.extraVolumes);
   if (opencodeMounts) extraVolumes.push(...opencodeMounts.extraVolumes);
   extraVolumes.push(...ide.extraVolumes);
   extraVolumes.push(`${socketDir}:/run/agentbox`);
@@ -871,6 +898,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     socketPath,
     claudeConfigVolume: claudeSpec.volume,
     codexConfigVolume,
+    agentsConfigVolume,
     opencodeConfigVolume,
     vscodeServerVolume: vscodeServerVolumeName(id),
     cursorServerVolume: cursorServerVolumeName(id),

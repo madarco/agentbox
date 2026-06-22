@@ -547,6 +547,46 @@ export async function stageCodexStaticForUpload(
   }
 }
 
+// ---------- agents (shared ~/.agents skills) ----------
+
+/**
+ * Filtered tarball of `~/.agents/` (the cross-agent "Agent Skills" dir).
+ * Extracts into `/home/vscode/.agents/` on the sandbox FS at snapshot-bake time
+ * so the in-box agents (codex reads `~/.agents/skills` directly) see the same
+ * skill set the host does. `-L` dereferences each skill's symlinks into real
+ * files; broken ones are excluded so the sync can't abort.
+ */
+export async function stageAgentsStaticForUpload(
+  opts: { hostHome?: string } = {},
+): Promise<StageResult> {
+  const hostHome = opts.hostHome ?? homedir();
+  const hostAgents = join(hostHome, '.agents');
+  if (!(await pathExists(hostAgents))) return emptyResult();
+
+  const stageDir = await mkStageDir('agents-static');
+  let tarballPath: string | null = null;
+  try {
+    const broken = await findBrokenSymlinks(hostAgents);
+    await execa('rsync', [
+      '-a',
+      '-L',
+      ...broken.map((r) => `--exclude=/${r}`),
+      `${hostAgents}/`,
+      `${stageDir}/`,
+    ]);
+    tarballPath = await tarballFromDir(stageDir, 'agents-static');
+    return {
+      tarballPath,
+      cleanup: makeCleanup([stageDir, tarballPath]),
+      warnings: [],
+    };
+  } catch (err) {
+    await rm(stageDir, { recursive: true, force: true });
+    if (tarballPath) await rm(tarballPath, { force: true });
+    throw err;
+  }
+}
+
 /**
  * Tarball with **only** `auth.json`. Prefers the cloud backup
  * `~/.agentbox/codex-credentials.json` (a login captured from a previous cloud

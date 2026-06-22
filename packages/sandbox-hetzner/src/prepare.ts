@@ -36,6 +36,7 @@ import { computeContextSha256, readCliStamp } from '@agentbox/sandbox-core';
 import {
   stageClaudeStaticForUpload,
   stageCodexStaticForUpload,
+  stageAgentsStaticForUpload,
   stageOpencodeStaticForUpload,
   type StageResult,
 } from '@agentbox/sandbox-cloud';
@@ -260,7 +261,11 @@ export async function prepareHetzner(
     // opencode boot with no plugins, no skills, no settings, and prompt the
     // user to log in fresh on every box.
     progress('staging host agent static config');
-    const stagings: Array<{ kind: 'claude' | 'codex' | 'opencode'; tar: StageResult; dest: string }> = [];
+    const stagings: Array<{
+      kind: 'claude' | 'codex' | 'opencode' | 'agents';
+      tar: StageResult;
+      dest: string;
+    }> = [];
     try {
       const claudeTar = await stageClaudeStaticForUpload({ hostWorkspace: opts.hostWorkspace });
       for (const w of claudeTar.warnings) log(`prepare-hetzner: ${w}`);
@@ -276,6 +281,12 @@ export async function prepareHetzner(
       for (const w of opencodeTar.warnings) log(`prepare-hetzner: ${w}`);
       if (opencodeTar.tarballPath) stagings.push({ kind: 'opencode', tar: opencodeTar, dest: '/home/vscode/.local/share/opencode' });
       else await opencodeTar.cleanup();
+
+      // ~/.agents (cross-agent Agent Skills) — codex reads ~/.agents/skills.
+      const agentsTar = await stageAgentsStaticForUpload();
+      for (const w of agentsTar.warnings) log(`prepare-hetzner: ${w}`);
+      if (agentsTar.tarballPath) stagings.push({ kind: 'agents', tar: agentsTar, dest: '/home/vscode/.agents' });
+      else await agentsTar.cleanup();
 
       for (const s of stagings) {
         const remote = `/tmp/agentbox-${s.kind}-static.tar.gz`;

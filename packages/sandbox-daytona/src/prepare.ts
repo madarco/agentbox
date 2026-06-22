@@ -25,6 +25,7 @@ import type { PrepareOptions, PrepareResult } from '@agentbox/core';
 import {
   stageClaudeStaticForUpload,
   stageCodexStaticForUpload,
+  stageAgentsStaticForUpload,
   stageOpencodeStaticForUpload,
   type StageResult,
 } from '@agentbox/sandbox-cloud';
@@ -52,7 +53,7 @@ function defaultSnapshotName(fingerprint: string | null): string {
 }
 
 interface AgentStage {
-  kind: 'claude' | 'codex' | 'opencode';
+  kind: 'claude' | 'codex' | 'opencode' | 'agents';
   /** Path inside the image build that the tarball is uploaded to. */
   remoteTar: string;
   /** Path the image build extracts the tarball into. */
@@ -66,10 +67,11 @@ interface AgentStage {
  * file up.
  */
 async function stageAllAgentStatic(opts: { hostWorkspace?: string }): Promise<AgentStage[]> {
-  const [claudeStaged, codexStaged, opencodeStaged] = await Promise.all([
+  const [claudeStaged, codexStaged, opencodeStaged, agentsStaged] = await Promise.all([
     stageClaudeStaticForUpload({ hostWorkspace: opts.hostWorkspace }),
     stageCodexStaticForUpload(),
     stageOpencodeStaticForUpload(),
+    stageAgentsStaticForUpload(),
   ]);
   return [
     {
@@ -89,6 +91,12 @@ async function stageAllAgentStatic(opts: { hostWorkspace?: string }): Promise<Ag
       remoteTar: '/tmp/agentbox-seed-opencode.tar.gz',
       extractDir: '/home/vscode/.local/share/opencode',
       staged: opencodeStaged,
+    },
+    {
+      kind: 'agents',
+      remoteTar: '/tmp/agentbox-seed-agents.tar.gz',
+      extractDir: '/home/vscode/.agents',
+      staged: agentsStaged,
     },
   ];
 }
@@ -193,6 +201,10 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
       // staging tarballs (no point shipping them twice in the image layer).
       extractCmds.push(
         'chown -R vscode:vscode /home/vscode/.claude /home/vscode/.codex /home/vscode/.local',
+      );
+      // ~/.agents is only present when the host had one (skills dir); guard it.
+      extractCmds.push(
+        '[ -d /home/vscode/.agents ] && chown -R vscode:vscode /home/vscode/.agents || true',
       );
       extractCmds.push('rm -f /tmp/agentbox-seed-*.tar.gz');
     }
