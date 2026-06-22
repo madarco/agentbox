@@ -46,6 +46,7 @@ agentbox claude --resume <session-id>
 
 # Fork the host session you're in now into a new box (opens a new tab)
 agentbox fork
+agentbox fork hetzner                 # provider as a positional shorthand
 agentbox fork --agent codex --attach-in background
 
 # Anything after -- is forwarded to the in-box agent
@@ -54,7 +55,7 @@ agentbox claude -- --model sonnet
 
 Shared create/agent flags include `-n, --name`, `-w, --workspace <path>`, `--provider <name>`, `--snapshot <ref>` (start from a checkpoint), `--image <ref>`, `--build` (build the base image locally instead of pulling), `-y, --yes`, `--with-env`, `--with-playwright`, `--no-vnc`, `--portless` / `--no-portless`, `--from-branch <ref>`, `-b, --use-branch <name>`, `--memory`, `--cpus`, `--disk`, `--size <spec>` (cloud), and `--carry-yes` / `--carry <mode>`.
 
-Agent-specific: `--attach-in <split|window|tab|same>`, `-d, --no-attach`, `-i, --initial-prompt <text>` (background queue), and for `claude` only `-c, --continue`, `--resume <id>`, `--plan <path>`, and `--dangerously-skip-permissions` (on by default in boxes). `fork` adds `--agent`, `--session <id>`, and `--attach-in` (default `tab`).
+Agent-specific: `--attach-in <split|window|tab|same>`, `-d, --no-attach`, `-i, --initial-prompt <text>` (background queue), and for `claude` only `-c, --continue`, `--resume <id>`, `--plan <path>`, and `--dangerously-skip-permissions` (on by default in boxes). `fork` adds `--agent`, `--session <id>`, `--attach-in` (default `tab`), and a positional `[provider]` (`agentbox fork hetzner` is shorthand for `--provider hetzner`). When `--agent`/`--session` are omitted, `fork` autodetects the launching agent and current session from its env vars (Claude via `CLAUDECODE` / `CLAUDE_CODE_SESSION_ID`, Codex via `CODEX_THREAD_ID`), so a bare `agentbox fork` forks whichever agent you ran it from.
 
 <Callout type="warn" title="HEADS UP">`-i` / `--initial-prompt` is AgentBox's background-queue prompt, not the agent's own `-p` print mode. To run the agent headless, pass it after `--` (e.g. `agentbox claude -- -p "..."`). Note also that `-i` means `--inline` on the `attach`/`start` subcommands.</Callout>
 

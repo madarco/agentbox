@@ -122,6 +122,12 @@ plan) intact. The quickest way is the `/agentbox` skill from inside Claude Code,
 Codex, or OpenCode; on the host it's `agentbox fork`. See
 [run an agent](/docs/run-an-agent) for the details.
 
+`agentbox fork` autodetects which agent it was launched from via the agent's own
+environment variables — Claude Code (`CLAUDECODE` / `CLAUDE_CODE_SESSION_ID`) or
+Codex (`CODEX_THREAD_ID`) — and defaults the session to resume to the current
+one. So a bare `agentbox fork` run from inside either agent forks *that* agent's
+session. Pass `--agent claude|codex|opencode` and/or `--session <id>` to override.
+
 ## Pushing and pulling
 
 Commits the agent makes land on the box's branch in your real `.git`. To push,

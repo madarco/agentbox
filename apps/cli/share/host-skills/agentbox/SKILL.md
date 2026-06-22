@@ -29,7 +29,7 @@ Fork the current Claude Code session into a fresh AgentBox box.
 3. **Fork.** If you are in plan mode, exit it, then run, via the Bash tool, exactly one command (add `--plan "<path>"` only if step 2 found a plan):
 
    ```
-   agentbox fork --session ${CLAUDE_SESSION_ID} [--provider $ARGUMENTS] [--plan "<plan path>"]
+   agentbox fork --session "${CLAUDE_CODE_SESSION_ID:-$CLAUDE_SESSION_ID}" [--provider $ARGUMENTS] [--plan "<plan path>"]
    ```
 
 4. **Report.** In one line, give the user the new box name (parse it from the command output) and confirm their host session is unaffected. If you passed `--plan`, mention the box opens in plan mode ready to resume. Do not summarize the conversation — the fork already carries it.
