@@ -9,6 +9,11 @@
 set -euo pipefail
 
 if pgrep -x dockerd >/dev/null; then
+  # dockerd already up — but a prior run may have died after the daemon became
+  # ready yet before it widened the socket, leaving it 0660 and unreachable by
+  # the unprivileged box user. Re-assert the chmod (see the note on the
+  # fresh-start path below) before the idempotent early exit.
+  chmod 666 /var/run/docker.sock 2>/dev/null || true
   exit 0
 fi
 
