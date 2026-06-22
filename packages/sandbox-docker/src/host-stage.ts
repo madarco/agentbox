@@ -445,12 +445,16 @@ const CODEX_RSYNC_EXCLUDES = [
   '--exclude=log',
   '--exclude=history.jsonl',
   '--exclude=hooks.json',
-  '--exclude=logs_2.sqlite',
-  '--exclude=logs_2.sqlite-shm',
-  '--exclude=logs_2.sqlite-wal',
-  '--exclude=state_5.sqlite',
-  '--exclude=state_5.sqlite-shm',
-  '--exclude=state_5.sqlite-wal',
+  // Codex's session-state DBs / indexes — the `state_*.sqlite` `threads` index
+  // is where Codex reads the resume cwd, so seeding the host copy makes a
+  // teleported session resume at its host cwd (the "Choose working directory"
+  // prompt). Globbed on the version suffix (state_5 -> state_6 across schema
+  // bumps) so it keeps matching. Codex rebuilds the index from the box's
+  // rollouts (see `backfill_state`). Also stops the host's cross-project Codex
+  // history from leaking into the box.
+  '--exclude=state_*.sqlite*',
+  '--exclude=logs_*.sqlite*',
+  '--exclude=external_agent_session_imports.json',
   '--exclude=sqlite',
   '--exclude=cache',
   '--exclude=vendor_imports',

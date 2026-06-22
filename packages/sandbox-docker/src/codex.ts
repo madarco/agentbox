@@ -82,6 +82,22 @@ export interface EnsureCodexVolumeResult {
  * (`history.jsonl`) are excluded: large, box-irrelevant, and not something the
  * in-box codex needs seeded.
  *
+ * Codex's session-state DBs and indexes are also excluded:
+ *   - `state_*.sqlite*` is the `threads` INDEX over the rollout files
+ *     (id -> rollout_path, cwd, title, git, ...). Codex reads the resume cwd
+ *     from `threads.cwd`, so seeding the host copy made a teleported session
+ *     resume at its *host* cwd and pop Codex's "Choose working directory"
+ *     prompt — overriding the cwd we rewrite in the rollout. The index is a
+ *     derived cache (Codex backfills it from the rollouts present, see the
+ *     `backfill_state` table), so the box rebuilds it from the one teleported
+ *     rollout (already rewritten to /workspace) -> no prompt.
+ *   - `logs_*.sqlite*`, `session_index.jsonl`,
+ *     `external_agent_session_imports.json`, `shell_snapshots/` are likewise
+ *     host-session runtime state, not config. Excluding them also stops the
+ *     host's entire cross-project Codex history from leaking into every box.
+ * Config / auth / extensions (`config.toml`, `auth.json`, `prompts/`, `skills/`,
+ * `plugins/`, `rules/`, `memories/`) are still synced.
+ *
  * When there is nothing to sync the volume root is still `chown`ed to uid 1000
  * so a throwaway `codex login` container (running as `vscode`) can write
  * `auth.json` into a freshly created, otherwise root-owned volume.
@@ -111,8 +127,22 @@ export async function ensureCodexVolume(
       '-c',
       // --exclude=hooks.json: the AgentBox activity hooks file is box-owned
       // (seeded by seedCodexHooks); never let the host copy clobber it.
+      // The session-state DBs / indexes are excluded so a teleported session
+      // resumes at /workspace (Codex reads the cwd from state_*.sqlite's threads
+      // index, which it backfills from the box's rollouts) and the host's
+      // cross-project Codex history doesn't leak into the box.
+      // The trailing `rm -rf` purges any state DBs a PREVIOUS sync (before these
+      // excludes) already copied into the shared volume — rsync without
+      // --delete only adds/updates. The globs are no-ops with `-f` when absent,
+      // and never touch box-owned `sessions/` (the teleported rollouts) or
+      // `hooks.json`.
       'rsync -a --exclude=sessions --exclude=log --exclude=history.jsonl --exclude=hooks.json' +
-        ' /src/ /dst/ && chown -R 1000:1000 /dst',
+        ' --exclude=state_*.sqlite* --exclude=logs_*.sqlite* --exclude=session_index.jsonl' +
+        ' --exclude=external_agent_session_imports.json --exclude=shell_snapshots' +
+        ' /src/ /dst/' +
+        ' && rm -rf /dst/state_*.sqlite* /dst/logs_*.sqlite* /dst/session_index.jsonl' +
+        ' /dst/external_agent_session_imports.json /dst/shell_snapshots' +
+        ' && chown -R 1000:1000 /dst',
     ]);
     return { created, synced: true };
   }
