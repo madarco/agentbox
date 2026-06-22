@@ -486,9 +486,11 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
     ignore it (hetzner locks egress via its own firewall). Verified live: a
     `deny-all` box can't reach `example.com`; an `example.com`-allowlist box
     reaches `example.com` but not `api.github.com`. Unit-tested `parseNetworkPolicy`.
-    `extendTimeout` is **deferred** (niche: session length is already set at create
-    via `box.vercelTimeoutMs`, and persistent mode auto-resumes — mid-session
-    extension has no clean CLI home yet).
+    `extendTimeout` is now **wired** via `CloudBackend.renewTimeout` + the host
+    relay `cloud-keepalive` loop: while the in-box agent is active the box's
+    session timeout is renewed (anchored at `lastActivity + autopause.idleMinutes`)
+    so a long agent run isn't killed mid-work. Bounded by the plan cap (mainly
+    benefits Pro+). Same loop covers E2B (`Sandbox.setTimeout`).
 19. **gh/git relay shims don't win PATH on Vercel AL2023.** Found 2026-05-29 while
     verifying the git-shim-ordering fix: in a booted vercel box `command -v git`
     resolves to **`/opt/git/bin/git`**, not `/usr/local/bin/git` — Vercel's base

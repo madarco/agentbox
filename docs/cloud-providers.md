@@ -497,6 +497,12 @@ the shape in brief:
   Caveat: `sb.snapshot()` stops the source box (it auto-resumes on next call).
 - **Hard platform limits:** region `iad1` only, 32 GB fixed disk, 2048 MB RAM
   per vCPU, 45 min (Hobby) / 5 hr (Pro+) sessions.
+- **Session keepalive.** The host relay (`cloud-keepalive` loop, sibling to
+  auto-pause) renews a running box's session timeout while its in-box agent is
+  active, anchoring the death-time at `lastActivity + autopause.idleMinutes` so a
+  long agent run isn't killed mid-work; an idle box lapses. Bounded by the plan's
+  max session (the renewal mainly benefits Pro+). Same mechanism on E2B. Uses
+  `CloudBackend.renewTimeout` (vercel `extendTimeout`, e2b `setTimeout`).
 
 ## 3c. The E2B shape
 

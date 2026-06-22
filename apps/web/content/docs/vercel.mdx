@@ -77,9 +77,13 @@ agentbox vercel claude
 | Disk | 32 GB fixed |
 | RAM | 2048 MB per vCPU (coupled) |
 | Exposed ports | ≤4 (8080 / 6080 / 8788 reserved + ~1 free), fixed at create, non-privileged only |
-| Session length | 45 min (Hobby) / 5 hr (Pro+) |
+| Session length | 45 min (Hobby) / 5 hr (Pro+) — auto-renewed while the agent is working |
 | Nested containers | yes — `docker` baked in + auto-started (DinD) |
 | SSH | none — attach uses the Vercel CLI PTY |
+
+<Callout title="SESSION KEEPALIVE">
+While the in-box agent is actively working, the host relay automatically renews the box's session timeout (anchored at the agent's last activity + the [`autopause.idleMinutes`](/docs/configuration) window), so a long Claude/Codex run isn't killed mid-work. An idle box stops being renewed and lapses normally. The renewal is bounded by your Vercel plan's max session (Hobby ~45 min hard cap; Pro+ ~5 hr) — it mainly helps Pro+ plans run past the conservative 45-min default.
+</Callout>
 
 <Callout title="IN-BOX DOCKER">
 Vercel boxes ship with a working in-box `docker`: the engine is baked into the prepare snapshot and `dockerd` is auto-started on create/resume, so `agentbox.yaml` `image:` services (e.g. a `postgres:16` service) work out of the box. Pulled images carry over across pause/resume. See [docker-in-docker](/docs/docker-in-docker).

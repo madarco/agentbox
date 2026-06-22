@@ -76,7 +76,7 @@ agentbox e2b claude
 | Region | SDK-chosen (transparent) |
 | Disk / RAM / vCPU | Template-level — set at `Template.build()` time; per-create `--size` is advisory only |
 | Exposed ports | Any port via `sandbox.getHost(port)`; WebProxy runs on 8080 |
-| Session length | 1 hour (Hobby) — the attach helper caps at **55 minutes** for headroom |
+| Session length | 1 hour (Hobby) — the attach helper caps at **55 minutes** for headroom; auto-renewed (up to the plan cap) while the agent is working |
 | Nested containers | none — `docker` unavailable in-box (Firecracker + seccomp) |
 | SSH | none — attach is an SDK-streaming PTY bridge over `pty.create` |
 
