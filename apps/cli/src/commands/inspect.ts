@@ -69,7 +69,9 @@ async function renderText(i: InspectedBox): Promise<string> {
   // in-box daemon when running, else the persisted snapshot.
   const live = await fetchLive(i.state, i.record.container);
   if (live) {
-    lines.push('', ...renderLiveSections(live));
+    // Label the source: the `persisted` row above shows snapshot counts, so
+    // flag these sections as live to explain any disagreement with it.
+    lines.push('', '(live from agentbox-ctl)', '', ...renderLiveSections(live));
   } else if (i.persistedStatus) {
     lines.push('', `(persisted snapshot from ${i.persistedStatus.timestamp})`, '');
     lines.push(...renderPersistedSections(i.persistedStatus));

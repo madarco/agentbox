@@ -24,7 +24,7 @@ export const statusCommand = withWatchOptions(
       'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
     )
     .option('-j, --json', 'machine-readable JSON output')
-    .option('--inspect', 'add detailed box info (volumes, limits, paths) to the service/task status'),
+    .option('--inspect', 'show detailed box info (volumes, limits, paths) plus service/task status'),
 ).action(async (idOrName: string | undefined, opts: StatusOptions) => {
   try {
     if (opts.json && opts.watch) {
