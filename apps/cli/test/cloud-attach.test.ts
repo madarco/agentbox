@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildCloudAttachInnerCommand } from '../src/commands/_cloud-attach.js';
+import type { BoxRecord, ExecResult, Provider } from '@agentbox/core';
+import {
+  buildCloudAttachInnerCommand,
+  verifyDetachedSession,
+} from '../src/commands/_cloud-attach.js';
 import { buildPromptArgs } from '../src/lib/queue/build-prompt-args.js';
 
 /**
@@ -87,5 +91,60 @@ describe('buildCloudAttachInnerCommand', () => {
     const args = buildPromptArgs('claude-code', 'fix the failing test', ['--permission-mode=plan']);
     const cmd = buildCloudAttachInnerCommand('claude', args);
     expect(decodeArgs(cmd)).toEqual(['fix the failing test', '--permission-mode=plan']);
+  });
+});
+
+/**
+ * `verifyDetachedSession` is what turns a silent cloud `-i` failure (box created,
+ * job reports "done", but the seeded agent session never came up) into a thrown,
+ * surfaced error. A fake provider drives the `tmux has-session`/`capture-pane`
+ * probe so we exercise the three outcomes without a real sandbox.
+ */
+describe('verifyDetachedSession', () => {
+  const box = { name: 'kanban-buttons' } as BoxRecord;
+  const fakeProvider = (exec: (argv: string[]) => ExecResult): Provider =>
+    ({ exec: (_b: BoxRecord, argv: string[]) => Promise.resolve(exec(argv)) }) as unknown as Provider;
+
+  it('throws "exited immediately" when the session is gone (probe exits 7)', async () => {
+    const provider = fakeProvider(() => ({ exitCode: 7, stdout: '', stderr: '' }));
+    await expect(
+      verifyDetachedSession(provider, box, 'claude', 'claude', { windowMs: 0 }),
+    ).rejects.toThrow(/exited immediately after launch/);
+  });
+
+  it('throws an actionable login hint when the pane shows an auth rejection', async () => {
+    const provider = fakeProvider(() => ({
+      exitCode: 0,
+      stdout: '❯ build a kanban board\n● Please run /login · API Error: 401 Invalid authentication credentials',
+      stderr: '',
+    }));
+    await expect(
+      verifyDetachedSession(provider, box, 'claude', 'claude', { windowMs: 0 }),
+    ).rejects.toThrow(/credentials were rejected.*agentbox claude login/s);
+  });
+
+  it('resolves for a live, authenticated session', async () => {
+    const provider = fakeProvider(() => ({
+      exitCode: 0,
+      stdout: '❯ build a kanban board\n● Working on it...',
+      stderr: '',
+    }));
+    await expect(
+      verifyDetachedSession(provider, box, 'claude', 'claude', { windowMs: 0 }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('does not false-fail on a transient probe error (keeps polling)', async () => {
+    let calls = 0;
+    const provider = fakeProvider(() => {
+      calls++;
+      if (calls === 1) throw new Error('transport blip');
+      return { exitCode: 0, stdout: 'all good', stderr: '' };
+    });
+    // windowMs large enough for a second tick; pollMs tiny so the test is fast.
+    await expect(
+      verifyDetachedSession(provider, box, 'claude', 'claude', { windowMs: 30, pollMs: 1 }),
+    ).resolves.toBeUndefined();
+    expect(calls).toBeGreaterThan(1);
   });
 });
