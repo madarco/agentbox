@@ -58,8 +58,13 @@ template for this work; read it first.
    documented cap. Task 1 sets `webProxyPort: 8080` to mirror Vercel and keep
    the in-box `AGENTBOX_WEB_PROXY_PORT` flag uniform across cloud backends.
    Re-test :80 in Task 2.
-4. **Nested containers** — **Confirmed `launchDockerd: false`.** E2B is
-   Firecracker, same family as Vercel.
+4. **Nested containers** — Ships `launchDockerd: false`. **NOTE (corrected
+   2026-06-23): the "same family as Vercel → no DinD" inference here was
+   WRONG.** E2B's microVM actually supports nested containers (full root +
+   `cap_sys_admin` + working namespaces); docker runs once installed. The
+   `false` default is a deliberate AgentBox choice (docker not baked in), not
+   a platform constraint. See the changelog entry + the "DinD on E2B"
+   follow-up.
 5. **Default resources** — E2B `base` template ships node 20, sudo, git, tar
    on Debian 12. vCPU/RAM/disk are **template-level** (`Template.build({
    cpuCount, memoryMB })`), NOT per-create. Task 1's `defaultResources: { cpu:
@@ -201,6 +206,21 @@ attach works, checkpoints capture/restore. ALL smoke steps verified end-to-end.
 
 #### Empirical findings (Task 2, 2026-06-03)
 
+- **Checkpoints capture RAM + disk, not just disk.** E2B pause/resume is a
+  full **memory** snapshot — `Sandbox.pause` persists RAM + filesystem and
+  `Sandbox.connect` resumes with running processes intact. `createSnapshot`
+  rides the same mechanism (it pauses the source while capturing), so an e2b
+  checkpoint includes the memory state. This differs from the **docker**
+  provider, whose checkpoint is `docker commit` (disk only). Restoring an e2b
+  box can therefore bring back in-flight processes; a docker box cannot.
+- **The platform DOES support DinD** (empirically verified 2026-06-23 — see
+  changelog; subsequently **shipped on by default**). Unlike Vercel, the E2B
+  microVM grants full root with the complete capability set
+  (`CapEff: 000001ffffffffff`, incl. `cap_sys_admin`), working
+  `unshare --user`/`--mount`, and cgroup v2 — so `docker.io` + `dockerd`
+  (overlay2) runs containers inside an agentbox e2b box. This is now baked
+  into the base template with `launchDockerd: true` (see the shipped changelog
+  entry); the original "same as Vercel → no DinD" inference was wrong.
 - **`Template.build` requires RELATIVE source paths.** The SDK's
   `template.copy(src, dest)` rejects absolute paths (`Invalid source path
   "/foo": absolute paths are not allowed`). We stage every resolved asset
@@ -304,10 +324,32 @@ mode … Yes, I accept" gate.
 - **Drive harness display quirk** on the e2b shell attach (Task 2 finding).
   A plain `script -q -c …` capture shows the prompt; the headless drive
   harness shows an empty screen. Underlying PTY bridge works.
-- **No `e2bTimeoutMs` / `e2bNetworkPolicy` config keys.** Vercel exposes
-  parallels for its own SDK; on E2B both knobs are template-level (set at
-  `Template.build()` time) — there's no per-create override to bind a
-  config key to. Revisit if E2B's SDK grows per-create surface.
+- **No `e2bTimeoutMs` config key.** Vercel exposes a parallel for its own
+  SDK; on E2B the timeout is set at `Sandbox.create({ timeout })` time and
+  extended live via `Sandbox.setTimeout`. Could be wired to a per-create
+  config key — not done at launch.
+- **No `e2bNetworkPolicy` config key — and it CAN be wired (backlog
+  correction).** An earlier note here claimed E2B's network knobs are
+  "template-level (set at `Template.build()` time)" with "no per-create
+  override." That is **wrong**: the SDK exposes them at **`Sandbox.create()`**
+  time, not build time. The create signature is
+  `Sandbox.create(..., allowInternetAccess = true, network?:
+  SandboxNetworkOpts, ...)`. Only `cpuCount` / `memoryMB` are genuinely
+  template-level (baked at `Template.build()`).
+  - What a network policy covers (none of it is *ports*):
+    - **Egress** — `allowInternetAccess` (default `true`): whether the box
+      can reach the outside internet at all (the air-gapped-run lockdown).
+    - **Ingress** — `network: { allowPublicTraffic: false }`: makes the
+      preview URL require an `e2b-traffic-access-token` header instead of
+      being open HTTPS (Task 1 §1 chose public to match Vercel).
+    - Domain allow-listing lives under the same `SandboxNetworkOpts`.
+  - **Ports are unrelated.** Any port is exposed on demand via
+    `getHost(port)` → `{port}-{sandboxId}.e2b.app`; there is no documented
+    port cap and the network policy does not gate individual ports. AgentBox
+    fixes the WebProxy at 8080.
+  - Action if picked up: add a `box.e2bNetworkPolicy` (egress on/off +
+    public-traffic gating) create-time config key and thread it through
+    `backend.provision` → `Sandbox.create`.
 - **`box.image` cross-provider migration** was already handled in Task 2
   (per-provider `box.imageE2b` lives in `packages/config/src/types.ts`).
 
@@ -354,6 +396,45 @@ mode … Yes, I accept" gate.
   relay and can launch boxes on other providers, so they can fully smoke-test.
 
 ## Changelog
+- 2026-06-23: **DinD shipped — docker baked into the base, auto-launched on
+  create/resume (mirrors vercel).** Following the empirical verification below,
+  enabled in-box docker by: (1) adding a "docker engine (in-box DinD)" step to
+  `packages/sandbox-e2b/scripts/build-template.sh` (`apt-get install docker.io
+  iptables`, `groupadd -f docker`, `usermod -aG docker vscode`, systemd docker
+  disabled); (2) baking the shared `agentbox-dockerd-start` helper — added it to
+  `RUNTIME_ASSETS` in `runtime-assets.ts`, the `e2bFiles` stage list in
+  `apps/cli/scripts/stage-runtime.mjs`, and the install + trim steps in
+  `build-template.sh`; (3) flipping `launchDockerd: false → true` in
+  `packages/sandbox-e2b/src/index.ts`. The launch path itself
+  (`launchCloudDockerdDaemon`, called on create + resume in `cloud-provider.ts`)
+  was already provider-agnostic. Like vercel, only `docker.io` + `iptables` are
+  installed (no fuse-overlayfs) — `agentbox-dockerd-start`'s runtime probe picks
+  overlay2, which works on E2B. Cost: ~+200MB base template, ~5-15s dockerd
+  warm-up at create; always-on (not gated behind a config key). Pulled images +
+  the running daemon carry across pause/resume (snapshots capture full
+  disk+RAM). Docs synced: e2b.mdx, docker-in-docker.mdx, cloud-providers.md
+  (intro table + §3c), CLAUDE.md.
+- 2026-06-23: **DinD empirically verified to work on E2B — overturns the
+  Task 1 §4 "no nested containers" inference.** Two-stage live test on the
+  user's E2B account:
+  1. Raw `Sandbox.create()` (vanilla E2B `base`): root has
+     `CapEff: 000001ffffffffff` (full set incl. `cap_sys_admin`),
+     `unshare --user`/`--mount` both rc=0, cgroup v2 mounted. Then
+     `apt-get install docker.io` → `dockerd` (Server 20.10.24, overlay2) →
+     `docker run hello-world` and `docker run alpine:3` both succeeded;
+     the container reports the host kernel `6.1.158+`.
+  2. Real agentbox e2b box (`agentbox create --provider e2b`, baked
+     `agentbox-base` template): as the `vscode` user (uid 1002,
+     passwordless sudo) `sudo apt install docker.io` + `sudo dockerd` +
+     `sudo docker run hello-world|alpine:3` all worked end-to-end.
+  Conclusion: the Vercel "Firecracker → no DinD" reasoning does NOT transfer
+  to E2B; the blocker on Vercel was its stripped capability set + seccomp,
+  not Firecracker. AgentBox's `launchDockerd: false` is a default (docker not
+  baked in), not a platform limit. Filed "DinD on E2B" as an enable-able
+  follow-up above. (Test note: when running this from inside an
+  agentbox-in-agentbox, the in-box `git` shim rejects the create's
+  `git clone --no-checkout` seed step — put the real `/usr/bin/git` ahead of
+  `/usr/local/bin/git` on PATH for the host-side create.)
 - 2026-06-17: Fix `ERR_REQUIRE_ESM` crash on Node < 20.19 (e.g. 20.18, which
   our `engines.node >=20.10` permits). The `e2b` SDK ships **no `exports` map**
   (only `main`→CJS / `module`→ESM), so an ESM `import 'e2b'` falls back to the

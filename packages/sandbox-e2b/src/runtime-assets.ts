@@ -8,8 +8,9 @@
  *   1. The CLI's staged runtime tree: `<cliRoot>/e2b/...`.
  *   2. The monorepo source tree (dev fallback) under `packages/`.
  *
- * Any missing file throws a clear error naming the paths tried. Note: no
- * dockerd helper — E2B microVMs can't run nested containers.
+ * Any missing file throws a clear error naming the paths tried. Includes the
+ * shared dockerd launch helper — E2B microVMs DO support nested containers, so
+ * the base template bakes the docker engine (in-box DinD).
  */
 
 import { existsSync } from 'node:fs';
@@ -44,6 +45,7 @@ export interface RuntimeAsset {
 export const RUNTIME_ASSETS: readonly RuntimeAsset[] = [
   { name: 'build-template.sh', remotePath: '/tmp/agentbox-build-template.sh', remoteMode: 0o755 },
   { name: 'agentbox-ctl', remotePath: '/tmp/agentbox-ctl', remoteMode: 0o755 },
+  { name: 'agentbox-dockerd-start', remotePath: '/tmp/agentbox-dockerd-start', remoteMode: 0o755 },
   { name: 'agentbox-vnc-start', remotePath: '/tmp/agentbox-vnc-start', remoteMode: 0o755 },
   { name: 'agentbox-checkpoint-cleanup', remotePath: '/tmp/agentbox-checkpoint-cleanup', remoteMode: 0o755 },
   { name: 'agentbox-open', remotePath: '/tmp/agentbox-open', remoteMode: 0o755 },
@@ -71,6 +73,7 @@ export function candidatesFor(
   const monorepoRelative: Record<string, string[]> = {
     'build-template.sh': ['packages/sandbox-e2b/scripts/build-template.sh'],
     'agentbox-ctl': ['packages/ctl/dist/bin.cjs'],
+    'agentbox-dockerd-start': ['packages/sandbox-docker/scripts/agentbox-dockerd-start'],
     'agentbox-vnc-start': ['packages/sandbox-docker/scripts/agentbox-vnc-start'],
     'agentbox-checkpoint-cleanup': ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup'],
     'agentbox-open': ['packages/sandbox-docker/scripts/agentbox-open'],
@@ -87,6 +90,7 @@ export function candidatesFor(
   const cliRelative: Record<string, string[]> = {
     'build-template.sh': ['e2b/scripts/build-template.sh'],
     'agentbox-ctl': ['e2b/ctl.cjs'],
+    'agentbox-dockerd-start': ['e2b/agentbox-dockerd-start', 'docker/packages/sandbox-docker/scripts/agentbox-dockerd-start'],
     'agentbox-vnc-start': ['e2b/agentbox-vnc-start', 'docker/packages/sandbox-docker/scripts/agentbox-vnc-start'],
     'agentbox-checkpoint-cleanup': ['e2b/agentbox-checkpoint-cleanup', 'docker/packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup'],
     'agentbox-open': ['e2b/agentbox-open', 'docker/packages/sandbox-docker/scripts/agentbox-open'],

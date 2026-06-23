@@ -163,6 +163,7 @@ const e2bFiles = [
   ['packages/sandbox-e2b/scripts/build-template.sh', 'scripts/build-template.sh', true],
   ['packages/sandbox-e2b/dist/attach-helper.cjs', 'attach-helper.cjs', false],
   ['packages/ctl/dist/bin.cjs', 'ctl.cjs', true],
+  ['packages/sandbox-docker/scripts/agentbox-dockerd-start', 'agentbox-dockerd-start', true],
   ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
   ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
   ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
