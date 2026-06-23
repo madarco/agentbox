@@ -81,6 +81,12 @@ export async function buildE2bAttach(
     '--user',
     'vscode',
   ];
+  // Detached pre-start (new-tab attach / `-i` queue worker): the inner command
+  // only creates the tmux session (no `exec tmux attach`). The helper must run
+  // it once and EXIT rather than open a persistent interactive PTY that idles
+  // forever — otherwise the host's `runDetached` await never resolves and
+  // `agentbox <agent>` hangs after "box ready". See attach-helper.ts header.
+  if (opts?.detached) argv.push('--detached');
 
   return {
     argv,

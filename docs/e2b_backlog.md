@@ -435,6 +435,29 @@ mode … Yes, I accept" gate.
   agentbox-in-agentbox, the in-box `git` shim rejects the create's
   `git clone --no-checkout` seed step — put the real `/usr/bin/git` ahead of
   `/usr/local/bin/git` on PATH for the host-side create.)
+- 2026-06-23: Fix `agentbox e2b claude` hanging on a blank screen at attach
+  (then `agentbox attach` works). Root cause: the create→attach path runs
+  `cloudAgentAttach` with `extraArgs` (always `--dangerously-skip-permissions`)
+  and a new-terminal `openIn` (iTerm2 split / tmux / cmux), which triggers
+  `startDetachedSession` to pre-create the agent's tmux session **before**
+  spawning the new pane (so the re-invoked attach, which carries no extraArgs,
+  finds the session via `tmux has-session`). `startDetachedSession` →
+  `runDetached` spawns the provider's `detached` attach argv and **awaits its
+  exit**. On SSH/Vercel the detached argv runs the inner command (`tmux
+  new-session -d …; <config>`) as the remote process and exits — but the E2B
+  attach-helper always opens a **persistent interactive in-box PTY shell** and
+  blocks on `handle.wait()`; with no trailing `exec tmux attach` to replace the
+  shell, it idles at a prompt forever, so `await startDetachedSession` never
+  returns and the CLI hangs right after `box ready` (no pane ever opens). The
+  `tmux new-session` had already run, so the session + agent existed — which is
+  why Ctrl+C then `agentbox attach` rendered fine. Fix: `buildE2bAttach` now
+  appends `--detached` to the helper argv when `opts.detached` is set, and the
+  helper, in that mode, runs the inner command once via the non-interactive
+  `sb.commands.run` and exits with its code instead of opening a PTY. Verified
+  live: the detached helper now exits in ~1s (was: hung >30s) after creating the
+  session + launching claude, and `agentbox claude start <e2b-box> --
+  --dangerously-skip-permissions` completes (`Attached in new iTerm2 split.`) in
+  ~1s instead of hanging. Regression tests in `test/build-attach.test.ts`.
 - 2026-06-17: Fix `ERR_REQUIRE_ESM` crash on Node < 20.19 (e.g. 20.18, which
   our `engines.node >=20.10` permits). The `e2b` SDK ships **no `exports` map**
   (only `main`→CJS / `module`→ESM), so an ESM `import 'e2b'` falls back to the
