@@ -108,7 +108,7 @@
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl claude-state idle >/dev/null 2>&1 &", "timeout": 3 }
+          { "type": "command", "command": "agentbox-ctl claude-state idle --clear-session >/dev/null 2>&1 &", "timeout": 3 }
         ]
       }
     ]

@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { claudeState } from '../client.js';
-import { recordClaudeSessionId } from '../session-pointer.js';
+import { clearClaudeSessionPointer, recordClaudeSessionId } from '../session-pointer.js';
 import {
   CLAUDE_ACTIVITY_STATES,
   DEFAULT_SOCKET_PATH,
@@ -14,6 +14,7 @@ interface ClaudeStateOptions {
   payloadStdin?: boolean;
   clearPending?: boolean;
   captureSession?: boolean;
+  clearSession?: boolean;
 }
 
 /**
@@ -32,6 +33,12 @@ interface ClaudeStateOptions {
  * to a per-box pointer (see session-pointer.ts) so a box restart can resume the
  * exact conversation. Wired onto frequently-firing hooks (SessionStart / Stop)
  * so the pointer tracks `/new` and `/branch`, which mint fresh session ids.
+ *
+ * With `--clear-session` (SessionEnd), drops that pointer synchronously so a
+ * restart won't resume a session the user already ended. The StatusReporter's
+ * running→stopped edge is the backstop for ends that skip the hook (a kill /
+ * crash), but this avoids the up-to-15s race where the box is stopped before
+ * the next status snapshot.
  */
 export const claudeStateCommand = new Command('claude-state')
   .description('Report Claude activity state to the box supervisor (used by hooks)')
@@ -40,11 +47,13 @@ export const claudeStateCommand = new Command('claude-state')
   .option('--payload-stdin', "parse Claude Code's hook JSON from stdin (PreToolUse plan/question)")
   .option('--clear-pending', 'force-clear a sticky end-plan/question state (PostToolUse cleanup)')
   .option('--capture-session', "record the hook's session_id to the box's session pointer")
+  .option('--clear-session', "drop the box's session pointer (SessionEnd)")
   .action(async (state: string, opts: ClaudeStateOptions) => {
     try {
       if (!CLAUDE_ACTIVITY_STATES.includes(state as ClaudeActivityState)) {
         process.exit(0);
       }
+      if (opts.clearSession) clearClaudeSessionPointer();
       const typedState = state as ClaudeActivityState;
       // Read stdin at most once, shared by both consumers.
       const raw = opts.payloadStdin || opts.captureSession ? await readStdinJson() : null;
