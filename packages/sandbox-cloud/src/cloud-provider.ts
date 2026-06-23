@@ -11,7 +11,7 @@
  * "no relay configured" error.
  */
 
-import { basename } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { generateBoxId } from '@agentbox/core';
 import type {
   AttachKind,
@@ -494,7 +494,17 @@ export function createCloudProvider(
   return {
     name: providerName,
 
-    async create(req: CreateBoxRequest): Promise<CreatedBox> {
+    async create(reqRaw: CreateBoxRequest): Promise<CreatedBox> {
+      // Resolve the host workspace path to absolute up front, mirroring the
+      // docker provider (`resolve(opts.workspacePath)` in sandbox-docker's
+      // create). A relative `-w ../repo` would otherwise flow into the
+      // git-clone seed as `git clone file://../repo` — `file://` needs an
+      // absolute path, so git reads it as host `/repo` and fails with "does
+      // not appear to be a git repository". Resolving here also keeps the
+      // box record's workspacePath stable regardless of the caller's cwd.
+      const req: CreateBoxRequest = reqRaw.workspacePath
+        ? { ...reqRaw, workspacePath: resolve(reqRaw.workspacePath) }
+        : reqRaw;
       const log = req.onLog ?? (() => {});
       const { id, name, branch } = mintBox(req);
       const image = opts.provisionImage

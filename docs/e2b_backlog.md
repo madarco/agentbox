@@ -312,6 +312,28 @@ mode … Yes, I accept" gate.
 
 #### Deferred follow-ups (intentional, not blocking)
 
+- **E2B checkpoints are full-state (disk + RAM), not disk-only — disk-only is
+  future work.** `checkpoint create` uses `Sandbox.createSnapshot`, which
+  `pause`s the box and persists the **entire VM state (memory + filesystem)**;
+  booting a box from the checkpoint (`Sandbox.create({ template: snapshotId })`)
+  **resumes** that paused state rather than booting fresh. Verified live
+  (2026-06-23): a box created from a checkpoint kept the source box's running
+  process (same PID), tmpfs/`/dev/shm` contents, frozen `boot_id`, and
+  continuing uptime. The E2B SDK (2.27.1 and 2.30.5) exposes **no disk-only
+  snapshot option** — the snapshot API takes only `{ name }`, and the model is
+  inherently pause-based. This is mostly a cleanliness/fragility concern (a
+  fresh box resumes the source's stale ctl/dockerd/agent processes), NOT a
+  correctness blocker: the create-from-checkpoint flow re-seeds `/workspace`
+  from the host git bundle (overlay delta), so **the per-box branch still
+  updates to the host's current tip** — verified: a box from a checkpoint picked
+  up an unpushed host-`main` commit made *after* the checkpoint, via
+  `checkpoint restore: /workspace: delta bundle (<oldTip>..<newTip>)`. A true
+  disk-only checkpoint would need `Template.build().fromTemplate(base).copy(<box
+  state>)` (boots fresh, like the base snapshot) — feasible (the SDK has
+  `fromTemplate` + `copy`) but the open question is *what FS state to capture*
+  (E2B has no `docker commit`-style rootfs diff), and it is slower to create
+  than the seconds-fast memory snapshot. Tracked as future work; ships as
+  full-state.
 - **No `Template.list()` in the SDK.** `prune --provider e2b` enumerates
   sandboxes only; built templates have to be removed from the E2B
   dashboard. Document this in the provider page; ship as-is.
@@ -396,6 +418,18 @@ mode … Yes, I accept" gate.
   relay and can launch boxes on other providers, so they can fully smoke-test.
 
 ## Changelog
+- 2026-06-23: **Fix: cloud create with a relative `-w` path failed the git-clone
+  workspace seed (all cloud providers).** `agentbox create --provider e2b -w
+  ../repo` died with `git clone … 'file://../repo' … fatal: '/repo' does not
+  appear to be a git repository` — `file://` URLs require an absolute path, so
+  the relative one resolved to host `/repo`. The docker provider already does
+  `resolve(opts.workspacePath)`; the cloud `Provider.create` did not. Fixed by
+  resolving `req.workspacePath` to absolute at the top of `createCloudProvider`'s
+  `create` (in `packages/sandbox-cloud/src/cloud-provider.ts`), mirroring docker
+  — which also keeps the box record's `workspacePath` cwd-independent. Found
+  while testing e2b checkpoints; the fix is cloud-wide (daytona/hetzner/vercel/
+  e2b). Verified live: `-w ../agentbox-test-repo-gh` now clones + completes, and
+  the box record stores the resolved absolute path.
 - 2026-06-23: **DinD shipped — docker baked into the base, auto-launched on
   create/resume (mirrors vercel).** Following the empirical verification below,
   enabled in-box docker by: (1) adding a "docker engine (in-box DinD)" step to
