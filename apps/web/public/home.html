@@ -919,7 +919,7 @@
   <div class="meta pad">
     <span class="m-npm"><b>npm</b> @madarco/agentbox</span>
     <span class="m-license"><b>license</b> MIT</span>
-    <span class="m-envs"><b>envs</b> Local Docker · Vercel · Hetzner · Daytona</span>
+    <span class="m-envs"><b>envs</b> Local Docker · Vercel · Hetzner · E2B · Daytona</span>
     <span class="m-os"><b>os</b> macOS · Linux</span>
   </div>
 
@@ -1194,7 +1194,7 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
       <div class="cgroup-h">create &amp; run</div>
       <div class="crow"><code>agentbox create</code><span>Create and start a new agent box.</span></div>
       <div class="crow"><code>agentbox claude</code><span>Create a sandboxed box and launch Claude Code in a detachable tmux session.</span></div>
-      <div class="crow"><code>agentbox &lt;provider&gt; claude</code><span>Launch sandboxed boxes on <b>Vercel</b>, <b>Hetzner</b>, <b>Daytona</b> or local <b>Docker</b>.</span></div>
+      <div class="crow"><code>agentbox &lt;provider&gt; claude</code><span>Launch sandboxed boxes on <b>Vercel</b>, <b>Hetzner</b>, <b>E2B</b>, <b>Daytona</b> or local <b>Docker</b>.</span></div>
       <div class="crow"><code>agentbox &lt;provider&gt; codex</code><span>Same, for <b>Codex</b> and <b>Open Code</b> — any agent, any provider.</span></div>
       <div class="crow"><code>agentbox attach 2</code><span>Reattach to the running agent session on box <span class="mono">2</span> (claude, codex, or opencode — whichever is live).</span></div>
 
@@ -1225,13 +1225,13 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
     <div class="ptable">
       <table>
         <thead>
-          <tr><th>capability</th><th class="col">local docker</th><th class="col">hetzner</th><th class="col">daytona</th><th class="col">vercel</th></tr>
+          <tr><th>capability</th><th class="col">local docker</th><th class="col">hetzner</th><th class="col">daytona</th><th class="col">vercel</th><th class="col">e2b</th></tr>
         </thead>
         <tbody>
-          <tr><td>support</td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="warn">partial</span></td><td><span class="yes">full</span></td></tr>
-          <tr><td>base image</td><td>Dockerfile</td><td>setup script (Ubuntu)</td><td>Dockerfile</td><td>setup script</td></tr>
-          <tr><td>live snapshots</td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td>experimental</td><td><span class="yes">yes</span></td></tr>
-          <tr><td>private preview urls</td><td><span class="yes">portless · orbstack</span></td><td><span class="yes">portless</span></td><td><span class="yes">native</span></td><td><span class="yes">native</span></td></tr>
+          <tr><td>support</td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="warn">partial</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td></tr>
+          <tr><td>base image</td><td>Dockerfile</td><td>setup script (Ubuntu)</td><td>Dockerfile</td><td>setup script</td><td>Dockerfile</td></tr>
+          <tr><td>live snapshots</td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td>experimental</td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td></tr>
+          <tr><td>private preview urls</td><td><span class="yes">portless · orbstack</span></td><td><span class="yes">portless</span></td><td><span class="yes">native</span></td><td><span class="yes">native</span></td><td><span class="yes">native</span></td></tr>
         </tbody>
       </table>
     </div>

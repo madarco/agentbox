@@ -12,8 +12,8 @@ Fork the current Claude Code session into a fresh AgentBox box.
 
 1. **Resolve the provider flag from `$ARGUMENTS`:**
    - empty → no flag (uses the default docker provider)
-   - `docker` | `daytona` | `hetzner` | `vercel` → pass `--provider $ARGUMENTS`
-   - anything else → stop and tell the user the valid values are `docker`, `daytona`, `hetzner`, `vercel`
+   - `docker` | `daytona` | `hetzner` | `vercel` | `e2b` → pass `--provider $ARGUMENTS`
+   - anything else → stop and tell the user the valid values are `docker`, `daytona`, `hetzner`, `vercel`, `e2b`
 
 2. **Detect an active plan (optional `--plan`).** If this session was just working on a Claude Code plan, carry it into the box so the fork resumes in plan mode.
    - **If you know the plan file path** for this session (plan mode writes it to `~/.claude/plans/<slug>.md`, and you have it from the plan you just produced in this conversation), use that path.

@@ -13,7 +13,7 @@ If you find yourself *inside* a box (`/workspace` exists and `AGENTBOX_RELAY_URL
 
 ## What AgentBox is, in one paragraph
 
-AgentBox spins up one isolated sandbox per agent run — a local Docker container (default), a Hetzner VPS (`--provider hetzner`), a Vercel Sandbox (`--provider vercel`), or a Daytona cloud sandbox (`--provider daytona`, partial support). Each box has its own `/workspace`, but the host's `.git/` is shared, so commits made inside the box land on the host immediately. The agent inside the box has **no host credentials** — `git push`, opening URLs in the host browser, capturing checkpoints, and all other host-side operations flow through a small host process called the **relay** that runs alongside the CLI.
+AgentBox spins up one isolated sandbox per agent run — a local Docker container (default), a Hetzner VPS (`--provider hetzner`), a Vercel Sandbox (`--provider vercel`), an E2B microVM (`--provider e2b`), or a Daytona cloud sandbox (`--provider daytona`, partial support). Each box has its own `/workspace`, but the host's `.git/` is shared, so commits made inside the box land on the host immediately. The agent inside the box has **no host credentials** — `git push`, opening URLs in the host browser, capturing checkpoints, and all other host-side operations flow through a small host process called the **relay** that runs alongside the CLI.
 
 ## The two starting commands
 
@@ -28,7 +28,7 @@ agentbox create --provider hetzner    # cloud VPS (requires `agentbox prepare --
 agentbox create --attach              # drop into a shell inside the box after create
 ```
 
-Useful flags: `-n <name>` (friendly box name), `--provider docker|daytona|hetzner|vercel`, `--attach`, `-w <path>` (workspace to mount; defaults to `cwd`), `--snapshot <ref>` (start from a checkpoint).
+Useful flags: `-n <name>` (friendly box name), `--provider docker|daytona|hetzner|vercel|e2b`, `--attach`, `-w <path>` (workspace to mount; defaults to `cwd`), `--snapshot <ref>` (start from a checkpoint).
 
 Non-docker providers require a one-time `agentbox prepare --provider <name>` to bake the base image / snapshot.
 
@@ -66,13 +66,13 @@ agentbox dashboard                    # TUI with status + leader-key actions
 agentbox claude attach <name|n>       # reattach to a specific box
 ```
 
-`-i` works on every provider — pass `--provider daytona|hetzner|vercel` (or set `box.provider`) and the queued job creates a cloud box and pre-starts the seeded agent session detached, same as docker. The host must have valid agent credentials. Extra args after `--` are forwarded to the in-box agent (e.g. `agentbox claude -i "<prompt>" --provider vercel -- --permission-mode=plan`).
+`-i` works on every provider — pass `--provider daytona|hetzner|vercel|e2b` (or set `box.provider`) and the queued job creates a cloud box and pre-starts the seeded agent session detached, same as docker. The host must have valid agent credentials. Extra args after `--` are forwarded to the in-box agent (e.g. `agentbox claude -i "<prompt>" --provider vercel -- --permission-mode=plan`).
 
 `-i` honors the project's `carry:` block: the carry gate runs on the host when you submit (it prompts there, since you're at the terminal), and the approved files ride the queued job and land in the box at create time. Auto-approve non-interactively with `--carry-yes` (or `AGENTBOX_CARRY_YES=1`); skip with `--carry skip` (or `AGENTBOX_CARRY=skip`).
 
 ## Forking the current session into a box
 
-From host Claude, run the **`/agentbox`** slash command (optional arg: `docker` | `daytona` | `hetzner`) to snapshot the *current* Claude Code session into a brand-new box that resumes it. With tmux or iTerm it opens in a new terminal tab; otherwise it starts in the background. The host session is unaffected — you get two parallel timelines. The underlying CLI is `agentbox fork` (`agentbox fork --help`); `/agentbox` requires `agentbox install` to have been run once. This is distinct from `-i`, which seeds a *new* prompt rather than resuming the live conversation. Fork **sends** the project's `carry:` block by default (the host is trusted; the box is the untrusted side, so host→box copy is safe) — opt out with `agentbox fork --carry skip`.
+From host Claude, run the **`/agentbox`** slash command (optional arg: `docker` | `daytona` | `hetzner` | `vercel` | `e2b`) to snapshot the *current* Claude Code session into a brand-new box that resumes it. With tmux or iTerm it opens in a new terminal tab; otherwise it starts in the background. The host session is unaffected — you get two parallel timelines. The underlying CLI is `agentbox fork` (`agentbox fork --help`); `/agentbox` requires `agentbox install` to have been run once. This is distinct from `-i`, which seeds a *new* prompt rather than resuming the live conversation. Fork **sends** the project's `carry:` block by default (the host is trusted; the box is the untrusted side, so host→box copy is safe) — opt out with `agentbox fork --carry skip`.
 
 ## Driving one agent from another (`drive`, `agent`, `queue wait-for`)
 
@@ -80,7 +80,7 @@ When *you* are the host-side agent and want to orchestrate other agents running 
 
 ### `agentbox drive <box>` — terminal driving
 
-Targets the running tmux session inside a box (auto-picks the agent session: `claude` → `codex` → `opencode` → the only running session; override with `--session <name>`). Provider-uniform — works the same on docker / daytona / hetzner / vercel.
+Targets the running tmux session inside a box (auto-picks the agent session: `claude` → `codex` → `opencode` → the only running session; override with `--session <name>`). Provider-uniform — works the same on docker / daytona / hetzner / vercel / e2b.
 
 ```sh
 agentbox drive snapshot 1                          # print rendered TUI as plain text
@@ -225,7 +225,7 @@ If a PR op appears to hang, tell the user to check the dashboard footer for the 
 | `agentbox url [n\|name]` | Open the box's web app URL (`<box-name>.localhost` via Portless) in the host browser. |
 | `agentbox screen [n\|name]` | Open the box's **own** Chromium via VNC — useful for OAuth flows the agent inside the box initiates. |
 | `agentbox code [n\|name]` | Open VS Code / Cursor pointed at the box. |
-| `agentbox prepare --provider <name>` | One-time base image / snapshot build for `daytona` or `hetzner` or `vercel`. With no `--provider`, prints status across all providers. |
+| `agentbox prepare --provider <name>` | One-time base image / snapshot build for `daytona`, `hetzner`, `vercel`, or `e2b` (e2b builds the base from a Dockerfile via `Template.build()`). With no `--provider`, prints status across all providers. |
 | `agentbox prune --provider <name>` | Clean up orphan boxes / images / snapshots for a provider (docker + daytona supported; hetzner pending). |
 | `agentbox cp <src> <dst>` | Copy a file/dir host↔box (`box:/path` prefix picks direction). Heavy dirs (`.git`, `node_modules`, build output) are dropped by default; add `--exclude=<glob\|name>` or `--no-default-excludes`. Uploads over `box.cpMaxBytes` (100 MB, post-exclude) are **blocked** with a size breakdown — trim with `--exclude`, copy heavy folders one at a time, or pass `--yes`. |
 
