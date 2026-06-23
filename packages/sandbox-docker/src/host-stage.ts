@@ -442,6 +442,14 @@ export interface StageCodexOptions {
 }
 
 const CODEX_RSYNC_EXCLUDES = [
+  // Keep codex's bundled marketplaces (`.tmp/bundled-marketplaces`, ~56MB) — they
+  // back the Browser plugin and codex does NOT regenerate them, so a cloud box
+  // baked without this content shows no Browser plugin. These includes precede
+  // the `.tmp/**` exclude below (and the broad `cache`/`tmp` excludes) so the
+  // whole bundled-marketplaces subtree rides into the snapshot while the rest of
+  // `.tmp` (the heavy, regenerable plugin-sync cache) is dropped.
+  '--include=.tmp/',
+  '--include=.tmp/bundled-marketplaces/***',
   '--exclude=sessions',
   '--exclude=log',
   '--exclude=history.jsonl',
@@ -462,7 +470,8 @@ const CODEX_RSYNC_EXCLUDES = [
   '--exclude=tmp',
   // .tmp holds codex plugin sync state — ~100 MB of marketplace cache. Not
   // the same as `tmp/`; both can exist side by side on a long-running host.
-  '--exclude=.tmp',
+  // Excludes everything under .tmp EXCEPT the bundled-marketplaces kept above.
+  '--exclude=.tmp/**',
   '--exclude=.codex-global-state.json',
   '--exclude=.codex-global-state.json.bak',
   '--exclude=.personality_migration',

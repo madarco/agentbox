@@ -19,11 +19,18 @@ js_repl = false
 source_type = "local"
 source = "/Users/marco/.codex/.tmp/bundled-marketplaces/openai-bundled"
 
+[marketplaces.openai-primary-runtime]
+source_type = "local"
+source = "/Users/marco/.cache/codex-runtimes/codex-primary-runtime/plugins/openai-primary-runtime"
+
 [marketplaces.claude-plugins-official]
 source_type = "git"
 source = "https://github.com/anthropics/claude-plugins-official.git"
 
 [plugins."browser@openai-bundled"]
+enabled = true
+
+[plugins."documents@openai-primary-runtime"]
 enabled = true
 
 [plugins."code-review@claude-plugins-official"]
@@ -78,10 +85,17 @@ describe('sanitizeCodexConfigForBox', () => {
     // host-path notify removed
     expect(cfg['notify']).toBeUndefined();
 
-    // local-source marketplace + its plugin removed; git one + its plugin kept
-    expect(obj(cfg['marketplaces'])['openai-bundled']).toBeUndefined();
+    // in-~/.codex local marketplace KEPT, source rewritten host->box; its plugin survives
+    expect(obj(cfg['marketplaces'])['openai-bundled']).toBeDefined();
+    expect(obj(obj(cfg['marketplaces'])['openai-bundled'])['source']).toBe(
+      '/home/vscode/.codex/.tmp/bundled-marketplaces/openai-bundled',
+    );
+    expect(obj(cfg['plugins'])['browser@openai-bundled']).toBeDefined();
+    // out-of-~/.codex local marketplace (under ~/.cache) + its plugin DROPPED
+    expect(obj(cfg['marketplaces'])['openai-primary-runtime']).toBeUndefined();
+    expect(obj(cfg['plugins'])['documents@openai-primary-runtime']).toBeUndefined();
+    // git marketplace + its plugin kept
     expect(obj(cfg['marketplaces'])['claude-plugins-official']).toBeDefined();
-    expect(obj(cfg['plugins'])['browser@openai-bundled']).toBeUndefined();
     expect(obj(cfg['plugins'])['code-review@claude-plugins-official']).toBeDefined();
 
     // unrelated settings untouched
