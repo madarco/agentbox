@@ -576,6 +576,7 @@ export const claudeCommand = new Command('claude')
         await assertAgentCredsAvailable({
           agent: 'claude-code',
           image: cfg.effective.box.image,
+          providerName,
         });
       } catch (err) {
         if (err instanceof MissingAgentCredsError) {
@@ -624,6 +625,30 @@ export const claudeCommand = new Command('claude')
     // Resolve auth from host env or the legacy ~/.agentbox/auth.json
     // setup-token (the dormant CI fallback).
     const resolved = await resolveClaudeAuth(process.env);
+
+    // Non-interactive (orchestrator pipe, CI): no TTY to attach or complete an
+    // in-box /login, so fail fast with the same actionable message the prompt
+    // would give instead of booting a box whose agent then silently sits on its
+    // /login screen. `-y` in a real TTY is exempt — that's the documented "boot
+    // and /login inside the box" escape hatch (the user is present). Host-env
+    // auth is exempt too (its presence is the user's explicit choice). The
+    // expiry half of the check is cloud-only — docker boxes refresh in-box.
+    if (!process.stdin.isTTY && resolved.source !== 'host-env') {
+      try {
+        await assertAgentCredsAvailable({
+          agent: 'claude-code',
+          image: cfg.effective.box.image,
+          providerName,
+        });
+      } catch (err) {
+        if (err instanceof MissingAgentCredsError) {
+          log.error(err.message);
+          cmdLog.close();
+          process.exit(2);
+        }
+        throw err;
+      }
+    }
 
     // First-run sign-in offer. Docker seeds every box from the host backup;
     // cloud captures the login to the same backup so the per-box push seeds it

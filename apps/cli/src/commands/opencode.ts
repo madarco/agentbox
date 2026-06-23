@@ -439,6 +439,7 @@ export const opencodeCommand = new Command('opencode')
         await assertAgentCredsAvailable({
           agent: 'opencode',
           image: cfg.effective.box.image,
+          providerName,
         });
       } catch (err) {
         if (err instanceof MissingAgentCredsError) {

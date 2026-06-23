@@ -476,6 +476,7 @@ export const codexCommand = new Command('codex')
         await assertAgentCredsAvailable({
           agent: 'codex',
           image: cfg.effective.box.image,
+          providerName,
         });
       } catch (err) {
         if (err instanceof MissingAgentCredsError) {

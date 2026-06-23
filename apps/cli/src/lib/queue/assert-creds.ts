@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   hostBackupHasCredentials,
+  hostClaudeBackupExpired,
   OPENCODE_FORWARDED_ENV_KEYS,
   SHARED_CODEX_VOLUME,
   SHARED_OPENCODE_VOLUME,
@@ -33,6 +34,28 @@ export async function claudeAuthAvailable(env: NodeJS.ProcessEnv): Promise<boole
   const resolved = await resolveClaudeAuth(env);
   if (resolved.source !== 'none') return true;
   return hostBackupHasCredentials();
+}
+
+/**
+ * Richer Claude credential verdict for the non-interactive paths. `'missing'`
+ * when nothing can seed a box; `'expired'` when the only credential is a host
+ * backup whose OAuth token is known-expired AND we're on a cloud provider —
+ * cloud's in-box refresh has proven unreliable, whereas docker boxes refresh the
+ * access token themselves, so a stale `expiresAt` is a non-issue there (and
+ * access tokens expire ~hourly, so flagging it on docker would false-fail
+ * constantly). A host-env token (`ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`)
+ * or legacy `auth.json` short-circuits to `'ok'`: it has no expiry concept here.
+ * Mirrors the interactive `maybeRunCloudClaudeLogin` split.
+ */
+export async function claudeCredStatus(
+  env: NodeJS.ProcessEnv,
+  isCloud: boolean,
+): Promise<'ok' | 'missing' | 'expired'> {
+  const resolved = await resolveClaudeAuth(env);
+  if (resolved.source !== 'none') return 'ok';
+  if (!(await hostBackupHasCredentials())) return 'missing';
+  if (isCloud && (await hostClaudeBackupExpired())) return 'expired';
+  return 'ok';
 }
 
 /**
@@ -69,12 +92,15 @@ export async function opencodeAuthAvailable(
 
 const MESSAGES: Record<QueueAgentKind, string> = {
   'claude-code':
-    '-i / --initial-prompt: no Claude credentials on host. Run `agentbox claude login` first (or `agentbox claude` interactively) to seed them, then retry.',
+    'No Claude credentials on host. Run `agentbox claude login` first (or `agentbox claude` interactively) to seed them, then retry.',
   codex:
-    '-i / --initial-prompt: no Codex credentials on host. Run `agentbox codex login` first (or set OPENAI_API_KEY) to seed them, then retry.',
+    'No Codex credentials on host. Run `agentbox codex login` first (or set OPENAI_API_KEY) to seed them, then retry.',
   opencode:
-    '-i / --initial-prompt: no OpenCode credentials on host. Run `agentbox opencode login` first to seed them, then retry.',
+    'No OpenCode credentials on host. Run `agentbox opencode login` first to seed them, then retry.',
 };
+
+const CLAUDE_EXPIRED_MESSAGE =
+  'Your saved Claude login looks expired. Refresh it with `agentbox claude login`, then retry.';
 
 export class MissingAgentCredsError extends Error {
   readonly agent: QueueAgentKind;
@@ -85,10 +111,26 @@ export class MissingAgentCredsError extends Error {
   }
 }
 
+/**
+ * Subclass for the present-but-expired case (Claude on cloud). Extends
+ * {@link MissingAgentCredsError} so the existing `instanceof MissingAgentCredsError`
+ * catches at the call sites still match (→ same fail-fast / exit 2), while callers
+ * and tests can distinguish the reason.
+ */
+export class ExpiredAgentCredsError extends MissingAgentCredsError {
+  constructor(agent: QueueAgentKind, message: string) {
+    super(agent, message);
+    this.name = 'ExpiredAgentCredsError';
+  }
+}
+
 export interface AssertAgentCredsInput {
   agent: QueueAgentKind;
   image: string;
   env?: NodeJS.ProcessEnv;
+  /** Provider for this run; gates the Claude expiry check to cloud (see
+   *  {@link claudeCredStatus}). Omitted/`'docker'` → presence check only. */
+  providerName?: string;
 }
 
 /**
@@ -101,13 +143,16 @@ export interface AssertAgentCredsInput {
  */
 export async function assertAgentCredsAvailable(input: AssertAgentCredsInput): Promise<void> {
   const env = input.env ?? process.env;
-  let ok = false;
   if (input.agent === 'claude-code') {
-    ok = await claudeAuthAvailable(env);
-  } else if (input.agent === 'codex') {
-    ok = await codexAuthAvailable(input.image, env);
-  } else {
-    ok = await opencodeAuthAvailable(input.image, env);
+    const isCloud = input.providerName !== undefined && input.providerName !== 'docker';
+    const status = await claudeCredStatus(env, isCloud);
+    if (status === 'missing') throw new MissingAgentCredsError(input.agent, MESSAGES[input.agent]);
+    if (status === 'expired') throw new ExpiredAgentCredsError(input.agent, CLAUDE_EXPIRED_MESSAGE);
+    return;
   }
+  const ok =
+    input.agent === 'codex'
+      ? await codexAuthAvailable(input.image, env)
+      : await opencodeAuthAvailable(input.image, env);
   if (!ok) throw new MissingAgentCredsError(input.agent, MESSAGES[input.agent]);
 }

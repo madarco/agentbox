@@ -42,7 +42,7 @@ $ agentbox codex -i "Draft the v0.13 changelog from git log"
 job a1b2c3d4e5f6a1b2c3 queued (2/5 running); log: ~/.agentbox/queue/a1b2c3d4e5f6a1b2c3.log
 ```
 
-Credentials for the chosen agent must already be on the host — the background worker can't do an interactive login. If they're missing, submission fails loud. Authenticate first (see [run an agent](/docs/run-an-agent)).
+Credentials for the chosen agent must already be on the host — the background worker can't do an interactive login. If they're missing — or, on a cloud provider, if your saved Claude login has already expired — submission fails loud (non-zero exit) before any box is created, with an `agentbox <agent> login` hint. The same pre-flight runs for a non-interactive foreground run (e.g. an orchestrating agent piping into `agentbox claude`), so a stale login surfaces as a clean error rather than a box whose agent silently sits on its `/login` screen. Authenticate first (see [run an agent](/docs/run-an-agent)).
 
 On a cloud provider the worker also verifies the seeded session actually came up before reporting success: if the agent exits at launch, or its in-box login is rejected at runtime (the seeded cloud token expires independently of the host session), the job ends in `failed` — `queue show <id>` prints the reason, with an `agentbox <agent> login` hint when it's a credentials problem. Refresh and re-submit.
 
