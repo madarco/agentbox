@@ -285,15 +285,17 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
 /**
  * Create + configure the agent's tmux session running `command` without
  * attaching (the `detached` buildAttach mode). Shared by the new-tab attach
- * pre-start and the background (`-i`) queue worker. `runDetached` swallows the
- * exit code; a real launch failure surfaces on the subsequent attach.
+ * pre-start and the background (`-i`) queue worker. Returns the session-create
+ * command's exit code + stderr so the queue worker can fail the job when the
+ * session was never created; the new-tab pre-start ignores the result (a real
+ * launch failure surfaces on the subsequent attach).
  */
 async function startDetachedSession(
   provider: Provider,
   box: BoxRecord,
   sessionName: string,
   command: string,
-): Promise<void> {
+): Promise<{ exitCode: number; stderr: string }> {
   if (!provider.buildAttach) {
     throw new Error(`provider '${provider.name}' does not support detached sessions`);
   }
@@ -303,9 +305,76 @@ async function startDetachedSession(
     detached: true,
   });
   try {
-    await runDetached(spec.argv, spec.env);
+    return await runDetached(spec.argv, spec.env);
   } finally {
     if (spec.cleanup) await spec.cleanup();
+  }
+}
+
+/**
+ * Markers an agent prints to its TUI when its in-box credentials are rejected.
+ * The seeded cloud login can be stale (it expires independently of the host
+ * session — `agentbox <agent> login` refreshes it), in which case the agent
+ * launches, draws, then sits on an auth error doing no work. Scraping the pane
+ * for these turns that otherwise-silent dead-end into an actionable failure.
+ */
+const AGENT_AUTH_FAILURE =
+  /Please run \/login|Invalid authentication credentials|API Error: 401|Invalid API key|\bUnauthorized\b/i;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * After a detached pre-start, confirm the agent's tmux session actually came up
+ * and stayed up. `tmux new-session -d` creates the session synchronously, so a
+ * session that's already gone — or vanishes within the settle window — means the
+ * agent process exited immediately at launch (the single-window session dies
+ * with it). This is the exact silent failure the `-i` queue path hit on cloud
+ * providers: the box was created and the job reported "done", but no session was
+ * ever running. We also scrape the pane for credential-rejection markers, the
+ * most common cause of a session that's technically alive but doing nothing.
+ * Throws an actionable error so the caller surfaces it (queue worker → failed
+ * job; restore → logged) instead of masking it.
+ */
+export async function verifyDetachedSession(
+  provider: Provider,
+  box: BoxRecord,
+  sessionName: string,
+  binary: string,
+  opts: { windowMs?: number; pollMs?: number } = {},
+): Promise<void> {
+  const windowMs = opts.windowMs ?? 10_000;
+  const pollMs = opts.pollMs ?? 2_000;
+  const q = `'${sessionName.replace(/'/g, `'\\''`)}'`;
+  // One round-trip per tick: bail (exit 7) if the session is gone, else echo the
+  // pane so we can sniff for an auth dead-end.
+  const probe = `tmux has-session -t ${q} 2>/dev/null || exit 7; tmux capture-pane -p -t ${q} 2>/dev/null`;
+  const deadline = Date.now() + windowMs;
+  for (;;) {
+    let pane = '';
+    try {
+      const r = await provider.exec(box, ['bash', '-lc', probe], { user: 'vscode' });
+      if (r.exitCode === 7) {
+        throw new Error(
+          `agent '${binary}' exited immediately after launch in box ${box.name} — the session did not stay up. ` +
+            `Attach to inspect: agentbox ${binary} attach ${box.name}`,
+        );
+      }
+      pane = r.stdout;
+    } catch (err) {
+      // Re-throw our own diagnosis; a transport-level probe error is NOT proof
+      // of death (don't false-fail on a flaky exec) — keep polling.
+      if (err instanceof Error && err.message.startsWith(`agent '${binary}'`)) throw err;
+    }
+    if (AGENT_AUTH_FAILURE.test(pane)) {
+      throw new Error(
+        `box ${binary} credentials were rejected — the agent launched but printed an auth error, so no work will run. ` +
+          `Refresh them with \`agentbox ${binary} login\`, then re-run.`,
+      );
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(pollMs);
   }
 }
 
@@ -334,23 +403,47 @@ export async function cloudAgentStartDetached(args: {
     box = await provider.start(box);
   }
   const command = buildCloudAttachInnerCommand(args.binary, args.extraArgs);
-  await startDetachedSession(provider, box, args.sessionName, command);
+  const { exitCode, stderr } = await startDetachedSession(
+    provider,
+    box,
+    args.sessionName,
+    command,
+  );
+  if (exitCode !== 0) {
+    const detail = stderr.trim().slice(0, 500);
+    throw new Error(
+      `failed to start the ${args.binary} session in box ${box.name} (exit ${String(exitCode)})` +
+        (detail ? `: ${detail}` : ''),
+    );
+  }
+  await verifyDetachedSession(provider, box, args.sessionName, args.binary);
 }
 
 /**
  * Run an attach-style argv non-interactively to completion (used for the
- * `detached` session pre-start). stdio is ignored — the remote command only
- * creates + configures the tmux session and exits; there's nothing to show.
- * Resolves on exit regardless of code (a non-zero here shouldn't block the
- * subsequent attach, which surfaces any real failure to the user).
+ * `detached` session pre-start). The remote command only creates + configures
+ * the tmux session and exits, so stdout is dropped — but stderr and the exit
+ * code are captured: the E2B helper's `--detached` path runs the session-create
+ * command via the SDK and exits with its code, so a non-zero here is the only
+ * signal that the session was never created (e.g. a transient SDK connect/exec
+ * failure). Callers decide whether to surface it — the queue worker fails the
+ * job, the new-tab pre-start ignores it (the subsequent attach re-creates the
+ * session anyway). Resolves on exit regardless of code (never rejects).
  */
-function runDetached(argv: string[], env?: Record<string, string>): Promise<void> {
+function runDetached(
+  argv: string[],
+  env?: Record<string, string>,
+): Promise<{ exitCode: number; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(argv[0]!, argv.slice(1), {
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', 'pipe'],
       env: env ? { ...process.env, ...env } : process.env,
     });
-    child.on('error', () => resolve());
-    child.on('exit', () => resolve());
+    let stderr = '';
+    child.stderr?.on('data', (c: Buffer) => {
+      stderr += c.toString('utf8');
+    });
+    child.on('error', (err) => resolve({ exitCode: 1, stderr: stderr + String(err.message ?? err) }));
+    child.on('exit', (code) => resolve({ exitCode: code ?? 0, stderr }));
   });
 }

@@ -424,6 +424,32 @@ mode … Yes, I accept" gate.
   relay and can launch boxes on other providers, so they can fully smoke-test.
 
 ## Changelog
+- 2026-06-23: **Fix: cloud `-i` background jobs reported `done` even when the
+  seeded agent session never came up (all cloud providers).** The `-i` queue
+  worker's cloud path (`runCloudJob` → `cloudAgentStartDetached` → `runDetached`
+  in `apps/cli/src/commands/_cloud-attach.ts`) spawned the detached session-start
+  helper with `stdio: 'ignore'` and resolved on **any** exit, discarding the
+  exit code and stderr — so a helper failure (a transient SDK connect/exec error,
+  the agent crashing at launch, or stale in-box credentials) was invisible and
+  the job still wrote `status: done`. The only error that surfaced was the
+  unrelated best-effort `queue.openIn` step (e.g. `herdr tab gave no pane id`),
+  which misled diagnosis toward openIn even though session start is independent of
+  it. Fixes: (1) `runDetached` now captures the exit code + stderr; (2)
+  `cloudAgentStartDetached` throws (→ failed job with reason) when the
+  session-create command exits non-zero; (3) new `verifyDetachedSession` polls
+  `tmux has-session` after start — a session that's already gone means the agent
+  exited immediately at launch (the exact "no tmux session running" symptom) —
+  and best-effort-scrapes the pane for credential-rejection markers (`Please run
+  /login` / `API Error: 401` / …), failing the job with an actionable `agentbox
+  <agent> login` hint. Both callers handle the throw correctly: the queue worker
+  marks the job failed; `restoreAgentSessions` (resume-on-restart) catches +
+  logs. Cloud-wide (daytona/hetzner/vercel/e2b). Verified live on e2b: a job
+  whose box claude creds had lapsed now reports `failed` with the login hint
+  instead of a false `done`; a healthy job still reports `done` with a live
+  session. Unit-tested in `test/cloud-attach.test.ts`. The seeded in-box claude
+  OAuth token is a point-in-time snapshot that expires independently of the host
+  session (see `docs` note on box-cred expiry) — `agentbox claude login` re-seeds
+  it; this fix makes that condition discoverable instead of silent.
 - 2026-06-23: **Fix: cloud create with a relative `-w` path failed the git-clone
   workspace seed (all cloud providers).** `agentbox create --provider e2b -w
   ../repo` died with `git clone … 'file://../repo' … fatal: '/repo' does not
