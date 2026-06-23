@@ -11,7 +11,7 @@ AgentBox runs on five backends today, behind a single `Provider` interface
 | `daytona` | Daytona Cloud sandbox | When the workload outgrows the laptop, when teammates need to attach, when you want a snapshot-ready remote env. |
 | `hetzner` | Hetzner Cloud VPS (1:1 per box) | When you want bare-VPS control (root, full kernel, your own region), pure OpenSSH (no third-party agent in the box), and a Cloud Firewall locked to your egress IP. ~€4/mo per running box. |
 | `vercel` | Vercel Sandbox (Firecracker microVM) | When you want a fast snapshot-based remote env with public HTTPS preview URLs and persistent pause/resume. In-box `docker` (DinD) is baked in and auto-started; region `iad1` only. See §3b. |
-| `e2b` | E2B Sandbox (Firecracker microVM) | When you want a Firecracker microVM with public HTTPS preview URLs and **the base image built straight from a Dockerfile** (`Template.build()`) — the only cloud provider that bakes from a Dockerfile rather than a one-time snapshot. No nested containers, no SSH; 1-hour platform session cap on Hobby. See §3c. |
+| `e2b` | E2B Sandbox (Firecracker microVM) | When you want a Firecracker microVM with public HTTPS preview URLs and **the base image built straight from a Dockerfile** (`Template.build()`) — the only cloud provider that bakes from a Dockerfile rather than a one-time snapshot. In-box docker (DinD) supported, no SSH; 1-hour platform session cap on Hobby. See §3c. |
 
 Switch backends per box: `agentbox create --provider daytona` (or `--provider
 hetzner` / `--provider vercel` / `--provider e2b`), or pin project-wide via
@@ -539,9 +539,12 @@ brief:
   OpenCode, agentbox-ctl, the vscode user, VNC, tmux). The resulting
   `templateId:tag` is persisted to `~/.agentbox/e2b-prepared.json` and to
   `box.imageE2b`; every `create --provider e2b` boots from it in seconds.
-- **No nested containers.** Firecracker + seccomp on E2B blocks the
-  namespace syscalls a container runtime needs (same as Vercel), so the
-  provider passes `launchDockerd: false`; in-box `docker` is unavailable.
+- **In-box docker (DinD).** Contrary to the original "same as Vercel"
+  assumption, E2B's microVM grants the capabilities a container runtime needs
+  (full root + `cap_sys_admin` + working namespaces, verified 2026-06-23). The
+  base template bakes the docker engine and the provider passes
+  `launchDockerd: true`, so `dockerd` auto-launches on create/resume (same as
+  daytona/hetzner/vercel). Pulled images carry across pause/resume.
 - **Pause/resume is free.** `Sandbox.pause(id)` pauses; `Sandbox.connect(id)`
   auto-resumes lazily on the next op. The provider's `state()`/`get()` use
   the non-resuming `Sandbox.getInfo()` so existence checks don't wake (and

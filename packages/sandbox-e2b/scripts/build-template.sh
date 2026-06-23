@@ -8,8 +8,10 @@
 # Differences from the vercel installer (packages/sandbox-vercel/scripts/
 # provision.sh), which this mirrors:
 #   - apt-get / dpkg, not dnf (E2B base = Debian 12 bookworm).
-#   - NO docker / dockerd / iptables — E2B microVMs can't run nested
-#     containers (same shape as vercel).
+#   - docker.io + iptables ARE installed (in-box DinD): unlike the original
+#     assumption, E2B microVMs DO support nested containers (full root +
+#     cap_sys_admin + working namespaces, verified 2026-06-23). dockerd is
+#     launched at create/resume by agentbox-dockerd-start, not systemd.
 #   - The `vscode` user is created with a free uid (E2B's `code` group holds
 #     1000 on the base template, so useradd picks the next free uid; there are
 #     no bind mounts so the exact uid is irrelevant — only ownership of
@@ -17,6 +19,7 @@
 #
 # Required inputs (uploaded via Template.copy before this runs):
 #   /tmp/agentbox-ctl                  -- prebuilt @agentbox/ctl bundle (cjs)
+#   /tmp/agentbox-dockerd-start        -- in-box dockerd launch helper (DinD)
 #   /tmp/agentbox-vnc-start            -- VNC startup helper
 #   /tmp/agentbox-checkpoint-cleanup   -- pre-snapshot cleanup helper
 #   /tmp/agentbox-open                 -- in-box xdg-open shim
@@ -89,6 +92,19 @@ chmod 0440 /etc/sudoers.d/90-agentbox-vscode
 visudo -cf /etc/sudoers >/dev/null
 done_ "vscode user + sudoers"
 
+step "docker engine (in-box DinD)"
+# E2B microVMs support nested containers (full root + cap_sys_admin), so bake
+# the docker engine like the vercel/hetzner/docker providers. dockerd is NOT
+# started by systemd here — agentbox-dockerd-start launches it at create/resume
+# (it picks the storage driver at runtime; overlay2 works on E2B). docker.io
+# pulls containerd + runc + the cli; iptables is needed for bridge networking.
+# Must run AFTER the vscode user exists (usermod -aG docker vscode below).
+apt-get install -y -q --no-install-recommends docker.io iptables
+groupadd -f docker
+usermod -aG docker vscode
+systemctl disable --now docker.service docker.socket 2>/dev/null || true
+done_ "docker engine (in-box DinD)"
+
 step "agentbox base dirs + /workspace ownership"
 mkdir -p /workspace /run/agentbox /var/log/agentbox /var/lib/agentbox /etc/agentbox /etc/claude-code \
          /usr/local/share/agentbox
@@ -120,7 +136,8 @@ step "agentbox-ctl install"
 install -m 0755 /tmp/agentbox-ctl /usr/local/bin/agentbox-ctl
 done_ "agentbox-ctl install"
 
-step "baked helper scripts (vnc / cleanup / xdg-open)"
+step "baked helper scripts (dockerd / vnc / cleanup / xdg-open)"
+install -m 0755 /tmp/agentbox-dockerd-start      /usr/local/bin/agentbox-dockerd-start
 install -m 0755 /tmp/agentbox-vnc-start          /usr/local/bin/agentbox-vnc-start
 install -m 0755 /tmp/agentbox-checkpoint-cleanup /usr/local/bin/agentbox-checkpoint-cleanup
 install -m 0755 /tmp/agentbox-open               /usr/local/bin/agentbox-open
@@ -129,7 +146,7 @@ ln -sf /usr/local/bin/agentbox-open /usr/local/bin/xdg-open
 # Installing them here would put the relay-routing `git` on PATH ahead of
 # /usr/bin/git and route this script's own remaining git/clone commands through
 # a relay that doesn't exist during the bake.
-done_ "baked helper scripts (vnc / cleanup / xdg-open)"
+done_ "baked helper scripts (dockerd / vnc / cleanup / xdg-open)"
 
 step "baked config files (claude / codex / setup guide / tmux.conf)"
 install -m 0644 /tmp/agentbox-custom-CLAUDE.md      /etc/claude-code/CLAUDE.md
@@ -289,7 +306,7 @@ install -m 0755 /tmp/agentbox-linear-shim /usr/local/bin/linear
 done_ "relay shims (gh + git + ntn + linear)"
 
 step "trim /tmp/agentbox-*"
-rm -f /tmp/agentbox-ctl /tmp/agentbox-vnc-start \
+rm -f /tmp/agentbox-ctl /tmp/agentbox-dockerd-start /tmp/agentbox-vnc-start \
       /tmp/agentbox-checkpoint-cleanup /tmp/agentbox-open \
       /tmp/agentbox-gh-shim /tmp/agentbox-git-shim /tmp/agentbox-ntn-shim \
       /tmp/agentbox-linear-shim \

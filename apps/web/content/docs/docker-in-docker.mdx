@@ -62,7 +62,7 @@ The shared cache is mutually exclusive at runtime: only one box can mount `agent
 
 ## Cloud parity & limits
 
-[Daytona](/docs/daytona), [Hetzner](/docs/hetzner), and [Vercel](/docs/vercel) get the same DinD setup as the default docker provider — `dockerd` is auto-launched with no opt-in, and the data root lives on the sandbox/VPS filesystem (wiped with the box on `destroy`). On Vercel the docker engine is baked into the prepare snapshot and pulled images carry over across pause/resume.
+[Daytona](/docs/daytona), [Hetzner](/docs/hetzner), [Vercel](/docs/vercel), and [E2B](/docs/e2b) get the same DinD setup as the default docker provider — `dockerd` is auto-launched with no opt-in, and the data root lives on the sandbox/VPS filesystem (wiped with the box on `destroy`). On Vercel and E2B the docker engine is baked into the prepare snapshot/template and pulled images carry over across pause/resume.
 
 | Provider | DinD |
 |----------|------|
@@ -70,11 +70,12 @@ The shared cache is mutually exclusive at runtime: only one box can mount `agent
 | daytona | Yes — auto-launched; no shared-cache option |
 | hetzner | Yes — runs inside the VPS, baked into the prepare snapshot |
 | vercel | Yes — baked into the prepare snapshot; auto-launched on create/resume |
+| e2b | Yes — baked into the prepare template; auto-launched on create/resume |
 
 ```bash
 agentbox shell <cloud-box> -- docker info
 ```
 
 <Callout title="NOTE">
-`--shared-docker-cache` is a docker-provider feature only. Every other provider (daytona, hetzner, vercel) still gets a working in-box `docker` — just without the shared-cache volume.
+`--shared-docker-cache` is a docker-provider feature only. Every other provider (daytona, hetzner, vercel, e2b) still gets a working in-box `docker` — just without the shared-cache volume.
 </Callout>
