@@ -60,6 +60,19 @@ describe('buildE2bAttach', () => {
     });
   });
 
+  it('omits --detached for a normal (interactive) attach', async () => {
+    const spec = await buildE2bAttach(boxWith('sbx_1'), 'agent', { command: 'exec claude' });
+    expect(spec.argv).not.toContain('--detached');
+  });
+
+  it('appends --detached for a detached pre-start so the helper runs once and exits', async () => {
+    const spec = await buildE2bAttach(boxWith('sbx_1'), 'agent', {
+      command: 'exec claude',
+      detached: true,
+    });
+    expect(spec.argv).toContain('--detached');
+  });
+
   it('passes the kind through to renderInnerCommand', async () => {
     const spec = await buildE2bAttach(boxWith('sbx_1'), 'logs', { service: 'web' });
     expect(spec.env?.AGENTBOX_E2B_INNER_CMD).toBe('INNER(logs)');
