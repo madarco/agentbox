@@ -374,20 +374,29 @@ function extractHerdrPaneId(result: Record<string, unknown> | null): string | un
  */
 async function spawnInHerdr(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTerminalResult> {
   const env = args.env;
+  // Creating a pane/tab/workspace is heavier than a query and gets slower when
+  // several queue workers fan out tabs at once (the `-i` concurrency case), so
+  // give the create a wider window than the default 2s before falling back.
+  const CREATE_TIMEOUT_MS = 6000;
   let result: Record<string, unknown> | null;
   let noteKind: string;
   if (args.mode === 'split') {
     const params: Record<string, unknown> = { direction: 'right', ratio: 0.5 };
     if (args.herdrTargetPane) params['pane_id'] = args.herdrTargetPane;
-    result = await herdrRequest('pane.split', params, env);
+    result = await herdrRequest('pane.split', params, env, CREATE_TIMEOUT_MS);
     noteKind = 'Herdr split';
   } else if (args.mode === 'tab') {
     const params: Record<string, unknown> = {};
     if (args.herdrTargetWorkspace) params['workspace_id'] = args.herdrTargetWorkspace;
-    result = await herdrRequest('tab.create', params, env);
+    result = await herdrRequest('tab.create', params, env, CREATE_TIMEOUT_MS);
     noteKind = 'Herdr tab';
   } else {
-    result = await herdrRequest('workspace.create', { cwd: args.cwd, label: args.title }, env);
+    result = await herdrRequest(
+      'workspace.create',
+      { cwd: args.cwd, label: args.title },
+      env,
+      CREATE_TIMEOUT_MS,
+    );
     noteKind = 'Herdr workspace';
   }
 

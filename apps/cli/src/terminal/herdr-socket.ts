@@ -54,10 +54,19 @@ export function herdrSend(
 }
 
 /**
- * Send a Herdr request and resolve the first response line's `result`. Resolves
- * `null` on any error (no socket, refused connect, error reply, timeout) so
- * callers can fall back. Used by the spawn paths, which need the created
- * pane id echoed back.
+ * Send a Herdr request and resolve the reply's `result`. Resolves `null` on any
+ * error (no socket, refused connect, error reply, timeout) so callers can fall
+ * back. Used by the spawn paths, which need the created pane id echoed back.
+ *
+ * Reply correlation matters under concurrency: when several boxes' queue
+ * workers each open a Herdr connection and ask it to create a tab at once,
+ * Herdr can push a notification (a focus/layout event) onto the connection
+ * *before* the RPC reply. The old "take the first line with a `result`" logic
+ * mis-read that notification as the answer and reported "gave no pane id" even
+ * though the tab was created. We now scan line-by-line and consume only the line
+ * carrying OUR request `id` (an id-less reply is still accepted, so a
+ * non-compliant Herdr that omits the echo doesn't regress), skipping
+ * notifications (no `result`/`error`) and any other request's reply.
  */
 export function herdrRequest(
   method: string,
@@ -67,11 +76,13 @@ export function herdrRequest(
 ): Promise<Record<string, unknown> | null> {
   const sock = herdrSocketPath(env);
   if (!sock) return Promise.resolve(null);
+  const id = nextId();
   return new Promise((resolve) => {
     let settled = false;
     const done = (value: Record<string, unknown> | null): void => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
       try {
         client.destroy();
       } catch {
@@ -93,26 +104,36 @@ export function herdrRequest(
     client.on('close', () => done(null));
     client.on('connect', () => {
       try {
-        client.write(`${JSON.stringify({ id: nextId(), method, params })}\n`);
+        client.write(`${JSON.stringify({ id, method, params })}\n`);
       } catch {
         done(null);
       }
     });
     client.on('data', (chunk: Buffer) => {
       buf += chunk.toString('utf8');
-      const nl = buf.indexOf('\n');
-      if (nl === -1) return;
-      const line = buf.slice(0, nl);
-      try {
-        const msg = JSON.parse(line) as { result?: unknown; error?: unknown };
+      let nl: number;
+      // Drain every complete line; ignore anything that isn't our reply and
+      // keep reading until the matching id arrives or the timeout fires.
+      while ((nl = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (line.trim().length === 0) continue;
+        let msg: { id?: unknown; result?: unknown; error?: unknown };
+        try {
+          msg = JSON.parse(line) as typeof msg;
+        } catch {
+          continue; // partial/garbage line — wait for more data
+        }
+        // Notifications (method+params, no result/error) aren't replies — skip.
+        if (!('result' in msg) && !('error' in msg)) continue;
+        // A reply for a different request on this connection — not ours.
+        if (msg.id !== undefined && msg.id !== id) continue;
         if (msg.error || typeof msg.result !== 'object' || msg.result === null) {
           done(null);
         } else {
-          clearTimeout(timer);
           done(msg.result as Record<string, unknown>);
         }
-      } catch {
-        done(null);
+        return;
       }
     });
   });

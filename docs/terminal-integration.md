@@ -292,7 +292,18 @@ design is the inverse: we **proxy state transparently** and let Herdr do the res
   notifications) and `herdrRequest` (request/response, for spawn). Everything is
   best-effort — a missing/erroring socket never breaks the attach. Keyed on
   `HERDR_ENV=1` + `HERDR_SOCKET_PATH` + `HERDR_PANE_ID` (`herdrStatusActive`), so
-  it works even when a tmux is nested inside Herdr.
+  it works even when a tmux is nested inside Herdr. **Reply correlation:**
+  `herdrRequest` consumes only the line carrying its own request `id`, skipping
+  notifications and other replies that Herdr may push onto the connection first
+  (an id-less reply is still accepted, so a non-compliant Herdr doesn't regress).
+  This is what made the `-i` queue's concurrent `tab.create` fan-out flaky —
+  several boxes opening tabs at once raced a layout/focus notification ahead of
+  the reply, and the old "take the first `result` line" logic mis-read it as
+  "gave no pane id" even though the tab was created. Pane/tab/workspace *creates*
+  also use a wider 6s timeout (vs the 2s default) since they're slower under that
+  fan-out. (Note: queued session start is independent of `openIn` — a failed
+  `openIn` no longer means no session; see `cloud-create-flow` / the `-i`
+  worker.)
 
 ## Herdr plugin (`agentbox install herdr` + `herdr-plugin/`)
 
