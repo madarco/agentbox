@@ -9,6 +9,62 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.19.0] - 2026-06-23
+
+### Added
+
+- **Codex in boxes now sees your full setup.** Running `agentbox codex` syncs
+  your complete skill set (from `~/.agents/skills`, the cross-agent skills dir,
+  not just the handful of runtime skills), sanitizes the box's `config.toml`
+  (strips host-only MCP servers, `notify`, and macOS-desktop marketplaces that
+  can't resolve in a Linux box), and pre-trusts `/workspace` so Codex no longer
+  pops a "trust this folder?" prompt on attach. Skills that were symlinks on the
+  host are materialized as real dirs in the box.
+- **`agentbox fork` autodetects the agent and session.** A bare `agentbox fork`
+  now works from inside either Claude Code or Codex — it detects which agent
+  launched it (and which session to resume) from the environment. You can also
+  pass the provider positionally (`agentbox fork hetzner`). Explicit `--agent`
+  still wins.
+- **`/agentbox` fork skill installs via the `skills` CLI.** `agentbox install`
+  now registers the `/agentbox` fork skill through `npx skills add`, so it shows
+  up on the skills.sh directory; it falls back to a plain copy offline.
+- **Cloud boxes no longer die mid-work.** A new host-relay keepalive renews a
+  cloud box's session timeout while its agent is actively working (Vercel and
+  E2B), so a long test or build run is no longer cut off when the 45-minute
+  create timeout elapses. Idle boxes still lapse as before. (Bounded by each
+  plan's hard session cap.)
+- **In-box Docker on Vercel.** Vercel Sandbox now supports nested containers, so
+  `dockerd` is baked into the Vercel base snapshot and auto-started — `docker
+  run` works inside a Vercel box. Re-run `agentbox prepare --provider vercel` to
+  pick it up.
+- **Checkpoint restore carries your host state on cloud boxes.** Creating a
+  cloud box from a checkpoint now re-branches onto a fresh `agentbox/<box>`
+  branch at your current host tip, ships the missing commits as a delta bundle,
+  and replays your stash + untracked files (conflicts resolve box-wins and are
+  reported back) — matching docker, instead of booting the frozen snapshot
+  verbatim. Honors `--no-resync`.
+- **`status --inspect` and cloud `status` list tasks/services/ports.** The
+  inspect view now renders each task, service, and port (live from the in-box
+  daemon when running, else the persisted snapshot) instead of just a count.
+- **`{{AGENTBOX_BOX_HOST}}` resolves to the public preview host** on public-URL
+  cloud boxes (Vercel/Daytona/E2B), so env-init substitution targets a reachable
+  host instead of an unreachable `*.localhost`.
+
+### Fixed
+
+- **`agentbox fork --agent codex` resumes straight into `/workspace`.** The
+  teleport now rewrites the working directory in every Codex per-turn record
+  (and stops seeding Codex's host-wide session-index DBs into the box), so a
+  forked Codex session no longer pops "Choose working directory" or resumes at
+  the host path — and your cross-project Codex history no longer leaks into the
+  box.
+- **In-box `agentbox-ctl cp`/`download` with a relative host path** now resolves
+  against the box's workspace, not whatever directory the long-lived relay was
+  started from (files could land in an unrelated project's folder).
+- **In-box docker socket** is reliably world-accessible — the dockerd start
+  helper re-asserts the socket permissions even when it exits early on an
+  already-running daemon, so the unprivileged box user can always reach it.
+
 ## [0.18.0] - 2026-06-18
 
 ### Added

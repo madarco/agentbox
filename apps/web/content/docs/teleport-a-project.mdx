@@ -41,10 +41,18 @@ agentbox claude --provider hetzner   # or daytona, vercel; local docker is the d
 Refer to a box later by index (`1`, `2`), name, or id prefix. See
 [CLI commands](/docs/cli) for all flags.
 
-<Callout title="TIP">`agentbox claude`, `agentbox codex`, and `agentbox opencode` provision the box **and** launch the agent in one step — these are what you'll normally run. Use plain `agentbox create` when you want just the box, with no agent. See [run an agent](/docs/run-an-agent).</Callout>
+<Callout title="TIP">
+  `agentbox claude`, `agentbox codex`, and `agentbox opencode` provision the box **and** launch the
+  agent in one step — these are what you'll normally run. Use plain `agentbox create` when you want
+  just the box, with no agent. See [run an agent](/docs/run-an-agent).
+</Callout>
 
 {/* DIAGRAM /diagrams/teleport-a-project.png — nano-banana-pro, home-diagram style ref. Recipe + prompt in apps/web/images.md → Phase D. */}
-<Figure src="/diagrams/teleport-a-project.png" caption="agentbox create gives the box a writable copy of your repo on its own branch; your host checkout is untouched." />
+
+<Figure
+  src="/diagrams/teleport-a-project.png"
+  caption="agentbox create gives the box a writable copy of your repo on its own branch; your host checkout is untouched."
+/>
 
 ## The setup wizard
 
@@ -72,7 +80,10 @@ You then review the generated `agentbox.yaml` and commit it (or pull it back wit
 start those tasks and services automatically. A warm
 [checkpoint](/docs/checkpoints-and-pausing) skips it too.
 
-<Callout type="warn" title="HEADS UP">Imported env files bypass `.gitignore` and put secrets in the box, including cloud boxes. Only import them for boxes you trust with those values.</Callout>
+<Callout type="warn" title="HEADS UP">
+  Imported env files bypass `.gitignore` and put secrets in the box, including cloud boxes. Only
+  import them for boxes you trust with those values.
+</Callout>
 
 For host files outside the env patterns that you want in every box, declare a
 `carry:` block in `agentbox.yaml`. AgentBox asks once to approve the copy when the
@@ -92,7 +103,11 @@ live only in the container, survive pause, stop, and start, and are wiped on
 Cloud providers can't bind-mount your `.git`, so the workspace is seeded from a
 host `git bundle` instead, and push and pull flow through the host relay.
 
-<Callout type="warn" title="HEADS UP">The box's `/workspace` is not a folder on your machine; it lives inside the container. Use `agentbox open` or `agentbox download` to bring files back. See [access your box](/docs/access-your-box).</Callout>
+<Callout type="warn" title="HEADS UP">
+  The box's `/workspace` is not a folder on your machine; it lives inside the container. Use
+  `agentbox open` or `agentbox download` to bring files back. See [access your
+  box](/docs/access-your-box).
+</Callout>
 
 ## Your uncommitted work comes too
 
@@ -101,7 +116,10 @@ untracked files, so the agent starts from exactly the state you'd see in
 `git status`, on a fresh branch. Gitignored files are the one exception, which is
 what the wizard's env import and the `carry:` block are for.
 
-<Callout title="WHY">Carry-over is non-destructive. It never alters your host working tree or stash list, so your machine looks the same after creating the box as before.</Callout>
+<Callout title="WHY">
+  Carry-over is non-destructive. It never alters your host working tree or stash list, so your
+  machine looks the same after creating the box as before.
+</Callout>
 
 ## Choosing a branch
 
@@ -118,15 +136,16 @@ agentbox claude --from-branch main
 
 You don't have to start from scratch. You can fork your current agent session
 into a fresh box and continue it there, with the full conversation (and an active
-plan) intact. The quickest way is the `/agentbox` skill from inside Claude Code,
+plan) intact. The quickest way is the `/agentbox` skill or `! agentbox fork` from inside Claude Code,
 Codex, or OpenCode; on the host it's `agentbox fork`. See
 [run an agent](/docs/run-an-agent) for the details.
 
-`agentbox fork` autodetects which agent it was launched from via the agent's own
-environment variables — Claude Code (`CLAUDECODE` / `CLAUDE_CODE_SESSION_ID`) or
-Codex (`CODEX_THREAD_ID`) — and defaults the session to resume to the current
-one. So a bare `agentbox fork` run from inside either agent forks *that* agent's
-session. Pass `--agent claude|codex|opencode` and/or `--session <id>` to override.
+For eg:
+
+```
+/agentbox hetzner
+! agentbox fork vercel # or docker, etc.
+```
 
 ## Pushing and pulling
 
