@@ -18,6 +18,7 @@ import {
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
 import { runCarryGate } from '../lib/carry-gate.js';
+import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { makeProgressReporter } from '../lib/progress.js';
@@ -433,15 +434,10 @@ export const createCommand = new Command('create')
           portless: portlessEnabled,
           portlessStateDir: cfg.effective.portless.stateDir || undefined,
           ...(effectiveSize ? { size: effectiveSize } : {}),
-          // Vercel-only sizing (box.vercelVcpus / vercelTimeoutMs). The cloud
-          // scaffold reads these as overrides; other providers ignore them.
-          ...(provider.name === 'vercel'
-            ? {
-                vcpus: cfg.effective.box.vercelVcpus,
-                timeoutMs: cfg.effective.box.vercelTimeoutMs,
-                networkPolicy: cfg.effective.box.vercelNetworkPolicy,
-              }
-            : {}),
+          // Per-provider sizing / session-lifetime overrides (vercel vcpus /
+          // timeout / network policy, e2b timeout). The cloud scaffold reads
+          // them; other providers ignore them.
+          ...cloudSizingProviderOptions(provider.name, cfg.effective),
         },
       });
       s.stop(`box ${result.record.container} ready`);

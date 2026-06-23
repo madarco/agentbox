@@ -40,6 +40,7 @@ import {
   MissingAgentCredsError,
   opencodeAuthAvailable,
 } from '../lib/queue/assert-creds.js';
+import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
 import { captureOpenTerminalContext } from '../terminal/queue-open.js';
@@ -543,6 +544,8 @@ export const opencodeCommand = new Command('opencode')
           useBranch,
           resyncOnStart: opts.resync,
           projectRoot,
+          // Per-provider session-lifetime (e2b/vercel timeout); mirrors create.
+          providerOptions: cloudSizingProviderOptions(provider.name, cfg.effective),
         },
         binary: 'opencode',
         sessionName: cfg.effective.opencode.sessionName,

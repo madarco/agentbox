@@ -48,6 +48,7 @@ import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { maybeResyncWorkspace } from '../lib/resync-start.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
 import { agentResumeArgs } from '../agent-sessions.js';
+import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { applyCodexSkipPermissions } from '../lib/skip-permissions.js';
 import {
   ATTACH_IN_HELP,
@@ -580,6 +581,8 @@ export const codexCommand = new Command('codex')
           useBranch,
           resyncOnStart: opts.resync,
           projectRoot,
+          // Per-provider session-lifetime (e2b/vercel timeout); mirrors create.
+          providerOptions: cloudSizingProviderOptions(provider.name, cfg.effective),
         },
         binary: 'codex',
         sessionName: cfg.effective.codex.sessionName,

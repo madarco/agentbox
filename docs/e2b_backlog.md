@@ -318,16 +318,22 @@ mode … Yes, I accept" gate.
 - **1-hour platform session cap on Hobby.** The attach helper caps
   `timeoutMs` at **55 minutes** (see `packages/sandbox-e2b/src/attach-helper.ts`
   + the staged `apps/cli/runtime/e2b/attach-helper.cjs`) to leave headroom
-  under the platform ceiling. Longer interactive sessions would need a
-  mid-session `Sandbox.setTimeout` keepalive that extends the lease — out
-  of scope for the launch.
+  under the platform ceiling. NOTE: the **box lifetime** keepalive IS done —
+  the host relay's `cloud-keepalive` loop calls `renewTimeout` →
+  `Sandbox.setTimeout` while the in-box agent is working, so a long agent run
+  no longer dies at the create timeout (bounded by the plan's max session: ~1 h
+  on Hobby). What's still capped is the **interactive attach PTY** itself
+  (`pty.create` ≤ 1 h on Hobby) — after 55 min the attach disconnects but the
+  box stays alive and the agent keeps working; just reattach. Extending the live
+  PTY mid-stream remains future work.
 - **Drive harness display quirk** on the e2b shell attach (Task 2 finding).
   A plain `script -q -c …` capture shows the prompt; the headless drive
   harness shows an empty screen. Underlying PTY bridge works.
-- **No `e2bTimeoutMs` config key.** Vercel exposes a parallel for its own
-  SDK; on E2B the timeout is set at `Sandbox.create({ timeout })` time and
-  extended live via `Sandbox.setTimeout`. Could be wired to a per-create
-  config key — not done at launch.
+- **`box.e2bTimeoutMs` config key — DONE.** Mirrors `box.vercelTimeoutMs`:
+  the session timeout a new `--provider e2b` box is created with (default 45 min),
+  threaded via `cloudSizingProviderOptions` (`apps/cli/src/lib/cloud-sizing.ts`)
+  into `create` and the agent-create commands, and recorded as
+  `cloud.sessionTimeoutMs` so the keepalive seeds its tracked deadline precisely.
 - **No `e2bNetworkPolicy` config key — and it CAN be wired (backlog
   correction).** An earlier note here claimed E2B's network knobs are
   "template-level (set at `Template.build()` time)" with "no per-create

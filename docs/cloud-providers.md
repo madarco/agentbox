@@ -562,8 +562,10 @@ brief:
   `attach-helper.cjs`, which `Sandbox.connect`s, opens a `pty.create({ cols,
   rows, onData })` stream, and bridges stdin / stdout / `SIGWINCH` to the
   host TTY. The helper caps `timeoutMs` at **55 minutes** to leave headroom
-  under E2B's 1-hour platform session cap on Hobby (longer sessions need a
-  mid-session `Sandbox.setTimeout` keepalive — deferred).
+  under E2B's 1-hour platform session cap on Hobby. This caps only the live
+  PTY connection — the **box lifetime** is held open independently by the
+  `cloud-keepalive` loop (see §3, "Session keepalive") while the agent works,
+  so after 55 min the attach drops but the box stays alive; just reattach.
 - **Checkpoints are id-addressed (same shape as Vercel).** The provider
   overrides `checkpoint.create` to call `Sandbox.createSnapshot(sandboxId,
   { name })`, store the returned `snapshotId` in the cloud-checkpoint

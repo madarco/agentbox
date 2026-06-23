@@ -172,6 +172,7 @@ See [teleport a project](/docs/teleport-a-project), [environment](/docs/environm
 | `box.vercelVcpus` | int | `2` | vCPUs (RAM is coupled at 2048 MB/vCPU); only 1/2/4/8 are accepted |
 | `box.vercelTimeoutMs` | int | `2700000` (45 min) | max session length before auto-snapshot; persistent mode auto-resumes |
 | `box.vercelNetworkPolicy` | string | empty (`allow-all`) | egress lock: `allow-all`, `deny-all`, or a comma-separated domain allowlist (`github.com,*.npmjs.org`) |
+| `box.e2bTimeoutMs` | int | `2700000` (45 min) | session timeout a new `--provider e2b` box is created with before E2B auto-pauses it on inactivity; the host keepalive holds it open while the agent works (Hobby caps total session at ~1 h) |
 
 See [Vercel](/docs/vercel).
 

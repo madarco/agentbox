@@ -83,6 +83,7 @@ export interface UserConfig {
     vercelVcpus?: number;
     vercelTimeoutMs?: number;
     vercelNetworkPolicy?: string;
+    e2bTimeoutMs?: number;
     cpMaxBytes?: number;
   };
   checkpoint?: {
@@ -208,6 +209,7 @@ export interface EffectiveConfig {
     vercelVcpus: number;
     vercelTimeoutMs: number;
     vercelNetworkPolicy: string;
+    e2bTimeoutMs: number;
     cpMaxBytes: number;
   };
   checkpoint: {
@@ -354,6 +356,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     vercelVcpus: 2,
     vercelTimeoutMs: 2_700_000,
     vercelNetworkPolicy: '',
+    e2bTimeoutMs: 2_700_000,
     cpMaxBytes: 100 * 1024 * 1024,
   },
   checkpoint: {
@@ -681,6 +684,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       'Max session length (ms) for new --provider vercel boxes before the VM auto-snapshots; persistent mode auto-resumes on the next call. Default 2700000 (45 min, the Hobby ceiling). Vercel-only.',
+  },
+  {
+    key: 'box.e2bTimeoutMs',
+    type: 'int',
+    description:
+      'Session timeout (ms) a new --provider e2b box is created with, before E2B auto-pauses it on inactivity. The host keepalive loop pushes this forward while the agent is working. Default 2700000 (45 min); the Hobby tier caps total session at ~1 h regardless. E2B-only.',
   },
   {
     key: 'box.cpMaxBytes',

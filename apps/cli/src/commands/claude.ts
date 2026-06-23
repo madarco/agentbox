@@ -37,6 +37,7 @@ import {
 import { Command } from 'commander';
 import { resolveClaudeAuth, type ResolvedClaudeAuth } from '../auth.js';
 import { reattachRef, resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { assertAgentCredsAvailable, MissingAgentCredsError } from '../lib/queue/assert-creds.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { maybeResyncWorkspace } from '../lib/resync-start.js';
@@ -782,6 +783,9 @@ export const claudeCommand = new Command('claude')
           useBranch,
           resyncOnStart: opts.resync,
           projectRoot,
+          // Per-provider session-lifetime (e2b/vercel timeout) so the keepalive
+          // seeds correctly; mirrors `agentbox create`.
+          providerOptions: cloudSizingProviderOptions(provider.name, cfg.effective),
         },
         binary: 'claude',
         hasSeedPrompt:
