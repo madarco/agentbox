@@ -294,14 +294,16 @@ design is the inverse: we **proxy state transparently** and let Herdr do the res
   `HERDR_ENV=1` + `HERDR_SOCKET_PATH` + `HERDR_PANE_ID` (`herdrStatusActive`), so
   it works even when a tmux is nested inside Herdr.
 
-## Herdr plugin (`agentbox install herdr` + `herdr-plugin/`)
+## Herdr plugin (`agentbox install herdr` + repo-root `herdr-plugin.toml`)
 
 `apps/cli/src/commands/install-herdr.ts` is the source of truth for a Herdr
 plugin (https://herdr.dev/docs/plugins) reachable two ways, both producing the
 same files:
-- **discovery:** `herdr plugin install madarco/agentbox/herdr-plugin` → the
-  committed `herdr-plugin/` dir; its `[[build]]` runs `build.sh` →
-  `agentbox install herdr --plugin-keys`.
+- **discovery:** `herdr plugin install madarco/agentbox` → the committed
+  repo-root `herdr-plugin.toml` (+ `build.sh`); its `[[build]]` runs `build.sh` →
+  `agentbox install herdr --plugin-keys`. The manifest lives at the repo root (not
+  a subdir) so the Herdr marketplace, which indexes `herdr-plugin.toml` from each
+  tagged repo's root, can discover it.
 - **local:** `agentbox install herdr` → the same files under
   `~/.agentbox/herdr/plugin/`, then `herdr plugin unlink agentbox` (best-effort) →
   `herdr plugin link` → `herdr server reload-config`.
@@ -311,9 +313,9 @@ shell expansion and an unreliable PATH (e.g. nvm). Rather than bake machine path
 into the manifest, agentbox commands route through `agentbox-shim.sh`
 (`herdrShimContent` → `exec <node> <cliEntry> "$@"`), written at install time.
 That keeps `buildHerdrManifest()` **pure + parameterless** so the committed
-`herdr-plugin/herdr-plugin.toml` is byte-identical to what the local install
+repo-root `herdr-plugin.toml` is byte-identical to what the local install
 writes — a test (`committed plugin stays in sync`) asserts it, as does
-`herdr-plugin/build.sh` vs `herdrBuildScript()`. The plugin carries its own
+`build.sh` vs `herdrBuildScript()`. The plugin carries its own
 `version` (constant), independent of the CLI version, so the committed file is
 stable across releases.
 

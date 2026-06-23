@@ -6,9 +6,11 @@
  *   - a **Ctrl+click** link handler that opens a box's web app (`agentbox://…`)
  *
  * The same plugin is reachable two ways, both producing identical behavior:
- *   - discovery: `herdr plugin install madarco/agentbox/herdr-plugin` → the
- *     committed manifest; its `[[build]]` runs `build.sh` → `agentbox install
- *     herdr --plugin-keys`.
+ *   - discovery: `herdr plugin install madarco/agentbox` → the repo-root manifest
+ *     (`herdr-plugin.toml`); its `[[build]]` runs `build.sh` → `agentbox install
+ *     herdr --plugin-keys`. The manifest lives at the repo root (not a subdir) so
+ *     the Herdr marketplace, which indexes `herdr-plugin.toml` from each tagged
+ *     repo's root, can discover it.
  *   - local: `agentbox install herdr` → the same files under `~/.agentbox`, linked.
  *
  * Herdr runs plugin commands as a bare argv with no shell expansion and an
@@ -28,10 +30,10 @@ import { dirname, join } from 'node:path';
 
 /**
  * The plugin's own version — independent of the CLI version so the committed
- * `herdr-plugin/herdr-plugin.toml` stays stable across releases. Bump when the
- * plugin's manifest changes.
+ * `herdr-plugin.toml` stays stable across releases. Bump when the plugin's
+ * manifest changes.
  */
-const PLUGIN_VERSION = '0.1.0';
+const PLUGIN_VERSION = '0.2.0';
 
 /** Directory the locally-generated plugin lives in (stable across upgrades). */
 export function herdrPluginDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -55,14 +57,15 @@ export function herdrBinary(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
- * The static plugin manifest. Pure + parameterless, so the committed
- * `herdr-plugin/herdr-plugin.toml` is byte-identical to what the local install
- * writes (a test asserts this). agentbox commands go through `agentbox-shim.sh`;
- * the pane-open action uses bare `herdr` (reliably on PATH inside a Herdr pane).
+ * The static plugin manifest. Pure + parameterless, so the committed root
+ * `herdr-plugin.toml` is byte-identical to what the local install writes (a test
+ * asserts this). It lives at the repo root so the Herdr marketplace can index it.
+ * agentbox commands go through `agentbox-shim.sh`; the pane-open action uses bare
+ * `herdr` (reliably on PATH inside a Herdr pane).
  */
 export function buildHerdrManifest(): string {
   return `# AgentBox Herdr plugin (https://herdr.dev/docs/plugins).
-# Install:  herdr plugin install madarco/agentbox/herdr-plugin
+# Install:  herdr plugin install madarco/agentbox
 # Or, with the AgentBox CLI already installed:  agentbox install herdr
 #
 # agentbox commands route through ./agentbox-shim.sh, written at install time

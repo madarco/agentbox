@@ -20,7 +20,7 @@ describe('buildHerdrManifest', () => {
 
   it('declares the plugin id, a stable own version, and platforms', () => {
     expect(toml).toContain('id = "agentbox"');
-    expect(toml).toContain('version = "0.1.0"'); // plugin version, not the CLI version
+    expect(toml).toContain('version = "0.2.0"'); // plugin version, not the CLI version
     expect(toml).toContain('min_herdr_version = "0.7.0"');
     expect(toml).toContain('platforms = ["linux", "macos", "windows"]');
   });
@@ -46,13 +46,15 @@ describe('buildHerdrManifest', () => {
 });
 
 describe('committed plugin stays in sync with the builders', () => {
-  it('herdr-plugin/herdr-plugin.toml matches buildHerdrManifest()', () => {
-    const committed = readFileSync(join(REPO_ROOT, 'herdr-plugin', 'herdr-plugin.toml'), 'utf8');
+  // Files live at the repo root (not a subdir) so the Herdr marketplace, which
+  // indexes herdr-plugin.toml from each tagged repo's root, can discover them.
+  it('herdr-plugin.toml (repo root) matches buildHerdrManifest()', () => {
+    const committed = readFileSync(join(REPO_ROOT, 'herdr-plugin.toml'), 'utf8');
     expect(committed).toBe(buildHerdrManifest());
   });
 
-  it('herdr-plugin/build.sh matches herdrBuildScript()', () => {
-    const committed = readFileSync(join(REPO_ROOT, 'herdr-plugin', 'build.sh'), 'utf8');
+  it('build.sh (repo root) matches herdrBuildScript()', () => {
+    const committed = readFileSync(join(REPO_ROOT, 'build.sh'), 'utf8');
     expect(committed).toBe(herdrBuildScript());
   });
 });
