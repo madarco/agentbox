@@ -1191,10 +1191,14 @@ async function startOrAttachClaude(
   // session (exact id, captured by the in-box hooks) rather than starting fresh.
   // Only when the user gave no args of their own and isn't teleporting a host
   // session, and only if the box actually has a resumable session.
+  let attachResumed = false;
   if (opts.attachResume && claudeArgs.length === 0 && !resumePrepared) {
     const provider = await providerForBox(box);
     const resume = await agentResumeArgs(provider, box, 'claude');
-    if (resume) effectiveArgs = [...effectiveArgs, ...resume];
+    if (resume) {
+      effectiveArgs = [...effectiveArgs, ...resume];
+      attachResumed = true;
+    }
   }
   if (resumePrepared) {
     s.message('uploading claude session into box');
@@ -1218,9 +1222,11 @@ async function startOrAttachClaude(
   }
 
   // Inject the resync conflict warning as the agent's opening turn. A resumed
-  // session rides `--resume <id>` with no clean first user turn, so surface the
-  // warning on stderr after the spinner stops instead.
-  if (resyncWarning && !resumePrepared) {
+  // session (teleport `--resume`, or an attach-resume into the in-box session)
+  // rides resume flags with no clean first user turn, so surface the warning on
+  // stderr after the spinner stops instead — injecting a seed prompt would
+  // collide with `--resume`.
+  if (resyncWarning && !resumePrepared && !attachResumed) {
     effectiveArgs = buildPromptArgs('claude-code', resyncWarning, effectiveArgs);
   }
 
@@ -1233,7 +1239,7 @@ async function startOrAttachClaude(
   });
 
   s.stop(`box ${box.container} ready`);
-  if (resyncWarning && resumePrepared) log.warn(resyncWarning);
+  if (resyncWarning && (resumePrepared || attachResumed)) log.warn(resyncWarning);
   logPrune(rebuild);
   for (const f of rebuild.failed) {
     log.warn(

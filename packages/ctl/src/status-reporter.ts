@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { RelayClient } from './relay-client.js';
-import { markCodexActive } from './session-pointer.js';
+import { clearClaudeSessionPointer, clearCodexMarker, markCodexActive } from './session-pointer.js';
 import type { Supervisor } from './supervisor.js';
 import { probeAgentSession } from './tmux.js';
 import {
@@ -47,6 +47,10 @@ export class StatusReporter {
   private claudePlan: ClaudePlanPayload | undefined;
   private claudeQuestion: ClaudeQuestionPayload | undefined;
   private codexMarked = false;
+  // Last-seen tmux liveness per agent, for the running→stopped edge that clears
+  // the session pointer/marker (see snapshot()).
+  private lastClaudeRunning = false;
+  private lastCodexRunning = false;
   private codexState: AgentActivityState = 'unknown';
   private codexUpdatedAt: string | null = null;
   private opencodeState: AgentActivityState = 'unknown';
@@ -209,6 +213,16 @@ export class StatusReporter {
     const claudeSession = await probeAgentSession(this.sessionName);
     const codexSession = await probeAgentSession(DEFAULT_CODEX_SESSION_NAME);
     const opencodeSession = await probeAgentSession(DEFAULT_OPENCODE_SESSION_NAME);
+
+    // Clear the per-box session pointer/marker when an agent's tmux session ends
+    // (running → not running). This keeps a box restart from resuming an agent
+    // the user already exited — restore should only bring back what was actually
+    // running when the box went down. A fresh daemon starts from `false`, so a
+    // just-restored agent (rising edge) is never cleared.
+    if (this.lastClaudeRunning && !claudeSession.running) clearClaudeSessionPointer();
+    if (this.lastCodexRunning && !codexSession.running) clearCodexMarker();
+    this.lastClaudeRunning = claudeSession.running;
+    this.lastCodexRunning = codexSession.running;
 
     const status: BoxStatus = {
       schema: BOX_STATUS_SCHEMA,

@@ -887,12 +887,16 @@ async function startOrAttachCodex(
   // Attach path on a box that just came back up: resume the box's recorded codex
   // session rather than starting fresh (see claude.ts for the rationale). Gated
   // to no-args, no-teleport, and a box where codex actually ran.
+  let attachResumed = false;
   if (opts.attachResume && codexArgs.length === 0 && !resumePrepared) {
     const provider = await providerForBox(box);
     // `resume` is a codex subcommand — it must follow the global flags in
     // effectiveArgs (skip-permissions etc.), so append rather than prepend.
     const resume = await agentResumeArgs(provider, box, 'codex');
-    if (resume) effectiveArgs = [...effectiveArgs, ...resume];
+    if (resume) {
+      effectiveArgs = [...effectiveArgs, ...resume];
+      attachResumed = true;
+    }
   }
   if (resumePrepared) {
     s.message('uploading codex session into box');
@@ -915,9 +919,10 @@ async function startOrAttachCodex(
     }
   }
 
-  // Inject the resync conflict warning as codex's opening turn (resume rides
-  // `--resume`, so surface it on stderr after the spinner stops instead).
-  if (resyncWarning && !resumePrepared) {
+  // Inject the resync conflict warning as codex's opening turn. A resumed
+  // session (teleport, or attach-resume into the in-box session) rides resume
+  // flags, so surface it on stderr instead — a seed prompt would collide.
+  if (resyncWarning && !resumePrepared && !attachResumed) {
     effectiveArgs = buildPromptArgs('codex', resyncWarning, effectiveArgs);
   }
 
@@ -925,7 +930,7 @@ async function startOrAttachCodex(
   await startCodexSession({ container: box.container, codexArgs: effectiveArgs, sessionName });
 
   s.stop(`box ${box.container} ready`);
-  if (resyncWarning && resumePrepared) log.warn(resyncWarning);
+  if (resyncWarning && (resumePrepared || attachResumed)) log.warn(resyncWarning);
 
   if (!wantAttach) {
     outro(

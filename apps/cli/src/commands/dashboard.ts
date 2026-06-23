@@ -38,6 +38,7 @@ import { resolveClaudeAuth } from '../auth.js';
 import { resolveLimits } from '../limits.js';
 import { Compositor, type RightTarget } from '../dashboard/compositor.js';
 import { loadPtyBackend, type PtySpawn, type TerminalCtor } from '../pty/pty-backend.js';
+import { restoreAgentSessions } from '../agent-sessions.js';
 import { providerForBox } from '../provider/registry.js';
 import { NEW_BOX_ID, NEW_BOX_LABEL, type SidebarBox } from '../dashboard/sidebar.js';
 import { buildCloudAttachInnerCommand } from './_cloud-attach.js';
@@ -274,8 +275,7 @@ export const dashboardCommand = new Command('dashboard')
         // `bash -l` for shell — login shell so /etc/profile.d/agentbox.sh
         // exports AGENTBOX_BOX_* env. For agents, the base64+mapfile launcher
         // (extraArgs is always [] from the dashboard — no `--` passthrough).
-        const innerCommand =
-          which === 'shell' ? 'bash -l' : buildCloudAttachInnerCommand(which);
+        const innerCommand = which === 'shell' ? 'bash -l' : buildCloudAttachInnerCommand(which);
         const spec = await provider.buildAttach(record, kind, {
           sessionName,
           command: innerCommand,
@@ -290,8 +290,7 @@ export const dashboardCommand = new Command('dashboard')
         };
       };
 
-      const isCloudBox = (box: ListedBox): boolean =>
-        (box.provider ?? 'docker') !== 'docker';
+      const isCloudBox = (box: ListedBox): boolean => (box.provider ?? 'docker') !== 'docker';
 
       // Cloud equivalent of claudeSessionInfo / box.codexSession.running for
       // the docker path: probe the box over SSH for live tmux sessions, so
@@ -301,12 +300,7 @@ export const dashboardCommand = new Command('dashboard')
       const probeCloudSessions = async (record: BoxRecord): Promise<Set<string>> => {
         try {
           const provider = await providerForBox(record);
-          const r = await provider.exec(record, [
-            'tmux',
-            'list-sessions',
-            '-F',
-            '#{session_name}',
-          ]);
+          const r = await provider.exec(record, ['tmux', 'list-sessions', '-F', '#{session_name}']);
           if (r.exitCode !== 0) return new Set();
           return new Set(
             r.stdout
@@ -441,8 +435,7 @@ export const dashboardCommand = new Command('dashboard')
             ? { opencodeConfig: { isolate: cfg.effective.box.isolateOpencodeConfig } }
             : {}),
           withPlaywright:
-            cfg.effective.box.withPlaywright ||
-            cfg.effective.browser.default !== 'agent-browser',
+            cfg.effective.box.withPlaywright || cfg.effective.browser.default !== 'agent-browser',
           withEnv: cfg.effective.box.withEnv,
           vnc: { enabled: cfg.effective.box.vnc },
           docker: { sharedCache: cfg.effective.box.dockerCacheShared },
@@ -595,10 +588,20 @@ export const dashboardCommand = new Command('dashboard')
           const provider = await providerForBox(record);
           if (box.state === 'paused') await provider.resume(record);
           else await provider.start(record);
+          // Cloud resume/start reboots the sandbox — the agent tmux session is
+          // gone, so restore it (silent: the dashboard attaches to its pane).
+          await restoreAgentSessions(record, provider);
           return;
         }
-        if (box.state === 'paused') await unpauseBox(box.id);
-        else await startBox(box.id);
+        if (box.state === 'paused') {
+          // Docker unpause is a cgroup thaw — the agent session survives.
+          await unpauseBox(box.id);
+          return;
+        }
+        await startBox(box.id);
+        // Docker stop→start killed the agent tmux session — restore it.
+        const record = await loadBoxRecord(boxId);
+        await restoreAgentSessions(record, await providerForBox(record));
       };
 
       const pauseBoxAction = async (boxId: string): Promise<void> => {

@@ -12,8 +12,12 @@
  * one of the mounted (shared) volumes (`~/.claude`, `~/.codex`, …) — so it is
  * per-box, survives stop/start + cloud pause/resume, and is wiped on destroy.
  * The host reads these files back over `provider.exec` on restart.
+ *
+ * The pointers are cleared when the agent's tmux session ends (the StatusReporter
+ * watches for the running→stopped edge) so a restart only resumes an agent that
+ * was actually running when the box went down, not one the user already exited.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -47,4 +51,23 @@ export function recordClaudeSessionId(id: string): void {
 /** Mark that Codex has run in this box (presence-only; resume uses `--last`). */
 export function markCodexActive(): void {
   writePointer(CODEX_ACTIVE_MARKER, `${new Date().toISOString()}\n`);
+}
+
+function clearPointer(path: string): void {
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // Best-effort: a stale pointer just means restore may relaunch an already-
+    // exited agent — annoying, not harmful.
+  }
+}
+
+/** Drop the Claude pointer when its session ends (no resume target anymore). */
+export function clearClaudeSessionPointer(): void {
+  clearPointer(CLAUDE_SESSION_POINTER);
+}
+
+/** Drop the Codex marker when its session ends. */
+export function clearCodexMarker(): void {
+  clearPointer(CODEX_ACTIVE_MARKER);
 }
