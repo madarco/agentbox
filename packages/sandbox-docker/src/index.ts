@@ -47,6 +47,8 @@ export {
   isRealAgentCredential,
   parseSyncResult,
   parseExtractResult,
+  parseVolumeClaudeCredentials,
+  volumeClaudeCredentials,
   syncClaudeCredentials,
   extractVolumeAuthToBackup,
   extractCodexCredentials,
@@ -54,6 +56,7 @@ export {
   type CredentialAgentKind,
   type CredentialSyncDirection,
   type SyncClaudeCredentialsResult,
+  type VolumeClaudeCredentials,
 } from './claude-credentials.js';
 export {
   buildCodexAttachArgv,

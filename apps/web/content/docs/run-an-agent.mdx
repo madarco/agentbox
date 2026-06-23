@@ -73,7 +73,7 @@ Auto-approve is safe to default on because the box can't touch your machine — 
 
 ## First-run auth
 
-Credentials are handled on the host and seeded into every box (macOS Keychain doesn't transfer into containers). On the first `agentbox claude` with no credentials, AgentBox offers an interactive sign-in that's saved and reused by every future box. Skip it with `-y` (or in CI) and claude will prompt you to `/login` inside the box.
+Credentials are handled on the host and seeded into every box (macOS Keychain doesn't transfer into containers). On the first `agentbox claude` with no credentials — or when a saved login has gone dead and can no longer refresh — AgentBox offers an interactive sign-in that's saved and reused by every future box. Skip it with `-y` (or in CI) and claude will prompt you to `/login` inside the box.
 
 ```bash
 agentbox claude login                 # sign in once, reused by every box

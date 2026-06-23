@@ -20,6 +20,7 @@ import {
   formatDetachNotice,
   hostBackupHasCredentials,
   hostClaudeBackupExpired,
+  imageExists,
   inspectBox,
   rebuildPluginNativeDeps,
   runInteractiveClaudeLogin,
@@ -29,6 +30,7 @@ import {
   startClaudeSession,
   syncClaudeCredentials,
   unpauseBox,
+  volumeClaudeCredentials,
   warmUpClaudeCredentials,
   type BoxRecord,
 } from '@agentbox/sandbox-docker';
@@ -268,17 +270,34 @@ async function maybeRunClaudeLogin(args: {
    *  the volume's `_claude.json` before the login container runs. */
   hostWorkspace: string;
 }): Promise<void> {
-  // Skip when: non-interactive / --yes; the user explicitly provided auth via
-  // host env (respect an intentional ANTHROPIC_API_KEY); or the host backup
-  // already holds real credentials (every box gets seeded from it). A legacy
-  // auth.json setup-token (`auth-file`) still gets the offer — that is the
-  // "Claude API" -> subscription upgrade.
+  // Skip when: non-interactive / --yes; or the user explicitly provided auth
+  // via host env (respect an intentional ANTHROPIC_API_KEY).
   if (!process.stdin.isTTY || args.yes) return;
   if (args.authSource === 'host-env') return;
-  if (await hostBackupHasCredentials()) return;
 
-  const message =
-    args.authSource === 'auth-file'
+  // Docker boots every box from the shared claude-config volume's live
+  // `.credentials.json`; the host backup is only a mirror that diverges when an
+  // in-box refresh fails (claude blanks the volume's refreshToken, and the
+  // create-time extract then skips it, so the backup keeps a stale token). So
+  // decide off the *volume*, not the backup:
+  //  - usable refresh token present -> trust the in-box refresh, no prompt
+  //    (a merely-expired access token renews itself; don't nag);
+  //  - file present but refresh token blanked -> the login is dead (the seed
+  //    only restores the same stale backup), so offer a fresh sign-in;
+  //  - no file yet -> the box seeds from the host backup, so only offer
+  //    sign-in when there is nothing to seed from either.
+  // The probe needs the image locally; skip it (fall back to the backup check)
+  // when it isn't, so a first-ever run doesn't trigger an implicit pull here.
+  const vol = (await imageExists(args.image))
+    ? await volumeClaudeCredentials(SHARED_CLAUDE_VOLUME, args.image)
+    : { present: false, hasRefreshToken: false };
+  if (vol.hasRefreshToken) return;
+  const blanked = vol.present && !vol.hasRefreshToken;
+  if (!vol.present && (await hostBackupHasCredentials())) return;
+
+  const message = blanked
+    ? 'Your saved Claude login looks expired. Sign in again? (saved and reused by every box)'
+    : args.authSource === 'auth-file'
       ? "You're on a legacy API token (shows as 'Claude API'). Sign in with your Claude subscription instead?"
       : 'Sign in with your Claude subscription? (saved and reused by every box)';
   const answer = await confirm({ message, initialValue: true });

@@ -180,6 +180,74 @@ export async function hostBackupHasCredentials(
   }
 }
 
+export interface VolumeClaudeCredentials {
+  /** A `.credentials.json` exists in the shared claude-config volume. */
+  present: boolean;
+  /** That file carries a usable (non-empty) `claudeAiOauth.refreshToken`. */
+  hasRefreshToken: boolean;
+}
+
+/**
+ * Parse the `PRESENT=<yes|no> REFRESH=<yes|no>` line the probe container prints.
+ * Pure — unit-tested independently of docker.
+ */
+export function parseVolumeClaudeCredentials(stdout: string): VolumeClaudeCredentials {
+  return {
+    present: /\bPRESENT=yes\b/.test(stdout),
+    hasRefreshToken: /\bREFRESH=yes\b/.test(stdout),
+  };
+}
+
+// Probe the live `.credentials.json` the box actually boots from. `jq` ships in
+// the box image; the "usable" test matches SYNC_SCRIPT — a non-empty
+// `claudeAiOauth.refreshToken`. A file present with a blanked refreshToken is
+// the dead state claude leaves behind after a rejected refresh.
+const VOLUME_CRED_PROBE_SCRIPT = `
+PRESENT=no
+REFRESH=no
+VOL=/dst/.credentials.json
+if [ -f "$VOL" ]; then
+  PRESENT=yes
+  if jq -e '(.claudeAiOauth.refreshToken // "") | length > 0' "$VOL" >/dev/null 2>&1; then REFRESH=yes; fi
+fi
+echo "PRESENT=$PRESENT REFRESH=$REFRESH"
+`;
+
+/**
+ * Inspect the shared claude-config VOLUME's live `.credentials.json` — the
+ * authoritative store the in-box claude reads and refreshes. Unlike the host
+ * backup (a mirror that lags and diverges when a refresh fails), this reports
+ * what the next box will actually boot with: whether a credentials file exists
+ * and whether it still holds a usable refresh token. Used to offer a re-login
+ * only when the volume's login is dead (file present, refresh token blanked),
+ * not on a merely-stale access token the in-box refresh can renew on its own.
+ *
+ * Best-effort: an unreadable volume / missing image resolves to
+ * `{ present: false, hasRefreshToken: false }` and never throws into a flow.
+ */
+export async function volumeClaudeCredentials(
+  volume: string,
+  image: string,
+): Promise<VolumeClaudeCredentials> {
+  try {
+    const { stdout } = await execa('docker', [
+      'run',
+      '--rm',
+      '--user',
+      '0',
+      '-v',
+      `${volume}:/dst`,
+      image,
+      'sh',
+      '-c',
+      VOLUME_CRED_PROBE_SCRIPT,
+    ]);
+    return parseVolumeClaudeCredentials(stdout);
+  } catch {
+    return { present: false, hasRefreshToken: false };
+  }
+}
+
 /**
  * Parse the `EXTRACTED=<yes|no> SEEDED=<yes|no> VOLREAL=<yes|no>` line the
  * helper container prints. Pure — unit-tested independently of docker.
