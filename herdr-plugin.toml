@@ -1,5 +1,5 @@
 # AgentBox Herdr plugin (https://herdr.dev/docs/plugins).
-# Install:  herdr plugin install madarco/agentbox/herdr-plugin
+# Install:  herdr plugin install madarco/agentbox
 # Or, with the AgentBox CLI already installed:  agentbox install herdr
 #
 # agentbox commands route through ./agentbox-shim.sh, written at install time
@@ -7,7 +7,7 @@
 # bare argv with no shell expansion / unreliable PATH (e.g. under nvm).
 id = "agentbox"
 name = "AgentBox"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.7.0"
 platforms = ["linux", "macos", "windows"]
 description = "AgentBox: live boxes overlay, shortcuts, and Ctrl+click to open a box web app."
