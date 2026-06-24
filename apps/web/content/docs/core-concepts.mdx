@@ -58,11 +58,6 @@ agent keeps running. Idle boxes are paused rather than stopped, so they use no
 CPU while their memory stays in place. `unpause` resumes in under a second, and
 editors and language servers continue where they left off.
 
-If a box is fully stopped (or a cloud box idle-pauses and is later resumed),
-`agentbox start` — and attaching — bring the agent back **resuming the same
-conversation**, so it looks like the box never stopped. Claude reopens its exact
-session; Codex resumes its most recent one.
-
 <Callout title="TIP">
 Detach with `Ctrl+a d` and start more boxes. Reattach to any of them; switching
 pauses the box you leave and resumes the one you open.

@@ -73,7 +73,7 @@ Auto-approve is safe to default on because the box can't touch your machine — 
 
 ## First-run auth
 
-Credentials are handled on the host and seeded into every box (macOS Keychain doesn't transfer into containers). On the first `agentbox claude` with no credentials — or when a saved login has gone dead and can no longer refresh — AgentBox offers an interactive sign-in that's saved and reused by every future box. Skip it with `-y` in a terminal and claude will prompt you to `/login` inside the box. A genuinely non-interactive run (no TTY — CI, or an orchestrating agent piping in) has no way to complete that login, so it fails fast with an `agentbox claude login` hint instead of leaving a box stuck on its `/login` screen.
+Credentials are handled on the host and seeded into every box (macOS Keychain doesn't transfer into containers). On the first `agentbox claude` with no credentials, AgentBox offers an interactive sign-in that's saved and reused by every future box. Skip it with `-y` (or in CI) and claude will prompt you to `/login` inside the box.
 
 ```bash
 agentbox claude login                 # sign in once, reused by every box
@@ -86,33 +86,6 @@ $ agentbox claude
 ? Sign in with your Claude subscription? (saved and reused by every box) › Yes
 ✔ Signed in with your Claude subscription — saved for future boxes.
 ```
-
-### Headless sign-in (no terminal / from an orchestrating agent)
-
-`agentbox claude login` normally needs a terminal to paste the OAuth code into.
-When there's no TTY (an orchestrating agent running `! agentbox claude login`, or
-CI) it switches to a two-call flow automatically — force it anywhere with
-`--headless`:
-
-```bash
-agentbox claude login --headless        # prints the approval URL, returns immediately
-# → open the URL, approve, copy the code, then:
-agentbox claude login --code <CODE>     # completes the sign-in
-```
-
-The first call backgrounds the live login (the OAuth code must be exchanged by
-the same process that minted the URL, so it stays resident) and prints the URL
-both as friendly text and as a stable, greppable marker line:
-
-```console
-AGENTBOX_LOGIN_URL=https://claude.com/cai/oauth/authorize?...
-```
-
-An orchestrating agent can grab the URL with `grep -o 'AGENTBOX_LOGIN_URL=.*'`,
-hand it to you to approve, then finish with `--code`. A rejected code keeps the
-session alive so you can retry `--code` with a corrected one; an unattended
-session expires after 10 minutes. (Needs the optional `node-pty` prebuild — the
-same one `dashboard` uses; without it, sign in from a terminal instead.)
 
 Setting `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` (Claude) or `OPENAI_API_KEY` (Codex) on the host forwards it into the box and skips the sign-in offer. Host `~/.claude` stays the source of truth — every `create` / `claude` syncs it in, so skills, plugins, MCP, and login flow into the next box. Cloud providers capture the login to `~/.agentbox` and push it in on create — see [hetzner](/docs/hetzner), [daytona](/docs/daytona), and [vercel](/docs/vercel).
 
