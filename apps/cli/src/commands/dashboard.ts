@@ -257,7 +257,7 @@ export const dashboardCommand = new Command('dashboard')
       };
 
       // Cloud equivalent of buildDashboardAttachArgv. Reuses the same
-      // base64+mapfile inner-command pattern as `agentbox claude/codex/
+      // base64-launcher inner-command pattern as `agentbox claude/codex/
       // opencode` so positional args (wizard prompts) survive every quoting
       // layer. For `shell`, attach to/create the box's tracked `shell` tmux
       // session so the dashboard's shell pane is the same detachable session
@@ -273,7 +273,7 @@ export const dashboardCommand = new Command('dashboard')
         const sessionName = which;
         const kind = which === 'shell' ? 'shell' : 'agent';
         // `bash -l` for shell — login shell so /etc/profile.d/agentbox.sh
-        // exports AGENTBOX_BOX_* env. For agents, the base64+mapfile launcher
+        // exports AGENTBOX_BOX_* env. For agents, the base64 launcher
         // (extraArgs is always [] from the dashboard — no `--` passthrough).
         const innerCommand = which === 'shell' ? 'bash -l' : buildCloudAttachInnerCommand(which);
         const spec = await provider.buildAttach(record, kind, {

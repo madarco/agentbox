@@ -46,12 +46,13 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
  *   - `exec` so the agent gets PID 2 (Ctrl-c in the agent kills the session
  *     cleanly rather than dropping to bash).
  *
- * When `extraArgs` is non-empty, we base64-encode the argv (one arg per line)
- * and hand the inner shell a small `mapfile`-based launcher that reconstructs
- * the array — see `buildCloudAttachInnerCommand`. Base64 is alphanumeric+`/+=`
- * so it survives every shell-quoting layer (host single-quote, SSH, tmux,
- * bash) untouched, which avoids the 3-layer escaping mess the literal form
- * would otherwise require.
+ * When `extraArgs` is non-empty, we base64-encode each arg individually,
+ * newline-join the tokens, base64 that once more, and hand the inner shell a
+ * small read-loop launcher that reconstructs the array — see
+ * `buildCloudAttachInnerCommand`. Base64 is alphanumeric+`/+=` so it survives
+ * every shell-quoting layer (host single-quote, SSH, tmux, bash) untouched, and
+ * per-arg encoding keeps a newline inside an arg (a multi-line seed prompt) from
+ * being mistaken for an argv separator.
  */
 export interface CloudAgentAttachArgs {
   box: BoxRecord;
@@ -62,9 +63,10 @@ export interface CloudAgentAttachArgs {
   /** Mode label for the wrapper's footer. */
   mode: 'claude' | 'codex' | 'opencode';
   /**
-   * Extra args the user typed after `--`. Passed through to the in-box agent
-   * verbatim via a base64-encoded launcher. Limitation: args containing
-   * literal `\n` aren't supported (none of claude/codex/opencode flags do).
+   * Extra args the user typed after `--`, plus any seed prompt slotted ahead of
+   * them. Passed through to the in-box agent verbatim via a base64-encoded
+   * launcher that preserves each arg's bytes exactly — including embedded
+   * newlines, which a multi-paragraph seed prompt routinely carries.
    */
   extraArgs?: string[];
   /**
@@ -113,32 +115,47 @@ export function buildCloudAttachInnerCommand(binary: string, extraArgs?: string[
   if (!extraArgs || extraArgs.length === 0) {
     return `bash -lc '${agentStartBanner(binary)}exec ${binary}'`;
   }
-  // One arg per line, base64-encoded. The launcher runs `mapfile -t A` against
-  // the decoded stream, then `exec <binary> "${A[@]}"` so each arg lands as
-  // its own argv element — quotes/spaces inside an arg are preserved exactly
-  // because base64 is opaque to every outer shell quoting pass.
-  const blob = Buffer.from(extraArgs.join('\n'), 'utf8').toString('base64');
-  // The decode feeds `mapfile` via a **here-string**, NOT process substitution
-  // (`< <(…)`). Process substitution needs `/dev/fd/N`, and the Vercel Sandbox
-  // (Firecracker microVM, AL2023) has no `/dev/fd` — so `mapfile -t A < <(…)`
-  // fails with `/dev/fd/63: No such file or directory`, A stays empty, and the
+  // Encode EACH arg to its own base64 token, newline-join the tokens, then
+  // base64 that whole list once more into a single opaque `blob`. The launcher
+  // decodes `blob` back to the newline-separated tokens, reads them one per
+  // line, and base64-decodes each into its own argv element before
+  // `exec <binary> "${A[@]}"`.
+  //
+  // Two layers, not one, on purpose: the earlier scheme joined the args with a
+  // single `\n` and split with `mapfile -t`, which conflated "argv separator"
+  // with "a newline INSIDE an arg". A multi-paragraph seed prompt (the `-i`
+  // queue's common case) was shredded into one positional per line, so claude/
+  // codex were launched as `claude "line1" "line2" …` — only the first line
+  // reached the agent and the surplus positionals could abort the launch, so
+  // the detached session died and `verifyDetachedSession` failed the job. Here
+  // the inner newlines live INSIDE a token's base64 payload (base64's alphabet
+  // is `[A-Za-z0-9+/=]` — no newlines), so they never act as a separator; only
+  // the outer per-token newlines split the argv.
+  const blob = Buffer.from(
+    extraArgs.map((a) => Buffer.from(a, 'utf8').toString('base64')).join('\n'),
+    'utf8',
+  ).toString('base64');
+  // The decode feeds the read loop via a **here-string**, NOT process
+  // substitution (`< <(…)`). Process substitution needs `/dev/fd/N`, and the
+  // Vercel Sandbox (Firecracker microVM, AL2023) has no `/dev/fd` — so it would
+  // fail with `/dev/fd/63: No such file or directory`, A stays empty, and the
   // agent launches with no args (the wizard's initial setup prompt is silently
   // dropped). A here-string is backed by a temp file, needs no `/dev/fd`, and
   // works on every backend (docker/daytona/hetzner unaffected). `$(…)` strips
-  // the trailing newline `<<<` re-adds, so mapfile -t yields one element per
-  // arg exactly as the join produced them.
+  // the trailing newline `<<<` re-adds, so the loop yields one element per token
+  // exactly as the join produced them.
   //
   // **bash -lc body MUST be single-quoted, not double-quoted.** When tmux
   // launches the session command, it goes through `/bin/sh -c <cmd>`. If we
   // double-quote, sh's parser sees `"${A[@]}"` and expands it eagerly —
-  // before mapfile ever runs — to the empty string, so claude is invoked as
+  // before the loop ever runs — to the empty string, so claude is invoked as
   // `claude ""` and the wizard's initial prompt is silently dropped. Single
   // quotes are inert in sh's parser: the literal `${A[@]}` (and `$(…)`) reach
   // bash, which runs them AFTER the outer sh layer. The outer shellSingle wrap
   // in renderInnerCommand re-escapes any internal `'` as `'\''`; this body has
   // no single quotes (it uses double quotes around the here-string), so it
   // composes fine.
-  return `bash -lc '${agentStartBanner(binary)}mapfile -t A <<< "$(echo ${blob} | base64 -d)"; exec ${binary} "\${A[@]}"'`;
+  return `bash -lc '${agentStartBanner(binary)}A=(); while IFS= read -r t; do A+=("$(printf %s "$t" | base64 -d)"); done <<< "$(echo ${blob} | base64 -d)"; exec ${binary} "\${A[@]}"'`;
 }
 
 export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void> {

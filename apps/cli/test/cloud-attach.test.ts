@@ -17,8 +17,12 @@ import { buildPromptArgs } from '../src/lib/queue/build-prompt-args.js';
 function decodeArgs(cmd: string): string[] {
   const m = /echo ([A-Za-z0-9+/=]+) \| base64 -d/.exec(cmd);
   if (!m) throw new Error(`launcher did not embed a base64 blob: ${cmd}`);
-  const decoded = Buffer.from(m[1]!, 'base64').toString('utf8');
-  return decoded.length === 0 ? [] : decoded.split('\n');
+  // Two layers: the outer blob decodes to newline-joined per-arg base64 tokens;
+  // each token decodes to one argv element (so a newline inside an arg is never
+  // mistaken for an argv separator). Mirrors the in-box read-loop launcher.
+  const payload = Buffer.from(m[1]!, 'base64').toString('utf8');
+  if (payload.length === 0) return [];
+  return payload.split('\n').map((t) => Buffer.from(t, 'base64').toString('utf8'));
 }
 
 describe('buildCloudAttachInnerCommand', () => {
@@ -35,13 +39,13 @@ describe('buildCloudAttachInnerCommand', () => {
   it('prints the start banner before the agent on the args path too', () => {
     const cmd = buildCloudAttachInnerCommand('claude', ['--model', 'sonnet']);
     expect(cmd).toContain('agentbox: starting claude');
-    // banner must precede the mapfile launcher so it paints during cold-start.
-    expect(cmd.indexOf('agentbox: starting')).toBeLessThan(cmd.indexOf('mapfile -t A'));
+    // banner must precede the read-loop launcher so it paints during cold-start.
+    expect(cmd.indexOf('agentbox: starting')).toBeLessThan(cmd.indexOf('while IFS= read -r t'));
   });
 
   it('encodes a single simple arg', () => {
     const cmd = buildCloudAttachInnerCommand('claude', ['--model', 'sonnet']);
-    expect(cmd).toContain('mapfile -t A');
+    expect(cmd).toContain('while IFS= read -r t');
     expect(cmd).toContain('exec claude');
     expect(decodeArgs(cmd)).toEqual(['--model', 'sonnet']);
   });
@@ -50,8 +54,20 @@ describe('buildCloudAttachInnerCommand', () => {
     // Process substitution (`< <(…)`) needs /dev/fd, which the Vercel Sandbox
     // lacks — the launcher must use a here-string so the args survive there.
     const cmd = buildCloudAttachInnerCommand('claude', ['--model', 'sonnet']);
-    expect(cmd).toContain('mapfile -t A <<< "$(');
+    expect(cmd).toContain('done <<< "$(');
     expect(cmd).not.toContain('< <(');
+  });
+
+  it('preserves a multi-line seed prompt as a single argv element', () => {
+    // The `-i` queue's common case: a multi-paragraph prompt. The earlier
+    // newline-join + `mapfile -t` scheme shredded it into one positional per
+    // line, so claude/codex got N positionals and the detached session died at
+    // launch (verifyDetachedSession then failed the job). Per-arg encoding keeps
+    // the whole prompt as one argv element.
+    const prompt = 'Build a kanban board.\n\nRequirements:\n- drag and drop\n- columns';
+    const args = buildPromptArgs('claude-code', prompt, ['--permission-mode=plan']);
+    const cmd = buildCloudAttachInnerCommand('claude', args);
+    expect(decodeArgs(cmd)).toEqual([prompt, '--permission-mode=plan']);
   });
 
   it('preserves args with spaces as a single element', () => {
