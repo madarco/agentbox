@@ -88,11 +88,13 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { loadPtyBackend } from '../pty/pty-backend.js';
 import {
   cleanupStaleSessions,
+  findLiveSession,
   findPendingSession,
   readLoginState,
   selectLoginMode,
   writeLoginCode,
   writeLoginRequest,
+  writeLoginState,
   type LoginState,
 } from '../lib/claude-login-session.js';
 
@@ -1481,12 +1483,19 @@ async function startHeadlessLogin(args: string[]): Promise<void> {
     process.exit(1);
   }
   cleanupStaleSessions();
-  // Only one live session at a time — re-surface an existing one rather than
-  // stranding a second worker on a URL nobody will read.
-  const existing = findPendingSession();
+  // Only one live session at a time. Match ANY non-terminal live session (incl.
+  // a worker still in `starting`, before its URL is published) so a second
+  // `--headless` can't slip through and spawn a duplicate worker.
+  const existing = findLiveSession();
   if (existing) {
-    log.info('A login is already pending; finish it (or wait for it to expire):');
-    printAwaitingCode(existing.state);
+    if (existing.state.phase === 'awaiting-code' && existing.state.url) {
+      log.info('A login is already pending; finish it (or wait for it to expire):');
+      printAwaitingCode(existing.state);
+    } else {
+      log.info(
+        'A login is already in progress; wait for it to print its URL, then finish with `agentbox claude login --code <CODE>`.',
+      );
+    }
     return;
   }
 
@@ -1518,8 +1527,17 @@ async function startHeadlessLogin(args: string[]): Promise<void> {
     env: process.env,
   });
   child.unref();
+  // Publish a `starting` state with the worker pid immediately, so a concurrent
+  // `--headless` sees a live session and won't spawn a second worker during the
+  // window before the worker itself writes any state.
+  if (typeof child.pid === 'number') {
+    writeLoginState(id, { phase: 'starting', pid: child.pid, createdAt: new Date().toISOString() });
+  }
 
-  const deadline = Date.now() + 30_000;
+  // Wait past the worker's own no-URL deadline (60s) so we observe its verdict
+  // (awaiting-code or a published error) instead of giving up while it's still
+  // working and missing the URL it later prints.
+  const deadline = Date.now() + 65_000;
   for (;;) {
     const st = readLoginState(id);
     if (st?.phase === 'awaiting-code' && st.url) {

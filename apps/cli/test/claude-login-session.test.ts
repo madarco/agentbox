@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   cleanupStaleSessions,
   extractOAuthUrl,
+  findLiveSession,
   findPendingSession,
   loginSessionDir,
   readLoginState,
@@ -125,6 +126,21 @@ describe('login session state IPC', () => {
   it('does not return a done/error session as pending', () => {
     writeLoginState('done', { phase: 'done', pid: process.pid, createdAt: 'T' });
     expect(findPendingSession()).toBeNull();
+  });
+
+  it('findLiveSession matches a live `starting` session (before its URL) but findPendingSession does not', () => {
+    writeLoginState('boot', { phase: 'starting', pid: process.pid, createdAt: 'T' });
+    expect(findPendingSession()).toBeNull(); // no URL yet → not deliverable
+    expect(findLiveSession()?.id).toBe('boot'); // but it IS live → blocks a 2nd worker
+  });
+
+  it('findLiveSession matches a live `exchanging` session but ignores dead/terminal ones', () => {
+    writeLoginState('xchg', { phase: 'exchanging', url: 'u', pid: process.pid, createdAt: 'T' });
+    expect(findLiveSession()?.id).toBe('xchg');
+    writeLoginState('xchg', { phase: 'done', pid: process.pid, createdAt: 'T' });
+    expect(findLiveSession()).toBeNull(); // terminal → not live
+    writeLoginState('xchg', { phase: 'exchanging', url: 'u', pid: DEAD_PID, createdAt: 'T' });
+    expect(findLiveSession()).toBeNull(); // dead worker → not live
   });
 });
 

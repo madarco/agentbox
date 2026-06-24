@@ -198,7 +198,10 @@ export const claudeLoginWorkerCommand = new Command('_claude-login-worker')
     disposers.push(() => clearTimeout(urlTimer));
 
     const codeTimer = setTimeout(() => {
-      if (finished || cur.phase === 'done' || cur.phase === 'error') return;
+      // Only abort while we're still WAITING for a code. Never kill an in-flight
+      // exchange (`exchanging`) — a code submitted near the deadline, or a slow
+      // token-exchange + credential warm-up, must be allowed to finish.
+      if (finished || (cur.phase !== 'starting' && cur.phase !== 'awaiting-code')) return;
       log.write('no code within timeout; aborting');
       setState({ phase: 'error', error: 'timed out waiting for a code (10 min) — run login again' });
       cleanExit(1);

@@ -172,6 +172,23 @@ export function findPendingSession(): { id: string; state: LoginState } | null {
 }
 
 /**
+ * Any live (worker-alive) session in a non-terminal phase — including `starting`
+ * (URL not published yet) and `exchanging`. The start guard uses THIS, not
+ * {@link findPendingSession}: blocking only on `awaiting-code` would let a second
+ * `--headless` slip through during the brief `starting` window and spawn a
+ * duplicate worker, breaking the single-session PKCE assumption.
+ */
+export function findLiveSession(): { id: string; state: LoginState } | null {
+  for (const id of listSessions()) {
+    const state = readLoginState(id);
+    if (state && state.phase !== 'done' && state.phase !== 'error' && pidAlive(state.pid)) {
+      return { id, state };
+    }
+  }
+  return null;
+}
+
+/**
  * Reap finished/dead/old session dirs. Removed when: the worker pid is dead and
  * the phase isn't terminal (crash), the phase is terminal and older than 5 min,
  * or the state is missing/older than 15 min (stuck/abandoned).
