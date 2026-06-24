@@ -284,6 +284,7 @@ export const dashboardCommand = new Command('dashboard')
           kind: 'attach',
           command: spec.argv[0]!,
           args: spec.argv.slice(1),
+          ...(spec.env ? { env: spec.env } : {}),
           ...(spec.cleanup ? { cleanup: spec.cleanup } : {}),
           mode: which,
           ...(providerSupportsKeepAlive(record.provider) ? { keepAlive: true } : {}),
