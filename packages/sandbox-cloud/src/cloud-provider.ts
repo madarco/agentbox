@@ -1436,6 +1436,20 @@ function makeCloudCheckpoint(backend: CloudBackend): ProviderCheckpoint {
  * tmux runs, and is a no-op (`infocmp` missing → also downgrades) when the box
  * lacks `infocmp`, so it never regresses the providers that hardcoded TERM.
  */
+/**
+ * The host TERM to forward into a cloud box, sanitized to a safe terminfo
+ * name. A terminal name is `[A-Za-z0-9][A-Za-z0-9._+-]*`; anything else (a
+ * space, a shell metacharacter) is rejected to `xterm-256color` because the
+ * vercel provider interpolates this into a `bash -lc` prelude — an unquoted,
+ * attacker-shaped TERM could otherwise split the export or inject a command.
+ * The box's terminfo is the real filter anyway: renderInnerCommand's guard
+ * downgrades any forwarded TERM the box doesn't actually carry.
+ */
+export function hostTermForCloud(): string {
+  const t = process.env['TERM'];
+  return t && /^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(t) ? t : 'xterm-256color';
+}
+
 export function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions): string {
   const sessionName = opts?.sessionName ?? defaultSessionName(kind);
   const fallback = opts?.command ?? defaultCommand(kind, opts);

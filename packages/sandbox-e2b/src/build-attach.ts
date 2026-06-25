@@ -24,7 +24,7 @@ import {
   type BoxRecord,
   type BuildAttachOptions,
 } from '@agentbox/core';
-import { renderInnerCommand } from '@agentbox/sandbox-cloud';
+import { hostTermForCloud, renderInnerCommand } from '@agentbox/sandbox-cloud';
 import { resolveApiKey } from './sdk.js';
 
 const SELF = dirname(fileURLToPath(import.meta.url));
@@ -76,7 +76,7 @@ export async function buildE2bAttach(
   // it, so pass it explicitly). The helper sets it on the in-box PTY; the
   // renderInnerCommand TERM guard downgrades to xterm-256color when the box's
   // terminfo doesn't carry it (e.g. xterm-ghostty), matching the docker path.
-  const hostTerm = process.env['TERM'] ?? 'xterm-256color';
+  const hostTerm = hostTermForCloud();
 
   const argv = [
     process.execPath,

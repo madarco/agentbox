@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { renderInnerCommand } from '../src/index.js';
+import { hostTermForCloud, renderInnerCommand } from '../src/index.js';
 
 // The TERM guard is shared with the docker provider (TERM_FALLBACK_SNIPPET).
 // hetzner/daytona forward the host TERM over `ssh -t`, and vercel/e2b forward
@@ -33,5 +33,33 @@ describe('renderInnerCommand TERM guard', () => {
   it('does not inject the guard into the tmux-less paths (logs / noTmux)', () => {
     expect(renderInnerCommand('logs', { service: 'web' })).not.toContain(GUARD);
     expect(renderInnerCommand('shell', { noTmux: true })).not.toContain(GUARD);
+  });
+});
+
+describe('hostTermForCloud', () => {
+  const orig = process.env['TERM'];
+  afterEach(() => {
+    if (orig === undefined) delete process.env['TERM'];
+    else process.env['TERM'] = orig;
+  });
+
+  it('passes through a well-formed terminfo name', () => {
+    for (const t of ['xterm-256color', 'screen-256color', 'tmux-256color', 'xterm-ghostty']) {
+      process.env['TERM'] = t;
+      expect(hostTermForCloud()).toBe(t);
+    }
+  });
+
+  it('falls back to xterm-256color when TERM is unset', () => {
+    delete process.env['TERM'];
+    expect(hostTermForCloud()).toBe('xterm-256color');
+  });
+
+  it('rejects an unsafe TERM (spaces / shell metacharacters) to the safe default', () => {
+    // these would otherwise break out of the vercel `bash -lc` prelude
+    for (const t of ['xterm; rm -rf /', 'foo bar', '$(whoami)', 'a`id`', '']) {
+      process.env['TERM'] = t;
+      expect(hostTermForCloud()).toBe('xterm-256color');
+    }
   });
 });

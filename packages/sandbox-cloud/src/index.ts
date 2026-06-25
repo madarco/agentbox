@@ -3,6 +3,7 @@ export {
   CLOUD_WORKSPACE_DIR,
   createCloudProvider,
   emptyCloudStats,
+  hostTermForCloud,
   renderInnerCommand,
   type CreateCloudProviderOptions,
 } from './cloud-provider.js';

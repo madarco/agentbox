@@ -11,15 +11,16 @@ vi.mock('../src/sdk.js', () => ({
 }));
 vi.mock('@agentbox/sandbox-cloud', () => ({
   renderInnerCommand: (kind: string) => `INNER(${kind})`,
+  hostTermForCloud: () => 'xterm-256color',
 }));
 
 const { buildVercelAttach } = await import('../src/build-attach.js');
 import type { BoxRecord } from '@agentbox/core';
 
 // The attach inner is prefixed with a UTF-8/TERM prelude (sbx forwards neither).
-// TERM is now the host's TERM (renderInnerCommand's guard handles fallback).
-const HOST_TERM = process.env['TERM'] ?? 'xterm-256color';
-const PRELUDE = `export LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=${HOST_TERM}; `;
+// TERM comes from hostTermForCloud (mocked to xterm-256color here); the
+// renderInnerCommand guard handles the box-side fallback.
+const PRELUDE = 'export LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=xterm-256color; ';
 
 function boxWith(sandboxId: string | undefined): BoxRecord {
   return {

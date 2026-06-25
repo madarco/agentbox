@@ -11,6 +11,7 @@ vi.mock('../src/sdk.js', () => ({
 }));
 vi.mock('@agentbox/sandbox-cloud', () => ({
   renderInnerCommand: (kind: string) => `INNER(${kind})`,
+  hostTermForCloud: () => 'xterm-256color',
 }));
 vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
@@ -57,7 +58,7 @@ describe('buildE2bAttach', () => {
     expect(spec.env).toEqual({
       E2B_API_KEY: 'e2b_test_key',
       AGENTBOX_E2B_INNER_CMD: 'INNER(agent)',
-      AGENTBOX_HOST_TERM: process.env['TERM'] ?? 'xterm-256color',
+      AGENTBOX_HOST_TERM: 'xterm-256color',
     });
   });
 

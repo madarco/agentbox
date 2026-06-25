@@ -29,7 +29,7 @@ import {
   type BoxRecord,
   type BuildAttachOptions,
 } from '@agentbox/core';
-import { renderInnerCommand } from '@agentbox/sandbox-cloud';
+import { hostTermForCloud, renderInnerCommand } from '@agentbox/sandbox-cloud';
 import { detectSbx } from './sbx-cli.js';
 import { ensureFreshCredentials, resolveCredentials } from './sdk.js';
 
@@ -65,8 +65,9 @@ export async function buildVercelAttach(
   // provider) so a box that carries that terminfo renders at full fidelity;
   // renderInnerCommand's TERM guard downgrades to xterm-256color when it
   // doesn't, so an exotic host TERM (e.g. xterm-ghostty) never breaks attach.
-  const hostTerm = process.env['TERM'] ?? 'xterm-256color';
-  const envPrelude = `export LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=${hostTerm}; `;
+  // hostTermForCloud sanitizes to a safe terminfo name — required because this
+  // value is interpolated into the bash -lc prelude below.
+  const envPrelude = `export LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=${hostTermForCloud()}; `;
   const inner = envPrelude + renderInnerCommand(kind, opts);
 
   const argv = [
