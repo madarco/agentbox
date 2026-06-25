@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
+import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
 
 /** Default tmux session name for `agentbox shell` (the box's first shell). */
 export const DEFAULT_SHELL_SESSION = 'shell';
@@ -191,20 +191,12 @@ export function buildShellSessionAttachArgv(
   user?: string,
 ): string[] {
   const name = sessionName ?? DEFAULT_SHELL_SESSION;
-  const term = process.env['TERM'] ?? 'xterm-256color';
-  return [
-    'exec',
-    '-it',
-    '-e',
-    `TERM=${term}`,
-    '--user',
-    user ?? CONTAINER_USER,
+  return buildTermSafeTmuxExec({
     container,
-    'tmux',
-    'attach',
-    '-t',
-    name,
-  ];
+    user: user ?? CONTAINER_USER,
+    tmuxScript: 'exec tmux attach -t "$1"',
+    positionals: [name],
+  });
 }
 
 /**

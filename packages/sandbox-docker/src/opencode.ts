@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
+import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
 import { ensureVolume, volumeExists } from './docker.js';
 
 /**
@@ -390,20 +390,12 @@ export async function startOpencodeSession(opts: StartOpencodeSessionOptions): P
  */
 export function buildOpencodeAttachArgv(container: string, sessionName?: string): string[] {
   const name = sessionName ?? DEFAULT_OPENCODE_SESSION;
-  const term = process.env['TERM'] ?? 'xterm-256color';
-  return [
-    'exec',
-    '-it',
-    '-e',
-    `TERM=${term}`,
-    '--user',
-    CONTAINER_USER,
+  return buildTermSafeTmuxExec({
     container,
-    'tmux',
-    'attach',
-    '-t',
-    name,
-  ];
+    user: CONTAINER_USER,
+    tmuxScript: 'exec tmux attach -t "$1"',
+    positionals: [name],
+  });
 }
 
 /**

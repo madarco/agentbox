@@ -1079,8 +1079,35 @@ export async function startClaudeSession(opts: StartClaudeSessionOptions): Promi
  * tmux session. Shared by {@link attachClaudeSession} (which `spawnSync`s it
  * directly) and the dashboard command (which hands it to `tmux respawn-pane`).
  */
-export function buildClaudeAttachArgv(container: string, sessionName?: string): string[] {
-  const name = sessionName ?? DEFAULT_CLAUDE_SESSION;
+/**
+ * Shell snippet (run via `sh -c`) that guarantees TERM resolves inside the box
+ * before tmux starts. The box runs Ubuntu, whose terminfo database does not
+ * carry every host terminal: notably `xterm-ghostty`, which was added to
+ * ncurses after 24.04 shipped. Forwarding such a TERM makes `tmux attach` exit
+ * immediately with "missing or unsuitable terminal", which looks like a brief
+ * flash and an instant exit. When the box cannot resolve $TERM, fall back to
+ * xterm-256color, which the image always provides.
+ */
+const TERM_FALLBACK_SNIPPET =
+  'if ! infocmp "$TERM" >/dev/null 2>&1; then TERM=xterm-256color; export TERM; fi; ';
+
+/**
+ * Build the `docker exec` argv that runs an in-box tmux command under `sh -c`
+ * with the TERM guard ({@link TERM_FALLBACK_SNIPPET}) applied first.
+ *
+ * `tmuxScript` is the tmux command line as it should reach tmux (use `\;` for
+ * tmux's own command separator, since a shell now parses it). `positionals` are
+ * bound to "$1", "$2", ... inside the script, so session names are passed as
+ * args rather than interpolated, keeping names with odd characters safe. The
+ * host's TERM is still forwarded via `-e`, so a box that does know it keeps full
+ * fidelity; the guard only downgrades the unknown case.
+ */
+export function buildTermSafeTmuxExec(opts: {
+  container: string;
+  user: string;
+  tmuxScript: string;
+  positionals: string[];
+}): string[] {
   const term = process.env['TERM'] ?? 'xterm-256color';
   return [
     'exec',
@@ -1088,13 +1115,24 @@ export function buildClaudeAttachArgv(container: string, sessionName?: string): 
     '-e',
     `TERM=${term}`,
     '--user',
-    CONTAINER_USER,
-    container,
-    'tmux',
-    'attach',
-    '-t',
-    name,
+    opts.user,
+    opts.container,
+    'sh',
+    '-c',
+    `${TERM_FALLBACK_SNIPPET}${opts.tmuxScript}`,
+    'sh',
+    ...opts.positionals,
   ];
+}
+
+export function buildClaudeAttachArgv(container: string, sessionName?: string): string[] {
+  const name = sessionName ?? DEFAULT_CLAUDE_SESSION;
+  return buildTermSafeTmuxExec({
+    container,
+    user: CONTAINER_USER,
+    tmuxScript: 'exec tmux attach -t "$1"',
+    positionals: [name],
+  });
 }
 
 /**
@@ -1105,46 +1143,28 @@ export function buildClaudeAttachArgv(container: string, sessionName?: string): 
  * attach via a *grouped* sibling session (`<name>-dash`, `tmux new-session -t
  * <name>`): grouped sessions share the same windows/panes (identical live
  * screen + scrollback) but keep independent session options, so `status off`
- * here does not affect a direct `agentbox <agent> attach` to `<name>`. The bare
- * `;` elements are tmux's command separator — node-pty spawns docker without a
- * shell, so they reach tmux verbatim. `new-session -A -d` is a no-op if the
- * grouped session already exists; `attach` runs after `status off` so the
- * footer is gone on first paint.
+ * here does not affect a direct `agentbox <agent> attach` to `<name>`. The
+ * `\;` elements are tmux's command separator, escaped so the wrapping `sh -c`
+ * passes them to tmux verbatim instead of treating them as shell separators.
+ * `new-session -A -d` is a no-op if the grouped session already exists;
+ * `attach` runs after `status off` so the footer is gone on first paint. Runs
+ * under the shared TERM guard ({@link buildTermSafeTmuxExec}) for the same
+ * reason the direct attach builders do.
  */
 export function buildDashboardAttachArgv(
   container: string,
   sessionName?: string,
 ): string[] {
   const name = sessionName ?? DEFAULT_CLAUDE_SESSION;
-  const dash = `${name}-dash`;
-  const term = process.env['TERM'] ?? 'xterm-256color';
-  return [
-    'exec',
-    '-it',
-    '-e',
-    `TERM=${term}`,
-    '--user',
-    CONTAINER_USER,
+  // The grouped sibling session name ("<name>-dash") is derived in-shell from
+  // $1, so the session name stays a single positional that sh never re-parses.
+  return buildTermSafeTmuxExec({
     container,
-    'tmux',
-    'new-session',
-    '-A',
-    '-d',
-    '-s',
-    dash,
-    '-t',
-    name,
-    ';',
-    'set',
-    '-t',
-    dash,
-    'status',
-    'off',
-    ';',
-    'attach',
-    '-t',
-    dash,
-  ];
+    user: CONTAINER_USER,
+    tmuxScript:
+      'dash="$1-dash"; exec tmux new-session -A -d -s "$dash" -t "$1" \\; set -t "$dash" status off \\; attach -t "$dash"',
+    positionals: [name],
+  });
 }
 
 /**
