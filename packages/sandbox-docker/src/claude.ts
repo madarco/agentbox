@@ -1088,7 +1088,7 @@ export async function startClaudeSession(opts: StartClaudeSessionOptions): Promi
  * flash and an instant exit. When the box cannot resolve $TERM, fall back to
  * xterm-256color, which the image always provides.
  */
-const TERM_FALLBACK_SNIPPET =
+export const TERM_FALLBACK_SNIPPET =
   'if ! infocmp "$TERM" >/dev/null 2>&1; then TERM=xterm-256color; export TERM; fi; ';
 
 /**

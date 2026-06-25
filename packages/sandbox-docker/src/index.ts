@@ -10,6 +10,7 @@ export {
   buildClaudeMounts,
   buildTmuxSessionArgs,
   buildTmuxConfigShellSnippet,
+  TERM_FALLBACK_SNIPPET,
   buildShellArgv,
   CLAUDE_FORWARDED_ENV_KEYS,
   ClaudeSessionError,

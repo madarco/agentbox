@@ -61,9 +61,12 @@ export async function buildVercelAttach(
   // `sbx exec` (unlike `ssh -t`) forwards neither TERM nor the locale, so the
   // box session lands in TERM=unknown + an ASCII (POSIX) locale — tmux then
   // collapses Claude Code's Unicode glyphs (logo, spinner, box-drawing) to `_`.
-  // Force a UTF-8 locale + a 256color TERM (matching the host PTY wrapper) so
-  // the tmux server + the agent it spawns render correctly.
-  const envPrelude = 'export LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=xterm-256color; ';
+  // Force a UTF-8 locale and forward the host's TERM (matching the docker
+  // provider) so a box that carries that terminfo renders at full fidelity;
+  // renderInnerCommand's TERM guard downgrades to xterm-256color when it
+  // doesn't, so an exotic host TERM (e.g. xterm-ghostty) never breaks attach.
+  const hostTerm = process.env['TERM'] ?? 'xterm-256color';
+  const envPrelude = `export LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=${hostTerm}; `;
   const inner = envPrelude + renderInnerCommand(kind, opts);
 
   const argv = [

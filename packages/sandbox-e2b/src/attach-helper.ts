@@ -142,7 +142,10 @@ async function main(): Promise<void> {
     envs: {
       LANG: 'C.UTF-8',
       LC_ALL: 'C.UTF-8',
-      TERM: 'xterm-256color',
+      // Forwarded from the host by build-attach.ts. The inner command's TERM
+      // guard (renderInnerCommand) downgrades to xterm-256color when the box's
+      // terminfo lacks it, so an exotic host TERM never breaks the attach.
+      TERM: process.env.AGENTBOX_HOST_TERM || 'xterm-256color',
     },
     // Long-lived. We don't want the SDK reaping the PTY mid-session.
     timeoutMs: 55 * 60_000,

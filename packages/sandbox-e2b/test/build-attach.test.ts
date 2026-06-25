@@ -57,6 +57,7 @@ describe('buildE2bAttach', () => {
     expect(spec.env).toEqual({
       E2B_API_KEY: 'e2b_test_key',
       AGENTBOX_E2B_INNER_CMD: 'INNER(agent)',
+      AGENTBOX_HOST_TERM: process.env['TERM'] ?? 'xterm-256color',
     });
   });
 

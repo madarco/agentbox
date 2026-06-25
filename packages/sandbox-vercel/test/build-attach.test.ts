@@ -17,7 +17,9 @@ const { buildVercelAttach } = await import('../src/build-attach.js');
 import type { BoxRecord } from '@agentbox/core';
 
 // The attach inner is prefixed with a UTF-8/TERM prelude (sbx forwards neither).
-const PRELUDE = 'export LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=xterm-256color; ';
+// TERM is now the host's TERM (renderInnerCommand's guard handles fallback).
+const HOST_TERM = process.env['TERM'] ?? 'xterm-256color';
+const PRELUDE = `export LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=${HOST_TERM}; `;
 
 function boxWith(sandboxId: string | undefined): BoxRecord {
   return {

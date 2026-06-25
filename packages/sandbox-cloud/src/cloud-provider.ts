@@ -48,6 +48,7 @@ import {
   portlessGetUrl,
   portlessUnalias,
   registerBoxWithRelay,
+  TERM_FALLBACK_SNIPPET,
 } from '@agentbox/sandbox-docker';
 import {
   ensureAgentVolumesForCloud,
@@ -1425,6 +1426,15 @@ function makeCloudCheckpoint(backend: CloudBackend): ProviderCheckpoint {
  * starts the session in the box's workspace dir so claude/codex/opencode
  * see /workspace as their cwd (otherwise tmux inherits the SSH login
  * shell's $HOME and the agents prompt for workspace-trust).
+ *
+ * The command is prefixed with the shared {@link TERM_FALLBACK_SNIPPET} (same
+ * guard the docker provider applies): hetzner/daytona forward the host TERM
+ * over `ssh -t`, and vercel/e2b forward it via their attach builders, so a
+ * host TERM the box's terminfo doesn't carry (e.g. xterm-ghostty on Ubuntu)
+ * would otherwise make `tmux attach` exit immediately ("missing or unsuitable
+ * terminal"). The guard downgrades the unknown case to xterm-256color before
+ * tmux runs, and is a no-op (`infocmp` missing → also downgrades) when the box
+ * lacks `infocmp`, so it never regresses the providers that hardcoded TERM.
  */
 export function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions): string {
   const sessionName = opts?.sessionName ?? defaultSessionName(kind);
@@ -1448,8 +1458,8 @@ export function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions):
   // `detached`: create + configure the session but don't attach. Used to
   // pre-start a session with its full launch command before a new-tab attach
   // re-invokes `agentbox <agent> attach` (which carries no launch args).
-  if (opts?.detached) return lines.join('; ');
-  return [...lines, `exec tmux attach -t ${sessionQ}`].join('; ');
+  if (opts?.detached) return TERM_FALLBACK_SNIPPET + lines.join('; ');
+  return TERM_FALLBACK_SNIPPET + [...lines, `exec tmux attach -t ${sessionQ}`].join('; ');
 }
 
 function defaultSessionName(kind: AttachKind): string {

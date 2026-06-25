@@ -72,6 +72,11 @@ export async function buildE2bAttach(
 
   const apiKey = resolveApiKey();
   const inner = renderInnerCommand(kind, opts);
+  // Forward the host's TERM (the helper has no host env once node-pty spawns
+  // it, so pass it explicitly). The helper sets it on the in-box PTY; the
+  // renderInnerCommand TERM guard downgrades to xterm-256color when the box's
+  // terminfo doesn't carry it (e.g. xterm-ghostty), matching the docker path.
+  const hostTerm = process.env['TERM'] ?? 'xterm-256color';
 
   const argv = [
     process.execPath,
@@ -93,6 +98,7 @@ export async function buildE2bAttach(
     env: {
       E2B_API_KEY: apiKey,
       AGENTBOX_E2B_INNER_CMD: inner,
+      AGENTBOX_HOST_TERM: hostTerm,
     },
   };
 }
