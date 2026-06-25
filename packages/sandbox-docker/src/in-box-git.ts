@@ -251,6 +251,54 @@ export async function bindWorktrees(
 }
 
 /**
+ * Best-effort host-side `git lfs fetch` of the LFS objects reachable from
+ * `baseRef`, BEFORE the in-box `git worktree add` checkout smudges them.
+ *
+ * Why host-side: the box has no access to the host's git credentials (the
+ * git-shim only relays push/pull/fetch/clone, and git-lfs uses its own HTTP
+ * transfer), so an in-box smudge of an object that isn't cached yet would
+ * reach the network unauthenticated and fail. The host *does* have creds, and
+ * `.git/lfs/objects/` is part of the bind-mounted `.git/` shared with the box.
+ * So we fetch here, the objects land in the shared store, and the in-box
+ * checkout resolves every object from cache with zero box network or creds.
+ *
+ * Quiet and safe: we first probe `git lfs ls-files` so the overwhelmingly
+ * common non-LFS repo does nothing and logs nothing. Any failure (no git-lfs
+ * on the host, no `origin`, offline, private without creds) is logged and
+ * swallowed, so create proceeds and the in-box checkout still resolves
+ * whatever is already cached. Mirrors the host-side, best-effort style of
+ * `collectRepoCarryOver`.
+ */
+async function prefetchHostLfs(
+  hostMainRepo: string,
+  baseRef: string,
+  log: (line: string) => void,
+): Promise<void> {
+  // Probe whether this repo tracks anything with LFS (ls-files defaults to
+  // HEAD). Empty output or a non-zero exit (no git-lfs binary, not LFS) → no
+  // work to do, and crucially no log noise on the common non-LFS path.
+  const tracked = await execa('git', ['-C', hostMainRepo, 'lfs', 'ls-files', '-n'], {
+    reject: false,
+  });
+  if (tracked.exitCode !== 0 || tracked.stdout.trim().length === 0) return;
+
+  // `origin` matches the convention used by from-branch.ts; a repo with a
+  // differently-named remote just falls through to the best-effort skip below.
+  const remote = 'origin';
+  const fetched = await execa('git', ['-C', hostMainRepo, 'lfs', 'fetch', remote, baseRef], {
+    reject: false,
+  });
+  if (fetched.exitCode === 0) {
+    log(`prefetched git-lfs objects for ${baseRef} into shared .git/lfs (host ${remote})`);
+  } else {
+    const msg = (fetched.stderr || fetched.stdout || `exit ${String(fetched.exitCode ?? '?')}`)
+      .trim()
+      .split('\n')[0];
+    log(`git-lfs prefetch for ${baseRef} skipped (best-effort, continuing): ${msg}`);
+  }
+}
+
+/**
  * Materialize each per-box git worktree *inside* the container against the
  * bind-mounted `.git/`, then replay the host's uncommitted state (stash +
  * untracked) into it. Runs as `vscode` (the in-container user) so files in
@@ -298,6 +346,10 @@ export async function seedWorkspace(opts: SeedWorkspaceOptions): Promise<void> {
     // stderr is surfaced verbatim below. fork (default): create a fresh
     // branch with `-b` from `fromBranch ?? HEAD` (root only; nested → HEAD).
     const baseRef = r.repo.kind === 'root' ? (opts.fromBranch ?? 'HEAD') : 'HEAD';
+    // Pull the checkout's LFS objects into the shared (bind-mounted) .git/lfs
+    // cache host-side first, so the in-box smudge below never reaches the
+    // network without the host's credentials. Best-effort; never aborts.
+    await prefetchHostLfs(main, baseRef, log);
     const addArgs = r.reuseBranch
       ? ['worktree', 'add', wt, r.branch]
       : ['worktree', 'add', '-b', r.branch, wt, baseRef];
@@ -523,6 +575,10 @@ export async function regenerateRestoredWorktrees(opts: {
   ].join('\n');
   for (const p of opts.plans) {
     const baseRef = p.kind === 'root' ? (opts.fromBranch ?? 'HEAD') : 'HEAD';
+    // Same as seedWorkspace: the restore script's `reset --hard HEAD` smudges
+    // LFS files in-box, so pull their objects into the shared .git/lfs
+    // host-side first. Best-effort; never aborts the restore.
+    await prefetchHostLfs(p.hostMainRepo, baseRef, log);
     const metaDir = `${p.hostMainRepo}/.git/worktrees/${fsSafeBranch(p.freshBranch)}`;
     const r = await execa(
       'docker',
