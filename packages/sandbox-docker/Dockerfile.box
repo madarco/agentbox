@@ -68,6 +68,7 @@ RUN apt-get update \
         python3-venv \
         build-essential \
         git \
+        git-lfs \
         tmux \
         vim \
         libcap2-bin \
@@ -111,6 +112,18 @@ RUN mkdir -p /home/vscode/.cache/node/corepack \
 # explicit allowlist. /etc/gitconfig is system-wide and unaffected by the RO
 # bind-mount of ~/.gitconfig from the host.
 RUN git config --system --add safe.directory '*'
+
+# git-lfs (installed above) must register its filter.lfs.* hooks, otherwise a
+# checkout of an LFS-tracked repo skips smudge/clean entirely. More to the
+# point: the host's ~/.gitconfig is bind-mounted RO into the box and a user who
+# ran `git lfs install` on the host has `filter.lfs.process = git-lfs
+# filter-process` in it. The in-container `git worktree add` (seedWorkspace)
+# then spawns that filter on checkout, so the `git-lfs` binary has to be on
+# PATH or the add dies with "git-lfs: not found / the remote end hung up
+# unexpectedly". `--system` writes /etc/gitconfig (the host-config bind only
+# covers ~/.gitconfig), so repos that declare LFS purely via .gitattributes
+# resolve too. `--skip-repo` keeps it from touching any checkout at build time.
+RUN git lfs install --system --skip-repo
 
 # Docker-in-Docker. dockerd inside the box lets the agent run
 # `docker build`/`docker run` in its own namespace without exposing the host
