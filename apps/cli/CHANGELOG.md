@@ -9,6 +9,27 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.20.1] - 2026-06-25
+
+### Added
+
+- **git-lfs repos now check out with real content inside boxes.** LFS-tracked
+  files land as their actual content instead of broken pointer files (or a
+  failed seed) at both create and checkpoint-restore. Covers every provider —
+  docker plus the cloud backends (daytona, hetzner, vercel, e2b). Cloud boxes
+  carry only the checked-out ref's objects (no creds/network needed in-box);
+  pushing box-created LFS objects back is not yet supported. Cloud providers
+  need a re-`prepare` to pick up the in-box git-lfs binary.
+
+### Fixed
+
+- **Attaching to a box no longer flashes and exits with an unusual terminal.**
+  When your terminal isn't in the box's terminfo database (e.g. Ghostty's
+  `xterm-ghostty`), `agentbox claude` / `codex` / `opencode` / `shell` attach
+  used to flash-quit with "missing or unsuitable terminal"; it now falls back
+  to `xterm-256color`. Terminals the box does recognize keep full fidelity.
+  Fixed across docker and all cloud providers.
+
 ## [0.20.0] - 2026-06-24
 
 ### Added
