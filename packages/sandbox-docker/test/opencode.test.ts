@@ -87,11 +87,16 @@ describe('buildOpencodeAttachArgv', () => {
     const argv = buildOpencodeAttachArgv('agentbox-box1');
     expect(argv.slice(0, 2)).toEqual(['exec', '-it']);
     expect(argv).toContain('agentbox-box1');
-    expect(argv.slice(-4)).toEqual(['tmux', 'attach', '-t', DEFAULT_OPENCODE_SESSION]);
+    // tmux runs under `sh -c` with the TERM guard; the session name is the
+    // final positional bound to "$1" in the script.
+    const script = argv[argv.indexOf('-c') + 1]!;
+    expect(script).toContain('infocmp "$TERM"');
+    expect(script).toContain('exec tmux attach -t "$1"');
+    expect(argv[argv.length - 1]).toBe(DEFAULT_OPENCODE_SESSION);
   });
 
   it('attaches to a custom session name', () => {
     const argv = buildOpencodeAttachArgv('agentbox-box1', 'my-oc');
-    expect(argv.slice(-4)).toEqual(['tmux', 'attach', '-t', 'my-oc']);
+    expect(argv[argv.length - 1]).toBe('my-oc');
   });
 });

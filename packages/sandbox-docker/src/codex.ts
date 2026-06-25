@@ -3,7 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
+import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
 import { sanitizeCodexConfigForBox, MINIMAL_TRUSTED_CODEX_CONFIG } from './codex-config.js';
 import { ensureVolume, volumeExists } from './docker.js';
 
@@ -473,20 +473,12 @@ export async function startCodexSession(opts: StartCodexSessionOptions): Promise
  */
 export function buildCodexAttachArgv(container: string, sessionName?: string): string[] {
   const name = sessionName ?? DEFAULT_CODEX_SESSION;
-  const term = process.env['TERM'] ?? 'xterm-256color';
-  return [
-    'exec',
-    '-it',
-    '-e',
-    `TERM=${term}`,
-    '--user',
-    CONTAINER_USER,
+  return buildTermSafeTmuxExec({
     container,
-    'tmux',
-    'attach',
-    '-t',
-    name,
-  ];
+    user: CONTAINER_USER,
+    tmuxScript: 'exec tmux attach -t "$1"',
+    positionals: [name],
+  });
 }
 
 /**
