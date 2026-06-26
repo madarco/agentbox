@@ -34,9 +34,6 @@ const PLUGIN_NAME = 'agentbox';
 /** Effective plugin id / config key: `<plugin>@<marketplace>`. */
 const PLUGIN_ID = `${PLUGIN_NAME}@${MARKETPLACE_NAME}`;
 
-const BLOCK_BEGIN = '# >>> agentbox install codex (managed) >>>';
-const BLOCK_END = '# <<< agentbox install codex (managed) <<<';
-
 /** `$CODEX_HOME` if set, else `~/.codex`. */
 export function codexHomeDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env['CODEX_HOME'];
@@ -76,30 +73,17 @@ function codexPluginInstalled(bin: string): boolean {
 }
 
 /** The managed TOML block that enables the plugin by default. */
-export function codexPluginEnableBlock(): string {
-  return `${BLOCK_BEGIN}
-# Remove this block (or set enabled = false) to turn the AgentBox plugin off.
+export function codexPluginEnableTable(): string {
+  return `# AgentBox plugin (added by \`agentbox install codex\`). Set enabled = false to disable.
 [plugins."${PLUGIN_ID}"]
-enabled = true
-${BLOCK_END}`;
-}
-
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** Strip any prior managed block (and surrounding blank lines) from a body. */
-function stripManagedBlock(existing: string): string {
-  return existing.replace(
-    new RegExp(`\\n*${escapeRe(BLOCK_BEGIN)}[\\s\\S]*?${escapeRe(BLOCK_END)}\\n*`, 'g'),
-    '\n',
-  );
+enabled = true`;
 }
 
 export type CodexEnableStatus =
-  | 'added' // our managed block was (re)written
-  | 'user-enabled' // user/TUI already has the plugin enabled — left untouched
-  | 'user-disabled' // user/TUI explicitly disabled it — respected, not overridden
+  | 'added' // appended the enable table (no prior entry)
+  | 'forced-enabled' // --force flipped a disabled entry to enabled
+  | 'user-enabled' // already enabled — left untouched
+  | 'user-disabled' // explicitly disabled, no --force — respected
   | 'parse-error'; // config.toml didn't parse — left untouched
 
 export interface CodexEnableResult {
@@ -108,32 +92,66 @@ export interface CodexEnableResult {
 }
 
 /**
- * Idempotently ensure the plugin is enabled in a `config.toml` body. Pure +
- * tested. Appends our managed block only when no `plugins."agentbox@agentbox"`
- * table exists outside it; if the user/TUI owns that table we respect their
- * value and remove our block (a duplicate table would break TOML parsing).
+ * Ensure the plugin is enabled in a `config.toml` body. Pure + tested. The
+ * `plugins."agentbox@agentbox"` table is owned by Codex (written by `plugin add`
+ * / the TUI toggle), so we never write a second one: append the enable table
+ * only when it's absent, otherwise respect the present value. `force` flips a
+ * present `enabled = false` to true via a targeted in-place edit — the rest of
+ * the file (comments, order, formatting) is preserved untouched.
  */
-export function upsertCodexPluginEnable(existing: string): CodexEnableResult {
-  const stripped = stripManagedBlock(existing);
-  let userEntry: unknown;
+export function upsertCodexPluginEnable(
+  existing: string,
+  opts: { force?: boolean } = {},
+): CodexEnableResult {
+  let entry: { enabled?: unknown } | undefined;
   try {
-    const parsed = parseToml(stripped) as { plugins?: Record<string, unknown> };
-    userEntry = parsed.plugins?.[PLUGIN_ID];
+    const parsed = parseToml(existing) as {
+      plugins?: Record<string, { enabled?: unknown }>;
+    };
+    entry = parsed.plugins?.[PLUGIN_ID];
   } catch {
     // Malformed user config — don't risk making it worse.
     return { text: existing, status: 'parse-error' };
   }
 
-  if (userEntry !== undefined) {
-    const enabled = (userEntry as { enabled?: unknown }).enabled;
-    const head = stripped.replace(/\s+$/, '');
-    const text = head.length > 0 ? `${head}\n` : '';
-    return { text, status: enabled === false ? 'user-disabled' : 'user-enabled' };
+  if (entry === undefined) {
+    const head = existing.replace(/\s+$/, '');
+    const text = (head.length > 0 ? `${head}\n\n` : '') + codexPluginEnableTable() + '\n';
+    return { text, status: 'added' };
   }
+  // Present: respect it. `enabled` defaults to true in Codex, so only an
+  // explicit `false` counts as disabled.
+  if (entry.enabled !== false) return { text: existing, status: 'user-enabled' };
+  if (!opts.force) return { text: existing, status: 'user-disabled' };
+  return { text: forceEnableInPlace(existing), status: 'forced-enabled' };
+}
 
-  const head = stripped.replace(/\s+$/, '');
-  const text = (head.length > 0 ? `${head}\n\n` : '') + codexPluginEnableBlock() + '\n';
-  return { text, status: 'added' };
+/**
+ * Set `enabled = true` inside the existing `[plugins."agentbox@agentbox"]` table
+ * without disturbing the rest of the file: rewrite the `enabled` line within the
+ * table's section (its header → next table header / EOF), inserting one if the
+ * table has no `enabled` key.
+ */
+function forceEnableInPlace(existing: string): string {
+  const lines = existing.split('\n');
+  const header = `[plugins."${PLUGIN_ID}"]`;
+  const start = lines.findIndex((l) => l.trim() === header);
+  if (start === -1) return existing; // caller already confirmed presence
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^\s*\[/.test(lines[i] ?? '')) {
+      end = i;
+      break;
+    }
+  }
+  for (let i = start + 1; i < end; i++) {
+    if (/^\s*enabled\s*=/.test(lines[i] ?? '')) {
+      lines[i] = 'enabled = true';
+      return lines.join('\n');
+    }
+  }
+  lines.splice(start + 1, 0, 'enabled = true');
+  return lines.join('\n');
 }
 
 export interface InstallCodexOptions {
@@ -181,8 +199,8 @@ export async function installCodexPlugin(
       process.stdout.write(
         `# would run: ${bin} plugin marketplace add ${MARKETPLACE_SOURCE}\n` +
           `# would run: ${bin} plugin add ${PLUGIN_ID}\n` +
-          `# --- appended to ${cfgPath} (if not already configured) ---\n` +
-          `${codexPluginEnableBlock()}\n`,
+          `# --- appended to ${cfgPath} (only if not already configured) ---\n` +
+          `${codexPluginEnableTable()}\n`,
       );
     }
     return result;
@@ -217,15 +235,15 @@ export async function installCodexPlugin(
 
   // 3) Enable by default in config.toml (respecting an explicit user choice).
   const existing = existsSync(cfgPath) ? readFileSync(cfgPath, 'utf8') : '';
-  const { text, status } = upsertCodexPluginEnable(existing);
+  const { text, status } = upsertCodexPluginEnable(existing, { force: opts.force });
   result.enableStatus = status;
-  if (status === 'added' && text !== existing) {
+  if (text !== existing) {
     mkdirSync(dirname(cfgPath), { recursive: true });
     writeFileSync(cfgPath, text);
   } else if (status === 'user-disabled' && !opts.quiet) {
     log.info(
       `AgentBox Codex plugin is present but disabled in ${cfgPath} — leaving it off. ` +
-        `Enable it in Codex (or set enabled = true) to use it.`,
+        `Re-run with --force (or set enabled = true) to use it.`,
     );
   }
   return result;
@@ -236,7 +254,7 @@ export const installCodexCommand = new Command('codex')
     'Install + enable the AgentBox Codex plugin (marketplace add, plugin add, and enable it by default in ~/.codex/config.toml).',
   )
   .option('--dry-run', 'print the commands and config block without changing anything')
-  .option('--force', 're-apply the managed enable block even if it was removed')
+  .option('--force', 're-install and re-enable even if the plugin was disabled')
   .action(async (opts: { dryRun?: boolean; force?: boolean }) => {
     intro('AgentBox Codex plugin');
     const res = await installCodexPlugin({ force: opts.force, dryRun: opts.dryRun });
@@ -254,11 +272,13 @@ export const installCodexCommand = new Command('codex')
         `Enabled:     ${
           res.enableStatus === 'added'
             ? `yes (wrote ${res.configPath})`
-            : res.enableStatus === 'user-enabled'
-              ? 'already enabled'
-              : res.enableStatus === 'user-disabled'
-                ? 'left disabled (your choice)'
-                : `could not edit ${res.configPath}`
+            : res.enableStatus === 'forced-enabled'
+              ? `re-enabled (wrote ${res.configPath})`
+              : res.enableStatus === 'user-enabled'
+                ? 'already enabled'
+                : res.enableStatus === 'user-disabled'
+                  ? 'left disabled (your choice — re-run with --force to enable)'
+                  : `could not edit ${res.configPath}`
         }`,
       'Installed',
     );
