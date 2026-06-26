@@ -27,8 +27,17 @@ export async function ensureCodexAgentsOverride(
     `\nchown vscode:vscode "$OVR" 2>/dev/null || true` +
     `\nchmod 0644 "$OVR" 2>/dev/null || true`;
   try {
-    await backend.exec(handle, script);
-    log('seeded Codex AGENTS.override.md');
+    // Cloud backends signal script failure via a non-zero exitCode rather than
+    // throwing, so a `set -e` abort (perms, missing paths) must be read off the
+    // result — otherwise we'd log success while the box booted without facts.
+    const res = await backend.exec(handle, script);
+    if (res.exitCode === 0) log('seeded Codex AGENTS.override.md');
+    else
+      log(
+        `codex AGENTS.override seed failed (continuing): exit ${res.exitCode}${
+          res.stderr.trim() ? `: ${res.stderr.trim()}` : ''
+        }`,
+      );
   } catch (err) {
     log(
       `codex AGENTS.override seed failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
