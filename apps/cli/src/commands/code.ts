@@ -212,8 +212,9 @@ async function prepareCloudAttach(box: BoxRecord, opts: PrepareCloudOptions): Pr
 
   // Mint the SSH target and (re)write the `~/.ssh/config` alias. Shared with
   // `agentbox open` and `agentbox shell --ssh-config`. The inner tmux command
-  // is irrelevant here (Remote-SSH starts its own session).
-  const { alias } = await ensureCloudSshAlias(box);
+  // is irrelevant here (Remote-SSH starts its own session). The box was already
+  // brought online + waited above, so skip the helper's lifecycle pass.
+  const { alias } = await ensureCloudSshAlias(box, { bringOnline: false });
   log.info(`updated ~/.ssh/config alias ${alias}`);
 
   return `vscode-remote://ssh-remote+${alias}/workspace`;

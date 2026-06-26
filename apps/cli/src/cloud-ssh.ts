@@ -19,32 +19,48 @@ export interface CloudSshAlias {
   identityFile?: string;
 }
 
-/**
- * Bring a cloud box online and resolve its SSH connection target WITHOUT
- * touching `~/.ssh/config`. Lets callers inspect the target (e.g. gate on a
- * persistent `identityFile`) before deciding to persist an alias.
- *
- * `buildAttach(..., { noTmux: true })` yields the plain `ssh ... <user>@<host>`
- * argv; the identity path (if any) is parsed straight out of it so we never
- * hardcode a provider-specific key path. Bringing the box online is idempotent
- * — a probe of an already-running box is a no-op.
- */
-export async function resolveCloudSshTarget(box: BoxRecord): Promise<CloudSshAlias> {
-  const p = await providerForBox(box);
-  const state = await p.probeState(box);
-  if (state === 'paused') {
-    log.info('box is paused; resuming');
-    await p.resume(box);
-  } else if (state === 'stopped') {
-    log.info('box is stopped; starting');
-    await p.start(box);
-  } else if (state === 'missing') {
-    throw new Error(`cloud sandbox for ${box.name} is missing; was it deleted?`);
-  }
+export interface CloudSshOptions {
+  /**
+   * Bring the box online (resume/start) before resolving the target. Default
+   * true. Callers that already brought the box online (e.g. `agentbox code`
+   * after its own wait-ready) pass false to skip a redundant lifecycle pass.
+   */
+  bringOnline?: boolean;
+}
 
+/**
+ * Resolve a cloud box's SSH connection target WITHOUT touching `~/.ssh/config`.
+ * Lets callers inspect the target (e.g. gate on a persistent `identityFile`)
+ * before deciding to persist an alias.
+ *
+ * The SSH-support check runs FIRST, before any lifecycle action — so an
+ * unsupported provider (e.g. Docker, which has no `buildAttach`) errors without
+ * resuming/starting the box. `buildAttach(..., { noTmux: true })` yields the
+ * plain `ssh ... <user>@<host>` argv; the identity path (if any) is parsed
+ * straight out of it so we never hardcode a provider-specific key path.
+ */
+export async function resolveCloudSshTarget(
+  box: BoxRecord,
+  opts: CloudSshOptions = {},
+): Promise<CloudSshAlias> {
+  const p = await providerForBox(box);
   if (!p.buildAttach) {
     throw new Error(`cloud provider '${p.name}' does not support SSH attach`);
   }
+
+  if (opts.bringOnline ?? true) {
+    const state = await p.probeState(box);
+    if (state === 'paused') {
+      log.info('box is paused; resuming');
+      await p.resume(box);
+    } else if (state === 'stopped') {
+      log.info('box is stopped; starting');
+      await p.start(box);
+    } else if (state === 'missing') {
+      throw new Error(`cloud sandbox for ${box.name} is missing; was it deleted?`);
+    }
+  }
+
   const spec = await p.buildAttach(box, 'shell', { noTmux: true });
   const target = parseSshTarget(spec.argv);
   if (!target) {
@@ -60,8 +76,11 @@ export async function resolveCloudSshTarget(box: BoxRecord): Promise<CloudSshAli
  * `agentbox open` (sshfs mount), and `agentbox shell --ssh-config` (external
  * app handoff) — all three need the same alias mapped to a live SSH target.
  */
-export async function ensureCloudSshAlias(box: BoxRecord): Promise<CloudSshAlias> {
-  const conn = await resolveCloudSshTarget(box);
+export async function ensureCloudSshAlias(
+  box: BoxRecord,
+  opts: CloudSshOptions = {},
+): Promise<CloudSshAlias> {
+  const conn = await resolveCloudSshTarget(box, opts);
   await writeAgentboxSshAlias({
     alias: conn.alias,
     hostname: conn.host,

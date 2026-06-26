@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   agentboxAliasFor,
+  hasUnmanagedHostConflict,
   parseSshTarget,
   readAgentboxSshAlias,
   removeAgentboxSshAlias,
@@ -139,5 +140,43 @@ describe('writeAgentboxSshAlias', () => {
       identityFile: '/box/key',
     });
     expect(await readAgentboxSshAlias('no-such-box')).toBeUndefined();
+  });
+
+  it('migrates away a legacy `agentbox-cloud-<box>` block on rewrite', async () => {
+    // Simulate a block written by an older release keyed on the legacy alias.
+    await writeAgentboxSshAlias({
+      alias: 'agentbox-cloud-hz-box',
+      hostname: '9.9.9.9',
+      user: 'vscode',
+      identityFile: '/box/old-key',
+    });
+    // Now write under the new box-name alias.
+    await writeAgentboxSshAlias({
+      alias: agentboxAliasFor('hz-box'),
+      hostname: '1.2.3.4',
+      user: 'vscode',
+      identityFile: '/box/key',
+    });
+    const cfg = await readCfg();
+    expect(cfg).not.toContain('agentbox-cloud-hz-box');
+    expect(cfg).not.toContain('9.9.9.9');
+    expect(cfg).toContain('Host hz-box');
+    expect(cfg).toContain('1.2.3.4');
+  });
+
+  it('hasUnmanagedHostConflict detects a user-authored Host but ignores our block', async () => {
+    // Our own managed block is not a conflict.
+    await writeAgentboxSshAlias({
+      alias: agentboxAliasFor('hz-box'),
+      hostname: '1.2.3.4',
+      user: 'vscode',
+      identityFile: '/box/key',
+    });
+    expect(await hasUnmanagedHostConflict('hz-box')).toBe(false);
+    expect(await hasUnmanagedHostConflict('mybox')).toBe(false);
+
+    // A user-authored stanza for the same alias IS a conflict.
+    await fs.appendFile(join(tmp, '.ssh', 'config'), '\nHost mybox other\n  HostName 5.6.7.8\n');
+    expect(await hasUnmanagedHostConflict('mybox')).toBe(true);
   });
 });

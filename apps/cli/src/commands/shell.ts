@@ -25,7 +25,7 @@ import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
 import { resolveCloudSshTarget } from '../cloud-ssh.js';
 import { hyperlink } from '../hyperlink.js';
-import { writeAgentboxSshAlias } from '../ssh-config.js';
+import { hasUnmanagedHostConflict, writeAgentboxSshAlias } from '../ssh-config.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
 import { requireDockerProvider } from './_provider-guard.js';
@@ -231,6 +231,16 @@ async function runSshConfig(box: BoxRecord, opts: ShellOptions): Promise<void> {
         `supported — Docker boxes aren't reachable over SSH, and Daytona uses a 60-min token that expires.`,
     );
   }
+  // The alias is the bare box name; warn (don't fail) if the user already has
+  // their own `Host <name>` — OpenSSH would let the earlier entry shadow ours.
+  if (await hasUnmanagedHostConflict(conn.alias)) {
+    log.warn(
+      `~/.ssh/config already has a non-agentbox \`Host ${conn.alias}\` entry. SSH uses the ` +
+        `first value per keyword, so it may override agentbox's HostName/IdentityFile — ` +
+        `remove it (or rename the box) if \`ssh ${conn.alias}\` doesn't reach the box.`,
+    );
+  }
+
   await writeAgentboxSshAlias({
     alias: conn.alias,
     hostname: conn.host,

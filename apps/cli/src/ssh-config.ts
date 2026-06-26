@@ -106,16 +106,43 @@ function buildBlock(opts: SshAliasOptions): string {
   return lines.join('\n');
 }
 
+/**
+ * Pre-`agentbox-cloud-<box>` → `<box>` rename, managed blocks were keyed by
+ * `agentbox-cloud-<box>`. We strip that block whenever we rewrite/remove the
+ * box's alias so upgrades don't leave a stale duplicate Host entry behind.
+ */
+function legacyAliasFor(alias: string): string {
+  return `agentbox-cloud-${alias}`;
+}
+
 export async function writeAgentboxSshAlias(opts: SshAliasOptions): Promise<void> {
   const path = sshConfigPath();
   await fs.mkdir(join(homedir(), '.ssh'), { recursive: true, mode: 0o700 });
   const existing = await readConfig();
-  const stripped = stripBlock(existing, opts.alias);
+  const stripped = stripBlock(stripBlock(existing, opts.alias), legacyAliasFor(opts.alias));
   const separator = stripped.length === 0 || stripped.endsWith('\n') ? '' : '\n';
   const next = `${stripped}${separator}${buildBlock(opts)}`;
   await fs.writeFile(path, next, { mode: 0o600 });
   // Re-assert mode in case the file existed with broader perms.
   await fs.chmod(path, 0o600);
+}
+
+/**
+ * True when `~/.ssh/config` already has a user-authored `Host <alias>` stanza
+ * OUTSIDE our managed block. Because the alias is now the bare box name, such a
+ * collision matters: OpenSSH applies the first value it sees per keyword, so an
+ * earlier user entry can shadow the HostName/IdentityFile/User we append.
+ */
+export async function hasUnmanagedHostConflict(alias: string): Promise<boolean> {
+  const contents = await readConfig();
+  if (contents === '') return false;
+  // Drop our managed block first so we only see foreign `Host` lines.
+  const foreign = stripBlock(contents, alias);
+  return foreign.split('\n').some((line) => {
+    const m = /^\s*Host\s+(.+?)\s*$/.exec(line);
+    if (!m) return false;
+    return m[1]!.split(/\s+/).includes(alias);
+  });
 }
 
 export interface SshTarget {
@@ -180,7 +207,7 @@ export async function removeAgentboxSshAlias(alias: string): Promise<void> {
   const path = sshConfigPath();
   const existing = await readConfig();
   if (existing === '') return;
-  const next = stripBlock(existing, alias);
+  const next = stripBlock(stripBlock(existing, alias), legacyAliasFor(alias));
   if (next === existing) return; // no managed block matched
   await fs.writeFile(path, next, { mode: 0o600 });
 }
