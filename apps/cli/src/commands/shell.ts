@@ -23,6 +23,9 @@ import {
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
+import { resolveCloudSshTarget } from '../cloud-ssh.js';
+import { hyperlink } from '../hyperlink.js';
+import { hasUnmanagedHostConflict, writeAgentboxSshAlias } from '../ssh-config.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
 import { requireDockerProvider } from './_provider-guard.js';
@@ -37,6 +40,10 @@ interface ShellOptions {
   name?: string;
   /** --new: open a fresh auto-numbered shell instead of the default. */
   new?: boolean;
+  /** --ssh-config: write a ~/.ssh/config alias for external apps instead of opening a shell. */
+  sshConfig?: boolean;
+  /** --json: machine-readable output (only meaningful with --ssh-config). */
+  json?: boolean;
 }
 
 function buildShellCliOverrides(opts: ShellOptions): Partial<UserConfig> {
@@ -204,6 +211,79 @@ async function startOrAttachShell(box: BoxRecord, cfg: ShellSessionCfg): Promise
   process.exit(code);
 }
 
+/**
+ * `agentbox shell <box> --ssh-config`: write the box's `~/.ssh/config` alias and
+ * print connection details so an external app (the Codex app, Claude desktop)
+ * can connect over plain SSH — instead of opening a shell.
+ *
+ * Only providers with a *persistent* per-box identity file qualify: an external
+ * app connects later, so a token-in-User credential that expires (Daytona) is
+ * useless, and Docker/Vercel/E2B have no SSH at all. We resolve the target
+ * first and gate on `identityFile` BEFORE writing, so unsupported providers
+ * leave `~/.ssh/config` untouched.
+ */
+async function runSshConfig(box: BoxRecord, opts: ShellOptions): Promise<void> {
+  const conn = await resolveCloudSshTarget(box);
+  if (!conn.identityFile) {
+    throw new Error(
+      `box '${box.name}' (provider '${box.provider ?? 'docker'}') has no persistent SSH key, ` +
+        `so it can't be added to Codex / Claude desktop over SSH. Only Hetzner cloud boxes are ` +
+        `supported — Docker boxes aren't reachable over SSH, and Daytona uses a 60-min token that expires.`,
+    );
+  }
+  // The alias is the bare box name; warn (don't fail) if the user already has
+  // their own `Host <name>` — OpenSSH would let the earlier entry shadow ours.
+  if (await hasUnmanagedHostConflict(conn.alias)) {
+    log.warn(
+      `~/.ssh/config already has a non-agentbox \`Host ${conn.alias}\` entry. SSH uses the ` +
+        `first value per keyword, so it may override agentbox's HostName/IdentityFile — ` +
+        `remove it (or rename the box) if \`ssh ${conn.alias}\` doesn't reach the box.`,
+    );
+  }
+
+  await writeAgentboxSshAlias({
+    alias: conn.alias,
+    hostname: conn.host,
+    user: conn.user,
+    identityFile: conn.identityFile,
+  });
+
+  const codexUrl = `codex://settings/connections/ssh/add?name=${encodeURIComponent(conn.alias)}`;
+  if (opts.json) {
+    process.stdout.write(
+      JSON.stringify(
+        {
+          alias: conn.alias,
+          host: conn.host,
+          user: conn.user,
+          identityFile: conn.identityFile,
+          sshCommand: `ssh ${conn.alias}`,
+          codexAddUrl: codexUrl,
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+    return;
+  }
+
+  const codexLink = hyperlink(`Add ${conn.alias} to Codex SSH`, codexUrl, process.stdout);
+  const lines = [
+    `wrote ~/.ssh/config alias "${conn.alias}"`,
+    ``,
+    `ssh alias:      ${conn.alias}`,
+    `host:           ${conn.host}`,
+    `user:           ${conn.user}`,
+    `identity:       ${conn.identityFile}`,
+    `connect:        ssh ${conn.alias}`,
+    ``,
+    `Codex:          ${codexLink}`,
+    `                ${codexUrl}`,
+    `Claude desktop: add an SSH connection to host "${conn.alias}" (already in ~/.ssh/config)`,
+  ];
+  process.stdout.write(lines.join('\n') + '\n');
+}
+
 export const shellCommand = new Command('shell')
   .description(
     'Open an interactive shell in a box, in a detachable tmux session (auto-unpause/start)',
@@ -221,6 +301,11 @@ export const shellCommand = new Command('shell')
   .option('--no-tmux', 'run a plain docker exec shell instead of a detachable tmux session')
   .option('-n, --name <label>', 'open/attach a named shell session (a box can hold several)')
   .option('--new', 'open a fresh, auto-numbered shell session (shell-2, shell-3, ...)')
+  .option(
+    '--ssh-config',
+    'write a ~/.ssh/config alias for this box (Hetzner cloud boxes) and print connection details for Codex / Claude desktop, instead of opening a shell',
+  )
+  .option('--json', 'with --ssh-config: emit the connection details as JSON')
   .action(async (idOrName: string | undefined, cmd: string[], opts: ShellOptions) => {
     try {
       // resolveBoxOrShift handles the `agentbox shell -- ls` case: commander
@@ -228,6 +313,13 @@ export const shellCommand = new Command('shell')
       // treat "ls" as the first cmd token instead.
       const { box, shifted } = await resolveBoxOrShift(idOrName);
       const effectiveCmd = shifted && idOrName ? [idOrName, ...cmd] : cmd;
+
+      // `--ssh-config` short-circuits the shell: it only writes the SSH alias
+      // and prints connection details for external apps.
+      if (opts.sshConfig) {
+        await runSshConfig(box, opts);
+        return;
+      }
 
       const cfg = await loadEffectiveConfig(box.workspacePath, {
         cliOverrides: buildShellCliOverrides(opts),

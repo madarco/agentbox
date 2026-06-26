@@ -231,6 +231,35 @@ If a PR op appears to hang, tell the user to check the dashboard footer for the 
 
 Per-project numeric index (`1`, `2`, …) and friendly name (`review`, `smoke`) both work wherever `<box>` is accepted. Index `1` is the first box created in the current workspace.
 
+## Connecting an external app (Codex / Claude desktop) over SSH
+
+When the user wants to attach the **Codex app** or **Claude desktop** to a box over SSH, run:
+
+```
+agentbox shell <box> --ssh-config          # writes ~/.ssh/config + prints details
+agentbox shell <box> --ssh-config --json   # same, machine-readable
+```
+
+This writes a `Host <box-name>` alias into `~/.ssh/config` (pointing at the box's IP and its
+per-box identity file) and prints the alias, host, user, identity path, and a ready `ssh
+<box-name>` command. `--json` emits `{ alias, host, user, identityFile, sshCommand,
+codexAddUrl }`.
+
+**Hetzner cloud boxes only.** Only a box with a persistent per-box SSH key qualifies — an
+external app connects later, so Daytona's 60-minute token would already be expired, and
+Docker / Vercel / E2B boxes have no SSH. The command exits with a clear message (and writes
+nothing) for unsupported providers.
+
+After running it, surface both apps to the user. For **Codex**, render the deep link verbatim
+(`<ssh-alias>` is the box name):
+
+```
+[Add <ssh-alias> to Codex SSH](codex://settings/connections/ssh/add?name=<ssh-alias>)
+```
+
+For **Claude desktop**, there's no deep link — tell the user to add an SSH connection to host
+`<ssh-alias>` (it's already in `~/.ssh/config`).
+
 ## Operating principles
 
 1. **Never assume the host needs SSH keys forwarded into a box** — git is handled by the relay, by design.
