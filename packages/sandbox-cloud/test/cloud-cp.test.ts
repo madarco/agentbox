@@ -43,4 +43,11 @@ describe('uploadToCloudBox parent-chain chown', () => {
     const cmd = await uploadAndGetCmd('/workspace/sub/');
     expect(cmd).not.toContain('while [ "$parent"');
   });
+
+  it('omits the parent walk when the dest lands exactly at $HOME (no /home chown)', async () => {
+    // boxDst without trailing slash → finalPath === /home/vscode. The walk must
+    // NOT run, else `dirname` would be `/home` and could reassign it.
+    const cmd = await uploadAndGetCmd('/home/vscode');
+    expect(cmd).not.toContain('while [ "$parent"');
+  });
 });

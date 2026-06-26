@@ -99,7 +99,9 @@ export async function uploadToCloudBox(
     // /workspace keep their existing ownership. The whole script runs via
     // `bashScript()` (`bash -c '<body>'`), which protects `$(...)`/`while` from
     // Vercel's outer `sudo -u vscode -H bash -lc` wrapping.
-    const underHome = finalPath === BOX_HOME || finalPath.startsWith(BOX_HOME + '/');
+    // Strictly *under* home (trailing segment) — never `=== BOX_HOME`, else
+    // `dirname` would be `/home` and the walk could reassign `/home` itself.
+    const underHome = finalPath.startsWith(BOX_HOME + '/');
     const parentWalk = underHome
       ? `parent=$(dirname ${quoteShellArg(finalPath)}); ` +
         `while [ "$parent" != ${quoteShellArg(BOX_HOME)} ] && [ "$parent" != "/" ]; do ` +

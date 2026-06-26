@@ -177,7 +177,9 @@ export async function uploadToBox(
   // `~/.codex/sessions/YYYY/MM/DD/` and Codex must then create its
   // `state_*.sqlite` index in that subtree. Non-fatal (matches the warn-only
   // policy of the chown above).
-  if (finalPath === BOX_HOME || finalPath.startsWith(BOX_HOME + '/')) {
+  // Strictly *under* home (trailing segment) — never `=== BOX_HOME`, else the
+  // walk's `dirname` would be `/home` and could reassign `/home` itself.
+  if (finalPath.startsWith(BOX_HOME + '/')) {
     const walk = await execa(
       'docker',
       [
