@@ -419,7 +419,20 @@ export async function cloudAgentStartDetached(args: {
   if (state !== 'running') {
     box = await provider.start(box);
   }
-  const command = buildCloudAttachInnerCommand(args.binary, args.extraArgs);
+  // With no user args, resume the box's recorded session instead of launching
+  // fresh — same as the interactive `cloudAgentAttach` path. Matters for a
+  // background `agentbox <agent> start <box> --no-attach` (and idle-resumed
+  // creates): the box already has a claude/codex session to reopen. The `-i`
+  // queue path always seeds a prompt, so extraArgs is non-empty and this no-ops.
+  let extraArgs = args.extraArgs;
+  if (
+    (!extraArgs || extraArgs.length === 0) &&
+    (args.binary === 'claude' || args.binary === 'codex')
+  ) {
+    const resume = await agentResumeArgs(provider, box, args.binary);
+    if (resume) extraArgs = resume;
+  }
+  const command = buildCloudAttachInnerCommand(args.binary, extraArgs);
   const { exitCode, stderr } = await startDetachedSession(
     provider,
     box,
