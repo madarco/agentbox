@@ -53,7 +53,7 @@ import {
   NO_ATTACH_HELP,
   resolveAttachInOption,
 } from './_attach-in.js';
-import { cloudAgentAttach } from './_cloud-attach.js';
+import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
@@ -886,19 +886,28 @@ const opencodeStartCommand = new Command('start')
         }
       }
       if ((box.provider ?? 'docker') !== 'docker') {
-        if (opts.attach === false) {
-          outro(
-            `--no-attach: cloud agent sessions are started lazily on attach. Run: agentbox opencode attach ${reattachRef(box)}`,
-          );
-          return;
-        }
         const cfg = await loadEffectiveConfig(box.workspacePath, {
           cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
         });
+        const sessionName = opts.sessionName ?? 'opencode';
+        if (opts.attach === false) {
+          // Background mode: start the detached session (matches docker) instead
+          // of deferring the agent until the next attach.
+          await cloudAgentStartDetached({
+            box,
+            binary: 'opencode',
+            sessionName,
+            extraArgs: effectiveOpencodeArgs,
+          });
+          outro(
+            `--no-attach: opencode started in background. Attach: agentbox opencode attach ${reattachRef(box)}`,
+          );
+          return;
+        }
         await cloudAgentAttach({
           box,
           binary: 'opencode',
-          sessionName: opts.sessionName ?? 'opencode',
+          sessionName,
           mode: 'opencode',
           extraArgs: effectiveOpencodeArgs,
           openIn: hostAwareOpenIn(cfg),

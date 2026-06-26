@@ -54,7 +54,7 @@ import {
   NO_ATTACH_HELP,
   resolveAttachInOption,
 } from './_attach-in.js';
-import { cloudAgentAttach } from './_cloud-attach.js';
+import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
@@ -1410,12 +1410,6 @@ const claudeStartCommand = new Command('start')
         }
       }
       if ((box.provider ?? 'docker') !== 'docker') {
-        if (opts.attach === false) {
-          outro(
-            `--no-attach: cloud agent sessions are started lazily on attach. Run: agentbox claude attach ${reattachRef(box)}`,
-          );
-          return;
-        }
         const cfg = await loadEffectiveConfig(box.workspacePath, {
           cliOverrides: {
             ...(attachIn ? { attach: { openIn: attachIn } } : {}),
@@ -1438,10 +1432,23 @@ const claudeStartCommand = new Command('start')
             throw err;
           }
         }
+        const sessionName = opts.sessionName ?? 'claude';
+        if (opts.attach === false) {
+          // Background mode: start the detached session (matches docker) instead
+          // of deferring the agent until the next attach.
+          await cloudAgentStartDetached({
+            box,
+            binary: 'claude',
+            sessionName,
+            extraArgs: effectiveClaudeArgs,
+          });
+          outro(`--no-attach: claude started in background. Attach: agentbox claude attach ${reattachRef(box)}`);
+          return;
+        }
         await cloudAgentAttach({
           box,
           binary: 'claude',
-          sessionName: opts.sessionName ?? 'claude',
+          sessionName,
           mode: 'claude',
           extraArgs: effectiveClaudeArgs,
           openIn: hostAwareOpenIn(cfg),

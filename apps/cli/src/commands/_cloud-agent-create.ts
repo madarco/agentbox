@@ -23,7 +23,7 @@ import { makeProgressReporter } from '../lib/progress.js';
 import { printLaunchRecap } from '../lib/launch-recap.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
-import { cloudAgentAttach } from './_cloud-attach.js';
+import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 
 export interface CloudAgentCreateArgs {
   /** Pre-resolved provider (from `providerForCreate`). */
@@ -42,11 +42,11 @@ export interface CloudAgentCreateArgs {
   verbose?: boolean;
   /** Where to open the attached session; forwarded to `cloudAgentAttach`. */
   openIn?: AttachOpenIn;
-  /** When `false`, create the cloud box and skip the agent attach (background
-   *  mode). Defaults to `true`. On cloud providers the agent's tmux session is
-   *  created lazily by `cloudAgentAttach`; with `attach: false` the session
-   *  isn't started yet — a later `agentbox <agent> attach <box>` starts it on
-   *  first attach. */
+  /** When `false`, create the cloud box and start the agent in a detached tmux
+   *  session (background mode) but don't attach the host terminal — mirrors the
+   *  docker path, where the session is always created and only the terminal
+   *  attach is skipped. A later `agentbox <agent> attach <box>` finds the
+   *  running session and attaches to it. Defaults to `true`. */
   attach?: boolean;
   /**
    * Hook fired AFTER the box is provisioned and BEFORE the agent attach starts
@@ -118,6 +118,15 @@ export async function cloudAgentCreate(args: CloudAgentCreateArgs): Promise<void
       attaching: args.attach !== false,
     });
     if (args.attach === false) {
+      // Background mode: start the agent in a detached tmux session (and verify
+      // it stayed up) without attaching the host terminal — matches docker,
+      // where the session is always created and only the attach is skipped.
+      await cloudAgentStartDetached({
+        box: result.record,
+        binary: args.binary,
+        sessionName: args.sessionName,
+        extraArgs,
+      });
       return;
     }
     await cloudAgentAttach({
