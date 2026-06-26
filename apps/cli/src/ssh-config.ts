@@ -12,7 +12,7 @@ import { join } from 'node:path';
  */
 
 export interface SshAliasOptions {
-  /** Host alias the user (and VS Code Remote-SSH) refers to, e.g. `agentbox-cloud-myname`. */
+  /** Host alias the user (and VS Code Remote-SSH) refers to — the box name, e.g. `myname`. */
   alias: string;
   /** Daytona SSH gateway, typically `ssh.app.daytona.io`. */
   hostname: string;
@@ -40,9 +40,15 @@ function endMarker(alias: string): string {
   return `# END agentbox cloud box ${alias}`;
 }
 
-/** Stable alias derived from a box name. Box names are already kebab-safe. */
+/**
+ * Stable `~/.ssh/config` Host alias for a box: the box name itself. Box names
+ * are already kebab-safe, so `ssh <boxname>` works and external apps (Codex's
+ * `codex://…?name=<alias>` deep link, Claude desktop) get a clean, memorable
+ * host. Our BEGIN/END-marked managed block keeps this entry isolated from any
+ * user-authored `Host <boxname>` so the two coexist.
+ */
 export function agentboxAliasFor(boxName: string): string {
-  return `agentbox-cloud-${boxName}`;
+  return boxName;
 }
 
 async function readConfig(): Promise<string> {
@@ -145,6 +151,29 @@ export function parseSshTarget(argv: readonly string[]): SshTarget | undefined {
     }
   }
   return { ...target, identityFile };
+}
+
+/**
+ * Read back the `HostName` / `IdentityFile` from the managed block for `alias`
+ * in `~/.ssh/config`, if one exists. Used by `inspect` to surface the SSH
+ * connection details without re-deriving them from a provider (which would
+ * require bringing the box online). Returns undefined when no managed block is
+ * present for the alias.
+ */
+export async function readAgentboxSshAlias(
+  alias: string,
+): Promise<{ hostName?: string; identityFile?: string } | undefined> {
+  const contents = await readConfig();
+  if (contents === '') return undefined;
+  const begin = beginMarker(alias);
+  const end = endMarker(alias);
+  const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`^${escape(begin)}\\n([\\s\\S]*?)${escape(end)}`, 'm').exec(contents);
+  if (!match) return undefined;
+  const body = match[1] ?? '';
+  const field = (name: string): string | undefined =>
+    new RegExp(`^\\s*${name}\\s+(.+)$`, 'm').exec(body)?.[1]?.trim();
+  return { hostName: field('HostName'), identityFile: field('IdentityFile') };
 }
 
 export async function removeAgentboxSshAlias(alias: string): Promise<void> {

@@ -8,8 +8,7 @@ import { hostOpenCommand } from '@agentbox/sandbox-core';
 import { openBoxInFinder } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { providerForBox } from '../provider/registry.js';
-import { agentboxAliasFor, parseSshTarget, writeAgentboxSshAlias } from '../ssh-config.js';
+import { ensureCloudSshAlias } from '../cloud-ssh.js';
 import { runPath } from './path.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -41,11 +40,10 @@ export const openCommand = new Command('open')
   .action(async (idOrName: string | undefined, opts: OpenOpts) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
-      const provider = await providerForBox(box);
       const isCloud = (box.provider ?? 'docker') !== 'docker';
 
       if (isCloud) {
-        await runCloudOpen(box, provider, opts);
+        await runCloudOpen(box, opts);
         return;
       }
 
@@ -77,11 +75,7 @@ export const openCommand = new Command('open')
  * 60-min Daytona SSH token, written into `~/.ssh/config` per call so sshfs
  * has a live target without baking the token into the mount itself.
  */
-async function runCloudOpen(
-  box: BoxRecord,
-  provider: { name: string; buildAttach?: NonNullable<Awaited<ReturnType<typeof providerForBox>>['buildAttach']> },
-  opts: OpenOpts,
-): Promise<void> {
+async function runCloudOpen(box: BoxRecord, opts: OpenOpts): Promise<void> {
   const mountRoot = join(homedir(), '.agentbox', 'mounts', box.name);
 
   if (opts.unmount) {
@@ -107,25 +101,10 @@ async function runCloudOpen(
     );
   }
 
-  if (!provider.buildAttach) {
-    throw new Error(
-      `cloud provider '${provider.name}' does not support SSH attach — \`agentbox open\` requires it for cloud boxes`,
-    );
-  }
-  // Same SSH alias machinery `agentbox code` uses — mint a fresh 60-min token
-  // and rewrite the alias every call so the user gets a live mount target.
-  const spec = await provider.buildAttach(box, 'shell', { noTmux: true });
-  const target = parseSshTarget(spec.argv);
-  if (!target) {
-    throw new Error(`could not parse <user>@<host> from cloud SSH argv: ${spec.argv.join(' ')}`);
-  }
-  const alias = agentboxAliasFor(box.name);
-  await writeAgentboxSshAlias({
-    alias,
-    hostname: target.host,
-    user: target.user,
-    identityFile: target.identityFile,
-  });
+  // Same SSH alias machinery `agentbox code` uses — bring the box online and
+  // (re)write the alias (a fresh 60-min token for Daytona) so sshfs gets a live
+  // mount target.
+  const { alias } = await ensureCloudSshAlias(box);
 
   // Ensure the mount dir exists. If something's already mounted there (a
   // stale mount from a previous run) we tear it down before re-mounting —

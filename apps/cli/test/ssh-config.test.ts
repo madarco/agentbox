@@ -6,9 +6,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   agentboxAliasFor,
   parseSshTarget,
+  readAgentboxSshAlias,
   removeAgentboxSshAlias,
   writeAgentboxSshAlias,
 } from '../src/ssh-config.js';
+
+describe('agentboxAliasFor', () => {
+  it('uses the box name as the SSH host alias', () => {
+    expect(agentboxAliasFor('hz-box')).toBe('hz-box');
+  });
+});
 
 describe('parseSshTarget', () => {
   it('extracts user, host, and identity file from a Hetzner-style argv', () => {
@@ -69,7 +76,7 @@ describe('writeAgentboxSshAlias', () => {
       identityFile: '/box/key',
     });
     const cfg = await readCfg();
-    expect(cfg).toContain('Host agentbox-cloud-hz-box');
+    expect(cfg).toContain('Host hz-box');
     expect(cfg).toContain('  IdentityFile /box/key');
     expect(cfg).toContain('  IdentitiesOnly yes');
   });
@@ -81,7 +88,7 @@ describe('writeAgentboxSshAlias', () => {
       user: 'tok_abc',
     });
     const cfg = await readCfg();
-    expect(cfg).toContain('Host agentbox-cloud-dt-box');
+    expect(cfg).toContain('Host dt-box');
     expect(cfg).not.toContain('IdentityFile');
     expect(cfg).not.toContain('IdentitiesOnly');
   });
@@ -96,7 +103,7 @@ describe('writeAgentboxSshAlias', () => {
     await writeAgentboxSshAlias(opts);
     await writeAgentboxSshAlias({ ...opts, identityFile: '/box/key-v2' });
     const cfg = await readCfg();
-    const beginCount = cfg.split('# BEGIN agentbox cloud box agentbox-cloud-hz-box').length - 1;
+    const beginCount = cfg.split('# BEGIN agentbox cloud box hz-box').length - 1;
     expect(beginCount).toBe(1);
     expect(cfg).toContain('/box/key-v2');
     expect(cfg).not.toContain('/box/key-v1');
@@ -114,9 +121,23 @@ describe('writeAgentboxSshAlias', () => {
       hostname: 'ssh.app.daytona.io',
       user: 'tok_abc',
     });
-    await removeAgentboxSshAlias('agentbox-cloud-hz-box');
+    await removeAgentboxSshAlias(agentboxAliasFor('hz-box'));
     const cfg = await readCfg();
-    expect(cfg).not.toContain('agentbox-cloud-hz-box');
-    expect(cfg).toContain('agentbox-cloud-dt-box');
+    expect(cfg).not.toContain('Host hz-box');
+    expect(cfg).toContain('Host dt-box');
+  });
+
+  it('readAgentboxSshAlias returns HostName + IdentityFile from a written block', async () => {
+    await writeAgentboxSshAlias({
+      alias: agentboxAliasFor('hz-box'),
+      hostname: '1.2.3.4',
+      user: 'vscode',
+      identityFile: '/box/key',
+    });
+    expect(await readAgentboxSshAlias(agentboxAliasFor('hz-box'))).toEqual({
+      hostName: '1.2.3.4',
+      identityFile: '/box/key',
+    });
+    expect(await readAgentboxSshAlias('no-such-box')).toBeUndefined();
   });
 });
