@@ -320,7 +320,7 @@ RUN npm install -g opencode-ai
 # wiped on `agentbox destroy`.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
+        libnss3 libnss3-tools libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
         libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
         libgbm1 libdrm2 libpango-1.0-0 libcairo2 libasound2t64 \
         fonts-liberation xdg-utils \
@@ -389,6 +389,12 @@ RUN chmod +x /usr/local/bin/agentbox-vnc-start
 # DinD launcher script. Same exec-d-as-root pattern as agentbox-vnc-start.
 COPY packages/sandbox-docker/scripts/agentbox-dockerd-start /usr/local/bin/agentbox-dockerd-start
 RUN chmod +x /usr/local/bin/agentbox-dockerd-start
+
+# In-box Portless CA trust helper — trusts the symmetric `<box>.localhost` CA in
+# the system store + the box user's NSS db (Chromium/Playwright). Invoked at
+# create when the host Portless proxy is TLS. certutil ships in libnss3-tools above.
+COPY packages/sandbox-docker/scripts/agentbox-portless-trust /usr/local/bin/agentbox-portless-trust
+RUN chmod +x /usr/local/bin/agentbox-portless-trust
 
 # Pre-`docker commit` cleanup for checkpoints. Baked into the image so the host
 # can always reach it via `docker exec --user root <ctr>
