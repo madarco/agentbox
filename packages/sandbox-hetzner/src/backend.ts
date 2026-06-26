@@ -628,7 +628,20 @@ export const hetznerBackend: CloudBackend = {
     const tlsFlag = opts.tls ? '' : '--no-tls';
     const startCmd = `sudo portless proxy start ${tlsFlag} -p ${String(opts.proxyPort)}`.replace(/\s+/g, ' ');
     const aliasCmd = `sudo portless alias ${shellQuote(opts.boxName)} ${String(opts.webPort)}`;
-    await this.exec(h, `${startCmd}; ${aliasCmd}`);
+    const cmds = [startCmd, aliasCmd];
+    if (opts.tls) {
+      // The TLS mirror serves its own self-signed CA at /root/.portless/ca.pem.
+      // `portless proxy start` only trusts it in the system store — not the box
+      // user's NSS db, which Chromium / Playwright read — so the VNC browser and
+      // Playwright fail with a cert error on `https://<box>.localhost`. Trust it
+      // everywhere (system store + vscode NSS db) and point Node at it via
+      // NODE_EXTRA_CA_CERTS. Best-effort: the helper never exits non-zero.
+      cmds.push(
+        'sudo agentbox-portless-trust /root/.portless/ca.pem >/dev/null 2>&1 || true',
+        `echo 'export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/agentbox-portless-ca.crt' | sudo tee /etc/profile.d/agentbox-portless-ca.sh >/dev/null || true`,
+      );
+    }
+    await this.exec(h, cmds.join('; '));
   },
 
   async attachArgv(h): Promise<string[]> {

@@ -39,6 +39,7 @@ const dockerfileSrc = 'packages/sandbox-docker/Dockerfile.box';
 const execBitFiles = new Set([
   'packages/sandbox-docker/scripts/agentbox-vnc-start',
   'packages/sandbox-docker/scripts/agentbox-dockerd-start',
+  'packages/sandbox-docker/scripts/agentbox-portless-trust',
   'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
   'packages/sandbox-docker/scripts/agentbox-open',
   'packages/sandbox-docker/scripts/gh-shim',
@@ -52,6 +53,7 @@ const contextFiles = [
   'apps/cli/share/agentbox-setup/SKILL.md',
   'packages/sandbox-docker/scripts/agentbox-vnc-start',
   'packages/sandbox-docker/scripts/agentbox-dockerd-start',
+  'packages/sandbox-docker/scripts/agentbox-portless-trust',
   'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
   'packages/sandbox-docker/scripts/agentbox-open',
   'packages/sandbox-docker/scripts/gh-shim',
@@ -98,6 +100,7 @@ const hetznerFiles = [
   ['packages/ctl/dist/bin.cjs', 'ctl.cjs', true],
   ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
   ['packages/sandbox-docker/scripts/agentbox-dockerd-start', 'agentbox-dockerd-start', true],
+  ['packages/sandbox-docker/scripts/agentbox-portless-trust', 'agentbox-portless-trust', true],
   ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
   ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
   ['packages/sandbox-docker/scripts/gh-shim', 'gh-shim', true],

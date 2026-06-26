@@ -17,6 +17,7 @@ function makeFakeRepo(): string {
     'packages/ctl/dist/bin.cjs',
     'packages/sandbox-docker/scripts/agentbox-vnc-start',
     'packages/sandbox-docker/scripts/agentbox-dockerd-start',
+    'packages/sandbox-docker/scripts/agentbox-portless-trust',
     'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
     'packages/sandbox-docker/scripts/agentbox-open',
     'packages/sandbox-docker/scripts/gh-shim',

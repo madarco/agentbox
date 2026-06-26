@@ -172,9 +172,10 @@ done_ "agentbox-ctl install"
 # *before* Chromium sidesteps the issue and keeps the snapshot complete.
 # Tracked as Phase-7 follow-up in docs/hertzner_backlog.md.
 
-step "baked helper scripts (vnc / dockerd / cleanup / xdg-open / gh + git + ntn + linear shims)"
+step "baked helper scripts (vnc / dockerd / portless-trust / cleanup / xdg-open / gh + git + ntn + linear shims)"
 install -m 0755 /tmp/agentbox-vnc-start          /usr/local/bin/agentbox-vnc-start
 install -m 0755 /tmp/agentbox-dockerd-start      /usr/local/bin/agentbox-dockerd-start
+install -m 0755 /tmp/agentbox-portless-trust     /usr/local/bin/agentbox-portless-trust
 install -m 0755 /tmp/agentbox-checkpoint-cleanup /usr/local/bin/agentbox-checkpoint-cleanup
 install -m 0755 /tmp/agentbox-open               /usr/local/bin/agentbox-open
 ln -sf /usr/local/bin/agentbox-open /usr/local/bin/xdg-open
@@ -191,7 +192,7 @@ install -m 0755 /tmp/agentbox-git-shim           /usr/local/bin/git
 install -m 0755 /tmp/agentbox-ntn-shim           /usr/local/bin/ntn
 ln -sf /usr/local/bin/ntn /usr/local/bin/notion
 install -m 0755 /tmp/agentbox-linear-shim        /usr/local/bin/linear
-done_ "baked helper scripts (vnc / dockerd / cleanup / xdg-open / gh + git + ntn + linear shims)"
+done_ "baked helper scripts (vnc / dockerd / portless-trust / cleanup / xdg-open / gh + git + ntn + linear shims)"
 
 step "baked config files (claude / codex / setup guide / tmux.conf)"
 install -m 0644 /tmp/agentbox-custom-CLAUDE.md      /etc/claude-code/CLAUDE.md
@@ -334,7 +335,7 @@ done_ "VNC stack (TigerVNC + noVNC + websockify + autocutsel)"
 
 step "Chrome runtime libs"
 apt-get install -y --no-install-recommends \
-  libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
+  libnss3 libnss3-tools libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
   libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
   libgbm1 libdrm2 libpango-1.0-0 libcairo2 libasound2t64 \
   fonts-liberation xdg-utils

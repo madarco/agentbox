@@ -423,6 +423,15 @@ decorates these URLs with Portless aliases for symmetric
 `<box-name>.localhost` URLs (handled provider-side, not in the
 backend, so the backend stays focused on plumbing).
 
+When the host Portless proxy runs in **TLS** mode, the in-box mirror serves a
+self-signed CA the box doesn't trust by default, so in-box Chromium (VNC window)
+and Playwright would reject `https://<box>.localhost`. The baked
+`agentbox-portless-trust` helper fixes this: `startInBoxPortless` (hetzner) and
+docker `create` invoke it to trust the CA in both the system store
+(`update-ca-certificates`) and the box user's NSS db (`certutil`, from
+`libnss3-tools`), and export `NODE_EXTRA_CA_CERTS` for Node clients. No-TLS host
+proxies (the `--no-tls -p 1355` default) serve plain `http` and skip this entirely.
+
 ### 3.4 Checkpoints
 
 Map to Hetzner's `create_image` API (`type: snapshot`). Defaults to

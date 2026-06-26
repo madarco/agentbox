@@ -306,6 +306,31 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
+/**
+ * Trust the (TLS) host Portless CA inside a docker box so the in-box VNC
+ * Chromium and Playwright accept `https://<name>.localhost`. The CA is the
+ * host's, bind-mounted at /home/vscode/.portless/ca.pem (PORTLESS_STATE_DIR).
+ * The baked `agentbox-portless-trust` helper installs it into the system store
+ * + the vscode NSS db; we then drop a profile.d export of NODE_EXTRA_CA_CERTS
+ * for Node-based agents. Best-effort: never throws.
+ */
+async function trustInBoxPortlessCa(
+  container: string,
+  log: (line: string) => void,
+): Promise<void> {
+  const script =
+    'agentbox-portless-trust /home/vscode/.portless/ca.pem >/dev/null 2>&1 || true; ' +
+    "echo 'export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/agentbox-portless-ca.crt' " +
+    '> /etc/profile.d/agentbox-portless-ca.sh 2>/dev/null || true';
+  const r = await execa(
+    'docker',
+    ['exec', '--user', 'root', container, 'bash', '-lc', script],
+    { reject: false },
+  );
+  if (r.exitCode === 0) log('portless: trusted host CA in box (system store + NSS)');
+  else log('portless: in-box CA trust failed (best-effort) — in-box https may warn');
+}
+
 // ~/.claude and ~/.codex are intentionally NOT in this list: each lives in a
 // named volume (`agentbox-claude-config` / `agentbox-codex-config`, see
 // resolveClaudeVolume / resolveCodexVolume) so auth persists inside the
@@ -1207,6 +1232,16 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
               // the proxy was started (http://…:1355 no-TLS, or https://… on :443).
               portlessUrl = await portlessGetUrl(name);
               log(`portless alias ${portlessUrl} -> 127.0.0.1:${String(webHostPort)}`);
+              // When the host proxy is TLS, the in-box VNC Chromium / Playwright
+              // hit `https://<name>.localhost` (via host.docker.internal) and
+              // reject the host's self-signed CA. The CA is already bind-mounted
+              // at /home/vscode/.portless/ca.pem (PORTLESS_STATE_DIR); trust it
+              // in the box (system store + vscode NSS db) and point Node at it.
+              // agent-browser already gets IGNORE_HTTPS_ERRORS via portlessEnv;
+              // this covers everything else. http (no-TLS :1355) has no cert.
+              if (portlessUrl.startsWith('https://')) {
+                await trustInBoxPortlessCa(containerName, log);
+              }
             } else {
               log('portless alias failed (best-effort) — box still reachable on the loopback URL');
             }
