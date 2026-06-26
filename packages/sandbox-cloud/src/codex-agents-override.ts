@@ -1,5 +1,8 @@
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
-import { buildCodexAgentsOverrideScript } from '@agentbox/sandbox-docker';
+import {
+  buildCodexAgentsOverrideScript,
+  CODEX_OVERRIDE_WROTE_MARKER,
+} from '@agentbox/sandbox-docker';
 
 /** CODEX_HOME is `/home/vscode/.codex` on every provider (the box user is `vscode`). */
 const BOX_CODEX_HOME = '/home/vscode/.codex';
@@ -30,14 +33,18 @@ export async function ensureCodexAgentsOverride(
     // Cloud backends signal script failure via a non-zero exitCode rather than
     // throwing, so a `set -e` abort (perms, missing paths) must be read off the
     // result — otherwise we'd log success while the box booted without facts.
+    // The script also exits 0 in the no-op case (box-facts file absent) without
+    // writing, so gate the "seeded" log on the wrote-marker, not just exit 0.
     const res = await backend.exec(handle, script);
-    if (res.exitCode === 0) log('seeded Codex AGENTS.override.md');
-    else
+    if (res.exitCode !== 0)
       log(
         `codex AGENTS.override seed failed (continuing): exit ${res.exitCode}${
           res.stderr.trim() ? `: ${res.stderr.trim()}` : ''
         }`,
       );
+    else if (res.stdout.includes(CODEX_OVERRIDE_WROTE_MARKER))
+      log('seeded Codex AGENTS.override.md');
+    else log('codex AGENTS.override skipped: box-facts file absent');
   } catch (err) {
     log(
       `codex AGENTS.override seed failed (continuing): ${err instanceof Error ? err.message : String(err)}`,

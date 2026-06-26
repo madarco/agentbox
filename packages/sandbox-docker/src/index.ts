@@ -62,6 +62,7 @@ export {
 export {
   BOX_SYSTEM_PROMPT_PATH,
   buildCodexAgentsOverrideScript,
+  CODEX_OVERRIDE_WROTE_MARKER,
   buildCodexAttachArgv,
   buildCodexLoginRunArgv,
   buildCodexMounts,

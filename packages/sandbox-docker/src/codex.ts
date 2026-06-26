@@ -36,6 +36,12 @@ export const BOX_SYSTEM_PROMPT_PATH = '/etc/claude-code/CLAUDE.md';
 /** Marks our generated override so we never fold our own output back in. */
 const CODEX_OVERRIDE_SENTINEL =
   '<!-- agentbox:box-facts (generated; edit AGENTS.md instead) -->';
+/**
+ * Stdout marker the generator prints ONLY after it actually writes the override.
+ * Callers key their "seeded" log off this (not just exit 0), since the script
+ * also exits 0 in the no-op case where the box-facts file is absent.
+ */
+export const CODEX_OVERRIDE_WROTE_MARKER = 'agentbox:codex-override-written';
 
 /**
  * Build the `sh` snippet that (re)generates `<codexHome>/AGENTS.override.md` =
@@ -85,6 +91,9 @@ export function buildCodexAgentsOverrideScript(codexHome: string): string {
     '  fi',
     '} > "$TMP"',
     'mv "$TMP" "$OVR"',
+    // Printed only on a real write; the early `exit 0` (box facts absent) skips
+    // it, so callers can distinguish "wrote" from "no-op" on a 0 exit.
+    `printf '%s\\n' '${CODEX_OVERRIDE_WROTE_MARKER}'`,
   ].join('\n');
 }
 
@@ -327,9 +336,9 @@ export async function seedCodexAgentsOverride(
       'sh',
       '-c',
       buildCodexAgentsOverrideScript('/dst') +
-        '\nchown 1000:1000 "$OVR" 2>/dev/null || true\n[ -f "$OVR" ] && echo SEEDED || true',
+        '\nchown 1000:1000 "$OVR" 2>/dev/null || true',
     ]);
-    return { seeded: stdout.includes('SEEDED') };
+    return { seeded: stdout.includes(CODEX_OVERRIDE_WROTE_MARKER) };
   } catch {
     return { seeded: false };
   }
