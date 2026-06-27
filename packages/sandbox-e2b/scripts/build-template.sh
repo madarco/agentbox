@@ -244,6 +244,18 @@ export DISABLE_AUTOUPDATER=${DISABLE_AUTOUPDATER:-1}
 export DISPLAY=${DISPLAY:-:1}
 export AGENT_BROWSER_EXECUTABLE_PATH=${AGENT_BROWSER_EXECUTABLE_PATH:-/usr/local/bin/chromium}
 export BROWSER=${BROWSER:-/usr/local/bin/agentbox-open}
+# Land interactive login shells in the workspace, so remote-host integrations
+# (Codex app, VS Code Remote-SSH, plain `ssh <box>`) open in the project instead
+# of $HOME. Interactive-only so scp/sftp and `ssh box <cmd>` are untouched; only
+# when still at $HOME so a caller-chosen dir (e.g. agentbox's tmux `-c /workspace`)
+# is never overridden.
+case $- in
+  *i*)
+    if [ "$PWD" = "$HOME" ] && [ -d /workspace ]; then
+      cd /workspace
+    fi
+    ;;
+esac
 PROFILE
 chmod 0644 /etc/profile.d/agentbox.sh
 done_ "login-shell shim (/etc/profile.d/agentbox.sh)"

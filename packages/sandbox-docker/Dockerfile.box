@@ -510,6 +510,15 @@ RUN printf '%s\n' \
         '  . /etc/agentbox/box.env' \
         '  set +a' \
         'fi' \
+        '# Land interactive login shells in the workspace (remote-host integrations,' \
+        '# plain `ssh <box>`); interactive-only and only when still at $HOME.' \
+        'case $- in' \
+        '  *i*)' \
+        '    if [ "$PWD" = "$HOME" ] && [ -d /workspace ]; then' \
+        '      cd /workspace' \
+        '    fi' \
+        '    ;;' \
+        'esac' \
         > /etc/profile.d/agentbox.sh \
     && chmod 0644 /etc/profile.d/agentbox.sh
 
