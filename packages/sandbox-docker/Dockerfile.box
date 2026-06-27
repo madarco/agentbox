@@ -32,10 +32,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 # outer terminal regardless; this just unlocks the in-pane side.
 #
 # DISABLE_AUTOUPDATER follows Anthropic's own devcontainer guidance: there's no
-# point updating Claude Code inside a sandbox that's torn down regularly, and
-# leaving it enabled triggers a "installMethod is native, but .local/bin
-# missing" warning when the host's .claude.json (synced in) reports a native
-# install method while the box uses npm-global.
+# point updating Claude Code inside a sandbox that's torn down regularly. The box
+# installs claude via Anthropic's native installer (below), so the binary lands
+# at /home/vscode/.local/bin/claude and installMethod=native (synced in from the
+# host's .claude.json) matches the box — no "installMethod is native, but
+# .local/bin missing" warning, and the autoupdater would otherwise churn the
+# pinned `stable` build.
 #
 # LANG/LC_ALL must be set via ENV (not /etc/environment, which is what the
 # devcontainers base seeds): `docker exec` doesn't source login files, so
@@ -265,7 +267,20 @@ RUN mkdir -p /home/vscode/.vscode-server/extensions /home/vscode/.cursor-server/
 # the host's `.claude.json` (with installMethod=native) expects, so the in-box
 # integrity check doesn't fire.
 USER vscode
-RUN curl -fsSL https://claude.ai/install.sh | bash -s stable
+# Fetch the installer to a file (not `curl | bash`) so a blocked download — e.g.
+# a Cloudflare 403 the CDN intermittently returns under load — fails the `&&`
+# chain instead of being hidden behind bash's exit 0, and retry it (3 attempts,
+# 60s then 240s backoff) before giving up, then verify `claude` is on PATH.
+# (RUN's default shell is /bin/sh, so a plain loop — no pipefail/bash arrays.)
+RUN i=1; while :; do \
+      curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh \
+        && bash /tmp/claude-install.sh stable \
+        && command -v claude >/dev/null && break; \
+      [ "$i" -ge 3 ] && { echo "claude native install failed after 3 attempts" >&2; exit 71; }; \
+      w=60; [ "$i" -ge 2 ] && w=240; \
+      echo "claude install attempt $i failed — backing off ${w}s" >&2; sleep "$w"; \
+      i=$((i+1)); \
+    done; rm -f /tmp/claude-install.sh
 USER root
 
 # OpenAI Codex CLI. The @openai/codex npm package ships platform-native

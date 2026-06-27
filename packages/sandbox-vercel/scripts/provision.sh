@@ -39,6 +39,24 @@ set -euo pipefail
 step() { printf '\n>>> BEGIN %s\n' "$1"; }
 done_() { printf '<<< END %s\n' "$1"; }
 
+# Retry a command with exponential backoff. Usage: retry_backoff <max> cmd...
+# Waits 60s before attempt 2, 240s before attempt 3 (~5 min total budget). Used
+# for the Claude native installer, whose CDN (claude.ai / downloads.claude.ai,
+# behind Cloudflare) intermittently 403s cloud-datacenter egress IPs under load.
+retry_backoff() {
+  local max=$1; shift
+  local attempt=1
+  local -a waits=(60 240)
+  while true; do
+    if "$@"; then return 0; fi
+    if [ "$attempt" -ge "$max" ]; then return 1; fi
+    local w=${waits[$((attempt-1))]:-240}
+    echo "retry_backoff: attempt ${attempt}/${max} failed — backing off ${w}s" >&2
+    sleep "$w"
+    attempt=$((attempt+1))
+  done
+}
+
 if [ "$(id -u)" -ne 0 ]; then
   echo "provision.sh: must run as root (got uid $(id -u))" >&2
   exit 64
@@ -298,8 +316,20 @@ npm install -g @openai/codex opencode-ai agent-browser 2>&1 | tail -3 || \
 done_ "agent CLIs (codex + opencode + agent-browser, global npm)"
 
 step "Claude Code (native installer, run as vscode)"
-# Anthropic's canonical installer drops `claude` at /home/vscode/.local/bin/.
-sudo -u vscode -H bash -lc 'curl -fsSL https://claude.ai/install.sh | bash -s stable'
+# Anthropic's native installer drops `claude` at /home/vscode/.local/bin/claude
+# with installMethod=native (matching the host-seeded .claude.json, so the
+# startup integrity check stays quiet) and ships native-only features the npm
+# package lacks. Its CDN (claude.ai / downloads.claude.ai) sits behind
+# Cloudflare, which intermittently 403s cloud-datacenter egress IPs under load —
+# so retry with backoff rather than falling back to npm. A bare `curl | bash`
+# would hide a 403 (curl -f exits non-zero but the pipe's status is bash's 0),
+# so keep pipefail and fold the PATH check in so a "succeeded but absent" result
+# also retries. A failed provision is better than a claude-less snapshot.
+if ! retry_backoff 3 sudo -u vscode -H bash -lc \
+     'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash -s stable && command -v claude >/dev/null'; then
+  echo "provision.sh: Claude native installer failed after 3 attempts (Cloudflare 403?) — aborting provision" >&2
+  exit 71
+fi
 done_ "Claude Code (native installer, run as vscode)"
 
 step "Chrome runtime libs (dnf)"
