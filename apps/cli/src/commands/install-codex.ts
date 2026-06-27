@@ -100,9 +100,13 @@ function symlinkStagedSkills(
     }
     if (!versionDir || !existsSync(versionDir)) {
       const children = existsSync(pluginRoot) ? readdirSync(pluginRoot) : [];
-      if (children.length === 1) versionDir = join(pluginRoot, children[0]!);
+      versionDir = children.length === 1 ? join(pluginRoot, children[0]!) : undefined;
     }
-    if (!versionDir) return { linked: 0, error: 'staged plugin dir not found' };
+    // Bail unless we resolved a real staged dir — never mkdir/symlink into a
+    // non-existent manifest-version path (that would orphan a tree Codex ignores).
+    if (!versionDir || !existsSync(versionDir)) {
+      return { linked: 0, error: 'staged plugin dir not found' };
+    }
 
     const skillsDir = join(bundle, 'skills');
     if (!existsSync(skillsDir)) return { linked: 0 };
@@ -381,8 +385,11 @@ export async function installCodexPlugin(
 
     // 3) Dev: symlink the staged skill file(s) to the working tree so skill edits
     // are live on the next Codex restart (no re-stage). Manifest/command changes
-    // still need a re-run of `agentbox install codex`.
-    if (devRoot && result.pluginInstalled) {
+    // still need a re-run of `agentbox install codex`. Run whenever a staged dir
+    // exists — not only on add.status === 0: a non-zero `plugin add` is treated as
+    // "already installed" and leaves a staged cache we still want symlinked
+    // (symlinkStagedSkills bails cleanly if nothing is staged).
+    if (devRoot) {
       const sym = symlinkStagedSkills(devRoot, env);
       result.skillsSymlinked = sym.linked > 0;
       if (sym.linked === 0 && !opts.quiet) {
