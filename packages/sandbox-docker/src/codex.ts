@@ -221,18 +221,32 @@ export async function ensureCodexVolume(
       // resumes at /workspace (Codex reads the cwd from state_*.sqlite's threads
       // index, which it backfills from the box's rollouts) and the host's
       // cross-project Codex history doesn't leak into the box.
-      // The trailing `rm -rf` purges any state DBs a PREVIOUS sync (before these
+      // The trailing `rm -rf` purges anything a PREVIOUS sync (before these
       // excludes) already copied into the shared volume — rsync without
       // --delete only adds/updates. The globs are no-ops with `-f` when absent,
       // and never touch box-owned `sessions/` (the teleported rollouts) or
       // `hooks.json`.
+      // Heavy host-only artifacts are also excluded (mirrors CODEX_RSYNC_EXCLUDES
+      // in host-stage.ts): `packages` (macOS standalone release binaries — the
+      // in-box codex is npm-installed), `plugins/.plugin-appserver` (the
+      // platform-specific plugin app-server runtime), `computer-use` (the macOS
+      // `Codex Computer Use.app` bundle), `archived_sessions` (host history), and
+      // the regenerable caches (`.tmp`, `tmp`, `cache`, `vendor_imports`,
+      // `sqlite`, `models_cache.json`). Without these the shared volume balloons
+      // to ~1.5 GB and every create's rsync crawls.
       'rsync -a --exclude=sessions --exclude=log --exclude=history.jsonl --exclude=hooks.json' +
         skillsExclude +
         ' --exclude=state_*.sqlite* --exclude=logs_*.sqlite* --exclude=session_index.jsonl' +
         ' --exclude=external_agent_session_imports.json --exclude=shell_snapshots' +
+        ' --exclude=packages --exclude=plugins/.plugin-appserver --exclude=computer-use' +
+        ' --exclude=archived_sessions --exclude=.tmp --exclude=tmp --exclude=cache' +
+        ' --exclude=vendor_imports --exclude=sqlite --exclude=models_cache.json' +
         ' /src/ /dst/' +
         ' && rm -rf /dst/state_*.sqlite* /dst/logs_*.sqlite* /dst/session_index.jsonl' +
         ' /dst/external_agent_session_imports.json /dst/shell_snapshots' +
+        ' /dst/packages /dst/plugins/.plugin-appserver /dst/computer-use' +
+        ' /dst/archived_sessions /dst/.tmp /dst/tmp /dst/cache' +
+        ' /dst/vendor_imports /dst/sqlite /dst/models_cache.json' +
         skillsPurge +
         ' && chown -R 1000:1000 /dst',
     ]);

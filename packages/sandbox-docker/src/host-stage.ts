@@ -471,6 +471,20 @@ const CODEX_RSYNC_EXCLUDES = [
   '--exclude=models_cache.json',
   '--exclude=installation_id',
   '--exclude=version.json',
+  // Heavy host-only artifacts that are useless inside a Linux box and balloon
+  // the staged tarball (~800 MB on a real host) — without these the codex
+  // static scp/extract during prepare crawls. `packages/standalone` is the
+  // macOS aarch64 standalone release binaries (the in-box codex is npm-installed
+  // anyway); `plugins/.plugin-appserver` is the platform-specific plugin
+  // app-server runtime; `computer-use` is the macOS `Codex Computer Use.app`
+  // bundle. `archived_sessions` is host session history, not config (mirrors the
+  // `sessions` exclude). (`plugins/cache`, the marketplace download cache, is
+  // already dropped by the generic `--exclude=cache` above.) This shrinks the
+  // staged codex tarball from ~800 MB to ~0.5 MB.
+  '--exclude=packages',
+  '--exclude=plugins/.plugin-appserver',
+  '--exclude=computer-use',
+  '--exclude=archived_sessions',
 ];
 
 const CODEX_KEYCHAIN_WARNING =
