@@ -44,6 +44,7 @@ import { markSetupComplete } from '../lib/first-run.js';
 import { maybePromptStar } from '../lib/star-prompt.js';
 import { installCmuxCommand } from './install-cmux.js';
 import { installHerdrCommand } from './install-herdr.js';
+import { installCodexCommand, installCodexPlugin } from './install-codex.js';
 import { runPrepare } from './prepare.js';
 
 /** Marker on the line after the frontmatter of every skill we ship. Its
@@ -640,6 +641,29 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
     log.warn(err instanceof Error ? err.message : String(err));
   }
 
+  // 5b) Codex plugin (marketplace add + install + enable by default). Best-effort
+  // and gated on the host having Codex — a clean no-op otherwise.
+  try {
+    const codexRes = await installCodexPlugin({
+      force: opts.force,
+      dryRun: opts.dryRun,
+      quiet: true,
+    });
+    if (codexRes.ran) {
+      log.info(
+        codexRes.enableStatus === 'added'
+          ? 'Codex plugin: installed and enabled by default'
+          : codexRes.enableStatus === 'user-enabled'
+            ? 'Codex plugin: already enabled'
+            : codexRes.enableStatus === 'user-disabled'
+              ? 'Codex plugin: installed (left disabled per your config)'
+              : 'Codex plugin: installed (could not edit ~/.codex/config.toml)',
+      );
+    }
+  } catch (err) {
+    log.warn(`Codex plugin setup skipped: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // 6) First-run marker (so the auto-trigger doesn't fire again).
   markSetupComplete(providerName);
 
@@ -727,3 +751,4 @@ export const installCommand = new Command('install')
 installCommand.enablePositionalOptions();
 installCommand.addCommand(installCmuxCommand);
 installCommand.addCommand(installHerdrCommand);
+installCommand.addCommand(installCodexCommand);

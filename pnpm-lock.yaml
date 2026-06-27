@@ -65,6 +65,9 @@ importers:
       execa:
         specifier: ^9.5.2
         version: 9.6.1
+      smol-toml:
+        specifier: ^1.7.0
+        version: 1.7.0
       supports-hyperlinks:
         specifier: ^3.1.0
         version: 3.2.0

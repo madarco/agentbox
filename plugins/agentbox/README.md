@@ -6,13 +6,25 @@ and push commits safely through the host relay.
 
 ## Install
 
+With the AgentBox CLI installed, one command registers, installs, and **enables**
+the plugin (also runs automatically during `agentbox install` when Codex is detected):
+
+```bash
+agentbox install codex
+```
+
+Or do it directly with Codex:
+
 ```bash
 codex plugin marketplace add madarco/agentbox
 codex plugin add agentbox@agentbox
 ```
 
 This repo doubles as a single-plugin Codex marketplace: `.agents/plugins/marketplace.json`
-points at this bundle (`./plugins/agentbox`).
+points at this bundle (`./plugins/agentbox`). Note `codex plugin add` installs the
+plugin but may leave it disabled depending on your Codex version — `agentbox install
+codex` also writes `[plugins."agentbox@agentbox"] enabled = true` to
+`~/.codex/config.toml` so it's on by default (it respects an explicit disable).
 
 ## Layout
 
