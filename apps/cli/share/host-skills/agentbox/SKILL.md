@@ -51,3 +51,4 @@ When in Codex App return a clickable link in the response for an easy way:
 
 - If agentbox command fails, tell the user to install AgentBox by writing `! npm -g install @madarco/agentbox` in the chat.
 - If `AGENTBOX_RELAY_URL` is set in the environment, you are running *inside* a box. This command is host-only in v1; tell the user box→box fork is not supported yet.
+- If you need to know more about Agentbox, check the /agentbox-info skill that containes the full documentation.
