@@ -27,7 +27,7 @@ interface CommonOptions {
   hostInitiatedToken?: string;
 }
 
-interface PushOptions extends CommonOptions {
+export interface PushOptions extends CommonOptions {
   /** Land the branch in the host's local repo only; never push to the remote. */
   hostOnly?: boolean;
   /** With --host-only: destination branch name on the host (default: box branch). */
@@ -53,13 +53,21 @@ interface GitCloneRpcParams {
   args?: string[];
 }
 
-function buildParams(opts: PushOptions, extra: string[]): GitRpcParams {
+export function buildParams(opts: PushOptions, extra: string[]): GitRpcParams {
+  const args = [...extra];
   const params: GitRpcParams = { path: opts.cwd ?? process.cwd() };
   if (opts.remote) params.remote = opts.remote;
-  if (extra.length > 0) params.args = extra;
-  if (opts.hostOnly) params.hostOnly = true;
-  if (opts.as) params.as = opts.as;
-  if (opts.force) params.force = true;
+  if (opts.hostOnly) {
+    params.hostOnly = true;
+    if (opts.as) params.as = opts.as;
+    if (opts.force) params.force = true;
+  } else if (opts.force) {
+    // Not host-only: --force is a real remote-push flag. `params.force` is only
+    // honored on the host-only land path, so forward it as a git arg here so
+    // the relay appends it to `git push <remote> <branch>`.
+    args.push('--force');
+  }
+  if (args.length > 0) params.args = args;
   if (opts.hostInitiatedToken) params.hostInitiated = opts.hostInitiatedToken;
   return params;
 }

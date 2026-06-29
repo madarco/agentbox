@@ -131,11 +131,16 @@ const pushCommand = new Command('push')
           await exitWith(await runAndStream(box, argv));
           return;
         }
-        const predicted = buildPredictedGitParams(opts.remote, args);
+        // --force is a real remote-push flag. Commander now consumes it into
+        // opts.force (it's a known option for --host-only), so re-append it to
+        // the forwarded args; ctl normalizes it back to the same args tail, so
+        // the predicted params hash still matches what ctl sends.
+        const extraArgs = opts.force ? [...args, '--force'] : args;
+        const predicted = buildPredictedGitParams(opts.remote, extraArgs);
         const tokenArgs = await hostInitiatedArgs(box.id, 'git.push', predicted);
         const argv = ['agentbox-ctl', 'git', 'push', ...tokenArgs];
         if (opts.remote) argv.push('--remote', opts.remote);
-        argv.push(...args);
+        argv.push(...extraArgs);
         await exitWith(await runAndStream(box, argv));
       } catch (err) {
         handleLifecycleError(err);
