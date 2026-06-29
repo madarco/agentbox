@@ -43,7 +43,7 @@ Cloud boxes (`--provider daytona`, `vercel`, `hetzner`) do a bulk tar pull of `/
 
 ## Copy files
 
-`agentbox cp <src> [dst]` is a one-off file copy between host and box, modeled on `docker cp`. Direction is inferred from which argument carries the `box:` prefix (a `:` not preceded by `/`): `box:/path` as the source downloads, `box:/path` as the destination uploads.
+`agentbox cp <paths...>` is a one-off file copy between host and box, modeled on `docker cp`. Direction is inferred from which side carries the `box:` prefix (a `:` not preceded by `/`): `box:/path` sources download, a `box:/path` destination uploads. The last path is the destination; everything before it is a source.
 
 ```bash
 # Download a single file into the current directory
@@ -57,12 +57,20 @@ agentbox cp ./local.txt mybox:/workspace/
 
 # Upload a directory (recursive)
 agentbox cp ./dir mybox:/workspace/
+
+# Many sources at once into a destination directory
+agentbox cp a.txt b.txt src/ mybox:/workspace/dest/
+
+# A shell-expanded wildcard (your shell expands it before agentbox runs)
+agentbox cp ./*.log mybox:/workspace/logs/
 ```
 
-On download the host path is optional and defaults to the current directory; on upload it is required. Directories copy recursively and preserve mode; uploaded files are re-owned to `vscode` (uid 1000). The box auto-unpauses if needed.
+On download the host path is optional and defaults to the current directory; on upload it is required. With two or more sources the destination must be a directory (end it with `/`). Directories copy recursively and preserve mode; uploaded files are re-owned to `vscode` (uid 1000). The box auto-unpauses if needed.
+
+Wildcards are expanded by the shell you type the command in, so `cp ./*.log box:/dst/` works from the host and `cp box:/workspace/*.log ./` works from inside the box (`agentbox-ctl cp toHost`). A box-path glob typed on the host can't be expanded (the host shell can't see the box filesystem) — list the files or run it from inside the box.
 
 <Callout type="warn" title="HEADS UP">
-Exactly one side must carry the `name:` prefix. `agentbox cp ./a ./b` (neither side) or `agentbox cp box:/a box:/b` (both sides) is a usage error.
+Exactly one side must carry the `name:` prefix, and all sources must be on that one side. `agentbox cp ./a ./b` (neither side) or `agentbox cp box:/a box:/b` (both sides) is a usage error, and box sources must all name the same box.
 </Callout>
 
 ## Push & pull via the relay

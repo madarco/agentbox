@@ -1267,20 +1267,20 @@ export function createCloudProvider(
 
     async uploadPath(
       box: BoxRecord,
-      hostSrc: string,
+      hostSrcs: string[],
       boxDst: string,
       exclude?: string[],
     ): Promise<{ finalPath: string }> {
-      return uploadToCloudBox(backend, handleFor(box), hostSrc, boxDst, exclude);
+      return uploadToCloudBox(backend, handleFor(box), hostSrcs, boxDst, exclude);
     },
 
     async downloadPath(
       box: BoxRecord,
-      boxSrc: string,
+      boxSrcs: string[],
       hostDst: string,
       exclude?: string[],
     ): Promise<{ finalPath: string }> {
-      return downloadFromCloudBox(backend, handleFor(box), boxSrc, hostDst, exclude);
+      return downloadFromCloudBox(backend, handleFor(box), boxSrcs, hostDst, exclude);
     },
 
     async downloadDirContents(

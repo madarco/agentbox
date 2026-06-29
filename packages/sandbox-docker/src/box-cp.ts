@@ -81,7 +81,7 @@ export async function streamTarPipe(
   ];
 }
 
-export async function uploadToBox(
+async function uploadOneToBox(
   box: BoxRecord,
   hostSrc: string,
   boxDst: string,
@@ -210,7 +210,7 @@ export async function uploadToBox(
   return { finalPath };
 }
 
-export async function downloadFromBox(
+async function downloadOneFromBox(
   box: BoxRecord,
   boxSrc: string,
   hostDst: string,
@@ -251,4 +251,168 @@ export async function downloadFromBox(
     renameSync(posix.join(hostParent, srcBasename), finalPath);
   }
   return { finalPath };
+}
+
+/** `docker exec test -d` — true when `p` is a directory inside the box. */
+async function boxIsDir(container: string, p: string): Promise<boolean> {
+  const r = await execa('docker', ['exec', container, 'test', '-d', p], { reject: false });
+  return r.exitCode === 0;
+}
+
+/**
+ * Resolve the box-side destination *directory* for a multi-source copy. With
+ * ≥2 sources the destination must be a directory (POSIX `cp`/`scp`): a trailing
+ * `/` says so explicitly (and we `mkdir -p` it), otherwise it must already be a
+ * directory in the box.
+ */
+async function resolveBoxDestDir(box: BoxRecord, boxDst: string): Promise<string> {
+  if (boxDst.endsWith('/')) return boxDst.replace(/\/+$/, '') || '/';
+  if (await boxIsDir(box.container, boxDst)) return boxDst.replace(/\/+$/, '') || '/';
+  throw new Error(
+    `cannot copy multiple sources to '${boxDst}': destination is not a directory (add a trailing slash, e.g. ${boxDst}/)`,
+  );
+}
+
+/** Group paths by their parent dir so one `tar` invocation packs each group. */
+function groupByParent(
+  paths: string[],
+  dir: (p: string) => string,
+  base: (p: string) => string,
+): Map<string, string[]> {
+  const groups = new Map<string, string[]>();
+  for (const p of paths) {
+    const parent = dir(p);
+    const arr = groups.get(parent);
+    if (arr) arr.push(base(p));
+    else groups.set(parent, [base(p)]);
+  }
+  return groups;
+}
+
+/**
+ * Copy one or more host sources into the box. A single source keeps full
+ * `docker cp` semantics (rename if the dest is a file path); ≥2 sources land
+ * under a destination directory (one `tar` per distinct source parent).
+ */
+export async function uploadToBox(
+  box: BoxRecord,
+  hostSrcs: string[],
+  boxDst: string,
+  exclude?: string[],
+): Promise<BoxCpResult> {
+  if (hostSrcs.length === 1) return uploadOneToBox(box, hostSrcs[0]!, boxDst, exclude);
+
+  const absSrcs = hostSrcs.map((s) => {
+    const a = resolve(s);
+    if (!existsSync(a)) throw new Error(`source not found: ${s}`);
+    return a;
+  });
+  const boxDir = await resolveBoxDestDir(box, boxDst);
+
+  const mk = await execa(
+    'docker',
+    ['exec', '--user', 'root', box.container, 'mkdir', '-p', boxDir],
+    { reject: false },
+  );
+  if (mk.exitCode !== 0) {
+    throw new Error(`mkdir -p ${boxDir} in box failed: ${asText(mk.stderr).slice(0, 300)}`);
+  }
+
+  for (const [parent, basenames] of groupByParent(absSrcs, dirname, basename)) {
+    const [packed, extracted] = await streamTarPipe(
+      'tar',
+      ['-C', parent, '-cf', '-', ...tarExcludeArgs(exclude), ...basenames],
+      'docker',
+      ['exec', '-i', '--user', 'root', box.container, 'tar', '-xf', '-', '-C', boxDir],
+      { ...process.env, COPYFILE_DISABLE: '1' },
+    );
+    if (packed.exitCode !== 0) {
+      throw new Error(`tar pack failed for ${parent}: ${asText(packed.stderr).slice(0, 300)}`);
+    }
+    if (extracted.exitCode !== 0) {
+      throw new Error(`tar extract in box failed: ${asText(extracted.stderr).slice(0, 300)}`);
+    }
+  }
+
+  // chown each landed entry (never `chown -R` the whole dest dir — that would
+  // re-own pre-existing siblings the copy never touched).
+  let warn: string | undefined;
+  for (const a of absSrcs) {
+    const landed = boxDir === '/' ? `/${basename(a)}` : `${boxDir}/${basename(a)}`;
+    const chown = await execa(
+      'docker',
+      ['exec', '--user', 'root', box.container, 'chown', '-R', '1000:1000', landed],
+      { reject: false },
+    );
+    if (chown.exitCode !== 0) {
+      warn = `chown under ${boxDir} to vscode (uid 1000) failed; ownership inside the box may be root.`;
+    }
+  }
+  // Parent-chain chown of the dest dir itself + ancestors back to $HOME (see
+  // uploadOneToBox for the rationale). Skipped for system / /workspace dests.
+  if (boxDir.startsWith(BOX_HOME + '/')) {
+    const walk = await execa(
+      'docker',
+      [
+        'exec',
+        '--user',
+        'root',
+        box.container,
+        'sh',
+        '-c',
+        `parent="$1"; ` +
+          `while [ "$parent" != "$2" ] && [ "$parent" != "/" ]; do ` +
+          `chown 1000:1000 "$parent" || true; ` +
+          `parent=$(dirname "$parent"); ` +
+          `done`,
+        'sh',
+        boxDir,
+        BOX_HOME,
+      ],
+      { reject: false },
+    );
+    if (walk.exitCode !== 0) {
+      warn = warn ?? `chown of parent dirs under ${BOX_HOME} failed; some may remain root-owned.`;
+    }
+  }
+  return warn ? { finalPath: `${boxDir}/`, warn } : { finalPath: `${boxDir}/` };
+}
+
+/**
+ * Copy one or more box sources to the host. A single source keeps full
+ * `docker cp` semantics; ≥2 sources land under a destination directory (one
+ * `tar` per distinct source parent).
+ */
+export async function downloadFromBox(
+  box: BoxRecord,
+  boxSrcs: string[],
+  hostDst: string,
+  exclude?: string[],
+): Promise<BoxCpResult> {
+  if (boxSrcs.length === 1) return downloadOneFromBox(box, boxSrcs[0]!, hostDst, exclude);
+
+  const dstAbs = resolve(hostDst);
+  const dstExists = existsSync(dstAbs);
+  if (!hostDst.endsWith('/') && !(dstExists && statSync(dstAbs).isDirectory())) {
+    throw new Error(
+      `cannot copy multiple sources to '${hostDst}': destination is not a directory (add a trailing slash, e.g. ${hostDst}/)`,
+    );
+  }
+  mkdirSync(dstAbs, { recursive: true });
+
+  for (const [parent, basenames] of groupByParent(boxSrcs, posixDirname, posix.basename)) {
+    const [packed, extracted] = await streamTarPipe(
+      'docker',
+      ['exec', box.container, 'tar', '-C', parent, '-cf', '-', ...tarExcludeArgs(exclude), ...basenames],
+      'tar',
+      ['-xf', '-', '-C', dstAbs],
+    );
+    if (packed.exitCode !== 0) {
+      throw new Error(`tar pack in box failed for ${parent}: ${asText(packed.stderr).slice(0, 300)}`);
+    }
+    if (extracted.exitCode !== 0) {
+      throw new Error(`tar extract on host failed: ${asText(extracted.stderr).slice(0, 300)}`);
+    }
+  }
+  return { finalPath: dstAbs };
 }

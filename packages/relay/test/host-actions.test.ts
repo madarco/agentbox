@@ -56,9 +56,10 @@ describe('executeCloudAction routing', () => {
   });
 
   it('cp.* with missing params returns exit 64 (invalid arguments)', async () => {
+    // Only boxPath, no hostPath → legacy fallback can't complete, no sources.
     const r1 = await executeCloudAction(action('cp.toHost', { boxPath: '/x' }), makeDeps());
     expect(r1.exitCode).toBe(64);
-    expect(r1.stderr).toContain('requires {boxPath, hostPath} strings');
+    expect(r1.stderr).toContain('requires a non-empty {sources}');
     const r2 = await executeCloudAction(action('cp.fromHost', {}), makeDeps());
     expect(r2.exitCode).toBe(64);
   });

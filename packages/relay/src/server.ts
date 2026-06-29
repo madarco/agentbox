@@ -46,6 +46,7 @@ import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from
 import { BoxRegistry, EventBuffer } from './registry.js';
 import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
 import { DEFAULT_BOX_RELAY_PORT } from './types.js';
+import { buildCpArgv, cpFlags, normalizeCpParams } from './cp-rpc.js';
 import type {
   BoxRegistration,
   BoxWorktree,
@@ -480,33 +481,39 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
       if (body.method === 'cp.toHost' || body.method === 'cp.fromHost') {
         const params = body.params as CpRpcParams | undefined;
-        if (!params || typeof params.boxPath !== 'string' || typeof params.hostPath !== 'string') {
-          send(res, 400, { error: 'cp.* requires {boxPath, hostPath} strings' });
+        let norm: { sources: string[]; dest: string };
+        try {
+          norm = normalizeCpParams(body.method, params);
+        } catch (err) {
+          send(res, 400, { error: err instanceof Error ? err.message : String(err) });
           return;
         }
         if (
-          params.exclude !== undefined &&
-          (!Array.isArray(params.exclude) || params.exclude.some((p) => typeof p !== 'string'))
+          params!.exclude !== undefined &&
+          (!Array.isArray(params!.exclude) || params!.exclude.some((p) => typeof p !== 'string'))
         ) {
           send(res, 400, { error: 'cp.* exclude must be an array of strings' });
           return;
         }
         const direction = body.method === 'cp.toHost' ? 'box -> host' : 'host -> box';
-        // Resolve the host path against THIS box's workspace so a relative path
+        // Resolve host paths against THIS box's workspace so a relative path
         // doesn't land under the relay daemon's CWD (whichever project started
         // the relay), and so the consent prompt shows the real destination.
         const workspacePath = await boxWorkspacePath(reg.boxId);
-        const hostAbs = resolveHostPath(workspacePath, params.hostPath);
-        const pathDetail =
-          body.method === 'cp.toHost'
-            ? `${params.boxPath} -> ${hostAbs}`
-            : `${hostAbs} -> ${params.boxPath}`;
-        const detailParts = [pathDetail];
-        if (params.exclude && params.exclude.length > 0) {
-          detailParts.push(`exclude: ${params.exclude.join(', ')}`);
+        const { argv: cpArgs, detail, contextArgv } = buildCpArgv({
+          method: body.method,
+          boxName: reg.name,
+          sources: norm.sources,
+          dest: norm.dest,
+          resolveHost: (p) => resolveHostPath(workspacePath, p),
+          flags: cpFlags(params!),
+        });
+        const detailParts = [detail];
+        if (params!.exclude && params!.exclude.length > 0) {
+          detailParts.push(`exclude: ${params!.exclude.join(', ')}`);
         }
-        if (params.defaultExcludes === false) detailParts.push('(default excludes off)');
-        if (params.yes) detailParts.push('(over size limit — confirmed)');
+        if (params!.defaultExcludes === false) detailParts.push('(default excludes off)');
+        if (params!.yes) detailParts.push('(over size limit — confirmed)');
         const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
           kind: 'confirm',
           message: `Allow cp (${direction}) on ${reg.name}?`,
@@ -514,17 +521,14 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           defaultAnswer: 'n',
           context: {
             command: body.method,
-            argv: [params.boxPath, hostAbs],
+            argv: contextArgv,
           },
         });
         if (verdict.answer !== 'y') {
           send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
           return;
         }
-        const result = await handleCpRpc(reg, body.method, params, {
-          hostPath: hostAbs,
-          cwd: workspacePath,
-        });
+        const result = await handleCpRpc(cpArgs, workspacePath);
         const status = result.exitCode === 0 ? 200 : 500;
         send(res, status, result);
         return;
@@ -1548,12 +1552,7 @@ async function handleIntegrationRpc(
  * Caller (the /rpc route) already gated this with askPrompt and rejected
  * non-'y' answers; we never reach this code without consent.
  */
-async function handleCpRpc(
-  reg: BoxRegistration,
-  method: 'cp.toHost' | 'cp.fromHost',
-  params: CpRpcParams,
-  opts: { hostPath: string; cwd?: string },
-): Promise<GitRpcResult> {
+async function handleCpRpc(cpArgs: string[], cwd?: string): Promise<GitRpcResult> {
   const entry = process.env.AGENTBOX_CLI_ENTRY;
   if (!entry) {
     return {
@@ -1562,20 +1561,12 @@ async function handleCpRpc(
       stderr: 'relay: AGENTBOX_CLI_ENTRY not set; cannot run cp host-side',
     };
   }
-  // `agentbox cp` is positional: <src> [dst]. Direction is encoded by which
-  // arg carries the `<boxName>:` prefix. `opts.hostPath` is already resolved to
-  // an absolute host path (against the box workspace); `opts.cwd` (the box
-  // workspace) makes the host CLI's project-config lookup box-correct too.
-  const boxRef = `${reg.name}:${params.boxPath}`;
-  const flags: string[] = [];
-  for (const pat of params.exclude ?? []) flags.push('--exclude', pat);
-  if (params.defaultExcludes === false) flags.push('--no-default-excludes');
-  if (params.yes) flags.push('--yes');
-  const argv =
-    method === 'cp.toHost'
-      ? [process.execPath, entry, 'cp', boxRef, opts.hostPath, ...flags]
-      : [process.execPath, entry, 'cp', opts.hostPath, boxRef, ...flags];
-  return runHostCommand(argv, CP_RPC_TIMEOUT_MS, opts.cwd);
+  // Re-shell the installed `agentbox cp` (it owns the tar pipe, excludes, the
+  // size guard, and provider routing). `cpArgs` is the fully-built argv from
+  // buildCpArgv (box side prefixed with `<name>:`, host paths absolute); `cwd`
+  // (the box workspace) makes the host CLI's project-config lookup box-correct.
+  const argv = [process.execPath, entry, ...cpArgs];
+  return runHostCommand(argv, CP_RPC_TIMEOUT_MS, cwd);
 }
 
 /**

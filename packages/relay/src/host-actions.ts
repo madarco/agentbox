@@ -41,6 +41,7 @@ import {
   type GhRunRpcParams,
 } from './gh.js';
 import { hashRpcParams, type HostInitiatedTokens } from './host-initiated.js';
+import { buildCpArgv, cpFlags, normalizeCpParams, type CpMethod } from './cp-rpc.js';
 import {
   assertIntegrationReady,
   makeIntegrationOpRefusal,
@@ -683,18 +684,6 @@ export function resolveHostPath(workspacePath: string | undefined, hostPath: str
  * must install it themselves. See the longer note on `resolveCloudBackend`.
  */
 interface CloudCpModule {
-  uploadToCloudBox(
-    backend: CloudBackend,
-    handle: CloudHandle,
-    hostSrc: string,
-    boxDst: string,
-  ): Promise<{ finalPath: string }>;
-  downloadFromCloudBox(
-    backend: CloudBackend,
-    handle: CloudHandle,
-    boxSrc: string,
-    hostDst: string,
-  ): Promise<{ finalPath: string }>;
   pullCloudDirContents(
     backend: CloudBackend,
     handle: CloudHandle,
@@ -727,56 +716,65 @@ async function runCpRpc(
   action: HostAction,
   deps: CloudActionExecutorDeps,
 ): Promise<HostActionResult> {
-  const params = (action.params ?? {}) as Partial<CpRpcParams>;
-  if (typeof params.boxPath !== 'string' || typeof params.hostPath !== 'string') {
+  const method = action.method as CpMethod;
+  const params = (action.params ?? {}) as CpRpcParams;
+  let norm: { sources: string[]; dest: string };
+  try {
+    norm = normalizeCpParams(method, params);
+  } catch (err) {
+    return { exitCode: 64, stdout: '', stderr: `${err instanceof Error ? err.message : String(err)}\n` };
+  }
+  const entry = process.env['AGENTBOX_CLI_ENTRY'];
+  if (!entry) {
     return {
       exitCode: 64,
       stdout: '',
-      stderr: 'cp.* requires {boxPath, hostPath} strings\n',
+      stderr: 'relay: AGENTBOX_CLI_ENTRY not set; cannot run cp host-side\n',
     };
   }
-  const direction = action.method === 'cp.toHost' ? 'box -> host' : 'host -> box';
-  // Resolve the host path against THIS box's workspace before prompting so the
-  // user sees the real destination and a relative path doesn't land under the
-  // relay daemon's CWD (which belongs to whichever project started the relay).
+  const direction = method === 'cp.toHost' ? 'box -> host' : 'host -> box';
+  // Resolve host paths against THIS box's workspace so a relative path doesn't
+  // land under the relay daemon's CWD (which belongs to whichever project
+  // started the relay), and so the consent prompt shows the real destination.
   const lookup = await lookupCloudBox(deps.boxId);
-  const hostAbs = resolveHostPath(lookup.workspacePath, params.hostPath);
+  const boxName = deps.boxName ?? deps.boxId;
+  const { argv: cpArgs, detail, contextArgv } = buildCpArgv({
+    method,
+    boxName,
+    sources: norm.sources,
+    dest: norm.dest,
+    resolveHost: (p) => resolveHostPath(lookup.workspacePath, p),
+    flags: cpFlags(params),
+  });
   // Same askPrompt UX as docker's /rpc handler — keeps the in-box agent from
   // pulling host files / scattering box files without explicit consent.
   if (deps.prompts && deps.subscribers) {
     const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, {
       kind: 'confirm',
-      message: `Allow cp (${direction}) on ${deps.boxName ?? deps.boxId}?`,
-      detail:
-        action.method === 'cp.toHost'
-          ? `${params.boxPath} -> ${hostAbs}`
-          : `${hostAbs} -> ${params.boxPath}`,
+      message: `Allow cp (${direction}) on ${boxName}?`,
+      detail,
       defaultAnswer: 'n',
-      context: {
-        command: action.method,
-        argv: [params.boxPath, hostAbs],
-      },
+      context: { command: method, argv: contextArgv },
     });
     if (verdict.answer !== 'y') {
       return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
     }
   }
-  const backend = await resolveCloudBackend(deps.backendName);
-  const handle: CloudHandle = { sandboxId: lookup.cloudSandboxId };
-  const cp = await loadCloudCp();
-  try {
-    const result =
-      action.method === 'cp.toHost'
-        ? await cp.downloadFromCloudBox(backend, handle, params.boxPath, hostAbs)
-        : await cp.uploadToCloudBox(backend, handle, hostAbs, params.boxPath);
-    return { exitCode: 0, stdout: `${result.finalPath}\n`, stderr: '' };
-  } catch (err) {
-    return {
-      exitCode: 1,
-      stdout: '',
-      stderr: `cp failed: ${err instanceof Error ? err.message : String(err)}\n`,
-    };
-  }
+  // Converge on the docker path: re-shell the installed `agentbox cp`. Its
+  // `isCloud` branch routes to the cloud provider's uploadPath/downloadPath, so
+  // excludes, the size guard, and provider routing are honored identically to a
+  // host-typed `agentbox cp` (the old direct-primitive path silently dropped
+  // them). cwd = the box workspace makes project-config lookup box-correct.
+  const argv = [process.execPath, entry, ...cpArgs];
+  const result = await execa(argv[0]!, argv.slice(1), {
+    reject: false,
+    cwd: lookup.workspacePath,
+  });
+  return {
+    exitCode: result.exitCode ?? 1,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+  };
 }
 
 /**

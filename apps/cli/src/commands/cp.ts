@@ -33,57 +33,61 @@ function collectExclude(val: string, acc: string[]): string[] {
 /**
  * Block an upload whose post-exclude size exceeds `box.cpMaxBytes` unless `--yes`
  * is passed, printing a `du`-style tree + a strategy the (often agent) caller can
- * act on. Returns the tar `--exclude` patterns to apply to the copy.
+ * act on. The limit is enforced *per source* (not on the sum) so the split
+ * suggestions stay coherent for a multi-source copy. Returns the tar `--exclude`
+ * patterns to apply to the copy.
  */
-async function guardUploadSize(
-  hostSrc: string,
+async function guardUploadSizes(
+  hostSrcs: string[],
   boxDst: string,
   opts: CpOptions,
 ): Promise<string[]> {
   const tokens = effectiveExcludes(opts.exclude, opts.defaultExcludes);
   const tarPatterns = toTarExcludes(tokens);
+  if (opts.yes) return tarPatterns;
 
   const cfg = await loadEffectiveConfig(process.cwd());
   const maxBytes = cfg.effective.box.cpMaxBytes;
 
-  const absSrc = resolve(hostSrc);
-  const measured = await measureCopy(absSrc, tokens);
-  if (opts.yes || measured.totalBytes <= maxBytes) {
-    return tarPatterns;
-  }
+  for (const hostSrc of hostSrcs) {
+    const absSrc = resolve(hostSrc);
+    const measured = await measureCopy(absSrc, tokens);
+    if (measured.totalBytes <= maxBytes) continue;
 
-  const dropped =
-    measured.isDir && opts.defaultExcludes
-      ? ` after default excludes (${effectiveExcludes([], true).join(', ')})`
-      : '';
-  const lines: string[] = [
-    `${hostSrc} is ${fmtBytes(measured.totalBytes)}${dropped}, over the ${fmtBytes(maxBytes)} per-copy limit.`,
-  ];
-  if (measured.isDir) {
-    // Directory: show where the weight is and how to split / trim it.
-    lines.push(
-      'Biggest remaining folders/subfolders:',
-      ...measured.treeLines,
-      'Each copy must be under the limit. To proceed, EITHER:',
-      '  - copy the heavy folders one at a time, e.g.:',
-    );
-    for (const child of measured.topChildren.slice(0, 3)) {
-      lines.push(`      agentbox cp ${hostSrc}/${child.path} ${boxDst}`);
+    const dropped =
+      measured.isDir && opts.defaultExcludes
+        ? ` after default excludes (${effectiveExcludes([], true).join(', ')})`
+        : '';
+    const lines: string[] = [
+      `${hostSrc} is ${fmtBytes(measured.totalBytes)}${dropped}, over the ${fmtBytes(maxBytes)} per-copy limit.`,
+    ];
+    if (measured.isDir) {
+      // Directory: show where the weight is and how to split / trim it.
+      lines.push(
+        'Biggest remaining folders/subfolders:',
+        ...measured.treeLines,
+        'Each copy must be under the limit. To proceed, EITHER:',
+        '  - copy the heavy folders one at a time, e.g.:',
+      );
+      for (const child of measured.topChildren.slice(0, 3)) {
+        lines.push(`      agentbox cp ${hostSrc}/${child.path} ${boxDst}`);
+      }
+      lines.push(
+        '  - or drop what you do not need:',
+        `      agentbox cp ${hostSrc} ${boxDst} --exclude=<dir>`,
+        '  - or copy the whole thing anyway:',
+        `      agentbox cp ${hostSrc} ${boxDst} --yes`,
+      );
+    } else {
+      // Single file: can't split or exclude — only override.
+      lines.push(
+        'A single file cannot be split or trimmed. To copy it anyway:',
+        `      agentbox cp ${hostSrc} ${boxDst} --yes`,
+      );
     }
-    lines.push(
-      '  - or drop what you do not need:',
-      `      agentbox cp ${hostSrc} ${boxDst} --exclude=<dir>`,
-      '  - or copy the whole thing anyway:',
-      `      agentbox cp ${hostSrc} ${boxDst} --yes`,
-    );
-  } else {
-    // Single file: can't split or exclude — only override.
-    lines.push(
-      'A single file cannot be split or trimmed. To copy it anyway:',
-      `      agentbox cp ${hostSrc} ${boxDst} --yes`,
-    );
+    throw new Error(lines.join('\n'));
   }
-  throw new Error(lines.join('\n'));
+  return tarPatterns;
 }
 
 /**
@@ -106,30 +110,61 @@ function parseBoxArg(arg: string): { boxRef: string; path: string } | null {
 interface Parsed {
   direction: 'download' | 'upload';
   boxRef: string;
-  boxPath: string;
-  hostPath: string | undefined; // undefined only on download with no dst (= cwd)
+  // download: box-side sources (>=1) + host-side dest (undefined = cwd)
+  boxSrcs?: string[];
+  hostDst?: string;
+  // upload: host-side sources (>=1) + box-side dest
+  hostSrcs?: string[];
+  boxDst?: string;
 }
 
-function parseArgs(src: string, dst: string | undefined): Parsed {
-  const srcBox = parseBoxArg(src);
-  const dstBox = dst === undefined ? null : parseBoxArg(dst);
+/**
+ * Split a variadic `cp` arg list into sources + destination and pick the
+ * direction. Commander requires the variadic to be the last argument, so the
+ * destination is recovered by arity: one arg downloads into cwd; otherwise the
+ * last arg is the destination and the rest are sources. Every source must be on
+ * the side opposite the destination (no box-to-box, no mixed sides), and all
+ * box sources must name the same box.
+ */
+export function parseArgs(paths: string[]): Parsed {
+  if (paths.length === 0) {
+    throw new Error('cp requires at least one path.');
+  }
+  const sources = paths.length === 1 ? paths : paths.slice(0, -1);
+  const dst = paths.length === 1 ? undefined : paths[paths.length - 1];
 
-  if (srcBox && dstBox) {
+  const srcBoxes = sources.map((s) => ({ raw: s, box: parseBoxArg(s) }));
+  const dstBox = dst === undefined ? null : parseBoxArg(dst);
+  const allSrcBox = srcBoxes.every((s) => s.box);
+  const anySrcBox = srcBoxes.some((s) => s.box);
+
+  if (anySrcBox && !allSrcBox) {
     throw new Error(
-      'box-to-box copy is not supported; both arguments look like box paths (`name:/path`).',
+      'all sources must be on the same side; mixing box paths (`name:/path`) and host paths is not supported.',
     );
   }
-  if (!srcBox && !dstBox) {
+  if (allSrcBox && dstBox) {
     throw new Error(
-      'one argument must be a box path of the form `<box>:/path` (e.g. `mybox:/workspace/foo`).',
+      'box-to-box copy is not supported; both sides look like box paths (`name:/path`).',
     );
   }
-  if (srcBox) {
+  if (!allSrcBox && !dstBox) {
+    throw new Error(
+      'one side must be a box path of the form `<box>:/path` (e.g. `mybox:/workspace/foo`).',
+    );
+  }
+  if (allSrcBox) {
+    const boxRefs = new Set(srcBoxes.map((s) => s.box!.boxRef));
+    if (boxRefs.size > 1) {
+      throw new Error(
+        `all box sources must name the same box; got ${[...boxRefs].join(', ')}.`,
+      );
+    }
     return {
       direction: 'download',
-      boxRef: srcBox.boxRef,
-      boxPath: srcBox.path,
-      hostPath: dst,
+      boxRef: srcBoxes[0]!.box!.boxRef,
+      boxSrcs: srcBoxes.map((s) => s.box!.path),
+      hostDst: dst,
     };
   }
   if (dst === undefined) {
@@ -138,17 +173,16 @@ function parseArgs(src: string, dst: string | undefined): Parsed {
   return {
     direction: 'upload',
     boxRef: dstBox!.boxRef,
-    boxPath: dstBox!.path,
-    hostPath: src,
+    hostSrcs: sources,
+    boxDst: dstBox!.path,
   };
 }
 
 export const cpCommand = new Command('cp')
   .description('Copy files between host and box (like `docker cp`; direction picked by `name:` prefix)')
-  .argument('<src>', '`box:/path` (download) or host path (upload)')
   .argument(
-    '[dst]',
-    '`box:/path` (upload) or host path (download); defaults to cwd when downloading',
+    '<paths...>',
+    'source path(s) then destination; `box:/path` marks the box side. With one arg, downloads into cwd. With >=2 sources the destination must be a directory.',
   )
   .option(
     '--exclude <pattern>',
@@ -160,7 +194,7 @@ export const cpCommand = new Command('cp')
     '--no-default-excludes',
     `keep the heavy dirs cp drops by default (${effectiveExcludes([], true).join(', ')})`,
   )
-  .option('-y, --yes', 'copy even if the source is over the box.cpMaxBytes size limit')
+  .option('-y, --yes', 'copy even if a source is over the box.cpMaxBytes size limit')
   .addHelpText(
     'after',
     [
@@ -170,12 +204,14 @@ export const cpCommand = new Command('cp')
       '  agentbox cp mybox:/workspace/.env           # download into cwd',
       '  agentbox cp ./local.txt mybox:/workspace/   # upload (host path required)',
       '  agentbox cp ./dir mybox:/workspace/         # upload directory (recursive)',
+      '  agentbox cp a.txt b.txt src/ mybox:/workspace/dest/   # many sources into a dir',
+      '  agentbox cp ./*.log mybox:/workspace/logs/  # shell-expanded wildcard',
       '  agentbox cp ./dir mybox:/workspace/ --exclude=.git --exclude="*/cache"',
     ].join('\n'),
   )
-  .action(async (src: string, dst: string | undefined, opts: CpOptions) => {
+  .action(async (paths: string[], opts: CpOptions) => {
     try {
-      const parsed = parseArgs(src, dst);
+      const parsed = parseArgs(paths);
       const box = await resolveBoxOrExit(parsed.boxRef);
       const isCloud = (box.provider ?? 'docker') !== 'docker';
 
@@ -183,7 +219,7 @@ export const cpCommand = new Command('cp')
       // (we know the host source's size cheaply; a box-side dir we don't).
       const tarPatterns =
         parsed.direction === 'upload'
-          ? await guardUploadSize(parsed.hostPath!, `${parsed.boxRef}:${parsed.boxPath}`, opts)
+          ? await guardUploadSizes(parsed.hostSrcs!, `${parsed.boxRef}:${parsed.boxDst}`, opts)
           : toTarExcludes(effectiveExcludes(opts.exclude, opts.defaultExcludes));
 
       if (isCloud) {
@@ -196,13 +232,13 @@ export const cpCommand = new Command('cp')
           throw new Error(`provider '${provider.name}' does not support cp`);
         }
         if (parsed.direction === 'upload') {
-          const result = await provider.uploadPath(box, parsed.hostPath!, parsed.boxPath, tarPatterns);
+          const result = await provider.uploadPath(box, parsed.hostSrcs!, parsed.boxDst!, tarPatterns);
           process.stdout.write(`copied to ${box.name}:${result.finalPath}\n`);
         } else {
           const result = await provider.downloadPath(
             box,
-            parsed.boxPath,
-            parsed.hostPath ?? process.cwd(),
+            parsed.boxSrcs!,
+            parsed.hostDst ?? process.cwd(),
             tarPatterns,
           );
           process.stdout.write(`copied to ${result.finalPath}\n`);
@@ -222,7 +258,7 @@ export const cpCommand = new Command('cp')
       }
 
       if (parsed.direction === 'upload') {
-        const result = await uploadToBox(box, parsed.hostPath!, parsed.boxPath, tarPatterns);
+        const result = await uploadToBox(box, parsed.hostSrcs!, parsed.boxDst!, tarPatterns);
         if (result.warn) {
           log.warn(`copied to ${box.name}:${result.finalPath}, but ${result.warn}`);
         } else {
@@ -232,8 +268,8 @@ export const cpCommand = new Command('cp')
         // Download: default dst to cwd (POSIX `cp` convention).
         const result = await downloadFromBox(
           box,
-          parsed.boxPath,
-          parsed.hostPath ?? process.cwd(),
+          parsed.boxSrcs!,
+          parsed.hostDst ?? process.cwd(),
           tarPatterns,
         );
         process.stdout.write(`copied to ${result.finalPath}\n`);

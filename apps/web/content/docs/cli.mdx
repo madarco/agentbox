@@ -181,6 +181,8 @@ agentbox download 1 --with-env
 # Copy files/dirs (direction inferred from the box: prefix)
 agentbox cp mybox:/workspace/.env      # download to cwd
 agentbox cp ./local.txt mybox:/workspace/   # upload
+agentbox cp a.txt b.txt src/ mybox:/workspace/dest/   # many sources into a dir
+agentbox cp ./*.log mybox:/workspace/logs/   # shell-expanded wildcard
 agentbox cp ./dir mybox:/workspace/ --exclude=.git --exclude="*/cache"  # upload, trimmed
 
 # Git/gh through the host relay (your credentials stay on the host)
@@ -196,7 +198,9 @@ agentbox git pr create 1
 
 `download` pulls `/workspace` back into your host workspace, honouring `.gitignore`. It has typed subcommands for agent state: `download env`, `download claude`, `download codex`, `download opencode`, `download config`. `cp` copies files or directories in either direction, like `docker cp`. `git` runs git/gh operations against the box from the host through the relay, so push and fetch use your host credentials and the box never sees them.
 
-`cp` drops heavy, regenerable directories by default (`.git`, `node_modules`, `bin`, `obj`, `packages`, `dist`, `.next`, `target`) — keep them with `--no-default-excludes`, or add more with repeatable `--exclude=<glob|name>`. An upload whose size (after excludes) exceeds `box.cpMaxBytes` (default 100 MB) is **blocked** and prints a `du`-style tree of the biggest remaining folders so you can decide what to drop; trim it with `--exclude`, copy the heavy folders one at a time, or pass `--yes` to copy it all anyway.
+`cp` takes multiple sources in one call — list several files/dirs (or a shell-expanded wildcard like `./*.log`) before the destination, which must then be a directory (trailing `/`). Wildcards are expanded by your shell, so a box-path glob (`mybox:/workspace/*.log`) only expands when run from inside the box; from the host, glob box contents from inside the box or list the files explicitly.
+
+`cp` drops heavy, regenerable directories by default (`.git`, `node_modules`, `bin`, `obj`, `packages`, `dist`, `.next`, `target`) — keep them with `--no-default-excludes`, or add more with repeatable `--exclude=<glob|name>`. An upload whose size (after excludes) exceeds `box.cpMaxBytes` (default 100 MB) is **blocked** and prints a `du`-style tree of the biggest remaining folders so you can decide what to drop; trim it with `--exclude`, copy the heavy folders one at a time, or pass `--yes` to copy it all anyway. The limit is checked per source.
 
 Useful flags: `download` takes `--dry-run`, `--no-respect-gitignore`, `--include-node-modules`, `--with-env`, `--pattern <glob>`; `git push`/`fetch` take `--remote <name>` (default `origin`) and forward extra args like `--force-with-lease`. `git push --host-only` lands the box's branch in your **local** repo without pushing to any remote (nothing is published online) — `--as <branch>` picks the host branch name (default: the box's branch) and `--force` allows a non-fast-forward overwrite. Because nothing leaves the host, `--host-only` skips the push-approval prompt.
 

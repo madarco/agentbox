@@ -87,7 +87,7 @@ export async function uploadTeleport(input: UploadTeleportInput): Promise<void> 
   }
   // Trailing slash → uploadPath treats dst as a directory and lands the file
   // under its existing basename, which already matches the in-box filename.
-  await input.provider.uploadPath(input.box, input.resolved.hostFile, `${input.resolved.boxParentDir}/`);
+  await input.provider.uploadPath(input.box, [input.resolved.hostFile], `${input.resolved.boxParentDir}/`);
   input.log?.(
     `teleport: uploaded ${input.resolved.sessionId} into ${input.resolved.boxParentDir}/`,
   );
