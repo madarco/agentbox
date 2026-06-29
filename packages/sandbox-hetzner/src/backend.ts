@@ -44,7 +44,7 @@ import {
   type HetznerServer,
   type HetznerServerStatus,
 } from './client.js';
-import { detectEgressIp, egressIpCached } from './egress-ip.js';
+import { detectEgressIp } from './egress-ip.js';
 import {
   createPerBoxFirewall,
   deletePerBoxFirewall,
@@ -259,7 +259,11 @@ async function firewallEgressStatus(sandboxId: string): Promise<FirewallEgressSt
   const firewall = await client().getFirewall(firewallId);
   const sshRule = firewall?.rules.find((r) => r.direction === 'in' && r.port === '22');
   const allowedSource = sshRule?.source_ips?.[0];
-  const currentEgress = `${await egressIpCached({})}/32`;
+  // A FRESH probe (not cached): this runs only on a connection-failure path, and
+  // a stale value could read the new IP as "unchanged" and skip the heal — the
+  // very mismatch we exist to catch. The poller already de-dupes its recover
+  // calls and `recover --all` is sequential, so fresh probing here won't storm.
+  const currentEgress = `${await detectEgressIp({})}/32`;
   return {
     firewallId,
     allowedSource,

@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { detectEgressIp, egressIpCached, __resetEgressCache } from '../src/egress-ip.js';
+import { describe, expect, it } from 'vitest';
+import { detectEgressIp } from '../src/egress-ip.js';
 
 function fakeFetch(map: Record<string, { status: number; body: string }>): typeof fetch {
   // Use Parameters<typeof fetch>[0] instead of `RequestInfo | URL` so this
@@ -47,35 +47,5 @@ describe('detectEgressIp', () => {
         }),
       }),
     ).rejects.toThrow(/could not auto-detect/i);
-  });
-});
-
-describe('egressIpCached', () => {
-  afterEach(() => __resetEgressCache());
-
-  /** A fetch that counts how many times it was invoked. */
-  function countingFetch(body: string): { fetchImpl: typeof fetch; calls: () => number } {
-    let n = 0;
-    const fetchImpl = (async () => {
-      n += 1;
-      return new Response(body, { status: 200 }) as unknown as Response;
-    }) as typeof fetch;
-    return { fetchImpl, calls: () => n };
-  }
-
-  it('probes once within the TTL window, re-probes after it', async () => {
-    const { fetchImpl, calls } = countingFetch('203.0.113.9\n');
-    const opts = { probes: ['https://p'], fetchImpl, ttlMs: 1000 };
-    let t = 10_000;
-    const now = () => t;
-
-    expect(await egressIpCached({ ...opts, now })).toBe('203.0.113.9');
-    t = 10_500; // within TTL → cached, no new probe
-    expect(await egressIpCached({ ...opts, now })).toBe('203.0.113.9');
-    expect(calls()).toBe(1);
-
-    t = 11_500; // past TTL → re-probe
-    expect(await egressIpCached({ ...opts, now })).toBe('203.0.113.9');
-    expect(calls()).toBe(2);
   });
 });
