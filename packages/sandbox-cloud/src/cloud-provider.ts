@@ -322,9 +322,11 @@ export function createCloudProvider(
   // portless aliases, persist the record, relaunch the in-box daemons
   // (ctl daemon -> in-box bridge + the agentbox.yaml tasks/services, dockerd,
   // VNC), and re-register with the host relay. Shared by `start()` (after
-  // `backend.start`) and `resume()` (after `backend.resume`) so EVERY wake path
-  // brings the box fully back, not just attach. Idempotent — the `launch*`
-  // helpers no-op when the daemon is already alive.
+  // `backend.start`), `resume()` (after `backend.resume`), and `reconnect()`
+  // (no power-cycle) so EVERY wake/recover path brings the box fully back, not
+  // just attach. Idempotent — `launchCloudCtlDaemon`/dockerd/VNC skip the spawn
+  // when a healthy instance is already serving (so a host-only `reconnect` on a
+  // live box doesn't pile up duplicate daemons).
   async function reEnsureCloudBox(box: BoxRecord, h: CloudHandle): Promise<BoxRecord> {
     // Preview URLs (and their tokens) can rotate across stop/start — refresh
     // the web + relay preview URLs and persist so `agentbox url` and the

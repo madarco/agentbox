@@ -68,6 +68,21 @@ export async function launchCloudCtlDaemon(args: LaunchCloudCtlArgs): Promise<vo
     boxEnvFile.push(`AGENTBOX_WEB_PROXY_PORT=${quoteShellArgv([String(args.webProxyPort)])}`);
   if (args.boxHost) boxEnvFile.push(`AGENTBOX_BOX_HOST=${quoteShellArgv([args.boxHost])}`);
 
+  // Port the in-box daemon serves the box-relay `/healthz` on (it binds
+  // AGENTBOX_BOX_RELAY_PORT, default 8788). We pass relayUrl as
+  // `http://127.0.0.1:8788`, so derive the port from it; fall back to 8788.
+  const boxRelayPort = (() => {
+    if (args.relayUrl) {
+      try {
+        const p = new URL(args.relayUrl).port;
+        if (p) return Number.parseInt(p, 10);
+      } catch {
+        // unparseable URL → default
+      }
+    }
+    return 8788;
+  })();
+
   // nohup + & detaches the daemon from the exec channel; logs go to the file
   // the daemon already uses for Docker boxes so debugging is uniform.
   // /run and /var/log are root-owned — the non-root sandbox user needs sudo
@@ -77,6 +92,17 @@ export async function launchCloudCtlDaemon(args: LaunchCloudCtlArgs): Promise<vo
   // by the image's /etc/profile.d/agentbox.sh shim.
   const script = [
     `set -e`,
+    // Idempotent: if a healthy ctl daemon is already serving the box relay,
+    // leave it — it already has the right env (relayUrl/token are stable across
+    // a host-only reconnect), and a fresh spawn would just fail to bind :PORT
+    // and linger as an orphan. Only a real sandbox restart kills the daemon, in
+    // which case the probe fails and we (re)launch. Without this, every
+    // start/resume/recover leaked another idle daemon. node is guaranteed
+    // present (it runs agentbox-ctl); curl may not be.
+    `if node -e 'require("http").get("http://127.0.0.1:${String(boxRelayPort)}/healthz",r=>process.exit(r.statusCode===200?0:1)).on("error",()=>process.exit(1))' 2>/dev/null; then`,
+    `  echo "agentbox-ctl daemon already healthy on :${String(boxRelayPort)}; skipping launch"`,
+    `  exit 0`,
+    `fi`,
     `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi`,
     `$SUDO mkdir -p /run/agentbox /var/log/agentbox /etc/agentbox`,
     `$SUDO chown "$(id -un):$(id -gn)" /run/agentbox /var/log/agentbox`,

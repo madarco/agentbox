@@ -54,6 +54,34 @@ describe('launchCloudCtlDaemon', () => {
     expect(script).toContain('AGENTBOX_WEB_PROXY_PORT=8080');
   });
 
+  it('guards the spawn with a /healthz probe before launching (idempotent)', async () => {
+    const script = await launchScript(undefined);
+    const guardIdx = script.indexOf('/healthz');
+    const spawnIdx = script.indexOf('agentbox-ctl daemon >>');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(spawnIdx).toBeGreaterThan(-1);
+    // The skip-guard must run BEFORE the daemon spawn, else it can't prevent it.
+    expect(guardIdx).toBeLessThan(spawnIdx);
+    expect(script).toContain('skipping launch');
+    // Default box-relay port when no relayUrl is supplied.
+    expect(script).toContain('127.0.0.1:8788/healthz');
+  });
+
+  it('probes the box-relay port parsed from relayUrl', async () => {
+    const backend = makeMockCloudBackend();
+    const handle = await backend.provision({ name: 'b', image: 'i' });
+    backend.clearCalls();
+    await launchCloudCtlDaemon({
+      backend,
+      handle,
+      boxId: 'id-1',
+      boxName: 'mybox',
+      relayUrl: 'http://127.0.0.1:9999',
+    });
+    const exec = backend.calls.find((c) => c.method === 'exec');
+    expect(exec!.args[1] as string).toContain('127.0.0.1:9999/healthz');
+  });
+
   it('omits AGENTBOX_BOX_HOST when unset (engine falls back to derive)', async () => {
     const script = await launchScript(undefined);
     expect(script).not.toContain('AGENTBOX_BOX_HOST=');
