@@ -330,10 +330,21 @@ export interface ClearNoticeBody {
 }
 
 export interface CpRpcParams {
-  /** Container-side path. */
-  boxPath: string;
-  /** Host-side path (dst for toHost, src for fromHost). */
-  hostPath: string;
+  /**
+   * Source path(s): box paths for `cp.toHost`, host paths for `cp.fromHost`.
+   * The host CLI side is what carries the `<box>:` prefix when re-shelled.
+   */
+  sources?: string[];
+  /** Destination path: host path for `cp.toHost`, box path for `cp.fromHost`. */
+  dest?: string;
+  /**
+   * Legacy single-source wire shape (older in-box `agentbox-ctl` baked into a
+   * box image before multi-source support). The relay normalizes these into
+   * `sources`/`dest`. `boxPath` is the container path; `hostPath` the host path
+   * (dst for toHost, src for fromHost).
+   */
+  boxPath?: string;
+  hostPath?: string;
   /** Defaults true; relay always uses `docker exec tar` (recursive). */
   recursive?: boolean;
   /** tar glob patterns / bare dir names to exclude, forwarded to `agentbox cp --exclude`. */

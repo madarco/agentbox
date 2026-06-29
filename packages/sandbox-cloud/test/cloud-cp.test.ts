@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { uploadToCloudBox } from '../src/cloud-cp.js';
+import { downloadFromCloudBox, uploadToCloudBox } from '../src/cloud-cp.js';
 import { makeMockCloudBackend } from '../src/mock-backend.js';
 
 let workspace: string;
@@ -17,7 +17,7 @@ async function uploadAndGetCmd(boxDst: string): Promise<string> {
   await writeFile(src, '{}');
   const backend = makeMockCloudBackend();
   const handle = await backend.provision({ name: 'b', image: 'i' });
-  await uploadToCloudBox(backend, handle, src, boxDst);
+  await uploadToCloudBox(backend, handle, [src], boxDst);
   const execCall = backend.calls.find((c) => c.method === 'exec');
   return String(execCall!.args[1]);
 }
@@ -49,5 +49,43 @@ describe('uploadToCloudBox parent-chain chown', () => {
     // NOT run, else `dirname` would be `/home` and could reassign it.
     const cmd = await uploadAndGetCmd('/home/vscode');
     expect(cmd).not.toContain('while [ "$parent"');
+  });
+});
+
+describe('cloud cp multi-source', () => {
+  it('uploads each source under the dest dir (one extract per source)', async () => {
+    const a = join(workspace, 'a.txt');
+    const b = join(workspace, 'b.txt');
+    await writeFile(a, 'a');
+    await writeFile(b, 'b');
+    const backend = makeMockCloudBackend();
+    const handle = await backend.provision({ name: 'b', image: 'i' });
+    const r = await uploadToCloudBox(backend, handle, [a, b], '/workspace/dest/');
+    expect(r.finalPath).toBe('/workspace/dest/');
+    // One staged upload + one extract exec per source (serial loop).
+    expect(backend.calls.filter((c) => c.method === 'uploadFile')).toHaveLength(2);
+    expect(backend.calls.filter((c) => c.method === 'exec')).toHaveLength(2);
+  });
+
+  it('rejects multiple upload sources when the dest is not a directory', async () => {
+    const a = join(workspace, 'a.txt');
+    const b = join(workspace, 'b.txt');
+    await writeFile(a, 'a');
+    await writeFile(b, 'b');
+    const backend = makeMockCloudBackend();
+    const handle = await backend.provision({ name: 'b', image: 'i' });
+    await expect(
+      uploadToCloudBox(backend, handle, [a, b], '/workspace/dest'),
+    ).rejects.toThrow(/destination is not a directory/);
+  });
+
+  it('rejects multiple download sources when the host dest is not a directory', async () => {
+    const backend = makeMockCloudBackend();
+    const handle = await backend.provision({ name: 'b', image: 'i' });
+    const dst = join(workspace, 'not-a-dir.txt');
+    await writeFile(dst, 'x');
+    await expect(
+      downloadFromCloudBox(backend, handle, ['/workspace/a', '/workspace/b'], dst),
+    ).rejects.toThrow(/destination is not a directory/);
   });
 });

@@ -40,7 +40,7 @@ export interface CloudCpResult {
   finalPath: string;
 }
 
-export async function uploadToCloudBox(
+async function uploadOneToCloudBox(
   backend: CloudBackend,
   handle: CloudHandle,
   hostSrc: string,
@@ -177,7 +177,7 @@ export async function pullCloudDirContents(
   return { finalPath: dstAbs };
 }
 
-export async function downloadFromCloudBox(
+async function downloadOneFromCloudBox(
   backend: CloudBackend,
   handle: CloudHandle,
   boxSrc: string,
@@ -231,4 +231,62 @@ export async function downloadFromCloudBox(
     await rm(stage, { recursive: true, force: true });
   }
   return { finalPath };
+}
+
+/**
+ * Copy one or more host sources into the cloud box. A single source keeps full
+ * `docker cp` semantics; ≥2 sources land under a destination directory (the
+ * cloud path has no in-box `test -d` probe, so the dir is opted into with a
+ * trailing `/`). The single-source primitive is run once per source, serially —
+ * `REMOTE_UP_TAR` is a fixed remote staging path reused each iteration.
+ */
+export async function uploadToCloudBox(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  hostSrcs: string[],
+  boxDst: string,
+  exclude?: string[],
+): Promise<CloudCpResult> {
+  if (hostSrcs.length === 1) {
+    return uploadOneToCloudBox(backend, handle, hostSrcs[0]!, boxDst, exclude);
+  }
+  if (!boxDst.endsWith('/')) {
+    throw new Error(
+      `cannot copy multiple sources to '${boxDst}': destination is not a directory (add a trailing slash, e.g. ${boxDst}/)`,
+    );
+  }
+  for (const src of hostSrcs) {
+    await uploadOneToCloudBox(backend, handle, src, boxDst, exclude);
+  }
+  return { finalPath: boxDst };
+}
+
+/**
+ * Copy one or more box sources to the host. A single source keeps full
+ * `docker cp` semantics; ≥2 sources land under a destination directory. Run
+ * serially — `REMOTE_DOWN_TAR` is a fixed remote staging path reused each
+ * iteration.
+ */
+export async function downloadFromCloudBox(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  boxSrcs: string[],
+  hostDst: string,
+  exclude?: string[],
+): Promise<CloudCpResult> {
+  if (boxSrcs.length === 1) {
+    return downloadOneFromCloudBox(backend, handle, boxSrcs[0]!, hostDst, exclude);
+  }
+  const dstAbs = hostResolve(hostDst);
+  const dstExists = existsSync(dstAbs);
+  if (!hostDst.endsWith('/') && !(dstExists && statSync(dstAbs).isDirectory())) {
+    throw new Error(
+      `cannot copy multiple sources to '${hostDst}': destination is not a directory (add a trailing slash, e.g. ${hostDst}/)`,
+    );
+  }
+  mkdirSync(dstAbs, { recursive: true });
+  for (const src of boxSrcs) {
+    await downloadOneFromCloudBox(backend, handle, src, dstAbs, exclude);
+  }
+  return { finalPath: dstAbs };
 }

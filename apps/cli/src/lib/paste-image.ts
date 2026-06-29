@@ -49,7 +49,7 @@ export async function uploadImageFileToBox(
   if (typeof provider.uploadPath !== 'function') return null;
   const boxPng = `/tmp/agentbox-clip-${String(Date.now())}.png`;
   try {
-    await provider.uploadPath(box, hostPath, boxPng);
+    await provider.uploadPath(box, [hostPath], boxPng);
     return boxPng;
   } catch {
     return null;
@@ -67,7 +67,7 @@ export async function pasteHostClipboardImage(
 
   const boxPng = `/tmp/agentbox-clip-${String(Date.now())}.png`;
   try {
-    await provider.uploadPath(box, hostPng, boxPng);
+    await provider.uploadPath(box, [hostPng], boxPng);
     await provider.exec(box, ['sh', '-lc', loadClipboardScript(boxPng)], {
       user: 'vscode',
     });

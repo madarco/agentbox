@@ -33,8 +33,8 @@ read-only and run silently; everything else asks the user to confirm in
 the host wrapper (deny → exit 10).
 
 For ad-hoc file transfers between this box and the host, use
-`agentbox-ctl cp toHost <boxPath> <hostPath>` and
-`agentbox-ctl cp fromHost <hostPath> <boxPath>` or `agentbox-ctl download claude` / `download env` /
+`agentbox-ctl cp toHost <boxPath...> <hostPath>` and
+`agentbox-ctl cp fromHost <hostPath...> <boxPath>` (both accept multiple paths; wildcards expand in your shell) or `agentbox-ctl download claude` / `download env` /
 `download config`. They RPC to the host and
 ask the user for confirmation on the wrapper that runs `agentbox claude`;
 deny returns exit 10 (`denied by user`).

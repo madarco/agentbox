@@ -374,13 +374,13 @@ export interface Provider {
   buildAttach?(box: BoxRecord, kind: AttachKind, opts?: BuildAttachOptions): Promise<AttachSpec>;
   uploadPath?(
     box: BoxRecord,
-    hostSrc: string,
+    hostSrcs: string[],
     boxDst: string,
     exclude?: string[],
   ): Promise<{ finalPath: string }>;
   downloadPath?(
     box: BoxRecord,
-    boxSrc: string,
+    boxSrcs: string[],
     hostDst: string,
     exclude?: string[],
   ): Promise<{ finalPath: string }>;
