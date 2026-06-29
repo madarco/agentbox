@@ -35,6 +35,7 @@ import {
 import { ensureRelay, generateRelayToken, readState, recordBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { restoreAgentSessions } from '../agent-sessions.js';
+import { withFirewallRepair } from '../lib/firewall-repair.js';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
 import { cloudBackendForProvider } from '../provider/cloud-backend.js';
@@ -46,6 +47,7 @@ import { handleLifecycleError } from './_errors.js';
 interface RecoverOpts {
   all?: boolean;
   attach?: boolean;
+  firewallSync?: boolean;
   provider?: string;
   adopt?: boolean;
   attachIn?: string;
@@ -98,7 +100,10 @@ async function readBoxBranch(box: BoxRecord): Promise<string | undefined> {
  * (optionally) attach. Returns false on a non-fatal skip (e.g. Hetzner key
  * gone) so `--all` keeps going.
  */
-async function recoverKnownBox(box: BoxRecord, opts: { attach: boolean }): Promise<boolean> {
+async function recoverKnownBox(
+  box: BoxRecord,
+  opts: { attach: boolean; firewallSync: boolean },
+): Promise<boolean> {
   if (await hetznerKeyMissing(box)) {
     log.warn(
       `${box.name}: per-box SSH key not found at ${hetznerKeyPath(box.cloud?.sandboxId ?? box.id)} — this box was created on another host and can't be controlled from here. Skipping.`,
@@ -106,7 +111,15 @@ async function recoverKnownBox(box: BoxRecord, opts: { attach: boolean }): Promi
     return false;
   }
   const provider = await providerForBox(box);
-  const record = await provider.reconnect(box);
+  // Reconnect is an explicit connection-establishment, so a connect failure may
+  // be a host IP change that locked the Hetzner firewall — self-heal it (only
+  // when the egress actually changed) and retry once.
+  const record = await withFirewallRepair(
+    provider,
+    box,
+    { enabled: opts.firewallSync, onLog: (line) => log.success(line) },
+    () => provider.reconnect(box),
+  );
   log.success(`reconnected ${record.name}`);
   // Bring back exactly the box's last agent: resume its session if there's one
   // to resume, else start it fresh (adopted box / cleared pointer; the only
@@ -245,6 +258,10 @@ export const recoverCommand = new Command('recover')
   )
   .option('--all', 'recover every box in local state (skips attach)')
   .option('--no-attach', 'restore only; do not attach to the agent')
+  .option(
+    '--no-firewall-sync',
+    "don't auto-sync a Hetzner box's firewall to your current egress IP on a connect failure",
+  )
   .option('--provider <name>', 'cloud provider for --adopt (daytona|hetzner|vercel|e2b)')
   .option('--adopt', 'rebuild local state from a live sandbox that is missing from this host')
   .action(async function (this: Command, idOrName: string | undefined) {
@@ -264,7 +281,10 @@ export const recoverCommand = new Command('recover')
         }
         const adopted = await adoptUnknownBox(provider, idOrName);
         if (!adopted) return;
-        await recoverKnownBox(adopted, { attach: opts.attach !== false });
+        await recoverKnownBox(adopted, {
+          attach: opts.attach !== false,
+          firewallSync: opts.firewallSync !== false,
+        });
         return;
       }
 
@@ -277,7 +297,13 @@ export const recoverCommand = new Command('recover')
         let ok = 0;
         for (const box of state.boxes) {
           try {
-            if (await recoverKnownBox(box, { attach: false })) ok++;
+            if (
+              await recoverKnownBox(box, {
+                attach: false,
+                firewallSync: opts.firewallSync !== false,
+              })
+            )
+              ok++;
           } catch (err) {
             log.warn(
               `${box.name}: recover failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -289,7 +315,10 @@ export const recoverCommand = new Command('recover')
       }
 
       const box = await resolveBoxOrExit(idOrName);
-      await recoverKnownBox(box, { attach: opts.attach !== false });
+      await recoverKnownBox(box, {
+        attach: opts.attach !== false,
+        firewallSync: opts.firewallSync !== false,
+      });
     } catch (err) {
       handleLifecycleError(err);
     }

@@ -2,11 +2,12 @@ import { spawn } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { spinner } from '@clack/prompts';
+import { log, spinner } from '@clack/prompts';
 import { DEFAULT_RELAY_PORT } from '@agentbox/sandbox-docker';
 import type { BoxRecord, Provider } from '@agentbox/core';
 import type { AttachOpenIn } from '@agentbox/config';
 import { agentResumeArgs } from '../agent-sessions.js';
+import { withFirewallRepair } from '../lib/firewall-repair.js';
 import { providerForBox } from '../provider/registry.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { pasteHostClipboardImage, uploadImageFileToBox } from '../lib/paste-image.js';
@@ -185,6 +186,24 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     box = await provider.start(box);
     s.stop('box running');
   }
+  // Hetzner only: open the SSH tunnel UP FRONT, self-healing a stale firewall (a
+  // host egress-IP change locks the per-box firewall) BEFORE any of the later
+  // establish touches — the resume probe, the detached pre-start, buildAttach.
+  // Whichever of those connected first would otherwise be an unguarded
+  // establish: a firewall block there aborts the attach (or silently drops the
+  // resumed session, since the resume probe swallows exec errors). Doing it once
+  // here covers them all. Repairs ONLY on an actual connect failure; otherwise a
+  // `true` over the already-open master is a cheap no-op. This is an ESTABLISH
+  // path — distinct from the mid-session `reconnect` closure below, which must
+  // NOT touch the firewall (a checkpoint/pause drop isn't an IP change).
+  if (box.provider === 'hetzner') {
+    await withFirewallRepair(
+      provider,
+      box,
+      { enabled: true, onLog: (line) => log.success(line) },
+      () => provider.exec(box, ['true']),
+    );
+  }
   // Attaching to a box that just came back up (a stop / cloud idle-timeout
   // resume): if the user passed no args of their own and the box has a resumable
   // claude/codex session, launch resuming it (claude --resume <id> / codex resume
@@ -213,10 +232,9 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     await startDetachedSession(provider, box, args.sessionName, command);
   }
 
-  let spec = await provider.buildAttach(box, 'agent', {
-    sessionName: args.sessionName,
-    command,
-  });
+  // The tunnel is already established (and firewall-healed) by the up-front warm
+  // -up above, so this reuses the live master.
+  let spec = await buildAttach(box, 'agent', { sessionName: args.sessionName, command });
   // claude only, and only when this host can capture a clipboard image (macOS,
   // or a Linux desktop with xclip/wl-paste). Otherwise Ctrl+V forwards verbatim.
   const canPaste = args.mode === 'claude' && (await clipboardCaptureAvailable());
@@ -231,6 +249,12 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   // a reboot this lands in a freshly-created tmux session (the snapshot is
   // filesystem-only); a blip on a still-running box re-attaches the same live
   // session. Returns null to give up (cancelled or timed out).
+  //
+  // NOTE: deliberately NO firewall repair here. This is a MID-SESSION drop — a
+  // checkpoint stops the box (the PTY drops) and we wait for it to come back;
+  // the host IP didn't change, so re-syncing the firewall would be wrong.
+  // Firewall self-heal belongs only to establish paths (the up-front warm-up
+  // above, and `agentbox recover`).
   const reconnect = async (
     signal: AbortSignal,
   ): Promise<{ command: string; argv: string[]; env?: Record<string, string> } | null> => {

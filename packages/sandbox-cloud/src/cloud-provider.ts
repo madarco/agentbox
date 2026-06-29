@@ -1103,6 +1103,12 @@ export function createCloudProvider(
       );
     },
 
+    async repairReachability(box: BoxRecord): Promise<{ changed: boolean; detail?: string }> {
+      // Delegate to the backend (only Hetzner self-heals its firewall); other
+      // backends have no host transport to repair.
+      return (await backend.repairReachability?.(handleFor(box))) ?? { changed: false };
+    },
+
     async pause(box: BoxRecord): Promise<void> {
       await backend.pause(handleFor(box));
       await persistLastState(box, 'paused');

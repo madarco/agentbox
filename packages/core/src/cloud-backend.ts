@@ -194,6 +194,18 @@ export interface CloudBackend {
   refreshPreviewUrl?(h: CloudHandle, port: number): Promise<CloudPreviewUrl>;
 
   /**
+   * Re-establish host→box reachability when establishing a connection fails for
+   * a reason the backend can self-heal. Today only Hetzner implements it: a host
+   * egress-IP change locks the per-box Cloud Firewall, so this re-syncs the
+   * firewall to the current egress IP — but ONLY when it actually changed (else
+   * `{ changed: false }`, so the caller surfaces the original error). The CLI
+   * calls it ONLY on a connection-ESTABLISHMENT failure (`recover`, the initial
+   * attach connect), never on a mid-session drop (a checkpoint stops the box —
+   * not an IP change). Backends with public URLs / no host transport omit it.
+   */
+  repairReachability?(h: CloudHandle): Promise<{ changed: boolean; detail?: string }>;
+
+  /**
    * Browser-bound signed preview URL with the auth token embedded in the URL
    * (no header needed). Used for `agentbox url` / `agentbox screen` — anywhere
    * the host hands the URL off to a browser. Distinct from `previewUrl()`

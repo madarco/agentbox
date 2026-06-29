@@ -317,6 +317,17 @@ export interface Provider {
    * provider has no cheaper reconnect path.
    */
   reconnect(box: BoxRecord): Promise<BoxRecord>;
+  /**
+   * Self-heal host→box reachability when establishing a connection fails for a
+   * reason the provider can repair. Today only the Hetzner cloud provider acts:
+   * a host egress-IP change locks the per-box firewall, so this re-syncs it to
+   * the current egress — but ONLY when it actually changed (`{ changed: false }`
+   * otherwise, so the caller rethrows the original error). The CLI calls it ONLY
+   * on a connection-ESTABLISHMENT failure (`recover`, the initial attach
+   * connect), never on a mid-session drop. Optional — docker and public-URL
+   * clouds omit it.
+   */
+  repairReachability?(box: BoxRecord): Promise<{ changed: boolean; detail?: string }>;
   pause(box: BoxRecord): Promise<void>;
   resume(box: BoxRecord): Promise<void>;
   stop(box: BoxRecord): Promise<void>;
