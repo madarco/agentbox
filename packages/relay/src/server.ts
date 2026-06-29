@@ -420,6 +420,14 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // — pushes to them are the whole point of agentbox, so they bypass
         // the y/N gate. Any other branch still prompts.
         if (body.method === 'git.push') {
+          const hostOnlyParams = body.params as GitRpcParams | undefined;
+          if (hostOnlyParams?.hostOnly) {
+            // Landing the branch in the host's local repo publishes nothing,
+            // so the push-confirm gate doesn't apply. Land and return.
+            const saveResult = await handleGitSaveToHost(reg, hostOnlyParams);
+            send(res, saveResult.exitCode === 0 ? 200 : 500, saveResult);
+            return;
+          }
           const params = body.params as GitRpcParams | undefined;
           const worktree = resolveWorktree(reg, params?.path ?? '/workspace');
           const isAgentboxBranch = worktree?.branch.startsWith('agentbox/') ?? false;
@@ -1134,6 +1142,56 @@ function resolveWorktree(reg: BoxRegistration, containerPath: string): BoxWorktr
     .filter((w) => containerPath === w.containerPath || containerPath.startsWith(w.containerPath + '/'))
     .sort((a, b) => b.containerPath.length - a.containerPath.length);
   return prefixMatches[0] ?? trees.find((w) => w.containerPath === '/workspace') ?? null;
+}
+
+/**
+ * git.push --host-only: make the box's branch available in the host's *local*
+ * repo without pushing to any remote. Docker boxes commit against the
+ * bind-mounted `.git/`, so the box's branch ref already lives in the host repo;
+ * we just copy it to the requested destination ref via a self-fetch (which
+ * enforces fast-forward and works even though the source branch is checked out
+ * in the worktree). When the destination equals the source branch this is a
+ * no-op success — the branch is already on the host.
+ */
+async function handleGitSaveToHost(
+  reg: BoxRegistration,
+  params: GitRpcParams | undefined,
+): Promise<GitRpcResult> {
+  const containerPath = params?.path ?? '/workspace';
+  const worktree = resolveWorktree(reg, containerPath);
+  if (!worktree) {
+    return {
+      exitCode: 64,
+      stdout: '',
+      stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
+    };
+  }
+  const src = worktree.branch;
+  const dest = params?.as && params.as.length > 0 ? params.as : src;
+  if (dest === src) {
+    return {
+      exitCode: 0,
+      stdout: `branch ${dest} already available in ${worktree.hostMainRepo}\n`,
+      stderr: '',
+    };
+  }
+  const refspec = `${params?.force ? '+' : ''}${src}:refs/heads/${dest}`;
+  const result = await runHostCommand([
+    'git',
+    '-C',
+    worktree.hostMainRepo,
+    'fetch',
+    '.',
+    refspec,
+  ]);
+  if (result.exitCode === 0) {
+    return {
+      exitCode: 0,
+      stdout: `branch ${dest} available in ${worktree.hostMainRepo}\n${result.stdout}`,
+      stderr: result.stderr,
+    };
+  }
+  return result;
 }
 
 /**

@@ -104,21 +104,44 @@ const pushCommand = new Command('push')
   .argument('<box>', 'box ref: project index, id, id prefix, name, or container')
   .argument('[args...]', 'extra flags forwarded to `agentbox-ctl git push` (e.g. --force-with-lease, --tags)')
   .option('--remote <name>', 'remote name (default: origin)')
+  .option('--host-only', "land the branch in the host's local repo only; do NOT push to the remote (nothing is published online)")
+  .option('--as <branch>', "with --host-only: destination branch name in the host repo (default: the box's branch name)")
+  .option('--force', 'with --host-only: allow a non-fast-forward overwrite of the destination branch')
   .allowExcessArguments(true)
   .allowUnknownOption(true)
-  .action(async (boxRef: string, args: string[], opts: { remote?: string }) => {
-    try {
-      const box = await resolveBoxOrExit(boxRef);
-      const predicted = buildPredictedGitParams(opts.remote, args);
-      const tokenArgs = await hostInitiatedArgs(box.id, 'git.push', predicted);
-      const argv = ['agentbox-ctl', 'git', 'push', ...tokenArgs];
-      if (opts.remote) argv.push('--remote', opts.remote);
-      argv.push(...args);
-      await exitWith(await runAndStream(box, argv));
-    } catch (err) {
-      handleLifecycleError(err);
-    }
-  });
+  .action(
+    async (
+      boxRef: string,
+      args: string[],
+      opts: { remote?: string; hostOnly?: boolean; as?: string; force?: boolean },
+    ) => {
+      try {
+        if (opts.hostOnly && opts.remote) {
+          process.stderr.write('agentbox git push: --host-only does not use a remote; drop --remote\n');
+          await exitWith(64);
+        }
+        const box = await resolveBoxOrExit(boxRef);
+        if (opts.hostOnly) {
+          // Host-only landing publishes nothing, so the relay skips its
+          // push-confirm gate entirely — no host-initiated token needed.
+          const argv = ['agentbox-ctl', 'git', 'push', '--host-only'];
+          if (opts.as) argv.push('--as', opts.as);
+          if (opts.force) argv.push('--force');
+          argv.push(...args);
+          await exitWith(await runAndStream(box, argv));
+          return;
+        }
+        const predicted = buildPredictedGitParams(opts.remote, args);
+        const tokenArgs = await hostInitiatedArgs(box.id, 'git.push', predicted);
+        const argv = ['agentbox-ctl', 'git', 'push', ...tokenArgs];
+        if (opts.remote) argv.push('--remote', opts.remote);
+        argv.push(...args);
+        await exitWith(await runAndStream(box, argv));
+      } catch (err) {
+        handleLifecycleError(err);
+      }
+    },
+  );
 
 const fetchCommand = new Command('fetch')
   .description('Fetch via the host relay (refs land in the shared .git)')

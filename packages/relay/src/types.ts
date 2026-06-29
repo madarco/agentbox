@@ -200,6 +200,19 @@ export interface GitRpcParams {
   /** Extra argv tail appended after the standard args (e.g. ['--set-upstream', 'origin', 'branch']). */
   args?: string[];
   /**
+   * git.push only: land the box's branch in the host's *local* repo instead of
+   * pushing to the remote. Nothing is published online; the relay skips the
+   * host-initiated-token / confirm-prompt gate (that gate guards remote pushes).
+   */
+  hostOnly?: boolean;
+  /**
+   * git.push --host-only only: destination branch name in the host repo.
+   * Defaults to the box's current branch name when omitted.
+   */
+  as?: string;
+  /** git.push --host-only only: allow a non-fast-forward overwrite of the destination branch. */
+  force?: boolean;
+  /**
    * One-time token minted by the host CLI via `/admin/host-initiated/mint`
    * before invoking this RPC through `agentbox-ctl`. The relay validates the
    * token against its in-memory store, scoped to `(boxId, method)`; on

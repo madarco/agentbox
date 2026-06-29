@@ -20,7 +20,11 @@ state. The wrapper already builds `git push <remote> <branch>` host-side from
 the registered worktree; the `-- <args>` slot is for extra flags only (e.g.
 `--force-with-lease`, `--tags`). Re-passing the remote or branch makes git
 treat them as refspecs and fails with `refs/remotes/origin/HEAD cannot be
-resolved to branch`.
+resolved to branch`. To make the branch available on the host **without**
+publishing it to the remote, add `--host-only` (e.g. `agentbox-ctl git push
+--host-only`); it lands the branch in the host's local repo only. Add `--as
+<branch>` to choose the host branch name (default: this box's branch), and
+`--force` to allow a non-fast-forward overwrite.
 
 For GitHub PR work, use `agentbox-ctl git pr <op> [args...]` — same model,
 relay shells to host `gh`. Ops: `create`, `view`, `list`, `comment`,

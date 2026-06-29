@@ -27,10 +27,22 @@ interface CommonOptions {
   hostInitiatedToken?: string;
 }
 
+interface PushOptions extends CommonOptions {
+  /** Land the branch in the host's local repo only; never push to the remote. */
+  hostOnly?: boolean;
+  /** With --host-only: destination branch name on the host (default: box branch). */
+  as?: string;
+  /** With --host-only: allow a non-fast-forward overwrite of the destination. */
+  force?: boolean;
+}
+
 interface GitRpcParams {
   path: string;
   remote?: string;
   args?: string[];
+  hostOnly?: boolean;
+  as?: string;
+  force?: boolean;
   hostInitiated?: string;
 }
 
@@ -41,10 +53,13 @@ interface GitCloneRpcParams {
   args?: string[];
 }
 
-function buildParams(opts: CommonOptions, extra: string[]): GitRpcParams {
+function buildParams(opts: PushOptions, extra: string[]): GitRpcParams {
   const params: GitRpcParams = { path: opts.cwd ?? process.cwd() };
   if (opts.remote) params.remote = opts.remote;
   if (extra.length > 0) params.args = extra;
+  if (opts.hostOnly) params.hostOnly = true;
+  if (opts.as) params.as = opts.as;
+  if (opts.force) params.force = true;
   if (opts.hostInitiatedToken) params.hostInitiated = opts.hostInitiatedToken;
   return params;
 }
@@ -91,6 +106,9 @@ export const gitCommand = new Command('git')
       .description("Run `git push` on the host main repo against this box's branch (user is prompted on the host wrapper to confirm)")
       .option('--remote <name>', 'remote name (default: origin)')
       .option('--cwd <path>', 'container path identifying which registered worktree to use')
+      .option('--host-only', "land the branch in the host's local repo only; do NOT push to the remote (nothing is published online)")
+      .option('--as <branch>', "with --host-only: destination branch name in the host repo (default: this box's branch name)")
+      .option('--force', 'with --host-only: allow a non-fast-forward overwrite of the destination branch')
       .addOption(hostInitiatedOption())
       .allowExcessArguments(true)
       .allowUnknownOption(true)
@@ -98,7 +116,11 @@ export const gitCommand = new Command('git')
         '[args...]',
         "extra flags appended to the host-built `git push <remote> <branch>` (e.g. `--force-with-lease`, `--tags`). Do NOT re-pass the remote or branch — they are taken from --remote and the registered worktree; appending them as positionals makes git treat them as refspecs and fail with `refs/remotes/origin/HEAD cannot be resolved to branch`. Use --remote to change the remote.",
       )
-      .action(async (args: string[], opts: CommonOptions) => {
+      .action(async (args: string[], opts: PushOptions) => {
+        if (opts.hostOnly && opts.remote) {
+          process.stderr.write('agentbox-ctl git push: --host-only does not use a remote; drop --remote\n');
+          process.exit(64);
+        }
         const code = await postRpcAndExit('git.push', buildParams(opts, args), {
           errorPrefix: 'agentbox-ctl git',
         });

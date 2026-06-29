@@ -939,6 +939,50 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
     };
   }
 
+  // Host-only landing: copy the box's branch into the host's *local* repo
+  // (no remote push, nothing published). This is the push flow's bundle
+  // pull-back steps without the final `git push` — so it skips the confirm
+  // gate below entirely. Destination defaults to the box's branch name.
+  if (params.hostOnly) {
+    const dest = params.as && params.as.length > 0 ? params.as : branch;
+    const stageSave = await mkdtemp(join(tmpdir(), 'agentbox-git-save-'));
+    const hostBundleSave = join(stageSave, 'op.bundle');
+    const remoteBundleSave = '/tmp/agentbox-rpc-save.bundle';
+    try {
+      const make = await backend.exec(
+        handle,
+        `git -C ${shellQuote(containerPath)} bundle create ${shellQuote(remoteBundleSave)} ${shellQuote(branch)}`,
+      );
+      if (make.exitCode !== 0) {
+        return { exitCode: make.exitCode, stdout: '', stderr: `bundle create failed: ${make.stderr || make.stdout}` };
+      }
+      await backend.downloadFile(handle, remoteBundleSave, hostBundleSave);
+      const refspec = `${params.force ? '+' : ''}${branch}:refs/heads/${dest}`;
+      const landed = await execa(
+        'git',
+        ['-C', lookup.workspacePath, 'fetch', hostBundleSave, refspec],
+        { reject: false },
+      );
+      if ((landed.exitCode ?? 1) !== 0) {
+        return {
+          exitCode: landed.exitCode ?? 1,
+          stdout: landed.stdout ?? '',
+          stderr: `host git fetch from bundle failed: ${landed.stderr ?? ''}`,
+        };
+      }
+      return {
+        exitCode: 0,
+        stdout: `branch ${dest} available in ${lookup.workspacePath}\n${landed.stdout ?? ''}`,
+        stderr: landed.stderr ?? '',
+      };
+    } finally {
+      await rm(stageSave, { recursive: true, force: true });
+      await backend.exec(handle, `rm -f ${shellQuote(remoteBundleSave)}`).catch(() => {
+        /* best-effort */
+      });
+    }
+  }
+
   // Gate `git.push` (and only `git.push`) behind the same host-side confirm
   // prompt the Docker provider already uses. The wrapper's SSE subscriber on
   // /admin/prompts/stream surfaces it as a footer y/N; `askPrompt` returns

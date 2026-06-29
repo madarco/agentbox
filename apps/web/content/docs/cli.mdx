@@ -185,6 +185,8 @@ agentbox cp ./dir mybox:/workspace/ --exclude=.git --exclude="*/cache"  # upload
 
 # Git/gh through the host relay (your credentials stay on the host)
 agentbox git push 1
+agentbox git push 1 --host-only            # land the branch in the host's local repo, don't publish
+agentbox git push 1 --host-only --as feat/login   # ...under a chosen branch name
 agentbox git fetch 1
 agentbox git pull 1 main --ff-only
 agentbox git checkout 1 feature-x
@@ -196,7 +198,7 @@ agentbox git pr create 1
 
 `cp` drops heavy, regenerable directories by default (`.git`, `node_modules`, `bin`, `obj`, `packages`, `dist`, `.next`, `target`) — keep them with `--no-default-excludes`, or add more with repeatable `--exclude=<glob|name>`. An upload whose size (after excludes) exceeds `box.cpMaxBytes` (default 100 MB) is **blocked** and prints a `du`-style tree of the biggest remaining folders so you can decide what to drop; trim it with `--exclude`, copy the heavy folders one at a time, or pass `--yes` to copy it all anyway.
 
-Useful flags: `download` takes `--dry-run`, `--no-respect-gitignore`, `--include-node-modules`, `--with-env`, `--pattern <glob>`; `git push`/`fetch` take `--remote <name>` (default `origin`) and forward extra args like `--force-with-lease`.
+Useful flags: `download` takes `--dry-run`, `--no-respect-gitignore`, `--include-node-modules`, `--with-env`, `--pattern <glob>`; `git push`/`fetch` take `--remote <name>` (default `origin`) and forward extra args like `--force-with-lease`. `git push --host-only` lands the box's branch in your **local** repo without pushing to any remote (nothing is published online) — `--as <branch>` picks the host branch name (default: the box's branch) and `--force` allows a non-fast-forward overwrite. Because nothing leaves the host, `--host-only` skips the push-approval prompt.
 
 <Callout title="TIP">`agentbox git push` runs through the host relay — your git/SSH credentials stay on your machine. The box requests the push; the host performs it (and prompts for approval per the relay's host-action gate).</Callout>
 
