@@ -23,6 +23,7 @@ import {
   imageExists,
   inspectBox,
   rebuildPluginNativeDeps,
+  recordLastAgent,
   runInteractiveClaudeLogin,
   seedSetupSkillIntoVolume,
   SHARED_CLAUDE_VOLUME,
@@ -1020,6 +1021,9 @@ export const claudeCommand = new Command('claude')
         sessionName,
         boxName: result.record.name,
       });
+      // Remember this box was launched as claude so `agentbox recover` relaunches
+      // the right agent. Best-effort — never block the launch.
+      await recordLastAgent(result.record.id, 'claude').catch(() => {});
       if (pendingCreateResyncWarn) log.warn(pendingCreateResyncWarn);
 
       const nSuffix =
@@ -1127,6 +1131,9 @@ async function startOrAttachClaude(
   if (insp.state === 'missing') {
     throw new Error(`box ${box.name} has no container; was it destroyed?`);
   }
+  // Record this attach/launch as a claude session so `agentbox recover` knows
+  // which agent to bring back. Best-effort.
+  await recordLastAgent(box.id, 'claude').catch(() => {});
 
   // If a tmux session already exists, just attach — no resync, no plugin
   // rebuild, ignore any post-`--` args (they only apply to a fresh claude).

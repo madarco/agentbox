@@ -22,6 +22,7 @@ import {
 import {
   createBox,
   rebuildPluginNativeDeps,
+  recordLastAgent,
   SHARED_CLAUDE_VOLUME,
   startClaudeSession,
   startCodexSession,
@@ -178,6 +179,7 @@ async function runDockerJob(
   // registered. Written before the session starts so a crash mid-launch is
   // still attributable to a box.
   onBoxCreated(result.record.id);
+  await recordLastAgent(result.record.id, agentBinaryName(job.agent)).catch(() => {});
   await writeJob({ ...job, boxId: result.record.id });
 
   // On-create resync conflicts (checkpoint-restore path): prepend the warning to
@@ -328,6 +330,7 @@ async function runCloudJob(
   // Record boxId before the session starts so a crash mid-launch is still
   // attributable to a box and the working-agent gate can join it to its box.
   onBoxCreated(result.record.id);
+  await recordLastAgent(result.record.id, agentBinaryName(job.agent)).catch(() => {});
   await writeJob({ ...job, boxId: result.record.id });
 
   const promptedArgs = buildPromptArgs(job.agent, job.prompt, job.agentArgs);

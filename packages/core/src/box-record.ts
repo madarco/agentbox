@@ -278,6 +278,15 @@ export interface BoxRecord {
   docker?: DockerBoxFields;
   /** Cloud-backend-specific fields. Present only for cloud providers. */
   cloud?: CloudBoxFields;
+  /**
+   * The agent last launched in this box (`agentbox claude` / `codex` /
+   * `opencode`). Recorded on every launch (foreground + queued). Durable, unlike
+   * the in-box session pointers which are cleared on the running->stopped tmux
+   * edge — so it's the signal `agentbox recover` uses to know which agent to
+   * relaunch/attach, and the only such signal for an adopted box with no live
+   * session.
+   */
+  lastAgent?: 'claude' | 'codex' | 'opencode';
   createdAt: string; // ISO-8601
 }
 

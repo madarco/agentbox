@@ -25,6 +25,7 @@ import {
   extractCodexCredentials,
   formatDetachNotice,
   inspectBox,
+  recordLastAgent,
   runInteractiveCodexLogin,
   seedCodexHooks,
   SHARED_CODEX_VOLUME,
@@ -725,6 +726,8 @@ export const codexCommand = new Command('codex')
         codexArgs: effectiveCodexArgs,
         sessionName,
       });
+      // Remember this box was launched as codex for `agentbox recover`.
+      await recordLastAgent(result.record.id, 'codex').catch(() => {});
 
       const nSuffix =
         typeof result.record.projectIndex === 'number'
@@ -817,6 +820,8 @@ async function startOrAttachCodex(
   if (insp.state === 'missing') {
     throw new Error(`box ${box.name} has no container; was it destroyed?`);
   }
+  // Record this attach/launch as a codex session for `agentbox recover`.
+  await recordLastAgent(box.id, 'codex').catch(() => {});
 
   // If a tmux session already exists, just attach — no resync, ignore any
   // post-`--` args (they only apply to a fresh codex).

@@ -7,6 +7,7 @@ export {
   mutateState,
   readState,
   recordBox,
+  recordLastAgent,
   removeBoxRecord,
   reserveProjectIndex,
   resolveBoxRef,

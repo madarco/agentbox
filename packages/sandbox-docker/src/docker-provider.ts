@@ -93,6 +93,16 @@ export const dockerProvider: Provider = {
     return { ...record, provider: 'docker' };
   },
 
+  async reconnect(box: BoxRecord): Promise<BoxRecord> {
+    // The container survives a host reboot (the docker daemon restarts it), so
+    // there's no host-side transport to rebuild. `startBox` is idempotent — a
+    // `docker start` on a running container is a no-op — and it already
+    // relaunches the ctl/dockerd/vnc daemons and re-registers the portless
+    // alias, which is exactly the reconnect work for docker.
+    const { record } = await startBox(box.id);
+    return { ...record, provider: 'docker' };
+  },
+
   async pause(box: BoxRecord): Promise<void> {
     await pauseBox(box.id);
   },
@@ -173,9 +183,7 @@ export const dockerProvider: Provider = {
       return box.portlessUrl ?? (await portlessGetUrl(box.portlessAlias));
     }
     if (box.webHostPort === undefined) {
-      throw new Error(
-        `web port not resolved for box ${box.name}; is the container running?`,
-      );
+      throw new Error(`web port not resolved for box ${box.name}; is the container running?`);
     }
     return `http://127.0.0.1:${String(box.webHostPort)}`;
   },

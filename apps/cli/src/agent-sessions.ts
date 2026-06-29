@@ -20,7 +20,11 @@
  */
 import { loadEffectiveConfig } from '@agentbox/config';
 import type { BoxRecord, Provider } from '@agentbox/core';
-import { startClaudeSession, startCodexSession } from '@agentbox/sandbox-docker';
+import {
+  startClaudeSession,
+  startCodexSession,
+  startOpencodeSession,
+} from '@agentbox/sandbox-docker';
 import { cloudAgentStartDetached } from './commands/_cloud-attach.js';
 import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from './lib/skip-permissions.js';
 
@@ -73,6 +77,47 @@ export async function agentResumeArgs(
 
 export interface RestoreOptions {
   onLog?: (line: string) => void;
+  /**
+   * When set, and the named agent's tmux session is NOT already live and there's
+   * nothing to resume (no in-box pointer — e.g. an adopted box, or one whose
+   * pointer was cleared on stop), start that agent in a FRESH detached session.
+   * Used by `agentbox recover` so the box's `lastAgent` comes back even with no
+   * resumable session. `start`/`unpause` omit it (they only resume what was
+   * actually running). OpenCode — which has no session resume — only ever
+   * launches via this path.
+   */
+  launchFresh?: 'claude' | 'codex' | 'opencode';
+}
+
+/** Start a fresh (no-resume) detached agent session. */
+async function startFreshSession(
+  box: BoxRecord,
+  kind: 'claude' | 'codex' | 'opencode',
+  sessionName: string,
+  cfg: Awaited<ReturnType<typeof loadEffectiveConfig>> | null,
+  isDocker: boolean,
+): Promise<void> {
+  const args =
+    kind === 'claude'
+      ? cfg
+        ? applyClaudeSkipPermissions([], cfg.effective)
+        : []
+      : kind === 'codex'
+        ? cfg
+          ? applyCodexSkipPermissions([], cfg.effective)
+          : []
+        : [];
+  if (isDocker) {
+    if (kind === 'claude') {
+      await startClaudeSession({ container: box.container, claudeArgs: args, sessionName });
+    } else if (kind === 'codex') {
+      await startCodexSession({ container: box.container, codexArgs: args, sessionName });
+    } else {
+      await startOpencodeSession({ container: box.container, opencodeArgs: args, sessionName });
+    }
+  } else {
+    await cloudAgentStartDetached({ box, binary: kind, sessionName, extraArgs: args });
+  }
 }
 
 /**
@@ -81,7 +126,8 @@ export interface RestoreOptions {
  * per agent — a relaunch failure is logged, never thrown (a box restart must not
  * fail because an agent couldn't resume).
  *
- * The box must already be running (call after `provider.start` / `startBox`).
+ * The box must already be running (call after `provider.start` / `startBox` /
+ * `provider.reconnect`).
  */
 export async function restoreAgentSessions(
   box: BoxRecord,
@@ -90,12 +136,23 @@ export async function restoreAgentSessions(
 ): Promise<void> {
   const cfg = await loadEffectiveConfig(box.workspacePath).catch(() => null);
   const isDocker = (box.provider ?? 'docker') === 'docker';
-  const kinds: Array<{ kind: ResumableAgent; sessionName: string }> = [
-    { kind: 'claude', sessionName: cfg?.effective.claude.sessionName ?? 'claude' },
-    { kind: 'codex', sessionName: cfg?.effective.codex.sessionName ?? 'codex' },
-  ];
-  for (const { kind, sessionName } of kinds) {
-    if (await tmuxAlive(provider, box, sessionName)) continue;
+  const sessionNameFor = (kind: 'claude' | 'codex' | 'opencode'): string =>
+    kind === 'claude'
+      ? (cfg?.effective.claude.sessionName ?? 'claude')
+      : kind === 'codex'
+        ? (cfg?.effective.codex.sessionName ?? 'codex')
+        : (cfg?.effective.opencode.sessionName ?? 'opencode');
+  // Pass 1: resume whichever resumable agents (claude/codex) were running.
+  // Track the kinds already live or relaunched so the fresh-launch pass below
+  // doesn't double-start one.
+  const handled = new Set<'claude' | 'codex' | 'opencode'>();
+  const kinds: ResumableAgent[] = ['claude', 'codex'];
+  for (const kind of kinds) {
+    const sessionName = sessionNameFor(kind);
+    if (await tmuxAlive(provider, box, sessionName)) {
+      handled.add(kind);
+      continue;
+    }
     const resume = await agentResumeArgs(provider, box, kind);
     if (!resume) continue;
     const args =
@@ -116,9 +173,24 @@ export async function restoreAgentSessions(
       } else {
         await cloudAgentStartDetached({ box, binary: kind, sessionName, extraArgs: args });
       }
+      handled.add(kind);
       opts.onLog?.(`resumed ${kind} session`);
     } catch (err) {
       opts.onLog?.(`could not resume ${kind} session: ${(err as Error).message}`);
+    }
+  }
+  // Pass 2 (recover only): the box's last agent had no live/resumable session,
+  // so start it fresh.
+  const fresh = opts.launchFresh;
+  if (fresh && !handled.has(fresh)) {
+    const sessionName = sessionNameFor(fresh);
+    if (!(await tmuxAlive(provider, box, sessionName))) {
+      try {
+        await startFreshSession(box, fresh, sessionName, cfg, isDocker);
+        opts.onLog?.(`started ${fresh} session`);
+      } catch (err) {
+        opts.onLog?.(`could not start ${fresh} session: ${(err as Error).message}`);
+      }
     }
   }
 }

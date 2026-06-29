@@ -187,6 +187,54 @@ async function dispatchDocker(
   }
 }
 
+/**
+ * Probe the box's live agent tmux sessions, pick one (prompt on a TTY when
+ * several), and attach to it — the shared body of `agentbox attach` and the
+ * attach tail of `agentbox recover`. Returns 'none' when no session is running
+ * (caller decides whether that's an error) and 'cancelled' when the user
+ * dismisses the multi-session picker. Otherwise it does not return (each attach
+ * wrapper ends in process.exit / blocks on the PTY).
+ */
+export async function attachToRunningAgent(
+  box: BoxRecord,
+  opts: AttachOpts,
+): Promise<'none' | 'cancelled' | void> {
+  const isCloud = (box.provider ?? 'docker') !== 'docker';
+  const sessions = isCloud
+    ? await probeCloudAgentSessions(box, opts.sessionName)
+    : await probeDockerAgentSessions(box.container, opts.sessionName);
+  if (sessions.length === 0) return 'none';
+  const winner = await pickSession(box.name, sessions);
+  if (winner === null) return 'cancelled';
+
+  if (isCloud) {
+    // Loading the effective config here only to read `attach.openIn`.
+    // The pre-probe above is the ONLY thing preventing auto-start on the
+    // cloud branch: `cloudAgentAttach` calls `provider.buildAttach(box,
+    // 'agent', { sessionName, command })`, which CREATES the tmux session
+    // if it doesn't exist. Don't move the empty-session guard below this
+    // line.
+    const attachIn = resolveAttachInOption(opts);
+    const cfg = await loadEffectiveConfig(box.workspacePath, {
+      cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
+    });
+    await cloudAgentAttach({
+      box,
+      binary: winner.kind,
+      sessionName: winner.sessionName,
+      mode: winner.kind,
+      openIn: hostAwareOpenIn(cfg),
+    });
+    return;
+  }
+
+  const attachIn = resolveAttachInOption(opts);
+  const cfg = await loadEffectiveConfig(box.workspacePath, {
+    cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
+  });
+  await dispatchDocker(box, winner, hostAwareOpenIn(cfg));
+}
+
 export const attachCommand = new Command('attach')
   .description(
     'Attach to the running agent tmux session in a box (claude / codex / opencode). Does not auto-start: if no session is running, exits non-zero with a bare warning. With multiple live sessions, prompts on a TTY and picks the most recently started otherwise.',
@@ -206,43 +254,11 @@ export const attachCommand = new Command('attach')
     intro('Attaching to agent session...');
     try {
       const box = await resolveBoxOrExit(idOrName);
-      const isCloud = (box.provider ?? 'docker') !== 'docker';
-      const sessions = isCloud
-        ? await probeCloudAgentSessions(box, opts.sessionName)
-        : await probeDockerAgentSessions(box.container, opts.sessionName);
-      if (sessions.length === 0) {
+      const result = await attachToRunningAgent(box, opts);
+      if (result === 'none') {
         log.warn(`no agent session running in ${box.name}`);
         process.exit(1);
       }
-      const winner = await pickSession(box.name, sessions);
-      if (winner === null) return;
-
-      if (isCloud) {
-        // Loading the effective config here only to read `attach.openIn`.
-        // The pre-probe above is the ONLY thing preventing auto-start on the
-        // cloud branch: `cloudAgentAttach` calls `provider.buildAttach(box,
-        // 'agent', { sessionName, command })`, which CREATES the tmux session
-        // if it doesn't exist. Don't move the empty-session guard below this
-        // line.
-        const attachIn = resolveAttachInOption(opts);
-        const cfg = await loadEffectiveConfig(box.workspacePath, {
-          cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
-        });
-        await cloudAgentAttach({
-          box,
-          binary: winner.kind,
-          sessionName: winner.sessionName,
-          mode: winner.kind,
-          openIn: hostAwareOpenIn(cfg),
-        });
-        return;
-      }
-
-      const attachIn = resolveAttachInOption(opts);
-      const cfg = await loadEffectiveConfig(box.workspacePath, {
-        cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
-      });
-      await dispatchDocker(box, winner, hostAwareOpenIn(cfg));
     } catch (err) {
       handleLifecycleError(err);
     }

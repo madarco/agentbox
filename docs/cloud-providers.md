@@ -27,7 +27,7 @@ The orchestration code uses `Provider` (`packages/core/src/provider.ts`):
 interface Provider {
   readonly name: ProviderName;          // 'docker' | 'daytona' | future
   create(req: CreateBoxRequest): Promise<CreatedBox>;
-  start/pause/resume/stop/destroy(box): Promise<…>;
+  start/reconnect/pause/resume/stop/destroy(box): Promise<…>;
   inspect/probeState(box): Promise<…>;
   exec(box, argv, opts): Promise<ExecResult>;
   resolveUrl(box, opts): Promise<string>;
@@ -48,6 +48,22 @@ credential sync, in-box dockerd launch, VNC daemon launch, signed preview URLs,
 snapshot manifests, and (eventually) per-service preview URLs. The `CloudBackend`
 just implements the SDK primitives (`provision`, `exec`, `uploadFile`,
 `previewUrl`, `attachArgv`, optionally `createSnapshot` / `list` / …).
+
+`reconnect(box)` is the **no-power-cycle** sibling of `start`, used by
+`agentbox recover` to re-attach this host to a box that's already running (host
+reboot, relay restart, fresh CLI process). The cloud provider `probeState`s the
+sandbox: when it's `running` it calls `reEnsureCloudBox` directly (re-resolve
+preview URLs, re-open the Hetzner tunnel + forwards, re-register host portless
+aliases + the relay poller, relaunch the in-box ctl/dockerd/vnc daemons) and
+skips `backend.start`; only a `paused`/`stopped` sandbox falls back to the
+power-cycling `resume`/`start`. Docker's `reconnect` is the idempotent `startBox`
+(a `docker start` on a live container is a no-op). `recover --provider <cloud>
+--adopt` additionally rebuilds a missing `BoxRecord` from `backend.list()` (the
+`agentbox.name` tag), minting fresh relay/bridge tokens that reach the in-box
+agent when `reconnect` relaunches the ctl daemon (it writes
+`/run/agentbox/relay.env`). Hetzner adoption needs the box's per-host SSH key
+(`~/.agentbox/boxes/<sandboxId>/ssh/id_ed25519`); a box created elsewhere can't
+be controlled and `recover` says so.
 
 This split is why "add a new cloud" is small: only the SDK shim differs.
 

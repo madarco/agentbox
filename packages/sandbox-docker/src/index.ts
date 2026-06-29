@@ -263,6 +263,7 @@ export {
   findBox,
   readState,
   recordBox,
+  recordLastAgent,
   removeBoxRecord,
   resolveBoxRef,
   type BoxRecord,

@@ -22,6 +22,7 @@ import {
   extractOpencodeCredentials,
   formatDetachNotice,
   inspectBox,
+  recordLastAgent,
   OPENCODE_CREDENTIALS_BACKUP_FILE,
   OPENCODE_FORWARDED_ENV_KEYS,
   OpencodeSessionError,
@@ -633,6 +634,8 @@ export const opencodeCommand = new Command('opencode')
         opencodeArgs,
         sessionName,
       });
+      // Remember this box was launched as opencode for `agentbox recover`.
+      await recordLastAgent(result.record.id, 'opencode').catch(() => {});
       const createResyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
 
       const nSuffix =
@@ -713,6 +716,8 @@ async function startOrAttachOpencode(
   if (insp.state === 'missing') {
     throw new Error(`box ${box.name} has no container; was it destroyed?`);
   }
+  // Record this attach/launch as an opencode session for `agentbox recover`.
+  await recordLastAgent(box.id, 'opencode').catch(() => {});
 
   // If a tmux session already exists, just attach — no resync, ignore any
   // post-`--` args (they only apply to a fresh opencode).

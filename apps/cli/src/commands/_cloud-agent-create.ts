@@ -23,6 +23,7 @@ import { makeProgressReporter } from '../lib/progress.js';
 import { printLaunchRecap } from '../lib/launch-recap.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
+import { recordLastAgent } from '@agentbox/sandbox-docker';
 import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 
 export interface CloudAgentCreateArgs {
@@ -88,6 +89,9 @@ export async function cloudAgentCreate(args: CloudAgentCreateArgs): Promise<void
         ? `  ·  n ${String(result.record.projectIndex)}`
         : '';
     s.stop(`box ready${nSuffix}`);
+    // Record which agent this box was launched with so `agentbox recover` can
+    // relaunch/attach the right one later. Best-effort — never block the launch.
+    await recordLastAgent(result.record.id, args.mode).catch(() => {});
     let extraArgs = args.extraArgs;
     if (args.beforeStart) {
       const hook = await args.beforeStart(result.record);

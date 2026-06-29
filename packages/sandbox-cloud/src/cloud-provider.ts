@@ -1079,6 +1079,28 @@ export function createCloudProvider(
       return reEnsureCloudBox(box, h);
     },
 
+    async reconnect(box: BoxRecord): Promise<BoxRecord> {
+      // Re-establish host connectivity WITHOUT a power-cycle when the sandbox is
+      // already up: `reEnsureCloudBox` re-resolves preview URLs, re-opens the
+      // Hetzner tunnel (lazily, on its first `previewUrl`), re-registers
+      // portless + the relay poller, and relaunches the in-box daemons. If the
+      // box is actually paused/stopped, fall back to the power-cycling paths.
+      const h = handleFor(box);
+      const state = await probe(box);
+      if (state === 'running') return reEnsureCloudBox(box, h);
+      if (state === 'paused') {
+        await backend.resume(h);
+        return reEnsureCloudBox(box, h);
+      }
+      if (state === 'stopped') {
+        await backend.start(h);
+        return reEnsureCloudBox(box, h);
+      }
+      throw new Error(
+        `cannot recover ${box.name}: sandbox ${box.cloud?.sandboxId ?? box.id} is ${state}`,
+      );
+    },
+
     async pause(box: BoxRecord): Promise<void> {
       await backend.pause(handleFor(box));
       await persistLastState(box, 'paused');
