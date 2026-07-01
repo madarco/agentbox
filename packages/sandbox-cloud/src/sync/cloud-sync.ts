@@ -31,7 +31,7 @@ import type {
 } from '@agentbox/core';
 import { dryRunProviderSync, SYNC_DRYRUN_ENV } from '@agentbox/core';
 import { renderCarryEntries } from '@agentbox/sandbox-core';
-import { resyncCloudWorkspace } from '../workspace-resync.js';
+import { resyncCloudWorkspace } from './workspace-resync.js';
 import {
   type CloudAgentKind,
   ensureAgentHomeDirsOwned,
@@ -39,13 +39,13 @@ import {
   refreshAgentCredentialsBackup,
   seedAgentVolumesIfFresh,
   seedOpencodeModelState,
-} from '../agent-credentials.js';
-import { seedDynamicConfig } from '../dynamic-sync.js';
-import { ensureCodexAgentsOverride } from '../codex-agents-override.js';
-import { seedClaudeJsonAtCreate } from '../claude-json-overlay.js';
-import { seedGitIdentity as seedCloudGitIdentity } from '../git-identity.js';
-import { uploadEnvFiles } from '../env-files.js';
-import { uploadCarryPaths } from '../carry.js';
+} from './agent-credentials.js';
+import { seedDynamicConfig } from './dynamic-sync.js';
+import { ensureCodexAgentsOverride } from './codex-agents-override.js';
+import { seedClaudeJsonAtCreate } from './claude-json-overlay.js';
+import { seedGitIdentity as seedCloudGitIdentity } from './git-identity.js';
+import { uploadEnvFiles } from './env-files.js';
+import { uploadCarryPaths } from './carry.js';
 
 export interface CloudSyncOptions {
   /**

@@ -5,7 +5,7 @@ import type { CloudBackend, CloudHandle, ResyncWorktree } from '@agentbox/core';
 const { execaMock } = vi.hoisted(() => ({ execaMock: vi.fn() }));
 vi.mock('execa', () => ({ execa: execaMock }));
 
-import { resyncCloudWorkspace } from '../src/workspace-resync.js';
+import { resyncCloudWorkspace } from '../src/sync/workspace-resync.js';
 
 const HOST_TIP = 'a'.repeat(40);
 const BASE = 'b'.repeat(40); // shared ancestor (fork base)

@@ -1,6 +1,6 @@
 import { execa } from 'execa';
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
-import { bashScript, quoteShellArg } from './shell.js';
+import { bashScript, quoteShellArg } from '../shell.js';
 
 export interface SeedGitIdentityOptions {
   /** Host repo dir to read the effective `user.name`/`user.email` from. */

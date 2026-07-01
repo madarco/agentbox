@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ResolvedCarryEntry } from '@agentbox/core';
-import { uploadCarryPaths } from '../src/carry.js';
+import { uploadCarryPaths } from '../src/sync/carry.js';
 import { makeMockCloudBackend } from '../src/mock-backend.js';
 
 const HOST_HOME_REPLACE = '/home/vscode';

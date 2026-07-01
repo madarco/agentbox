@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { CloudBackend, CloudHandle, ResyncResult } from '@agentbox/core';
 import { detectGitRepos } from '@agentbox/sandbox-core';
-import { bashScript, quoteShellArgv } from './shell.js';
+import { bashScript, quoteShellArgv } from '../shell.js';
 
 /**
  * Seed `/workspace` inside a cloud sandbox from the host workspace. Mirrors

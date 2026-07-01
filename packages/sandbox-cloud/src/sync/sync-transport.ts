@@ -24,7 +24,7 @@ import type {
   SyncTransport,
   TransportCaps,
 } from '@agentbox/core';
-import { quoteShellArgv } from './shell.js';
+import { quoteShellArgv } from '../shell.js';
 
 export interface CloudSyncTransportInit {
   backend: CloudBackend;

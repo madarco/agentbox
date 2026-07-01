@@ -17,19 +17,19 @@ const m = vi.hoisted(() => ({
   renderCarryEntries: vi.fn(),
 }));
 
-vi.mock('../src/agent-credentials.js', () => ({
+vi.mock('../src/sync/agent-credentials.js', () => ({
   ensureAgentHomeDirsOwned: m.ensureAgentHomeDirsOwned,
   extractCloudAgentCredentials: m.extractCloudAgentCredentials,
   refreshAgentCredentialsBackup: m.refreshAgentCredentialsBackup,
   seedAgentVolumesIfFresh: m.seedAgentVolumesIfFresh,
   seedOpencodeModelState: m.seedOpencodeModelState,
 }));
-vi.mock('../src/dynamic-sync.js', () => ({ seedDynamicConfig: m.seedDynamicConfig }));
-vi.mock('../src/codex-agents-override.js', () => ({ ensureCodexAgentsOverride: m.ensureCodexAgentsOverride }));
-vi.mock('../src/claude-json-overlay.js', () => ({ seedClaudeJsonAtCreate: m.seedClaudeJsonAtCreate }));
-vi.mock('../src/git-identity.js', () => ({ seedGitIdentity: m.seedGitIdentity }));
-vi.mock('../src/env-files.js', () => ({ uploadEnvFiles: m.uploadEnvFiles }));
-vi.mock('../src/carry.js', () => ({ uploadCarryPaths: m.uploadCarryPaths }));
+vi.mock('../src/sync/dynamic-sync.js', () => ({ seedDynamicConfig: m.seedDynamicConfig }));
+vi.mock('../src/sync/codex-agents-override.js', () => ({ ensureCodexAgentsOverride: m.ensureCodexAgentsOverride }));
+vi.mock('../src/sync/claude-json-overlay.js', () => ({ seedClaudeJsonAtCreate: m.seedClaudeJsonAtCreate }));
+vi.mock('../src/sync/git-identity.js', () => ({ seedGitIdentity: m.seedGitIdentity }));
+vi.mock('../src/sync/env-files.js', () => ({ uploadEnvFiles: m.uploadEnvFiles }));
+vi.mock('../src/sync/carry.js', () => ({ uploadCarryPaths: m.uploadCarryPaths }));
 vi.mock('@agentbox/sandbox-core', () => ({ renderCarryEntries: m.renderCarryEntries }));
 
 import { makeCloudSync } from '../src/sync/cloud-sync.js';

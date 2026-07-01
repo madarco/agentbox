@@ -37,7 +37,7 @@ import type {
   WorkspaceResyncPorts,
 } from '@agentbox/core';
 import { makeHostGitPorts, resyncWorkspace } from '@agentbox/sandbox-core';
-import { bashScript, quoteShellArg, quoteShellArgv } from './shell.js';
+import { bashScript, quoteShellArg, quoteShellArgv } from '../shell.js';
 
 /** Private in-box refs the pre-fetch writes; force-updated each resync, cleaned up after. */
 const TARGET_REF = 'refs/agentbox-resync/target';

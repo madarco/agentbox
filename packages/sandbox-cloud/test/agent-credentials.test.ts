@@ -15,7 +15,7 @@ import {
   ensureAgentVolumesForCloud,
   extractCloudAgentCredentials,
   seedAgentVolumesIfFresh,
-} from '../src/agent-credentials.js';
+} from '../src/sync/agent-credentials.js';
 
 interface ExecCall {
   cmd: string;

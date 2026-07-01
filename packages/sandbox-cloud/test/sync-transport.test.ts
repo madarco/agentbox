@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeMockCloudBackend } from '../src/mock-backend.js';
-import { createCloudSyncTransport } from '../src/sync-transport.js';
+import { createCloudSyncTransport } from '../src/sync/sync-transport.js';
 
 describe('CloudSyncTransport', () => {
   it('applyTarball uploads the tarball then extracts it with the byte-identical flags', async () => {

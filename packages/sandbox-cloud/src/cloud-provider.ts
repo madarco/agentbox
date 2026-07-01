@@ -55,7 +55,7 @@ import {
   registerBoxWithRelay,
   TERM_FALLBACK_SNIPPET,
 } from '@agentbox/sandbox-docker';
-import { ensureAgentVolumesForCloud } from './agent-credentials.js';
+import { ensureAgentVolumesForCloud } from './sync/agent-credentials.js';
 import {
   cloudSnapshotName,
   currentCloudBaseFingerprint,
@@ -70,8 +70,8 @@ import { readExposedServicePorts } from './expose-ports.js';
 import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
 import { kickCloudBootstrap } from './bootstrap-launch.js';
 import { quoteShellArgv } from './shell.js';
-import { seedCloudWorkspace } from './workspace-seed.js';
-import type { SeedCloudWorkspaceResult } from './workspace-seed.js';
+import { seedCloudWorkspace } from './sync/workspace-seed.js';
+import type { SeedCloudWorkspaceResult } from './sync/workspace-seed.js';
 
 /** Workspace mount path inside every cloud sandbox. Matches the Docker model. */
 export const CLOUD_WORKSPACE_DIR = '/workspace';
