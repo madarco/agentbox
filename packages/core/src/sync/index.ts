@@ -34,3 +34,15 @@ export type {
 export type { SyncContext } from './context.js';
 export type { ProviderSync, CarryApplyResult } from './provider-sync.js';
 export { dryRunProviderSync, SYNC_DRYRUN_ENV } from './provider-sync.js';
+export type { GitRpcParams } from './git-refs.js';
+export {
+  SCRATCH_BRANCH_PREFIX,
+  isScratchBranch,
+  resolveRemote,
+  resolveLandDest,
+  landRefspec,
+  upstreamRef,
+  remoteTrackingRef,
+  isResolvedBranch,
+  sanitizeGitArgs,
+} from './git-refs.js';
