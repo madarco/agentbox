@@ -95,6 +95,17 @@ describe('placeholderContextFromEnv', () => {
     } as NodeJS.ProcessEnv);
     expect(c).not.toHaveProperty('SECRET');
   });
+
+  it('prefers an explicit AGENTBOX_BOX_HOST over the derived host', () => {
+    // The cloud public-URL fix relies on this: a box that sets AGENTBOX_BOX_HOST
+    // to its real preview host (e.g. <sub>.vercel.run) must win over the
+    // <name>.localhost fallback derived from AGENTBOX_BOX_NAME.
+    const c = placeholderContextFromEnv({
+      AGENTBOX_BOX_NAME: 'foo',
+      AGENTBOX_BOX_HOST: 'abc123.vercel.run',
+    } as NodeJS.ProcessEnv);
+    expect(c.AGENTBOX_BOX_HOST).toBe('abc123.vercel.run');
+  });
 });
 
 describe('rule parsing', () => {

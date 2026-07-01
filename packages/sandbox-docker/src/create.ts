@@ -16,9 +16,16 @@ import {
   buildCodexMounts,
   ensureCodexVolume,
   resolveCodexVolume,
+  seedCodexAgentsOverride,
   seedCodexHooks,
   type CodexMountResult,
 } from './codex.js';
+import {
+  buildAgentsMounts,
+  ensureAgentsVolume,
+  resolveAgentsVolume,
+  type AgentsMountResult,
+} from './agents.js';
 import {
   buildOpencodeMounts,
   ensureOpencodeVolume,
@@ -298,6 +305,31 @@ async function pathExists(p: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Trust the (TLS) host Portless CA inside a docker box so the in-box VNC
+ * Chromium and Playwright accept `https://<name>.localhost`. The CA is the
+ * host's, bind-mounted at /home/vscode/.portless/ca.pem (PORTLESS_STATE_DIR).
+ * The baked `agentbox-portless-trust` helper installs it into the system store
+ * + the vscode NSS db; we then drop a profile.d export of NODE_EXTRA_CA_CERTS
+ * for Node-based agents. Best-effort: never throws.
+ */
+async function trustInBoxPortlessCa(
+  container: string,
+  log: (line: string) => void,
+): Promise<void> {
+  const script =
+    'agentbox-portless-trust /home/vscode/.portless/ca.pem >/dev/null 2>&1 || true; ' +
+    "echo 'export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/agentbox-portless-ca.crt' " +
+    '> /etc/profile.d/agentbox-portless-ca.sh 2>/dev/null || true';
+  const r = await execa(
+    'docker',
+    ['exec', '--user', 'root', container, 'bash', '-lc', script],
+    { reject: false },
+  );
+  if (r.exitCode === 0) log('portless: trusted host CA in box (system store + NSS)');
+  else log('portless: in-box CA trust failed (best-effort) — in-box https may warn');
 }
 
 // ~/.claude and ~/.codex are intentionally NOT in this list: each lives in a
@@ -668,8 +700,34 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     // each create so an image upgrade propagates; never touches the host.
     const codexHooks = await seedCodexHooks(codexSpec.volume, ensureRef);
     if (codexHooks.seeded) log(`seeded Codex activity hooks into ${codexSpec.volume}`);
+    // Box-only: fold the box "system prompt" (/etc/claude-code/CLAUDE.md) into
+    // ~/.codex/AGENTS.override.md so the in-box Codex agent reads the same box
+    // facts Claude gets. Runs after the rsync above so a user's synced AGENTS.md
+    // gets preserved beneath the facts.
+    const codexOverride = await seedCodexAgentsOverride(codexSpec.volume, ensureRef);
+    if (codexOverride.seeded) log(`seeded Codex AGENTS.override.md into ${codexSpec.volume}`);
     codexMounts = buildCodexMounts(codexSpec, process.env);
     codexConfigVolume = codexSpec.volume;
+  }
+
+  // Agents skills volume (~/.agents). Codex discovers skills from
+  // ~/.agents/skills directly, and the ~/.codex/skills symlinks point back into
+  // it, so the box needs it to see the same skill set as the host. Mounted
+  // whenever the host has a ~/.agents; shared across boxes (skills only, no
+  // auth). Same host-authoritative additive sync as the other agent volumes.
+  let agentsMounts: AgentsMountResult | undefined;
+  let agentsConfigVolume: string | undefined;
+  if (await pathExists(join(homedir(), '.agents'))) {
+    const agentsSpec = resolveAgentsVolume();
+    const agentsEnsured = await ensureAgentsVolume(agentsSpec, {
+      syncFromHost: true,
+      image: ensureRef,
+    });
+    if (agentsEnsured.synced) log(`synced ${agentsSpec.volume} from ~/.agents`);
+    else if (agentsEnsured.created) log(`created empty volume ${agentsSpec.volume}`);
+    else log(`reusing volume ${agentsSpec.volume}`);
+    agentsMounts = buildAgentsMounts(agentsSpec);
+    agentsConfigVolume = agentsSpec.volume;
   }
 
   // OpenCode config volume. Mounted when the caller wants opencode
@@ -717,6 +775,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   const extraVolumes = await buildIdentityMounts();
   extraVolumes.push(...claudeMounts.extraVolumes);
   if (codexMounts) extraVolumes.push(...codexMounts.extraVolumes);
+  if (agentsMounts) extraVolumes.push(...agentsMounts.extraVolumes);
   if (opencodeMounts) extraVolumes.push(...opencodeMounts.extraVolumes);
   extraVolumes.push(...ide.extraVolumes);
   extraVolumes.push(`${socketDir}:/run/agentbox`);
@@ -871,6 +930,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     socketPath,
     claudeConfigVolume: claudeSpec.volume,
     codexConfigVolume,
+    agentsConfigVolume,
     opencodeConfigVolume,
     vscodeServerVolume: vscodeServerVolumeName(id),
     cursorServerVolume: cursorServerVolumeName(id),
@@ -1179,6 +1239,16 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
               // the proxy was started (http://…:1355 no-TLS, or https://… on :443).
               portlessUrl = await portlessGetUrl(name);
               log(`portless alias ${portlessUrl} -> 127.0.0.1:${String(webHostPort)}`);
+              // When the host proxy is TLS, the in-box VNC Chromium / Playwright
+              // hit `https://<name>.localhost` (via host.docker.internal) and
+              // reject the host's self-signed CA. The CA is already bind-mounted
+              // at /home/vscode/.portless/ca.pem (PORTLESS_STATE_DIR); trust it
+              // in the box (system store + vscode NSS db) and point Node at it.
+              // agent-browser already gets IGNORE_HTTPS_ERRORS via portlessEnv;
+              // this covers everything else. http (no-TLS :1355) has no cert.
+              if (portlessUrl.startsWith('https://')) {
+                await trustInBoxPortlessCa(containerName, log);
+              }
             } else {
               log('portless alias failed (best-effort) — box still reachable on the loopback URL');
             }

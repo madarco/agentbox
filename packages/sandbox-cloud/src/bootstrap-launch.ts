@@ -27,6 +27,15 @@ export interface KickCloudBootstrapArgs {
   bridgeToken?: string;
   /** Exported as AGENTBOX_WEB_PROXY_PORT (Vercel uses 8080). */
   webProxyPort?: number;
+  /**
+   * The bare host (no scheme) this box is reachable at, exported as
+   * AGENTBOX_BOX_HOST so the in-box placeholder engine (`agentbox-ctl render`,
+   * the `{{AGENTBOX_BOX_HOST}}` env-init pattern) resolves the real host instead
+   * of the derived `<box-name>.localhost`. `<name>.localhost` for portless
+   * backends, the public preview host (e.g. `<sub>.vercel.run`) otherwise. When
+   * unset the in-box engine falls back to deriving `<box-name>.localhost`.
+   */
+  boxHost?: string;
   /** false → AGENTBOX_LAUNCH_DOCKERD=0 (Vercel can't run nested containers). */
   launchDockerd: boolean;
   /** Present → start the VNC stack with this password; undefined → VNC disabled. */
@@ -52,6 +61,7 @@ export async function kickCloudBootstrap(args: KickCloudBootstrapArgs): Promise<
   if (args.bridgeToken) env.push(`AGENTBOX_BRIDGE_TOKEN=${quoteShellArgv([args.bridgeToken])}`);
   if (args.webProxyPort !== undefined)
     env.push(`AGENTBOX_WEB_PROXY_PORT=${quoteShellArgv([String(args.webProxyPort)])}`);
+  if (args.boxHost) env.push(`AGENTBOX_BOX_HOST=${quoteShellArgv([args.boxHost])}`);
   if (args.vncPassword) {
     env.push(`AGENTBOX_VNC_ENABLED=1`);
     env.push(`AGENTBOX_VNC_PASSWORD=${quoteShellArgv([args.vncPassword])}`);

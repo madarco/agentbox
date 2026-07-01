@@ -1,5 +1,5 @@
 {
-  "$comment": "AgentBox enterprise-managed Claude Code settings, baked into the box image at /etc/claude-code/managed-settings.json. Highest precedence and NOT synced from the host ~/.claude, so claude-hooks-filter.ts never touches it; per Claude Code, hook arrays MERGE across settings sources, so the user's own hooks still run. These hooks report Claude's activity to the box supervisor (agentbox-ctl claude-state -> ctl socket -> relay -> ~/.agentbox/boxes/<id>/status.json) so `agentbox status/list/inspect` can show it even when the box is paused. Each command is exit-0 fast and shell-backgrounded so a hook can never block or fail a Claude turn. The ExitPlanMode / AskUserQuestion entries run SYNCHRONOUSLY (no &) because they consume the hook's stdin payload; the catchall PreToolUse 'working' hook races with them, but the supervisor's sticky-state semantics swallow that race (a 'working' set while in end-plan/question is ignored unless --clear-pending is set, which only the matching PostToolUse hook passes). skipDangerousModePermissionPrompt pre-accepts the bypass-permissions disclaimer at policy precedence — AgentBox boxes are isolated, and `agentbox claude` defaults to --dangerously-skip-permissions, so the one-time accept gate would just trap every fresh box.",
+  "$comment": "AgentBox enterprise-managed Claude Code settings, baked into the box image at /etc/claude-code/managed-settings.json. Highest precedence and NOT synced from the host ~/.claude, so claude-hooks-filter.ts never touches it; per Claude Code, hook arrays MERGE across settings sources, so the user's own hooks still run. These hooks report Claude's activity to the box supervisor (agentbox-ctl claude-state -> ctl socket -> relay -> ~/.agentbox/boxes/<id>/status.json) so `agentbox status/list/inspect` can show it even when the box is paused. Each command is exit-0 fast and shell-backgrounded so a hook can never block or fail a Claude turn. The ExitPlanMode / AskUserQuestion entries run SYNCHRONOUSLY (no &) because they consume the hook's stdin payload; the catchall PreToolUse 'working' hook races with them, but the supervisor's sticky-state semantics swallow that race (a 'working' set while in end-plan/question is ignored unless --clear-pending is set, which only the matching PostToolUse hook passes). The SessionStart / Stop entries also run SYNCHRONOUSLY (no &) with --capture-session: they read the hook's stdin session_id and record it to the box's per-box session pointer (~/.local/state/agentbox/claude-session) so a box restart can resume the exact conversation (claude --resume <id>); they fire often enough to track /new and /branch, which mint fresh session ids. (A backgrounded `&` hook would detach stdin, so capture hooks must be synchronous.) skipDangerousModePermissionPrompt pre-accepts the bypass-permissions disclaimer at policy precedence — AgentBox boxes are isolated, and `agentbox claude` defaults to --dangerously-skip-permissions, so the one-time accept gate would just trap every fresh box.",
   "skipDangerousModePermissionPrompt": true,
   "hooks": {
     "UserPromptSubmit": [
@@ -45,7 +45,7 @@
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl claude-state idle >/dev/null 2>&1 &", "timeout": 3 }
+          { "type": "command", "command": "agentbox-ctl claude-state idle --capture-session >/dev/null 2>&1", "timeout": 3 }
         ]
       }
     ],
@@ -101,14 +101,14 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl claude-state idle >/dev/null 2>&1 &", "timeout": 3 }
+          { "type": "command", "command": "agentbox-ctl claude-state idle --capture-session >/dev/null 2>&1", "timeout": 3 }
         ]
       }
     ],
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl claude-state idle >/dev/null 2>&1 &", "timeout": 3 }
+          { "type": "command", "command": "agentbox-ctl claude-state idle --clear-session >/dev/null 2>&1 &", "timeout": 3 }
         ]
       }
     ]

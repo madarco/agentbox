@@ -1,6 +1,10 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   createInputRouter,
+  looksLikeHostImagePath,
   type LeaderAction,
 } from '../../src/wrapped-pty/input-router.js';
 import type { PromptAnswerBody } from '@agentbox/relay';
@@ -410,6 +414,78 @@ describe('input router (Ctrl+V image paste)', () => {
     await flushMicrotasks();
     expect(s.calls()).toBe(0);
     expect(Buffer.concat(s.forwarded)).toEqual(Buffer.from('\x1b[118u', 'latin1'));
+  });
+});
+
+describe('looksLikeHostImagePath', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agb-ir-'));
+  const png = join(dir, 'shot.png');
+  writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+  it('returns the path for an existing host image file', () => {
+    expect(looksLikeHostImagePath(png)).toBe(png);
+    expect(looksLikeHostImagePath(`  ${png}  `)).toBe(png); // trims
+  });
+  it('accepts a file:// URL', () => {
+    expect(looksLikeHostImagePath(`file://${png}`)).toBe(png);
+  });
+  it('rejects non-image / missing / multi-line', () => {
+    expect(looksLikeHostImagePath(join(dir, 'nope.png'))).toBeNull(); // missing
+    expect(looksLikeHostImagePath(join(dir, 'shot.txt'))).toBeNull(); // not image
+    expect(looksLikeHostImagePath(`${png}\nrm -rf /`)).toBeNull(); // multi-line
+    expect(looksLikeHostImagePath('')).toBeNull();
+    expect(looksLikeHostImagePath('just some pasted text')).toBeNull();
+  });
+});
+
+describe('input router (Herdr screenshot-path paste)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agb-ir2-'));
+  const png = join(dir, 'herdr-clipboard-images-501', 'clip.png');
+  mkdirSync(dirname(png), { recursive: true });
+  writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  const BP = (s: string): Buffer => Buffer.from(`\x1b[200~${s}\x1b[201~`, 'utf8');
+
+  function fileSetup(boxPath: string | null) {
+    const forwarded: Buffer[] = [];
+    const seen: string[] = [];
+    const router = createInputRouter({
+      onForward: (b) => forwarded.push(b),
+      onAnswer: () => {},
+      onPasteImageFile: (p) => {
+        seen.push(p);
+        return Promise.resolve(boxPath);
+      },
+    });
+    return { forwarded, seen, router };
+  }
+
+  it('uploads the pasted host image and forwards a bracketed paste of the box path', async () => {
+    const s = fileSetup('/tmp/agentbox-clip-9.png');
+    s.router.feed(BP(png));
+    await flushMicrotasks();
+    expect(s.seen).toEqual([png]); // hook got the host path
+    expect(Buffer.concat(s.forwarded).toString('utf8')).toBe('\x1b[200~/tmp/agentbox-clip-9.png\x1b[201~');
+  });
+
+  it('falls back to the original host path when the upload fails', async () => {
+    const s = fileSetup(null);
+    s.router.feed(BP(png));
+    await flushMicrotasks();
+    expect(Buffer.concat(s.forwarded).toString('utf8')).toBe(`\x1b[200~${png}\x1b[201~`);
+  });
+
+  it('forwards a non-image bracketed paste unchanged (hook not called)', async () => {
+    const s = fileSetup('/tmp/x.png');
+    s.router.feed(BP('hello world'));
+    await flushMicrotasks();
+    expect(s.seen).toHaveLength(0);
+    expect(Buffer.concat(s.forwarded).toString('utf8')).toBe('\x1b[200~hello world\x1b[201~');
+  });
+
+  it('does nothing special when no file hook is set', () => {
+    const s = setup();
+    s.router.feed(BP(png));
+    expect(Buffer.concat(s.forwarded).toString('utf8')).toBe(`\x1b[200~${png}\x1b[201~`);
   });
 });
 

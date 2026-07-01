@@ -10,6 +10,7 @@ export {
   findBox,
   readState,
   recordBox,
+  recordLastAgent,
   removeBoxRecord,
   reserveProjectIndex,
   resolveBoxRef,

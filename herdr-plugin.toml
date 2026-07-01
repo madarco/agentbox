@@ -1,0 +1,49 @@
+# AgentBox Herdr plugin (https://herdr.dev/docs/plugins).
+# Install:  herdr plugin install madarco/agentbox
+# Or, with the AgentBox CLI already installed:  agentbox install herdr
+#
+# agentbox commands route through ./agentbox-shim.sh, written at install time
+# with the absolute path to your AgentBox CLI — Herdr runs plugin commands as a
+# bare argv with no shell expansion / unreliable PATH (e.g. under nvm).
+id = "agentbox"
+name = "AgentBox"
+version = "0.2.0"
+min_herdr_version = "0.7.0"
+platforms = ["linux", "macos", "windows"]
+description = "AgentBox: live boxes overlay, shortcuts, and Ctrl+click to open a box web app."
+
+[[build]]
+command = ["sh", "build.sh"]
+
+[[panes]]
+id = "boxes"
+title = "AgentBox"
+placement = "overlay"
+command = ["sh", "agentbox-shim.sh", "list", "--herdr", "--watch"]
+
+[[actions]]
+id = "boxes"
+title = "AgentBox: boxes overlay"
+contexts = ["workspace"]
+command = ["herdr", "plugin", "pane", "open", "--plugin", "agentbox", "--entrypoint", "boxes", "--placement", "overlay"]
+
+[[actions]]
+id = "new"
+title = "AgentBox: new box"
+contexts = ["workspace"]
+command = ["sh", "agentbox-shim.sh", "herdr", "new"]
+
+[[actions]]
+id = "link"
+title = "AgentBox: open box link"
+contexts = ["workspace"]
+command = ["sh", "agentbox-shim.sh", "herdr", "link"]
+
+# Keybindings are NOT declared here — Herdr ignores manifest keys. They're added
+# to the user's config.toml by `agentbox install herdr` / the build step.
+
+[[link_handlers]]
+id = "web"
+title = "AgentBox: open box web app"
+pattern = "^agentbox://"
+action = "link"

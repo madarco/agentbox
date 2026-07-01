@@ -27,10 +27,22 @@ interface CommonOptions {
   hostInitiatedToken?: string;
 }
 
+export interface PushOptions extends CommonOptions {
+  /** Land the branch in the host's local repo only; never push to the remote. */
+  hostOnly?: boolean;
+  /** With --host-only: destination branch name on the host (default: box branch). */
+  as?: string;
+  /** With --host-only: allow a non-fast-forward overwrite of the destination. */
+  force?: boolean;
+}
+
 interface GitRpcParams {
   path: string;
   remote?: string;
   args?: string[];
+  hostOnly?: boolean;
+  as?: string;
+  force?: boolean;
   hostInitiated?: string;
 }
 
@@ -41,10 +53,21 @@ interface GitCloneRpcParams {
   args?: string[];
 }
 
-function buildParams(opts: CommonOptions, extra: string[]): GitRpcParams {
+export function buildParams(opts: PushOptions, extra: string[]): GitRpcParams {
+  const args = [...extra];
   const params: GitRpcParams = { path: opts.cwd ?? process.cwd() };
   if (opts.remote) params.remote = opts.remote;
-  if (extra.length > 0) params.args = extra;
+  if (opts.hostOnly) {
+    params.hostOnly = true;
+    if (opts.as) params.as = opts.as;
+    if (opts.force) params.force = true;
+  } else if (opts.force) {
+    // Not host-only: --force is a real remote-push flag. `params.force` is only
+    // honored on the host-only land path, so forward it as a git arg here so
+    // the relay appends it to `git push <remote> <branch>`.
+    args.push('--force');
+  }
+  if (args.length > 0) params.args = args;
   if (opts.hostInitiatedToken) params.hostInitiated = opts.hostInitiatedToken;
   return params;
 }
@@ -143,6 +166,9 @@ export const gitCommand = new Command('git')
       .description("Run `git push` on the host main repo against this box's branch (user is prompted on the host wrapper to confirm)")
       .option('--remote <name>', 'remote name (default: origin)')
       .option('--cwd <path>', 'container path identifying which registered worktree to use')
+      .option('--host-only', "land the branch in the host's local repo only; do NOT push to the remote (nothing is published online)")
+      .option('--as <branch>', "with --host-only: destination branch name in the host repo (default: this box's branch name)")
+      .option('--force', 'with --host-only: allow a non-fast-forward overwrite of the destination branch')
       .addOption(hostInitiatedOption())
       .allowExcessArguments(true)
       .allowUnknownOption(true)
@@ -150,7 +176,11 @@ export const gitCommand = new Command('git')
         '[args...]',
         "extra flags appended to the host-built `git push <remote> <branch>` (e.g. `--force-with-lease`, `--tags`). Do NOT re-pass the remote or branch — they are taken from --remote and the registered worktree; appending them as positionals makes git treat them as refspecs and fail with `refs/remotes/origin/HEAD cannot be resolved to branch`. Use --remote to change the remote.",
       )
-      .action(async (args: string[], opts: CommonOptions) => {
+      .action(async (args: string[], opts: PushOptions) => {
+        if (opts.hostOnly && opts.remote) {
+          process.stderr.write('agentbox-ctl git push: --host-only does not use a remote; drop --remote\n');
+          process.exit(64);
+        }
         // Control-plane boxes lease a token and push directly; everyone else
         // routes the push through the relay (host creds / cloud poller).
         const code =

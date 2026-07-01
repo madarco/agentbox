@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { detectHostTerminal } from '../src/terminal/host.js';
+import type { AttachOpenIn, ConfigSource, LoadedConfig } from '@agentbox/config';
+import { detectHostTerminal, hostAwareOpenIn } from '../src/terminal/host.js';
 import { parseAttachInOption, resolveAttachInOption } from '../src/commands/_attach-in.js';
 
 describe('detectHostTerminal', () => {
@@ -38,6 +39,29 @@ describe('detectHostTerminal', () => {
     expect(detectHostTerminal({ TERM_PROGRAM: 'ghostty' })).toBe('unknown');
   });
 
+  it('returns "herdr" when HERDR_SOCKET_PATH is set, even under iTerm2', () => {
+    // Herdr runs inside a host terminal, so TERM_PROGRAM reflects the outer
+    // emulator; Herdr must win over iTerm2 or attach spawns iTerm2 windows.
+    expect(
+      detectHostTerminal({ HERDR_SOCKET_PATH: '/tmp/herdr.sock', TERM_PROGRAM: 'iTerm.app' }),
+    ).toBe('herdr');
+  });
+
+  it('returns "cmux" when both cmux and Herdr sockets are set (cmux wins)', () => {
+    expect(
+      detectHostTerminal({
+        CMUX_SOCKET_PATH: '/tmp/cmux.sock',
+        HERDR_SOCKET_PATH: '/tmp/herdr.sock',
+      }),
+    ).toBe('cmux');
+  });
+
+  it('returns "tmux" when TMUX and HERDR_SOCKET_PATH are both set (tmux wins)', () => {
+    expect(
+      detectHostTerminal({ TMUX: '/tmp/tmux-0/default,1,0', HERDR_SOCKET_PATH: '/tmp/herdr.sock' }),
+    ).toBe('tmux');
+  });
+
   it('treats an empty TMUX value as unset', () => {
     expect(detectHostTerminal({ TMUX: '', TERM_PROGRAM: 'iTerm.app' })).toBe('iterm2');
   });
@@ -45,6 +69,36 @@ describe('detectHostTerminal', () => {
   it('returns "unknown" for Apple Terminal / unrecognized programs', () => {
     expect(detectHostTerminal({ TERM_PROGRAM: 'Apple_Terminal' })).toBe('unknown');
     expect(detectHostTerminal({})).toBe('unknown');
+  });
+});
+
+describe('hostAwareOpenIn', () => {
+  const cfg = (openIn: AttachOpenIn, source: ConfigSource): LoadedConfig =>
+    ({
+      effective: { attach: { openIn } },
+      sources: { 'attach.openIn': source },
+    }) as unknown as LoadedConfig;
+  const HERDR = { HERDR_SOCKET_PATH: '/tmp/herdr.sock' };
+
+  it('defaults to a tab under Herdr when openIn is the built-in default split', () => {
+    expect(hostAwareOpenIn(cfg('split', 'default'), HERDR)).toBe('tab');
+  });
+
+  it('honors an explicitly configured/flagged split under Herdr', () => {
+    expect(hostAwareOpenIn(cfg('split', 'cli'), HERDR)).toBe('split');
+    expect(hostAwareOpenIn(cfg('split', 'global'), HERDR)).toBe('split');
+  });
+
+  it('only remaps split — other default modes pass through under Herdr', () => {
+    expect(hostAwareOpenIn(cfg('window', 'default'), HERDR)).toBe('window');
+    expect(hostAwareOpenIn(cfg('same', 'default'), HERDR)).toBe('same');
+  });
+
+  it('leaves the default split untouched outside Herdr', () => {
+    expect(hostAwareOpenIn(cfg('split', 'default'), { CMUX_SOCKET_PATH: '/tmp/c.sock' })).toBe(
+      'split',
+    );
+    expect(hostAwareOpenIn(cfg('split', 'default'), {})).toBe('split');
   });
 });
 

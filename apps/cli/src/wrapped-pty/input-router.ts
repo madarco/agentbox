@@ -1,3 +1,5 @@
+import { statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import type { PromptAnswerBody, PromptAskEvent } from '@agentbox/relay';
 
 /**
@@ -48,6 +50,46 @@ const KEY_LEADER = 0x01; // Ctrl-a
 const KEY_CTRL_V = 0x16; // Ctrl-v — Claude Code's "paste image from clipboard"
 const KEY_A_LOW = 0x61; // 'a'
 const KEY_V_LOW = 0x76; // 'v'
+
+/** Bracketed-paste markers (DEC 2004): the inner program receives a paste as
+ *  `ESC[200~ <text> ESC[201~`. Used to catch Herdr's screenshot-paste, which is
+ *  a *host* image-file path the boxed agent can't read. */
+const BP_START = Buffer.from('\x1b[200~');
+const BP_END = Buffer.from('\x1b[201~');
+
+/** True if `buf` at offset `i` begins with `needle`. */
+function bufHasAt(buf: Buffer, i: number, needle: Buffer): boolean {
+  if (i + needle.length > buf.length) return false;
+  for (let j = 0; j < needle.length; j++) {
+    if (buf[i + j] !== needle[j]) return false;
+  }
+  return true;
+}
+
+/**
+ * If `raw` is a single-line path to an existing host image file, return the
+ * resolved path; else null. Recognizes a `file://` URL too. Used to spot a
+ * pasted screenshot path (e.g. Herdr's herdr-clipboard-images temp PNG) so we
+ * can ship the file into the box and substitute the box path. Exported for tests.
+ */
+export function looksLikeHostImagePath(raw: string): string | null {
+  let t = raw.trim();
+  if (t.length === 0 || /[\r\n]/.test(t)) return null; // a real path paste is one line
+  if (t.startsWith('file://')) {
+    try {
+      t = fileURLToPath(t);
+    } catch {
+      return null;
+    }
+  }
+  if (!/\.(png|jpe?g|gif|webp|bmp)$/i.test(t)) return null;
+  try {
+    if (!statSync(t).isFile()) return null;
+  } catch {
+    return null;
+  }
+  return t;
+}
 
 /**
  * A key decoded from an enhanced-keyboard escape sequence. TUIs like Claude Code
@@ -146,6 +188,14 @@ export interface InputRouterOptions {
    * in flight are dropped (debounced). When omitted, `Ctrl+V` forwards
    * verbatim. Used for claude image paste; other modes don't pass it. */
   onPasteImage?: () => Promise<unknown>;
+  /**
+   * When set, a bracketed paste whose content is a single existing host image
+   * file (e.g. Herdr's screenshot-paste, which inserts a *host* path the boxed
+   * agent can't read) is intercepted: the router uploads that file into the box
+   * via this hook and forwards the returned **box path** instead, so Claude Code
+   * attaches it (`[Image #1]`). Returns the box path, or null to fall back to
+   * forwarding the original paste. Claude-mode only; other modes omit it. */
+  onPasteImageFile?: (hostPath: string) => Promise<string | null>;
   /** ms the leader menu stays open with no key before auto-closing (default 2000). */
   leaderTimeoutMs?: number;
   /** Injected for unit tests; defaults to global timers. */
@@ -161,6 +211,8 @@ export function createInputRouter(opts: InputRouterOptions): InputRouter {
   const leaderEnabled = Object.keys(leaderChords).length > 0;
   const onPasteImage = opts.onPasteImage;
   const pasteEnabled = typeof onPasteImage === 'function';
+  const onPasteImageFile = opts.onPasteImageFile;
+  const pasteFileEnabled = typeof onPasteImageFile === 'function';
   let pasteInFlight = false;
   const leaderTimeoutMs = opts.leaderTimeoutMs ?? DEFAULT_LEADER_TIMEOUT_MS;
   const setTimer = opts.setTimer ?? ((ms, fn) => setTimeout(fn, ms) as unknown);
@@ -277,6 +329,24 @@ export function createInputRouter(opts: InputRouterOptions): InputRouter {
       .then(done, done);
   };
 
+  // Intercepted screenshot-path paste (Herdr): upload the host file into the box,
+  // then forward a bracketed paste of the returned *box* path so Claude attaches
+  // it. On failure (or no box path) fall back to forwarding the original host
+  // path, i.e. today's behavior. Shares the in-flight guard with `triggerPaste`.
+  const triggerPasteFile = (hostPath: string): void => {
+    if (pasteInFlight) return;
+    pasteInFlight = true;
+    const done = (boxPath: string | null): void => {
+      pasteInFlight = false;
+      if (disposed) return;
+      const text = boxPath ?? hostPath;
+      opts.onForward(Buffer.concat([BP_START, Buffer.from(text, 'utf8'), BP_END]));
+    };
+    void Promise.resolve()
+      .then(() => onPasteImageFile?.(hostPath) ?? null)
+      .then(done, () => done(null));
+  };
+
   // Leader-aware steady-state forwarding: scan bytes, batching plain runs into
   // a single onForward call, and intercept `Ctrl+a` chords + `Ctrl+V` paste.
   const feedSteady = (buf: Buffer): void => {
@@ -359,6 +429,24 @@ export function createInputRouter(opts: InputRouterOptions): InputRouter {
         triggerPaste(Buffer.from([KEY_CTRL_V]));
         continue;
       }
+      // A bracketed paste of a host image-file path (Herdr's screenshot-paste):
+      // upload the file into the box and forward the box path instead. Handles
+      // the common single-read case (start+end markers in one chunk); a paste
+      // split across reads falls through and forwards verbatim (today's behavior).
+      if (pasteFileEnabled && byte === KEY_ESC && bufHasAt(buf, i, BP_START)) {
+        const end = buf.indexOf(BP_END, i + BP_START.length);
+        if (end !== -1) {
+          const payload = buf.subarray(i + BP_START.length, end).toString('utf8');
+          const hostPath = looksLikeHostImagePath(payload);
+          if (hostPath) {
+            flushChunk(i); // forward anything before the paste
+            i = end + BP_END.length;
+            chunkStart = i; // swallow the whole bracketed paste
+            triggerPasteFile(hostPath);
+            continue;
+          }
+        }
+      }
       i += 1;
     }
     flushChunk(buf.length);
@@ -398,7 +486,7 @@ export function createInputRouter(opts: InputRouterOptions): InputRouter {
         }
         return;
       }
-      if (!leaderEnabled && !pasteEnabled) {
+      if (!leaderEnabled && !pasteEnabled && !pasteFileEnabled) {
         opts.onForward(buf);
         return;
       }

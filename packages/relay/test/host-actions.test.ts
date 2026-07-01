@@ -1,5 +1,7 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { executeCloudAction } from '../src/host-actions.js';
+import { executeCloudAction, resolveHostPath } from '../src/host-actions.js';
 import type { HostAction } from '../src/types.js';
 
 /**
@@ -32,6 +34,20 @@ describe('executeCloudAction routing', () => {
     };
   }
 
+  it('resolveHostPath: relative paths resolve against the box workspace, not the relay CWD', () => {
+    const ws = '/Users/marco/Projects/AgentBox/agentbox';
+    // The reported bug: a relative path must land under the box workspace.
+    expect(resolveHostPath(ws, 'agentbox.yaml')).toBe(`${ws}/agentbox.yaml`);
+    expect(resolveHostPath(ws, './sub/x.txt')).toBe(`${ws}/sub/x.txt`);
+    // Absolute paths pass through untouched.
+    expect(resolveHostPath(ws, '/tmp/out.txt')).toBe('/tmp/out.txt');
+    // `~`/`~/` expand against the host home (path.resolve doesn't do this).
+    expect(resolveHostPath(ws, '~')).toBe(homedir());
+    expect(resolveHostPath(ws, '~/notes.md')).toBe(join(homedir(), 'notes.md'));
+    // Unknown workspace falls back to CWD-relative (legacy behaviour).
+    expect(resolveHostPath(undefined, '/abs/ok')).toBe('/abs/ok');
+  });
+
   it('returns a clear "not supported" error for unknown methods', async () => {
     const result = await executeCloudAction(action('unknown.method'), makeDeps());
     expect(result.exitCode).toBe(1);
@@ -40,9 +56,10 @@ describe('executeCloudAction routing', () => {
   });
 
   it('cp.* with missing params returns exit 64 (invalid arguments)', async () => {
+    // Only boxPath, no hostPath → legacy fallback can't complete, no sources.
     const r1 = await executeCloudAction(action('cp.toHost', { boxPath: '/x' }), makeDeps());
     expect(r1.exitCode).toBe(64);
-    expect(r1.stderr).toContain('requires {boxPath, hostPath} strings');
+    expect(r1.stderr).toContain('requires a non-empty {sources}');
     const r2 = await executeCloudAction(action('cp.fromHost', {}), makeDeps());
     expect(r2.exitCode).toBe(64);
   });

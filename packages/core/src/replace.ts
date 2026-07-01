@@ -17,8 +17,11 @@ export const PLACEHOLDER_KEYS = [
   'AGENTBOX_BOX_KIND',
   'AGENTBOX_HOST_WORKSPACE',
   'AGENTBOX_PROJECT_ROOT',
-  // Convenience: the portless host this box publishes (`<box-name>.localhost`).
-  // Derived from AGENTBOX_BOX_NAME when not set explicitly.
+  // Convenience: the host this box is reachable at. Derived from
+  // AGENTBOX_BOX_NAME as `<box-name>.localhost` when not set explicitly (the
+  // portless host for docker/hetzner). Public-URL cloud providers
+  // (vercel/daytona/e2b) set it explicitly at boot to the real preview host
+  // (e.g. `<sub>.vercel.run`), which then wins over the derived fallback.
   'AGENTBOX_BOX_HOST',
 ] as const;
 

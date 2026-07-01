@@ -200,6 +200,39 @@ async function peekCodexCwd(file: string): Promise<string | null> {
   return null;
 }
 
+/** Record types whose payloads hold only config/paths (no freeform transcript),
+ *  so a deep host-path rewrite is safe. `response_item` / `event_msg` are the
+ *  conversation + tool output and must be left byte-for-byte intact. Codex
+ *  records the cwd in `session_meta.payload.cwd` AND in every per-turn
+ *  `turn_context.payload` (cwd, workspace_roots, sandbox-policy entry paths) —
+ *  the latest `turn_context.cwd` is the "latest recorded cwd" that drives the
+ *  "Choose working directory" resume prompt, so both must be rewritten. */
+const CWD_REWRITE_TYPES = new Set(['session_meta', 'turn_context']);
+
+/** Replace a value that *is* hostCwd (or sits under hostCwd/) with BOX_WORKSPACE,
+ *  preserving the suffix. The trailing-'/' boundary stops a sibling dir
+ *  (".../repo-gh-2") from matching ".../repo-gh". */
+function rewriteHostPath(s: string, hostCwd: string): string {
+  if (s === hostCwd) return BOX_WORKSPACE;
+  if (s.startsWith(hostCwd + '/')) return BOX_WORKSPACE + s.slice(hostCwd.length);
+  return s;
+}
+
+/** Deep-rewrite every host-path string inside a config-only meta payload. Only
+ *  whole-string paths under hostCwd are touched, so a non-path blob like
+ *  `session_meta.payload.base_instructions.text` (the system prompt) is left
+ *  unchanged, and any new path field Codex adds is covered automatically. */
+function deepRewriteHostPaths(value: unknown, hostCwd: string): unknown {
+  if (typeof value === 'string') return rewriteHostPath(value, hostCwd);
+  if (Array.isArray(value)) return value.map((v) => deepRewriteHostPaths(v, hostCwd));
+  if (value && typeof value === 'object') {
+    const o = value as Record<string, unknown>;
+    for (const k of Object.keys(o)) o[k] = deepRewriteHostPaths(o[k], hostCwd);
+    return o;
+  }
+  return value;
+}
+
 async function rewriteCodexSession(
   src: string,
   dst: string,
@@ -223,17 +256,15 @@ async function rewriteCodexSession(
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       const obj = parsed as { type?: unknown; payload?: unknown };
       if (
-        obj.type === 'session_meta' &&
+        typeof obj.type === 'string' &&
+        CWD_REWRITE_TYPES.has(obj.type) &&
         obj.payload &&
         typeof obj.payload === 'object' &&
         !Array.isArray(obj.payload)
       ) {
-        const payload = obj.payload as Record<string, unknown>;
-        if (payload.cwd === hostCwd) {
-          payload.cwd = BOX_WORKSPACE;
-          out.push(JSON.stringify(obj));
-          continue;
-        }
+        obj.payload = deepRewriteHostPaths(obj.payload, hostCwd);
+        out.push(JSON.stringify(obj));
+        continue;
       }
     }
     out.push(line);

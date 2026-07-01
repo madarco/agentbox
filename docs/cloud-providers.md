@@ -10,8 +10,8 @@ AgentBox runs on five backends today, behind a single `Provider` interface
 | `docker` (default) | Local Docker container | Fast, free, owns the host. Good default. |
 | `daytona` | Daytona Cloud sandbox | When the workload outgrows the laptop, when teammates need to attach, when you want a snapshot-ready remote env. |
 | `hetzner` | Hetzner Cloud VPS (1:1 per box) | When you want bare-VPS control (root, full kernel, your own region), pure OpenSSH (no third-party agent in the box), and a Cloud Firewall locked to your egress IP. ~€4/mo per running box. |
-| `vercel` | Vercel Sandbox (Firecracker microVM) | When you want a fast snapshot-based remote env with public HTTPS preview URLs and persistent pause/resume. No nested containers (no in-box `docker`); region `iad1` only. See §3b. |
-| `e2b` | E2B Sandbox (Firecracker microVM) | When you want a Firecracker microVM with public HTTPS preview URLs and **the base image built straight from a Dockerfile** (`Template.build()`) — the only cloud provider that bakes from a Dockerfile rather than a one-time snapshot. No nested containers, no SSH; 1-hour platform session cap on Hobby. See §3c. |
+| `vercel` | Vercel Sandbox (Firecracker microVM) | When you want a fast snapshot-based remote env with public HTTPS preview URLs and persistent pause/resume. In-box `docker` (DinD) is baked in and auto-started; region `iad1` only. See §3b. |
+| `e2b` | E2B Sandbox (Firecracker microVM) | When you want a Firecracker microVM with public HTTPS preview URLs and **the base image built straight from a Dockerfile** (`Template.build()`) — the only cloud provider that bakes from a Dockerfile rather than a one-time snapshot. In-box docker (DinD) supported, no SSH; 1-hour platform session cap on Hobby. See §3c. |
 
 Switch backends per box: `agentbox create --provider daytona` (or `--provider
 hetzner` / `--provider vercel` / `--provider e2b`), or pin project-wide via
@@ -27,7 +27,7 @@ The orchestration code uses `Provider` (`packages/core/src/provider.ts`):
 interface Provider {
   readonly name: ProviderName;          // 'docker' | 'daytona' | future
   create(req: CreateBoxRequest): Promise<CreatedBox>;
-  start/pause/resume/stop/destroy(box): Promise<…>;
+  start/reconnect/pause/resume/stop/destroy(box): Promise<…>;
   inspect/probeState(box): Promise<…>;
   exec(box, argv, opts): Promise<ExecResult>;
   resolveUrl(box, opts): Promise<string>;
@@ -49,7 +49,48 @@ snapshot manifests, and (eventually) per-service preview URLs. The `CloudBackend
 just implements the SDK primitives (`provision`, `exec`, `uploadFile`,
 `previewUrl`, `attachArgv`, optionally `createSnapshot` / `list` / …).
 
+`reconnect(box)` is the **no-power-cycle** sibling of `start`, used by
+`agentbox recover` to re-attach this host to a box that's already running (host
+reboot, relay restart, fresh CLI process). The cloud provider `probeState`s the
+sandbox: when it's `running` it calls `reEnsureCloudBox` directly (re-resolve
+preview URLs, re-open the Hetzner tunnel + forwards, re-register host portless
+aliases + the relay poller, relaunch the in-box ctl/dockerd/vnc daemons) and
+skips `backend.start`; only a `paused`/`stopped` sandbox falls back to the
+power-cycling `resume`/`start`. Docker's `reconnect` is the idempotent `startBox`
+(a `docker start` on a live container is a no-op). `recover --provider <cloud>
+--adopt` additionally rebuilds a missing `BoxRecord` from `backend.list()` (the
+`agentbox.name` tag), minting fresh relay/bridge tokens that reach the in-box
+agent when `reconnect` relaunches the ctl daemon (it writes
+`/run/agentbox/relay.env`). Hetzner adoption needs the box's per-host SSH key
+(`~/.agentbox/boxes/<sandboxId>/ssh/id_ed25519`); a box created elsewhere can't
+be controlled and `recover` says so.
+
 This split is why "add a new cloud" is small: only the SDK shim differs.
+
+### 1.0.1 `AGENTBOX_BOX_HOST` on cloud boxes
+
+The `{{AGENTBOX_BOX_HOST}}` placeholder (used by `agentbox-ctl render` and carry
+`replaceEnvs`) is normally derived as `<box-name>.localhost` — correct for the
+portless providers (docker via `host.docker.internal`, hetzner via the in-VPS
+mirror). On the **public-URL clouds** (Vercel/Daytona/E2B) `<name>.localhost` is
+unreachable, so the cloud create/start flow resolves the box's web preview URL
+*before* launching the in-box `agentbox-ctl` daemon and passes the **bare host**
+(e.g. `<sub>.vercel.run`) to `launchCloudCtlDaemon` as `AGENTBOX_BOX_HOST`
+(`deriveCloudBoxHost` in `cloud-provider.ts`: loopback preview → `<name>.localhost`;
+public preview → `new URL(url).host`). It's both exported into the daemon's env
+(so every supervisor task/service child — e.g. a first-boot `render` task — sees
+it) and persisted to `/etc/agentbox/box.env` (so `agentbox shell` login shells and
+manual `agentbox-ctl render` resolve it too). The placeholder engine prefers this
+explicit value over the derived fallback, so `https://{{AGENTBOX_BOX_HOST}}`
+matches what `agentbox url` returns.
+
+The relay/bridge **tokens** are deliberately kept out of the world-readable
+`box.env`. The per-box relay URL + token go to a `0600 /run/agentbox/relay.env`
+(tmpfs, never snapshotted) written by the in-box ctl daemon, which `agentbox-ctl`
+reads on demand (`resolveRelayEnv`); the bridge token stays in the daemon's
+process env only. This is what lets the in-box agent and the host-driven
+`agentbox git push` reach the relay on cloud boxes, which (unlike docker) have no
+global env to inherit the token from. See [`host-relay.md`](./host-relay.md).
 
 ### 1.1 Per-provider base-image pins
 
@@ -406,6 +447,15 @@ decorates these URLs with Portless aliases for symmetric
 `<box-name>.localhost` URLs (handled provider-side, not in the
 backend, so the backend stays focused on plumbing).
 
+When the host Portless proxy runs in **TLS** mode, the in-box mirror serves a
+self-signed CA the box doesn't trust by default, so in-box Chromium (VNC window)
+and Playwright would reject `https://<box>.localhost`. The baked
+`agentbox-portless-trust` helper fixes this: `startInBoxPortless` (hetzner) and
+docker `create` invoke it to trust the CA in both the system store
+(`update-ca-certificates`) and the box user's NSS db (`certutil`, from
+`libnss3-tools`), and export `NODE_EXTRA_CA_CERTS` for Node clients. No-TLS host
+proxies (the `--no-tls -p 1355` default) serve plain `http` and skip this entirely.
+
 ### 3.4 Checkpoints
 
 Map to Hetzner's `create_image` API (`type: snapshot`). Defaults to
@@ -497,6 +547,14 @@ the shape in brief:
   Caveat: `sb.snapshot()` stops the source box (it auto-resumes on next call).
 - **Hard platform limits:** region `iad1` only, 32 GB fixed disk, 2048 MB RAM
   per vCPU, 45 min (Hobby) / 5 hr (Pro+) sessions.
+- **Session keepalive.** The host relay (`cloud-keepalive` loop, sibling to
+  auto-pause) renews a running box's session timeout while its in-box agent is
+  active — holding the death-time a rolling `autopause.idleMinutes` window ahead
+  of now so a long agent run isn't killed mid-work; once idle the box stops being
+  renewed and lapses ~one window later. The active case anchors on `now` (not the
+  agent's `updatedAt`, which freezes during a long single `working` op). Bounded
+  by the plan's max session (mainly benefits Pro+). Same mechanism on E2B. Uses
+  `CloudBackend.renewTimeout` (vercel `extendTimeout`, e2b `setTimeout`).
 
 ## 3c. The E2B shape
 
@@ -514,9 +572,12 @@ brief:
   OpenCode, agentbox-ctl, the vscode user, VNC, tmux). The resulting
   `templateId:tag` is persisted to `~/.agentbox/e2b-prepared.json` and to
   `box.imageE2b`; every `create --provider e2b` boots from it in seconds.
-- **No nested containers.** Firecracker + seccomp on E2B blocks the
-  namespace syscalls a container runtime needs (same as Vercel), so the
-  provider passes `launchDockerd: false`; in-box `docker` is unavailable.
+- **In-box docker (DinD).** Contrary to the original "same as Vercel"
+  assumption, E2B's microVM grants the capabilities a container runtime needs
+  (full root + `cap_sys_admin` + working namespaces, verified 2026-06-23). The
+  base template bakes the docker engine and the provider passes
+  `launchDockerd: true`, so `dockerd` auto-launches on create/resume (same as
+  daytona/hetzner/vercel). Pulled images carry across pause/resume.
 - **Pause/resume is free.** `Sandbox.pause(id)` pauses; `Sandbox.connect(id)`
   auto-resumes lazily on the next op. The provider's `state()`/`get()` use
   the non-resuming `Sandbox.getInfo()` so existence checks don't wake (and
@@ -534,8 +595,10 @@ brief:
   `attach-helper.cjs`, which `Sandbox.connect`s, opens a `pty.create({ cols,
   rows, onData })` stream, and bridges stdin / stdout / `SIGWINCH` to the
   host TTY. The helper caps `timeoutMs` at **55 minutes** to leave headroom
-  under E2B's 1-hour platform session cap on Hobby (longer sessions need a
-  mid-session `Sandbox.setTimeout` keepalive — deferred).
+  under E2B's 1-hour platform session cap on Hobby. This caps only the live
+  PTY connection — the **box lifetime** is held open independently by the
+  `cloud-keepalive` loop (see §3, "Session keepalive") while the agent works,
+  so after 55 min the attach drops but the box stays alive; just reattach.
 - **Checkpoints are id-addressed (same shape as Vercel).** The provider
   overrides `checkpoint.create` to call `Sandbox.createSnapshot(sandboxId,
   { name })`, store the returned `snapshotId` in the cloud-checkpoint

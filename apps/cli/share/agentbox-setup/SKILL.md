@@ -222,8 +222,9 @@ write back to the host):
   `obj`, `packages`, `dist`, `.next`, `target`) are dropped by default; `exclude:`
   is additive. Each carry entry is capped at `box.cpMaxBytes` (default 100 MiB
   after excludes) — the same limit `agentbox cp` enforces.
-- **`agentbox-ctl cp fromHost <hostPath> <boxPath>`** (ad-hoc, from inside the box)
-  — for a one-off copy. Prompts the user on the host to approve.
+- **`agentbox-ctl cp fromHost <hostPath...> <boxPath>`** (ad-hoc, from inside the box)
+  — for a one-off copy. Takes several sources in one call (last path is the dest,
+  which must be a directory). Prompts the user on the host to approve.
 
 **The per-copy size limit (important for large/legacy folders).** A single copy is
 blocked above `box.cpMaxBytes` (default **100 MB**) *after* default excludes, so it
@@ -236,9 +237,9 @@ the biggest remaining folders/subfolders. To get under the limit, EITHER:
 - pass `--yes` to copy the whole thing anyway (only when you really need it all).
 
 Example: a 2.4 GB legacy folder is mostly `packages/` (NuGet) + `.git`; those are
-excluded by default, and what's left can be split:
-`agentbox-ctl cp fromHost ../legacy/src /workspace/legacy/src` then
-`... cp fromHost ../legacy/Database /workspace/legacy/Database`.
+excluded by default, and what's left can be copied in one call by listing the
+sub-folders into a destination directory:
+`agentbox-ctl cp fromHost ../legacy/src ../legacy/Database /workspace/legacy/`.
 
 ## 7. Validate before handing off
 
@@ -276,7 +277,7 @@ On Vercel: this actually STOPS the sandbox, so warn the user about it. Also the 
 
 - For Nextjs/Vite/Tasnstack projects, makes sure to forward also websocket for hot reload.
 
-- Service like flask, nextjs, BETTER_AUTH_URL, NEXT_PUBLIC_APP_URL should use the `<boxname>.localhost` url for the local development so that on the host it will use the same url as the box. Render this automatically instead of hand-writing `sed` — see section 6c.
+- Service like flask, nextjs, BETTER_AUTH_URL, NEXT_PUBLIC_APP_URL should use the env-init `{{AGENTBOX_BOX_HOST}}` in agentbox.yaml so it will be automatically replaced.
 
 - The `install` task above uses `run_once: true`, so it is a no-op on warm boots. Do **not** wrap it in a manual marker check too. To force a one-off rebuild, run `agentbox-ctl run-task install --force` (which bypasses the run_once marker), or edit the command (a changed command invalidates the hash and re-runs).
 

@@ -13,6 +13,13 @@ import {
   restoreCmuxWorkspace,
   type CmuxWorkspaceState,
 } from '../terminal/cmux-status.js';
+import {
+  clearHerdrAgentState,
+  herdrStatusEnabled,
+  notifyHerdrApprovalPrompt,
+  reportHerdrAgentState,
+  reportHerdrApprovalState,
+} from '../terminal/herdr-status.js';
 import { popTerminalTitle, pushTerminalTitle, setTerminalTitle } from '../terminal/title.js';
 import {
   createInputRouter,
@@ -86,6 +93,10 @@ export interface WrappedAttachOptions {
    *  this settles, so Claude Code reads the now-loaded clipboard. Omitted →
    *  Ctrl+V forwards verbatim. */
   onPasteImage?: () => Promise<'pasted' | 'no-image' | 'error'>;
+  /** Upload a pasted *host* image file into the box and return the box path
+   *  (or null). Wired for claude only; drives the Herdr screenshot-paste fix —
+   *  the router substitutes the box path so Claude attaches it. */
+  onPasteImageFile?: (hostPath: string) => Promise<string | null>;
   /**
    * Re-establish the connection after the inner PTY drops. The wrapper decides
    * *whether* to call this (a checkpoint reboot — signalled by an active
@@ -627,6 +638,38 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     redrawChrome();
   };
 
+  // Herdr screenshot-paste: Herdr inserts a *host* image path (which a boxed
+  // agent can't read). Ship that file into the box and return the box path; the
+  // router forwards the box path so Claude attaches it. Flash the outcome; never
+  // throws.
+  const handlePasteImageFile = async (hostPath: string): Promise<string | null> => {
+    if (!opts.onPasteImageFile) return null;
+    if (flashTimer) {
+      clearTimeout(flashTimer);
+      flashTimer = null;
+    }
+    flashMessage = 'Pasting image…';
+    recomputeFooter();
+    redrawChrome();
+    let boxPath: string | null = null;
+    try {
+      boxPath = await opts.onPasteImageFile(hostPath);
+    } catch (e) {
+      logErr(`paste-image-file failed: ${(e as Error).message}`);
+    }
+    flashMessage = boxPath ? 'Image pasted' : 'Image paste failed';
+    flashTimer = setTimeout(() => {
+      flashTimer = null;
+      flashMessage = null;
+      recomputeFooter();
+      redrawChrome();
+    }, FLASH_DURATION_MS);
+    if (typeof flashTimer.unref === 'function') flashTimer.unref();
+    recomputeFooter();
+    redrawChrome();
+    return boxPath;
+  };
+
   // Wire stdin -> pty (through the router so prompts + the leader can intercept).
   const router: InputRouter = createInputRouter({
     onForward: (b) => {
@@ -651,6 +694,10 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       }
       capturingPrompt = null;
       applyBandChange();
+      // Local answer: revert the Herdr agent from the forced `blocked` (approval)
+      // back to its real activity. `onResolved` (the SSE echo) won't do it — it's
+      // guarded on `capturingPrompt` still matching, which we just cleared.
+      if (herdrOn) reportHerdrAgentState(opts.mode, lastActivity, opts.boxName);
     },
     leaderChords,
     onLeaderChange: (open) => {
@@ -662,6 +709,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       runAction(name);
     },
     onPasteImage: opts.onPasteImage ? handlePasteImage : undefined,
+    onPasteImageFile: opts.onPasteImageFile ? handlePasteImageFile : undefined,
   });
 
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
@@ -692,6 +740,23 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   };
   process.stdout.on('resize', onResize);
 
+  // Resolve the cmux/Herdr status gates BEFORE subscribing to the prompt stream:
+  // the relay flushes any pending `prompt-ask` backlog the instant the SSE
+  // connects, and `onPrompt` gates the Herdr approval-prompt toast on `herdrOn`
+  // — so a reattach with a queued approval would miss the toast if we resolved
+  // the gate afterwards. `cmuxOrig` holds the cmux workspace's prior
+  // colour/description to restore on detach; the Herdr path needs no capture
+  // (its agent association is ours, reset to idle on detach). The poll loop
+  // below also reads these gates.
+  let cmuxOn = false;
+  let cmuxOrig: CmuxWorkspaceState | null = null;
+  let herdrOn = false;
+  if (opts.mode !== 'shell') {
+    cmuxOn = await cmuxStatusEnabled();
+    if (cmuxOn) cmuxOrig = captureCmuxWorkspace();
+    herdrOn = await herdrStatusEnabled();
+  }
+
   // SSE: subscribe to the relay's prompt stream for this box.
   const stream: PromptStream = subscribePrompts({
     relayBaseUrl: opts.relayBaseUrl,
@@ -699,6 +764,14 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     onPrompt: (ev: PromptAskEvent) => {
       capturingPrompt = ev;
       applyBandChange();
+      // Special highlight for AgentBox's own host-relay approval prompts: Herdr
+      // can't know about these, so surface a toast AND flip the box agent to
+      // `blocked` (the in-box agent is still "working", but the pending approval
+      // takes precedence) so Herdr highlights the agent + its space until answered.
+      if (herdrOn) {
+        notifyHerdrApprovalPrompt(opts.boxName, ev);
+        reportHerdrApprovalState(opts.mode, opts.boxName);
+      }
       // capture() returns a Promise that resolves with the answer body; the
       // input-router's onAnswer callback already POSTs and resets the band.
       // We just need to await so unhandled rejections (router.abort) don't
@@ -718,6 +791,9 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
         capturingPrompt = null;
         router.abort('resolved-elsewhere');
         applyBandChange();
+        // Revert the Herdr agent from the forced `blocked` (approval) back to the
+        // box's real activity, which the poll has kept current in `lastActivity`.
+        if (herdrOn) reportHerdrAgentState(opts.mode, lastActivity, opts.boxName);
       }
     },
     onNotice: (ev: BoxNoticeEvent) => {
@@ -736,14 +812,10 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     },
   });
 
-  // When attached inside cmux, reflect the agent's activity on the box's cmux
-  // workspace (colour + description, set in the poll loop below) so the sidebar
-  // shows what each box is doing. Resolved (env + config) just before the first
-  // poll; `cmuxOrig` holds the workspace's prior colour/description to restore on
-  // detach.
-  let cmuxOn = false;
-  let cmuxOrig: CmuxWorkspaceState | null = null;
-
+  // cmux (workspace colour/description) + Herdr (pane agent state) reflect the
+  // box agent's activity from the poll loop below; both gates (`cmuxOn`,
+  // `herdrOn`) were resolved above, before the prompt subscription.
+  //
   // Poll the box's status.json for `claude.sessionTitle` so the idle
   // footer can show what claude set as its terminal title (mirrors the
   // dashboard's sidebar entry). Best-effort — paused/stopped boxes and
@@ -780,6 +852,15 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
         if (isAttentionState(nextActivity) && !isAttentionState(lastActivity)) {
           markCmuxTabAttention(opts.mode, opts.boxName, nextActivity);
         }
+      }
+      // Mirror the agent's activity onto the Herdr pane on each transition.
+      // Herdr surfaces needs-input itself from the `blocked` state, so (unlike
+      // cmux) there's no separate attention notification here. While a host-relay
+      // approval prompt is pending, the agent is force-reported as `blocked`
+      // (onPrompt) and we must not downgrade it back to working — so skip while
+      // `capturingPrompt` is set; `onResolved` re-syncs to the real activity.
+      if (herdrOn && nextActivity !== lastActivity && !capturingPrompt) {
+        reportHerdrAgentState(opts.mode, nextActivity, opts.boxName);
       }
       // Mirror the live title to the host terminal/tab, falling back to the box
       // name until the agent sets one. Deduped so we don't spam the terminal.
@@ -822,10 +903,6 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       logErr(`status poll failed: ${(e as Error).message}`);
     }
   };
-  if (opts.mode !== 'shell') {
-    cmuxOn = await cmuxStatusEnabled();
-    if (cmuxOn) cmuxOrig = captureCmuxWorkspace();
-  }
   void pollStatus();
   const statusTimer = setInterval(() => {
     void pollStatus();
@@ -962,6 +1039,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   process.stdout.off('resize', onResize);
   clearInterval(statusTimer);
   if (cmuxOn) restoreCmuxWorkspace(cmuxOrig);
+  if (herdrOn) clearHerdrAgentState(opts.mode, opts.boxName);
   stopSpinner();
   if (flashTimer) clearTimeout(flashTimer);
   if (process.stdin.isTTY) process.stdin.setRawMode(false);

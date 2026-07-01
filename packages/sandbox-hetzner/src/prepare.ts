@@ -36,23 +36,16 @@ import { computeContextSha256, readCliStamp } from '@agentbox/sandbox-core';
 import {
   stageClaudeStaticForUpload,
   stageCodexStaticForUpload,
+  stageAgentsStaticForUpload,
   stageOpencodeStaticForUpload,
   type StageResult,
 } from '@agentbox/sandbox-cloud';
 import { ensureHetznerCredentials } from './credentials.js';
 import { detectEgressIp } from './egress-ip.js';
-import {
-  createPerBoxFirewall,
-  deletePerBoxFirewall,
-  normalizeSourceCidr,
-} from './firewall.js';
+import { createPerBoxFirewall, deletePerBoxFirewall, normalizeSourceCidr } from './firewall.js';
 import { makeHetznerClient } from './client.js';
 import { generatePrepareCloudInit } from './cloud-init.js';
-import {
-  preparedStatePath,
-  readPreparedState,
-  writePreparedState,
-} from './prepared-state.js';
+import { preparedStatePath, readPreparedState, writePreparedState } from './prepared-state.js';
 import { pollUntil } from './poll.js';
 import {
   findStagedCliRuntimeRoot,
@@ -60,12 +53,7 @@ import {
   type ResolvedAsset,
 } from './runtime-assets.js';
 import { mintPrepareKey } from './ssh-key.js';
-import {
-  scpUpload,
-  sshExec,
-  waitForSsh,
-  type SshTargetArgs,
-} from './ssh-cli.js';
+import { scpUpload, sshExec, waitForSsh, type SshTargetArgs } from './ssh-cli.js';
 
 export interface PrepareHetznerOptions {
   name?: string;
@@ -136,9 +124,7 @@ export async function prepareHetzner(
   );
 
   if (!opts.force && existingState.base) {
-    const remote = await client
-      .getImage(existingState.base.imageId)
-      .catch(() => null);
+    const remote = await client.getImage(existingState.base.imageId).catch(() => null);
     if (remote && existingState.base.contextSha256 === contextSha) {
       progress(
         `base snapshot ${String(existingState.base.imageId)} already exists (fingerprint ${contextSha.slice(0, 12)} matches); skipping rebuild (pass --force to override)`,
@@ -149,7 +135,9 @@ export async function prepareHetzner(
       };
     }
     if (!remote) {
-      progress(`recorded base snapshot ${String(existingState.base.imageId)} is gone on Hetzner; rebuilding`);
+      progress(
+        `recorded base snapshot ${String(existingState.base.imageId)} is gone on Hetzner; rebuilding`,
+      );
     } else {
       progress(
         `build context changed (was ${existingState.base.contextSha256?.slice(0, 12) ?? '<none>'}, now ${contextSha.slice(0, 12)}); rebuilding base snapshot`,
@@ -182,7 +170,9 @@ export async function prepareHetzner(
     // 3. Create temp VPS.
     const serverName = `agentbox-prepare-${stamp}`;
     const cloudInit = generatePrepareCloudInit({ sshPubkey: key.publicKey });
-    progress(`creating temp VPS ${serverName} (${opts.serverType ?? TEMP_SERVER_TYPE_DEFAULT} / ${opts.location ?? TEMP_SERVER_LOCATION_DEFAULT})`);
+    progress(
+      `creating temp VPS ${serverName} (${opts.serverType ?? TEMP_SERVER_TYPE_DEFAULT} / ${opts.location ?? TEMP_SERVER_LOCATION_DEFAULT})`,
+    );
     const created = await client.createServer({
       name: serverName,
       server_type: opts.serverType ?? TEMP_SERVER_TYPE_DEFAULT,
@@ -209,9 +199,11 @@ export async function prepareHetzner(
     };
     const up = await waitForSsh(sshTarget, PREPARE_SSH_DEADLINE_MS);
     if (!up) {
-      throw new Error(`hetzner: ssh on ${ip} did not come up within ${String(PREPARE_SSH_DEADLINE_MS / 1000)}s`);
+      throw new Error(
+        `hetzner: ssh on ${ip} did not come up within ${String(PREPARE_SSH_DEADLINE_MS / 1000)}s`,
+      );
     }
-    progress('ssh up — scp\'ing runtime assets');
+    progress("ssh up — scp'ing runtime assets");
 
     // 5. scp every asset into /tmp/ **sequentially**. Parallel uploads
     // through 10 fresh ssh connections trip sshd's MaxStartups (10:30:100
@@ -244,6 +236,20 @@ export async function prepareHetzner(
       },
     );
     if (installRes.exitCode !== 0) {
+      // Exit 71 is install-box.sh's dedicated sentinel for "Claude Code native
+      // installer failed after its retries" — almost always a transient
+      // Cloudflare 403 that claude.ai / downloads.claude.ai return to
+      // cloud-datacenter egress IPs under load. Surface an actionable message
+      // instead of the opaque generic one (stderr is empty here because the
+      // install runs `bash -x ... 2>&1 | tee`, merging stderr into stdout).
+      if (installRes.exitCode === 71) {
+        throw new Error(
+          `Claude Code's native installer could not be reached from the Hetzner VPS after 3 retries (~5 min).\n` +
+            `This is a transient Cloudflare 403. It usually clears within a few minutes.\n\n` +
+            `What to do: wait a moment, then re-run \`agentbox prepare --provider hetzner --force\`.\n` +
+            `Full trace: /var/log/agentbox/install.log inside any box made from the resulting snapshot.`,
+        );
+      }
       throw new Error(
         `install-box.sh failed on temp VPS (exit ${String(installRes.exitCode)})\n` +
           `Last stderr: ${installRes.stderr.slice(-500) || '(empty)'}\n` +
@@ -260,22 +266,40 @@ export async function prepareHetzner(
     // opencode boot with no plugins, no skills, no settings, and prompt the
     // user to log in fresh on every box.
     progress('staging host agent static config');
-    const stagings: Array<{ kind: 'claude' | 'codex' | 'opencode'; tar: StageResult; dest: string }> = [];
+    const stagings: Array<{
+      kind: 'claude' | 'codex' | 'opencode' | 'agents';
+      tar: StageResult;
+      dest: string;
+    }> = [];
     try {
       const claudeTar = await stageClaudeStaticForUpload({ hostWorkspace: opts.hostWorkspace });
       for (const w of claudeTar.warnings) log(`prepare-hetzner: ${w}`);
-      if (claudeTar.tarballPath) stagings.push({ kind: 'claude', tar: claudeTar, dest: '/home/vscode/.claude' });
+      if (claudeTar.tarballPath)
+        stagings.push({ kind: 'claude', tar: claudeTar, dest: '/home/vscode/.claude' });
       else await claudeTar.cleanup();
 
       const codexTar = await stageCodexStaticForUpload();
       for (const w of codexTar.warnings) log(`prepare-hetzner: ${w}`);
-      if (codexTar.tarballPath) stagings.push({ kind: 'codex', tar: codexTar, dest: '/home/vscode/.codex' });
+      if (codexTar.tarballPath)
+        stagings.push({ kind: 'codex', tar: codexTar, dest: '/home/vscode/.codex' });
       else await codexTar.cleanup();
 
       const opencodeTar = await stageOpencodeStaticForUpload();
       for (const w of opencodeTar.warnings) log(`prepare-hetzner: ${w}`);
-      if (opencodeTar.tarballPath) stagings.push({ kind: 'opencode', tar: opencodeTar, dest: '/home/vscode/.local/share/opencode' });
+      if (opencodeTar.tarballPath)
+        stagings.push({
+          kind: 'opencode',
+          tar: opencodeTar,
+          dest: '/home/vscode/.local/share/opencode',
+        });
       else await opencodeTar.cleanup();
+
+      // ~/.agents (cross-agent Agent Skills) — codex reads ~/.agents/skills.
+      const agentsTar = await stageAgentsStaticForUpload();
+      for (const w of agentsTar.warnings) log(`prepare-hetzner: ${w}`);
+      if (agentsTar.tarballPath)
+        stagings.push({ kind: 'agents', tar: agentsTar, dest: '/home/vscode/.agents' });
+      else await agentsTar.cleanup();
 
       for (const s of stagings) {
         const remote = `/tmp/agentbox-${s.kind}-static.tar.gz`;
@@ -288,7 +312,9 @@ export async function prepareHetzner(
           `sudo -u vscode mkdir -p ${s.dest} && ` +
           `sudo -u vscode tar -xzf ${remote} -C ${s.dest} --no-same-permissions --no-same-owner -m && ` +
           `rm -f ${remote}`;
-        const r = await sshExec(sshTarget, extractCmd, { onLine: (line) => log(`[stage:${s.kind}] ${line}`) });
+        const r = await sshExec(sshTarget, extractCmd, {
+          onLine: (line) => log(`[stage:${s.kind}] ${line}`),
+        });
         if (r.exitCode !== 0) {
           throw new Error(
             `prepare-hetzner: ${s.kind} static extract failed (exit ${String(r.exitCode)}): ${r.stderr.slice(-300)}`,
@@ -308,7 +334,9 @@ export async function prepareHetzner(
       description,
       labels: { 'agentbox.role': 'base', 'agentbox.schema': '1' },
     });
-    progress(`snapshot create requested (image id ${String(snap.image.id)}); polling until available`);
+    progress(
+      `snapshot create requested (image id ${String(snap.image.id)}); polling until available`,
+    );
     const ready = await pollUntil(
       `image ${String(snap.image.id)} availability`,
       async () => {
@@ -317,7 +345,12 @@ export async function prepareHetzner(
         if (img.status === 'available') return img;
         return null;
       },
-      { deadlineMs: SNAPSHOT_DEADLINE_MS, intervalMs: 3_000, maxIntervalMs: 10_000, onPoll: (l) => log(`prepare-hetzner: ${l}`) },
+      {
+        deadlineMs: SNAPSHOT_DEADLINE_MS,
+        intervalMs: 3_000,
+        maxIntervalMs: 10_000,
+        onPoll: (l) => log(`prepare-hetzner: ${l}`),
+      },
     );
 
     // 8. Persist before tearing down — if the cleanup fails we still know
@@ -364,7 +397,9 @@ export async function prepareHetzner(
       }
     }
     if (firewallId !== null) {
-      log(`prepare-hetzner: cleanup — deleting per-prepare firewall ${String(firewallId)} after failure`);
+      log(
+        `prepare-hetzner: cleanup — deleting per-prepare firewall ${String(firewallId)} after failure`,
+      );
       try {
         await deletePerBoxFirewall(client, firewallId);
       } catch (cleanupErr) {

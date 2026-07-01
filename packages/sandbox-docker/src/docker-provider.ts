@@ -93,6 +93,26 @@ export const dockerProvider: Provider = {
     return { ...record, provider: 'docker' };
   },
 
+  async reconnect(box: BoxRecord): Promise<BoxRecord> {
+    // Reconnect re-establishes host-side wiring without a needless power-cycle.
+    // A PAUSED container can't `docker start` ("cannot start a paused
+    // container") — unpause resumes its still-frozen ctl/dockerd/vnc, and the
+    // portless alias is untouched by pause, so that's all it needs. A running or
+    // stopped container goes through `startBox`, which is idempotent (a
+    // `docker start` on a live container is a no-op) and relaunches the daemons
+    // + re-registers portless — the work a host reboot / relay restart needs.
+    const insp = await inspectBox(box.id);
+    if (insp.state === 'missing' || insp.state === 'destroyed') {
+      throw new Error(`box ${box.name} has no container; was it destroyed?`);
+    }
+    if (insp.state === 'paused') {
+      const record = await unpauseBox(box.id);
+      return { ...record, provider: 'docker' };
+    }
+    const { record } = await startBox(box.id);
+    return { ...record, provider: 'docker' };
+  },
+
   async pause(box: BoxRecord): Promise<void> {
     await pauseBox(box.id);
   },
@@ -136,21 +156,21 @@ export const dockerProvider: Provider = {
 
   async uploadPath(
     box: BoxRecord,
-    hostSrc: string,
+    hostSrcs: string[],
     boxDst: string,
     exclude?: string[],
   ): Promise<{ finalPath: string }> {
-    const r = await uploadToBox(box, hostSrc, boxDst, exclude);
+    const r = await uploadToBox(box, hostSrcs, boxDst, exclude);
     return { finalPath: r.finalPath };
   },
 
   async downloadPath(
     box: BoxRecord,
-    boxSrc: string,
+    boxSrcs: string[],
     hostDst: string,
     exclude?: string[],
   ): Promise<{ finalPath: string }> {
-    const r = await downloadFromBox(box, boxSrc, hostDst, exclude);
+    const r = await downloadFromBox(box, boxSrcs, hostDst, exclude);
     return { finalPath: r.finalPath };
   },
 
@@ -173,9 +193,7 @@ export const dockerProvider: Provider = {
       return box.portlessUrl ?? (await portlessGetUrl(box.portlessAlias));
     }
     if (box.webHostPort === undefined) {
-      throw new Error(
-        `web port not resolved for box ${box.name}; is the container running?`,
-      );
+      throw new Error(`web port not resolved for box ${box.name}; is the container running?`);
     }
     return `http://127.0.0.1:${String(box.webHostPort)}`;
   },

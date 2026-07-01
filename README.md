@@ -7,7 +7,7 @@
 
 Run multiple agents in parallel, with a single command, on your PC, self-hosted, or in the cloud
 
-Works with [iterm2](https://agent-box.sh/docs/integrations-iterm2) - [cmux](https://agent-box.sh/docs/integrations-cmux) - [tmux](https://agent-box.sh/docs/integrations-tmux)
+Works with [iterm2](https://agent-box.sh/docs/integrations-iterm2) - [cmux](https://agent-box.sh/docs/integrations-cmux) - [tmux](https://agent-box.sh/docs/integrations-tmux) - [Herdr](https://agent-box.sh/docs/integrations-herdr)
 <br>
 
 <p align="center">
@@ -45,14 +45,14 @@ agentbox claude
 agentbox hetzner claude # or vercel, daytona
 
 # Ctrl+a d to detach, claude keep going, to reconnect later:
-agentbox claude attach 1
+agentbox attach 1
 
 # To open a persistent shell inside the box:
 agentbox shell 1
 
 # Create a second box:
 agentbox claude
-agentbox claude attach 2
+agentbox attach 2
 agentbox shell 2
 
 # Open your web project on a .local url tunnel on your pc
@@ -173,3 +173,4 @@ The full development workflow, stack, end-to-end smoke tests, and teardown live 
 # License
 
 MIT. See [LICENSE](./LICENSE).
+

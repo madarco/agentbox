@@ -2,13 +2,15 @@ import { spawn } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { spinner } from '@clack/prompts';
+import { log, spinner } from '@clack/prompts';
 import { DEFAULT_RELAY_PORT } from '@agentbox/sandbox-docker';
 import type { BoxRecord, Provider } from '@agentbox/core';
 import type { AttachOpenIn } from '@agentbox/config';
+import { agentResumeArgs } from '../agent-sessions.js';
+import { withFirewallRepair } from '../lib/firewall-repair.js';
 import { providerForBox } from '../provider/registry.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
-import { pasteHostClipboardImage } from '../lib/paste-image.js';
+import { pasteHostClipboardImage, uploadImageFileToBox } from '../lib/paste-image.js';
 import { clipboardCaptureAvailable } from '../lib/host-clipboard.js';
 
 const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
@@ -45,12 +47,13 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
  *   - `exec` so the agent gets PID 2 (Ctrl-c in the agent kills the session
  *     cleanly rather than dropping to bash).
  *
- * When `extraArgs` is non-empty, we base64-encode the argv (one arg per line)
- * and hand the inner shell a small `mapfile`-based launcher that reconstructs
- * the array — see `buildCloudAttachInnerCommand`. Base64 is alphanumeric+`/+=`
- * so it survives every shell-quoting layer (host single-quote, SSH, tmux,
- * bash) untouched, which avoids the 3-layer escaping mess the literal form
- * would otherwise require.
+ * When `extraArgs` is non-empty, we base64-encode each arg individually,
+ * newline-join the tokens, base64 that once more, and hand the inner shell a
+ * small read-loop launcher that reconstructs the array — see
+ * `buildCloudAttachInnerCommand`. Base64 is alphanumeric+`/+=` so it survives
+ * every shell-quoting layer (host single-quote, SSH, tmux, bash) untouched, and
+ * per-arg encoding keeps a newline inside an arg (a multi-line seed prompt) from
+ * being mistaken for an argv separator.
  */
 export interface CloudAgentAttachArgs {
   box: BoxRecord;
@@ -61,9 +64,10 @@ export interface CloudAgentAttachArgs {
   /** Mode label for the wrapper's footer. */
   mode: 'claude' | 'codex' | 'opencode';
   /**
-   * Extra args the user typed after `--`. Passed through to the in-box agent
-   * verbatim via a base64-encoded launcher. Limitation: args containing
-   * literal `\n` aren't supported (none of claude/codex/opencode flags do).
+   * Extra args the user typed after `--`, plus any seed prompt slotted ahead of
+   * them. Passed through to the in-box agent verbatim via a base64-encoded
+   * launcher that preserves each arg's bytes exactly — including embedded
+   * newlines, which a multi-paragraph seed prompt routinely carries.
    */
   extraArgs?: string[];
   /**
@@ -112,32 +116,47 @@ export function buildCloudAttachInnerCommand(binary: string, extraArgs?: string[
   if (!extraArgs || extraArgs.length === 0) {
     return `bash -lc '${agentStartBanner(binary)}exec ${binary}'`;
   }
-  // One arg per line, base64-encoded. The launcher runs `mapfile -t A` against
-  // the decoded stream, then `exec <binary> "${A[@]}"` so each arg lands as
-  // its own argv element — quotes/spaces inside an arg are preserved exactly
-  // because base64 is opaque to every outer shell quoting pass.
-  const blob = Buffer.from(extraArgs.join('\n'), 'utf8').toString('base64');
-  // The decode feeds `mapfile` via a **here-string**, NOT process substitution
-  // (`< <(…)`). Process substitution needs `/dev/fd/N`, and the Vercel Sandbox
-  // (Firecracker microVM, AL2023) has no `/dev/fd` — so `mapfile -t A < <(…)`
-  // fails with `/dev/fd/63: No such file or directory`, A stays empty, and the
+  // Encode EACH arg to its own base64 token, newline-join the tokens, then
+  // base64 that whole list once more into a single opaque `blob`. The launcher
+  // decodes `blob` back to the newline-separated tokens, reads them one per
+  // line, and base64-decodes each into its own argv element before
+  // `exec <binary> "${A[@]}"`.
+  //
+  // Two layers, not one, on purpose: the earlier scheme joined the args with a
+  // single `\n` and split with `mapfile -t`, which conflated "argv separator"
+  // with "a newline INSIDE an arg". A multi-paragraph seed prompt (the `-i`
+  // queue's common case) was shredded into one positional per line, so claude/
+  // codex were launched as `claude "line1" "line2" …` — only the first line
+  // reached the agent and the surplus positionals could abort the launch, so
+  // the detached session died and `verifyDetachedSession` failed the job. Here
+  // the inner newlines live INSIDE a token's base64 payload (base64's alphabet
+  // is `[A-Za-z0-9+/=]` — no newlines), so they never act as a separator; only
+  // the outer per-token newlines split the argv.
+  const blob = Buffer.from(
+    extraArgs.map((a) => Buffer.from(a, 'utf8').toString('base64')).join('\n'),
+    'utf8',
+  ).toString('base64');
+  // The decode feeds the read loop via a **here-string**, NOT process
+  // substitution (`< <(…)`). Process substitution needs `/dev/fd/N`, and the
+  // Vercel Sandbox (Firecracker microVM, AL2023) has no `/dev/fd` — so it would
+  // fail with `/dev/fd/63: No such file or directory`, A stays empty, and the
   // agent launches with no args (the wizard's initial setup prompt is silently
   // dropped). A here-string is backed by a temp file, needs no `/dev/fd`, and
   // works on every backend (docker/daytona/hetzner unaffected). `$(…)` strips
-  // the trailing newline `<<<` re-adds, so mapfile -t yields one element per
-  // arg exactly as the join produced them.
+  // the trailing newline `<<<` re-adds, so the loop yields one element per token
+  // exactly as the join produced them.
   //
   // **bash -lc body MUST be single-quoted, not double-quoted.** When tmux
   // launches the session command, it goes through `/bin/sh -c <cmd>`. If we
   // double-quote, sh's parser sees `"${A[@]}"` and expands it eagerly —
-  // before mapfile ever runs — to the empty string, so claude is invoked as
+  // before the loop ever runs — to the empty string, so claude is invoked as
   // `claude ""` and the wizard's initial prompt is silently dropped. Single
   // quotes are inert in sh's parser: the literal `${A[@]}` (and `$(…)`) reach
   // bash, which runs them AFTER the outer sh layer. The outer shellSingle wrap
   // in renderInnerCommand re-escapes any internal `'` as `'\''`; this body has
   // no single quotes (it uses double quotes around the here-string), so it
   // composes fine.
-  return `bash -lc '${agentStartBanner(binary)}mapfile -t A <<< "$(echo ${blob} | base64 -d)"; exec ${binary} "\${A[@]}"'`;
+  return `bash -lc '${agentStartBanner(binary)}A=(); while IFS= read -r t; do A+=("$(printf %s "$t" | base64 -d)"); done <<< "$(echo ${blob} | base64 -d)"; exec ${binary} "\${A[@]}"'`;
 }
 
 export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void> {
@@ -167,12 +186,40 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     box = await provider.start(box);
     s.stop('box running');
   }
-  const command = buildCloudAttachInnerCommand(args.binary, args.extraArgs);
+  // Hetzner only: open the SSH tunnel UP FRONT, self-healing a stale firewall (a
+  // host egress-IP change locks the per-box firewall) BEFORE any of the later
+  // establish touches — the resume probe, the detached pre-start, buildAttach.
+  // Whichever of those connected first would otherwise be an unguarded
+  // establish: a firewall block there aborts the attach (or silently drops the
+  // resumed session, since the resume probe swallows exec errors). Doing it once
+  // here covers them all. Repairs ONLY on an actual connect failure; otherwise a
+  // `true` over the already-open master is a cheap no-op. This is an ESTABLISH
+  // path — distinct from the mid-session `reconnect` closure below, which must
+  // NOT touch the firewall (a checkpoint/pause drop isn't an IP change).
+  if (box.provider === 'hetzner') {
+    await withFirewallRepair(
+      provider,
+      box,
+      { enabled: true, onLog: (line) => log.success(line) },
+      () => provider.exec(box, ['true']),
+    );
+  }
+  // Attaching to a box that just came back up (a stop / cloud idle-timeout
+  // resume): if the user passed no args of their own and the box has a resumable
+  // claude/codex session, launch resuming it (claude --resume <id> / codex resume
+  // --last) so the attach reopens the conversation instead of starting fresh. The
+  // box is running now (provider.start above), so the probe can reach it. Opencode
+  // has no resume support — skipped.
+  let extraArgs = args.extraArgs;
+  if ((!extraArgs || extraArgs.length === 0) && (args.mode === 'claude' || args.mode === 'codex')) {
+    const resume = await agentResumeArgs(provider, box, args.mode);
+    if (resume) extraArgs = resume;
+  }
+  const command = buildCloudAttachInnerCommand(args.binary, extraArgs);
   // Daytona-only: force inline attach. `spec.cleanup` would otherwise run as
   // soon as the host process returns from the spawn (before the new pane has
   // released the per-call SSH tunnel), breaking the detached attach.
-  const safeOpenIn: AttachOpenIn | undefined =
-    box.provider === 'daytona' ? 'same' : args.openIn;
+  const safeOpenIn: AttachOpenIn | undefined = box.provider === 'daytona' ? 'same' : args.openIn;
 
   // New-terminal attaches (tab/window/split) re-invoke `agentbox <agent> attach`
   // in the fresh pane, and that re-invocation carries NO `extraArgs` — so for a
@@ -181,18 +228,16 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   // session detached here with the full command; the re-invoked attach then
   // finds it via `tmux has-session` and just attaches. (Inline attach runs the
   // full command itself, so it doesn't need this.)
-  if (safeOpenIn && safeOpenIn !== 'same' && args.extraArgs && args.extraArgs.length > 0) {
+  if (safeOpenIn && safeOpenIn !== 'same' && extraArgs && extraArgs.length > 0) {
     await startDetachedSession(provider, box, args.sessionName, command);
   }
 
-  let spec = await provider.buildAttach(box, 'agent', {
-    sessionName: args.sessionName,
-    command,
-  });
+  // The tunnel is already established (and firewall-healed) by the up-front warm
+  // -up above, so this reuses the live master.
+  let spec = await buildAttach(box, 'agent', { sessionName: args.sessionName, command });
   // claude only, and only when this host can capture a clipboard image (macOS,
   // or a Linux desktop with xclip/wl-paste). Otherwise Ctrl+V forwards verbatim.
-  const canPaste =
-    args.mode === 'claude' && (await clipboardCaptureAvailable());
+  const canPaste = args.mode === 'claude' && (await clipboardCaptureAvailable());
 
   // Re-establish the attach after the wrapper decides the box dropped (a vercel
   // checkpoint reboot, or a connection blip). Keep trying `provider.start` —
@@ -204,6 +249,12 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   // a reboot this lands in a freshly-created tmux session (the snapshot is
   // filesystem-only); a blip on a still-running box re-attaches the same live
   // session. Returns null to give up (cancelled or timed out).
+  //
+  // NOTE: deliberately NO firewall repair here. This is a MID-SESSION drop — a
+  // checkpoint stops the box (the PTY drops) and we wait for it to come back;
+  // the host IP didn't change, so re-syncing the firewall would be wrong.
+  // Firewall self-heal belongs only to establish paths (the up-front warm-up
+  // above, and `agentbox recover`).
   const reconnect = async (
     signal: AbortSignal,
   ): Promise<{ command: string; argv: string[]; env?: Record<string, string> } | null> => {
@@ -263,9 +314,8 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
           // best-effort
         }
       },
-      onPasteImage: canPaste
-        ? () => pasteHostClipboardImage(provider, box)
-        : undefined,
+      onPasteImage: canPaste ? () => pasteHostClipboardImage(provider, box) : undefined,
+      onPasteImageFile: canPaste ? (p) => uploadImageFileToBox(provider, box, p) : undefined,
     });
     process.exit(code);
   } finally {
@@ -276,15 +326,17 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
 /**
  * Create + configure the agent's tmux session running `command` without
  * attaching (the `detached` buildAttach mode). Shared by the new-tab attach
- * pre-start and the background (`-i`) queue worker. `runDetached` swallows the
- * exit code; a real launch failure surfaces on the subsequent attach.
+ * pre-start and the background (`-i`) queue worker. Returns the session-create
+ * command's exit code + stderr so the queue worker can fail the job when the
+ * session was never created; the new-tab pre-start ignores the result (a real
+ * launch failure surfaces on the subsequent attach).
  */
 async function startDetachedSession(
   provider: Provider,
   box: BoxRecord,
   sessionName: string,
   command: string,
-): Promise<void> {
+): Promise<{ exitCode: number; stderr: string }> {
   if (!provider.buildAttach) {
     throw new Error(`provider '${provider.name}' does not support detached sessions`);
   }
@@ -294,9 +346,76 @@ async function startDetachedSession(
     detached: true,
   });
   try {
-    await runDetached(spec.argv, spec.env);
+    return await runDetached(spec.argv, spec.env);
   } finally {
     if (spec.cleanup) await spec.cleanup();
+  }
+}
+
+/**
+ * Markers an agent prints to its TUI when its in-box credentials are rejected.
+ * The seeded cloud login can be stale (it expires independently of the host
+ * session — `agentbox <agent> login` refreshes it), in which case the agent
+ * launches, draws, then sits on an auth error doing no work. Scraping the pane
+ * for these turns that otherwise-silent dead-end into an actionable failure.
+ */
+const AGENT_AUTH_FAILURE =
+  /Please run \/login|Invalid authentication credentials|API Error: 401|Invalid API key|\bUnauthorized\b/i;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * After a detached pre-start, confirm the agent's tmux session actually came up
+ * and stayed up. `tmux new-session -d` creates the session synchronously, so a
+ * session that's already gone — or vanishes within the settle window — means the
+ * agent process exited immediately at launch (the single-window session dies
+ * with it). This is the exact silent failure the `-i` queue path hit on cloud
+ * providers: the box was created and the job reported "done", but no session was
+ * ever running. We also scrape the pane for credential-rejection markers, the
+ * most common cause of a session that's technically alive but doing nothing.
+ * Throws an actionable error so the caller surfaces it (queue worker → failed
+ * job; restore → logged) instead of masking it.
+ */
+export async function verifyDetachedSession(
+  provider: Provider,
+  box: BoxRecord,
+  sessionName: string,
+  binary: string,
+  opts: { windowMs?: number; pollMs?: number } = {},
+): Promise<void> {
+  const windowMs = opts.windowMs ?? 10_000;
+  const pollMs = opts.pollMs ?? 2_000;
+  const q = `'${sessionName.replace(/'/g, `'\\''`)}'`;
+  // One round-trip per tick: bail (exit 7) if the session is gone, else echo the
+  // pane so we can sniff for an auth dead-end.
+  const probe = `tmux has-session -t ${q} 2>/dev/null || exit 7; tmux capture-pane -p -t ${q} 2>/dev/null`;
+  const deadline = Date.now() + windowMs;
+  for (;;) {
+    let pane = '';
+    try {
+      const r = await provider.exec(box, ['bash', '-lc', probe], { user: 'vscode' });
+      if (r.exitCode === 7) {
+        throw new Error(
+          `agent '${binary}' exited immediately after launch in box ${box.name} — the session did not stay up. ` +
+            `Attach to inspect: agentbox ${binary} attach ${box.name}`,
+        );
+      }
+      pane = r.stdout;
+    } catch (err) {
+      // Re-throw our own diagnosis; a transport-level probe error is NOT proof
+      // of death (don't false-fail on a flaky exec) — keep polling.
+      if (err instanceof Error && err.message.startsWith(`agent '${binary}'`)) throw err;
+    }
+    if (AGENT_AUTH_FAILURE.test(pane)) {
+      throw new Error(
+        `box ${binary} credentials were rejected — the agent launched but printed an auth error, so no work will run. ` +
+          `Refresh them with \`agentbox ${binary} login\`, then re-run.`,
+      );
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(pollMs);
   }
 }
 
@@ -324,24 +443,61 @@ export async function cloudAgentStartDetached(args: {
   if (state !== 'running') {
     box = await provider.start(box);
   }
-  const command = buildCloudAttachInnerCommand(args.binary, args.extraArgs);
-  await startDetachedSession(provider, box, args.sessionName, command);
+  // With no user args, resume the box's recorded session instead of launching
+  // fresh — same as the interactive `cloudAgentAttach` path. Matters for a
+  // background `agentbox <agent> start <box> --no-attach` (and idle-resumed
+  // creates): the box already has a claude/codex session to reopen. The `-i`
+  // queue path always seeds a prompt, so extraArgs is non-empty and this no-ops.
+  let extraArgs = args.extraArgs;
+  if (
+    (!extraArgs || extraArgs.length === 0) &&
+    (args.binary === 'claude' || args.binary === 'codex')
+  ) {
+    const resume = await agentResumeArgs(provider, box, args.binary);
+    if (resume) extraArgs = resume;
+  }
+  const command = buildCloudAttachInnerCommand(args.binary, extraArgs);
+  const { exitCode, stderr } = await startDetachedSession(
+    provider,
+    box,
+    args.sessionName,
+    command,
+  );
+  if (exitCode !== 0) {
+    const detail = stderr.trim().slice(0, 500);
+    throw new Error(
+      `failed to start the ${args.binary} session in box ${box.name} (exit ${String(exitCode)})` +
+        (detail ? `: ${detail}` : ''),
+    );
+  }
+  await verifyDetachedSession(provider, box, args.sessionName, args.binary);
 }
 
 /**
  * Run an attach-style argv non-interactively to completion (used for the
- * `detached` session pre-start). stdio is ignored — the remote command only
- * creates + configures the tmux session and exits; there's nothing to show.
- * Resolves on exit regardless of code (a non-zero here shouldn't block the
- * subsequent attach, which surfaces any real failure to the user).
+ * `detached` session pre-start). The remote command only creates + configures
+ * the tmux session and exits, so stdout is dropped — but stderr and the exit
+ * code are captured: the E2B helper's `--detached` path runs the session-create
+ * command via the SDK and exits with its code, so a non-zero here is the only
+ * signal that the session was never created (e.g. a transient SDK connect/exec
+ * failure). Callers decide whether to surface it — the queue worker fails the
+ * job, the new-tab pre-start ignores it (the subsequent attach re-creates the
+ * session anyway). Resolves on exit regardless of code (never rejects).
  */
-function runDetached(argv: string[], env?: Record<string, string>): Promise<void> {
+function runDetached(
+  argv: string[],
+  env?: Record<string, string>,
+): Promise<{ exitCode: number; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(argv[0]!, argv.slice(1), {
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', 'pipe'],
       env: env ? { ...process.env, ...env } : process.env,
     });
-    child.on('error', () => resolve());
-    child.on('exit', () => resolve());
+    let stderr = '';
+    child.stderr?.on('data', (c: Buffer) => {
+      stderr += c.toString('utf8');
+    });
+    child.on('error', (err) => resolve({ exitCode: 1, stderr: stderr + String(err.message ?? err) }));
+    child.on('exit', (code) => resolve({ exitCode: code ?? 0, stderr }));
   });
 }

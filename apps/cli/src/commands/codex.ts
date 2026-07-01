@@ -26,6 +26,7 @@ import {
   extractCodexCredentials,
   formatDetachNotice,
   inspectBox,
+  recordLastAgent,
   runInteractiveCodexLogin,
   seedCodexHooks,
   SHARED_CODEX_VOLUME,
@@ -44,9 +45,12 @@ import {
 import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
 import { captureOpenTerminalContext } from '../terminal/queue-open.js';
+import { hostAwareOpenIn } from '../terminal/host.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { maybeResyncWorkspace } from '../lib/resync-start.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
+import { agentResumeArgs } from '../agent-sessions.js';
+import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { applyCodexSkipPermissions } from '../lib/skip-permissions.js';
 import {
   ATTACH_IN_HELP,
@@ -54,7 +58,7 @@ import {
   NO_ATTACH_HELP,
   resolveAttachInOption,
 } from './_attach-in.js';
-import { cloudAgentAttach } from './_cloud-attach.js';
+import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
@@ -75,7 +79,9 @@ import { maybePromptPortless } from '../portless-prompt.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
 
-function pickCodexCreateOpts(opts: CodexCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
+function pickCodexCreateOpts(
+  opts: CodexCreateOptions,
+): import('@agentbox/relay').QueueJobCreateOpts {
   return {
     workspace: opts.workspace,
     name: opts.name,
@@ -240,7 +246,10 @@ async function maybeRunCodexLogin(args: { image: string; yes: boolean }): Promis
   // Ensure the shared volume exists (and is vscode-writable) before the login
   // container writes auth.json into it.
   s.message('preparing codex config');
-  await ensureCodexVolume({ volume: SHARED_CODEX_VOLUME }, { syncFromHost: true, image: args.image });
+  await ensureCodexVolume(
+    { volume: SHARED_CODEX_VOLUME },
+    { syncFromHost: true, image: args.image },
+  );
   s.stop('image ready');
 
   const exitCode = await runCodexLoginContainer(args.image, []);
@@ -290,7 +299,10 @@ async function maybeRunCloudCodexLogin(args: { image: string; yes: boolean }): P
   s.start('preparing sandbox image');
   await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
   s.message('preparing codex config');
-  await ensureCodexVolume({ volume: SHARED_CODEX_VOLUME }, { syncFromHost: true, image: args.image });
+  await ensureCodexVolume(
+    { volume: SHARED_CODEX_VOLUME },
+    { syncFromHost: true, image: args.image },
+  );
   s.stop('image ready');
 
   const exitCode = await runCodexLoginContainer(args.image, []);
@@ -302,7 +314,10 @@ async function maybeRunCloudCodexLogin(args: { image: string; yes: boolean }): P
   // backup so the cloud push seeds it into this box (and future ones).
   const { copied } = await extractCodexCredentials(SHARED_CODEX_VOLUME, args.image);
   if (copied) log.success('Signed in to Codex — saved for future boxes.');
-  else log.warn('Codex login finished but no auth.json was captured — sign in inside the box if needed.');
+  else
+    log.warn(
+      'Codex login finished but no auth.json was captured — sign in inside the box if needed.',
+    );
 }
 
 export const codexCommand = new Command('codex')
@@ -310,7 +325,10 @@ export const codexCommand = new Command('codex')
   // Mirror create's surface so users can swap the verb without re-learning flags.
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
   .option('-n, --name <name>', 'friendly box name (default: <workspace-basename>-<id>)')
-  .option('--host-snapshot', 'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)')
+  .option(
+    '--host-snapshot',
+    'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)',
+  )
   .option('--no-host-snapshot', 'tar-pipe directly from the live host workspace at create time')
   .option(
     '--snapshot <ref>',
@@ -363,17 +381,14 @@ export const codexCommand = new Command('codex')
   .option('--cpus <n>', 'CPU count cap (fractional ok, e.g. 1.5); unset = unlimited')
   .option('--pids-limit <n>', 'max process count (PIDs cgroup); unset = unlimited')
   .option('--disk <size>', 'best-effort writable-layer size (e.g. 10g); no-op on overlay2/macOS')
-  .option(
-    '--provider <name>',
-    "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
-  )
+  .option('--provider <name>', "sandbox backend: 'docker' (default) or 'daytona' for a cloud box")
   .option(
     '--from-branch <ref>',
     "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
   )
   .option(
     '-b, --use-branch <name>',
-    "reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.",
+    'reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.',
   )
   .option(
     '-v, --verbose',
@@ -404,7 +419,7 @@ export const codexCommand = new Command('codex')
   )
   .argument(
     '[codex-args...]',
-    "extra args passed to codex inside the box; place after `--`, e.g. `agentbox codex -- -m gpt-5.4`",
+    'extra args passed to codex inside the box; place after `--`, e.g. `agentbox codex -- -m gpt-5.4`',
   )
   .action(async (codexArgs: string[], opts: CodexCreateOptions) => {
     const cmdLog = openCommandLog('codex');
@@ -472,6 +487,7 @@ export const codexCommand = new Command('codex')
         await assertAgentCredsAvailable({
           agent: 'codex',
           image: cfg.effective.box.image,
+          providerName,
         });
       } catch (err) {
         if (err instanceof MissingAgentCredsError) {
@@ -575,14 +591,18 @@ export const codexCommand = new Command('codex')
           limits: resolveLimits(cfg.effective.box, opts),
           fromBranch,
           useBranch,
+          resyncOnStart: opts.resync,
           projectRoot,
+          // Per-provider session-lifetime (e2b/vercel timeout); mirrors create.
+          providerOptions: cloudSizingProviderOptions(provider.name, cfg.effective),
         },
         binary: 'codex',
         sessionName: cfg.effective.codex.sessionName,
         mode: 'codex',
+        hasSeedPrompt: Boolean(resumePrepared),
         extraArgs: applyCodexSkipPermissions(codexArgs, cfg.effective),
         verbose: opts.verbose === true,
-        openIn: cfg.effective.attach.openIn,
+        openIn: hostAwareOpenIn(cfg),
         attach: opts.attach !== false,
         beforeStart: resumePrepared
           ? async (box) => {
@@ -716,6 +736,8 @@ export const codexCommand = new Command('codex')
         codexArgs: effectiveCodexArgs,
         sessionName,
       });
+      // Remember this box was launched as codex for `agentbox recover`.
+      await recordLastAgent(result.record.id, 'codex').catch(() => {});
 
       const nSuffix =
         typeof result.record.projectIndex === 'number'
@@ -742,7 +764,7 @@ export const codexCommand = new Command('codex')
         sessionName,
         reattachRef(result.record),
         (m) => cmdLog.write(m),
-        cfg.effective.attach.openIn,
+        hostAwareOpenIn(cfg),
       );
     } catch (err) {
       s.stop('failed');
@@ -773,6 +795,10 @@ interface CodexStartOptions {
   attach?: boolean; // commander: --no-attach => false; default true.
   continue?: boolean;
   resume?: string;
+  // Set by the `attach` subcommand: resume the in-box session (`--continue`)
+  // when bringing a down box back up, so attach after a stop is seamless. Not
+  // set by the bare `codex` / `codex start` command (stays fresh).
+  attachResume?: boolean;
 }
 
 // Shared by `codex start` and `codex attach`: if a session is already running,
@@ -797,13 +823,15 @@ async function startOrAttachCodex(
   if (opts.resync !== undefined) cliOverrides.box = { resyncOnStart: opts.resync };
   const cfg = await loadEffectiveConfig(box.workspacePath, { cliOverrides });
   const sessionName = cfg.effective.codex.sessionName;
-  const openIn = cfg.effective.attach.openIn;
+  const openIn = hostAwareOpenIn(cfg);
   const wantAttach = opts.attach !== false;
 
   const insp = await inspectBox(box.id);
   if (insp.state === 'missing') {
     throw new Error(`box ${box.name} has no container; was it destroyed?`);
   }
+  // Record this attach/launch as a codex session for `agentbox recover`.
+  await recordLastAgent(box.id, 'codex').catch(() => {});
 
   // If a tmux session already exists, just attach — no resync, ignore any
   // post-`--` args (they only apply to a fresh codex).
@@ -875,6 +903,20 @@ async function startOrAttachCodex(
   });
 
   let effectiveArgs = applyCodexSkipPermissions(codexArgs, cfg.effective);
+  // Attach path on a box that just came back up: resume the box's recorded codex
+  // session rather than starting fresh (see claude.ts for the rationale). Gated
+  // to no-args, no-teleport, and a box where codex actually ran.
+  let attachResumed = false;
+  if (opts.attachResume && codexArgs.length === 0 && !resumePrepared) {
+    const provider = await providerForBox(box);
+    // `resume` is a codex subcommand — it must follow the global flags in
+    // effectiveArgs (skip-permissions etc.), so append rather than prepend.
+    const resume = await agentResumeArgs(provider, box, 'codex');
+    if (resume) {
+      effectiveArgs = [...effectiveArgs, ...resume];
+      attachResumed = true;
+    }
+  }
   if (resumePrepared) {
     s.message('uploading codex session into box');
     try {
@@ -896,9 +938,10 @@ async function startOrAttachCodex(
     }
   }
 
-  // Inject the resync conflict warning as codex's opening turn (resume rides
-  // `--resume`, so surface it on stderr after the spinner stops instead).
-  if (resyncWarning && !resumePrepared) {
+  // Inject the resync conflict warning as codex's opening turn. A resumed
+  // session (teleport, or attach-resume into the in-box session) rides resume
+  // flags, so surface it on stderr instead — a seed prompt would collide.
+  if (resyncWarning && !resumePrepared && !attachResumed) {
     effectiveArgs = buildPromptArgs('codex', resyncWarning, effectiveArgs);
   }
 
@@ -906,7 +949,7 @@ async function startOrAttachCodex(
   await startCodexSession({ container: box.container, codexArgs: effectiveArgs, sessionName });
 
   s.stop(`box ${box.container} ready`);
-  if (resyncWarning && resumePrepared) log.warn(resyncWarning);
+  if (resyncWarning && (resumePrepared || attachResumed)) log.warn(resyncWarning);
 
   if (!wantAttach) {
     outro(
@@ -944,11 +987,11 @@ const codexAttachCommand = new Command('attach')
           binary: 'codex',
           sessionName: opts.sessionName ?? 'codex',
           mode: 'codex',
-          openIn: cfg.effective.attach.openIn,
+          openIn: hostAwareOpenIn(cfg),
         });
         return;
       }
-      await startOrAttachCodex(box, [], { ...opts, syncConfig: false });
+      await startOrAttachCodex(box, [], { ...opts, syncConfig: false, attachResume: true });
     } catch (err) {
       if (err instanceof CodexSessionError) {
         log.error(err.message);
@@ -978,13 +1021,10 @@ const codexStartCommand = new Command('start')
     '-c, --continue',
     'teleport the most recent host Codex session for this cwd into the box and resume',
   )
-  .option(
-    '--resume <id>',
-    'teleport the specified host Codex session uuid into the box and resume',
-  )
+  .option('--resume <id>', 'teleport the specified host Codex session uuid into the box and resume')
   .argument(
     '[codex-args...]',
-    "extra args passed to codex when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox codex start 1 -- -m gpt-5.4`",
+    'extra args passed to codex when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox codex start 1 -- -m gpt-5.4`',
   )
   .action(async function (this: Command, idOrName: string | undefined, codexArgs: string[]) {
     const opts = this.optsWithGlobals() as CodexStartOptions;
@@ -1019,12 +1059,6 @@ const codexStartCommand = new Command('start')
         }
       }
       if ((box.provider ?? 'docker') !== 'docker') {
-        if (opts.attach === false) {
-          outro(
-            `--no-attach: cloud agent sessions are started lazily on attach. Run: agentbox codex attach ${reattachRef(box)}`,
-          );
-          return;
-        }
         const cfg = await loadEffectiveConfig(box.workspacePath, {
           cliOverrides: {
             ...(attachIn ? { attach: { openIn: attachIn } } : {}),
@@ -1047,13 +1081,26 @@ const codexStartCommand = new Command('start')
             throw err;
           }
         }
+        const sessionName = opts.sessionName ?? 'codex';
+        if (opts.attach === false) {
+          // Background mode: start the detached session (matches docker) instead
+          // of deferring the agent until the next attach.
+          await cloudAgentStartDetached({
+            box,
+            binary: 'codex',
+            sessionName,
+            extraArgs: effectiveCodexArgs,
+          });
+          outro(`--no-attach: codex started in background. Attach: agentbox codex attach ${reattachRef(box)}`);
+          return;
+        }
         await cloudAgentAttach({
           box,
           binary: 'codex',
-          sessionName: opts.sessionName ?? 'codex',
+          sessionName,
           mode: 'codex',
           extraArgs: effectiveCodexArgs,
-          openIn: cfg.effective.attach.openIn,
+          openIn: hostAwareOpenIn(cfg),
         });
         return;
       }

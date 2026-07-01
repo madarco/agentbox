@@ -1,25 +1,32 @@
-# Host-terminal integration (`--attach-in`, cmux sidebar status)
+# Host-terminal integration (`--attach-in`, cmux + Herdr status)
 
 How `agentbox claude|codex|opencode` (and `shell`) place the attached session in
 the user's host terminal, and how a box's agent state is surfaced in the cmux
-sidebar. Source lives in `apps/cli/src/terminal/` and the attach wrapper
-`apps/cli/src/wrapped-pty/run.ts`.
+sidebar / Herdr pane. Source lives in `apps/cli/src/terminal/` and the attach
+wrapper `apps/cli/src/wrapped-pty/run.ts`.
 
 ## Host-terminal detection
 
 `detectHostTerminal()` (`apps/cli/src/terminal/host.ts`) classifies the host
 terminal from env vars, in priority order:
 
-1. `TMUX` set → `tmux` (wins even when nested inside cmux — its CLI is the right
-   primitive and is portable across macOS/Linux).
+1. `TMUX` set → `tmux` (wins even when nested inside cmux/Herdr — its CLI is the
+   right primitive and is portable across macOS/Linux).
 2. `CMUX_SOCKET_PATH` set → `cmux` (a Ghostty-based multiplexer with its own
    control CLI; it shares `TERM_PROGRAM=ghostty` with standalone Ghostty, so we
    key on `CMUX_*` env vars, not `TERM_PROGRAM`).
-3. `TERM_PROGRAM=iTerm.app` → `iterm2` (macOS-only; driven via AppleScript).
-4. else → `unknown` (caller falls back to inline attach).
+3. `HERDR_SOCKET_PATH` set → `herdr` (https://herdr.dev — a multiplexer with a
+   newline-delimited JSON-RPC socket API). **Checked before iTerm2 on purpose:**
+   Herdr runs *inside* a host emulator, so `TERM_PROGRAM` reflects the outer one
+   (e.g. iTerm2). Keying on `TERM_PROGRAM` would mis-route attach into iTerm2
+   windows instead of Herdr panes.
+4. `TERM_PROGRAM=iTerm.app` → `iterm2` (macOS-only; driven via AppleScript).
+5. else → `unknown` (caller falls back to inline attach).
 
 The cmux control binary is resolved by `cmuxBinary()`: `CMUX_BUNDLED_CLI_PATH`
-(cmux exports this) → bare `cmux` on PATH.
+(cmux exports this) → bare `cmux` on PATH. Herdr needs no binary — we talk to its
+socket directly (`apps/cli/src/terminal/herdr-socket.ts`), so there's no PATH /
+`HERDR_BIN_PATH` dependency.
 
 ## `--attach-in` / `attach.openIn`
 
@@ -27,12 +34,12 @@ The cmux control binary is resolved by `cmuxBinary()`: `CMUX_BUNDLED_CLI_PATH`
 `attach.openIn`, default `split`; CLI `--attach-in`, `--inline` = `same`).
 `spawnInNewTerminal()` (`host.ts`) maps each mode per terminal:
 
-| mode     | tmux                       | cmux                         | iTerm2                  |
-| -------- | -------------------------- | ---------------------------- | ----------------------- |
-| `split`  | `split-window -h`          | `new-split right`            | `split vertically`      |
-| `tab`    | `new-window`               | `new-surface` (tab in pane)  | `create tab`            |
-| `window` | `new-window`               | `new-workspace`              | `create window`         |
-| `same`   | inline attach in current terminal (no spawn)                            |
+| mode     | tmux                       | cmux                         | Herdr               | iTerm2                  |
+| -------- | -------------------------- | ---------------------------- | ------------------- | ----------------------- |
+| `split`  | `split-window -h`          | `new-split right`            | `pane.split`        | `split vertically`      |
+| `tab`    | `new-window`               | `new-surface` (tab in pane)  | `tab.create`        | `create tab`            |
+| `window` | `new-window`               | `new-workspace`              | `workspace.create`  | `create window`         |
+| `same`   | inline attach in current terminal (no spawn)                                                  |
 
 Mechanics:
 - The new pane re-invokes `agentbox <agent> attach <box> --attach-in same` so the
@@ -42,8 +49,20 @@ Mechanics:
   `new-workspace` carries `--cwd`/`--command` atomically; `new-split`/
   `new-surface` print a surface ref (`surface:N`, parsed by `parseCmuxRef`) that
   we then `cmux send "cd <cwd> && exec <cmd>\n"` into.
-- Anything that fails (unknown host, shell mode, spawn non-zero) falls through to
-  inline attach.
+- Herdr (`spawnInHerdr`, `host.ts`): the create method returns a new pane id
+  (`extractHerdrPaneId`), then we `pane.send_text "cd <cwd> && exec <cmd>\n"` into
+  it — same `cd && exec` shape as cmux/iTerm2. All over the socket via
+  `herdrRequest` (request/response, since we need the pane id back).
+- Anything that fails (unknown host, shell mode, spawn non-zero / no pane id)
+  falls through to inline attach.
+
+**Herdr default override.** The global `attach.openIn` default is `split`, but a
+split pane is cramped for an attached agent under Herdr, so `hostAwareOpenIn`
+(`host.ts`) maps it to `tab` **only when the value is the built-in default**
+(`cfg.sources['attach.openIn'] === 'default'`) and the host is Herdr. An explicit
+`--attach-in` / configured value (any non-default source) is honored as-is. It's
+applied at each command's `cfg.effective.attach.openIn` read site (claude / codex
+/ opencode / attach), so both the docker and cloud foreground paths get it.
 
 ## `queue.openIn` — open a background `-i` box when it is ready
 
@@ -58,7 +77,8 @@ Flow:
 - At submit (`captureOpenTerminalContext`, `terminal/queue-open.ts`): if
   `queue.openIn !== 'none'` and the submitting shell is a known host terminal,
   capture the targeting (`host`, `mode`, `cwd`, tmux `$TMUX`/`$TMUX_PANE`, cmux
-  `$CMUX_SOCKET_PATH`/CLI) onto the queue job (`QueueJob.openTerminal`). The live
+  `$CMUX_SOCKET_PATH`/CLI, Herdr `$HERDR_SOCKET_PATH`/`$HERDR_PANE_ID`/
+  `$HERDR_WORKSPACE_ID`) onto the queue job (`QueueJob.openTerminal`). The live
   submit env is the source of truth — the long-lived relay/worker inherit a
   **stale** terminal env from whenever the relay first started.
 - When the box is ready (`_run-queued-job.ts` → `maybeOpenQueuedTerminal`): the
@@ -71,11 +91,11 @@ Flow:
 Per-host targeting differs from the foreground path because the worker is
 detached (no "current" pane):
 
-| mode     | tmux                          | cmux                                    | iTerm2            |
-| -------- | ----------------------------- | --------------------------------------- | ----------------- |
-| `split`  | `split-window -h -t <pane>`   | `new-split --surface`→`--workspace`→`new-workspace` | `split vertically` |
-| `tab`    | `new-window -t <pane>`        | `new-surface --workspace`→`new-workspace` | `create tab`       |
-| `window` | `new-window -t <pane>`        | `new-workspace`                         | `create window`    |
+| mode     | tmux                          | cmux                                    | Herdr                          | iTerm2            |
+| -------- | ----------------------------- | --------------------------------------- | ------------------------------ | ----------------- |
+| `split`  | `split-window -h -t <pane>`   | `new-split --surface`→`--workspace`→`new-workspace` | `pane.split` (target pane)     | `split vertically` |
+| `tab`    | `new-window -t <pane>`        | `new-surface --workspace`→`new-workspace` | `tab.create` (target workspace) | `create tab`       |
+| `window` | `new-window -t <pane>`        | `new-workspace`                         | `workspace.create`             | `create window`    |
 
 - tmux targets the captured `$TMUX_PANE` so the split/window lands in the
   submitting pane's session and shows up live in the attached client.
@@ -92,6 +112,10 @@ detached (no "current" pane):
   in the queue log). cmux opens require `socketControlMode: automation` (or
   `password`) in `~/.config/cmux/cmux.json` + `cmux reload-config`. `config set
   queue.openIn` prints this caveat. tmux/iTerm2 are unaffected.
+- Herdr targets the captured `$HERDR_PANE_ID` (`split`) / `$HERDR_WORKSPACE_ID`
+  (`tab`) so the new pane/tab lands relative to the submitting pane; `window`
+  opens a fresh `workspace.create`. No socket-trust caveat like cmux's — Herdr's
+  socket accepts the worker connection.
 - iTerm2 opens relative to the **frontmost** window (no stable submit-time handle
   is captured in v1).
 - Unknown host terminal at submit → nothing is captured and nothing opens.
@@ -235,6 +259,121 @@ sits in the sidebar. Implementation: `apps/cli/src/commands/install-cmux.ts`
   non-cmux `agentbox list --watch` (wide terminal) keeps its `g` scope toggle —
   that path still uses `watchRender`'s `onKey` raw-mode capture.
 
+## Herdr: box agent status (`attach.herdrStatus`)
+
+`apps/cli/src/terminal/herdr-status.ts` + `herdr-socket.ts`. When attached
+**inside Herdr**, the wrapper reports the box agent's live activity to its Herdr
+**pane** so the box looks like a *normal* agent pane in Herdr's UI. Config key
+`attach.herdrStatus` (bool, default true); no-op outside Herdr.
+
+Unlike cmux (where we had to drive the workspace colour because cmux won't draw
+its agent pill for a `docker exec`), Herdr has a first-class agent model. So the
+design is the inverse: we **proxy state transparently** and let Herdr do the rest.
+
+- **Transparent state proxy.** Driven from the same 3s `status.json` poll loop in
+  `run.ts`, on each activity transition we send `pane.report_agent` with
+  `agent: "claude"|"codex"|"opencode"` (`reportHerdrAgentState`). Mapping
+  (`mapActivityToAgentState`): working/compacting → `working`;
+  question/waiting/end-plan/error → `blocked`; idle → `idle`; unknown → left
+  as-is. Because Herdr treats it as a normal agent, **Herdr surfaces needs-input
+  itself** from the `blocked` state — so, unlike the cmux path, we do **not**
+  fire our own needs-input toast.
+- **Special highlight for AgentBox's own prompts.** The one thing Herdr can't
+  know about is AgentBox's **host-relay approval prompts** (git push / PR / merge
+  / cp / download / checkpoint) — they're not the box agent. When one arrives
+  (the `onPrompt` SSE callback in `run.ts`) we fire `notification.show` with sound
+  `request` (`notifyHerdrApprovalPrompt`, title = box name, body =
+  `agentbox · <prompt message>`) so it stands out from the normal agent flow.
+- **No capture/restore.** The `pane.report_agent` association is ours (it didn't
+  exist before the attach), so detach just reports `idle` (`clearHerdrAgentState`)
+  — there's nothing prior to restore.
+- **Transport.** All calls go over Herdr's newline-delimited JSON-RPC UNIX socket
+  (`herdr-socket.ts`): `herdrSend` (fire-and-forget, for state reports +
+  notifications) and `herdrRequest` (request/response, for spawn). Everything is
+  best-effort — a missing/erroring socket never breaks the attach. Keyed on
+  `HERDR_ENV=1` + `HERDR_SOCKET_PATH` + `HERDR_PANE_ID` (`herdrStatusActive`), so
+  it works even when a tmux is nested inside Herdr. **Reply correlation:**
+  `herdrRequest` consumes only the line carrying its own request `id`, skipping
+  notifications and other replies that Herdr may push onto the connection first
+  (an id-less reply is still accepted, so a non-compliant Herdr doesn't regress).
+  This is what made the `-i` queue's concurrent `tab.create` fan-out flaky —
+  several boxes opening tabs at once raced a layout/focus notification ahead of
+  the reply, and the old "take the first `result` line" logic mis-read it as
+  "gave no pane id" even though the tab was created. Pane/tab/workspace *creates*
+  also use a wider 6s timeout (vs the 2s default) since they're slower under that
+  fan-out. (Note: queued session start is independent of `openIn` — a failed
+  `openIn` no longer means no session; see `cloud-create-flow` / the `-i`
+  worker.)
+
+## Herdr plugin (`agentbox install herdr` + repo-root `herdr-plugin.toml`)
+
+`apps/cli/src/commands/install-herdr.ts` is the source of truth for a Herdr
+plugin (https://herdr.dev/docs/plugins) reachable two ways, both producing the
+same files:
+- **discovery:** `herdr plugin install madarco/agentbox` → the committed
+  repo-root `herdr-plugin.toml` (+ `build.sh`); its `[[build]]` runs `build.sh` →
+  `agentbox install herdr --plugin-keys`. The manifest lives at the repo root (not
+  a subdir) so the Herdr marketplace, which indexes `herdr-plugin.toml` from each
+  tagged repo's root, can discover it.
+- **local:** `agentbox install herdr` → the same files under
+  `~/.agentbox/herdr/plugin/`, then `herdr plugin unlink agentbox` (best-effort) →
+  `herdr plugin link` → `herdr server reload-config`.
+
+**Static manifest + a shim.** Herdr runs plugin commands as a bare argv with no
+shell expansion and an unreliable PATH (e.g. nvm). Rather than bake machine paths
+into the manifest, agentbox commands route through `agentbox-shim.sh`
+(`herdrShimContent` → `exec <node> <cliEntry> "$@"`), written at install time.
+That keeps `buildHerdrManifest()` **pure + parameterless** so the committed
+repo-root `herdr-plugin.toml` is byte-identical to what the local install
+writes — a test (`committed plugin stays in sync`) asserts it, as does
+`build.sh` vs `herdrBuildScript()`. The plugin carries its own
+`version` (constant), independent of the CLI version, so the committed file is
+stable across releases.
+
+Manifest contents:
+- `[[build]]` → `["sh", "build.sh"]` (run only by `herdr plugin install`, not by
+  `herdr plugin link`).
+- `[[panes]]` `boxes` (placement `overlay`) → `sh agentbox-shim.sh list --herdr --watch`.
+- `[[actions]]` `boxes` (opens the pane via bare `herdr plugin pane open`), `new`
+  (`sh agentbox-shim.sh herdr new`), `link` (`sh agentbox-shim.sh herdr link`).
+- `[[link_handlers]]` `^agentbox://` → action `link`.
+
+`build.sh` (committed): if `command -v agentbox` resolves, run
+`agentbox install herdr --plugin-keys` (writes the shim into the plugin root +
+keybindings + reload, no relink); else print the `npm i -g` hint and `exit 0` —
+the plugin installs but stays inert until the CLI arrives (never aborts the
+install).
+
+**Keybindings live in the user's `config.toml`, not the manifest.** Verified
+against Herdr 0.7: manifest `[[keys.command]]` entries are ignored (they don't
+appear in `herdr plugin list` and never fire). So `install herdr` splices a
+managed `[[keys.command]]` block into `~/.config/herdr/config.toml`
+(`herdrConfigPath`) — idempotently, between `# >>> agentbox … >>>` sentinels via
+`upsertHerdrKeybindings` — binding `prefix+a` → `agentbox.boxes` and
+`prefix+shift+a` → `agentbox.new` with `type = "plugin_action"`, then runs
+`herdr server reload-config`. (`prefix+b` is Herdr's own `toggle_sidebar`, so
+it's avoided.) `herdr config reset-keys` (or re-running) removes the block.
+
+The plugin's runtime entry points live in `apps/cli/src/commands/herdr.ts`
+(hidden command group `agentbox herdr`):
+- `herdr new` reads `HERDR_PLUGIN_CONTEXT_JSON` for the cwd and reuses the phase-1
+  `spawnInNewTerminal({host:'herdr', mode:'tab'})` to open a box session in a tab.
+- `herdr link` parses `HERDR_PLUGIN_CLICKED_URL` (`agentbox://web/<box>`, via the
+  pure `parseHerdrLink`), finds the box's exposed web endpoint
+  (`ListedBox.endpoints`), and opens it with `hostOpenCommand()` — or, when no web
+  app is exposed, fires a `notification.show` and does nothing.
+
+`agentbox list --herdr` is the `--cmux` compact renderer with box names wrapped in
+**OSC 8 hyperlinks** to `agentbox://web/<name>` (forced on — the Herdr overlay
+always supports OSC 8 and the link is what drives Ctrl+click). 
+
+**Native sidebar vs the overlay.** Herdr's sidebar agent panel
+(`agent_panel_scope = "all"`) already lists *attached* boxes globally (phase-1
+reporting feeds it) — that's the always-visible view of active boxes. Plugins
+**cannot** add to the sidebar (v1 panes are only overlay/split/tab/zoomed) and the
+sidebar only shows boxes with a live pane, so the full roster (incl. paused) is
+the keyboard-toggled overlay instead.
+
 ## Gotchas
 
 - **`set-status` is stored-but-hidden for box workspaces** — see above. Don't
@@ -260,9 +399,18 @@ sits in the sidebar. Implementation: `apps/cli/src/commands/install-cmux.ts`
   but `list-workspaces --json` only exposes `workspace:N` refs unless you pass
   `--id-format both`. `captureCmuxWorkspace` uses `--id-format both` and matches
   the UUID loosely.
-- **tmux wins over cmux when nested**, but cmux status keys on `CMUX_SOCKET_PATH`
-  directly (not `detectHostTerminal`), so the workspace status still updates when
-  a tmux runs inside a cmux surface.
+- **tmux wins over cmux/Herdr when nested**, but both cmux status and Herdr
+  status key on their socket env var directly (not `detectHostTerminal`), so the
+  status still updates when a tmux runs inside a cmux surface / Herdr pane.
+- **Herdr is checked before iTerm2** in `detectHostTerminal` — Herdr runs inside
+  an emulator, so `TERM_PROGRAM` is the outer one (iTerm2). Don't reorder these,
+  or attach spawns iTerm2 windows instead of Herdr panes.
+- **Herdr handles needs-input; don't double-notify.** The whole point of the
+  transparent `pane.report_agent` proxy is that Herdr does its own needs-input
+  surfacing from `blocked`. Reserve `notification.show` for AgentBox-specific
+  relay prompts. (If a future Herdr version stops surfacing needs-input from
+  reported state, the fallback is to add a `notification.show` in the poll
+  transition, mirroring cmux's `markCmuxTabAttention`.)
 - **Non-TTY / missing node-pty → fallback.** `runWrappedAttach` runs the plain
   `runFallback` (no footer, no poll loop, no cmux status) when stdin/stdout
   aren't TTYs or the node-pty backend is unavailable. The cmux status only fires
@@ -280,6 +428,17 @@ clears when you focus it — including when that box is the selected tab in its
 workspace. `agentbox config set attach.cmuxStatus false` disables it.
 Outside cmux (tmux/iTerm2/plain shell) there must be zero `cmux` calls.
 
-Unit tests: `apps/cli/test/cmux-status.test.ts` (pure state→colour/description
-map + `cmuxStatusActive`), `apps/cli/test/terminal-host.test.ts` (detection +
+In a **real Herdr pane**: `agentbox claude` against an `examples/` box; confirm
+the pane shows a claude agent (Herdr's native treatment) and transitions
+working↔blocked↔idle as the agent runs — and that Herdr raises its **own**
+needs-input signal when the agent asks a question (we don't). Probe the socket
+with e.g. `printf '{"id":"x","method":"agent.list","params":{}}\n' | nc -U
+"$HERDR_SOCKET_PATH"`. Trigger a host-relay approval (e.g. an in-box `git push`)
+and confirm an AgentBox `notification.show` toast fires. `agentbox config set
+attach.herdrStatus false` disables it; outside Herdr there must be zero socket
+calls.
+
+Unit tests: `apps/cli/test/cmux-status.test.ts` and
+`apps/cli/test/herdr-status.test.ts` (pure state map + `*StatusActive`),
+`apps/cli/test/terminal-host.test.ts` (detection incl. Herdr-before-iTerm2 +
 `--attach-in` parsing).

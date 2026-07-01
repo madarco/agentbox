@@ -37,7 +37,7 @@ export type QueueAgentKind = 'claude-code' | 'codex' | 'opencode';
  * started it, not this submit's terminal.
  */
 export interface QueueJobOpenTerminal {
-  host: 'tmux' | 'cmux' | 'iterm2';
+  host: 'tmux' | 'cmux' | 'herdr' | 'iterm2';
   mode: 'split' | 'window' | 'tab';
   /** Submitting shell's cwd, so the new pane resolves project-scoped refs. */
   cwd: string;
@@ -52,6 +52,12 @@ export interface QueueJobOpenTerminal {
    *  that, the parent workspace) instead of opening a new top-level workspace. */
   cmuxSurfaceId?: string;
   cmuxWorkspaceId?: string;
+  /** Herdr session socket (`$HERDR_SOCKET_PATH`) + submitting pane/workspace ids
+   *  (`$HERDR_PANE_ID` / `$HERDR_WORKSPACE_ID`), so the worker can split the
+   *  original pane / add a tab in the parent workspace. */
+  herdrSocket?: string;
+  herdrPaneId?: string;
+  herdrWorkspaceId?: string;
 }
 
 /** On-disk job manifest. Read/written under `~/.agentbox/queue/<id>.json`. */

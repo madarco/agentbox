@@ -3,7 +3,7 @@ title: E2B
 description: Run your agents in a fast E2B cloud sandbox with public preview URLs and free pause/resume
 ---
 
-Run your agents in a fast E2B cloud sandbox with a public HTTPS preview URL and free pause/resume — no local Docker needed. Each box is a remote E2B sandbox you drive with the same `agentbox` commands as a local box. It runs on Firecracker, so there's no [Docker-in-Docker](/docs/docker-in-docker) and the Hobby tier caps sessions at one hour — but it's the only provider that builds its base straight from a Dockerfile.
+Run your agents in a fast E2B cloud sandbox with a public HTTPS preview URL and free pause/resume — no local Docker needed. Each box is a remote E2B sandbox you drive with the same `agentbox` commands as a local box. It supports [Docker-in-Docker](/docs/docker-in-docker) (the engine is baked into the base) but the Hobby tier caps sessions at one hour — and it's the only provider that builds its base straight from a Dockerfile.
 
 Switch per box with `--provider e2b`, or pin it project-wide with `box.provider: e2b` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona), and [vercel](/docs/vercel).
 
@@ -76,12 +76,12 @@ agentbox e2b claude
 | Region | SDK-chosen (transparent) |
 | Disk / RAM / vCPU | Template-level — set at `Template.build()` time; per-create `--size` is advisory only |
 | Exposed ports | Any port via `sandbox.getHost(port)`; WebProxy runs on 8080 |
-| Session length | 1 hour (Hobby) — the attach helper caps at **55 minutes** for headroom |
-| Nested containers | none — `docker` unavailable in-box (Firecracker + seccomp) |
+| Session length | 1 hour (Hobby) — the attach helper caps at **55 minutes** for headroom; auto-renewed (up to the plan cap) while the agent is working |
+| Nested containers | Yes — the docker engine is baked into the prepare template; `dockerd` auto-launches on create/resume |
 | SSH | none — attach is an SDK-streaming PTY bridge over `pty.create` |
 
-<Callout type="warn" title="NO IN-BOX DOCKER">
-If your `agentbox.yaml` needs Docker-in-Docker — say a `postgres:16` service — use the [docker](/docs/local-docker), [hetzner](/docs/hetzner), or [daytona](/docs/daytona) provider instead. DinD is impossible on E2B for the same reason as on Vercel (Firecracker + seccomp). See [docker-in-docker](/docs/docker-in-docker).
+<Callout title="IN-BOX DOCKER">
+E2B supports [Docker-in-Docker](/docs/docker-in-docker) — the microVM grants the capabilities a container runtime needs. The engine is baked into the prepare template and `dockerd` auto-launches on every create/resume, so a `postgres:16` `agentbox.yaml` service or ad-hoc `docker run` works with no opt-in. Pulled images carry over across pause/resume; the data root is wiped with the box on `destroy`.
 </Callout>
 
 ## Pause / resume

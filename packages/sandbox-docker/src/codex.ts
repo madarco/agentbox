@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
+import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
+import { sanitizeCodexConfigForBox, MINIMAL_TRUSTED_CODEX_CONFIG } from './codex-config.js';
 import { ensureVolume, volumeExists } from './docker.js';
 
 /**
@@ -22,6 +23,79 @@ const CONTAINER_CODEX_DIR = '/home/vscode/.codex';
  * into the codex-config volume as `~/.codex/hooks.json`.
  */
 const IN_BOX_CODEX_HOOKS_PATH = '/usr/local/share/agentbox/codex-hooks.json';
+/**
+ * Image-baked box "system prompt": operational facts about the sandbox (it's a
+ * container, `/workspace` is a per-box worktree, push/PR/cp go through the host
+ * relay, identity in `/etc/agentbox/box.env`). Installed at this path on every
+ * provider (Dockerfile.box COPY for docker/daytona; the cloud install scripts
+ * copy it here too). {@link buildCodexAgentsOverrideScript} folds it into
+ * `~/.codex/AGENTS.override.md` so the in-box Codex agent reads the same facts
+ * Claude gets — Codex has no `/etc`-level memory slot of its own.
+ */
+export const BOX_SYSTEM_PROMPT_PATH = '/etc/claude-code/CLAUDE.md';
+/** Marks our generated override so we never fold our own output back in. */
+const CODEX_OVERRIDE_SENTINEL =
+  '<!-- agentbox:box-facts (generated; edit AGENTS.md instead) -->';
+/**
+ * Stdout marker the generator prints ONLY after it actually writes the override.
+ * Callers key their "seeded" log off this (not just exit 0), since the script
+ * also exits 0 in the no-op case where the box-facts file is absent.
+ */
+export const CODEX_OVERRIDE_WROTE_MARKER = 'agentbox:codex-override-written';
+
+/**
+ * Build the `sh` snippet that (re)generates `<codexHome>/AGENTS.override.md` =
+ * sentinel + box facts ({@link BOX_SYSTEM_PROMPT_PATH}) + the user's own global
+ * Codex instructions. Codex loads the first non-empty of
+ * `AGENTS.override.md` then `AGENTS.md` from CODEX_HOME (first-match-wins, no
+ * concat, no `@import`), so to be additive we must own the override and fold the
+ * user's content in below the facts.
+ *
+ * Idempotent: a sentinel on line 1 distinguishes our file from a user-authored
+ * one, so re-runs don't fold our own output back in (no feedback loop). The
+ * user's global — `AGENTS.md`, or a hand-authored `AGENTS.override.md` — is
+ * folded in beneath the box facts. Because the host `~/.codex` is re-synced
+ * before each seed (docker) the user's source is restored every create, so the
+ * fold is stable across runs; the sentinel-only file is regenerated from that
+ * fresh source. Box facts are read fresh too, so an image upgrade propagates on
+ * the next create. No-op when the box-facts file is absent.
+ *
+ * Caller owns the file afterwards (docker chowns to uid 1000; the cloud path
+ * runs the script as `vscode`, so ownership is already correct). `codexHome` is
+ * `/dst` for the docker volume-seed container and `$HOME/.codex` in-box.
+ */
+export function buildCodexAgentsOverrideScript(codexHome: string): string {
+  // `codexHome` is a build-time constant from our own callers, never user input.
+  return [
+    'set -e',
+    `BOX=${BOX_SYSTEM_PROMPT_PATH}`,
+    '[ -f "$BOX" ] || exit 0',
+    `DIR=${codexHome}`,
+    'OVR="$DIR/AGENTS.override.md"',
+    'AGT="$DIR/AGENTS.md"',
+    `SENTINEL='${CODEX_OVERRIDE_SENTINEL}'`,
+    'UC=""',
+    'if [ -f "$OVR" ] && ! head -n1 "$OVR" | grep -qF "$SENTINEL"; then',
+    '  UC=$(cat "$OVR")',
+    'elif [ -f "$AGT" ]; then',
+    '  UC=$(cat "$AGT")',
+    'fi',
+    'mkdir -p "$DIR"',
+    'TMP="$OVR.agentbox.tmp"',
+    '{',
+    "  printf '%s\\n' \"$SENTINEL\"",
+    '  cat "$BOX"',
+    '  if [ -n "$UC" ]; then',
+    "    printf '\\n\\n'",
+    "    printf '%s\\n' \"$UC\"",
+    '  fi',
+    '} > "$TMP"',
+    'mv "$TMP" "$OVR"',
+    // Printed only on a real write; the early `exit 0` (box facts absent) skips
+    // it, so callers can distinguish "wrote" from "no-op" on a 0 exit.
+    `printf '%s\\n' '${CODEX_OVERRIDE_WROTE_MARKER}'`,
+  ].join('\n');
+}
 
 export interface CodexConfigSpec {
   /** Resolved Docker volume name mounted at /home/vscode/.codex. */
@@ -82,6 +156,22 @@ export interface EnsureCodexVolumeResult {
  * (`history.jsonl`) are excluded: large, box-irrelevant, and not something the
  * in-box codex needs seeded.
  *
+ * Codex's session-state DBs and indexes are also excluded:
+ *   - `state_*.sqlite*` is the `threads` INDEX over the rollout files
+ *     (id -> rollout_path, cwd, title, git, ...). Codex reads the resume cwd
+ *     from `threads.cwd`, so seeding the host copy made a teleported session
+ *     resume at its *host* cwd and pop Codex's "Choose working directory"
+ *     prompt — overriding the cwd we rewrite in the rollout. The index is a
+ *     derived cache (Codex backfills it from the rollouts present, see the
+ *     `backfill_state` table), so the box rebuilds it from the one teleported
+ *     rollout (already rewritten to /workspace) -> no prompt.
+ *   - `logs_*.sqlite*`, `session_index.jsonl`,
+ *     `external_agent_session_imports.json`, `shell_snapshots/` are likewise
+ *     host-session runtime state, not config. Excluding them also stops the
+ *     host's entire cross-project Codex history from leaking into every box.
+ * Config / auth / extensions (`config.toml`, `auth.json`, `prompts/`, `skills/`,
+ * `plugins/`, `rules/`, `memories/`) are still synced.
+ *
  * When there is nothing to sync the volume root is still `chown`ed to uid 1000
  * so a throwaway `codex login` container (running as `vscode`) can write
  * `auth.json` into a freshly created, otherwise root-owned volume.
@@ -97,6 +187,22 @@ export async function ensureCodexVolume(
   const hostCodex = join(homedir(), '.codex');
   const willSync = opts.syncFromHost && (await pathExists(hostCodex));
   if (willSync) {
+    // Skills handling depends on whether the host uses the shared ~/.agents dir.
+    // WITH ~/.agents: ~/.codex/skills/<x> are symlinks into ~/.agents/skills,
+    //   which the box mounts from its own volume (agents.ts) — codex reads
+    //   ~/.agents/skills directly, so the per-codex copies are redundant.
+    //   Exclude `skills` (also dodges an rsync "could not make way for new
+    //   symlink" failure when the shared volume holds them as real dirs from an
+    //   earlier deref) and `find`-purge those stale non-system dirs, keeping
+    //   codex's runtime-managed `.system`.
+    // WITHOUT ~/.agents: the user keeps real skills directly under
+    //   ~/.codex/skills — sync them as-is (no exclude, no purge) so they reach
+    //   the box (the box has no ~/.agents volume to fall back on).
+    const hasAgents = await pathExists(join(homedir(), '.agents'));
+    const skillsExclude = hasAgents ? ' --exclude=skills' : '';
+    const skillsPurge = hasAgents
+      ? ' && { [ -d /dst/skills ] && find /dst/skills -mindepth 1 -maxdepth 1 ! -name .system -exec rm -rf {} + || true; }'
+      : '';
     await execa('docker', [
       'run',
       '--rm',
@@ -111,9 +217,40 @@ export async function ensureCodexVolume(
       '-c',
       // --exclude=hooks.json: the AgentBox activity hooks file is box-owned
       // (seeded by seedCodexHooks); never let the host copy clobber it.
+      // The session-state DBs / indexes are excluded so a teleported session
+      // resumes at /workspace (Codex reads the cwd from state_*.sqlite's threads
+      // index, which it backfills from the box's rollouts) and the host's
+      // cross-project Codex history doesn't leak into the box.
+      // The trailing `rm -rf` purges anything a PREVIOUS sync (before these
+      // excludes) already copied into the shared volume — rsync without
+      // --delete only adds/updates. The globs are no-ops with `-f` when absent,
+      // and never touch box-owned `sessions/` (the teleported rollouts) or
+      // `hooks.json`.
+      // Heavy host-only artifacts are also excluded (mirrors CODEX_RSYNC_EXCLUDES
+      // in host-stage.ts): `packages` (macOS standalone release binaries — the
+      // in-box codex is npm-installed), `plugins/.plugin-appserver` (the
+      // platform-specific plugin app-server runtime), `computer-use` (the macOS
+      // `Codex Computer Use.app` bundle), `archived_sessions` (host history), and
+      // the regenerable caches (`.tmp`, `tmp`, `cache`, `vendor_imports`,
+      // `sqlite`, `models_cache.json`). Without these the shared volume balloons
+      // to ~1.5 GB and every create's rsync crawls.
       'rsync -a --exclude=sessions --exclude=log --exclude=history.jsonl --exclude=hooks.json' +
-        ' /src/ /dst/ && chown -R 1000:1000 /dst',
+        skillsExclude +
+        ' --exclude=state_*.sqlite* --exclude=logs_*.sqlite* --exclude=session_index.jsonl' +
+        ' --exclude=external_agent_session_imports.json --exclude=shell_snapshots' +
+        ' --exclude=packages --exclude=plugins/.plugin-appserver --exclude=computer-use' +
+        ' --exclude=archived_sessions --exclude=.tmp --exclude=tmp --exclude=cache' +
+        ' --exclude=vendor_imports --exclude=sqlite --exclude=models_cache.json' +
+        ' /src/ /dst/' +
+        ' && rm -rf /dst/state_*.sqlite* /dst/logs_*.sqlite* /dst/session_index.jsonl' +
+        ' /dst/external_agent_session_imports.json /dst/shell_snapshots' +
+        ' /dst/packages /dst/plugins/.plugin-appserver /dst/computer-use' +
+        ' /dst/archived_sessions /dst/.tmp /dst/tmp /dst/cache' +
+        ' /dst/vendor_imports /dst/sqlite /dst/models_cache.json' +
+        skillsPurge +
+        ' && chown -R 1000:1000 /dst',
     ]);
+    await sanitizeVolumeCodexConfig(spec.volume, opts.image);
     return { created, synced: true };
   }
 
@@ -135,6 +272,12 @@ export async function ensureCodexVolume(
     ],
     { reject: false },
   );
+  // Even with nothing to sync, pre-trust /workspace so a Codex user with no host
+  // ~/.codex/config.toml doesn't hit the trust prompt. sanitizeVolumeCodexConfig
+  // writes a minimal trusted config when the host has none.
+  if (!(await pathExists(join(hostCodex, 'config.toml')))) {
+    await sanitizeVolumeCodexConfig(spec.volume, opts.image);
+  }
   return { created, synced: false };
 }
 
@@ -146,6 +289,17 @@ export async function ensureCodexVolume(
  *
  * Re-seeded on every create/start (image-versioned) so an image upgrade
  * propagates. Best-effort — a failure must not fail box creation.
+ *
+ * Shape note (codex 0.134.0): `hooks.json` must be `{ hooks: { Event: [...] } }`
+ * (matching the `HooksFile` Rust struct), with NO extra top-level keys — codex's
+ * strict parser rejects unknown fields (a stray `$comment` produced a startup
+ * `failed to parse hooks config` warning). Loading also needs `--enable hooks`
+ * and either the in-TUI trust dialog or `--dangerously-bypass-hook-trust`, both
+ * supplied by {@link CODEX_AGENTBOX_FLAGS}. In practice JSON-hook firing is still
+ * unreliable in 0.134.0 (TUI mode skips them on some startup paths) — the real
+ * mechanism that lights up state in production is the tmux-pane scraper in
+ * `packages/ctl/src/codex-scraper.ts`. These hooks remain a defense-in-depth
+ * seed so any future codex build that fixes the firing also lights up state.
  */
 export async function seedCodexHooks(
   volume: string,
@@ -168,6 +322,96 @@ export async function seedCodexHooks(
     return { seeded: stdout.includes('SEEDED') };
   } catch {
     return { seeded: false };
+  }
+}
+
+/**
+ * Regenerate `~/.codex/AGENTS.override.md` in the codex-config volume so the
+ * in-box Codex agent picks up the box "system prompt" ({@link
+ * BOX_SYSTEM_PROMPT_PATH}). Runs in a throwaway container with the volume at
+ * `/dst`; reads the box-facts file from the image's own fs and any user global
+ * from the volume. Must run AFTER {@link ensureCodexVolume} (the host rsync) so
+ * the user's synced `AGENTS.md`/override is in place to fold in. Best-effort —
+ * never fail box creation. See {@link buildCodexAgentsOverrideScript}.
+ */
+export async function seedCodexAgentsOverride(
+  volume: string,
+  image: string,
+): Promise<{ seeded: boolean }> {
+  try {
+    const { stdout } = await execa('docker', [
+      'run',
+      '--rm',
+      '--user',
+      '0',
+      '-v',
+      `${volume}:/dst`,
+      image,
+      'sh',
+      '-c',
+      buildCodexAgentsOverrideScript('/dst') +
+        '\nchown 1000:1000 "$OVR" 2>/dev/null || true',
+    ]);
+    return { seeded: stdout.includes(CODEX_OVERRIDE_WROTE_MARKER) };
+  } catch {
+    return { seeded: false };
+  }
+}
+
+/**
+ * Overwrite the box's just-synced `~/.codex/config.toml` with a sanitized copy
+ * that drops host-only-path entries (desktop-Codex.app MCP servers like
+ * `node_repl`, a macOS `notify` helper, local-source marketplaces) — see
+ * {@link sanitizeCodexConfigForBox}. Without this the in-box codex tries to exec
+ * macOS paths and prints `MCP client ... failed to start: No such file` warnings.
+ *
+ * Runs AFTER the rsync so the raw copy already exists: best-effort, and a no-op
+ * when nothing host-only is present. On a missing host config, a TOML parse
+ * failure, or a container error we leave the raw rsynced copy intact — the box
+ * must never end up without a `config.toml`.
+ */
+async function sanitizeVolumeCodexConfig(
+  volume: string,
+  image: string,
+): Promise<{ sanitized: boolean }> {
+  try {
+    const hostConfig = join(homedir(), '.codex', 'config.toml');
+    // No host config to sanitize: still seed a minimal config that pre-trusts
+    // /workspace, so a Codex user without a host config.toml doesn't hit the
+    // "trust this folder?" prompt in the box.
+    let text: string;
+    if (!(await pathExists(hostConfig))) {
+      text = MINIMAL_TRUSTED_CODEX_CONFIG;
+    } else {
+      const sanitized = sanitizeCodexConfigForBox(await readFile(hostConfig, 'utf8'));
+      if (!sanitized.changed || sanitized.text.length === 0) return { sanitized: false };
+      text = sanitized.text;
+    }
+    // `-i` keeps stdin attached so execa's `input` reaches `cat`; without it the
+    // container gets immediate EOF and `>` truncates config.toml to empty. Write
+    // to a temp file then `mv` so a partial/failed write never clobbers the
+    // rsynced copy.
+    await execa(
+      'docker',
+      [
+        'run',
+        '--rm',
+        '-i',
+        '--user',
+        '0',
+        '-v',
+        `${volume}:/dst`,
+        image,
+        'sh',
+        '-c',
+        'cat > /dst/config.toml.tmp && chown 1000:1000 /dst/config.toml.tmp && ' +
+          'mv /dst/config.toml.tmp /dst/config.toml',
+      ],
+      { input: text },
+    );
+    return { sanitized: true };
+  } catch {
+    return { sanitized: false };
   }
 }
 
@@ -277,9 +521,21 @@ export interface StartCodexSessionOptions {
 //   dialog that would otherwise block startup on every fresh box. The hooks
 //   are AgentBox-managed and pre-vetted; the user never sees them, so trust
 //   verification has no UX value here.
+// The flag makes codex print a (cosmetic, duplicated) "--dangerously-bypass-
+//   hook-trust is enabled" warning at startup. There is NO codex option to
+//   silence only that warning. The only way to drop it is to stop passing the
+//   flag and instead persist hook trust in config.toml as
+//   `[hooks.state."<hooks.json path>:<event>:0:0"] trusted_hash = "sha256:…"`
+//   (one entry per event, written when you accept the dialog). We deliberately
+//   do NOT seed those: the hash is an opaque codex-internal digest (not
+//   reproducible from the hook command) tied to both hooks.json content and the
+//   codex version — a mismatch turns the cosmetic warning into a *blocking*
+//   "Hooks need review" dialog on every box. The bypass flag always works, so
+//   the warning is the accepted cost. (`hooks.managed_dir` auto-trusts but did
+//   not fire the hooks in testing.)
 // The actual mechanism that lights up codex.state in production is the
 // tmux-pane scraper (codex-scraper.ts); these flags are defense-in-depth for
-// the day codex's JSON-hook firing becomes reliable.
+// the day codex's JSON-hook firing becomes reliable (it does fire on 0.141.0).
 const CODEX_AGENTBOX_FLAGS = ['--enable', 'hooks', '--dangerously-bypass-hook-trust'] as const;
 
 export async function startCodexSession(opts: StartCodexSessionOptions): Promise<void> {
@@ -337,20 +593,12 @@ export async function startCodexSession(opts: StartCodexSessionOptions): Promise
  */
 export function buildCodexAttachArgv(container: string, sessionName?: string): string[] {
   const name = sessionName ?? DEFAULT_CODEX_SESSION;
-  const term = process.env['TERM'] ?? 'xterm-256color';
-  return [
-    'exec',
-    '-it',
-    '-e',
-    `TERM=${term}`,
-    '--user',
-    CONTAINER_USER,
+  return buildTermSafeTmuxExec({
     container,
-    'tmux',
-    'attach',
-    '-t',
-    name,
-  ];
+    user: CONTAINER_USER,
+    tmuxScript: 'exec tmux attach -t "$1"',
+    positionals: [name],
+  });
 }
 
 /**

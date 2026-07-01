@@ -27,6 +27,12 @@ const FALLBACK_EMAIL = 'agentbox@users.noreply.github.com';
  * user.name`), so a repo-local override is honored just like a normal local
  * commit would. Sets `--global` for the box's agent user (cloud `exec` runs as
  * that user), which is where the in-box merge / agent commits look it up.
+ *
+ * Note: the git-lfs `filter.lfs.*` config is intentionally NOT seeded here — it
+ * is registered system-wide in each base image (`git lfs install --system`, see
+ * the provider install scripts / Dockerfile.box), so an LFS checkout smudges
+ * without any per-box config. The objects themselves are seeded host-side by
+ * `seedCloneLfsObjects` in workspace-seed.ts.
  */
 export async function seedGitIdentity(
   backend: CloudBackend,

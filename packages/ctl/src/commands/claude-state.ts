@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { claudeState } from '../client.js';
+import { clearClaudeSessionPointer, recordClaudeSessionId } from '../session-pointer.js';
 import {
   CLAUDE_ACTIVITY_STATES,
   DEFAULT_SOCKET_PATH,
@@ -12,6 +13,8 @@ interface ClaudeStateOptions {
   socket: string;
   payloadStdin?: boolean;
   clearPending?: boolean;
+  captureSession?: boolean;
+  clearSession?: boolean;
 }
 
 /**
@@ -25,22 +28,39 @@ interface ClaudeStateOptions {
  * for `end-plan` / `question` states, extracts the plan body or the questions
  * array so the host can surface them via `agentbox agent get-plan-question`
  * without scraping the terminal.
+ *
+ * With `--capture-session`, reads the same hook JSON and records `session_id`
+ * to a per-box pointer (see session-pointer.ts) so a box restart can resume the
+ * exact conversation. Wired onto frequently-firing hooks (SessionStart / Stop)
+ * so the pointer tracks `/new` and `/branch`, which mint fresh session ids.
+ *
+ * With `--clear-session` (SessionEnd), drops that pointer synchronously so a
+ * restart won't resume a session the user already ended. The StatusReporter's
+ * running→stopped edge is the backstop for ends that skip the hook (a kill /
+ * crash), but this avoids the up-to-15s race where the box is stopped before
+ * the next status snapshot.
  */
 export const claudeStateCommand = new Command('claude-state')
   .description('Report Claude activity state to the box supervisor (used by hooks)')
   .argument('<state>', `one of: ${CLAUDE_ACTIVITY_STATES.join(', ')}`)
   .option('--socket <path>', 'unix socket path', DEFAULT_SOCKET_PATH)
-  .option('--payload-stdin', 'parse Claude Code\'s hook JSON from stdin (PreToolUse plan/question)')
+  .option('--payload-stdin', "parse Claude Code's hook JSON from stdin (PreToolUse plan/question)")
   .option('--clear-pending', 'force-clear a sticky end-plan/question state (PostToolUse cleanup)')
+  .option('--capture-session', "record the hook's session_id to the box's session pointer")
+  .option('--clear-session', "drop the box's session pointer (SessionEnd)")
   .action(async (state: string, opts: ClaudeStateOptions) => {
     try {
       if (!CLAUDE_ACTIVITY_STATES.includes(state as ClaudeActivityState)) {
         process.exit(0);
       }
+      if (opts.clearSession) clearClaudeSessionPointer();
       const typedState = state as ClaudeActivityState;
-      const extracted = opts.payloadStdin
-        ? await extractPayload(typedState, await readStdinJson())
-        : undefined;
+      // Read stdin at most once, shared by both consumers.
+      const raw = opts.payloadStdin || opts.captureSession ? await readStdinJson() : null;
+      if (opts.captureSession && typeof raw?.session_id === 'string') {
+        recordClaudeSessionId(raw.session_id);
+      }
+      const extracted = opts.payloadStdin ? extractPayload(typedState, raw) : undefined;
       const payload: {
         plan?: ClaudePlanPayload;
         question?: ClaudeQuestionPayload;
@@ -65,6 +85,8 @@ export const claudeStateCommand = new Command('claude-state')
 interface HookPayload {
   tool_name?: string;
   tool_input?: Record<string, unknown>;
+  /** Claude Code passes the active session id on every hook's stdin JSON. */
+  session_id?: string;
 }
 
 /**
@@ -95,14 +117,12 @@ function extractPayload(
   return undefined;
 }
 
-function normalizeQuestion(raw: unknown):
-  | {
-      question: string;
-      header?: string;
-      multiSelect?: boolean;
-      options: Array<{ label: string; description?: string }>;
-    }
-  | null {
+function normalizeQuestion(raw: unknown): {
+  question: string;
+  header?: string;
+  multiSelect?: boolean;
+  options: Array<{ label: string; description?: string }>;
+} | null {
   if (!raw || typeof raw !== 'object') return null;
   const q = raw as Record<string, unknown>;
   if (typeof q.question !== 'string') return null;

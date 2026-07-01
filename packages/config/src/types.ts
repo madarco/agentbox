@@ -14,7 +14,7 @@ export type BrowserKind = 'agent-browser' | 'playwright' | 'both';
 /** Sandbox backend new boxes are created on. */
 export type ProviderKind = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b';
 /** Where `agentbox claude|codex|opencode` opens the attached session when the host
- *  shell is running inside tmux, cmux, or iTerm2. `same` keeps today's inline behavior. */
+ *  shell is running inside tmux, cmux, Herdr, or iTerm2. `same` keeps today's inline behavior. */
 export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
 /** Where a background `-i` (queued) run opens the box once the worker has created
  *  it. `none` (default) opens nothing — the historical behavior. The open is
@@ -83,6 +83,7 @@ export interface UserConfig {
     vercelVcpus?: number;
     vercelTimeoutMs?: number;
     vercelNetworkPolicy?: string;
+    e2bTimeoutMs?: number;
     cpMaxBytes?: number;
   };
   checkpoint?: {
@@ -102,6 +103,7 @@ export interface UserConfig {
   attach?: {
     openIn?: AttachOpenIn;
     cmuxStatus?: boolean;
+    herdrStatus?: boolean;
   };
   code?: {
     ide?: IdeFlavor;
@@ -216,6 +218,7 @@ export interface EffectiveConfig {
     vercelVcpus: number;
     vercelTimeoutMs: number;
     vercelNetworkPolicy: string;
+    e2bTimeoutMs: number;
     cpMaxBytes: number;
   };
   checkpoint: {
@@ -235,6 +238,7 @@ export interface EffectiveConfig {
   attach: {
     openIn: AttachOpenIn;
     cmuxStatus: boolean;
+    herdrStatus: boolean;
   };
   code: {
     ide: IdeFlavor;
@@ -362,6 +366,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     vercelVcpus: 2,
     vercelTimeoutMs: 2_700_000,
     vercelNetworkPolicy: '',
+    e2bTimeoutMs: 2_700_000,
     cpMaxBytes: 100 * 1024 * 1024,
   },
   checkpoint: {
@@ -381,6 +386,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   attach: {
     openIn: 'split',
     cmuxStatus: true,
+    herdrStatus: true,
   },
   code: {
     ide: 'auto',
@@ -691,6 +697,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
       'Max session length (ms) for new --provider vercel boxes before the VM auto-snapshots; persistent mode auto-resumes on the next call. Default 2700000 (45 min, the Hobby ceiling). Vercel-only.',
   },
   {
+    key: 'box.e2bTimeoutMs',
+    type: 'int',
+    description:
+      'Session timeout (ms) a new --provider e2b box is created with, before E2B auto-pauses it on inactivity. The host keepalive loop pushes this forward while the agent is working. Default 2700000 (45 min); the Hobby tier caps total session at ~1 h regardless. E2B-only.',
+  },
+  {
     key: 'box.cpMaxBytes',
     type: 'int',
     description:
@@ -735,13 +747,19 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'enum',
     enumValues: ['split', 'window', 'tab', 'same'] as const,
     description:
-      'Where `agentbox claude|codex|opencode` opens the attached session when run from tmux, cmux, or iTerm2: `split` (tmux split-window / cmux new-split / iTerm2 vertical split, default — same workspace), `window` (tmux new-window / cmux new-workspace / new iTerm2 window), `tab` (tmux new-window / cmux new-surface tab in the current pane, same workspace / new iTerm2 tab), or `same` (attach inline in the current terminal). Outside tmux/cmux/iTerm2 every value behaves like `same`.',
+      'Where `agentbox claude|codex|opencode` opens the attached session when run from tmux, cmux, Herdr, or iTerm2: `split` (tmux split-window / cmux new-split / Herdr pane.split / iTerm2 vertical split, default — same workspace), `window` (tmux new-window / cmux new-workspace / Herdr workspace.create / new iTerm2 window), `tab` (tmux new-window / cmux new-surface / Herdr tab.create in the current workspace / new iTerm2 tab), or `same` (attach inline in the current terminal). Outside tmux/cmux/Herdr/iTerm2 every value behaves like `same`.',
   },
   {
     key: 'attach.cmuxStatus',
     type: 'bool',
     description:
       "When attached inside cmux, reflect the box agent's live activity on its cmux workspace (colour + description: blue=working, amber=needs input, idle clears; restored on detach) and, when the agent needs input, flag the box's own tab via a cmux notification (tab badge + reorder + desktop notification) so it stands out among sibling tabs. cmux only; no-op in other terminals.",
+  },
+  {
+    key: 'attach.herdrStatus',
+    type: 'bool',
+    description:
+      "When attached inside Herdr, report the box agent's live activity to its Herdr pane (pane.report_agent: working / blocked / idle) so it looks like a normal agent pane and Herdr handles needs-input natively, and fire a Herdr notification for AgentBox's own host-relay approval prompts (git push / PR / checkpoint …) which Herdr can't otherwise see. Herdr only; no-op in other terminals.",
   },
   {
     key: 'code.ide',
@@ -869,7 +887,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'enum',
     enumValues: ['none', 'split', 'window', 'tab'] as const,
     description:
-      'When a background `-i` job finishes creating its box, where the host relay opens an attached terminal onto it: `none` (default — open nothing, just queue), `split`, `window`, or `tab`. Honored only when the submitting shell runs inside tmux, cmux, or iTerm2 (the targeting is captured at submit time). Under cmux, `split` splits the pane you submitted from (falling back to the parent workspace, then a new workspace), `tab` adds a tab in the parent workspace, and `window` opens a separate workspace; iTerm2 opens relative to the frontmost window. Unlike `attach.openIn` there is no `same` mode — the box is created asynchronously, so it is always a fresh terminal.',
+      'When a background `-i` job finishes creating its box, where the host relay opens an attached terminal onto it: `none` (default — open nothing, just queue), `split`, `window`, or `tab`. Honored only when the submitting shell runs inside tmux, cmux, Herdr, or iTerm2 (the targeting is captured at submit time). Under cmux, `split` splits the pane you submitted from (falling back to the parent workspace, then a new workspace), `tab` adds a tab in the parent workspace, and `window` opens a separate workspace; under Herdr, `split` splits the pane you submitted from, `tab` adds a tab in the parent workspace, and `window` opens a separate workspace; iTerm2 opens relative to the frontmost window. Unlike `attach.openIn` there is no `same` mode — the box is created asynchronously, so it is always a fresh terminal.',
   },
   {
     key: 'cloud.useCurrentBranch',

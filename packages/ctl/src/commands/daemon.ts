@@ -5,6 +5,7 @@ import {
   type RelayServerHandle,
 } from '@agentbox/relay';
 import { loadConfig } from '../config.js';
+import { writeRelayEnvFile } from '../relay-env.js';
 import { startCodexScraper, type CodexScraperHandle } from '../codex-scraper.js';
 import { startClaudeScraper, type ClaudeScraperHandle } from '../claude-scraper.js';
 import { Supervisor } from '../supervisor.js';
@@ -148,6 +149,17 @@ export const daemonCommand = new Command('daemon')
             kind: 'cloud',
             registeredAt: new Date().toISOString(),
           });
+          // Persist the relay URL + token to a 0600 file so sibling
+          // `agentbox-ctl` invocations that don't inherit this daemon's env
+          // (the interactive agent's tmux login shell, the host-driven
+          // `agentbox git push`) can still reach the in-box relay. Cloud boxes
+          // have no global env to inherit from (unlike docker's `docker run -e`).
+          try {
+            writeRelayEnvFile(`http://127.0.0.1:${String(boxRelayPort)}`, boxToken);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            process.stderr.write(`agentbox-ctl: failed to write relay env file: ${msg}\n`);
+          }
           process.stdout.write(
             `agentbox-ctl: in-sandbox relay (mode=box) listening on :${String(boxRelayPort)}\n`,
           );

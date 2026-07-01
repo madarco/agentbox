@@ -351,7 +351,7 @@ replacements:
   box-host:
     # Repoint a hard-coded hostname at this box's published URL.
     - from: 'optima\.localhost'
-      to: '{{AGENTBOX_BOX_HOST}}'   # = <box-name>.localhost
+      to: '{{AGENTBOX_BOX_HOST}}'   # docker/hetzner: <box-name>.localhost; vercel/daytona/e2b: the real preview host
       regex: true
 ```
 
@@ -382,7 +382,7 @@ tasks:
 | Placeholder | Value |
 | --- | --- |
 | `{{AGENTBOX_BOX_NAME}}` | The box name. |
-| `{{AGENTBOX_BOX_HOST}}` | The published portless host, `<box-name>.localhost`. |
+| `{{AGENTBOX_BOX_HOST}}` | The host this box is reachable at. Docker/Hetzner: the published portless host `<box-name>.localhost`. Public-URL clouds (Vercel/Daytona/E2B): the real preview host (e.g. `<sub>.vercel.run`), wired in at boot so it matches what `agentbox url` returns. |
 | `{{AGENTBOX_BOX_ID}}` | The box id. |
 | `{{AGENTBOX_BOX_KIND}}` | `docker` or `cloud`. |
 | `{{AGENTBOX_HOST_WORKSPACE}}` | Host workspace path. |

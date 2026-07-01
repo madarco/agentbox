@@ -8,6 +8,35 @@
 pnpm build && pnpm lint && pnpm typecheck && pnpm test
 ```
 
+## Host skills + Codex plugin in dev
+
+The `/agentbox` host skills and the Codex plugin are wired so a **source checkout
+reflects your edits without re-publishing**, while a published npm install pulls
+from the GitHub repo. The discriminator is `isSourceCheckout()` /
+`resolveDevRepoRoot()` in `apps/cli/src/lib/source-checkout.ts` — every
+distribution path lives under a `node_modules` segment; a clone does not.
+
+- **Claude / OpenCode skills** — `agentbox install` (or `--skills-only`) symlinks
+  `~/.claude/skills/agentbox-info` → `apps/cli/share/host-skills/agentbox-info/SKILL.md`
+  in a checkout (copies on an npm install). Edit the **canonical**
+  `apps/cli/share/host-skills/agentbox-info/SKILL.md`; it's live immediately.
+- **Codex plugin** — `agentbox install codex` from a checkout points
+  `[marketplaces.agentbox]` at the local repo (`source_type = "local"`) instead of
+  the `madarco/agentbox` GitHub slug, re-syncs the bundle skill copy
+  (`scripts/check-plugin-skill-sync.mjs --fix`), `codex plugin add`s from the
+  working tree, then symlinks the staged `skills/<name>/SKILL.md` back to the repo.
+  Skill edits then go live on the next Codex restart — no re-stage.
+  - Codex re-derives "installed" from the staged dir, so we symlink only the skill
+    *files*, not the whole staged dir (a dir symlink makes Codex report the plugin
+    "not installed").
+  - The Codex bundle keeps a **real copy** of the skill at
+    `plugins/agentbox/skills/agentbox-info/SKILL.md` (Codex won't follow a symlink
+    out of a bundle when it copies on publish). Edit the canonical and run
+    `pnpm check:plugin-skill --fix` to propagate; CI runs `pnpm check:plugin-skill`.
+  - Re-run `agentbox install codex` after **manifest/command** changes (not needed
+    for skill text). Use `agentbox install codex --no-dev` to force the published
+    GitHub path even inside a checkout (it flips the marketplace back to git).
+
 ## Manual end-to-end
 
 Each long-running CLI command tees its output to `~/.agentbox/logs/<command>.log`

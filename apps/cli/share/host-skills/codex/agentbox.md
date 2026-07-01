@@ -6,7 +6,7 @@ argument-hint: [provider]
 
 Fork the current Codex session into a fresh AgentBox box running Codex.
 
-Optional provider argument: `$ARGUMENTS` (docker | daytona | hetzner; default docker).
+Optional provider argument: `$ARGUMENTS` (docker | daytona | hetzner | vercel | e2b; default docker).
 
 ## Steps
 
@@ -14,7 +14,13 @@ Optional provider argument: `$ARGUMENTS` (docker | daytona | hetzner; default do
    - If `AGENTBOX_RELAY_URL` is set in the environment, you are running *inside* a box — box→box fork is not supported yet; stop and tell the user.
    - If `which agentbox` fails, tell the user to install AgentBox (`npm -g install @madarco/agentbox`) and stop.
 
-2. **Find the current Codex session id.** Codex exposes no session-id variable, so resolve it from the most recently written rollout file (that is the live session). Run via your shell tool:
+2. **Find the current Codex session id.** Codex exposes it as `CODEX_THREAD_ID` in your shell. Run via your shell tool:
+
+   ```
+   printenv CODEX_THREAD_ID
+   ```
+
+   That prints the session `<uuid>`. If it prints nothing (older Codex without the variable), fall back to the most recently written rollout file (that is the live session):
 
    ```
    ls -t "$HOME"/.codex/sessions/*/*/*/rollout-*.jsonl 2>/dev/null | head -1 \
@@ -22,14 +28,16 @@ Optional provider argument: `$ARGUMENTS` (docker | daytona | hetzner; default do
      | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
    ```
 
-   That prints the session `<uuid>`. If it prints nothing, stop and tell the user no Codex session was found for this machine.
+   If both print nothing, stop and tell the user no Codex session was found for this machine.
 
-3. **Resolve the provider flag from `$ARGUMENTS`:** empty → none; `docker` | `daytona` | `hetzner` → `--provider $ARGUMENTS`; anything else → stop and report the valid values.
+3. **Resolve the provider flag from `$ARGUMENTS`:** empty → none; `docker` | `daytona` | `hetzner` | `vercel` | `e2b` → `--provider $ARGUMENTS`; anything else → stop and report the valid values.
 
 4. **Fork.** Run, via your shell tool:
 
    ```
    agentbox fork --agent codex --session <uuid> [--provider <from step 3>]
    ```
+
+   (`agentbox fork` autodetects Codex from `CODEX_THREAD_ID` on its own, so a bare `agentbox fork` works too — passing `--agent codex --session <uuid>` explicitly is just the most reliable form.)
 
 5. **Report** the new box name from the command output. Your current Codex session is unaffected — you now have two parallel timelines.

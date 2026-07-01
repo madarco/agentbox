@@ -12,8 +12,8 @@ Fork the current Claude Code session into a fresh AgentBox box.
 
 1. **Resolve the provider flag from `$ARGUMENTS`:**
    - empty → no flag (uses the default docker provider)
-   - `docker` | `daytona` | `hetzner` | `vercel` → pass `--provider $ARGUMENTS`
-   - anything else → stop and tell the user the valid values are `docker`, `daytona`, `hetzner`, `vercel`
+   - `docker` | `daytona` | `hetzner` | `vercel` | `e2b` → pass `--provider $ARGUMENTS`
+   - anything else → stop and tell the user the valid values are `docker`, `daytona`, `hetzner`, `vercel`, `e2b`
 
 2. **Detect an active plan (optional `--plan`).** If this session was just working on a Claude Code plan, carry it into the box so the fork resumes in plan mode.
    - **If you know the plan file path** for this session (plan mode writes it to `~/.claude/plans/<slug>.md`, and you have it from the plan you just produced in this conversation), use that path.
@@ -26,15 +26,29 @@ Fork the current Claude Code session into a fresh AgentBox box.
 
      If it prints a path, that's the current plan; if it prints nothing, there is no active plan — skip `--plan`.
 
-3. **Fork.** If you are in plan mode, exit it, then run, via the Bash tool, exactly one command (add `--plan "<path>"` only if step 2 found a plan):
+3. **Fork.** If you are in plan mode, exit it, then run, via the Bash tool, exactly one command (add `--plan "<path>"` only if step 2 found a plan). Do NOT pass `--session`: `agentbox fork` autodetects the current Claude session itself (and safely falls back to the newest session for this workspace), which is correct even when this skill runs in a subagent where `$CLAUDE_CODE_SESSION_ID` would be the subagent's id, not the conversation you want to fork:
 
    ```
-   agentbox fork --session ${CLAUDE_SESSION_ID} [--provider $ARGUMENTS] [--plan "<plan path>"]
+   agentbox fork [--provider $ARGUMENTS] [--plan "<plan path>"]
    ```
 
 4. **Report.** In one line, give the user the new box name (parse it from the command output) and confirm their host session is unaffected. If you passed `--plan`, mention the box opens in plan mode ready to resume. Do not summarize the conversation — the fork already carries it.
+
+For Hetzner cloud boxes only, when in Codex App or Claude Desktop, use can add a ssh connection to the box. To do this first add an alias to their ssh config, then instruct them how to add the connection:
+
+```
+agentbox shell <box> --ssh-config          # writes ~/.ssh/config + prints details
+```
+
+to add a ssh alias that the user can use to connect to the box
+
+When in Codex App return a clickable link in the response for an easy way:
+```
+[Add <ssh-alias> to Codex SSH](codex://settings/connections/ssh/add?name=<ssh-alias>)
+```
 
 ## Troubleshooting
 
 - If agentbox command fails, tell the user to install AgentBox by writing `! npm -g install @madarco/agentbox` in the chat.
 - If `AGENTBOX_RELAY_URL` is set in the environment, you are running *inside* a box. This command is host-only in v1; tell the user box→box fork is not supported yet.
+- If you need to know more about Agentbox, check the /agentbox-info skill that containes the full documentation.

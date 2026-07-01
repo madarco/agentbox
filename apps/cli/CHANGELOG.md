@@ -9,6 +9,257 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.21.0] - 2026-06-30
+
+### Added
+
+- **`agentbox recover [box]` — reconnect to a running box without power-cycling
+  it.** Rebuilds the host-side state (relay registry, Hetzner SSH tunnel, host
+  Portless aliases, the detached agent session) that is lost on a host reboot,
+  relay restart, or new CLI process, then relaunches and attaches the agent the
+  box was running — all without restarting the sandbox. `recover --provider
+  <cloud> --adopt [ref]` rebuilds local state for a sandbox missing from this
+  host entirely. Works across all five providers.
+- **`agentbox git push <box> --host-only` — land a box's branch in your host's
+  local repo without publishing it anywhere.** The destination branch defaults
+  to the box's branch; `--as <branch>` renames it and `--force` allows a
+  non-fast-forward overwrite. Nothing leaves the host. Covers docker and all
+  four cloud providers.
+- **`agentbox cp` now copies multiple files/dirs in one call.** List several
+  sources before a destination directory (`agentbox cp a b c <box>:/dest/`);
+  from inside a box this means one host-approval prompt instead of several.
+  Excludes and the size guard are now honored on every provider.
+- **`agentbox install codex` — install and enable the Codex plugin for you.**
+  Wires up the marketplace add, plugin add, and enable (previously a manual
+  three-step chore); also runs inside the `agentbox install` wizard when Codex
+  is detected. From a source checkout it points Codex at the local repo and
+  live-symlinks skills so edits go live on restart.
+- **Codex now sees the box's system prompt.** The same sandbox facts baked for
+  Claude (DinD, per-box worktree, push/PR/cp via the host relay, box identity)
+  now reach the in-box Codex agent via `~/.codex/AGENTS.override.md`, folded in
+  beneath your own `AGENTS.md`.
+- **`agentbox shell <box> --ssh-config`** writes an `~/.ssh/config` alias on
+  demand so external apps (the Codex app, Claude desktop, VS Code Remote-SSH)
+  can reach a box over plain SSH, and prints the identity path plus a Codex
+  deep link. Hetzner only (the provider with a persistent per-box key).
+- **Interactive SSH/login shells now open in `/workspace`** (the project)
+  instead of the home directory, across all providers.
+
+### Changed
+
+- **Hetzner boxes self-heal their firewall when your egress IP changes.** Moving
+  your laptop between networks used to make every box op fail with an opaque SSH
+  timeout until you ran `firewall sync` by hand; now a connection failure
+  auto-detects the IP change and re-syncs the per-box firewall (only when it
+  actually changed). `--no-firewall-sync` opts out on shared/untrusted networks.
+- **Faster, smaller Codex box setup.** Codex config staging now skips ~1 GB+ of
+  host-only artifacts (macOS binaries, plugin runtimes, regenerable caches) that
+  were never usable in a Linux box — a fresh box's `~/.codex` dropped from ~1.5
+  GB to ~59 MB. Config, auth, skills, prompts, and plugins still sync.
+
+### Fixed
+
+- **`agentbox-ctl git push` from a cloud box no longer fails with "no relay
+  configured".** Cloud boxes have no global env, so the in-box agent had lost
+  its relay token; it's now restored via a `0600 /run/agentbox/relay.env`.
+- **`agentbox git push <box> --force` is no longer silently dropped** on a
+  normal remote push (it was only honored on the `--host-only` land path).
+- **In-box services and `https://<box>.localhost` work from inside cloud boxes.**
+  The in-box Portless CA is now trusted, so the box's own VNC Chromium and
+  Playwright stop rejecting the self-signed cert. (Needs a re-`prepare` /
+  docker image rebuild.)
+- **Hetzner `prepare` no longer bakes a snapshot with no `claude`.** The native
+  installer (which can hit an intermittent Cloudflare 403 on datacenter IPs) is
+  retried with backoff and aborts the bake on persistent failure instead of
+  shipping an agent-less box that crash-loops on attach.
+- **Background `--no-attach` cloud starts now actually start the agent session**,
+  and resume the recorded session rather than going idle.
+- **`recover` / lifecycle fixes:** unpauses a paused docker box instead of
+  erroring; restores only the box's last agent rather than resurrecting
+  unrelated sessions; and the in-box ctl-daemon launch is now idempotent (no
+  more idle-daemon pile-up on repeated start/recover).
+- **Codex setup robustness:** agent home dirs are `vscode`-owned so Codex can
+  create its `state_*.sqlite`; the `AGENTS.override.md` seed only reports success
+  when it actually wrote; and staged dev skills symlink more reliably.
+
+## [0.20.1] - 2026-06-25
+
+### Added
+
+- **git-lfs repos now check out with real content inside boxes.** LFS-tracked
+  files land as their actual content instead of broken pointer files (or a
+  failed seed) at both create and checkpoint-restore. Covers every provider —
+  docker plus the cloud backends (daytona, hetzner, vercel, e2b). Cloud boxes
+  carry only the checked-out ref's objects (no creds/network needed in-box);
+  pushing box-created LFS objects back is not yet supported. Cloud providers
+  need a re-`prepare` to pick up the in-box git-lfs binary.
+
+### Fixed
+
+- **Attaching to a box no longer flashes and exits with an unusual terminal.**
+  When your terminal isn't in the box's terminfo database (e.g. Ghostty's
+  `xterm-ghostty`), `agentbox claude` / `codex` / `opencode` / `shell` attach
+  used to flash-quit with "missing or unsuitable terminal"; it now falls back
+  to `xterm-256color`. Terminals the box does recognize keep full fidelity.
+  Fixed across docker and all cloud providers.
+
+## [0.20.0] - 2026-06-24
+
+### Added
+
+- **Boxes resume your running agent across a restart.** When a box stops (or a
+  cloud box idle-pauses and resumes), `agentbox start` — and attaching to a
+  down box, and cloud idle-wake — now relaunches the agent resuming the *same*
+  conversation (`claude --resume`, `codex resume --last`) instead of opening a
+  fresh session, so background/`-i` work isn't lost. Verified on docker,
+  vercel, and hetzner. Requires a docker image rebuild / cloud re-`prepare`;
+  until then it no-ops.
+- **Headless `agentbox claude login` for non-interactive use.** Sign in without
+  a TTY (CI, an orchestrating agent) via a two-call protocol:
+  `agentbox claude login --headless` prints the approval URL (and a greppable
+  `AGENTBOX_LOGIN_URL=` marker), then `agentbox claude login --code <CODE>`
+  completes it. Headless mode is auto-selected when stdin is not a TTY;
+  interactive login is unchanged.
+- **E2B now runs docker-in-docker by default.** In-box docker is baked into the
+  E2B base template and `dockerd` auto-starts on create/resume — nested
+  containers work on E2B (full root + namespaces), matching the other cloud
+  providers. Re-`prepare --provider e2b` to pick it up.
+- **Configurable E2B session timeout.** New `box.e2bTimeoutMs` config key
+  (default 45m, mirrors `box.vercelTimeoutMs`) records the box's real session
+  lifetime so the keepalive holds the box open precisely while the agent is
+  working.
+
+### Changed
+
+- **Non-interactive runs fail fast on a missing or expired Claude login.** The
+  `-i` queue preflight and TTY-less foreground runs now check credential
+  validity (expiry is consulted on cloud) and exit early with an
+  `agentbox claude login` hint, instead of creating a box whose agent silently
+  parks on its `/login` screen.
+- **Herdr plugin is discoverable from the marketplace.** The `herdr-plugin.toml`
+  manifest moved to the repo root, so the install shorthand is now
+  `herdr plugin install madarco/agentbox`.
+
+### Fixed
+
+- **Multi-line `-i` seed prompts survive on cloud.** A multi-paragraph seed
+  prompt passed to a detached cloud `-i` run was being split into one argument
+  per line, killing the agent at launch; prompts are now encoded so embedded
+  newlines are preserved.
+- **`-i` fan-out reliably opens its Herdr terminal.** Concurrent box launches no
+  longer trip "herdr gave no pane id" — JSON-RPC replies are now matched by
+  request id (ignoring interleaved notifications), and pane ids with letters
+  (`:pA`, `:pB`, …) are accepted.
+- **Cloud `-i` start failures surface instead of reporting done.** A detached
+  cloud session that fails to launch (transient SDK error, agent crash, stale
+  in-box credentials) is now marked failed with an actionable hint, rather than
+  silently writing `status: done` with no agent running.
+- **`agentbox create --provider <cloud> -w ../repo`** now resolves a relative
+  workspace path to absolute, fixing the git seed that failed with "does not
+  appear to be a git repository".
+- **E2B fixes:** the dashboard attach now forwards the provider env so the
+  attach helper gets its inner command (right pane no longer blank); the
+  create→attach pre-start no longer hangs the CLI on a blank screen.
+- **Docker Claude config sync** no longer aborts (rsync exit 23) on nested
+  symlinked skill dirs that point outside the box, and a box whose shared-volume
+  login token was blanked by a failed in-box refresh now re-offers sign-in
+  before launch instead of booting into a login error.
+
+## [0.19.0] - 2026-06-23
+
+### Added
+
+- **Codex in boxes now sees your full setup.** Running `agentbox codex` syncs
+  your complete skill set (from `~/.agents/skills`, the cross-agent skills dir,
+  not just the handful of runtime skills), sanitizes the box's `config.toml`
+  (strips host-only MCP servers, `notify`, and macOS-desktop marketplaces that
+  can't resolve in a Linux box), and pre-trusts `/workspace` so Codex no longer
+  pops a "trust this folder?" prompt on attach. Skills that were symlinks on the
+  host are materialized as real dirs in the box.
+- **`agentbox fork` autodetects the agent and session.** A bare `agentbox fork`
+  now works from inside either Claude Code or Codex — it detects which agent
+  launched it (and which session to resume) from the environment. You can also
+  pass the provider positionally (`agentbox fork hetzner`). Explicit `--agent`
+  still wins.
+- **`/agentbox` fork skill installs via the `skills` CLI.** `agentbox install`
+  now registers the `/agentbox` fork skill through `npx skills add`, so it shows
+  up on the skills.sh directory; it falls back to a plain copy offline.
+- **Cloud boxes no longer die mid-work.** A new host-relay keepalive renews a
+  cloud box's session timeout while its agent is actively working (Vercel and
+  E2B), so a long test or build run is no longer cut off when the 45-minute
+  create timeout elapses. Idle boxes still lapse as before. (Bounded by each
+  plan's hard session cap.)
+- **In-box Docker on Vercel.** Vercel Sandbox now supports nested containers, so
+  `dockerd` is baked into the Vercel base snapshot and auto-started — `docker
+  run` works inside a Vercel box. Re-run `agentbox prepare --provider vercel` to
+  pick it up.
+- **Checkpoint restore carries your host state on cloud boxes.** Creating a
+  cloud box from a checkpoint now re-branches onto a fresh `agentbox/<box>`
+  branch at your current host tip, ships the missing commits as a delta bundle,
+  and replays your stash + untracked files (conflicts resolve box-wins and are
+  reported back) — matching docker, instead of booting the frozen snapshot
+  verbatim. Honors `--no-resync`.
+- **`status --inspect` and cloud `status` list tasks/services/ports.** The
+  inspect view now renders each task, service, and port (live from the in-box
+  daemon when running, else the persisted snapshot) instead of just a count.
+- **`{{AGENTBOX_BOX_HOST}}` resolves to the public preview host** on public-URL
+  cloud boxes (Vercel/Daytona/E2B), so env-init substitution targets a reachable
+  host instead of an unreachable `*.localhost`.
+
+### Fixed
+
+- **`agentbox fork --agent codex` resumes straight into `/workspace`.** The
+  teleport now rewrites the working directory in every Codex per-turn record
+  (and stops seeding Codex's host-wide session-index DBs into the box), so a
+  forked Codex session no longer pops "Choose working directory" or resumes at
+  the host path — and your cross-project Codex history no longer leaks into the
+  box.
+- **In-box `agentbox-ctl cp`/`download` with a relative host path** now resolves
+  against the box's workspace, not whatever directory the long-lived relay was
+  started from (files could land in an unrelated project's folder).
+- **In-box docker socket** is reliably world-accessible — the dockerd start
+  helper re-asserts the socket permissions even when it exits early on an
+  already-running daemon, so the unprivileged box user can always reach it.
+
+## [0.18.0] - 2026-06-18
+
+### Added
+
+- **Herdr integration.** Running `agentbox claude|codex|opencode` inside
+  [Herdr](https://herdr.dev) now feels native: each box shows up as a normal
+  agent in Herdr's sidebar with live status (working / idle), a pending
+  host-relay approval (git push / PR / checkpoint) highlights the box as
+  **blocked** and raises a Herdr notification, and `attach.openIn` /
+  `queue.openIn` open boxes as Herdr splits, tabs, or workspaces — defaulting to
+  a new **tab** under Herdr. New `attach.herdrStatus` config key (default on)
+  controls the status reporting.
+- **Herdr plugin** — `agentbox install herdr` (or, from Herdr,
+  `herdr plugin install madarco/agentbox/herdr-plugin`) installs a plugin that
+  adds a **boxes overlay** (`prefix a`), a **new box** shortcut
+  (`prefix shift a`), and **Ctrl+click** a box to open its web app.
+- **Paste screenshots into a box under Herdr.** Pressing **Ctrl+V** with an
+  image on the clipboard while attached to a box's Claude now ships the image
+  into the box and attaches it (`[Image #1]`) — works on docker and cloud boxes.
+- **GitHub star prompt** — a one-time nudge to star the project, shown after
+  `agentbox install` / `agentbox update`.
+
+## [0.17.1] - 2026-06-17
+
+### Fixed
+
+- **The CLI no longer crashes on startup with `ERR_REQUIRE_ESM` on Node
+  20.10–20.18.** Every `agentbox` command (not just the `e2b` ones) failed to
+  start on Node versions before 20.19, because the bundled E2B SDK loaded an
+  ESM-only build of `chalk` that older Node can't `require()`. E2B's `chalk` is
+  now pinned to a CommonJS build, so the CLI loads on every supported Node
+  (>=20.10).
+- **`agentbox vercel login` (Sign in with Vercel) no longer dead-ends after a
+  successful sign-in.** Recent Vercel sandbox CLIs stopped writing the team id
+  to their config, so the login harvest reported "no credentials were found in
+  the Vercel CLI store" even though a valid token was present. Login now
+  resolves the team from `VERCEL_TEAM_ID`, the CLI config, or your account's
+  default team.
+
 ## [0.17.0] - 2026-06-15
 
 ### Added

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   readState,
   recordBox,
+  recordLastAgent,
   removeBoxRecord,
   reserveProjectIndex,
   writeState,
@@ -103,6 +104,42 @@ describe('state.ts', () => {
     const reloaded = await readState(file);
     expect(reloaded.boxes).toHaveLength(1);
     expect(reloaded.boxes[0]?.name).toBe('new');
+  });
+
+  it('records lastAgent without touching other fields', async () => {
+    const box: BoxRecord = {
+      id: 'a1b2c3d4',
+      name: 'demo',
+      container: 'agentbox-a1b2c3d4',
+      image: 'agentbox/box:dev',
+      workspacePath: '/tmp/ws',
+      createdAt: '2026-05-12T12:00:00.000Z',
+    };
+    await recordBox(box, file);
+    await recordLastAgent('a1b2c3d4', 'codex', file);
+    let reloaded = await readState(file);
+    expect(reloaded.boxes[0]?.lastAgent).toBe('codex');
+    expect(reloaded.boxes[0]?.name).toBe('demo');
+    // Overwrites on a subsequent launch.
+    await recordLastAgent('a1b2c3d4', 'opencode', file);
+    reloaded = await readState(file);
+    expect(reloaded.boxes[0]?.lastAgent).toBe('opencode');
+  });
+
+  it('recordLastAgent is a no-op for an unknown box id', async () => {
+    const box: BoxRecord = {
+      id: 'a1b2c3d4',
+      name: 'demo',
+      container: 'agentbox-a1b2c3d4',
+      image: 'agentbox/box:dev',
+      workspacePath: '/tmp/ws',
+      createdAt: '2026-05-12T12:00:00.000Z',
+    };
+    await recordBox(box, file);
+    await recordLastAgent('does-not-exist', 'claude', file);
+    const reloaded = await readState(file);
+    expect(reloaded.boxes).toHaveLength(1);
+    expect(reloaded.boxes[0]?.lastAgent).toBeUndefined();
   });
 
   it('rejects malformed state', async () => {

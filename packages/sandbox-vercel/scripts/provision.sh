@@ -9,8 +9,9 @@
 # Differences from the hetzner installer (packages/sandbox-hetzner/scripts/
 # install-box.sh), which this mirrors:
 #   - dnf, not apt (Amazon Linux 2023).
-#   - NO docker / dockerd / iptables — Vercel Sandbox blocks the namespace
-#     syscalls a container runtime needs, so DinD is impossible here.
+#   - docker is installed from the AL2023 repos (Vercel Sandbox now supports
+#     nested containers). dockerd is NOT auto-started by systemd; the cloud
+#     scaffold launches it via agentbox-dockerd-start on create/resume.
 #   - The `vscode` user is created without forcing uid 1000 (the Vercel default
 #     user may already hold it; there are no bind mounts so the exact uid is
 #     irrelevant — only ownership of /workspace + /home/vscode matters).
@@ -18,6 +19,7 @@
 # Required inputs (uploaded to /tmp before this runs):
 #   /tmp/agentbox-ctl                  -- prebuilt @agentbox/ctl bundle (cjs)
 #   /tmp/agentbox-vnc-start            -- VNC startup helper
+#   /tmp/agentbox-dockerd-start        -- in-box dockerd startup helper
 #   /tmp/agentbox-checkpoint-cleanup   -- pre-snapshot cleanup helper
 #   /tmp/agentbox-open                 -- in-box xdg-open shim
 #   /tmp/agentbox-gh-shim              -- in-box `gh` shim (routes to host gh)
@@ -36,6 +38,24 @@ set -euo pipefail
 
 step() { printf '\n>>> BEGIN %s\n' "$1"; }
 done_() { printf '<<< END %s\n' "$1"; }
+
+# Retry a command with exponential backoff. Usage: retry_backoff <max> cmd...
+# Waits 60s before attempt 2, 240s before attempt 3 (~5 min total budget). Used
+# for the Claude native installer, whose CDN (claude.ai / downloads.claude.ai,
+# behind Cloudflare) intermittently 403s cloud-datacenter egress IPs under load.
+retry_backoff() {
+  local max=$1; shift
+  local attempt=1
+  local -a waits=(60 240)
+  while true; do
+    if "$@"; then return 0; fi
+    if [ "$attempt" -ge "$max" ]; then return 1; fi
+    local w=${waits[$((attempt-1))]:-240}
+    echo "retry_backoff: attempt ${attempt}/${max} failed — backing off ${w}s" >&2
+    sleep "$w"
+    attempt=$((attempt+1))
+  done
+}
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "provision.sh: must run as root (got uid $(id -u))" >&2
@@ -104,6 +124,18 @@ chmod 755 /workspace
 chown vscode:vscode /workspace /run/agentbox /var/log/agentbox /var/lib/agentbox
 done_ "agentbox base dirs + /workspace ownership"
 
+step "docker engine (in-box DinD)"
+# Vercel Sandbox now supports nested containers. Install the engine + iptables
+# from the AL2023 repos; dockerd itself is launched by the cloud scaffold via
+# agentbox-dockerd-start (NOT systemd), so the agentbox path owns its lifecycle.
+# No /etc/docker/daemon.json here — agentbox-dockerd-start rewrites it with the
+# resolved storage-driver on every start.
+dnf install -y -q --allowerasing docker iptables
+groupadd -f docker
+usermod -aG docker vscode
+systemctl disable --now docker.service docker.socket 2>/dev/null || true
+done_ "docker engine (in-box DinD)"
+
 step "node setcap (bind <1024 without root)"
 # The cloud WebProxy binds port 80; grant node the capability so it needn't run
 # as root. Best-effort — if setcap is unavailable the WebProxy can still be
@@ -130,12 +162,33 @@ git config --system --add safe.directory '*' 2>/dev/null || true
 sudo -u vscode -H git config --global --add safe.directory '*' 2>/dev/null || true
 done_ "git system-wide safe.directory"
 
+step "git-lfs (binary + system filter)"
+# Not in the atomic base dnf transaction on purpose: AL2023 may not carry
+# git-lfs in its default repos, and a missing package would abort the whole
+# (atomic) base install. Best-effort here — try dnf, then git-lfs's official
+# packagecloud rpm repo as a fallback. If both miss, LFS repos degrade to
+# pointer files rather than breaking the bake.
+if ! command -v git-lfs >/dev/null 2>&1; then
+  dnf install -y -q git-lfs 2>/dev/null || {
+    curl -fsSL https://packagecloud.io/install/repositories/github/git-lfs/script.rpm.sh | bash 2>&1 | tail -3 || true
+    dnf install -y -q git-lfs 2>&1 | tail -3 || true
+  }
+fi
+# Register filter.lfs.* in the (Vercel-relocated /opt/git/etc) system gitconfig
+# AND for vscode, so an in-box checkout of an LFS repo smudges instead of writing
+# pointers. Cloud boxes have no bind-mounted ~/.gitconfig, so this is the only
+# place the filter lives. --skip-repo never touches a checkout at bake time.
+git lfs install --system --skip-repo 2>/dev/null || true
+sudo -u vscode -H git lfs install --skip-repo 2>/dev/null || true
+done_ "git-lfs (binary + system filter)"
+
 step "agentbox-ctl install"
 install -m 0755 /tmp/agentbox-ctl /usr/local/bin/agentbox-ctl
 done_ "agentbox-ctl install"
 
-step "baked helper scripts (vnc / cleanup / xdg-open)"
+step "baked helper scripts (vnc / dockerd / cleanup / xdg-open)"
 install -m 0755 /tmp/agentbox-vnc-start          /usr/local/bin/agentbox-vnc-start
+install -m 0755 /tmp/agentbox-dockerd-start      /usr/local/bin/agentbox-dockerd-start
 install -m 0755 /tmp/agentbox-checkpoint-cleanup /usr/local/bin/agentbox-checkpoint-cleanup
 install -m 0755 /tmp/agentbox-open               /usr/local/bin/agentbox-open
 ln -sf /usr/local/bin/agentbox-open /usr/local/bin/xdg-open
@@ -143,7 +196,7 @@ ln -sf /usr/local/bin/agentbox-open /usr/local/bin/xdg-open
 # Installing them here would put the relay-routing `git` on PATH ahead of
 # /usr/bin/git and route provision.sh's own noVNC `git clone` through a relay
 # that doesn't exist during the bake.
-done_ "baked helper scripts (vnc / cleanup / xdg-open)"
+done_ "baked helper scripts (vnc / dockerd / cleanup / xdg-open)"
 
 step "baked config files (claude / codex / setup guide / tmux.conf)"
 install -m 0644 /tmp/agentbox-custom-CLAUDE.md      /etc/claude-code/CLAUDE.md
@@ -216,6 +269,18 @@ export DISABLE_AUTOUPDATER=${DISABLE_AUTOUPDATER:-1}
 export DISPLAY=${DISPLAY:-:1}
 export AGENT_BROWSER_EXECUTABLE_PATH=${AGENT_BROWSER_EXECUTABLE_PATH:-/usr/local/bin/chromium}
 export BROWSER=${BROWSER:-/usr/local/bin/agentbox-open}
+# Land interactive login shells in the workspace, so remote-host integrations
+# (Codex app, VS Code Remote-SSH, plain `ssh <box>`) open in the project instead
+# of $HOME. Interactive-only so scp/sftp and `ssh box <cmd>` are untouched; only
+# when still at $HOME so a caller-chosen dir (e.g. agentbox's tmux `-c /workspace`)
+# is never overridden.
+case $- in
+  *i*)
+    if [ "$PWD" = "$HOME" ] && [ -d /workspace ]; then
+      cd /workspace
+    fi
+    ;;
+esac
 PROFILE
 chmod 0644 /etc/profile.d/agentbox.sh
 done_ "login-shell shim (/etc/profile.d/agentbox.sh)"
@@ -263,8 +328,20 @@ npm install -g @openai/codex opencode-ai agent-browser 2>&1 | tail -3 || \
 done_ "agent CLIs (codex + opencode + agent-browser, global npm)"
 
 step "Claude Code (native installer, run as vscode)"
-# Anthropic's canonical installer drops `claude` at /home/vscode/.local/bin/.
-sudo -u vscode -H bash -lc 'curl -fsSL https://claude.ai/install.sh | bash -s stable'
+# Anthropic's native installer drops `claude` at /home/vscode/.local/bin/claude
+# with installMethod=native (matching the host-seeded .claude.json, so the
+# startup integrity check stays quiet) and ships native-only features the npm
+# package lacks. Its CDN (claude.ai / downloads.claude.ai) sits behind
+# Cloudflare, which intermittently 403s cloud-datacenter egress IPs under load —
+# so retry with backoff rather than falling back to npm. A bare `curl | bash`
+# would hide a 403 (curl -f exits non-zero but the pipe's status is bash's 0),
+# so keep pipefail and fold the PATH check in so a "succeeded but absent" result
+# also retries. A failed provision is better than a claude-less snapshot.
+if ! retry_backoff 3 sudo -u vscode -H bash -lc \
+     'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash -s stable && command -v claude >/dev/null'; then
+  echo "provision.sh: Claude native installer failed after 3 attempts (Cloudflare 403?) — aborting provision" >&2
+  exit 71
+fi
 done_ "Claude Code (native installer, run as vscode)"
 
 step "Chrome runtime libs (dnf)"
@@ -328,7 +405,7 @@ install -m 0755 /tmp/agentbox-linear-shim /usr/local/bin/linear
 done_ "relay shims (gh + git + ntn + linear)"
 
 step "trim /tmp/agentbox-*"
-rm -f /tmp/agentbox-ctl /tmp/agentbox-vnc-start \
+rm -f /tmp/agentbox-ctl /tmp/agentbox-vnc-start /tmp/agentbox-dockerd-start \
       /tmp/agentbox-checkpoint-cleanup /tmp/agentbox-open \
       /tmp/agentbox-gh-shim /tmp/agentbox-git-shim /tmp/agentbox-ntn-shim \
       /tmp/agentbox-linear-shim \

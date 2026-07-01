@@ -52,6 +52,11 @@ export type RightTarget =
       command: string;
       /** Args passed to `command` (everything after `argv[0]`). */
       args: string[];
+      /** Extra env merged over `process.env` for the spawned attach process.
+       *  Required by providers that pass the inner command / credentials through
+       *  the environment instead of argv (e2b: `AGENTBOX_E2B_INNER_CMD` +
+       *  `E2B_API_KEY`). Dropping it makes the e2b attach helper exit early. */
+      env?: NodeJS.ProcessEnv;
       /** Fires when the PtySession is disposed. Used by daytona to revoke the
        *  ephemeral SSH token its `buildAttach` mints. */
       cleanup?: () => Promise<void>;
@@ -604,6 +609,7 @@ export class Compositor {
         () => this.scheduleRender(),
         (id) => this.onSessionExit(id),
         target.cleanup,
+        target.env,
       );
       if (keepAlive) {
         // A re-resolve can replace an existing pooled entry for this box.

@@ -11,6 +11,7 @@ vi.mock('../src/sdk.js', () => ({
 }));
 vi.mock('@agentbox/sandbox-cloud', () => ({
   renderInnerCommand: (kind: string) => `INNER(${kind})`,
+  hostTermForCloud: () => 'xterm-256color',
 }));
 vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
@@ -57,7 +58,21 @@ describe('buildE2bAttach', () => {
     expect(spec.env).toEqual({
       E2B_API_KEY: 'e2b_test_key',
       AGENTBOX_E2B_INNER_CMD: 'INNER(agent)',
+      AGENTBOX_HOST_TERM: 'xterm-256color',
     });
+  });
+
+  it('omits --detached for a normal (interactive) attach', async () => {
+    const spec = await buildE2bAttach(boxWith('sbx_1'), 'agent', { command: 'exec claude' });
+    expect(spec.argv).not.toContain('--detached');
+  });
+
+  it('appends --detached for a detached pre-start so the helper runs once and exits', async () => {
+    const spec = await buildE2bAttach(boxWith('sbx_1'), 'agent', {
+      command: 'exec claude',
+      detached: true,
+    });
+    expect(spec.argv).toContain('--detached');
   });
 
   it('passes the kind through to renderInnerCommand', async () => {

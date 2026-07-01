@@ -1,5 +1,6 @@
 import { startBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
+import { restoreAgentSessions } from '../agent-sessions.js';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
@@ -18,9 +19,18 @@ export const startCommand = new Command('start')
       if ((box.provider ?? 'docker') === 'docker') {
         const { record } = await startBox(box.id);
         process.stdout.write(`started ${record.container}\n`);
+        // Resume whichever agent (claude/codex) was running before the stop, so
+        // a later attach picks up where it left off. Best-effort, never throws.
+        await restoreAgentSessions(record, await providerForBox(record), {
+          onLog: (line) => process.stdout.write(`${line}\n`),
+        });
       } else {
-        await (await providerForBox(box)).start(box);
+        const provider = await providerForBox(box);
+        const record = await provider.start(box);
         process.stdout.write(`started ${box.name}\n`);
+        await restoreAgentSessions(record, provider, {
+          onLog: (line) => process.stdout.write(`${line}\n`),
+        });
       }
     } catch (err) {
       handleLifecycleError(err);

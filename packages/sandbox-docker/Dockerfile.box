@@ -32,10 +32,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 # outer terminal regardless; this just unlocks the in-pane side.
 #
 # DISABLE_AUTOUPDATER follows Anthropic's own devcontainer guidance: there's no
-# point updating Claude Code inside a sandbox that's torn down regularly, and
-# leaving it enabled triggers a "installMethod is native, but .local/bin
-# missing" warning when the host's .claude.json (synced in) reports a native
-# install method while the box uses npm-global.
+# point updating Claude Code inside a sandbox that's torn down regularly. The box
+# installs claude via Anthropic's native installer (below), so the binary lands
+# at /home/vscode/.local/bin/claude and installMethod=native (synced in from the
+# host's .claude.json) matches the box — no "installMethod is native, but
+# .local/bin missing" warning, and the autoupdater would otherwise churn the
+# pinned `stable` build.
 #
 # LANG/LC_ALL must be set via ENV (not /etc/environment, which is what the
 # devcontainers base seeds): `docker exec` doesn't source login files, so
@@ -68,6 +70,7 @@ RUN apt-get update \
         python3-venv \
         build-essential \
         git \
+        git-lfs \
         tmux \
         vim \
         libcap2-bin \
@@ -111,6 +114,18 @@ RUN mkdir -p /home/vscode/.cache/node/corepack \
 # explicit allowlist. /etc/gitconfig is system-wide and unaffected by the RO
 # bind-mount of ~/.gitconfig from the host.
 RUN git config --system --add safe.directory '*'
+
+# git-lfs (installed above) must register its filter.lfs.* hooks, otherwise a
+# checkout of an LFS-tracked repo skips smudge/clean entirely. More to the
+# point: the host's ~/.gitconfig is bind-mounted RO into the box and a user who
+# ran `git lfs install` on the host has `filter.lfs.process = git-lfs
+# filter-process` in it. The in-container `git worktree add` (seedWorkspace)
+# then spawns that filter on checkout, so the `git-lfs` binary has to be on
+# PATH or the add dies with "git-lfs: not found / the remote end hung up
+# unexpectedly". `--system` writes /etc/gitconfig (the host-config bind only
+# covers ~/.gitconfig), so repos that declare LFS purely via .gitattributes
+# resolve too. `--skip-repo` keeps it from touching any checkout at build time.
+RUN git lfs install --system --skip-repo
 
 # Docker-in-Docker. dockerd inside the box lets the agent run
 # `docker build`/`docker run` in its own namespace without exposing the host
@@ -252,7 +267,20 @@ RUN mkdir -p /home/vscode/.vscode-server/extensions /home/vscode/.cursor-server/
 # the host's `.claude.json` (with installMethod=native) expects, so the in-box
 # integrity check doesn't fire.
 USER vscode
-RUN curl -fsSL https://claude.ai/install.sh | bash -s stable
+# Fetch the installer to a file (not `curl | bash`) so a blocked download — e.g.
+# a Cloudflare 403 the CDN intermittently returns under load — fails the `&&`
+# chain instead of being hidden behind bash's exit 0, and retry it (3 attempts,
+# 60s then 240s backoff) before giving up, then verify `claude` is on PATH.
+# (RUN's default shell is /bin/sh, so a plain loop — no pipefail/bash arrays.)
+RUN i=1; while :; do \
+      curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh \
+        && bash /tmp/claude-install.sh stable \
+        && command -v claude >/dev/null && break; \
+      [ "$i" -ge 3 ] && { echo "claude native install failed after 3 attempts" >&2; exit 71; }; \
+      w=60; [ "$i" -ge 2 ] && w=240; \
+      echo "claude install attempt $i failed — backing off ${w}s" >&2; sleep "$w"; \
+      i=$((i+1)); \
+    done; rm -f /tmp/claude-install.sh
 USER root
 
 # OpenAI Codex CLI. The @openai/codex npm package ships platform-native
@@ -307,7 +335,7 @@ RUN npm install -g opencode-ai
 # wiped on `agentbox destroy`.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
+        libnss3 libnss3-tools libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
         libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
         libgbm1 libdrm2 libpango-1.0-0 libcairo2 libasound2t64 \
         fonts-liberation xdg-utils \
@@ -377,6 +405,12 @@ RUN chmod +x /usr/local/bin/agentbox-vnc-start
 COPY packages/sandbox-docker/scripts/agentbox-dockerd-start /usr/local/bin/agentbox-dockerd-start
 RUN chmod +x /usr/local/bin/agentbox-dockerd-start
 
+# In-box Portless CA trust helper — trusts the symmetric `<box>.localhost` CA in
+# the system store + the box user's NSS db (Chromium/Playwright). Invoked at
+# create when the host Portless proxy is TLS. certutil ships in libnss3-tools above.
+COPY packages/sandbox-docker/scripts/agentbox-portless-trust /usr/local/bin/agentbox-portless-trust
+RUN chmod +x /usr/local/bin/agentbox-portless-trust
+
 # Pre-`docker commit` cleanup for checkpoints. Baked into the image so the host
 # can always reach it via `docker exec --user root <ctr>
 # /usr/local/bin/agentbox-checkpoint-cleanup` regardless of the in-box state
@@ -422,13 +456,17 @@ RUN printf '%s\n' \
         'set -g escape-time 0' \
         > /etc/tmux.conf
 
-# System-wide Claude Code hint. NOTE: /etc/claude-code/CLAUDE.md is not a
+# System-wide agent hint. NOTE: /etc/claude-code/CLAUDE.md is not a
 # documented Claude Code load path today (only /etc/claude-code/managed-settings.json
 # is, and that's settings-only) — kept here so it's discoverable via
 # `cat /etc/claude-code/CLAUDE.md` and forward-compatible if Claude Code
-# adds it to its memory chain. Until then, in-box agents learn the same
-# facts via /etc/agentbox/box.env + AGENTBOX_* env vars. Content lives in
-# scripts/custom-system-CLAUDE.md (edit there, not inline) for maintainability.
+# adds it to its memory chain. Codex DOES consume it: seedCodexAgentsOverride()
+# (packages/sandbox-docker/src/codex.ts) folds this file into the codex-config
+# volume's ~/.codex/AGENTS.override.md at create time (a runtime seed, not an
+# image bake — the ~/.codex volume would shadow a baked link). Until Claude loads
+# it, Claude agents learn the same facts via /etc/agentbox/box.env + AGENTBOX_*
+# env vars. Content lives in scripts/custom-system-CLAUDE.md (edit there, not
+# inline) for maintainability.
 RUN mkdir -p /etc/claude-code
 COPY packages/sandbox-docker/scripts/custom-system-CLAUDE.md /etc/claude-code/CLAUDE.md
 RUN chmod 0644 /etc/claude-code/CLAUDE.md
@@ -472,6 +510,15 @@ RUN printf '%s\n' \
         '  . /etc/agentbox/box.env' \
         '  set +a' \
         'fi' \
+        '# Land interactive login shells in the workspace (remote-host integrations,' \
+        '# plain `ssh <box>`); interactive-only and only when still at $HOME.' \
+        'case $- in' \
+        '  *i*)' \
+        '    if [ "$PWD" = "$HOME" ] && [ -d /workspace ]; then' \
+        '      cd /workspace' \
+        '    fi' \
+        '    ;;' \
+        'esac' \
         > /etc/profile.d/agentbox.sh \
     && chmod 0644 /etc/profile.d/agentbox.sh
 

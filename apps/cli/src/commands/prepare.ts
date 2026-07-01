@@ -292,8 +292,6 @@ export interface RunPrepareOptions {
   yes?: boolean;
   /** Host workspace dir (defaults to `process.cwd()`). */
   cwd?: string;
-  /** Suppress the closing skill-install tip (the install wizard already does its own skill step). */
-  suppressTip?: boolean;
   /** Suppress the post-prepare status block. */
   suppressStatus?: boolean;
 }
@@ -394,12 +392,6 @@ export async function runPrepare(
     if (!opts.suppressStatus) {
       process.stdout.write('\n');
       await showStatus({ onlyProvider: providerName });
-    }
-    if (!opts.suppressTip) {
-      log.info(
-        'tip: install the agentbox host skill so Claude Code on this machine can drive AgentBox for you:\n' +
-          '  npx skills add https://github.com/madarco/agentbox --skill agentbox',
-      );
     }
   } catch (err) {
     sp.stop(`prepare failed: ${describeError(err)}`);

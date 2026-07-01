@@ -23,6 +23,7 @@ import {
   extractOpencodeCredentials,
   formatDetachNotice,
   inspectBox,
+  recordLastAgent,
   OPENCODE_CREDENTIALS_BACKUP_FILE,
   OPENCODE_FORWARDED_ENV_KEYS,
   OpencodeSessionError,
@@ -41,9 +42,11 @@ import {
   MissingAgentCredsError,
   opencodeAuthAvailable,
 } from '../lib/queue/assert-creds.js';
+import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
 import { captureOpenTerminalContext } from '../terminal/queue-open.js';
+import { hostAwareOpenIn } from '../terminal/host.js';
 import { maybeResyncWorkspace } from '../lib/resync-start.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
 import {
@@ -52,7 +55,7 @@ import {
   NO_ATTACH_HELP,
   resolveAttachInOption,
 } from './_attach-in.js';
-import { cloudAgentAttach } from './_cloud-attach.js';
+import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
@@ -447,6 +450,7 @@ export const opencodeCommand = new Command('opencode')
         await assertAgentCredsAvailable({
           agent: 'opencode',
           image: cfg.effective.box.image,
+          providerName,
         });
       } catch (err) {
         if (err instanceof MissingAgentCredsError) {
@@ -550,14 +554,20 @@ export const opencodeCommand = new Command('opencode')
           limits: resolveLimits(cfg.effective.box, opts),
           fromBranch,
           useBranch,
+          resyncOnStart: opts.resync,
           projectRoot,
+          // Per-provider session-lifetime (e2b/vercel timeout); mirrors create.
+          providerOptions: cloudSizingProviderOptions(provider.name, cfg.effective),
         },
         binary: 'opencode',
         sessionName: cfg.effective.opencode.sessionName,
         mode: 'opencode',
+        // opencode surfaces the resync warning on stderr (matches its docker
+        // path, which never injects it as an opening turn).
+        hasSeedPrompt: true,
         extraArgs: opencodeArgs,
         verbose: opts.verbose === true,
-        openIn: cfg.effective.attach.openIn,
+        openIn: hostAwareOpenIn(cfg),
         attach: opts.attach !== false,
       });
       return;
@@ -634,6 +644,8 @@ export const opencodeCommand = new Command('opencode')
         opencodeArgs,
         sessionName,
       });
+      // Remember this box was launched as opencode for `agentbox recover`.
+      await recordLastAgent(result.record.id, 'opencode').catch(() => {});
       const createResyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
 
       const nSuffix =
@@ -661,7 +673,7 @@ export const opencodeCommand = new Command('opencode')
         sessionName,
         reattachRef(result.record),
         (m) => cmdLog.write(m),
-        cfg.effective.attach.openIn,
+        hostAwareOpenIn(cfg),
       );
     } catch (err) {
       s.stop('failed');
@@ -707,13 +719,15 @@ async function startOrAttachOpencode(
   if (opts.resync !== undefined) cliOverrides.box = { resyncOnStart: opts.resync };
   const cfg = await loadEffectiveConfig(box.workspacePath, { cliOverrides });
   const sessionName = cfg.effective.opencode.sessionName;
-  const openIn = cfg.effective.attach.openIn;
+  const openIn = hostAwareOpenIn(cfg);
   const wantAttach = opts.attach !== false;
 
   const insp = await inspectBox(box.id);
   if (insp.state === 'missing') {
     throw new Error(`box ${box.name} has no container; was it destroyed?`);
   }
+  // Record this attach/launch as an opencode session for `agentbox recover`.
+  await recordLastAgent(box.id, 'opencode').catch(() => {});
 
   // If a tmux session already exists, just attach — no resync, ignore any
   // post-`--` args (they only apply to a fresh opencode).
@@ -817,7 +831,7 @@ const opencodeAttachCommand = new Command('attach')
           binary: 'opencode',
           sessionName: opts.sessionName ?? 'opencode',
           mode: 'opencode',
-          openIn: cfg.effective.attach.openIn,
+          openIn: hostAwareOpenIn(cfg),
         });
         return;
       }
@@ -887,22 +901,31 @@ const opencodeStartCommand = new Command('start')
         }
       }
       if ((box.provider ?? 'docker') !== 'docker') {
-        if (opts.attach === false) {
-          outro(
-            `--no-attach: cloud agent sessions are started lazily on attach. Run: agentbox opencode attach ${reattachRef(box)}`,
-          );
-          return;
-        }
         const cfg = await loadEffectiveConfig(box.workspacePath, {
           cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
         });
+        const sessionName = opts.sessionName ?? 'opencode';
+        if (opts.attach === false) {
+          // Background mode: start the detached session (matches docker) instead
+          // of deferring the agent until the next attach.
+          await cloudAgentStartDetached({
+            box,
+            binary: 'opencode',
+            sessionName,
+            extraArgs: effectiveOpencodeArgs,
+          });
+          outro(
+            `--no-attach: opencode started in background. Attach: agentbox opencode attach ${reattachRef(box)}`,
+          );
+          return;
+        }
         await cloudAgentAttach({
           box,
           binary: 'opencode',
-          sessionName: opts.sessionName ?? 'opencode',
+          sessionName,
           mode: 'opencode',
           extraArgs: effectiveOpencodeArgs,
-          openIn: cfg.effective.attach.openIn,
+          openIn: hostAwareOpenIn(cfg),
         });
         return;
       }

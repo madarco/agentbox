@@ -21,8 +21,10 @@ import {
   formatDetachNotice,
   hostBackupHasCredentials,
   hostClaudeBackupExpired,
+  imageExists,
   inspectBox,
   rebuildPluginNativeDeps,
+  recordLastAgent,
   runInteractiveClaudeLogin,
   seedSetupSkillIntoVolume,
   SHARED_CLAUDE_VOLUME,
@@ -30,27 +32,31 @@ import {
   startClaudeSession,
   syncClaudeCredentials,
   unpauseBox,
+  volumeClaudeCredentials,
   warmUpClaudeCredentials,
   type BoxRecord,
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveClaudeAuth, type ResolvedClaudeAuth } from '../auth.js';
 import { reattachRef, resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { assertAgentCredsAvailable, MissingAgentCredsError } from '../lib/queue/assert-creds.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { maybeResyncWorkspace } from '../lib/resync-start.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
+import { agentResumeArgs } from '../agent-sessions.js';
 import { applyClaudeSkipPermissions } from '../lib/skip-permissions.js';
 import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
 import { captureOpenTerminalContext } from '../terminal/queue-open.js';
+import { hostAwareOpenIn } from '../terminal/host.js';
 import {
   ATTACH_IN_HELP,
   INLINE_HELP,
   NO_ATTACH_HELP,
   resolveAttachInOption,
 } from './_attach-in.js';
-import { cloudAgentAttach } from './_cloud-attach.js';
+import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
@@ -74,9 +80,25 @@ import { maybeRunSetupWizard } from '../wizard.js';
 import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
 import { runPrepare } from './prepare.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
-import { pasteHostClipboardImage } from '../lib/paste-image.js';
+import { pasteHostClipboardImage, uploadImageFileToBox } from '../lib/paste-image.js';
 import { clipboardCaptureAvailable } from '../lib/host-clipboard.js';
 import { handleLifecycleError } from './_errors.js';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { loadPtyBackend } from '../pty/pty-backend.js';
+import {
+  cleanupStaleSessions,
+  findLiveSession,
+  findPendingSession,
+  readLoginState,
+  selectLoginMode,
+  writeLoginCode,
+  writeLoginRequest,
+  writeLoginState,
+  type LoginState,
+} from '../lib/claude-login-session.js';
 
 /** Project an agent-create options struct down to what the queue worker needs. */
 function pickCreateOpts(opts: ClaudeCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
@@ -143,6 +165,7 @@ export async function attachClaudeWrapped(
     onError,
     openIn,
     onPasteImage: canPaste ? () => pasteHostClipboardImage(provider, box) : undefined,
+    onPasteImageFile: canPaste ? (p) => uploadImageFileToBox(provider, box, p) : undefined,
   });
   process.exit(code);
 }
@@ -267,17 +290,34 @@ async function maybeRunClaudeLogin(args: {
    *  the volume's `_claude.json` before the login container runs. */
   hostWorkspace: string;
 }): Promise<void> {
-  // Skip when: non-interactive / --yes; the user explicitly provided auth via
-  // host env (respect an intentional ANTHROPIC_API_KEY); or the host backup
-  // already holds real credentials (every box gets seeded from it). A legacy
-  // auth.json setup-token (`auth-file`) still gets the offer — that is the
-  // "Claude API" -> subscription upgrade.
+  // Skip when: non-interactive / --yes; or the user explicitly provided auth
+  // via host env (respect an intentional ANTHROPIC_API_KEY).
   if (!process.stdin.isTTY || args.yes) return;
   if (args.authSource === 'host-env') return;
-  if (await hostBackupHasCredentials()) return;
 
-  const message =
-    args.authSource === 'auth-file'
+  // Docker boots every box from the shared claude-config volume's live
+  // `.credentials.json`; the host backup is only a mirror that diverges when an
+  // in-box refresh fails (claude blanks the volume's refreshToken, and the
+  // create-time extract then skips it, so the backup keeps a stale token). So
+  // decide off the *volume*, not the backup:
+  //  - usable refresh token present -> trust the in-box refresh, no prompt
+  //    (a merely-expired access token renews itself; don't nag);
+  //  - file present but refresh token blanked -> the login is dead (the seed
+  //    only restores the same stale backup), so offer a fresh sign-in;
+  //  - no file yet -> the box seeds from the host backup, so only offer
+  //    sign-in when there is nothing to seed from either.
+  // The probe needs the image locally; skip it (fall back to the backup check)
+  // when it isn't, so a first-ever run doesn't trigger an implicit pull here.
+  const vol = (await imageExists(args.image))
+    ? await volumeClaudeCredentials(SHARED_CLAUDE_VOLUME, args.image)
+    : { present: false, hasRefreshToken: false };
+  if (vol.hasRefreshToken) return;
+  const blanked = vol.present && !vol.hasRefreshToken;
+  if (!vol.present && (await hostBackupHasCredentials())) return;
+
+  const message = blanked
+    ? 'Your saved Claude login looks expired. Sign in again? (saved and reused by every box)'
+    : args.authSource === 'auth-file'
       ? "You're on a legacy API token (shows as 'Claude API'). Sign in with your Claude subscription instead?"
       : 'Sign in with your Claude subscription? (saved and reused by every box)';
   const answer = await confirm({ message, initialValue: true });
@@ -562,6 +602,7 @@ export const claudeCommand = new Command('claude')
         await assertAgentCredsAvailable({
           agent: 'claude-code',
           image: cfg.effective.box.image,
+          providerName,
         });
       } catch (err) {
         if (err instanceof MissingAgentCredsError) {
@@ -610,6 +651,30 @@ export const claudeCommand = new Command('claude')
     // Resolve auth from host env or the legacy ~/.agentbox/auth.json
     // setup-token (the dormant CI fallback).
     const resolved = await resolveClaudeAuth(process.env);
+
+    // Non-interactive (orchestrator pipe, CI): no TTY to attach or complete an
+    // in-box /login, so fail fast with the same actionable message the prompt
+    // would give instead of booting a box whose agent then silently sits on its
+    // /login screen. `-y` in a real TTY is exempt — that's the documented "boot
+    // and /login inside the box" escape hatch (the user is present). Host-env
+    // auth is exempt too (its presence is the user's explicit choice). The
+    // expiry half of the check is cloud-only — docker boxes refresh in-box.
+    if (!process.stdin.isTTY && resolved.source !== 'host-env') {
+      try {
+        await assertAgentCredsAvailable({
+          agent: 'claude-code',
+          image: cfg.effective.box.image,
+          providerName,
+        });
+      } catch (err) {
+        if (err instanceof MissingAgentCredsError) {
+          log.error(err.message);
+          cmdLog.close();
+          process.exit(2);
+        }
+        throw err;
+      }
+    }
 
     // First-run sign-in offer. Docker seeds every box from the host backup;
     // cloud captures the login to the same backup so the per-box push seeds it
@@ -697,7 +762,6 @@ export const claudeCommand = new Command('claude')
       await runPrepare(providerName, {
         force: true,
         cwd: opts.workspace,
-        suppressTip: true,
         suppressStatus: true,
       });
     }
@@ -768,14 +832,22 @@ export const claudeCommand = new Command('claude')
           limits: resolveLimits(cfg.effective.box, opts),
           fromBranch,
           useBranch,
+          resyncOnStart: opts.resync,
           projectRoot,
+          // Per-provider session-lifetime (e2b/vercel timeout) so the keepalive
+          // seeds correctly; mirrors `agentbox create`.
+          providerOptions: cloudSizingProviderOptions(provider.name, cfg.effective),
         },
         binary: 'claude',
+        hasSeedPrompt:
+          Boolean(planPrepared) ||
+          (wiz.action === 'launch-with-prompt' && Boolean(wiz.initialPrompt)) ||
+          Boolean(resumePrepared),
         sessionName: cfg.effective.claude.sessionName,
         mode: 'claude',
         extraArgs: effectiveClaudeArgs,
         verbose: opts.verbose === true,
-        openIn: cfg.effective.attach.openIn,
+        openIn: hostAwareOpenIn(cfg),
         attach: opts.attach !== false,
         beforeStart:
           resumePrepared || planPrepared
@@ -958,6 +1030,9 @@ export const claudeCommand = new Command('claude')
         sessionName,
         boxName: result.record.name,
       });
+      // Remember this box was launched as claude so `agentbox recover` relaunches
+      // the right agent. Best-effort — never block the launch.
+      await recordLastAgent(result.record.id, 'claude').catch(() => {});
       if (pendingCreateResyncWarn) log.warn(pendingCreateResyncWarn);
 
       const nSuffix =
@@ -991,7 +1066,7 @@ export const claudeCommand = new Command('claude')
         sessionName,
         reattachRef(result.record),
         (m) => cmdLog.write(m),
-        cfg.effective.attach.openIn,
+        hostAwareOpenIn(cfg),
       );
     } catch (err) {
       s.stop('failed');
@@ -1022,6 +1097,11 @@ interface ClaudeStartOptions {
   attach?: boolean; // commander: --no-attach => false; default true.
   continue?: boolean; // -c / --continue: teleport newest session for cwd.
   resume?: string; // --resume <id>: teleport specific session.
+  // Set by the `attach` subcommand: when the box was down and is being brought
+  // back up, resume the in-box session (`--continue`) instead of starting fresh,
+  // so attaching after a stop / cloud idle-timeout looks seamless. NOT set by the
+  // bare `claude` / `claude start` command, which stays fresh.
+  attachResume?: boolean;
 }
 
 // Shared by `claude start` and `claude attach`: if a session is already
@@ -1046,7 +1126,7 @@ async function startOrAttachClaude(
   if (opts.resync !== undefined) cliOverrides.box = { resyncOnStart: opts.resync };
   const cfg = await loadEffectiveConfig(box.workspacePath, { cliOverrides });
   const sessionName = cfg.effective.claude.sessionName;
-  const openIn = cfg.effective.attach.openIn;
+  const openIn = hostAwareOpenIn(cfg);
   const wantAttach = opts.attach !== false;
   // Read-only — used to gate the first-run login offer (respect an intentional
   // host ANTHROPIC_API_KEY). The box already exists, so `resolved.env` is not
@@ -1060,6 +1140,9 @@ async function startOrAttachClaude(
   if (insp.state === 'missing') {
     throw new Error(`box ${box.name} has no container; was it destroyed?`);
   }
+  // Record this attach/launch as a claude session so `agentbox recover` knows
+  // which agent to bring back. Best-effort.
+  await recordLastAgent(box.id, 'claude').catch(() => {});
 
   // If a tmux session already exists, just attach — no resync, no plugin
   // rebuild, ignore any post-`--` args (they only apply to a fresh claude).
@@ -1165,6 +1248,19 @@ async function startOrAttachClaude(
   });
 
   let effectiveArgs = applyClaudeSkipPermissions(claudeArgs, cfg.effective);
+  // Attach path on a box that just came back up: resume the box's recorded
+  // session (exact id, captured by the in-box hooks) rather than starting fresh.
+  // Only when the user gave no args of their own and isn't teleporting a host
+  // session, and only if the box actually has a resumable session.
+  let attachResumed = false;
+  if (opts.attachResume && claudeArgs.length === 0 && !resumePrepared) {
+    const provider = await providerForBox(box);
+    const resume = await agentResumeArgs(provider, box, 'claude');
+    if (resume) {
+      effectiveArgs = [...effectiveArgs, ...resume];
+      attachResumed = true;
+    }
+  }
   if (resumePrepared) {
     s.message('uploading claude session into box');
     try {
@@ -1187,9 +1283,11 @@ async function startOrAttachClaude(
   }
 
   // Inject the resync conflict warning as the agent's opening turn. A resumed
-  // session rides `--resume <id>` with no clean first user turn, so surface the
-  // warning on stderr after the spinner stops instead.
-  if (resyncWarning && !resumePrepared) {
+  // session (teleport `--resume`, or an attach-resume into the in-box session)
+  // rides resume flags with no clean first user turn, so surface the warning on
+  // stderr after the spinner stops instead — injecting a seed prompt would
+  // collide with `--resume`.
+  if (resyncWarning && !resumePrepared && !attachResumed) {
     effectiveArgs = buildPromptArgs('claude-code', resyncWarning, effectiveArgs);
   }
 
@@ -1202,7 +1300,7 @@ async function startOrAttachClaude(
   });
 
   s.stop(`box ${box.container} ready`);
-  if (resyncWarning && resumePrepared) log.warn(resyncWarning);
+  if (resyncWarning && (resumePrepared || attachResumed)) log.warn(resyncWarning);
   logPrune(rebuild);
   for (const f of rebuild.failed) {
     log.warn(
@@ -1248,14 +1346,14 @@ const claudeAttachCommand = new Command('attach')
           binary: 'claude',
           sessionName: opts.sessionName ?? 'claude',
           mode: 'claude',
-          openIn: cfg.effective.attach.openIn,
+          openIn: hostAwareOpenIn(cfg),
         });
         return;
       }
       // A plain reattach must never touch host config. Force syncConfig off so
       // the no-session path starts a fresh session without the host->volume
       // rsync (which would overwrite the in-box _claude.json / prompt history).
-      await startOrAttachClaude(box, [], { ...opts, syncConfig: false });
+      await startOrAttachClaude(box, [], { ...opts, syncConfig: false, attachResume: true });
     } catch (err) {
       if (err instanceof ClaudeSessionError) {
         log.error(err.message);
@@ -1328,12 +1426,6 @@ const claudeStartCommand = new Command('start')
         }
       }
       if ((box.provider ?? 'docker') !== 'docker') {
-        if (opts.attach === false) {
-          outro(
-            `--no-attach: cloud agent sessions are started lazily on attach. Run: agentbox claude attach ${reattachRef(box)}`,
-          );
-          return;
-        }
         const cfg = await loadEffectiveConfig(box.workspacePath, {
           cliOverrides: {
             ...(attachIn ? { attach: { openIn: attachIn } } : {}),
@@ -1356,13 +1448,26 @@ const claudeStartCommand = new Command('start')
             throw err;
           }
         }
+        const sessionName = opts.sessionName ?? 'claude';
+        if (opts.attach === false) {
+          // Background mode: start the detached session (matches docker) instead
+          // of deferring the agent until the next attach.
+          await cloudAgentStartDetached({
+            box,
+            binary: 'claude',
+            sessionName,
+            extraArgs: effectiveClaudeArgs,
+          });
+          outro(`--no-attach: claude started in background. Attach: agentbox claude attach ${reattachRef(box)}`);
+          return;
+        }
         await cloudAgentAttach({
           box,
           binary: 'claude',
-          sessionName: opts.sessionName ?? 'claude',
+          sessionName,
           mode: 'claude',
           extraArgs: effectiveClaudeArgs,
-          openIn: cfg.effective.attach.openIn,
+          openIn: hostAwareOpenIn(cfg),
         });
         return;
       }
@@ -1376,21 +1481,178 @@ const claudeStartCommand = new Command('start')
     }
   });
 
+function printAwaitingCode(st: LoginState): void {
+  const url = st.url ?? '';
+  log.info('To finish signing in, open this URL in a browser and approve access:');
+  process.stdout.write(`\n  ${url}\n\n`);
+  log.info('Then run:  agentbox claude login --code <CODE>');
+  // Stable, greppable marker so an orchestrating agent can grab the URL
+  // deterministically regardless of how the prose above is worded.
+  process.stdout.write(`AGENTBOX_LOGIN_URL=${url}\n`);
+}
+
+/**
+ * Headless login (non-TTY / `--headless`): spawn the detached worker that holds
+ * the live `claude auth login`, wait for it to publish the auth URL, print it +
+ * the `--code` follow-up, and return while the worker keeps waiting. A second
+ * `agentbox claude login --code <CODE>` ({@link deliverLoginCode}) finishes it.
+ */
+async function startHeadlessLogin(args: string[]): Promise<void> {
+  // node-pty drives the login; without the prebuild there is no headless path.
+  if (!(await loadPtyBackend())) {
+    log.error(
+      'Headless login needs the node-pty prebuild, which is not installed. Run `agentbox claude login` from an interactive terminal instead.',
+    );
+    process.exit(1);
+  }
+  cleanupStaleSessions();
+  // Only one live session at a time. Match ANY non-terminal live session (incl.
+  // a worker still in `starting`, before its URL is published) so a second
+  // `--headless` can't slip through and spawn a duplicate worker.
+  const existing = findLiveSession();
+  if (existing) {
+    if (existing.state.phase === 'awaiting-code' && existing.state.url) {
+      log.info('A login is already pending; finish it (or wait for it to expire):');
+      printAwaitingCode(existing.state);
+    } else {
+      log.info(
+        'A login is already in progress; wait for it to print its URL, then finish with `agentbox claude login --code <CODE>`.',
+      );
+    }
+    return;
+  }
+
+  const cfg = await loadEffectiveConfig(process.cwd());
+  const image = cfg.effective.box.image;
+  const s = spinner();
+  s.start('preparing sandbox image');
+  await ensureImage(image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  s.stop('image ready');
+
+  const id = randomUUID().slice(0, 8);
+  writeLoginRequest(id, {
+    image,
+    extraArgs: args,
+    cwd: process.cwd(),
+    createdAt: new Date().toISOString(),
+  });
+
+  // This foreground process IS the CLI entry, so argv[1] is the right script to
+  // re-exec for the worker; AGENTBOX_CLI_ENTRY wins if a wrapper set it.
+  const entry = process.env.AGENTBOX_CLI_ENTRY ?? process.argv[1];
+  if (!entry || !existsSync(entry)) {
+    log.error('could not resolve the agentbox CLI entry to spawn the login worker');
+    process.exit(1);
+  }
+  const child = spawn(process.execPath, [entry, '_claude-login-worker', id], {
+    detached: true,
+    stdio: 'ignore',
+    env: process.env,
+  });
+  child.unref();
+  // Publish a `starting` state with the worker pid immediately, so a concurrent
+  // `--headless` sees a live session and won't spawn a second worker during the
+  // window before the worker itself writes any state.
+  if (typeof child.pid === 'number') {
+    writeLoginState(id, { phase: 'starting', pid: child.pid, createdAt: new Date().toISOString() });
+  }
+
+  // Wait past the worker's own no-URL deadline (60s) so we observe its verdict
+  // (awaiting-code or a published error) instead of giving up while it's still
+  // working and missing the URL it later prints.
+  const deadline = Date.now() + 65_000;
+  for (;;) {
+    const st = readLoginState(id);
+    if (st?.phase === 'awaiting-code' && st.url) {
+      printAwaitingCode(st);
+      return;
+    }
+    if (st?.phase === 'error') {
+      log.error(`login could not start: ${st.error ?? 'unknown error'}`);
+      process.exit(1);
+    }
+    if (Date.now() > deadline) {
+      log.error(`timed out waiting for the login URL — see ~/.agentbox/logs/claude-login-${id}.log`);
+      process.exit(1);
+    }
+    await sleep(400);
+  }
+}
+
+/** Deliver an OAuth code to the pending headless login session and report the outcome. */
+async function deliverLoginCode(code: string): Promise<void> {
+  cleanupStaleSessions();
+  const pending = findPendingSession();
+  if (!pending) {
+    log.error(
+      'No pending login is waiting for a code. Start one first with `agentbox claude login` (or --headless).',
+    );
+    process.exit(1);
+  }
+  const { id } = pending;
+  const submittedAt = Date.now();
+  writeLoginCode(id, code);
+
+  const s = spinner();
+  s.start('completing sign-in');
+  const deadline = Date.now() + 120_000;
+  for (;;) {
+    const st = readLoginState(id);
+    if (st?.phase === 'done') {
+      s.stop(st.warmed ? 'credentials ready' : 'signed in (credential check incomplete)');
+      outro('signed in — credentials saved for future boxes');
+      return;
+    }
+    if (st?.phase === 'error') {
+      s.stop('sign-in failed');
+      log.error(st.error ?? 'login failed');
+      process.exit(1);
+    }
+    // Worker reverted to awaiting-code after our submit → the code was rejected;
+    // the session stays valid so a corrected `--code` can retry it.
+    if (st?.phase === 'awaiting-code' && st.lastError && Date.parse(st.updatedAt) >= submittedAt) {
+      s.stop('code rejected');
+      log.error(`${st.lastError}. Run \`agentbox claude login --code <CODE>\` again with a fresh code.`);
+      process.exit(1);
+    }
+    if (Date.now() > deadline) {
+      s.stop('sign-in timed out');
+      log.error('timed out completing sign-in — see the login worker log under ~/.agentbox/logs/');
+      process.exit(1);
+    }
+    await sleep(500);
+  }
+}
+
 const claudeLoginCommand = new Command('login')
   .description(
-    'Sign in to Claude for use in sandboxes (forwards args to `claude auth login`, e.g. --sso, --console). Runs in a throwaway container against the shared claude-config volume — usable before the first `agentbox claude`.',
+    'Sign in to Claude for use in sandboxes (forwards args to `claude auth login`, e.g. --sso, --console). Runs in a throwaway container against the shared claude-config volume — usable before the first `agentbox claude`. Non-interactive (no TTY) or `--headless`: prints the auth URL, then finish with `--code <CODE>`.',
   )
   .argument(
     '[args...]',
     'extra args forwarded to `claude auth login`; place after `--`, e.g. `agentbox claude login -- --sso`',
   )
-  .action(async (args: string[]) => {
-    intro('Signing in to Claude...');
-    if (!process.stdin.isTTY) {
-      log.error('`agentbox claude login` needs an interactive terminal.');
-      process.exit(1);
-    }
+  .option(
+    '--headless',
+    'drive login without a terminal: print the auth URL, then finish with `--code` (auto-selected when stdin is not a TTY)',
+  )
+  .option('--code <code>', 'deliver the OAuth code to a pending headless login session')
+  .action(async (args: string[], opts: { headless?: boolean; code?: string }) => {
+    const mode = selectLoginMode({
+      isTTY: !!process.stdin.isTTY,
+      headless: !!opts.headless,
+      code: typeof opts.code === 'string',
+    });
     try {
+      if (mode === 'code') {
+        await deliverLoginCode(opts.code as string);
+        return;
+      }
+      if (mode === 'headless') {
+        await startHeadlessLogin(args);
+        return;
+      }
+      intro('Signing in to Claude...');
       const cfg = await loadEffectiveConfig(process.cwd());
       const image = cfg.effective.box.image;
 

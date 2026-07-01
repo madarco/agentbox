@@ -11,10 +11,15 @@ implementation (per the project convention), not as end-of-PR cleanup.
   Dockerfile build. The base environment is a **Vercel snapshot** baked once by
   `agentbox prepare --provider vercel` (boot fresh node24 → run `provision.sh`
   → `sandbox.snapshot()`), exactly the hetzner-style one-time prerequisite.
-- **No nested containers** (validated 2026-05-18, memory
-  `project-vercel-sandbox-no-containers`): seccomp blocks `clone`/`unshare`, no
-  `CAP_SYS_ADMIN`. The provider sets `launchDockerd: false`; in-box `docker` is
-  unavailable by design.
+- **Nested containers (in-box docker) supported.** Vercel added Docker support
+  in 2026 (https://vercel.com/changelog/run-docker-containers-inside-vercel-sandbox),
+  reversing the earlier "no containers" finding (memory
+  `project-vercel-sandbox-no-containers`). The base snapshot now bakes the
+  docker engine and the provider sets `launchDockerd: true`, so the cloud
+  scaffold auto-starts `dockerd` (via the shared `agentbox-dockerd-start`) on
+  create/resume. The socket is widened to 0666 so the unprivileged box user and
+  the ctl `image:` services drive `docker` without sudo. Pulled images carry
+  over across pause/resume (persistent snapshot).
 - **No SSH.** `sandbox.domain(port)` is an HTTPS(+WebSocket) proxy only. There's
   no `attachArgv`; attach goes through a custom SDK-streaming helper.
 - **Persistent by default.** Stopping a sandbox auto-snapshots; the next
@@ -111,8 +116,9 @@ Confirmed live 2026-05-28:
    (~1.3 GB) in a few minutes; the snapshot comes back usable. claude / codex /
    opencode are all present in a booted box.
 2. [x] **User mapping.** A booted box runs as `vscode` (uid 1001) with `/workspace`
-   checked out on `agentbox/<box>`; `docker` is correctly unavailable
-   (`launchDockerd:false`). vscode passwordless sudo now works (see bug #3).
+   checked out on `agentbox/<box>`. vscode passwordless sudo now works (see bug
+   #3). (In-box `docker` is now baked in + auto-started — `launchDockerd:true`;
+   this note historically tracked the now-reversed "no docker" state.)
 3. [x] **Workspace seed.** The shallow-clone seed (`$SUDO rm/mkdir/chown` +
    tar-extract as vscode) lands `/workspace` on the box branch — gated on the
    sudoers fix (#3). Agent-credential / carry / env-file ownership beyond this was
@@ -139,6 +145,13 @@ Confirmed live 2026-05-28:
    gates on `git ls-remote` (the probe branch is absent before, present after); it
    also needs the `VERCEL_TOKEN` trio in env (it predates CLI-login auth, so under
    `VERCEL_AUTH_SOURCE=cli` drive the round-trip via the CLI/`backend.exec` directly).
+   - **Update (relay token now read from a file, not login-shell env).** The in-box
+     relay token reaches `agentbox-ctl` via a `0600 /run/agentbox/relay.env` written by
+     the ctl daemon (read by `resolveRelayEnv` in `packages/ctl/src/relay-env.ts`), not
+     via login-shell env. This fixed the regression (b9e4ebf55) where the in-box agent's
+     `agentbox-ctl git push` failed "no relay configured" because the daemon's `box.env`
+     overwrite dropped the token. Applies to all cloud providers; the bridge token used
+     by the `sandbox.domain(8788)` `/bridge/*` round-trip above stays daemon-only.
    **Original plan (host — must run on a real host, not a nested box):**
    - *Why nested doesn't work:* a vercel box's `CloudBoxPoller` runs wherever the
      `agentbox` CLI runs; from inside a docker agentbox the relay/git creds chain is
@@ -480,9 +493,11 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
     ignore it (hetzner locks egress via its own firewall). Verified live: a
     `deny-all` box can't reach `example.com`; an `example.com`-allowlist box
     reaches `example.com` but not `api.github.com`. Unit-tested `parseNetworkPolicy`.
-    `extendTimeout` is **deferred** (niche: session length is already set at create
-    via `box.vercelTimeoutMs`, and persistent mode auto-resumes — mid-session
-    extension has no clean CLI home yet).
+    `extendTimeout` is now **wired** via `CloudBackend.renewTimeout` + the host
+    relay `cloud-keepalive` loop: while the in-box agent is active the box's
+    session timeout is renewed (anchored at `lastActivity + autopause.idleMinutes`)
+    so a long agent run isn't killed mid-work. Bounded by the plan cap (mainly
+    benefits Pro+). Same loop covers E2B (`Sandbox.setTimeout`).
 19. **gh/git relay shims don't win PATH on Vercel AL2023.** Found 2026-05-29 while
     verifying the git-shim-ordering fix: in a booted vercel box `command -v git`
     resolves to **`/opt/git/bin/git`**, not `/usr/local/bin/git` — Vercel's base
@@ -506,3 +521,40 @@ agentbox/<box>` shows the commit, then try `agentbox-ctl git pull` and a `gh pr`
       `git push` with no relay errors out via the shim (not real git).
     - Note: docker/hetzner are unaffected (their base PATH puts `/usr/local/bin`
       first); this is Vercel-base-specific.
+20. [x] **`AGENTBOX_BOX_HOST` resolves to the real preview host.** Done — the
+    `{{AGENTBOX_BOX_HOST}}` placeholder used to derive `<box-name>.localhost`, which
+    is unreachable on Vercel (no portless). The shared cloud create/start flow now
+    resolves the web preview URL *before* `launchCloudCtlDaemon` and passes the bare
+    host (`sb.domain(8080)` → `<sub>.vercel.run`) as `AGENTBOX_BOX_HOST`
+    (`deriveCloudBoxHost`: loopback preview → `<name>.localhost`; public preview →
+    `URL.host`). Exported into the daemon env (so first-boot `agentbox-ctl render`
+    tasks see it) and written to `/etc/agentbox/box.env` for login-shell parity. The
+    placeholder engine already prefers an explicit value over the derive, so
+    `https://{{AGENTBOX_BOX_HOST}}` now matches `agentbox url`. Generic across the
+    public-URL clouds (vercel/daytona/e2b); docker/hetzner keep `<name>.localhost`.
+    Unit-tested (`deriveCloudBoxHost`, `launchCloudCtlDaemon` script). See
+    `docs/cloud-providers.md` §1.0.1.
+21. [x] **Boxes from a checkpoint were frozen on the source box's branch.** Done —
+    cloud create restored a snapshot and **skipped** workspace seeding entirely, so
+    every checkpoint-derived box reused the snapshot's `/workspace/.git` verbatim:
+    same `agentbox/<source-box>` branch, none of the new box's uncommitted/untracked
+    host state. Now `seedCloudWorkspace` gains an **overlay** mode used on the
+    snapshot path (`overlay: Boolean(snapshotName)`): it keeps the snapshot's
+    gitignored warm tree (node_modules, build caches), moves the box onto a fresh
+    `agentbox/<new-box>` branch at the host base ref (`git checkout -f -B` + `git
+    reset --hard`, dropping the checkpoint's own commits — matching docker), and
+    replays the host stash + untracked carry-over. **Transport is incremental:**
+    ships only the commits the checkpoint lacks (`checkpointTip..hostTarget`) as a
+    git bundle fetched into the existing `.git`, with a full-clone `.git`-swap
+    fallback when the box diverged / the tip is unknown. **Carry-over conflicts are
+    box-wins + reported** (host change skipped, never left unmerged) via
+    `CreatedBox.resync` → the existing `buildResyncWarning` injects the same
+    *"conflicting host changes SKIPPED … `agentbox-ctl reload`"* prompt into
+    claude/codex/opencode that docker does. The cloud analogue of docker's
+    `regenerateRestoredWorktrees`+`resyncWorkspaceFromHost`. Generic across the
+    cloud providers (the shared `cloud-provider.ts` create path); non-git
+    workspaces keep the snapshot tree as-is. Verified live on Vercel: a box from a
+    checkpoint landed on a fresh `agentbox/<box>` branch with the host's new commit
+    (delta shipped it), carried a host untracked file created after the checkpoint,
+    and kept the snapshot's warm root marker. See `docs/cloud-create-flow.md` +
+    `docs/create-and-checkpoints.md`.

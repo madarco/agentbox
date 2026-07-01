@@ -11,6 +11,7 @@ import type {
 } from '@agentbox/ctl';
 import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './claude.js';
 import { codexSessionInfo, SHARED_CODEX_VOLUME, type CodexSessionInfo } from './codex.js';
+import { SHARED_AGENTS_VOLUME } from './agents.js';
 import {
   opencodeSessionInfo,
   SHARED_OPENCODE_VOLUME,
@@ -767,6 +768,8 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
       SHARED_CLAUDE_VOLUME,
       // The shared codex-config volume — same reasoning (holds Codex auth).
       SHARED_CODEX_VOLUME,
+      // The shared agents-config volume — holds the cross-agent ~/.agents skills.
+      SHARED_AGENTS_VOLUME,
       // The shared opencode-config volume — same reasoning (holds OpenCode auth).
       SHARED_OPENCODE_VOLUME,
       // Shared across boxes: downloaded IDE extensions. Same reasoning.

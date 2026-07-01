@@ -19,6 +19,7 @@
 
 import { confirm, intro, log, note, outro, select, spinner } from '../lib/prompt.js';
 import { Command } from 'commander';
+import { execa } from 'execa';
 import {
   existsSync,
   lstatSync,
@@ -29,8 +30,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
+import { isSourceCheckout, resolveHostSkillsDir } from '../lib/source-checkout.js';
 import {
   formatCompact,
   runProviderChecks,
@@ -40,7 +41,10 @@ import {
   type ProviderName,
 } from '../lib/doctor-checks.js';
 import { markSetupComplete } from '../lib/first-run.js';
+import { maybePromptStar } from '../lib/star-prompt.js';
 import { installCmuxCommand } from './install-cmux.js';
+import { installHerdrCommand } from './install-herdr.js';
+import { installCodexCommand, installCodexPlugin } from './install-codex.js';
 import { runPrepare } from './prepare.js';
 
 /** Marker on the line after the frontmatter of every skill we ship. Its
@@ -185,11 +189,14 @@ interface InstallTarget {
   gateDir?: string;
 }
 
+// The user-invokable `/agentbox` fork skill is installed separately via the open
+// `skills` CLI (see installForkSkill) rather than in this manual copy/symlink loop,
+// so the install is registered on the skills.sh directory. Everything else here uses
+// per-agent formats/paths that don't map onto the skills CLI's layout.
 function installTargets(): InstallTarget[] {
   const home = homedir();
   const claudeSkills = join(home, '.claude', 'skills');
   return [
-    { src: join('agentbox', 'SKILL.md'), dest: join(claudeSkills, 'agentbox', 'SKILL.md') },
     {
       src: join('agentbox-info', 'SKILL.md'),
       dest: join(claudeSkills, 'agentbox-info', 'SKILL.md'),
@@ -207,45 +214,12 @@ function installTargets(): InstallTarget[] {
   ];
 }
 
-/**
- * Locate the bundled `share/host-skills/` directory. This module is bundled
- * into the CLI at `<root>/dist/index.js`; `share/` ships as a sibling of
- * `dist/` in both the dev tree and the published package. The src-tree
- * candidate covers running unbundled (e.g. tsx).
- */
-function resolveHostSkillsDir(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    resolve(here, '..', 'share', 'host-skills'),
-    resolve(here, '..', '..', 'share', 'host-skills'),
-  ];
-  for (const c of candidates) {
-    if (existsSync(c)) return c;
-  }
-  throw new Error(`could not locate bundled host skills; tried:\n  ${candidates.join('\n  ')}`);
-}
-
 function isSymlink(target: string): boolean {
   try {
     return lstatSync(target).isSymbolicLink();
   } catch {
     return false;
   }
-}
-
-/**
- * True when the bundled skills resolve inside a source checkout rather than an
- * installed package. Every distribution path — `npm i -g`, pnpm global, the
- * npx cache — lives under a `node_modules` segment; a dev clone
- * (`<repo>/apps/cli/share/host-skills`) does not. We key on the source
- * *location*, not `detectExecutionMethod`, because a global install invoked
- * directly carries no `npm_config_user_agent` and would misreport as `direct`.
- * In a checkout we symlink skills so source edits are picked up live (mirroring
- * the `pnpm register` bin symlink); a published install must copy, since its
- * source dir is transient and a symlink would dangle on upgrade.
- */
-function isSourceCheckout(srcDir: string): boolean {
-  return !srcDir.split(sep).includes('node_modules');
 }
 
 function writableReason(target: string, force: boolean): 'new' | 'managed' | 'forced' | 'skip' {
@@ -329,6 +303,93 @@ export function installHostSkills(opts: InstallHostSkillsOptions = {}): InstallH
   }
 
   return { written, skipped, blocked };
+}
+
+/** Public repo the open `skills` CLI fetches the `/agentbox` fork skill from on
+ *  the default branch. `--skill agentbox` resolves against the skill whose
+ *  frontmatter name is `agentbox`; the repo's top-level `skills/agentbox`
+ *  symlink is its canonical publishing surface (and what skills.sh indexes). */
+const FORK_SKILL_REPO = 'https://github.com/madarco/agentbox';
+
+export interface InstallForkSkillResult extends InstallHostSkillsResult {
+  method: 'npx' | 'symlink' | 'copy' | 'skip' | 'dry-run';
+}
+
+/**
+ * Install the user-invokable `/agentbox` fork skill into Claude Code.
+ *
+ * In a **source checkout** we symlink the bundled source (live edits picked up,
+ * no network, no skills.sh telemetry from dev installs) — mirroring
+ * {@link installHostSkills}. In an **installed package** we delegate to the open
+ * `skills` CLI (`npx skills add … --skill agentbox`) so the install is registered
+ * on the skills.sh directory. If that fails (offline, npm missing, validation
+ * error) we fall back to copying the bundled file so the install never breaks.
+ */
+export async function installForkSkill(
+  opts: InstallHostSkillsOptions = {},
+): Promise<InstallForkSkillResult> {
+  const force = opts.force === true;
+  const dryRun = opts.dryRun === true;
+  const quiet = opts.quiet === true;
+  const srcDir = resolveHostSkillsDir();
+  const src = join(srcDir, 'agentbox', 'SKILL.md');
+  const dest = join(homedir(), '.claude', 'skills', 'agentbox', 'SKILL.md');
+
+  if (!existsSync(src)) {
+    if (!quiet) log.warn(`bundled file missing (skipped): ${src}`);
+    return { written: [], skipped: 1, blocked: [], method: 'skip' };
+  }
+  const reason = writableReason(dest, force);
+  if (reason === 'skip') {
+    if (!quiet) log.warn(`user-modified file at ${dest}, skipping; pass --force to overwrite`);
+    return { written: [], skipped: 1, blocked: [dest], method: 'skip' };
+  }
+  if (dryRun) {
+    const via = isSourceCheckout(srcDir) ? 'link' : 'npx skills add';
+    if (!quiet) log.info(`would install ${dest} via ${via} (${reason})`);
+    return { written: [dest], skipped: 0, blocked: [], method: 'dry-run' };
+  }
+
+  // Source checkout → symlink to local source (live edits; no network).
+  if (isSourceCheckout(srcDir)) {
+    mkdirSync(dirname(dest), { recursive: true });
+    rmSync(dest, { force: true });
+    symlinkSync(src, dest);
+    return { written: [dest], skipped: 0, blocked: [], method: 'symlink' };
+  }
+
+  // Installed package → register via the open `skills` CLI; copy on any failure.
+  try {
+    await execa(
+      'npx',
+      [
+        '-y',
+        'skills',
+        'add',
+        FORK_SKILL_REPO,
+        '--skill',
+        'agentbox',
+        '-a',
+        'claude-code',
+        '-g',
+        '-y',
+        '--copy',
+      ],
+      { timeout: 120_000 },
+    );
+    if (existsSync(dest)) return { written: [dest], skipped: 0, blocked: [], method: 'npx' };
+    // Exited 0 but nothing landed — fall through to the copy fallback.
+    throw new Error('`skills add` reported success but wrote no skill file');
+  } catch (err) {
+    if (!quiet) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`\`npx skills add\` failed (${msg}); copying the bundled fork skill instead`);
+    }
+    mkdirSync(dirname(dest), { recursive: true });
+    if (isSymlink(dest)) rmSync(dest, { force: true });
+    writeFileSync(dest, readFileSync(src, 'utf8'));
+    return { written: [dest], skipped: 0, blocked: [], method: 'copy' };
+  }
 }
 
 const PROVIDER_HINTS: Record<ProviderName, string> = {
@@ -510,7 +571,6 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
         cwd: process.cwd(),
         yes: true,
         suppressStatus: true,
-        suppressTip: true,
       });
     } catch (err) {
       log.warn(
@@ -526,23 +586,49 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
   // 5) Host /agentbox skill (idempotent).
   const sp = spinner();
   sp.start('installing host /agentbox skill…');
-  let skillRes: InstallHostSkillsResult;
   try {
-    skillRes = installHostSkills({ force: opts.force, dryRun: opts.dryRun, quiet: true });
-    if (skillRes.written.length > 0) {
-      sp.stop(`Agentbox Skills: Installed in ${String(skillRes.written.length)} locations`);
+    const skillRes = installHostSkills({ force: opts.force, dryRun: opts.dryRun, quiet: true });
+    const forkRes = await installForkSkill({ force: opts.force, dryRun: opts.dryRun, quiet: true });
+    const written = skillRes.written.length + forkRes.written.length;
+    const skipped = skillRes.skipped + forkRes.skipped;
+    if (written > 0) {
+      sp.stop(`Agentbox Skills: Installed in ${String(written)} locations`);
     } else {
-      sp.stop(`Agentbox Skills: nothing to write (${String(skillRes.skipped)} skipped)`);
+      sp.stop(`Agentbox Skills: nothing to write (${String(skipped)} skipped)`);
     }
-    if (skillRes.blocked.length > 0) {
+    const blocked = [...skillRes.blocked, ...forkRes.blocked];
+    if (blocked.length > 0) {
       log.warn(
-        `user-modified host skill file(s) left in place: ${skillRes.blocked.join(', ')}\n` +
+        `user-modified host skill file(s) left in place: ${blocked.join(', ')}\n` +
           'pass `agentbox install --skills-only --force` to overwrite',
       );
     }
   } catch (err) {
     sp.stop('Agentbox Skills: failed');
     log.warn(err instanceof Error ? err.message : String(err));
+  }
+
+  // 5b) Codex plugin (marketplace add + install + enable by default). Best-effort
+  // and gated on the host having Codex — a clean no-op otherwise.
+  try {
+    const codexRes = await installCodexPlugin({
+      force: opts.force,
+      dryRun: opts.dryRun,
+      quiet: true,
+    });
+    if (codexRes.ran) {
+      log.info(
+        codexRes.enableStatus === 'added'
+          ? 'Codex plugin: installed and enabled by default'
+          : codexRes.enableStatus === 'user-enabled'
+            ? 'Codex plugin: already enabled'
+            : codexRes.enableStatus === 'user-disabled'
+              ? 'Codex plugin: installed (left disabled per your config)'
+              : 'Codex plugin: installed (could not edit ~/.codex/config.toml)',
+      );
+    }
+  } catch (err) {
+    log.warn(`Codex plugin setup skipped: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // 6) First-run marker (so the auto-trigger doesn't fire again).
@@ -560,6 +646,8 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
       ? '✨ Setup complete — continuing with your command…'
       : '✨ Setup complete',
   );
+
+  await maybePromptStar({ trigger: 'install' });
   return true;
 }
 
@@ -590,23 +678,27 @@ export const installCommand = new Command('install')
     if (opts.skillsOnly) {
       intro('Installing AgentBox host commands...');
       let res: InstallHostSkillsResult;
+      let forkRes: InstallForkSkillResult;
       try {
         res = installHostSkills({ force: opts.force, dryRun: opts.dryRun });
+        forkRes = await installForkSkill({ force: opts.force, dryRun: opts.dryRun });
       } catch (err) {
         log.error(err instanceof Error ? err.message : String(err));
         process.exit(1);
       }
+      const written = [...res.written, ...forkRes.written];
+      const skipped = res.skipped + forkRes.skipped;
       if (opts.dryRun) {
         outro(
-          `dry-run: ${String(res.written.length)} file(s) would be written, ${String(res.skipped)} skipped`,
+          `dry-run: ${String(written.length)} file(s) would be written, ${String(skipped)} skipped`,
         );
         return;
       }
-      if (res.written.length === 0) {
-        outro(`nothing installed (${String(res.skipped)} skipped)`);
+      if (written.length === 0) {
+        outro(`nothing installed (${String(skipped)} skipped)`);
         return;
       }
-      outro(`installed: ${res.written.join(', ')}`);
+      outro(`installed: ${written.join(', ')}`);
       return;
     }
 
@@ -625,3 +717,5 @@ export const installCommand = new Command('install')
 // consumed by `install`'s own same-named options.
 installCommand.enablePositionalOptions();
 installCommand.addCommand(installCmuxCommand);
+installCommand.addCommand(installHerdrCommand);
+installCommand.addCommand(installCodexCommand);

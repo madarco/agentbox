@@ -12,7 +12,10 @@
  *     so restore boots from it (`Sandbox.createSnapshot` produces an
  *     id-addressed reusable snapshot, same shape as Vercel).
  *
- * `launchDockerd: false` because E2B microVMs can't run nested containers.
+ * `launchDockerd: true` — E2B microVMs DO support nested containers (full root
+ * + cap_sys_admin + working namespaces, verified 2026-06-23), so the base
+ * template bakes the docker engine and the cloud scaffold auto-starts dockerd
+ * on every create/resume (same as the vercel/hetzner/daytona providers).
  */
 
 import type { BoxRecord, Provider, ProviderCheckpoint } from '@agentbox/core';
@@ -40,7 +43,7 @@ const cloudProvider = createCloudProvider(e2bBackend, {
   // metadata for BoxRecord stats / the dashboard pane; per-create overrides
   // aren't honored by the SDK.
   defaultResources: { cpu: 2, memory: 4, disk: 8 },
-  launchDockerd: false,
+  launchDockerd: true,
 });
 
 /**

@@ -167,6 +167,20 @@ cold, without baking anything into the base image. Code: `checkpoint.ts`
   `.next`, build caches) are untouched by the reset — that warm state is the
   checkpoint's value. `resyncWorkspaceFromHost` then overlays the host's current
   uncommitted/untracked work, matching the non-checkpoint carry-over.
+- **Cloud parallel (vercel/daytona/e2b/hetzner).** Cloud has no worktrees and
+  can't bind-mount the host `.git`, but the same hazard applies: the snapshot's
+  `/workspace/.git` is the *source* box's per-box branch. `createCloudProvider`'s
+  create re-seeds in **overlay** mode (`seedCloudWorkspace({ overlay: true })`,
+  `packages/sandbox-cloud/src/workspace-seed.ts`): it keeps the snapshot's
+  gitignored warm tree, ships only the missing host commits
+  (`checkpointTip..hostTarget`) as a **git bundle** (full-clone `.git` swap as
+  fallback when diverged), then `git checkout -f -B agentbox/<new-box>` + `git
+  reset --hard` to the host base ref and replays the host stash + untracked.
+  Carry-over conflicts are resolved **box-wins** and returned as
+  `CreatedBox.resync` so the CLI injects the same conflict warning into the agent
+  as docker. The cloud analogue of `regenerateRestoredWorktrees` +
+  `resyncWorkspaceFromHost`. So a cloud box from a checkpoint lands on a fresh
+  per-box branch with the host's current files, not the frozen source branch.
 - `BoxRecord.checkpointImage` mirrors `record.image` for plain-vs-checkpoint
   disambiguation (used by `prune --all` to allowlist still-referenced
   checkpoint tags).

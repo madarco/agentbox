@@ -31,7 +31,8 @@
     "@agentbox/ctl": "workspace:*",
     "@agentbox/relay": "workspace:*",
     "@agentbox/sandbox-core": "workspace:*",
-    "execa": "^9.5.2"
+    "execa": "^9.5.2",
+    "smol-toml": "^1.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

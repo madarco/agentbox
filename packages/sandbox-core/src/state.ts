@@ -137,6 +137,26 @@ export async function recordBox(box: BoxRecord, path: string = STATE_FILE): Prom
 }
 
 /**
+ * Record which agent was last launched in a box (`agentbox claude` / `codex` /
+ * `opencode`). A locked read-modify-write so it can't clobber a concurrent
+ * state change. No-op when the box isn't in state (a race with `destroy`).
+ * `agentbox recover` reads `box.lastAgent` to decide which agent to relaunch.
+ */
+export async function recordLastAgent(
+  boxId: string,
+  kind: 'claude' | 'codex' | 'opencode',
+  path: string = STATE_FILE,
+): Promise<void> {
+  await mutateState(
+    (state) => ({
+      version: 1,
+      boxes: state.boxes.map((b) => (b.id === boxId ? { ...b, lastAgent: kind } : b)),
+    }),
+    path,
+  );
+}
+
+/**
  * Atomically allocate the next per-project index AND persist `record` claiming
  * it, under the state lock. Returns the reserved index (also stamped onto the
  * persisted record).
@@ -298,9 +318,7 @@ export function resolveBoxRef(
   const trimmed = ref.trim();
   if (projectRoot !== undefined && /^[1-9][0-9]*$/.test(trimmed)) {
     const idx = Number.parseInt(trimmed, 10);
-    const hit = state.boxes.find(
-      (b) => b.projectRoot === projectRoot && b.projectIndex === idx,
-    );
+    const hit = state.boxes.find((b) => b.projectRoot === projectRoot && b.projectIndex === idx);
     return hit ? { kind: 'ok', box: hit } : { kind: 'none' };
   }
   return findBox(trimmed, state);

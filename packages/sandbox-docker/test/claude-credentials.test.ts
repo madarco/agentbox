@@ -8,6 +8,7 @@ import {
   isRealAgentCredential,
   parseExtractResult,
   parseSyncResult,
+  parseVolumeClaudeCredentials,
 } from '../src/claude-credentials.js';
 
 describe('parseExtractResult', () => {
@@ -15,6 +16,40 @@ describe('parseExtractResult', () => {
     expect(parseExtractResult('COPIED=yes')).toEqual({ copied: true });
     expect(parseExtractResult('COPIED=no')).toEqual({ copied: false });
     expect(parseExtractResult('garbage')).toEqual({ copied: false });
+  });
+});
+
+describe('parseVolumeClaudeCredentials', () => {
+  it('reads a present file with a usable refresh token', () => {
+    expect(parseVolumeClaudeCredentials('PRESENT=yes REFRESH=yes')).toEqual({
+      present: true,
+      hasRefreshToken: true,
+    });
+  });
+
+  it('reports a present-but-blanked file (the dead state) as no refresh token', () => {
+    expect(parseVolumeClaudeCredentials('PRESENT=yes REFRESH=no')).toEqual({
+      present: true,
+      hasRefreshToken: false,
+    });
+  });
+
+  it('reports an absent file', () => {
+    expect(parseVolumeClaudeCredentials('PRESENT=no REFRESH=no')).toEqual({
+      present: false,
+      hasRefreshToken: false,
+    });
+  });
+
+  it('is tolerant of empty / garbage output', () => {
+    expect(parseVolumeClaudeCredentials('')).toEqual({
+      present: false,
+      hasRefreshToken: false,
+    });
+    expect(parseVolumeClaudeCredentials('docker: command not found')).toEqual({
+      present: false,
+      hasRefreshToken: false,
+    });
   });
 });
 

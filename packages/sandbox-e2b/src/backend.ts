@@ -62,9 +62,10 @@ const BOX_OWNER = 'vscode:vscode';
 const DEFAULT_E2B_DOMAIN = 'e2b.app';
 
 /**
- * Per-box session timeout the SDK enforces. Past it, E2B auto-terminates the
- * sandbox; we explicitly extend via `sb.setTimeout` is not needed for Task 1's
- * smoke (boxes survive minutes, not hours). 45 min default mirrors vercel.
+ * Per-box session timeout the SDK enforces at create. Past it, E2B
+ * auto-terminates the sandbox. The host keepalive loop renews it while the
+ * agent is active via `renewTimeout` (static `Sandbox.setTimeout`), so a
+ * long-running session isn't killed mid-work. 45 min default mirrors vercel.
  */
 const DEFAULT_TIMEOUT_MS = 45 * 60_000;
 
@@ -244,6 +245,19 @@ export const e2bBackend: CloudBackend = {
 
   async resume(h: CloudHandle): Promise<void> {
     await this.start(h);
+  },
+
+  // E2B `setTimeout` SETS the TTL to N ms from now (absolute-from-now), so we
+  // ignore the host's tracked deadline and use `target - now`. The static
+  // `Sandbox.setTimeout` hits the API without `connect` (no resume of a paused
+  // box). The host only calls when target > current, so this never shortens.
+  async renewTimeout(h: CloudHandle, targetDeadlineEpochMs: number): Promise<void> {
+    const ttlMs = Math.max(0, targetDeadlineEpochMs - Date.now());
+    if (ttlMs === 0) return;
+    const apiKey = resolveApiKey();
+    await withE2bRetry({ method: 'renewTimeout', retryOnAmbiguous: true }, async () => {
+      await Sandbox.setTimeout(h.sandboxId, ttlMs, { apiKey });
+    });
   },
 
   async destroy(h: CloudHandle): Promise<void> {

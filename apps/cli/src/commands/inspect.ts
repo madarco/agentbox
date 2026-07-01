@@ -9,7 +9,9 @@ import {
 import { renderEndpointLines } from '../endpoints-render.js';
 import { fmtBytes } from '../fmt.js';
 import { providerForBox } from '../provider/registry.js';
+import { agentboxAliasFor, readAgentboxSshAlias } from '../ssh-config.js';
 import { watchRender } from '../watch.js';
+import { fetchLive, renderLiveSections, renderPersistedSections } from './_status-render.js';
 import { handleLifecycleError } from './_errors.js';
 
 export interface InspectRunOptions {
@@ -63,6 +65,18 @@ async function renderText(i: InspectedBox): Promise<string> {
     `host export   ${i.hostPaths.mergedExport}  (run \`agentbox open\` to refresh)`,
     `created       ${i.record.createdAt}`,
   ];
+
+  // Append the same service/task/port detail plain `status` shows: live from the
+  // in-box daemon when running, else the persisted snapshot.
+  const live = await fetchLive(i.state, i.record.container);
+  if (live) {
+    // Label the source: the `persisted` row above shows snapshot counts, so
+    // flag these sections as live to explain any disagreement with it.
+    lines.push('', '(live from agentbox-ctl)', '', ...renderLiveSections(live));
+  } else if (i.persistedStatus) {
+    lines.push('', `(persisted snapshot from ${i.persistedStatus.timestamp})`, '');
+    lines.push(...renderPersistedSections(i.persistedStatus));
+  }
   return lines.join('\n');
 }
 
@@ -140,6 +154,8 @@ async function renderCloudText(box: BoxRecord): Promise<string> {
   const provider = await providerForBox(box);
   const state = await provider.probeState(box);
   const persisted = await readBoxStatus(box);
+  const alias = agentboxAliasFor(box.name);
+  const sshAlias = await readAgentboxSshAlias(alias);
   const lim = box.resourceLimits;
   const lines: string[] = [
     `id            ${box.id}`,
@@ -157,6 +173,8 @@ async function renderCloudText(box: BoxRecord): Promise<string> {
     `web preview   ${webPreviewLine(box)}`,
     `relay preview ${box.cloud?.relayPreviewUrl ?? '(unresolved)'}`,
     `bridge token  ${box.cloud?.bridgeToken ? '(set)' : '(unset)'}`,
+    `ssh alias     ${alias}${sshAlias ? '' : ` (run \`agentbox shell ${box.name} --ssh-config\` to write it)`}`,
+    `ssh identity  ${sshAlias?.identityFile ?? '(none — write the alias first)'}`,
     `playwright    ${box.withPlaywright ? 'yes' : 'no'}`,
     `env files     ${box.withEnv ? 'yes' : 'no'}`,
     `mem limit     ${lim?.memoryBytes ? fmtBytes(lim.memoryBytes) : 'unlimited'}`,
@@ -165,6 +183,13 @@ async function renderCloudText(box: BoxRecord): Promise<string> {
     `persisted     ${persisted ? `${persisted.timestamp} (${String(persisted.services.length)} svc, ${String(persisted.tasks.length)} tasks, ${String(persisted.ports.length)} ports)` : '(none)'}`,
     `created       ${box.createdAt}`,
   ];
+
+  // Cloud boxes have no host container to `docker exec` into, so the persisted
+  // snapshot (mirrored by the host poller) is the only source for task/service
+  // detail. Surface it instead of just the count line above.
+  if (persisted) {
+    lines.push('', ...renderPersistedSections(persisted));
+  }
   return lines.join('\n');
 }
 

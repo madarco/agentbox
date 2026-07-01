@@ -10,6 +10,7 @@ import { Command } from 'commander';
 import { detectExecutionMethod, type ExecMethod } from '../exec-method.js';
 import { handleLifecycleError } from './_errors.js';
 import { installHostSkills } from './install.js';
+import { maybePromptStar } from '../lib/star-prompt.js';
 
 interface UpdateOptions {
   yes?: boolean;
@@ -194,6 +195,7 @@ export const updateCommand = new Command('self-update')
         }
       }
 
+      await maybePromptStar({ trigger: 'self-update' });
       outro('update complete');
     } catch (err) {
       handleLifecycleError(err);

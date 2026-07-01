@@ -259,6 +259,42 @@ export async function seedAgentVolumesIfFresh(
 }
 
 /**
+ * Force the agent static-config home dirs (`~/.codex`, `~/.claude`,
+ * `~/.local/share/opencode`) to be owned by `vscode` on the live box.
+ *
+ * Why this exists: the agent runs as `vscode`, but a cloud base template can
+ * bake these dirs with the wrong owner (E2B's base image ships a `node` user,
+ * and the root `npm install -g @openai/codex` step has been observed leaving
+ * `~/.codex` as `node:node`). Once we stopped seeding Codex's `state_*.sqlite`
+ * index, Codex *creates* it at startup — which fails with EACCES when the dir
+ * isn't vscode-writable. A cheap, idempotent chown at create time fixes
+ * existing prepared templates without forcing a re-bake.
+ *
+ * Best-effort: `chown` is rejected on Daytona's S3-backed FUSE volumes, so the
+ * command tolerates failure. `chown -R` does not dereference symlinks, so the
+ * baked `~/.codex/auth.json -> ~/.agentbox-creds/codex/auth.json` credential
+ * symlink (and its peers) are unaffected.
+ */
+export async function ensureAgentHomeDirsOwned(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  opts: { onLog?: (line: string) => void } = {},
+): Promise<void> {
+  const log = opts.onLog ?? (() => {});
+  const paths = AGENT_SPECS.map((s) => s.staticMountPath).join(' ');
+  try {
+    await backend.exec(
+      handle,
+      `sudo -n chown -R vscode:vscode ${paths} 2>/dev/null || true`,
+    );
+  } catch (err) {
+    log(
+      `agent home-dir ownership normalize failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
  * Refresh the host-side credential backups (`~/.agentbox/{claude,codex,opencode}-credentials.json`)
  * from the live docker shared volumes BEFORE cloud creates seed from them.
  *

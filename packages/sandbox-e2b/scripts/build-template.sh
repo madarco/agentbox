@@ -8,8 +8,10 @@
 # Differences from the vercel installer (packages/sandbox-vercel/scripts/
 # provision.sh), which this mirrors:
 #   - apt-get / dpkg, not dnf (E2B base = Debian 12 bookworm).
-#   - NO docker / dockerd / iptables — E2B microVMs can't run nested
-#     containers (same shape as vercel).
+#   - docker.io + iptables ARE installed (in-box DinD): unlike the original
+#     assumption, E2B microVMs DO support nested containers (full root +
+#     cap_sys_admin + working namespaces, verified 2026-06-23). dockerd is
+#     launched at create/resume by agentbox-dockerd-start, not systemd.
 #   - The `vscode` user is created with a free uid (E2B's `code` group holds
 #     1000 on the base template, so useradd picks the next free uid; there are
 #     no bind mounts so the exact uid is irrelevant — only ownership of
@@ -17,6 +19,7 @@
 #
 # Required inputs (uploaded via Template.copy before this runs):
 #   /tmp/agentbox-ctl                  -- prebuilt @agentbox/ctl bundle (cjs)
+#   /tmp/agentbox-dockerd-start        -- in-box dockerd launch helper (DinD)
 #   /tmp/agentbox-vnc-start            -- VNC startup helper
 #   /tmp/agentbox-checkpoint-cleanup   -- pre-snapshot cleanup helper
 #   /tmp/agentbox-open                 -- in-box xdg-open shim
@@ -37,6 +40,24 @@ set -euo pipefail
 step() { printf '\n>>> BEGIN %s\n' "$1"; }
 done_() { printf '<<< END %s\n' "$1"; }
 
+# Retry a command with exponential backoff. Usage: retry_backoff <max> cmd...
+# Waits 60s before attempt 2, 240s before attempt 3 (~5 min total budget). Used
+# for the Claude native installer, whose CDN (claude.ai / downloads.claude.ai,
+# behind Cloudflare) intermittently 403s cloud-datacenter egress IPs under load.
+retry_backoff() {
+  local max=$1; shift
+  local attempt=1
+  local -a waits=(60 240)
+  while true; do
+    if "$@"; then return 0; fi
+    if [ "$attempt" -ge "$max" ]; then return 1; fi
+    local w=${waits[$((attempt-1))]:-240}
+    echo "retry_backoff: attempt ${attempt}/${max} failed — backing off ${w}s" >&2
+    sleep "$w"
+    attempt=$((attempt+1))
+  done
+}
+
 if [ "$(id -u)" -ne 0 ]; then
   echo "build-template.sh: must run as root (got uid $(id -u))" >&2
   exit 64
@@ -51,6 +72,7 @@ apt-get update -y -q
 apt-get install -y -q --no-install-recommends \
   ca-certificates \
   git \
+  git-lfs \
   tar \
   gzip \
   curl \
@@ -89,6 +111,19 @@ chmod 0440 /etc/sudoers.d/90-agentbox-vscode
 visudo -cf /etc/sudoers >/dev/null
 done_ "vscode user + sudoers"
 
+step "docker engine (in-box DinD)"
+# E2B microVMs support nested containers (full root + cap_sys_admin), so bake
+# the docker engine like the vercel/hetzner/docker providers. dockerd is NOT
+# started by systemd here — agentbox-dockerd-start launches it at create/resume
+# (it picks the storage driver at runtime; overlay2 works on E2B). docker.io
+# pulls containerd + runc + the cli; iptables is needed for bridge networking.
+# Must run AFTER the vscode user exists (usermod -aG docker vscode below).
+apt-get install -y -q --no-install-recommends docker.io iptables
+groupadd -f docker
+usermod -aG docker vscode
+systemctl disable --now docker.service docker.socket 2>/dev/null || true
+done_ "docker engine (in-box DinD)"
+
 step "agentbox base dirs + /workspace ownership"
 mkdir -p /workspace /run/agentbox /var/log/agentbox /var/lib/agentbox /etc/agentbox /etc/claude-code \
          /usr/local/share/agentbox
@@ -116,11 +151,21 @@ git config --system --add safe.directory '*' 2>/dev/null || true
 sudo -u vscode -H git config --global --add safe.directory '*' 2>/dev/null || true
 done_ "git system-wide safe.directory"
 
+step "git-lfs system filter"
+# Register filter.lfs.* system-wide (and for vscode) so an in-box checkout of an
+# LFS repo smudges instead of writing pointer files. Cloud boxes have no
+# bind-mounted ~/.gitconfig, so --system is the only place the filter lives.
+# --skip-repo never touches a checkout at bake time.
+git lfs install --system --skip-repo 2>/dev/null || true
+sudo -u vscode -H git lfs install --skip-repo 2>/dev/null || true
+done_ "git-lfs system filter"
+
 step "agentbox-ctl install"
 install -m 0755 /tmp/agentbox-ctl /usr/local/bin/agentbox-ctl
 done_ "agentbox-ctl install"
 
-step "baked helper scripts (vnc / cleanup / xdg-open)"
+step "baked helper scripts (dockerd / vnc / cleanup / xdg-open)"
+install -m 0755 /tmp/agentbox-dockerd-start      /usr/local/bin/agentbox-dockerd-start
 install -m 0755 /tmp/agentbox-vnc-start          /usr/local/bin/agentbox-vnc-start
 install -m 0755 /tmp/agentbox-checkpoint-cleanup /usr/local/bin/agentbox-checkpoint-cleanup
 install -m 0755 /tmp/agentbox-open               /usr/local/bin/agentbox-open
@@ -129,7 +174,7 @@ ln -sf /usr/local/bin/agentbox-open /usr/local/bin/xdg-open
 # Installing them here would put the relay-routing `git` on PATH ahead of
 # /usr/bin/git and route this script's own remaining git/clone commands through
 # a relay that doesn't exist during the bake.
-done_ "baked helper scripts (vnc / cleanup / xdg-open)"
+done_ "baked helper scripts (dockerd / vnc / cleanup / xdg-open)"
 
 step "baked config files (claude / codex / setup guide / tmux.conf)"
 install -m 0644 /tmp/agentbox-custom-CLAUDE.md      /etc/claude-code/CLAUDE.md
@@ -199,6 +244,18 @@ export DISABLE_AUTOUPDATER=${DISABLE_AUTOUPDATER:-1}
 export DISPLAY=${DISPLAY:-:1}
 export AGENT_BROWSER_EXECUTABLE_PATH=${AGENT_BROWSER_EXECUTABLE_PATH:-/usr/local/bin/chromium}
 export BROWSER=${BROWSER:-/usr/local/bin/agentbox-open}
+# Land interactive login shells in the workspace, so remote-host integrations
+# (Codex app, VS Code Remote-SSH, plain `ssh <box>`) open in the project instead
+# of $HOME. Interactive-only so scp/sftp and `ssh box <cmd>` are untouched; only
+# when still at $HOME so a caller-chosen dir (e.g. agentbox's tmux `-c /workspace`)
+# is never overridden.
+case $- in
+  *i*)
+    if [ "$PWD" = "$HOME" ] && [ -d /workspace ]; then
+      cd /workspace
+    fi
+    ;;
+esac
 PROFILE
 chmod 0644 /etc/profile.d/agentbox.sh
 done_ "login-shell shim (/etc/profile.d/agentbox.sh)"
@@ -231,8 +288,20 @@ npm install -g @openai/codex opencode-ai agent-browser 2>&1 | tail -3 || \
 done_ "agent CLIs (codex + opencode + agent-browser, global npm)"
 
 step "Claude Code (native installer, run as vscode)"
-# Anthropic's canonical installer drops `claude` at /home/vscode/.local/bin/.
-sudo -u vscode -H bash -lc 'curl -fsSL https://claude.ai/install.sh | bash -s stable'
+# Anthropic's native installer drops `claude` at /home/vscode/.local/bin/claude
+# with installMethod=native (matching the host-seeded .claude.json, so the
+# startup integrity check stays quiet) and ships native-only features the npm
+# package lacks. Its CDN (claude.ai / downloads.claude.ai) sits behind
+# Cloudflare, which intermittently 403s cloud-datacenter egress IPs under load —
+# so retry with backoff rather than falling back to npm. A bare `curl | bash`
+# would hide a 403 (curl -f exits non-zero but the pipe's status is bash's 0),
+# so keep pipefail and fold the PATH check in so a "succeeded but absent" result
+# also retries. A failed build is better than a claude-less template.
+if ! retry_backoff 3 sudo -u vscode -H bash -lc \
+     'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash -s stable && command -v claude >/dev/null'; then
+  echo "build-template.sh: Claude native installer failed after 3 attempts (Cloudflare 403?) — aborting build" >&2
+  exit 71
+fi
 done_ "Claude Code (native installer, run as vscode)"
 
 step "Chrome runtime libs (apt)"
@@ -289,7 +358,7 @@ install -m 0755 /tmp/agentbox-linear-shim /usr/local/bin/linear
 done_ "relay shims (gh + git + ntn + linear)"
 
 step "trim /tmp/agentbox-*"
-rm -f /tmp/agentbox-ctl /tmp/agentbox-vnc-start \
+rm -f /tmp/agentbox-ctl /tmp/agentbox-dockerd-start /tmp/agentbox-vnc-start \
       /tmp/agentbox-checkpoint-cleanup /tmp/agentbox-open \
       /tmp/agentbox-gh-shim /tmp/agentbox-git-shim /tmp/agentbox-ntn-shim \
       /tmp/agentbox-linear-shim \

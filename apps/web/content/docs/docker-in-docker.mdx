@@ -62,19 +62,20 @@ The shared cache is mutually exclusive at runtime: only one box can mount `agent
 
 ## Cloud parity & limits
 
-[Daytona](/docs/daytona) and [Hetzner](/docs/hetzner) get the same DinD setup as the default docker provider — `dockerd` is auto-launched with no opt-in, and the data root lives on the sandbox/VPS filesystem (wiped with the box on `destroy`). [Vercel](/docs/vercel) cannot run nested containers at all.
+[Daytona](/docs/daytona), [Hetzner](/docs/hetzner), [Vercel](/docs/vercel), and [E2B](/docs/e2b) get the same DinD setup as the default docker provider — `dockerd` is auto-launched with no opt-in, and the data root lives on the sandbox/VPS filesystem (wiped with the box on `destroy`). On Vercel and E2B the docker engine is baked into the prepare snapshot/template and pulled images carry over across pause/resume.
 
 | Provider | DinD |
 |----------|------|
 | docker (default) | Yes — per-box volume; `--shared-docker-cache` available |
 | daytona | Yes — auto-launched; no shared-cache option |
 | hetzner | Yes — runs inside the VPS, baked into the prepare snapshot |
-| vercel | No — `CAP_SYS_ADMIN` + seccomp block nested containers |
+| vercel | Yes — baked into the prepare snapshot; auto-launched on create/resume |
+| e2b | Yes — baked into the prepare template; auto-launched on create/resume |
 
 ```bash
 agentbox shell <cloud-box> -- docker info
 ```
 
 <Callout title="NOTE">
-`--shared-docker-cache` is a docker-provider feature only. The Vercel provider sets `launchDockerd: false`, so if your workflow needs `docker` inside the box, choose docker, daytona, or hetzner.
+`--shared-docker-cache` is a docker-provider feature only. Every other provider (daytona, hetzner, vercel, e2b) still gets a working in-box `docker` — just without the shared-cache volume.
 </Callout>

@@ -448,6 +448,25 @@ export const vercelBackend: CloudBackend = {
     return this.previewUrl(h, port);
   },
 
+  // Vercel `extendTimeout` is ADDITIVE (adds to the current deadline) and the
+  // remaining time isn't readable, so the host passes its tracked deadline and
+  // we extend by the delta to land the death-time at `target`. The host only
+  // calls when target > current, so this never shortens. A plan-cap rejection
+  // bubbles to the keepalive loop's catch (it lets the box lapse at the cap).
+  async renewTimeout(
+    h: CloudHandle,
+    targetDeadlineEpochMs: number,
+    currentDeadlineEpochMs: number,
+  ): Promise<void> {
+    const deltaMs = Math.max(0, targetDeadlineEpochMs - currentDeadlineEpochMs);
+    if (deltaMs === 0) return;
+    await ensureFreshCredentials();
+    await withVercelRetry({ method: 'renewTimeout', retryOnAmbiguous: true }, async () => {
+      const sb = await getSandbox(h.sandboxId);
+      await sb.extendTimeout(deltaMs);
+    });
+  },
+
   async snapshotExists(snapshotName: string): Promise<boolean> {
     await ensureFreshCredentials();
     return withVercelRetry({ method: 'snapshotExists', retryOnAmbiguous: true }, async () => {

@@ -24,7 +24,7 @@ import {
   type BoxRecord,
   type BuildAttachOptions,
 } from '@agentbox/core';
-import { renderInnerCommand } from '@agentbox/sandbox-cloud';
+import { hostTermForCloud, renderInnerCommand } from '@agentbox/sandbox-cloud';
 import { resolveApiKey } from './sdk.js';
 
 const SELF = dirname(fileURLToPath(import.meta.url));
@@ -72,6 +72,11 @@ export async function buildE2bAttach(
 
   const apiKey = resolveApiKey();
   const inner = renderInnerCommand(kind, opts);
+  // Forward the host's TERM (the helper has no host env once node-pty spawns
+  // it, so pass it explicitly). The helper sets it on the in-box PTY; the
+  // renderInnerCommand TERM guard downgrades to xterm-256color when the box's
+  // terminfo doesn't carry it (e.g. xterm-ghostty), matching the docker path.
+  const hostTerm = hostTermForCloud();
 
   const argv = [
     process.execPath,
@@ -81,12 +86,19 @@ export async function buildE2bAttach(
     '--user',
     'vscode',
   ];
+  // Detached pre-start (new-tab attach / `-i` queue worker): the inner command
+  // only creates the tmux session (no `exec tmux attach`). The helper must run
+  // it once and EXIT rather than open a persistent interactive PTY that idles
+  // forever — otherwise the host's `runDetached` await never resolves and
+  // `agentbox <agent>` hangs after "box ready". See attach-helper.ts header.
+  if (opts?.detached) argv.push('--detached');
 
   return {
     argv,
     env: {
       E2B_API_KEY: apiKey,
       AGENTBOX_E2B_INNER_CMD: inner,
+      AGENTBOX_HOST_TERM: hostTerm,
     },
   };
 }

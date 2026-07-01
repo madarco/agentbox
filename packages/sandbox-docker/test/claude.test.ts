@@ -32,9 +32,8 @@ describe('resolveClaudeVolume', () => {
 describe('buildDashboardAttachArgv', () => {
   it('attaches via a grouped sibling session with the inner status bar off', () => {
     const argv = buildDashboardAttachArgv('agentbox-box1');
-    const dash = `${DEFAULT_CLAUDE_SESSION}-dash`;
-    // grouped session created (or no-op) before status is changed, attach last
-    expect(argv).toEqual([
+    // docker exec head, then the tmux command runs under `sh -c` with the TERM guard.
+    expect(argv.slice(0, 7)).toEqual([
       'exec',
       '-it',
       '-e',
@@ -42,34 +41,29 @@ describe('buildDashboardAttachArgv', () => {
       '--user',
       'vscode',
       'agentbox-box1',
-      'tmux',
-      'new-session',
-      '-A',
-      '-d',
-      '-s',
-      dash,
-      '-t',
-      DEFAULT_CLAUDE_SESSION,
-      ';',
-      'set',
-      '-t',
-      dash,
-      'status',
-      'off',
-      ';',
-      'attach',
-      '-t',
-      dash,
     ]);
+    const script = argv[argv.indexOf('-c') + 1]!;
+    expect(script).toContain('infocmp "$TERM"');
+    // grouped session name derived in-shell, created (or no-op) and status off
+    // before attach, attach last.
+    expect(script).toContain('dash="$1-dash"');
+    expect(script).toContain('new-session -A -d -s "$dash" -t "$1"');
+    expect(script).toContain('set -t "$dash" status off');
+    expect(script).toMatch(/attach -t "\$dash"\s*$/);
+    // the base session name is the single positional bound to "$1".
+    expect(argv[argv.length - 1]).toBe(DEFAULT_CLAUDE_SESSION);
   });
 
   it('derives the grouped session from a custom session name', () => {
     const argv = buildDashboardAttachArgv('agentbox-box1', 'codex');
-    expect(argv).toContain('codex');
-    expect(argv).toContain('codex-dash');
-    // never attaches directly to the original session (would show its footer)
-    const attachIdx = argv.lastIndexOf('attach');
-    expect(argv[attachIdx + 2]).toBe('codex-dash');
+    // the base session name is the single positional; the grouped "-dash" name
+    // is derived from it in-shell.
+    expect(argv[argv.length - 1]).toBe('codex');
+    const script = argv[argv.indexOf('-c') + 1]!;
+    expect(script).toContain('dash="$1-dash"');
+    // never attaches directly to the original session (would show its footer).
+    expect(script).toContain('attach -t "$dash"');
+    expect(script).not.toContain('attach -t "$1"');
   });
 });
 

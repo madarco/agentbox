@@ -3,6 +3,7 @@ import { request as httpRequest } from 'node:http';
 import { DEFAULT_RELAY_PORT } from './types.js';
 import { startRelayServer } from './server.js';
 import { startAutopauseLoop } from './autopause.js';
+import { startCloudKeepaliveLoop } from './cloud-keepalive.js';
 import { startQueueLoop } from './queue.js';
 
 const program = new Command();
@@ -36,6 +37,11 @@ program
       events: handle.events,
       log: (line) => process.stdout.write(`agentbox-relay: ${line}\n`),
     });
+    const cloudKeepalive = startCloudKeepaliveLoop({
+      registry: handle.registry,
+      statusStore: handle.statusStore,
+      log: (line) => process.stdout.write(`agentbox-relay: ${line}\n`),
+    });
     const queue = startQueueLoop({
       log: (line) => process.stdout.write(`agentbox-relay: ${line}\n`),
       registry: handle.registry,
@@ -47,7 +53,7 @@ program
 
     const shutdown = (signal: string): void => {
       process.stdout.write(`agentbox-relay: ${signal} — shutting down\n`);
-      Promise.allSettled([autopause.stop(), queue.stop()])
+      Promise.allSettled([autopause.stop(), cloudKeepalive.stop(), queue.stop()])
         .finally(() => handle.close())
         .finally(() => process.exit(0));
     };

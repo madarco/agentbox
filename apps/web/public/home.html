@@ -539,6 +539,344 @@
   footer .links a { color: var(--muted); }
   footer .links a:hover { color: var(--accent); }
   footer b { color: var(--ink); font-weight: 500; }
+
+/* ──────────────────────────────────────────────────────────
+   feature-widgets.css — three interactive feature widgets
+   inherits the page's :root tokens (--accent, --mono, …)
+   ────────────────────────────────────────────────────────── */
+
+.feat-lede {
+  font-size: 16px;
+  line-height: 1.62;
+  color: var(--ink-2);
+  max-width: 64ch;
+  margin-bottom: 30px;
+  text-wrap: pretty;
+}
+.feat-lede b { font-weight: 500; color: var(--ink); }
+
+/* ══ 01 · provisioning manifest ══════════════════════════ */
+.sp {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04);
+}
+.sp-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 16px; background: var(--paper); border-bottom: 1px solid var(--line-2);
+}
+.sp-bar-l { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.sp-led { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; transition: background .3s; }
+.sp.run .sp-led { background: #b07d12; }
+.sp.done .sp-led { background: var(--accent); }
+.sp-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.sp-sub { font-size: 11.5px; color: var(--muted); }
+.sp-run {
+  font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--accent);
+  background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 7px;
+  padding: 7px 12px; cursor: pointer; white-space: nowrap;
+  transition: filter .15s, opacity .25s;
+}
+.sp-run:hover { filter: brightness(.97); }
+.sp.run .sp-run { opacity: .45; pointer-events: none; }
+
+.sp-prog { height: 3px; background: var(--line-2); }
+.sp-prog-fill { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s ease; }
+
+.sp-list { padding: 4px 0; }
+.sp-task {
+  display: flex; align-items: center; gap: 13px; padding: 11px 16px;
+  border-top: 1px solid var(--line-2); opacity: .48; transition: opacity .3s;
+}
+.sp-task:first-child { border-top: none; }
+.sp-task.running, .sp-task.done { opacity: 1; }
+.sp-ic { width: 20px; height: 20px; color: var(--faint); flex: none; transition: color .3s; }
+.sp-ic svg { width: 100%; height: 100%; display: block; }
+.sp-task.running .sp-ic { color: #b07d12; }
+.sp-task.done .sp-ic { color: var(--accent); }
+.sp-lbl { font-family: var(--mono); font-size: 13px; color: var(--ink); display: flex; flex-direction: column; gap: 1px; line-height: 1.3; }
+.sp-lbl small { font-size: 11px; color: var(--muted); font-weight: 400; }
+.sp-stat { margin-left: auto; display: flex; align-items: center; min-width: 60px; justify-content: flex-end; }
+.sp-q { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+.sp-spin {
+  width: 13px; height: 13px; border-radius: 50%; display: none;
+  border: 2px solid rgba(176, 125, 18, .25); border-top-color: #b07d12;
+  animation: sp-spin .7s linear infinite;
+}
+.sp-ok { color: var(--accent); font-family: var(--mono); font-size: 13px; display: none; }
+.sp-task.running .sp-q { display: none; }
+.sp-task.running .sp-spin { display: block; }
+.sp-task.done .sp-q, .sp-task.done .sp-spin { display: none; }
+.sp-task.done .sp-ok { display: block; }
+@keyframes sp-spin { to { transform: rotate(360deg); } }
+.sp-foot { padding: 11px 16px; border-top: 1px solid var(--line-2); background: var(--paper); font-size: 12px; color: var(--muted); }
+.sp-foot.on { color: var(--accent); }
+
+/* ══ 02 · access switcher ════════════════════════════════ */
+.ax-tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+.ax-tab {
+  font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 13px; cursor: pointer; transition: color .15s, border-color .15s, background .15s;
+}
+.ax-tab:hover { color: var(--ink); border-color: var(--faint); }
+.ax-tab.is-on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+
+.ax-stage { position: relative; height: clamp(300px, 42vw, 360px); }
+.ax-view { position: absolute; inset: 0; opacity: 0; pointer-events: none; transition: opacity .35s ease; }
+.ax-view.is-on { opacity: 1; pointer-events: auto; }
+
+.axw {
+  height: 100%; display: flex; flex-direction: column;
+  background: #15171b; border: 1px solid #262a31; border-radius: 12px; overflow: hidden;
+  box-shadow: 0 22px 44px -28px rgba(20, 24, 30, .5);
+}
+.axw-bar { display: flex; align-items: center; gap: 7px; padding: 9px 12px; background: #1b1e24; border-bottom: 1px solid #262a31; }
+.axw-bar .td { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.axw-t { margin-left: 7px; font-size: 10.5px; color: #6c727b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ax-live { margin-left: auto; font-size: 10px; color: #61c554; white-space: nowrap; }
+
+/* screen share */
+.ax-desk { flex: 1; position: relative; overflow: hidden; background: radial-gradient(120% 90% at 30% 0%, #1e2a33, #11161d 70%); }
+.ax-desk-top { display: flex; justify-content: space-between; padding: 6px 12px; font-family: var(--mono); font-size: 10px; color: #8a929c; border-bottom: 1px solid rgba(255, 255, 255, .06); }
+.ax-desk-win { position: absolute; left: 13%; top: 23%; width: 60%; height: 55%; background: #0e1218; border: 1px solid #2a2f37; border-radius: 8px; overflow: hidden; box-shadow: 0 18px 40px -20px rgba(0, 0, 0, .7); }
+.ax-dw-bar { height: 22px; background: #161b22; border-bottom: 1px solid #242a31; }
+.ax-dw-body { padding: 13px; display: flex; flex-direction: column; gap: 9px; }
+.ax-dw-body span { height: 7px; border-radius: 4px; background: #2a313a; display: block; }
+.ax-dw-body span:nth-child(1) { width: 70%; background: #3a4452; }
+.ax-dw-body span:nth-child(2) { width: 92%; }
+.ax-dw-body span:nth-child(3) { width: 54%; }
+.ax-cursor { position: absolute; width: 14px; height: 14px; left: 0; top: 0; animation: ax-cursor 6.5s ease-in-out infinite; }
+.ax-cursor::before {
+  content: ''; position: absolute; width: 0; height: 0;
+  border-left: 8px solid #fff; border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+  transform: rotate(-40deg); filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .5));
+}
+@keyframes ax-cursor {
+  0%   { transform: translate(72px, 64px); }
+  22%  { transform: translate(230px, 130px); }
+  46%  { transform: translate(150px, 195px); }
+  70%  { transform: translate(300px, 96px); }
+  100% { transform: translate(72px, 64px); }
+}
+
+/* local preview */
+.ax-page { flex: 1; background: #fff; display: flex; flex-direction: column; overflow: hidden; }
+.ax-addr { margin-left: 7px; display: inline-flex; align-items: center; gap: 6px; background: #0e1218; border: 1px solid #2a2f37; border-radius: 6px; padding: 3px 9px; font-family: var(--mono); font-size: 10.5px; color: #aeb6c0; }
+.ax-lock { color: #4ec98a; display: inline-flex; }
+.ax-lock svg { width: 9px; height: 9px; display: block; }
+.ax-tunnel { color: #4ec98a; border: 1px solid rgba(78, 201, 138, .4); border-radius: 4px; padding: 0 5px; font-size: 9px; }
+.ax-pg-nav { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid #ececec; }
+.ax-pg-logo { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); }
+.ax-pg-link { width: 46px; height: 7px; border-radius: 4px; background: #e2e2dc; }
+.ax-pg-btn { margin-left: auto; width: 66px; height: 24px; border-radius: 6px; background: #16181c; }
+.ax-pg-hero { display: flex; gap: 18px; padding: 22px 16px; align-items: center; }
+.ax-pg-htext { flex: 1; display: flex; flex-direction: column; gap: 9px; }
+.ax-pg-htext span { height: 10px; border-radius: 5px; background: #e2e2dc; }
+.ax-pg-htext span.h { width: 80%; height: 15px; background: #16181c; }
+.ax-pg-htext span.w95 { width: 95%; }
+.ax-pg-htext span.w60 { width: 60%; }
+.ax-pg-cta { width: 96px; height: 30px; border-radius: 7px; background: var(--accent); margin-top: 4px; }
+.ax-pg-himg { width: 42%; height: 96px; border-radius: 10px; background: linear-gradient(135deg, #eaf4ee, #cfe9da); border: 1px solid #e2e2dc; }
+.ax-pg-cards { display: flex; gap: 12px; padding: 0 16px 18px; }
+.ax-pg-cards span { flex: 1; height: 54px; border-radius: 9px; background: #f3f3ef; border: 1px solid #ececec; }
+
+/* editor */
+.ax-code { flex: 1; display: grid; grid-template-columns: 128px 1fr; min-height: 0; }
+.ax-tree { background: #13171d; border-right: 1px solid #242a31; padding: 10px 0; display: flex; flex-direction: column; gap: 2px; }
+.ax-tree span { font-family: var(--mono); font-size: 11px; color: #7c828c; padding: 3px 14px; }
+.ax-tree span.on { color: #e6e9ed; background: rgba(255, 255, 255, .05); border-left: 2px solid var(--accent); padding-left: 12px; }
+.ax-editor { background: #0e1218; padding: 12px 16px; font-family: var(--mono); font-size: 11.5px; line-height: 1.9; overflow: hidden; color: #c8ccd3; }
+.ax-cl { white-space: pre; min-height: 1px; }
+.t-key { color: #c98aff; } .t-fn { color: #62a9f0; } .t-str { color: #7fe0a8; }
+.t-com { color: #5d646e; } .t-var { color: #e6e9ed; } .t-num { color: #f4bf4f; }
+.ax-status { background: var(--accent); color: #eafff2; font-family: var(--mono); font-size: 10.5px; padding: 5px 14px; display: flex; align-items: center; gap: 8px; }
+.ax-st-dot { width: 6px; height: 6px; border-radius: 50%; background: #eafff2; }
+
+/* terminal */
+.ax-tmux { display: flex; background: #13171d; border-bottom: 1px solid #242a31; }
+.ax-tmux span { font-family: var(--mono); font-size: 11px; color: #7c828c; padding: 7px 13px; border-right: 1px solid #242a31; }
+.ax-tmux span.on { color: #e6e9ed; background: #0e1218; border-bottom: 2px solid var(--accent); }
+.ax-term { flex: 1; background: #0e1218; padding: 13px 15px; font-family: var(--mono); font-size: 11.5px; line-height: 1.9; color: #c8ccd3; }
+.ax-term .pr { color: #4ec98a; } .ax-term .dim { color: #7c828c; } .ax-term .ok { color: #5fc88f; } .ax-term .shellp { color: #62a9f0; }
+.cur2 { display: inline-block; width: 6px; height: 12px; background: #7fe0a8; vertical-align: -1px; animation: term-blink 1.05s steps(1) infinite; }
+
+.ax-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+.ax-chips-lbl { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin-right: 2px; }
+.ax-chip { font-family: var(--mono); font-size: 12px; color: var(--ink-2); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; }
+.ax-more { color: var(--muted); border-style: dashed; }
+
+/* ══ 03 · orchestration loop ═════════════════════════════ */
+.lp-main { display: grid; grid-template-columns: 1fr; gap: 14px; }
+@media (min-width: 760px) { .lp-main { grid-template-columns: minmax(0, 300px) 1fr; align-items: stretch; } }
+
+.lp-orch {
+  background: #15171b; border: 1px solid #262a31; border-radius: 12px; overflow: hidden;
+  display: flex; flex-direction: column; box-shadow: 0 18px 40px -28px rgba(20, 24, 30, .5);
+}
+.lp-orch-h { display: flex; align-items: center; gap: 10px; padding: 13px 15px; border-bottom: 1px solid #262a31; }
+.lp-orch-ic { width: 18px; height: 18px; color: #4ec98a; flex: none; }
+.lp-orch-ic svg { width: 100%; height: 100%; display: block; }
+.lp-orch-t { font-size: 13px; font-weight: 600; color: #e6e9ed; }
+.lp-orch-b { margin-left: auto; font-size: 10px; color: #4ec98a; border: 1px solid rgba(78, 201, 138, .4); border-radius: 999px; padding: 3px 9px; }
+.lp-feed {
+  flex: 1; min-height: 196px; max-height: 236px; padding: 12px 15px;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.7; color: #c8ccd3;
+  overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 34px);
+          mask-image: linear-gradient(to bottom, transparent 0, #000 34px);
+}
+.lp-fl { white-space: pre-wrap; word-break: break-word; opacity: 0; transform: translateY(4px); animation: lp-in .3s ease forwards; }
+@keyframes lp-in { to { opacity: 1; transform: none; } }
+.lp-fl .a { color: #4ec98a; } .lp-fl .q { color: #f4bf4f; } .lp-fl .w { color: #62a9f0; } .lp-fl .m { color: #7c828c; }
+
+.lp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.lp-sq { position: relative; display: flex; flex-direction: column; min-height: 132px; background: #15171b; border: 1px solid #262a31; border-radius: 11px; overflow: hidden; box-shadow: 0 14px 30px -22px rgba(20, 24, 30, .55); transition: border-color .25s, box-shadow .25s, opacity .35s ease, transform .35s ease; }
+.lp-sq-bar { display: flex; align-items: center; gap: 6px; padding: 7px 10px; background: #1b1e24; border-bottom: 1px solid #262a31; }
+.lp-sq-bar .td { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.lp-sq-id { margin-left: 5px; font-family: var(--mono); font-size: 10px; font-weight: 600; color: #c8ccd3; }
+.lp-sq-br { margin-left: auto; font-family: var(--mono); font-size: 9.5px; color: #6c727b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 88px; }
+.lp-sq-screen { flex: 1; display: grid; place-items: center; padding: 12px; background: radial-gradient(80% 80% at 50% 32%, #1b2128, #0f1218 82%); }
+.lp-sq-logo { width: 44px; height: 44px; border-radius: 11px; background: #fff; padding: 6px; object-fit: contain; box-shadow: 0 5px 14px -5px rgba(0, 0, 0, .55); }
+.lp-sq-foot { display: flex; align-items: center; gap: 8px; padding: 7px 10px; min-height: 36px; border-top: 1px solid #242a31; background: #13161b; }
+.lp-dot { width: 7px; height: 7px; border-radius: 50%; background: #6c727b; flex: none; transition: background .3s; }
+.lp-sq-state { font-family: var(--mono); font-size: 10px; color: #9aa0a8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lp-answer { margin-left: auto; display: none; font-family: var(--mono); font-size: 10px; font-weight: 500; color: #fff; background: #2f7de0; border: 1px solid #2f7de0; border-radius: 6px; padding: 3px 9px; cursor: pointer; flex: none; animation: lp-pulse 1.4s ease-in-out infinite; }
+.lp-sq.is-wait .lp-answer { display: inline-block; }
+.lp-sq.is-wait { border-color: #2f7de0; box-shadow: 0 0 0 2px rgba(47, 125, 224, .18); }
+@keyframes lp-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(47, 125, 224, .4); } 60% { box-shadow: 0 0 0 5px rgba(47, 125, 224, 0); } }
+
+.lp-sq[data-state="plan"] .lp-dot { background: #f4bf4f; }
+.lp-sq[data-state="wait"] .lp-dot { background: #62a9f0; }
+.lp-sq[data-state="run"] .lp-dot { background: #4ec98a; animation: lp-blink 1s steps(1) infinite; }
+.lp-sq[data-state="push"] .lp-dot { background: #f4bf4f; }
+.lp-sq[data-state="pr"] .lp-dot { background: #4ec98a; }
+.lp-sq[data-state="done"] .lp-dot { background: #4ec98a; }
+@keyframes lp-blink { 50% { opacity: .3; } }
+
+.lp-sq.empty { align-items: center; justify-content: center; gap: 7px; background: transparent; border: 1px dashed #353b43; box-shadow: none; }
+.lp-slot-mark { font-family: var(--mono); font-size: 22px; line-height: 1; color: #454b54; }
+.lp-slot-t { font-family: var(--mono); font-size: 10px; letter-spacing: .04em; color: #565d66; }
+.lp-sq.spawning { animation: lp-spawn .5s cubic-bezier(.2, .7, .3, 1.25) both; }
+@keyframes lp-spawn { from { opacity: 0; transform: scale(.82); } to { opacity: 1; transform: none; } }
+.lp-sq.despawn { opacity: 0; transform: scale(.86); }
+
+.lp-git { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 14px; padding: 13px 15px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.lp-git-lbl { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin-right: 2px; }
+.lp-gchip { font-family: var(--mono); font-size: 12px; color: var(--ink-2); background: var(--paper); border: 1px solid var(--line); border-radius: 7px; padding: 5px 11px; transition: color .2s, border-color .2s, background .2s; }
+.lp-gchip.flash { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.lp-gsep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+.lp-int { font-family: var(--mono); font-size: 12px; color: var(--muted); background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; transition: color .2s, border-color .2s, background .2s; }
+.lp-int.flash { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-spin, .ax-cursor, .cur2, .lp-fl, .lp-answer, .lp-dot, .lp-sq.spawning { animation: none !important; }
+  .lp-fl { opacity: 1; transform: none; }
+}
+
+/* ══ 01b · provision grid (Docker / Sandbox) ═════════════ */
+.bx { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; box-shadow: 0 1px 2px rgba(16, 24, 40, .04); }
+.bx-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; background: var(--paper); border-bottom: 1px solid var(--line-2); }
+.bx-bar-l { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.bx-led { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; transition: background .3s; }
+.bx.run .bx-led { background: #b07d12; }
+.bx.done .bx-led { background: var(--accent); }
+.bx-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.bx-sub { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+
+.bx-seg { display: flex; gap: 2px; padding: 2px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; flex: none; }
+.bx-seg-b { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--muted); background: transparent; border: none; border-radius: 6px; padding: 5px 13px; cursor: pointer; transition: color .15s, background .15s, box-shadow .15s; }
+.bx-seg-b:hover { color: var(--ink); }
+.bx-seg-b.is-on { color: var(--accent); background: var(--panel); box-shadow: 0 1px 2px rgba(16, 24, 40, .08); }
+
+.bx-prog { height: 3px; background: var(--line-2); }
+.bx-prog-fill { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s ease; }
+
+.bx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 14px; }
+@media (max-width: 560px) { .bx-grid { grid-template-columns: 1fr; } }
+.bx-item { display: flex; align-items: center; gap: 10px; text-align: left; font: inherit; cursor: pointer; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 9px; background: var(--paper); color: var(--ink); -webkit-tap-highlight-color: transparent; transition: border-color .25s, background .25s, color .25s, box-shadow .2s; }
+.bx-item:hover { border-color: var(--faint); }
+.bx-ic { width: 17px; height: 17px; color: var(--faint); flex: none; transition: color .25s; }
+.bx-ic svg { width: 100%; height: 100%; display: block; }
+.bx-lbl { font-family: var(--mono); font-size: 12px; line-height: 1.25; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bx-chk { margin-left: auto; width: 15px; height: 15px; color: var(--accent); flex: none; opacity: 0; transform: scale(.5); transition: opacity .25s, transform .25s; }
+.bx-chk svg { width: 100%; height: 100%; display: block; }
+.bx-item.active { border-color: #b07d12; background: rgba(176, 125, 18, .06); animation: bx-pulse 1s ease-in-out infinite; }
+.bx-item.active .bx-ic { color: #b07d12; }
+.bx-item.done { border-color: var(--accent); background: var(--accent-soft); }
+.bx-item.done .bx-ic { color: var(--accent); }
+.bx-item.done .bx-chk { opacity: 1; transform: scale(1); }
+@keyframes bx-pulse { 0%, 100% { box-shadow: 0 0 0 2px rgba(176, 125, 18, .12); } 50% { box-shadow: 0 0 0 3px rgba(176, 125, 18, .22); } }
+
+.bx-foot { padding: 11px 16px; border-top: 1px solid var(--line-2); background: var(--paper); font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.bx-foot.on { color: var(--accent); }
+
+@media (prefers-reduced-motion: reduce) { .bx-item.active { animation: none; } }
+
+.bx-item.bx-s-only { display: none; }
+.bx.is-sandbox .bx-item.bx-s-only { display: flex; }
+
+/* ── draggable screen-share windows ──────────────────────── */
+.ax-win { position: absolute; width: 448px; max-width: 96%; background: #fff; border: 1px solid #d4d4ce; border-radius: 10px; overflow: hidden; box-shadow: 0 18px 44px -20px rgba(20, 24, 30, .55); }
+.ax-win.drag { box-shadow: 0 28px 60px -18px rgba(20, 24, 30, .7); }
+.ax-win-bar { display: flex; align-items: center; gap: 7px; padding: 8px 12px; background: #ececea; border-bottom: 1px solid #e0e0da; cursor: grab; user-select: none; touch-action: none; }
+.ax-win.drag .ax-win-bar, .ax-win.drag .ax-url { cursor: grabbing; }
+.ax-win-bar .td { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.ax-win-t { margin-left: 5px; font-size: 10px; color: #8a929c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ax-win-body { padding: 9px 11px 11px; font-family: var(--mono); font-size: 10.5px; line-height: 1.6; color: #c8ccd3; }
+.ax-win-body > div { white-space: pre; overflow: hidden; }
+.ax-win-body .pr { color: #4ec98a; }
+.ax-win-body .hd { color: #6c727b; }
+.ax-win-body .id { color: #62a9f0; }
+.ax-win-body .ok { color: #5fc88f; }
+.ax-win-body .dim { color: #7c828c; }
+.ax-win-body .ar { color: #c98aff; }
+.ax-win-body .shellp { color: #62a9f0; }
+
+/* fake chromium browser windows (inside the draggable .ax-win) */
+.ax-url { display: flex; align-items: center; gap: 8px; padding: 7px 11px; background: #f4f4f0; border-bottom: 1px solid #e6e6e0; cursor: grab; user-select: none; touch-action: none; }
+.ax-nav { font-family: var(--mono); font-size: 13px; color: #9aa0a8; letter-spacing: 1px; flex: none; }
+.ax-urlbar { flex: 1; display: flex; align-items: center; gap: 6px; background: #fff; border: 1px solid #e0e0da; border-radius: 6px; padding: 5px 11px; font-family: var(--mono); font-size: 12px; color: #5b616b; white-space: nowrap; overflow: hidden; }
+.ax-urlbar svg { width: 10px; height: 10px; color: var(--accent); flex: none; }
+.ax-web { background: #fff; opacity: 0.4; }
+
+.ax-web-shop { display: flex; flex-direction: column; }
+.ax-wnav { display: flex; align-items: center; gap: 9px; padding: 9px 13px; border-bottom: 1px solid #ececec; }
+.ax-wlogo { width: 18px; height: 18px; border-radius: 5px; background: var(--accent); flex: none; }
+.ax-wl { width: 34px; height: 6px; border-radius: 3px; background: #e2e2dc; }
+.ax-wbtn { margin-left: auto; width: 52px; height: 20px; border-radius: 5px; background: #16181c; }
+.ax-whero { display: flex; gap: 13px; padding: 13px 13px; align-items: center; }
+.ax-wtext { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.ax-wtext span { height: 8px; border-radius: 4px; background: #e2e2dc; }
+.ax-wtext .t { width: 76%; height: 14px; background: #16181c; }
+.ax-wtext .s { width: 55%; }
+.ax-wtext span.ax-wcta { width: 76px; height: 24px; border-radius: 6px; background: var(--accent); margin-top: 4px; }
+.ax-wimg { width: 40%; height: 58px; border-radius: 9px; background: linear-gradient(135deg, #eaf4ee, #cfe9da); border: 1px solid #e2e2dc; flex: none; }
+.ax-wcards { display: flex; gap: 11px; padding: 0 13px 13px; }
+.ax-wcards span { flex: 1; height: 34px; border-radius: 8px; background: #f3f3ef; border: 1px solid #ececec; }
+
+.ax-web-dash { padding: 15px; background: #fff; }
+.ax-dhead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
+.ax-dtitle { width: 96px; height: 11px; border-radius: 5px; background: #16181c; }
+.ax-dpill { width: 56px; height: 19px; border-radius: 999px; background: var(--accent-soft); border: 1px solid var(--accent); }
+.ax-dstats { display: flex; gap: 11px; margin-bottom: 14px; }
+.ax-dstats span { flex: 1; height: 38px; border-radius: 8px; background: #f3f3ef; border: 1px solid #ececec; }
+.ax-dchart { display: flex; align-items: flex-end; gap: 9px; height: 70px; }
+.ax-dchart i { flex: 1; background: var(--accent); border-radius: 4px 4px 0 0; opacity: .9; }
+.ax-dchart i:nth-child(even) { background: #9fc9b2; }
+#ax-win1 { width: 408px; }
+
+@media (max-width: 560px) {
+  .ax-stage { height: 360px; }
+  .ax-win { max-width: 94%; }
+  .bx-bar { flex-wrap: wrap; row-gap: 10px; }
+  .bx-bar-l { width: 100%; }
+  .bx-title { white-space: nowrap; }
+  .bx-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .bx-seg { margin-left: auto; }
+}
 </style>
 </head>
 <body>
@@ -561,7 +899,7 @@
   <header class="top pad" id="topbar">
     <a href="#top" class="brand"><span class="mark">▣</span> agentbox</a>
     <nav id="topnav">
-      <a href="#how">how it works</a>
+      <a href="#loops">how it works</a>
       <a href="#cli">cli</a>
       <a href="#providers">providers</a>
       <a href="#install">install</a>
@@ -581,7 +919,7 @@
   <div class="meta pad">
     <span class="m-npm"><b>npm</b> @madarco/agentbox</span>
     <span class="m-license"><b>license</b> MIT</span>
-    <span class="m-envs"><b>envs</b> Local Docker · Vercel · Hetzner · Daytona</span>
+    <span class="m-envs"><b>envs</b> Docker · Vercel · Hetzner · E2B · Daytona</span>
     <span class="m-os"><b>os</b> macOS · Linux</span>
   </div>
 
@@ -614,8 +952,295 @@
     </div>
   </section>
 
+  <!-- FEATURE 01 · LOOPS -->
+  <section class="sec pad rule" id="loops">
+    <div class="sec-head"><span class="sec-no">01</span><h2>Orchestrate agents in loops</h2><span class="hint">live</span></div>
+    <p class="feat-lede">The best builders don't babysit one agent — they run many in a loop.<br />
+With the AgentBox skill, your agent <b>spawns subagents in isolated VMs</b> and drives them: waits on their input, reads back plan questions, answers, hands over prompts and commands, and polls status. Full <b>git control</b> per box: switch branch, pull, push, open a PR directly from the host. Also with <b>Notion and Linear</b> integration.</p>
+
+    <div class="lp" id="lp">
+      <div class="lp-main">
+        <div class="lp-orch">
+          <div class="lp-orch-h">
+            <span class="lp-orch-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 7.5v3M12 10.5 6 16.5M12 10.5 18 16.5"/></svg></span>
+            <span class="lp-orch-t mono">Orchestrator</span>
+            <span class="lp-orch-b mono">claude / codex</span>
+          </div>
+          <div class="lp-feed" id="lp-feed"></div>
+        </div>
+
+        <div class="lp-grid" id="lp-grid">
+          <div class="lp-sq" data-box="2" data-branch="feat/auth" data-agent="claude">
+            <div class="lp-sq-bar"><span class="td r"></span><span class="td y"></span><span class="td g"></span><span class="lp-sq-id mono">box-2</span><span class="lp-sq-br mono">feat/auth</span></div>
+            <div class="lp-sq-screen"><img class="lp-sq-logo" src="assets/agent-claude.png" alt="Claude Code" /></div>
+            <div class="lp-sq-foot"><span class="lp-dot"></span><span class="lp-sq-state mono">queued</span><button class="lp-answer mono" type="button">answer</button></div>
+          </div>
+          <div class="lp-sq" data-box="3" data-branch="feat/api" data-agent="codex">
+            <div class="lp-sq-bar"><span class="td r"></span><span class="td y"></span><span class="td g"></span><span class="lp-sq-id mono">box-3</span><span class="lp-sq-br mono">feat/api</span></div>
+            <div class="lp-sq-screen"><img class="lp-sq-logo" src="assets/agent-codex.png" alt="Codex" /></div>
+            <div class="lp-sq-foot"><span class="lp-dot"></span><span class="lp-sq-state mono">queued</span><button class="lp-answer mono" type="button">answer</button></div>
+          </div>
+          <div class="lp-sq" data-box="4" data-branch="fix/cache" data-agent="opencode">
+            <div class="lp-sq-bar"><span class="td r"></span><span class="td y"></span><span class="td g"></span><span class="lp-sq-id mono">box-4</span><span class="lp-sq-br mono">fix/cache</span></div>
+            <div class="lp-sq-screen"><img class="lp-sq-logo" src="assets/agent-opencode.png" alt="OpenCode" /></div>
+            <div class="lp-sq-foot"><span class="lp-dot"></span><span class="lp-sq-state mono">queued</span><button class="lp-answer mono" type="button">answer</button></div>
+          </div>
+          <div class="lp-sq empty" id="lp-slot">
+            <span class="lp-slot-mark">+</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="lp-git">
+        <span class="lp-git-lbl">git control</span>
+        <span class="lp-gchip mono" data-g="branch">⎇ branch</span>
+        <span class="lp-gchip mono" data-g="pull">↓ pull</span>
+        <span class="lp-gchip mono" data-g="push">↑ push</span>
+        <span class="lp-gchip mono" data-g="pr">⎇ PR</span>
+        <span class="lp-gsep"></span>
+        <span class="lp-int mono" data-i="notion">Notion</span>
+        <span class="lp-int mono" data-i="linear">Linear</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURE 02 · SETUP -->
+  <section class="sec pad rule" id="setup">
+    <div class="sec-head"><span class="sec-no">02</span><h2>Your whole setup, baked in</h2><span class="hint">docker · sandbox</span></div>
+    <p class="feat-lede">Standing up a remote dev box — and keeping it alive — is the tedious part.<br />
+AgentBox does it for you. It carries your <b>shell &amp; editor settings</b>, your <b>Claude Code and Codex auth</b>, and your <b>skills and plugins</b>, then provisions the machine end-to-end: Linux packages installed, Docker services up and running, your project bootstrapped and ready. Agentbox.yaml for repetible runs.</p>
+
+    <div class="bx" id="bx">
+      <div class="bx-bar">
+        <div class="bx-bar-l">
+          <span class="bx-led"></span>
+          <span class="bx-title mono">agentbox create</span>
+          <span class="bx-sub mono" id="bx-sub">local · docker-in-docker</span>
+        </div>
+        <div class="bx-seg" id="bx-seg">
+          <button class="bx-seg-b is-on" data-target="docker" type="button">Docker</button>
+          <button class="bx-seg-b" data-target="sandbox" type="button">Sandbox</button>
+        </div>
+      </div>
+      <div class="bx-prog"><span class="bx-prog-fill" id="bx-fill"></span></div>
+      <div class="bx-grid" id="bx-grid">
+        <button class="bx-item" data-dur="440" type="button"><span class="bx-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m11 12 7-7 3 3M16 7l2 2"/></svg></span><span class="bx-lbl">Claude / Codex auth</span><span class="bx-chk"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5L13 5"/></svg></span></button>
+        <button class="bx-item" data-dur="460" type="button"><span class="bx-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 7h3a2 2 0 0 1 2 2v3a2 2 0 1 1 0 4v3a2 2 0 0 1-2 2h-3a2 2 0 1 0-4 0H7a2 2 0 0 1-2-2v-3a2 2 0 1 1 0-4V9a2 2 0 0 1 2-2h3a2 2 0 1 1 4 0Z"/></svg></span><span class="bx-lbl">Skills &amp; plugins</span><span class="bx-chk"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5L13 5"/></svg></span></button>
+        <button class="bx-item" data-dur="420" type="button"><span class="bx-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1"/><path d="M16 3h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1"/></svg></span><span class="bx-lbl">.env variables</span><span class="bx-chk"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5L13 5"/></svg></span></button>
+        <button class="bx-item" data-dur="520" data-docker="git worktree" data-sandbox="git bundle copy" type="button"><span class="bx-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span><span class="bx-lbl">git worktree</span><span class="bx-chk"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5L13 5"/></svg></span></button>
+        <button class="bx-item" data-dur="680" type="button"><span class="bx-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span><span class="bx-lbl">Agentbox.yaml: Db, Redis</span><span class="bx-chk"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5L13 5"/></svg></span></button>
+        <button class="bx-item" data-dur="560" type="button"><span class="bx-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/></svg></span><span class="bx-lbl">Dev server bootstrap</span><span class="bx-chk"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5L13 5"/></svg></span></button>
+        <button class="bx-item bx-s-only" data-dur="600" type="button"><span class="bx-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 11a7.5 7.5 0 0 1 15 0"/><path d="M8 12.5a4 4 0 0 1 8 0"/><circle cx="12" cy="16" r="1.4"/></svg></span><span class="bx-lbl">Agentbox relay connected</span><span class="bx-chk"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5L13 5"/></svg></span></button>
+        <button class="bx-item" data-dur="560" data-docker="Portless https tunnel" data-sandbox="localhost https tunnel" type="button"><span class="bx-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></span><span class="bx-lbl">Portless https tunnel</span><span class="bx-chk"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5L13 5"/></svg></span></button>
+        <button class="bx-item" data-dur="480" type="button"><span class="bx-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg></span><span class="bx-lbl">Detachable shell</span><span class="bx-chk"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5L13 5"/></svg></span></button>
+        <button class="bx-item bx-s-only" data-dur="640" type="button"><span class="bx-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3.6"/></svg></span><span class="bx-lbl">VM Snapshot</span><span class="bx-chk"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5L13 5"/></svg></span></button>
+      </div>
+      <div class="bx-foot mono" id="bx-foot">ready to provision</div>
+    </div>
+  </section>
+
+  <!-- FEATURE 03 · ACCESS -->
+  <section class="sec pad rule" id="access">
+    <div class="sec-head"><span class="sec-no">03</span><h2>Like it never left your laptop</h2><span class="hint">full machine</span></div>
+    <p class="feat-lede">Connecting to a remote box usually means a stripped-down SSH session.<br />
+AgentBox gives you the whole machine: a live browser you can screen-share into, a local web tunnel so previews open at your-app.localhost, and a full VS Code / Cursor running inside the box that your local editor attaches to — indistinguishable from local. Plus direct integration with your IDEs and terminals like <b>cmux</b> or <b>Herdr</b>.</p>
+
+    <div class="ax" id="ax">
+      <div class="ax-tabs" role="tablist">
+        <button class="ax-tab is-on" data-view="screen" type="button">Screen share</button>
+        <button class="ax-tab" data-view="preview" type="button">Local preview</button>
+        <button class="ax-tab" data-view="editor" type="button">VS Code / Cursor</button>
+        <button class="ax-tab" data-view="term" type="button">Terminal</button>
+      </div>
+
+      <div class="ax-stage">
+
+        <!-- screen share -->
+        <div class="ax-view is-on" data-view="screen" role="tabpanel">
+          <div class="axw">
+            <div class="axw-bar"><span class="td r"></span><span class="td y"></span><span class="td g"></span><span class="axw-t mono">webVNC · box-1 :5900</span><span class="ax-live mono">● live</span></div>
+            <div class="ax-desk" id="ax-desk">
+              <div class="ax-desk-top"><span>box-1 · ubuntu</span><span>drag the windows ↔</span></div>
+
+              <div class="ax-win" id="ax-win1" style="left:20px;top:16px;">
+                <div class="ax-win-bar"><span class="td r"></span><span class="td y"></span><span class="td g"></span></div>
+                <div class="ax-url">
+                  <span class="ax-nav">‹ ›</span>
+                  <span class="ax-urlbar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>shop.localhost</span>
+                </div>
+                <div class="ax-web ax-web-shop">
+                  <div class="ax-wnav"><span class="ax-wlogo"></span><span class="ax-wl"></span><span class="ax-wl"></span><span class="ax-wbtn"></span></div>
+                  <div class="ax-whero">
+                    <div class="ax-wtext"><span class="t"></span><span></span><span class="s"></span><span class="ax-wcta"></span></div>
+                    <div class="ax-wimg"></div>
+                  </div>
+                  <div class="ax-wcards"><span></span><span></span><span></span></div>
+                </div>
+              </div>
+
+              <div class="ax-win" id="ax-win2" style="left:300px;top:96px;">
+                <div class="ax-win-bar"><span class="td r"></span><span class="td y"></span><span class="td g"></span></div>
+                <div class="ax-url">
+                  <span class="ax-nav">‹ ›</span>
+                  <span class="ax-urlbar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>localhost:5173/admin</span>
+                </div>
+                <div class="ax-web ax-web-dash">
+                  <div class="ax-dhead"><span class="ax-dtitle"></span><span class="ax-dpill"></span></div>
+                  <div class="ax-dstats"><span></span><span></span><span></span></div>
+                  <div class="ax-dchart"><i style="height:42%"></i><i style="height:68%"></i><i style="height:54%"></i><i style="height:82%"></i><i style="height:60%"></i><i style="height:95%"></i></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- local preview -->
+        <div class="ax-view" data-view="preview" role="tabpanel">
+          <div class="axw">
+            <div class="axw-bar"><span class="td r"></span><span class="td y"></span><span class="td g"></span>
+              <span class="ax-addr mono"><span class="ax-lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>shop.localhost<span class="ax-tunnel">tunnel</span></span>
+            </div>
+            <div class="ax-page">
+              <div class="ax-pg-nav"><span class="ax-pg-logo"></span><span class="ax-pg-link"></span><span class="ax-pg-link"></span><span class="ax-pg-btn"></span></div>
+              <div class="ax-pg-hero">
+                <div class="ax-pg-htext"><span class="h"></span><span class="w95"></span><span class="w60"></span><span class="ax-pg-cta"></span></div>
+                <div class="ax-pg-himg"></div>
+              </div>
+              <div class="ax-pg-cards"><span></span><span></span><span></span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- editor -->
+        <div class="ax-view" data-view="editor" role="tabpanel">
+          <div class="axw">
+            <div class="axw-bar"><span class="td r"></span><span class="td y"></span><span class="td g"></span><span class="axw-t mono">shop — Dev Containers: box-1</span></div>
+            <div class="ax-code">
+              <div class="ax-tree"><span class="on">src</span><span>app.ts</span><span>routes.ts</span><span>db.ts</span><span>Dockerfile</span></div>
+              <div class="ax-editor">
+                <div class="ax-cl"><span class="t-com">// box-1 · the same files as your laptop</span></div>
+                <div class="ax-cl"><span class="t-key">import</span> <span class="t-var">{ db }</span> <span class="t-key">from</span> <span class="t-str">'./db'</span></div>
+                <div class="ax-cl"> </div>
+                <div class="ax-cl"><span class="t-key">export</span> <span class="t-fn">async function</span> <span class="t-var">checkout</span>(<span class="t-var">cart</span>) {</div>
+                <div class="ax-cl">  <span class="t-key">const</span> <span class="t-var">order</span> = <span class="t-key">await</span> <span class="t-var">db</span>.<span class="t-fn">insert</span>(<span class="t-var">cart</span>)</div>
+                <div class="ax-cl">  <span class="t-key">return</span> { <span class="t-var">id</span>: <span class="t-var">order</span>.<span class="t-num">id</span> }</div>
+                <div class="ax-cl">}</div>
+              </div>
+            </div>
+            <div class="ax-status mono"><span class="ax-st-dot"></span> SSH: box-1 · port 5173 forwarded</div>
+          </div>
+        </div>
+
+        <!-- terminal -->
+        <div class="ax-view" data-view="term" role="tabpanel">
+          <div class="axw">
+            <div class="axw-bar"><span class="td r"></span><span class="td y"></span><span class="td g"></span><span class="axw-t mono">cmux · box-1</span></div>
+            <div class="ax-tmux"><span class="on">1:claude</span><span>2:codex</span><span>3:shell</span><span>4:logs</span></div>
+            <div class="ax-term mono">
+              <div><span class="pr">$</span> agentbox shell 1</div>
+              <div class="dim">↳ attaching to box-1 · iTerm</div>
+              <div><span class="shellp">user@box-1:~/workspace$</span> npm run dev</div>
+              <div class="ok">  ➜ Local:  http://shop.localhost</div>
+              <div><span class="shellp">user@box-1:~/workspace$</span> <span class="cur2"></span></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="ax-chips">
+        <span class="ax-chips-lbl">native hooks</span>
+        <span class="ax-chip">iTerm</span>
+        <span class="ax-chip">Herd</span>
+        <span class="ax-chip">cmux</span>
+        <span class="ax-chip">VS Code</span>
+        <span class="ax-chip">Cursor</span>
+        <span class="ax-chip ax-more">+ more</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section class="sec pad rule" id="how">
+    <div class="sec-head"><span class="sec-no">04</span><h2>How it works</h2></div>
+    <div class="flist">
+      <div class="fitem">
+        <div class="name"><span class="sq">▸</span> Teleport</div>
+        <p>Move your project to a dedicated VM — <b>local or in the cloud</b> — with a single command.</p>
+      </div>
+      <div class="fitem">
+        <div class="name"><span class="sq">▸</span> Automatic</div>
+        <p>Brings all your skills, plugins, and settings for <b>Claude Code</b>, <b>Codex</b>, and <b>Open Code</b>.</p>
+      </div>
+      <div class="fitem">
+        <div class="name"><span class="sq">▸</span> Full computer</div>
+        <p>Dedicated browser, screen sharing, persistent shells and a warmed-up <b>VS Code / Cursor</b> IDE in every box.</p>
+      </div>
+      <div class="fitem">
+        <div class="name"><span class="sq">▸</span> Checkpoints</div>
+        <p>Sub-1s startup from a previous checkpoint. <b>Auto-pause</b> to save cost and resources when idle.</p>
+      </div>
+      <div class="fitem">
+        <div class="name"><span class="sq">▸</span> Safe</div>
+        <p>Git credentials stay on your local machine. Pushing to a remote always goes through an explicit <b>permission request</b>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- CLI -->
+  <section class="sec pad rule" id="cli">
+    <div class="sec-head"><span class="sec-no">05</span><h2>The CLI</h2></div>
+    <div class="ctable">
+      <div class="cgroup-h">create &amp; run</div>
+      <div class="crow"><code>agentbox create</code><span>Create and start a new agent box.</span></div>
+      <div class="crow"><code>agentbox claude</code><span>Create a sandboxed box and launch Claude Code in a detachable tmux session.</span></div>
+      <div class="crow"><code>agentbox &lt;provider&gt; claude</code><span>Launch sandboxed boxes on <b>Vercel</b>, <b>Hetzner</b>, <b>E2B</b>, <b>Daytona</b> or local <b>Docker</b>.</span></div>
+      <div class="crow"><code>agentbox &lt;provider&gt; codex</code><span>Same, for <b>Codex</b> and <b>Open Code</b> — any agent, any provider.</span></div>
+      <div class="crow"><code>agentbox attach 2</code><span>Reattach to the running agent session on box <span class="mono">2</span> (claude, codex, or opencode — whichever is live).</span></div>
+
+      <div class="cgroup-h">access</div>
+      <div class="crow"><code>agentbox url</code><span>Open a box's web app URL in the browser.</span></div>
+      <div class="crow"><code>agentbox screen</code><span>Open a box's VNC (noVNC) viewer.</span></div>
+      <div class="crow"><code>agentbox code</code><span>Open a box in VS Code or Cursor via Dev Containers.</span></div>
+      <div class="crow"><code>agentbox shell</code><span>Open an interactive bash shell in a box.</span></div>
+      <div class="crow"><code>agentbox dashboard</code><span>Box list plus the selected box's live agent session.</span></div>
+
+      <div class="cgroup-h">lifecycle</div>
+      <div class="crow"><code>start / stop</code><span>Start or stop a box, preserving its upper volume.</span></div>
+      <div class="crow"><code>pause / unpause</code><span>Freeze or resume a box — sub-second.</span></div>
+      <div class="crow"><code>destroy</code><span>Destroy a box and discard its upper volume.</span></div>
+      <div class="crow"><code>checkpoint</code><span>List and manage warm box-state checkpoints.</span></div>
+
+      <div class="cgroup-h">orchestrate</div>
+      <div class="crow"><code>agentbox queue</code><span>Queue new agents to start automatically as running boxes go idle.</span></div>
+      <div class="crow"><code>agentbox agent wait-for</code><span>Block until an agent is <span class="mono">idle</span>, <span class="mono">input-needed</span> or <span class="mono">plan-ready</span>.</span></div>
+      <div class="crow"><code>agentbox agent get-plan</code><span>Read an interactive session's plan questions as data — no screen scraping.</span></div>
+      <div class="crow"><code>agentbox drive prompt</code><span>Drive <span class="mono">y/N</span> answers, or type straight into any CLI agent's prompt.</span></div>
+    </div>
+  </section>
+
+  <!-- PROVIDERS -->
+  <section class="sec pad rule" id="providers">
+    <div class="sec-head"><span class="sec-no">06</span><h2>Providers</h2><span class="hint">local or remote</span></div>
+    <div class="ptable">
+      <table>
+        <thead>
+          <tr><th>capability</th><th class="col">local docker</th><th class="col">hetzner</th><th class="col">vercel</th><th class="col">e2b</th><th class="col">daytona</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>support</td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="warn">partial</span></td></tr>
+          <tr><td>base image</td><td>Dockerfile</td><td>setup script (Ubuntu)</td><td>setup script</td><td>Dockerfile</td><td>Dockerfile</td></tr>
+          <tr><td>live snapshots</td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td>experimental</td></tr>
+          <tr><td>private preview urls</td><td><span class="yes">portless · orbstack</span></td><td><span class="yes">portless</span></td><td><span class="yes">native</span></td><td><span class="yes">native</span></td><td><span class="yes">native</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <!-- DIAGRAM -->
-  <section class="diagram pad rule">
+  <section class="diagram pad rule" id="security">
+
+    <div class="sec-head"><span class="sec-no">07</span><h2>Security architecture</h2><span class="hint">interactive</span></div>
 
     <div class="dg-toolbar" id="dg-toolbar">
       <span class="dg-toolbar-lbl">actions</span>
@@ -739,80 +1364,9 @@
     <div class="lbl" id="dg-status">// click <b>workspace</b> or <b>.claude</b> on the host to teleport it into the box — or hit the <span class="accent">teleport ▸</span> arrow to send everything</div>
   </section>
 
-  <!-- HOW IT WORKS -->
-  <section class="sec pad rule" id="how">
-    <div class="sec-head"><span class="sec-no">01</span><h2>How it works</h2></div>
-    <div class="flist">
-      <div class="fitem">
-        <div class="name"><span class="sq">▸</span> Teleport</div>
-        <p>Move your project to a dedicated VM — <b>local or in the cloud</b> — with a single command.</p>
-      </div>
-      <div class="fitem">
-        <div class="name"><span class="sq">▸</span> Automatic</div>
-        <p>Brings all your skills, plugins, and settings for <b>Claude Code</b>, <b>Codex</b>, and <b>Open Code</b>.</p>
-      </div>
-      <div class="fitem">
-        <div class="name"><span class="sq">▸</span> Full computer</div>
-        <p>Dedicated browser, screen sharing, persistent shells and a warmed-up <b>VS Code / Cursor</b> IDE in every box.</p>
-      </div>
-      <div class="fitem">
-        <div class="name"><span class="sq">▸</span> Checkpoints</div>
-        <p>Sub-1s startup from a previous checkpoint. <b>Auto-pause</b> to save cost and resources when idle.</p>
-      </div>
-      <div class="fitem">
-        <div class="name"><span class="sq">▸</span> Safe</div>
-        <p>Git credentials stay on your local machine. Pushing to a remote always goes through an explicit <b>permission request</b>.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- CLI -->
-  <section class="sec pad rule" id="cli">
-    <div class="sec-head"><span class="sec-no">02</span><h2>The CLI</h2></div>
-    <div class="ctable">
-      <div class="cgroup-h">create &amp; run</div>
-      <div class="crow"><code>agentbox create</code><span>Create and start a new agent box.</span></div>
-      <div class="crow"><code>agentbox claude</code><span>Create a sandboxed box and launch Claude Code in a detachable tmux session.</span></div>
-      <div class="crow"><code>agentbox &lt;provider&gt; claude</code><span>Launch sandboxed boxes on <b>Vercel</b>, <b>Hetzner</b>, <b>Daytona</b> or local <b>Docker</b>.</span></div>
-      <div class="crow"><code>agentbox &lt;provider&gt; codex</code><span>Same, for <b>Codex</b> and <b>Open Code</b> — any agent, any provider.</span></div>
-      <div class="crow"><code>agentbox attach 2</code><span>Reattach to the running agent session on box <span class="mono">2</span> (claude, codex, or opencode — whichever is live).</span></div>
-
-      <div class="cgroup-h">access</div>
-      <div class="crow"><code>agentbox url</code><span>Open a box's web app URL in the browser.</span></div>
-      <div class="crow"><code>agentbox screen</code><span>Open a box's VNC (noVNC) viewer.</span></div>
-      <div class="crow"><code>agentbox code</code><span>Open a box in VS Code or Cursor via Dev Containers.</span></div>
-      <div class="crow"><code>agentbox shell</code><span>Open an interactive bash shell in a box.</span></div>
-      <div class="crow"><code>agentbox dashboard</code><span>Box list plus the selected box's live agent session.</span></div>
-
-      <div class="cgroup-h">lifecycle</div>
-      <div class="crow"><code>start / stop</code><span>Start or stop a box, preserving its upper volume.</span></div>
-      <div class="crow"><code>pause / unpause</code><span>Freeze or resume a box — sub-second.</span></div>
-      <div class="crow"><code>destroy</code><span>Destroy a box and discard its upper volume.</span></div>
-      <div class="crow"><code>checkpoint</code><span>List and manage warm box-state checkpoints.</span></div>
-    </div>
-  </section>
-
-  <!-- PROVIDERS -->
-  <section class="sec pad rule" id="providers">
-    <div class="sec-head"><span class="sec-no">03</span><h2>Providers</h2><span class="hint">local or remote</span></div>
-    <div class="ptable">
-      <table>
-        <thead>
-          <tr><th>capability</th><th class="col">local docker</th><th class="col">hetzner</th><th class="col">daytona</th><th class="col">vercel</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>support</td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="warn">partial</span></td><td><span class="yes">full</span></td></tr>
-          <tr><td>base image</td><td>Dockerfile</td><td>setup script (Ubuntu)</td><td>Dockerfile</td><td>setup script</td></tr>
-          <tr><td>live snapshots</td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td>experimental</td><td><span class="yes">yes</span></td></tr>
-          <tr><td>private preview urls</td><td><span class="yes">portless · orbstack</span></td><td><span class="yes">portless</span></td><td><span class="yes">native</span></td><td><span class="yes">native</span></td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
   <!-- INSTALL -->
   <section class="sec pad rule" id="install">
-    <div class="sec-head"><span class="sec-no">04</span><h2>Install</h2></div>
+    <div class="sec-head"><span class="sec-no">08</span><h2>Install</h2></div>
     <div class="inst">
       <div>
         <div class="runline" style="max-width:none">
@@ -1207,6 +1761,362 @@
       })
       .catch(function () {});
   })();
+</script>
+
+<script>
+/* feature-widgets.js — provisioning manifest · access switcher · orchestration loop
+   each widget is scroll-gated and respects prefers-reduced-motion */
+(function () {
+  var RM = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // fire cb once el is on screen — IntersectionObserver + scroll fallback
+  function onVisible(el, cb) {
+    var done = false;
+    function go() { if (done) return; done = true; cleanup(); cb(); }
+    function near() {
+      var r = el.getBoundingClientRect();
+      var vh = window.innerHeight || document.documentElement.clientHeight;
+      return r.top < vh * 0.85 && r.bottom > 0;
+    }
+    function onScroll() { if (near()) go(); }
+    function cleanup() {
+      if (io) io.disconnect();
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+    }
+    var io = null;
+    if ('IntersectionObserver' in window) {
+      io = new IntersectionObserver(function (es) {
+        es.forEach(function (e) { if (e.isIntersecting) go(); });
+      }, { threshold: 0.15, rootMargin: '0px 0px -8% 0px' });
+      io.observe(el);
+    }
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    if (near()) go();
+  }
+
+  /* ── 01 · provisioning manifest ───────────────────────── */
+  (function () {
+    var sp = document.getElementById('sp');
+    if (!sp) return;
+    var list = document.getElementById('sp-list');
+    var tasks = [].slice.call(list.querySelectorAll('.sp-task'));
+    var fill = document.getElementById('sp-fill');
+    var foot = document.getElementById('sp-foot');
+    var runBtn = document.getElementById('sp-run');
+    var running = false, timers = [];
+
+    function reset() {
+      timers.forEach(clearTimeout); timers = [];
+      tasks.forEach(function (t) { t.className = 'sp-task'; });
+      fill.style.width = '0%';
+      sp.classList.remove('run', 'done');
+      foot.classList.remove('on'); foot.textContent = 'waiting…';
+    }
+    function finish() {
+      sp.classList.remove('run'); sp.classList.add('done');
+      fill.style.width = '100%';
+      foot.textContent = '✓ box ready in 0.8s — agent attached'; foot.classList.add('on');
+      running = false;
+    }
+    function run() {
+      if (running) return;
+      running = true; reset(); sp.classList.add('run'); foot.textContent = 'provisioning…';
+      if (RM) { tasks.forEach(function (t) { t.classList.add('done'); }); finish(); return; }
+      var i = 0, n = tasks.length;
+      (function step() {
+        if (i >= n) { finish(); return; }
+        var t = tasks[i];
+        t.classList.add('running');
+        var dur = parseInt(t.getAttribute('data-dur'), 10) || 700;
+        timers.push(setTimeout(function () {
+          t.classList.remove('running'); t.classList.add('done');
+          i++; fill.style.width = (i / n * 100) + '%';
+          timers.push(setTimeout(step, 170));
+        }, dur));
+      })();
+    }
+    runBtn.addEventListener('click', run);
+    onVisible(sp, run);
+  })();
+
+  /* ── 02 · access switcher ─────────────────────────────── */
+  (function () {
+    var ax = document.getElementById('ax');
+    if (!ax) return;
+    var tabs = [].slice.call(ax.querySelectorAll('.ax-tab'));
+    var views = [].slice.call(ax.querySelectorAll('.ax-view'));
+    var auto = true, idx = 0, timer = null;
+    window.__axStopAuto = function () { auto = false; if (timer) clearInterval(timer); };
+
+    function show(v) {
+      tabs.forEach(function (t) { t.classList.toggle('is-on', t.getAttribute('data-view') === v); });
+      views.forEach(function (x) { x.classList.toggle('is-on', x.getAttribute('data-view') === v); });
+    }
+    tabs.forEach(function (t, i) {
+      t.addEventListener('click', function () {
+        auto = false; if (timer) clearInterval(timer);
+        idx = i; show(t.getAttribute('data-view'));
+      });
+    });
+    onVisible(ax, function () {
+      if (RM) return;
+      timer = setInterval(function () {
+        if (!auto) return;
+        idx = (idx + 1) % tabs.length;
+        show(tabs[idx].getAttribute('data-view'));
+      }, 3400);
+    });
+  })();
+
+  /* ── 03 · orchestration loop ──────────────────────────── */
+  (function () {
+    var lp = document.getElementById('lp');
+    if (!lp) return;
+    var feed = document.getElementById('lp-feed');
+    var grid = document.getElementById('lp-grid');
+    var slot = document.getElementById('lp-slot');
+    var boxes = [].slice.call(lp.querySelectorAll('.lp-sq:not(.empty)'));
+    var CLAUDE_SRC = 'assets/agent-claude.png';
+    var gchip = {
+      branch: lp.querySelector('.lp-gchip[data-g="branch"]'),
+      pull: lp.querySelector('.lp-gchip[data-g="pull"]'),
+      push: lp.querySelector('.lp-gchip[data-g="push"]'),
+      pr: lp.querySelector('.lp-gchip[data-g="pr"]')
+    };
+    var ints = {
+      notion: lp.querySelector('.lp-int[data-i="notion"]'),
+      linear: lp.querySelector('.lp-int[data-i="linear"]')
+    };
+    var STATES = [
+      { k: 'spawn', label: 'spawning',    dur: 1500, msg: function (id, br, ag) { return ['m', '▸ box-' + id + ' · ' + ag + ' spawned']; } },
+      { k: 'plan',  label: '2 questions', dur: 2000, msg: function (id) { return ['q', '? box-' + id + ' plan ready — 2 questions']; } },
+      { k: 'wait',  label: 'needs input', dur: 3400, wait: true, msg: function (id) { return ['w', '… box-' + id + ' waiting on your answer']; } },
+      { k: 'run',   label: 'running',     dur: 2600, msg: function (id) { return ['a', '✓ answered box-' + id + ' · running']; } },
+      { k: 'push',  label: 'pushing',     dur: 1600, git: 'push', msg: function (id, br) { return ['m', '↑ box-' + id + ' pushing ' + br]; } },
+      { k: 'pr',    label: 'PR opened',   dur: 2000, git: 'pr', sync: true, msg: function (id) { return ['a', '⎇ box-' + id + ' opened PR · synced']; } },
+      { k: 'done',  label: 'merged',      dur: 1700, msg: function (id) { return ['a', '● box-' + id + ' merged to main']; } }
+    ];
+
+    function flashEl(el) { if (!el) return; el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); setTimeout(function () { el.classList.remove('flash'); }, 1300); }
+    function log(type, text) {
+      var d = document.createElement('div'); d.className = 'lp-fl';
+      var s = document.createElement('span'); s.className = type; s.textContent = text;
+      d.appendChild(s); feed.appendChild(d);
+      while (feed.children.length > 16) feed.removeChild(feed.firstChild);
+    }
+    function setState(box, si) {
+      var st = STATES[si];
+      box.setAttribute('data-si', si);
+      box.setAttribute('data-state', st.k);
+      var se = box.querySelector('.lp-sq-state'); if (se) se.textContent = st.label;
+      box.classList.toggle('is-wait', !!st.wait);
+      var id = box.getAttribute('data-box'), br = box.getAttribute('data-branch'), ag = box.getAttribute('data-agent');
+      var m = st.msg(id, br, ag); log(m[0], m[1]);
+      if (st.git) flashEl(gchip[st.git]);
+      if (st.sync) { flashEl(ints.linear); flashEl(ints.notion); }
+      clearTimeout(box._t);
+      if (RM) return;
+      if (box._spawned && st.k === 'done') { box._t = setTimeout(function () { despawn(box); }, st.dur); return; }
+      box._t = setTimeout(function () { advance(box); }, st.dur);
+    }
+    function advance(box) { setState(box, (parseInt(box.getAttribute('data-si'), 10) + 1) % STATES.length); }
+    function attachAnswer(box) {
+      var ans = box.querySelector('.lp-answer');
+      if (ans) ans.addEventListener('click', function () {
+        var si = parseInt(box.getAttribute('data-si'), 10);
+        if (STATES[si] && STATES[si].wait) { clearTimeout(box._t); advance(box); }
+      });
+    }
+    boxes.forEach(attachAnswer);
+
+    var spawnedBox = null;
+    function makeBox(id, branch) {
+      var d = document.createElement('div');
+      d.className = 'lp-sq';
+      d.setAttribute('data-box', id); d.setAttribute('data-branch', branch); d.setAttribute('data-agent', 'claude');
+      d.innerHTML = '<div class="lp-sq-bar"><span class="td r"></span><span class="td y"></span><span class="td g"></span>'
+        + '<span class="lp-sq-id mono">box-' + id + '</span><span class="lp-sq-br mono">' + branch + '</span></div>'
+        + '<div class="lp-sq-screen"><img class="lp-sq-logo" src="' + CLAUDE_SRC + '" alt="Claude Code" /></div>'
+        + '<div class="lp-sq-foot"><span class="lp-dot"></span><span class="lp-sq-state mono">spawning</span>'
+        + '<button class="lp-answer mono" type="button">answer</button></div>';
+      attachAnswer(d);
+      return d;
+    }
+    function spawnExtra() {
+      if (spawnedBox || !slot.parentNode) return;
+      log('m', '▸ orchestrator spawning box-5 · claude');
+      var b = makeBox('5', 'feat/ui');
+      b._spawned = true;
+      grid.replaceChild(b, slot);
+      b.classList.add('spawning');
+      setTimeout(function () { b.classList.remove('spawning'); }, 520);
+      spawnedBox = b;
+      setState(b, 0);
+    }
+    function despawn(box) {
+      clearTimeout(box._t);
+      box.classList.add('despawn');
+      setTimeout(function () {
+        if (box.parentNode === grid) grid.replaceChild(slot, box);
+        spawnedBox = null;
+        if (!RM) setTimeout(spawnExtra, 2600);
+      }, 400);
+    }
+    function start() {
+      if (RM) { setState(boxes[0], 3); if (boxes[1]) setState(boxes[1], 2); if (boxes[2]) setState(boxes[2], 5); return; }
+      var starts = [3, 1, 0];
+      boxes.forEach(function (box, i) { setTimeout(function () { setState(box, starts[i] != null ? starts[i] : 0); }, i * 550); });
+      setTimeout(spawnExtra, 2600);
+    }
+    onVisible(lp, start);
+  })();
+
+  /* ── 01b · provision grid (Docker / Sandbox) ─────────── */
+  (function () {
+    var bx = document.getElementById('bx');
+    if (!bx) return;
+    var allItems = [].slice.call(bx.querySelectorAll('.bx-item'));
+    function visible() { return allItems.filter(function (it) { return it.offsetParent !== null; }); }
+    var fill = document.getElementById('bx-fill');
+    var foot = document.getElementById('bx-foot');
+    var sub = document.getElementById('bx-sub');
+    var segBtns = [].slice.call(bx.querySelectorAll('.bx-seg-b'));
+    var TARGET = {
+      docker:  { name: 'docker',  sub: 'local \u00b7 docker-in-docker', time: '0.8s' },
+      sandbox: { name: 'sandbox', sub: 'cloud \u00b7 vercel \u00b7 E2B', time: '0.6s' }
+    };
+    var target = 'docker', running = false, timers = [];
+
+    function reset() {
+      timers.forEach(clearTimeout); timers = [];
+      allItems.forEach(function (it) { it.classList.remove('active', 'done'); });
+      fill.style.width = '0%';
+      bx.classList.remove('run', 'done'); foot.classList.remove('on');
+    }
+    function run() {
+      running = true; reset(); bx.classList.add('run');
+      var t = TARGET[target];
+      var seq = visible();
+      foot.textContent = 'provisioning on ' + t.name + '\u2026';
+      if (RM) {
+        seq.forEach(function (it) { it.classList.add('done'); });
+        fill.style.width = '100%'; bx.classList.remove('run'); bx.classList.add('done');
+        foot.textContent = '\u2713 ready on ' + t.name + ' \u00b7 ' + t.time; foot.classList.add('on');
+        running = false; return;
+      }
+      var i = 0, n = seq.length;
+      (function step() {
+        if (i >= n) {
+          bx.classList.remove('run'); bx.classList.add('done');
+          foot.textContent = '\u2713 ready on ' + t.name + ' \u00b7 ' + t.time + ' \u00b7 agent attached';
+          foot.classList.add('on'); running = false; return;
+        }
+        var it = seq[i];
+        it.classList.add('active');
+        var dur = parseInt(it.getAttribute('data-dur'), 10) || 500;
+        timers.push(setTimeout(function () {
+          it.classList.remove('active'); it.classList.add('done');
+          i++; fill.style.width = (i / n * 100) + '%';
+          timers.push(setTimeout(step, 120));
+        }, dur));
+      })();
+    }
+    function applyTarget(tg) {
+      bx.classList.toggle('is-sandbox', tg === 'sandbox');
+      allItems.forEach(function (it) {
+        var lbl = it.getAttribute('data-' + tg);
+        if (lbl) { var el = it.querySelector('.bx-lbl'); if (el) el.textContent = lbl; }
+      });
+    }
+    function setTarget(tg) {
+      target = tg;
+      segBtns.forEach(function (b) { b.classList.toggle('is-on', b.getAttribute('data-target') === tg); });
+      sub.textContent = TARGET[tg].sub;
+      applyTarget(tg);
+      running = false; run();
+    }
+    segBtns.forEach(function (b) {
+      b.addEventListener('click', function () { setTarget(b.getAttribute('data-target')); });
+    });
+    allItems.forEach(function (it) {
+      it.addEventListener('click', function () {
+        if (running) return;
+        it.classList.remove('done'); void it.offsetWidth; it.classList.add('active');
+        setTimeout(function () { it.classList.remove('active'); it.classList.add('done'); }, 440);
+      });
+    });
+    applyTarget('docker');
+    onVisible(bx, function () { if (!running) run(); });
+  })();
+
+  /* ── 02b · draggable screen-share windows ─────────────── */
+  (function () {
+    var desk = document.getElementById('ax-desk');
+    if (!desk) return;
+    var wins = [].slice.call(desk.querySelectorAll('.ax-win'));
+    var z = 5, touched = false;
+    function front(w) { w.style.zIndex = (++z); }
+    function clamp(w) {
+      var cw = desk.clientWidth, ch = desk.clientHeight;
+      if (!cw || !ch) return;
+      var x = Math.max(0, Math.min(w.offsetLeft, cw - w.offsetWidth));
+      var y = Math.max(0, Math.min(w.offsetTop, ch - w.offsetHeight));
+      w.style.left = x + 'px'; w.style.top = y + 'px';
+    }
+    wins.forEach(function (w) {
+      front(w);
+      var handles = [w.querySelector('.ax-win-bar'), w.querySelector('.ax-url')].filter(Boolean);
+      var sx, sy, ox, oy, drag = false;
+      function down(e) {
+        drag = true; front(w); w.classList.add('drag'); touched = true;
+        if (window.__axStopAuto) window.__axStopAuto();
+        sx = e.clientX; sy = e.clientY; ox = w.offsetLeft; oy = w.offsetTop;
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+        e.preventDefault();
+      }
+      function move(e) {
+        if (!drag) return;
+        var cw = desk.clientWidth, ch = desk.clientHeight;
+        var nx = Math.max(0, Math.min(ox + (e.clientX - sx), cw - w.offsetWidth));
+        var ny = Math.max(0, Math.min(oy + (e.clientY - sy), ch - w.offsetHeight));
+        w.style.left = nx + 'px'; w.style.top = ny + 'px';
+      }
+      function end() { drag = false; w.classList.remove('drag'); }
+      handles.forEach(function (h) {
+        h.addEventListener('pointerdown', down);
+        h.addEventListener('pointermove', move);
+        h.addEventListener('pointerup', end);
+        h.addEventListener('pointercancel', end);
+      });
+      w.addEventListener('pointerdown', function () { front(w); });
+    });
+    function clampAll() { wins.forEach(clamp); }
+    function layout() {
+      var cw = desk.clientWidth, ch = desk.clientHeight;
+      if (!cw || !ch || wins.length < 2) { clampAll(); return; }
+      var w1 = wins[0], w2 = wins[1];
+      var maxW = Math.max(w1.offsetWidth, w2.offsetWidth);
+      var maxH = Math.max(w1.offsetHeight, w2.offsetHeight);
+      var dx = Math.max(12, Math.min(52, cw - maxW - 8));
+      var dy = Math.max(14, Math.min(44, ch - maxH - 8));
+      var bboxW = Math.max(w1.offsetWidth, dx + w2.offsetWidth);
+      var bboxH = Math.max(w1.offsetHeight, dy + w2.offsetHeight);
+      var sx = Math.max(0, Math.round((cw - bboxW) / 2));
+      var sy = Math.max(0, Math.round((ch - bboxH) / 2));
+      w1.style.left = sx + 'px'; w1.style.top = sy + 'px';
+      w2.style.left = (sx + dx) + 'px'; w2.style.top = (sy + dy) + 'px';
+      clampAll();
+    }
+    function arrange() { if (touched) clampAll(); else layout(); }
+    arrange();
+    window.addEventListener('resize', arrange);
+    setTimeout(arrange, 320);
+    onVisible(desk, function () { setTimeout(arrange, 60); });
+  })();
+
+})();
 </script>
 </body>
 </html>

@@ -15,6 +15,34 @@ function metaLine(id: string, cwd: string): string {
   });
 }
 
+// Codex writes one of these per turn; the latest cwd drives the resume prompt.
+// Mirrors the real shape: cwd, workspace_roots, and nested sandbox-policy paths.
+function turnContextLine(cwd: string): string {
+  return JSON.stringify({
+    timestamp: '2026-05-03T18:08:00.000Z',
+    type: 'turn_context',
+    payload: {
+      turn_id: 'turn-1',
+      cwd,
+      workspace_roots: [cwd],
+      permission_profile: {
+        file_system: { entries: [{ path: { path: `${cwd}/.git` } }] },
+      },
+      file_system_sandbox_policy: { entries: [{ path: { path: cwd } }] },
+    },
+  });
+}
+
+// Freeform transcript content — must be preserved byte-for-byte even though it
+// mentions the host path.
+function responseItemLine(cwd: string): string {
+  return JSON.stringify({
+    timestamp: '2026-05-03T18:08:01.000Z',
+    type: 'response_item',
+    payload: { role: 'assistant', content: [{ type: 'text', text: `I ran ls in ${cwd}` }] },
+  });
+}
+
 async function seedCodexSession(
   hostHome: string,
   rel: { year: string; month: string; day: string; filename: string },
@@ -95,6 +123,45 @@ describe('resolveCodexTeleport', () => {
     const rewritten = await readFile(r.hostFile, 'utf8');
     expect(rewritten).toContain('"cwd":"/workspace"');
     expect(rewritten).not.toContain(HOST_CWD);
+  });
+
+  it('rewrites cwd in turn_context records but leaves transcript intact', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'teleport-codex-'));
+    const id = '019def05-d305-7453-9483-feedfeedfeed';
+    const responseLine = responseItemLine(HOST_CWD);
+    await seedCodexSession(
+      home,
+      {
+        year: '2026',
+        month: '05',
+        day: '03',
+        filename: `rollout-2026-05-03T19-07-09-${id}.jsonl`,
+      },
+      [metaLine(id, HOST_CWD), turnContextLine(HOST_CWD), responseLine],
+      1_000_000_000_000,
+    );
+
+    const r = await resolveCodexTeleport({
+      hostCwd: HOST_CWD,
+      mode: { kind: 'continue' },
+      hostHome: home,
+    });
+
+    const rewritten = await readFile(r.hostFile, 'utf8');
+    const lines = rewritten.split('\n').filter((l) => l.length > 0);
+    const meta = JSON.parse(lines[0]!);
+    const turn = JSON.parse(lines[1]!);
+
+    // session_meta + turn_context cwd/paths rewritten to the box workspace.
+    expect(meta.payload.cwd).toBe('/workspace');
+    expect(turn.payload.cwd).toBe('/workspace');
+    expect(turn.payload.workspace_roots).toEqual(['/workspace']);
+    expect(turn.payload.permission_profile.file_system.entries[0].path.path).toBe('/workspace/.git');
+    expect(turn.payload.file_system_sandbox_policy.entries[0].path.path).toBe('/workspace');
+
+    // The response_item transcript line is preserved verbatim (host path intact).
+    expect(lines[2]).toBe(responseLine);
+    expect(lines[2]).toContain(HOST_CWD);
   });
 
   it('errors when no codex session has a matching cwd for -c', async () => {

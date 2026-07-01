@@ -22,6 +22,8 @@ Use the /screenshot skill to capture screenshots of terminal windows and GUI win
 | `claude-tui.png` | run-an-agent, cli | done (2026-06-02) | C |
 | `cursor.png` | access-your-box (Cursor / Dev Containers) | done (2026-06-02) | C |
 | `push-approval.png` | sync-and-git (push approval) | done (2026-06-02, gh pr create approval band, agent-driven) | C |
+| `herdr-permission-prompt.png` | integrations-herdr (hero) | done (2026-06-18, Claude-in-box in Herdr blocked on a `gh pr create` approval band + agents sidebar; agentbox-test-repo-gh, agent-driven like push-approval, isolated `herdr --session agbdocs`) | C |
+| `herdr-overlay.png` | integrations-herdr (plugin section) | done (2026-06-18, boxes overlay + Herdr agents sidebar, captured live in a Herdr window) | C |
 | diagram — core-concepts | core-concepts (box/relay model) | done (2026-06-02, `/diagrams/core-concepts.png`, nano-banana-pro) | D |
 | diagram — configuration | configuration (resolution order) | done (2026-06-02, `/diagrams/configuration.png`, nano-banana-pro) | D |
 | diagram — services DAG | services-and-tasks (`needs` DAG) | done (2026-06-02, `/diagrams/services-and-tasks.png`, nano-banana-pro) | D |

@@ -3,6 +3,7 @@ export {
   CLOUD_WORKSPACE_DIR,
   createCloudProvider,
   emptyCloudStats,
+  hostTermForCloud,
   renderInnerCommand,
   type CreateCloudProviderOptions,
 } from './cloud-provider.js';
@@ -14,6 +15,7 @@ export {
 } from './workspace-seed.js';
 export {
   agentSpecsForCloud,
+  ensureAgentHomeDirsOwned,
   ensureAgentVolumesForCloud,
   extractCloudAgentCredentials,
   seedAgentVolumesIfFresh,
@@ -69,6 +71,7 @@ export {
   stageClaudeCredentialsForUpload,
   stageCodexStaticForUpload,
   stageCodexCredentialsForUpload,
+  stageAgentsStaticForUpload,
   stageOpencodeStaticForUpload,
   stageOpencodeCredentialsForUpload,
   CREDENTIALS_BACKUP_FILE,

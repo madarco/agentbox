@@ -18,7 +18,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
-import { agentboxAliasFor, parseSshTarget, writeAgentboxSshAlias } from '../ssh-config.js';
+import { ensureCloudSshAlias } from '../cloud-ssh.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface CodeOptions {
@@ -210,30 +210,11 @@ async function prepareCloudAttach(box: BoxRecord, opts: PrepareCloudOptions): Pr
   // `writeFileInBox` over `backend.exec`. Not load-bearing for the editor
   // attach itself; user can author `.vscode/tasks.json` manually.
 
-  if (!p.buildAttach) {
-    throw new Error(
-      `cloud provider '${p.name}' does not support SSH attach — \`agentbox code\` requires it`,
-    );
-  }
-  // buildAttach mints a fresh 60-min SSH token via the backend's `attachArgv`.
-  // We only want the connect argv here; the inner tmux command is irrelevant
-  // (Remote-SSH starts its own session). `noTmux` skips the tmux wrap so
-  // argv is the plain `ssh ... <user>@<host>` form.
-  const spec = await p.buildAttach(box, 'shell', { noTmux: true });
-  const target = parseSshTarget(spec.argv);
-  if (!target) {
-    throw new Error(
-      `could not parse <user>@<host> from cloud SSH argv: ${spec.argv.join(' ')}`,
-    );
-  }
-
-  const alias = agentboxAliasFor(box.name);
-  await writeAgentboxSshAlias({
-    alias,
-    hostname: target.host,
-    user: target.user,
-    identityFile: target.identityFile,
-  });
+  // Mint the SSH target and (re)write the `~/.ssh/config` alias. Shared with
+  // `agentbox open` and `agentbox shell --ssh-config`. The inner tmux command
+  // is irrelevant here (Remote-SSH starts its own session). The box was already
+  // brought online + waited above, so skip the helper's lifecycle pass.
+  const { alias } = await ensureCloudSshAlias(box, { bringOnline: false });
   log.info(`updated ~/.ssh/config alias ${alias}`);
 
   return `vscode-remote://ssh-remote+${alias}/workspace`;

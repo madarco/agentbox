@@ -27,7 +27,7 @@ agentbox codex
 agentbox opencode
 ```
 
-The agent-agnostic `agentbox attach [box]` reattaches to whichever agent session is running in the box (it prompts when more than one is live). It never auto-starts: when nothing is running it prints a warning and exits non-zero. Each agent command also exposes its own `attach` / `start` / `login` subcommands: per-agent `attach` reattaches *and* starts a session if none is running (never re-syncs config), `start` (re)starts a session in an existing box (rsyncs host config unless `--no-sync-config`), and `login` runs that agent's auth flow.
+The agent-agnostic `agentbox attach [box]` reattaches to whichever agent session is running in the box (it prompts when more than one is live). It never auto-starts: when nothing is running it prints a warning and exits non-zero. Each agent command also exposes its own `attach` / `start` / `login` subcommands: per-agent `attach` reattaches *and* starts a session if none is running (never re-syncs config), `start` (re)starts a session in an existing box (rsyncs host config unless `--no-sync-config`), and `login` runs that agent's auth flow. `claude login` is interactive in a terminal; with no TTY (or `--headless`) it prints the OAuth approval URL — including a greppable `AGENTBOX_LOGIN_URL=` marker — and you finish with `agentbox claude login --code <CODE>`, so an orchestrating agent can drive the sign-in. See [first-run auth](/docs/run-an-agent#headless-sign-in-no-terminal--from-an-orchestrating-agent).
 
 ```bash
 # Create a box and drop into a shell once it's ready
@@ -46,6 +46,7 @@ agentbox claude --resume <session-id>
 
 # Fork the host session you're in now into a new box (opens a new tab)
 agentbox fork
+agentbox fork hetzner                 # provider as a positional shorthand
 agentbox fork --agent codex --attach-in background
 
 # Anything after -- is forwarded to the in-box agent
@@ -54,7 +55,7 @@ agentbox claude -- --model sonnet
 
 Shared create/agent flags include `-n, --name`, `-w, --workspace <path>`, `--provider <name>`, `--snapshot <ref>` (start from a checkpoint), `--image <ref>`, `--build` (build the base image locally instead of pulling), `-y, --yes`, `--with-env`, `--with-playwright`, `--no-vnc`, `--portless` / `--no-portless`, `--from-branch <ref>`, `-b, --use-branch <name>`, `--memory`, `--cpus`, `--disk`, `--size <spec>` (cloud), and `--carry-yes` / `--carry <mode>`.
 
-Agent-specific: `--attach-in <split|window|tab|same>`, `-d, --no-attach`, `-i, --initial-prompt <text>` (background queue), and for `claude` only `-c, --continue`, `--resume <id>`, `--plan <path>`, and `--dangerously-skip-permissions` (on by default in boxes). `fork` adds `--agent`, `--session <id>`, and `--attach-in` (default `tab`).
+Agent-specific: `--attach-in <split|window|tab|same>`, `-d, --no-attach`, `-i, --initial-prompt <text>` (background queue), and for `claude` only `-c, --continue`, `--resume <id>`, `--plan <path>`, and `--dangerously-skip-permissions` (on by default in boxes). `fork` adds `--agent`, `--session <id>`, `--attach-in` (default `tab`), and a positional `[provider]` (`agentbox fork hetzner` is shorthand for `--provider hetzner`). When `--agent`/`--session` are omitted, `fork` autodetects the launching agent and current session from its env vars (Claude via `CLAUDECODE` / `CLAUDE_CODE_SESSION_ID`, Codex via `CODEX_THREAD_ID`), so a bare `agentbox fork` forks whichever agent you ran it from.
 
 <Callout type="warn" title="HEADS UP">`-i` / `--initial-prompt` is AgentBox's background-queue prompt, not the agent's own `-p` print mode. To run the agent headless, pass it after `--` (e.g. `agentbox claude -- -p "..."`). Note also that `-i` means `--inline` on the `attach`/`start` subcommands.</Callout>
 
@@ -151,12 +152,19 @@ agentbox unpause 1
 agentbox stop 1
 agentbox start 1
 
+# Reconnect to an already-running box (no power-cycle) and resume its agent
+agentbox recover 1
+agentbox recover --all              # every box in local state (no attach)
+agentbox recover --provider hetzner --adopt   # rebuild state for a box created elsewhere
+
 # Destroy (discard the box; alias rm)
 agentbox destroy 1
 agentbox rm 1 -y
 ```
 
 `pause`/`unpause` is the cheap context switch (docker freezes the cgroup, sub-second resume; cloud archives and rehydrates, slower). `stop`/`start` is a full stop that preserves the upper volume, including `node_modules`. `destroy` (alias `rm`) wipes the box and its writable layer; `--keep-snapshot` leaves the snapshot dir under `~/.agentbox/snapshots/` in place. If the name/id matches no tracked box but a leftover `agentbox-<name>` container exists, `destroy` removes that orphan container directly (then suggests `prune -y` for any leftover volumes).
+
+`recover` re-establishes a box's **host-side** connectivity without power-cycling it — for after a host reboot, a relay restart, or a fresh CLI process on another machine. It ensures the host relay is up and re-registers every box with it, re-opens the host transport (the Hetzner SSH tunnel + port forwards), re-registers the Portless aliases, relaunches the in-box daemons, and brings back the agent the box was last running (`claude`/`codex`/`opencode` — resuming its session, or starting fresh), then attaches. With no argument it recovers the current project's box; `--all` recovers every box in state (and skips the attach); `--no-attach` restores without attaching. `agentbox recover --provider <cloud> --adopt [id|name]` first rebuilds local state for a running sandbox that this host has no record of (e.g. one created on another machine), minting fresh relay tokens from what the box exposes. For Hetzner, adoption needs the box's per-host SSH key — a box created on a different host can't be controlled and `recover` says so.
 
 <Callout title="TIP">Prefer `pause`/`unpause` to switch between boxes — it frees CPU and RAM while frozen and resumes instantly on docker. Use `stop` when you want the box off but kept.</Callout>
 
@@ -173,10 +181,14 @@ agentbox download 1 --with-env
 # Copy files/dirs (direction inferred from the box: prefix)
 agentbox cp mybox:/workspace/.env      # download to cwd
 agentbox cp ./local.txt mybox:/workspace/   # upload
+agentbox cp a.txt b.txt src/ mybox:/workspace/dest/   # many sources into a dir
+agentbox cp ./*.log mybox:/workspace/logs/   # shell-expanded wildcard
 agentbox cp ./dir mybox:/workspace/ --exclude=.git --exclude="*/cache"  # upload, trimmed
 
 # Git/gh through the host relay (your credentials stay on the host)
 agentbox git push 1
+agentbox git push 1 --host-only            # land the branch in the host's local repo, don't publish
+agentbox git push 1 --host-only --as feat/login   # ...under a chosen branch name
 agentbox git fetch 1
 agentbox git pull 1 main --ff-only
 agentbox git checkout 1 feature-x
@@ -186,9 +198,11 @@ agentbox git pr create 1
 
 `download` pulls `/workspace` back into your host workspace, honouring `.gitignore`. It has typed subcommands for agent state: `download env`, `download claude`, `download codex`, `download opencode`, `download config`. `cp` copies files or directories in either direction, like `docker cp`. `git` runs git/gh operations against the box from the host through the relay, so push and fetch use your host credentials and the box never sees them.
 
-`cp` drops heavy, regenerable directories by default (`.git`, `node_modules`, `bin`, `obj`, `packages`, `dist`, `.next`, `target`) — keep them with `--no-default-excludes`, or add more with repeatable `--exclude=<glob|name>`. An upload whose size (after excludes) exceeds `box.cpMaxBytes` (default 100 MB) is **blocked** and prints a `du`-style tree of the biggest remaining folders so you can decide what to drop; trim it with `--exclude`, copy the heavy folders one at a time, or pass `--yes` to copy it all anyway.
+`cp` takes multiple sources in one call — list several files/dirs (or a shell-expanded wildcard like `./*.log`) before the destination, which must then be a directory (trailing `/`). Wildcards are expanded by your shell, so a box-path glob (`mybox:/workspace/*.log`) only expands when run from inside the box; from the host, glob box contents from inside the box or list the files explicitly.
 
-Useful flags: `download` takes `--dry-run`, `--no-respect-gitignore`, `--include-node-modules`, `--with-env`, `--pattern <glob>`; `git push`/`fetch` take `--remote <name>` (default `origin`) and forward extra args like `--force-with-lease`.
+`cp` drops heavy, regenerable directories by default (`.git`, `node_modules`, `bin`, `obj`, `packages`, `dist`, `.next`, `target`) — keep them with `--no-default-excludes`, or add more with repeatable `--exclude=<glob|name>`. An upload whose size (after excludes) exceeds `box.cpMaxBytes` (default 100 MB) is **blocked** and prints a `du`-style tree of the biggest remaining folders so you can decide what to drop; trim it with `--exclude`, copy the heavy folders one at a time, or pass `--yes` to copy it all anyway. The limit is checked per source.
+
+Useful flags: `download` takes `--dry-run`, `--no-respect-gitignore`, `--include-node-modules`, `--with-env`, `--pattern <glob>`; `git push`/`fetch` take `--remote <name>` (default `origin`) and forward extra args like `--force-with-lease`. `git push --host-only` lands the box's branch in your **local** repo without pushing to any remote (nothing is published online) — `--as <branch>` picks the host branch name (default: the box's branch) and `--force` allows a non-fast-forward overwrite. Because nothing leaves the host, `--host-only` skips the push-approval prompt.
 
 <Callout title="TIP">`agentbox git push` runs through the host relay — your git/SSH credentials stay on your machine. The box requests the push; the host performs it (and prompts for approval per the relay's host-action gate).</Callout>
 
@@ -251,6 +265,8 @@ agentbox config edit
 agentbox install
 agentbox install --skills-only   # just (re)install the host /agentbox skill
 agentbox install cmux            # add a box-list panel to the cmux sidebar dock
+agentbox install herdr           # install the Herdr plugin (boxes overlay, shortcuts, Ctrl+click)
+agentbox install codex           # install + enable the AgentBox Codex plugin (drive AgentBox from Codex)
 
 # Diagnose system + provider readiness
 agentbox doctor
@@ -262,7 +278,7 @@ agentbox prepare -p hetzner
 agentbox prepare -p docker --build
 ```
 
-`install` is the first-run setup wizard (system check, pick a provider, log in, prepare its base image, install the host skill). `install cmux` pins a live `agentbox list` panel (all your boxes) to the [cmux](https://cmux.com) sidebar dock — see [cmux integration](/docs/integrations-cmux#the-agentbox-dock-right-sidebar). `doctor` diagnoses system and provider readiness — and reports each service integration ([Notion](/docs/integrations-notion), [Linear](/docs/integrations-linear)): host CLI installed? authed? enabled per project? `prepare` builds base images or snapshots — omit `--provider` for status only.
+`install` is the first-run setup wizard (system check, pick a provider, log in, prepare its base image, install the host skill). `install cmux` pins a live `agentbox list` panel (all your boxes) to the [cmux](https://cmux.com) sidebar dock — see [cmux integration](/docs/integrations-cmux#the-agentbox-dock-right-sidebar). `install herdr` installs a [Herdr](https://herdr.dev) plugin with a boxes overlay, shortcuts, and Ctrl+click — see [Herdr integration](/docs/integrations-herdr#the-herdr-plugin). `install codex` registers the AgentBox [Codex](https://openai.com/index/introducing-codex/) plugin (marketplace + `codex plugin add`) and enables it by default in `~/.codex/config.toml`, so the `/agentbox` skill works in Codex with no manual toggle — it also runs automatically during `install` when Codex is detected. `doctor` diagnoses system and provider readiness — and reports each service integration ([Notion](/docs/integrations-notion), [Linear](/docs/integrations-linear)): host CLI installed? authed? enabled per project? `prepare` builds base images or snapshots — omit `--provider` for status only.
 
 <Callout title="TIP">`agentbox config get <key> --all` shows which layer each value comes from. See the full key reference in [Configuration](/docs/configuration).</Callout>
 

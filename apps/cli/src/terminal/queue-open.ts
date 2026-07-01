@@ -16,7 +16,7 @@ import {
  * trusted to point at this submit's terminal.
  *
  * Returns `undefined` when `mode` is `none` or the host terminal is not one we
- * can drive (tmux / cmux / iTerm2) — in both cases nothing is opened.
+ * can drive (tmux / cmux / Herdr / iTerm2) — in both cases nothing is opened.
  */
 export function captureOpenTerminalContext(
   mode: QueueOpenIn,
@@ -39,6 +39,15 @@ export function captureOpenTerminalContext(
       cmuxBundledCli: cmuxBinary(env),
       cmuxSurfaceId: env['CMUX_SURFACE_ID'],
       cmuxWorkspaceId: env['CMUX_WORKSPACE_ID'],
+    };
+  }
+  if (host === 'herdr') {
+    return {
+      ...base,
+      host,
+      herdrSocket: env['HERDR_SOCKET_PATH'],
+      herdrPaneId: env['HERDR_PANE_ID'],
+      herdrWorkspaceId: env['HERDR_WORKSPACE_ID'],
     };
   }
   // iTerm2: osascript drives the app via Apple events, no captured handle.
@@ -84,6 +93,20 @@ export function spawnQueuedOpenTerminal(
       cmuxTargetSurface: ctx.cmuxSurfaceId,
       cmuxTargetWorkspace: ctx.cmuxWorkspaceId,
       cmuxWorkspaceFallback: true,
+    });
+  }
+  if (ctx.host === 'herdr') {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    if (ctx.herdrSocket) env['HERDR_SOCKET_PATH'] = ctx.herdrSocket;
+    return spawnInNewTerminal({
+      host: 'herdr',
+      mode: ctx.mode,
+      argv,
+      cwd: ctx.cwd,
+      title,
+      env,
+      herdrTargetPane: ctx.herdrPaneId,
+      herdrTargetWorkspace: ctx.herdrWorkspaceId,
     });
   }
   return spawnInNewTerminal({ host: 'iterm2', mode: ctx.mode, argv, cwd: ctx.cwd, title });

@@ -33,6 +33,29 @@ function loadClipboardScript(boxPngPath: string): string {
   ].join('; ');
 }
 
+/**
+ * Upload a host image file into the box and return its box-side path (or null on
+ * failure). Used for the Herdr paste path: Herdr turns a clipboard screenshot
+ * into a *host* file and pastes its path, which a boxed Claude can't read — so we
+ * ship that file into the box and substitute the box path, which Claude Code then
+ * attaches as an image (`[Image #1]`). No clipboard/X11 needed (unlike the Ctrl+V
+ * path above): Claude reads the pasted path directly.
+ */
+export async function uploadImageFileToBox(
+  provider: Provider,
+  box: BoxRecord,
+  hostPath: string,
+): Promise<string | null> {
+  if (typeof provider.uploadPath !== 'function') return null;
+  const boxPng = `/tmp/agentbox-clip-${String(Date.now())}.png`;
+  try {
+    await provider.uploadPath(box, [hostPath], boxPng);
+    return boxPng;
+  } catch {
+    return null;
+  }
+}
+
 export async function pasteHostClipboardImage(
   provider: Provider,
   box: BoxRecord,
@@ -44,7 +67,7 @@ export async function pasteHostClipboardImage(
 
   const boxPng = `/tmp/agentbox-clip-${String(Date.now())}.png`;
   try {
-    await provider.uploadPath(box, hostPng, boxPng);
+    await provider.uploadPath(box, [hostPng], boxPng);
     await provider.exec(box, ['sh', '-lc', loadClipboardScript(boxPng)], {
       user: 'vscode',
     });

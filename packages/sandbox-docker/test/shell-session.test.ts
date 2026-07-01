@@ -16,7 +16,12 @@ describe('buildShellSessionAttachArgv', () => {
     expect(argv).toContain('--user');
     expect(argv[argv.indexOf('--user') + 1]).toBe('vscode');
     expect(argv).toContain('agentbox-smoke');
-    expect(argv.slice(-4)).toEqual(['tmux', 'attach', '-t', DEFAULT_SHELL_SESSION]);
+    // tmux runs under `sh -c` with the TERM guard; the session name is the
+    // final positional bound to "$1" in the script.
+    const script = argv[argv.indexOf('-c') + 1]!;
+    expect(script).toContain('infocmp "$TERM"');
+    expect(script).toContain('exec tmux attach -t "$1"');
+    expect(argv[argv.length - 1]).toBe(DEFAULT_SHELL_SESSION);
     // TERM is forwarded so tmux declares true-color / hyperlink support.
     expect(argv).toContain('-e');
   });
@@ -24,7 +29,7 @@ describe('buildShellSessionAttachArgv', () => {
   it('honors a custom session name and user', () => {
     const argv = buildShellSessionAttachArgv('agentbox-smoke', 'shell-work', 'root');
     expect(argv[argv.indexOf('--user') + 1]).toBe('root');
-    expect(argv.slice(-2)).toEqual(['-t', 'shell-work']);
+    expect(argv[argv.length - 1]).toBe('shell-work');
   });
 });
 

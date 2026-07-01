@@ -315,6 +315,29 @@ export interface Provider {
   create(req: CreateBoxRequest): Promise<CreatedBox>;
   /** Bring a stopped/paused box back; returns the record with refreshed fields. */
   start(box: BoxRecord): Promise<BoxRecord>;
+  /**
+   * Re-establish host-side connectivity to a box that is (or should be) already
+   * running, WITHOUT power-cycling it: re-resolve preview URLs, re-open the
+   * host transport (Hetzner SSH tunnel + forwards), re-register host portless
+   * aliases, relaunch the in-box daemons, and re-register with the host relay.
+   * Used by `agentbox recover` after a host reboot / relay restart, and after
+   * adopting a box that was missing from local state. If the box turns out to be
+   * paused/stopped, providers fall back to `start`/`resume` (which power-cycle).
+   * Returns the record with refreshed fields. Defaults to `start` when a
+   * provider has no cheaper reconnect path.
+   */
+  reconnect(box: BoxRecord): Promise<BoxRecord>;
+  /**
+   * Self-heal host→box reachability when establishing a connection fails for a
+   * reason the provider can repair. Today only the Hetzner cloud provider acts:
+   * a host egress-IP change locks the per-box firewall, so this re-syncs it to
+   * the current egress — but ONLY when it actually changed (`{ changed: false }`
+   * otherwise, so the caller rethrows the original error). The CLI calls it ONLY
+   * on a connection-ESTABLISHMENT failure (`recover`, the initial attach
+   * connect), never on a mid-session drop. Optional — docker and public-URL
+   * clouds omit it.
+   */
+  repairReachability?(box: BoxRecord): Promise<{ changed: boolean; detail?: string }>;
   pause(box: BoxRecord): Promise<void>;
   resume(box: BoxRecord): Promise<void>;
   stop(box: BoxRecord): Promise<void>;
@@ -361,13 +384,13 @@ export interface Provider {
   buildAttach?(box: BoxRecord, kind: AttachKind, opts?: BuildAttachOptions): Promise<AttachSpec>;
   uploadPath?(
     box: BoxRecord,
-    hostSrc: string,
+    hostSrcs: string[],
     boxDst: string,
     exclude?: string[],
   ): Promise<{ finalPath: string }>;
   downloadPath?(
     box: BoxRecord,
-    boxSrc: string,
+    boxSrcs: string[],
     hostDst: string,
     exclude?: string[],
   ): Promise<{ finalPath: string }>;
@@ -378,7 +401,11 @@ export interface Provider {
    * need this (the rsync path in `pullToHost` already handles it); cloud
    * providers do because their `downloadPath` matches docker-cp semantics.
    */
-  downloadDirContents?(box: BoxRecord, boxSrc: string, hostDst: string): Promise<{ finalPath: string }>;
+  downloadDirContents?(
+    box: BoxRecord,
+    boxSrc: string,
+    hostDst: string,
+  ): Promise<{ finalPath: string }>;
   checkpoint?: ProviderCheckpoint;
   /**
    * Extract the box's agent login credentials (claude/codex/opencode) from the

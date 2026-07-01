@@ -11,7 +11,7 @@
  * "no relay configured" error.
  */
 
-import { basename } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { generateBoxId } from '@agentbox/core';
 import type {
   AttachKind,
@@ -48,8 +48,10 @@ import {
   portlessGetUrl,
   portlessUnalias,
   registerBoxWithRelay,
+  TERM_FALLBACK_SNIPPET,
 } from '@agentbox/sandbox-docker';
 import {
+  ensureAgentHomeDirsOwned,
   ensureAgentVolumesForCloud,
   extractCloudAgentCredentials,
   refreshAgentCredentialsBackup,
@@ -57,6 +59,7 @@ import {
   seedOpencodeModelState,
 } from './agent-credentials.js';
 import { seedDynamicConfig } from './dynamic-sync.js';
+import { ensureCodexAgentsOverride } from './codex-agents-override.js';
 import { seedClaudeJsonAtCreate } from './claude-json-overlay.js';
 import { seedGitIdentity } from './git-identity.js';
 import {
@@ -76,6 +79,7 @@ import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './
 import { kickCloudBootstrap } from './bootstrap-launch.js';
 import { quoteShellArgv } from './shell.js';
 import { seedCloudWorkspace } from './workspace-seed.js';
+import type { SeedCloudWorkspaceResult } from './workspace-seed.js';
 
 /** Workspace mount path inside every cloud sandbox. Matches the Docker model. */
 export const CLOUD_WORKSPACE_DIR = '/workspace';
@@ -158,6 +162,28 @@ function parseLoopbackPort(url: string): number | undefined {
     if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') return undefined;
     const port = Number.parseInt(u.port, 10);
     return Number.isFinite(port) ? port : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The bare host (no scheme) that `AGENTBOX_BOX_HOST` should advertise inside the
+ * box. Portless backends return a loopback `http://127.0.0.1:<port>` web preview
+ * (the host-side `ssh -L` forward) — meaningless inside the box, where the
+ * portless mirror serves `<box-name>.localhost`, so we use that. Public-URL
+ * backends (Vercel/Daytona/E2B) return a real preview whose host (e.g.
+ * `<sub>.vercel.run`) is the reachable host. Returns `undefined` when no preview
+ * resolved, letting the in-box engine derive `<box-name>.localhost` itself.
+ */
+export function deriveCloudBoxHost(
+  boxName: string,
+  webPreviewUrl: string | undefined,
+): string | undefined {
+  if (!webPreviewUrl) return undefined;
+  if (parseLoopbackPort(webPreviewUrl) !== undefined) return `${boxName}.localhost`;
+  try {
+    return new URL(webPreviewUrl).host;
   } catch {
     return undefined;
   }
@@ -295,9 +321,12 @@ export function createCloudProvider(
   // portless aliases, persist the record, relaunch the in-box daemons
   // (ctl daemon -> in-box bridge + the agentbox.yaml tasks/services, dockerd,
   // VNC), and re-register with the host relay. Shared by `start()` (after
-  // `backend.start`) and `resume()` (after `backend.resume`) so EVERY wake path
-  // brings the box fully back, not just attach. Idempotent — the `launch*`
-  // helpers no-op when the daemon is already alive.
+  // `backend.start`), `resume()` (after `backend.resume`), and `reconnect()`
+  // (no power-cycle) so EVERY wake/recover path brings the box fully back, not
+  // just attach. Idempotent — the in-box `agentbox-ctl bootstrap` (ctl/dockerd/
+  // VNC) skips the spawn when a healthy instance is already serving (so a
+  // host-only `reconnect` on a
+  // live box doesn't pile up duplicate daemons).
   async function reEnsureCloudBox(box: BoxRecord, h: CloudHandle): Promise<BoxRecord> {
     // Preview URLs (and their tokens) can rotate across stop/start — refresh
     // the web + relay preview URLs and persist so `agentbox url` and the
@@ -424,6 +453,7 @@ export function createCloudProvider(
       webProxyPort: backend.webProxyPort,
       launchDockerd: opts.launchDockerd !== false,
       vncPassword: box.vncEnabled ? box.vncPassword : undefined,
+      boxHost: deriveCloudBoxHost(box.name, webPreview?.url),
     });
     // Re-register with the host relay so its CloudBoxPoller picks up the
     // fresh preview URL/token.
@@ -452,7 +482,17 @@ export function createCloudProvider(
   return {
     name: providerName,
 
-    async create(req: CreateBoxRequest): Promise<CreatedBox> {
+    async create(reqRaw: CreateBoxRequest): Promise<CreatedBox> {
+      // Resolve the host workspace path to absolute up front, mirroring the
+      // docker provider (`resolve(opts.workspacePath)` in sandbox-docker's
+      // create). A relative `-w ../repo` would otherwise flow into the
+      // git-clone seed as `git clone file://../repo` — `file://` needs an
+      // absolute path, so git reads it as host `/repo` and fails with "does
+      // not appear to be a git repository". Resolving here also keeps the
+      // box record's workspacePath stable regardless of the caller's cwd.
+      const req: CreateBoxRequest = reqRaw.workspacePath
+        ? { ...reqRaw, workspacePath: resolve(reqRaw.workspacePath) }
+        : reqRaw;
       const log = req.onLog ?? (() => {});
       const { id, name, branch } = mintBox(req);
       const image = opts.provisionImage
@@ -617,16 +657,25 @@ export function createCloudProvider(
         : undefined;
 
       try {
-        if (snapshotName) {
-          // Snapshot already carries /workspace (captured by the source box's
-          // `agentbox checkpoint create`). Re-seeding would clobber the
-          // user's setup state. Match Docker's `applyCheckpointRef` behavior.
-          log('skipping workspace seed — snapshot already contains /workspace');
-        } else if (inBoxClone) {
+        // Checkpoint-restore conflicts (overlay): surface to the CLI so it
+        // injects the same "conflicting host changes SKIPPED … agentbox-ctl
+        // reload" prompt into the agent that docker does. Undefined on a fresh
+        // create (no overlay), an in-box clone, or when nothing conflicted.
+        let resync: SeedCloudWorkspaceResult['resync'];
+        if (inBoxClone) {
           // The box clones itself at bootstrap; no host-side seed.
           log('skipping host workspace seed — box will clone in-box at bootstrap');
         } else {
-          await seedCloudWorkspace({
+          // The snapshot carries /workspace from the SOURCE box — including its
+          // (now stale) per-box branch and none of this box's uncommitted work.
+          // Booting from it verbatim would leave every checkpoint-derived box on
+          // the same frozen branch with the wrong files. So we re-seed in OVERLAY
+          // mode: keep the snapshot's gitignored warm artifacts (node_modules,
+          // build caches — the checkpoint's value), but swap `.git` for a fresh
+          // host clone, move onto this box's fresh `agentbox/<box>` branch at the
+          // host base ref, and apply the host's uncommitted/untracked carry-over.
+          // Mirrors docker's `regenerateRestoredWorktrees` + `resyncWorkspaceFromHost`.
+          const seedResult = await seedCloudWorkspace({
             backend,
             handle,
             workspacePath: req.workspacePath,
@@ -635,8 +684,15 @@ export function createCloudProvider(
             bundleDepth: req.bundleDepth,
             fromBranch: req.fromBranch,
             useBranch: req.useBranch,
+            overlay: Boolean(snapshotName),
+            // `--no-resync` (resyncOnStart === false): re-branch the box to the
+            // host tip but skip replaying the host's uncommitted/untracked state
+            // onto the warm checkpoint tree — matches docker's gated resync.
+            skipCarryOver: Boolean(snapshotName) && req.resyncOnStart === false,
             onLog: log,
           });
+          resync =
+            seedResult.resync && seedResult.resync.hadConflicts ? seedResult.resync : undefined;
         }
 
         // Refresh the host-side credential backups from the docker shared
@@ -664,6 +720,20 @@ export function createCloudProvider(
             onLog: log,
           });
         }
+
+        // Normalize ownership of the agent static-config home dirs to vscode.
+        // Runs unconditionally (not gated on a credentials volume): the agent
+        // runs as vscode and a base template can bake `~/.codex` etc. with the
+        // wrong owner. Without this, Codex can't create its `state_*.sqlite`
+        // index at startup (we stopped seeding it). Cheap + idempotent.
+        await ensureAgentHomeDirsOwned(backend, handle, { onLog: log });
+
+        // Fold the box "system prompt" (/etc/claude-code/CLAUDE.md) into
+        // ~/.codex/AGENTS.override.md so the in-box Codex agent reads the same
+        // box facts Claude gets. Runs after the agent home dirs are in place so
+        // any user-global AGENTS.md is preserved beneath the facts. Mirrors the
+        // docker provider's seedCodexAgentsOverride.
+        await ensureCodexAgentsOverride(backend, handle, { onLog: log });
 
         // Seed the host's selected OpenCode model into the box's (ephemeral)
         // state dir on every create. Runs unconditionally — Hetzner has no
@@ -753,6 +823,24 @@ export function createCloudProvider(
         const vncEnabled = req.vnc?.enabled !== false;
         const vncPassword = vncEnabled ? generateVncPassword() : undefined;
 
+        // The box's "web" port: the in-box WebProxy port the provider exposes.
+        // Defaults to 80; Vercel uses 8080 (it can't expose privileged ports).
+        const wp = backend.webProxyPort ?? CLOUD_WEB_PROXY_PORT;
+
+        // Resolve the web preview URL BEFORE the bootstrap so the box's reachable
+        // host (AGENTBOX_BOX_HOST) is wired into the supervisor's env — a
+        // first-boot `agentbox-ctl render` task must see the real host, not the
+        // `<name>.localhost` fallback. Best-effort: most boxes won't have a
+        // service on the WebProxy port yet, but the provider resolves the routing
+        // URL regardless of whether anything listens. Reused below for portless
+        // bootstrap and previewUrls persistence. `agentbox url` re-resolves.
+        let webPreview: { url: string; token?: string } | undefined;
+        try {
+          webPreview = await backend.previewUrl(handle, wp);
+        } catch {
+          webPreview = undefined;
+        }
+
         // Hand off to the single in-box bootstrap: it (optionally) clones the
         // workspace, then launches dockerd → the ctl supervisor → VNC, each only
         // if not already live. One exec replaces the three previous host-driven
@@ -774,22 +862,9 @@ export function createCloudProvider(
           launchDockerd: opts.launchDockerd !== false,
           vncPassword,
           clone: inBoxClone,
+          boxHost: deriveCloudBoxHost(name, webPreview?.url),
           onLog: log,
         });
-
-        // The box's "web" port: the in-box WebProxy port the provider exposes.
-        // Defaults to 80; Vercel uses 8080 (it can't expose privileged ports).
-        const wp = backend.webProxyPort ?? CLOUD_WEB_PROXY_PORT;
-
-        // The web preview URL is best-effort at create — most boxes won't
-        // have a service on the WebProxy port until the supervisor schedules
-        // the `expose:` service. `agentbox url` re-resolves on demand.
-        let webPreview: { url: string; token?: string } | undefined;
-        try {
-          webPreview = await backend.previewUrl(handle, wp);
-        } catch {
-          webPreview = undefined;
-        }
 
         // Portless host alias + in-VPS mirror. Default-on for backends whose
         // `previewUrl()` returns a loopback URL (Hetzner); naturally skipped
@@ -959,11 +1034,12 @@ export function createCloudProvider(
             bridgeToken,
             snapshotRef: resolvedCheckpointRef,
             lastState: 'running',
+            sessionTimeoutMs: timeoutMs,
           },
           createdAt: new Date().toISOString(),
         };
         await recordBox(record);
-        return { record, imageBuilt: false };
+        return { record, imageBuilt: false, resync };
       } catch (err) {
         // Best-effort teardown of the half-provisioned sandbox so a failed
         // create doesn't leave the user paying for an inert box.
@@ -981,6 +1057,34 @@ export function createCloudProvider(
       const h = handleFor(box);
       await backend.start(h);
       return reEnsureCloudBox(box, h);
+    },
+
+    async reconnect(box: BoxRecord): Promise<BoxRecord> {
+      // Re-establish host connectivity WITHOUT a power-cycle when the sandbox is
+      // already up: `reEnsureCloudBox` re-resolves preview URLs, re-opens the
+      // Hetzner tunnel (lazily, on its first `previewUrl`), re-registers
+      // portless + the relay poller, and relaunches the in-box daemons. If the
+      // box is actually paused/stopped, fall back to the power-cycling paths.
+      const h = handleFor(box);
+      const state = await probe(box);
+      if (state === 'running') return reEnsureCloudBox(box, h);
+      if (state === 'paused') {
+        await backend.resume(h);
+        return reEnsureCloudBox(box, h);
+      }
+      if (state === 'stopped') {
+        await backend.start(h);
+        return reEnsureCloudBox(box, h);
+      }
+      throw new Error(
+        `cannot recover ${box.name}: sandbox ${box.cloud?.sandboxId ?? box.id} is ${state}`,
+      );
+    },
+
+    async repairReachability(box: BoxRecord): Promise<{ changed: boolean; detail?: string }> {
+      // Delegate to the backend (only Hetzner self-heals its firewall); other
+      // backends have no host transport to repair.
+      return (await backend.repairReachability?.(handleFor(box))) ?? { changed: false };
     },
 
     async pause(box: BoxRecord): Promise<void> {
@@ -1141,20 +1245,20 @@ export function createCloudProvider(
 
     async uploadPath(
       box: BoxRecord,
-      hostSrc: string,
+      hostSrcs: string[],
       boxDst: string,
       exclude?: string[],
     ): Promise<{ finalPath: string }> {
-      return uploadToCloudBox(backend, handleFor(box), hostSrc, boxDst, exclude);
+      return uploadToCloudBox(backend, handleFor(box), hostSrcs, boxDst, exclude);
     },
 
     async downloadPath(
       box: BoxRecord,
-      boxSrc: string,
+      boxSrcs: string[],
       hostDst: string,
       exclude?: string[],
     ): Promise<{ finalPath: string }> {
-      return downloadFromCloudBox(backend, handleFor(box), boxSrc, hostDst, exclude);
+      return downloadFromCloudBox(backend, handleFor(box), boxSrcs, hostDst, exclude);
     },
 
     async downloadDirContents(
@@ -1346,7 +1450,30 @@ function makeCloudCheckpoint(backend: CloudBackend): ProviderCheckpoint {
  * starts the session in the box's workspace dir so claude/codex/opencode
  * see /workspace as their cwd (otherwise tmux inherits the SSH login
  * shell's $HOME and the agents prompt for workspace-trust).
+ *
+ * The command is prefixed with the shared {@link TERM_FALLBACK_SNIPPET} (same
+ * guard the docker provider applies): hetzner/daytona forward the host TERM
+ * over `ssh -t`, and vercel/e2b forward it via their attach builders, so a
+ * host TERM the box's terminfo doesn't carry (e.g. xterm-ghostty on Ubuntu)
+ * would otherwise make `tmux attach` exit immediately ("missing or unsuitable
+ * terminal"). The guard downgrades the unknown case to xterm-256color before
+ * tmux runs, and is a no-op (`infocmp` missing → also downgrades) when the box
+ * lacks `infocmp`, so it never regresses the providers that hardcoded TERM.
  */
+/**
+ * The host TERM to forward into a cloud box, sanitized to a safe terminfo
+ * name. A terminal name is `[A-Za-z0-9][A-Za-z0-9._+-]*`; anything else (a
+ * space, a shell metacharacter) is rejected to `xterm-256color` because the
+ * vercel provider interpolates this into a `bash -lc` prelude — an unquoted,
+ * attacker-shaped TERM could otherwise split the export or inject a command.
+ * The box's terminfo is the real filter anyway: renderInnerCommand's guard
+ * downgrades any forwarded TERM the box doesn't actually carry.
+ */
+export function hostTermForCloud(): string {
+  const t = process.env['TERM'];
+  return t && /^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(t) ? t : 'xterm-256color';
+}
+
 export function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions): string {
   const sessionName = opts?.sessionName ?? defaultSessionName(kind);
   const fallback = opts?.command ?? defaultCommand(kind, opts);
@@ -1369,8 +1496,8 @@ export function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions):
   // `detached`: create + configure the session but don't attach. Used to
   // pre-start a session with its full launch command before a new-tab attach
   // re-invokes `agentbox <agent> attach` (which carries no launch args).
-  if (opts?.detached) return lines.join('; ');
-  return [...lines, `exec tmux attach -t ${sessionQ}`].join('; ');
+  if (opts?.detached) return TERM_FALLBACK_SNIPPET + lines.join('; ');
+  return TERM_FALLBACK_SNIPPET + [...lines, `exec tmux attach -t ${sessionQ}`].join('; ');
 }
 
 function defaultSessionName(kind: AttachKind): string {

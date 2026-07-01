@@ -9,7 +9,9 @@
  *   - `checkpoint`  — store the Vercel snapshot *id* in the manifest so restore
  *     boots from it (Vercel snapshots are id-addressed, not name-addressed).
  *
- * `launchDockerd: false` because Vercel Sandbox can't run nested containers.
+ * `launchDockerd: true` — Vercel Sandbox now supports nested containers, so the
+ * base snapshot bakes the docker engine and the cloud scaffold auto-starts
+ * dockerd on every create/resume (see agentbox-dockerd-start).
  */
 
 import type { BoxRecord, Provider, ProviderCheckpoint } from '@agentbox/core';
@@ -37,7 +39,7 @@ const BACKEND_NAME = 'vercel';
 const cloudProvider = createCloudProvider(vercelBackend, {
   // Vercel couples RAM to vCPU at 2048 MB/vCPU; disk is a fixed 32 GB NVMe.
   defaultResources: { cpu: 2, memory: 4, disk: 32 },
-  launchDockerd: false,
+  launchDockerd: true,
 });
 
 /**

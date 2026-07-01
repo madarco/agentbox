@@ -31,6 +31,8 @@ export interface DockerBoxFields {
   claudeConfigVolume?: string;
   /** Docker volume mounted at /home/vscode/.codex inside the box. */
   codexConfigVolume?: string;
+  /** Docker volume mounted at /home/vscode/.agents inside the box (Agent Skills). */
+  agentsConfigVolume?: string;
   /** Docker volume mounted at /home/vscode/.local/share/opencode. */
   opencodeConfigVolume?: string;
   /** Per-box volume holding `.vscode-server`. */
@@ -111,6 +113,14 @@ export interface CloudBoxFields {
    * the real state. Absent on pre-feature records → treated as `running`.
    */
   lastState?: BoxRuntimeState;
+  /**
+   * Effective per-session timeout (ms) the sandbox was created with, when the
+   * backend models one (vercel `Sandbox.create({ timeout })`). Recorded so the
+   * host keepalive loop can seed its tracked death-time accurately (the
+   * effective value can be project/workspace-overridden, not the global
+   * default). Absent on backends without a session timeout / pre-feature records.
+   */
+  sessionTimeoutMs?: number;
 }
 
 export interface GitWorktreeRecord {
@@ -174,6 +184,8 @@ export interface BoxRecord {
   claudeConfigVolume?: string;
   /** Docker volume mounted at /home/vscode/.codex inside the box. Docker only. */
   codexConfigVolume?: string;
+  /** Docker volume mounted at /home/vscode/.agents inside the box (Agent Skills). Docker only. */
+  agentsConfigVolume?: string;
   /** Docker volume mounted at /home/vscode/.local/share/opencode. Docker only. */
   opencodeConfigVolume?: string;
   /** Per-box volume holding `.vscode-server`. Docker only. */
@@ -266,6 +278,15 @@ export interface BoxRecord {
   docker?: DockerBoxFields;
   /** Cloud-backend-specific fields. Present only for cloud providers. */
   cloud?: CloudBoxFields;
+  /**
+   * The agent last launched in this box (`agentbox claude` / `codex` /
+   * `opencode`). Recorded on every launch (foreground + queued). Durable, unlike
+   * the in-box session pointers which are cleared on the running->stopped tmux
+   * edge — so it's the signal `agentbox recover` uses to know which agent to
+   * relaunch/attach, and the only such signal for an adopted box with no live
+   * session.
+   */
+  lastAgent?: 'claude' | 'codex' | 'opencode';
   createdAt: string; // ISO-8601
 }
 

@@ -13,7 +13,7 @@
  *                                    │                            │
  *   stdout (host PTY) ◄── onData ────┴──────────────────  ◄────────┘
  *
- * Argv: `node attach-helper.cjs --sandbox-id <id> [--user <name>]`.
+ * Argv: `node attach-helper.cjs --sandbox-id <id> [--user <name>] [--detached]`.
  * Env:
  *   E2B_API_KEY                E2B credentials (resolved via the credentials
  *                              loader; the spawning CLI threads it in).
@@ -26,6 +26,16 @@
  * Exit code mirrors the inner command (the tmux session). Detach
  * (`Ctrl+a d`) collapses tmux → the PTY exits 0; an SDK transport error
  * exits 1 so the CLI's reconnect loop fires.
+ *
+ * `--detached`: pre-start mode. The inner command only creates + configures the
+ * tmux session (renderInnerCommand with `detached:true`, i.e. NO trailing
+ * `exec tmux attach`). Unlike the SSH/Vercel transports — where the detached
+ * argv runs the inner command as the remote process and EXITS — this helper's
+ * interactive path opens a persistent in-box PTY shell that, with nothing to
+ * `exec` into, idles at a prompt forever (the PTY never exits, so the host
+ * `runDetached` await never resolves and `agentbox <agent>` hangs after "box
+ * ready"). So in detached mode we skip the PTY entirely: run the inner command
+ * once via the non-interactive `commands.run` and exit with its code.
  */
 
 import { Sandbox } from 'e2b';
@@ -34,11 +44,13 @@ import { ensureE2bEnvLoaded } from './env-loader.js';
 interface ParsedArgs {
   sandboxId: string;
   user: string;
+  detached: boolean;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
   let sandboxId: string | undefined;
   let user = 'vscode';
+  let detached = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--sandbox-id') {
@@ -47,17 +59,19 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (a === '--user') {
       user = argv[i + 1] ?? user;
       i++;
+    } else if (a === '--detached') {
+      detached = true;
     }
   }
   if (!sandboxId) {
     process.stderr.write('attach-helper: --sandbox-id is required\n');
     process.exit(2);
   }
-  return { sandboxId, user };
+  return { sandboxId, user, detached };
 }
 
 async function main(): Promise<void> {
-  const { sandboxId, user } = parseArgs(process.argv.slice(2));
+  const { sandboxId, user, detached } = parseArgs(process.argv.slice(2));
   ensureE2bEnvLoaded();
 
   const inner = process.env.AGENTBOX_E2B_INNER_CMD;
@@ -84,6 +98,30 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Detached pre-start: just run the session-create command once and exit (no
+  // PTY, no stdin wiring). Opening the interactive PTY here would idle forever
+  // because the detached inner has no `exec tmux attach` to take over the
+  // shell — see the file header. `commands.run` mirrors the backend's exec.
+  if (detached) {
+    try {
+      const r = await sb.commands.run(inner, {
+        user: user as 'root' | 'user',
+        cwd: '/workspace',
+        timeoutMs: 5 * 60_000,
+      });
+      process.exit(r.exitCode ?? 0);
+    } catch (err) {
+      // commands.run throws on non-zero exit; surface the code so a real
+      // session-create failure isn't masked, but never hang.
+      const code = (err as { exitCode?: number }).exitCode;
+      if (typeof code === 'number') process.exit(code);
+      process.stderr.write(
+        `attach-helper: detached pre-start failed: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      process.exit(1);
+    }
+  }
+
   // Default to 80x24 if stdout isn't a TTY (e.g. piped). The PTY API requires
   // positive dimensions; node-pty hosts always set them.
   const cols = process.stdout.columns && process.stdout.columns > 0 ? process.stdout.columns : 80;
@@ -104,7 +142,10 @@ async function main(): Promise<void> {
     envs: {
       LANG: 'C.UTF-8',
       LC_ALL: 'C.UTF-8',
-      TERM: 'xterm-256color',
+      // Forwarded from the host by build-attach.ts. The inner command's TERM
+      // guard (renderInnerCommand) downgrades to xterm-256color when the box's
+      // terminfo lacks it, so an exotic host TERM never breaks the attach.
+      TERM: process.env.AGENTBOX_HOST_TERM || 'xterm-256color',
     },
     // Long-lived. We don't want the SDK reaping the PTY mid-session.
     timeoutMs: 55 * 60_000,

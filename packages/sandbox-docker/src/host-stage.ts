@@ -39,6 +39,7 @@ import {
   trustWorkspace,
 } from './claude-hooks-filter.js';
 import { CREDENTIALS_BACKUP_FILE } from './claude-credentials.js';
+import { sanitizeCodexConfigForBox } from './codex-config.js';
 
 export interface StageResult {
   /** Absolute path to the .tar.gz, or null when there was nothing to stage. */
@@ -445,12 +446,16 @@ const CODEX_RSYNC_EXCLUDES = [
   '--exclude=log',
   '--exclude=history.jsonl',
   '--exclude=hooks.json',
-  '--exclude=logs_2.sqlite',
-  '--exclude=logs_2.sqlite-shm',
-  '--exclude=logs_2.sqlite-wal',
-  '--exclude=state_5.sqlite',
-  '--exclude=state_5.sqlite-shm',
-  '--exclude=state_5.sqlite-wal',
+  // Codex's session-state DBs / indexes — the `state_*.sqlite` `threads` index
+  // is where Codex reads the resume cwd, so seeding the host copy makes a
+  // teleported session resume at its host cwd (the "Choose working directory"
+  // prompt). Globbed on the version suffix (state_5 -> state_6 across schema
+  // bumps) so it keeps matching. Codex rebuilds the index from the box's
+  // rollouts (see `backfill_state`). Also stops the host's cross-project Codex
+  // history from leaking into the box.
+  '--exclude=state_*.sqlite*',
+  '--exclude=logs_*.sqlite*',
+  '--exclude=external_agent_session_imports.json',
   '--exclude=sqlite',
   '--exclude=cache',
   '--exclude=vendor_imports',
@@ -466,6 +471,20 @@ const CODEX_RSYNC_EXCLUDES = [
   '--exclude=models_cache.json',
   '--exclude=installation_id',
   '--exclude=version.json',
+  // Heavy host-only artifacts that are useless inside a Linux box and balloon
+  // the staged tarball (~800 MB on a real host) — without these the codex
+  // static scp/extract during prepare crawls. `packages/standalone` is the
+  // macOS aarch64 standalone release binaries (the in-box codex is npm-installed
+  // anyway); `plugins/.plugin-appserver` is the platform-specific plugin
+  // app-server runtime; `computer-use` is the macOS `Codex Computer Use.app`
+  // bundle. `archived_sessions` is host session history, not config (mirrors the
+  // `sessions` exclude). (`plugins/cache`, the marketplace download cache, is
+  // already dropped by the generic `--exclude=cache` above.) This shrinks the
+  // staged codex tarball from ~800 MB to ~0.5 MB.
+  '--exclude=packages',
+  '--exclude=plugins/.plugin-appserver',
+  '--exclude=computer-use',
+  '--exclude=archived_sessions',
 ];
 
 const CODEX_KEYCHAIN_WARNING =
@@ -488,6 +507,22 @@ const CODEX_KEYCHAIN_WARNING =
  * sandbox FS alike. Broken symlinks would abort rsync under `-L`, so pre-scan
  * and skip them.
  */
+/**
+ * Best-effort, in-place sanitize of a staged `config.toml`: drops host-only-path
+ * `mcp_servers` / `notify` / local marketplaces via {@link
+ * sanitizeCodexConfigForBox}. A missing file, a parse failure, or any IO error
+ * leaves the file untouched — staging must never fail on config sanitization.
+ */
+async function sanitizeStagedCodexConfig(configPath: string, hostHome: string): Promise<void> {
+  try {
+    if (!(await pathExists(configPath))) return;
+    const { text, changed } = sanitizeCodexConfigForBox(await readFile(configPath, 'utf8'), hostHome);
+    if (changed) await writeFile(configPath, text);
+  } catch {
+    // leave the rsynced copy as-is
+  }
+}
+
 export async function stageCodexStaticForUpload(
   opts: StageCodexOptions = {},
 ): Promise<StageResult> {
@@ -508,7 +543,52 @@ export async function stageCodexStaticForUpload(
       `${hostCodex}/`,
       `${stageDir}/`,
     ]);
+    // Strip host-only-path entries (desktop-Codex.app MCP servers like
+    // node_repl, a macOS notify helper, local-source marketplaces) from the
+    // staged config.toml so the in-box codex doesn't try to exec macOS paths.
+    // Best-effort: a parse failure leaves the rsynced copy intact.
+    await sanitizeStagedCodexConfig(join(stageDir, 'config.toml'), hostHome);
     tarballPath = await tarballFromDir(stageDir, 'codex-static');
+    return {
+      tarballPath,
+      cleanup: makeCleanup([stageDir, tarballPath]),
+      warnings: [],
+    };
+  } catch (err) {
+    await rm(stageDir, { recursive: true, force: true });
+    if (tarballPath) await rm(tarballPath, { force: true });
+    throw err;
+  }
+}
+
+// ---------- agents (shared ~/.agents skills) ----------
+
+/**
+ * Filtered tarball of `~/.agents/` (the cross-agent "Agent Skills" dir).
+ * Extracts into `/home/vscode/.agents/` on the sandbox FS at snapshot-bake time
+ * so the in-box agents (codex reads `~/.agents/skills` directly) see the same
+ * skill set the host does. `-L` dereferences each skill's symlinks into real
+ * files; broken ones are excluded so the sync can't abort.
+ */
+export async function stageAgentsStaticForUpload(
+  opts: { hostHome?: string } = {},
+): Promise<StageResult> {
+  const hostHome = opts.hostHome ?? homedir();
+  const hostAgents = join(hostHome, '.agents');
+  if (!(await pathExists(hostAgents))) return emptyResult();
+
+  const stageDir = await mkStageDir('agents-static');
+  let tarballPath: string | null = null;
+  try {
+    const broken = await findBrokenSymlinks(hostAgents);
+    await execa('rsync', [
+      '-a',
+      '-L',
+      ...broken.map((r) => `--exclude=/${r}`),
+      `${hostAgents}/`,
+      `${stageDir}/`,
+    ]);
+    tarballPath = await tarballFromDir(stageDir, 'agents-static');
     return {
       tarballPath,
       cleanup: makeCleanup([stageDir, tarballPath]),

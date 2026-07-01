@@ -1,23 +1,13 @@
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
-import {
-  renderPortsTable,
-  renderStatusTable,
-  renderTaskTable,
-  type BoxStatus,
-  type StatusReply,
-} from '@agentbox/ctl';
-import {
-  boxResourceStats,
-  execInBox,
-  inspectBox,
-  type InspectedBox,
-} from '@agentbox/sandbox-docker';
+import type { BoxStatus } from '@agentbox/ctl';
+import { boxResourceStats, inspectBox, type InspectedBox } from '@agentbox/sandbox-docker';
 import type { BoxResourceStats } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { renderEndpointLines } from '../endpoints-render.js';
 import { fmtAgo, fmtBytes, fmtPercent } from '../fmt.js';
 import { withWatchOptions, watchRender, type WatchableOptions } from '../watch.js';
+import { fetchLive, renderLiveSections, renderPersistedSections } from './_status-render.js';
 import { runInspect } from './inspect.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -34,7 +24,7 @@ export const statusCommand = withWatchOptions(
       'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
     )
     .option('-j, --json', 'machine-readable JSON output')
-    .option('--inspect', 'show detailed box info (volumes, limits, paths) instead of service/task status'),
+    .option('--inspect', 'show detailed box info (volumes, limits, paths) plus service/task status'),
 ).action(async (idOrName: string | undefined, opts: StatusOptions) => {
   try {
     if (opts.json && opts.watch) {
@@ -91,22 +81,6 @@ export const statusCommand = withWatchOptions(
   }
 });
 
-async function fetchLive(state: string, container: string): Promise<StatusReply | null> {
-  // Only a running container is reachable via `docker exec` (macOS can see the
-  // socket file but can't connect to it). Paused/stopped — or a failed exec —
-  // falls back to the snapshot the relay persisted to disk.
-  if (state !== 'running') return null;
-  const proc = await execInBox(container, ['agentbox-ctl', 'status', '--json'], {
-    user: 'vscode',
-  });
-  if (proc.exitCode !== 0) return null;
-  try {
-    return JSON.parse(proc.stdout) as StatusReply;
-  } catch {
-    return null;
-  }
-}
-
 async function buildStatusText(id: string, container: string): Promise<string> {
   const inspected = await inspectBox(id);
   const { state, endpoints, persistedStatus } = inspected;
@@ -122,11 +96,7 @@ async function buildStatusText(id: string, container: string): Promise<string> {
   out.push('', 'SHELLS', renderShells(inspected));
 
   if (live) {
-    if (live.tasks.length > 0) {
-      out.push('', 'TASKS', renderTaskTable(live.tasks));
-    }
-    out.push('', 'SERVICES', renderStatusTable(live.services));
-    out.push('', 'PORTS', renderPortsTable(live.ports));
+    out.push('', ...renderLiveSections(live));
     return out.join('\n');
   }
 
@@ -200,37 +170,9 @@ function renderShells(i: InspectedBox): string {
 }
 
 function renderPersisted(s: BoxStatus, state: string): string {
-  const out: string[] = [`(persisted snapshot from ${s.timestamp}; box is ${state})`, ''];
-  if (s.tasks.length > 0) {
-    out.push('TASKS');
-    out.push(...s.tasks.map((t) => `  ${t.name}  ${t.state}`));
-    out.push('');
-  }
-  out.push('SERVICES');
-  if (s.services.length === 0) {
-    out.push('  (none)');
-  } else {
-    out.push(
-      ...s.services.map(
-        (svc) => `  ${svc.name}  ${svc.state}${svc.port !== null ? `  :${String(svc.port)}` : ''}`,
-      ),
-    );
-  }
-  out.push('');
-  out.push('PORTS');
-  if (s.ports.length === 0) {
-    out.push('  (none listening)');
-  } else {
-    const other = s.ports
-      .filter((p) => !p.service)
-      .map((p) => p.port)
-      .sort((a, b) => a - b);
-    out.push(
-      ...s.ports
-        .filter((p) => p.service)
-        .map((p) => `  :${String(p.port)}  (${p.service})`),
-    );
-    if (other.length > 0) out.push(`  other (${other.length}): ${other.join(', ')}`);
-  }
-  return out.join('\n');
+  return [
+    `(persisted snapshot from ${s.timestamp}; box is ${state})`,
+    '',
+    ...renderPersistedSections(s),
+  ].join('\n');
 }

@@ -12,6 +12,45 @@ import { opencodeCommand } from './opencode.js';
 type ForkAgent = 'claude' | 'codex' | 'opencode';
 const FORK_AGENTS = ['claude', 'codex', 'opencode'] as const;
 
+/** Providers fork accepts positionally (`agentbox fork hetzner`) or via
+ *  --provider. Kept in sync with the per-agent create commands' provider set. */
+const FORK_PROVIDERS = ['docker', 'daytona', 'hetzner', 'vercel', 'e2b'] as const;
+
+/** Resolve the provider from the positional arg (`agentbox fork <provider>`,
+ *  the skill's `$ARGUMENTS` shape) and/or --provider. A blank value (an LLM
+ *  passing `--provider ""`) is treated as "not passed" → default docker.
+ *  Throws on an unknown provider or a positional/flag conflict. Exported pure
+ *  for unit testing. */
+export function resolveForkProvider(
+  positional: string | undefined,
+  flag: string | undefined,
+): string | undefined {
+  const pos = positional?.trim();
+  const fl = flag?.trim();
+  if (pos && fl && pos !== fl) {
+    throw new Error(`provider given twice: "${pos}" (positional) and --provider "${fl}" — pass it once.`);
+  }
+  const provider = fl || pos;
+  if (provider && !(FORK_PROVIDERS as readonly string[]).includes(provider)) {
+    throw new Error(`provider: expected one of ${FORK_PROVIDERS.join(', ')}, got "${provider}"`);
+  }
+  return provider || undefined;
+}
+
+/** Identity env vars each agent exports into the shell of the commands it runs,
+ *  so a bare `agentbox fork` (no --agent) can tell which agent launched it:
+ *  - claude: CLAUDECODE=1 and CLAUDE_CODE_SESSION_ID=<session uuid>.
+ *  - codex: CODEX_THREAD_ID=<session uuid> (the id `codex resume` expects).
+ *  Returns undefined when neither is present (caller falls back to claude).
+ *  Exported for unit testing — keep it pure (env in, agent out, no fs). */
+export function detectAgentFromEnv(env: NodeJS.ProcessEnv = process.env): ForkAgent | undefined {
+  if (env.CLAUDECODE === '1' || (env.CLAUDE_CODE_SESSION_ID ?? '').trim().length > 0) {
+    return 'claude';
+  }
+  if ((env.CODEX_THREAD_ID ?? '').trim().length > 0) return 'codex';
+  return undefined;
+}
+
 /** The create-style command each agent forks through. fork forwards a curated
  *  argv and lets the delegate run its own create+teleport+attach pipeline
  *  (incl. the new-tab spawn, tagged with that agent's attach mode). */
@@ -109,20 +148,24 @@ function resolveAttachArgs(attachIn: string): string[] {
 
 export const forkCommand = new Command('fork')
   .description(
-    'Fork the current host agent session into a new box and resume it there. Opens the box in a new terminal tab under iTerm/tmux; otherwise starts it in the background.',
+    'Fork the current host agent session into a new box and resume it there. Autodetects the agent (Claude / Codex) and the current session from the launching agent\'s env, so a bare `agentbox fork` forks whatever you ran it from. Opens the box in a new terminal tab under iTerm/tmux; otherwise starts it in the background.',
+  )
+  .argument(
+    '[provider]',
+    "sandbox backend as a positional shorthand for --provider (e.g. `agentbox fork hetzner`): 'docker' (default), 'daytona', 'hetzner', 'vercel', or 'e2b'",
   )
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
   .option(
     '--agent <name>',
-    'which agent to fork: claude (default), codex, or opencode. OpenCode starts a fresh box (session resume not supported yet).',
+    'which agent to fork: claude, codex, or opencode. Autodetected from env (CLAUDECODE / CODEX_THREAD_ID) when omitted, defaulting to claude. OpenCode starts a fresh box (session resume not supported yet).',
   )
   .option(
     '--session <id>',
-    'host agent session id to resume (default: the newest session for this cwd; claude refuses if several were used recently). Ignored for --agent opencode.',
+    "host agent session id to resume. Autodetected from the launching agent's env (CLAUDE_CODE_SESSION_ID / CODEX_THREAD_ID) when omitted; else the newest session for this cwd (claude refuses if several were used recently). Ignored for --agent opencode.",
   )
   .option(
     '--provider <name>',
-    "sandbox backend: 'docker' (default), 'daytona', 'hetzner', 'vercel', or 'e2b'",
+    "sandbox backend: 'docker' (default), 'daytona', 'hetzner', 'vercel', or 'e2b'. Can also be passed positionally: `agentbox fork hetzner`.",
   )
   .option('-n, --name <name>', 'box name (default: fork-<HHMMSS>)')
   .option(
@@ -138,7 +181,7 @@ export const forkCommand = new Command('fork')
     '--plan <path>',
     'copy a Claude Code plan file (e.g. ~/.claude/plans/<slug>.md) into the box, start claude in plan mode, and seed a "resume the plan" prompt. Claude only.',
   )
-  .action(async (opts: ForkOptions) => {
+  .action(async (providerArg: string | undefined, opts: ForkOptions) => {
     // Box→box guard: AGENTBOX_RELAY_URL is only set inside a box. Fork teleports
     // a *host* agent session into a new box; it can't run from inside one yet.
     // Checked here (not just in the /agentbox skill) so an LLM that calls the
@@ -150,7 +193,9 @@ export const forkCommand = new Command('fork')
       process.exit(2);
     }
 
-    const agent = (opts.agent?.trim() || 'claude') as ForkAgent;
+    // Precedence: explicit --agent > env autodetect (so a bare `agentbox fork`
+    // works from claude or codex) > legacy claude default.
+    const agent = (opts.agent?.trim() || detectAgentFromEnv() || 'claude') as ForkAgent;
     if (!(FORK_AGENTS as readonly string[]).includes(agent)) {
       log.error(`--agent: expected one of ${FORK_AGENTS.join(', ')}, got "${opts.agent ?? ''}"`);
       process.exit(2);
@@ -175,9 +220,46 @@ export const forkCommand = new Command('fork')
       process.exit(2);
     }
 
-    // Tolerate an LLM passing `--provider ""` (or whitespace): treat a blank
-    // value as "not passed" so it falls through to the default docker provider.
-    const provider = opts.provider?.trim();
+    // Provider may arrive positionally (`agentbox fork hetzner`, the skill's
+    // $ARGUMENTS shape) or via --provider; a blank value falls through to docker.
+    let provider: string | undefined;
+    try {
+      provider = resolveForkProvider(providerArg, opts.provider);
+    } catch (err) {
+      log.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+
+    // Default --session from the launching agent's env so a bare `agentbox fork`
+    // resumes the current conversation. Only when --session wasn't passed.
+    if (!opts.session?.trim()) {
+      if (agent === 'claude') {
+        // Only adopt the env id if a matching transcript exists for this cwd:
+        // the /agentbox skill runs in a general-purpose SUBAGENT whose
+        // CLAUDE_CODE_SESSION_ID is the subagent's own id (no jsonl here), so we
+        // fall through to resolveSessionArgs' newest-by-mtime --continue pick.
+        const envId = (
+          process.env.CLAUDE_CODE_SESSION_ID ??
+          process.env.CLAUDE_SESSION_ID ??
+          ''
+        ).trim();
+        if (envId) {
+          const dir = join(
+            homedir(),
+            '.claude',
+            'projects',
+            encodeClaudeProjectsDir(opts.workspace),
+          );
+          if (existsSync(join(dir, `${envId}.jsonl`))) opts.session = envId;
+        }
+      } else if (agent === 'codex') {
+        // CODEX_THREAD_ID is the resumable session uuid; resolveCodexTeleport
+        // matches it against the rollout-*.jsonl filename. Empty -> --continue
+        // (newest rollout) keeps older Codex working.
+        const envId = (process.env.CODEX_THREAD_ID ?? '').trim();
+        if (envId) opts.session = envId;
+      }
+    }
 
     let sessionArgs: string[];
     try {

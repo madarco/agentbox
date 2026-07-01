@@ -8,8 +8,9 @@
  *   1. The CLI's staged runtime tree: `<cliRoot>/runtime/vercel/...`.
  *   2. The monorepo source tree (dev fallback) under `packages/`.
  *
- * Any missing file throws a clear error naming the paths tried. Note: no
- * dockerd helper — Vercel can't run nested containers.
+ * Any missing file throws a clear error naming the paths tried. Includes the
+ * shared `agentbox-dockerd-start` helper — Vercel now supports nested
+ * containers, so the base snapshot bakes the docker engine + this launcher.
  */
 
 import { existsSync } from 'node:fs';
@@ -47,6 +48,7 @@ export const RUNTIME_ASSETS: readonly RuntimeAsset[] = [
   { name: 'provision.sh', remotePath: '/tmp/agentbox-provision.sh', remoteMode: 0o755 },
   { name: 'agentbox-ctl', remotePath: '/tmp/agentbox-ctl', remoteMode: 0o755 },
   { name: 'agentbox-vnc-start', remotePath: '/tmp/agentbox-vnc-start', remoteMode: 0o755 },
+  { name: 'agentbox-dockerd-start', remotePath: '/tmp/agentbox-dockerd-start', remoteMode: 0o755 },
   { name: 'agentbox-checkpoint-cleanup', remotePath: '/tmp/agentbox-checkpoint-cleanup', remoteMode: 0o755 },
   { name: 'agentbox-open', remotePath: '/tmp/agentbox-open', remoteMode: 0o755 },
   { name: 'gh-shim', remotePath: '/tmp/agentbox-gh-shim', remoteMode: 0o755 },
@@ -74,6 +76,7 @@ export function candidatesFor(
     'provision.sh': ['packages/sandbox-vercel/scripts/provision.sh'],
     'agentbox-ctl': ['packages/ctl/dist/bin.cjs'],
     'agentbox-vnc-start': ['packages/sandbox-docker/scripts/agentbox-vnc-start'],
+    'agentbox-dockerd-start': ['packages/sandbox-docker/scripts/agentbox-dockerd-start'],
     'agentbox-checkpoint-cleanup': ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup'],
     'agentbox-open': ['packages/sandbox-docker/scripts/agentbox-open'],
     'gh-shim': ['packages/sandbox-docker/scripts/gh-shim'],
@@ -90,6 +93,7 @@ export function candidatesFor(
     'provision.sh': ['vercel/scripts/provision.sh'],
     'agentbox-ctl': ['vercel/ctl.cjs'],
     'agentbox-vnc-start': ['vercel/agentbox-vnc-start', 'docker/packages/sandbox-docker/scripts/agentbox-vnc-start'],
+    'agentbox-dockerd-start': ['vercel/agentbox-dockerd-start', 'docker/packages/sandbox-docker/scripts/agentbox-dockerd-start'],
     'agentbox-checkpoint-cleanup': ['vercel/agentbox-checkpoint-cleanup', 'docker/packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup'],
     'agentbox-open': ['vercel/agentbox-open', 'docker/packages/sandbox-docker/scripts/agentbox-open'],
     'gh-shim': ['vercel/gh-shim', 'docker/packages/sandbox-docker/scripts/gh-shim'],

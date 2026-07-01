@@ -58,8 +58,13 @@ template for this work; read it first.
    documented cap. Task 1 sets `webProxyPort: 8080` to mirror Vercel and keep
    the in-box `AGENTBOX_WEB_PROXY_PORT` flag uniform across cloud backends.
    Re-test :80 in Task 2.
-4. **Nested containers** — **Confirmed `launchDockerd: false`.** E2B is
-   Firecracker, same family as Vercel.
+4. **Nested containers** — Ships `launchDockerd: false`. **NOTE (corrected
+   2026-06-23): the "same family as Vercel → no DinD" inference here was
+   WRONG.** E2B's microVM actually supports nested containers (full root +
+   `cap_sys_admin` + working namespaces); docker runs once installed. The
+   `false` default is a deliberate AgentBox choice (docker not baked in), not
+   a platform constraint. See the changelog entry + the "DinD on E2B"
+   follow-up.
 5. **Default resources** — E2B `base` template ships node 20, sudo, git, tar
    on Debian 12. vCPU/RAM/disk are **template-level** (`Template.build({
    cpuCount, memoryMB })`), NOT per-create. Task 1's `defaultResources: { cpu:
@@ -201,6 +206,21 @@ attach works, checkpoints capture/restore. ALL smoke steps verified end-to-end.
 
 #### Empirical findings (Task 2, 2026-06-03)
 
+- **Checkpoints capture RAM + disk, not just disk.** E2B pause/resume is a
+  full **memory** snapshot — `Sandbox.pause` persists RAM + filesystem and
+  `Sandbox.connect` resumes with running processes intact. `createSnapshot`
+  rides the same mechanism (it pauses the source while capturing), so an e2b
+  checkpoint includes the memory state. This differs from the **docker**
+  provider, whose checkpoint is `docker commit` (disk only). Restoring an e2b
+  box can therefore bring back in-flight processes; a docker box cannot.
+- **The platform DOES support DinD** (empirically verified 2026-06-23 — see
+  changelog; subsequently **shipped on by default**). Unlike Vercel, the E2B
+  microVM grants full root with the complete capability set
+  (`CapEff: 000001ffffffffff`, incl. `cap_sys_admin`), working
+  `unshare --user`/`--mount`, and cgroup v2 — so `docker.io` + `dockerd`
+  (overlay2) runs containers inside an agentbox e2b box. This is now baked
+  into the base template with `launchDockerd: true` (see the shipped changelog
+  entry); the original "same as Vercel → no DinD" inference was wrong.
 - **`Template.build` requires RELATIVE source paths.** The SDK's
   `template.copy(src, dest)` rejects absolute paths (`Invalid source path
   "/foo": absolute paths are not allowed`). We stage every resolved asset
@@ -292,22 +312,72 @@ mode … Yes, I accept" gate.
 
 #### Deferred follow-ups (intentional, not blocking)
 
+- **E2B checkpoints are full-state (disk + RAM), not disk-only — disk-only is
+  future work.** `checkpoint create` uses `Sandbox.createSnapshot`, which
+  `pause`s the box and persists the **entire VM state (memory + filesystem)**;
+  booting a box from the checkpoint (`Sandbox.create({ template: snapshotId })`)
+  **resumes** that paused state rather than booting fresh. Verified live
+  (2026-06-23): a box created from a checkpoint kept the source box's running
+  process (same PID), tmpfs/`/dev/shm` contents, frozen `boot_id`, and
+  continuing uptime. The E2B SDK (2.27.1 and 2.30.5) exposes **no disk-only
+  snapshot option** — the snapshot API takes only `{ name }`, and the model is
+  inherently pause-based. This is mostly a cleanliness/fragility concern (a
+  fresh box resumes the source's stale ctl/dockerd/agent processes), NOT a
+  correctness blocker: the create-from-checkpoint flow re-seeds `/workspace`
+  from the host git bundle (overlay delta), so **the per-box branch still
+  updates to the host's current tip** — verified: a box from a checkpoint picked
+  up an unpushed host-`main` commit made *after* the checkpoint, via
+  `checkpoint restore: /workspace: delta bundle (<oldTip>..<newTip>)`. A true
+  disk-only checkpoint would need `Template.build().fromTemplate(base).copy(<box
+  state>)` (boots fresh, like the base snapshot) — feasible (the SDK has
+  `fromTemplate` + `copy`) but the open question is *what FS state to capture*
+  (E2B has no `docker commit`-style rootfs diff), and it is slower to create
+  than the seconds-fast memory snapshot. Tracked as future work; ships as
+  full-state.
 - **No `Template.list()` in the SDK.** `prune --provider e2b` enumerates
   sandboxes only; built templates have to be removed from the E2B
   dashboard. Document this in the provider page; ship as-is.
 - **1-hour platform session cap on Hobby.** The attach helper caps
   `timeoutMs` at **55 minutes** (see `packages/sandbox-e2b/src/attach-helper.ts`
   + the staged `apps/cli/runtime/e2b/attach-helper.cjs`) to leave headroom
-  under the platform ceiling. Longer interactive sessions would need a
-  mid-session `Sandbox.setTimeout` keepalive that extends the lease — out
-  of scope for the launch.
+  under the platform ceiling. NOTE: the **box lifetime** keepalive IS done —
+  the host relay's `cloud-keepalive` loop calls `renewTimeout` →
+  `Sandbox.setTimeout` while the in-box agent is working, so a long agent run
+  no longer dies at the create timeout (bounded by the plan's max session: ~1 h
+  on Hobby). What's still capped is the **interactive attach PTY** itself
+  (`pty.create` ≤ 1 h on Hobby) — after 55 min the attach disconnects but the
+  box stays alive and the agent keeps working; just reattach. Extending the live
+  PTY mid-stream remains future work.
 - **Drive harness display quirk** on the e2b shell attach (Task 2 finding).
   A plain `script -q -c …` capture shows the prompt; the headless drive
   harness shows an empty screen. Underlying PTY bridge works.
-- **No `e2bTimeoutMs` / `e2bNetworkPolicy` config keys.** Vercel exposes
-  parallels for its own SDK; on E2B both knobs are template-level (set at
-  `Template.build()` time) — there's no per-create override to bind a
-  config key to. Revisit if E2B's SDK grows per-create surface.
+- **`box.e2bTimeoutMs` config key — DONE.** Mirrors `box.vercelTimeoutMs`:
+  the session timeout a new `--provider e2b` box is created with (default 45 min),
+  threaded via `cloudSizingProviderOptions` (`apps/cli/src/lib/cloud-sizing.ts`)
+  into `create` and the agent-create commands, and recorded as
+  `cloud.sessionTimeoutMs` so the keepalive seeds its tracked deadline precisely.
+- **No `e2bNetworkPolicy` config key — and it CAN be wired (backlog
+  correction).** An earlier note here claimed E2B's network knobs are
+  "template-level (set at `Template.build()` time)" with "no per-create
+  override." That is **wrong**: the SDK exposes them at **`Sandbox.create()`**
+  time, not build time. The create signature is
+  `Sandbox.create(..., allowInternetAccess = true, network?:
+  SandboxNetworkOpts, ...)`. Only `cpuCount` / `memoryMB` are genuinely
+  template-level (baked at `Template.build()`).
+  - What a network policy covers (none of it is *ports*):
+    - **Egress** — `allowInternetAccess` (default `true`): whether the box
+      can reach the outside internet at all (the air-gapped-run lockdown).
+    - **Ingress** — `network: { allowPublicTraffic: false }`: makes the
+      preview URL require an `e2b-traffic-access-token` header instead of
+      being open HTTPS (Task 1 §1 chose public to match Vercel).
+    - Domain allow-listing lives under the same `SandboxNetworkOpts`.
+  - **Ports are unrelated.** Any port is exposed on demand via
+    `getHost(port)` → `{port}-{sandboxId}.e2b.app`; there is no documented
+    port cap and the network policy does not gate individual ports. AgentBox
+    fixes the WebProxy at 8080.
+  - Action if picked up: add a `box.e2bNetworkPolicy` (egress on/off +
+    public-traffic gating) create-time config key and thread it through
+    `backend.provision` → `Sandbox.create`.
 - **`box.image` cross-provider migration** was already handled in Task 2
   (per-provider `box.imageE2b` lives in `packages/config/src/types.ts`).
 
@@ -354,6 +424,106 @@ mode … Yes, I accept" gate.
   relay and can launch boxes on other providers, so they can fully smoke-test.
 
 ## Changelog
+- 2026-06-23: **Fix: cloud `-i` background jobs reported `done` even when the
+  seeded agent session never came up (all cloud providers).** The `-i` queue
+  worker's cloud path (`runCloudJob` → `cloudAgentStartDetached` → `runDetached`
+  in `apps/cli/src/commands/_cloud-attach.ts`) spawned the detached session-start
+  helper with `stdio: 'ignore'` and resolved on **any** exit, discarding the
+  exit code and stderr — so a helper failure (a transient SDK connect/exec error,
+  the agent crashing at launch, or stale in-box credentials) was invisible and
+  the job still wrote `status: done`. The only error that surfaced was the
+  unrelated best-effort `queue.openIn` step (e.g. `herdr tab gave no pane id`),
+  which misled diagnosis toward openIn even though session start is independent of
+  it. Fixes: (1) `runDetached` now captures the exit code + stderr; (2)
+  `cloudAgentStartDetached` throws (→ failed job with reason) when the
+  session-create command exits non-zero; (3) new `verifyDetachedSession` polls
+  `tmux has-session` after start — a session that's already gone means the agent
+  exited immediately at launch (the exact "no tmux session running" symptom) —
+  and best-effort-scrapes the pane for credential-rejection markers (`Please run
+  /login` / `API Error: 401` / …), failing the job with an actionable `agentbox
+  <agent> login` hint. Both callers handle the throw correctly: the queue worker
+  marks the job failed; `restoreAgentSessions` (resume-on-restart) catches +
+  logs. Cloud-wide (daytona/hetzner/vercel/e2b). Verified live on e2b: a job
+  whose box claude creds had lapsed now reports `failed` with the login hint
+  instead of a false `done`; a healthy job still reports `done` with a live
+  session. Unit-tested in `test/cloud-attach.test.ts`. The seeded in-box claude
+  OAuth token is a point-in-time snapshot that expires independently of the host
+  session (see `docs` note on box-cred expiry) — `agentbox claude login` re-seeds
+  it; this fix makes that condition discoverable instead of silent.
+- 2026-06-23: **Fix: cloud create with a relative `-w` path failed the git-clone
+  workspace seed (all cloud providers).** `agentbox create --provider e2b -w
+  ../repo` died with `git clone … 'file://../repo' … fatal: '/repo' does not
+  appear to be a git repository` — `file://` URLs require an absolute path, so
+  the relative one resolved to host `/repo`. The docker provider already does
+  `resolve(opts.workspacePath)`; the cloud `Provider.create` did not. Fixed by
+  resolving `req.workspacePath` to absolute at the top of `createCloudProvider`'s
+  `create` (in `packages/sandbox-cloud/src/cloud-provider.ts`), mirroring docker
+  — which also keeps the box record's `workspacePath` cwd-independent. Found
+  while testing e2b checkpoints; the fix is cloud-wide (daytona/hetzner/vercel/
+  e2b). Verified live: `-w ../agentbox-test-repo-gh` now clones + completes, and
+  the box record stores the resolved absolute path.
+- 2026-06-23: **DinD shipped — docker baked into the base, auto-launched on
+  create/resume (mirrors vercel).** Following the empirical verification below,
+  enabled in-box docker by: (1) adding a "docker engine (in-box DinD)" step to
+  `packages/sandbox-e2b/scripts/build-template.sh` (`apt-get install docker.io
+  iptables`, `groupadd -f docker`, `usermod -aG docker vscode`, systemd docker
+  disabled); (2) baking the shared `agentbox-dockerd-start` helper — added it to
+  `RUNTIME_ASSETS` in `runtime-assets.ts`, the `e2bFiles` stage list in
+  `apps/cli/scripts/stage-runtime.mjs`, and the install + trim steps in
+  `build-template.sh`; (3) flipping `launchDockerd: false → true` in
+  `packages/sandbox-e2b/src/index.ts`. The launch path itself
+  (`launchCloudDockerdDaemon`, called on create + resume in `cloud-provider.ts`)
+  was already provider-agnostic. Like vercel, only `docker.io` + `iptables` are
+  installed (no fuse-overlayfs) — `agentbox-dockerd-start`'s runtime probe picks
+  overlay2, which works on E2B. Cost: ~+200MB base template, ~5-15s dockerd
+  warm-up at create; always-on (not gated behind a config key). Pulled images +
+  the running daemon carry across pause/resume (snapshots capture full
+  disk+RAM). Docs synced: e2b.mdx, docker-in-docker.mdx, cloud-providers.md
+  (intro table + §3c), CLAUDE.md.
+- 2026-06-23: **DinD empirically verified to work on E2B — overturns the
+  Task 1 §4 "no nested containers" inference.** Two-stage live test on the
+  user's E2B account:
+  1. Raw `Sandbox.create()` (vanilla E2B `base`): root has
+     `CapEff: 000001ffffffffff` (full set incl. `cap_sys_admin`),
+     `unshare --user`/`--mount` both rc=0, cgroup v2 mounted. Then
+     `apt-get install docker.io` → `dockerd` (Server 20.10.24, overlay2) →
+     `docker run hello-world` and `docker run alpine:3` both succeeded;
+     the container reports the host kernel `6.1.158+`.
+  2. Real agentbox e2b box (`agentbox create --provider e2b`, baked
+     `agentbox-base` template): as the `vscode` user (uid 1002,
+     passwordless sudo) `sudo apt install docker.io` + `sudo dockerd` +
+     `sudo docker run hello-world|alpine:3` all worked end-to-end.
+  Conclusion: the Vercel "Firecracker → no DinD" reasoning does NOT transfer
+  to E2B; the blocker on Vercel was its stripped capability set + seccomp,
+  not Firecracker. AgentBox's `launchDockerd: false` is a default (docker not
+  baked in), not a platform limit. Filed "DinD on E2B" as an enable-able
+  follow-up above. (Test note: when running this from inside an
+  agentbox-in-agentbox, the in-box `git` shim rejects the create's
+  `git clone --no-checkout` seed step — put the real `/usr/bin/git` ahead of
+  `/usr/local/bin/git` on PATH for the host-side create.)
+- 2026-06-23: Fix `agentbox e2b claude` hanging on a blank screen at attach
+  (then `agentbox attach` works). Root cause: the create→attach path runs
+  `cloudAgentAttach` with `extraArgs` (always `--dangerously-skip-permissions`)
+  and a new-terminal `openIn` (iTerm2 split / tmux / cmux), which triggers
+  `startDetachedSession` to pre-create the agent's tmux session **before**
+  spawning the new pane (so the re-invoked attach, which carries no extraArgs,
+  finds the session via `tmux has-session`). `startDetachedSession` →
+  `runDetached` spawns the provider's `detached` attach argv and **awaits its
+  exit**. On SSH/Vercel the detached argv runs the inner command (`tmux
+  new-session -d …; <config>`) as the remote process and exits — but the E2B
+  attach-helper always opens a **persistent interactive in-box PTY shell** and
+  blocks on `handle.wait()`; with no trailing `exec tmux attach` to replace the
+  shell, it idles at a prompt forever, so `await startDetachedSession` never
+  returns and the CLI hangs right after `box ready` (no pane ever opens). The
+  `tmux new-session` had already run, so the session + agent existed — which is
+  why Ctrl+C then `agentbox attach` rendered fine. Fix: `buildE2bAttach` now
+  appends `--detached` to the helper argv when `opts.detached` is set, and the
+  helper, in that mode, runs the inner command once via the non-interactive
+  `sb.commands.run` and exits with its code instead of opening a PTY. Verified
+  live: the detached helper now exits in ~1s (was: hung >30s) after creating the
+  session + launching claude, and `agentbox claude start <e2b-box> --
+  --dangerously-skip-permissions` completes (`Attached in new iTerm2 split.`) in
+  ~1s instead of hanging. Regression tests in `test/build-attach.test.ts`.
 - 2026-06-17: Fix `ERR_REQUIRE_ESM` crash on Node < 20.19 (e.g. 20.18, which
   our `engines.node >=20.10` permits). The `e2b` SDK ships **no `exports` map**
   (only `main`→CJS / `module`→ESM), so an ESM `import 'e2b'` falls back to the

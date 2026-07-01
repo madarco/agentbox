@@ -166,6 +166,21 @@ export async function deletePerBoxFirewall(
 }
 
 /**
+ * Whether the firewall's allowed SSH source needs re-syncing to the current
+ * egress: true when they differ AND the firewall isn't already wide-open
+ * (`0.0.0.0/0`, the explicit dynamic-IP opt-in). Pure so the hint + auto-sync
+ * decision is unit-testable without the Hetzner API. An absent allowed source
+ * (no SSH rule) counts as a mismatch worth syncing.
+ */
+export function firewallNeedsSync(
+  allowedSource: string | undefined,
+  currentEgress: string,
+): boolean {
+  if (allowedSource === '0.0.0.0/0') return false;
+  return allowedSource !== currentEgress;
+}
+
+/**
  * Normalize a source spec into a CIDR. Accepts:
  *   - bare IPv4 → appends `/32`
  *   - bare IPv6 → appends `/128`

@@ -144,10 +144,23 @@ function isUnder(parent: string, child: string): boolean {
  *    at `/.agents`). The referent then has "no referent" inside the box — e.g. a
  *    dev's `~/.claude/skills/*` symlinked into an agentbox source checkout.
  *
- * Crosses into subdirs; doesn't follow symlinks (the whole point is to test
- * them rather than traverse them).
+ * A symlinked directory whose target IS reachable can still hide an unsyncable
+ * link one level down: `~/.claude/skills/<name>` -> `~/.agents/skills/<name>`
+ * (reachable) whose `SKILL.md` is an ABSOLUTE link into a repo checkout (not
+ * mounted). rsync's `--copy-unsafe-links` dereferences the reachable dir link
+ * and descends into it, then aborts on the nested absolute link. So when a
+ * symlink resolves into a reachable tree we recurse into the resolved target,
+ * reporting nested findings under the symlink's path as rsync transfers it
+ * (the link name in `root`, not the resolved `~/.agents` path). An ancestry
+ * guard (`onPath`) blocks symlink cycles without suppressing the same resolved
+ * dir reached under a *different* virtual prefix — e.g. two skills symlinked to
+ * one shared target must each report their nested unsyncable link, or rsync
+ * still aborts on the prefix we skipped.
  */
-async function findUnsyncableSymlinks(root: string, reachableRoots: string[]): Promise<string[]> {
+export async function findUnsyncableSymlinks(
+  root: string,
+  reachableRoots: string[],
+): Promise<string[]> {
   // realpath the reachable roots so a symlinked ancestor (e.g. macOS
   // /var -> /private/var) doesn't make a containment check spuriously fail.
   const reachable = await Promise.all(
@@ -160,32 +173,50 @@ async function findUnsyncableSymlinks(root: string, reachableRoots: string[]): P
     }),
   );
   const unsyncable: string[] = [];
-  async function walk(dir: string): Promise<void> {
-    let entries;
+  // Resolved dirs currently on the recursion path. Guards against symlink
+  // cycles (a link pointing at an ancestor) while still allowing the same dir
+  // to be re-walked under a different virtual prefix once this branch unwinds.
+  const onPath = new Set<string>();
+  // `realDir` is the filesystem directory to read; `virtualDir` is its path as
+  // rsync sees it under `root` (they diverge once we follow a symlinked dir).
+  async function walk(realDir: string, virtualDir: string): Promise<void> {
+    if (onPath.has(realDir)) return;
+    onPath.add(realDir);
     try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const ent of entries) {
-      const full = join(dir, ent.name);
-      if (ent.isSymbolicLink()) {
-        let real: string;
-        try {
-          real = await realpath(full);
-        } catch {
-          unsyncable.push(relative(root, full)); // broken on the host
-          continue;
-        }
-        if (!reachable.some((r) => isUnder(r, real))) {
-          unsyncable.push(relative(root, full)); // target not mounted in the box
-        }
-      } else if (ent.isDirectory()) {
-        await walk(full);
+      let entries;
+      try {
+        entries = await readdir(realDir, { withFileTypes: true });
+      } catch {
+        return;
       }
+      for (const ent of entries) {
+        const realFull = join(realDir, ent.name);
+        const virtualFull = virtualDir ? join(virtualDir, ent.name) : ent.name;
+        if (ent.isSymbolicLink()) {
+          let real: string;
+          try {
+            real = await realpath(realFull);
+          } catch {
+            unsyncable.push(virtualFull); // broken on the host
+            continue;
+          }
+          if (!reachable.some((r) => isUnder(r, real))) {
+            unsyncable.push(virtualFull); // target not mounted in the box
+            continue;
+          }
+          // Reachable target: rsync will dereference + descend, so check inside
+          // it too for nested unsyncable links, keyed to the symlink's path.
+          const st = await stat(real).catch(() => null);
+          if (st?.isDirectory()) await walk(real, virtualFull);
+        } else if (ent.isDirectory()) {
+          await walk(realFull, virtualFull);
+        }
+      }
+    } finally {
+      onPath.delete(realDir);
     }
   }
-  await walk(root);
+  await walk(root, '');
   return unsyncable;
 }
 
@@ -1048,8 +1079,35 @@ export async function startClaudeSession(opts: StartClaudeSessionOptions): Promi
  * tmux session. Shared by {@link attachClaudeSession} (which `spawnSync`s it
  * directly) and the dashboard command (which hands it to `tmux respawn-pane`).
  */
-export function buildClaudeAttachArgv(container: string, sessionName?: string): string[] {
-  const name = sessionName ?? DEFAULT_CLAUDE_SESSION;
+/**
+ * Shell snippet (run via `sh -c`) that guarantees TERM resolves inside the box
+ * before tmux starts. The box runs Ubuntu, whose terminfo database does not
+ * carry every host terminal: notably `xterm-ghostty`, which was added to
+ * ncurses after 24.04 shipped. Forwarding such a TERM makes `tmux attach` exit
+ * immediately with "missing or unsuitable terminal", which looks like a brief
+ * flash and an instant exit. When the box cannot resolve $TERM, fall back to
+ * xterm-256color, which the image always provides.
+ */
+export const TERM_FALLBACK_SNIPPET =
+  'if ! infocmp "$TERM" >/dev/null 2>&1; then TERM=xterm-256color; export TERM; fi; ';
+
+/**
+ * Build the `docker exec` argv that runs an in-box tmux command under `sh -c`
+ * with the TERM guard ({@link TERM_FALLBACK_SNIPPET}) applied first.
+ *
+ * `tmuxScript` is the tmux command line as it should reach tmux (use `\;` for
+ * tmux's own command separator, since a shell now parses it). `positionals` are
+ * bound to "$1", "$2", ... inside the script, so session names are passed as
+ * args rather than interpolated, keeping names with odd characters safe. The
+ * host's TERM is still forwarded via `-e`, so a box that does know it keeps full
+ * fidelity; the guard only downgrades the unknown case.
+ */
+export function buildTermSafeTmuxExec(opts: {
+  container: string;
+  user: string;
+  tmuxScript: string;
+  positionals: string[];
+}): string[] {
   const term = process.env['TERM'] ?? 'xterm-256color';
   return [
     'exec',
@@ -1057,13 +1115,24 @@ export function buildClaudeAttachArgv(container: string, sessionName?: string): 
     '-e',
     `TERM=${term}`,
     '--user',
-    CONTAINER_USER,
-    container,
-    'tmux',
-    'attach',
-    '-t',
-    name,
+    opts.user,
+    opts.container,
+    'sh',
+    '-c',
+    `${TERM_FALLBACK_SNIPPET}${opts.tmuxScript}`,
+    'sh',
+    ...opts.positionals,
   ];
+}
+
+export function buildClaudeAttachArgv(container: string, sessionName?: string): string[] {
+  const name = sessionName ?? DEFAULT_CLAUDE_SESSION;
+  return buildTermSafeTmuxExec({
+    container,
+    user: CONTAINER_USER,
+    tmuxScript: 'exec tmux attach -t "$1"',
+    positionals: [name],
+  });
 }
 
 /**
@@ -1074,46 +1143,28 @@ export function buildClaudeAttachArgv(container: string, sessionName?: string): 
  * attach via a *grouped* sibling session (`<name>-dash`, `tmux new-session -t
  * <name>`): grouped sessions share the same windows/panes (identical live
  * screen + scrollback) but keep independent session options, so `status off`
- * here does not affect a direct `agentbox <agent> attach` to `<name>`. The bare
- * `;` elements are tmux's command separator — node-pty spawns docker without a
- * shell, so they reach tmux verbatim. `new-session -A -d` is a no-op if the
- * grouped session already exists; `attach` runs after `status off` so the
- * footer is gone on first paint.
+ * here does not affect a direct `agentbox <agent> attach` to `<name>`. The
+ * `\;` elements are tmux's command separator, escaped so the wrapping `sh -c`
+ * passes them to tmux verbatim instead of treating them as shell separators.
+ * `new-session -A -d` is a no-op if the grouped session already exists;
+ * `attach` runs after `status off` so the footer is gone on first paint. Runs
+ * under the shared TERM guard ({@link buildTermSafeTmuxExec}) for the same
+ * reason the direct attach builders do.
  */
 export function buildDashboardAttachArgv(
   container: string,
   sessionName?: string,
 ): string[] {
   const name = sessionName ?? DEFAULT_CLAUDE_SESSION;
-  const dash = `${name}-dash`;
-  const term = process.env['TERM'] ?? 'xterm-256color';
-  return [
-    'exec',
-    '-it',
-    '-e',
-    `TERM=${term}`,
-    '--user',
-    CONTAINER_USER,
+  // The grouped sibling session name ("<name>-dash") is derived in-shell from
+  // $1, so the session name stays a single positional that sh never re-parses.
+  return buildTermSafeTmuxExec({
     container,
-    'tmux',
-    'new-session',
-    '-A',
-    '-d',
-    '-s',
-    dash,
-    '-t',
-    name,
-    ';',
-    'set',
-    '-t',
-    dash,
-    'status',
-    'off',
-    ';',
-    'attach',
-    '-t',
-    dash,
-  ];
+    user: CONTAINER_USER,
+    tmuxScript:
+      'dash="$1-dash"; exec tmux new-session -A -d -s "$dash" -t "$1" \\; set -t "$dash" status off \\; attach -t "$dash"',
+    positionals: [name],
+  });
 }
 
 /**

@@ -124,6 +124,7 @@ export class PtySession {
     onRenderable: () => void,
     onExit: (boxId: string) => void,
     cleanup?: () => Promise<void>,
+    env?: NodeJS.ProcessEnv,
   ) {
     this.boxId = boxId;
     this.keepAlive = keepAlive;
@@ -140,7 +141,10 @@ export class PtySession {
       name: 'xterm-256color',
       cols,
       rows,
-      env: process.env,
+      // Merge provider-supplied env over the host env. e2b's attach helper
+      // reads the inner tmux command + API key from here (passed via env, not
+      // argv); without the merge the helper exits before attaching.
+      env: env ? { ...process.env, ...env } : process.env,
     });
     this.pty.onData((d) => {
       // Always feed the parser so the headless buffer stays current even while

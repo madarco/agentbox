@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildCloudAttachInnerCommand } from '../src/commands/_cloud-attach.js';
+import type { BoxRecord, ExecResult, Provider } from '@agentbox/core';
+import {
+  buildCloudAttachInnerCommand,
+  verifyDetachedSession,
+} from '../src/commands/_cloud-attach.js';
 import { buildPromptArgs } from '../src/lib/queue/build-prompt-args.js';
 
 /**
@@ -13,8 +17,12 @@ import { buildPromptArgs } from '../src/lib/queue/build-prompt-args.js';
 function decodeArgs(cmd: string): string[] {
   const m = /echo ([A-Za-z0-9+/=]+) \| base64 -d/.exec(cmd);
   if (!m) throw new Error(`launcher did not embed a base64 blob: ${cmd}`);
-  const decoded = Buffer.from(m[1]!, 'base64').toString('utf8');
-  return decoded.length === 0 ? [] : decoded.split('\n');
+  // Two layers: the outer blob decodes to newline-joined per-arg base64 tokens;
+  // each token decodes to one argv element (so a newline inside an arg is never
+  // mistaken for an argv separator). Mirrors the in-box read-loop launcher.
+  const payload = Buffer.from(m[1]!, 'base64').toString('utf8');
+  if (payload.length === 0) return [];
+  return payload.split('\n').map((t) => Buffer.from(t, 'base64').toString('utf8'));
 }
 
 describe('buildCloudAttachInnerCommand', () => {
@@ -31,13 +39,13 @@ describe('buildCloudAttachInnerCommand', () => {
   it('prints the start banner before the agent on the args path too', () => {
     const cmd = buildCloudAttachInnerCommand('claude', ['--model', 'sonnet']);
     expect(cmd).toContain('agentbox: starting claude');
-    // banner must precede the mapfile launcher so it paints during cold-start.
-    expect(cmd.indexOf('agentbox: starting')).toBeLessThan(cmd.indexOf('mapfile -t A'));
+    // banner must precede the read-loop launcher so it paints during cold-start.
+    expect(cmd.indexOf('agentbox: starting')).toBeLessThan(cmd.indexOf('while IFS= read -r t'));
   });
 
   it('encodes a single simple arg', () => {
     const cmd = buildCloudAttachInnerCommand('claude', ['--model', 'sonnet']);
-    expect(cmd).toContain('mapfile -t A');
+    expect(cmd).toContain('while IFS= read -r t');
     expect(cmd).toContain('exec claude');
     expect(decodeArgs(cmd)).toEqual(['--model', 'sonnet']);
   });
@@ -46,8 +54,20 @@ describe('buildCloudAttachInnerCommand', () => {
     // Process substitution (`< <(…)`) needs /dev/fd, which the Vercel Sandbox
     // lacks — the launcher must use a here-string so the args survive there.
     const cmd = buildCloudAttachInnerCommand('claude', ['--model', 'sonnet']);
-    expect(cmd).toContain('mapfile -t A <<< "$(');
+    expect(cmd).toContain('done <<< "$(');
     expect(cmd).not.toContain('< <(');
+  });
+
+  it('preserves a multi-line seed prompt as a single argv element', () => {
+    // The `-i` queue's common case: a multi-paragraph prompt. The earlier
+    // newline-join + `mapfile -t` scheme shredded it into one positional per
+    // line, so claude/codex got N positionals and the detached session died at
+    // launch (verifyDetachedSession then failed the job). Per-arg encoding keeps
+    // the whole prompt as one argv element.
+    const prompt = 'Build a kanban board.\n\nRequirements:\n- drag and drop\n- columns';
+    const args = buildPromptArgs('claude-code', prompt, ['--permission-mode=plan']);
+    const cmd = buildCloudAttachInnerCommand('claude', args);
+    expect(decodeArgs(cmd)).toEqual([prompt, '--permission-mode=plan']);
   });
 
   it('preserves args with spaces as a single element', () => {
@@ -87,5 +107,60 @@ describe('buildCloudAttachInnerCommand', () => {
     const args = buildPromptArgs('claude-code', 'fix the failing test', ['--permission-mode=plan']);
     const cmd = buildCloudAttachInnerCommand('claude', args);
     expect(decodeArgs(cmd)).toEqual(['fix the failing test', '--permission-mode=plan']);
+  });
+});
+
+/**
+ * `verifyDetachedSession` is what turns a silent cloud `-i` failure (box created,
+ * job reports "done", but the seeded agent session never came up) into a thrown,
+ * surfaced error. A fake provider drives the `tmux has-session`/`capture-pane`
+ * probe so we exercise the three outcomes without a real sandbox.
+ */
+describe('verifyDetachedSession', () => {
+  const box = { name: 'kanban-buttons' } as BoxRecord;
+  const fakeProvider = (exec: (argv: string[]) => ExecResult): Provider =>
+    ({ exec: (_b: BoxRecord, argv: string[]) => Promise.resolve(exec(argv)) }) as unknown as Provider;
+
+  it('throws "exited immediately" when the session is gone (probe exits 7)', async () => {
+    const provider = fakeProvider(() => ({ exitCode: 7, stdout: '', stderr: '' }));
+    await expect(
+      verifyDetachedSession(provider, box, 'claude', 'claude', { windowMs: 0 }),
+    ).rejects.toThrow(/exited immediately after launch/);
+  });
+
+  it('throws an actionable login hint when the pane shows an auth rejection', async () => {
+    const provider = fakeProvider(() => ({
+      exitCode: 0,
+      stdout: '❯ build a kanban board\n● Please run /login · API Error: 401 Invalid authentication credentials',
+      stderr: '',
+    }));
+    await expect(
+      verifyDetachedSession(provider, box, 'claude', 'claude', { windowMs: 0 }),
+    ).rejects.toThrow(/credentials were rejected.*agentbox claude login/s);
+  });
+
+  it('resolves for a live, authenticated session', async () => {
+    const provider = fakeProvider(() => ({
+      exitCode: 0,
+      stdout: '❯ build a kanban board\n● Working on it...',
+      stderr: '',
+    }));
+    await expect(
+      verifyDetachedSession(provider, box, 'claude', 'claude', { windowMs: 0 }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('does not false-fail on a transient probe error (keeps polling)', async () => {
+    let calls = 0;
+    const provider = fakeProvider(() => {
+      calls++;
+      if (calls === 1) throw new Error('transport blip');
+      return { exitCode: 0, stdout: 'all good', stderr: '' };
+    });
+    // windowMs large enough for a second tick; pollMs tiny so the test is fast.
+    await expect(
+      verifyDetachedSession(provider, box, 'claude', 'claude', { windowMs: 30, pollMs: 1 }),
+    ).resolves.toBeUndefined();
+    expect(calls).toBeGreaterThan(1);
   });
 });

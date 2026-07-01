@@ -3,7 +3,7 @@ title: Vercel
 description: Run your agents in a fast Vercel cloud sandbox with public preview URLs and persistent pause/resume
 ---
 
-Run your agents in a fast Vercel cloud sandbox with a public HTTPS preview URL and persistent pause/resume — no local Docker needed. Each box is a remote Vercel sandbox you drive with the same `agentbox` commands as a local box. It runs on Firecracker, so there's no [Docker-in-Docker](/docs/docker-in-docker), and capturing a checkpoint stops the VM first (pause auto-snapshots on stop).
+Run your agents in a fast Vercel cloud sandbox with a public HTTPS preview URL and persistent pause/resume — no local Docker needed. Each box is a remote Vercel sandbox you drive with the same `agentbox` commands as a local box. It supports [Docker-in-Docker](/docs/docker-in-docker) (baked into the snapshot and auto-started), and capturing a checkpoint stops the VM first (pause auto-snapshots on stop).
 
 Switch per box with `--provider vercel`, or pin it project-wide with `box.provider: vercel` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona), and [e2b](/docs/e2b).
 
@@ -77,12 +77,16 @@ agentbox vercel claude
 | Disk | 32 GB fixed |
 | RAM | 2048 MB per vCPU (coupled) |
 | Exposed ports | ≤4 (8080 / 6080 / 8788 reserved + ~1 free), fixed at create, non-privileged only |
-| Session length | 45 min (Hobby) / 5 hr (Pro+) |
-| Nested containers | none — `docker` unavailable (no `CAP_SYS_ADMIN`) |
+| Session length | 45 min (Hobby) / 5 hr (Pro+) — auto-renewed while the agent is working |
+| Nested containers | yes — `docker` baked in + auto-started (DinD) |
 | SSH | none — attach uses the Vercel CLI PTY |
 
-<Callout type="warn" title="NO IN-BOX DOCKER">
-If your `agentbox.yaml` needs Docker-in-Docker — say a `postgres:16` service — use the [docker](/docs/local-docker) or [hetzner](/docs/hetzner) provider instead. DinD is impossible on Vercel. See [docker-in-docker](/docs/docker-in-docker).
+<Callout title="SESSION KEEPALIVE">
+While the in-box agent is actively working, the host relay automatically renews the box's session timeout (keeping it a rolling [`autopause.idleMinutes`](/docs/configuration) window ahead of now), so a long Claude/Codex run isn't killed mid-work. Once the agent goes idle the box stops being renewed and lapses about one window later. The renewal is bounded by your Vercel plan's max session (Hobby ~45 min hard cap; Pro+ ~5 hr) — it mainly helps Pro+ plans run past the conservative 45-min default.
+</Callout>
+
+<Callout title="IN-BOX DOCKER">
+Vercel boxes ship with a working in-box `docker`: the engine is baked into the prepare snapshot and `dockerd` is auto-started on create/resume, so `agentbox.yaml` `image:` services (e.g. a `postgres:16` service) work out of the box. Pulled images carry over across pause/resume. See [docker-in-docker](/docs/docker-in-docker).
 </Callout>
 
 ## Sizing & network policy

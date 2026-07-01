@@ -1,6 +1,11 @@
 import { spawn } from 'node:child_process';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { executeCloudAction, refreshCloudPreviewUrl } from './host-actions.js';
+import {
+  boxWorkspacePath,
+  executeCloudAction,
+  refreshCloudPreviewUrl,
+  resolveHostPath,
+} from './host-actions.js';
 import { HostActionQueue } from './host-action-queue.js';
 import { BoxNotices } from './notices.js';
 import { hostOpenCommand } from '@agentbox/sandbox-core';
@@ -47,6 +52,7 @@ import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
 import { MemoryStore } from './store/memory-store.js';
 import type { Store } from './store/store.js';
 import { DEFAULT_BOX_RELAY_PORT } from './types.js';
+import { buildCpArgv, cpFlags, normalizeCpParams } from './cp-rpc.js';
 import type {
   BoxRegistration,
   BoxWorktree,
@@ -491,6 +497,14 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // — pushes to them are the whole point of agentbox, so they bypass
         // the y/N gate. Any other branch still prompts.
         if (body.method === 'git.push') {
+          const hostOnlyParams = body.params as GitRpcParams | undefined;
+          if (hostOnlyParams?.hostOnly) {
+            // Landing the branch in the host's local repo publishes nothing,
+            // so the push-confirm gate doesn't apply. Land and return.
+            const saveResult = await handleGitSaveToHost(reg, hostOnlyParams);
+            send(res, saveResult.exitCode === 0 ? 200 : 500, saveResult);
+            return;
+          }
           const params = body.params as GitRpcParams | undefined;
           const worktree = resolveWorktree(reg, params?.path ?? '/workspace');
           const isAgentboxBranch = worktree?.branch.startsWith('agentbox/') ?? false;
@@ -578,28 +592,39 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
       if (body.method === 'cp.toHost' || body.method === 'cp.fromHost') {
         const params = body.params as CpRpcParams | undefined;
-        if (!params || typeof params.boxPath !== 'string' || typeof params.hostPath !== 'string') {
-          send(res, 400, { error: 'cp.* requires {boxPath, hostPath} strings' });
+        let norm: { sources: string[]; dest: string };
+        try {
+          norm = normalizeCpParams(body.method, params);
+        } catch (err) {
+          send(res, 400, { error: err instanceof Error ? err.message : String(err) });
           return;
         }
         if (
-          params.exclude !== undefined &&
-          (!Array.isArray(params.exclude) || params.exclude.some((p) => typeof p !== 'string'))
+          params!.exclude !== undefined &&
+          (!Array.isArray(params!.exclude) || params!.exclude.some((p) => typeof p !== 'string'))
         ) {
           send(res, 400, { error: 'cp.* exclude must be an array of strings' });
           return;
         }
         const direction = body.method === 'cp.toHost' ? 'box -> host' : 'host -> box';
-        const pathDetail =
-          body.method === 'cp.toHost'
-            ? `${params.boxPath} -> ${params.hostPath}`
-            : `${params.hostPath} -> ${params.boxPath}`;
-        const detailParts = [pathDetail];
-        if (params.exclude && params.exclude.length > 0) {
-          detailParts.push(`exclude: ${params.exclude.join(', ')}`);
+        // Resolve host paths against THIS box's workspace so a relative path
+        // doesn't land under the relay daemon's CWD (whichever project started
+        // the relay), and so the consent prompt shows the real destination.
+        const workspacePath = await boxWorkspacePath(reg.boxId);
+        const { argv: cpArgs, detail, contextArgv } = buildCpArgv({
+          method: body.method,
+          boxName: reg.name,
+          sources: norm.sources,
+          dest: norm.dest,
+          resolveHost: (p) => resolveHostPath(workspacePath, p),
+          flags: cpFlags(params!),
+        });
+        const detailParts = [detail];
+        if (params!.exclude && params!.exclude.length > 0) {
+          detailParts.push(`exclude: ${params!.exclude.join(', ')}`);
         }
-        if (params.defaultExcludes === false) detailParts.push('(default excludes off)');
-        if (params.yes) detailParts.push('(over size limit — confirmed)');
+        if (params!.defaultExcludes === false) detailParts.push('(default excludes off)');
+        if (params!.yes) detailParts.push('(over size limit — confirmed)');
         const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
           kind: 'confirm',
           message: `Allow cp (${direction}) on ${reg.name}?`,
@@ -607,14 +632,14 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           defaultAnswer: 'n',
           context: {
             command: body.method,
-            argv: [params.boxPath, params.hostPath],
+            argv: contextArgv,
           },
         });
         if (verdict.answer !== 'y') {
           send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
           return;
         }
-        const result = await handleCpRpc(reg, body.method, params);
+        const result = await handleCpRpc(cpArgs, workspacePath);
         const status = result.exitCode === 0 ? 200 : 500;
         send(res, status, result);
         return;
@@ -1303,6 +1328,56 @@ function sanitizeWorktrees(input: BoxWorktree[] | undefined): BoxWorktree[] | un
 }
 
 /**
+ * git.push --host-only: make the box's branch available in the host's *local*
+ * repo without pushing to any remote. Docker boxes commit against the
+ * bind-mounted `.git/`, so the box's branch ref already lives in the host repo;
+ * we just copy it to the requested destination ref via a self-fetch (which
+ * enforces fast-forward and works even though the source branch is checked out
+ * in the worktree). When the destination equals the source branch this is a
+ * no-op success — the branch is already on the host.
+ */
+async function handleGitSaveToHost(
+  reg: BoxRegistration,
+  params: GitRpcParams | undefined,
+): Promise<GitRpcResult> {
+  const containerPath = params?.path ?? '/workspace';
+  const worktree = resolveWorktree(reg, containerPath);
+  if (!worktree) {
+    return {
+      exitCode: 64,
+      stdout: '',
+      stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
+    };
+  }
+  const src = worktree.branch;
+  const dest = params?.as && params.as.length > 0 ? params.as : src;
+  if (dest === src) {
+    return {
+      exitCode: 0,
+      stdout: `branch ${dest} already available in ${worktree.hostMainRepo}\n`,
+      stderr: '',
+    };
+  }
+  const refspec = `${params?.force ? '+' : ''}${src}:refs/heads/${dest}`;
+  const result = await runHostCommand([
+    'git',
+    '-C',
+    worktree.hostMainRepo,
+    'fetch',
+    '.',
+    refspec,
+  ]);
+  if (result.exitCode === 0) {
+    return {
+      exitCode: 0,
+      stdout: `branch ${dest} available in ${worktree.hostMainRepo}\n${result.stdout}`,
+      stderr: result.stderr,
+    };
+  }
+  return result;
+}
+
+/**
  * git.push / git.fetch: run `git -C <hostMainRepo> <op> <remote> <branch>
  * [args]` on the host with the user's creds. The in-container worktree's
  * working tree isn't on the host, so we operate on the shared `.git/` from
@@ -1656,11 +1731,7 @@ async function handleIntegrationRpc(
  * Caller (the /rpc route) already gated this with askPrompt and rejected
  * non-'y' answers; we never reach this code without consent.
  */
-async function handleCpRpc(
-  reg: BoxRegistration,
-  method: 'cp.toHost' | 'cp.fromHost',
-  params: CpRpcParams,
-): Promise<GitRpcResult> {
+async function handleCpRpc(cpArgs: string[], cwd?: string): Promise<GitRpcResult> {
   const entry = process.env.AGENTBOX_CLI_ENTRY;
   if (!entry) {
     return {
@@ -1669,18 +1740,12 @@ async function handleCpRpc(
       stderr: 'relay: AGENTBOX_CLI_ENTRY not set; cannot run cp host-side',
     };
   }
-  // `agentbox cp` is positional: <src> [dst]. Direction is encoded by which
-  // arg carries the `<boxName>:` prefix.
-  const boxRef = `${reg.name}:${params.boxPath}`;
-  const flags: string[] = [];
-  for (const pat of params.exclude ?? []) flags.push('--exclude', pat);
-  if (params.defaultExcludes === false) flags.push('--no-default-excludes');
-  if (params.yes) flags.push('--yes');
-  const argv =
-    method === 'cp.toHost'
-      ? [process.execPath, entry, 'cp', boxRef, params.hostPath, ...flags]
-      : [process.execPath, entry, 'cp', params.hostPath, boxRef, ...flags];
-  return runHostCommand(argv, CP_RPC_TIMEOUT_MS);
+  // Re-shell the installed `agentbox cp` (it owns the tar pipe, excludes, the
+  // size guard, and provider routing). `cpArgs` is the fully-built argv from
+  // buildCpArgv (box side prefixed with `<name>:`, host paths absolute); `cwd`
+  // (the box workspace) makes the host CLI's project-config lookup box-correct.
+  const argv = [process.execPath, entry, ...cpArgs];
+  return runHostCommand(argv, CP_RPC_TIMEOUT_MS, cwd);
 }
 
 /**
@@ -1709,7 +1774,10 @@ async function handleDownloadRpc(
   // are subcommands of `download`.
   if (kind !== 'workspace') argv.push(kind);
   argv.push(reg.name, '-y');
-  return runHostCommand(argv, DOWNLOAD_RPC_TIMEOUT_MS);
+  // Run from the box's host workspace so the host CLI's project-config lookup
+  // is box-correct (the destination already defaults to box.workspacePath).
+  const cwd = await boxWorkspacePath(reg.boxId);
+  return runHostCommand(argv, DOWNLOAD_RPC_TIMEOUT_MS, cwd);
 }
 
 /**
@@ -1758,6 +1826,7 @@ export function isOpenableUrl(value: string): boolean {
 function runHostCommand(
   argv: string[],
   timeoutMs: number = GIT_RPC_TIMEOUT_MS,
+  cwd?: string,
 ): Promise<GitRpcResult> {
   return new Promise<GitRpcResult>((resolve) => {
     const [cmd, ...rest] = argv;
@@ -1768,6 +1837,10 @@ function runHostCommand(
     const child = spawn(cmd, rest, {
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // Default to the relay daemon's CWD when unset (legacy behaviour); callers
+      // that know the box pass its workspace so relative host paths + project
+      // config resolve against the box, not whatever dir launched the relay.
+      ...(cwd ? { cwd } : {}),
     });
     let stdout = '';
     let stderr = '';

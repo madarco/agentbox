@@ -48,7 +48,9 @@ import { detectEgressIp } from './egress-ip.js';
 import {
   createPerBoxFirewall,
   deletePerBoxFirewall,
+  firewallNeedsSync,
   normalizeSourceCidr,
+  syncFirewallSource,
 } from './firewall.js';
 import { pollUntil } from './poll.js';
 import { readPreparedState } from './prepared-state.js';
@@ -75,6 +77,35 @@ const SNAPSHOT_DEADLINE_MS = 20 * 60_000;
 // replacement with the same 2 vCPU / 4 GB / 40 GB shape on x86.
 const HETZNER_DEFAULT_SERVER_TYPE = 'cx23';
 const HETZNER_DEFAULT_LOCATION = 'nbg1';
+
+/**
+ * Secrets that must never land in the world-readable (0644) cloud-init
+ * `/etc/agentbox/box.env`. The relay token reaches in-box ctl via the daemon's
+ * 0600 `relay.env`; the bridge token stays in the daemon's process env.
+ */
+const CLOUD_INIT_BOX_ENV_EXCLUDE = new Set<string>([
+  'AGENTBOX_RELAY_URL',
+  'AGENTBOX_RELAY_TOKEN',
+  'AGENTBOX_BRIDGE_TOKEN',
+]);
+
+/**
+ * Build the cloud-init `box.env` passthrough: the `AGENTBOX_*` identity/portless
+ * vars, with the relay/bridge secrets in `CLOUD_INIT_BOX_ENV_EXCLUDE` stripped
+ * (cloud-init writes box.env 0644 — those secrets travel via the daemon's 0600
+ * `relay.env` / process env instead). Exported for unit testing.
+ */
+export function cloudInitBoxEnv(
+  env: Record<string, string | undefined> = {},
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (v !== undefined && k.startsWith('AGENTBOX_') && !CLOUD_INIT_BOX_ENV_EXCLUDE.has(k)) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
 
 /** Module-level tunnel manager — one ControlMaster per box for this process. */
 const tunnels = new SshTunnelManager();
@@ -201,13 +232,71 @@ function buildSshTarget(state: PerBoxState, vpsIp: string, controlPath?: string)
   };
 }
 
+/**
+ * The per-box firewall's current SSH source vs the host's live egress IP. Best-
+ * effort and called ONLY on a connection-failure path (the open-failed hint and
+ * `recover`'s auto-sync), never on the happy path — `egressIpCached` keeps the
+ * probe from storming across retries. Returns null when there's no firewall or
+ * we can't determine the state.
+ */
+interface FirewallEgressStatus {
+  firewallId: number;
+  /** The CIDR the firewall currently allows for inbound SSH (`source_ips[0]`). */
+  allowedSource: string | undefined;
+  /** The host's current egress IP as a `/32` CIDR. */
+  currentEgress: string;
+  /** Friendly box ref for the `firewall sync` hint (the `agentbox.box` label). */
+  boxRef: string;
+}
+
+async function firewallEgressStatus(sandboxId: string): Promise<FirewallEgressStatus | null> {
+  const id = Number.parseInt(sandboxId, 10);
+  if (!Number.isFinite(id)) return null;
+  const server = await client().getServer(id);
+  if (!server) return null;
+  const firewallId = Number.parseInt(server.labels['agentbox.firewall'] ?? '', 10);
+  if (!Number.isFinite(firewallId)) return null;
+  const firewall = await client().getFirewall(firewallId);
+  const sshRule = firewall?.rules.find((r) => r.direction === 'in' && r.port === '22');
+  const allowedSource = sshRule?.source_ips?.[0];
+  // A FRESH probe (not cached): this runs only on a connection-failure path, and
+  // a stale value could read the new IP as "unchanged" and skip the heal — the
+  // very mismatch we exist to catch. The poller already de-dupes its recover
+  // calls and `recover --all` is sequential, so fresh probing here won't storm.
+  const currentEgress = `${await detectEgressIp({})}/32`;
+  return {
+    firewallId,
+    allowedSource,
+    currentEgress,
+    boxRef: server.labels['agentbox.box'] ?? sandboxId,
+  };
+}
+
 async function ensureTunnel(sandboxId: string, state: PerBoxState, vpsIp: string): Promise<void> {
   if (tunnels.has(sandboxId)) return;
-  await tunnels.open({
-    boxId: sandboxId,
-    vpsHost: vpsIp,
-    identity: state.identity,
-  });
+  try {
+    await tunnels.open({
+      boxId: sandboxId,
+      vpsHost: vpsIp,
+      identity: state.identity,
+    });
+  } catch (err) {
+    // A host egress-IP change locks us out of the per-box firewall, surfacing as
+    // an opaque SSH connect timeout. Best-effort: detect the mismatch and enrich
+    // the error with the fix. Never let the diagnostic mask the original error
+    // on a match (box is just down) or a probe failure.
+    const s = await firewallEgressStatus(sandboxId).catch(() => null);
+    if (s && firewallNeedsSync(s.allowedSource, s.currentEgress)) {
+      throw new Error(
+        `${(err as Error).message}\n\n` +
+          `hetzner: SSH is blocked by the box firewall — it allows ${s.allowedSource ?? '(no rule)'} ` +
+          `but your egress IP is now ${s.currentEgress}. Your IP changed; run:\n` +
+          `  agentbox hetzner firewall sync ${s.boxRef}\n` +
+          `(or \`agentbox recover ${s.boxRef}\`, which auto-syncs).`,
+      );
+    }
+    throw err;
+  }
 }
 
 /**
@@ -288,11 +377,11 @@ export const hetznerBackend: CloudBackend = {
       firewallId = firewall.id;
 
       // 5. Cloud-init for the box: vscode user, pubkey, /etc/hosts alias,
-      // optional box.env passthrough from req.env.
-      const boxEnv: Record<string, string> = {};
-      for (const [k, v] of Object.entries(req.env ?? {})) {
-        if (k.startsWith('AGENTBOX_')) boxEnv[k] = v;
-      }
+      // optional box.env passthrough from req.env. The relay/bridge tokens are
+      // deliberately excluded — cloud-init writes box.env world-readable (0644),
+      // and these secrets reach the in-box ctl via the daemon's 0600 relay.env
+      // (relay token) and its process env (bridge token) instead.
+      const boxEnv = cloudInitBoxEnv(req.env);
       const cloudInit = generateBoxCloudInit({
         sshPubkey: key.publicKey,
         boxName: req.name,
@@ -610,6 +699,22 @@ export const hetznerBackend: CloudBackend = {
     return { url: `http://127.0.0.1:${String(localPort)}` };
   },
 
+  async repairReachability(h): Promise<{ changed: boolean; detail?: string }> {
+    // Re-sync the per-box firewall to the host's CURRENT egress IP, but only
+    // when it actually changed — the host laptop moved networks and the
+    // firewall is now blocking us. Called by the CLI ONLY on a connection-
+    // establishment failure (`recover`, the initial attach connect), never on a
+    // mid-session drop. A `0.0.0.0/0` firewall (explicit dynamic-IP opt-in) is
+    // already open, so it's a no-op.
+    const s = await firewallEgressStatus(h.sandboxId).catch(() => null);
+    if (!s || !firewallNeedsSync(s.allowedSource, s.currentEgress)) return { changed: false };
+    await syncFirewallSource(client(), s.firewallId, s.currentEgress);
+    return {
+      changed: true,
+      detail: `firewall updated: SSH now allowed from ${s.currentEgress} (was ${s.allowedSource ?? '(no rule)'})`,
+    };
+  },
+
   async startInBoxPortless(h, opts): Promise<void> {
     // Bring up a `portless` proxy *inside the VPS* mirroring the host's
     // mode so `<boxName>.localhost:<P>` resolves to the same content on
@@ -628,7 +733,20 @@ export const hetznerBackend: CloudBackend = {
     const tlsFlag = opts.tls ? '' : '--no-tls';
     const startCmd = `sudo portless proxy start ${tlsFlag} -p ${String(opts.proxyPort)}`.replace(/\s+/g, ' ');
     const aliasCmd = `sudo portless alias ${shellQuote(opts.boxName)} ${String(opts.webPort)}`;
-    await this.exec(h, `${startCmd}; ${aliasCmd}`);
+    const cmds = [startCmd, aliasCmd];
+    if (opts.tls) {
+      // The TLS mirror serves its own self-signed CA at /root/.portless/ca.pem.
+      // `portless proxy start` only trusts it in the system store — not the box
+      // user's NSS db, which Chromium / Playwright read — so the VNC browser and
+      // Playwright fail with a cert error on `https://<box>.localhost`. Trust it
+      // everywhere (system store + vscode NSS db) and point Node at it via
+      // NODE_EXTRA_CA_CERTS. Best-effort: the helper never exits non-zero.
+      cmds.push(
+        'sudo agentbox-portless-trust /root/.portless/ca.pem >/dev/null 2>&1 || true',
+        `echo 'export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/agentbox-portless-ca.crt' | sudo tee /etc/profile.d/agentbox-portless-ca.sh >/dev/null || true`,
+      );
+    }
+    await this.exec(h, cmds.join('; '));
   },
 
   async attachArgv(h): Promise<string[]> {

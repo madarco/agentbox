@@ -83,11 +83,16 @@ describe('buildCodexAttachArgv', () => {
     const argv = buildCodexAttachArgv('agentbox-box1');
     expect(argv.slice(0, 2)).toEqual(['exec', '-it']);
     expect(argv).toContain('agentbox-box1');
-    expect(argv.slice(-4)).toEqual(['tmux', 'attach', '-t', DEFAULT_CODEX_SESSION]);
+    // tmux runs under `sh -c` with the TERM guard; the session name is the
+    // final positional bound to "$1" in the script.
+    const script = argv[argv.indexOf('-c') + 1]!;
+    expect(script).toContain('infocmp "$TERM"');
+    expect(script).toContain('exec tmux attach -t "$1"');
+    expect(argv[argv.length - 1]).toBe(DEFAULT_CODEX_SESSION);
   });
 
   it('attaches to a custom session name', () => {
     const argv = buildCodexAttachArgv('agentbox-box1', 'my-codex');
-    expect(argv.slice(-4)).toEqual(['tmux', 'attach', '-t', 'my-codex']);
+    expect(argv[argv.length - 1]).toBe('my-codex');
   });
 });
