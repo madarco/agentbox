@@ -2,7 +2,9 @@
 
 Branch: `feat/sync-layer` (off `feat/control-plane-create`; PR targets that, not `main`).
 Full design: the approved plan (`we-need-to-abstract-rippling-clover`). This file tracks
-execution state so the branch is self-documenting for resumption.
+execution state so the branch is self-documenting for resumption. For the steady-state
+architecture (the seams, the four override mechanisms, how to add a provider), see
+[`sync-architecture.md`](./sync-architecture.md).
 
 ## Goal (recap)
 One well-defined, **bidirectional** sync layer, organized by concern (git / env / files /
