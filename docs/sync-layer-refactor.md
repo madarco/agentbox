@@ -67,11 +67,36 @@ Two-tier layout (dependency-graph-driven): **pure contracts** in `packages/core/
     docker `host-export.ts:copyHostEnvFilesToBox` + cloud `env-files.ts:uploadEnvFiles`; both
     become thin wrappers injecting their transport.
   - Tests: env-concern golden test via `RecordingSyncTransport`; keep `scan-host-env-files.test.ts`.
-- **Phase 4 — carry + dynamic + skills concerns.** `concerns/files.ts` (calls
-  `sandbox-core/carry-render.ts`, which stays; collapses docker `copyCarryPathsToBox` +
-  cloud `uploadCarryPaths`); `concerns/dynamic.ts` + move manifest logic verbatim to
-  `sync/manifest/dynamic-sync.ts` (delete the cloud→docker import); `concerns/skills.ts`
-  (`~/.agents` + per-tool pull via `spec.pull`).
+- **Phase 4 — carry + dynamic + skills concerns.** Concrete findings from the first pass:
+  - **carry is the most provider-divergent concern — do NOT force a single transport
+    unification.** docker `copyOneEntry` (`host-export.ts:729`) uses `streamTarPipe` (stdin,
+    no temp file) + several separate `docker exec --user 0:0` calls (mkdir/extract/rename/
+    chmod/chown/parent-chain). cloud `uploadOneEntry` (`carry.ts:86`) stages a temp tar,
+    `uploadFile`s it, then runs ONE combined bash command, with a `wantsRoot` carve-out for
+    vercel/e2b — and an explicit note that splitting/nesting that command reintroduces a
+    Vercel `$(...)`/`while` hang. Safe approach: extract the shared *decision* logic
+    (`~/`→`/home/vscode` expansion, file-vs-dir, exclude, uid/mode defaults, rename-needed,
+    parent-chain-needed, the audit loop + missing-entry handling) into a pure
+    `planCarryEntry(entry)` in `sync/concerns/files.ts`; keep each provider's *apply*
+    mechanism as-is (it stays byte-identical + avoids the vercel hang). Modest dedup, zero
+    risk. `renderCarryEntries` stays in `sandbox-core/carry-render.ts`.
+  - **dynamic — killing the cloud→docker leak needs a claude-specific dependency chain
+    moved first.** `docker/dynamic-sync.ts` is provider-neutral EXCEPT it imports
+    `BOX_CLAUDE_PROJECT_DIR` (const), `resolveClaudeMemoryDir`, `encodeClaudeProjectsKey`
+    from `host-stage.ts` (also used by `stageClaudeStaticForUpload`). Move that trio +
+    the manifest logic (`buildHostSyncManifest`/`computeSyncDelta`/`stageDynamicSyncTarball`
+    + types + `BOX_*` consts) into `sync/agents/claude/` (they're claude-specific) or
+    `sync/manifest/`; re-export from `host-stage.ts` for its other consumers; then cloud
+    `seedDynamicConfig` + a `concerns/dynamic.ts` import from sandbox-core (leak gone).
+    NOTE: verify whether the docker create path has its own dynamic seed or if the manifest
+    logic is cloud-only-consumed (it may be — docker seeds workflows/memory via the
+    `~/.claude` volume rsync instead).
+  - **transport fix already landed:** `DockerSyncTransport.applyTarball` now always pins
+    `--user <uid>:<uid>` (incl. `0:0` for root) — the carry `uid:0` path needs it; env
+    (`uid:1000`) is unchanged.
+  - **skills:** `~/.agents` shared-volume seed (docker `ensureAgentsVolume` via
+    `seedVolumeFromHost`) + cloud `stageAgentsStaticForUpload`; per-tool box→host pull via
+    `spec.pull` (`pullClaudeExtras`/`pullCodexConfig`/`pullOpencodeConfig`).
 - **Phase 5 — credentials concern.** `concerns/credentials.ts`
   (`seedCredentials`/`extractCredentials`/`refreshHostBackups`). Encode expiry gate
   (`hostClaudeBackupExpired`) + seed-once marker (`.agentbox-seeded-at`) + force rule +

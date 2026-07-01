@@ -65,10 +65,10 @@ export function createDockerSyncTransport(init: DockerSyncTransportInit): SyncTr
       const uid = opts?.uid ?? 1000;
       const tarArgs = ['tar', '-xf', '-', '-C', boxDestDir];
       if (opts?.noSamePerms) tarArgs.push('--no-same-permissions', '--no-same-owner', '-m');
-      const args =
-        uid === 0
-          ? ['exec', '-i', container, ...tarArgs]
-          : ['exec', '-i', '--user', `${uid}:${uid}`, container, ...tarArgs];
+      // Always pin the extract user explicitly (`--user <uid>:<uid>`), incl.
+      // `0:0` for root — omitting it would run as the image's default USER
+      // (vscode), which is wrong for a root-owned carry extract.
+      const args = ['exec', '-i', '--user', `${uid}:${uid}`, container, ...tarArgs];
       const r = await execa('docker', args, { input: createReadStream(hostTarPath), reject: false });
       if (r.exitCode !== 0) {
         throw new Error(`docker tar extract into ${boxDestDir} failed: ${String(r.stderr).slice(0, 300)}`);
