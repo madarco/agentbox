@@ -24,19 +24,31 @@ A provider therefore never re-implements a concern. It supplies a mechanism (or 
 capability flag, or a small override), and the shared concern runs on top. This is
 composition, not class inheritance — see [The four override mechanisms](#the-four-override-mechanisms).
 
+**Two goals, held together — reuse is only half of it:**
+1. **Reuse** — the *what* lives once, so a fix to the workspace resync is a fix for
+   every provider.
+2. **Co-location / auditability** — you can open *one* file and see *every* sync
+   activity a provider performs, and line up *one* activity (e.g. workspace resync)
+   across *all* providers as peer methods.
+
+Reuse is served by concerns-as-functions (below); co-location is served by the
+[`ProviderSync` facade](#co-location-the-providersync-facade), a per-provider surface
+that *names* each op. The two are complementary — the facade methods are thin
+delegations to the shared concerns — so neither goal is traded for the other.
+
 ---
 
 ## The layering
 
 ```
-┌─ Tier 1: CONTRACTS ─ @agentbox/core / src/sync/ ───────────────────────────┐
+┌─ Tier 1: CONTRACTS ─ @agentbox/core / src/sync/ ────────────────────────────┐
 │  transport.ts   SyncTransport + TransportCaps + PushOptions                 │
 │  workspace.ts   WorkspaceResyncPorts + ResyncWorktree + RepoResyncResult    │
 │  reconciler.ts  ConflictPolicy + ConflictVerdict + Reconciler               │
 │  types.ts       SyncTopology | SyncDirection | SyncConcern                  │
-│  agent-kind.ts  claude/codex/opencode name normalization                   │
+│  agent-kind.ts  claude/codex/opencode name normalization                    │
 │  (also core/src/provider.ts: Provider · cloud-backend.ts: CloudBackend)     │
-└────────────────────────────────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────────────────────┘
                  ▲ pure interfaces + data types, no fs/exec
 ┌─ Tier 2: IMPL + CONCERNS ─ @agentbox/sandbox-core / src/sync/ ──────────────┐
 │  registry.ts            AGENT_SYNC_SPECS  (per-tool data: paths/creds/caps) │
@@ -47,20 +59,23 @@ composition, not class inheritance — see [The four override mechanisms](#the-f
 │    files.ts       planCarryEntry            (host→box carry decisions)      │
 │    skills.ts      seedAgentsVolume          (~/.agents)                     │
 │    credentials.ts extractCredentials + isRealAgentCredential + guards       │
-│    dynamic.ts     workflows/memory manifest sync                           │
+│    dynamic.ts     workflows/memory manifest sync                            │
 │    git.ts         classifyUntrackedOverlay + resyncWorkspace                │
-└────────────────────────────────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────────────────────┘
                  ▲ functions of (ctx, transport|ports, spec) — provider-neutral
-┌─ Tier 3: PROVIDERS + TRANSPORTS ───────────────────────────────────────────┐
+┌─ Tier 3: PROVIDERS + TRANSPORTS ────────────────────────────────────────────┐
 │  @agentbox/sandbox-docker                @agentbox/sandbox-cloud            │
-│    dockerProvider : Provider               createCloudProvider(backend)     │
-│    DockerSyncTransport                       : Provider  ← ONE cloud default │
-│    makeDockerResyncPorts                     CloudSyncTransport             │
-│                                              makeCloudResyncPorts (planned) │
+│    dockerProvider : Provider             createCloudProvider(backend)       │
+│    DockerSyncTransport                     : Provider  (cloud default)      │
+│    makeDockerResyncPorts                   CloudSyncTransport               │
+│    .sync = dockerSync                      .sync = makeCloudSync(backend)   │
+│                                                                             │
+│  provider.sync : ProviderSync   the co-located, auditable per-provider      │
+│    surface (one file = every sync op; same method names across providers)   │
 │                                                                             │
 │  cloud backends (each a thin CloudBackend, reuse createCloudProvider):      │
 │    sandbox-daytona · sandbox-e2b · sandbox-vercel · sandbox-hetzner         │
-└────────────────────────────────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Dependency direction (no cycles):** `core` ← `sandbox-core` ← {`sandbox-docker`,
@@ -131,10 +146,92 @@ guard), `staticPaths` (incl. opencode's 3-XDG-dir layout), `forwardedEnvKeys`,
 
 ---
 
+## Co-location: the `ProviderSync` facade
+
+Reuse (the concerns) is only half the goal. The other half is **auditability by
+co-location**: open one file → see *every* sync activity a provider performs; and
+line up *one* activity across *all* providers as peer methods. Concerns-as-functions
+give reuse but **scatter** the per-provider view across `create.ts` and a dozen files,
+and give no single "resync on every provider" surface.
+
+The **`ProviderSync` facade** closes that gap: a single interface listing every sync
+operation, implemented once per provider as a co-located object whose methods are
+thin delegations to the shared concerns.
+
+```ts
+// core/src/sync/provider-sync.ts — the canonical list of sync operations
+export interface ProviderSync {
+  // workspace (git working tree)
+  seedWorkspace(ctx: SyncContext, plan: WorkspaceSeedPlan): Promise<SeedResult>;
+  resyncWorkspace(ctx: SyncContext): Promise<ResyncResult>;
+  // workspace overlays (gitignore-bypassing host files)
+  seedEnvFiles(ctx: SyncContext, patterns: string[]): Promise<CountResult>;
+  applyCarry(ctx: SyncContext, entries: ResolvedCarryEntry[]): Promise<CountResult>;
+  // agent state (iterates AGENT_SYNC_SPECS internally)
+  seedStaticConfig(ctx: SyncContext): Promise<void>;    // claude/codex/opencode static config
+  seedSkills(ctx: SyncContext): Promise<SeedResult>;    // ~/.agents
+  seedDynamicConfig(ctx: SyncContext): Promise<void>;   // workflows/memory
+  seedCredentials(ctx: SyncContext): Promise<void>;     // host→box logins
+  extractCredentials(ctx: SyncContext): Promise<string[]>; // box→host login capture
+}
+
+// every Provider exposes ONE handle
+interface Provider { /* …lifecycle… */ sync: ProviderSync }
+```
+
+One file per provider is then the complete, auditable surface:
+
+```ts
+// sandbox-docker/src/sync/docker-sync.ts  ← "everything docker syncs" lives HERE
+export const dockerSync: ProviderSync = {
+  resyncWorkspace:    (ctx) => resyncWorkspace(ctx.worktrees, makeDockerResyncPorts(ctx.container), ctx.onLog),
+  seedEnvFiles:       (ctx, pats) => pushEnvFiles(ctx, dockerTransport(ctx), pats),
+  seedSkills:         (ctx) => seedAgentsVolume({ transport: dockerTransport(ctx), /*…*/ }),
+  extractCredentials: (ctx) => extractCredentials(dockerTransport(ctx)),
+  seedCredentials:    (ctx) => syncClaudeCredentials(/* docker's helper-container mechanism */),
+  // …every op, one place, ~3 lines each
+};
+
+// sandbox-cloud/src/sync/cloud-sync.ts  ← ONE cloud default, per-backend overridable
+export function makeCloudSync(backend: CloudBackend, overrides?: Partial<ProviderSync>): ProviderSync {
+  const base: ProviderSync = {
+    resyncWorkspace: (ctx) => resyncWorkspace(ctx.worktrees, makeCloudResyncPorts(cloudTransport(ctx))),
+    /* …the cloud default for every op… */
+  };
+  return { ...base, ...overrides };   // a specific cloud overrides one method, same name
+}
+```
+
+This yields all three properties at once:
+
+| Goal | Delivered by |
+|---|---|
+| **Reuse** | each method is a one-liner over the shared concern — no logic duplicated |
+| **Per-provider audit** | `docker-sync.ts` / `cloud-sync.ts` *is* the complete list of that provider's sync activities |
+| **Per-concern cross-provider audit** | `dockerSync.resyncWorkspace` vs `cloudSync.resyncWorkspace` — same method, peers under one interface; the interface itself is the canonical op list |
+
+**How it relates to the rest.** The facade sits *on top of* the concerns and
+transports — it doesn't replace them. Concerns stay the reusable, golden-tested
+bodies; the transport/ports stay the injected mechanism (next section); the facade
+is the co-located surface that *names* each op per provider. A genuinely
+provider-specific mechanism (docker's helper-container credential sync, its
+`mount --bind` worktree replay) is the *body* of a shared-named method — so
+`seedCredentials` still appears on every provider and you compare the bodies side by
+side, rather than it hiding as an un-named step inside `create()`.
+
+> **Status: target shape, not yet built.** Today only `resyncWorkspace` and
+> `extractAgentCredentials` are surfaced as (scattered) `Provider` methods; the rest
+> run imperatively inside `create()`. Consolidating them into `ProviderSync` is the
+> spine of **Phase 7** — it replaces the earlier "bare data pipeline" framing (a
+> pipeline can still iterate over the facade). See the
+> [refactor tracker](./sync-layer-refactor.md).
+
+---
+
 ## The four override mechanisms
 
-Provider-specific behaviour is expressed in four composable ways — reach for the
-cheapest that works:
+Within a `ProviderSync` method (or when building `makeCloudSync`), provider-specific
+behaviour is expressed in four composable ways — reach for the cheapest that works:
 
 | # | Mechanism | A provider overrides by… | Example |
 |---|---|---|---|
@@ -271,9 +368,16 @@ The rule mirrors carry's "keep the apply mechanism byte-identical": unify the
 
 ## Status
 
-Contracts + concerns for env, carry, skills, credentials (guards+extract),
-dynamic, and git-resync are migrated; the cloud live-box resync and the
-data-driven create **driver** (`SEED_PIPELINE`, which collapses the remaining
-imperative `create.ts` / `cloud-provider.ts` sequences) are pending. Per-phase
-execution state and the deferred backlog live in
+**Built:** contracts + concerns for env, carry, skills, credentials
+(guards+extract), dynamic, and git-resync; the `WorkspaceResyncPorts` seam with the
+docker implementation.
+
+**Pending:** the [`ProviderSync` facade](#co-location-the-providersync-facade) — the
+co-located per-provider surface — is the not-yet-built spine of **Phase 7**. It
+consolidates the sync ops now scattered across `create.ts` + a dozen files into one
+`ProviderSync` object per provider, each method a thin delegation to a concern. Also
+pending on the same phase: the cloud live-box resync (`makeCloudResyncPorts`, closes
+the "Phase 2" gap) and the cloud static/credential seed collapse.
+
+Per-phase execution state and the deferred backlog live in
 [`sync-layer-refactor.md`](./sync-layer-refactor.md).

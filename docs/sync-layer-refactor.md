@@ -171,11 +171,20 @@ Two-tier layout (dependency-graph-driven): **pure contracts** in `packages/core/
   worktree/bind-mount seed has no cloud analog). (c) box-facts (the generated
   `/etc/claude-code/CLAUDE.md` fold) — the last provider-mirrored create-step not behind a seam.
   Leave the `inBoxClone` control-plane branch untouched throughout.
-- **Phase 7 — data-driven driver.** `sync/driver.ts` `SEED_PIPELINE` + `seed()`; replace the
-  imperative sequences in `create.ts`/`cloud-provider.ts` (order preserved). Move the
-  per-tool static-config stage producers to `sync/agents/<tool>/stage.ts` + fill in the
-  claude/codex `staticPaths[].exclude` (`CLAUDE_RUNTIME_EXCLUDES`, `CODEX_RSYNC_EXCLUDES`).
-  Add the `AGENTBOX_SYNC_DRYRUN` passthrough (prints the transport sequence) here.
+- **Phase 7 — the `ProviderSync` facade + driver.** Spine is the co-located
+  `ProviderSync` interface (`core/src/sync/provider-sync.ts`): every sync op named once
+  (`seedWorkspace`/`resyncWorkspace`/`seedEnvFiles`/`applyCarry`/`seedStaticConfig`/
+  `seedSkills`/`seedDynamicConfig`/`seedCredentials`/`extractCredentials`), implemented
+  **once per provider** as a co-located object (`dockerSync`; `makeCloudSync(backend)`
+  overridable per-method) whose methods are thin delegations to the existing concerns.
+  Goal is auditability + co-location as much as reuse — see
+  [`sync-architecture.md`](./sync-architecture.md) §"Co-location: the ProviderSync facade".
+  The imperative `create.ts` / `cloud-provider.ts` sequences then read as an ordered walk
+  over `provider.sync.*` (a data-driven `SEED_PIPELINE` may still iterate the facade, order
+  preserved). Also here: move the per-tool static-config stage producers to
+  `sync/agents/<tool>/stage.ts` + fill in the claude/codex `staticPaths[].exclude`
+  (`CLAUDE_RUNTIME_EXCLUDES`, `CODEX_RSYNC_EXCLUDES`); the deferred cloud credential/dynamic
+  *seed* collapses land in `cloudSync`; add the `AGENTBOX_SYNC_DRYRUN` passthrough.
 - **Phase 8 — naming reconciliation.** Route all reads/writes through `agent-kind.ts`; delete
   the (now-delegating) inline shims. Only phase that may change a snapshot; relay tests stay
   green; no data migration (read-time normalization only).
