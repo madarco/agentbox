@@ -143,6 +143,14 @@ export interface CreateBoxRequest {
    * only — the docker provider bind-mounts the host `.git` and never clones.
    */
   inBoxClone?: { authedUrl: string; originUrl: string; branch?: string };
+  /**
+   * Hosted control-plane base URL when this box's live relay IS the plane (cloud
+   * only). When set, the provider resolves `topology: 'control-plane'`, registers
+   * the box on the plane with its origin URL, and the box's in-box daemon
+   * forwards `/rpc` to the plane + pushes via a leased token (`AGENTBOX_GIT_LEASE`).
+   * Absent → classic host-side sync (`'cloud'`/`'docker'`). Docker ignores it.
+   */
+  controlPlaneUrl?: string;
   /** Provider-specific knobs (docker: sharedCache/portless; daytona: resources/region). */
   providerOptions?: Record<string, unknown>;
   onLog?: (line: string) => void;

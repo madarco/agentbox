@@ -6,6 +6,7 @@
  */
 
 import type { BoxRuntimeState } from './provider.js';
+import type { SyncTopology } from './sync/types.js';
 
 /** Sandbox backend a box runs on. Open-ended so future providers need no core change. */
 export type ProviderName = 'docker' | 'daytona' | 'hetzner' | (string & {});
@@ -135,6 +136,20 @@ export interface CloudBoxFields {
    * is the one piece resync can't recover from the box alone.
    */
   workspaceBranch?: string;
+  /**
+   * The box's resolved sync federation shape (`resolveSyncTopology`). `'cloud'`
+   * for a classic host-synced box, `'control-plane'` when its live relay is a
+   * hosted control plane (the box forwards `/rpc` to the plane and leases push
+   * tokens directly). Persisted so the value is stable across resumes.
+   */
+  topology?: SyncTopology;
+  /**
+   * The hosted control-plane base URL this box points at, when
+   * `topology === 'control-plane'`. Persisted (not re-derived from config) so a
+   * resume re-kick on a host whose config has changed/lacks the URL still
+   * re-threads the box's forwarder upstream + `AGENTBOX_GIT_LEASE` correctly.
+   */
+  controlPlaneUrl?: string;
 }
 
 export interface GitWorktreeRecord {
