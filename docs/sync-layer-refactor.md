@@ -122,6 +122,34 @@ Two-tier layout (dependency-graph-driven): **pure contracts** in `packages/core/
   clones — a deliberate non-unification). **SMOKE OWED:** docker session-start resync moved
   onto the seam (runs on every down→up transition, mutates worktrees) — needs the docker
   half of the matrix before push, even though it's behavior-preserving.
+- **Phase 7.1–7.3 — the `ProviderSync` facade (docker half).** Done on branch
+  `feat/sync-layer-phase7` (off `feat/sync-layer`, PRs into it).
+  - **7.1 (contracts, zero behaviour):** `core/src/sync/provider-sync.ts` — the GROUPED
+    `ProviderSync` interface (`resyncWorkspace`/`seedAgentConfig`/`seedCredentials`/
+    `extractCredentials`/`seedGitIdentity`/`seedEnvFiles`/`applyCarry`) + `CarryApplyResult`.
+    Hoisted the pure `SyncContext` interface into `core` (Tier-1 contract; sandbox-core
+    re-exports it, `makeSyncContext` stays). `Provider.sync?(box)` added; `resyncWorkspace?`
+    widened with `onLog?`. Factored docker's 5 host-side resync ports into a shared
+    `makeHostGitPorts()` in the sandbox-core git concern (host git is provider-neutral —
+    the reuse point cloud resync 7.5 needs).
+  - **7.2 (dockerSync facade + wiring):** `sandbox-docker/src/sync/docker-sync.ts`
+    `makeDockerSync(handle)` — one method per op, thin delegations to the existing docker
+    fns. Handle carries the resolved per-tool specs (create-path). `dockerProvider` gains
+    `sync(box)` + `resyncWorkspace(box, onLog)` (reproduces `resyncBox`'s short-circuit).
+    CLI `resync-start.ts` now routes through `providerForBox(box).resyncWorkspace` (dropped
+    the `provider==='docker'` string gate). `seedGitIdentity`/`extractCredentials` are
+    documented docker no-ops. New `docker-sync.test.ts` (12, delegation).
+  - **7.3 (rewire create.ts):** the inline agent-config seed block + env/carry/checkpoint-
+    resync now walk `makeDockerSync(...)`; specs resolved once (also drive the mounts).
+  - **SMOKE PASSED (docker, this session):** real-box `create --with-env` seeds the claude
+    volume + `.env` + `/workspace` on `agentbox/<name>`; session-start resync merges a host
+    commit (merge commit with **both parents surviving**), keeps the box version on the
+    README conflict + reports it, copies the untracked host file, host uncommitted overlay
+    skipped, idempotent on re-run. Covers the docker half of the 7.2/7.3 owed smoke.
+  - **Remaining (checkpoint before starting):** 7.4 (cloudSync facade + rewire cloud
+    `create()`), 7.5 (net-new cloud live-box resync — data-loss-capable, own PR/review),
+    7.6 (dry-run + stage-producer relocation). Cloud smoke `{vercel,hetzner}×{claude,codex}`
+    owed for 7.4/7.5.
 
 ## Refinements to the plan's phasing (decided during execution)
 1. **Transports co-develop with their first concern (Phase 3), not in a vacuum.** Docker
