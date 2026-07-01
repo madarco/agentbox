@@ -1,4 +1,5 @@
 import { Command, Option } from 'commander';
+import { resolveRemote, type GitRpcParams } from '@agentbox/core';
 import { spawn } from 'node:child_process';
 import { postRpcAndExit, postRpcAwait } from '../relay-rpc.js';
 import { buildPrCommand } from './pr-subcommands.js';
@@ -34,16 +35,6 @@ export interface PushOptions extends CommonOptions {
   as?: string;
   /** With --host-only: allow a non-fast-forward overwrite of the destination. */
   force?: boolean;
-}
-
-interface GitRpcParams {
-  path: string;
-  remote?: string;
-  args?: string[];
-  hostOnly?: boolean;
-  as?: string;
-  force?: boolean;
-  hostInitiated?: string;
 }
 
 interface GitCloneRpcParams {
@@ -125,7 +116,7 @@ async function leaseAndPush(opts: CommonOptions, extra: string[]): Promise<numbe
     process.stderr.write(`${prefix}: lease response missing remoteUrl\n`);
     return 1;
   }
-  const remote = opts.remote ?? 'origin';
+  const remote = resolveRemote(opts.remote);
   const branch = await captureGit(['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
   if (!branch) {
     process.stderr.write(`${prefix}: could not resolve current branch\n`);
@@ -237,7 +228,7 @@ export const gitCommand = new Command('git')
           if (fetchCode !== 0) process.exit(fetchCode);
           // Merge happens in the container, where the working tree lives. No
           // creds needed; refs are already in the shared .git from the fetch.
-          const remote = opts.remote ?? 'origin';
+          const remote = resolveRemote(opts.remote);
           // Resolve branch via the current HEAD's upstream, falling back to
           // `<remote>/HEAD` so a freshly cloned worktree still pulls.
           const cwd = opts.cwd ?? process.cwd();
