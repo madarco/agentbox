@@ -4,12 +4,27 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { execa } from 'execa';
 import { sanitizeMnemonic } from '@agentbox/config';
-import { hostOpenCommand } from '@agentbox/sandbox-core';
+import {
+  hostOpenCommand,
+  makeSyncContext,
+  pushEnvFiles,
+  ENV_PRUNE_DIRS,
+} from '@agentbox/sandbox-core';
 import type { ResolvedCarryEntry } from '@agentbox/core';
 import type { BoxStatus } from '@agentbox/ctl';
 import { streamTarPipe } from './box-cp.js';
 import { execInBox } from './docker.js';
+import { createDockerSyncTransport } from './sync-transport.js';
 import type { BoxRecord } from './state.js';
+
+// Env/config-file sync moved to the shared concern (`@agentbox/sandbox-core`'s
+// sync/concerns/env). Re-exported here so existing importers (wizard,
+// download*, the scan test) keep their `@agentbox/sandbox-docker` import site.
+export {
+  DEFAULT_ENV_PATTERNS,
+  scanHostEnvFiles,
+  buildHostEnvFindArgs,
+} from '@agentbox/sandbox-core';
 
 export type DockerEngine = 'orbstack' | 'docker-desktop' | 'other';
 
@@ -226,36 +241,6 @@ export async function refreshExport(
 }
 
 /**
- * Default env/config file basename globs for `pull env` / `pull --with-env`.
- * These are almost always gitignored, so a normal gitignore-aware `pull`
- * skips them; this list opts them back in explicitly. `agentbox.yaml` is
- * included so a file generated in-box by `/agentbox-setup` lands on the host
- * even before it's committed.
- */
-export const DEFAULT_ENV_PATTERNS = [
-  '.env',
-  '.env.*',
-  '.envrc',
-  '.dev.vars',
-  'secrets.toml',
-  'local.settings.json',
-  'appsettings.*.json',
-  'agentbox.yaml',
-];
-
-/** Directories the env-file `find` prunes — heavy or never-relevant. */
-const ENV_PRUNE_DIRS = [
-  'node_modules',
-  '.git',
-  '.venv',
-  'venv',
-  '__pycache__',
-  'dist',
-  '.next',
-  'build',
-];
-
-/**
  * Build the in-box `find` argv that enumerates env/config files by basename
  * glob, pruning `ENV_PRUNE_DIRS`. `-printf '%P\0'` emits NUL-delimited paths
  * already relative to /workspace (so they feed rsync --files-from --from0
@@ -294,45 +279,6 @@ function buildEnvFindArgs(patterns: string[]): string[] {
   ];
 }
 
-/**
- * Host-side mirror of `buildEnvFindArgs` for the reverse direction (host →
- * box). Rooted at `.` (run with cwd = the host workspace) and uses `-print0`
- * instead of `-printf '%P\0'` because macOS's BSD `find` has no `-printf`;
- * `./relpath` entries feed `tar -C <workspace> --null -T -` directly, exactly
- * like the untracked-file pipe in git-worktree.ts.
- */
-export function buildHostEnvFindArgs(patterns: string[]): string[] {
-  const nameGroup = (names: string[]): string[] => {
-    const out: string[] = [];
-    names.forEach((n, i) => {
-      if (i > 0) out.push('-o');
-      out.push('-name', n);
-    });
-    return out;
-  };
-  return [
-    'find',
-    '.',
-    '(',
-    '-type',
-    'd',
-    '(',
-    ...nameGroup(ENV_PRUNE_DIRS),
-    ')',
-    '-prune',
-    ')',
-    '-o',
-    '(',
-    '-type',
-    'f',
-    '(',
-    ...nameGroup(patterns),
-    ')',
-    '-print0',
-    ')',
-  ];
-}
-
 export interface CopyHostEnvOptions {
   /** Target container name (must be running with the overlay mounted). */
   container: string;
@@ -357,67 +303,18 @@ export interface CopyHostEnvOptions {
 export async function copyHostEnvFilesToBox(
   opts: CopyHostEnvOptions,
 ): Promise<{ copied: number }> {
-  const log = opts.onLog ?? (() => {});
-
-  // Default (utf8) encoding: `find` output is NUL-delimited path text, and
-  // `encoding:'buffer'` would hand back a Uint8Array whose .toString() is
-  // comma-joined byte codes, not the paths.
-  const found = await execa('find', buildHostEnvFindArgs(opts.patterns).slice(1), {
-    cwd: opts.workspaceDir,
-    reject: false,
+  // Thin wrapper over the shared env concern: same host-side find + tar pack,
+  // with the docker transport's `applyTarball` reproducing the exact
+  // `docker exec -i --user 1000:1000 tar -xf - -C /workspace` extract.
+  const ctx = makeSyncContext({
+    boxName: '',
+    boxId: '',
+    provider: 'docker',
+    hostWorkspace: opts.workspaceDir,
+    onLog: opts.onLog,
   });
-  if (found.exitCode !== 0) {
-    log(`warning: env-file scan failed: ${String(found.stderr).slice(0, 300)}`);
-    return { copied: 0 };
-  }
-  const list = String(found.stdout)
-    .split('\0')
-    .filter((p) => p.length > 0);
-  if (list.length === 0) return { copied: 0 };
-
-  // Same fork-and-stream as the untracked-file carry-over in git-worktree.ts.
-  const packed = await execa('tar', ['-C', opts.workspaceDir, '--null', '-T', '-', '-cf', '-'], {
-    input: list.join('\0'),
-    encoding: 'buffer',
-    reject: false,
-  });
-  if (packed.exitCode !== 0) {
-    log(`warning: env-file tar pack failed: ${String(packed.stderr).slice(0, 300)}`);
-    return { copied: 0 };
-  }
-  const extract = await execa(
-    'docker',
-    ['exec', '-i', '--user', '1000:1000', opts.container, 'tar', '-xf', '-', '-C', '/workspace'],
-    { input: packed.stdout as Buffer, reject: false },
-  );
-  if (extract.exitCode !== 0) {
-    log(`warning: env-file copy into box failed: ${String(extract.stderr).slice(0, 300)}`);
-    return { copied: 0 };
-  }
-  return { copied: list.length };
-}
-
-/**
- * Run `buildHostEnvFindArgs` against `workspaceDir` and return the matched
- * paths as a relative-path string array. Pure host-side helper: no docker, no
- * mutation. Empty array on a scan failure (best-effort, matching
- * `copyHostEnvFilesToBox`). Used by the setup wizard to preview a multiselect
- * of importable env files.
- */
-export async function scanHostEnvFiles(
-  workspaceDir: string,
-  patterns: string[],
-): Promise<string[]> {
-  if (patterns.length === 0) return [];
-  const found = await execa('find', buildHostEnvFindArgs(patterns).slice(1), {
-    cwd: workspaceDir,
-    reject: false,
-  });
-  if (found.exitCode !== 0) return [];
-  return String(found.stdout)
-    .split('\0')
-    .map((p) => p.replace(/^\.\//, ''))
-    .filter((p) => p.length > 0);
+  const transport = createDockerSyncTransport({ container: opts.container });
+  return pushEnvFiles(ctx, transport, opts.patterns);
 }
 
 export interface CopyHostFilesOptions {

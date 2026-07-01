@@ -81,6 +81,14 @@ export interface SyncTransport {
   exec(cmd: string[], opts?: SyncExecOptions): Promise<SyncExecResult>;
 
   // ---- host → box ----
+  /**
+   * Extract a host-built tarball into `boxDestDir` — the unified host→box
+   * primitive concerns stage a (filtered) tarball for. Docker streams it into
+   * `tar -xf -` (honoring `opts.uid` via `--user`); cloud uploads it then
+   * `backend.exec('tar -xf … --no-same-permissions --no-same-owner -m')`. Each
+   * impl keeps its own extract flags so behavior is byte-identical to today.
+   */
+  applyTarball(hostTarPath: string, boxDestDir: string, opts?: PushOptions): Promise<void>;
   pushTree(hostSrcDir: string, boxDestDir: string, opts?: PushOptions): Promise<void>;
   pushFile(hostSrcPath: string, boxDestPath: string, opts?: PushOptions): Promise<void>;
 

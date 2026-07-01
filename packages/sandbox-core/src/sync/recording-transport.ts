@@ -23,6 +23,7 @@ import type {
 export interface RecordedOp {
   op:
     | 'exec'
+    | 'applyTarball'
     | 'pushTree'
     | 'pushFile'
     | 'pullTree'
@@ -76,6 +77,9 @@ export function makeRecordingTransport(
     async exec(cmd: string[], execOpts?: SyncExecOptions): Promise<SyncExecResult> {
       push('exec', { cmd, opts: execOpts });
       return opts.execResult?.(cmd, execOpts) ?? { exitCode: 0, stdout: '', stderr: '' };
+    },
+    async applyTarball(hostTarPath: string, boxDestDir: string, o?: PushOptions): Promise<void> {
+      push('applyTarball', { hostTarPath, boxDestDir, opts: o });
     },
     async pushTree(hostSrcDir: string, boxDestDir: string, o?: PushOptions): Promise<void> {
       push('pushTree', { hostSrcDir, boxDestDir, opts: o });

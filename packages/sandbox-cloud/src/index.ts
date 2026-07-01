@@ -25,6 +25,7 @@ export {
   type SeedAgentVolumesOptions,
 } from './agent-credentials.js';
 export { uploadEnvFiles, type UploadEnvFilesArgs, type UploadEnvFilesResult } from './env-files.js';
+export { createCloudSyncTransport, type CloudSyncTransportInit } from './sync-transport.js';
 export { seedDynamicConfig, type SeedDynamicConfigOptions } from './dynamic-sync.js';
 export {
   seedClaudeJsonAtCreate,

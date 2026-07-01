@@ -22,3 +22,12 @@ export type {
   AgentCredential,
   AgentCapabilities,
 } from './agents/types.js';
+export { makeSyncContext, type SyncContext, type SyncContextInit } from './context.js';
+export {
+  pushEnvFiles,
+  scanHostEnvFiles,
+  buildHostEnvFindArgs,
+  DEFAULT_ENV_PATTERNS,
+  ENV_PRUNE_DIRS,
+  type PushEnvFilesResult,
+} from './concerns/env.js';
