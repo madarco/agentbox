@@ -2,8 +2,26 @@ import { execa } from 'execa';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { claudeInstallFingerprint } from '@agentbox/sandbox-core';
 
 export const DEFAULT_BOX_IMAGE = 'agentbox/box:dev';
+
+/**
+ * Resolve the effective `box.claudeInstall` for the current project. Docker
+ * builds its image lazily at create time, so every `ensureImage` path must
+ * agree on the mode or a native rebuild would clobber an npm-baked image (and
+ * vice-versa). Lazy-imported to keep the module load cheap; falls back to
+ * `native` if config can't be read.
+ */
+async function resolveClaudeInstallMode(): Promise<'native' | 'npm'> {
+  try {
+    const { loadEffectiveConfig } = await import('@agentbox/config');
+    const cfg = await loadEffectiveConfig(process.cwd());
+    return cfg.effective.box.claudeInstall;
+  } catch {
+    return 'native';
+  }
+}
 
 /**
  * Public registry repo the box image is published to (see
@@ -138,6 +156,8 @@ export interface BuildImageOptions {
   ref?: string;
   dockerfile?: string;
   contextDir?: string;
+  /** `--build-arg K=V` pairs forwarded to `docker build` (e.g. AGENTBOX_CLAUDE_INSTALL). */
+  buildArgs?: Record<string, string>;
   onProgress?: (line: string) => void;
 }
 
@@ -150,7 +170,11 @@ export async function buildImage(opts: BuildImageOptions = {}): Promise<string> 
   // the default bridge network can't bind-mount /proc/<pid>/ns/net for the
   // build container, breaking any RUN that needs network (e.g. apt, curl).
   // Falling back to host networking sidesteps the missing capability.
-  const args = ['build', '-t', ref, '-f', dockerfile, contextDir];
+  const args = ['build', '-t', ref, '-f', dockerfile];
+  for (const [k, v] of Object.entries(opts.buildArgs ?? {})) {
+    args.push('--build-arg', `${k}=${v}`);
+  }
+  args.push(contextDir);
   if (process.env.AGENTBOX === '1') {
     args.splice(1, 0, '--network=host');
   }
@@ -185,6 +209,8 @@ export interface PullOrBuildOptions {
   allowPull?: boolean;
   /** Registry repo to pull from. Defaults to `BOX_IMAGE_REGISTRY`; empty disables pulling. */
   registry?: string;
+  /** `--build-arg K=V` pairs forwarded to the local `docker build` (ignored on a registry pull). */
+  buildArgs?: Record<string, string>;
 }
 
 /**
@@ -221,6 +247,7 @@ export async function pullOrBuild(
     ref,
     dockerfile: opts.dockerfile,
     contextDir: opts.contextDir,
+    buildArgs: opts.buildArgs,
     onProgress: opts.onProgress,
   });
   if (fingerprint) {
@@ -239,6 +266,12 @@ export interface EnsureImageOptions {
   allowPull?: boolean;
   /** Registry repo to pull from. Defaults to `BOX_IMAGE_REGISTRY`; empty disables pulling. */
   registry?: string;
+  /**
+   * How Claude Code is installed into the image. Folded into the build-context
+   * fingerprint so a mode switch rebuilds (and an npm image isn't clobbered by
+   * a native rebuild). Defaults to the resolved `box.claudeInstall`.
+   */
+  claudeInstall?: 'native' | 'npm';
 }
 
 export async function ensureImage(
@@ -251,9 +284,18 @@ export async function ensureImage(
   const { computeDockerContextFingerprint, readPreparedDockerState, preparedMatches } =
     await import('./prepared-state.js');
 
-  const fingerprint = await computeDockerContextFingerprint({
+  const claudeInstall = opts.claudeInstall ?? (await resolveClaudeInstallMode());
+  const rawFingerprint = await computeDockerContextFingerprint({
     contextDir: opts.contextDir,
   });
+  // Fold the install mode into the sha so native↔npm are distinct cache
+  // identities (`native` leaves the hash unchanged).
+  const fingerprint = rawFingerprint
+    ? {
+        ...rawFingerprint,
+        contextSha256: claudeInstallFingerprint(rawFingerprint.contextSha256, claudeInstall),
+      }
+    : null;
   const prepared = readPreparedDockerState();
   const exists = await imageExists(ref);
 
@@ -278,12 +320,15 @@ export async function ensureImage(
   }
 
   opts.onProgress?.(`[image] ${ref}: ${reason}`);
+  const npm = claudeInstall === 'npm';
   const { source } = await pullOrBuild(ref, fingerprint, {
     onProgress: opts.onProgress,
     dockerfile: opts.dockerfile,
     contextDir: opts.contextDir,
-    allowPull: opts.allowPull,
+    // The published GHCR image is native-only, so npm mode must build locally.
+    allowPull: npm ? false : opts.allowPull,
     registry: opts.registry,
+    buildArgs: npm ? { AGENTBOX_CLAUDE_INSTALL: 'npm' } : undefined,
   });
   return { ref, built: source === 'built', reason };
 }

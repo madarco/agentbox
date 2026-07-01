@@ -26,7 +26,7 @@
 import { readFile } from 'node:fs/promises';
 import { Writable } from 'node:stream';
 import type { Provider } from '@agentbox/core';
-import { computeContextSha256, readCliStamp } from '@agentbox/sandbox-core';
+import { claudeInstallFingerprint, computeContextSha256, readCliStamp } from '@agentbox/sandbox-core';
 import {
   stageClaudeStaticForUpload,
   stageCodexStaticForUpload,
@@ -63,6 +63,8 @@ export interface PrepareVercelOptions {
   cliRuntimeRoot?: string;
   /** Repo root for the dev fallback (defaults to a cwd-walk). */
   repoRoot?: string;
+  /** How provision.sh installs Claude Code (`native` default | `npm`). */
+  claudeInstall?: 'native' | 'npm';
   onLog?: (line: string) => void;
 }
 
@@ -86,8 +88,10 @@ export async function prepareVercel(
     cliRuntimeRoot: opts.cliRuntimeRoot ?? findStagedCliRuntimeRoot(),
     repoRoot: opts.repoRoot,
   });
-  const contextSha = await computeContextSha256(
-    assets.map((a) => ({ rel: a.name, abs: a.localPath })),
+  const claudeInstall = opts.claudeInstall ?? 'native';
+  const contextSha = claudeInstallFingerprint(
+    await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
+    claudeInstall,
   );
 
   // Skip-fast: existing base snapshot still on Vercel + matching fingerprint.
@@ -136,7 +140,7 @@ export async function prepareVercel(
   progress('running provision.sh (this takes a few minutes)');
   const install = await sb.runCommand({
     cmd: SHELL,
-    args: ['-lc', 'bash /tmp/agentbox-provision.sh 2>&1'],
+    args: ['-lc', `AGENTBOX_CLAUDE_INSTALL=${claudeInstall} bash /tmp/agentbox-provision.sh 2>&1`],
     sudo: true,
     stdout: lineSink((l) => log(`[provision] ${l}`)),
     stderr: lineSink((l) => log(`[provision] ${l}`)),
@@ -275,5 +279,6 @@ export const prepareVercelProvider: NonNullable<Provider['prepare']> = (req) =>
     name: req.name,
     hostWorkspace: req.hostWorkspace ?? process.cwd(),
     force: req.force,
+    claudeInstall: req.claudeInstall,
     onLog: req.onLog,
   });

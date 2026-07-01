@@ -20,7 +20,7 @@ import type {
   ProviderSync,
   ResyncResult,
 } from '@agentbox/core';
-import { makeSyncContext } from '@agentbox/sandbox-core';
+import { claudeInstallFingerprint, makeSyncContext } from '@agentbox/sandbox-core';
 import { makeDockerSync } from './sync/docker-sync.js';
 import { createBox, type CreateBoxOptions } from './create.js';
 import { destroyBox, inspectBox, pauseBox, startBox, stopBox, unpauseBox } from './lifecycle.js';
@@ -229,7 +229,16 @@ export const dockerProvider: Provider = {
     // build-context fingerprint matches the recorded one. `--force`
     // overrides both checks.
     const ref = DEFAULT_BOX_IMAGE;
-    const fingerprint = await computeDockerContextFingerprint();
+    const claudeInstall = opts.claudeInstall ?? 'native';
+    const rawFingerprint = await computeDockerContextFingerprint();
+    // Fold the install mode into the sha so native↔npm are distinct cache
+    // identities (`native` leaves the hash unchanged).
+    const fingerprint = rawFingerprint
+      ? {
+          ...rawFingerprint,
+          contextSha256: claudeInstallFingerprint(rawFingerprint.contextSha256, claudeInstall),
+        }
+      : null;
     const prepared = readPreparedDockerState();
 
     if (!opts.force) {
@@ -249,10 +258,13 @@ export const dockerProvider: Provider = {
     }
 
     // `--force` skips the registry pull and always builds a fresh local image.
+    // npm mode must also build locally — the published GHCR image is native-only.
+    const npm = claudeInstall === 'npm';
     const { source } = await pullOrBuild(ref, fingerprint, {
       onProgress: opts.onLog,
-      allowPull: opts.force ? false : opts.allowPull,
+      allowPull: opts.force || npm ? false : opts.allowPull,
       registry: opts.registry,
+      buildArgs: npm ? { AGENTBOX_CLAUDE_INSTALL: 'npm' } : undefined,
     });
     if (fingerprint) {
       opts.onLog?.(

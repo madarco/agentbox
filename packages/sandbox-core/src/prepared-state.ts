@@ -129,6 +129,17 @@ export function shortFingerprint(sha: string): string {
 }
 
 /**
+ * Fold the Claude install method into a base context fingerprint so switching
+ * `box.claudeInstall` native↔npm forces a re-bake. `native` returns the base
+ * hash unchanged — existing native snapshots keep their fingerprint and never
+ * spuriously rebuild; only `npm` derives a distinct hash.
+ */
+export function claudeInstallFingerprint(baseSha: string, mode: 'native' | 'npm'): string {
+  if (mode === 'native') return baseSha;
+  return createHash('sha256').update(`${baseSha}\0claude-install=npm`).digest('hex');
+}
+
+/**
  * CLI version stamps set by `apps/cli/src/index.ts` at startup via env vars
  * (the values themselves come from tsup's build-time `define`). Providers
  * record them onto prepared-state files and checkpoint manifests so a stale

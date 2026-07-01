@@ -151,6 +151,7 @@ See [checkpoints and pausing](/docs/checkpoints-and-pausing).
 | `box.hostSnapshot` | bool | prompt | use a frozen APFS clone of the host workspace as overlay lower (renamed from `box.snapshot`) |
 | `box.withEnv` | bool | `false` | copy host env/config files (`.env*`, `secrets.toml`, `agentbox.yaml`, …) into `/workspace`, bypassing gitignore |
 | `box.withPlaywright` | bool | `false` | install `@playwright/cli@latest` in the box at create |
+| `box.claudeInstall` | enum `native`/`npm` | `native` | how `agentbox prepare` installs Claude Code into the base image/snapshot. `npm` (`@anthropic-ai/claude-code`) is a fallback for cloud egress IPs the native installer's CDN 403s; bake-time only, so re-run `prepare` after changing it. Override per-run with `prepare --claude-install <mode>` |
 | `box.vnc` | bool | `true` | run the per-box Xvnc + noVNC stack |
 | `box.autoApproveHostActions` | bool | `false` | auto-approve host-action confirms (git push, cp, gh PR writes, checkpoint) for this box without a prompt; for unattended orchestration of trusted boxes. Each bypass is logged as a relay event. See [orchestration](/docs/background-and-parallel) |
 | `box.resyncOnStart` | bool | `true` | on starting a session, merge the host's current branch + overlay changes (box wins on conflict, warns the agent) |

@@ -34,7 +34,7 @@ import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { Provider } from '@agentbox/core';
-import { computeContextSha256, readCliStamp } from '@agentbox/sandbox-core';
+import { claudeInstallFingerprint, computeContextSha256, readCliStamp } from '@agentbox/sandbox-core';
 import { ensureE2bCredentials } from './credentials.js';
 import { resolveApiKey, Template } from './sdk.js';
 import {
@@ -61,6 +61,8 @@ export interface PrepareE2bOptions {
   cliRuntimeRoot?: string;
   /** Repo root for the dev fallback (defaults to a cwd-walk). */
   repoRoot?: string;
+  /** How build-template.sh installs Claude Code (`native` default | `npm`). */
+  claudeInstall?: 'native' | 'npm';
   onLog?: (line: string) => void;
 }
 
@@ -87,8 +89,10 @@ export async function prepareE2b(
     cliRuntimeRoot: opts.cliRuntimeRoot ?? findStagedCliRuntimeRoot(),
     repoRoot: opts.repoRoot,
   });
-  const contextSha = await computeContextSha256(
-    assets.map((a) => ({ rel: a.name, abs: a.localPath })),
+  const claudeInstall = opts.claudeInstall ?? 'native';
+  const contextSha = claudeInstallFingerprint(
+    await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
+    claudeInstall,
   );
 
   // Skip-fast: existing template + matching fingerprint.
@@ -138,7 +142,9 @@ export async function prepareE2b(
         user: 'root',
       });
     }
-    template.runCmd('bash /tmp/agentbox-build-template.sh 2>&1', { user: 'root' });
+    template.runCmd(`AGENTBOX_CLAUDE_INSTALL=${claudeInstall} bash /tmp/agentbox-build-template.sh 2>&1`, {
+      user: 'root',
+    });
     // setReadyCmd flips the builder into TemplateFinal — required for build().
     // The check passes once the script's last `install` step lands the ctl bundle.
     const finalTemplate = template.setReadyCmd(
@@ -248,5 +254,6 @@ export const prepareE2bProvider: NonNullable<Provider['prepare']> = (req) =>
     name: req.name,
     hostWorkspace: req.hostWorkspace ?? process.cwd(),
     force: req.force,
+    claudeInstall: req.claudeInstall,
     onLog: req.onLog,
   });

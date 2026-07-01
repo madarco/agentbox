@@ -32,7 +32,7 @@
 import { join } from 'node:path';
 import type { Provider } from '@agentbox/core';
 import { UserFacingError } from '@agentbox/core';
-import { computeContextSha256, readCliStamp } from '@agentbox/sandbox-core';
+import { claudeInstallFingerprint, computeContextSha256, readCliStamp } from '@agentbox/sandbox-core';
 import {
   stageClaudeStaticForUpload,
   stageCodexStaticForUpload,
@@ -74,6 +74,8 @@ export interface PrepareHetznerOptions {
   cliRuntimeRoot?: string;
   /** Repo root for the dev fallback (defaults to `process.cwd()` walk). */
   repoRoot?: string;
+  /** How install-box.sh installs Claude Code (`native` default | `npm`). */
+  claudeInstall?: 'native' | 'npm';
   onLog?: (line: string) => void;
 }
 
@@ -119,8 +121,10 @@ export async function prepareHetzner(
   // Fingerprint = hash of every asset we scp into the prepare VPS. Keyed on
   // logical name (stable across staged-vs-monorepo layouts) so two CLIs with
   // the same staged tree produce the same hash.
-  const contextSha = await computeContextSha256(
-    assets.map((a) => ({ rel: a.name, abs: a.localPath })),
+  const claudeInstall = opts.claudeInstall ?? 'native';
+  const contextSha = claudeInstallFingerprint(
+    await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
+    claudeInstall,
   );
 
   if (!opts.force && existingState.base) {
@@ -229,7 +233,7 @@ export async function prepareHetzner(
     progress('running install-box.sh on temp VPS (this takes ~5-15 min)');
     const installRes = await sshExec(
       sshTarget,
-      `sudo mkdir -p /var/log/agentbox && set -o pipefail && bash -x /tmp/agentbox-install.sh 2>&1 | sudo tee /var/log/agentbox/install.log`,
+      `sudo mkdir -p /var/log/agentbox && set -o pipefail && AGENTBOX_CLAUDE_INSTALL=${claudeInstall} bash -x /tmp/agentbox-install.sh 2>&1 | sudo tee /var/log/agentbox/install.log`,
       {
         timeoutMs: INSTALL_SCRIPT_TIMEOUT_MS,
         onLine: (line) => log(`[install] ${line}`),

@@ -51,6 +51,22 @@ The snapshot is a shell mirror of the Docker box image (Node, Python, Docker, th
 
 When you upgrade AgentBox, `create --provider hetzner` notices if the new install would bake a different snapshot (the comparison is checksum-based on the baked files — CLI version strings on their own don't count) and offers to rebake inline; with `-y` or non-TTY it instead warns loudly and boots on the existing snapshot. `agentbox hetzner login` also nudges you toward `agentbox prepare --provider hetzner` on the first successful login.
 
+<Callout title="If the bake fails installing Claude Code">
+The bake installs Claude Code with Anthropic's native installer, whose CDN
+occasionally returns a Cloudflare 403 to cloud-datacenter egress IPs (Hetzner
+among them). The bake retries three times and then aborts rather than shipping a
+Claude-less snapshot. If it keeps failing, switch to the npm installer:
+
+```bash
+agentbox prepare --provider hetzner --claude-install npm
+# or persist it: agentbox config set box.claudeInstall npm
+```
+
+`npm` installs `@anthropic-ai/claude-code` and symlinks it into the same
+`~/.local/bin/claude` path the native installer uses, so the box behaves
+identically. Bake-time only — changing it re-bakes the snapshot.
+</Callout>
+
 <Callout type="warn" title="HEADS UP">
 The bake costs a few minutes and a couple euro-cents, but you only do it once per account.
 </Callout>

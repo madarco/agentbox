@@ -13,6 +13,12 @@ export type EngineKind = 'orbstack' | 'docker-desktop' | 'other' | 'auto';
 export type BrowserKind = 'agent-browser' | 'playwright' | 'both';
 /** Sandbox backend new boxes are created on. */
 export type ProviderKind = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b';
+/**
+ * How the base image/snapshot installs Claude Code at bake time. `native`
+ * (Anthropic's installer, the default) or `npm` (`@anthropic-ai/claude-code`) —
+ * an opt-in fallback for cloud egress IPs whose CDN the native installer 403s.
+ */
+export type ClaudeInstallMethod = 'native' | 'npm';
 /** Where `agentbox claude|codex|opencode` opens the attached session when the host
  *  shell is running inside tmux, cmux, Herdr, or iTerm2. `same` keeps today's inline behavior. */
 export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
@@ -55,6 +61,12 @@ export interface UserConfig {
     sizeVercel?: string;
     sizeE2b?: string;
     withPlaywright?: boolean;
+    /**
+     * How the base image/snapshot installs Claude Code at bake time. Bake-time
+     * only (read by `agentbox prepare`, not `create`); `npm` is a fallback for
+     * cloud egress IPs the native installer's CDN 403s.
+     */
+    claudeInstall?: ClaudeInstallMethod;
     withEnv?: boolean;
     resyncOnStart?: boolean;
     vnc?: boolean;
@@ -195,6 +207,7 @@ export interface EffectiveConfig {
     sizeVercel: string;
     sizeE2b: string;
     withPlaywright: boolean;
+    claudeInstall: ClaudeInstallMethod;
     withEnv: boolean;
     resyncOnStart: boolean;
     vnc: boolean;
@@ -341,6 +354,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     sizeVercel: '',
     sizeE2b: '',
     withPlaywright: false,
+    claudeInstall: 'native',
     withEnv: false,
     resyncOnStart: true,
     vnc: true,
@@ -566,6 +580,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.withPlaywright',
     type: 'bool',
     description: 'Install @playwright/cli@latest in the box at create time.',
+  },
+  {
+    key: 'box.claudeInstall',
+    type: 'enum',
+    enumValues: ['native', 'npm'] as const,
+    description:
+      "How `agentbox prepare` installs Claude Code into the base image/snapshot: `native` (Anthropic's installer, the default) or `npm` (@anthropic-ai/claude-code). A fallback for cloud egress IPs the native installer's CDN 403s. Bake-time only — change it, then re-run `agentbox prepare --provider <name>`.",
   },
   {
     key: 'box.withEnv',

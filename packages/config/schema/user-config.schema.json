@@ -24,6 +24,7 @@
         "sizeVercel": { "type": "string", "minLength": 1 },
         "sizeE2b": { "type": "string", "minLength": 1 },
         "withPlaywright": { "type": "boolean" },
+        "claudeInstall": { "enum": ["native", "npm"] },
         "withEnv": { "type": "boolean" },
         "resyncOnStart": { "type": "boolean" },
         "vnc": { "type": "boolean" },

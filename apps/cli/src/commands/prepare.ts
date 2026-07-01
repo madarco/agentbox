@@ -47,6 +47,7 @@ interface PrepareOptions {
   build?: boolean;
   yes?: boolean;
   status?: boolean;
+  claudeInstall?: string;
 }
 
 interface DockerStatus {
@@ -294,6 +295,11 @@ export interface RunPrepareOptions {
   cwd?: string;
   /** Suppress the post-prepare status block. */
   suppressStatus?: boolean;
+  /**
+   * How the bake installs Claude Code (`native` | `npm`). CLI override of the
+   * `box.claudeInstall` config key; falls back to the effective config.
+   */
+  claudeInstall?: 'native' | 'npm';
 }
 
 /**
@@ -326,13 +332,11 @@ export async function runPrepare(
   }
 
   const cwd = opts.cwd ?? process.cwd();
+  const cfg = await loadEffectiveConfig(cwd).catch(() => null);
   // Docker base-image registry override (box.imageRegistry; empty = always build).
-  const registry =
-    providerName === 'docker'
-      ? await loadEffectiveConfig(cwd)
-          .then((c) => c.effective.box.imageRegistry)
-          .catch(() => undefined)
-      : undefined;
+  const registry = providerName === 'docker' ? cfg?.effective.box.imageRegistry : undefined;
+  // Bake-time Claude install method: CLI flag wins over the config key.
+  const claudeInstall = opts.claudeInstall ?? cfg?.effective.box.claudeInstall ?? 'native';
   const sp = spinner();
   sp.start(`preparing ${providerName}…`);
   try {
@@ -342,6 +346,7 @@ export async function runPrepare(
       force: opts.force,
       allowPull: opts.build ? false : undefined,
       registry,
+      claudeInstall,
       onLog: (line) => sp.message(line.slice(0, 80)),
     });
     if (result.snapshotName !== undefined) {
@@ -415,11 +420,24 @@ export const prepareCommand = new Command('prepare')
   )
   .option('-y, --yes', 'skip confirmation prompts (cost / time warnings)')
   .option('--status', 'show status without preparing anything')
+  .option(
+    '--claude-install <mode>',
+    'install Claude Code into the base image via the native installer (default) or npm (native | npm)',
+  )
   .action(async (opts: PrepareOptions) => {
     // Status-only path: no provider, or explicit --status.
     if (!opts.provider || opts.status) {
       await showStatus({});
       return;
+    }
+
+    let claudeInstall: 'native' | 'npm' | undefined;
+    if (opts.claudeInstall !== undefined) {
+      if (opts.claudeInstall !== 'native' && opts.claudeInstall !== 'npm') {
+        process.stderr.write('error: --claude-install must be one of: native, npm\n');
+        process.exit(1);
+      }
+      claudeInstall = opts.claudeInstall;
     }
 
     const providerName = opts.provider.trim();
@@ -433,6 +451,7 @@ export const prepareCommand = new Command('prepare')
       force: opts.force,
       build: opts.build,
       yes: opts.yes,
+      claudeInstall,
     });
   });
 

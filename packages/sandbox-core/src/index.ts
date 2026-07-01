@@ -27,6 +27,7 @@ export {
 } from './carry-render.js';
 export * from './sync/index.js';
 export {
+  claudeInstallFingerprint,
   computeContextSha256,
   DOCKER_CONTEXT_FILE_MAP,
   preparedStatePathFor,

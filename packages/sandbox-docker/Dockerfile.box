@@ -258,30 +258,43 @@ RUN mkdir -p /home/vscode/.agentbox-creds/claude \
 RUN mkdir -p /home/vscode/.vscode-server/extensions /home/vscode/.cursor-server/extensions \
     && chown -R vscode:vscode /home/vscode/.vscode-server /home/vscode/.cursor-server
 
-# Claude Code via Anthropic's native installer — the recommended path per
-# code.claude.com/docs/en/setup (npm-global is under "Advanced installation"
-# now, with a warning against `sudo npm install -g`). Pinned to the `stable`
-# release channel so rebuilds get a predictable ~week-old release.
-# DISABLE_AUTOUPDATER=1 (set above) prevents in-box self-updates. We run as
-# `vscode` so the binary lands at /home/vscode/.local/bin/claude — the path
-# the host's `.claude.json` (with installMethod=native) expects, so the in-box
-# integrity check doesn't fire.
+# Claude Code. AGENTBOX_CLAUDE_INSTALL selects the method (default `native`,
+# Anthropic's installer — the recommended path per code.claude.com/docs/en/setup).
+# `npm` is an opt-in fallback (`box.claudeInstall`) for hosts whose egress IP the
+# native CDN 403s. Either way the binary ends up at /home/vscode/.local/bin/claude
+# — the path the host's `.claude.json` (installMethod=native) expects, so the
+# in-box integrity check stays quiet. The two RUNs are each other's no-op in the
+# unselected mode; the native branch runs as `vscode` so the binary lands in the
+# right home (and the Dockerfile ENV PATH already includes ~/.local/bin, so
+# `command -v claude` resolves).
+ARG AGENTBOX_CLAUDE_INSTALL=native
 USER vscode
 # Fetch the installer to a file (not `curl | bash`) so a blocked download — e.g.
 # a Cloudflare 403 the CDN intermittently returns under load — fails the `&&`
 # chain instead of being hidden behind bash's exit 0, and retry it (3 attempts,
 # 60s then 240s backoff) before giving up, then verify `claude` is on PATH.
 # (RUN's default shell is /bin/sh, so a plain loop — no pipefail/bash arrays.)
-RUN i=1; while :; do \
-      curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh \
-        && bash /tmp/claude-install.sh stable \
-        && command -v claude >/dev/null && break; \
-      [ "$i" -ge 3 ] && { echo "claude native install failed after 3 attempts" >&2; exit 71; }; \
-      w=60; [ "$i" -ge 2 ] && w=240; \
-      echo "claude install attempt $i failed — backing off ${w}s" >&2; sleep "$w"; \
-      i=$((i+1)); \
-    done; rm -f /tmp/claude-install.sh
+RUN if [ "$AGENTBOX_CLAUDE_INSTALL" != "npm" ]; then \
+      i=1; while :; do \
+        curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh \
+          && bash /tmp/claude-install.sh stable \
+          && command -v claude >/dev/null && break; \
+        [ "$i" -ge 3 ] && { echo "claude native install failed after 3 attempts" >&2; exit 71; }; \
+        w=60; [ "$i" -ge 2 ] && w=240; \
+        echo "claude install attempt $i failed — backing off ${w}s" >&2; sleep "$w"; \
+        i=$((i+1)); \
+      done; rm -f /tmp/claude-install.sh; \
+    fi
 USER root
+# npm branch: npm-global drops `claude` at Node's prefix bin; symlink it into
+# /home/vscode/.local/bin/claude so the box stays indistinguishable from native.
+RUN if [ "$AGENTBOX_CLAUDE_INSTALL" = "npm" ]; then \
+      npm install -g @anthropic-ai/claude-code \
+        && install -d -o vscode -g vscode /home/vscode/.local/bin \
+        && ln -sf "$(command -v claude)" /home/vscode/.local/bin/claude \
+        && chown -h vscode:vscode /home/vscode/.local/bin/claude \
+        && command -v claude >/dev/null; \
+    fi
 
 # OpenAI Codex CLI. The @openai/codex npm package ships platform-native
 # prebuilds for linux arm64/amd64, so a plain global install is enough.

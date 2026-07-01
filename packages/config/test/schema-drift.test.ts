@@ -82,6 +82,8 @@ maintenance:
     yaml: 'queue:\n  enabled: true\n  maxConcurrent: 5\n  maxWorking: 3\n  idleGraceSeconds: 20\n',
   },
   { name: 'queue openIn', yaml: 'queue:\n  openIn: split\n' },
+  { name: 'box claudeInstall npm', yaml: 'box:\n  claudeInstall: npm\n' },
+  { name: 'box claudeInstall native', yaml: 'box:\n  claudeInstall: native\n' },
   { name: 'maintenance only', yaml: 'maintenance:\n  pruneProjectConfigs: true\n' },
   { name: 'portless only', yaml: 'portless:\n  enabled: true\n' },
   { name: 'portless stateDir', yaml: 'portless:\n  enabled: false\n  stateDir: /tmp/portless\n' },
@@ -147,6 +149,10 @@ const INVALID: Fixture[] = [
   {
     name: 'queue openIn unknown enum value',
     yaml: 'queue:\n  openIn: same\n',
+  },
+  {
+    name: 'box claudeInstall unknown enum value',
+    yaml: 'box:\n  claudeInstall: yarn\n',
   },
   {
     name: 'maintenance wrong type for int',

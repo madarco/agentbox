@@ -327,22 +327,38 @@ npm install -g @openai/codex opencode-ai agent-browser 2>&1 | tail -3 || \
   echo "provision.sh: one or more agent npm installs failed (continuing)"
 done_ "agent CLIs (codex + opencode + agent-browser, global npm)"
 
-step "Claude Code (native installer, run as vscode)"
-# Anthropic's native installer drops `claude` at /home/vscode/.local/bin/claude
-# with installMethod=native (matching the host-seeded .claude.json, so the
-# startup integrity check stays quiet) and ships native-only features the npm
-# package lacks. Its CDN (claude.ai / downloads.claude.ai) sits behind
-# Cloudflare, which intermittently 403s cloud-datacenter egress IPs under load —
-# so retry with backoff rather than falling back to npm. A bare `curl | bash`
-# would hide a 403 (curl -f exits non-zero but the pipe's status is bash's 0),
-# so keep pipefail and fold the PATH check in so a "succeeded but absent" result
-# also retries. A failed provision is better than a claude-less snapshot.
-if ! retry_backoff 3 sudo -u vscode -H bash -lc \
-     'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash -s stable && command -v claude >/dev/null'; then
-  echo "provision.sh: Claude native installer failed after 3 attempts (Cloudflare 403?) — aborting provision" >&2
-  exit 71
+# AGENTBOX_CLAUDE_INSTALL selects how Claude Code is installed (default
+# `native`). `npm` is an opt-in fallback for hosts whose egress IP the native
+# installer's CDN 403s — see `box.claudeInstall`.
+if [ "${AGENTBOX_CLAUDE_INSTALL:-native}" = "npm" ]; then
+  step "Claude Code (npm: @anthropic-ai/claude-code)"
+  # npm-global drops `claude` at Node's prefix bin, not the
+  # /home/vscode/.local/bin/claude the rest of AgentBox hardcodes. Symlink it
+  # into that path so the box stays indistinguishable from a native install.
+  npm install -g @anthropic-ai/claude-code
+  install -d -o vscode -g vscode /home/vscode/.local/bin
+  ln -sf "$(command -v claude)" /home/vscode/.local/bin/claude
+  chown -h vscode:vscode /home/vscode/.local/bin/claude
+  command -v claude >/dev/null || { echo "provision.sh: npm claude install produced no claude on PATH" >&2; exit 71; }
+  done_ "Claude Code (npm: @anthropic-ai/claude-code)"
+else
+  step "Claude Code (native installer, run as vscode)"
+  # Anthropic's native installer drops `claude` at /home/vscode/.local/bin/claude
+  # with installMethod=native (matching the host-seeded .claude.json, so the
+  # startup integrity check stays quiet) and ships native-only features the npm
+  # package lacks. Its CDN (claude.ai / downloads.claude.ai) sits behind
+  # Cloudflare, which intermittently 403s cloud-datacenter egress IPs under load —
+  # so retry with backoff rather than falling back to npm. A bare `curl | bash`
+  # would hide a 403 (curl -f exits non-zero but the pipe's status is bash's 0),
+  # so keep pipefail and fold the PATH check in so a "succeeded but absent" result
+  # also retries. A failed provision is better than a claude-less snapshot.
+  if ! retry_backoff 3 sudo -u vscode -H bash -lc \
+       'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash -s stable && command -v claude >/dev/null'; then
+    echo "provision.sh: Claude native installer failed after 3 attempts (Cloudflare 403?) — aborting provision" >&2
+    exit 71
+  fi
+  done_ "Claude Code (native installer, run as vscode)"
 fi
-done_ "Claude Code (native installer, run as vscode)"
 
 step "Chrome runtime libs (dnf)"
 # agent-browser launches Chromium at AGENT_BROWSER_EXECUTABLE_PATH
