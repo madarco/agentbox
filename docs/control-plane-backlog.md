@@ -1,5 +1,10 @@
 # Control plane — build-out status
 
+> **Rename in flight:** "control-plane" is being renamed to **Control Hub** (`agentbox hub`) — see
+> [`control-plane-roadmap.md`](./control-plane-roadmap.md) (milestone M1). This backlog stays as the
+> historical record of what shipped under the old name; the code/CLI/config still say `control-plane`
+> until the M1 rename lands.
+
 Status of the **control plane**: a portable service that holds the centralized
 concerns for boxes — git credentials (GitHub-App token leasing), permission
 state, the box registry/events — so boxes keep pushing / opening PRs while the
