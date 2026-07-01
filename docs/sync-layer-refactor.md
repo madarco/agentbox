@@ -146,10 +146,32 @@ Two-tier layout (dependency-graph-driven): **pure contracts** in `packages/core/
     commit (merge commit with **both parents surviving**), keeps the box version on the
     README conflict + reports it, copies the untracked host file, host uncommitted overlay
     skipped, idempotent on re-run. Covers the docker half of the 7.2/7.3 owed smoke.
-  - **Remaining (checkpoint before starting):** 7.4 (cloudSync facade + rewire cloud
-    `create()`), 7.5 (net-new cloud live-box resync — data-loss-capable, own PR/review),
-    7.6 (dry-run + stage-producer relocation). Cloud smoke `{vercel,hetzner}×{claude,codex}`
-    owed for 7.4/7.5.
+  - **7.4 (cloudSync facade + rewire cloud create):** `sandbox-cloud/src/sync/cloud-sync.ts`
+    `makeCloudSync(backend, handle, opts)`. seedCredentials = refreshAgentCredentialsBackup +
+    seedAgentVolumesIfFresh; seedAgentConfig = ensureAgentHomeDirsOwned + ensureCodexAgentsOverride
+    + seedOpencodeModelState + seedClaudeJsonAtCreate + seedDynamicConfig; seedGitIdentity/
+    seedEnvFiles(uploadEnvFiles)/applyCarry(render+uploadCarryPaths)/extractCredentials. Handle
+    carries the credential-volume `agents`. createCloudProvider gains `sync(box)`;
+    extractAgentCredentials delegates to the facade. Non-inBoxClone create() walks sync.* in the
+    identical order. cloud-sync.test.ts (8).
+  - **7.5 (NET-NEW cloud live-box resync — own PR):** `sandbox-cloud/src/workspace-resync.ts`
+    `resyncCloudWorkspace` — pre-fetch host commits (shared-ancestor `^P` bundle, target only when
+    the host advanced) into private in-box refs, then run `resyncWorkspace` UNCHANGED with cloud
+    ports (resolveHostRef→in-box target ref/box-branch fallback; createHostStash→bundled stash SHA;
+    host ports = makeHostGitPorts; box ports via backend.exec/uploadFile; untracked probe as root on
+    vercel/e2b to dodge the sudo-u `$()/while` re-parse hang). **Never reset --hard.** CloudBoxFields
+    += hostSeeded (gate) + workspaceBranch; createCloudProvider.resyncWorkspace(box) gates + re-derives
+    worktrees via detectGitRepos. CLI carry-resync gated to docker. workspace-resync.test.ts (3).
+  - **SMOKE (this session):** **Vercel** create seeds the full facade; a live-box resync (in-box
+    commit + host commit + host uncommitted + untracked) produced a MERGE COMMIT with BOTH PARENTS
+    surviving, kept the box version on the README conflict, copied the untracked host file, and re-ran
+    idempotently (no new merge). **Hetzner** create-facade seeds verified, but its resync is blocked
+    by an external transient Cloudflare 403 during the base-snapshot rebuild (shipped snapshot predates
+    the in-box `bootstrap` cmd). The resync path is provider-neutral (same backend.exec/uploadFile
+    ports), so Vercel's pass — including the harder root-probe path — covers it; re-run the Hetzner
+    half once `prepare --provider hetzner --force` succeeds.
+  - **Remaining:** 7.6 (dry-run passthrough + move per-tool static-config stage producers to
+    `sync/agents/<tool>/stage.ts` + fill claude/codex `staticPaths[].exclude`) — cleanup, no smoke.
 
 ## Refinements to the plan's phasing (decided during execution)
 1. **Transports co-develop with their first concern (Phase 3), not in a vacuum.** Docker
