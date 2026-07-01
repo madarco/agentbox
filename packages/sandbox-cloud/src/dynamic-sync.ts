@@ -27,7 +27,7 @@ import {
   computeSyncDelta,
   stageDynamicSyncTarball,
   type DynamicSyncManifest,
-} from '@agentbox/sandbox-docker';
+} from '@agentbox/sandbox-core';
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
 
 export interface SeedDynamicConfigOptions {

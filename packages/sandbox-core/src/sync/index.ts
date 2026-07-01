@@ -38,3 +38,24 @@ export {
   basenameUnix,
   type CarryPlan,
 } from './concerns/files.js';
+export {
+  encodeClaudeProjectsKey,
+  resolveClaudeMemoryDir,
+  BOX_CLAUDE_PROJECT_DIR,
+} from './agents/claude/paths.js';
+export {
+  BOX_WORKFLOWS_DIR,
+  BOX_MEMORY_DIR,
+  BOX_DYNAMIC_SYNC_MANIFEST,
+  buildHostSyncManifest,
+  computeSyncDelta,
+  stageDynamicSyncTarball,
+  type DynamicSyncManifest,
+  type DynamicSyncSet,
+  type DynamicSyncSetName,
+  type DynamicSyncDelta,
+  type DynamicSyncUpload,
+  type DynamicSyncDeletion,
+  type HostSyncManifest,
+  type StagedTarball,
+} from './concerns/dynamic.js';
