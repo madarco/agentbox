@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
-import { ensureVolume, volumeExists } from './docker.js';
+import { ensureVolume, volumeExists } from '../../docker.js';
 
 /**
  * OpenCode support mirrors the Codex support in `codex.ts`. The one structural

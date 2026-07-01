@@ -1,7 +1,7 @@
 import { chmod, mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { execa } from 'execa';
-import type { ClaudeConfigSpec } from '../claude.js';
+import type { ClaudeConfigSpec } from './agents/claude.js';
 import { STATE_DIR } from '../state.js';
 
 // The pure credential guards (`isRealAgentCredential`, `hostClaudeBackupExpired`,

@@ -4,8 +4,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
-import { sanitizeCodexConfigForBox, MINIMAL_TRUSTED_CODEX_CONFIG } from './sync/codex-config.js';
-import { ensureVolume, volumeExists } from './docker.js';
+import { sanitizeCodexConfigForBox, MINIMAL_TRUSTED_CODEX_CONFIG } from '../codex-config.js';
+import { ensureVolume, volumeExists } from '../../docker.js';
 
 /**
  * Codex support mirrors the Claude support in `claude.ts`, trimmed for what

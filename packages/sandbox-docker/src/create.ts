@@ -6,18 +6,18 @@ import { ConfigError, loadConfig } from '@agentbox/ctl';
 import { makeSyncContext } from '@agentbox/sandbox-core';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { makeDockerSync } from './sync/docker-sync.js';
-import { buildClaudeMounts, resolveClaudeVolume } from './claude.js';
+import { buildClaudeMounts, resolveClaudeVolume } from './sync/agents/claude.js';
 import {
   buildCodexMounts,
   resolveCodexVolume,
   type CodexMountResult,
-} from './codex.js';
-import { buildAgentsMounts, resolveAgentsVolume, type AgentsMountResult } from './agents.js';
+} from './sync/agents/codex.js';
+import { buildAgentsMounts, resolveAgentsVolume, type AgentsMountResult } from './sync/agents/skills.js';
 import {
   buildOpencodeMounts,
   resolveOpencodeVolume,
   type OpencodeMountResult,
-} from './opencode.js';
+} from './sync/agents/opencode.js';
 import {
   type BoxLimitSpec,
   containerExists,

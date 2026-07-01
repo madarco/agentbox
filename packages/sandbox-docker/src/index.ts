@@ -40,7 +40,7 @@ export {
   type RebuildPluginNativeDepsResult,
   type StartClaudeSessionOptions,
   type WarmUpClaudeResult,
-} from './claude.js';
+} from './sync/agents/claude.js';
 export {
   CREDENTIALS_BACKUP_FILE,
   CODEX_CREDENTIALS_BACKUP_FILE,
@@ -91,7 +91,7 @@ export {
   type PullCodexOptions,
   type PullCodexResult,
   type StartCodexSessionOptions,
-} from './codex.js';
+} from './sync/agents/codex.js';
 export {
   buildAgentsMounts,
   ensureAgentsVolume,
@@ -101,7 +101,7 @@ export {
   type AgentsMountResult,
   type EnsureAgentsVolumeOptions,
   type EnsureAgentsVolumeResult,
-} from './agents.js';
+} from './sync/agents/skills.js';
 export {
   buildOpencodeAttachArgv,
   buildOpencodeLoginRunArgv,
@@ -128,7 +128,7 @@ export {
   type PullOpencodeOptions,
   type PullOpencodeResult,
   type StartOpencodeSessionOptions,
-} from './opencode.js';
+} from './sync/agents/opencode.js';
 export { createBox, type CreateBoxOptions, type CreatedBox } from './create.js';
 export {
   agentboxHomeBytes,

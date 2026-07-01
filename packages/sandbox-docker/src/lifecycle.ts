@@ -9,14 +9,14 @@ import type {
   ClaudeActivityState,
   ClaudeQuestionPayload,
 } from '@agentbox/ctl';
-import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './claude.js';
-import { codexSessionInfo, SHARED_CODEX_VOLUME, type CodexSessionInfo } from './codex.js';
-import { SHARED_AGENTS_VOLUME } from './agents.js';
+import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './sync/agents/claude.js';
+import { codexSessionInfo, SHARED_CODEX_VOLUME, type CodexSessionInfo } from './sync/agents/codex.js';
+import { SHARED_AGENTS_VOLUME } from './sync/agents/skills.js';
 import {
   opencodeSessionInfo,
   SHARED_OPENCODE_VOLUME,
   type OpencodeSessionInfo,
-} from './opencode.js';
+} from './sync/agents/opencode.js';
 import { listShellSessions, type ShellSessionSummary } from './shell-session.js';
 import { bindWorktrees, removeInBoxWorktree, resyncWorkspaceFromHost } from './sync/in-box-git.js';
 import {

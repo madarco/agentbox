@@ -19,18 +19,18 @@ const m = vi.hoisted(() => ({
   renderCarryEntries: vi.fn(),
 }));
 
-vi.mock('../src/claude.js', () => ({
+vi.mock('../src/sync/agents/claude.js', () => ({
   ensureClaudeVolume: m.ensureClaudeVolume,
   seedSetupSkillIntoVolume: m.seedSetupSkillIntoVolume,
 }));
 vi.mock('../src/sync/claude-credentials.js', () => ({ syncClaudeCredentials: m.syncClaudeCredentials }));
-vi.mock('../src/codex.js', () => ({
+vi.mock('../src/sync/agents/codex.js', () => ({
   ensureCodexVolume: m.ensureCodexVolume,
   seedCodexHooks: m.seedCodexHooks,
   seedCodexAgentsOverride: m.seedCodexAgentsOverride,
 }));
-vi.mock('../src/agents.js', () => ({ ensureAgentsVolume: m.ensureAgentsVolume }));
-vi.mock('../src/opencode.js', () => ({
+vi.mock('../src/sync/agents/skills.js', () => ({ ensureAgentsVolume: m.ensureAgentsVolume }));
+vi.mock('../src/sync/agents/opencode.js', () => ({
   ensureOpencodeVolume: m.ensureOpencodeVolume,
   seedOpencodePlugin: m.seedOpencodePlugin,
 }));

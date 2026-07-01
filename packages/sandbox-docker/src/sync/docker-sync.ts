@@ -27,15 +27,15 @@ import type {
 } from '@agentbox/core';
 import { dryRunProviderSync, SYNC_DRYRUN_ENV } from '@agentbox/core';
 import { renderCarryEntries } from '@agentbox/sandbox-core';
-import type { ClaudeConfigSpec } from '../claude.js';
-import { ensureClaudeVolume, seedSetupSkillIntoVolume } from '../claude.js';
+import type { ClaudeConfigSpec } from './agents/claude.js';
+import { ensureClaudeVolume, seedSetupSkillIntoVolume } from './agents/claude.js';
 import { syncClaudeCredentials } from './claude-credentials.js';
-import type { CodexConfigSpec } from '../codex.js';
-import { ensureCodexVolume, seedCodexAgentsOverride, seedCodexHooks } from '../codex.js';
-import type { AgentsConfigSpec } from '../agents.js';
-import { ensureAgentsVolume } from '../agents.js';
-import type { OpencodeConfigSpec } from '../opencode.js';
-import { ensureOpencodeVolume, seedOpencodePlugin } from '../opencode.js';
+import type { CodexConfigSpec } from './agents/codex.js';
+import { ensureCodexVolume, seedCodexAgentsOverride, seedCodexHooks } from './agents/codex.js';
+import type { AgentsConfigSpec } from './agents/skills.js';
+import { ensureAgentsVolume } from './agents/skills.js';
+import type { OpencodeConfigSpec } from './agents/opencode.js';
+import { ensureOpencodeVolume, seedOpencodePlugin } from './agents/opencode.js';
 import { copyCarryPathsToBox, copyHostEnvFilesToBox } from './host-export.js';
 import { resyncWorkspaceFromHost } from './in-box-git.js';
 

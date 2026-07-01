@@ -1,8 +1,8 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { seedAgentsVolume } from '@agentbox/sandbox-core';
-import { ensureVolume, volumeExists } from './docker.js';
-import { createDockerSyncTransport } from './sync/sync-transport.js';
+import { ensureVolume, volumeExists } from '../../docker.js';
+import { createDockerSyncTransport } from '../sync-transport.js';
 
 /**
  * The shared `~/.agents` directory — the cross-agent "Agent Skills" location
