@@ -3,33 +3,18 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { ConfigError, loadConfig } from '@agentbox/ctl';
-import { renderCarryEntries } from '@agentbox/sandbox-core';
+import { makeSyncContext } from '@agentbox/sandbox-core';
 import { loadEffectiveConfig } from '@agentbox/config';
-import {
-  buildClaudeMounts,
-  ensureClaudeVolume,
-  resolveClaudeVolume,
-  seedSetupSkillIntoVolume,
-} from './claude.js';
-import { syncClaudeCredentials } from './claude-credentials.js';
+import { makeDockerSync } from './sync/docker-sync.js';
+import { buildClaudeMounts, resolveClaudeVolume } from './claude.js';
 import {
   buildCodexMounts,
-  ensureCodexVolume,
   resolveCodexVolume,
-  seedCodexAgentsOverride,
-  seedCodexHooks,
   type CodexMountResult,
 } from './codex.js';
-import {
-  buildAgentsMounts,
-  ensureAgentsVolume,
-  resolveAgentsVolume,
-  type AgentsMountResult,
-} from './agents.js';
+import { buildAgentsMounts, resolveAgentsVolume, type AgentsMountResult } from './agents.js';
 import {
   buildOpencodeMounts,
-  ensureOpencodeVolume,
-  seedOpencodePlugin,
   resolveOpencodeVolume,
   type OpencodeMountResult,
 } from './opencode.js';
@@ -53,7 +38,6 @@ import {
   gitWorktreePathFor,
   regenerateRestoredWorktrees,
   removeInBoxWorktree,
-  resyncWorkspaceFromHost,
   seedWorkspace,
   seedWorkspaceFromDir,
   type RepoCarryOver,
@@ -63,8 +47,6 @@ import {
   CONTAINER_EXPORT_MERGED,
   DEFAULT_ENV_PATTERNS,
   boxRunDirFor,
-  copyCarryPathsToBox,
-  copyHostEnvFilesToBox,
   copyHostFilesToBox,
   detectEngine,
 } from './host-export.js';
@@ -620,144 +602,84 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   log(`prepared volumes ${vscodeServerVolumeName(id)}, ${cursorServerVolumeName(id)}, ${dockerVolume}`);
   const ide = buildIdeMounts(id);
 
-  // Claude Code config volume. Shared by default so users sign in once across
-  // every box; --isolate-claude-config opts into a per-box volume. Either way,
-  // the host's ~/.claude is the authoritative source: we rsync host -> volume
-  // on every create so updates on the host (new login, new skills, new MCP)
-  // flow into the next box. Sync is additive — box-only state (session logs,
-  // etc.) is preserved.
+  // Agent config volumes (claude/codex/agents/opencode). Each is
+  // host-authoritative and additively synced from the host on every create (a
+  // new login/skill/MCP on the host flows into the next box; box-only state like
+  // session logs is preserved). `--isolate-<tool>-config` opts into a per-box
+  // volume. Resolve the specs + want-conditionals here (one source of truth —
+  // they also drive the mounts below), then walk the docker ProviderSync facade
+  // to run the actual volume seeds + credential sync.
   const claudeSpec = resolveClaudeVolume({
     isolate: opts.claudeConfig?.isolate ?? false,
     boxId: id,
   });
-  const claudeEnsured = await ensureClaudeVolume(claudeSpec, {
-    syncFromHost: true,
-    image: ensureRef,
-    hostWorkspace: workspace,
-  });
-  if (claudeEnsured.synced) {
-    log(`synced ${claudeSpec.volume} from ~/.claude`);
-    if ((claudeEnsured.filteredHookCount ?? 0) > 0) {
-      log(
-        `filtered ${String(claudeEnsured.filteredHookCount)} host-path hook(s) (paths under ~/)`,
-      );
-    }
-    if (claudeEnsured.installMethodFixed) {
-      log('set installMethod=native in synced .claude.json (matches box native install)');
-    }
-    if (claudeEnsured.aliasedProjectKey) {
-      log(`aliased project state for ${workspace} -> /workspace in synced .claude.json`);
-    }
-    if (claudeEnsured.workspaceTrusted) {
-      log('pre-trusted /workspace in synced .claude.json (skips the trust dialog)');
-    }
-  } else if (claudeEnsured.created) {
-    log(`created empty volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
-  } else {
-    log(`reusing volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
-  }
-  // Box-only: seed /agentbox-setup into the volume from the image. Never
-  // touches the host's ~/.claude. Re-copied every run so an image upgrade
-  // propagates to a long-lived shared volume.
-  const seeded = await seedSetupSkillIntoVolume(claudeSpec.volume, ensureRef);
-  if (seeded.seeded) log(`refreshed /agentbox-setup skill into ${claudeSpec.volume}`);
-  // Mirror the in-box OAuth credentials with the host backup: extract a
-  // box-written `.credentials.json` out to ~/.agentbox, or seed a fresh
-  // volume from a previous box's login. Best-effort.
-  const credSync = await syncClaudeCredentials(claudeSpec, {
-    image: ensureRef,
-    isolate: opts.claudeConfig?.isolate ?? false,
-  });
-  if (credSync.direction === 'extracted') {
-    log('extracted box claude credentials to host backup');
-  } else if (credSync.direction === 'seeded') {
-    log(`seeded claude credentials into ${claudeSpec.volume} from host backup`);
-  }
-  const claudeMounts = buildClaudeMounts(claudeSpec, process.env);
-
-  // Codex config volume. Mounted when the caller explicitly wants codex
-  // (`agentbox codex` passes `codexConfig`) OR the host already uses codex
-  // (`~/.codex` exists) — so a plain `agentbox create` for a Codex user still
-  // gets a working box. Same host-authoritative additive sync as the claude
-  // volume; `--isolate-codex-config` opts into a per-box volume.
+  // Codex: wanted when the caller passes `codexConfig` (`agentbox codex`) OR the
+  // host already uses codex (`~/.codex` exists) — so a plain create for a Codex
+  // user still gets a working box.
   const wantCodex =
     opts.codexConfig !== undefined || (await pathExists(join(homedir(), '.codex')));
-  let codexMounts: CodexMountResult | undefined;
-  let codexConfigVolume: string | undefined;
-  if (wantCodex) {
-    const codexSpec = resolveCodexVolume({
-      isolate: opts.codexConfig?.isolate ?? false,
-      boxId: id,
-    });
-    const codexEnsured = await ensureCodexVolume(codexSpec, {
-      syncFromHost: true,
-      image: ensureRef,
-    });
-    if (codexEnsured.synced) log(`synced ${codexSpec.volume} from ~/.codex`);
-    else if (codexEnsured.created) log(`created empty volume ${codexSpec.volume} (no host ~/.codex)`);
-    else log(`reusing volume ${codexSpec.volume}`);
-    // Box-only: seed the Codex activity hooks (~/.codex/hooks.json). Re-seeded
-    // each create so an image upgrade propagates; never touches the host.
-    const codexHooks = await seedCodexHooks(codexSpec.volume, ensureRef);
-    if (codexHooks.seeded) log(`seeded Codex activity hooks into ${codexSpec.volume}`);
-    // Box-only: fold the box "system prompt" (/etc/claude-code/CLAUDE.md) into
-    // ~/.codex/AGENTS.override.md so the in-box Codex agent reads the same box
-    // facts Claude gets. Runs after the rsync above so a user's synced AGENTS.md
-    // gets preserved beneath the facts.
-    const codexOverride = await seedCodexAgentsOverride(codexSpec.volume, ensureRef);
-    if (codexOverride.seeded) log(`seeded Codex AGENTS.override.md into ${codexSpec.volume}`);
-    codexMounts = buildCodexMounts(codexSpec, process.env);
-    codexConfigVolume = codexSpec.volume;
-  }
-
-  // Agents skills volume (~/.agents). Codex discovers skills from
-  // ~/.agents/skills directly, and the ~/.codex/skills symlinks point back into
-  // it, so the box needs it to see the same skill set as the host. Mounted
-  // whenever the host has a ~/.agents; shared across boxes (skills only, no
-  // auth). Same host-authoritative additive sync as the other agent volumes.
-  let agentsMounts: AgentsMountResult | undefined;
-  let agentsConfigVolume: string | undefined;
-  if (await pathExists(join(homedir(), '.agents'))) {
-    const agentsSpec = resolveAgentsVolume();
-    const agentsEnsured = await ensureAgentsVolume(agentsSpec, {
-      syncFromHost: true,
-      image: ensureRef,
-    });
-    if (agentsEnsured.synced) log(`synced ${agentsSpec.volume} from ~/.agents`);
-    else if (agentsEnsured.created) log(`created empty volume ${agentsSpec.volume}`);
-    else log(`reusing volume ${agentsSpec.volume}`);
-    agentsMounts = buildAgentsMounts(agentsSpec);
-    agentsConfigVolume = agentsSpec.volume;
-  }
-
-  // OpenCode config volume. Mounted when the caller wants opencode
-  // (`agentbox opencode` passes `opencodeConfig`) OR the host already uses
-  // OpenCode (`~/.config/opencode` or `~/.local/share/opencode` exists). One
-  // volume holds both OpenCode dirs (data at the root, config in a `config/`
-  // subdir via OPENCODE_CONFIG_DIR — see opencode.ts).
+  const codexSpec = wantCodex
+    ? resolveCodexVolume({ isolate: opts.codexConfig?.isolate ?? false, boxId: id })
+    : undefined;
+  // Agents skills (~/.agents): mounted whenever the host has one; shared across
+  // boxes (skills only, no auth). Codex discovers skills from ~/.agents/skills.
+  const agentsSpec = (await pathExists(join(homedir(), '.agents')))
+    ? resolveAgentsVolume()
+    : undefined;
+  // OpenCode: wanted when the caller passes `opencodeConfig` OR the host already
+  // uses OpenCode (`~/.config/opencode` or `~/.local/share/opencode`).
   const wantOpencode =
     opts.opencodeConfig !== undefined ||
     (await pathExists(join(homedir(), '.config', 'opencode'))) ||
     (await pathExists(join(homedir(), '.local', 'share', 'opencode')));
+  const opencodeSpec = wantOpencode
+    ? resolveOpencodeVolume({ isolate: opts.opencodeConfig?.isolate ?? false, boxId: id })
+    : undefined;
+
+  // Walk the docker ProviderSync facade (see sync/docker-sync.ts for the full
+  // per-op picture): seed every agent-config volume (claude static+skills+dynamic
+  // +box-facts, codex hooks+AGENTS.override, opencode plugin) then sync the claude
+  // credentials. The seeds run against throwaway helper containers + the box image
+  // — the box container `containerName` doesn't exist yet, which is fine (those
+  // ops don't touch it). Workspace *seed* + the mount building below stay here:
+  // they're docker-specific, non-facade steps that feed `runBox`.
+  const syncCtx = makeSyncContext({
+    boxName: name,
+    boxId: id,
+    provider: 'docker',
+    hostWorkspace: workspace,
+    projectRoot: opts.projectRoot ?? workspace,
+    onLog: log,
+  });
+  const sync = makeDockerSync({
+    container: containerName,
+    image: ensureRef,
+    claudeSpec,
+    claudeIsolate: opts.claudeConfig?.isolate ?? false,
+    codexSpec,
+    agentsSpec,
+    opencodeSpec,
+  });
+  await sync.seedAgentConfig(syncCtx);
+  await sync.seedCredentials(syncCtx);
+
+  // Container mounts, built from the same specs (pure).
+  const claudeMounts = buildClaudeMounts(claudeSpec, process.env);
+  let codexMounts: CodexMountResult | undefined;
+  let codexConfigVolume: string | undefined;
+  if (codexSpec) {
+    codexMounts = buildCodexMounts(codexSpec, process.env);
+    codexConfigVolume = codexSpec.volume;
+  }
+  let agentsMounts: AgentsMountResult | undefined;
+  let agentsConfigVolume: string | undefined;
+  if (agentsSpec) {
+    agentsMounts = buildAgentsMounts(agentsSpec);
+    agentsConfigVolume = agentsSpec.volume;
+  }
   let opencodeMounts: OpencodeMountResult | undefined;
   let opencodeConfigVolume: string | undefined;
-  if (wantOpencode) {
-    const opencodeSpec = resolveOpencodeVolume({
-      isolate: opts.opencodeConfig?.isolate ?? false,
-      boxId: id,
-    });
-    const opencodeEnsured = await ensureOpencodeVolume(opencodeSpec, {
-      syncFromHost: true,
-      image: ensureRef,
-    });
-    if (opencodeEnsured.synced) log(`synced ${opencodeSpec.volume} from ~/.config + ~/.local/share opencode`);
-    else if (opencodeEnsured.created) log(`created empty volume ${opencodeSpec.volume} (no host opencode)`);
-    else log(`reusing volume ${opencodeSpec.volume}`);
-    // Seed the AgentBox state-reporting plugin from the image-baked copy.
-    // OpenCode autoloads anything under $OPENCODE_CONFIG_DIR/plugins/; the
-    // plugin shells `agentbox-ctl opencode-state` on each lifecycle event.
-    const opencodePlugin = await seedOpencodePlugin(opencodeSpec.volume, ensureRef);
-    if (opencodePlugin.seeded) log(`seeded agentbox-state plugin into ${opencodeSpec.volume}`);
+  if (opencodeSpec) {
     opencodeMounts = buildOpencodeMounts(opencodeSpec, process.env);
     opencodeConfigVolume = opencodeSpec.volume;
   }
@@ -1080,17 +1002,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     // current branch in + overlays the host's uncommitted/untracked changes, so
     // the box matches a fresh create from HEAD (box wins on conflict).
     if (opts.resyncOnStart !== false) {
-      const repos = await resyncWorkspaceFromHost({
-        container: containerName,
-        worktrees: gitWorktreeRecords,
-        onLog: log,
-      });
-      resyncResult = {
-        repos,
-        hadConflicts: repos.some(
-          (r) => r.mergeConflicts.length > 0 || r.overlaySkipped.length > 0,
-        ),
-      };
+      resyncResult = await sync.resyncWorkspace(syncCtx, gitWorktreeRecords);
     }
   } else {
     log('using /workspace from checkpoint image (no worktrees recorded; no rebind)');
@@ -1147,12 +1059,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
 
   if (opts.withEnv) {
     log('copying host env/config files into /workspace (--with-env)');
-    const { copied } = await copyHostEnvFilesToBox({
-      container: containerName,
-      workspaceDir: workspace,
-      patterns: DEFAULT_ENV_PATTERNS,
-      onLog: log,
-    });
+    const { copied } = await sync.seedEnvFiles(syncCtx, DEFAULT_ENV_PATTERNS);
     log(copied > 0 ? `copied ${String(copied)} env/config file(s)` : 'no env/config files found');
   }
 
@@ -1175,16 +1082,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   let carrySummary: BoxRecord['carry'] | undefined;
   if (opts.carry && opts.carry.length > 0) {
     log(`carry: copying ${String(opts.carry.length)} host path(s) into the box`);
-    const entries = await renderCarryEntries(
-      opts.carry,
-      { name, id, kind: 'docker', hostWorkspace: workspace, projectRoot: opts.projectRoot },
-      log,
-    );
-    const result = await copyCarryPathsToBox({
-      container: containerName,
-      entries,
-      onLog: log,
-    });
+    const result = await sync.applyCarry(syncCtx, opts.carry);
     log(`carry: copied ${String(result.copied)}/${String(opts.carry.length)} entry/entries`);
     for (const err of result.errors) log(`carry: ${err}`);
     if (result.applied.length > 0) {
