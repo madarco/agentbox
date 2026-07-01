@@ -423,6 +423,11 @@ export const createCommand = new Command('create')
         fromBranch,
         useBranch,
         resyncOnStart: opts.resync,
+        // When a control plane is configured, a cloud box's live relay IS the
+        // plane: the provider resolves control-plane topology, registers the box
+        // on the plane, and the box forwards /rpc + leases push tokens directly.
+        // Cloud-only in effect; the docker provider ignores it.
+        controlPlaneUrl: cfg.effective.relay.controlPlaneUrl,
         projectRoot,
         onLog: (line) => {
           s.message(line);
