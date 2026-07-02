@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { isProviderKind, type ProviderKind } from '@agentbox/config';
-import type { BoxRecord, Provider } from '@agentbox/core';
+import { normalizeLastAgent, type BoxRecord, type Provider } from '@agentbox/core';
 import type { ProviderModule } from '@agentbox/sandbox-core';
 import { readState } from '@agentbox/sandbox-core';
 import { listBoxes, type ListedBox } from '@agentbox/sandbox-docker';
@@ -67,7 +67,8 @@ function mapBox(b: ListedBox): Box {
     repo: path.basename(root),
     branch: b.gitWorktrees?.[0]?.branch ?? b.cloud?.workspaceBranch ?? '',
     task: b.claudeSessionTitle ?? b.codexSessionTitle ?? b.opencodeSessionTitle ?? b.name,
-    agent: b.lastAgent ?? 'claude',
+    // Normalize the frozen wire spelling ('claude-code') to the UI label ('claude').
+    agent: normalizeLastAgent(b.lastAgent) ?? 'claude',
     status,
     createdAt,
     lastActivity: createdAt,
