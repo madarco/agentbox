@@ -133,6 +133,7 @@ export {
   type RelayServerHandle,
   type RelayServerOptions,
 } from './server.js';
+export { startRelayDaemon, type RelayDaemonHandle } from './daemon.js';
 export {
   loadAutopauseConfig,
   selectBoxesToPause,

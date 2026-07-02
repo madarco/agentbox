@@ -124,6 +124,13 @@ export interface RelayServerOptions {
    * Null/absent → `git.lease-token` returns a clear "not configured" error.
    */
   githubApp?: GitHubAppConfig | null;
+  /**
+   * Optional delegate for requests that matched no relay route (e.g. Next's
+   * `getRequestHandler()`). Invoked at the top-level 404 fallthrough, so every
+   * relay route still matches first and the UI can never shadow `/admin`,
+   * `/rpc`, etc. Lets the hub serve Next on the relay's own port.
+   */
+  uiHandler?: (req: IncomingMessage, res: ServerResponse) => void;
 }
 
 export interface RelayServerHandle {
@@ -297,6 +304,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   // boxes reach it via the poller).
   const githubAppConfig = opts.githubApp === undefined ? loadGitHubAppConfig() : opts.githubApp;
   const leaser = githubAppConfig ? new GitHubAppLeaser(githubAppConfig) : null;
+  const uiHandler = opts.uiHandler;
 
   // Host-mode pollers for cloud-tagged boxes; started on /admin/register-box,
   // stopped on /admin/forget-box. Lazy import to keep host-mode startup free
@@ -1246,6 +1254,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       return;
     }
 
+    if (uiHandler) {
+      uiHandler(req, res);
+      return;
+    }
     send(res, 404, { error: 'not found', route });
   }
 
