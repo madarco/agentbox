@@ -32,6 +32,7 @@
     "e2b",
     "---Reference---",
     "cli",
+    "hub",
     "control-plane",
     "agentbox-yaml",
     "configuration",

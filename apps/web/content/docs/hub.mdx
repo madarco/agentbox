@@ -1,0 +1,75 @@
+---
+title: Hub (Web UI)
+description: A local dashboard for your boxes — served by the host relay on http://127.0.0.1:8787
+---
+
+The **hub** is a local Web UI for your boxes: a dashboard, box detail views, and a
+live **approvals** inbox, served by the host relay on `http://127.0.0.1:8787`. It's
+the same `@agentbox/relay` core you already run, with a Next.js UI delegated onto
+its port — one process, no extra port opened.
+
+```bash
+agentbox hub
+```
+
+That starts the hub (if it isn't already running) and opens it in your browser at
+`http://127.0.0.1:8787/?token=<secret>`.
+
+<Figure caption="The hub dashboard — boxes grouped by project, with live status and lifecycle controls." />
+
+## What's in it
+
+- **Dashboard** — every box on this machine, grouped by project, with live status
+  (running / paused / stopped / error) and per-box **pause / resume / stop /
+  destroy** controls.
+- **Box detail** — a box's task, agent, branch, host, and timestamps.
+- **Approvals** — the host-action requests a box is blocked on (a `git push` to a
+  protected branch, `cp`, `download`, gh/integration writes). **Approve** unblocks
+  the box; **Deny** returns an error to it. This is the same gate the relay prompts
+  for in an attached terminal — surfaced in the browser so you can answer from
+  anywhere on your machine.
+- **Live updates** — box states and approvals stream in over SSE; no manual
+  refresh. A pending approval appears the moment a box requests it.
+
+<Callout type="info" title="Creating boxes">Creating boxes from the hub isn't wired yet — use `agentbox create` (and the `-i` background flag) from the terminal. The hub reflects and controls the boxes you already have.</Callout>
+
+## Commands
+
+```bash
+agentbox hub              # start + open in the browser (default)
+agentbox hub --no-open    # start without opening a browser, just print the URL
+agentbox hub status       # is it running? (add --json)
+agentbox hub stop         # stop the hub process
+agentbox hub restart      # stop then start
+```
+
+## How it relates to the relay
+
+The hub is a **superset of the host relay** — it embeds the relay and adds the UI,
+on the same port (8787). The two are mutually exclusive there, so:
+
+- `agentbox hub` takes over from a bare `agentbox relay` if one is already running.
+- Once the hub is up, ordinary box commands (`agentbox create`, `claude`, …) reuse
+  it — they don't spawn a second relay.
+
+So you can run `agentbox hub` once and leave it; everything else keeps working
+through it. Stopping the hub (`agentbox hub stop`) frees the port, and the next box
+command brings a lean relay back automatically.
+
+## Auth
+
+On localhost the hub binds loopback (`127.0.0.1`) and gates access with a
+per-machine **token** — there's no login screen. `agentbox hub` generates a secret
+at `~/.agentbox/hub/token` (mode `0600`) and hands it to you in the URL; the hub
+stores it in an httpOnly cookie and redirects to the clean URL. Direct access
+without the token is refused (401). This protects the loopback bind from other
+local processes and DNS-rebinding. `AGENTBOX_HUB_AUTH=off` disables the gate.
+
+<Callout type="info" title="Requirements">The hub server needs **Node ≥ 22.5** (the lean relay and the rest of the CLI keep a lower floor). If you're below that, `agentbox hub` prints a clear error — use `agentbox relay` instead.</Callout>
+
+## Running it for a team
+
+`agentbox hub` is the single-user, on-your-machine UI. For a **shared, multi-user**
+deployment with password login and a cross-machine box registry — so cloud boxes
+keep working with your laptop off — deploy the same app as the hosted
+[control plane](/docs/control-plane) (Vercel or a VPS, backed by Postgres).
