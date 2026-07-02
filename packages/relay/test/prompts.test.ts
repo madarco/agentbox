@@ -62,6 +62,36 @@ describe('PendingPrompts', () => {
     expect(p.boxFor('missing')).toBeNull();
   });
 
+  it('all() lists every pending prompt across boxes with its boxId + createdAt', () => {
+    const p = new PendingPrompts();
+    void p.add('a', { id: 'a1', kind: 'confirm', message: 'a1' });
+    void p.add('b', { id: 'b1', kind: 'confirm', message: 'b1' });
+    const all = p.all();
+    expect(all.map((e) => e.id).sort()).toEqual(['a1', 'b1']);
+    const a1 = all.find((e) => e.id === 'a1')!;
+    expect(a1.boxId).toBe('a');
+    expect(a1.ev.message).toBe('a1');
+    expect(typeof a1.createdAt).toBe('string');
+    // resolving drops it from the listing
+    p.resolve('a1', 'y');
+    expect(p.all().map((e) => e.id)).toEqual(['b1']);
+  });
+
+  it('setOnChange fires on add and on resolve', () => {
+    const p = new PendingPrompts();
+    let calls = 0;
+    p.setOnChange(() => {
+      calls += 1;
+    });
+    void p.add('a', { id: 'a1', kind: 'confirm', message: 'a1' });
+    expect(calls).toBe(1);
+    p.resolve('a1', 'y');
+    expect(calls).toBe(2);
+    // a no-op resolve (already gone) does not fire
+    p.resolve('a1', 'y');
+    expect(calls).toBe(2);
+  });
+
   it('forwards `cancelled` to the awaiting promise', async () => {
     const p = new PendingPrompts();
     const result = p.add('box-1', { id: 'x', kind: 'confirm', message: 'q' });

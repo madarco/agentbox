@@ -74,6 +74,24 @@ The embedded server needs Node >= 22.5 for `node:sqlite` (stable on Node 24; pas
 
 > The hub server needs Node >= 22.5; the lean relay/CLI keep the lower floor.
 
+## Web UI views
+
+Dashboard (boxes grouped by project), Box detail, and **Approvals** — a live view
+of pending host-action approvals (git push, `cp`, `download`, gh/integration
+writes) a box is blocked on. Approve/Deny answers the parked in-box RPC and
+unblocks the box. On the embedded profiles (localhost/hetzner) the relay runs in
+**block mode**, so approvals are read from the relay handle's in-process prompt
+map (`handle.prompts`), not the Store; the sidebar badge shows the pending count.
+
+**Live updates** are pushed over SSE: the browser subscribes to `/api/events`
+(same-origin, gated by the auth cookie); the custom server's in-process
+`HubNotifier` fires a `change` whenever the pending-approval set mutates, and a
+15s `ping` heartbeat doubles as a catch-all refresh for box changes made outside
+the hub. Each event triggers a `router.refresh()` of the force-dynamic layout, so
+box states and approvals stay current without polling. (Vercel/serverless has no
+in-process notifier — its stream degrades to heartbeats only; poll-mode approvals
+over `PostgresStore` are a later item.)
+
 ## Deploy
 
 The turnkey path is `agentbox control-plane setup` (creates the GitHub App, then

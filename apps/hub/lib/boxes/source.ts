@@ -10,7 +10,7 @@ export async function getDashboardData(): Promise<HubState> {
   const backend = globalThis.__AGENTBOX_HUB_BACKEND;
   if (!backend) {
     // No custom server (e.g. plain `next start`) — nothing to read.
-    return { user: { login: 'user', name: 'user' }, github: { available: false, installed: false, appName: 'GitHub App', account: '', installedAt: 0, repos: [] }, projects: [], boxes: [], authMode: authMode() };
+    return { user: { login: 'user', name: 'user' }, github: { available: false, installed: false, appName: 'GitHub App', account: '', installedAt: 0, repos: [] }, projects: [], boxes: [], approvals: [], authMode: authMode() };
   }
   return { ...(await backend.getData()), authMode: authMode() };
 }

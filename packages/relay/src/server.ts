@@ -7,6 +7,7 @@ import {
   resolveHostPath,
 } from './host-actions.js';
 import { HostActionQueue } from './host-action-queue.js';
+import { HubNotifier } from './hub-notifier.js';
 import { BoxNotices } from './notices.js';
 import { hostOpenCommand } from '@agentbox/sandbox-core';
 import {
@@ -143,6 +144,8 @@ export interface RelayServerHandle {
   prompts: PendingPrompts;
   subscribers: PromptSubscribers;
   notices: BoxNotices;
+  /** Fan-out for the embedded hub UI's SSE route (pending-approval changes). */
+  hubNotifier: HubNotifier;
   /** Present only in `mode === 'box'`: the parking lot for host-only RPCs. */
   hostActions?: HostActionQueue;
   url: string;
@@ -256,6 +259,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const prompts = new PendingPrompts();
   const subscribers = new PromptSubscribers();
   const notices = new BoxNotices(subscribers);
+  // Fan-out for the embedded hub UI: every change to the pending-approval set
+  // pushes a refresh to browsers subscribed on the hub's SSE route. No-op when
+  // no hub is attached (the CLI relay bin never subscribes).
+  const hubNotifier = new HubNotifier();
+  prompts.setOnChange(() => hubNotifier.notify());
   // The persisted-state seam. Defaults to a MemoryStore wrapping the concrete
   // instances above, so the laptop relay + tests behave exactly as before; a
   // hosted control plane injects a Postgres-backed store instead. Handlers go
@@ -1310,6 +1318,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     prompts,
     subscribers,
     notices,
+    hubNotifier,
     hostActions: hostActions ?? undefined,
     url: `http://${host}:${String(opts.port)}`,
     setQueuePoke: (fn) => {

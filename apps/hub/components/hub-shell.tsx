@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation';
 import { useEffect, type ReactNode } from 'react';
 import { AppSidebar } from '@/components/app-sidebar';
+import { LiveRefresh } from '@/components/live-refresh';
 import { Topbar } from '@/components/topbar';
 import { HubProvider } from '@/lib/boxes/store';
 import type { HubState } from '@/lib/boxes/types';
@@ -32,6 +33,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
 export function HubShell({ data, children }: { data: HubState; children: ReactNode }) {
   return (
     <HubProvider data={data}>
+      <LiveRefresh />
       <ShellFrame>{children}</ShellFrame>
     </HubProvider>
   );

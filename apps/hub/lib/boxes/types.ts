@@ -54,11 +54,26 @@ export interface User {
   name: string;
 }
 
+// A pending host-action approval, flattened from the relay's in-process prompt
+// map. The UI joins `boxId` to a Box (from the same HubState) for display.
+export interface Approval {
+  id: string;
+  boxId: string;
+  message: string;
+  detail?: string;
+  command?: string;
+  cwd?: string;
+  argv?: string[];
+  defaultAnswer: 'y' | 'n';
+  createdAt: number;
+}
+
 export interface HubState {
   user: User;
   github: GithubState;
   projects: Project[];
   boxes: Box[];
+  approvals: Approval[];
   // Active gate: 'password' (hetzner/vercel) drives the topbar sign-out; 'token'
   // (localhost) and 'off' show none.
   authMode: AuthMode;

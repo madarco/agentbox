@@ -50,10 +50,14 @@ async function main(): Promise<void> {
     },
   });
 
-  // Share the relay's live Store (approvals view, Phase 4) and the host backend
-  // (box list + lifecycle) with Next server code via globalThis.
+  // Share the host backend (box list + lifecycle + approvals) and the live-update
+  // notifier with Next server code via globalThis. The backend reads the relay
+  // handle's in-process prompt map for approvals (block mode); the notifier drives
+  // the /api/events SSE stream. __AGENTBOX_BOX_SOURCE (the Store) is kept for the
+  // deferred poll-mode path only.
   globalThis.__AGENTBOX_BOX_SOURCE = daemon.handle.store;
-  globalThis.__AGENTBOX_HUB_BACKEND = createHubBackend();
+  globalThis.__AGENTBOX_HUB_BACKEND = createHubBackend(daemon.handle);
+  globalThis.__AGENTBOX_HUB_NOTIFIER = daemon.handle.hubNotifier;
 
   // Password profiles (hetzner/vercel): create/upgrade the auth tables and
   // env-seed the admin. Dynamic import so localhost never loads node:sqlite /

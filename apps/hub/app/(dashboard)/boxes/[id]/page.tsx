@@ -7,7 +7,6 @@ import { StatusBadge } from '@/components/status-badge';
 import { Alert } from '@/components/ui/alert';
 import { Card } from '@/components/ui/card';
 import { useStore } from '@/lib/boxes/store';
-import { AgentTerminal } from '../components/agent-terminal';
 import { BackLink } from '../components/back-link';
 import { BoxActions } from '../components/box-actions';
 import { DRow } from '../components/d-row';
@@ -65,9 +64,6 @@ export default function BoxDetailPage() {
         <Stat k="Files touched" v={box.filesTouched ?? '—'} icon={Icons.file} />
         <Stat k="Last activity" v={<Ago ms={box.lastActivity} />} mono />
       </StatGrid>
-
-      <SectionLabel>Agent output</SectionLabel>
-      <AgentTerminal box={box} />
 
       <SectionLabel>Details</SectionLabel>
       <Card className="divide-y divide-border/60 overflow-hidden">

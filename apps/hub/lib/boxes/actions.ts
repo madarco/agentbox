@@ -25,3 +25,11 @@ export async function stopBoxAction(id: string): Promise<ActionResult> {
 export async function destroyBoxAction(id: string): Promise<ActionResult> {
   return dispatch('destroy', id);
 }
+
+export async function answerApprovalAction(id: string, answer: 'y' | 'n'): Promise<ActionResult> {
+  const backend = globalThis.__AGENTBOX_HUB_BACKEND;
+  if (!backend) return { ok: false, error: 'hub backend unavailable (run the hub server)' };
+  const res = await backend.answerApproval(id, answer);
+  if (res.ok) revalidatePath('/', 'layout');
+  return res;
+}

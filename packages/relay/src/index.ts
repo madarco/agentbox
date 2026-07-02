@@ -73,10 +73,12 @@ export {
   askPrompt,
   type AutoApprovePolicy,
   isPromptAnswerBody,
+  type PendingApproval,
   PendingPrompts,
   PromptSubscribers,
   type PromptResolution,
 } from './prompts.js';
+export { HubNotifier } from './hub-notifier.js';
 export { BoxNotices } from './notices.js';
 export { hashRpcParams, HostInitiatedTokens } from './host-initiated.js';
 export {
