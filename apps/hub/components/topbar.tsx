@@ -1,10 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
+import { signOut } from '@/lib/auth.client';
 import { useStore } from '@/lib/boxes/store';
 
 function Crumb({ to, children, current }: { to?: string; children: ReactNode; current?: boolean }) {
@@ -50,6 +51,8 @@ function Crumbs() {
 }
 
 export function Topbar() {
+  const router = useRouter();
+  const { state } = useStore();
   return (
     <div className="sticky top-0 z-30 flex h-[54px] items-center gap-3 border-b border-border bg-[rgba(246,246,243,.86)] px-6 backdrop-blur-md">
       <Button
@@ -67,6 +70,20 @@ export function Topbar() {
         <Icons.book />
         Docs
       </Button>
+      {state.authMode === 'password' ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            void signOut().then(() => {
+              router.push('/signin');
+              router.refresh();
+            });
+          }}
+        >
+          Sign out
+        </Button>
+      ) : null}
     </div>
   );
 }

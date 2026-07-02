@@ -10,7 +10,9 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 // packages never enter Next's bundle. This is a pure-type module (no runtime
 // imports) so both the implementation and the ambient global can share it.
 export interface HubBackend {
-  getData(): Promise<HubState>;
+  // authMode is an env-derived concern layered on by source.ts, not the host
+  // backend — so the backend produces everything else.
+  getData(): Promise<Omit<HubState, 'authMode'>>;
   pause(id: string): Promise<ActionResult>;
   resume(id: string): Promise<ActionResult>;
   stop(id: string): Promise<ActionResult>;

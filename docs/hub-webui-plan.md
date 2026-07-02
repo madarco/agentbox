@@ -308,15 +308,86 @@ Kept the Vercel path (`app/[...path]/route.ts` + `lib/plane.ts`) byte-intact.
 - **Deferred:** vercel/hosted source (Postgres), the `agentbox hub` bin +
   `output:'standalone'` packaging (Phase 5), real agent-output streaming (Phase 4).
 
-### Phase 3 — better-auth dual dialect
+### Phase 3 — better-auth dual dialect — DONE
 `lib/auth.ts` (`node:sqlite` vs pg), mount route, `proxy.ts` gate;
-`AGENTBOX_HUB_AUTH=off` on localhost. Resolve the node:sqlite/Kysely dialect
-question.
-- **Verify (hetzner):** bind `0.0.0.0`, hit from a second machine → redirected to
-  login; after login boxes load; `curl http://<host>:8787/admin/registry` from
-  off-box → **403** (loopback guard intact).
-- **Verify (vercel):** preview deploy, Postgres login works, `/admin/*` still
-  bearer-gated.
+`AGENTBOX_HUB_AUTH` per profile.
+- **node:sqlite/Kysely question resolved — simpler than feared:** better-auth's
+  built-in Kysely adapter accepts the **driver instance directly** for both
+  dialects (`new DatabaseSync(path)` / `new Pool({connectionString})`), and
+  `getMigrations(auth.options).runMigrations()` creates the tables. **No drizzle,
+  no kysely-adapter, no hand-written schema** were built (the plan's
+  `drizzleAdapter` + copied `lib/db/schema/auth.ts` are dropped). Node 24 → stable
+  `node:sqlite`, no flag.
+- **Auth is secret-gated (design refinement):** `authEnabled()` = explicit
+  `AGENTBOX_HUB_AUTH` if set, else `Boolean(BETTER_AUTH_SECRET)`. This makes auth
+  a deliberate opt-in and prevents a secretless vercel deploy from serving a login
+  page with **no user** (a lockout). `vercel.json` sets only `AGENTBOX_HUB_PROFILE=vercel`;
+  `db:auth-migrate` self-skips when auth is off, so a secretless build never
+  touches the DB.
+- **First admin env-seeded** (`AGENTBOX_HUB_ADMIN_EMAIL/PASSWORD`) on boot
+  (embedded) / on `db:auth-migrate` (vercel); no public signup. localhost stays
+  fully off/lazy (better-auth + sqlite never constructed; no `auth.db` created).
+- **`lib/auth.ts` intentionally omits `import 'server-only'`** — `server.ts` and
+  `scripts/auth-migrate.ts` import it under plain node/tsx, where the Next-aliased
+  `server-only` module does not resolve; it stays out of the client bundle by
+  discipline (client uses `auth.client.ts`).
+- **New:** `lib/auth-config.ts`, `lib/auth.ts`, `lib/auth.client.ts`,
+  `app/(auth)/api/auth/[...all]/route.ts` (404s when auth off),
+  `app/(auth)/signin/page.tsx`, `proxy.ts`, `scripts/auth-migrate.ts`. **Modified:**
+  `server.ts` (profile/auth env from bind host + `ensureAuthReady` when on),
+  `package.json` (better-auth, `engines.node>=22.5`, `db:auth-migrate`),
+  `vercel.json`, `.env.example`, `components/topbar.tsx` (sign-out, gated on
+  `authEnabled`), `lib/boxes/{types,source,backend-types}.ts` + `lib/hub-backend.ts`
+  (thread `authEnabled` into `HubState`). **Setup prompt (§7):**
+  `apps/cli/src/control-plane/hub-auth-env.ts` + wired into the **vercel** branch
+  of `apps/cli/src/commands/control-plane.ts`.
+- **Verified (build):** `next build` clean — routes `/`, `/[...path]`,
+  `/api/auth/[...all]`, `/signin` + Proxy, no conflict; typecheck + lint clean
+  (hub + CLI). **Verified (runtime, via `next start` on a throwaway port + isolated
+  `$HOME`):**
+  - localhost (auth off): `/` → 200 no redirect; `/api/auth/session` → 404;
+    `/settings` → 200 (ungated); no `~/.agentbox/hub/auth.db` created.
+  - hetzner sim (auth on): `db:auth-migrate` created the 4 tables + seeded the
+    admin; `/` unauth → 307 `/signin?returnUrl=/`; `/signin` → 200;
+    `/admin/registry` → 503 (NOT a signin redirect — proxy exclusion holds);
+    `POST /api/auth/sign-in/email` with the seeded creds → 200 + session cookie;
+    `/` with cookie → 200; wrong password → 401.
+- **Deferred to Phase 5:** the off-box `/admin` → **403** loopback-guard check
+  (needs the embedded `server.ts` relay daemon, not `next start`) — the guard is
+  unchanged and the proxy matcher excludes `/admin` at the code level. **Live
+  vercel preview** (Postgres login) not run this session (no live deploy) — the pg
+  path uses the same native adapter as the verified sqlite path. **hetzner
+  docker-compose auth wiring** (the compose/Dockerfile runs `next start` with
+  Postgres, a different model than the embedded sqlite hetzner profile; needs a
+  build-time `db:auth-migrate` + auth env in compose) — the setup prompt is wired
+  for the vercel deploy only.
+
+### Phase 3.1 — localhost token auth — DONE
+localhost is no longer open: it now runs a lightweight **token gate** (shared-secret
+cookie, no login screen). This closes the loopback-is-trusted gap (other local
+processes, DNS-rebinding).
+- **Three-way auth mode** in `lib/auth-config.ts` (`authMode()` → `off | token |
+  password`; `authEnabled()` = `authMode() !== 'off'`). Added `AUTH_TOKEN_PATH`
+  (`~/.agentbox/hub/token`) + `HUB_TOKEN_COOKIE`.
+- **`lib/hub-token.ts`** (new, node-only): `ensureHubToken()` reads-or-generates a
+  `randomBytes(32).hex` secret at `0600`. **`server.ts`** provisions it on the
+  localhost bind (unless `AGENTBOX_HUB_AUTH=off`), sets `process.env.AGENTBOX_HUB_TOKEN`,
+  logs `open http://127.0.0.1:<port>/?token=<token>`, and now gates `ensureAuthReady`
+  on `authMode()==='password'` (localhost never loads better-auth/node:sqlite).
+- **`proxy.ts`** branches by mode: token mode consumes `?token=` (constant-time
+  compare via `node:crypto` `timingSafeEqual`), sets an httpOnly `SameSite=lax`
+  cookie, redirects to the clean URL, and 401s otherwise; password mode unchanged.
+- **`route.ts`** (auth mount) 404s unless `authMode()==='password'`. `HubState`
+  now carries `authMode` (was `authEnabled`) so the topbar shows better-auth
+  **Sign out** only in password mode.
+- **On by default** (user decision): every localhost start enforces the token;
+  `AGENTBOX_HUB_AUTH=off` opts out. The `agentbox hub` command that auto-opens the
+  token URL is Phase 5; until then the logged URL is used directly.
+- **Verified (real `server.ts`, scratch port + isolated `$HOME`):** token file
+  `0600`; `/` no token → 401; `/?token=<valid>` → 307 + `Set-Cookie … HttpOnly;
+  SameSite=lax`; cookie → 200; wrong token → 401; `/healthz` → 200 (relay owns it,
+  bypasses the gate). Opt-out (`AGENTBOX_HUB_AUTH=off`): `/` → 200, no token file,
+  no URL logged. Build + typecheck + lint clean.
 
 ### Phase 4 — Live updates + approvals
 SSE proxy route (hetzner) / same-origin subscribe (localhost); Approvals view over

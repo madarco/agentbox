@@ -133,7 +133,9 @@ async function runLifecycle(id: string, op: (box: BoxRecord, provider: Provider)
 
 export function createHubBackend(): HubBackend {
   return {
-    async getData(): Promise<HubState> {
+    // authMode is layered on by source.ts (an env-derived concern), so the host
+    // backend produces everything else.
+    async getData(): Promise<Omit<HubState, 'authMode'>> {
       const listed = await listBoxes();
       return {
         user: currentUser(),

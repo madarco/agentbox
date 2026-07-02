@@ -10,8 +10,12 @@
     "start": "next start",
     "hub:dev": "tsx watch server.ts",
     "hub:start": "next build && NODE_ENV=production tsx server.ts",
+    "db:auth-migrate": "tsx scripts/auth-migrate.ts",
     "lint": "eslint app components lib",
     "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.5"
   },
   "dependencies": {
     "@agentbox/config": "workspace:*",
@@ -24,6 +28,7 @@
     "@agentbox/sandbox-e2b": "workspace:*",
     "@agentbox/sandbox-hetzner": "workspace:*",
     "@agentbox/sandbox-vercel": "workspace:*",
+    "better-auth": "^1.6.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.577.0",

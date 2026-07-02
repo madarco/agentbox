@@ -34,6 +34,46 @@ See [`.env.example`](./.env.example). Required: `POSTGRES_URL`,
 `GITHUB_APP_PRIVATE_KEY` (raw or base64 PEM). Tables are created automatically on
 first request (`PostgresStore.migrate`).
 
+## Profiles + auth (Web UI)
+
+The hub runs in one of three profiles, selected by `AGENTBOX_HUB_PROFILE`:
+
+| Profile | Runtime | Box source | Auth store | Login |
+|---|---|---|---|---|
+| `localhost` | embedded `server.ts` (relay + Next, one process on 8787) | relay live in-process + `~/.agentbox` state | — | **token** (shared-secret cookie) |
+| `hetzner` | embedded `server.ts`, bind `0.0.0.0` | same as localhost | `node:sqlite` @ `~/.agentbox/hub/auth.db` | password |
+| `vercel` | Next only (serverless) | Postgres (`PostgresStore`) | Postgres | password |
+
+`server.ts` defaults the profile from the bind host (`127.0.0.1` → localhost,
+else hetzner); set `AGENTBOX_HUB_PROFILE=vercel` explicitly for the serverless
+path. `AGENTBOX_HUB_AUTH=off` disables all protection on any profile.
+
+**localhost — token gate.** There is no login screen: `server.ts` auto-generates
+`~/.agentbox/hub/token` (0600) and logs the entry URL
+`http://127.0.0.1:8787/?token=<secret>` (the `agentbox hub` command, Phase 5,
+opens it for you). The hub validates the token, stores it in an httpOnly cookie,
+and redirects to the clean URL; later requests are authorized by the cookie, and
+direct access without it is locked (401). This protects the loopback bind from
+other local processes and DNS-rebinding.
+
+**hetzner/vercel — password auth is secret-gated.** Login is enforced when `AGENTBOX_HUB_AUTH=on`, or (when
+unset) whenever `BETTER_AUTH_SECRET` is present — so a secretless deploy never
+serves a login page with no user (no lockout). better-auth uses its built-in
+Kysely adapter with the driver instance directly (`node:sqlite` `DatabaseSync` or
+`pg` `Pool`); tables are created by boot-time migration (embedded) or the
+`db:auth-migrate` script (vercel, run in the build). The first admin is
+**env-seeded** on first boot / migrate from `AGENTBOX_HUB_ADMIN_EMAIL` +
+`AGENTBOX_HUB_ADMIN_PASSWORD` (idempotent; no public signup).
+
+Auth env (see [`.env.example`](./.env.example)): `AGENTBOX_HUB_PROFILE`,
+`AGENTBOX_HUB_AUTH`, `BETTER_AUTH_SECRET` (>= 32 chars), `AGENTBOX_HUB_ADMIN_EMAIL`,
+`AGENTBOX_HUB_ADMIN_PASSWORD`, optional `BETTER_AUTH_URL` (pins the trusted origin;
+otherwise the request origin is trusted — fine for a single-origin self-hosted hub).
+The embedded server needs Node >= 22.5 for `node:sqlite` (stable on Node 24; pass
+`--experimental-sqlite` on 22.5–23).
+
+> The hub server needs Node >= 22.5; the lean relay/CLI keep the lower floor.
+
 ## Deploy
 
 The turnkey path is `agentbox control-plane setup` (creates the GitHub App, then

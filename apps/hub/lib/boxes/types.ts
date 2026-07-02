@@ -1,6 +1,7 @@
 // Box view model — normalized shape the UI renders, produced by
 // lib/boxes/source.ts from the host's ~/.agentbox state (state.json + statuses).
 import type { AgentId } from '@/components/icons';
+import type { AuthMode } from '@/lib/auth-config';
 
 export type BoxStatus = 'running' | 'paused' | 'stopped' | 'creating' | 'error';
 
@@ -58,6 +59,9 @@ export interface HubState {
   github: GithubState;
   projects: Project[];
   boxes: Box[];
+  // Active gate: 'password' (hetzner/vercel) drives the topbar sign-out; 'token'
+  // (localhost) and 'off' show none.
+  authMode: AuthMode;
 }
 
 export const statusMeta: Record<BoxStatus, { label: string; badgeClass: string }> = {
