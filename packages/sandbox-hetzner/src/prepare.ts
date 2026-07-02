@@ -430,6 +430,11 @@ export const prepareHetznerProvider: NonNullable<Provider['prepare']> = (req) =>
     hostWorkspace: req.hostWorkspace ?? process.cwd(),
     force: req.force,
     onLog: req.onLog,
+    // Forward the Claude install mode (native | npm). Without this the Hetzner
+    // bake always ran the native `curl install.sh`, whose CDN 403s datacenter
+    // egress IPs — the `npm` escape hatch (box.claudeInstall / --claude-install
+    // npm) never reached the bake. (matches prepareVercelProvider.)
+    claudeInstall: req.claudeInstall,
   });
 
 /**
