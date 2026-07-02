@@ -1,5 +1,6 @@
 import 'server-only';
 
+import type { PostgresStore } from '@agentbox/relay/control-plane';
 import type { Approval, Box, BoxStatus, HubState, Project } from './types';
 
 /*
@@ -119,12 +120,29 @@ export function hasPostgresSource(): boolean {
   return Boolean(process.env.POSTGRES_URL ?? process.env.RELAY_STORE_URL);
 }
 
+// One Postgres pool (+ one migrate) per server instance, not per dashboard load —
+// PostgresStore creates its pool lazily on first query, so a new store per render
+// would leak pools until the connection limit is hit. Mirrors lib/plane.ts.
+let storePromise: Promise<PostgresStore> | null = null;
+function getStore(url: string): Promise<PostgresStore> {
+  if (!storePromise) {
+    storePromise = (async () => {
+      const { PostgresStore } = await import('@agentbox/relay/control-plane');
+      const store = new PostgresStore({ connectionString: url });
+      await store.migrate();
+      return store;
+    })().catch((err: unknown) => {
+      storePromise = null; // let the next request retry (e.g. transient DB outage)
+      throw err;
+    });
+  }
+  return storePromise;
+}
+
 export async function getPostgresDashboardData(): Promise<Omit<HubState, 'authMode'>> {
   const url = process.env.POSTGRES_URL ?? process.env.RELAY_STORE_URL;
   if (!url) throw new Error('hub: POSTGRES_URL required for the hosted source');
-  const { PostgresStore } = await import('@agentbox/relay/control-plane');
-  const store = new PostgresStore({ connectionString: url });
-  await store.migrate();
+  const store = await getStore(url);
 
   const regs = (await store.listBoxes()) as unknown as Registration[];
   const statuses = await store.listStatuses();

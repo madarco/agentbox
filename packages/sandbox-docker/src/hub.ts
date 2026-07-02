@@ -178,14 +178,20 @@ export async function ensureHub(opts: EnsureHubOptions = {}): Promise<HubEndpoin
   } else {
     const pid = await readPid(HUB_PID_FILE);
     if (pid !== null && (await processAlive(pid))) {
+      // A hub process exists but isn't answering /healthz yet — give startup a
+      // beat before deciding it's wedged.
       for (let i = 0; i < 10; i++) {
         if (await pingHealthz(300)) return endpointFor();
         await delay(200);
       }
-      log(`hub pid ${String(pid)} alive but /healthz unresponsive — proceeding`);
-      return endpointFor();
+      // Still unresponsive after ~2s: replace it rather than report a false
+      // "running" for a hub that never came up.
+      log(`hub pid ${String(pid)} alive but /healthz unresponsive — restarting it`);
+      await reclaimPort(pid, log);
+      // fall through to a fresh spawn
+    } else if (pid !== null) {
+      await unlink(HUB_PID_FILE).catch(() => {});
     }
-    if (pid !== null) await unlink(HUB_PID_FILE).catch(() => {});
   }
 
   const hubServer = resolveHubServer();
