@@ -40,7 +40,9 @@ const IMPORTERS: Record<ProviderKind, () => Promise<{ providerModule: ProviderMo
 function pickProviderModule(mod: unknown, name: string): ProviderModule | null {
   const m = mod as { providerModule?: ProviderModule; providerModules?: ProviderModule[] };
   const all = m.providerModules ?? (m.providerModule ? [m.providerModule] : []);
-  return all.find((pm) => pm.provider?.name === name) ?? all[0] ?? null;
+  // Strict match on provider.name — never fall back to all[0], or a package
+  // could serve the WRONG provider for a mismatched `--provider` name.
+  return all.find((pm) => pm.provider?.name === name) ?? null;
 }
 
 /**

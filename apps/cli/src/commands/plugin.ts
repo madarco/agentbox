@@ -176,6 +176,24 @@ pluginCommand
       return;
     }
 
+    // Reject a provider-name collision with a DIFFERENT already-registered
+    // package (re-adding the same package is an allowed upsert). Otherwise the
+    // registry would hold two entries for one name and only the first would
+    // ever resolve.
+    const existing = readPluginRegistrySync().plugins;
+    for (const p of validated.providers) {
+      const clash = existing.find(
+        (r) => r.packageName !== pkg.packageName && r.providers.includes(p.name),
+      );
+      if (clash) {
+        log.error(
+          `provider "${p.name}" is already provided by "${clash.packageName}" — remove it first (\`agentbox plugin remove ${p.name}\`)`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+    }
+
     const provNames = validated.providers.map((p) => p.name).join(', ');
     log.info(
       `${pkg.packageName}@${pkg.version} — provider(s): ${provNames} (SDK v${String(validated.apiVersion)})`,

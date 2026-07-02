@@ -31,7 +31,13 @@ import {
   upstreamRef,
 } from '@agentbox/core';
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
-import { findBox, hostOpenCommand, pluginForProvider, readState } from '@agentbox/sandbox-core';
+import {
+  findBox,
+  hostOpenCommand,
+  isSupportedApiVersion,
+  pluginForProvider,
+  readState,
+} from '@agentbox/sandbox-core';
 import {
   assertGhReady,
   checkoutGuards,
@@ -148,13 +154,19 @@ export async function resolveCloudBackend(name: string): Promise<CloudBackend> {
   // (same ~/.agentbox), so the registry + the installed package are reachable.
   const plugin = pluginForProvider(name);
   if (plugin) {
+    if (!isSupportedApiVersion(plugin.apiVersion)) {
+      throw new Error(
+        `relay: plugin '${plugin.packageName}' targets provider SDK v${String(plugin.apiVersion)}, which this AgentBox does not support`,
+      );
+    }
     return loadCloudBackend(plugin.packageName, async () => {
       const mod = (await import(plugin.resolvedEntry)) as {
         providerModule?: { provider?: { name?: string }; backend?: CloudBackend };
         providerModules?: { provider?: { name?: string }; backend?: CloudBackend }[];
       };
       const all = mod.providerModules ?? (mod.providerModule ? [mod.providerModule] : []);
-      const pm = all.find((m) => m.provider?.name === name) ?? all[0];
+      // Strict name match — never fall back to all[0] (wrong-backend hazard).
+      const pm = all.find((m) => m.provider?.name === name);
       if (!pm?.backend) {
         throw new Error(`plugin '${plugin.packageName}' exposes no cloud backend for '${name}'`);
       }

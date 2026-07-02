@@ -26,7 +26,6 @@ import {
   boxImageConfigKey,
   isProviderKind,
   loadEffectiveConfig,
-  PROVIDER_NAMES,
   setConfigValue,
   unsetConfigValue,
 } from '@agentbox/config';
@@ -41,6 +40,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
+import { getRuntimeProviderNames } from '../provider/loaders.js';
 
 interface PrepareOptions {
   provider?: string;
@@ -315,7 +315,9 @@ export async function runPrepare(
   opts: RunPrepareOptions = {},
 ): Promise<void> {
   if (!isKnownProvider(providerName)) {
-    process.stderr.write(`error: --provider must be one of: ${PROVIDER_NAMES.join(', ')}\n`);
+    process.stderr.write(
+      `error: --provider must be one of: ${getRuntimeProviderNames().join(', ')}\n`,
+    );
     process.exit(1);
   }
 
