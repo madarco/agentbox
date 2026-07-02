@@ -1,0 +1,41 @@
+{
+  "name": "@agentbox/provider-sdk",
+  "version": "1.0.0",
+  "description": "Public SDK for building AgentBox sandbox providers as installable community packages",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "execa": "^9.5.2",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "@agentbox/config": "workspace:*",
+    "@agentbox/core": "workspace:*",
+    "@agentbox/sandbox-cloud": "workspace:*",
+    "@agentbox/sandbox-core": "workspace:*",
+    "@types/node": "^22.10.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  }
+}
