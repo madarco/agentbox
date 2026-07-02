@@ -8,8 +8,10 @@ import { BoxTable } from './boxes/components/box-table';
 import { EmptyBox } from './boxes/components/empty-box';
 import { SectionLabel } from './boxes/components/section-label';
 
+const CREATE_SOON = 'Creating boxes from the hub is coming soon — use `agentbox create` for now.';
+
 export default function DashboardPage() {
-  const { state, boxesFor, openCreateProject, openCreateBox } = useStore();
+  const { state, boxesFor } = useStore();
   const grouped = state.projects.map((p) => ({ p, boxes: boxesFor(p.id) }));
   const totalRunning = state.boxes.filter((b) => b.status === 'running').length;
 
@@ -20,12 +22,12 @@ export default function DashboardPage() {
           <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">Boxes</h1>
           <div className="mt-1.5 text-sm text-muted-foreground">
             <span className="font-mono text-secondary-foreground">{totalRunning}</span> running across{' '}
-            <span className="font-mono text-secondary-foreground">{state.projects.length}</span> projects · the control plane keeps them
-            alive without your machine.
+            <span className="font-mono text-secondary-foreground">{state.projects.length}</span>{' '}
+            project{state.projects.length === 1 ? '' : 's'} on this machine.
           </div>
         </div>
         <div className="ml-auto flex flex-none gap-2">
-          <Button onClick={openCreateProject}>
+          <Button disabled title={CREATE_SOON}>
             <Icons.plus />
             New project
           </Button>
@@ -33,6 +35,12 @@ export default function DashboardPage() {
       </div>
 
       <SectionLabel>Projects</SectionLabel>
+      {grouped.length === 0 ? (
+        <EmptyBox>
+          <div>No boxes on this machine yet.</div>
+          <div className="mt-1.5 font-mono text-xs text-muted-foreground">Create one with `agentbox create`.</div>
+        </EmptyBox>
+      ) : null}
       {grouped.map(({ p, boxes }) => (
         <div className="mb-7" key={p.id}>
           <div className="flex items-center gap-3 px-1 pb-3">
@@ -53,8 +61,9 @@ export default function DashboardPage() {
             <Button
               variant="outline"
               size="sm"
-              className="font-mono text-xs hover:border-[var(--green)] hover:bg-accent hover:text-[var(--green-ink)]"
-              onClick={() => openCreateBox(p)}
+              className="font-mono text-xs"
+              disabled
+              title={CREATE_SOON}
             >
               <Icons.plus />
               Create box
@@ -67,10 +76,6 @@ export default function DashboardPage() {
               <div>
                 No boxes in <b className="font-semibold text-secondary-foreground">{p.name}</b> yet.
               </div>
-              <Button className="mt-3.5" onClick={() => openCreateBox(p)}>
-                <Icons.plus />
-                Create box
-              </Button>
             </EmptyBox>
           )}
         </div>

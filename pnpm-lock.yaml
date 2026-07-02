@@ -133,9 +133,36 @@ importers:
 
   apps/hub:
     dependencies:
+      '@agentbox/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@agentbox/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@agentbox/ctl':
+        specifier: workspace:*
+        version: link:../../packages/ctl
       '@agentbox/relay':
         specifier: workspace:*
         version: link:../../packages/relay
+      '@agentbox/sandbox-core':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-core
+      '@agentbox/sandbox-daytona':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-daytona
+      '@agentbox/sandbox-docker':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-docker
+      '@agentbox/sandbox-e2b':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-e2b
+      '@agentbox/sandbox-hetzner':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-hetzner
+      '@agentbox/sandbox-vercel':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-vercel
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -182,6 +209,9 @@ importers:
       tailwindcss:
         specifier: ^4.1.14
         version: 4.3.0
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.3
       tw-animate-css:
         specifier: ^1.2.5
         version: 1.4.0

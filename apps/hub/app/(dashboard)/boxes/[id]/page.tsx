@@ -1,11 +1,11 @@
 'use client';
 
 import { useParams } from 'next/navigation';
+import { Ago } from '@/components/ago';
 import { Icons } from '@/components/icons';
 import { StatusBadge } from '@/components/status-badge';
 import { Alert } from '@/components/ui/alert';
 import { Card } from '@/components/ui/card';
-import { fmtAgo } from '@/lib/boxes/format';
 import { useStore } from '@/lib/boxes/store';
 import { AgentTerminal } from '../components/agent-terminal';
 import { BackLink } from '../components/back-link';
@@ -61,9 +61,9 @@ export default function BoxDetailPage() {
       <StatGrid>
         <Stat k="Status" v={<StatusBadge status={box.status} />} />
         <Stat k="Agent CLI" v={box.agent} mono />
-        <Stat k="Commits" v={box.commits} icon={Icons.commit} />
-        <Stat k="Files touched" v={box.filesTouched} icon={Icons.file} />
-        <Stat k="Last activity" v={fmtAgo(box.lastActivity)} mono />
+        <Stat k="Commits" v={box.commits ?? '—'} icon={Icons.commit} />
+        <Stat k="Files touched" v={box.filesTouched ?? '—'} icon={Icons.file} />
+        <Stat k="Last activity" v={<Ago ms={box.lastActivity} />} mono />
       </StatGrid>
 
       <SectionLabel>Agent output</SectionLabel>

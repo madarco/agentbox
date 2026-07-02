@@ -278,14 +278,35 @@ Kept the Vercel path (`app/[...path]/route.ts` + `lib/plane.ts`) byte-intact.
   configured Postgres, not a Next 404 — dispatch intact); `/` + all views render in
   a headless browser (dashboard, box detail terminal, create-project modal).
 
-### Phase 2 — Embedded server + in-process source
-`apps/hub/server.ts` (prepare Next → `startRelayDaemon({uiHandler})`),
-`globalThis.__AGENTBOX_BOX_SOURCE`, `lib/boxes/source.ts` relay-live impl;
-Dashboard + Box detail wired to real data.
-- **Verify (localhost):** `node server.js`; open `http://127.0.0.1:8787/` →
-  dashboard renders; `curl :8787/healthz` and `:8787/admin/registry` still return
-  relay JSON; `agentbox create -y -n smoke` → box appears in the UI;
-  `~/.agentbox/state.json` still updates.
+### Phase 2 — Embedded server + real box data + live lifecycle — DONE
+`apps/hub/server.ts` prepares Next and hands `getRequestHandler()` to
+`startRelayDaemon({uiHandler})` — one process on 8787 serves the relay + UI.
+- **Corrected data source (plan premise was wrong):** the relay `Store` is
+  in-process/thin and NOT the box registry. Rich box data lives in the CLI's
+  `~/.agentbox/state.json` (`BoxRecord`); the displayed status is `listBoxes()`
+  (`@agentbox/sandbox-docker`: state.json + `docker inspect` / `cloud.lastState` +
+  `status.json` activity). The hub source reuses `listBoxes()`.
+- **globalThis backend seam (load-bearing):** importing the sandbox/relay
+  toolchain into a Next server component drags the cloud dynamic-imports into
+  Turbopack and fails the build. So the Node/docker work lives in
+  `lib/hub-backend.ts` (loaded only by `server.ts`, run via `tsx`), exposed to Next
+  via `globalThis.__AGENTBOX_HUB_BACKEND` (list + lifecycle) and
+  `__AGENTBOX_BOX_SOURCE` (relay Store, for Phase 4). Next's `source.ts`/`actions.ts`
+  are thin wrappers importing zero runtime packages → clean bundle.
+- **Lifecycle = real** (user decision): pause/resume/stop/destroy are server
+  actions → `providerForBox(box).{…}` (self-mutate state.json) + `revalidatePath` +
+  `router.refresh()`. Create modals disabled; GitHub-App settings disabled on
+  localhost; user chip = OS username; commits/filesTouched = "—" (no source);
+  agent terminal is a truthful placeholder (real streaming is Phase 4). Data flow
+  refactored from the client mock store to a read-only server-data context.
+- **Verified (localhost):** `tsx server.ts` → `listening on 127.0.0.1:8787`;
+  `curl :8787/healthz` → 200 daemon relay JSON (pid/cliEntry), `:8787/admin/registry`
+  → relay JSON, `:8787/` → 200 HTML; a real `agentbox create` box appeared grouped
+  under its project with live `running` status; Pause → `docker inspect`=paused +
+  UI paused; Resume → running; Destroy → container removed + `BoxRecord` gone from
+  `state.json` (all confirmed via ground truth). Build + typecheck + lint clean.
+- **Deferred:** vercel/hosted source (Postgres), the `agentbox hub` bin +
+  `output:'standalone'` packaging (Phase 5), real agent-output streaming (Phase 4).
 
 ### Phase 3 — better-auth dual dialect
 `lib/auth.ts` (`node:sqlite` vs pg), mount route, `proxy.ts` gate;

@@ -1,9 +1,9 @@
 'use client';
 
 import { useParams } from 'next/navigation';
+import { Ago } from '@/components/ago';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
-import { fmtAgo } from '@/lib/boxes/format';
 import { useStore } from '@/lib/boxes/store';
 import { BackLink } from '../../boxes/components/back-link';
 import { BoxTable } from '../../boxes/components/box-table';
@@ -11,9 +11,11 @@ import { EmptyBox } from '../../boxes/components/empty-box';
 import { SectionLabel } from '../../boxes/components/section-label';
 import { Stat, StatGrid } from '../../boxes/components/stat-grid';
 
+const CREATE_SOON = 'Creating boxes from the hub is coming soon — use `agentbox create` for now.';
+
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { project, boxesFor, openCreateBox } = useStore();
+  const { project, boxesFor } = useStore();
   const proj = project(id);
 
   if (!proj) {
@@ -41,16 +43,11 @@ export default function ProjectDetailPage() {
             {proj.name}
           </h1>
           <div className="mt-1.5 text-sm text-muted-foreground">
-            <span className="font-mono text-secondary-foreground">{proj.repo}</span> · default branch{' '}
-            <span className="font-mono text-secondary-foreground">{proj.defaultBranch}</span> · {proj.provider}
+            <span className="font-mono text-secondary-foreground">{proj.repo}</span> · {proj.provider}
           </div>
         </div>
         <div className="ml-auto flex flex-none gap-2 max-md:ml-0">
-          <Button variant="outline" href={'https://github.com/' + proj.repo} target="_blank" rel="noopener">
-            <Icons.github />
-            Repo
-          </Button>
-          <Button onClick={() => openCreateBox(proj)}>
+          <Button disabled title={CREATE_SOON}>
             <Icons.plus />
             Create box
           </Button>
@@ -62,7 +59,7 @@ export default function ProjectDetailPage() {
           <Stat k="Boxes" v={boxes.length} icon={Icons.box} />
           <Stat k="Running" v={running} icon={Icons.activity} />
           <Stat k="Provider" v={proj.provider} mono />
-          <Stat k="Created" v={fmtAgo(proj.createdAt)} mono />
+          <Stat k="Created" v={<Ago ms={proj.createdAt} />} mono />
         </StatGrid>
       </div>
 
@@ -72,10 +69,6 @@ export default function ProjectDetailPage() {
       ) : (
         <EmptyBox>
           <div>No boxes yet.</div>
-          <Button className="mt-3.5" onClick={() => openCreateBox(proj)}>
-            <Icons.plus />
-            Create the first box
-          </Button>
         </EmptyBox>
       )}
     </div>

@@ -1,5 +1,5 @@
-// Box view model — normalized shape the UI renders. Phase 2's
-// lib/boxes/source.ts will produce this same shape from the relay store.
+// Box view model — normalized shape the UI renders, produced by
+// lib/boxes/source.ts from the host's ~/.agentbox state (state.json + statuses).
 import type { AgentId } from '@/components/icons';
 
 export type BoxStatus = 'running' | 'paused' | 'stopped' | 'creating' | 'error';
@@ -15,8 +15,9 @@ export interface Box {
   createdAt: number;
   lastActivity: number;
   host: string;
-  commits: number;
-  filesTouched: number;
+  // null when the metric has no host-side source yet (rendered as "—").
+  commits: number | null;
+  filesTouched: number | null;
   error?: string | null;
 }
 
@@ -38,6 +39,8 @@ export interface Repo {
 }
 
 export interface GithubState {
+  // false on localhost — the GitHub App is a hosted-hub concern, not a laptop one.
+  available: boolean;
   installed: boolean;
   appName: string;
   account: string;

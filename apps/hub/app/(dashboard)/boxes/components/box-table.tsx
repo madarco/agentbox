@@ -1,11 +1,11 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { Ago } from '@/components/ago';
 import { Icons } from '@/components/icons';
 import { StatusBadge } from '@/components/status-badge';
 import { Card } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { fmtAgo } from '@/lib/boxes/format';
 import type { Box } from '@/lib/boxes/types';
 import { BoxActions } from './box-actions';
 
@@ -37,7 +37,7 @@ export function BoxTable({ boxes }: { boxes: Box[] }) {
                   <span className="truncate">{box.branch}</span>
                 </span>
                 <div className="mt-0.5 font-mono text-[11px] text-[#a4a9b0]">
-                  {box.agent} · {fmtAgo(box.lastActivity)}
+                  {box.agent} · <Ago ms={box.lastActivity} />
                 </div>
               </TableCell>
               <TableCell className="max-md:hidden">
