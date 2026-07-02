@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:standalone": "next build && node scripts/build-standalone.mjs",
     "start": "next start",
     "hub:dev": "tsx watch server.ts",
     "hub:start": "next build && NODE_ENV=production tsx server.ts",

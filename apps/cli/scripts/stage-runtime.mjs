@@ -76,7 +76,9 @@ function copy(srcRel, destAbs, exec = false) {
     return;
   }
   mkdirSync(dirname(destAbs), { recursive: true });
-  cpSync(src, destAbs, { recursive: true });
+  // verbatimSymlinks keeps relative symlink targets intact (the hub standalone
+  // tree relies on them); the default rewrites them to absolute source paths.
+  cpSync(src, destAbs, { recursive: true, verbatimSymlinks: true });
   if (exec) chmodSync(destAbs, 0o755);
 }
 
@@ -86,6 +88,14 @@ mkdirSync(runtime, { recursive: true });
 for (const [srcRel, destRel] of direct) {
   copy(srcRel, join(runtime, destRel));
 }
+
+// Hub standalone build — `agentbox hub` spawns this self-contained Next+relay
+// server (packages/sandbox-docker/src/hub.ts resolveHubServer() looks for
+// runtime/hub/apps/hub/server.js). Built by `apps/hub` `build:standalone`; the
+// traced tree uses relative symlinks so cpSync (dereference:false) keeps it
+// self-contained. Absent in a partial dev build (warn+skip) — a publish runs
+// build:standalone first (apps/cli prepublishOnly).
+copy('apps/hub/dist-standalone', join(runtime, 'hub'));
 copy(dockerfileSrc, join(dockerCtx, 'Dockerfile.box'));
 for (const srcRel of contextFiles) {
   copy(srcRel, join(dockerCtx, srcRel), execBitFiles.has(srcRel));

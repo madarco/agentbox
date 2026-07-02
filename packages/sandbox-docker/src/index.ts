@@ -205,6 +205,16 @@ export {
   type RelayStatus,
   type StopRelayResult,
 } from './relay.js';
+export {
+  ensureHub,
+  getHubStatus,
+  resolveHubServer,
+  stopHub,
+  type EnsureHubOptions,
+  type HubEndpoint,
+  type HubStatus,
+  type StopHubResult,
+} from './hub.js';
 // The host-config stage producers now live in the provider-neutral sync layer
 // (`@agentbox/sandbox-core`); cloud consumers import them from there. The claude
 // per-project path helpers + Stage types stay re-exported here (from core) for

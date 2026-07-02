@@ -10,6 +10,8 @@
  * Run with tsx: `tsx server.ts` (dev) or `NODE_ENV=production tsx server.ts`
  * (after `next build`). The standalone/`agentbox hub` bin packaging is Phase 5.
  */
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import next from 'next';
 import { startRelayDaemon } from '@agentbox/relay/daemon';
 import { createHubBackend } from './lib/hub-backend';
@@ -36,7 +38,23 @@ async function main(): Promise<void> {
     process.env.AGENTBOX_HUB_TOKEN = await ensureHubToken();
   }
 
-  const app = next({ dev, dir: import.meta.dirname, hostname: host, port });
+  // Standalone build (`agentbox hub`): hand Next its precompiled config so the
+  // full next() API skips loadConfig() + the webpack hook — output:'standalone'
+  // prunes webpack, so without this next() dies on `next/dist/compiled/webpack`.
+  // Dev (`tsx server.ts`) has no required-server-files.json → unaffected.
+  const dir = import.meta.dirname;
+  if (!dev) {
+    const rsfPath = path.join(dir, '.next', 'required-server-files.json');
+    if (existsSync(rsfPath)) {
+      const rsf = JSON.parse(readFileSync(rsfPath, 'utf8')) as { config: unknown };
+      process.env.__NEXT_PRIVATE_STANDALONE_CONFIG ??= JSON.stringify(rsf.config);
+      // Next resolves distDir ('./.next') against cwd; the CLI spawns us with an
+      // arbitrary cwd, so anchor it here (the standalone `server.js` does the same).
+      process.chdir(dir);
+    }
+  }
+
+  const app = next({ dev, dir, hostname: host, port });
   await app.prepare();
   const handle = app.getRequestHandler();
 

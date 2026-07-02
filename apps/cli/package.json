@@ -47,7 +47,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist runtime .turbo",
-    "prepublishOnly": "cd ../.. && pnpm -w build",
+    "stage": "node scripts/stage-runtime.mjs",
+    "prepublishOnly": "cd ../.. && pnpm -w build && pnpm --filter @agentbox/hub build:standalone && pnpm --filter @madarco/agentbox stage",
     "version": "git add CHANGELOG.md",
     "publish:patch": "npm version patch && git push --follow-tags",
     "publish:minor": "npm version minor && git push --follow-tags"

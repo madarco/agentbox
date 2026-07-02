@@ -194,7 +194,7 @@ async function reclaimRelay(reportedPid: number | undefined, log: (line: string)
 }
 
 /** SIGTERM, wait for exit, then SIGKILL — same escalation as {@link stopRelay}. */
-async function killPid(pid: number): Promise<void> {
+export async function killPid(pid: number): Promise<void> {
   try {
     process.kill(pid, 'SIGTERM');
   } catch {
@@ -282,7 +282,7 @@ export function resolveRelayBin(): string {
  *   2. installed: `<...>/agentbox/node_modules/@agentbox/sandbox-docker/dist` ↔ `<...>/agentbox/dist/index.js`
  * Best-effort: returns null when not found (relay reports a clear error).
  */
-function resolveCliEntry(): string | null {
+export function resolveCliEntry(): string | null {
   const override = process.env.AGENTBOX_CLI_ENTRY;
   if (override && existsSync(override)) return override;
   const here = dirname(fileURLToPath(import.meta.url));
@@ -524,7 +524,7 @@ export async function getRelayStatus(): Promise<RelayStatus> {
   };
 }
 
-function pingHealthz(timeoutMs: number): Promise<boolean> {
+export function pingHealthz(timeoutMs: number): Promise<boolean> {
   return new Promise<boolean>((resolveP) => {
     const req = httpRequest(
       { host: '127.0.0.1', port: PORT, method: 'GET', path: '/healthz', timeout: timeoutMs },
@@ -543,12 +543,14 @@ function pingHealthz(timeoutMs: number): Promise<boolean> {
   });
 }
 
-interface HealthzBody {
+export interface HealthzBody {
   ok: boolean;
   boxes: number;
   events: number;
   /** The relay's own pid (for reclaiming). Absent on relays predating this field. */
   pid?: number;
+  /** True when a Next UI is delegated (the embedded hub) vs a bare relay. Absent on old relays. */
+  ui?: boolean;
   /** Whether the relay has AGENTBOX_CLI_ENTRY (can run cp/download/checkpoint). Absent on old relays. */
   cliEntry?: boolean;
   /** The agentbox version that spawned the relay. Absent on relays predating this field. */
@@ -557,7 +559,7 @@ interface HealthzBody {
   commit?: string;
 }
 
-function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
+export function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
   return new Promise<HealthzBody | null>((resolveP) => {
     const req = httpRequest(
       { host: '127.0.0.1', port: PORT, method: 'GET', path: '/healthz', timeout: timeoutMs },
@@ -583,6 +585,7 @@ function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
                 boxes: parsed.boxes,
                 events: parsed.events,
                 pid: typeof parsed.pid === 'number' ? parsed.pid : undefined,
+                ui: typeof parsed.ui === 'boolean' ? parsed.ui : undefined,
                 cliEntry: typeof parsed.cliEntry === 'boolean' ? parsed.cliEntry : undefined,
                 version:
                   typeof parsed.version === 'string' && parsed.version.length > 0
@@ -622,7 +625,7 @@ async function readPidFile(): Promise<number | null> {
   }
 }
 
-async function processAlive(pid: number): Promise<boolean> {
+export async function processAlive(pid: number): Promise<boolean> {
   try {
     // Signal 0 is the existence probe: throws if no such process.
     process.kill(pid, 0);
