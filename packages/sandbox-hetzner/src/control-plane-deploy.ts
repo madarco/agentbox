@@ -1,5 +1,5 @@
 /**
- * Deploy the AgentBox hosted control plane (the `apps/control-plane` Next.js +
+ * Deploy the AgentBox hosted control plane (the `apps/hub` Next.js +
  * Postgres app) to a fresh Hetzner VPS, reachable over HTTPS at
  * `https://<ipv4>.sslip.io` (sslip.io resolves the host to the IP; Caddy auto-
  * provisions a Let's Encrypt cert — no domain or DNS setup needed).
@@ -48,7 +48,7 @@ export interface ControlPlaneHetznerDeployResult {
   sshKeyDir: string;
 }
 
-const REMOTE_APP_DIR = '/opt/agentbox/apps/control-plane';
+const REMOTE_APP_DIR = '/opt/agentbox/apps/hub';
 
 function caddyfile(domain: string): string {
   // Caddy auto-provisions a Let's Encrypt cert for the site address and reverse-

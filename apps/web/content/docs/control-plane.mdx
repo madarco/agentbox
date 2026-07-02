@@ -37,7 +37,7 @@ Both deploy targets build the plane **from GitHub** (`--repo`, default `madarco/
 `--deploy vercel` builds the plane **from GitHub** via the Vercel API — no local checkout. It works in tiers so you don't have to think about ownership:
 
 1. If you don't own `--repo`, AgentBox **forks it to your account with `gh`** and deploys the fork.
-2. It creates a Git-connected project (Root Directory `apps/control-plane`, Next.js), **auto-provisions Neon Postgres**, sets the App env, and builds `--ref` from GitHub.
+2. It creates a Git-connected project (Root Directory `apps/hub`, Next.js), **auto-provisions Neon Postgres**, sets the App env, and builds `--ref` from GitHub.
 3. If Vercel can't connect the repo via the API (its GitHub App isn't on your account yet), it falls back to the **Vercel Deploy Button** — your browser opens to clone the repo + install the App + provision Postgres, then AgentBox sets the secrets and redeploys.
 
 Requires `agentbox vercel login` (and `gh auth login` for the auto-fork — without `gh`, the Deploy Button does the fork in-browser).
@@ -53,7 +53,7 @@ Requires `agentbox vercel login` (and `gh auth login` for the auto-fork — with
 Skip the deploy step and run the written env anywhere:
 
 ```bash
-cd apps/control-plane
+cd apps/hub
 docker compose --env-file ~/.agentbox/control-plane/control-plane.env up --build
 # Postgres + the app on :8787
 agentbox control-plane set-url http://<host>:8787

@@ -39,7 +39,7 @@ export interface VercelDeployOptions {
 }
 
 const PROJECT_DEFAULT = 'agentbox-control-plane';
-const ROOT_DIRECTORY = 'apps/control-plane';
+const ROOT_DIRECTORY = 'apps/hub';
 
 /** Raised when Vercel can't connect the repo (GitHub App not installed on the owner). */
 class GitConnectError extends Error {}

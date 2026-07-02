@@ -1,0 +1,336 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * AgentBox hub design tokens, ported from the shadcn prototype
+ * (../agentbox-design/control-shadcn/). Raw HSL triplets live in :root; the
+ * @theme inline block re-exposes them as Tailwind color/radius/font utilities
+ * (bg-primary, text-muted-foreground, rounded-lg, font-mono, …). This mirrors
+ * the prototype's tailwind.config theme.extend, translated to Tailwind v4.
+ */
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --font-sans: var(--font-ibm-plex-sans), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-ibm-plex-mono), ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+:root {
+  --background: 60 14% 96%; /* paper #f6f6f3 */
+  --foreground: 220 12% 10%; /* ink #16181c */
+  --card: 0 0% 100%;
+  --card-foreground: 220 12% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 220 12% 10%;
+  --primary: 150 77% 31%; /* accent #128a4f */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 60 7% 92%; /* line-2 #ededea */
+  --secondary-foreground: 219 11% 27%; /* ink-2 #3d434c */
+  --muted: 60 7% 92%;
+  --muted-foreground: 218 6% 51%; /* muted #7b818b */
+  --accent: 144 31% 94%; /* accent-soft #eaf4ee */
+  --accent-foreground: 151 80% 23%; /* accent-ink #0c6b3d */
+  --destructive: 9 61% 47%; /* red #c1452f */
+  --destructive-foreground: 0 0% 100%;
+  --border: 60 10% 88%; /* line #e3e3dd */
+  --input: 60 10% 88%;
+  --ring: 150 77% 31%;
+  --radius: 0.6rem;
+
+  /* AgentBox extras (not part of shadcn core) */
+  --amber: #b07d12;
+  --amber-soft: #f7efda;
+  --amber-line: #ead9ad;
+  --red: #c1452f;
+  --red-soft: #f8e9e6;
+  --red-line: #eccbc4;
+  --blue: #2f6ad0;
+  --blue-soft: #e8f0fb;
+  --blue-line: #c4d8f4;
+  --green: #128a4f;
+  --green-soft: #eaf4ee;
+  --green-line: #bfe3cd;
+  --green-ink: #0c6b3d;
+  --faint: #a4a9b0;
+}
+
+* {
+  box-sizing: border-box;
+}
+html {
+  scroll-behavior: smooth;
+}
+body {
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  margin: 0;
+}
+::selection {
+  background: var(--green-soft);
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+button {
+  font-family: inherit;
+}
+
+/* status badge variants */
+.badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+.badge-run {
+  color: var(--green-ink);
+  border-color: var(--green-line);
+  background: var(--green-soft);
+}
+.badge-run .badge-dot {
+  background: var(--green);
+  animation: pulse-dot 1.8s infinite;
+}
+.badge-pause {
+  color: var(--amber);
+  border-color: var(--amber-line);
+  background: var(--amber-soft);
+}
+.badge-pause .badge-dot {
+  background: var(--amber);
+}
+.badge-stop {
+  color: hsl(var(--muted-foreground));
+  border-color: hsl(var(--border));
+  background: hsl(var(--secondary));
+}
+.badge-stop .badge-dot {
+  background: var(--faint);
+}
+.badge-create {
+  color: var(--blue);
+  border-color: var(--blue-line);
+  background: var(--blue-soft);
+}
+.badge-create .badge-dot {
+  background: var(--blue);
+  animation: pulse-dot 1.1s infinite;
+}
+.badge-err {
+  color: var(--red);
+  border-color: var(--red-line);
+  background: var(--red-soft);
+}
+.badge-err .badge-dot {
+  background: var(--red);
+}
+@keyframes pulse-dot {
+  0% {
+    box-shadow: 0 0 0 0 rgba(18, 138, 79, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 5px rgba(18, 138, 79, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(18, 138, 79, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .badge-dot {
+    animation: none !important;
+  }
+}
+
+/* dialog animations */
+@keyframes shad-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes shad-pop {
+  from {
+    transform: translateY(10px) scale(0.98);
+    opacity: 0;
+  }
+}
+.anim-fade {
+  animation: shad-fade 0.18s ease;
+}
+.anim-pop {
+  animation: shad-pop 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .anim-fade,
+  .anim-pop {
+    animation: none;
+  }
+}
+
+/* spinner */
+.spin {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: rot 0.7s linear infinite;
+  display: inline-block;
+}
+@keyframes rot {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* terminal (domain component, kept dark) */
+.term {
+  background: #15171b;
+  border: 1px solid #262a31;
+  border-radius: 12px;
+  overflow: hidden;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  box-shadow:
+    0 22px 48px -30px rgba(20, 24, 30, 0.5),
+    0 2px 8px -3px rgba(20, 24, 30, 0.22);
+}
+.term-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 13px;
+  background: #1b1e24;
+  border-bottom: 1px solid #262a31;
+}
+.term-bar .td {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+.td.r {
+  background: #ec6a5e;
+}
+.td.y {
+  background: #f4bf4f;
+}
+.td.g {
+  background: #61c554;
+}
+.term-title {
+  margin-left: 7px;
+  font-size: 10.5px;
+  color: #6c727b;
+  letter-spacing: 0.02em;
+}
+.term-state {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: #828893;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.term-state .ld {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ec98a;
+  box-shadow: 0 0 6px #4ec98a;
+  animation: pulse-dot 1.6s infinite;
+}
+.term-body {
+  padding: 15px 16px 18px;
+  font-size: 12px;
+  line-height: 1.85;
+  color: #c8ccd3;
+  overflow-x: auto;
+}
+.term-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.term-line .cmd {
+  color: #f0f2f5;
+}
+.term-line.dim {
+  color: #7c828c;
+}
+.term-line.ok {
+  color: #5fc88f;
+}
+.term-line.warnl {
+  color: #e0b657;
+}
+.term-line.errl {
+  color: #ec8b7d;
+}
+.term-line .shellp {
+  color: #62a9f0;
+}
+.term .cur {
+  display: inline-block;
+  width: 6px;
+  height: 12px;
+  background: #7fe0a8;
+  vertical-align: -1px;
+  animation: blink 1.05s steps(1) infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .term .cur,
+  .term-state .ld {
+    animation: none !important;
+  }
+}
+
+/* mobile sidebar drawer */
+@media (max-width: 760px) {
+  .shad-side {
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    transform: translateX(-100%);
+    transition: transform 0.24s ease;
+  }
+  body.nav-open .shad-side {
+    transform: none;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

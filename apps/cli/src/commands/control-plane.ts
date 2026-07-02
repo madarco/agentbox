@@ -21,6 +21,7 @@ import { makeControlPlaneCreateBox } from '../control-plane/create-box.js';
 import { runGitHubAppManifestFlow } from '../control-plane/github-app-manifest.js';
 import { deployControlPlaneToVercel } from '../control-plane/deploy-vercel.js';
 import { runHetznerDeploy } from '../control-plane/deploy-hetzner.js';
+import { resolveHubAuthEnv } from '../control-plane/hub-auth-env.js';
 import {
   addRepoUrl,
   checkRepoInstalled,
@@ -130,6 +131,11 @@ const setupSub = new Command('setup')
       const target = await resolveDeployTarget(opts.deploy);
       let deployedUrl: string | null = null;
       if (target !== 'none') {
+        // Prompt for the hub login admin BEFORE the deploy spinner starts (a
+        // spinner and @clack prompts can't share the terminal). Setting these
+        // turns login on in the deployed hub so it is never left loginless.
+        // hetzner (docker-compose) auth wiring is a Phase 5 follow-up.
+        const hubAuth = target === 'vercel' ? await resolveHubAuthEnv() : null;
         try {
           const ds = spinner();
           ds.start(`deploying the control plane to ${target}`);
@@ -141,6 +147,7 @@ const setupSub = new Command('setup')
               GITHUB_APP_ID: app.appId,
               GITHUB_APP_PRIVATE_KEY: pemB64,
               AGENTBOX_RELAY_ADMIN_TOKEN: adminToken,
+              ...(hubAuth ?? {}),
             };
             deployedUrl = (await deployControlPlaneToVercel({ env, repo, ref, log: onLog })).url;
           } else {
@@ -195,7 +202,7 @@ function printManualDeploy(): void {
   log.info(
     [
       'Deploy later with the written env:',
-      `  Self-host:  cd apps/control-plane && docker compose --env-file ${ENV_PATH} up --build`,
+      `  Self-host:  cd apps/hub && docker compose --env-file ${ENV_PATH} up --build`,
       `  Vercel:     agentbox control-plane setup --deploy vercel  (or 'vercel env add' the vars + 'vercel deploy --prod')`,
       `  Then:       agentbox control-plane set-url https://<your-plane-url>`,
     ].join('\n'),

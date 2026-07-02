@@ -16,6 +16,10 @@
       "types": "./dist/control-plane.d.ts",
       "import": "./dist/control-plane.js"
     },
+    "./daemon": {
+      "types": "./dist/daemon.d.ts",
+      "import": "./dist/daemon.js"
+    },
     "./bin": "./dist/bin.cjs"
   },
   "bin": {
