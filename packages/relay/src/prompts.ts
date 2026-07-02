@@ -39,13 +39,31 @@ export interface AutoApprovePolicy {
   audit(boxId: string, params: Omit<PromptAskEvent, 'id'>): void;
 }
 
+/** A pending approval, flattened for listing across all boxes (hub UI). */
+export interface PendingApproval {
+  id: string;
+  boxId: string;
+  ev: PromptAskEvent;
+  createdAt: string;
+}
+
 export class PendingPrompts {
   private readonly entries = new Map<string, PendingPromptEntry>();
   private autoApprove: AutoApprovePolicy | null = null;
+  private onChange: (() => void) | null = null;
 
   /** Install the per-box auto-approve policy (relay server, once at startup). */
   setAutoApprovePolicy(policy: AutoApprovePolicy): void {
     this.autoApprove = policy;
+  }
+
+  /**
+   * Install a change hook fired whenever the pending set is mutated (add /
+   * resolve). Wired by the relay server to the hub notifier so the embedded UI
+   * pushes an update to connected browsers.
+   */
+  setOnChange(fn: () => void): void {
+    this.onChange = fn;
   }
 
   /**
@@ -67,6 +85,7 @@ export class PendingPrompts {
         resolve,
         createdAt: new Date().toISOString(),
       });
+      this.onChange?.();
     });
   }
 
@@ -80,6 +99,7 @@ export class PendingPrompts {
     if (!entry) return false;
     this.entries.delete(id);
     entry.resolve({ answer, cancelled });
+    this.onChange?.();
     return true;
   }
 
@@ -91,6 +111,18 @@ export class PendingPrompts {
     const out: PromptAskEvent[] = [];
     for (const entry of this.entries.values()) {
       if (entry.boxId === boxId) out.push(entry.ev);
+    }
+    return out;
+  }
+
+  /**
+   * Snapshot of every pending prompt across all boxes, with its boxId and
+   * enqueue time — the hub's Approvals view lists these.
+   */
+  all(): PendingApproval[] {
+    const out: PendingApproval[] = [];
+    for (const entry of this.entries.values()) {
+      out.push({ id: entry.ev.id, boxId: entry.boxId, ev: entry.ev, createdAt: entry.createdAt });
     }
     return out;
   }

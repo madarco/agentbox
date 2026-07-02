@@ -17,4 +17,6 @@ export interface HubBackend {
   resume(id: string): Promise<ActionResult>;
   stop(id: string): Promise<ActionResult>;
   destroy(id: string): Promise<ActionResult>;
+  // Answer a pending host-action approval; resolves the parked in-box RPC.
+  answerApproval(id: string, answer: 'y' | 'n'): Promise<ActionResult>;
 }

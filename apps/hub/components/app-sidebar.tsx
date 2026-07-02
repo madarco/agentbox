@@ -77,6 +77,13 @@ export function AppSidebar() {
       <SideLabel>Workspace</SideLabel>
       <nav className="flex flex-col gap-px">
         <SideItem active={dashActive} to="/" icon={Icons.grid} label="Dashboard" count={state.boxes.length} />
+        <SideItem
+          active={pathname.startsWith('/approvals')}
+          to="/approvals"
+          icon={Icons.shield}
+          label="Approvals"
+          count={state.approvals.length}
+        />
         <SideItem active={pathname.startsWith('/settings')} to="/settings" icon={Icons.settings} label="Settings" />
         <SideItem href="https://agent-box.sh/docs" icon={Icons.book} label="Docs" ext />
       </nav>

@@ -13,6 +13,12 @@ declare global {
   // it never enters Next's bundle. Implemented in lib/hub-backend.ts.
   // eslint-disable-next-line no-var
   var __AGENTBOX_HUB_BACKEND: HubBackend | undefined;
+
+  // In-process fan-out for the live-updates SSE route (/api/events). Set by the
+  // custom server to the relay's HubNotifier; fires whenever the pending-approval
+  // set changes. Structural type keeps Next loosely coupled to the relay.
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_NOTIFIER: { subscribe(fn: () => void): () => void } | undefined;
 }
 
 export {};

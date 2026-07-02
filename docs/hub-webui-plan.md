@@ -389,11 +389,53 @@ processes, DNS-rebinding).
   bypasses the gate). Opt-out (`AGENTBOX_HUB_AUTH=off`): `/` → 200, no token file,
   no URL logged. Build + typecheck + lint clean.
 
-### Phase 4 — Live updates + approvals
-SSE proxy route (hetzner) / same-origin subscribe (localhost); Approvals view over
-the prompt mailbox.
-- **Verify:** trigger a host-action approval in a box → appears in Approvals →
-  answering y/n unblocks the box.
+### Phase 4 — Live updates + approvals — DONE
+Live SSE push + a net-new **Approvals** view over the relay prompt mailbox.
+- **Approvals source corrected (plan premise was wrong):** the plan referenced
+  `Store.listPendingPrompts` / `daemon.handle.store`, but the laptop/hetzner relay
+  runs in **block mode** — pending approvals live **in-process** in
+  `handle.prompts` (`PendingPrompts`), not the Store (empty in block mode). So the
+  hub reads approvals from `handle.prompts.all()` (new accessor) and answers via
+  `handle.prompts.resolve(id, answer)` + `handle.subscribers.broadcast('prompt-resolved')`
+  — the same primitive `POST /admin/prompts/answer`'s block branch uses, in-process
+  (resolving the parked `/rpc` Promise unblocks the box). Approvals ride along in
+  `getData()` → `HubState.approvals`, so the sidebar badge + view + SSE refresh all
+  share one read. Vercel/poll-mode approvals deferred (no daemon; consistent with
+  Phase 2 deferring the hosted source).
+- **Live updates via a single in-process notifier (not the per-box loopback SSE
+  the plan sketched):** new `HubNotifier` on the relay handle (`packages/relay/src/hub-notifier.ts`),
+  fired by `PendingPrompts.setOnChange` (wired in `add`/`resolve`). The custom
+  server exposes it at `globalThis.__AGENTBOX_HUB_NOTIFIER`; a Next route
+  `app/(dashboard)/api/events/route.ts` streams a `change` on every notify + a 15s
+  `ping` heartbeat. `components/live-refresh.tsx` (mounted in `hub-shell.tsx`)
+  subscribes with `EventSource` and debounced-`router.refresh()`es (paused when the
+  tab is hidden). `/api/events` is a same-origin Next route gated by `proxy.ts`
+  (cookie rides along) — works identically on localhost + hetzner, no loopback
+  proxy needed. Box changes made outside the hub surface on the ≤15s heartbeat.
+- **Agent terminal hidden** (user decision): removed the "Agent output" section +
+  `AgentTerminal` from box detail; real streaming is a later feature.
+- **New:** `packages/relay/src/hub-notifier.ts` (+ `PendingApproval` type,
+  `PendingPrompts.all()`/`setOnChange`, `hubNotifier` on `RelayServerHandle`);
+  `apps/hub/app/(dashboard)/api/events/route.ts`, `components/live-refresh.tsx`,
+  `app/(dashboard)/approvals/page.tsx` + `approvals/components/approval-actions.tsx`.
+  **Modified:** `server.ts` (`createHubBackend(daemon.handle)` + notifier global),
+  `global.d.ts`, `lib/boxes/{types,backend-types,source,actions}.ts`,
+  `lib/hub-backend.ts`, `components/{app-sidebar,hub-shell}.tsx`,
+  `boxes/[id]/page.tsx`. **Deleted:** `boxes/components/agent-terminal.tsx`.
+- **Verified:** relay build + 261 unit tests green (new `hub-notifier.test.ts` +
+  `PendingPrompts.all`/`setOnChange` cases); hub `build` (routes `/approvals`,
+  `/api/events` coexist with `/[...path]`) + `typecheck` + `lint` clean.
+  **Runtime (embedded `server.ts`, scratch port + isolated `$HOME`):** `/healthz`
+  → 200 (relay bypass); `/api/events` + `/approvals` unauth → 401, with the token
+  cookie → 200; `/api/events` streams `event: open` then `event: ping` at 15s;
+  `/approvals` renders its empty state; the sidebar links `/approvals`; box detail
+  no longer renders "Agent output". **Approval chain (in-process harness over the
+  real `startRelayDaemon` + `createHubBackend` + notifier):** a pending prompt
+  appears in `getData().approvals` with all fields mapped; `answerApproval('y')`
+  **resolved the parked in-box RPC Promise** (box unblocks), fired the notifier
+  both on add + resolve, and cleared the listing; unknown id → clean `{ok:false}`.
+  (The relay's existing integration tests already cover block-mode
+  add→`/admin/prompts/answer`→exit-10 over real HTTP.)
 
 ### Phase 5 — CLI wiring
 `agentbox hub` / `AGENTBOX_HUB=1` spawns the hub on 8787; default CLI keeps the

@@ -2,11 +2,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { isProviderKind, type ProviderKind } from '@agentbox/config';
 import { normalizeLastAgent, type BoxRecord, type Provider } from '@agentbox/core';
+import type { PendingApproval, RelayServerHandle } from '@agentbox/relay';
 import type { ProviderModule } from '@agentbox/sandbox-core';
 import { readState } from '@agentbox/sandbox-core';
 import { listBoxes, type ListedBox } from '@agentbox/sandbox-docker';
 import type { ActionResult, HubBackend } from './boxes/backend-types';
-import type { Box, BoxStatus, GithubState, HubState, Project, User } from './boxes/types';
+import type { Approval, Box, BoxStatus, GithubState, HubState, Project, User } from './boxes/types';
 
 /*
  * Node-only host backend. This module imports the sandbox/relay toolchain and is
@@ -119,6 +120,20 @@ const LOCAL_GITHUB: GithubState = {
   repos: [],
 };
 
+function mapApproval(p: PendingApproval): Approval {
+  return {
+    id: p.id,
+    boxId: p.boxId,
+    message: p.ev.message,
+    detail: p.ev.detail,
+    command: p.ev.context?.command,
+    cwd: p.ev.context?.cwd,
+    argv: p.ev.context?.argv,
+    defaultAnswer: p.ev.defaultAnswer ?? 'n',
+    createdAt: Date.parse(p.createdAt) || Date.now(),
+  };
+}
+
 async function runLifecycle(id: string, op: (box: BoxRecord, provider: Provider) => Promise<void>): Promise<ActionResult> {
   try {
     const { boxes } = await readState();
@@ -132,7 +147,7 @@ async function runLifecycle(id: string, op: (box: BoxRecord, provider: Provider)
   }
 }
 
-export function createHubBackend(): HubBackend {
+export function createHubBackend(handle: RelayServerHandle): HubBackend {
   return {
     // authMode is layered on by source.ts (an env-derived concern), so the host
     // backend produces everything else.
@@ -143,11 +158,25 @@ export function createHubBackend(): HubBackend {
         github: LOCAL_GITHUB,
         projects: deriveProjects(listed),
         boxes: listed.map(mapBox),
+        // Block-mode approvals live in-process on the relay handle, not the Store.
+        approvals: handle.prompts.all().map(mapApproval),
       };
     },
     pause: (id) => runLifecycle(id, (box, provider) => provider.pause(box)),
     resume: (id) => runLifecycle(id, (box, provider) => provider.resume(box)),
     stop: (id) => runLifecycle(id, (box, provider) => provider.stop(box)),
     destroy: (id) => runLifecycle(id, (box, provider) => provider.destroy(box)),
+    // Mirror POST /admin/prompts/answer's block branch, in-process: resolving
+    // the entry fulfills the Promise the /rpc handler is awaiting (box unblocks),
+    // and the broadcast clears any attached-terminal footer.
+    answerApproval(id, answer): Promise<ActionResult> {
+      const boxId = handle.prompts.boxFor(id);
+      if (!boxId) return Promise.resolve({ ok: false, error: 'no pending approval' });
+      if (!handle.prompts.resolve(id, answer)) {
+        return Promise.resolve({ ok: false, error: 'no pending approval' });
+      }
+      handle.subscribers.broadcast(boxId, 'prompt-resolved', { id });
+      return Promise.resolve({ ok: true });
+    },
   };
 }
