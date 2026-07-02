@@ -74,11 +74,18 @@ describe('plugin registry', () => {
     expect(await removePluginRecord('missing', path)).toBe(0);
   });
 
-  it('corrupt registry degrades to empty, never throws', () => {
+  it('corrupt registry degrades to empty on READ, never throws', () => {
     writeFileSync(path, '{ not json', 'utf8');
     expect(readPluginRegistrySync(path)).toEqual({ version: 1, plugins: [] });
     writeFileSync(path, JSON.stringify({ version: 99, plugins: [] }), 'utf8');
     expect(readPluginRegistrySync(path)).toEqual({ version: 1, plugins: [] });
+  });
+
+  it('a WRITE refuses to clobber a corrupt registry (no data loss)', async () => {
+    writeFileSync(path, '{ not json — hand-edited', 'utf8');
+    await expect(addPluginRecord(rec(), path)).rejects.toThrow(/corrupt|unrecognized/i);
+    // the corrupt file is left intact, not overwritten with an empty registry
+    expect(readFileSync(path, 'utf8')).toContain('hand-edited');
   });
 
   it('api-version gate', () => {

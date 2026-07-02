@@ -124,6 +124,38 @@ export async function readPluginRegistry(path: string = PLUGINS_FILE): Promise<P
   }
 }
 
+/**
+ * Read for a read-modify-WRITE. Unlike the lenient readers (which degrade a
+ * corrupt file to empty so the CLI never bricks), this REFUSES to proceed when
+ * an existing file is unparseable/unrecognized — otherwise `addPluginRecord`
+ * would overwrite a recoverable `plugins.json` and silently drop every other
+ * registered plugin. A genuinely missing file (ENOENT) is still an empty start.
+ */
+async function readForWrite(path: string): Promise<PluginsFile> {
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { ...EMPTY };
+    throw err;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `refusing to modify a corrupt plugin registry at ${path} (${(err as Error).message}) — fix or delete the file and retry.`,
+    );
+  }
+  const p = parsed as PluginsFile;
+  if (!p || p.version !== 1 || !Array.isArray(p.plugins)) {
+    throw new Error(
+      `refusing to modify an unrecognized plugin registry at ${path} — fix or delete the file and retry.`,
+    );
+  }
+  return p;
+}
+
 async function writeRegistry(file: PluginsFile, path: string = PLUGINS_FILE): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp.${String(process.pid)}.${String(Date.now())}`;
@@ -137,7 +169,7 @@ export async function addPluginRecord(
   path: string = PLUGINS_FILE,
 ): Promise<void> {
   await withFileLock(path, async () => {
-    const file = await readPluginRegistry(path);
+    const file = await readForWrite(path);
     const next = file.plugins.filter((p) => p.packageName !== record.packageName);
     next.push(record);
     await writeRegistry({ version: 1, plugins: next }, path);
@@ -154,7 +186,7 @@ export async function removePluginRecord(
 ): Promise<number> {
   let removed = 0;
   await withFileLock(path, async () => {
-    const file = await readPluginRegistry(path);
+    const file = await readForWrite(path);
     const next = file.plugins.filter((p) => {
       const match = p.packageName === nameOrPackage || p.providers.includes(nameOrPackage);
       if (match) removed += 1;

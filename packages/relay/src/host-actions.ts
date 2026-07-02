@@ -18,6 +18,7 @@ import { execa } from 'execa';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   isResolvedBranch,
   isScratchBranch,
@@ -160,7 +161,7 @@ export async function resolveCloudBackend(name: string): Promise<CloudBackend> {
       );
     }
     return loadCloudBackend(plugin.packageName, async () => {
-      const mod = (await import(plugin.resolvedEntry)) as {
+      const mod = (await import(pathToFileURL(plugin.resolvedEntry).href)) as {
         providerModule?: { provider?: { name?: string }; backend?: CloudBackend };
         providerModules?: { provider?: { name?: string }; backend?: CloudBackend }[];
       };

@@ -16,6 +16,7 @@
  * config `PROVIDERS` table forces a matching entry here (a TS error otherwise).
  */
 
+import { pathToFileURL } from 'node:url';
 import { PROVIDER_NAMES, isProviderKind, type ProviderKind } from '@agentbox/config';
 import {
   pluginForProvider,
@@ -70,7 +71,9 @@ export async function loadProviderModule(name: string): Promise<ProviderModule> 
   }
   // Variable specifier on purpose: this is the extension seam. esbuild leaves it
   // as a runtime import so an externally-installed package resolves at run time.
-  const mod = (await import(plugin.resolvedEntry)) as unknown;
+  // Convert to a file:// URL — a bare absolute path is not a valid ESM dynamic
+  // import specifier on Windows / some Node setups.
+  const mod = (await import(pathToFileURL(plugin.resolvedEntry).href)) as unknown;
   const providerModule = pickProviderModule(mod, name);
   if (!providerModule) {
     throw new Error(
