@@ -16,8 +16,13 @@
  * config `PROVIDERS` table forces a matching entry here (a TS error otherwise).
  */
 
-import type { ProviderKind } from '@agentbox/config';
-import type { ProviderModule } from '@agentbox/sandbox-core';
+import { PROVIDER_NAMES, isProviderKind, type ProviderKind } from '@agentbox/config';
+import {
+  pluginForProvider,
+  pluginProviderNames,
+  isSupportedApiVersion,
+  type ProviderModule,
+} from '@agentbox/sandbox-core';
 
 const IMPORTERS: Record<ProviderKind, () => Promise<{ providerModule: ProviderModule }>> = {
   docker: () => import('@agentbox/sandbox-docker'),
@@ -27,7 +32,58 @@ const IMPORTERS: Record<ProviderKind, () => Promise<{ providerModule: ProviderMo
   e2b: () => import('@agentbox/sandbox-e2b'),
 };
 
-/** Lazily import a provider package and return its uniform `providerModule`. */
-export async function loadProviderModule(name: ProviderKind): Promise<ProviderModule> {
-  return (await IMPORTERS[name]()).providerModule;
+/**
+ * Extract the `providerModule` matching `name` from an already-imported plugin
+ * package. A plugin may export a single `providerModule` or a `providerModules`
+ * array (multi-provider package).
+ */
+function pickProviderModule(mod: unknown, name: string): ProviderModule | null {
+  const m = mod as { providerModule?: ProviderModule; providerModules?: ProviderModule[] };
+  const all = m.providerModules ?? (m.providerModule ? [m.providerModule] : []);
+  return all.find((pm) => pm.provider?.name === name) ?? all[0] ?? null;
+}
+
+/**
+ * Lazily import a provider package and return its uniform `providerModule`.
+ *
+ * Built-in providers resolve through the literal-specifier `IMPORTERS` map
+ * (bundle-inlined). An unknown name falls back to the plugin registry: a TRUE
+ * variable `import(resolvedEntry)` of the externally-installed package — NOT
+ * inlined at build time, resolved from wherever the user installed it.
+ */
+export async function loadProviderModule(name: string): Promise<ProviderModule> {
+  if (isProviderKind(name)) {
+    return (await IMPORTERS[name]()).providerModule;
+  }
+  const plugin = pluginForProvider(name);
+  if (!plugin) {
+    throw new Error(
+      `unknown provider "${name}" — not built in and no registered plugin provides it (run \`agentbox plugin list\`)`,
+    );
+  }
+  if (!isSupportedApiVersion(plugin.apiVersion)) {
+    throw new Error(
+      `plugin "${plugin.packageName}" targets provider SDK v${String(plugin.apiVersion)}, which this AgentBox does not support — update the plugin or AgentBox`,
+    );
+  }
+  // Variable specifier on purpose: this is the extension seam. esbuild leaves it
+  // as a runtime import so an externally-installed package resolves at run time.
+  const mod = (await import(plugin.resolvedEntry)) as unknown;
+  const providerModule = pickProviderModule(mod, name);
+  if (!providerModule) {
+    throw new Error(
+      `plugin "${plugin.packageName}" does not export a providerModule for "${name}"`,
+    );
+  }
+  return providerModule;
+}
+
+/** Built-in + registered-plugin provider names (deduped). */
+export function getRuntimeProviderNames(): string[] {
+  return [...new Set<string>([...PROVIDER_NAMES, ...pluginProviderNames()])];
+}
+
+/** True if `name` is a built-in provider or a registered plugin provider. */
+export function isRuntimeProvider(name: string): boolean {
+  return isProviderKind(name) || pluginProviderNames().includes(name);
 }

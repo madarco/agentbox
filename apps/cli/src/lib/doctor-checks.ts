@@ -10,10 +10,10 @@ import { accessSync, constants as fsConstants, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { loadEffectiveConfig, PROVIDER_NAMES, type ProviderKind } from '@agentbox/config';
+import { loadEffectiveConfig, type ProviderKind } from '@agentbox/config';
 import { errSummary, firstLine, type CheckResult, type CheckStatus } from '@agentbox/sandbox-core';
 import { ALL_CONNECTORS, type IntegrationConnector } from '@agentbox/integrations';
-import { loadProviderModule } from '../provider/loaders.js';
+import { getRuntimeProviderNames, loadProviderModule } from '../provider/loaders.js';
 
 // The per-provider health probes live in each `@agentbox/sandbox-<name>`
 // package (`providerModule.doctorChecks`); this module just aggregates them
@@ -27,10 +27,9 @@ export interface CheckGroup {
   results: CheckResult[];
 }
 
-/** Provider group name — the config `ProviderKind` (single source of truth). */
-export type ProviderName = ProviderKind;
+/** Provider group name — a built-in `ProviderKind` or a registered plugin provider. */
+export type ProviderName = ProviderKind | (string & {});
 
-const ALL_PROVIDERS: readonly ProviderName[] = PROVIDER_NAMES;
 const NODE_MIN_MAJOR = 20;
 const NODE_MIN_MINOR = 10;
 
@@ -275,13 +274,23 @@ async function checkOneIntegration(
 }
 
 export async function runProviderChecks(name: ProviderName): Promise<CheckGroup> {
-  const mod = await loadProviderModule(name);
-  return { title: name, results: await mod.doctorChecks() };
+  try {
+    const mod = await loadProviderModule(name);
+    return { title: name, results: await mod.doctorChecks() };
+  } catch (err) {
+    // A broken/incompatible plugin must not crash `doctor` — surface it as a warn.
+    return {
+      title: name,
+      results: [{ label: 'plugin', status: 'warn', detail: errSummary(err) }],
+    };
+  }
 }
 
 export async function runAllChecks(): Promise<CheckGroup[]> {
   const sys: CheckGroup = { title: 'system', results: await runSystemChecks() };
-  const providerGroups = await Promise.all(ALL_PROVIDERS.map((n) => runProviderChecks(n)));
+  const providerGroups = await Promise.all(
+    getRuntimeProviderNames().map((n) => runProviderChecks(n)),
+  );
   const integrations: CheckGroup = { title: 'integrations', results: await integrationsChecks() };
   return [sys, ...providerGroups, integrations];
 }

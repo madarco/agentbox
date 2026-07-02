@@ -40,8 +40,8 @@ import {
   type CheckResult,
   type ProviderName,
 } from '../lib/doctor-checks.js';
-import { PROVIDER_NAMES, isProviderKind, providerMeta } from '@agentbox/config';
-import { loadProviderModule } from '../provider/loaders.js';
+import { PROVIDER_NAMES, providerMeta } from '@agentbox/config';
+import { isRuntimeProvider, loadProviderModule } from '../provider/loaders.js';
 import { markSetupComplete } from '../lib/first-run.js';
 import { maybePromptStar } from '../lib/star-prompt.js';
 import { installCmuxCommand } from './install-cmux.js';
@@ -447,7 +447,7 @@ function tutorialBody(provider: ProviderName): string {
 const KNOWN_PROVIDERS: readonly ProviderName[] = PROVIDER_NAMES;
 
 function isProviderName(s: string): s is ProviderName {
-  return isProviderKind(s);
+  return isRuntimeProvider(s);
 }
 
 /**

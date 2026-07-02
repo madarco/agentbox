@@ -29,6 +29,19 @@ export {
   type ProviderModule,
 } from './doctor.js';
 export {
+  PLUGINS_FILE,
+  SUPPORTED_SDK_API_VERSIONS,
+  isSupportedApiVersion,
+  readPluginRegistry,
+  readPluginRegistrySync,
+  addPluginRecord,
+  removePluginRecord,
+  pluginProviderNames,
+  pluginForProvider,
+  type PluginRecord,
+  type PluginsFile,
+} from './plugin-registry.js';
+export {
   carryPlaceholderContext,
   renderCarryEntries,
   type CarryBoxContext,
