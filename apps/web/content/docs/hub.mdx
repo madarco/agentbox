@@ -22,7 +22,12 @@ That starts the hub (if it isn't already running) and opens it in your browser a
 - **Dashboard** — every box on this machine, grouped by project, with live status
   (running / paused / stopped / error) and per-box **pause / resume / stop /
   destroy** controls.
-- **Box detail** — a box's task, agent, branch, host, and timestamps.
+- **Box detail** — a box's task, agent, branch, host, and timestamps, plus common
+  box operations: **Git** (pull, push, [push to the host repo only](/docs/sync-and-git),
+  change branch, create a new `agentbox/*` branch) and **Services** (live state of the
+  box's [`agentbox.yaml` services](/docs/services-and-tasks), with restart-one and
+  restart-all). The same operations are on the [hub API](/docs/hub-api) and the
+  [CLI](/docs/cli) (`agentbox git`, `agentbox services`).
 - **Approvals** — the host-action requests a box is blocked on (a `git push` to a
   protected branch, `cp`, `download`, gh/integration writes). **Approve** unblocks
   the box; **Deny** returns an error to it. This is the same gate the relay prompts

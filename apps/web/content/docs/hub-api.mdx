@@ -59,6 +59,10 @@ with an HTTP status that matches the `code` (`400 invalid_request`,
 | `POST /boxes/{id}/resume` | Resume a paused box. |
 | `POST /boxes/{id}/stop` | Stop a box. |
 | `POST /boxes/{id}/destroy` | Destroy a box (container + volumes). |
+| `GET /boxes/{id}/git` | Live git summary of the box's worktree: `{ ok, branch, dirty, ahead, behind }`. |
+| `POST /boxes/{id}/git/{op}` | Git op on the box branch (`checkout`, `branch`, `pull`, `push`, `push-host`). Body per op: `checkout {branch}`; `branch {name, from?}` (create+switch a new `agentbox/*` branch); `pull {remote?, ffOnly?}`; `push {remote?, force?}`; `push-host {as?, force?}` (land in the host repo only — publishes nothing). Returns `{ ok, stdout, stderr }`. |
+| `GET /boxes/{id}/services` | The box's `agentbox.yaml` service/task/port status (`source: live \| persisted \| unavailable`). |
+| `POST /boxes/{id}/services/restart` | Restart one service (`{ name }`) or every service (empty body). |
 | `GET /projects` | Registered projects (create targets). |
 | `POST /projects` | Register a folder as a project. Body: `{ path }` (absolute). |
 | `DELETE /projects/{id}` | Unregister an **empty** project (0 boxes). Folder/files on disk are untouched; `409` if it still has boxes. |

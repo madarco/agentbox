@@ -130,6 +130,19 @@ status. Thin facade over the already-shipped backend seam — no new box logic.
   `POST /jobs/:id/answer` interaction stream (needs Phases A–C). Dedicated API-key
   management + hosted-plane **writes** land with the hosted-remote phase below.
 
+## Phase D.1 — Box git + service operations (detail page + API + CLI) — DONE
+Beyond create/lifecycle: common box ops on the detail page, `/api/v1`, and the CLI.
+- [x] Shared provider-agnostic `@agentbox/sandbox-core/box-git.ts` (checkout, new-branch,
+  push, pull, push-host, service status/restart argv). Token minting injected → no relay
+  import (cycle-safe). CLI `git.ts` refactored onto it; new `agentbox git branch` +
+  `agentbox services [list|restart]`.
+- [x] Hub backend methods (`gitCheckout/gitNewBranch/gitPush/gitPull/gitPushHost/getGit/
+  getServices/restartService`) + server actions + REST routes
+  (`/boxes/{id}/git`, `/boxes/{id}/git/{op}`, `/boxes/{id}/services`,
+  `/boxes/{id}/services/restart`) + OpenAPI + `git-actions.tsx`/`services-panel.tsx`.
+- [x] Docker E2E green (CLI ground-truth + REST envelopes + UI render). See
+  `docs/hub-webui-plan.md` Phase 8. Deferred: hosted/Postgres write path (503).
+
 ## Phase E — Web UI + docs
 - [ ] Generalized prompt/link surface (extend Approvals for job origin + links).
 - [ ] Management views (bake, provider install) streaming `/jobs/:id/events`.

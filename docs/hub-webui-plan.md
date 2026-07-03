@@ -545,6 +545,41 @@ already-shipped backend seam (`__AGENTBOX_HUB_BACKEND` + `getDashboardData()` +
   `/jobs/:id/events` + `/jobs/:id/answer` interaction stream (Phases A–C), hosted
   writes, and API-key management.
 
+### Phase 8 — Box git + service operations (detail page + API + CLI) — DONE
+Common day-to-day box operations on the box-detail page, the public `/api/v1`, and
+the host CLI: change branch, create+switch a new `agentbox/*` branch, pull/push,
+push-to-host-only, and `agentbox.yaml` service status + restart-one/all.
+- **Shared, provider-agnostic helper** `packages/sandbox-core/src/box-git.ts`
+  (checkout / new-branch / push / pull / push-host + service argv builders). Cycle-safe:
+  the host-initiated-token mint is **injected** (`BoxGitDeps.hostInitiatedArgs`), so the
+  module needs no relay/ctl import (relay → sandbox-core, so it can't reach back). The
+  predicted `GitRpcParams` match `agentbox-ctl git`'s exactly so the minted token's
+  params-hash round-trips. The CLI `git.ts` driver refactored onto these helpers.
+- **CLI:** new `agentbox git branch <box> <name> [--from <ref>]` (create+switch) and
+  `agentbox services <box> [list|restart [name]]` (provider-agnostic via `provider.exec`;
+  live status parsed from `agentbox-ctl status --json`, restart-all is a host-side loop —
+  no new ctl wire op, works on already-baked boxes).
+- **Hub backend** (`hub-backend.ts`): `gitCheckout/gitNewBranch/gitPush/gitPull/
+  gitPushHost/getGit/getServices/restartService` via a `resolveBoxProvider` + `gitOp`
+  helper and a `hubGitDeps` that mints tokens in-process (`mintHostInitiatedToken` +
+  `hashRpcParams`). `getServices` falls back to the persisted `handle.statusStore`
+  snapshot when the box isn't live; `getGit` parses `git status --porcelain=v2 --branch`.
+- **Surfaces:** server actions (`actions.ts`, UI) + REST routes
+  (`api/v1/boxes/[id]/git/[op]`, `.../git` GET, `.../services` GET, `.../services/restart`
+  POST) + `validate.ts` parsers + `openapi.ts` entries. UI: `git-actions.tsx` +
+  `services-panel.tsx` (client, poll `/api/v1` reads via same-origin cookie, mutate via
+  server actions), rendered on `boxes/[id]/page.tsx`.
+- **Verified (docker E2E, real hub on 8787):** `agentbox services` list + restart one/all;
+  `git branch` create+switch (from HEAD and `--from main`, `agentbox/` prefix added);
+  `git checkout` (incl. clean failure when the target is checked out in the host
+  worktree); `push --host-only` lands in the host repo only (ground truth: branch in
+  host repo, nothing on any remote). REST: every route with a Bearer token — git info +
+  live branch (not stale `box.branch`), services `source:live`, branch/checkout/push-host
+  succeed, restart one/all, and 400/404/409/401 envelopes; `openapi.json` valid 3.1 with
+  the 4 new paths; box-detail page renders both panels. Unit: `box-git.test.ts` (argv +
+  params contract) + the validators. Deferred: hosted/Postgres write path (503, same as
+  the existing lifecycle actions).
+
 ---
 
 ## Docs to update (in the phase that changes the behavior)
