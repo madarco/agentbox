@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState, useTransition, type ReactNode } from 'react';
 import { Icons } from '@/components/icons';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -73,6 +74,7 @@ function CreateBoxModal({
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<string>('streaming');
 
   const selected = projects.find((p) => p.id === projectId) ?? project;
 
@@ -106,13 +108,19 @@ function CreateBoxModal({
           <Icons.box />
         </DialogIcon>
         <div>
-          <DialogTitle>{jobId ? 'Creating box…' : 'Create box'}</DialogTitle>
+          <DialogTitle>Create box</DialogTitle>
           <DialogDescription>{selected ? selected.name : 'Start a box in a project'}</DialogDescription>
         </div>
+        {/* Live job state next to the close button: pulsating while working, a pill when settled. */}
+        {jobId ? (
+          <div className="ml-auto mr-8 flex-none pt-0.5">
+            <JobStatusBadge status={jobStatus} />
+          </div>
+        ) : null}
       </DialogHeader>
       <DialogBody className="flex flex-col gap-4">
         {jobId ? (
-          <JobLogStream jobId={jobId} onDone={() => router.refresh()} />
+          <JobLogStream jobId={jobId} onStatus={setJobStatus} onDone={() => router.refresh()} />
         ) : (
           <>
             {!project ? (
@@ -172,6 +180,33 @@ function CreateBoxModal({
         )}
       </DialogFooter>
     </Dialog>
+  );
+}
+
+// The build-job state, shown as a status pill in the modal header. `badge-create`
+// pulses (working); `badge-run` is the settled green (done); `badge-err` is red.
+function JobStatusBadge({ status }: { status: string }) {
+  if (status === 'done') {
+    return (
+      <Badge className="badge-run">
+        <span className="badge-dot" />
+        Done
+      </Badge>
+    );
+  }
+  if (status === 'failed' || status === 'error') {
+    return (
+      <Badge className="badge-err">
+        <span className="badge-dot" />
+        Failed
+      </Badge>
+    );
+  }
+  return (
+    <Badge className="badge-create">
+      <span className="badge-dot" />
+      Working…
+    </Badge>
   );
 }
 

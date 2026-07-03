@@ -4,19 +4,33 @@ import { useEffect, useRef, useState } from 'react';
 
 // Streams a create job's log via the per-job SSE route into a scrolling panel.
 // Read-only — this is the create/build log, not an interactive agent terminal.
-export function JobLogStream({ jobId, onDone }: { jobId: string; onDone?: (status: string) => void }) {
+export function JobLogStream({
+  jobId,
+  onDone,
+  onStatus,
+}: {
+  jobId: string;
+  onDone?: (status: string) => void;
+  // Fired with 'streaming' on (re)connect and the terminal status on end, so the
+  // parent can render a live working/done indicator in the modal header.
+  onStatus?: (status: string) => void;
+}) {
   const [lines, setLines] = useState<string[]>([]);
   const [status, setStatus] = useState<string>('streaming');
   const preRef = useRef<HTMLPreElement>(null);
-  // Keep the latest onDone in a ref so the EventSource effect depends ONLY on
+  // Keep the latest callbacks in refs so the EventSource effect depends ONLY on
   // jobId. Callers pass a fresh `() => router.refresh()` each render, and
   // dashboard refreshes (LiveRefresh / queue onStatusChange) re-render this
-  // component mid-stream — if onDone were an effect dep, the stream would tear
-  // down and reopen from offset 0, replaying and duplicating the whole tail.
+  // component mid-stream — if a callback were an effect dep, the stream would
+  // tear down and reopen from offset 0, replaying and duplicating the whole tail.
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
+  const onStatusRef = useRef(onStatus);
+  onStatusRef.current = onStatus;
 
   useEffect(() => {
+    setStatus('streaming');
+    onStatusRef.current?.('streaming');
     const es = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/logs`);
     es.addEventListener('log', (e) => {
       const line = JSON.parse((e as MessageEvent).data) as string;
@@ -25,6 +39,7 @@ export function JobLogStream({ jobId, onDone }: { jobId: string; onDone?: (statu
     es.addEventListener('end', (e) => {
       const payload = JSON.parse((e as MessageEvent).data) as { status: string };
       setStatus(payload.status);
+      onStatusRef.current?.(payload.status);
       onDoneRef.current?.(payload.status);
       es.close();
     });
@@ -45,11 +60,11 @@ export function JobLogStream({ jobId, onDone }: { jobId: string; onDone?: (statu
       >
         {lines.length === 0 ? 'starting…' : lines.join('\n')}
       </pre>
-      <div className="mt-2 font-mono text-xs text-muted-foreground">
-        {status === 'streaming'
-          ? 'creating — the box + agent start in the background; you can close this.'
-          : `job ${status}`}
-      </div>
+      {status === 'streaming' ? (
+        <div className="mt-2 font-mono text-xs text-muted-foreground">
+          The box + agent start in the background — you can close this.
+        </div>
+      ) : null}
     </div>
   );
 }
