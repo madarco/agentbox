@@ -239,11 +239,11 @@ const unsetUrlSub = new Command('unset-url')
   .action(async (opts: { purge?: boolean }) => {
     try {
       // set-url writes the global scope; also clear a per-project override if one
-      // exists (best-effort — a non-project cwd has no project file to touch).
+      // exists. A cwd with no project config just yields `existed:false` (the
+      // project unset never throws for that) — real I/O/write errors from either
+      // scope propagate to handleLifecycleError rather than being masked.
       const g = await unsetConfigValue('global', 'relay.controlPlaneUrl', process.cwd());
-      const p = await unsetConfigValue('project', 'relay.controlPlaneUrl', process.cwd()).catch(
-        () => ({ existed: false }),
-      );
+      const p = await unsetConfigValue('project', 'relay.controlPlaneUrl', process.cwd());
       if (!g.existed && !p.existed) {
         log.info('No control plane was configured (relay.controlPlaneUrl not set).');
       } else {
