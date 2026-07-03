@@ -1,4 +1,4 @@
-import { stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -6,7 +6,10 @@ import {
   hashProjectPath,
   isProviderKind,
   listProjectsConfigured,
+  PROVIDER_NAMES,
+  providerMeta,
   registerProject,
+  unregisterProject,
   type ProviderKind,
 } from '@agentbox/config';
 import { normalizeLastAgent, type BoxRecord, type Provider } from '@agentbox/core';
@@ -20,15 +23,17 @@ import {
   type RelayServerHandle,
 } from '@agentbox/relay';
 import type { ProviderModule } from '@agentbox/sandbox-core';
-import { readState } from '@agentbox/sandbox-core';
+import { readPreparedStateRaw, readState } from '@agentbox/sandbox-core';
 import { listBoxes, type ListedBox } from '@agentbox/sandbox-docker';
 import type {
   ActionResult,
+  BrowseDirResult,
   CreateBoxInput,
   CreateBoxResult,
+  DirEntry,
   HubBackend,
 } from './boxes/backend-types';
-import type { Approval, Box, BoxStatus, GithubState, HubState, Project, User } from './boxes/types';
+import type { Approval, Box, BoxStatus, GithubState, HubState, Project, ProviderOption, User } from './boxes/types';
 
 /*
  * Node-only host backend. This module imports the sandbox/relay toolchain and is
@@ -197,15 +202,46 @@ function mapJobToBox(job: QueueJob, status: BoxStatus): Box {
     repo: path.basename(root),
     branch: '',
     task: job.prompt || job.boxName || 'new box',
-    agent: AGENT_LABEL[job.agent] ?? 'claude',
+    // A no-agent box ("just create") has no agent — show the shell glyph.
+    agent: job.noAgent ? 'shell' : (AGENT_LABEL[job.agent] ?? 'claude'),
     status,
     createdAt,
     lastActivity: createdAt,
-    host: `local · ${job.providerName}`,
+    host: job.providerName === 'docker' ? 'local · docker' : job.providerName,
     commits: null,
     filesTouched: null,
     error: status === 'error' ? (job.reason ?? 'create failed') : null,
   };
+}
+
+/**
+ * Which providers a box can be created on right now. docker is always available
+ * (its base self-heals); a cloud provider is usable only once its base is baked —
+ * `~/.agentbox/<provider>-prepared.json` with a `base`. That marker read is sync +
+ * offline (no cloud SDK), so it's cheap to compute on every getData(). A prepared
+ * marker implies a prior `<provider> login`, so it's a sufficient readiness proxy.
+ */
+function isProviderConfigured(id: ProviderKind): boolean {
+  if (id === 'docker') return true;
+  const raw = readPreparedStateRaw(id);
+  return !!(raw && typeof raw === 'object' && (raw as { base?: unknown }).base);
+}
+
+function listProviders(): ProviderOption[] {
+  return PROVIDER_NAMES.map((id) => {
+    // Keep "Docker (local)" but drop the "(cloud …)" qualifier from cloud labels
+    // — the picker just wants the provider name.
+    const label = id === 'docker' ? providerMeta(id).label : providerMeta(id).label.replace(/\s*\(.*\)$/, '');
+    const configured = isProviderConfigured(id);
+    return {
+      id,
+      label,
+      configured,
+      reason: configured
+        ? undefined
+        : `Not set up on this host — run \`agentbox ${id} login\` then \`agentbox prepare --provider ${id}\``,
+    };
+  });
 }
 
 function currentUser(): User {
@@ -239,6 +275,46 @@ function mapApproval(p: PendingApproval): Approval {
     defaultAnswer: p.ev.defaultAnswer ?? 'n',
     createdAt: Date.parse(p.createdAt) || Date.now(),
   };
+}
+
+// A folder "looks like a project" if it already carries a git repo or an
+// agentbox.yaml — the same signals `findProjectRoot` walks up to.
+async function looksLikeProject(dir: string): Promise<boolean> {
+  const [git, yaml] = await Promise.all([
+    stat(path.join(dir, '.git')).then(() => true).catch(() => false),
+    stat(path.join(dir, 'agentbox.yaml')).then(() => true).catch(() => false),
+  ]);
+  return git || yaml;
+}
+
+// List the immediate subdirectories of `dir` (defaulting to the user's home) for
+// the folder picker. Hidden dirs (dotfiles) are skipped to keep the list to real
+// project candidates; symlinks are followed only when they resolve to a directory.
+async function browseDirHost(dir?: string): Promise<BrowseDirResult> {
+  try {
+    const target = dir && dir.trim() ? dir.trim() : os.homedir();
+    if (!path.isAbsolute(target)) return { ok: false, error: 'an absolute path is required' };
+    const st = await stat(target).catch(() => null);
+    if (!st || !st.isDirectory()) return { ok: false, error: `not a directory: ${target}` };
+
+    const dirents = await readdir(target, { withFileTypes: true });
+    const entries: DirEntry[] = [];
+    for (const d of dirents) {
+      if (d.name.startsWith('.')) continue;
+      if (!d.isDirectory() && !d.isSymbolicLink()) continue;
+      const full = path.join(target, d.name);
+      if (d.isSymbolicLink()) {
+        const ls = await stat(full).catch(() => null);
+        if (!ls || !ls.isDirectory()) continue;
+      }
+      entries.push({ name: d.name, path: full, isProject: await looksLikeProject(full) });
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    const parent = path.dirname(target);
+    return { ok: true, path: target, parent: parent === target ? null : parent, entries };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 async function runLifecycle(id: string, op: (box: BoxRecord, provider: Provider) => Promise<void>): Promise<ActionResult> {
@@ -277,6 +353,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         boxes: [...jobBoxes, ...listed.map(mapBox)],
         // Block-mode approvals live in-process on the relay handle, not the Store.
         approvals: handle.prompts.all().map(mapApproval),
+        providers: listProviders(),
       };
     },
     pause: (id) => runLifecycle(id, (box, provider) => provider.pause(box)),
@@ -301,19 +378,32 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // Accepts any project the dashboard shows (registry or live box root).
         const workspace = await resolveProjectPath(input.projectId);
         if (!workspace) return { ok: false, error: `unknown project ${input.projectId}` };
-        const agent: QueueAgentKind = input.agent === 'claude' ? 'claude-code' : input.agent;
+        // Provider gate (defense-in-depth: a client could bypass the disabled UI
+        // option). Default docker; reject unknown kinds and unconfigured providers.
+        const provider = input.provider ?? 'docker';
+        if (!isProviderKind(provider)) return { ok: false, error: `unknown provider ${provider}` };
+        if (!isProviderConfigured(provider)) {
+          return { ok: false, error: `provider ${provider} is not set up on this host` };
+        }
+        const noAgent = input.agent === 'none';
+        // For a no-agent box `agent` is inert (the worker ignores it when noAgent);
+        // keep a valid placeholder so the closed QueueAgentKind union holds.
+        const agent: QueueAgentKind =
+          input.agent === 'claude' || input.agent === 'none' ? 'claude-code' : input.agent;
         const name = input.name?.trim() || undefined;
         // Enqueue a detached create job (the same pipeline as `agentbox <agent>
         // -i`): the worker runs createBox() — including the full sync layer —
-        // then starts the agent in a detached tmux session. It never attaches.
-        // The worker names the box from `createOpts.name` (like the CLI's
+        // then starts the agent in a detached tmux session (unless noAgent, which
+        // stops after create, like `agentbox create`). It never attaches. The
+        // worker names the box from `createOpts.name` (like the CLI's
         // pickCreateOpts), so the typed name must go there, not only on boxName.
         const { job } = await enqueueQueueJob({
           agent,
           boxName: name ?? '',
-          providerName: 'docker',
-          prompt: input.prompt ?? '',
+          providerName: provider,
+          prompt: noAgent ? '' : (input.prompt ?? ''),
           agentArgs: [],
+          ...(noAgent ? { noAgent: true } : {}),
           createOpts: { workspace, name },
         });
         handle.pokeQueue();
@@ -338,6 +428,33 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
     },
+    async removeProject(projectId: string): Promise<ActionResult> {
+      try {
+        // Empty-only: refuse if any live box OR any create job that still SURFACES
+        // as a box in getData() belongs to this project — otherwise DELETE would
+        // unregister a project the dashboard still lists (and the UI hides Delete
+        // for). Mirror getData()'s exact surfacing predicate: a job shows as a box
+        // unless a live box already superseded it and its status is queued/running
+        // ('creating') or failed ('error'). done/cancelled never surface.
+        const [boxes, jobs] = await Promise.all([listBoxes(), loadQueue()]);
+        const hasBox = boxes.some((b) => hashProjectPath(projectRootOf(b)) === projectId);
+        const liveIds = new Set(boxes.map((b) => b.id));
+        const hasJob = jobs.some(
+          (j) =>
+            !(j.boxId && liveIds.has(j.boxId)) &&
+            (j.status === 'queued' || j.status === 'running' || j.status === 'failed') &&
+            hashProjectPath(j.createOpts.workspace) === projectId,
+        );
+        if (hasBox || hasJob) return { ok: false, error: 'project has boxes; delete them first' };
+        // Idempotent: unregisterProject returns false when already gone — still ok,
+        // the goal state is "not registered".
+        await unregisterProject(projectId);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    browseDir: (dir) => browseDirHost(dir),
     async getJob(id): Promise<{ status: string; logPath: string; boxId?: string } | null> {
       const job = await readJob(id);
       if (!job) return null;

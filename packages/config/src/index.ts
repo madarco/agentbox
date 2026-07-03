@@ -78,6 +78,7 @@ export {
   pruneOrphanProjectConfigs,
   registerProject,
   setConfigValue,
+  unregisterProject,
   unsetConfigValue,
   type ProjectEntry,
   type PruneOrphanProjectConfigsOptions,

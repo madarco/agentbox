@@ -133,15 +133,17 @@ async function runDockerJob(
         : (cfg.effective.box.hostSnapshot ?? false);
 
   // Auth resolution mirrors the foreground claude path; codex/opencode don't
-  // need a host-env probe (they ride the in-box volume that login seeded).
-  const resolved = job.agent === 'claude-code' ? await resolveClaudeAuth(process.env) : null;
+  // need a host-env probe (they ride the in-box volume that login seeded). A
+  // no-agent box ("just create") needs no agent auth or config at all.
+  const resolved =
+    !job.noAgent && job.agent === 'claude-code' ? await resolveClaudeAuth(process.env) : null;
 
   // browser.default = 'playwright' | 'both' implies installing playwright
   // even if box.withPlaywright wasn't explicitly set.
   const withPlaywright =
     cfg.effective.box.withPlaywright || cfg.effective.browser.default !== 'agent-browser';
 
-  log.write(`creating box for agent=${job.agent}`);
+  log.write(`creating box for agent=${job.noAgent ? 'none' : job.agent}`);
   const result = await createBox({
     workspacePath: opts.workspace,
     name: opts.name && opts.name.length > 0 ? opts.name : undefined,
@@ -149,11 +151,15 @@ async function runDockerJob(
     checkpointRef,
     image: cfg.effective.box.image,
     claudeConfig:
-      job.agent === 'claude-code' ? { isolate: cfg.effective.box.isolateClaudeConfig } : undefined,
+      !job.noAgent && job.agent === 'claude-code'
+        ? { isolate: cfg.effective.box.isolateClaudeConfig }
+        : undefined,
     codexConfig:
-      job.agent === 'codex' ? { isolate: cfg.effective.box.isolateCodexConfig } : undefined,
+      !job.noAgent && job.agent === 'codex' ? { isolate: cfg.effective.box.isolateCodexConfig } : undefined,
     opencodeConfig:
-      job.agent === 'opencode' ? { isolate: cfg.effective.box.isolateOpencodeConfig } : undefined,
+      !job.noAgent && job.agent === 'opencode'
+        ? { isolate: cfg.effective.box.isolateOpencodeConfig }
+        : undefined,
     claudeEnv: resolved?.env,
     withPlaywright,
     withEnv: cfg.effective.box.withEnv,
@@ -180,8 +186,16 @@ async function runDockerJob(
   // registered. Written before the session starts so a crash mid-launch is
   // still attributable to a box.
   onBoxCreated(result.record.id);
-  await recordLastAgent(result.record.id, toSyncKind(job.agent)).catch(() => {});
+  if (!job.noAgent) await recordLastAgent(result.record.id, toSyncKind(job.agent)).catch(() => {});
   await writeJob({ ...job, boxId: result.record.id });
+
+  // "Just create the box" (like `agentbox create`): the box is up with its ctl
+  // supervisor running; skip the agent session entirely. The user attaches later
+  // (agentbox shell / claude attach). No prompt, no terminal open.
+  if (job.noAgent) {
+    log.write('no-agent box created; skipping agent session');
+    return;
+  }
 
   // On-create resync conflicts (checkpoint-restore path): prepend the warning to
   // the queued prompt so the background agent opens on it.
@@ -305,7 +319,7 @@ async function runCloudJob(
   const withPlaywright =
     cfg.effective.box.withPlaywright || cfg.effective.browser.default !== 'agent-browser';
 
-  log.write(`creating cloud box (${providerName}) for agent=${job.agent}`);
+  log.write(`creating cloud box (${providerName}) for agent=${job.noAgent ? 'none' : job.agent}`);
   const result = await provider.create({
     workspacePath: opts.workspace,
     name: opts.name && opts.name.length > 0 ? opts.name : undefined,
@@ -326,8 +340,14 @@ async function runCloudJob(
   // Record boxId before the session starts so a crash mid-launch is still
   // attributable to a box and the working-agent gate can join it to its box.
   onBoxCreated(result.record.id);
-  await recordLastAgent(result.record.id, toSyncKind(job.agent)).catch(() => {});
+  if (!job.noAgent) await recordLastAgent(result.record.id, toSyncKind(job.agent)).catch(() => {});
   await writeJob({ ...job, boxId: result.record.id });
+
+  // "Just create the box": skip the detached agent session (see runDockerJob).
+  if (job.noAgent) {
+    log.write('no-agent box created; skipping agent session');
+    return;
+  }
 
   const promptedArgs = buildPromptArgs(job.agent, job.prompt, job.agentArgs);
 

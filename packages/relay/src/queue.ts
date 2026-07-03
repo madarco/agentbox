@@ -73,6 +73,12 @@ export interface QueueJob {
   prompt: string;
   /** Extra argv tokens passed after `--`. */
   agentArgs: string[];
+  /**
+   * "Just create the box, don't start an agent" (like `agentbox create`). When
+   * true the worker builds the box and stops — no agent session, no prompt.
+   * `agent` still holds a value (required by the type) but is ignored.
+   */
+  noAgent?: boolean;
   /** Workspace + create-time options the worker reconstructs from. */
   createOpts: QueueJobCreateOpts;
   /** Per-job concurrency ceiling (--max-running override, else the global). */
@@ -193,6 +199,12 @@ export interface EnqueueQueueJobInput {
   prompt: string;
   agentArgs: string[];
   createOpts: QueueJobCreateOpts;
+  /**
+   * "Just create the box, don't start an agent" (like `agentbox create`). The
+   * worker runs createBox() then stops — no agent session. `agent` is still
+   * required by the type but is ignored by the worker when this is set.
+   */
+  noAgent?: boolean;
   /** Per-invocation override of queue.maxConcurrent. */
   maxRunningOverride?: number;
   /** Per-invocation override of queue.maxWorking. */
@@ -240,6 +252,7 @@ export async function enqueueQueueJob(
     providerName: input.providerName,
     prompt: input.prompt,
     agentArgs: input.agentArgs,
+    ...(input.noAgent ? { noAgent: true } : {}),
     createOpts: input.createOpts,
     maxConcurrent: ceiling,
     ...(maxWorking !== undefined ? { maxWorking } : {}),

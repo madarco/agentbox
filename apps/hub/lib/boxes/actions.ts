@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import type { ActionResult, CreateBoxInput, CreateBoxResult } from './backend-types';
+import type { ActionResult, BrowseDirResult, CreateBoxInput, CreateBoxResult } from './backend-types';
 
 // Thin server actions. The lifecycle work runs in the Node-only backend on
 // globalThis (set by the custom server); here we just dispatch and revalidate.
@@ -51,4 +51,22 @@ export async function addProjectAction(absPath: string): Promise<ActionResult> {
   const res = await backend.addProject(absPath);
   if (res.ok) revalidatePath('/', 'layout');
   return res;
+}
+
+// Unregister a project (by id) from the hub. The backend refuses if it still has
+// boxes; on success the project drops off the dashboard + sidebar.
+export async function removeProjectAction(projectId: string): Promise<ActionResult> {
+  const backend = globalThis.__AGENTBOX_HUB_BACKEND;
+  if (!backend) return { ok: false, error: 'hub backend unavailable (run the hub server)' };
+  const res = await backend.removeProject(projectId);
+  if (res.ok) revalidatePath('/', 'layout');
+  return res;
+}
+
+// Read-only: list a directory on the hub host for the folder picker. No
+// revalidate (nothing mutates).
+export async function browseDirAction(dir?: string): Promise<BrowseDirResult> {
+  const backend = globalThis.__AGENTBOX_HUB_BACKEND;
+  if (!backend) return { ok: false, error: 'hub backend unavailable (run the hub server)' };
+  return backend.browseDir(dir);
 }

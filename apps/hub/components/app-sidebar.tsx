@@ -69,7 +69,7 @@ export function AppSidebar() {
   return (
     <aside className="shad-side sticky top-0 z-50 flex h-screen flex-col self-start overflow-y-auto border-r border-border bg-background px-3.5 pb-4 pt-4 max-md:w-64">
       <div className="flex items-center gap-2.5 px-2 pb-4 font-mono text-sm font-semibold">
-        <span className="grid h-5 w-5 place-items-center rounded border-[1.5px] border-foreground text-xs">▣</span>
+        <img src="/logo.svg" alt="" width={20} height={20} className="h-5 w-5" />
         agentbox
         <span className="font-normal text-[#a4a9b0]">/ control</span>
       </div>

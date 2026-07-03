@@ -468,4 +468,18 @@ describe('loadQueue / writeJob round trip', () => {
       }
     }
   });
+
+  it('persists noAgent on the manifest so the worker can skip the agent session', async () => {
+    const { QUEUE_DIR } = await import('../src/queue.js');
+    const id = `queue-vitest-${String(process.pid)}-noagent`;
+    try {
+      await writeJob(job({ id, noAgent: true }));
+      const raw = JSON.parse(await readFile(join(QUEUE_DIR, `${id}.json`), 'utf8')) as QueueJob;
+      expect(raw.noAgent).toBe(true);
+      const loaded = (await loadQueue()).find((j) => j.id === id);
+      expect(loaded?.noAgent).toBe(true);
+    } finally {
+      await rm(join(QUEUE_DIR, `${id}.json`), { force: true });
+    }
+  });
 });

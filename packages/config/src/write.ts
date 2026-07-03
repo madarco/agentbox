@@ -331,6 +331,22 @@ export async function registerProject(absPath: string): Promise<void> {
   await touchProjectMeta(absPath);
 }
 
+/**
+ * Remove a project from the on-disk registry by its {@link hashProjectPath}
+ * hash — deletes `~/.agentbox/projects/<hash>-<mnemonic>/`, i.e. its `meta.json`
+ * and any project-scoped `config.yaml` the user set for that folder. Does NOT
+ * touch the workspace folder/files, its git repo, or checkpoints (a separate
+ * `~/.agentbox/checkpoints/` tree). Idempotent: returns `false` when the hash
+ * isn't registered (nothing to remove). Mirrors the delete
+ * {@link pruneOrphanProjectConfigs} does (rm by the on-disk `dirName`).
+ */
+export async function unregisterProject(hash: string): Promise<boolean> {
+  const entry = (await listProjectsConfigured()).find((e) => e.hash === hash);
+  if (!entry) return false;
+  await rm(join(PROJECTS_DIR, entry.dirName), { recursive: true, force: true });
+  return true;
+}
+
 async function touchProjectMeta(absPath: string): Promise<void> {
   const dir = dirname(projectMetaFile(absPath));
   await mkdir(dir, { recursive: true });

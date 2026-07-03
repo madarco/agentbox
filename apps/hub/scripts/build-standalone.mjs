@@ -86,6 +86,13 @@ await rm(outDir, { recursive: true, force: true });
 await cp(standaloneSrc, outDir, { recursive: true, verbatimSymlinks: true });
 // Static assets aren't part of the traced server output — copy them in.
 await cp(path.join(nextDir, 'static'), path.join(outApp, '.next', 'static'), { recursive: true });
+// public/ isn't traced into the standalone output either; Next serves it from the
+// app root at runtime, so copy it alongside .next (else /logo.svg, favicon, etc.
+// fall through to the vercel [...path] catch-all → 503).
+const publicSrc = path.join(hubDir, 'public');
+if (existsSync(publicSrc)) {
+  await cp(publicSrc, path.join(outApp, 'public'), { recursive: true });
+}
 // Overlay our bundled custom server (server.js + chunks) where Next's default sat.
 const serverOut = path.join(hubDir, '.standalone-server');
 for (const f of await readdir(serverOut)) {

@@ -54,13 +54,15 @@ with an HTTP status that matches the `code` (`400 invalid_request`,
 | `GET /health` | Liveness + API version (no auth). |
 | `GET /boxes` | List every box (normalized view). |
 | `GET /boxes/{id}` | One box. |
-| `POST /boxes` | Create a box — returns `202 { jobId }`. Body: `{ projectId, agent, name?, prompt? }`. |
+| `POST /boxes` | Create a box — returns `202 { jobId }`. Body: `{ projectId, agent, provider?, name?, prompt? }`. `agent: "none"` just creates the box without starting an agent (`prompt` ignored). `provider` defaults to `docker`; a cloud provider must be configured on the host (see `GET /providers`). |
 | `POST /boxes/{id}/pause` | Pause a running box. |
 | `POST /boxes/{id}/resume` | Resume a paused box. |
 | `POST /boxes/{id}/stop` | Stop a box. |
 | `POST /boxes/{id}/destroy` | Destroy a box (container + volumes). |
 | `GET /projects` | Registered projects (create targets). |
 | `POST /projects` | Register a folder as a project. Body: `{ path }` (absolute). |
+| `DELETE /projects/{id}` | Unregister an **empty** project (0 boxes). Folder/files on disk are untouched; `409` if it still has boxes. |
+| `GET /providers` | Sandbox providers + whether each is configured (baked) on this host: `{ id, label, configured, reason? }`. |
 | `GET /approvals` | Pending host-action approvals. |
 | `POST /approvals/{id}/answer` | Answer an approval. Body: `{ answer: "y" \| "n" }`. |
 | `GET /jobs/{id}` | Create-job status (`queued`/`running`/`done`/`failed`). |

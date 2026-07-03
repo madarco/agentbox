@@ -31,9 +31,19 @@ That starts the hub (if it isn't already running) and opens it in your browser a
 - **Live updates** — box states and approvals stream in over SSE; no manual
   refresh. A pending approval appears the moment a box requests it.
 
-- **Create boxes** — register a project folder and start a box (with an agent and
-  an optional task) straight from the dashboard; the live build log streams into a
-  panel and the box appears as `creating` → `running`.
+- **Create boxes** — register a project folder and start a box (with a provider, an
+  agent, and an optional task) straight from the dashboard; the live build log
+  streams into a panel and the box appears as `creating` → `running`. Pick agent
+  **Empty — just create the box** to build a box without starting an agent (like
+  `agentbox create`); attach later with `agentbox shell`. The **Provider** picker
+  offers docker plus any cloud provider set up on this host — providers you haven't
+  configured (`agentbox <provider> login` + `agentbox prepare --provider <provider>`)
+  show up disabled.
+
+- **Manage projects** — register a folder as a project (a folder picker browses
+  your machine), and remove an **empty** project (0 boxes) with the **Delete**
+  button on its dashboard/detail header. Deleting only unregisters the folder from
+  the hub — its files, git repo, and checkpoints are untouched.
 
 <Callout type="info" title="Driving it programmatically">Everything the UI does is also available over HTTP — see the [Hub REST API](/docs/hub-api) for launching and managing boxes from an IDE, a script, or a remote hub.</Callout>
 

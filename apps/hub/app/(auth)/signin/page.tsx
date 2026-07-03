@@ -76,7 +76,10 @@ export default function SignInPage() {
     <div className="flex min-h-screen items-center justify-center bg-background p-6">
       <Card className="w-full max-w-[380px]">
         <CardHeader>
-          <CardTitle>AgentBox hub</CardTitle>
+          <CardTitle className="flex items-center gap-2.5 font-mono">
+            <img src="/logo.svg" alt="" width={22} height={22} className="h-[22px] w-[22px]" />
+            AgentBox hub
+          </CardTitle>
           <CardDescription>Sign in to continue</CardDescription>
         </CardHeader>
         <CardContent>

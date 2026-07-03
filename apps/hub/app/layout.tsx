@@ -19,6 +19,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 export const metadata = {
   title: 'AgentBox hub',
   description: 'Boxes, approvals, and events across machines',
+  icons: { icon: [{ url: '/logo.svg', type: 'image/svg+xml' }] },
 };
 
 export const dynamic = 'force-dynamic';

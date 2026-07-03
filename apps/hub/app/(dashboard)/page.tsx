@@ -6,6 +6,7 @@ import { useStore } from '@/lib/boxes/store';
 import { AddProjectButton } from './boxes/components/add-project-modal';
 import { BoxTable } from './boxes/components/box-table';
 import { CreateBoxButton } from './boxes/components/create-box-modal';
+import { DeleteProjectButton } from './boxes/components/delete-project-button';
 import { EmptyBox } from './boxes/components/empty-box';
 import { SectionLabel } from './boxes/components/section-label';
 
@@ -57,6 +58,7 @@ export default function DashboardPage() {
               {boxes.length} box{boxes.length === 1 ? '' : 'es'}
             </span>
             <CreateBoxButton project={p} variant="outline" size="sm" className="font-mono text-xs" />
+            {boxes.length === 0 ? <DeleteProjectButton project={p} size="sm" className="font-mono text-xs" /> : null}
           </div>
           {boxes.length ? (
             <BoxTable boxes={boxes} />

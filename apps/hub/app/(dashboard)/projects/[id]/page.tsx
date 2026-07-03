@@ -7,6 +7,7 @@ import { useStore } from '@/lib/boxes/store';
 import { BackLink } from '../../boxes/components/back-link';
 import { BoxTable } from '../../boxes/components/box-table';
 import { CreateBoxButton } from '../../boxes/components/create-box-modal';
+import { DeleteProjectButton } from '../../boxes/components/delete-project-button';
 import { EmptyBox } from '../../boxes/components/empty-box';
 import { SectionLabel } from '../../boxes/components/section-label';
 import { Stat, StatGrid } from '../../boxes/components/stat-grid';
@@ -46,6 +47,7 @@ export default function ProjectDetailPage() {
         </div>
         <div className="ml-auto flex flex-none gap-2 max-md:ml-0">
           <CreateBoxButton project={proj} />
+          {boxes.length === 0 ? <DeleteProjectButton project={proj} redirectHome /> : null}
         </div>
       </div>
 

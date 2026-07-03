@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState, useTransition, type ReactNode } from 'react';
 import { Icons } from '@/components/icons';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -18,10 +19,15 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { createBoxAction } from '@/lib/boxes/actions';
 import type { CreateBoxInput } from '@/lib/boxes/backend-types';
-import type { Project } from '@/lib/boxes/types';
+import { useStore } from '@/lib/boxes/store';
+import type { Project, ProviderOption } from '@/lib/boxes/types';
 import { JobLogStream } from './job-log-stream';
 
 type Agent = CreateBoxInput['agent'];
+
+// Docker is always available; used when the server sent no provider list (the
+// hosted/Postgres path, where host readiness isn't known).
+const DOCKER_ONLY: ProviderOption[] = [{ id: 'docker', label: 'Docker (local)', configured: true }];
 
 // Button + modal to create a box. Pass `project` to lock it (project page /
 // per-project row); pass `projects` for a picker (no fixed project).
@@ -66,13 +72,17 @@ function CreateBoxModal({
   onClose: () => void;
 }) {
   const router = useRouter();
+  const { state } = useStore();
+  const providers = state.providers.length ? state.providers : DOCKER_ONLY;
   const [pending, startTransition] = useTransition();
   const [projectId, setProjectId] = useState(project?.id ?? projects[0]?.id ?? '');
   const [agent, setAgent] = useState<Agent>('claude');
+  const [provider, setProvider] = useState<CreateBoxInput['provider']>('docker');
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<string>('streaming');
 
   const selected = projects.find((p) => p.id === projectId) ?? project;
 
@@ -86,8 +96,9 @@ function CreateBoxModal({
       const res = await createBoxAction({
         projectId,
         agent,
+        provider,
         name: name.trim() || undefined,
-        prompt: prompt.trim() || undefined,
+        prompt: agent === 'none' ? undefined : prompt.trim() || undefined,
       });
       if (!res.ok) {
         setError(res.error);
@@ -99,19 +110,26 @@ function CreateBoxModal({
   };
 
   return (
-    <Dialog onClose={onClose} className="max-w-[560px]">
+    // Widen the dialog while the build log streams so long lines are readable.
+    <Dialog onClose={onClose} className={jobId ? 'max-w-[900px]' : 'max-w-[560px]'}>
       <DialogHeader>
         <DialogIcon>
           <Icons.box />
         </DialogIcon>
         <div>
-          <DialogTitle>{jobId ? 'Creating box…' : 'Create box'}</DialogTitle>
+          <DialogTitle>Create box</DialogTitle>
           <DialogDescription>{selected ? selected.name : 'Start a box in a project'}</DialogDescription>
         </div>
+        {/* Live job state next to the close button: pulsating while working, a pill when settled. */}
+        {jobId ? (
+          <div className="ml-auto mr-8 flex-none pt-0.5">
+            <JobStatusBadge status={jobStatus} />
+          </div>
+        ) : null}
       </DialogHeader>
       <DialogBody className="flex flex-col gap-4">
         {jobId ? (
-          <JobLogStream jobId={jobId} onDone={() => router.refresh()} />
+          <JobLogStream jobId={jobId} onStatus={setJobStatus} onDone={() => router.refresh()} />
         ) : (
           <>
             {!project ? (
@@ -126,31 +144,56 @@ function CreateBoxModal({
                 </Select>
               </Field>
             ) : null}
+            <Field label="Provider">
+              <Select value={provider} onChange={(e) => setProvider(e.target.value as CreateBoxInput['provider'])}>
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id} disabled={!p.configured} title={p.reason}>
+                    {p.label}
+                    {p.configured ? '' : ' — not configured'}
+                  </option>
+                ))}
+              </Select>
+            </Field>
             <Field label="Agent">
               <Select value={agent} onChange={(e) => setAgent(e.target.value as Agent)}>
                 <option value="claude">Claude</option>
                 <option value="codex">Codex</option>
                 <option value="opencode">OpenCode</option>
+                <option value="none">Empty — just create the box</option>
               </Select>
             </Field>
             <Field label="Name (optional)">
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="auto" />
             </Field>
-            <Field label="Initial prompt (optional)">
-              <Textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                rows={3}
-                placeholder="Leave empty to just start the agent — attach later from a terminal or SSH."
-              />
-            </Field>
+            {agent === 'none' ? (
+              <p className="font-mono text-xs text-muted-foreground">
+                The box is created and left running with no agent — attach later from a terminal or SSH
+                (<span className="text-secondary-foreground">agentbox shell</span>).
+              </p>
+            ) : (
+              <Field label="Initial prompt (optional)">
+                <Textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  rows={3}
+                  placeholder="Leave empty to just start the agent — attach later from a terminal or SSH."
+                />
+              </Field>
+            )}
             {error ? <div className="font-mono text-xs text-destructive">{error}</div> : null}
           </>
         )}
       </DialogBody>
       <DialogFooter>
         {jobId ? (
-          <Button onClick={onClose}>Close</Button>
+          <>
+            {jobStatus === 'streaming' ? (
+              <span className="mr-auto self-center font-mono text-xs text-muted-foreground">
+                The box + agent start in the background — you can close this.
+              </span>
+            ) : null}
+            <Button onClick={onClose}>Close</Button>
+          </>
         ) : (
           <>
             <Button variant="outline" onClick={onClose} disabled={pending}>
@@ -163,6 +206,33 @@ function CreateBoxModal({
         )}
       </DialogFooter>
     </Dialog>
+  );
+}
+
+// The build-job state, shown as a status pill in the modal header. `badge-create`
+// pulses (working); `badge-run` is the settled green (done); `badge-err` is red.
+function JobStatusBadge({ status }: { status: string }) {
+  if (status === 'done') {
+    return (
+      <Badge className="badge-run">
+        <span className="badge-dot" />
+        Done
+      </Badge>
+    );
+  }
+  if (status === 'failed' || status === 'error') {
+    return (
+      <Badge className="badge-err">
+        <span className="badge-dot" />
+        Failed
+      </Badge>
+    );
+  }
+  return (
+    <Badge className="badge-create">
+      <span className="badge-dot" />
+      Working…
+    </Badge>
   );
 }
 

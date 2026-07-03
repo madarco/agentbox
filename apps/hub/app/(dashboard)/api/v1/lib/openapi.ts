@@ -52,7 +52,7 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
         post: {
-          summary: 'Create a box (async — returns a job id)',
+          summary: 'Create a box (async — returns a job id). agent "none" just creates the box without starting an agent (prompt ignored). provider defaults to docker; a cloud provider must be configured on the host (see GET /providers).',
           requestBody: {
             required: true,
             content: { 'application/json': { schema: { $ref: '#/components/schemas/CreateBox' } } },
@@ -113,6 +113,28 @@ export function buildOpenApi(): Record<string, unknown> {
             '400': errorResponse,
             '401': errorResponse,
             '503': errorResponse,
+          },
+        },
+      },
+      '/projects/{id}': {
+        delete: {
+          summary: 'Unregister an empty project (folder/files on disk are untouched)',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': { description: 'Removed', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse, // project still has boxes
+            '503': errorResponse,
+          },
+        },
+      },
+      '/providers': {
+        get: {
+          summary: 'List sandbox providers and whether each is configured (baked) on this host',
+          responses: {
+            '200': { description: 'Providers', content: { 'application/json': { schema: { type: 'object', properties: { providers: { type: 'array', items: { $ref: '#/components/schemas/Provider' } } }, required: ['providers'] } } } },
+            '401': errorResponse,
           },
         },
       },
@@ -244,11 +266,22 @@ export function buildOpenApi(): Record<string, unknown> {
           type: 'object',
           properties: {
             projectId: { type: 'string' },
-            agent: { type: 'string', enum: ['claude', 'codex', 'opencode'] },
+            agent: { type: 'string', enum: ['claude', 'codex', 'opencode', 'none'] },
+            provider: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b'], default: 'docker' },
             name: { type: 'string' },
             prompt: { type: 'string' },
           },
           required: ['projectId', 'agent'],
+        },
+        Provider: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b'] },
+            label: { type: 'string' },
+            configured: { type: 'boolean' },
+            reason: { type: 'string' },
+          },
+          required: ['id', 'label', 'configured'],
         },
       },
     },
