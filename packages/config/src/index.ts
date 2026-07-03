@@ -76,8 +76,10 @@ export {
   bumpProjectGcCounter,
   listProjectsConfigured,
   pruneOrphanProjectConfigs,
+  registerProject,
   setConfigValue,
   unsetConfigValue,
+  type ProjectEntry,
   type PruneOrphanProjectConfigsOptions,
   type PruneOrphanProjectConfigsResult,
 } from './write.js';

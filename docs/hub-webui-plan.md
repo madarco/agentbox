@@ -480,6 +480,26 @@ Live SSE push + a net-new **Approvals** view over the relay prompt mailbox.
 - **Deferred:** shrinking the ~194M standalone (swc platform prune); the
   `AGENTBOX_HUB=1` env alias (only the `agentbox hub` command ships).
 
+### Phase 6 — Create boxes from the hub (first slice of web/API box management) — IN PROGRESS
+The hub can now **create** boxes (not just view/lifecycle). First vertical slice of
+the broader "drive box management from web/API/macOS without duplicating the CLI"
+effort — see `docs/web-create-boxes-backlog.md` and the approved architecture plan.
+- **Project registry:** `@agentbox/config` gains `registerProject()` + exported
+  `ProjectEntry`; the CLI create path registers `projectRoot`, and the hub
+  self-heals (registers any box root it sees) so **zero-box folders are selectable**.
+  Project id unified on `hashProjectPath` (dropped the hub's base64url id).
+- **Create path:** `HubBackend.create(input)` resolves the project **by id**
+  server-side (never a client path) → `enqueueQueueJob` (pure core extracted into
+  `@agentbox/relay`) + `handle.pokeQueue()`. The detached queue worker runs
+  `createBox()` — **full sync layer intact** — then starts the agent in a detached
+  tmux session; **it never attaches**. `addProject(path)` registers a folder.
+- **UI + streaming:** in-flight jobs surface as `creating` boxes (flip to `running`
+  when the real box lands); `/api/jobs/[id]/logs` SSE tails the per-job log into a
+  panel; create-box + add-project modals; `onStatusChange → hubNotifier` refresh.
+- **Deferred:** no-agent plain box (queue is agent-only), cloud providers, carry-
+  secrets/env/checkpoint surfaces, and the full `--protocol json` interaction bus
+  (prompts/links) + hosted-plane parity — tracked in the backlog.
+
 ---
 
 ## Docs to update (in the phase that changes the behavior)

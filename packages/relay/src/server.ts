@@ -156,6 +156,13 @@ export interface RelayServerHandle {
    * No-op until set; the queue still picks the job up via the periodic tick.
    */
   setQueuePoke: (fn: () => void) => void;
+  /**
+   * Kick the queue scheduler in-process (same effect as `POST
+   * /admin/queue/enqueue`, without a loopback round-trip). Used by the embedded
+   * hub after it enqueues a create job via `enqueueQueueJob`. No-op until
+   * `setQueuePoke` has wired the scheduler.
+   */
+  pokeQueue: () => void;
   close: () => Promise<void>;
 }
 
@@ -1327,6 +1334,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     url: `http://${host}:${String(opts.port)}`,
     setQueuePoke: (fn) => {
       queuePoke = fn;
+    },
+    pokeQueue: () => {
+      queuePoke?.();
     },
     close: async () => {
       if (pollers) await pollers.stopAll();

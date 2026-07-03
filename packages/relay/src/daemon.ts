@@ -38,6 +38,10 @@ export async function startRelayDaemon(opts: RelayServerOptions): Promise<RelayD
     log,
     registry: handle.registry,
     statusStore: handle.statusStore,
+    // Refresh the embedded hub UI whenever a background job flips state
+    // (queued → running → done/failed), so a create job's box shows up and
+    // then transitions creating → running without waiting for the 15s SSE ping.
+    onStatusChange: () => handle.hubNotifier.notify(),
   });
   // `poke` isn't on the declared QueueLoopHandle (only `stop` is); same cast bin.ts used.
   handle.setQueuePoke(() => {

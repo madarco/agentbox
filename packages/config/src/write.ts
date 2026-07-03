@@ -89,7 +89,7 @@ export async function unsetConfigValue(
   return { path, existed: true };
 }
 
-interface ProjectEntry {
+export interface ProjectEntry {
   /** SHA-1 (first 16 hex chars) of `originalPath` — the canonical key. */
   hash: string;
   /**
@@ -316,6 +316,19 @@ async function atomicWriteYaml(path: string, doc: Partial<UserConfig>): Promise<
   const tmp = `${path}.tmp-${process.pid.toString()}-${Date.now().toString(36)}`;
   await writeFile(tmp, text, { encoding: 'utf8', mode: 0o644 });
   await rename(tmp, path);
+}
+
+/**
+ * Register a project (a folder on the PC) in the on-disk registry so it is
+ * enumerable via {@link listProjectsConfigured} even before it has any config
+ * value or any box. Idempotent: creates `~/.agentbox/projects/<hash>/meta.json`
+ * on first call and refreshes `lastSeenAt` (preserving `createdAt`) after.
+ *
+ * `absPath` should be a canonical project root (e.g. `findProjectRoot(cwd).root`).
+ * Callers that start from an arbitrary user path should canonicalize first.
+ */
+export async function registerProject(absPath: string): Promise<void> {
+  await touchProjectMeta(absPath);
 }
 
 async function touchProjectMeta(absPath: string): Promise<void> {

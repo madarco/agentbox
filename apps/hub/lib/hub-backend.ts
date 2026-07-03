@@ -1,12 +1,33 @@
+import { stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { isProviderKind, type ProviderKind } from '@agentbox/config';
+import {
+  findProjectRoot,
+  hashProjectPath,
+  isProviderKind,
+  listProjectsConfigured,
+  registerProject,
+  type ProviderKind,
+} from '@agentbox/config';
 import { normalizeLastAgent, type BoxRecord, type Provider } from '@agentbox/core';
-import type { PendingApproval, RelayServerHandle } from '@agentbox/relay';
+import {
+  enqueueQueueJob,
+  loadQueue,
+  readJob,
+  type PendingApproval,
+  type QueueAgentKind,
+  type QueueJob,
+  type RelayServerHandle,
+} from '@agentbox/relay';
 import type { ProviderModule } from '@agentbox/sandbox-core';
 import { readState } from '@agentbox/sandbox-core';
 import { listBoxes, type ListedBox } from '@agentbox/sandbox-docker';
-import type { ActionResult, HubBackend } from './boxes/backend-types';
+import type {
+  ActionResult,
+  CreateBoxInput,
+  CreateBoxResult,
+  HubBackend,
+} from './boxes/backend-types';
 import type { Approval, Box, BoxStatus, GithubState, HubState, Project, User } from './boxes/types';
 
 /*
@@ -36,8 +57,11 @@ async function providerForBox(box: BoxRecord): Promise<Provider> {
 }
 
 // ── ListedBox → UI view model ──
-function projectIdFor(root: string): string {
-  return Buffer.from(root).toString('base64url');
+// Project id = the config registry's canonical key (SHA-1/16 of the path), so
+// registry-derived and box-derived projects share one id and `create` can
+// resolve a projectId back to its registered path.
+function projectRootOf(b: ListedBox): string {
+  return b.projectRoot ?? b.workspacePath ?? b.id;
 }
 
 function mapStatus(b: ListedBox): BoxStatus {
@@ -59,12 +83,12 @@ function hostLabel(b: ListedBox): string {
 }
 
 function mapBox(b: ListedBox): Box {
-  const root = b.projectRoot ?? b.workspacePath ?? b.id;
+  const root = projectRootOf(b);
   const createdAt = Date.parse(b.createdAt) || Date.now();
   const status = mapStatus(b);
   return {
     id: b.id,
-    projectId: projectIdFor(root),
+    projectId: hashProjectPath(root),
     repo: path.basename(root),
     branch: b.gitWorktrees?.[0]?.branch ?? b.cloud?.workspaceBranch ?? '',
     task: b.claudeSessionTitle ?? b.codexSessionTitle ?? b.opencodeSessionTitle ?? b.name,
@@ -80,25 +104,108 @@ function mapBox(b: ListedBox): Box {
   };
 }
 
-function deriveProjects(boxes: ListedBox[]): Project[] {
-  const byRoot = new Map<string, { root: string; provider: string; createdAt: number }>();
+/**
+ * The project list unions the on-disk registry (`~/.agentbox/projects`, which
+ * includes folders that have *zero* boxes) with the roots of live boxes. It also
+ * self-heals: any box root not yet registered is registered here, so projects
+ * created before the registry existed (or via a create path that skips
+ * registration) still appear and become resolvable by `create`.
+ */
+async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
+  // Per-root metadata from live boxes: provider + earliest createdAt.
+  const boxByRoot = new Map<string, { root: string; provider: string; createdAt: number }>();
   for (const b of boxes) {
-    const root = b.projectRoot ?? b.workspacePath ?? b.id;
+    const root = projectRootOf(b);
     const createdAt = Date.parse(b.createdAt) || Date.now();
-    const existing = byRoot.get(root);
-    if (!existing) byRoot.set(root, { root, provider: b.provider ?? 'docker', createdAt });
+    const existing = boxByRoot.get(root);
+    if (!existing) boxByRoot.set(root, { root, provider: b.provider ?? 'docker', createdAt });
     else if (createdAt < existing.createdAt) existing.createdAt = createdAt;
   }
-  return [...byRoot.values()]
-    .map((p) => ({
-      id: projectIdFor(p.root),
-      name: path.basename(p.root),
-      repo: path.basename(p.root),
+  // Self-heal: register any box root missing from the registry (best-effort).
+  await Promise.all([...boxByRoot.keys()].map((r) => registerProject(r).catch(() => {})));
+
+  const byId = new Map<string, Project>();
+  // Registry entries (incl. zero-box projects).
+  for (const e of await listProjectsConfigured()) {
+    const box = boxByRoot.get(e.originalPath);
+    byId.set(e.hash, {
+      id: e.hash,
+      name: path.basename(e.originalPath),
+      repo: path.basename(e.originalPath),
       defaultBranch: 'main',
-      provider: p.provider,
-      createdAt: p.createdAt,
-    }))
-    .sort((a, b) => b.createdAt - a.createdAt);
+      provider: box?.provider ?? 'docker',
+      createdAt: box?.createdAt ?? (e.createdAt ? Date.parse(e.createdAt) || Date.now() : Date.now()),
+    });
+  }
+  // Belt-and-suspenders: any box root that failed to register still shows up.
+  for (const p of boxByRoot.values()) {
+    const id = hashProjectPath(p.root);
+    if (!byId.has(id)) {
+      byId.set(id, {
+        id,
+        name: path.basename(p.root),
+        repo: path.basename(p.root),
+        defaultBranch: 'main',
+        provider: p.provider,
+        createdAt: p.createdAt,
+      });
+    }
+  }
+  return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/**
+ * Resolve a client-supplied projectId to its absolute host path. Mirrors what
+ * `listProjects` shows: the on-disk registry first, then live box roots (a
+ * project can surface from a box root even if its registry registration failed).
+ * Registering the healed root keeps it resolvable next time. Returns null only
+ * when no project the UI could display matches — so `create` never rejects a
+ * project the user can actually see on the dashboard.
+ */
+async function resolveProjectPath(projectId: string): Promise<string | null> {
+  const entry = (await listProjectsConfigured()).find((e) => e.hash === projectId);
+  if (entry) return entry.originalPath;
+  for (const b of await listBoxes()) {
+    const root = projectRootOf(b);
+    if (hashProjectPath(root) === projectId) {
+      await registerProject(root).catch(() => {});
+      return root;
+    }
+  }
+  return null;
+}
+
+// Map QueueAgentKind ('claude-code') to the UI agent label ('claude').
+const AGENT_LABEL: Record<QueueAgentKind, string> = {
+  'claude-code': 'claude',
+  codex: 'codex',
+  opencode: 'opencode',
+};
+
+/**
+ * Render an in-flight (or just-failed) create job as a synthetic Box, so a box
+ * being built appears in the dashboard as `creating` and flips to `running` once
+ * the real box lands in `listBoxes()`. `id` is prefixed `job:` until the worker
+ * writes back the real `boxId`, so it never collides with a live box.
+ */
+function mapJobToBox(job: QueueJob, status: BoxStatus): Box {
+  const root = job.createOpts.workspace;
+  const createdAt = Date.parse(job.createdAt) || Date.now();
+  return {
+    id: job.boxId ?? `job:${job.id}`,
+    projectId: hashProjectPath(root),
+    repo: path.basename(root),
+    branch: '',
+    task: job.prompt || job.boxName || 'new box',
+    agent: AGENT_LABEL[job.agent] ?? 'claude',
+    status,
+    createdAt,
+    lastActivity: createdAt,
+    host: `local · ${job.providerName}`,
+    commits: null,
+    filesTouched: null,
+    error: status === 'error' ? (job.reason ?? 'create failed') : null,
+  };
 }
 
 function currentUser(): User {
@@ -152,12 +259,22 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     // authMode is layered on by source.ts (an env-derived concern), so the host
     // backend produces everything else.
     async getData(): Promise<Omit<HubState, 'authMode'>> {
-      const listed = await listBoxes();
+      const [listed, jobs] = await Promise.all([listBoxes(), loadQueue()]);
+      // Surface in-flight create jobs as synthetic `creating` boxes (and just-
+      // failed ones as `error`) until the real box lands in listBoxes() and
+      // takes over — matched by the boxId the worker writes back to the manifest.
+      const liveIds = new Set(listed.map((b) => b.id));
+      const jobBoxes: Box[] = [];
+      for (const j of jobs) {
+        if (j.boxId && liveIds.has(j.boxId)) continue;
+        if (j.status === 'queued' || j.status === 'running') jobBoxes.push(mapJobToBox(j, 'creating'));
+        else if (j.status === 'failed') jobBoxes.push(mapJobToBox(j, 'error'));
+      }
       return {
         user: currentUser(),
         github: LOCAL_GITHUB,
-        projects: deriveProjects(listed),
-        boxes: listed.map(mapBox),
+        projects: await listProjects(listed),
+        boxes: [...jobBoxes, ...listed.map(mapBox)],
         // Block-mode approvals live in-process on the relay handle, not the Store.
         approvals: handle.prompts.all().map(mapApproval),
       };
@@ -177,6 +294,54 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       }
       handle.subscribers.broadcast(boxId, 'prompt-resolved', { id });
       return Promise.resolve({ ok: true });
+    },
+    async create(input: CreateBoxInput): Promise<CreateBoxResult> {
+      try {
+        // Resolve the project by id server-side — never trust a client path.
+        // Accepts any project the dashboard shows (registry or live box root).
+        const workspace = await resolveProjectPath(input.projectId);
+        if (!workspace) return { ok: false, error: `unknown project ${input.projectId}` };
+        const agent: QueueAgentKind = input.agent === 'claude' ? 'claude-code' : input.agent;
+        const name = input.name?.trim() || undefined;
+        // Enqueue a detached create job (the same pipeline as `agentbox <agent>
+        // -i`): the worker runs createBox() — including the full sync layer —
+        // then starts the agent in a detached tmux session. It never attaches.
+        // The worker names the box from `createOpts.name` (like the CLI's
+        // pickCreateOpts), so the typed name must go there, not only on boxName.
+        const { job } = await enqueueQueueJob({
+          agent,
+          boxName: name ?? '',
+          providerName: 'docker',
+          prompt: input.prompt ?? '',
+          agentArgs: [],
+          createOpts: { workspace, name },
+        });
+        handle.pokeQueue();
+        return { ok: true, jobId: job.id };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    async addProject(absPath: string): Promise<ActionResult> {
+      try {
+        if (!absPath || !path.isAbsolute(absPath)) {
+          return { ok: false, error: 'an absolute path is required' };
+        }
+        const st = await stat(absPath).catch(() => null);
+        if (!st || !st.isDirectory()) return { ok: false, error: `not a directory: ${absPath}` };
+        // Canonicalize to a project root (walks up to an agentbox.yaml if any),
+        // matching how create resolves the workspace.
+        const root = (await findProjectRoot(absPath)).root;
+        await registerProject(root);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    async getJob(id): Promise<{ status: string; logPath: string; boxId?: string } | null> {
+      const job = await readJob(id);
+      if (!job) return null;
+      return { status: job.status, logPath: job.logPath, boxId: job.boxId };
     },
   };
 }

@@ -2,13 +2,12 @@
 
 import Link from 'next/link';
 import { Icons } from '@/components/icons';
-import { Button } from '@/components/ui/button';
 import { useStore } from '@/lib/boxes/store';
+import { AddProjectButton } from './boxes/components/add-project-modal';
 import { BoxTable } from './boxes/components/box-table';
+import { CreateBoxButton } from './boxes/components/create-box-modal';
 import { EmptyBox } from './boxes/components/empty-box';
 import { SectionLabel } from './boxes/components/section-label';
-
-const CREATE_SOON = 'Creating boxes from the hub is coming soon — use `agentbox create` for now.';
 
 export default function DashboardPage() {
   const { state, boxesFor } = useStore();
@@ -27,18 +26,17 @@ export default function DashboardPage() {
           </div>
         </div>
         <div className="ml-auto flex flex-none gap-2">
-          <Button disabled title={CREATE_SOON}>
-            <Icons.plus />
-            New project
-          </Button>
+          <AddProjectButton />
         </div>
       </div>
 
       <SectionLabel>Projects</SectionLabel>
       {grouped.length === 0 ? (
         <EmptyBox>
-          <div>No boxes on this machine yet.</div>
-          <div className="mt-1.5 font-mono text-xs text-muted-foreground">Create one with `agentbox create`.</div>
+          <div>No projects on this machine yet.</div>
+          <div className="mt-1.5 font-mono text-xs text-muted-foreground">
+            Add one with “New project”, or run `agentbox create` in a folder.
+          </div>
         </EmptyBox>
       ) : null}
       {grouped.map(({ p, boxes }) => (
@@ -58,16 +56,7 @@ export default function DashboardPage() {
             <span className="font-mono text-[11.5px] text-[#a4a9b0]">
               {boxes.length} box{boxes.length === 1 ? '' : 'es'}
             </span>
-            <Button
-              variant="outline"
-              size="sm"
-              className="font-mono text-xs"
-              disabled
-              title={CREATE_SOON}
-            >
-              <Icons.plus />
-              Create box
-            </Button>
+            <CreateBoxButton project={p} variant="outline" size="sm" className="font-mono text-xs" />
           </div>
           {boxes.length ? (
             <BoxTable boxes={boxes} />

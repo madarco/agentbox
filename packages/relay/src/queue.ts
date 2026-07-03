@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import {
   mkdir,
   readdir,
@@ -183,6 +184,79 @@ export async function writeJob(job: QueueJob): Promise<void> {
   const tmp = `${final}.tmp.${String(process.pid)}.${String(Date.now())}`;
   await writeFile(tmp, JSON.stringify(job, null, 2) + '\n', 'utf8');
   await rename(tmp, final);
+}
+
+export interface EnqueueQueueJobInput {
+  agent: QueueAgentKind;
+  boxName: string;
+  providerName: string;
+  prompt: string;
+  agentArgs: string[];
+  createOpts: QueueJobCreateOpts;
+  /** Per-invocation override of queue.maxConcurrent. */
+  maxRunningOverride?: number;
+  /** Per-invocation override of queue.maxWorking. */
+  maxWorkingOverride?: number;
+  /** Host-terminal targeting captured at submit time (CLI `queue.openIn`). */
+  openTerminal?: QueueJobOpenTerminal;
+}
+
+export interface EnqueueQueueJobResult {
+  job: QueueJob;
+  /** Cross-provider running count at the time of enqueue (informational). */
+  runningCount: number;
+  /** Effective ceiling used for the job (override or global). */
+  maxConcurrent: number;
+}
+
+/**
+ * Build a queued-job manifest and write it to `~/.agentbox/queue/<id>.json`.
+ * Pure + transport-free: it does NOT ensure a relay is running and does NOT
+ * poke the scheduler — callers do that (the CLI via `POST /admin/queue/enqueue`
+ * after `ensureRelay`; the embedded hub via its in-process queue poke). Kept in
+ * `@agentbox/relay` so both the CLI `submitQueueJob` wrapper and the hub backend
+ * share one manifest-builder without the hub importing `apps/cli`. The scheduler
+ * (`startQueueLoop`) picks the manifest up on its next tick regardless.
+ */
+export async function enqueueQueueJob(
+  input: EnqueueQueueJobInput,
+): Promise<EnqueueQueueJobResult> {
+  const cfg = await loadQueueConfig();
+  const ceiling =
+    typeof input.maxRunningOverride === 'number' && input.maxRunningOverride > 0
+      ? input.maxRunningOverride
+      : cfg.maxConcurrent;
+  const maxWorking =
+    typeof input.maxWorkingOverride === 'number' && input.maxWorkingOverride > 0
+      ? input.maxWorkingOverride
+      : undefined;
+
+  const id = randomBytes(9).toString('hex');
+  const job: QueueJob = {
+    id,
+    agent: input.agent,
+    status: 'queued',
+    boxName: input.boxName,
+    providerName: input.providerName,
+    prompt: input.prompt,
+    agentArgs: input.agentArgs,
+    createOpts: input.createOpts,
+    maxConcurrent: ceiling,
+    ...(maxWorking !== undefined ? { maxWorking } : {}),
+    ...(input.openTerminal !== undefined ? { openTerminal: input.openTerminal } : {}),
+    createdAt: new Date().toISOString(),
+    logPath: queueLogPath(id),
+  };
+  await writeJob(job);
+
+  let runningCount = 0;
+  try {
+    runningCount = await defaultCountRunningBoxes();
+  } catch {
+    runningCount = 0;
+  }
+
+  return { job, runningCount, maxConcurrent: ceiling };
 }
 
 /** Read a single job manifest by id. Returns null when missing. */

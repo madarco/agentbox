@@ -4,6 +4,7 @@ import {
   findProjectRoot,
   loadEffectiveConfig,
   pruneOrphanProjectConfigs,
+  registerProject,
   resolveBoxImage,
   resolveBoxSize,
   resolveDefaultCheckpoint,
@@ -229,6 +230,15 @@ export const createCommand = new Command('create')
       cliOverrides: buildCliOverrides(opts),
     });
     const projectRoot = (await findProjectRoot(opts.workspace)).root;
+    // Register the project in the on-disk registry so the hub / web UI can list
+    // it (even before it has any box). Best-effort: never block or fail create.
+    // Other create entry points (agent commands, queue worker) are covered by
+    // the hub's self-heal backfill, which registers any box's projectRoot it sees.
+    try {
+      await registerProject(projectRoot);
+    } catch {
+      /* best-effort project registration */
+    }
     const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
     const checkpointRef = resolveCheckpointRef(
       opts,

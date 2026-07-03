@@ -1,10 +1,6 @@
-import { randomBytes } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import {
-  defaultCountRunningBoxes,
-  loadQueueConfig,
-  queueLogPath,
-  writeJob,
+  enqueueQueueJob,
   type QueueAgentKind,
   type QueueJob,
   type QueueJobCreateOpts,
@@ -51,46 +47,15 @@ export interface SubmitQueueJobResult {
 export async function submitQueueJob(
   input: SubmitQueueJobInput,
 ): Promise<SubmitQueueJobResult> {
-  const cfg = await loadQueueConfig();
-  const ceiling =
-    typeof input.maxRunningOverride === 'number' && input.maxRunningOverride > 0
-      ? input.maxRunningOverride
-      : cfg.maxConcurrent;
-
-  const maxWorking =
-    typeof input.maxWorkingOverride === 'number' && input.maxWorkingOverride > 0
-      ? input.maxWorkingOverride
-      : undefined;
-
-  const id = newJobId();
-  const job: QueueJob = {
-    id,
-    agent: input.agent,
-    status: 'queued',
-    boxName: input.boxName,
-    providerName: input.providerName,
-    prompt: input.prompt,
-    agentArgs: input.agentArgs,
-    createOpts: input.createOpts,
-    maxConcurrent: ceiling,
-    ...(maxWorking !== undefined ? { maxWorking } : {}),
-    ...(input.openTerminal !== undefined ? { openTerminal: input.openTerminal } : {}),
-    createdAt: new Date().toISOString(),
-    logPath: queueLogPath(id),
-  };
-  await writeJob(job);
-
-  let runningCount = 0;
-  try {
-    runningCount = await defaultCountRunningBoxes();
-  } catch {
-    runningCount = 0;
-  }
+  // Build + persist the manifest via the shared relay core (no transport there),
+  // then ensure the relay is up and poke its scheduler so the job starts without
+  // waiting for the next periodic tick.
+  const { job, runningCount, maxConcurrent } = await enqueueQueueJob(input);
 
   let pokedRelay = false;
   try {
     await ensureRelay();
-    await postEnqueue(id);
+    await postEnqueue(job.id);
     pokedRelay = true;
   } catch {
     // Manifest is on disk; next relay tick (after a future `ensureRelay`)
@@ -98,13 +63,7 @@ export async function submitQueueJob(
     // outer command already prints a `log: <path>` for the per-job log.
   }
 
-  return { job, runningCount, maxConcurrent: ceiling, pokedRelay };
-}
-
-function newJobId(): string {
-  // 9-byte URL-safe id (18 hex). Short enough to type, wide enough to never
-  // collide in practice. Mirrors the existing per-box mnemonic id length.
-  return randomBytes(9).toString('hex');
+  return { job, runningCount, maxConcurrent, pokedRelay };
 }
 
 function postEnqueue(id: string): Promise<void> {
