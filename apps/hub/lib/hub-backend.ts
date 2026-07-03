@@ -6,6 +6,8 @@ import {
   hashProjectPath,
   isProviderKind,
   listProjectsConfigured,
+  PROVIDER_NAMES,
+  providerMeta,
   registerProject,
   unregisterProject,
   type ProviderKind,
@@ -21,7 +23,7 @@ import {
   type RelayServerHandle,
 } from '@agentbox/relay';
 import type { ProviderModule } from '@agentbox/sandbox-core';
-import { readState } from '@agentbox/sandbox-core';
+import { readPreparedStateRaw, readState } from '@agentbox/sandbox-core';
 import { listBoxes, type ListedBox } from '@agentbox/sandbox-docker';
 import type {
   ActionResult,
@@ -31,7 +33,7 @@ import type {
   DirEntry,
   HubBackend,
 } from './boxes/backend-types';
-import type { Approval, Box, BoxStatus, GithubState, HubState, Project, User } from './boxes/types';
+import type { Approval, Box, BoxStatus, GithubState, HubState, Project, ProviderOption, User } from './boxes/types';
 
 /*
  * Node-only host backend. This module imports the sandbox/relay toolchain and is
@@ -205,11 +207,41 @@ function mapJobToBox(job: QueueJob, status: BoxStatus): Box {
     status,
     createdAt,
     lastActivity: createdAt,
-    host: `local · ${job.providerName}`,
+    host: job.providerName === 'docker' ? 'local · docker' : job.providerName,
     commits: null,
     filesTouched: null,
     error: status === 'error' ? (job.reason ?? 'create failed') : null,
   };
+}
+
+/**
+ * Which providers a box can be created on right now. docker is always available
+ * (its base self-heals); a cloud provider is usable only once its base is baked —
+ * `~/.agentbox/<provider>-prepared.json` with a `base`. That marker read is sync +
+ * offline (no cloud SDK), so it's cheap to compute on every getData(). A prepared
+ * marker implies a prior `<provider> login`, so it's a sufficient readiness proxy.
+ */
+function isProviderConfigured(id: ProviderKind): boolean {
+  if (id === 'docker') return true;
+  const raw = readPreparedStateRaw(id);
+  return !!(raw && typeof raw === 'object' && (raw as { base?: unknown }).base);
+}
+
+function listProviders(): ProviderOption[] {
+  return PROVIDER_NAMES.map((id) => {
+    // Keep "Docker (local)" but drop the "(cloud …)" qualifier from cloud labels
+    // — the picker just wants the provider name.
+    const label = id === 'docker' ? providerMeta(id).label : providerMeta(id).label.replace(/\s*\(.*\)$/, '');
+    const configured = isProviderConfigured(id);
+    return {
+      id,
+      label,
+      configured,
+      reason: configured
+        ? undefined
+        : `Not set up on this host — run \`agentbox ${id} login\` then \`agentbox prepare --provider ${id}\``,
+    };
+  });
 }
 
 function currentUser(): User {
@@ -321,6 +353,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         boxes: [...jobBoxes, ...listed.map(mapBox)],
         // Block-mode approvals live in-process on the relay handle, not the Store.
         approvals: handle.prompts.all().map(mapApproval),
+        providers: listProviders(),
       };
     },
     pause: (id) => runLifecycle(id, (box, provider) => provider.pause(box)),
@@ -345,6 +378,13 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // Accepts any project the dashboard shows (registry or live box root).
         const workspace = await resolveProjectPath(input.projectId);
         if (!workspace) return { ok: false, error: `unknown project ${input.projectId}` };
+        // Provider gate (defense-in-depth: a client could bypass the disabled UI
+        // option). Default docker; reject unknown kinds and unconfigured providers.
+        const provider = input.provider ?? 'docker';
+        if (!isProviderKind(provider)) return { ok: false, error: `unknown provider ${provider}` };
+        if (!isProviderConfigured(provider)) {
+          return { ok: false, error: `provider ${provider} is not set up on this host` };
+        }
         const noAgent = input.agent === 'none';
         // For a no-agent box `agent` is inert (the worker ignores it when noAgent);
         // keep a valid placeholder so the closed QueueAgentKind union holds.
@@ -360,7 +400,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         const { job } = await enqueueQueueJob({
           agent,
           boxName: name ?? '',
-          providerName: 'docker',
+          providerName: provider,
           prompt: noAgent ? '' : (input.prompt ?? ''),
           agentArgs: [],
           ...(noAgent ? { noAgent: true } : {}),

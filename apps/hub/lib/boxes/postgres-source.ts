@@ -161,5 +161,9 @@ export async function getPostgresDashboardData(): Promise<Omit<HubState, 'authMo
     projects: deriveProjects(regs),
     boxes: regs.map((r) => mapBox(r, statusByBox.get(r.boxId))),
     approvals,
+    // Provider readiness is host-local; the hosted/Postgres path has no create
+    // host to probe (hosted create is a documented follow-up). Empty → the modal
+    // falls back to docker-only.
+    providers: [],
   };
 }

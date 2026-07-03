@@ -19,10 +19,15 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { createBoxAction } from '@/lib/boxes/actions';
 import type { CreateBoxInput } from '@/lib/boxes/backend-types';
-import type { Project } from '@/lib/boxes/types';
+import { useStore } from '@/lib/boxes/store';
+import type { Project, ProviderOption } from '@/lib/boxes/types';
 import { JobLogStream } from './job-log-stream';
 
 type Agent = CreateBoxInput['agent'];
+
+// Docker is always available; used when the server sent no provider list (the
+// hosted/Postgres path, where host readiness isn't known).
+const DOCKER_ONLY: ProviderOption[] = [{ id: 'docker', label: 'Docker (local)', configured: true }];
 
 // Button + modal to create a box. Pass `project` to lock it (project page /
 // per-project row); pass `projects` for a picker (no fixed project).
@@ -67,9 +72,12 @@ function CreateBoxModal({
   onClose: () => void;
 }) {
   const router = useRouter();
+  const { state } = useStore();
+  const providers = state.providers.length ? state.providers : DOCKER_ONLY;
   const [pending, startTransition] = useTransition();
   const [projectId, setProjectId] = useState(project?.id ?? projects[0]?.id ?? '');
   const [agent, setAgent] = useState<Agent>('claude');
+  const [provider, setProvider] = useState<CreateBoxInput['provider']>('docker');
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +96,7 @@ function CreateBoxModal({
       const res = await createBoxAction({
         projectId,
         agent,
+        provider,
         name: name.trim() || undefined,
         prompt: agent === 'none' ? undefined : prompt.trim() || undefined,
       });
@@ -135,6 +144,16 @@ function CreateBoxModal({
                 </Select>
               </Field>
             ) : null}
+            <Field label="Provider">
+              <Select value={provider} onChange={(e) => setProvider(e.target.value as CreateBoxInput['provider'])}>
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id} disabled={!p.configured} title={p.reason}>
+                    {p.label}
+                    {p.configured ? '' : ' — not configured'}
+                  </option>
+                ))}
+              </Select>
+            </Field>
             <Field label="Agent">
               <Select value={agent} onChange={(e) => setAgent(e.target.value as Agent)}>
                 <option value="claude">Claude</option>
@@ -167,7 +186,14 @@ function CreateBoxModal({
       </DialogBody>
       <DialogFooter>
         {jobId ? (
-          <Button onClick={onClose}>Close</Button>
+          <>
+            {jobStatus === 'streaming' ? (
+              <span className="mr-auto self-center font-mono text-xs text-muted-foreground">
+                The box + agent start in the background — you can close this.
+              </span>
+            ) : null}
+            <Button onClick={onClose}>Close</Button>
+          </>
         ) : (
           <>
             <Button variant="outline" onClick={onClose} disabled={pending}>

@@ -16,7 +16,6 @@ export function JobLogStream({
   onStatus?: (status: string) => void;
 }) {
   const [lines, setLines] = useState<string[]>([]);
-  const [status, setStatus] = useState<string>('streaming');
   const preRef = useRef<HTMLPreElement>(null);
   // Keep the latest callbacks in refs so the EventSource effect depends ONLY on
   // jobId. Callers pass a fresh `() => router.refresh()` each render, and
@@ -29,7 +28,6 @@ export function JobLogStream({
   onStatusRef.current = onStatus;
 
   useEffect(() => {
-    setStatus('streaming');
     onStatusRef.current?.('streaming');
     const es = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/logs`);
     es.addEventListener('log', (e) => {
@@ -38,7 +36,6 @@ export function JobLogStream({
     });
     es.addEventListener('end', (e) => {
       const payload = JSON.parse((e as MessageEvent).data) as { status: string };
-      setStatus(payload.status);
       onStatusRef.current?.(payload.status);
       onDoneRef.current?.(payload.status);
       es.close();
@@ -53,18 +50,11 @@ export function JobLogStream({
   }, [lines]);
 
   return (
-    <div>
-      <pre
-        ref={preRef}
-        className="max-h-[440px] min-h-[220px] overflow-auto whitespace-pre rounded-lg bg-[#16181c] p-3 font-mono text-[11.5px] leading-relaxed text-[#d6d9de]"
-      >
-        {lines.length === 0 ? 'starting…' : lines.join('\n')}
-      </pre>
-      {status === 'streaming' ? (
-        <div className="mt-2 font-mono text-xs text-muted-foreground">
-          The box + agent start in the background — you can close this.
-        </div>
-      ) : null}
-    </div>
+    <pre
+      ref={preRef}
+      className="max-h-[440px] min-h-[220px] overflow-auto whitespace-pre rounded-lg bg-[#16181c] p-3 font-mono text-[11.5px] leading-relaxed text-[#d6d9de]"
+    >
+      {lines.length === 0 ? 'starting…' : lines.join('\n')}
+    </pre>
   );
 }

@@ -68,12 +68,23 @@ export interface Approval {
   createdAt: number;
 }
 
+// A provider the box could be created on. `configured` = usable on this host
+// (docker always; a cloud provider needs its base baked — see hub-backend). The
+// modal disables unconfigured options and shows `reason`.
+export interface ProviderOption {
+  id: string;
+  label: string;
+  configured: boolean;
+  reason?: string;
+}
+
 export interface HubState {
   user: User;
   github: GithubState;
   projects: Project[];
   boxes: Box[];
   approvals: Approval[];
+  providers: ProviderOption[];
   // Active gate: 'password' (hetzner/vercel) drives the topbar sign-out; 'token'
   // (localhost) and 'off' show none.
   authMode: AuthMode;
