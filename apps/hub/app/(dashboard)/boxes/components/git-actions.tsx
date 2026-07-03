@@ -16,15 +16,8 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  gitBranchAction,
-  gitCheckoutAction,
-  gitPullAction,
-  gitPushAction,
-  gitPushHostAction,
-  restartServiceAction,
-} from '@/lib/boxes/actions';
-import type { ActionResult, BoxOpResult, GitInfo, ServicesResult } from '@/lib/boxes/backend-types';
+import { gitBranchAction, gitCheckoutAction, gitPullAction, gitPushAction, gitPushHostAction } from '@/lib/boxes/actions';
+import type { BoxOpResult, GitInfo } from '@/lib/boxes/backend-types';
 import type { Box } from '@/lib/boxes/types';
 import { cn } from '@/lib/utils';
 
@@ -136,17 +129,10 @@ function firstLine(stdout?: string, stderr?: string): string | undefined {
   return text ? text.split('\n')[0] : undefined;
 }
 
-function serviceDesc(names: string[] | null): string {
-  if (names === null) return 'loading…';
-  if (names.length === 0) return 'no services declared';
-  return names.join(' · ');
-}
-
 export function GitActions({ box }: { box: Box }) {
   const router = useRouter();
   const { toasts, push, dismiss } = useToasts();
   const [git, setGit] = useState<GitInfo | null>(null);
-  const [svcNames, setSvcNames] = useState<string[] | null>(null);
   const [modal, setModal] = useState<'change' | 'new' | null>(null);
   const offline = box.status !== 'running';
 
@@ -159,19 +145,9 @@ export function GitActions({ box }: { box: Box }) {
     }
   }, [box.id]);
 
-  const loadServices = useCallback(async () => {
-    try {
-      const r = await fetch(`/api/v1/boxes/${encodeURIComponent(box.id)}/services`, { credentials: 'same-origin' });
-      if (r.ok) setSvcNames(((await r.json()) as ServicesResult).services.map((s) => s.name));
-    } catch {
-      /* leave as-is */
-    }
-  }, [box.id]);
-
   useEffect(() => {
     void loadGit();
-    void loadServices();
-  }, [loadGit, loadServices]);
+  }, [loadGit]);
 
   // Live branch (box.branch from the dashboard snapshot goes stale after a checkout).
   const branch = git?.ok && git.branch ? git.branch : box.branch || '—';
@@ -188,17 +164,6 @@ export function GitActions({ box }: { box: Box }) {
       refresh();
     } else {
       push({ variant: 'error', title: `${title} failed`, detail: res.error });
-    }
-  };
-
-  const runRestartAll = async () => {
-    const res: ActionResult = await restartServiceAction(box.id);
-    if (res.ok) {
-      push({ title: 'Services restarted' });
-      void loadServices();
-      router.refresh();
-    } else {
-      push({ variant: 'error', title: 'Restart failed', detail: res.error });
     }
   };
 
@@ -235,11 +200,6 @@ export function GitActions({ box }: { box: Box }) {
             <Icons.plus />
             New branch
           </Button>
-        </GitOpRow>
-        <GitOpRow label="Services" desc={serviceDesc(svcNames)}>
-          <OpButton icon={Icons.refresh} disabled={offline} onRun={runRestartAll}>
-            Restart all services
-          </OpButton>
         </GitOpRow>
       </Card>
 
