@@ -1,5 +1,13 @@
 import type { BoxRecord, ExecResult } from '@agentbox/core';
 import { GH_PR_OPS, hashRpcParams, injectPrCreateHead as injectHead, type GhPrOp } from '@agentbox/relay';
+import {
+  boxGitCheckout,
+  boxGitNewBranch,
+  boxGitPull,
+  boxGitPush,
+  boxGitPushHost,
+  type BoxGitDeps,
+} from '@agentbox/sandbox-core';
 import { mintHostInitiatedToken } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
@@ -35,6 +43,25 @@ async function runAndStream(box: BoxRecord, argv: string[]): Promise<number> {
   if (r.stdout) process.stdout.write(r.stdout);
   if (r.stderr) process.stderr.write(r.stderr);
   return r.exitCode;
+}
+
+/** Stream a shared-helper exec result to the terminal, then exit with its code. */
+async function streamExit(r: ExecResult): Promise<never> {
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stderr.write(r.stderr);
+  return exitWith(r.exitCode);
+}
+
+/**
+ * BoxGitDeps for the shared helpers: forward each credentialed RPC's
+ * `(method, params)` to the host-initiated-token minter. The helpers only ever
+ * build `{ path, remote?, args? }`, so the cast to PredictedGitParams is safe
+ * (path is always set) and the params hash round-trips with what ctl sends.
+ */
+function gitDeps(box: BoxRecord): BoxGitDeps {
+  return {
+    hostInitiatedArgs: (method, params) => hostInitiatedArgs(box.id, method, params as PredictedGitParams),
+  };
 }
 
 /**
@@ -121,27 +148,18 @@ const pushCommand = new Command('push')
           await exitWith(64);
         }
         const box = await resolveBoxOrExit(boxRef);
+        const provider = await providerForBox(box);
         if (opts.hostOnly) {
           // Host-only landing publishes nothing, so the relay skips its
           // push-confirm gate entirely — no host-initiated token needed.
-          const argv = ['agentbox-ctl', 'git', 'push', '--host-only'];
-          if (opts.as) argv.push('--as', opts.as);
-          if (opts.force) argv.push('--force');
-          argv.push(...args);
-          await exitWith(await runAndStream(box, argv));
+          await streamExit(await boxGitPushHost(provider, box, { as: opts.as, force: opts.force, args }));
           return;
         }
-        // --force is a real remote-push flag. Commander now consumes it into
-        // opts.force (it's a known option for --host-only), so re-append it to
-        // the forwarded args; ctl normalizes it back to the same args tail, so
-        // the predicted params hash still matches what ctl sends.
-        const extraArgs = opts.force ? [...args, '--force'] : args;
-        const predicted = buildPredictedGitParams(opts.remote, extraArgs);
-        const tokenArgs = await hostInitiatedArgs(box.id, 'git.push', predicted);
-        const argv = ['agentbox-ctl', 'git', 'push', ...tokenArgs];
-        if (opts.remote) argv.push('--remote', opts.remote);
-        argv.push(...extraArgs);
-        await exitWith(await runAndStream(box, argv));
+        // --force is a real remote-push flag; the helper appends it to the args
+        // tail and folds it into the params hash so the minted token matches.
+        await streamExit(
+          await boxGitPush(provider, box, { remote: opts.remote, force: opts.force, args }, gitDeps(box)),
+        );
       } catch (err) {
         handleLifecycleError(err);
       }
@@ -192,21 +210,16 @@ const pullCommand = new Command('pull')
     ) => {
       try {
         const box = await resolveBoxOrExit(boxRef);
+        const provider = await providerForBox(box);
         if (branch) {
-          const switchCode = await runAndStream(box, ['git', 'checkout', branch]);
-          if (switchCode !== 0) await exitWith(switchCode);
+          const switched = await boxGitCheckout(provider, box, branch);
+          if (switched.stdout) process.stdout.write(switched.stdout);
+          if (switched.stderr) process.stderr.write(switched.stderr);
+          if (switched.exitCode !== 0) await exitWith(switched.exitCode);
         }
-        // ctl's `git pull` runs `git.fetch` internally then a local merge —
-        // the relay only sees `git.fetch`. Match the scope to that. Note
-        // `--ff-only` is consumed by ctl (not forwarded to the relay), so
-        // it's excluded from the predicted params hash.
-        const predicted = buildPredictedGitParams(opts.remote, args);
-        const tokenArgs = await hostInitiatedArgs(box.id, 'git.fetch', predicted);
-        const argv = ['agentbox-ctl', 'git', 'pull', ...tokenArgs];
-        if (opts.remote) argv.push('--remote', opts.remote);
-        if (opts.ffOnly) argv.push('--ff-only');
-        argv.push(...args);
-        await exitWith(await runAndStream(box, argv));
+        await streamExit(
+          await boxGitPull(provider, box, { remote: opts.remote, ffOnly: opts.ffOnly, args }, gitDeps(box)),
+        );
       } catch (err) {
         handleLifecycleError(err);
       }
@@ -223,8 +236,25 @@ const checkoutCommand = new Command('checkout')
   .action(async (boxRef: string, branch: string, args: string[]) => {
     try {
       const box = await resolveBoxOrExit(boxRef);
+      const provider = await providerForBox(box);
       // No relay involvement: branch switching is local to the worktree.
-      await exitWith(await runAndStream(box, ['git', 'checkout', branch, ...args]));
+      await streamExit(await boxGitCheckout(provider, box, branch, args));
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const branchCommand = new Command('branch')
+  .description('Create a new agentbox/* branch from HEAD (or a given base) and switch the box onto it')
+  .argument('<box>', 'box ref')
+  .argument('<name>', "new branch name (an 'agentbox/' prefix is added when missing)")
+  .option('--from <ref>', 'base ref to fork from (default: the box\'s current HEAD)')
+  .action(async (boxRef: string, name: string, opts: { from?: string }) => {
+    try {
+      const box = await resolveBoxOrExit(boxRef);
+      const provider = await providerForBox(box);
+      // Local to the worktree (`git checkout -b`), so no relay involvement.
+      await streamExit(await boxGitNewBranch(provider, box, name, opts.from));
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -323,5 +353,6 @@ export const gitCommand = new Command('git')
   .addCommand(fetchCommand)
   .addCommand(pullCommand)
   .addCommand(checkoutCommand)
+  .addCommand(branchCommand)
   .addCommand(statusCommand)
   .addCommand(prCommand);

@@ -64,6 +64,80 @@ export function isLifecycleAction(v: string): v is LifecycleAction {
   return (LIFECYCLE_ACTIONS as readonly string[]).includes(v);
 }
 
+// ── git operations ──
+export const GIT_OPS = ['checkout', 'branch', 'pull', 'push', 'push-host'] as const;
+export type GitOp = (typeof GIT_OPS)[number];
+
+export function isGitOp(v: string): v is GitOp {
+  return (GIT_OPS as readonly string[]).includes(v);
+}
+
+function optionalString(v: unknown, field: string): Parsed<string | undefined> {
+  if (v === undefined) return { ok: true, value: undefined };
+  if (typeof v !== 'string') return { ok: false, message: `${field} must be a string` };
+  return { ok: true, value: v };
+}
+
+function optionalBool(v: unknown, field: string): Parsed<boolean | undefined> {
+  if (v === undefined) return { ok: true, value: undefined };
+  if (typeof v !== 'boolean') return { ok: false, message: `${field} must be a boolean` };
+  return { ok: true, value: v };
+}
+
+export function parseGitCheckout(body: unknown): Parsed<{ branch: string }> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const { branch } = body;
+  if (typeof branch !== 'string' || branch.trim().length === 0) {
+    return { ok: false, message: 'branch is required (non-empty string)' };
+  }
+  return { ok: true, value: { branch } };
+}
+
+export function parseGitBranch(body: unknown): Parsed<{ name: string; from?: string }> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const { name, from } = body;
+  if (typeof name !== 'string' || name.trim().length === 0) {
+    return { ok: false, message: 'name is required (non-empty string)' };
+  }
+  const f = optionalString(from, 'from');
+  if (!f.ok) return f;
+  return { ok: true, value: { name, from: f.value } };
+}
+
+export function parseGitPush(body: unknown): Parsed<{ remote?: string; force?: boolean }> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const remote = optionalString(body.remote, 'remote');
+  if (!remote.ok) return remote;
+  const force = optionalBool(body.force, 'force');
+  if (!force.ok) return force;
+  return { ok: true, value: { remote: remote.value, force: force.value } };
+}
+
+export function parseGitPull(body: unknown): Parsed<{ remote?: string; ffOnly?: boolean }> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const remote = optionalString(body.remote, 'remote');
+  if (!remote.ok) return remote;
+  const ffOnly = optionalBool(body.ffOnly, 'ffOnly');
+  if (!ffOnly.ok) return ffOnly;
+  return { ok: true, value: { remote: remote.value, ffOnly: ffOnly.value } };
+}
+
+export function parseGitPushHost(body: unknown): Parsed<{ as?: string; force?: boolean }> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const as = optionalString(body.as, 'as');
+  if (!as.ok) return as;
+  const force = optionalBool(body.force, 'force');
+  if (!force.ok) return force;
+  return { ok: true, value: { as: as.value, force: force.value } };
+}
+
+export function parseServiceRestart(body: unknown): Parsed<{ name?: string }> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const name = optionalString(body.name, 'name');
+  if (!name.ok) return name;
+  return { ok: true, value: { name: name.value } };
+}
+
 // Read + JSON-parse a request body, tolerating an empty body as {}.
 export async function readJson(req: Request): Promise<Parsed<unknown>> {
   const text = await req.text();

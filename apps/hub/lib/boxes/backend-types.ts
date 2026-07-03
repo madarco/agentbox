@@ -4,6 +4,56 @@ import type { HubState } from './types';
 // Result of a lifecycle server action.
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
+// Result of a box git/service operation that runs a command in the box. On
+// success it carries the command's stdout/stderr so the UI can surface git's
+// output; on failure `error` is the trimmed stderr (or a resolve error).
+export type BoxOpResult = { ok: true; stdout?: string; stderr?: string } | { ok: false; error: string };
+
+// One supervised service, normalized from either a live `agentbox-ctl status`
+// pull or the persisted box-status snapshot. Fields absent in the persisted
+// snapshot (pid/restarts/lastExitCode/command) are filled with nulls/defaults.
+export interface ServiceView {
+  name: string;
+  state: string;
+  pid: number | null;
+  restarts: number;
+  lastExitCode: number | null;
+  blockedOn: string[];
+  command: string;
+}
+
+export interface TaskView {
+  name: string;
+  state: string;
+}
+
+export interface PortView {
+  port: number;
+  service: string | null;
+}
+
+// A box's agentbox.yaml task/service/port status. `source` says where it came
+// from: a live in-box pull, the persisted snapshot (box paused/stopped), or
+// unavailable (box gone / never reported).
+export interface ServicesResult {
+  source: 'live' | 'persisted' | 'unavailable';
+  services: ServiceView[];
+  tasks: TaskView[];
+  ports: PortView[];
+  error?: string;
+}
+
+// Live git summary for the box detail panel. `box.branch` from getData() goes
+// stale after a checkout, so the panel reads this instead.
+export interface GitInfo {
+  ok: boolean;
+  branch?: string;
+  dirty?: boolean;
+  ahead?: number;
+  behind?: number;
+  error?: string;
+}
+
 // Input for creating a box in an existing (registered) project. The client
 // sends a projectId (never a host path); the backend resolves it to the
 // registered project's absolute path server-side. `agent` selects the coding
@@ -77,4 +127,24 @@ export interface HubBackend {
   // Read a background job (log path + status) for the per-job log SSE. null when
   // the manifest is gone.
   getJob(id: string): Promise<JobView | null>;
+
+  // ── box git operations ──
+  // Change the box's working branch (git checkout, local to the worktree).
+  gitCheckout(id: string, branch: string): Promise<BoxOpResult>;
+  // Create a fresh agentbox/* branch from HEAD (or `from`) and switch onto it.
+  gitNewBranch(id: string, input: { name: string; from?: string }): Promise<BoxOpResult>;
+  // Push the box's branch to the remote via the host relay.
+  gitPush(id: string, input?: { remote?: string; force?: boolean }): Promise<BoxOpResult>;
+  // Fetch via the relay then merge locally in the box.
+  gitPull(id: string, input?: { remote?: string; ffOnly?: boolean }): Promise<BoxOpResult>;
+  // Land the box's branch in the host's local repo only (publishes nothing).
+  gitPushHost(id: string, input?: { as?: string; force?: boolean }): Promise<BoxOpResult>;
+  // Live git summary (current branch + dirty/ahead/behind) for the detail panel.
+  getGit(id: string): Promise<GitInfo>;
+
+  // ── box service control ──
+  // Live (or persisted) status of the box's agentbox.yaml services/tasks/ports.
+  getServices(id: string): Promise<ServicesResult>;
+  // Restart one service by name, or every service when name is omitted.
+  restartService(id: string, name?: string): Promise<BoxOpResult>;
 }

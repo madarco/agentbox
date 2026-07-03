@@ -11,7 +11,9 @@ import { BackLink } from '../components/back-link';
 import { BoxActions } from '../components/box-actions';
 import { DRow } from '../components/d-row';
 import { EmptyBox } from '../components/empty-box';
+import { GitActions } from '../components/git-actions';
 import { SectionLabel } from '../components/section-label';
+import { ServicesPanel } from '../components/services-panel';
 import { Stat, StatGrid } from '../components/stat-grid';
 
 export default function BoxDetailPage() {
@@ -64,6 +66,10 @@ export default function BoxDetailPage() {
         <Stat k="Files touched" v={box.filesTouched ?? '—'} icon={Icons.file} />
         <Stat k="Last activity" v={<Ago ms={box.lastActivity} />} mono />
       </StatGrid>
+
+      <GitActions id={box.id} running={box.status === 'running'} />
+
+      <ServicesPanel id={box.id} running={box.status === 'running'} />
 
       <SectionLabel>Details</SectionLabel>
       <Card className="divide-y divide-border/60 overflow-hidden">

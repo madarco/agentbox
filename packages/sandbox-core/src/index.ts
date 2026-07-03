@@ -21,6 +21,22 @@ export {
 } from './git-detect.js';
 export { hostOpenCommand } from './host-open.js';
 export {
+  BOX_WORKSPACE,
+  boxGitCheckout,
+  boxGitNewBranch,
+  boxGitPull,
+  boxGitPush,
+  boxGitPushHost,
+  boxRestartService,
+  boxRestartServices,
+  boxServicesStatusRaw,
+  restartServiceArgv,
+  scratchBranchName,
+  servicesStatusArgv,
+  type BoxGitDeps,
+  type HostInitiatedArgs,
+} from './box-git.js';
+export {
   errSummary,
   firstLine,
   type CheckResult,

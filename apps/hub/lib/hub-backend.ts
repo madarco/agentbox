@@ -12,9 +12,12 @@ import {
   unregisterProject,
   type ProviderKind,
 } from '@agentbox/config';
-import { normalizeLastAgent, type BoxRecord, type Provider } from '@agentbox/core';
+import { normalizeLastAgent, type BoxRecord, type ExecResult, type Provider } from '@agentbox/core';
+import type { BoxStatus as CtlBoxStatus, StatusReply } from '@agentbox/ctl';
 import {
   enqueueQueueJob,
+  hashRpcParams,
+  isValidBoxStatus,
   loadQueue,
   readJob,
   type PendingApproval,
@@ -22,16 +25,31 @@ import {
   type QueueJob,
   type RelayServerHandle,
 } from '@agentbox/relay';
-import type { ProviderModule } from '@agentbox/sandbox-core';
-import { readPreparedStateRaw, readState } from '@agentbox/sandbox-core';
-import { listBoxes, type ListedBox } from '@agentbox/sandbox-docker';
+import type { BoxGitDeps, ProviderModule } from '@agentbox/sandbox-core';
+import {
+  BOX_WORKSPACE,
+  boxGitCheckout,
+  boxGitNewBranch,
+  boxGitPull,
+  boxGitPush,
+  boxGitPushHost,
+  boxRestartService,
+  boxRestartServices,
+  boxServicesStatusRaw,
+  readPreparedStateRaw,
+  readState,
+} from '@agentbox/sandbox-core';
+import { listBoxes, mintHostInitiatedToken, type ListedBox } from '@agentbox/sandbox-docker';
 import type {
   ActionResult,
+  BoxOpResult,
   BrowseDirResult,
   CreateBoxInput,
   CreateBoxResult,
   DirEntry,
+  GitInfo,
   HubBackend,
+  ServicesResult,
 } from './boxes/backend-types';
 import type { Approval, Box, BoxStatus, GithubState, HubState, Project, ProviderOption, User } from './boxes/types';
 
@@ -330,6 +348,120 @@ async function runLifecycle(id: string, op: (box: BoxRecord, provider: Provider)
   }
 }
 
+const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** Resolve a box id to its record + provider, or null when the box is gone. */
+async function resolveBoxProvider(id: string): Promise<{ box: BoxRecord; provider: Provider } | null> {
+  const { boxes } = await readState();
+  const box = boxes.find((b) => b.id === id);
+  if (!box) return null;
+  return { box, provider: await providerForBox(box) };
+}
+
+/** Generous TTL matching the host CLI: a slow push over a flaky uplink can take ~60s. */
+const GIT_TOKEN_TTL_MS = 120_000;
+
+/**
+ * BoxGitDeps for the shared helpers: mint a one-time host-initiated token bound
+ * to the RPC's (method, params) hash so the relay skips its confirm prompt. The
+ * mint endpoint is loopback-only and the hub server *is* the relay process, so
+ * this reaches it in-process. Null (relay unreachable) falls back to the prompt
+ * path; `agentbox/*` scratch pushes auto-allow regardless.
+ */
+function hubGitDeps(boxId: string): BoxGitDeps {
+  return {
+    hostInitiatedArgs: async (method, params) => {
+      const token = await mintHostInitiatedToken(boxId, method, hashRpcParams(params), GIT_TOKEN_TTL_MS);
+      return token ? ['--host-initiated-token', token] : [];
+    },
+  };
+}
+
+/** Run a box-git helper and map its exec result to a BoxOpResult. */
+async function gitOp(id: string, fn: (box: BoxRecord, provider: Provider) => Promise<ExecResult>): Promise<BoxOpResult> {
+  try {
+    const rp = await resolveBoxProvider(id);
+    if (!rp) return { ok: false, error: `box ${id} not found` };
+    const r = await fn(rp.box, rp.provider);
+    if (r.exitCode !== 0) {
+      return { ok: false, error: (r.stderr || r.stdout || `command exited ${String(r.exitCode)}`).trim() };
+    }
+    return { ok: true, stdout: r.stdout, stderr: r.stderr };
+  } catch (err) {
+    return { ok: false, error: errMsg(err) };
+  }
+}
+
+/** Pull the live `agentbox-ctl status --json` snapshot, or null when unreachable. */
+async function liveServices(provider: Provider, box: BoxRecord): Promise<StatusReply | null> {
+  const r = await boxServicesStatusRaw(provider, box).catch(() => null);
+  if (!r || r.exitCode !== 0) return null;
+  try {
+    return JSON.parse(r.stdout) as StatusReply;
+  } catch {
+    return null;
+  }
+}
+
+function mapLiveServices(live: StatusReply): ServicesResult {
+  return {
+    source: 'live',
+    services: live.services.map((s) => ({
+      name: s.name,
+      state: s.state,
+      pid: s.pid,
+      restarts: s.restarts,
+      lastExitCode: s.lastExitCode,
+      blockedOn: s.blockedOn,
+      command: s.command,
+    })),
+    tasks: live.tasks.map((t) => ({ name: t.name, state: t.state })),
+    ports: live.ports.map((p) => ({ port: p.port, service: p.service })),
+  };
+}
+
+// The persisted snapshot lacks pid/restarts/lastExitCode/command (the compact
+// BoxStatusServiceEntry shape); fill with nulls/defaults.
+function mapPersistedServices(s: CtlBoxStatus): ServicesResult {
+  return {
+    source: 'persisted',
+    services: s.services.map((sv) => ({
+      name: sv.name,
+      state: sv.state,
+      pid: null,
+      restarts: 0,
+      lastExitCode: null,
+      blockedOn: [],
+      command: '',
+    })),
+    tasks: s.tasks.map((t) => ({ name: t.name, state: t.state })),
+    ports: s.ports.map((p) => ({ port: p.port, service: p.service })),
+  };
+}
+
+/** Parse `git status --porcelain=v2 --branch` into a live git summary. */
+function parseGitStatus(out: string): GitInfo {
+  let branch: string | undefined;
+  let ahead = 0;
+  let behind = 0;
+  let dirty = false;
+  for (const line of out.split('\n')) {
+    if (line.startsWith('# branch.head ')) {
+      branch = line.slice('# branch.head '.length).trim();
+    } else if (line.startsWith('# branch.ab ')) {
+      const m = line.match(/\+(\d+)\s+-(\d+)/);
+      if (m) {
+        ahead = Number(m[1]);
+        behind = Number(m[2]);
+      }
+    } else if (line.length > 0 && !line.startsWith('#')) {
+      dirty = true;
+    }
+  }
+  // git reports '(detached)' for a detached HEAD — surface it as no branch.
+  return { ok: true, branch: branch === '(detached)' ? undefined : branch, dirty, ahead, behind };
+}
+
 export function createHubBackend(handle: RelayServerHandle): HubBackend {
   return {
     // authMode is layered on by source.ts (an env-derived concern), so the host
@@ -459,6 +591,62 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       const job = await readJob(id);
       if (!job) return null;
       return { status: job.status, logPath: job.logPath, boxId: job.boxId };
+    },
+
+    // ── box git operations (delegate to the shared, provider-agnostic helpers) ──
+    gitCheckout: (id, branch) => gitOp(id, (box, provider) => boxGitCheckout(provider, box, branch)),
+    gitNewBranch: (id, input) =>
+      gitOp(id, (box, provider) => boxGitNewBranch(provider, box, input.name, input.from)),
+    gitPush: (id, input = {}) =>
+      gitOp(id, (box, provider) => boxGitPush(provider, box, input, hubGitDeps(id))),
+    gitPull: (id, input = {}) =>
+      gitOp(id, (box, provider) => boxGitPull(provider, box, input, hubGitDeps(id))),
+    gitPushHost: (id, input = {}) => gitOp(id, (box, provider) => boxGitPushHost(provider, box, input)),
+    async getGit(id): Promise<GitInfo> {
+      try {
+        const rp = await resolveBoxProvider(id);
+        if (!rp) return { ok: false, error: `box ${id} not found` };
+        const r = await rp.provider.exec(rp.box, ['git', 'status', '--porcelain=v2', '--branch'], {
+          cwd: BOX_WORKSPACE,
+        });
+        if (r.exitCode !== 0) return { ok: false, error: (r.stderr || `git status exited ${String(r.exitCode)}`).trim() };
+        return parseGitStatus(r.stdout);
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+
+    // ── box service control ──
+    async getServices(id): Promise<ServicesResult> {
+      const rp = await resolveBoxProvider(id).catch(() => null);
+      if (!rp) return { source: 'unavailable', services: [], tasks: [], ports: [], error: `box ${id} not found` };
+      const live = await liveServices(rp.provider, rp.box);
+      if (live) return mapLiveServices(live);
+      const snap = handle.statusStore.get(id);
+      if (snap && isValidBoxStatus(snap)) return mapPersistedServices(snap as unknown as CtlBoxStatus);
+      return { source: 'unavailable', services: [], tasks: [], ports: [] };
+    },
+    async restartService(id, name): Promise<BoxOpResult> {
+      try {
+        const rp = await resolveBoxProvider(id);
+        if (!rp) return { ok: false, error: `box ${id} not found` };
+        if (name) {
+          const r = await boxRestartService(rp.provider, rp.box, name);
+          return r.exitCode === 0
+            ? { ok: true, stdout: r.stdout, stderr: r.stderr }
+            : { ok: false, error: (r.stderr || `restart ${name} exited ${String(r.exitCode)}`).trim() };
+        }
+        // Restart all: read the live service list, then restart each in sequence.
+        const live = await liveServices(rp.provider, rp.box);
+        if (!live) return { ok: false, error: 'could not reach the box supervisor (is the box running?)' };
+        const names = live.services.map((s) => s.name);
+        if (names.length === 0) return { ok: true };
+        const results = await boxRestartServices(rp.provider, rp.box, names);
+        const failed = results.filter((r) => r.result.exitCode !== 0).map((r) => r.name);
+        return failed.length > 0 ? { ok: false, error: `failed to restart: ${failed.join(', ')}` } : { ok: true };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
     },
   };
 }

@@ -97,6 +97,68 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/boxes/{id}/git': {
+        get: {
+          summary: "Live git summary of the box's worktree (current branch, dirty, ahead/behind)",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': { description: 'Git info', content: { 'application/json': { schema: { $ref: '#/components/schemas/GitInfo' } } } },
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/boxes/{id}/git/{op}': {
+        post: {
+          summary: 'Git op on the box branch. checkout {branch}; branch {name, from?} (create+switch a new agentbox/* branch); pull {remote?, ffOnly?}; push {remote?, force?}; push-host {as?, force?} (land in the host repo only, publishes nothing).',
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'op', in: 'path', required: true, schema: { type: 'string', enum: ['checkout', 'branch', 'pull', 'push', 'push-host'] } },
+          ],
+          requestBody: {
+            required: false,
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/GitOpBody' } } },
+          },
+          responses: {
+            '200': { description: 'Done (git stdout/stderr)', content: { 'application/json': { schema: { $ref: '#/components/schemas/GitOpResult' } } } },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/boxes/{id}/services': {
+        get: {
+          summary: "The box's agentbox.yaml service/task/port status (live, or the persisted snapshot when the box isn't running)",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': { description: 'Services', content: { 'application/json': { schema: { $ref: '#/components/schemas/Services' } } } },
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/boxes/{id}/services/restart': {
+        post: {
+          summary: 'Restart one service (body {name}) or every service (empty body)',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: false,
+            content: { 'application/json': { schema: { type: 'object', properties: { name: { type: 'string' } } } } },
+          },
+          responses: {
+            '200': { description: 'Restarted', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/projects': {
         get: {
           summary: 'List registered projects',
@@ -282,6 +344,68 @@ export function buildOpenApi(): Record<string, unknown> {
             reason: { type: 'string' },
           },
           required: ['id', 'label', 'configured'],
+        },
+        GitOpBody: {
+          type: 'object',
+          description: 'Union of git-op fields; only those for the chosen {op} are read (extras are ignored).',
+          properties: {
+            branch: { type: 'string', description: 'checkout: branch to switch to' },
+            name: { type: 'string', description: 'branch: new branch name (agentbox/ prefix added when missing)' },
+            from: { type: 'string', description: "branch: base ref to fork from (default: box's HEAD)" },
+            remote: { type: 'string', description: 'push/pull: remote name (default: origin)' },
+            force: { type: 'boolean', description: 'push: force the remote push; push-host: overwrite the destination branch' },
+            ffOnly: { type: 'boolean', description: 'pull: pass --ff-only to the merge' },
+            as: { type: 'string', description: "push-host: destination branch name in the host repo (default: the box's branch)" },
+          },
+        },
+        GitOpResult: {
+          type: 'object',
+          properties: { ok: { const: true }, stdout: { type: 'string' }, stderr: { type: 'string' } },
+          required: ['ok'],
+        },
+        GitInfo: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' },
+            branch: { type: 'string' },
+            dirty: { type: 'boolean' },
+            ahead: { type: 'number' },
+            behind: { type: 'number' },
+            error: { type: 'string' },
+          },
+          required: ['ok'],
+        },
+        Services: {
+          type: 'object',
+          properties: {
+            source: { type: 'string', enum: ['live', 'persisted', 'unavailable'] },
+            services: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  state: { type: 'string' },
+                  pid: { type: ['number', 'null'] },
+                  restarts: { type: 'number' },
+                  lastExitCode: { type: ['number', 'null'] },
+                  blockedOn: { type: 'array', items: { type: 'string' } },
+                  command: { type: 'string' },
+                },
+                required: ['name', 'state'],
+              },
+            },
+            tasks: {
+              type: 'array',
+              items: { type: 'object', properties: { name: { type: 'string' }, state: { type: 'string' } }, required: ['name', 'state'] },
+            },
+            ports: {
+              type: 'array',
+              items: { type: 'object', properties: { port: { type: 'number' }, service: { type: ['string', 'null'] } }, required: ['port'] },
+            },
+            error: { type: 'string' },
+          },
+          required: ['source', 'services', 'tasks', 'ports'],
         },
       },
     },
