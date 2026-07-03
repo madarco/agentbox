@@ -150,6 +150,12 @@ export interface CloudBoxFields {
    * re-threads the box's forwarder upstream + `AGENTBOX_GIT_LEASE` correctly.
    */
   controlPlaneUrl?: string;
+  /**
+   * Git push routing (`git.pushMode`): `'auto' | 'relay' | 'lease'`. Persisted
+   * (not re-derived from config) so a resume re-kick re-threads `AGENTBOX_GIT_LEASE`
+   * correctly even if the host config changed. Mirrors config's `GitPushMode`.
+   */
+  gitPushMode?: 'auto' | 'relay' | 'lease';
 }
 
 export interface GitWorktreeRecord {

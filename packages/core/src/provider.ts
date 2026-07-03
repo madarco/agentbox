@@ -151,6 +151,12 @@ export interface CreateBoxRequest {
    * Absent → classic host-side sync (`'cloud'`/`'docker'`). Docker ignores it.
    */
   controlPlaneUrl?: string;
+  /**
+   * Git push routing (`git.pushMode`): `'auto' | 'relay' | 'lease'`. Mirrors
+   * config's `GitPushMode` (core doesn't depend on config). Threaded to the box
+   * bootstrap to gate `AGENTBOX_GIT_LEASE`. Docker ignores it (always relay).
+   */
+  gitPushMode?: 'auto' | 'relay' | 'lease';
   /** Provider-specific knobs (docker: sharedCache/portless; daytona: resources/region). */
   providerOptions?: Record<string, unknown>;
   onLog?: (line: string) => void;

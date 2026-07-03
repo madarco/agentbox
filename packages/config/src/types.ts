@@ -26,6 +26,19 @@ export type { ProviderKind };
  * an opt-in fallback for cloud egress IPs whose CDN the native installer 403s.
  */
 export type ClaudeInstallMethod = 'native' | 'npm';
+/**
+ * How a box's `git push` reaches GitHub:
+ * - `relay` — the box asks the host relay to push with the HOST's credentials
+ *   (they never enter the box). Docker boxes always use this; for a cloud box it
+ *   runs through the host relay's cloud poller (git-bundle pull-back).
+ * - `lease` — the relay/plane leases a short-lived GitHub-App token and the box
+ *   pushes directly with it (keeps working with the laptop off). Needs a
+ *   reachable relay/plane with a GitHub App configured.
+ * - `auto` (default) — lease when a control plane is configured for the box
+ *   (`relay.controlPlaneUrl`), else relay. Today's behavior.
+ * Docker boxes ignore this (always `relay` — they bind-mount the host `.git`).
+ */
+export type GitPushMode = 'auto' | 'relay' | 'lease';
 /** Where `agentbox claude|codex|opencode` opens the attached session when the host
  *  shell is running inside tmux, cmux, Herdr, or iTerm2. `same` keeps today's inline behavior. */
 export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
@@ -152,6 +165,9 @@ export interface UserConfig {
      * (the default). Set via `agentbox control-plane set-url`.
      */
     controlPlaneUrl?: string;
+  };
+  git?: {
+    pushMode?: GitPushMode;
   };
   vnc?: {
     containerPort?: number;
@@ -280,6 +296,9 @@ export interface EffectiveConfig {
   relay: {
     port: number;
     controlPlaneUrl: string | undefined;
+  };
+  git: {
+    pushMode: GitPushMode;
   };
   vnc: {
     containerPort: number;
@@ -429,6 +448,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   relay: {
     port: 8787,
     controlPlaneUrl: undefined,
+  },
+  git: {
+    pushMode: 'auto',
   },
   vnc: {
     containerPort: 6080,
@@ -789,6 +811,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'string',
     description:
       'Public HTTPS URL of a deployed control plane (hosted Next.js + Postgres app). When set, new cloud boxes point at it for git-token leasing, permission state, and the box registry/events, and push to GitHub directly with a leased token so they keep working with the laptop off. Set via `agentbox control-plane set-url`.',
+  },
+  {
+    key: 'git.pushMode',
+    type: 'enum',
+    enumValues: ['auto', 'relay', 'lease'] as const,
+    description:
+      "How a box's `git push` reaches GitHub: `relay` (the host relay pushes with your host credentials — they never enter the box), `lease` (the relay/plane leases a short-lived GitHub-App token and the box pushes directly, so it works with the laptop off), or `auto` (default — lease when `relay.controlPlaneUrl` is set for the box, else relay). Only affects cloud boxes; docker boxes always use `relay`. Forcing `relay` needs a reachable host relay for the box; forcing `lease` needs a reachable relay/plane with a GitHub App.",
   },
   {
     key: 'vnc.containerPort',

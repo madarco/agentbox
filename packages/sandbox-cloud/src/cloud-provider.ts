@@ -447,6 +447,7 @@ export function createCloudProvider(
       launchDockerd: opts.launchDockerd !== false,
       vncPassword: box.vncEnabled ? box.vncPassword : undefined,
       controlPlaneUrl: box.cloud?.controlPlaneUrl,
+      gitPushMode: box.cloud?.gitPushMode,
       boxHost: deriveCloudBoxHost(box.name, webPreview?.url),
     });
     // Re-register on resume. A control-plane box registers on the plane (with
@@ -807,6 +808,7 @@ export function createCloudProvider(
           vncPassword,
           clone: inBoxClone,
           controlPlaneUrl: req.controlPlaneUrl,
+          gitPushMode: req.gitPushMode,
           boxHost: deriveCloudBoxHost(name, webPreview?.url),
           onLog: log,
         });
@@ -1028,6 +1030,7 @@ export function createCloudProvider(
             workspaceBranch: branch,
             topology: resolveSyncTopology(backend.name, req.controlPlaneUrl),
             controlPlaneUrl: req.controlPlaneUrl,
+            gitPushMode: req.gitPushMode,
           },
           createdAt: new Date().toISOString(),
         };

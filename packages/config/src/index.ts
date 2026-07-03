@@ -10,6 +10,7 @@ export {
   type ConfigSource,
   type EffectiveConfig,
   type EngineKind,
+  type GitPushMode,
   type IdeFlavor,
   type KeyDescriptor,
   type KeyType,
