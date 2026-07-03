@@ -48,10 +48,17 @@ The hub runs in one of three profiles, selected by `AGENTBOX_HUB_PROFILE`:
 else hetzner); set `AGENTBOX_HUB_PROFILE=vercel` explicitly for the serverless
 path. `AGENTBOX_HUB_AUTH=off` disables all protection on any profile.
 
+**Run it locally.** `agentbox hub` (start/stop/status/restart) spawns the
+embedded hub on 8787 and opens `http://127.0.0.1:8787/?token=<secret>`. It ships a
+self-contained Next `output:'standalone'` build (a compiled `server.ts` + traced
+`node_modules` staged under the CLI's `runtime/hub/`), so it runs from a published
+install (Node ≥ 22.5). The hub is a superset of the lean relay: `agentbox hub`
+reclaims any lean relay on 8787, and once it's up the create path reuses it (both
+answer `/healthz`, distinguished by a `ui` flag).
+
 **localhost — token gate.** There is no login screen: `server.ts` auto-generates
 `~/.agentbox/hub/token` (0600) and logs the entry URL
-`http://127.0.0.1:8787/?token=<secret>` (the `agentbox hub` command, Phase 5,
-opens it for you). The hub validates the token, stores it in an httpOnly cookie,
+`http://127.0.0.1:8787/?token=<secret>`. The hub validates the token, stores it in an httpOnly cookie,
 and redirects to the clean URL; later requests are authorized by the cookie, and
 direct access without it is locked (401). This protects the loopback bind from
 other local processes and DNS-rebinding.

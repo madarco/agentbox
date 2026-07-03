@@ -70,6 +70,7 @@ import { prepareCommand } from './commands/prepare.js';
 import { pruneCommand } from './commands/prune.js';
 import { queueCommand } from './commands/queue.js';
 import { relayCommand } from './commands/relay.js';
+import { hubCommand } from './commands/hub.js';
 import { controlPlaneCommand } from './commands/control-plane.js';
 import { runQueuedJobCommand } from './commands/_run-queued-job.js';
 import { claudeLoginWorkerCommand } from './commands/_claude-login-worker.js';
@@ -133,6 +134,7 @@ program.addCommand(checkpointCommand);
 program.addCommand(configCommand);
 program.addCommand(queueCommand);
 program.addCommand(relayCommand);
+program.addCommand(hubCommand);
 program.addCommand(controlPlaneCommand);
 // Internal worker spawned by the relay's queue scheduler. Hidden from
 // `--help` (it shows nothing user-facing — see _run-queued-job.ts).
@@ -169,6 +171,7 @@ const FIRST_RUN_EXEMPT = new Set([
   'doctor',
   'help',
   'relay',
+  'hub',
   '_run-queued-job',
   '_claude-login-worker',
   'drive',

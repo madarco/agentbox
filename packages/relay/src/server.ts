@@ -351,6 +351,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         boxes: await store.countBoxes(),
         events: await store.countEvents(),
         pid: process.pid,
+        // True when a Next UI is delegated here (the embedded hub) vs a bare relay.
+        // Lets `agentbox hub` distinguish "a hub already runs" from "a lean relay
+        // holds the port" (reclaim + respawn as the hub).
+        ui: Boolean(uiHandler),
         cliEntry: Boolean(process.env.AGENTBOX_CLI_ENTRY),
         // The spawning CLI's version/commit (inherited via env at spawn time).
         // `version` lets host-side ensureRelay reclaim a relay left over from a

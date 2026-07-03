@@ -133,9 +133,21 @@ const setupSub = new Command('setup')
       if (target !== 'none') {
         // Prompt for the hub login admin BEFORE the deploy spinner starts (a
         // spinner and @clack prompts can't share the terminal). Setting these
-        // turns login on in the deployed hub so it is never left loginless.
-        // hetzner (docker-compose) auth wiring is a Phase 5 follow-up.
-        const hubAuth = target === 'vercel' ? await resolveHubAuthEnv() : null;
+        // turns login on in the deployed hub so it is never left loginless — both
+        // vercel and hetzner (the Caddy-HTTPS docker-compose deploy).
+        const hubAuth = await resolveHubAuthEnv();
+        // hetzner reads ENV_PATH (written to the VPS .env); append the auth env +
+        // the Postgres auth profile so docker-compose enforces login there too.
+        if (target === 'hetzner' && hubAuth) {
+          const authBody =
+            `AGENTBOX_HUB_PROFILE=vercel\n` +
+            `AGENTBOX_HUB_AUTH=${hubAuth.AGENTBOX_HUB_AUTH}\n` +
+            `BETTER_AUTH_SECRET=${hubAuth.BETTER_AUTH_SECRET}\n` +
+            `AGENTBOX_HUB_ADMIN_EMAIL=${hubAuth.AGENTBOX_HUB_ADMIN_EMAIL}\n` +
+            `AGENTBOX_HUB_ADMIN_PASSWORD=${hubAuth.AGENTBOX_HUB_ADMIN_PASSWORD}\n`;
+          await writeFile(ENV_PATH, envBody + authBody, { mode: 0o600 });
+          await chmod(ENV_PATH, 0o600);
+        }
         try {
           const ds = spinner();
           ds.start(`deploying the control plane to ${target}`);

@@ -255,6 +255,18 @@ export class PostgresStore implements Store {
     await this.query(`DELETE FROM box_status WHERE box_id = $1`, [boxId]);
   }
 
+  /**
+   * All box status snapshots in one query (avoids N+1 over listBoxes +
+   * per-box getStatus). Used by the hosted hub UI to render every box's live
+   * status. Not on the Store interface — only the hosted Postgres path needs it.
+   */
+  async listStatuses(): Promise<Array<{ boxId: string; status: BoxStatusSnapshot }>> {
+    const rows = await this.query<{ box_id: string; status: BoxStatusSnapshot }>(
+      `SELECT box_id, status FROM box_status`,
+    );
+    return rows.map((r) => ({ boxId: r.box_id, status: r.status }));
+  }
+
   // --- prompt mailbox ---
 
   async createPrompt(row: PromptRow): Promise<void> {

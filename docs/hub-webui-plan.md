@@ -437,11 +437,48 @@ Live SSE push + a net-new **Approvals** view over the relay prompt mailbox.
   (The relay's existing integration tests already cover block-mode
   add→`/admin/prompts/answer`→exit-10 over real HTTP.)
 
-### Phase 5 — CLI wiring
-`agentbox hub` / `AGENTBOX_HUB=1` spawns the hub on 8787; default CLI keeps the
-lean relay bin.
-- **Verify:** audit the relay bin's module graph has no Next (bundle size
-  unchanged); hub mode serves UI + API on the single port 8787.
+### Phase 5 — CLI wiring + published packaging + hosted fixes — DONE
+`agentbox hub` (start/stop/status/restart) spawns the embedded relay + Next UI on
+8787; default CLI keeps the lean relay bin. Shipped in three parts.
+- **5a — command + lifecycle.** `/healthz` gained `ui:Boolean(uiHandler)` so the
+  hub (superset of the lean relay, both on 8787, mutually exclusive) is
+  distinguishable. `packages/sandbox-docker/src/hub.ts` (`ensureHub`/`stopHub`/
+  `getHubStatus`, separate `hub.pid`/`hub.log`) reuses relay.ts's probes + the
+  version-reclaim gate: reuses a running hub, reclaims a lean relay (or
+  version-mismatched hub) to take the port. The hub spawn sets `AGENTBOX_CLI_ENTRY`
+  + version so the create path's `ensureRelay()` reuses it and never reclaims it.
+  `apps/cli/src/commands/hub.ts` mirrors `relay.ts`; `start` is the default
+  subcommand and opens `http://127.0.0.1:8787/?token=…`.
+- **5b — published packaging (PoC-established recipe).** Next `output:'standalone'`
+  (gated behind `AGENTBOX_HUB_STANDALONE`, set only by `build:standalone`, so the
+  `next start`/Vercel deploy builds stay non-standalone). `apps/hub/scripts/build-standalone.mjs`
+  esbuild-bundles the custom `server.ts` with **code-splitting** (lazy `lib/auth` +
+  cloud-provider chunks stay unloaded in token mode), externalizing `next` + cloud
+  SDKs + better-auth/pg. `server.ts` sets `__NEXT_PRIVATE_STANDALONE_CONFIG` (from
+  `.next/required-server-files.json`) + `process.chdir(dir)` so the full `next()`
+  API skips `loadConfig()`/webpack; the spawn forces `NODE_ENV=production`.
+  `stage-runtime.mjs` stages `dist-standalone` → `runtime/hub` with
+  `verbatimSymlinks:true` (keeps the traced tree's relative symlinks
+  self-contained). `resolveHubServer()` locator + Node ≥ 22.5 gate +
+  `--experimental-sqlite` on 22.5–23; `prepublishOnly` builds the standalone
+  before staging.
+- **5c — hosted-path Bugbot fixes (#140).** #1 (High): compose/hetzner auth wiring
+  (docker-compose env passthrough + `AGENTBOX_HUB_PROFILE=vercel` Postgres auth,
+  Dockerfile boot-time `db:auth-migrate`, `control-plane.ts` collects
+  `resolveHubAuthEnv()` for hetzner + appends to the deploy `.env`). #2 (Medium):
+  `PostgresStore.listStatuses()` + `apps/hub/lib/boxes/postgres-source.ts` — the
+  `next start` deploy path now maps `listBoxes()`+`listStatuses()`+
+  `listPendingPrompts()` → `HubState` (dynamic pg import keeps pg out of the
+  localhost bundle); `source.ts` routes to it when there's no in-process backend
+  but `POSTGRES_URL` is set.
+- **Verified:** typecheck/lint clean across relay/sandbox-docker/cli/hub; relay 261
+  tests green. Live (dev tree, real `~/.agentbox`): `hub start` → `ui:true`/
+  `cliEntry:true`, token gate 401/200, `ensureRelay` reuses the hub (pid unchanged),
+  a lean relay is reclaimed + replaced, idempotent restart, `stop` frees the port.
+  Published shape: `runtime/hub` staged (relative symlinks) + runs out-of-tree.
+  Hosted: `next start` + seeded Postgres rendered the real box; auth env → `/signin`.
+- **Deferred:** shrinking the ~194M standalone (swc platform prune); the
+  `AGENTBOX_HUB=1` env alias (only the `agentbox hub` command ships).
 
 ---
 

@@ -22,5 +22,7 @@ ENV PORT=3000
 COPY --from=build /repo .
 WORKDIR /repo/apps/hub
 EXPOSE 3000
-# next start serves the production build; the route handlers run on Node.
-CMD ["pnpm", "exec", "next", "start", "-p", "3000"]
+# Create/upgrade the auth tables + seed the admin (self-skips when auth is off,
+# i.e. no BETTER_AUTH_SECRET), then serve the production build. Runs at boot (not
+# build) so it sees the container's POSTGRES_URL + auth env.
+CMD ["sh", "-c", "pnpm run db:auth-migrate && pnpm exec next start -p 3000"]

@@ -331,12 +331,19 @@ agentbox queue clear --all
 agentbox relay status
 agentbox relay restart
 
+# Web UI — the relay + a dashboard on http://127.0.0.1:8787
+agentbox hub                 # start + open it in the browser
+agentbox hub status
+agentbox hub stop
+
 # Update agentbox (wipes the box image so it rebuilds, reloads the relay)
 agentbox self-update
 agentbox self-update --dry-run
 ```
 
 `prune` cleans up orphan state records; `--all` also removes orphan docker resources, and `--provider <cloud>` lists untracked cloud sandboxes and offers to delete them. `queue` manages background `-i` jobs. `relay` manages the host relay (`status`, `stop`, `start`, `restart`). `self-update` updates the CLI.
+
+`hub` runs the **AgentBox hub** — the host relay plus a local Web UI (dashboard, box detail, live approvals) on `http://127.0.0.1:8787`, gated by a per-machine token. It's a superset of the relay on the same port: `agentbox hub` takes over from a bare relay, and normal box commands reuse it. Needs Node ≥ 22.5.
 
 ## Control plane
 
