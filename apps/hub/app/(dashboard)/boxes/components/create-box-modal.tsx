@@ -99,7 +99,8 @@ function CreateBoxModal({
   };
 
   return (
-    <Dialog onClose={onClose} className="max-w-[560px]">
+    // Widen the dialog while the build log streams so long lines are readable.
+    <Dialog onClose={onClose} className={jobId ? 'max-w-[900px]' : 'max-w-[560px]'}>
       <DialogHeader>
         <DialogIcon>
           <Icons.box />

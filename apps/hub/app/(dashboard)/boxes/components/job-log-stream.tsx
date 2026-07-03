@@ -41,7 +41,7 @@ export function JobLogStream({ jobId, onDone }: { jobId: string; onDone?: (statu
     <div>
       <pre
         ref={preRef}
-        className="max-h-[320px] min-h-[160px] overflow-auto rounded-lg bg-[#16181c] p-3 font-mono text-[11.5px] leading-relaxed text-[#d6d9de]"
+        className="max-h-[440px] min-h-[220px] overflow-auto whitespace-pre rounded-lg bg-[#16181c] p-3 font-mono text-[11.5px] leading-relaxed text-[#d6d9de]"
       >
         {lines.length === 0 ? 'starting…' : lines.join('\n')}
       </pre>
