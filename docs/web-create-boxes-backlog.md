@@ -30,8 +30,12 @@ streaming), before the full `--protocol json` interaction bus.
 - [ ] **2. Hub reads registry** (`apps/hub/lib/hub-backend.ts`): `listProjects()`
   unions `listProjectsConfigured()` with box-derived roots; self-heal registers box
   roots; unify project id on `hashProjectPath`.
-- [ ] **3. Relocate `submitQueueJob` → `@agentbox/relay`** (`queue-submit.ts`) +
-  add `listJobs()`; re-export from the old CLI path.
+- [x] **3. Shared enqueue core in `@agentbox/relay`.** Refinement: relocating
+  `submitQueueJob` wholesale would cycle (it needs `ensureRelay` from
+  sandbox-docker, which depends on relay). Instead extracted the **pure**
+  `enqueueQueueJob(input)` (manifest build + `writeJob`, no transport) into
+  `queue.ts`; CLI `submitQueueJob` now wraps it (+ `ensureRelay`/poke). Reused the
+  existing `loadQueue()` instead of adding `listJobs()`.
 - [ ] **4. Hub `create` + `addProject` backend methods** (`backend-types.ts`,
   `hub-backend.ts`): `create` resolves workspace from the registry **by projectId**;
   surface in-flight jobs as synthetic `creating` boxes in `getData()`.
