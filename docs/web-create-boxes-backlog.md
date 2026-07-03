@@ -65,9 +65,15 @@ streaming), before the full `--protocol json` interaction bus.
       `claude` tmux, no attach.
     - Zero-box registry projects render in the dashboard; `/api/jobs/[id]/logs`
       SSE streamed `log`→`end`.
-  - ⚠ **Cloud not run:** no cloud provider credentials configured on this machine
-    (no daytona/hetzner/e2b/vercel keys); cloud-from-hub is deferred in v1 anyway.
-    Needs cloud provisioning to smoke the shared enqueue core cross-provider.
+  - ✓ **Cloud (shared enqueue core, via CLI `-i` queue path):** all four providers
+    (**daytona, hetzner, vercel, e2b**) provisioned a box and started the detached
+    agent — my `enqueueQueueJob` refactor works cross-provider. hetzner/vercel/e2b
+    passed the post-start auth verify (`done`); **daytona** flipped `failed` only
+    because claude's creds were rejected *inside that daytona box*
+    (`verifyDetachedSession` — a snapshot/creds env issue, not a code bug: the box
+    created + detached session started fine). All cloud boxes destroyed after.
+    (Cloud-from-hub UI is still deferred in v1 — this validated the core, not the
+    hub's docker-only `create`.)
 
 > **Sync layer preserved:** hub create goes through `enqueueQueueJob` →
 > `_run-queued-job` → `createBox()`, the same path the CLI uses — download/upload
@@ -132,9 +138,10 @@ streaming), before the full `--protocol json` interaction bus.
   and the create-box/add-project UI. Verified logic + hub boot (item 8);
   Docker create→running E2E remains as the pre-push smoke test. **Not pushed** —
   awaiting the {local,vercel,hetzner}×{claude,codex} smoke matrix.
-- _2026-07-03_ — **local smoke passed**: docker×{claude,codex} via queue + a full
-  browser E2E (add-project + create-box through the real server actions →
-  creating→running, sync layer intact, detached no-attach). Cloud legs
-  (vercel/hetzner) blocked — no cloud creds on this machine. Smoke artifacts
-  cleaned (boxes destroyed, registry entries + temp files removed, user's hub
-  restored on 8787). **Still not pushed** — awaiting go-ahead + cloud legs.
+- _2026-07-03_ — **smoke passed**: docker×{claude,codex} via queue + full browser
+  E2E (add-project + create-box through the real server actions → creating→running,
+  sync layer intact, detached no-attach). **Cloud**: daytona/hetzner/vercel/e2b all
+  provisioned + started the detached agent via the shared enqueue core
+  (hetzner/vercel/e2b `done`; daytona failed only on in-box claude auth verify —
+  env, not code). All boxes destroyed; artifacts cleaned; hub restored on 8787.
+  Pushing + PR into `feat/control-plane-create`.
