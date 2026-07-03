@@ -16,6 +16,14 @@ export async function POST(
   if (!isLifecycleAction(action)) {
     return fail('invalid_request', `unknown action: ${action}`, { allowed: ['pause', 'resume', 'stop', 'destroy'] });
   }
+  // In-flight create jobs surface in GET /boxes as synthetic `creating`/`error`
+  // boxes with a `job:` id — they have no real container yet, so lifecycle would
+  // 404 in the backend and contradict the GET. Reject with a clear 409 instead.
+  if (id.startsWith('job:')) {
+    return fail('conflict', `box ${id} is still being created; ${action} is not available yet`, {
+      jobId: id.slice('job:'.length),
+    });
+  }
   const backend = backendOrNull();
   if (!backend) return fail('backend_unavailable', 'hub backend unavailable (run the hub server)');
 
