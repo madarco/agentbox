@@ -28,7 +28,7 @@ function Crumbs() {
   const { project, box } = useStore();
   const parts: ReactNode[] = [
     <Crumb key="h" to="/">
-      control
+      hub
     </Crumb>,
   ];
 

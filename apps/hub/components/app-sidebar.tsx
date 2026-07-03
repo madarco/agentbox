@@ -71,7 +71,7 @@ export function AppSidebar() {
       <div className="flex items-center gap-2.5 px-2 pb-4 font-mono text-sm font-semibold">
         <img src="/logo.svg" alt="" width={20} height={20} className="h-5 w-5" />
         agentbox
-        <span className="font-normal text-[#a4a9b0]">/ control</span>
+        <span className="font-normal text-[#a4a9b0]">/ hub</span>
       </div>
 
       <SideLabel>Workspace</SideLabel>

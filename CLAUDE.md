@@ -66,6 +66,32 @@ When verifying a change:
 - **No emojis in code or output** unless explicitly requested.
 - **Comments only when the WHY is non-obvious** (a constraint, a workaround, a surprising invariant). Names should carry the WHAT.
 
+## AgentBox Tray (macOS menu-bar app)
+
+A native macOS **menu-bar app** lives in the sibling repo [`../agentbox-tray`](../agentbox-tray)
+(private GitHub `madarco/agentbox-tray`). It surfaces all boxes and gives one-click actions — open
+the hub, open each box's Web/VNC, start/stop, per-box git ops (`pull`/`push`/`push --host-only`/
+`checkout`/`branch`), restart services, and answer host-action approvals — without a terminal. It
+updates live over the hub's SSE stream and falls back to polling.
+
+It has **no build-time coupling** to this repo — it's a Swift Package Manager / AppKit app (Swift
+5.10, no Xcode, no external deps) that drives the two public surfaces:
+
+- **Boxes + actions** via the installed CLI, shelled through a login shell (`/bin/zsh -lc 'agentbox …'`,
+  because a GUI app has no inherited PATH). The list comes from `agentbox list -g --json` — it keeps
+  the CLI (not hub REST `/api/v1/boxes`) because only `ListedBox` carries the resolved Web/VNC URLs.
+- **Approvals + live events** via the local **Control Hub** at `127.0.0.1:8787`: REST
+  `/api/v1/approvals` (+ `…/{id}/answer`) and the SSE `/api/events` stream. **Auth split to remember
+  when changing the hub:** `/api/v1/*` uses `Authorization: Bearer <token>`, but `/api/events` reads
+  the **`agentbox_hub_token` cookie** (Bearer there 401s). Token is `~/.agentbox/hub/token`. SSE
+  events are refetch signals only (empty `data: {}`).
+
+**When you change the hub API, the SSE event/auth contract, the `agentbox list --json` shape, or any
+CLI command/flag the app uses (git/services/url/screen/start/stop/hub), update the tray app too** —
+its own [`CLAUDE.md`](../agentbox-tray/CLAUDE.md) documents exactly which surfaces it depends on. The
+app's data/action layer sits behind a `BoxSource` protocol so a future `HubAPIBoxSource` can target
+the hosted control-plane unchanged (aligns with [`docs/control-plane-roadmap.md`](./docs/control-plane-roadmap.md)).
+
 ## Documentation map
 
 Each topic has a dedicated file under [`docs/`](./docs). Read the relevant one before changing that area.
