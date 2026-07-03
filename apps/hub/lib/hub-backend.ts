@@ -13,6 +13,7 @@ import { normalizeLastAgent, type BoxRecord, type Provider } from '@agentbox/cor
 import {
   enqueueQueueJob,
   loadQueue,
+  readJob,
   type PendingApproval,
   type QueueAgentKind,
   type QueueJob,
@@ -311,6 +312,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
+    },
+    async getJob(id): Promise<{ status: string; logPath: string; boxId?: string } | null> {
+      const job = await readJob(id);
+      if (!job) return null;
+      return { status: job.status, logPath: job.logPath, boxId: job.boxId };
     },
   };
 }

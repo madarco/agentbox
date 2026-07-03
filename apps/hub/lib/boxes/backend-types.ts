@@ -19,6 +19,15 @@ export interface CreateBoxInput {
 // detached queue worker; progress streams over the per-job log SSE.
 export type CreateBoxResult = { ok: true; jobId: string } | { ok: false; error: string };
 
+// Minimal job view for the log-stream route: the log file to tail, the terminal
+// status (so the SSE knows when to stop), and the box id once the worker writes
+// it back. Status is a plain string to keep this module free of relay imports.
+export interface JobView {
+  status: string;
+  logPath: string;
+  boxId?: string;
+}
+
 // The host-facing backend. Implemented in lib/hub-backend.ts (Node-only, imports
 // the sandbox/relay toolchain) and constructed by the custom server, which sets
 // it on `globalThis.__AGENTBOX_HUB_BACKEND`. Next server code (source.ts /
@@ -39,4 +48,7 @@ export interface HubBackend {
   create(input: CreateBoxInput): Promise<CreateBoxResult>;
   // Register a folder (absolute path) as a project so it can host boxes.
   addProject(absPath: string): Promise<ActionResult>;
+  // Read a background job (log path + status) for the per-job log SSE. null when
+  // the manifest is gone.
+  getJob(id: string): Promise<JobView | null>;
 }

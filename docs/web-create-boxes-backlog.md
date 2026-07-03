@@ -42,13 +42,19 @@ streaming), before the full `--protocol json` interaction bus.
   surface as synthetic `creating`/`error` boxes in `getData()`. Added
   `handle.pokeQueue()` to the relay handle for in-process scheduler kicks.
 - [x] **5. `onStatusChange → hubNotifier`** wired in `daemon.ts` (Phase A bit).
-- [ ] **6. Per-job log SSE** (`apps/hub/app/(dashboard)/api/jobs/[id]/logs/route.ts`)
-  tailing `queueLogPath(id)`; gated by `proxy.ts`.
-- [ ] **7. Server actions + UI**: `createBoxAction`/`addProjectAction`
-  (`actions.ts`); re-enable the buttons; create-box modal + `JobLogStream` +
-  add-project modal.
-- [ ] **8. Docs + verification**: run the E2E slice check; update
+- [x] **6. Per-job log SSE** (`apps/hub/app/(dashboard)/api/jobs/[id]/logs/route.ts`)
+  tails the job log via `backend.getJob(id)` (path + status) with plain `fs` so
+  the route never bundles the relay toolchain; emits `log`/`end` events; ends on
+  terminal status. Gated by `proxy.ts`.
+- [x] **7. Server actions + UI**: `createBoxAction`/`addProjectAction`
+  (`actions.ts`); re-enabled the buttons; `CreateBoxButton`+modal, `JobLogStream`,
+  `AddProjectButton`+modal. typecheck + lint + `next build` clean.
+- [ ] **8. Runtime verification**: E2E slice check (below); update
   `docs/hub-webui-plan.md`.
+
+> **Sync layer preserved:** hub create goes through `enqueueQueueJob` →
+> `_run-queued-job` → `createBox()`, the same path the CLI uses — download/upload
+> of files/skills/git is untouched (no reimplementation of create).
 
 ---
 
