@@ -10,6 +10,45 @@ function tokenEq(a: string, b: string): boolean {
   return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
+// Public REST API surface. It shares the hub's gate but answers JSON 401s (never a
+// /signin redirect, which a non-browser client can't follow) and accepts a Bearer
+// token, since an IDE/API client can't carry the browser cookie.
+const API_PREFIX = '/api/v1';
+// Endpoints that never require auth: liveness + the spec + its docs page (no state).
+const API_PUBLIC = new Set(['/api/v1/health', '/api/v1/openapi.json', '/api/v1/docs']);
+
+function bearerOf(request: NextRequest): string | null {
+  const h = request.headers.get('authorization');
+  const m = h ? /^Bearer\s+(.+)$/i.exec(h) : null;
+  return m ? m[1].trim() : null;
+}
+
+function apiUnauthorized(): NextResponse {
+  return NextResponse.json(
+    { error: { code: 'unauthorized', message: 'Missing or invalid credentials. Send Authorization: Bearer <hub token>.' } },
+    { status: 401 },
+  );
+}
+
+// Gate a /api/v1 request. `mode` is never 'off' here (handled by the caller).
+function gateApi(request: NextRequest, mode: 'token' | 'password'): NextResponse {
+  if (API_PUBLIC.has(request.nextUrl.pathname)) return NextResponse.next();
+  if (mode === 'token') {
+    const expected = process.env.AGENTBOX_HUB_TOKEN ?? '';
+    if (!expected) return apiUnauthorized();
+    const bearer = bearerOf(request);
+    if (bearer && tokenEq(bearer, expected)) return NextResponse.next();
+    // Same-origin browser fetches (the hub's own UI) carry the token cookie.
+    const cookie = request.cookies.get(HUB_TOKEN_COOKIE)?.value;
+    if (cookie && tokenEq(cookie, expected)) return NextResponse.next();
+    return apiUnauthorized();
+  }
+  // password (hetzner/vercel): accept the better-auth session cookie. A dedicated
+  // API-key scheme for headless clients lands with the hosted-remote phase.
+  if (getSessionCookie(request)) return NextResponse.next();
+  return apiUnauthorized();
+}
+
 // Next 16 middleware. Gates the hub UI by mode. The matcher excludes every
 // relay-owned prefix so that on vercel (where those paths are the app/[...path]
 // catch-all) box→host comms and the bearer-gated /admin/* are never redirected to
@@ -18,6 +57,10 @@ function tokenEq(a: string, b: string): boolean {
 export function proxy(request: NextRequest): NextResponse {
   const mode = authMode();
   if (mode === 'off') return NextResponse.next();
+
+  // The public API is gated but answers JSON (not a signin redirect) and accepts
+  // a Bearer token — handle it before the browser flows below.
+  if (request.nextUrl.pathname.startsWith(API_PREFIX)) return gateApi(request, mode);
 
   // localhost token gate: a shared-secret cookie, no login screen. `?token=`
   // sets the cookie once and redirects to the clean URL; thereafter the cookie

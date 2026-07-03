@@ -86,6 +86,7 @@ export function AppSidebar() {
         />
         <SideItem active={pathname.startsWith('/settings')} to="/settings" icon={Icons.settings} label="Settings" />
         <SideItem href="https://agent-box.sh/docs" icon={Icons.book} label="Docs" ext />
+        <SideItem href="/api/v1/docs" icon={Icons.terminal} label="API" ext />
       </nav>
 
       <SideLabel>Projects</SideLabel>

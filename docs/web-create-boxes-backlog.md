@@ -99,11 +99,36 @@ streaming), before the full `--protocol json` interaction bus.
 - [ ] Dispatch on job `kind`: `create-box` (existing), `prepare`/`bake`
   (`runPrepare`), `provider-install`. Run core lib in-worker with `--protocol json`.
 
-## Phase D — Relay / hub HTTP API surface
-- [ ] Tier-1 in-process routes (`/boxes`, `/boxes/:id/{pause,resume,stop,destroy}`,
-  `/providers`).
-- [ ] Tier-2/3 job routes (`POST /boxes|/prepare|/providers/:name/install`,
-  `GET /jobs/:id/events`, `POST /jobs/:id/answer`). Document as the public API.
+## Phase D — Hub public REST API (`/api/v1`) — first cut DONE
+The public API lives as a **versioned `/api/v1/*` route group on the hub** (Next
+routes under `apps/hub/app/(dashboard)/api/v1/`), served on the relay port via the
+existing `uiHandler` seam — deliberately **not** an extension of the relay's internal
+`/admin`+`/rpc` if-ladder (that stays loopback-internal, with exit-code-coupled
+statuses and no schema). One consistent envelope: success returns the resource
+directly; errors always `{ error: { code, message, details? } }` with a correct HTTP
+status. Thin facade over the already-shipped backend seam — no new box logic.
+- [x] **Tier-1 in-process routes:** `GET /boxes`, `GET /boxes/:id`,
+  `POST /boxes/:id/{pause,resume,stop,destroy}`, `GET|POST /projects`,
+  `GET /approvals`, `POST /approvals/:id/answer`. Reads go through
+  `getDashboardData()` (in-process → Postgres → empty), so the read contract is
+  **topology-agnostic** already; mutations use `globalThis.__AGENTBOX_HUB_BACKEND`
+  (503 on the Postgres path — hosted writes are the follow-up below).
+- [x] **Tier-2 job routes:** `POST /boxes` (create → `202 {jobId}` via
+  `enqueueQueueJob`), `GET /jobs/:id`, `GET /jobs/:id/logs` (SSE, shared tail in
+  `lib/job-log-stream.ts` with the internal modal route).
+- [x] **Auth:** `proxy.ts` gates `/api/v1/*` — accepts `Authorization: Bearer
+  <AGENTBOX_HUB_TOKEN>` (or the same-origin cookie) in token mode, the better-auth
+  session in password mode, and always answers **JSON 401** (never a `/signin`
+  redirect a non-browser client can't follow). `/health`, `/openapi.json`, `/docs`
+  are public.
+- [x] **OpenAPI 3.1 + docs:** hand-authored spec at `GET /api/v1/openapi.json`
+  (no zod dep added — the repo has no zod convention; validation is hand-rolled
+  `typeof` guards in `api/v1/lib/validate.ts`, matching the codebase), Scalar docs at
+  `GET /api/v1/docs`.
+- **Deferred to Phase D-next:** `/providers` list, `POST /prepare` (bake) +
+  `POST /providers/:name/install`, and the structured `GET /jobs/:id/events` /
+  `POST /jobs/:id/answer` interaction stream (needs Phases A–C). Dedicated API-key
+  management + hosted-plane **writes** land with the hosted-remote phase below.
 
 ## Phase E — Web UI + docs
 - [ ] Generalized prompt/link surface (extend Approvals for job origin + links).

@@ -500,6 +500,51 @@ effort — see `docs/web-create-boxes-backlog.md` and the approved architecture 
   secrets/env/checkpoint surfaces, and the full `--protocol json` interaction bus
   (prompts/links) + hosted-plane parity — tracked in the backlog.
 
+### Phase 7 — Public REST API (`/api/v1`) — DONE
+A versioned, documented HTTP API so external tools (IDEs above all, and a future
+macOS app) can launch + manage boxes — including when the hub runs on a **separate
+host**, where there's no local CLI to shell out to. Design decision: a **new
+`/api/v1/*` route group on the hub** (Next routes under
+`apps/hub/app/(dashboard)/api/v1/`, served on the relay port via the existing
+`uiHandler` seam), **not** an extension of the relay's internal `/admin`+`/rpc`
+if-ladder — that surface is loopback-internal by design, couples HTTP status to
+child-process exit codes, and has no schema. The API is a thin facade over the
+already-shipped backend seam (`__AGENTBOX_HUB_BACKEND` + `getDashboardData()` +
+`enqueueQueueJob`) — no new box logic.
+- **Contract:** one envelope everywhere — success returns the resource directly,
+  errors always `{ error: { code, message, details? } }` with a correct status.
+  Routes: `GET /boxes`, `GET /boxes/:id`,
+  `POST /boxes/:id/{pause,resume,stop,destroy}`, `POST /boxes` (create → `202
+  {jobId}`), `GET|POST /projects`, `GET /approvals`, `POST /approvals/:id/answer`,
+  `GET /jobs/:id`, `GET /jobs/:id/logs` (SSE), `GET /health`, `GET /openapi.json`,
+  `GET /docs`. The box view model is the normalized hub `Box` (provider-agnostic),
+  identical to what the UI and the future Postgres source produce.
+- **Auth:** `proxy.ts` gates `/api/v1/*` and answers **JSON 401** (never a `/signin`
+  redirect). Token mode accepts `Authorization: Bearer <AGENTBOX_HUB_TOKEN>` (or the
+  same-origin cookie); password mode accepts the better-auth session. `/health`,
+  `/openapi.json`, `/docs` are public. Dedicated API keys arrive with hosted-remote.
+- **Topology:** reads route through `getDashboardData()` (in-process → Postgres →
+  empty), so the read contract is topology-agnostic already; mutations use the
+  in-process backend (the Postgres/plane write path is the documented follow-up).
+- **OpenAPI + docs:** hand-authored OpenAPI 3.1 at `/api/v1/openapi.json` (no zod dep
+  added — validation is hand-rolled `typeof` guards, matching the repo's convention),
+  Scalar-rendered reference at `/api/v1/docs`. The per-job log SSE tail is shared with
+  the internal create-modal route via `lib/job-log-stream.ts`.
+- **New:** `apps/hub/app/(dashboard)/api/v1/**` (routes + `lib/{envelope,backend,
+  validate,openapi}.ts`), `apps/hub/lib/job-log-stream.ts`. **Modified:**
+  `apps/hub/proxy.ts` (Bearer gate), the internal `api/jobs/[id]/logs/route.ts`
+  (delegates to the shared tail).
+- **Verified (embedded `server.ts`, scratch port + isolated `$HOME`):** health
+  public; boxes/projects/approvals 401 without Bearer, 200 with it, 401 wrong token;
+  validation → 400 envelopes, unknown project → 404, unknown box/job → 404, bad
+  action → 400; `openapi.json` valid 3.1 with all paths, `/docs` renders; regression
+  `/healthz`, `/admin/registry`, `/api/events`, dashboard `/` all intact. Full create
+  E2E through the API: `POST /boxes` → `202 {jobId}` → job `running` →
+  `GET /jobs/:id/logs` streamed the real build log → box surfaced as `creating`.
+- **Deferred:** `/providers`, bake/provider-install jobs, the structured
+  `/jobs/:id/events` + `/jobs/:id/answer` interaction stream (Phases A–C), hosted
+  writes, and API-key management.
+
 ---
 
 ## Docs to update (in the phase that changes the behavior)

@@ -70,6 +70,10 @@ export function Topbar() {
         <Icons.book />
         Docs
       </Button>
+      <Button variant="ghost" size="sm" href="/api/v1/docs" target="_blank" rel="noopener">
+        <Icons.terminal />
+        API
+      </Button>
       {state.authMode === 'password' ? (
         <Button
           variant="ghost"

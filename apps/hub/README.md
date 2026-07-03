@@ -27,6 +27,33 @@ Admin (the `AGENTBOX_RELAY_ADMIN_TOKEN` bearer, never loopback):
 `GET /admin/events`, `GET /admin/registry`, `GET /admin/prompts`,
 `POST /admin/prompts/answer`. `GET /healthz` is open.
 
+Those are the **internal** relay wire (per-box / loopback / admin-bearer). The
+**public** REST API is a separate, versioned surface — see below.
+
+## Public REST API (`/api/v1`)
+
+A stable, documented HTTP API for external callers (IDEs, scripts, the future
+macOS app) — a thin facade over the in-process backend, served on the relay port
+via the `uiHandler` seam (Next routes under `app/(dashboard)/api/v1/`). It does
+**not** reuse the internal `/admin`+`/rpc` wire (loopback-only, exit-code-coupled
+statuses, no schema).
+
+- **Auth:** `Authorization: Bearer <AGENTBOX_HUB_TOKEN>` in token mode (or the
+  better-auth session in password mode); always a JSON `401`, never a `/signin`
+  redirect. `/health`, `/openapi.json`, `/docs` are public.
+- **Envelope:** success returns the resource directly; errors are
+  `{ error: { code, message, details? } }` with a matching HTTP status.
+- **Routes:** `GET /boxes`, `GET /boxes/:id`,
+  `POST /boxes/:id/{pause,resume,stop,destroy}`, `POST /boxes` (create →
+  `202 {jobId}`), `GET|POST /projects`, `GET /approvals`,
+  `POST /approvals/:id/answer`, `GET /jobs/:id`, `GET /jobs/:id/logs` (SSE),
+  `GET /health`, `GET /openapi.json` (OpenAPI 3.1), `GET /docs` (Scalar).
+- **Reads** are topology-agnostic (in-process → Postgres via `getDashboardData()`);
+  **writes** use the in-process backend (hosted-plane writes are a follow-up).
+
+Full reference: `apps/web/content/docs/hub-api.mdx` (published at
+https://agent-box.sh/docs/hub-api).
+
 ## Configuration
 
 See [`.env.example`](./.env.example). Required: `POSTGRES_URL`,
