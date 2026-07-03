@@ -52,7 +52,7 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
         post: {
-          summary: 'Create a box (async — returns a job id)',
+          summary: 'Create a box (async — returns a job id). agent "none" just creates the box without starting an agent (prompt ignored).',
           requestBody: {
             required: true,
             content: { 'application/json': { schema: { $ref: '#/components/schemas/CreateBox' } } },
@@ -257,7 +257,7 @@ export function buildOpenApi(): Record<string, unknown> {
           type: 'object',
           properties: {
             projectId: { type: 'string' },
-            agent: { type: 'string', enum: ['claude', 'codex', 'opencode'] },
+            agent: { type: 'string', enum: ['claude', 'codex', 'opencode', 'none'] },
             name: { type: 'string' },
             prompt: { type: 'string' },
           },

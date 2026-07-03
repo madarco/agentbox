@@ -5,7 +5,8 @@ import type { CreateBoxInput } from '@/lib/boxes/backend-types';
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; message: string; details?: unknown };
 
-const AGENTS = ['claude', 'codex', 'opencode'] as const;
+// 'none' = create the box without starting an agent (like `agentbox create`).
+const AGENTS = ['claude', 'codex', 'opencode', 'none'] as const;
 export const LIFECYCLE_ACTIONS = ['pause', 'resume', 'stop', 'destroy'] as const;
 export type LifecycleAction = (typeof LIFECYCLE_ACTIONS)[number];
 

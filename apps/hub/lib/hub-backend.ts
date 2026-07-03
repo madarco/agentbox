@@ -200,7 +200,8 @@ function mapJobToBox(job: QueueJob, status: BoxStatus): Box {
     repo: path.basename(root),
     branch: '',
     task: job.prompt || job.boxName || 'new box',
-    agent: AGENT_LABEL[job.agent] ?? 'claude',
+    // A no-agent box ("just create") has no agent — show the shell glyph.
+    agent: job.noAgent ? 'shell' : (AGENT_LABEL[job.agent] ?? 'claude'),
     status,
     createdAt,
     lastActivity: createdAt,
@@ -344,19 +345,25 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // Accepts any project the dashboard shows (registry or live box root).
         const workspace = await resolveProjectPath(input.projectId);
         if (!workspace) return { ok: false, error: `unknown project ${input.projectId}` };
-        const agent: QueueAgentKind = input.agent === 'claude' ? 'claude-code' : input.agent;
+        const noAgent = input.agent === 'none';
+        // For a no-agent box `agent` is inert (the worker ignores it when noAgent);
+        // keep a valid placeholder so the closed QueueAgentKind union holds.
+        const agent: QueueAgentKind =
+          input.agent === 'claude' || input.agent === 'none' ? 'claude-code' : input.agent;
         const name = input.name?.trim() || undefined;
         // Enqueue a detached create job (the same pipeline as `agentbox <agent>
         // -i`): the worker runs createBox() — including the full sync layer —
-        // then starts the agent in a detached tmux session. It never attaches.
-        // The worker names the box from `createOpts.name` (like the CLI's
+        // then starts the agent in a detached tmux session (unless noAgent, which
+        // stops after create, like `agentbox create`). It never attaches. The
+        // worker names the box from `createOpts.name` (like the CLI's
         // pickCreateOpts), so the typed name must go there, not only on boxName.
         const { job } = await enqueueQueueJob({
           agent,
           boxName: name ?? '',
           providerName: 'docker',
-          prompt: input.prompt ?? '',
+          prompt: noAgent ? '' : (input.prompt ?? ''),
           agentArgs: [],
+          ...(noAgent ? { noAgent: true } : {}),
           createOpts: { workspace, name },
         });
         handle.pokeQueue();

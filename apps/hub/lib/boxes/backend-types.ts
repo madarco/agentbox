@@ -10,7 +10,8 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 // = just start the agent, don't drive it).
 export interface CreateBoxInput {
   projectId: string;
-  agent: 'claude' | 'codex' | 'opencode';
+  // 'none' = just create the box (like `agentbox create`), don't start an agent.
+  agent: 'claude' | 'codex' | 'opencode' | 'none';
   name?: string;
   prompt?: string;
 }

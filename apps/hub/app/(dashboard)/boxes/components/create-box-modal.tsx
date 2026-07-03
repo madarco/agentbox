@@ -87,7 +87,7 @@ function CreateBoxModal({
         projectId,
         agent,
         name: name.trim() || undefined,
-        prompt: prompt.trim() || undefined,
+        prompt: agent === 'none' ? undefined : prompt.trim() || undefined,
       });
       if (!res.ok) {
         setError(res.error);
@@ -131,19 +131,27 @@ function CreateBoxModal({
                 <option value="claude">Claude</option>
                 <option value="codex">Codex</option>
                 <option value="opencode">OpenCode</option>
+                <option value="none">None — just create the box</option>
               </Select>
             </Field>
             <Field label="Name (optional)">
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="auto" />
             </Field>
-            <Field label="Initial prompt (optional)">
-              <Textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                rows={3}
-                placeholder="Leave empty to just start the agent — attach later from a terminal or SSH."
-              />
-            </Field>
+            {agent === 'none' ? (
+              <p className="font-mono text-xs text-muted-foreground">
+                The box is created and left running with no agent — attach later from a terminal or SSH
+                (<span className="text-secondary-foreground">agentbox shell</span>).
+              </p>
+            ) : (
+              <Field label="Initial prompt (optional)">
+                <Textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  rows={3}
+                  placeholder="Leave empty to just start the agent — attach later from a terminal or SSH."
+                />
+              </Field>
+            )}
             {error ? <div className="font-mono text-xs text-destructive">{error}</div> : null}
           </>
         )}
