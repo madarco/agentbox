@@ -430,14 +430,19 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     },
     async removeProject(projectId: string): Promise<ActionResult> {
       try {
-        // Empty-only: refuse if any live box OR in-flight create job belongs to
-        // this project. listProjects() self-heals from live box roots, so a
-        // project with boxes would just reappear — deletion is meaningless there.
+        // Empty-only: refuse if any live box OR any create job that still SURFACES
+        // as a box in getData() belongs to this project — otherwise DELETE would
+        // unregister a project the dashboard still lists (and the UI hides Delete
+        // for). Mirror getData()'s exact surfacing predicate: a job shows as a box
+        // unless a live box already superseded it and its status is queued/running
+        // ('creating') or failed ('error'). done/cancelled never surface.
         const [boxes, jobs] = await Promise.all([listBoxes(), loadQueue()]);
         const hasBox = boxes.some((b) => hashProjectPath(projectRootOf(b)) === projectId);
+        const liveIds = new Set(boxes.map((b) => b.id));
         const hasJob = jobs.some(
           (j) =>
-            (j.status === 'queued' || j.status === 'running') &&
+            !(j.boxId && liveIds.has(j.boxId)) &&
+            (j.status === 'queued' || j.status === 'running' || j.status === 'failed') &&
             hashProjectPath(j.createOpts.workspace) === projectId,
         );
         if (hasBox || hasJob) return { ok: false, error: 'project has boxes; delete them first' };
