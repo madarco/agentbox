@@ -1,4 +1,5 @@
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
+import type { GitPushMode } from '@agentbox/config';
 import { bashScript, quoteShellArgv } from './shell.js';
 
 /**
@@ -54,6 +55,13 @@ export interface KickCloudBootstrapArgs {
    * reEnsure/attach) from the persisted record so resume preserves the topology.
    */
   controlPlaneUrl?: string;
+  /**
+   * Git push routing for this box (`git.pushMode`): `relay` (host relay pushes
+   * with host creds), `lease` (box leases a token and pushes direct), or `auto`
+   * (default — lease iff a control plane is configured). Only `lease` (explicit
+   * or auto-with-control-plane) writes `AGENTBOX_GIT_LEASE=1`. Omitted = `auto`.
+   */
+  gitPushMode?: GitPushMode;
   onLog?: (line: string) => void;
 }
 
@@ -112,10 +120,19 @@ export function buildBootstrapEnv(args: KickCloudBootstrapArgs): {
     boxEnvFile.push(`AGENTBOX_WEB_PROXY_PORT=${quoteShellArgv([String(args.webProxyPort)])}`);
   if (args.boxHost) boxEnvFile.push(`AGENTBOX_BOX_HOST=${quoteShellArgv([args.boxHost])}`);
 
-  // Control-plane topology: the daemon needs the upstream URL (process env), and
-  // the login-shell `git push` needs the lease flag (box.env, world-readable).
+  // Control-plane topology: the daemon needs the upstream URL (process env)
+  // regardless of push routing — it drives the registry/events/permissions, not
+  // just leasing.
   if (args.controlPlaneUrl) {
     env.push(`AGENTBOX_CONTROL_PLANE_URL=${quoteShellArgv([args.controlPlaneUrl])}`);
+  }
+
+  // Git push routing (git.pushMode). The login-shell `git push` leases + pushes
+  // direct only when this flag is set; otherwise it routes through the host relay.
+  // `auto` (default) leases iff a control plane is configured for the box.
+  const pushMode = args.gitPushMode ?? 'auto';
+  const lease = pushMode === 'lease' || (pushMode === 'auto' && Boolean(args.controlPlaneUrl));
+  if (lease) {
     boxEnvFile.push(`AGENTBOX_GIT_LEASE=1`);
   }
 

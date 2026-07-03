@@ -128,11 +128,15 @@ function writeReposState(state: ReposState): void {
  */
 export async function ensureProjectRepoOnControlPlane(args: {
   controlPlaneUrl: string | undefined;
+  gitPushMode?: 'auto' | 'relay' | 'lease';
   projectRoot: string;
   yes?: boolean;
 }): Promise<void> {
   const { controlPlaneUrl, projectRoot } = args;
   if (!controlPlaneUrl) return;
+  // `relay` push mode never leases, so the repo doesn't need to be authorized on
+  // the control plane's GitHub App — skip the check/nag.
+  if (args.gitPushMode === 'relay') return;
   const ownerRepo = await resolveOwnerRepo(projectRoot);
   if (!ownerRepo) return;
   const { owner, repo } = ownerRepo;

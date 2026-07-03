@@ -431,6 +431,7 @@ export const createCommand = new Command('create')
         // on the plane, and the box forwards /rpc + leases push tokens directly.
         // Cloud-only in effect; the docker provider ignores it.
         controlPlaneUrl: cfg.effective.relay.controlPlaneUrl,
+        gitPushMode: cfg.effective.git.pushMode,
         projectRoot,
         onLog: (line) => {
           s.message(line);

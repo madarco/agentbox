@@ -588,6 +588,7 @@ export const claudeCommand = new Command('claude')
     // authorized on its GitHub App so the box can lease push tokens.
     await ensureProjectRepoOnControlPlane({
       controlPlaneUrl: cfg.effective.relay.controlPlaneUrl,
+      gitPushMode: cfg.effective.git.pushMode,
       projectRoot,
       yes: !!opts.yes,
     });
