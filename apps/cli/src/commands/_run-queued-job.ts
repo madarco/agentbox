@@ -146,9 +146,16 @@ async function ensureClaudeLoginFresh(args: {
     })();
   }, 500);
 
+  // Abort the in-flight login promptly if the queue worker is stopped, instead of
+  // leaving the login container running until the URL/code timeout.
+  const abort = new AbortController();
+  const onSignal = (): void => abort.abort();
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) process.once(sig, onSignal);
+
   try {
     const result = await runClaudeLogin({
       image,
+      signal: abort.signal,
       writeRaw: (chunk) => log.raw(chunk),
       writeLog: (line) => log.write(line),
       onPhase: (phase, u) => {
@@ -169,6 +176,7 @@ async function ensureClaudeLoginFresh(args: {
     log.write('claude login refreshed');
   } finally {
     clearInterval(codeWatcher);
+    for (const sig of ['SIGTERM', 'SIGINT'] as const) process.removeListener(sig, onSignal);
   }
 }
 

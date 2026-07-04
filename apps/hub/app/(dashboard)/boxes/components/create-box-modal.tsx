@@ -98,6 +98,9 @@ function CreateBoxModal({
   useEffect(() => {
     if (!projectId || jobId) return;
     setRunSetup(selected?.needsSetup ?? false);
+    // Reset the provider to the default on a project switch (like branch/setup) so
+    // a cloud provider picked for one project doesn't silently carry to the next.
+    setProvider('docker');
     let cancelled = false;
     setBranches(null);
     setFromBranch(selected?.currentBranch ?? '');

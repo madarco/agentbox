@@ -644,6 +644,15 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         if (fromBranch) {
           const v = await verifyFromBranch(workspace, fromBranch);
           if (!v.ok) return { ok: false, error: v.error };
+          // Cloud providers seed via `git clone --branch <ref>`, which only accepts
+          // branch/tag names — a SHA passes rev-parse but fails at provisioning, so
+          // reject it here rather than leave a half-built box.
+          if (provider !== 'docker' && SHA_RE.test(fromBranch)) {
+            return {
+              ok: false,
+              error: `base ref "${fromBranch}" is a commit SHA; ${provider} boxes can only branch from a branch or tag name`,
+            };
+          }
         }
         // Setup wizard: seed the agent's first turn to generate agentbox.yaml.
         // Inert for a no-agent box (nothing to run it).
