@@ -310,17 +310,10 @@ function CreateBoxModal({
 
 // The build-job state, shown as a status pill in the modal header. `badge-create`
 // pulses (working); `badge-run` is the settled green (done); `badge-err` is red.
-// A pending Claude re-login takes over the pill (amber "Login required") until the
-// user finishes it, since the create is blocked on that.
+// A terminal job status always wins; only while the job is still running does a
+// pending Claude re-login take over the pill (amber "Login required"), since the
+// create is blocked on it.
 function JobStatusBadge({ status, loginPhase }: { status: string; loginPhase?: JobLoginState['phase'] | null }) {
-  if (loginPhase === 'awaiting-code' || loginPhase === 'starting' || loginPhase === 'exchanging') {
-    return (
-      <Badge className="badge-create">
-        <span className="badge-dot" />
-        Login required
-      </Badge>
-    );
-  }
   if (status === 'done') {
     return (
       <Badge className="badge-run">
@@ -329,11 +322,19 @@ function JobStatusBadge({ status, loginPhase }: { status: string; loginPhase?: J
       </Badge>
     );
   }
-  if (status === 'failed' || status === 'error') {
+  if (status === 'failed' || status === 'error' || status === 'cancelled') {
     return (
       <Badge className="badge-err">
         <span className="badge-dot" />
         Failed
+      </Badge>
+    );
+  }
+  if (loginPhase === 'awaiting-code' || loginPhase === 'starting' || loginPhase === 'exchanging') {
+    return (
+      <Badge className="badge-create">
+        <span className="badge-dot" />
+        Login required
       </Badge>
     );
   }

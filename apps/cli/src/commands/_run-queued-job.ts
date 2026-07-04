@@ -118,9 +118,19 @@ async function ensureClaudeLoginFresh(args: {
   await patchJobLogin(id, { required: true, phase: 'starting' });
   await ensureImage(image, { onProgress: (line) => log.write(line) });
 
+  // Serialize ALL of our manifest writes through one chain so read-modify-write
+  // patches (phase/url/error AND the code-clear below) can't interleave and lose
+  // each other's updates. Log failures rather than swallow them.
+  let chain: Promise<void> = Promise.resolve();
+  const enqueue = (patch: Partial<QueueJobLogin>): void => {
+    chain = chain
+      .then(() => patchJobLogin(id, patch))
+      .catch((err) => log.write(`login manifest write failed: ${err instanceof Error ? err.message : String(err)}`));
+  };
+
   // Bridge the manifest `login.code` (written by the hub endpoint) to the
-  // synchronous getCode the login core polls: read it off disk, clear it, hand
-  // it over once.
+  // synchronous getCode the login core polls: read it off disk, clear it (through
+  // the same write chain), and hand it over once.
   let pendingCode: string | null = null;
   const codeWatcher = setInterval(() => {
     void (async () => {
@@ -129,16 +139,10 @@ async function ensureClaudeLoginFresh(args: {
       const c = j?.login?.code;
       if (c && c.trim().length > 0) {
         pendingCode = c.trim();
-        await patchJobLogin(id, { code: undefined });
+        enqueue({ code: undefined });
       }
     })();
   }, 500);
-
-  // Serialize our own manifest writes so phase transitions can't reorder.
-  let chain: Promise<void> = Promise.resolve();
-  const enqueue = (patch: Partial<QueueJobLogin>): void => {
-    chain = chain.then(() => patchJobLogin(id, patch)).catch(() => {});
-  };
 
   try {
     const result = await runClaudeLogin({
