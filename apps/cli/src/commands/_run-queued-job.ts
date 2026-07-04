@@ -165,10 +165,12 @@ async function runDockerJob(
     withEnv: cfg.effective.box.withEnv,
     vnc: { enabled: cfg.effective.box.vnc },
     docker: { sharedCache: cfg.effective.box.dockerCacheShared },
-    // Background jobs do not negotiate Portless interactively. If the user
-    // explicitly set --portless / --no-portless we honor it, else leave
-    // undefined so the create path skips the live prompt.
-    portless: opts.portless,
+    // Background jobs (incl. hub-created boxes) can't negotiate Portless
+    // interactively, but they must still honor a resolved `portless.enabled`.
+    // Explicit --portless / --no-portless on the job wins; otherwise fall back
+    // to the effective config so a host that opted in gets its <name>.localhost
+    // alias registered. Undefined (never opted in) still skips, as before.
+    portless: opts.portless ?? cfg.effective.portless.enabled,
     portlessStateDir: cfg.effective.portless.stateDir || undefined,
     resyncOnStart: opts.resync,
     limits: resolveLimits(cfg.effective.box, opts),
