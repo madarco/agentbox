@@ -73,6 +73,7 @@ import { relayCommand } from './commands/relay.js';
 import { hubCommand } from './commands/hub.js';
 import { controlPlaneCommand } from './commands/control-plane.js';
 import { runQueuedJobCommand } from './commands/_run-queued-job.js';
+import { runQueuedPrepareCommand } from './commands/_run-queued-prepare.js';
 import { claudeLoginWorkerCommand } from './commands/_claude-login-worker.js';
 import { herdrCommand } from './commands/herdr.js';
 import { recoverCommand } from './commands/recover.js';
@@ -141,6 +142,9 @@ program.addCommand(controlPlaneCommand);
 // Internal worker spawned by the relay's queue scheduler. Hidden from
 // `--help` (it shows nothing user-facing — see _run-queued-job.ts).
 program.addCommand(runQueuedJobCommand, { hidden: true });
+// Internal worker that bakes a provider base image for a `kind: 'prepare'` queue
+// job (hub-driven), streaming progress to the job log. Hidden.
+program.addCommand(runQueuedPrepareCommand, { hidden: true });
 // Internal worker that drives `claude auth login` under a pty for the headless
 // (non-TTY / --headless) login flow. Hidden — see _claude-login-worker.ts.
 program.addCommand(claudeLoginWorkerCommand, { hidden: true });
@@ -175,6 +179,7 @@ const FIRST_RUN_EXEMPT = new Set([
   'relay',
   'hub',
   '_run-queued-job',
+  '_run-queued-prepare',
   '_claude-login-worker',
   'drive',
   'screen',

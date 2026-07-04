@@ -24,6 +24,14 @@ import type { BoxStatusStore } from './status-store.js';
 
 export const QUEUE_DIR = join(STATE_DIR, 'queue');
 
+/**
+ * Concurrency ceiling for `kind: 'prepare'` (image-bake) jobs — a separate lane
+ * from box creation. Serialized to 1: bakes are resource-heavy (a docker build,
+ * a booted VPS) and each pins project config on success, so running one at a
+ * time avoids contention and write races. A second bake queues behind the first.
+ */
+export const PREPARE_MAX_CONCURRENT = 1;
+
 export type QueueJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 export type QueueAgentKind = 'claude-code' | 'codex' | 'opencode';
 
@@ -64,6 +72,14 @@ export interface QueueJobOpenTerminal {
 /** On-disk job manifest. Read/written under `~/.agentbox/queue/<id>.json`. */
 export interface QueueJob {
   id: string;
+  /**
+   * What the worker does with this job. `create` (default when absent) builds a
+   * box. `prepare` bakes a provider's base image — it produces an artifact, not
+   * a box, so it is excluded from the box/working concurrency gates and never
+   * surfaces as a box in the dashboard. Prepare jobs carry `prepare` (not the
+   * agent/create fields, which hold inert placeholders).
+   */
+  kind?: 'create' | 'prepare';
   agent: QueueAgentKind;
   status: QueueJobStatus;
   /** Friendly box name the worker should create the box under. */
@@ -127,6 +143,8 @@ export interface QueueJob {
    * (creds-OK) path.
    */
   login?: QueueJobLogin;
+  /** Bake options for a `kind: 'prepare'` job (see {@link QueueJobPrepare}). */
+  prepare?: QueueJobPrepare;
 }
 
 /**
@@ -145,6 +163,18 @@ export interface QueueJobLogin {
   error?: string;
   /** A recoverable note (e.g. a rejected code) — the flow stays usable. */
   lastError?: string;
+}
+
+/**
+ * Options for a `kind: 'prepare'` job: bake a provider's base image. The worker
+ * (`_run-queued-prepare`) calls `provider.prepare({ force, claudeInstall, onLog })`
+ * directly and streams progress to the job log.
+ */
+export interface QueueJobPrepare {
+  /** Rebuild even if the base image/snapshot already exists. */
+  force?: boolean;
+  /** Bake-time Claude install method (falls back to the effective config). */
+  claudeInstall?: 'native' | 'npm';
 }
 
 /**
@@ -311,6 +341,51 @@ export async function enqueueQueueJob(
   return { job, runningCount, maxConcurrent: ceiling };
 }
 
+export interface EnqueuePrepareJobInput {
+  /** Provider to bake (docker | daytona | hetzner | vercel | e2b | plugin). */
+  providerName: string;
+  /** Rebuild even if the base already exists. */
+  force?: boolean;
+  /** Bake-time Claude install method (else the effective config decides). */
+  claudeInstall?: 'native' | 'npm';
+  /** Host dir used for config resolution; the worker defaults it if absent. */
+  workspace?: string;
+}
+
+/**
+ * Build a `kind: 'prepare'` manifest and write it to the queue. Like
+ * {@link enqueueQueueJob} this is transport-free — the caller pokes the
+ * scheduler. The agent/create fields carry inert placeholders (the prepare
+ * worker only reads `providerName` + `prepare`); the job is scheduled in its own
+ * lane (see {@link PREPARE_MAX_CONCURRENT}) and never surfaces as a box.
+ */
+export async function enqueuePrepareJob(
+  input: EnqueuePrepareJobInput,
+): Promise<{ job: QueueJob }> {
+  const id = randomBytes(9).toString('hex');
+  const prepare: QueueJobPrepare = {
+    ...(input.force ? { force: true } : {}),
+    ...(input.claudeInstall ? { claudeInstall: input.claudeInstall } : {}),
+  };
+  const job: QueueJob = {
+    id,
+    kind: 'prepare',
+    agent: 'claude-code', // placeholder — ignored for prepare
+    status: 'queued',
+    boxName: '',
+    providerName: input.providerName,
+    prompt: '',
+    agentArgs: [],
+    createOpts: { workspace: input.workspace ?? process.cwd() },
+    prepare,
+    maxConcurrent: PREPARE_MAX_CONCURRENT,
+    createdAt: new Date().toISOString(),
+    logPath: queueLogPath(id),
+  };
+  await writeJob(job);
+  return { job };
+}
+
 /** Read a single job manifest by id. Returns null when missing. */
 export async function readJob(id: string): Promise<QueueJob | null> {
   try {
@@ -368,7 +443,37 @@ export function selectNextRunnable(jobs: QueueJob[], runningCount: number): Queu
   // jobs is FIFO by createdAt already (loadQueue sorts).
   for (const j of jobs) {
     if (j.status !== 'queued') continue;
+    if (j.kind === 'prepare') continue; // prepare has its own lane
     if (runningCount < j.maxConcurrent) return j;
+  }
+  return null;
+}
+
+/** Count running prepare jobs (its own concurrency lane). Dead workers skipped. */
+export function countRunningPrepareJobs(jobs: QueueJob[]): number {
+  let n = 0;
+  for (const j of jobs) {
+    if (j.kind !== 'prepare') continue;
+    if (j.status !== 'running') continue;
+    if (typeof j.pid === 'number' && !processAlive(j.pid)) continue;
+    n += 1;
+  }
+  return n;
+}
+
+/**
+ * Pure selector for the prepare (image-bake) lane: the oldest queued prepare job
+ * while under {@link PREPARE_MAX_CONCURRENT}. Independent of the box gates.
+ */
+export function selectNextRunnablePrepare(
+  jobs: QueueJob[],
+  runningPrepare: number,
+): QueueJob | null {
+  if (runningPrepare >= PREPARE_MAX_CONCURRENT) return null;
+  for (const j of jobs) {
+    if (j.kind !== 'prepare') continue;
+    if (j.status !== 'queued') continue;
+    return j;
   }
   return null;
 }
@@ -476,6 +581,7 @@ export function selectNextRunnableByWorking(
 ): QueueJob | null {
   for (const j of jobs) {
     if (j.status !== 'queued') continue;
+    if (j.kind === 'prepare') continue; // prepare has its own lane
     const ceil =
       typeof j.maxWorking === 'number' && j.maxWorking > 0 ? j.maxWorking : globalMaxWorking;
     if (workingCount < ceil) return j;
@@ -631,7 +737,7 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
           const fresh = await loadQueue();
           next = selectNextRunnable(fresh, occupancy);
         }
-        if (!next) return;
+        if (!next) break;
         // Atomic claim: re-read to make sure no other process already started
         // it (the relay is the only writer of status: running, but a
         // future-second-relay scenario would clobber here without this read).
@@ -673,6 +779,49 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
           await writeJob(failed);
           onStatusChange?.(failed);
           log(`queue: spawn for job ${updated.id} failed: ${msg}`);
+        }
+      }
+
+      // Prepare (image-bake) lane — independent of the box/working gates. A bake
+      // produces an artifact, not a box, so it neither counts against nor is
+      // blocked by running boxes. Serialized to PREPARE_MAX_CONCURRENT.
+      while (!stopped) {
+        const fresh = await loadQueue();
+        const runningPrepare = countRunningPrepareJobs(fresh);
+        const next = selectNextRunnablePrepare(fresh, runningPrepare);
+        if (!next) break;
+        const current = await readJob(next.id);
+        if (!current || current.status !== 'queued') continue;
+        const updated: QueueJob = {
+          ...current,
+          status: 'running',
+          startedAt: new Date().toISOString(),
+        };
+        await writeJob(updated);
+        onStatusChange?.(updated);
+        try {
+          const pid = await spawnWorker(updated);
+          if (typeof pid === 'number') {
+            const withPid: QueueJob = { ...updated, pid };
+            await writeJob(withPid);
+            onStatusChange?.(withPid);
+            log(
+              `queue: started prepare job ${updated.id} (${updated.providerName}) as pid ${String(pid)}; prepare ${String(runningPrepare + 1)}/${String(PREPARE_MAX_CONCURRENT)}`,
+            );
+          } else {
+            log(`queue: started prepare job ${updated.id} (${updated.providerName}); pid unknown`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const failed: QueueJob = {
+            ...updated,
+            status: 'failed',
+            finishedAt: new Date().toISOString(),
+            reason: `worker-spawn-failed: ${msg}`,
+          };
+          await writeJob(failed);
+          onStatusChange?.(failed);
+          log(`queue: spawn for prepare job ${updated.id} failed: ${msg}`);
         }
       }
     } catch (err) {
@@ -821,6 +970,7 @@ export async function defaultCountWorkingBoxes(
 export function countInFlightCreateJobs(jobs: QueueJob[], accountedBoxIds: Set<string>): number {
   let n = 0;
   for (const j of jobs) {
+    if (j.kind === 'prepare') continue; // a bake is not a box
     if (j.status !== 'running') continue;
     if (j.boxId && accountedBoxIds.has(j.boxId)) continue; // counted via its box
     if (typeof j.pid === 'number' && !processAlive(j.pid)) continue; // dead worker
@@ -952,7 +1102,9 @@ async function defaultSpawnWorker(job: QueueJob): Promise<number | null> {
   }
   await mkdir(join(STATE_DIR, 'logs'), { recursive: true });
   const fd = openSync(job.logPath, 'a');
-  const child = spawn(process.execPath, [entry, '_run-queued-job', job.id], {
+  // A prepare (image-bake) job runs a different worker; both stream to logPath.
+  const command = job.kind === 'prepare' ? '_run-queued-prepare' : '_run-queued-job';
+  const child = spawn(process.execPath, [entry, command, job.id], {
     detached: true,
     stdio: ['ignore', fd, fd],
     env: process.env,
