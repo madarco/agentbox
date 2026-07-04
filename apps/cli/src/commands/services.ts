@@ -3,7 +3,7 @@ import { renderStatusTable, type StatusReply } from '@agentbox/ctl';
 import { boxRestartService, boxRestartServices, boxServicesStatusRaw } from '@agentbox/sandbox-core';
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
-import { resolveBoxOrExit } from '../box-ref.js';
+import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -64,10 +64,14 @@ const restartCommand = new Command('restart')
   .argument('[name]', 'service to restart (omit to restart all)')
   .action(async (idOrName: string | undefined, name: string | undefined) => {
     try {
-      const box = await resolveBoxOrExit(idOrName);
+      // On a single-box project `restart <svc>` binds <svc> to [box]; resolveBoxOrShift
+      // re-treats it as the service name on the auto-picked box (like shell/logs), so
+      // the box ref stays optional the same way `list`/`status` allow omitting it.
+      const { box, shifted } = await resolveBoxOrShift(idOrName);
+      const serviceName = shifted ? idOrName : name;
       const provider = await providerForBox(box);
-      if (name) {
-        const r = await boxRestartService(provider, box, name);
+      if (serviceName) {
+        const r = await boxRestartService(provider, box, serviceName);
         if (r.stdout) process.stdout.write(r.stdout);
         if (r.stderr) process.stderr.write(r.stderr);
         process.exit(r.exitCode);
