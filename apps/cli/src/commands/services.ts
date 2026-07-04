@@ -30,14 +30,23 @@ async function liveStatus(provider: Provider, box: BoxRecord): Promise<StatusRep
 const listCommand = new Command('list')
   .description("List the box's services with their live state (running / ready / crashed / …)")
   .argument('[box]', 'box ref (default: the only box in this project)')
-  .action(async (idOrName: string | undefined) => {
+  .option('--json', 'print the raw live status (services, tasks, ports) as JSON')
+  .action(async (idOrName: string | undefined, opts: { json?: boolean }) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
       const provider = await providerForBox(box);
       const live = await liveStatus(provider, box);
       if (!live) {
+        if (opts.json) {
+          process.stdout.write(JSON.stringify({ services: [], tasks: [], ports: [] }) + '\n');
+          return;
+        }
         log.error('could not reach the box supervisor (is the box running?). Try `agentbox status` for the persisted snapshot.');
         process.exit(1);
+      }
+      if (opts.json) {
+        process.stdout.write(JSON.stringify(live) + '\n');
+        return;
       }
       if (live.services.length === 0) {
         process.stdout.write('no services declared in agentbox.yaml\n');

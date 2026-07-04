@@ -199,6 +199,7 @@ agentbox git pr create 1
 
 # Services declared in agentbox.yaml
 agentbox services 1                        # list services with their live state
+agentbox services list 1 --json            # same, as JSON (services, tasks, ports)
 agentbox services restart 1                # restart every service
 agentbox services restart 1 web            # restart one service
 ```
