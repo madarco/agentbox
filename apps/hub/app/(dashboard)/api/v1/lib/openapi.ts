@@ -130,6 +130,19 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/boxes/{id}/branches': {
+        get: {
+          summary: "List the box project's branches (local + remote) and its current HEAD, for the box git-panel branch picker",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': { description: 'Branches', content: { 'application/json': { schema: { $ref: '#/components/schemas/BranchList' } } } },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/boxes/{id}/services': {
         get: {
           summary: "The box's agentbox.yaml service/task/port status (live, or the persisted snapshot when the box isn't running)",

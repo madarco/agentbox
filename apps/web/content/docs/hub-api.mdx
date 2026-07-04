@@ -61,6 +61,7 @@ with an HTTP status that matches the `code` (`400 invalid_request`,
 | `POST /boxes/{id}/destroy` | Destroy a box (container + volumes). |
 | `GET /boxes/{id}/git` | Live git summary of the box's worktree: `{ ok, branch, dirty, ahead, behind }`. |
 | `POST /boxes/{id}/git/{op}` | Git op on the box branch (`checkout`, `branch`, `pull`, `push`, `push-host`). Body per op: `checkout {branch}`; `branch {name, from?}` (create+switch a new `agentbox/*` branch); `pull {remote?, ffOnly?}`; `push {remote?, force?}`; `push-host {as?, force?}` (land in the host repo only — publishes nothing). Returns `{ ok, stdout, stderr }`. |
+| `GET /boxes/{id}/branches` | The box project's branches (local + remote) and current HEAD, for the box git-panel branch picker: `{ current, branches }`. |
 | `GET /boxes/{id}/services` | The box's `agentbox.yaml` service/task/port status (`source: live \| persisted \| unavailable`). |
 | `POST /boxes/{id}/services/restart` | Restart one service (`{ name }`) or every service (empty body). |
 | `GET /projects` | Registered projects (create targets). Each carries `currentBranch` (the default base) and `needsSetup` (no `agentbox.yaml` + no default snapshot). |

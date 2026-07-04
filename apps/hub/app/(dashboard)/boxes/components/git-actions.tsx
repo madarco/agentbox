@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { gitBranchAction, gitCheckoutAction, gitPullAction, gitPushAction, gitPushHostAction } from '@/lib/boxes/actions';
 import type { BoxOpResult, GitInfo } from '@/lib/boxes/backend-types';
 import type { Box } from '@/lib/boxes/types';
@@ -216,6 +217,133 @@ export function GitActions({ box }: { box: Box }) {
 
 type OnDone = (t: Omit<Toast, 'id'>) => void;
 
+// Sentinel select value that switches the field to free-text entry.
+const MANUAL = '__manual__';
+
+// A branch picker: a Select of the box project's branches (local + remote) with
+// a manual-entry escape hatch, so an arbitrary ref/SHA stays reachable. Falls
+// back to a plain text Input when the branch list is unavailable (hosted path
+// 503) or empty — the field never blocks a checkout/base ref.
+//
+// `headLabel` (New branch base ref) adds a leading empty-value option meaning
+// "the box's current HEAD"; without it (Change branch) a disabled placeholder
+// forces an explicit pick.
+function BranchField({
+  boxId,
+  value,
+  onChange,
+  id,
+  headLabel,
+  currentBranch,
+}: {
+  boxId: string;
+  value: string;
+  onChange: (v: string) => void;
+  id: string;
+  headLabel?: string;
+  currentBranch?: string;
+}) {
+  const [branches, setBranches] = useState<string[] | null>(null); // null = loading
+  const [current, setCurrent] = useState<string | null>(currentBranch ?? null);
+  const [manual, setManual] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await fetch(`/api/v1/boxes/${encodeURIComponent(boxId)}/branches`, { credentials: 'same-origin' });
+        const j = r.ok ? ((await r.json()) as { current?: string | null; branches?: string[] }) : null;
+        if (cancelled) return;
+        if (j && Array.isArray(j.branches) && j.branches.length > 0) {
+          setBranches(j.branches);
+          // The caller's notion of "current" wins (the box's own branch for a
+          // checkout); only fall back to the repo HEAD the endpoint reports.
+          if (!currentBranch && typeof j.current === 'string') setCurrent(j.current);
+        } else {
+          // No usable list (empty repo or hosted path) — drop to free text.
+          setBranches([]);
+          setManual(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setBranches([]);
+          setManual(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [boxId, currentBranch]);
+
+  if (branches === null) {
+    return (
+      <Select id={id} value="" disabled wrapperClassName="w-full">
+        <option value="">Loading branches…</option>
+      </Select>
+    );
+  }
+
+  if (manual) {
+    return (
+      <>
+        <Input
+          id={id}
+          className="font-mono text-[13px]"
+          autoFocus
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={headLabel ? 'HEAD' : 'feature-x'}
+        />
+        {branches.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => {
+              setManual(false);
+              onChange('');
+            }}
+            className="mt-1.5 cursor-pointer text-xs text-secondary-foreground underline-offset-2 hover:underline"
+          >
+            ← Back to branch list
+          </button>
+        ) : null}
+      </>
+    );
+  }
+
+  return (
+    <Select
+      id={id}
+      value={value}
+      wrapperClassName="w-full"
+      onChange={(e) => {
+        if (e.target.value === MANUAL) {
+          setManual(true);
+          onChange('');
+          return;
+        }
+        onChange(e.target.value);
+      }}
+    >
+      {headLabel ? (
+        <option value="">{headLabel}</option>
+      ) : (
+        <option value="" disabled>
+          Select a branch…
+        </option>
+      )}
+      <option value={MANUAL}>Other / type manually…</option>
+      <option disabled>────────────</option>
+      {branches.map((b) => (
+        <option key={b} value={b}>
+          {b}
+          {b === current ? ' (current)' : ''}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
 function ChangeBranchModal({
   box,
   branch,
@@ -266,17 +394,7 @@ function ChangeBranchModal({
       </DialogHeader>
       <DialogBody>
         <Label htmlFor="gb-branch">Branch</Label>
-        <Input
-          id="gb-branch"
-          className="font-mono text-[13px]"
-          autoFocus
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') submit();
-          }}
-          placeholder="feature-x"
-        />
+        <BranchField boxId={box.id} id="gb-branch" value={value} onChange={setValue} currentBranch={branch} />
         <p className="mt-1.5 text-xs text-muted-foreground">
           The branch must exist and not be checked out in another worktree.
         </p>
@@ -361,16 +479,7 @@ function NewBranchModal({
         <Label htmlFor="nb-from">
           Base ref <span className="font-normal text-[#a4a9b0]">(optional)</span>
         </Label>
-        <Input
-          id="nb-from"
-          className="font-mono text-[13px]"
-          value={from}
-          onChange={(e) => setFrom(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') submit();
-          }}
-          placeholder="HEAD"
-        />
+        <BranchField boxId={box.id} id="nb-from" value={from} onChange={setFrom} headLabel="Current HEAD (default)" />
         <p className="mt-1.5 text-xs text-muted-foreground">Defaults to the box's current HEAD.</p>
         {error ? <p className="mt-2 break-words font-mono text-xs text-destructive">{error}</p> : null}
       </DialogBody>
