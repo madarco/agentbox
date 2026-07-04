@@ -10,7 +10,7 @@ import { createCloudProvider } from '@agentbox/sandbox-cloud';
 import { daytonaBackend, DEFAULT_BOX_IMAGE_REF } from './backend.js';
 import { prepareDaytona } from './prepare.js';
 import { currentDaytonaBaseFingerprintLive } from './prepared-state.js';
-import { ensureDaytonaCredentials } from './credentials.js';
+import { ensureDaytonaCredentials, setDaytonaCredentials } from './credentials.js';
 import { doctorChecks, readCredStatusSummary } from './provider-module.js';
 
 const cloudProvider = createCloudProvider(daytonaBackend, {
@@ -29,6 +29,7 @@ export const providerModule: ProviderModule = {
   backend: daytonaBackend,
   ensureCredentials: ensureDaytonaCredentials,
   readCredStatus: readCredStatusSummary,
+  setCredentials: setDaytonaCredentials,
   currentBaseFingerprintLive: (claudeInstall) => currentDaytonaBaseFingerprintLive(claudeInstall),
   doctorChecks,
 };
@@ -41,7 +42,7 @@ export { currentDaytonaBaseFingerprintLive } from './prepared-state.js';
 // Plain async function — no commander surface — so adding it here doesn't
 // pull commander/clack into consumers' type graphs. The full CLI command
 // lives at the `./cli` subpath export.
-export { ensureDaytonaCredentials } from './credentials.js';
+export { ensureDaytonaCredentials, setDaytonaCredentials } from './credentials.js';
 export type { EnsureDaytonaCredentialsOptions } from './credentials.js';
 export {
   getDaytonaStatus,

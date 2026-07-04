@@ -34,6 +34,18 @@ export interface CredStatusSummary {
 }
 
 /**
+ * Outcome of a non-interactive `setCredentials` call (the headless path the hub
+ * drives). `status` reflects the store *after* the attempt, so a caller can
+ * report `configured` without a second read.
+ */
+export interface CredSetResult {
+  ok: boolean;
+  /** One-line failure reason when `ok` is false (e.g. a rejected token). */
+  error?: string;
+  status: CredStatusSummary;
+}
+
+/**
  * The uniform surface every `@agentbox/sandbox-<name>` package exposes as
  * `export const providerModule`. The CLI's provider loader resolves this via a
  * lazy `import()` and drives create / doctor / install / checkpoint through it,
@@ -51,6 +63,15 @@ export interface ProviderModule {
   ensureCredentials?: (opts?: { force?: boolean }) => Promise<void>;
   /** Normalized credential state for the install wizard. Absent for docker. */
   readCredStatus?: () => Promise<CredStatusSummary> | CredStatusSummary;
+  /**
+   * Non-interactive credential write (the headless path a hub/API driver uses,
+   * bypassing the TTY-gated `ensureCredentials` prompts). Validates the given
+   * fields against the cloud, then persists them to `~/.agentbox/secrets.env`.
+   * The `fields` shape is provider-specific (e.g. `{ apiKey }`, `{ token }`,
+   * `{ token, teamId?, projectId? }`). Absent for docker (no login). Never
+   * returns the secret values.
+   */
+  setCredentials?: (fields: Record<string, string>) => Promise<CredSetResult>;
   /**
    * CURRENT build-context fingerprint of the provider's base image/snapshot,
    * for staleness nagging. Absent for docker (its base self-heals).

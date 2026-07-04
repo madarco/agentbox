@@ -33,7 +33,7 @@ import { readCliStamp, recordBox, type ProviderModule } from '@agentbox/sandbox-
 import { prepareVercelProvider } from './prepare.js';
 import { buildVercelAttach } from './build-attach.js';
 import { currentVercelBaseFingerprintLive } from './prepared-state.js';
-import { ensureVercelCredentials } from './credentials.js';
+import { ensureVercelCredentials, setVercelCredentials } from './credentials.js';
 import { doctorChecks, readCredStatusSummary } from './provider-module.js';
 
 const BACKEND_NAME = 'vercel';
@@ -114,13 +114,14 @@ export const providerModule: ProviderModule = {
   backend: vercelBackend,
   ensureCredentials: ensureVercelCredentials,
   readCredStatus: readCredStatusSummary,
+  setCredentials: setVercelCredentials,
   currentBaseFingerprintLive: (claudeInstall) => currentVercelBaseFingerprintLive(claudeInstall),
   doctorChecks,
 };
 
 export { vercelBackend, DEFAULT_BOX_IMAGE_REF };
 export { ensureVercelEnvLoaded, reloadVercelEnv } from './env-loader.js';
-export { ensureVercelCredentials } from './credentials.js';
+export { ensureVercelCredentials, setVercelCredentials } from './credentials.js';
 export type { EnsureVercelCredentialsOptions } from './credentials.js';
 export {
   readVercelCredStatus,

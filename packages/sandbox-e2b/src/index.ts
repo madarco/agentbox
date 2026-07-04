@@ -34,7 +34,7 @@ import { withE2bRetry } from './retry.js';
 import { prepareE2bProvider } from './prepare.js';
 import { buildE2bAttach } from './build-attach.js';
 import { currentE2bBaseFingerprintLive } from './prepared-state.js';
-import { ensureE2bCredentials } from './credentials.js';
+import { ensureE2bCredentials, setE2bCredentials } from './credentials.js';
 import { doctorChecks, readCredStatusSummary } from './provider-module.js';
 
 const BACKEND_NAME = 'e2b';
@@ -163,6 +163,7 @@ export const providerModule: ProviderModule = {
   backend: e2bBackend,
   ensureCredentials: ensureE2bCredentials,
   readCredStatus: readCredStatusSummary,
+  setCredentials: (fields) => Promise.resolve(setE2bCredentials(fields)),
   currentBaseFingerprintLive: (claudeInstall) => currentE2bBaseFingerprintLive(claudeInstall),
   doctorChecks,
 };
@@ -171,6 +172,7 @@ export { e2bBackend, DEFAULT_BOX_IMAGE_REF };
 export { ensureE2bEnvLoaded, reloadE2bEnv } from './env-loader.js';
 export {
   ensureE2bCredentials,
+  setE2bCredentials,
   readE2bCredStatus,
   secretsPath,
   maskKey,

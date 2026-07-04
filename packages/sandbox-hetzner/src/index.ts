@@ -17,7 +17,7 @@ import { createCloudProvider } from '@agentbox/sandbox-cloud';
 import { hetznerBackend, HETZNER_DEFAULT_BOX_IMAGE_REF } from './backend.js';
 import { prepareHetznerProvider } from './prepare.js';
 import { currentHetznerBaseFingerprintLive } from './prepared-state.js';
-import { ensureHetznerCredentials } from './credentials.js';
+import { ensureHetznerCredentials, setHetznerCredentials } from './credentials.js';
 import { doctorChecks, readCredStatusSummary } from './provider-module.js';
 
 const cloudProvider = createCloudProvider(hetznerBackend, {
@@ -36,6 +36,7 @@ export const providerModule: ProviderModule = {
   backend: hetznerBackend,
   ensureCredentials: ensureHetznerCredentials,
   readCredStatus: readCredStatusSummary,
+  setCredentials: setHetznerCredentials,
   currentBaseFingerprintLive: (claudeInstall) => currentHetznerBaseFingerprintLive(claudeInstall),
   doctorChecks,
 };
@@ -44,6 +45,7 @@ export { hetznerBackend, HETZNER_DEFAULT_BOX_IMAGE_REF };
 export { ensureHetznerEnvLoaded } from './env-loader.js';
 export {
   ensureHetznerCredentials,
+  setHetznerCredentials,
   readHetznerCredStatus,
   secretsPath,
   maskKey,

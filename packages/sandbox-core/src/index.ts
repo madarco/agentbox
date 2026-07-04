@@ -41,9 +41,11 @@ export {
   firstLine,
   type CheckResult,
   type CheckStatus,
+  type CredSetResult,
   type CredStatusSummary,
   type ProviderModule,
 } from './doctor.js';
+export { maskSecret, secretsEnvPath, writeManagedSecrets } from './secrets.js';
 export {
   PLUGINS_FILE,
   SUPPORTED_SDK_API_VERSIONS,
