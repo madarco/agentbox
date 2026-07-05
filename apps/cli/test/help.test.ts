@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { describe, expect, it } from 'vitest';
 import { HELP_GROUPS, buildGroupedHelp } from '../src/help.js';
 import { agentCommand } from '../src/commands/agent.js';
+import { appCommand } from '../src/commands/app.js';
 import { attachCommand } from '../src/commands/attach.js';
 import { checkpointCommand } from '../src/commands/checkpoint.js';
 import { claudeCommand } from '../src/commands/claude.js';
@@ -91,6 +92,7 @@ function buildProgram(): Command {
     doctorCommand,
     updateCommand,
     installCommand,
+    appCommand,
   ]) {
     program.addCommand(cmd);
   }

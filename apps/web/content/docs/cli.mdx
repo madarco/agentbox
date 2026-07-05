@@ -277,6 +277,7 @@ agentbox install --skills-only   # just (re)install the host /agentbox skill
 agentbox install cmux            # add a box-list panel to the cmux sidebar dock
 agentbox install herdr           # install the Herdr plugin (boxes overlay, shortcuts, Ctrl+click)
 agentbox install codex           # install + enable the AgentBox Codex plugin (drive AgentBox from Codex)
+agentbox install tray            # install the AgentBox Tray menu-bar app (macOS)
 
 # Diagnose system + provider readiness
 agentbox doctor
@@ -289,7 +290,7 @@ agentbox prepare -p docker --build
 agentbox prepare -p hetzner --claude-install npm   # install Claude via npm (native-CDN 403 fallback)
 ```
 
-`install` is the first-run setup wizard (system check, pick a provider, log in, prepare its base image, install the host skill). `install cmux` pins a live `agentbox list` panel (all your boxes) to the [cmux](https://cmux.com) sidebar dock — see [cmux integration](/docs/integrations-cmux#the-agentbox-dock-right-sidebar). `install herdr` installs a [Herdr](https://herdr.dev) plugin with a boxes overlay, shortcuts, and Ctrl+click — see [Herdr integration](/docs/integrations-herdr#the-herdr-plugin). `install codex` registers the AgentBox [Codex](https://openai.com/index/introducing-codex/) plugin (marketplace + `codex plugin add`) and enables it by default in `~/.codex/config.toml`, so the `/agentbox` skill works in Codex with no manual toggle — it also runs automatically during `install` when Codex is detected. `doctor` diagnoses system and provider readiness — including a per-provider **base freshness** check that warns when an already-baked snapshot is out of date (a CLI upgrade changed a baked file) and should be re-run through `agentbox prepare --provider <name>` — and reports each service integration ([Notion](/docs/integrations-notion), [Linear](/docs/integrations-linear)): host CLI installed? authed? enabled per project? `prepare` builds base images or snapshots — omit `--provider` for status only; `--claude-install <native|npm>` (or the `box.claudeInstall` config key) switches how Claude Code is installed into the base, with `npm` as a fallback for cloud egress IPs the native installer's CDN 403s.
+`install` is the first-run setup wizard (system check, pick a provider, log in, prepare its base image, install the host skill). `install cmux` pins a live `agentbox list` panel (all your boxes) to the [cmux](https://cmux.com) sidebar dock — see [cmux integration](/docs/integrations-cmux#the-agentbox-dock-right-sidebar). `install herdr` installs a [Herdr](https://herdr.dev) plugin with a boxes overlay, shortcuts, and Ctrl+click — see [Herdr integration](/docs/integrations-herdr#the-herdr-plugin). `install codex` registers the AgentBox [Codex](https://openai.com/index/introducing-codex/) plugin (marketplace + `codex plugin add`) and enables it by default in `~/.codex/config.toml`, so the `/agentbox` skill works in Codex with no manual toggle — it also runs automatically during `install` when Codex is detected. `install tray` installs the **AgentBox Tray** macOS menu-bar app into `/Applications` and launches it (a live view of every box with one-click actions); once installed, `agentbox app start|stop|restart|status` controls the running process (see [Maintenance](#maintenance)). `doctor` diagnoses system and provider readiness — including a per-provider **base freshness** check that warns when an already-baked snapshot is out of date (a CLI upgrade changed a baked file) and should be re-run through `agentbox prepare --provider <name>` — and reports each service integration ([Notion](/docs/integrations-notion), [Linear](/docs/integrations-linear)): host CLI installed? authed? enabled per project? `prepare` builds base images or snapshots — omit `--provider` for status only; `--claude-install <native|npm>` (or the `box.claudeInstall` config key) switches how Claude Code is installed into the base, with `npm` as a fallback for cloud egress IPs the native installer's CDN 403s.
 
 <Callout title="TIP">`agentbox config get <key> --all` shows which layer each value comes from. See the full key reference in [Configuration](/docs/configuration).</Callout>
 
@@ -346,12 +347,18 @@ agentbox hub                 # start + open it in the browser
 agentbox hub status
 agentbox hub stop
 
+# Menu-bar app (macOS) — control the running AgentBox Tray process
+agentbox app status
+agentbox app start
+agentbox app stop
+agentbox app restart
+
 # Update agentbox (wipes the box image so it rebuilds, reloads the relay)
 agentbox self-update
 agentbox self-update --dry-run
 ```
 
-`prune` cleans up orphan state records; `--all` also removes orphan docker resources, and `--provider <cloud>` lists untracked cloud sandboxes and offers to delete them. `queue` manages background `-i` jobs. `relay` manages the host relay (`status`, `stop`, `start`, `restart`). `self-update` updates the CLI.
+`prune` cleans up orphan state records; `--all` also removes orphan docker resources, and `--provider <cloud>` lists untracked cloud sandboxes and offers to delete them. `queue` manages background `-i` jobs. `relay` manages the host relay (`status`, `stop`, `start`, `restart`). `app` controls the macOS menu-bar app (`status`, `start`, `stop`, `restart`) — install it first with `agentbox install tray`. `self-update` updates the CLI.
 
 `hub` runs the **AgentBox hub** — the host relay plus a local Web UI (dashboard, box detail, live approvals) on `http://127.0.0.1:8787`, gated by a per-machine token. When [Portless](https://portless.sh) is installed it also serves at a friendly `https://agentbox.localhost`. It's a superset of the relay on the same port: `agentbox hub` takes over from a bare relay, and normal box commands reuse it. Needs Node ≥ 22.5.
 

@@ -37,6 +37,7 @@ import { Command } from 'commander';
 import { applyEngineOverrideAtStartup } from './engine-override.js';
 import { buildGroupedHelp } from './help.js';
 import { agentCommand } from './commands/agent.js';
+import { appCommand } from './commands/app.js';
 import { attachCommand } from './commands/attach.js';
 import { claudeCommand } from './commands/claude.js';
 import { checkpointCommand } from './commands/checkpoint.js';
@@ -159,6 +160,7 @@ program.addCommand(e2bCommand);
 program.addCommand(dockerCommand);
 program.addCommand(updateCommand);
 program.addCommand(installCommand);
+program.addCommand(appCommand);
 program.addCommand(pluginCommand);
 program.addCommand(doctorCommand);
 
@@ -180,6 +182,7 @@ const FIRST_RUN_EXEMPT = new Set([
   'help',
   'relay',
   'hub',
+  'app',
   '_run-queued-job',
   '_run-queued-prepare',
   '_claude-login-worker',

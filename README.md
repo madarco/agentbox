@@ -143,6 +143,7 @@ Uses `portless` to give box web apps the same URL from inside the box and on the
 - `agentbox self-update` — Update agentbox, wipe the box image so it rebuilds, reload the relay
 - `agentbox config` — Read / write layered config (global, per-project, workspace `defaults:`)
 - `agentbox relay` — Manage the host relay process (`status` / `stop` / `start` / `restart`)
+- `agentbox app` — Control the macOS menu-bar app process (`status` / `start` / `stop` / `restart`); install it with `agentbox install tray`
 
 Run `agentbox <command> --help` for command-specific options.
 

@@ -29,6 +29,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       'doctor',
       'self-update',
       'install',
+      'app',
       'config',
       'git',
       'relay',
