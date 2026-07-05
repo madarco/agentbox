@@ -1,16 +1,19 @@
 import { spawn } from 'node:child_process';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import {
+  boxCarriedHostPaths,
   boxWorkspacePath,
   executeCloudAction,
   refreshCloudPreviewUrl,
   resolveHostPath,
 } from './host-actions.js';
+import { canAutoApproveTransfer } from './safe-transfer.js';
 import { HostActionQueue } from './host-action-queue.js';
 import { HubNotifier } from './hub-notifier.js';
 import { BoxNotices } from './notices.js';
 import { hostOpenCommand } from '@agentbox/sandbox-core';
 import {
+  isSanctionedPushBranch,
   isScratchBranch,
   landRefspec,
   parseDownloadKind,
@@ -25,6 +28,7 @@ import {
   checkoutGuards,
   GH_API_ENDPOINT_REFUSAL,
   GH_PR_READ_ONLY_OPS,
+  GH_PR_SAFE_AUTO_APPROVE_OPS,
   GH_RUN_READ_ONLY_OPS,
   injectPrCreateHead,
   isAllowedGhApiEndpoint,
@@ -32,6 +36,7 @@ import {
   isGhPrOp,
   isGhRunOp,
   PR_CREATE_NO_HEAD_REFUSAL,
+  prCreateHasExplicitHead,
   prCreateNeedsHead,
   refuseCheckoutByDefault,
   refuseMergeBypass,
@@ -286,7 +291,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   // sync policy view and the async store view never diverge on the laptop relay.
   prompts.setAutoApprovePolicy({
     shouldAutoApprove: (boxId) => registry.get(boxId)?.autoApproveHostActions === true,
-    audit: (boxId, params) => {
+    audit: (boxId, params, reason) => {
       events.append({
         boxId,
         type: 'host-action-auto-approved',
@@ -294,9 +299,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           command: params.context?.command,
           argv: params.context?.argv,
           message: params.message,
+          ...(reason ? { reason } : {}),
         },
       });
-      log(`auto-approved host action for ${boxId}: ${params.context?.command ?? params.message}`);
+      log(
+        `auto-approved host action for ${boxId}: ${params.context?.command ?? params.message}` +
+          (reason ? ` (${reason})` : ''),
+      );
     },
   });
   const hostInitiatedTokens = new HostInitiatedTokens();
@@ -523,6 +532,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             prompts,
             subscribers,
             hostInitiatedTokens,
+            autoApproveSafeHostActions: reg.autoApproveSafeHostActions,
             log,
           });
           send(res, result.exitCode === 0 ? 200 : 500, result);
@@ -543,7 +553,37 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           }
           const params = body.params as GitRpcParams | undefined;
           const worktree = resolveWorktree(reg, params?.path ?? '/workspace');
-          const isAgentboxBranch = isScratchBranch(worktree?.branch);
+          // The docker relay always pushes the worktree's host-selected branch
+          // (`sanctionedBranch`, falling back to the create-time `branch`) — the
+          // in-box agent can't influence which branch is pushed. Key the gate on
+          // THAT branch, not the immutable create-time `branch` (which is always
+          // `agentbox/*`): after a host `agentbox git checkout main`, the push
+          // target is `main`, so it must NOT be treated as a scratch bypass.
+          // A scratch target bypasses unconditionally; a non-scratch sanctioned
+          // target bypasses only as part of the safe subset (honors
+          // `box.autoApproveSafeHostActions`) and leaves an audit trail.
+          const dockerPushBranch = worktree?.sanctionedBranch ?? worktree?.branch;
+          const isScratch = isScratchBranch(dockerPushBranch);
+          const safeApproveOn = reg.autoApproveSafeHostActions !== false;
+          // `isSanctionedPushBranch(dockerPushBranch, dockerPushBranch)` is true
+          // only for a resolved branch — so a box with no registered worktree
+          // (undefined branch) never bypasses and still prompts.
+          const isSanctionedNonScratch =
+            !isScratch &&
+            safeApproveOn &&
+            isSanctionedPushBranch(dockerPushBranch, dockerPushBranch);
+          const bypassPushGate = isScratch || isSanctionedNonScratch;
+          if (isSanctionedNonScratch) {
+            prompts.noteAutoApprove(
+              reg.boxId,
+              {
+                kind: 'confirm',
+                message: `git push to sanctioned branch ${dockerPushBranch ?? ''} from box ${reg.name}`,
+                context: { command: 'git push', cwd: params?.path, argv: params?.args },
+              },
+              'safe: sanctioned-branch push',
+            );
+          }
           // Host-initiated pushes (driven by `agentbox git push <box>`) skip
           // the confirm prompt — but only if the host CLI minted a valid,
           // unexpired, scope-matched, params-hash-bound token via
@@ -556,10 +596,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           const tokenClaimed = typeof params?.hostInitiated === 'string';
           const incomingHash = hashRpcParams(params);
           const hostInitiatedOk =
-            !isAgentboxBranch &&
+            !bypassPushGate &&
             tokenClaimed &&
             hostInitiatedTokens.consume(params?.hostInitiated, reg.boxId, 'git.push', incomingHash);
-          if (!isAgentboxBranch && tokenClaimed && !hostInitiatedOk) {
+          if (!bypassPushGate && tokenClaimed && !hostInitiatedOk) {
             send(res, 500, {
               exitCode: 10,
               stdout: '',
@@ -568,7 +608,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             });
             return;
           }
-          if (!isAgentboxBranch && !hostInitiatedOk) {
+          if (!bypassPushGate && !hostInitiatedOk) {
             const gate = await gateApproval(gateDeps, reg.boxId, 'git.push', body.params, {
               kind: 'confirm',
               message: `Allow git push from box ${reg.name}?`,
@@ -600,8 +640,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       if (body.method === 'git.lease-token') {
         // The hosted-plane equivalent of git.push: instead of the relay pushing,
         // it leases a repo-scoped GitHub-App token and the box pushes directly.
-        // Same gate as git.push — agentbox/* branches auto-allow, others need a
-        // human (poll-parked on the hosted plane).
+        // Because that token can push ANY branch (the relay doesn't pick the
+        // branch here, unlike git.push), the sanctioned-branch auto-approve does
+        // NOT apply — only the box's own scratch branch bypasses; others prompt.
         const params = body.params as GitRpcParams | undefined;
         const worktree = resolveWorktree(reg, params?.path ?? '/workspace');
         const isAgentboxBranch = isScratchBranch(worktree?.branch);
@@ -661,19 +702,47 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         }
         if (params!.defaultExcludes === false) detailParts.push('(default excludes off)');
         if (params!.yes) detailParts.push('(over size limit — confirmed)');
-        const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
-          kind: 'confirm',
-          message: `Allow cp (${direction}) on ${reg.name}?`,
-          detail: detailParts.join('\n'),
-          defaultAnswer: 'n',
-          context: {
-            command: body.method,
-            argv: contextArgv,
-          },
+        // Auto-approve a transfer that stays inside the box's project folder
+        // (box->host: check the dest; host->box: check the sources, keeping
+        // secret files behind the prompt). Anything else prompts as before.
+        const cpHostPaths =
+          body.method === 'cp.toHost'
+            ? [resolveHostPath(workspacePath, norm.dest)]
+            : norm.sources.map((s) => resolveHostPath(workspacePath, s));
+        const cpAuto = await canAutoApproveTransfer({
+          enabled: reg.autoApproveSafeHostActions !== false,
+          workspacePath,
+          hostPaths: cpHostPaths,
+          checkSecret: body.method === 'cp.fromHost',
+          carried:
+            body.method === 'cp.fromHost' ? await boxCarriedHostPaths(reg.boxId) : undefined,
         });
-        if (verdict.answer !== 'y') {
-          send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
-          return;
+        if (cpAuto) {
+          prompts.noteAutoApprove(
+            reg.boxId,
+            {
+              kind: 'confirm',
+              message: `cp (${direction}) on ${reg.name}`,
+              detail: detailParts.join('\n'),
+              context: { command: body.method, argv: contextArgv },
+            },
+            body.method === 'cp.toHost' ? 'safe: contained copy to host' : 'safe: contained copy from host',
+          );
+        } else {
+          const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+            kind: 'confirm',
+            message: `Allow cp (${direction}) on ${reg.name}?`,
+            detail: detailParts.join('\n'),
+            defaultAnswer: 'n',
+            context: {
+              command: body.method,
+              argv: contextArgv,
+            },
+          });
+          if (verdict.answer !== 'y') {
+            send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
+            return;
+          }
         }
         const result = await handleCpRpc(cpArgs, workspacePath);
         const status = result.exitCode === 0 ? 200 : 500;
@@ -754,19 +823,45 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       ) {
         const params = body.params as DownloadRpcParams | undefined;
         const kind = parseDownloadKind(body.method);
-        const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
-          kind: 'confirm',
-          message: `Allow download (${kind}) from ${reg.name}?`,
-          detail: params?.hostPath ?? '(default host location)',
-          defaultAnswer: 'n',
-          context: {
-            command: body.method,
-            argv: params?.hostPath ? [params.hostPath] : [],
-          },
-        });
-        if (verdict.answer !== 'y') {
-          send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
-          return;
+        // `download.workspace` lands under the box's project folder (contained by
+        // construction), so it auto-approves under the safe flag. The env/config/
+        // claude kinds land in ~/.agentbox / ~/.claude (outside the project) and
+        // keep prompting.
+        const dlWorkspace = await boxWorkspacePath(reg.boxId);
+        const dlAuto =
+          kind === 'workspace' &&
+          (await canAutoApproveTransfer({
+            enabled: reg.autoApproveSafeHostActions !== false,
+            workspacePath: dlWorkspace,
+            hostPaths: dlWorkspace ? [dlWorkspace] : [],
+            checkSecret: false,
+          }));
+        if (dlAuto) {
+          prompts.noteAutoApprove(
+            reg.boxId,
+            {
+              kind: 'confirm',
+              message: `download (${kind}) from ${reg.name}`,
+              detail: params?.hostPath ?? '(default host location)',
+              context: { command: body.method, argv: params?.hostPath ? [params.hostPath] : [] },
+            },
+            'safe: contained download',
+          );
+        } else {
+          const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+            kind: 'confirm',
+            message: `Allow download (${kind}) from ${reg.name}?`,
+            detail: params?.hostPath ?? '(default host location)',
+            defaultAnswer: 'n',
+            context: {
+              command: body.method,
+              argv: params?.hostPath ? [params.hostPath] : [],
+            },
+          });
+          if (verdict.answer !== 'y') {
+            send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
+            return;
+          }
         }
         const result = await handleDownloadRpc(reg, kind);
         const status = result.exitCode === 0 ? 200 : 500;
@@ -940,6 +1035,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             ? body.bridgeToken
             : undefined,
         autoApproveHostActions: body.autoApproveHostActions === true,
+        // Default on: only an explicit `false` disables the safe subset, so an
+        // older wire body without the field stays relaxed.
+        autoApproveSafeHostActions: body.autoApproveSafeHostActions !== false,
         originUrl:
           typeof body.originUrl === 'string' && body.originUrl.length > 0
             ? body.originUrl
@@ -990,6 +1088,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                       prompts,
                       subscribers,
                       hostInitiatedTokens,
+                      autoApproveSafeHostActions: reg.autoApproveSafeHostActions,
                       log,
                     });
                     await respond(result);
@@ -1365,6 +1464,9 @@ function sanitizeWorktrees(input: BoxWorktree[] | undefined): BoxWorktree[] | un
         containerPath: w.containerPath,
         hostMainRepo: w.hostMainRepo,
         branch: w.branch,
+        ...(typeof w.sanctionedBranch === 'string' && w.sanctionedBranch.length > 0
+          ? { sanctionedBranch: w.sanctionedBranch }
+          : {}),
       });
     }
   }
@@ -1393,7 +1495,10 @@ async function handleGitSaveToHost(
       stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
     };
   }
-  const src = worktree.branch;
+  // Land the branch the box is actually on (its host-sanctioned branch, updated
+  // by `agentbox git checkout`), matching what `git.push` publishes — not the
+  // stale create-time scratch ref.
+  const src = worktree.sanctionedBranch ?? worktree.branch;
   const dest = resolveLandDest(src, params?.as);
   if (dest === src) {
     return {
@@ -1448,7 +1553,12 @@ async function handleGitRpc(
   }
   const op = method === 'git.push' ? 'push' : 'fetch';
   const remote = resolveRemote(params?.remote);
-  const argv = ['git', '-C', worktree.hostMainRepo, op, remote, worktree.branch];
+  // Operate on the host-sanctioned branch (updated by `agentbox git checkout`),
+  // falling back to the create-time `branch` for records without the field.
+  // The agent can't influence this — the relay picks the branch — so pushing
+  // it is always host-controlled.
+  const pushBranch = worktree.sanctionedBranch ?? worktree.branch;
+  const argv = ['git', '-C', worktree.hostMainRepo, op, remote, pushBranch];
   argv.push(...sanitizeGitArgs(params?.args));
   const result = await runHostCommand(argv);
   // After a successful push, mirror what `git push -u` would have left behind:
@@ -1457,14 +1567,14 @@ async function handleGitRpc(
   // (`agentbox/<name>`) — they're local-only by design. Docker shares .git/
   // with the box, so update-ref of the remote-tracking ref already happened
   // during the push; only the upstream config is missing.
-  if (method === 'git.push' && result.exitCode === 0 && !isScratchBranch(worktree.branch)) {
+  if (method === 'git.push' && result.exitCode === 0 && !isScratchBranch(pushBranch)) {
     await runHostCommand([
       'git',
       '-C',
       worktree.hostMainRepo,
       'branch',
-      `--set-upstream-to=${upstreamRef(remote, worktree.branch)}`,
-      worktree.branch,
+      `--set-upstream-to=${upstreamRef(remote, pushBranch)}`,
+      pushBranch,
     ]);
   }
   return result;
@@ -1513,7 +1623,15 @@ async function handleGhPrRpc(
     : [];
 
   if (op === 'checkout') {
-    const branches = (reg.worktrees ?? []).map((w) => w.branch);
+    // Guard against the host repo checking out onto ANY branch a box currently
+    // occupies — its create-time scratch ref AND its host-sanctioned branch
+    // (the box's live HEAD after `agentbox git checkout`), either of which the
+    // bind-mounted `.git/HEAD` would corrupt.
+    const branches = (reg.worktrees ?? []).flatMap((w) =>
+      w.sanctionedBranch && w.sanctionedBranch !== w.branch
+        ? [w.branch, w.sanctionedBranch]
+        : [w.branch],
+    );
     const guard = await checkoutGuards(worktree.hostMainRepo, branches);
     if (guard) return guard;
   }
@@ -1538,7 +1656,28 @@ async function handleGhPrRpc(
         'host-initiated token rejected: invalid, expired, or bound to different params\n',
     };
   }
-  if (!GH_PR_READ_ONLY_OPS.has(op) && !hostInitiatedOk) {
+  // Safe subset: open-PR + PR comment auto-approve under the flag (audited);
+  // review/close/reopen/merge/checkout keep prompting. A `create` with an
+  // EXPLICIT `--head` is excluded — that head could name any branch (e.g.
+  // `main`), so it falls back to the prompt; a headless `create` has its head
+  // forced to the box's sanctioned branch below, so it stays scoped.
+  const ghSafeAuto =
+    GH_PR_SAFE_AUTO_APPROVE_OPS.has(op) &&
+    reg.autoApproveSafeHostActions !== false &&
+    !prCreateHasExplicitHead(op, args);
+  if (ghSafeAuto && !hostInitiatedOk) {
+    prompts.noteAutoApprove(
+      reg.boxId,
+      {
+        kind: 'confirm',
+        message: `gh pr ${op} from box ${reg.name}`,
+        detail: args.join(' ').slice(0, 200),
+        context: { command: `gh pr ${op}`, cwd: containerPath, argv: args },
+      },
+      `safe: gh pr ${op}`,
+    );
+  }
+  if (!GH_PR_READ_ONLY_OPS.has(op) && !ghSafeAuto && !hostInitiatedOk) {
     const detail = args.join(' ').slice(0, 200);
     const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
       kind: 'confirm',
@@ -1559,7 +1698,10 @@ async function handleGhPrRpc(
   // Default `--head` to the box's branch for `create` (the host repo cwd isn't
   // on the box branch, so gh can't infer it). Done after token validation —
   // which hashes the incoming `params`, not this post-injection argv.
-  const finalArgs = injectPrCreateHead(op, worktree.branch, args);
+  // Inject the box's SANCTIONED branch (updated by `agentbox git checkout`),
+  // matching what `git.push` publishes — so a headless PR targets the branch
+  // the box's work is actually on, not the stale create-time scratch ref.
+  const finalArgs = injectPrCreateHead(op, worktree.sanctionedBranch ?? worktree.branch, args);
   // Never let `gh` fall back to the host repo's checked-out branch.
   if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
   return runHostGh(['pr', op, ...finalArgs], worktree.hostMainRepo);
@@ -1596,15 +1738,29 @@ async function handleGhRunRpc(
 
   if (!GH_RUN_READ_ONLY_OPS.has(op)) {
     const detail = args.join(' ').slice(0, 200);
-    const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
-      kind: 'confirm',
-      message: `Allow gh run ${op} from box ${reg.name}?`,
-      detail,
-      defaultAnswer: 'n',
-      context: { command: `gh run ${op}`, cwd: containerPath, argv: args },
-    });
-    if (verdict.answer !== 'y') {
-      return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+    if (reg.autoApproveSafeHostActions !== false) {
+      // `gh run rerun` only re-triggers the project's own CI — safe subset.
+      prompts.noteAutoApprove(
+        reg.boxId,
+        {
+          kind: 'confirm',
+          message: `gh run ${op} from box ${reg.name}`,
+          detail,
+          context: { command: `gh run ${op}`, cwd: containerPath, argv: args },
+        },
+        `safe: gh run ${op}`,
+      );
+    } else {
+      const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+        kind: 'confirm',
+        message: `Allow gh run ${op} from box ${reg.name}?`,
+        detail,
+        defaultAnswer: 'n',
+        context: { command: `gh run ${op}`, cwd: containerPath, argv: args },
+      });
+      if (verdict.answer !== 'y') {
+        return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+      }
     }
   }
   return runHostGh(['run', op, ...args], worktree.hostMainRepo);
@@ -1726,34 +1882,53 @@ async function handleIntegrationRpc(
   // reject a *present-but-invalid* token (attack signal). Only fall through
   // to the prompt when no token was claimed. Reads never need a token.
   if (opDesc.write) {
-    const tokenClaimed = typeof params?.hostInitiated === 'string';
-    const incomingHash = hashRpcParams(params);
-    const tokenOk =
-      tokenClaimed &&
-      hostInitiatedTokens.consume(params?.hostInitiated, reg.boxId, method, incomingHash);
-    if (tokenClaimed && !tokenOk) {
-      return {
-        exitCode: 10,
-        stdout: '',
-        stderr:
-          'host-initiated token rejected: invalid, expired, or bound to different params\n',
-      };
-    }
-    if (!tokenOk) {
-      const detail = args.join(' ').slice(0, 200);
-      const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
-        kind: 'confirm',
-        message: `Allow ${parsed.service} ${parsed.op} from box ${reg.name}?`,
-        detail,
-        defaultAnswer: 'n',
-        context: {
-          command: `integration ${parsed.service} ${parsed.op}`,
-          cwd: containerPath,
-          argv: args,
+    if (reg.autoApproveSafeHostActions !== false) {
+      // Integration writes hit the connected external service (not the host) —
+      // safe subset, audited, no prompt.
+      prompts.noteAutoApprove(
+        reg.boxId,
+        {
+          kind: 'confirm',
+          message: `${parsed.service} ${parsed.op} from box ${reg.name}`,
+          detail: args.join(' ').slice(0, 200),
+          context: {
+            command: `integration ${parsed.service} ${parsed.op}`,
+            cwd: containerPath,
+            argv: args,
+          },
         },
-      });
-      if (verdict.answer !== 'y') {
-        return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+        `safe: integration ${parsed.service} ${parsed.op}`,
+      );
+    } else {
+      const tokenClaimed = typeof params?.hostInitiated === 'string';
+      const incomingHash = hashRpcParams(params);
+      const tokenOk =
+        tokenClaimed &&
+        hostInitiatedTokens.consume(params?.hostInitiated, reg.boxId, method, incomingHash);
+      if (tokenClaimed && !tokenOk) {
+        return {
+          exitCode: 10,
+          stdout: '',
+          stderr:
+            'host-initiated token rejected: invalid, expired, or bound to different params\n',
+        };
+      }
+      if (!tokenOk) {
+        const detail = args.join(' ').slice(0, 200);
+        const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+          kind: 'confirm',
+          message: `Allow ${parsed.service} ${parsed.op} from box ${reg.name}?`,
+          detail,
+          defaultAnswer: 'n',
+          context: {
+            command: `integration ${parsed.service} ${parsed.op}`,
+            cwd: containerPath,
+            argv: args,
+          },
+        });
+        if (verdict.answer !== 'y') {
+          return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+        }
       }
     }
   }

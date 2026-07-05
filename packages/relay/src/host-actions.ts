@@ -22,8 +22,10 @@ import { pathToFileURL } from 'node:url';
 import {
   isResolvedBranch,
   isScratchBranch,
+  isSanctionedPushBranch,
   landRefspec,
   parseDownloadKind,
+  realpathSafe,
   remoteTrackingRef,
   resolveHostPath,
   resolveLandDest,
@@ -44,12 +46,14 @@ import {
   checkoutGuards,
   GH_API_ENDPOINT_REFUSAL,
   GH_PR_READ_ONLY_OPS,
+  GH_PR_SAFE_AUTO_APPROVE_OPS,
   GH_RUN_READ_ONLY_OPS,
   injectPrCreateHead,
   isAllowedGhApiEndpoint,
   isGhPrOp,
   isGhRunOp,
   PR_CREATE_NO_HEAD_REFUSAL,
+  prCreateHasExplicitHead,
   prCreateNeedsHead,
   refuseCheckoutByDefault,
   refuseGhApiCall,
@@ -71,6 +75,7 @@ import {
   type IntegrationRpcParams,
 } from './integrations.js';
 import { askPrompt, type PendingPrompts, type PromptSubscribers } from './prompts.js';
+import { canAutoApproveTransfer } from './safe-transfer.js';
 import { getConnector } from '@agentbox/integrations';
 import type {
   CheckpointRpcParams,
@@ -94,6 +99,13 @@ export interface CloudActionExecutorDeps {
   subscribers?: PromptSubscribers;
   /** Host CLI one-time tokens; presence + scope-match skips the confirm prompt. */
   hostInitiatedTokens?: HostInitiatedTokens;
+  /**
+   * Mirrors `box.autoApproveSafeHostActions` from the registration (default
+   * on). When not `false`, the SAFE subset of host actions auto-resolves; only
+   * an explicit `false` restores the always-prompt behavior. Undefined is
+   * treated as enabled so callers that don't know the flag stay relaxed.
+   */
+  autoApproveSafeHostActions?: boolean;
   /** Best-effort logger. */
   log?: (line: string) => void;
 }
@@ -357,8 +369,31 @@ async function runGhPrRpc(
         'host-initiated token rejected: invalid, expired, or bound to different params\n',
     };
   }
+  // Safe subset: opening a PR (relay forces `--head <box-branch>`) and PR
+  // comments auto-approve under the flag, audited. merge/checkout/review/close
+  // keep prompting.
+  // A `create` with an EXPLICIT `--head` is excluded from the safe subset — that
+  // head could name any branch (e.g. `main`); it falls back to the prompt. A
+  // headless `create` has its head forced to the box's sanctioned branch below.
+  const ghSafeAuto =
+    GH_PR_SAFE_AUTO_APPROVE_OPS.has(op) &&
+    deps.autoApproveSafeHostActions !== false &&
+    !prCreateHasExplicitHead(op, args);
+  if (ghSafeAuto && !hostInitiatedGhOk) {
+    deps.prompts?.noteAutoApprove(
+      deps.boxId,
+      {
+        kind: 'confirm',
+        message: `gh pr ${op} from cloud box ${deps.boxName ?? deps.boxId}`,
+        detail: args.join(' ').slice(0, 200),
+        context: { command: `gh pr ${op}`, cwd: params.path, argv: args },
+      },
+      `safe: gh pr ${op}`,
+    );
+  }
   if (
     !GH_PR_READ_ONLY_OPS.has(op) &&
+    !ghSafeAuto &&
     !hostInitiatedGhOk &&
     deps.prompts &&
     deps.subscribers
@@ -420,7 +455,10 @@ async function runGhPrRpc(
       `git -C ${shellQuote(containerPath)} rev-parse --abbrev-ref HEAD`,
     );
     const branch = branchProbe.exitCode === 0 ? (branchProbe.stdout ?? '').trim() : '';
-    finalArgs = injectPrCreateHead(op, branch, finalArgs);
+    // Prefer the host-sanctioned branch so a headless PR targets the box's own
+    // work (and matches the safe-auto gate above), not whatever HEAD the agent
+    // may have switched to. Fall back to the probed HEAD when unknown.
+    finalArgs = injectPrCreateHead(op, lookup.sanctionedBranch ?? branch, finalArgs);
   }
   // Never let `gh` fall back to the host repo's checked-out branch.
   if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
@@ -490,8 +528,22 @@ async function runGhRunRpc(
   if (ghReady) return ghReady;
   const lookup = await lookupCloudBox(deps.boxId);
   if (!GH_RUN_READ_ONLY_OPS.has(op)) {
-    const denied = await cloudWriteConfirm(deps, `gh run ${op}`, params.path, args);
-    if (denied) return denied;
+    if (deps.autoApproveSafeHostActions !== false) {
+      // `gh run rerun` only re-triggers the project's own CI — safe subset.
+      deps.prompts?.noteAutoApprove(
+        deps.boxId,
+        {
+          kind: 'confirm',
+          message: `gh run ${op} from cloud box ${deps.boxName ?? deps.boxId}`,
+          detail: args.join(' ').slice(0, 200),
+          context: { command: `gh run ${op}`, cwd: params.path, argv: args },
+        },
+        `safe: gh run ${op}`,
+      );
+    } else {
+      const denied = await cloudWriteConfirm(deps, `gh run ${op}`, params.path, args);
+      if (denied) return denied;
+    }
   }
   return runHostGh(['run', op, ...args], lookup.workspacePath);
 }
@@ -582,32 +634,47 @@ async function runIntegrationRpc(
   if (ready) return ready;
 
   if (opDesc.write) {
-    const tokenClaimed = typeof params.hostInitiated === 'string';
-    const incomingHash = hashRpcParams(params);
-    const tokenOk =
-      tokenClaimed &&
-      (deps.hostInitiatedTokens?.consume(
-        params.hostInitiated,
+    if (deps.autoApproveSafeHostActions !== false) {
+      // Integration writes go to the connected external service (not the
+      // host), so they're in the safe subset — audited, no prompt.
+      deps.prompts?.noteAutoApprove(
         deps.boxId,
-        action.method,
-        incomingHash,
-      ) ?? false);
-    if (tokenClaimed && !tokenOk) {
-      return {
-        exitCode: 10,
-        stdout: '',
-        stderr:
-          'host-initiated token rejected: invalid, expired, or bound to different params\n',
-      };
-    }
-    if (!tokenOk) {
-      const denied = await cloudWriteConfirm(
-        deps,
-        `integration ${parsed.service} ${parsed.op}`,
-        params.path,
-        args,
+        {
+          kind: 'confirm',
+          message: `integration ${parsed.service} ${parsed.op} from cloud box ${deps.boxName ?? deps.boxId}`,
+          detail: args.join(' ').slice(0, 200),
+          context: { command: `integration ${parsed.service} ${parsed.op}`, cwd: params.path, argv: args },
+        },
+        `safe: integration ${parsed.service} ${parsed.op}`,
       );
-      if (denied) return denied;
+    } else {
+      const tokenClaimed = typeof params.hostInitiated === 'string';
+      const incomingHash = hashRpcParams(params);
+      const tokenOk =
+        tokenClaimed &&
+        (deps.hostInitiatedTokens?.consume(
+          params.hostInitiated,
+          deps.boxId,
+          action.method,
+          incomingHash,
+        ) ?? false);
+      if (tokenClaimed && !tokenOk) {
+        return {
+          exitCode: 10,
+          stdout: '',
+          stderr:
+            'host-initiated token rejected: invalid, expired, or bound to different params\n',
+        };
+      }
+      if (!tokenOk) {
+        const denied = await cloudWriteConfirm(
+          deps,
+          `integration ${parsed.service} ${parsed.op}`,
+          params.path,
+          args,
+        );
+        if (denied) return denied;
+      }
     }
   }
 
@@ -673,6 +740,12 @@ async function runBrowserOpenMirror(
 interface BoxLookup {
   workspacePath: string;
   cloudSandboxId: string;
+  /**
+   * Branch the host has sanctioned for this box's pushes (defaults to the
+   * create-time `workspaceBranch`). The push gate auto-approves a push only to
+   * a scratch branch or this value.
+   */
+  sanctionedBranch?: string;
 }
 
 async function lookupCloudBox(boxId: string): Promise<BoxLookup> {
@@ -685,7 +758,11 @@ async function lookupCloudBox(boxId: string): Promise<BoxLookup> {
   if (!sid) {
     throw new Error(`box ${boxId} has no cloud.sandboxId — record is malformed`);
   }
-  return { workspacePath: hit.box.workspacePath, cloudSandboxId: sid };
+  return {
+    workspacePath: hit.box.workspacePath,
+    cloudSandboxId: sid,
+    sanctionedBranch: hit.box.cloud?.sanctionedBranch ?? hit.box.cloud?.workspaceBranch,
+  };
 }
 
 /**
@@ -700,6 +777,26 @@ export async function boxWorkspacePath(boxId: string): Promise<string | undefine
   const state = await readState();
   const hit = findBox(boxId, state);
   return hit.kind === 'ok' ? hit.box.workspacePath : undefined;
+}
+
+/**
+ * The realpath'd host source paths this box already approved via its `carry:`
+ * block, so the cp auto-approve gate can exempt a secret file that the user
+ * already consented to copy in at create time. Best-effort: empty set on any
+ * read failure (→ secret files fall back to prompting). Shared by the docker
+ * and cloud cp handlers.
+ */
+export async function boxCarriedHostPaths(boxId: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  try {
+    const state = await readState();
+    const hit = findBox(boxId, state);
+    const entries = hit.kind === 'ok' ? hit.box.carry?.entries : undefined;
+    for (const e of entries ?? []) out.add(await realpathSafe(e.src));
+  } catch {
+    /* best-effort */
+  }
+  return out;
 }
 
 // resolveHostPath's pure decision moved to `@agentbox/core`'s sync/files.ts.
@@ -782,8 +879,27 @@ async function runCpRpc(
     flags: cpFlags(params),
   });
   // Same askPrompt UX as docker's /rpc handler — keeps the in-box agent from
-  // pulling host files / scattering box files without explicit consent.
-  if (deps.prompts && deps.subscribers) {
+  // pulling host files / scattering box files without explicit consent. A
+  // transfer contained in the box project folder (non-secret for host->box)
+  // auto-approves under the safe flag, mirroring the docker handler.
+  const cpHostPaths =
+    method === 'cp.toHost'
+      ? [resolveHostPath(lookup.workspacePath, norm.dest)]
+      : norm.sources.map((s) => resolveHostPath(lookup.workspacePath, s));
+  const cpAuto = await canAutoApproveTransfer({
+    enabled: deps.autoApproveSafeHostActions !== false,
+    workspacePath: lookup.workspacePath,
+    hostPaths: cpHostPaths,
+    checkSecret: method === 'cp.fromHost',
+    carried: method === 'cp.fromHost' ? await boxCarriedHostPaths(deps.boxId) : undefined,
+  });
+  if (cpAuto) {
+    deps.prompts?.noteAutoApprove(
+      deps.boxId,
+      { kind: 'confirm', message: `cp (${direction}) on ${boxName}`, detail, context: { command: method, argv: contextArgv } },
+      method === 'cp.toHost' ? 'safe: contained copy to host' : 'safe: contained copy from host',
+    );
+  } else if (deps.prompts && deps.subscribers) {
     const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, {
       kind: 'confirm',
       message: `Allow cp (${direction}) on ${boxName}?`,
@@ -841,6 +957,7 @@ async function runCheckpointRpc(
   // proceed (a headless caller already knows the box will reboot).
   if (
     deps.backendName === 'vercel' &&
+    deps.autoApproveSafeHostActions === false &&
     deps.prompts &&
     deps.subscribers &&
     deps.subscribers.forBox(deps.boxId).length > 0
@@ -855,6 +972,23 @@ async function runCheckpointRpc(
     if (verdict.answer !== 'y') {
       return { exitCode: 10, stdout: '', stderr: 'checkpoint denied by user\n' };
     }
+  } else if (
+    deps.backendName === 'vercel' &&
+    deps.subscribers &&
+    deps.subscribers.forBox(deps.boxId).length > 0
+  ) {
+    // Checkpoint is a safe subset op (the box's own snapshot); audit the
+    // reboot-causing auto-approval so it's still visible in the event feed.
+    deps.prompts?.noteAutoApprove(
+      deps.boxId,
+      {
+        kind: 'confirm',
+        message: `checkpoint create on ${deps.boxName ?? deps.boxId} (vercel box will stop and reboot)`,
+        detail: params.name ? `checkpoint: ${params.name}` : '(auto-named)',
+        context: { command: 'checkpoint create', argv: params.name ? [params.name] : [] },
+      },
+      'safe: checkpoint create',
+    );
   }
 
   const argv = [process.execPath, entry, 'checkpoint', 'create', deps.boxId];
@@ -889,7 +1023,33 @@ async function runDownloadRpc(
       stderr: `download.${kind} is not yet supported for cloud boxes (only download.workspace is)\n`,
     };
   }
-  if (deps.prompts && deps.subscribers) {
+  const lookup = await lookupCloudBox(deps.boxId);
+  // params.hostPath is reserved in the wire shape; v1 lands /workspace under
+  // box.workspacePath (the host project root), matching docker's default. A
+  // relative override resolves against the box workspace, not the relay's CWD.
+  const hostDst = typeof params.hostPath === 'string' && params.hostPath.length > 0
+    ? resolveHostPath(lookup.workspacePath, params.hostPath)
+    : lookup.workspacePath;
+  // Auto-approve when the destination stays inside the box project folder
+  // (the default does); an escaping override still prompts.
+  const dlAuto = await canAutoApproveTransfer({
+    enabled: deps.autoApproveSafeHostActions !== false,
+    workspacePath: lookup.workspacePath,
+    hostPaths: [hostDst],
+    checkSecret: false,
+  });
+  if (dlAuto) {
+    deps.prompts?.noteAutoApprove(
+      deps.boxId,
+      {
+        kind: 'confirm',
+        message: `download (${kind}) from ${deps.boxName ?? deps.boxId}`,
+        detail: params.hostPath ?? '(default host location)',
+        context: { command: action.method, argv: params.hostPath ? [params.hostPath] : [] },
+      },
+      'safe: contained download',
+    );
+  } else if (deps.prompts && deps.subscribers) {
     const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, {
       kind: 'confirm',
       message: `Allow download (${kind}) from ${deps.boxName ?? deps.boxId}?`,
@@ -904,16 +1064,9 @@ async function runDownloadRpc(
       return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
     }
   }
-  const lookup = await lookupCloudBox(deps.boxId);
   const backend = await resolveCloudBackend(deps.backendName);
   const handle: CloudHandle = { sandboxId: lookup.cloudSandboxId };
   const cp = await loadCloudCp();
-  // params.hostPath is reserved in the wire shape; v1 lands /workspace under
-  // box.workspacePath (the host project root), matching docker's default. A
-  // relative override resolves against the box workspace, not the relay's CWD.
-  const hostDst = typeof params.hostPath === 'string' && params.hostPath.length > 0
-    ? resolveHostPath(lookup.workspacePath, params.hostPath)
-    : lookup.workspacePath;
   try {
     const result = await cp.pullCloudDirContents(backend, handle, '/workspace', hostDst);
     return { exitCode: 0, stdout: `${result.finalPath}\n`, stderr: '' };
@@ -1020,9 +1173,28 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
   // prompt the Docker provider already uses. The wrapper's SSE subscriber on
   // /admin/prompts/stream surfaces it as a footer y/N; `askPrompt` returns
   // auto-`y` when AGENTBOX_PROMPT=off (matches Docker behavior).
-  // Per-box `agentbox/<name>` branches bypass the gate — pushing to them is
-  // the box's whole job; the prompt would only ever ask about other branches.
-  const isAgentboxBranch = isScratchBranch(branch);
+  // The gate is bypassed for pushes to a *sanctioned* branch: the box's own
+  // `agentbox/<name>` scratch branch (always its job), or the branch the host
+  // last put the box on (`sanctionedBranch`). A scratch push bypasses
+  // unconditionally; the sanctioned-but-non-scratch bypass is part of the safe
+  // subset, so it honors `box.autoApproveSafeHostActions` and leaves an audit
+  // trail. An agent that self-switches HEAD to another branch still prompts.
+  const isScratch = isScratchBranch(branch);
+  const safeApproveOn = deps.autoApproveSafeHostActions !== false;
+  const isSanctionedNonScratch =
+    !isScratch && safeApproveOn && isSanctionedPushBranch(branch, lookup.sanctionedBranch);
+  const bypassPushGate = isScratch || isSanctionedNonScratch;
+  if (action.method === 'git.push' && isSanctionedNonScratch) {
+    deps.prompts?.noteAutoApprove(
+      deps.boxId,
+      {
+        kind: 'confirm',
+        message: `git push to sanctioned branch ${branch} on ${deps.boxName ?? deps.boxId}`,
+        context: { command: 'git push', cwd: containerPath, argv: params.args },
+      },
+      'safe: sanctioned-branch push',
+    );
+  }
   // Host-initiated pushes (driven by `agentbox git push <box>`) skip the
   // confirm prompt — but only with a valid scope-matched, params-hash-bound
   // one-time token. If a token is *present* but invalid (mutated args,
@@ -1031,7 +1203,7 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
   const tokenClaimedGit = typeof params.hostInitiated === 'string';
   const incomingHashGit = hashRpcParams(params);
   const hostInitiatedOk =
-    !isAgentboxBranch &&
+    !bypassPushGate &&
     tokenClaimedGit &&
     (deps.hostInitiatedTokens?.consume(
       params.hostInitiated,
@@ -1039,7 +1211,7 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
       'git.push',
       incomingHashGit,
     ) ?? false);
-  if (action.method === 'git.push' && !isAgentboxBranch && tokenClaimedGit && !hostInitiatedOk) {
+  if (action.method === 'git.push' && !bypassPushGate && tokenClaimedGit && !hostInitiatedOk) {
     return {
       exitCode: 10,
       stdout: '',
@@ -1049,7 +1221,7 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
   }
   if (
     action.method === 'git.push' &&
-    !isAgentboxBranch &&
+    !bypassPushGate &&
     !hostInitiatedOk &&
     deps.prompts &&
     deps.subscribers

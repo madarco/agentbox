@@ -202,6 +202,7 @@ export async function handleRelayRequest(
       previewToken: body.previewToken || undefined,
       bridgeToken: body.bridgeToken || undefined,
       autoApproveHostActions: body.autoApproveHostActions === true,
+      autoApproveSafeHostActions: body.autoApproveSafeHostActions !== false,
       originUrl: body.originUrl || undefined,
     };
     await store.registerBox(reg);
@@ -336,6 +337,11 @@ async function dispatchRpc(
   if (method === 'git.lease-token') {
     const p = params as GitRpcParams | undefined;
     const worktree = resolveWorktree(reg, p?.path ?? '/workspace');
+    // Lease-token grants a *repo-scoped* push token — the box can then push any
+    // branch with it, so (unlike the relay-driven git.push, where the relay
+    // picks the exact branch) the sanctioned-branch auto-approve does NOT apply
+    // here. Only the box's own scratch branch bypasses; everything else parks
+    // for a human.
     const isAgentboxBranch = isScratchBranch(worktree?.branch);
     if (!isAgentboxBranch) {
       const gate = await gateApproval({ mode: 'poll', store: deps.store }, reg.boxId, method, params, {

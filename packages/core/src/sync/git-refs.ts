@@ -22,6 +22,22 @@ export function isScratchBranch(branch: string | undefined): boolean {
 }
 
 /**
+ * True when a push to `branch` is a *sanctioned* push that may bypass the
+ * relay's confirm prompt: it's the box's own `agentbox/<name>` scratch branch
+ * (always its job), or it exactly matches the branch the host last put the box
+ * on (`sanctionedBranch`). An in-box agent that self-switches HEAD to some
+ * other branch (e.g. `main`) fails both arms, so its push still prompts.
+ * Undefined-safe; empty/`HEAD` never matches the sanctioned arm.
+ */
+export function isSanctionedPushBranch(
+  branch: string | undefined,
+  sanctionedBranch: string | undefined,
+): boolean {
+  if (isScratchBranch(branch)) return true;
+  return isResolvedBranch(branch ?? '') && !!sanctionedBranch && branch === sanctionedBranch;
+}
+
+/**
  * Resolve the push remote, defaulting to 'origin'.
  *
  * MUST be `??`, not `||`: only an *undefined* remote falls back to 'origin'.

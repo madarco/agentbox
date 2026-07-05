@@ -14,8 +14,8 @@ import { existsSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
-const APP_NAME = 'AgentBoxTray';
-const APP_PATH = `/Applications/${APP_NAME}.app`;
+export const APP_NAME = 'AgentBoxTray';
+export const APP_PATH = `/Applications/${APP_NAME}.app`;
 
 /** Locate the bundled tray zip, or null if it isn't staged (e.g. a dev checkout, or Linux). */
 export function resolveTrayZip(): string | null {
