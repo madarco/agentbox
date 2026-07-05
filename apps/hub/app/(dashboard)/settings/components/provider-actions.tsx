@@ -12,6 +12,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Icons } from '@/components/icons';
+import { cn } from '@/lib/utils';
 import { useStore } from '@/lib/boxes/store';
 import type { ProviderOption } from '@/lib/boxes/types';
 import { JobLogStream } from '../../boxes/components/job-log-stream';
@@ -60,10 +62,22 @@ function statusBadge(p: ProviderOption) {
   return <Badge className="gap-1.5 normal-case">needs credentials</Badge>;
 }
 
+// A fixed-length dot mask shown in a field that already has a saved value — a
+// placeholder signal (the API never returns the real secret), never submitted.
+const MASK = '••••••••••••';
+
 function ProviderRow({ provider: p }: { provider: ProviderOption }) {
   const router = useRouter();
   const fields = CRED_FIELDS[p.id] ?? [];
+  // Required fields re-mask when emptied; optional ones (e.g. vercel team/project) don't.
+  const maskableKeys = new Set(fields.filter((f) => !f.optional).map((f) => f.key));
   const [values, setValues] = useState<Record<string, string>>({});
+  // Start required fields masked when the provider already has credentials.
+  const [masked, setMasked] = useState<Record<string, boolean>>(() =>
+    p.hasCredentials
+      ? Object.fromEntries(fields.filter((f) => !f.optional).map((f) => [f.key, true]))
+      : {},
+  );
   const [savingCreds, setSavingCreds] = useState(false);
   const [credError, setCredError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(!p.hasCredentials && fields.length > 0);
@@ -79,6 +93,7 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
     try {
       const body: Record<string, string> = {};
       for (const f of fields) {
+        if (masked[f.key]) continue; // the dot mask is a placeholder, not a value
         const v = (values[f.key] ?? '').trim();
         if (v) body[f.key] = v;
       }
@@ -94,6 +109,8 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
         return;
       }
       setValues({});
+      // Re-mask the required fields now that they have a saved value.
+      setMasked(Object.fromEntries([...maskableKeys].map((k) => [k, true])));
       setShowForm(false);
       router.refresh(); // hasCredentials flips in getData
     } catch (err) {
@@ -130,10 +147,16 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
   };
 
   const canBake = p.id === 'docker' || p.hasCredentials;
+  const hasFields = fields.length > 0;
 
   return (
     <div className="flex flex-col gap-3 p-4 px-5">
-      <div className="flex items-center gap-3">
+      {/* Whole header row toggles the credential form (cloud providers). The
+          Re-bake button stops propagation so it never toggles. */}
+      <div
+        className={cn('flex items-center gap-3', hasFields && 'cursor-pointer')}
+        onClick={hasFields ? () => setShowForm((s) => !s) : undefined}
+      >
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-[14px] font-semibold">
             {p.label}
@@ -141,12 +164,7 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
           </div>
           {p.reason ? <div className="mt-0.5 text-[12.5px] text-muted-foreground">{p.reason}</div> : null}
         </div>
-        <div className="flex flex-none items-center gap-2">
-          {p.hasCredentials && fields.length > 0 ? (
-            <Button variant="ghost" size="sm" type="button" onClick={() => setShowForm((s) => !s)}>
-              {showForm ? 'Cancel' : 'Update credentials'}
-            </Button>
-          ) : null}
+        <div className="flex flex-none items-center gap-2" onClick={(e) => e.stopPropagation()}>
           <Button
             type="button"
             size="sm"
@@ -155,9 +173,21 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
             onClick={() => void bake()}
             title={canBake ? undefined : 'Add credentials first'}
           >
+            <Icons.refresh className="size-3.5" />
             {jobId ? 'Baking…' : baking ? 'Starting…' : p.configured ? 'Re-bake' : 'Bake image'}
           </Button>
         </div>
+        {hasFields ? (
+          <Icons.chevR
+            className={cn(
+              'size-4 flex-none text-muted-foreground transition-transform',
+              showForm && 'rotate-90',
+            )}
+          />
+        ) : (
+          // Keep the Re-bake button aligned with the chevron'd rows.
+          <span className="size-4 flex-none" aria-hidden />
+        )}
       </div>
 
       {showForm && fields.length > 0 ? (
@@ -171,8 +201,21 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
               <Input
                 type="password"
                 autoComplete="off"
-                value={values[f.key] ?? ''}
+                value={masked[f.key] ? MASK : (values[f.key] ?? '')}
                 placeholder={f.placeholder}
+                onFocus={() => {
+                  // Clear the "already saved" mask on focus so a fresh value can be typed.
+                  if (masked[f.key]) {
+                    setMasked((m) => ({ ...m, [f.key]: false }));
+                    setValues((v) => ({ ...v, [f.key]: '' }));
+                  }
+                }}
+                onBlur={() => {
+                  // Restore the mask if a previously-saved field was left empty.
+                  if (maskableKeys.has(f.key) && !(values[f.key] ?? '').trim()) {
+                    setMasked((m) => ({ ...m, [f.key]: true }));
+                  }
+                }}
                 onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
                 className="font-mono text-xs"
               />
