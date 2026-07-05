@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isResolvedBranch,
+  isSanctionedPushBranch,
   isScratchBranch,
   landRefspec,
   remoteTrackingRef,
@@ -87,6 +88,27 @@ describe('git-refs pure decisions', () => {
     });
     it('accepts a real branch', () => {
       expect(isResolvedBranch('main')).toBe(true);
+    });
+  });
+
+  describe('isSanctionedPushBranch', () => {
+    it('always allows a scratch branch, regardless of sanctioned value', () => {
+      expect(isSanctionedPushBranch('agentbox/box1', undefined)).toBe(true);
+      expect(isSanctionedPushBranch('agentbox/box1', 'main')).toBe(true);
+    });
+    it('allows a non-scratch branch only when it equals the sanctioned branch', () => {
+      expect(isSanctionedPushBranch('main', 'main')).toBe(true);
+      expect(isSanctionedPushBranch('feature/x', 'feature/x')).toBe(true);
+    });
+    it('rejects an agent-switched branch that is not the sanctioned one', () => {
+      expect(isSanctionedPushBranch('main', 'agentbox/box1')).toBe(false);
+      expect(isSanctionedPushBranch('rogue', 'main')).toBe(false);
+    });
+    it('rejects when sanctioned is unset or branch is empty/HEAD', () => {
+      expect(isSanctionedPushBranch('main', undefined)).toBe(false);
+      expect(isSanctionedPushBranch('', 'main')).toBe(false);
+      expect(isSanctionedPushBranch('HEAD', 'HEAD')).toBe(false);
+      expect(isSanctionedPushBranch(undefined, undefined)).toBe(false);
     });
   });
 

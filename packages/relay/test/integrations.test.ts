@@ -184,7 +184,7 @@ esac
     integ._resetIntegrationReadyCacheForTests();
   });
 
-  async function registerBox(): Promise<void> {
+  async function registerBox(extra: Record<string, unknown> = {}): Promise<void> {
     // hostMainRepo doesn't need to exist on disk: handleIntegrationRpc only
     // uses it as a cwd for the spawn, and the stub doesn't look at cwd.
     const r = await fetchJson(handle, 'POST', '/admin/register-box', {
@@ -195,6 +195,7 @@ esac
         worktrees: [
           { containerPath: '/workspace', hostMainRepo: stubDir, branch: 'agentbox/box-one' },
         ],
+        ...extra,
       },
     });
     expect(r.status).toBe(204);
@@ -217,8 +218,22 @@ esac
     expect(handle.prompts.size()).toBe(0);
   });
 
-  it('write op enqueues an askPrompt; denial returns exit 10', async () => {
+  it('write op auto-approves under the default safe flag (no prompt)', async () => {
     await registerBox();
+    const r = await fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: {
+        method: 'integration.notion.page.create',
+        params: { path: '/workspace', args: ['--parent', 'db_id', '--title', 'T'] },
+      },
+    });
+    expect(r.status).toBe(200);
+    expect(handle.prompts.size()).toBe(0);
+  });
+
+  it('write op enqueues an askPrompt; denial returns exit 10 (strict flag)', async () => {
+    // autoApproveSafeHostActions:false restores the always-prompt behavior.
+    await registerBox({ autoApproveSafeHostActions: false });
     const rpcPromise = fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
       body: {

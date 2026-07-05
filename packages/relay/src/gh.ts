@@ -46,6 +46,15 @@ export const GH_PR_READ_ONLY_OPS: ReadonlySet<GhPrOp> = new Set([
 ]);
 
 /**
+ * `gh pr` write ops that auto-approve under `box.autoApproveSafeHostActions`:
+ * opening a PR for the box's branch (the relay forces `--head <box-branch>`, so
+ * it can only ever target the box's own work) and commenting on a PR. The more
+ * consequential writes (`review`, `close`, `reopen`, and especially `merge` /
+ * `checkout`) are deliberately excluded — they keep prompting.
+ */
+export const GH_PR_SAFE_AUTO_APPROVE_OPS: ReadonlySet<GhPrOp> = new Set(['create', 'comment']);
+
+/**
  * Whitelisted subset of `gh run` ops exposed via RPC. `list` / `view` are
  * read-only; `rerun` re-triggers CI (a write — gated by the host confirm
  * prompt). `watch` is deliberately absent: it blocks until the run finishes,

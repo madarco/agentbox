@@ -25,6 +25,7 @@ export interface RegisterBoxWithPlaneArgs {
   createdAt?: string;
   projectIndex?: number;
   autoApproveHostActions?: boolean;
+  autoApproveSafeHostActions?: boolean;
 }
 
 /** Read the host workspace's `origin` remote URL (the box's push target). */
@@ -58,6 +59,7 @@ export async function registerBoxWithPlane(args: RegisterBoxWithPlaneArgs): Prom
       createdAt: args.createdAt,
       projectIndex: args.projectIndex,
       autoApproveHostActions: args.autoApproveHostActions,
+      autoApproveSafeHostActions: args.autoApproveSafeHostActions,
     }),
   });
   if (!res.ok) {

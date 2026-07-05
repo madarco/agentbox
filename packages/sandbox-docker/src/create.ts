@@ -514,6 +514,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         containerPath: w.containerPath,
         gitWorktreePath: freshGitWorktreePath,
         branch: freshBranch,
+        sanctionedBranch: freshBranch,
         relPathFromWorkspace: w.relPathFromWorkspace,
       });
     }
@@ -554,6 +555,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
           containerPath,
           gitWorktreePath,
           branch,
+          sanctionedBranch: branch,
           relPathFromWorkspace: r.relPathFromWorkspace,
         });
         continue;
@@ -572,6 +574,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         containerPath,
         gitWorktreePath,
         branch,
+        sanctionedBranch: branch,
         relPathFromWorkspace: r.relPathFromWorkspace,
       });
     }
@@ -743,9 +746,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // > project > global). Read here, in the construction layer, so every
   // entrypoint (create/claude/codex/opencode/wizard/queued worker) gets the
   // same behavior without each caller threading the flag.
-  const autoApproveHostActions = (
-    await loadEffectiveConfig(opts.projectRoot ?? workspace)
-  ).effective.box.autoApproveHostActions;
+  const effectiveBoxCfg = (await loadEffectiveConfig(opts.projectRoot ?? workspace)).effective.box;
+  const autoApproveHostActions = effectiveBoxCfg.autoApproveHostActions;
+  const autoApproveSafeHostActions = effectiveBoxCfg.autoApproveSafeHostActions;
 
   // Per-box bearer token for the host relay. Register *before* runBox so the
   // box's supervisor can post on boot. Skip if the relay isn't reachable —
@@ -762,6 +765,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         projectIndex,
         worktrees: gitWorktreeRecords,
         autoApproveHostActions,
+        autoApproveSafeHostActions,
       });
       log(`registered box token with relay`);
     } catch (err) {
@@ -861,6 +865,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     withPlaywright: opts.withPlaywright ? true : undefined,
     withEnv: opts.withEnv ? true : undefined,
     autoApproveHostActions: autoApproveHostActions ? true : undefined,
+    // Default on: persist only when explicitly disabled (mirrors the relay's
+    // `!== false` read); an absent field on an older record stays relaxed.
+    autoApproveSafeHostActions: autoApproveSafeHostActions === false ? false : undefined,
     vncEnabled: vncEnabled ? true : undefined,
     vncContainerPort: vncEnabled ? VNC_CONTAINER_PORT : undefined,
     vncPassword: vncPassword,

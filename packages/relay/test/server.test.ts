@@ -472,7 +472,9 @@ exit 0
     gh._resetGhReadyCacheForTests();
   });
 
-  async function registerWithWorktree(): Promise<void> {
+  async function registerWithWorktree(
+    extra: Record<string, unknown> = {},
+  ): Promise<void> {
     // The worktree paths don't need to exist on disk: handleGhPrRpc only uses
     // hostMainRepo as a cwd for `gh`, and our stub ignores cwd.
     const r = await fetchJson(handle, 'POST', '/admin/register-box', {
@@ -483,6 +485,7 @@ exit 0
         worktrees: [
           { containerPath: '/workspace', hostMainRepo: stubDir, branch: 'agentbox/box-one' },
         ],
+        ...extra,
       },
     });
     expect(r.status).toBe(204);
@@ -537,8 +540,22 @@ exit 0
     expect(handle.prompts.size()).toBe(0);
   });
 
-  it('gh.pr.create denial via /admin/prompts/answer returns exit 10', async () => {
+  it('gh.pr.create auto-approves under the default safe flag (no prompt)', async () => {
     await registerWithWorktree();
+    const r = await fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: {
+        method: 'gh.pr.create',
+        params: { path: '/workspace', args: ['--title', 'T', '--body', 'B'] },
+      },
+    });
+    expect(r.status).toBe(200);
+    expect(handle.prompts.size()).toBe(0);
+  });
+
+  it('gh.pr.create denial via /admin/prompts/answer returns exit 10 (strict flag)', async () => {
+    // autoApproveSafeHostActions:false restores the always-prompt behavior.
+    await registerWithWorktree({ autoApproveSafeHostActions: false });
     const rpcPromise = fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
       body: {

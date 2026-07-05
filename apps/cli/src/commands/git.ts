@@ -6,9 +6,11 @@ import {
   boxGitPull,
   boxGitPush,
   boxGitPushHost,
+  mutateState,
+  scratchBranchName,
   type BoxGitDeps,
 } from '@agentbox/sandbox-core';
-import { mintHostInitiatedToken } from '@agentbox/sandbox-docker';
+import { mintHostInitiatedToken, registerBoxWithRelay } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
@@ -43,6 +45,59 @@ async function runAndStream(box: BoxRecord, argv: string[]): Promise<number> {
   if (r.stdout) process.stdout.write(r.stdout);
   if (r.stderr) process.stderr.write(r.stderr);
   return r.exitCode;
+}
+
+/**
+ * Record `branch` as the box's host-sanctioned branch after a host-driven
+ * `agentbox git checkout`/`branch`/`pull <branch>`. The relay auto-approves a
+ * push only to a scratch branch or this value, so a host branch switch must
+ * update it (otherwise the box would prompt to push the branch the host just
+ * put it on). Persists to `~/.agentbox/state.json` (docker root worktree +
+ * cloud field) and re-registers docker boxes so the in-memory relay registry
+ * picks up the new value. Best-effort: a failure here just means the next push
+ * to that branch prompts — it never blocks the branch switch itself.
+ */
+async function sanctionBoxBranch(box: BoxRecord, branch: string): Promise<void> {
+  try {
+    await mutateState((state) => {
+      const b = state.boxes.find((x) => x.id === box.id);
+      if (!b) return state;
+      if (b.gitWorktrees) {
+        for (const w of b.gitWorktrees) {
+          if (w.kind === 'root') w.sanctionedBranch = branch;
+        }
+      }
+      if (b.cloud) b.cloud.sanctionedBranch = branch;
+      return state;
+    });
+  } catch {
+    return; // couldn't persist → leave the gate as-is
+  }
+  // Docker's push gate reads the in-memory registry, so re-register to refresh
+  // the worktree's sanctionedBranch. Cloud's gate reads state.json per RPC, so
+  // the persist above is enough — no cloud re-register needed.
+  const isDocker = box.provider === 'docker' || box.provider === undefined;
+  if (isDocker && box.relayToken) {
+    const worktrees = (box.gitWorktrees ?? []).map((w) =>
+      w.kind === 'root' ? { ...w, sanctionedBranch: branch } : w,
+    );
+    try {
+      await registerBoxWithRelay({
+        boxId: box.id,
+        token: box.relayToken,
+        name: box.name,
+        containerName: box.container,
+        createdAt: box.createdAt,
+        projectIndex: box.projectIndex,
+        worktrees,
+        autoApproveHostActions: box.autoApproveHostActions,
+        autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+      });
+    } catch {
+      // best-effort — relay may be down; the persisted state re-registers on
+      // the next `relay` rehydrate.
+    }
+  }
 }
 
 /** Stream a shared-helper exec result to the terminal, then exit with its code. */
@@ -216,6 +271,9 @@ const pullCommand = new Command('pull')
           if (switched.stdout) process.stdout.write(switched.stdout);
           if (switched.stderr) process.stderr.write(switched.stderr);
           if (switched.exitCode !== 0) await exitWith(switched.exitCode);
+          // Host switched the box onto <branch> — sanction it so the following
+          // pull/push don't prompt to touch the branch the host just picked.
+          await sanctionBoxBranch(box, branch);
         }
         await streamExit(
           await boxGitPull(provider, box, { remote: opts.remote, ffOnly: opts.ffOnly, args }, gitDeps(box)),
@@ -237,8 +295,11 @@ const checkoutCommand = new Command('checkout')
     try {
       const box = await resolveBoxOrExit(boxRef);
       const provider = await providerForBox(box);
-      // No relay involvement: branch switching is local to the worktree.
-      await streamExit(await boxGitCheckout(provider, box, branch, args));
+      const r = await boxGitCheckout(provider, box, branch, args);
+      // Host-sanctioned branch switch: record it so pushing this branch skips
+      // the confirm prompt (an in-box agent's own checkout does not).
+      if (r.exitCode === 0) await sanctionBoxBranch(box, branch);
+      await streamExit(r);
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -253,8 +314,12 @@ const branchCommand = new Command('branch')
     try {
       const box = await resolveBoxOrExit(boxRef);
       const provider = await providerForBox(box);
-      // Local to the worktree (`git checkout -b`), so no relay involvement.
-      await streamExit(await boxGitNewBranch(provider, box, name, opts.from));
+      const r = await boxGitNewBranch(provider, box, name, opts.from);
+      // The new branch is always an `agentbox/*` scratch branch (already
+      // gate-exempt), but record it as sanctioned for consistency + in case
+      // the scratch-prefix policy ever changes.
+      if (r.exitCode === 0) await sanctionBoxBranch(box, scratchBranchName(name));
+      await streamExit(r);
     } catch (err) {
       handleLifecycleError(err);
     }

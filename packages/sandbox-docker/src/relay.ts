@@ -683,6 +683,12 @@ export interface RegisterBoxArgs {
    */
   autoApproveHostActions?: boolean;
   /**
+   * Mirrors `box.autoApproveSafeHostActions` (default true). When not `false`,
+   * the SAFE subset of host actions auto-resolves without a prompt. Absent →
+   * enabled; only an explicit `false` restores the always-prompt behavior.
+   */
+  autoApproveSafeHostActions?: boolean;
+  /**
    * The box repo's origin remote URL. The hosted control plane resolves
    * owner/repo from this when leasing a GitHub-App push token. Absent for
    * boxes without a git origin.
@@ -695,6 +701,7 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     containerPath: w.containerPath,
     hostMainRepo: w.hostMainRepo,
     branch: w.branch,
+    ...(w.sanctionedBranch ? { sanctionedBranch: w.sanctionedBranch } : {}),
   }));
   await adminPost('/admin/register-box', {
     boxId: args.boxId,
@@ -710,6 +717,7 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     previewToken: args.previewToken,
     bridgeToken: args.bridgeToken,
     autoApproveHostActions: args.autoApproveHostActions,
+    autoApproveSafeHostActions: args.autoApproveSafeHostActions,
     originUrl: args.originUrl,
   });
 }
@@ -897,6 +905,8 @@ export interface BoxWithToken {
   bridgeToken?: string;
   /** Mirrors `BoxRecord.autoApproveHostActions`; re-registered on rehydrate. */
   autoApproveHostActions?: boolean;
+  /** Mirrors `BoxRecord.autoApproveSafeHostActions`; re-registered on rehydrate. */
+  autoApproveSafeHostActions?: boolean;
 }
 
 /**
@@ -924,6 +934,7 @@ export async function rehydrateRelayRegistry(boxes: BoxWithToken[]): Promise<voi
         previewToken: b.relayPreviewToken,
         bridgeToken: b.bridgeToken,
         autoApproveHostActions: b.autoApproveHostActions,
+        autoApproveSafeHostActions: b.autoApproveSafeHostActions,
       });
     } catch {
       // best-effort

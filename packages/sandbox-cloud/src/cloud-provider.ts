@@ -473,6 +473,7 @@ export function createCloudProvider(
             createdAt: box.createdAt,
             projectIndex: box.projectIndex,
             autoApproveHostActions: box.autoApproveHostActions,
+            autoApproveSafeHostActions: box.autoApproveSafeHostActions,
           });
         } catch {
           // best-effort
@@ -492,6 +493,7 @@ export function createCloudProvider(
           createdAt: box.createdAt,
           projectIndex: box.projectIndex,
           autoApproveHostActions: box.autoApproveHostActions,
+          autoApproveSafeHostActions: box.autoApproveSafeHostActions,
         });
       } catch {
         // best-effort
@@ -902,9 +904,11 @@ export function createCloudProvider(
           : undefined;
 
         // Per-box host-action auto-approve policy (workspace > project > global).
-        const autoApproveHostActions = (
+        const effectiveBoxForApprove = (
           await loadEffectiveConfig(req.projectRoot ?? req.workspacePath)
-        ).effective.box.autoApproveHostActions;
+        ).effective.box;
+        const autoApproveHostActions = effectiveBoxForApprove.autoApproveHostActions;
+        const autoApproveSafeHostActions = effectiveBoxForApprove.autoApproveSafeHostActions;
 
         // Register the box so its RPCs (status, git.lease-token) are recognized.
         // Control-plane box → register on the PLANE with its origin URL (the
@@ -943,6 +947,7 @@ export function createCloudProvider(
                 createdAt: new Date().toISOString(),
                 projectIndex,
                 autoApproveHostActions,
+                autoApproveSafeHostActions,
               });
             } catch (err) {
               log(
@@ -964,6 +969,7 @@ export function createCloudProvider(
               bridgeToken,
               createdAt: new Date().toISOString(),
               autoApproveHostActions,
+              autoApproveSafeHostActions,
             });
           } catch (err) {
             log(
@@ -991,6 +997,7 @@ export function createCloudProvider(
           withPlaywright: req.withPlaywright,
           withEnv: req.withEnv,
           autoApproveHostActions: autoApproveHostActions ? true : undefined,
+          autoApproveSafeHostActions: autoApproveSafeHostActions === false ? false : undefined,
           carry: carrySummary,
           portlessAlias: portlessAliasName,
           portlessUrl: portlessUrlResolved,

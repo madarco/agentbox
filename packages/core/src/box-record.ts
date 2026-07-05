@@ -137,6 +137,14 @@ export interface CloudBoxFields {
    */
   workspaceBranch?: string;
   /**
+   * Last branch the HOST sanctioned for this cloud box (defaults to
+   * `workspaceBranch`, updated by host `agentbox git checkout`/`branch`/`pull
+   * <branch>`). The cloud push gate auto-approves a push only to a scratch
+   * branch OR this value — the cloud analogue of the docker registry's
+   * `BoxWorktree.sanctionedBranch`. Absent → treated as `workspaceBranch`.
+   */
+  sanctionedBranch?: string;
+  /**
    * The box's resolved sync federation shape (`resolveSyncTopology`). `'cloud'`
    * for a classic host-synced box, `'control-plane'` when its live relay is a
    * hosted control plane (the box forwards `/rpc` to the plane and leases push
@@ -176,6 +184,16 @@ export interface GitWorktreeRecord {
   gitWorktreePath: string;
   /** Branch the worktree was created on, e.g. `agentbox/<box-name>`. */
   branch: string;
+  /**
+   * The last branch the HOST put this box on — its create-time `branch`,
+   * updated by host-driven `agentbox git checkout`/`branch`/`pull <branch>`.
+   * Distinct from `branch` (which stays the immutable scratch identity used by
+   * host-only land, checkout guards, and upstream-sync skip): the relay
+   * auto-approves a push only to a scratch branch OR this sanctioned branch,
+   * so an in-box agent self-switching to `main` and pushing still prompts.
+   * Absent on records written before this field existed → treated as `branch`.
+   */
+  sanctionedBranch?: string;
   /** Workspace-relative path the repo was found at (empty string for root). */
   relPathFromWorkspace: string;
 }
@@ -245,6 +263,15 @@ export interface BoxRecord {
    * Persisted so a `relay` rehydrate re-registers with the same policy.
    */
   autoApproveHostActions?: boolean;
+  /**
+   * Resolved `box.autoApproveSafeHostActions` at create time (default true).
+   * Forwarded to the relay so the SAFE subset of host actions (open PR, PR
+   * comments, sanctioned-branch push, contained non-secret file copy, CI
+   * rerun, checkpoint, integration writes) auto-resolves without a prompt.
+   * Absent is treated as enabled (default on) by the relay. Persisted so a
+   * `relay` rehydrate re-registers with the same policy.
+   */
+  autoApproveSafeHostActions?: boolean;
   /**
    * Carry summary recorded at create time: which host paths were copied into
    * the box from `agentbox.yaml`'s `carry:` block. Audit trail for inspect

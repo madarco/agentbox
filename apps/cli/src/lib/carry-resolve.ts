@@ -2,6 +2,7 @@ import { realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import { BUILT_IN_DEFAULTS } from '@agentbox/config';
+import { isInside, realpathSafe } from '@agentbox/core';
 import { resolveRuleRefs, type CarryItem, type ReplaceRule } from '@agentbox/ctl';
 import { effectiveExcludes, isPathExcluded, toTarExcludes } from './dir-breakdown.js';
 
@@ -255,21 +256,6 @@ function validateBoxDest(dest: string, ctx: OneCtx): void {
     if (dest === p || dest.startsWith(`${p}/`)) {
       throw new Error(`${ctx.where}.dest "${dest}" is on the denylist (prefix ${p})`);
     }
-  }
-}
-
-function isInside(child: string, parent: string): boolean {
-  const c = resolve(child);
-  const p = resolve(parent);
-  if (c === p) return true;
-  return c.startsWith(p + '/');
-}
-
-async function realpathSafe(p: string): Promise<string> {
-  try {
-    return await realpath(p);
-  } catch {
-    return resolve(p);
   }
 }
 

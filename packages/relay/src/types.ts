@@ -81,6 +81,14 @@ export interface BoxRegistration {
    */
   autoApproveHostActions?: boolean;
   /**
+   * Mirrors `box.autoApproveSafeHostActions` (default true). When not `false`,
+   * the SAFE subset of host actions (open PR, PR/review comments,
+   * sanctioned-branch push, contained non-secret file copy/download, CI rerun,
+   * checkpoint, integration writes) auto-resolves without a prompt — each
+   * still emits a `host-action-auto-approved` event. Absent → enabled.
+   */
+  autoApproveSafeHostActions?: boolean;
+  /**
    * The box repo's origin remote URL (any git URL shape). The hosted control
    * plane resolves owner/repo from THIS registered value when leasing a
    * GitHub-App token (never from box-supplied RPC params). Absent for boxes
@@ -102,6 +110,13 @@ export interface BoxWorktree {
   hostMainRepo: string;
   /** Branch the in-container worktree was created on (`agentbox/<box-name>`). */
   branch: string;
+  /**
+   * Last branch the HOST sanctioned for this box (create-time `branch`, updated
+   * by host `agentbox git checkout`/`branch`/`pull <branch>`). The push gate
+   * auto-approves only a scratch branch or this value; absent → treated as
+   * `branch`.
+   */
+  sanctionedBranch?: string;
 }
 
 export interface RelayEvent {
@@ -158,6 +173,8 @@ export interface RegisterBoxBody {
    * prompts auto-resolve to `y` (audited via a relay event).
    */
   autoApproveHostActions?: boolean;
+  /** Mirrors `box.autoApproveSafeHostActions` (default true; absent → enabled). */
+  autoApproveSafeHostActions?: boolean;
   /** The box repo's origin remote URL (for GitHub-App lease repo resolution). */
   originUrl?: string;
 }

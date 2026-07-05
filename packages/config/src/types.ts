@@ -91,6 +91,7 @@ export interface UserConfig {
     resyncOnStart?: boolean;
     vnc?: boolean;
     autoApproveHostActions?: boolean;
+    autoApproveSafeHostActions?: boolean;
     isolateClaudeConfig?: boolean;
     isolateCodexConfig?: boolean;
     isolateOpencodeConfig?: boolean;
@@ -235,6 +236,7 @@ export interface EffectiveConfig {
     resyncOnStart: boolean;
     vnc: boolean;
     autoApproveHostActions: boolean;
+    autoApproveSafeHostActions: boolean;
     isolateClaudeConfig: boolean;
     isolateCodexConfig: boolean;
     isolateOpencodeConfig: boolean;
@@ -385,6 +387,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     resyncOnStart: true,
     vnc: true,
     autoApproveHostActions: false,
+    autoApproveSafeHostActions: true,
     isolateClaudeConfig: false,
     isolateCodexConfig: false,
     isolateOpencodeConfig: false,
@@ -609,6 +612,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'bool',
     description:
       'Auto-approve host-action confirmations (git push, cp host<->box, gh PR writes, checkpoint) for this box without an interactive prompt. Off by default; intended for unattended orchestration of trusted boxes. Each auto-approval is recorded as a relay event (visible in `agentbox agent` / the dashboard).',
+  },
+  {
+    key: 'box.autoApproveSafeHostActions',
+    type: 'bool',
+    description:
+      'Auto-approve the SAFE subset of host actions without a prompt: opening a PR, PR/review comments, re-running CI, pushing to the box\'s scratch or host-sanctioned branch, checkpoints, integration writes, and file copy/download that stays inside the box project folder (non-secret). Uncontained or secret file transfers, non-sanctioned-branch pushes, and PR merge/checkout still prompt. On by default; set false to prompt for every host action (the pre-relax behavior). Superseded by box.autoApproveHostActions, which approves everything. Each auto-approval is recorded as a relay event.',
   },
   {
     key: 'box.isolateClaudeConfig',

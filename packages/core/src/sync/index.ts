@@ -39,8 +39,15 @@ export type { GitRpcParams } from './git-refs.js';
 export type { DownloadKind } from './files.js';
 export { parseDownloadKind, resolveHostPath } from './files.js';
 export {
+  realpathSafe,
+  isInside,
+  isContainedInWorkspace,
+  looksLikeSecret,
+} from './containment.js';
+export {
   SCRATCH_BRANCH_PREFIX,
   isScratchBranch,
+  isSanctionedPushBranch,
   resolveRemote,
   resolveLandDest,
   landRefspec,

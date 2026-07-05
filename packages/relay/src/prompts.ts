@@ -36,7 +36,7 @@ interface PendingPromptEntry {
  */
 export interface AutoApprovePolicy {
   shouldAutoApprove(boxId: string): boolean;
-  audit(boxId: string, params: Omit<PromptAskEvent, 'id'>): void;
+  audit(boxId: string, params: Omit<PromptAskEvent, 'id'>, reason?: string): void;
 }
 
 /** A pending approval, flattened for listing across all boxes (hub UI). */
@@ -75,6 +75,18 @@ export class PendingPrompts {
     if (!this.autoApprove || !this.autoApprove.shouldAutoApprove(boxId)) return false;
     this.autoApprove.audit(boxId, params);
     return true;
+  }
+
+  /**
+   * Record a *safe-subset* auto-approval (opening a PR, a contained file copy,
+   * a sanctioned-branch push, …) to the audit sink WITHOUT the blanket
+   * `autoApproveHostActions` opt-in. The handler already decided the action is
+   * safe under `box.autoApproveSafeHostActions`; this just leaves the same
+   * `host-action-auto-approved` trail a full opt-in would, tagged with `reason`.
+   * No-op when no policy is installed (e.g. the stateless poll plane).
+   */
+  noteAutoApprove(boxId: string, params: Omit<PromptAskEvent, 'id'>, reason: string): void {
+    this.autoApprove?.audit(boxId, params, reason);
   }
 
   add(boxId: string, ev: PromptAskEvent): Promise<PromptResolution> {

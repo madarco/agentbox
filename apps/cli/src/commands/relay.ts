@@ -34,6 +34,7 @@ export async function rehydrateFromState(): Promise<void> {
       relayPreviewToken: b.cloud?.relayPreviewToken,
       bridgeToken: b.cloud?.bridgeToken,
       autoApproveHostActions: b.autoApproveHostActions,
+      autoApproveSafeHostActions: b.autoApproveSafeHostActions,
     })),
   );
 }
