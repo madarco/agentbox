@@ -106,6 +106,7 @@ export {
   portlessGetUrl,
   portlessInstallHint,
   portlessStartHint,
+  portlessDoctorRow,
   portlessUnalias,
   resetPortlessCache,
   resolvePortlessHostStateDir,

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
+import type { CheckResult } from '@agentbox/sandbox-core';
 
 /**
  * Portless (https://portless.sh) — a host reverse-proxy that maps
@@ -142,6 +143,38 @@ export function portlessInstallHint(): string {
 /** Command the user should run to bring the Portless proxy up. */
 export function portlessStartHint(): string {
   return 'portless proxy start';
+}
+
+/**
+ * A `doctor` row (see `@agentbox/sandbox-core`'s `CheckResult`) for a provider
+ * that benefits from a host Portless proxy — docker on plain Docker Desktop /
+ * Linux engine (OrbStack serves `.orb.local` natively, so its `doctorChecks`
+ * skips this) and hetzner (the SSH-forwarded loopback only becomes a
+ * `<box>.localhost` alias with host Portless). Pure — the caller passes the
+ * already-probed state so this stays offline and testable.
+ */
+export function portlessDoctorRow(state: PortlessState): CheckResult {
+  if (!state.installed) {
+    return {
+      label: 'portless',
+      status: 'warn',
+      detail: 'not installed — box web URLs fall back to raw loopback ports',
+      hint: `recommended: \`${portlessInstallHint()}\` for https://<box>.localhost URLs`,
+    };
+  }
+  if (!state.proxyRunning) {
+    return {
+      label: 'portless',
+      status: 'warn',
+      detail: 'installed, proxy not running',
+      hint: `start it: \`${portlessStartHint()}\``,
+    };
+  }
+  return {
+    label: 'portless',
+    status: 'ok',
+    detail: state.version ? `running · v${state.version}` : 'running',
+  };
 }
 
 export interface PortlessBrowserEnvOptions {

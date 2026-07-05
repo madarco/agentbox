@@ -11,6 +11,8 @@ import { errSummary, type CheckResult, type ProviderModule } from '@agentbox/san
 import { dockerProvider } from './docker-provider.js';
 import { DEFAULT_BOX_IMAGE, imageInfo } from './image.js';
 import { volumeExists } from './docker.js';
+import { detectEngine } from './sync/host-export.js';
+import { detectPortless, portlessDoctorRow } from './portless.js';
 import { SHARED_CLAUDE_VOLUME } from './sync/agents/claude.js';
 import { SHARED_CODEX_VOLUME } from './sync/agents/codex.js';
 import { SHARED_OPENCODE_VOLUME } from './sync/agents/opencode.js';
@@ -97,7 +99,13 @@ export async function dockerChecks(): Promise<CheckResult[]> {
     detail: `${String(present)}/${String(vols.length)} present (seeded lazily)`,
   };
 
-  return [cliRes, daemonRes, imgRes, volRes];
+  const results = [cliRes, daemonRes, imgRes, volRes];
+  // OrbStack serves per-box .orb.local URLs natively; Portless only matters on
+  // plain Docker Desktop / Linux docker engine.
+  if ((await detectEngine().catch(() => 'other')) !== 'orbstack') {
+    results.push(portlessDoctorRow(await detectPortless()));
+  }
+  return results;
 }
 
 export const providerModule: ProviderModule = {

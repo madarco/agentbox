@@ -5,6 +5,7 @@
  */
 
 import { errSummary, type CheckResult, type CredStatusSummary } from '@agentbox/sandbox-core';
+import { detectPortless, portlessDoctorRow } from '@agentbox/sandbox-cloud';
 import { readHetznerCredStatus } from './credentials.js';
 import { readPreparedState } from './prepared-state.js';
 
@@ -38,7 +39,10 @@ export async function doctorChecks(): Promise<CheckResult[]> {
           detail: 'not baked',
           hint: '`agentbox prepare --provider hetzner`',
         };
-    return [credRes, snapRes];
+    // Host Portless mints the <box>.localhost alias for the SSH-forwarded port;
+    // without it hetzner web URLs degrade to raw loopback.
+    const portlessRes = portlessDoctorRow(await detectPortless());
+    return [credRes, snapRes, portlessRes];
   } catch (err) {
     return [{ label: 'credentials', status: 'warn', detail: errSummary(err) }];
   }

@@ -347,6 +347,7 @@ export {
   portlessGetUrl,
   portlessInstallHint,
   portlessStartHint,
+  portlessDoctorRow,
   PORTLESS_PROXY_PORT,
   resetPortlessCache,
   resolvePortlessHostStateDir,
