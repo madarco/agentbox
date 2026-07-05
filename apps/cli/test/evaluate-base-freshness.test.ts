@@ -5,6 +5,20 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 // vi.mocked().
 vi.mock('@agentbox/sandbox-cloud', () => ({
   currentCloudBaseFingerprint: vi.fn(),
+  // `baseFreshnessFromFingerprints` is a pure compare (no fs/SDK), so we give the
+  // mock the real logic — its canonical impl + reason format are separately
+  // covered by sandbox-cloud/test/base-freshness.test.ts.
+  baseFreshnessFromFingerprints: (stored: string | undefined, live: string | undefined) => {
+    if (!stored) return { state: 'unprepared' };
+    if (!live) return { state: 'unknown' };
+    if (stored !== live) {
+      return {
+        state: 'stale',
+        reason: `baked runtime differs (base ${stored.slice(0, 12)}, current ${live.slice(0, 12)})`,
+      };
+    }
+    return { state: 'fresh' };
+  },
   // The other named imports of checkpoint-lookup.ts are unused by
   // evaluateBaseFreshness but must still be present so the module loads.
   probeCloudCheckpoint: vi.fn(),
