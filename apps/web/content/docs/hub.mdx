@@ -44,8 +44,8 @@ That starts the hub (if it isn't already running) and opens it in your browser a
   **Empty — just create the box** to build a box without starting an agent (like
   `agentbox create`); attach later with `agentbox shell`. The **Provider** picker
   offers docker plus any cloud provider set up on this host — providers you haven't
-  configured (`agentbox <provider> login` + `agentbox prepare --provider <provider>`)
-  show up disabled. Pick a **Base branch** to fork the box from a ref other than
+  configured yet show up disabled (set them up under **Settings → Sandbox
+  providers**, below). Pick a **Base branch** to fork the box from a ref other than
   the project's current HEAD (like `--from-branch`). When a project has no
   `agentbox.yaml` and no default snapshot, a **Run setup wizard** toggle (on by
   default) seeds the agent's first turn to explore the repo and propose an
@@ -55,6 +55,16 @@ That starts the hub (if it isn't already running) and opens it in your browser a
   your machine), and remove an **empty** project (0 boxes) with the **Delete**
   button on its dashboard/detail header. Deleting only unregisters the folder from
   the hub — its files, git repo, and checkpoints are untouched.
+
+- **Sandbox providers** (Settings) — set up a cloud provider without a terminal:
+  paste its **credentials** (an API key/token — validated and saved to
+  `~/.agentbox/secrets.env`) and **Bake** its base image, with the build log
+  streaming live just like a box create. Once baked, the provider flips to
+  **ready** and becomes selectable in the create dialog. Docker needs no
+  credentials (its base self-heals); the rest is the same [`login` +
+  `prepare`](/docs/cli) the CLI does, driven from the browser. Provider install
+  + bake run on the host that owns Docker/SSH, so they need the local or
+  full-host hub (not the serverless plane).
 
 <Callout type="info" title="Driving it programmatically">Everything the UI does is also available over HTTP — see the [Hub REST API](/docs/hub-api) for launching and managing boxes from an IDE, a script, or a remote hub.</Callout>
 

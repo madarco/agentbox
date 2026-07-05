@@ -68,7 +68,9 @@ with an HTTP status that matches the `code` (`400 invalid_request`,
 | `POST /projects` | Register a folder as a project. Body: `{ path }` (absolute). |
 | `GET /projects/{id}/branches` | The project's branches (local + remote) and current HEAD, for the create base-branch picker: `{ current, branches }`. |
 | `DELETE /projects/{id}` | Unregister an **empty** project (0 boxes). Folder/files on disk are untouched; `409` if it still has boxes. |
-| `GET /providers` | Sandbox providers + whether each is configured (baked) on this host: `{ id, label, configured, reason? }`. |
+| `GET /providers` | Sandbox providers with credential + baked status on this host: `{ id, label, configured, hasCredentials?, jobId?, reason? }`. `configured` = base image baked (usable for create); `hasCredentials` = credentials present (docker always); `jobId` = an in-flight bake, if any. |
+| `POST /providers/{id}/credentials` | Set a provider's credentials (validated against the cloud, then saved to `~/.agentbox/secrets.env`). Body is provider-specific string fields: `{ apiKey }` (e2b/daytona), `{ token }` (hetzner), `{ token, teamId?, projectId? }` (vercel). Never echoes secret values. Host-topology only (`503` on the hosted plane). |
+| `POST /providers/{id}/prepare` | Bake a provider's base image — returns `202 { jobId }`. Optional body `{ force?, claudeInstall? }`. Progress streams over `GET /jobs/{id}/logs` (same as create). Prechecks the host (docker daemon; hetzner `ssh`/`scp`; credentials present) and reuses an in-flight bake for the same provider. |
 | `GET /approvals` | Pending host-action approvals. |
 | `POST /approvals/{id}/answer` | Answer an approval. Body: `{ answer: "y" \| "n" }`. |
 | `GET /jobs/{id}` | Create-job status (`queued`/`running`/`done`/`failed`). |
@@ -121,10 +123,37 @@ event: end
 data: {"status":"done"}
 ```
 
+## Installing providers &amp; baking images
+
+Before a cloud provider can host boxes it needs two things on the host: its
+**credentials** and its **baked base image**. Both are drivable over the API
+(the hub settings UI uses exactly these calls), so you never have to drop to a
+terminal:
+
+```bash
+# 1. Save credentials (validated against the cloud, then written to secrets.env):
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"apiKey":"e2b_..."}' \
+  http://127.0.0.1:8787/api/v1/providers/e2b/credentials
+# -> 200 { "ok": true }   (a rejected token -> 400 with the reason)
+
+# 2. Bake the base image (async — stream the build like a create job):
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{}' http://127.0.0.1:8787/api/v1/providers/e2b/prepare
+# -> 202 { "jobId": "..." }
+curl -N -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8787/api/v1/jobs/<jobId>/logs
+```
+
+Once the bake finishes, `GET /providers` reports the provider as `configured:
+true` and it becomes a valid `provider` for `POST /boxes`. Docker needs no
+credentials; its base self-heals, so a bake there is optional (a `force` rebuild).
+
+<Callout type="info" title="Host capability">These two endpoints run on the host that owns Docker/SSH and writes `~/.agentbox` — the local or full-host hub. On the hosted (serverless) plane they return `503`.</Callout>
+
 ## Exploring the API
 
 `GET /api/v1/docs` renders the full spec (an interactive reference), and
 `GET /api/v1/openapi.json` returns the raw OpenAPI 3.1 document you can feed to a
 client generator or an IDE's HTTP client.
 
-<Callout type="info" title="What's not here yet">Provider listing, bake/prepare and provider-install jobs, and the structured mid-run prompt/link interaction stream are on the roadmap. Today the API covers boxes, projects, approvals, and create jobs.</Callout>
+<Callout type="info" title="What's not here yet">The structured mid-run prompt/link interaction stream is on the roadmap. Today the API covers boxes, projects, approvals, create jobs, and provider install/bake.</Callout>
