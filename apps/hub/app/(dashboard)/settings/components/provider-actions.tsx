@@ -184,7 +184,10 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
               showForm && 'rotate-90',
             )}
           />
-        ) : null}
+        ) : (
+          // Keep the Re-bake button aligned with the chevron'd rows.
+          <span className="size-4 flex-none" aria-hidden />
+        )}
       </div>
 
       {showForm && fields.length > 0 ? (
