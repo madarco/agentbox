@@ -12,6 +12,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Icons } from '@/components/icons';
+import { cn } from '@/lib/utils';
 import { useStore } from '@/lib/boxes/store';
 import type { ProviderOption } from '@/lib/boxes/types';
 import { JobLogStream } from '../../boxes/components/job-log-stream';
@@ -145,10 +147,16 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
   };
 
   const canBake = p.id === 'docker' || p.hasCredentials;
+  const hasFields = fields.length > 0;
 
   return (
     <div className="flex flex-col gap-3 p-4 px-5">
-      <div className="flex items-center gap-3">
+      {/* Whole header row toggles the credential form (cloud providers). The
+          Re-bake button stops propagation so it never toggles. */}
+      <div
+        className={cn('flex items-center gap-3', hasFields && 'cursor-pointer')}
+        onClick={hasFields ? () => setShowForm((s) => !s) : undefined}
+      >
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-[14px] font-semibold">
             {p.label}
@@ -156,12 +164,7 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
           </div>
           {p.reason ? <div className="mt-0.5 text-[12.5px] text-muted-foreground">{p.reason}</div> : null}
         </div>
-        <div className="flex flex-none items-center gap-2">
-          {p.hasCredentials && fields.length > 0 ? (
-            <Button variant="ghost" size="sm" type="button" onClick={() => setShowForm((s) => !s)}>
-              {showForm ? 'Cancel' : 'Update credentials'}
-            </Button>
-          ) : null}
+        <div className="flex flex-none items-center gap-2" onClick={(e) => e.stopPropagation()}>
           <Button
             type="button"
             size="sm"
@@ -170,9 +173,18 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
             onClick={() => void bake()}
             title={canBake ? undefined : 'Add credentials first'}
           >
+            <Icons.refresh className="size-3.5" />
             {jobId ? 'Baking…' : baking ? 'Starting…' : p.configured ? 'Re-bake' : 'Bake image'}
           </Button>
         </div>
+        {hasFields ? (
+          <Icons.chevR
+            className={cn(
+              'size-4 flex-none text-muted-foreground transition-transform',
+              showForm && 'rotate-90',
+            )}
+          />
+        ) : null}
       </div>
 
       {showForm && fields.length > 0 ? (
