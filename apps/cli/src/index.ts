@@ -138,7 +138,9 @@ program.addCommand(configCommand);
 program.addCommand(queueCommand);
 program.addCommand(relayCommand);
 program.addCommand(hubCommand);
-program.addCommand(controlPlaneCommand);
+// Experimental + WIP (hosted control plane / deployed hub). Hidden from the main
+// `agentbox --help` list; still runnable and self-documented via `control-plane --help`.
+program.addCommand(controlPlaneCommand, { hidden: true });
 // Internal worker spawned by the relay's queue scheduler. Hidden from
 // `--help` (it shows nothing user-facing — see _run-queued-job.ts).
 program.addCommand(runQueuedJobCommand, { hidden: true });

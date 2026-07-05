@@ -114,7 +114,7 @@ Plain `git push` inside the box just works: a `git`/`gh` shim routes network ops
 There are two ways a box's `git push` can reach your remote:
 
 - **Relay** (the default above) — the box asks the host relay to push, and the host runs `git push` with your own credentials. They never enter the box. Docker boxes always use this (they bind-mount your `.git`); cloud boxes run it through the relay's cloud poller (a git-bundle pull-back).
-- **Lease** — when a [control plane](/docs/control-plane) is configured for a cloud box, the relay/plane leases a short-lived, repo-scoped GitHub-App token and the box pushes **directly** with it, so the box keeps working with your laptop off.
+- **Lease** — when a control plane is configured for a cloud box, the relay/plane leases a short-lived, repo-scoped GitHub-App token and the box pushes **directly** with it, so the box keeps working with your laptop off.
 
 `auto` (the default) leases when a control plane is configured for the box, and uses the relay otherwise. Force one with the `git.pushMode` config key:
 

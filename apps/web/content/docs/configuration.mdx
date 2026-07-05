@@ -293,7 +293,7 @@ The remaining infrastructure knobs — mostly advanced.
 | `portless.enabled` | bool | prompt | map each box web app to `https://<box-name>.localhost` via the Portless proxy (Docker Desktop only) |
 | `portless.stateDir` | string (advanced) | empty | host Portless state dir to share into boxes |
 | `relay.port` | int (advanced) | `8787` | host relay TCP port |
-| `relay.controlPlaneUrl` | string | empty | URL of a deployed [control plane](/docs/control-plane); cloud boxes point at it for git-token leasing, permission state, and the registry/events so they keep working with the laptop off. Set via `agentbox control-plane set-url` |
+| `relay.controlPlaneUrl` | string | empty | URL of a deployed control plane; cloud boxes point at it for git-token leasing, permission state, and the registry/events so they keep working with the laptop off. Set via `agentbox control-plane set-url` |
 | `vnc.containerPort` | int (advanced) | `6080` | container-side noVNC port |
 | `maintenance.pruneProjectConfigs` | bool | `true` | periodically delete `~/.agentbox/projects/<hash>/` dirs whose source folder is gone |
 | `maintenance.pruneProjectConfigsEvery` | int | `50` | run the orphan sweep every N successful `agentbox create` |

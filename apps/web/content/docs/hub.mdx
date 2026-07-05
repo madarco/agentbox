@@ -28,7 +28,7 @@ That starts the hub (if it isn't already running) and opens it in your browser a
   box operations: **Git** (pull, push, [push to the host repo only](/docs/sync-and-git),
   change branch, create a new `agentbox/*` branch) and **Services** (live state of the
   box's [`agentbox.yaml` services](/docs/services-and-tasks), with restart-one and
-  restart-all). The same operations are on the [hub API](/docs/hub-api) and the
+  restart-all). The same operations are on the [REST API](/docs/api) and the
   [CLI](/docs/cli) (`agentbox git`, `agentbox services`).
 - **Approvals** — the host-action requests a box is blocked on (a `git push` to a
   protected branch, `cp`, `download`, gh/integration writes). **Approve** unblocks
@@ -66,7 +66,7 @@ That starts the hub (if it isn't already running) and opens it in your browser a
   + bake run on the host that owns Docker/SSH, so they need the local or
   full-host hub (not the serverless plane).
 
-<Callout type="info" title="Driving it programmatically">Everything the UI does is also available over HTTP — see the [Hub REST API](/docs/hub-api) for launching and managing boxes from an IDE, a script, or a remote hub.</Callout>
+<Callout type="info" title="Driving it programmatically">Everything the UI does is also available over HTTP — see the [REST API](/docs/api) for launching and managing boxes from an IDE, a script, or a remote hub.</Callout>
 
 ## Commands
 
@@ -107,4 +107,4 @@ local processes and DNS-rebinding. `AGENTBOX_HUB_AUTH=off` disables the gate.
 `agentbox hub` is the single-user, on-your-machine UI. For a **shared, multi-user**
 deployment with password login and a cross-machine box registry — so cloud boxes
 keep working with your laptop off — deploy the same app as the hosted
-[control plane](/docs/control-plane) (Vercel or a VPS, backed by Postgres).
+control plane (Vercel or a VPS, backed by Postgres).

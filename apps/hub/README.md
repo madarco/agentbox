@@ -51,8 +51,8 @@ statuses, no schema).
 - **Reads** are topology-agnostic (in-process → Postgres via `getDashboardData()`);
   **writes** use the in-process backend (hosted-plane writes are a follow-up).
 
-Full reference: `apps/web/content/docs/hub-api.mdx` (published at
-https://agent-box.sh/docs/hub-api).
+Full reference: `apps/web/content/docs/api.mdx` (published at
+https://agent-box.sh/docs/api).
 
 ## Configuration
 

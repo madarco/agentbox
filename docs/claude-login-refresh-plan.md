@@ -205,7 +205,7 @@ field, paste a real code, and watch it complete and continue into box-created.
 - The login container is **host-docker** in all cases (it refreshes the host backup; cloud
   create then syncs it in), so it needs the box image locally — `runClaudeLogin` must ensure
   the image first (reuse the existing ensure-image step from `startHeadlessLogin`).
-- Keep public docs in sync: update `apps/web/content/docs/hub-api.mdx` (new `login-code`
+- Keep public docs in sync: update `apps/web/content/docs/api.mdx` (new `login-code`
   endpoint + `login` on the job/SSE shapes) and the tray `../agentbox-tray/CLAUDE.md`
   (new `login` SSE event + `login-code` POST it depends on).
 - Per the repo convention for multi-phase work, mirror this plan into

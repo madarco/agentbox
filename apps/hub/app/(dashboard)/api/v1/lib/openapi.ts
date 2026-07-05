@@ -23,10 +23,21 @@ export function buildOpenApi(): Record<string, unknown> {
     },
     servers: [{ url: '/api/v1' }],
     security: [{ bearerAuth: [] }],
+    tags: [
+      { name: 'System', description: 'Liveness and API version.' },
+      { name: 'Boxes', description: 'Create, inspect, and run lifecycle actions on boxes.' },
+      { name: 'Box git', description: "Git state and operations on a box's branch." },
+      { name: 'Box services', description: "A box's agentbox.yaml service/task/port status." },
+      { name: 'Projects', description: 'Register folders as projects and list their branches.' },
+      { name: 'Providers', description: 'Sandbox providers: status, credentials, base-image bake.' },
+      { name: 'Approvals', description: 'Pending host-action approvals.' },
+      { name: 'Jobs', description: 'Async create/bake job status and log streams.' },
+    ],
     paths: {
       '/health': {
         get: {
-          summary: 'Liveness + API version',
+          tags: ['System'],
+          summary: 'Get liveness + API version',
           security: [],
           responses: {
             '200': {
@@ -38,6 +49,7 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/boxes': {
         get: {
+          tags: ['Boxes'],
           summary: 'List boxes',
           responses: {
             '200': {
@@ -52,7 +64,10 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
         post: {
-          summary: 'Create a box (async — returns a job id). agent "none" just creates the box without starting an agent (prompt ignored). provider defaults to docker; a cloud provider must be configured on the host (see GET /providers).',
+          tags: ['Boxes'],
+          summary: 'Create a box',
+          description:
+            'Async — returns a job id. agent "none" just creates the box without starting an agent (prompt ignored). provider defaults to docker; a cloud provider must be configured on the host (see GET /providers).',
           requestBody: {
             required: true,
             content: { 'application/json': { schema: { $ref: '#/components/schemas/CreateBox' } } },
@@ -71,6 +86,7 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/boxes/{id}': {
         get: {
+          tags: ['Boxes'],
           summary: 'Get one box',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
@@ -82,7 +98,9 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/boxes/{id}/{action}': {
         post: {
-          summary: 'Lifecycle action (pause | resume | stop | destroy)',
+          tags: ['Boxes'],
+          summary: 'Run a lifecycle action',
+          description: 'One of pause | resume | stop | destroy.',
           parameters: [
             { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
             { name: 'action', in: 'path', required: true, schema: { type: 'string', enum: ['pause', 'resume', 'stop', 'destroy'] } },
@@ -99,7 +117,9 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/boxes/{id}/git': {
         get: {
-          summary: "Live git summary of the box's worktree (current branch, dirty, ahead/behind)",
+          tags: ['Box git'],
+          summary: "Get the box's live git summary",
+          description: "The worktree's current branch, dirty, ahead/behind.",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': { description: 'Git info', content: { 'application/json': { schema: { $ref: '#/components/schemas/GitInfo' } } } },
@@ -111,7 +131,10 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/boxes/{id}/git/{op}': {
         post: {
-          summary: 'Git op on the box branch. checkout {branch}; branch {name, from?} (create+switch a new agentbox/* branch); pull {remote?, ffOnly?}; push {remote?, force?}; push-host {as?, force?} (land in the host repo only, publishes nothing).',
+          tags: ['Box git'],
+          summary: 'Run a git op on the box branch',
+          description:
+            'checkout {branch}; branch {name, from?} (create+switch a new agentbox/* branch); pull {remote?, ffOnly?}; push {remote?, force?}; push-host {as?, force?} (land in the host repo only, publishes nothing).',
           parameters: [
             { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
             { name: 'op', in: 'path', required: true, schema: { type: 'string', enum: ['checkout', 'branch', 'pull', 'push', 'push-host'] } },
@@ -132,7 +155,9 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/boxes/{id}/branches': {
         get: {
-          summary: "List the box project's branches (local + remote) and its current HEAD, for the box git-panel branch picker",
+          tags: ['Box git'],
+          summary: "List the box project's branches",
+          description: 'Local + remote branches and the current HEAD, for the box git-panel branch picker.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': { description: 'Branches', content: { 'application/json': { schema: { $ref: '#/components/schemas/BranchList' } } } },
@@ -145,7 +170,9 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/boxes/{id}/services': {
         get: {
-          summary: "The box's agentbox.yaml service/task/port status (live, or the persisted snapshot when the box isn't running)",
+          tags: ['Box services'],
+          summary: "Get the box's service/task/port status",
+          description: "From the box's agentbox.yaml — live, or the persisted snapshot when the box isn't running.",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': { description: 'Services', content: { 'application/json': { schema: { $ref: '#/components/schemas/Services' } } } },
@@ -156,7 +183,9 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/boxes/{id}/services/restart': {
         post: {
-          summary: 'Restart one service (body {name}) or every service (empty body)',
+          tags: ['Box services'],
+          summary: 'Restart services',
+          description: 'Restart one service (body {name}) or every service (empty body).',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           requestBody: {
             required: false,
@@ -174,6 +203,7 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/projects': {
         get: {
+          tags: ['Projects'],
           summary: 'List registered projects',
           responses: {
             '200': { description: 'Projects', content: { 'application/json': { schema: { type: 'object', properties: { projects: { type: 'array', items: { $ref: '#/components/schemas/Project' } } }, required: ['projects'] } } } },
@@ -181,8 +211,9 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
         post: {
-          summary: 'Register a folder (absolute path) as a project',
-          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } } },
+          tags: ['Projects'],
+          summary: 'Register a folder as a project',
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the folder.' } }, required: ['path'] } } } },
           responses: {
             '200': { description: 'Registered', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
             '400': errorResponse,
@@ -193,7 +224,9 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/projects/{id}': {
         delete: {
-          summary: 'Unregister an empty project (folder/files on disk are untouched)',
+          tags: ['Projects'],
+          summary: 'Unregister an empty project',
+          description: 'Folder/files on disk are untouched.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': { description: 'Removed', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
@@ -206,7 +239,9 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/projects/{id}/branches': {
         get: {
-          summary: "List a project's branches (local + remote) and its current HEAD, for the create-box base-branch picker",
+          tags: ['Projects'],
+          summary: "List a project's branches",
+          description: 'Local + remote branches and the current HEAD, for the create-box base-branch picker.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': { description: 'Branches', content: { 'application/json': { schema: { $ref: '#/components/schemas/BranchList' } } } },
@@ -219,7 +254,9 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/providers': {
         get: {
-          summary: 'List sandbox providers with credential + baked status on this host',
+          tags: ['Providers'],
+          summary: 'List sandbox providers',
+          description: 'With credential + baked status on this host.',
           responses: {
             '200': { description: 'Providers', content: { 'application/json': { schema: { type: 'object', properties: { providers: { type: 'array', items: { $ref: '#/components/schemas/Provider' } } }, required: ['providers'] } } } },
             '401': errorResponse,
@@ -228,7 +265,9 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/providers/{id}/credentials': {
         post: {
-          summary: 'Set a provider\'s credentials (API keys/tokens), validated then saved to secrets.env. Never echoes secret values.',
+          tags: ['Providers'],
+          summary: "Set a provider's credentials",
+          description: 'API keys/tokens, validated then saved to secrets.env. Never echoes secret values.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b'] } }],
           requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: { type: 'string' }, description: 'Provider-specific fields, e.g. { apiKey } (e2b), { token } (hetzner), { apiKey } or { jwtToken, organizationId } (daytona), { token, teamId?, projectId? } (vercel).' } } } },
           responses: {
@@ -241,7 +280,9 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/providers/{id}/prepare': {
         post: {
-          summary: 'Bake a provider\'s base image (async — returns a job id). Progress streams over GET /jobs/{id}/logs.',
+          tags: ['Providers'],
+          summary: "Bake a provider's base image",
+          description: 'Async — returns a job id. Progress streams over GET /jobs/{id}/logs.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b'] } }],
           requestBody: { required: false, content: { 'application/json': { schema: { type: 'object', properties: { force: { type: 'boolean' }, claudeInstall: { type: 'string', enum: ['native', 'npm'] } } } } } },
           responses: {
@@ -255,6 +296,7 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/approvals': {
         get: {
+          tags: ['Approvals'],
           summary: 'List pending host-action approvals',
           responses: {
             '200': { description: 'Approvals', content: { 'application/json': { schema: { type: 'object', properties: { approvals: { type: 'array', items: { $ref: '#/components/schemas/Approval' } } }, required: ['approvals'] } } } },
@@ -264,6 +306,7 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/approvals/{id}/answer': {
         post: {
+          tags: ['Approvals'],
           summary: 'Answer a pending approval',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { answer: { type: 'string', enum: ['y', 'n'] } }, required: ['answer'] } } } },
@@ -278,6 +321,7 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/jobs/{id}': {
         get: {
+          tags: ['Jobs'],
           summary: 'Get a create job status',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
@@ -289,6 +333,7 @@ export function buildOpenApi(): Record<string, unknown> {
       },
       '/jobs/{id}/logs': {
         get: {
+          tags: ['Jobs'],
           summary: 'Stream a create job log (SSE)',
           description: 'text/event-stream. Emits `open`, then `log` events per line, then a terminal `end` event with the final status.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],

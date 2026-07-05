@@ -107,7 +107,7 @@ tasks:
 
 From the host, inspect and tail units with `agentbox status` and `agentbox logs`; inside the box, talk to the daemon directly with `agentbox-ctl` (`status`, `logs`, `restart`, `reload`, …). See [CLI commands](/docs/cli) for the full surface.
 
-`agentbox services <box>` lists the services with their live state (`services list <box> --json` prints the raw snapshot — services, tasks, ports — for scripting) and `agentbox services restart <box> [name]` restarts one service (or all when no name is given) — the same controls are on the [hub](/docs/hub) box-detail page and the [hub API](/docs/hub-api) (`GET /boxes/{id}/services`, `POST /boxes/{id}/services/restart`).
+`agentbox services <box>` lists the services with their live state (`services list <box> --json` prints the raw snapshot — services, tasks, ports — for scripting) and `agentbox services restart <box> [name]` restarts one service (or all when no name is given) — the same controls are on the [hub](/docs/hub) box-detail page and the [REST API](/docs/api) (`GET /boxes/{id}/services`, `POST /boxes/{id}/services/restart`).
 
 ```console
 $ agentbox status mybox

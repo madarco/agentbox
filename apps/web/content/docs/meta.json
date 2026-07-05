@@ -33,8 +33,7 @@
     "---Reference---",
     "cli",
     "hub",
-    "hub-api",
-    "control-plane",
+    "api",
     "agentbox-yaml",
     "configuration",
     "environment"

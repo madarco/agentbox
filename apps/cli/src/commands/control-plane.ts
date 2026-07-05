@@ -442,7 +442,7 @@ const workerSub = new Command('worker')
   });
 
 export const controlPlaneCommand = new Command('control-plane')
-  .description('Set up + manage the hosted control plane (GitHub App, deploy config, reachability)')
+  .description('EXPERIMENTAL - Set up + manage the hosted control plane (GitHub App, deploy config, reachability)')
   .addCommand(statusSub, { isDefault: true })
   .addCommand(setupSub)
   .addCommand(setUrlSub)
