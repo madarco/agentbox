@@ -27,7 +27,12 @@
     "clean": "turbo run clean && rm -rf node_modules .turbo",
     "register": "src=\"$PWD/apps/cli/dist/index.js\"; test -x \"$src\" || { echo 'build first: pnpm build' >&2; exit 1; }; for d in /opt/homebrew/bin /usr/local/bin \"$HOME/.local/bin\"; do test -w \"$d\" && ln -sf \"$src\" \"$d/agentbox\" && echo \"linked $d/agentbox -> $src\" && { \"$src\" install --skills-only || echo 'skill link failed (bin link is fine)' >&2; } && exit 0; done; echo 'no writable bin dir found in /opt/homebrew/bin, /usr/local/bin, ~/.local/bin' >&2; exit 1",
     "unregister": "src=\"$PWD/apps/cli/dist/index.js\"; removed=0; for d in /opt/homebrew/bin /usr/local/bin \"$HOME/.local/bin\"; do f=\"$d/agentbox\"; if test -L \"$f\" && test \"$(readlink \"$f\")\" = \"$src\"; then rm \"$f\" && echo \"removed $f\" && removed=1; fi; done; test \"$removed\" = 1 || { echo 'no matching symlink found'; exit 1; }",
-    "drive": "tsx apps/cli/test/_harness/drive.ts"
+    "drive": "tsx apps/cli/test/_harness/drive.ts",
+    "tray:build": "test -d ../agentbox-tray || { echo 'sibling ../agentbox-tray checkout not found' >&2; exit 1; }; ../agentbox-tray/scripts/make-app.sh",
+    "tray:start": "open ../agentbox-tray/AgentBoxTray.app",
+    "tray:stop": "pkill -x AgentBoxTray || true",
+    "tray:restart": "pkill -x AgentBoxTray || true; sleep 1; open ../agentbox-tray/AgentBoxTray.app",
+    "tray:dev": "pnpm run tray:build && pnpm run tray:restart"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

@@ -167,6 +167,20 @@ node apps/cli/dist/index.js --help
 
 The full development workflow, stack, end-to-end smoke tests, and teardown live in [`docs/development.md`](./docs/development.md).
 
+### Menu-bar tray app (dev)
+
+The macOS tray app lives in the sibling repo [`../agentbox-tray`](https://github.com/madarco/agentbox-tray). When you have it checked out next to this repo, these scripts build and run your **local** dev build (ad-hoc signed, at `../agentbox-tray/AgentBoxTray.app`) — separate from the notarized copy `agentbox install tray` puts in `/Applications`:
+
+```sh
+pnpm tray:dev        # rebuild the dev .app and relaunch it (the one you'll use most)
+pnpm tray:build      # just rebuild (scripts/make-app.sh)
+pnpm tray:start      # launch the dev build
+pnpm tray:stop       # quit any running instance
+pnpm tray:restart    # quit + relaunch the dev build
+```
+
+> Note: `agentbox app start|restart` targets the **installed** `/Applications` copy, not this dev build. Use the `pnpm tray:*` scripts while iterating on the tray here; run `agentbox install tray` to refresh `/Applications` from the current CLI build.
+
 # Author
 
 [Marco D'Alia](https://www.madarco.net) - [@madarco](https://x.com/madarco) - [Linkedin](https://www.linkedin.com/in/marcodalia/)
