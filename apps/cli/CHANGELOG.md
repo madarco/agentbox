@@ -9,6 +9,62 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.22.0] - 2026-07-06
+
+### Added
+
+- **`agentbox hub` — a local Web UI + REST API for your boxes.** The control
+  plane was renamed to the **hub**: `agentbox hub` runs a persistent relay + web
+  app (served at `https://agentbox.localhost` via Portless, port 8787). From the
+  browser you can launch and manage boxes on any configured provider (docker or
+  cloud), watch build logs live over SSE, run per-box git ops (sync, branch
+  picker, `push`/`push --host-only`/`checkout`) and service restarts, answer
+  host-action approvals, create/delete projects, and manage provider credentials
+  + bake provider base images. A public REST API at `/api/v1` backs all of it, so
+  the hub (and the tray app) are pure REST clients. `agentbox hub install /
+  update / uninstall` manage the daemon.
+- **`agentbox app`** — start / stop / restart / status for the macOS AgentBoxTray
+  menu-bar app, driving the process directly (mirrors the `relay` group).
+- **`agentbox install tray`** — install the macOS menu-bar app. It is downloaded
+  from GitHub Releases (SHA-256 verified, ditto-extracted to `/Applications`),
+  no longer bundled in the npm package.
+- **External provider plugins.** Publish an `agentbox-provider-<name>` package on
+  the public `@agentbox/provider-sdk` and add it with `agentbox plugin add`; the
+  CLI loads it at runtime through a trust-on-add registry. See
+  `examples/agentbox-provider-sample`.
+- **Hosted control plane (experimental/WIP).** `agentbox control-plane
+  setup|worker|set-url|unset-url|status|add` — a GitHub-App setup flow, a
+  Git-backed Vercel deploy, and a durable box-create worker that leases
+  GitHub-App tokens to push on the box's behalf.
+- **`box.claudeInstall`** config key — install Claude via npm at image-bake time
+  (a fallback when the native installer CDN 403s a cloud egress IP).
+- **`git.pushMode`** config key — choose whether a box's `git push` goes through
+  the host relay or a GitHub-App lease.
+- **`agentbox services list --json`** for scripting.
+- **`agentbox doctor`** gained a Portless health row (non-OrbStack docker +
+  hetzner) and now flags a stale provider base image with an actionable fix.
+- **Expired-Claude-login recovery** — `create` detects an expired in-box Claude
+  login and offers an in-card re-login (hub + CLI).
+
+### Changed
+
+- **A safe subset of host actions now auto-approves without a prompt** — e.g. a
+  contained git write-back that stays within the box's own branch namespace. The
+  approval prompt still fires for anything that could publish or overwrite
+  outside that boundary.
+- **`agentbox services restart`** accepts a bare service name on a single-box
+  project (no need to name the box).
+- Interactive login/SSH shells and background box creation now register a
+  Portless alias, so hub- and background-created docker boxes get web URLs too.
+
+### Fixed
+
+- **Relay push gate** now keys its scratch-branch bypass on the branch actually
+  being pushed, closing a case where a push could slip the gate.
+- A failed relay re-register on a sanctioned-branch write-back now warns you
+  (pointing at `agentbox relay restart`) instead of silently leaving the relay
+  gating on the old branch.
+
 ## [0.21.0] - 2026-06-30
 
 ### Added
