@@ -9,7 +9,7 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
-## [Unreleased]
+## [0.22.1] - 2026-07-07
 
 ### Added
 
@@ -20,6 +20,19 @@ CLI, not the raw commits.
   `--out <file>` writes one self-contained bundle (versions + log + newest crash
   report) to attach. The app keeps no log file of its own — these are
   macOS-native surfaces (unified logging + OS `.ips` crash reports).
+- **Build your own provider.** The provider SDK now ships on npm as
+  `@madarco/agentbox-provider-sdk` and carries the full surface a real provider
+  needs (base-image `prepare`, no-SSH `buildAttach`, id-addressed `checkpoint`),
+  with a complete reference provider to copy (`examples/agentbox-provider-example`)
+  and a new [Build a provider](https://agent-box.sh/docs/build-a-provider) guide.
+  (The `agentbox plugin` system itself shipped in 0.22.0.)
+- **Per-box SSH config via a managed Include.** SSH-capable boxes now keep their
+  `Host` blocks in an AgentBox-owned `~/.agentbox/ssh/config`, referenced by one
+  managed `Include` in `~/.ssh/config` and regenerated from box state (so it
+  self-heals stale/destroyed boxes and refreshes a Hetzner box's IP across
+  stop/start). On by default (`ssh.autoConfig`); `agentbox shell --ssh-config` /
+  `code` / `open` still write on demand, and legacy inline blocks in
+  `~/.ssh/config` are stripped on next touch.
 
 ### Changed
 
@@ -27,9 +40,15 @@ CLI, not the raw commits.
   installs to `/Applications/AgentBox.app`; `agentbox install tray` removes any
   old `AgentBoxTray.app` on install so the two never coexist. The bundle
   identifier is unchanged, so launch-at-login and notifications carry over.
+- **First-run web URLs come up on `:443`.** The first time a box needs a public
+  web URL, AgentBox starts its Portless proxy on `:443` with a one-time root
+  prompt, and no longer prints a misleading fallback port.
 
 ### Fixed
 
+- **`agentbox checkpoint` covers provider-plugin checkpoints.** `checkpoint ls`,
+  `ls -g`, and `rm` now include checkpoints captured by external provider plugins,
+  not just the built-in cloud providers.
 - **`agentbox hub` now starts after a fresh `npm install`.** The published
   package shipped the hub's Next.js bundle with a pnpm-linked `node_modules` that
   `npm publish` mangles, so a globally-installed hub crashed on startup with
