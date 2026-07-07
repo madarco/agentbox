@@ -169,6 +169,13 @@
         "pruneProjectConfigs": { "type": "boolean" },
         "pruneProjectConfigsEvery": { "type": "integer" }
       }
+    },
+    "update": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "check": { "type": "boolean" }
+      }
     }
   }
 }

@@ -199,6 +199,15 @@ export interface UserConfig {
     pruneProjectConfigs?: boolean;
     pruneProjectConfigsEvery?: number;
   };
+  update?: {
+    /**
+     * Daily background check for a newer published CLI (npm registry) and
+     * tray app (release sha sidecar), plus the "newer version available"
+     * nudge it feeds. At most one network probe per 24h; `false` disables
+     * both the probe and the nudge.
+     */
+    check?: boolean;
+  };
   integrations?: {
     notion?: {
       enabled?: boolean;
@@ -333,6 +342,9 @@ export interface EffectiveConfig {
   maintenance: {
     pruneProjectConfigs: boolean;
     pruneProjectConfigsEvery: number;
+  };
+  update: {
+    check: boolean;
   };
   integrations: {
     notion: {
@@ -489,6 +501,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   maintenance: {
     pruneProjectConfigs: true,
     pruneProjectConfigsEvery: 50,
+  },
+  update: {
+    check: true,
   },
   integrations: {
     notion: { enabled: false },
@@ -927,6 +942,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'maintenance.pruneProjectConfigsEvery',
     type: 'int',
     description: 'Run the orphan project-config sweep every N successful `agentbox create`.',
+  },
+  {
+    key: 'update.check',
+    type: 'bool',
+    description:
+      'Daily background check for a newer published agentbox (npm registry) and menu-bar app (release sha sidecar), plus the "newer version available" nudge. At most one network probe per 24h; false disables both.',
   },
   {
     key: 'integrations.notion.enabled',

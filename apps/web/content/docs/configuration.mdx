@@ -317,6 +317,7 @@ The remaining infrastructure knobs — mostly advanced.
 | `vnc.containerPort` | int (advanced) | `6080` | container-side noVNC port |
 | `maintenance.pruneProjectConfigs` | bool | `true` | periodically delete `~/.agentbox/projects/<hash>/` dirs whose source folder is gone |
 | `maintenance.pruneProjectConfigsEvery` | int | `50` | run the orphan sweep every N successful `agentbox create` |
+| `update.check` | bool | `true` | daily background check for a newer published CLI (npm) and menu-bar app (release checksum), plus the "newer version available" nudge; at most one network probe per 24h — `false` disables both |
 
 See [web apps and tunnels](/docs/web-apps-and-tunnels), [local Docker](/docs/local-docker), [sync and git](/docs/sync-and-git), and [browser and screen](/docs/browser-and-screen).
 
