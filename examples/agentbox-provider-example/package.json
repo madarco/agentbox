@@ -1,7 +1,7 @@
 {
   "name": "agentbox-provider-example",
   "version": "0.1.0",
-  "description": "A real, working AgentBox provider plugin (Vercel-backed) built only on @agentbox/provider-sdk — the reference example. Internal test, not published.",
+  "description": "A real, working AgentBox provider plugin (Vercel-backed) built only on @madarco/agentbox-provider-sdk — the reference example. Internal test, not published.",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -24,7 +24,7 @@
     "README.md"
   ],
   "dependencies": {
-    "@agentbox/provider-sdk": "file:../../packages/provider-sdk",
+    "@madarco/agentbox-provider-sdk": "file:../../packages/provider-sdk",
     "@clack/prompts": "^0.9.0",
     "@vercel/sandbox": "^2.0.1",
     "execa": "^9.5.2"

@@ -1,7 +1,7 @@
 ---
-description: Curate a CHANGELOG.md entry from commits since the last release; with a bump arg, also version, commit, and push the tag — then hand the npm publish to the user (they publish manually)
+description: Curate a CHANGELOG.md entry from commits since the last release; with a bump arg, also version, commit, and push the tag — then hand the npm publish to the user (they publish manually). Also flags when the separately-published provider SDK needs a republish.
 argument-hint: "[patch|minor|major]"
-allowed-tools: Bash(git describe:*), Bash(git log:*), Bash(git tag:*), Bash(git rev-list:*), Bash(git rev-parse:*), Bash(git status:*), Bash(git add:*), Bash(git commit:*), Bash(git push:*), Bash(node:*), Bash(npm version:*), Bash(npm view:*), Bash(cp:*), Bash(pnpm:*), Read, Edit
+allowed-tools: Bash(git describe:*), Bash(git log:*), Bash(git tag:*), Bash(git rev-list:*), Bash(git rev-parse:*), Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(git push:*), Bash(node:*), Bash(npm version:*), Bash(npm view:*), Bash(npm pack:*), Bash(cp:*), Bash(mktemp:*), Bash(tar:*), Bash(rm:*), Bash(pnpm:*), Read, Edit
 ---
 
 You are writing the next release-notes entry for `@madarco/agentbox`. The
@@ -58,7 +58,55 @@ changelog is at `apps/cli/CHANGELOG.md` (Keep a Changelog format). Produce
   Use today's real date — get it from the environment context, do not invent one.
 - Print the entry you wrote.
 
-## 6. Release (only when `$ARGUMENTS` named a bump)
+## 6. Provider SDK — republish check (always run)
+
+`@madarco/agentbox-provider-sdk` (`packages/provider-sdk`) is published
+**separately** from the CLI and is **not** covered by the `@madarco/agentbox`
+publish. External plugins depend on it, so a stale published SDK silently breaks
+them. Run this check every time:
+
+1. **Did the range touch its surface?** The SDK re-exports from `@agentbox/config`,
+   `@agentbox/core`, `@agentbox/sandbox-cloud`, `@agentbox/sandbox-core`, plus its
+   own package:
+   ```
+   git diff --name-only <anchor>..HEAD -- packages/provider-sdk packages/config packages/core packages/sandbox-cloud packages/sandbox-core
+   ```
+   No files listed → the SDK is unaffected; skip the rest of this section.
+
+2. **Confirm it's a real *interface* change** (step 1 over-triggers on internal-only
+   edits). Build the SDK and diff its generated types against what's on npm:
+   ```
+   pnpm --filter @madarco/agentbox-provider-sdk build
+   pub=$(npm view @madarco/agentbox-provider-sdk version 2>/dev/null)
+   # empty $pub → never published → it needs its FIRST publish; skip the diff, treat as changed.
+   tmp=$(mktemp -d); npm pack @madarco/agentbox-provider-sdk@"$pub" --pack-destination "$tmp" >/dev/null
+   tar -xzf "$tmp"/*.tgz -C "$tmp"
+   git diff --no-index "$tmp/package/dist/index.d.ts" packages/provider-sdk/dist/index.d.ts; rm -rf "$tmp"
+   ```
+   No diff → interface unchanged (internal-only edit); skip the rest. A diff → the
+   public surface changed.
+
+3. **If the interface changed:**
+   - **Bump `packages/provider-sdk/package.json` `version`** — minor for additive-only,
+     **major** for any removed / renamed / retyped export. A major (breaking) change
+     **also** bumps `SDK_API_VERSION` in `packages/provider-sdk/src/index.ts`, and that
+     new value must be added to the CLI's `SUPPORTED_SDK_API_VERSIONS`
+     (`packages/sandbox-core/src/plugin-registry.ts`).
+   - Add a short SDK line to the changelog entry (under `Added` / `Changed` / `Breaking`).
+   - Sanity-gate the artifact: `pnpm --filter @madarco/agentbox-provider-sdk pack:test`.
+   - When releasing (next section), stage `packages/provider-sdk/package.json` (+
+     `src/index.ts` if `SDK_API_VERSION` changed, + the plugin-registry file) into the
+     `release:` commit.
+   - **Warn the user, prominently:** `@madarco/agentbox-provider-sdk@<new>` must be
+     **republished separately** — the CLI publish does not cover it. Give the exact
+     command to run in their own terminal (same 2FA/redaction reasons as the CLI
+     publish — do **not** run it for them):
+     ```
+     ! cd packages/provider-sdk && npm publish --auth-type=web
+     ```
+     (`prepublishOnly` rebuilds dist; scoped `access: public` is already set.)
+
+## 7. Release (only when `$ARGUMENTS` named a bump)
 
 If `$ARGUMENTS` did **not** name a bump (`patch` / `minor` / `major`), stop here so
 the user can review and edit the changelog before releasing — do not bump or push.

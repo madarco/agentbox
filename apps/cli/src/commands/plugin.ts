@@ -2,7 +2,7 @@
  * `agentbox plugin` — manage externally-installed provider packages.
  *
  * A community provider ships as its own npm package (`agentbox-provider-<name>`)
- * built against `@agentbox/provider-sdk`. The user installs it themselves
+ * built against `@madarco/agentbox-provider-sdk`. The user installs it themselves
  * (`npm i -g agentbox-provider-foo`, or into any resolvable location), then
  * `agentbox plugin add <pkg>` validates it and records it in
  * `~/.agentbox/plugins.json`. The CLI + relay resolve it from there at runtime.

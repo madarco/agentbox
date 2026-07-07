@@ -741,7 +741,7 @@ Two ways to ship it:
   literal-import block in `resolveCloudBackend`
   (`packages/relay/src/host-actions.ts`).
 - **External / community plugin**: publish `agentbox-provider-<name>` built on
-  `@agentbox/provider-sdk` and `agentbox plugin add` it — **no edits to AgentBox**.
+  `@madarco/agentbox-provider-sdk` and `agentbox plugin add` it — **no edits to AgentBox**.
   This is the recommended path for third-party clouds. See
   [`provider-plugins.md`](./provider-plugins.md).
 

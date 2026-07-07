@@ -63,7 +63,7 @@ CLI, not the raw commits.
   from GitHub Releases (SHA-256 verified, ditto-extracted to `/Applications`),
   no longer bundled in the npm package.
 - **External provider plugins.** Publish an `agentbox-provider-<name>` package on
-  the public `@agentbox/provider-sdk` and add it with `agentbox plugin add`; the
+  the public `@madarco/agentbox-provider-sdk` and add it with `agentbox plugin add`; the
   CLI loads it at runtime through a trust-on-add registry. See
   `examples/agentbox-provider-sample`.
 - **Hosted control plane (experimental/WIP).** `agentbox control-plane

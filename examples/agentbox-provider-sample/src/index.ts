@@ -1,6 +1,6 @@
 /**
  * agentbox-provider-sample — a minimal external provider built ONLY on
- * @agentbox/provider-sdk, to prove the plugin path end-to-end. The backend is a
+ * @madarco/agentbox-provider-sdk, to prove the plugin path end-to-end. The backend is a
  * stub (it does not talk to a real cloud); it demonstrates the contract a real
  * community provider implements.
  */
@@ -11,7 +11,7 @@ import {
   type CloudHandle,
   type ProviderModule,
   type CheckResult,
-} from '@agentbox/provider-sdk';
+} from '@madarco/agentbox-provider-sdk';
 
 const NAME = 'sample';
 

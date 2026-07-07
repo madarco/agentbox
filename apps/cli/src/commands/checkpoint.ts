@@ -26,6 +26,7 @@ import {
 import type { CheckpointInfo } from '@agentbox/sandbox-docker';
 import {
   listAllCloudCheckpoints,
+  listCloudBackendDirs,
   listCloudCheckpoints,
   resolveCloudCheckpoint,
 } from '@agentbox/sandbox-cloud';
@@ -39,8 +40,17 @@ import { handleLifecycleError } from './_errors.js';
 const CLOUD_BACKENDS = CLOUD_PROVIDER_NAMES;
 type CloudBackend = ProviderKind;
 
+/**
+ * The built-in cloud backends unioned with any on-disk checkpoint-store dir, so
+ * `list`/`rm`/`set-default` also cover **plugin** cloud providers (whose names
+ * aren't in the built-in `CLOUD_PROVIDER_NAMES`). A store is just named dirs.
+ */
+async function allCloudBackends(): Promise<string[]> {
+  return [...new Set<string>([...CLOUD_BACKENDS, ...(await listCloudBackendDirs())])];
+}
+
 /** Lazily resolve a cloud provider's checkpoint capability (dynamic import keeps SDKs out of the hot path). */
-async function cloudProviderFor(backend: CloudBackend): Promise<import('@agentbox/core').Provider> {
+async function cloudProviderFor(backend: string): Promise<import('@agentbox/core').Provider> {
   return (await loadProviderModule(backend)).provider;
 }
 
@@ -268,9 +278,9 @@ const lsSub = new Command('ls')
       // Merge in cloud-backend checkpoints. Each cloud provider stores its
       // snapshots under ~/.agentbox/cloud-checkpoints/<backend>/.
       const cloudLists = await Promise.all(
-        CLOUD_BACKENDS.map(async (backend) => ({
+        (await allCloudBackends()).map(async (backend) => ({
           backend,
-          def: resolveDefaultCheckpoint(cfg.effective, backend),
+          def: resolveDefaultCheckpoint(cfg.effective, backend as CloudBackend),
           items: await listCloudCheckpoints(projectRoot, backend),
         })),
       );
@@ -335,7 +345,7 @@ const setDefaultSub = new Command('set-default')
         (providerArg === undefined || providerArg === 'docker') &&
         (await listCheckpoints(projectRoot)).some((c) => c.name === ref);
       let cloudHit = false;
-      for (const backend of CLOUD_BACKENDS) {
+      for (const backend of await allCloudBackends()) {
         if (providerArg !== undefined && providerArg !== backend) continue;
         if (await resolveCloudCheckpoint(projectRoot, backend, ref)) {
           cloudHit = true;
@@ -364,8 +374,8 @@ const rmSub = new Command('rm')
       // it. Docker is always a candidate (removeCheckpoint no-ops if absent);
       // cloud stores are pre-resolved so we only act on backends that have it.
       const wantDocker = !opts.provider || opts.provider === 'docker';
-      const cloudHits: CloudBackend[] = [];
-      for (const backend of CLOUD_BACKENDS) {
+      const cloudHits: string[] = [];
+      for (const backend of await allCloudBackends()) {
         if (opts.provider && opts.provider !== backend) continue;
         if (await resolveCloudCheckpoint(projectRoot, backend, ref)) cloudHits.push(backend);
       }
