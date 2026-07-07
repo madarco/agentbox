@@ -84,13 +84,21 @@ export function maybeStartRemoteCheck(): Promise<void> | null {
   });
 
   const run = async (): Promise<void> => {
-    if (!(await updateCheckEnabled())) return;
-    const [npmLatest, trayLatestSha] = await Promise.all([
-      nudgeEligible(method, AGENTBOX_VERSION) ? fetchNpmLatest() : Promise.resolve(undefined),
-      trayInstalled() ? fetchTraySidecarSha() : Promise.resolve(undefined),
-    ]);
-    // Stamp checkedAt even on total failure — a dead network must not turn
-    // into a fetch attempt on every subsequent command that day.
+    let npmLatest: string | undefined;
+    let trayLatestSha: string | undefined;
+    if (await updateCheckEnabled()) {
+      [npmLatest, trayLatestSha] = await Promise.all([
+        nudgeEligible(method, AGENTBOX_VERSION) ? fetchNpmLatest() : Promise.resolve(undefined),
+        trayInstalled() ? fetchTraySidecarSha() : Promise.resolve(undefined),
+      ]);
+    }
+    // Stamp checkedAt even when disabled or offline — the daily gate must
+    // throttle regardless, or every command re-schedules this probe. Merge
+    // with the previous cache so a partial probe (one fetch failed) doesn't
+    // drop the other value cached earlier.
+    const prev = readUpdateState().remoteCheck;
+    npmLatest ??= prev?.npmLatest;
+    trayLatestSha ??= prev?.trayLatestSha;
     writeUpdateState({
       remoteCheck: {
         checkedAt: new Date().toISOString(),
