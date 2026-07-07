@@ -19,6 +19,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { writeUpdateState } from '../lib/update-state.js';
 
 export const APP_NAME = 'AgentBox';
 export const APP_PATH = `/Applications/${APP_NAME}.app`;
@@ -69,12 +70,14 @@ export async function installTray(opts: InstallTrayOptions = {}): Promise<Instal
     if (existsSync(APP_PATH)) rmSync(APP_PATH, { recursive: true, force: true });
     // Also remove a leftover pre-rename bundle.
     if (existsSync(LEGACY_APP_PATH)) rmSync(LEGACY_APP_PATH, { recursive: true, force: true });
+    writeUpdateState({ traySha: undefined });
     say(`Removed ${APP_PATH}. (Launch-at-login is unregistered by the app itself.)`);
     return { ran: true };
   }
 
   // Resolve the zip: a local path (--zip) or a fresh download from the release.
   let zip: string;
+  let sha: string | undefined;
   let scratch: string | null = null;
   if (opts.zip) {
     if (!existsSync(opts.zip)) {
@@ -82,10 +85,11 @@ export async function installTray(opts: InstallTrayOptions = {}): Promise<Instal
       return { ran: false, reason: 'zip-missing' };
     }
     zip = opts.zip;
+    sha = createHash('sha256').update(readFileSync(zip)).digest('hex');
   } else {
     scratch = mkdtempSync(join(tmpdir(), 'agentbox-tray-'));
     try {
-      zip = await downloadAndVerify(opts.tag ?? DEFAULT_TAG, scratch, say);
+      ({ zipPath: zip, sha } = await downloadAndVerify(opts.tag ?? DEFAULT_TAG, scratch, say));
     } catch (err) {
       rmSync(scratch, { recursive: true, force: true });
       say(`Download failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -103,6 +107,9 @@ export async function installTray(opts: InstallTrayOptions = {}): Promise<Instal
     if (existsSync(LEGACY_APP_PATH)) rmSync(LEGACY_APP_PATH, { recursive: true, force: true });
     // Belt-and-suspenders: clear any quarantine bit so Gatekeeper never blocks the download.
     await execa('xattr', ['-dr', 'com.apple.quarantine', APP_PATH]).catch(() => undefined);
+    // Record which zip is now installed so refresh flows can compare the
+    // release's ~80-byte .sha256 sidecar instead of re-downloading the app.
+    writeUpdateState({ traySha: sha });
     await launchTray(say);
   } finally {
     if (scratch) rmSync(scratch, { recursive: true, force: true });
@@ -110,6 +117,60 @@ export async function installTray(opts: InstallTrayOptions = {}): Promise<Instal
 
   say(`Installed ${APP_PATH} and launched it (look for the box icon in the menu bar).`);
   return { ran: true };
+}
+
+/** Tray-app presence check shared by the update paths. */
+export function trayInstalled(): boolean {
+  return process.platform === 'darwin' && existsSync(APP_PATH);
+}
+
+/**
+ * Fetch only the release's `AgentBox.zip.sha256` sidecar (~80 bytes) and
+ * return the hex digest, or undefined on any failure. Short timeout — this
+ * runs inside refresh flows and the daily background check, never on a
+ * command's critical path.
+ */
+export async function fetchTraySidecarSha(tag: string = DEFAULT_TAG): Promise<string | undefined> {
+  try {
+    const { stdout } = await execa('curl', [
+      '-fsSL',
+      '--max-time',
+      '5',
+      `${RELEASE_BASE}/${tag}/${APP_NAME}.zip.sha256`,
+    ]);
+    return parseSidecarSha(stdout);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Parse the `shasum` sidecar format: "<hex>  AgentBox.zip". */
+export function parseSidecarSha(body: string): string | undefined {
+  const first = body.trim().split(/\s+/)[0]?.toLowerCase();
+  return first && /^[0-9a-f]{64}$/.test(first) ? first : undefined;
+}
+
+export interface TrayUpdateDecision {
+  update: boolean;
+  reason: 'not-installed' | 'no-latest-sha' | 'no-stamp' | 'mismatch' | 'up-to-date';
+}
+
+/**
+ * Pure decision: reinstall only when the published sha differs from the
+ * stamped one. A missing stamp with the app installed reads as update-needed
+ * once (self-heals installs that predate sha stamping). An unknown latest sha
+ * (offline, release missing) never triggers a download.
+ */
+export function decideTrayUpdate(input: {
+  installed: boolean;
+  stampedSha: string | undefined;
+  latestSha: string | undefined;
+}): TrayUpdateDecision {
+  if (!input.installed) return { update: false, reason: 'not-installed' };
+  if (input.latestSha === undefined) return { update: false, reason: 'no-latest-sha' };
+  if (input.stampedSha === undefined) return { update: true, reason: 'no-stamp' };
+  if (input.stampedSha !== input.latestSha) return { update: true, reason: 'mismatch' };
+  return { update: false, reason: 'up-to-date' };
 }
 
 /** True while the tray process is running. `pgrep -x` exits 1 (rejects) when nothing matches. */
@@ -135,12 +196,12 @@ async function launchTray(say: (m: string) => void): Promise<void> {
   }
 }
 
-/** Download `<tag>/AgentBox.zip` + its `.sha256`, verify, and return the local zip path. */
+/** Download `<tag>/AgentBox.zip` + its `.sha256`, verify, and return the local zip path + sha. */
 async function downloadAndVerify(
   tag: string,
   dir: string,
   say: (m: string) => void,
-): Promise<string> {
+): Promise<{ zipPath: string; sha: string }> {
   const base = `${RELEASE_BASE}/${tag}`;
   const zipPath = join(dir, `${APP_NAME}.zip`);
   const shaPath = join(dir, `${APP_NAME}.zip.sha256`);
@@ -149,13 +210,12 @@ async function downloadAndVerify(
   await execa('curl', ['-fSL', '-o', zipPath, `${base}/${APP_NAME}.zip`]);
   await execa('curl', ['-fSL', '-o', shaPath, `${base}/${APP_NAME}.zip.sha256`]);
 
-  // The .sha256 sidecar is `shasum` format: "<hex>  AgentBox.zip".
-  const expected = readFileSync(shaPath, 'utf8').trim().split(/\s+/)[0]?.toLowerCase();
+  const expected = parseSidecarSha(readFileSync(shaPath, 'utf8'));
   const actual = createHash('sha256').update(readFileSync(zipPath)).digest('hex');
   if (!expected || expected !== actual) {
     throw new Error(`checksum mismatch (expected ${expected ?? 'none'}, got ${actual})`);
   }
-  return zipPath;
+  return { zipPath, sha: actual };
 }
 
 export const installTrayCommand = new Command('tray')

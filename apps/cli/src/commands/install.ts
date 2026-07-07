@@ -44,6 +44,8 @@ import { PROVIDER_NAMES, providerMeta, type ProviderKind } from '@agentbox/confi
 import { isRuntimeProvider, loadProviderModule } from '../provider/loaders.js';
 import { markSetupComplete } from '../lib/first-run.js';
 import { maybePromptStar } from '../lib/star-prompt.js';
+import { writeUpdateState } from '../lib/update-state.js';
+import { AGENTBOX_VERSION } from '../version.js';
 import { installCmuxCommand } from './install-cmux.js';
 import { installHerdrCommand } from './install-herdr.js';
 import { installCodexCommand, installCodexPlugin } from './install-codex.js';
@@ -585,8 +587,12 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
     log.warn(`Codex plugin setup skipped: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // 6) First-run marker (so the auto-trigger doesn't fire again).
+  // 6) First-run marker (so the auto-trigger doesn't fire again) + version
+  // baseline (so a fresh install never sees the "agentbox was updated" prompt).
   markSetupComplete(providerName);
+  if (AGENTBOX_VERSION !== '0.0.0-dev') {
+    writeUpdateState({ lastRunVersion: AGENTBOX_VERSION });
+  }
 
   // Brief check post-setup so the user sees what's now ready.
   const providerGroup = await runProviderChecks(providerName);
