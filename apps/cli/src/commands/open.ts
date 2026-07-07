@@ -4,11 +4,11 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { BoxRecord } from '@agentbox/core';
-import { hostOpenCommand } from '@agentbox/sandbox-core';
+import { hostOpenCommand, ensureCloudSshAlias } from '@agentbox/sandbox-core';
 import { openBoxInFinder } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { ensureCloudSshAlias } from '../cloud-ssh.js';
+import { providerForBox } from '../provider/registry.js';
 import { runPath } from './path.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -104,7 +104,8 @@ async function runCloudOpen(box: BoxRecord, opts: OpenOpts): Promise<void> {
   // Same SSH alias machinery `agentbox code` uses — bring the box online and
   // (re)write the alias (a fresh 60-min token for Daytona) so sshfs gets a live
   // mount target.
-  const { alias } = await ensureCloudSshAlias(box);
+  const provider = await providerForBox(box);
+  const { alias } = await ensureCloudSshAlias(box, provider);
 
   // Ensure the mount dir exists. If something's already mounted there (a
   // stale mount from a previous run) we tear it down before re-mounting —

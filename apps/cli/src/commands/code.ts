@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { log } from '@clack/prompts';
 import { Command, InvalidArgumentError } from 'commander';
-import { hostOpenCommand } from '@agentbox/sandbox-core';
+import { hostOpenCommand, ensureCloudSshAlias } from '@agentbox/sandbox-core';
 import type { BoxRecord } from '@agentbox/core';
 import type { StatusReply, WaitReadyReply } from '@agentbox/ctl';
 import { loadEffectiveConfig, type IdeFlavor as ConfigIdeFlavor, type UserConfig } from '@agentbox/config';
@@ -18,7 +18,6 @@ import {
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
-import { ensureCloudSshAlias } from '../cloud-ssh.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface CodeOptions {
@@ -214,7 +213,7 @@ async function prepareCloudAttach(box: BoxRecord, opts: PrepareCloudOptions): Pr
   // `agentbox open` and `agentbox shell --ssh-config`. The inner tmux command
   // is irrelevant here (Remote-SSH starts its own session). The box was already
   // brought online + waited above, so skip the helper's lifecycle pass.
-  const { alias } = await ensureCloudSshAlias(box, { bringOnline: false });
+  const { alias } = await ensureCloudSshAlias(box, p, { bringOnline: false });
   log.info(`updated ~/.ssh/config alias ${alias}`);
 
   return `vscode-remote://ssh-remote+${alias}/workspace`;

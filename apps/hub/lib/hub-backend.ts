@@ -35,6 +35,7 @@ import {
 import type { BoxGitDeps, ProviderModule } from '@agentbox/sandbox-core';
 import {
   BOX_WORKSPACE,
+  autoWriteSshConfig,
   boxGitCheckout,
   boxGitNewBranch,
   boxGitPull,
@@ -46,6 +47,7 @@ import {
   readPreparedStateRaw,
   readState,
   secretsEnvPath,
+  syncAgentboxSshConfig,
 } from '@agentbox/sandbox-core';
 import {
   baseFreshnessFromFingerprints,
@@ -634,6 +636,23 @@ async function runLifecycle(id: string, op: (box: BoxRecord, provider: Provider)
 
 const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+/**
+ * Keep `~/.agentbox/ssh/config` in sync after a hub-initiated resume, so boxes
+ * created/resumed through the hub get the same `ssh <box>` alias the CLI writes
+ * (a Hetzner box's public IP can change across pause/resume). Best-effort and
+ * gated by `ssh.autoConfig`; the hub runs on the host, so it can write the file.
+ */
+async function hubWriteSshConfig(box: BoxRecord, provider: Provider): Promise<void> {
+  try {
+    const cfg = await loadEffectiveConfig(box.workspacePath);
+    await autoWriteSshConfig(box, provider, cfg.effective.ssh.autoConfig, (m) =>
+      console.warn(`[hub] ${m}`),
+    );
+  } catch (err) {
+    console.warn(`[hub] ssh-config write for ${box.name} failed: ${errMsg(err)}`);
+  }
+}
+
 /** Resolve a box id to its record + provider, or null when the box is gone. */
 async function resolveBoxProvider(id: string): Promise<{ box: BoxRecord; provider: Provider } | null> {
   const { boxes } = await readState();
@@ -779,9 +798,19 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       return listProvidersWithFreshness(listProviders(await loadQueue()));
     },
     pause: (id) => runLifecycle(id, (box, provider) => provider.pause(box)),
-    resume: (id) => runLifecycle(id, (box, provider) => provider.resume(box)),
+    resume: (id) =>
+      runLifecycle(id, async (box, provider) => {
+        await provider.resume(box);
+        // Refresh the box's SSH-config alias now it's back online (IP may have changed).
+        await hubWriteSshConfig(box, provider);
+      }),
     stop: (id) => runLifecycle(id, (box, provider) => provider.stop(box)),
-    destroy: (id) => runLifecycle(id, (box, provider) => provider.destroy(box)),
+    destroy: (id) =>
+      runLifecycle(id, async (box, provider) => {
+        await provider.destroy(box);
+        // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
+        await syncAgentboxSshConfig().catch(() => {});
+      }),
     // Mirror POST /admin/prompts/answer's block branch, in-process: resolving
     // the entry fulfills the Promise the /rpc handler is awaiting (box unblocks),
     // and the broadcast clears any attached-terminal footer.

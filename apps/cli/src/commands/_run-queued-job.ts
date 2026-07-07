@@ -55,6 +55,7 @@ import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { buildResyncWarning, prependResyncWarning } from '../lib/resync-warning.js';
 import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from '../lib/skip-permissions.js';
 import { providerForCreate } from '../provider/registry.js';
+import { autoWriteSshConfig } from '@agentbox/sandbox-core';
 import { cloudAgentStartDetached } from './_cloud-attach.js';
 import { spawnQueuedOpenTerminal } from '../terminal/queue-open.js';
 import { resolvePortlessNonInteractive } from '../portless-prompt.js';
@@ -531,6 +532,13 @@ async function runCloudJob(
   // lose the OAuth phase/url or leave the create modal stuck on "Login required".
   const persisted = await readJob(job.id);
   await writeJob({ ...job, boxId: result.record.id, login: persisted?.login });
+
+  // Default-on: write the `~/.agentbox/ssh/config` entry for SSH-capable cloud
+  // boxes. The hub's create path lands here (not the CLI `create` command), so
+  // this is what makes hub-created Hetzner boxes get their `ssh <box>` alias.
+  await autoWriteSshConfig(result.record, provider, cfg.effective.ssh.autoConfig, (m) =>
+    log.write(m),
+  );
 
   // "Just create the box": skip the detached agent session (see runDockerJob).
   if (job.noAgent) {

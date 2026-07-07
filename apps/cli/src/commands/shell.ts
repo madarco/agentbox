@@ -23,10 +23,14 @@ import {
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
-import { resolveCloudSshTarget } from '../cloud-ssh.js';
-import { recordBoxSsh } from '@agentbox/sandbox-core';
+import {
+  recordBoxSsh,
+  resolveCloudSshTarget,
+  agentboxSshConfigPath,
+  hasUnmanagedHostConflict,
+  syncAgentboxSshConfig,
+} from '@agentbox/sandbox-core';
 import { hyperlink } from '../hyperlink.js';
-import { agentboxSshConfigPath, hasUnmanagedHostConflict, syncAgentboxSshConfig } from '../ssh-config.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
 import { requireDockerProvider } from './_provider-guard.js';
@@ -224,7 +228,8 @@ async function startOrAttachShell(box: BoxRecord, cfg: ShellSessionCfg): Promise
  * leave `~/.ssh/config` untouched.
  */
 async function runSshConfig(box: BoxRecord, opts: ShellOptions): Promise<void> {
-  const conn = await resolveCloudSshTarget(box);
+  const provider = await providerForBox(box);
+  const conn = await resolveCloudSshTarget(box, provider);
   if (!conn.identityFile) {
     throw new Error(
       `box '${box.name}' (provider '${box.provider ?? 'docker'}') has no persistent SSH key, ` +
