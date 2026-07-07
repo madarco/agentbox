@@ -16,7 +16,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AGENTBOX_VERSION } from '../version.js';
-import { APP_BUNDLE_ID, APP_NAME, APP_PATH } from './install-tray.js';
+import { APP_BUNDLE_ID, APP_NAME, APP_PATH, LEGACY_APP_NAME } from './install-tray.js';
 
 /** macOS writes app crash reports here as `AgentBox-<timestamp>.ips`. */
 const DIAGNOSTIC_REPORTS_DIR = join(homedir(), 'Library/Logs/DiagnosticReports');
@@ -30,9 +30,9 @@ function ensureMac(): boolean {
   return false;
 }
 
-/** PIDs of the running tray process, or [] if none. `pgrep` exits 1 (throws) when nothing matches. */
-async function trayPids(): Promise<number[]> {
-  const res = await execa('pgrep', ['-x', APP_NAME]).catch(() => null);
+/** PIDs of a process by exact executable name, or [] if none. `pgrep` exits 1 when nothing matches. */
+async function pidsForName(name: string): Promise<number[]> {
+  const res = await execa('pgrep', ['-x', name]).catch(() => null);
   if (!res) return [];
   return res.stdout
     .split('\n')
@@ -40,13 +40,28 @@ async function trayPids(): Promise<number[]> {
     .filter((n) => Number.isInteger(n) && n > 0);
 }
 
+/**
+ * PIDs of the running app, or [] if none. Covers both the current (`AgentBox`) and the legacy
+ * pre-rename (`AgentBoxTray`) executable names, so status/stop/restart still see a stray old process
+ * during migration.
+ */
+async function trayPids(): Promise<number[]> {
+  const [current, legacy] = await Promise.all([
+    pidsForName(APP_NAME),
+    pidsForName(LEGACY_APP_NAME),
+  ]);
+  return [...current, ...legacy];
+}
+
 async function startTray(): Promise<void> {
   await execa('open', [APP_PATH]);
 }
 
 async function stopTray(): Promise<void> {
-  // `pkill` exits 1 when there was nothing to kill — not an error for us.
+  // `pkill` exits 1 when there was nothing to kill — not an error for us. Cover the legacy
+  // pre-rename name too so `stop`/`restart` don't leave a stray old process alive.
   await execa('pkill', ['-x', APP_NAME]).catch(() => undefined);
+  await execa('pkill', ['-x', LEGACY_APP_NAME]).catch(() => undefined);
 }
 
 /** True only when the bundle is present; guard `start`/`restart` and point at the installer. */

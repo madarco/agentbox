@@ -26,8 +26,9 @@ export const APP_PATH = `/Applications/${APP_NAME}.app`;
 export const APP_BUNDLE_ID = 'com.madarco.agentbox-tray';
 
 // The app was renamed AgentBoxTray.app → AgentBox.app but kept its bundle id. A leftover old bundle
-// would collide (two bundles, one id), so remove it on install/uninstall.
-const LEGACY_APP_NAME = 'AgentBoxTray';
+// would collide (two bundles, one id), so remove it on install/uninstall. `agentbox app` also uses
+// LEGACY_APP_NAME so status/stop/restart still see a stray pre-rename process during migration.
+export const LEGACY_APP_NAME = 'AgentBoxTray';
 const LEGACY_APP_PATH = `/Applications/${LEGACY_APP_NAME}.app`;
 
 // Overridable for forks/testing; default is the public agentbox repo's moving tray release.
