@@ -352,13 +352,15 @@ agentbox app status
 agentbox app start
 agentbox app stop
 agentbox app restart
+agentbox app log                 # tray diagnostics (unified log + crash reports)
+agentbox app log --out report.txt  # bundle everything into one file for a bug report
 
 # Update agentbox (wipes the box image so it rebuilds, reloads the relay)
 agentbox self-update
 agentbox self-update --dry-run
 ```
 
-`prune` cleans up orphan state records; `--all` also removes orphan docker resources, and `--provider <cloud>` lists untracked cloud sandboxes and offers to delete them. `queue` manages background `-i` jobs. `relay` manages the host relay (`status`, `stop`, `start`, `restart`). `app` controls the macOS menu-bar app (`status`, `start`, `stop`, `restart`) — install it first with `agentbox install tray`. `self-update` updates the CLI.
+`prune` cleans up orphan state records; `--all` also removes orphan docker resources, and `--provider <cloud>` lists untracked cloud sandboxes and offers to delete them. `queue` manages background `-i` jobs. `relay` manages the host relay (`status`, `stop`, `start`, `restart`). `app` controls the macOS menu-bar app (`status`, `start`, `stop`, `restart`) — install it first with `agentbox install tray`. `app log` collects the tray's diagnostics for a bug report: it reads the tray's macOS unified-log entries (`--last <window>`, `-f` to stream live, `--crashes` for just the crash reports) and lists its crash reports from `~/Library/Logs/DiagnosticReports`; `--open` reveals that folder in Finder, and `--out <file>` writes a single self-contained bundle (versions, log, newest crash report) to attach. The tray keeps no log file of its own — these are macOS-native surfaces. `self-update` updates the CLI.
 
 `hub` runs the **AgentBox hub** — the host relay plus a local Web UI (dashboard, box detail, live approvals) on `http://127.0.0.1:8787`, gated by a per-machine token. When [Portless](https://portless.sh) is installed it also serves at a friendly `https://agentbox.localhost`. It's a superset of the relay on the same port: `agentbox hub` takes over from a bare relay, and normal box commands reuse it. Needs Node ≥ 22.5.
 

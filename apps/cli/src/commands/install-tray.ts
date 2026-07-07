@@ -22,6 +22,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 export const APP_NAME = 'AgentBoxTray';
 export const APP_PATH = `/Applications/${APP_NAME}.app`;
+/** Unified-logging subsystem the tray logs under (see the tray app's `Diagnostics/Log.swift`). */
+export const APP_BUNDLE_ID = 'com.madarco.agentbox-tray';
 
 // Overridable for forks/testing; default is the public agentbox repo's moving tray release.
 const RELEASE_BASE =
