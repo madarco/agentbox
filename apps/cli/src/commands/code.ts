@@ -20,7 +20,7 @@ import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
-interface CodeOptions {
+export interface CodeOptions {
   // commander stores `--no-wait` / `--no-auto-terminals` under the positive
   // key (`wait` / `autoTerminals`), defaulting to true and flipping to false.
   wait?: boolean;
@@ -70,42 +70,49 @@ export const codeCommand = new Command('code')
   .action(async (idOrName: string | undefined, opts: CodeOptions) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
-
-      // Layered config: workspace = the box's host workspace, not cwd, so
-      // per-project defaults follow the box even if you run `agentbox code`
-      // from elsewhere.
-      const cfg = await loadEffectiveConfig(box.workspacePath, {
-        cliOverrides: buildCodeCliOverrides(opts),
-      });
-      const wait = cfg.effective.code.wait;
-      const autoTerminals = cfg.effective.code.autoTerminals;
-      const timeoutMs = String(cfg.effective.code.timeoutMs);
-      const ide = cfg.effective.code.ide;
-      const forcedIde: IdeFlavor | undefined = ide === 'auto' ? undefined : (ide as IdeFlavor);
-
-      const provider = box.provider ?? 'docker';
-      const folderUri =
-        provider === 'docker'
-          ? await prepareDockerAttach(box, { wait, autoTerminals, timeoutMs, regenTasks: opts.regenTasks })
-          : await prepareCloudAttach(box, { wait, timeoutMs });
-
-      if (opts.print) {
-        process.stdout.write(folderUri + '\n');
-        return;
-      }
-      const exit = await launchIde(folderUri, forcedIde);
-      if (exit.code !== 0) {
-        log.error(`failed to launch ${exit.flavor ? ideProfile(exit.flavor).displayName : 'IDE'} via ${exit.via} (exit ${String(exit.code)})`);
-        process.stdout.write(folderUri + '\n');
-        process.exit(1);
-      }
-      log.success(
-        `opening ${box.name} in ${ideProfile(exit.flavor).displayName} (${exit.via})`,
-      );
+      await runCodeOpen(box, opts);
     } catch (err) {
       handleLifecycleError(err);
     }
   });
+
+/**
+ * The `agentbox code` body after box resolution — exported so
+ * `agentbox open --in vscode` can reuse it verbatim.
+ */
+export async function runCodeOpen(box: BoxRecord, opts: CodeOptions): Promise<void> {
+  // Layered config: workspace = the box's host workspace, not cwd, so
+  // per-project defaults follow the box even if you run `agentbox code`
+  // from elsewhere.
+  const cfg = await loadEffectiveConfig(box.workspacePath, {
+    cliOverrides: buildCodeCliOverrides(opts),
+  });
+  const wait = cfg.effective.code.wait;
+  const autoTerminals = cfg.effective.code.autoTerminals;
+  const timeoutMs = String(cfg.effective.code.timeoutMs);
+  const ide = cfg.effective.code.ide;
+  const forcedIde: IdeFlavor | undefined = ide === 'auto' ? undefined : (ide as IdeFlavor);
+
+  const provider = box.provider ?? 'docker';
+  const folderUri =
+    provider === 'docker'
+      ? await prepareDockerAttach(box, { wait, autoTerminals, timeoutMs, regenTasks: opts.regenTasks })
+      : await prepareCloudAttach(box, { wait, timeoutMs });
+
+  if (opts.print) {
+    process.stdout.write(folderUri + '\n');
+    return;
+  }
+  const exit = await launchIde(folderUri, forcedIde);
+  if (exit.code !== 0) {
+    log.error(`failed to launch ${exit.flavor ? ideProfile(exit.flavor).displayName : 'IDE'} via ${exit.via} (exit ${String(exit.code)})`);
+    process.stdout.write(folderUri + '\n');
+    process.exit(1);
+  }
+  log.success(
+    `opening ${box.name} in ${ideProfile(exit.flavor).displayName} (${exit.via})`,
+  );
+}
 
 interface PrepareDockerOptions {
   wait: boolean;

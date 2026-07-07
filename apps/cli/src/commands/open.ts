@@ -4,13 +4,31 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { BoxRecord } from '@agentbox/core';
-import { hostOpenCommand, ensureCloudSshAlias } from '@agentbox/sandbox-core';
-import { openBoxInFinder } from '@agentbox/sandbox-docker';
-import { Command } from 'commander';
+import {
+  hostOpenCommand,
+  ensureCloudSshAlias,
+  recordBoxSsh,
+  resolveCloudSshTarget,
+  syncAgentboxSshConfig,
+} from '@agentbox/sandbox-core';
+import { inspectBox, openBoxInFinder, startBox, unpauseBox } from '@agentbox/sandbox-docker';
+import { Command, InvalidArgumentError } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { hyperlink } from '../hyperlink.js';
 import { providerForBox } from '../provider/registry.js';
+import { spawnInNewTerminal } from '../terminal/host.js';
 import { runPath } from './path.js';
 import { handleLifecycleError } from './_errors.js';
+import { runCodeOpen } from './code.js';
+import {
+  codexAddUrl,
+  defaultHerdrSocketPath,
+  detectOpenTargets,
+  PERSISTENT_SSH_PROVIDERS,
+  renderTargets,
+  resolveCmuxBinary,
+  type OpenTarget,
+} from './_open-in.js';
 
 interface OpenOpts {
   refresh: boolean; // commander gives `--no-refresh` => refresh=false
@@ -18,10 +36,30 @@ interface OpenOpts {
   print?: boolean;
   path?: boolean;
   unmount?: boolean;
+  in?: OpenTarget;
+  targets?: boolean;
+  json?: boolean;
+}
+
+function parseOpenTarget(value: string): OpenTarget {
+  if (
+    value === 'codex' ||
+    value === 'herdr' ||
+    value === 'cmux' ||
+    value === 'vscode' ||
+    value === 'finder'
+  ) {
+    return value;
+  }
+  throw new InvalidArgumentError(
+    `expected one of: codex, herdr, cmux, vscode, finder (got "${value}")`,
+  );
 }
 
 export const openCommand = new Command('open')
-  .description("Open a box's /workspace in Finder (docker: rsync'd snapshot; cloud: sshfs mount)")
+  .description(
+    "Open a box in Finder (default; docker: rsync'd snapshot; cloud: sshfs mount) or in a host app via --in",
+  )
   .argument(
     '[box]',
     'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
@@ -37,9 +75,37 @@ export const openCommand = new Command('open')
     '--unmount',
     'cloud only: unmount any existing sshfs mount for the box and exit',
   )
+  .option(
+    '--in <app>',
+    'open the box in a host app instead of Finder: codex | herdr | cmux | vscode | finder',
+    parseOpenTarget,
+  )
+  .option('--targets', 'print which --in apps are installed on this host and exit (no box needed)')
+  .option('--json', 'with --targets: machine-readable output')
   .action(async (idOrName: string | undefined, opts: OpenOpts) => {
     try {
+      if (opts.targets) {
+        const report = detectOpenTargets();
+        process.stdout.write(opts.json ? JSON.stringify(report) + '\n' : renderTargets(report));
+        return;
+      }
+
       const box = await resolveBoxOrExit(idOrName);
+
+      const app = opts.in ?? 'finder';
+      if (app === 'codex') {
+        await openInCodex(box);
+        return;
+      }
+      if (app === 'herdr' || app === 'cmux') {
+        await openInTerminalApp(box, app);
+        return;
+      }
+      if (app === 'vscode') {
+        await runCodeOpen(box, {});
+        return;
+      }
+
       const isCloud = (box.provider ?? 'docker') !== 'docker';
 
       if (isCloud) {
@@ -67,6 +133,145 @@ export const openCommand = new Command('open')
       handleLifecycleError(err);
     }
   });
+
+/**
+ * `open --in codex`: write the box's SSH alias and auto-open Codex's
+ * "add SSH connection" deep link, pre-filled with the alias — the same link
+ * `agentbox shell --ssh-config` prints, but launched instead of printed.
+ * Same gating as there: only providers with a persistent per-box identity
+ * file qualify (Codex connects later on its own), and we gate BEFORE writing
+ * so unsupported providers leave `~/.ssh/config` untouched.
+ */
+async function openInCodex(box: BoxRecord): Promise<void> {
+  const providerName = box.provider ?? 'docker';
+  if (!PERSISTENT_SSH_PROVIDERS.includes(providerName)) {
+    throw new Error(
+      `'--in codex' needs a box with a persistent SSH key — only Hetzner cloud boxes qualify ` +
+        `(this box is '${providerName}'). Docker boxes aren't reachable over SSH and Daytona uses ` +
+        `a 60-min token that expires. Try 'agentbox open ${box.name} --in vscode' instead.`,
+    );
+  }
+  const provider = await providerForBox(box);
+  const conn = await resolveCloudSshTarget(box, provider);
+  if (!conn.identityFile) {
+    throw new Error(
+      `box '${box.name}' (provider '${providerName}') has no persistent SSH key, so it can't ` +
+        `be added to Codex over SSH.`,
+    );
+  }
+  await recordBoxSsh(box.id, {
+    host: conn.host,
+    user: conn.user,
+    identityFile: conn.identityFile,
+  });
+  await syncAgentboxSshConfig();
+  log.info(`ssh alias '${conn.alias}' written (Include'd from ~/.ssh/config)`);
+
+  const url = codexAddUrl(conn.alias);
+  const opened = await execa(hostOpenCommand(), [url], { reject: false });
+  if (opened.exitCode !== 0) {
+    log.warn(
+      `could not auto-open the Codex link (is Codex.app installed?): ${opened.stderr || `exit ${String(opened.exitCode)}`}`,
+    );
+    const link = hyperlink(`Add ${conn.alias} to Codex SSH`, url, process.stdout);
+    process.stdout.write(`open manually: ${link}\n${url}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  log.success(`opening Codex — the SSH connection form is pre-filled with '${conn.alias}'`);
+  process.stdout.write(url + '\n');
+}
+
+/**
+ * `open --in herdr|cmux`: bring the box online, then open a new workspace in
+ * the host app running `agentbox attach <box>`. Works from OUTSIDE the app:
+ * Herdr via its well-known session socket, cmux via its control CLI (PATH or
+ * the macOS app bundle). cmux rejects external control clients unless the
+ * user enables it — surface that as an actionable error, don't auto-configure.
+ */
+async function openInTerminalApp(box: BoxRecord, host: 'herdr' | 'cmux'): Promise<void> {
+  // `agentbox attach` does not auto-start a box, so bring it online here —
+  // otherwise the new pane just shows the "box is stopped" error.
+  if ((box.provider ?? 'docker') === 'docker') {
+    const insp = await inspectBox(box.id);
+    if (insp.state === 'paused') {
+      log.info('box is paused; unpausing');
+      await unpauseBox(box.id);
+    } else if (insp.state === 'stopped') {
+      log.info('box is stopped; starting');
+      await startBox(box.id);
+    } else if (insp.state === 'missing') {
+      throw new Error(`box ${box.name} has no container; was it destroyed?`);
+    }
+  } else {
+    const p = await providerForBox(box);
+    const state = await p.probeState(box);
+    if (state === 'paused') {
+      log.info('box is paused; resuming');
+      await p.resume(box);
+    } else if (state === 'stopped') {
+      log.info('box is stopped; starting');
+      await p.start(box);
+    } else if (state === 'missing') {
+      throw new Error(`cloud sandbox for ${box.name} is missing; was it deleted?`);
+    }
+  }
+
+  // This command usually runs from a plain terminal (or the tray app), where
+  // the in-app env vars are absent — resolve the app's control channel
+  // explicitly and inject it, so the spawn helpers work unchanged.
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  if (host === 'herdr' && !env['HERDR_SOCKET_PATH']) {
+    const sock = defaultHerdrSocketPath();
+    if (!sock) {
+      throw new Error(
+        `Herdr socket not found (~/.config/herdr/herdr.sock). Is Herdr running? ` +
+          `Set up the integration with 'agentbox install herdr'.`,
+      );
+    }
+    env['HERDR_SOCKET_PATH'] = sock;
+  }
+  if (host === 'cmux') {
+    const bin = resolveCmuxBinary();
+    if (!bin) {
+      throw new Error(
+        `cmux CLI not found — not on PATH and no /Applications/cmux.app. Install cmux first.`,
+      );
+    }
+    env['CMUX_BUNDLED_CLI_PATH'] = bin;
+  }
+
+  const cwd = box.workspacePath || box.projectRoot || homedir();
+  // `--inline` keeps the attach in the pane we just created — without it the
+  // attach process (now running inside the app, env vars set) would honor
+  // `attach.openIn` and spawn yet another tab, stranding a bare shell.
+  const r = await spawnInNewTerminal({
+    host,
+    mode: 'window',
+    argv: [process.execPath, process.argv[1] ?? 'agentbox', 'attach', box.name, '--inline'],
+    cwd,
+    title: box.name,
+    env,
+    // A failed attach (e.g. no agent session yet) should leave a usable shell
+    // in the new pane, not a closed one.
+    keepShell: true,
+  });
+  if (!r.launched) {
+    if (host === 'cmux' && /password|auth|denied|unauthorized|control/i.test(r.error ?? '')) {
+      throw new Error(
+        `cmux refused the control connection — external processes can't drive it by default. ` +
+          `In cmux Settings enable socketControlMode "automation", or set a socket password ` +
+          `(Settings, or CMUX_SOCKET_PASSWORD).\n${r.error ?? ''}`,
+      );
+    }
+    const hint =
+      host === 'herdr'
+        ? ' Is Herdr running? (`herdr status server`)'
+        : ' Is cmux running?';
+    throw new Error(`could not open in ${host}: ${r.error ?? 'unknown error'}.${hint}`);
+  }
+  log.success(`opened ${box.name} in a new ${host} workspace (agentbox attach)`);
+}
 
 /**
  * Cloud `open`: mount the sandbox's `/workspace` via sshfs at a per-box host

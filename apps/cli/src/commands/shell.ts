@@ -33,6 +33,7 @@ import {
 import { hyperlink } from '../hyperlink.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
+import { codexAddUrl } from './_open-in.js';
 import { requireDockerProvider } from './_provider-guard.js';
 
 const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
@@ -256,7 +257,7 @@ async function runSshConfig(box: BoxRecord, opts: ShellOptions): Promise<void> {
   });
   await syncAgentboxSshConfig();
 
-  const codexUrl = `codex://settings/connections/ssh/add?name=${encodeURIComponent(conn.alias)}`;
+  const codexUrl = codexAddUrl(conn.alias);
   if (opts.json) {
     process.stdout.write(
       JSON.stringify(
@@ -287,6 +288,7 @@ async function runSshConfig(box: BoxRecord, opts: ShellOptions): Promise<void> {
     ``,
     `Codex:          ${codexLink}`,
     `                ${codexUrl}`,
+    `                (auto-open with: agentbox open ${box.name} --in codex)`,
     `Claude desktop: add an SSH connection to host "${conn.alias}" (already in ~/.ssh/config)`,
   ];
   process.stdout.write(lines.join('\n') + '\n');

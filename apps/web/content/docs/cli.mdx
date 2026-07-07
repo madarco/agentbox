@@ -85,6 +85,13 @@ agentbox code 2
 # Open /workspace in Finder
 agentbox open 2
 
+# Open the box in a host app
+agentbox open 2 --in codex    # auto-open Codex's add-SSH-connection form (Hetzner boxes)
+agentbox open 2 --in herdr    # new Herdr workspace running `agentbox attach`
+agentbox open 2 --in cmux     # new cmux workspace running `agentbox attach`
+agentbox open 2 --in vscode   # same as `agentbox code`
+agentbox open --targets       # which apps are installed (add --json for machines)
+
 # Multiplexed box dashboard (TUI)
 agentbox dashboard
 ```
@@ -92,6 +99,8 @@ agentbox dashboard
 `url` opens the box's web app in your browser even with no `expose:` service. `screen` opens the in-box desktop over noVNC. `code` opens the box in VS Code or Cursor via Dev Containers. `dashboard` shows a box list alongside the selected box's live session.
 
 Add `--print` to `url`, `screen`, or `code` to print the URL instead of opening it. `url`/`screen` accept `--loopback` (docker: use `127.0.0.1` instead of the OrbStack/Portless URL) and `--ttl <seconds>` (cloud signed-URL expiry). `shell` has `attach`, `ls`, and `kill` subcommands.
+
+`open --in <app>` opens the box in a host app instead of Finder: `codex` writes the box's SSH alias and auto-opens Codex's add-SSH-connection deep link (needs a persistent SSH key, so Hetzner boxes only); `herdr` and `cmux` open a new workspace in that terminal app running `agentbox attach <box>` (the box is auto-started first); `vscode` is equivalent to `agentbox code`. `open --targets [--json]` reports which of these apps are installed on the host — the AgentBox Tray app uses it to decide which "Open In…" menu items to show. cmux rejects control connections from outside the app by default: enable `socketControlMode: automation` (or set a socket password) in cmux's settings for `--in cmux` to work.
 
 A one-shot command after `--` is run under the box's login shell. A single quoted argument is treated as a shell snippet (so `&&`, pipes, redirections, and `$VAR` are interpreted by the box); multiple tokens are passed through verbatim as a literal argv (like `docker exec`), so quoting and format strings such as `curl -w '%{http_code}'` reach the command intact — no double-parsing.
 
