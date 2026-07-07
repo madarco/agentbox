@@ -6,7 +6,7 @@ import { destroyBox, portlessUnalias } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
-import { syncAgentboxSshConfig } from '../ssh-config.js';
+import { syncAgentboxSshConfig } from '@agentbox/sandbox-core';
 import { handleLifecycleError } from './_errors.js';
 
 interface DestroyOptions {

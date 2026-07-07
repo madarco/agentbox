@@ -3,7 +3,7 @@ import { startBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { restoreAgentSessions } from '../agent-sessions.js';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { autoWriteSshConfig } from '../cloud-ssh.js';
+import { autoWriteSshConfig } from '@agentbox/sandbox-core';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -33,7 +33,9 @@ export const startCommand = new Command('start')
         // Refresh the box's `~/.agentbox/ssh/config` entry — a cloud box's public
         // IP can change across stop/start, so re-resolve now it's back online.
         const cfg = await loadEffectiveConfig(record.workspacePath);
-        await autoWriteSshConfig(record, cfg.effective.ssh.autoConfig);
+        await autoWriteSshConfig(record, provider, cfg.effective.ssh.autoConfig, (m) =>
+          process.stderr.write(`agentbox: ${m}\n`),
+        );
         await restoreAgentSessions(record, provider, {
           onLog: (line) => process.stdout.write(`${line}\n`),
         });

@@ -23,7 +23,7 @@ import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { makeProgressReporter } from '../lib/progress.js';
-import { autoWriteSshConfig } from '../cloud-ssh.js';
+import { autoWriteSshConfig } from '@agentbox/sandbox-core';
 import { maybePromptPortless, setupPortlessHost } from '../portless-prompt.js';
 import { providerForCreate } from '../provider/registry.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
@@ -471,7 +471,9 @@ export const createCommand = new Command('create')
       // cloud boxes (Hetzner/DigitalOcean) so `ssh <box>` just works. Best-effort
       // and gated by `ssh.autoConfig`; skips docker and token-auth providers.
       if (!isDocker) {
-        await autoWriteSshConfig(result.record, cfg.effective.ssh.autoConfig);
+        await autoWriteSshConfig(result.record, provider, cfg.effective.ssh.autoConfig, (m) =>
+          log.warn(m),
+        );
       }
 
       log.info(`id:        ${result.record.id}`);

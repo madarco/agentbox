@@ -22,6 +22,24 @@ export {
 } from './git-detect.js';
 export { hostOpenCommand } from './host-open.js';
 export {
+  agentboxSshConfigPath,
+  agentboxAliasFor,
+  ensureSshInclude,
+  syncAgentboxSshConfig,
+  hasUnmanagedHostConflict,
+  parseSshTarget,
+  readAgentboxSshAlias,
+  type SshAliasOptions,
+  type SshTarget,
+} from './ssh-config.js';
+export {
+  resolveCloudSshTarget,
+  ensureCloudSshAlias,
+  autoWriteSshConfig,
+  type CloudSshAlias,
+  type CloudSshOptions,
+} from './cloud-ssh.js';
+export {
   BOX_WORKSPACE,
   boxGitCheckout,
   boxGitNewBranch,

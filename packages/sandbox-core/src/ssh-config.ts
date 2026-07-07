@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { readState } from '@agentbox/sandbox-core';
+import { readState } from './state.js';
 
 /**
  * Host-side SSH-config manager for cloud boxes. AgentBox owns a dedicated file

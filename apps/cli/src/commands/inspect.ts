@@ -9,7 +9,7 @@ import {
 import { renderEndpointLines } from '../endpoints-render.js';
 import { fmtBytes } from '../fmt.js';
 import { providerForBox } from '../provider/registry.js';
-import { agentboxAliasFor, readAgentboxSshAlias } from '../ssh-config.js';
+import { agentboxAliasFor, readAgentboxSshAlias } from '@agentbox/sandbox-core';
 import { watchRender } from '../watch.js';
 import { fetchLive, renderLiveSections, renderPersistedSections } from './_status-render.js';
 import { handleLifecycleError } from './_errors.js';

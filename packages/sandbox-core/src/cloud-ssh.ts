@@ -1,8 +1,15 @@
-import { log } from '@clack/prompts';
-import type { BoxRecord } from '@agentbox/core';
-import { recordBoxSsh } from '@agentbox/sandbox-core';
-import { providerForBox } from './provider/registry.js';
+import type { BoxRecord, Provider } from '@agentbox/core';
+import { recordBoxSsh } from './state.js';
 import { agentboxAliasFor, parseSshTarget, syncAgentboxSshConfig } from './ssh-config.js';
+
+/**
+ * Resolve + persist a cloud box's SSH connection target and regenerate
+ * `~/.agentbox/ssh/config`. Lives in sandbox-core (not the CLI) so BOTH the CLI
+ * commands AND the hub can write the SSH config after create/start/resume — the
+ * caller supplies the already-resolved `Provider` (the CLI via `providerForBox`,
+ * the hub via its own provider seam), so this code takes no dependency on either
+ * one's provider registry.
+ */
 
 export interface CloudSshAlias {
   /** Host alias written to `~/.ssh/config` (the box name). */
@@ -27,6 +34,8 @@ export interface CloudSshOptions {
    * after its own wait-ready) pass false to skip a redundant lifecycle pass.
    */
   bringOnline?: boolean;
+  /** Optional progress logger for the bring-online path (CLI passes clack's `log.info`). */
+  logInfo?: (msg: string) => void;
 }
 
 /**
@@ -42,27 +51,27 @@ export interface CloudSshOptions {
  */
 export async function resolveCloudSshTarget(
   box: BoxRecord,
+  provider: Provider,
   opts: CloudSshOptions = {},
 ): Promise<CloudSshAlias> {
-  const p = await providerForBox(box);
-  if (!p.buildAttach) {
-    throw new Error(`cloud provider '${p.name}' does not support SSH attach`);
+  if (!provider.buildAttach) {
+    throw new Error(`cloud provider '${provider.name}' does not support SSH attach`);
   }
 
   if (opts.bringOnline ?? true) {
-    const state = await p.probeState(box);
+    const state = await provider.probeState(box);
     if (state === 'paused') {
-      log.info('box is paused; resuming');
-      await p.resume(box);
+      opts.logInfo?.('box is paused; resuming');
+      await provider.resume(box);
     } else if (state === 'stopped') {
-      log.info('box is stopped; starting');
-      await p.start(box);
+      opts.logInfo?.('box is stopped; starting');
+      await provider.start(box);
     } else if (state === 'missing') {
       throw new Error(`cloud sandbox for ${box.name} is missing; was it deleted?`);
     }
   }
 
-  const spec = await p.buildAttach(box, 'shell', { noTmux: true });
+  const spec = await provider.buildAttach(box, 'shell', { noTmux: true });
   const target = parseSshTarget(spec.argv);
   if (!target) {
     throw new Error(`could not parse <user>@<host> from cloud SSH argv: ${spec.argv.join(' ')}`);
@@ -82,9 +91,10 @@ export async function resolveCloudSshTarget(
  */
 export async function ensureCloudSshAlias(
   box: BoxRecord,
+  provider: Provider,
   opts: CloudSshOptions = {},
 ): Promise<CloudSshAlias> {
-  const conn = await resolveCloudSshTarget(box, opts);
+  const conn = await resolveCloudSshTarget(box, provider, opts);
   await recordBoxSsh(box.id, {
     host: conn.host,
     user: conn.user,
@@ -100,16 +110,22 @@ export async function ensureCloudSshAlias(
  * can opt out. Only persistent-identity providers qualify (Hetzner/DigitalOcean:
  * a per-box identity file that survives across sessions); Daytona's ephemeral
  * token and Docker/Vercel/E2B (no SSH) are skipped. Best-effort: a failure here
- * must never break the lifecycle command that triggered it.
+ * must never break the lifecycle command/action that triggered it — but it is no
+ * longer swallowed silently, so `logWarn` surfaces the reason (CLI stderr, hub log).
  *
  * The box is assumed already online (create just finished, or start/resume
  * brought it up), so `bringOnline: false` avoids a redundant lifecycle pass.
  * Re-resolving on start is what refreshes a Hetzner box's changed public IP.
  */
-export async function autoWriteSshConfig(box: BoxRecord, enabled: boolean): Promise<void> {
+export async function autoWriteSshConfig(
+  box: BoxRecord,
+  provider: Provider,
+  enabled: boolean,
+  logWarn?: (msg: string) => void,
+): Promise<void> {
   if (!enabled) return;
   try {
-    const conn = await resolveCloudSshTarget(box, { bringOnline: false });
+    const conn = await resolveCloudSshTarget(box, provider, { bringOnline: false });
     if (!conn.identityFile) return;
     await recordBoxSsh(box.id, {
       host: conn.host,
@@ -117,7 +133,12 @@ export async function autoWriteSshConfig(box: BoxRecord, enabled: boolean): Prom
       identityFile: conn.identityFile,
     });
     await syncAgentboxSshConfig();
-  } catch {
-    /* best-effort: SSH-config auto-write must never break create/start */
+  } catch (err) {
+    // Best-effort: SSH-config auto-write must never break create/start. But
+    // surface the reason rather than swallowing it (this masked the hub-create
+    // gap for a whole release).
+    logWarn?.(
+      `ssh-config auto-write for ${box.name} failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
