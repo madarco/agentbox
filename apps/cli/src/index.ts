@@ -15,7 +15,7 @@ process.env.AGENTBOX_CLI_COMMIT = AGENTBOX_COMMIT;
 
 // Stamp the staged `runtime/` root so externally-installed provider plugins can
 // resolve the shared box-side assets (ctl.cjs + shims) from the RUNNING CLI via
-// `@agentbox/provider-sdk`'s `resolveSharedRuntimeAsset`. Probe both bundle
+// `@madarco/agentbox-provider-sdk`'s `resolveSharedRuntimeAsset`. Probe both bundle
 // layouts (dist/index.js and dist/<chunk>.js) for the `_shared` marker.
 import { existsSync as _existsSync } from 'node:fs';
 import { dirname as _dirname, resolve as _resolve } from 'node:path';

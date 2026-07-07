@@ -3,12 +3,23 @@
 AgentBox ships five built-in providers (docker, daytona, hetzner, vercel, e2b),
 but the provider surface is open: anyone can publish a **provider plugin** as its
 own npm package and users can add it with `agentbox plugin add` — no changes to
-AgentBox itself. This doc is the authoring + operating guide. The reference
-package is [`examples/agentbox-provider-sample`](../examples/agentbox-provider-sample).
+AgentBox itself. This doc is the authoring + operating guide. The user-facing
+version lives on the docs site at [`/docs/build-a-provider`](https://agent-box.sh/docs/build-a-provider).
+Two reference packages live under [`examples/`](../examples):
+
+- [`agentbox-provider-sample`](../examples/agentbox-provider-sample) — a **stub**
+  backend that throws on `provision`. The smallest thing that plugs in; read it
+  first to see the contract.
+- [`agentbox-provider-example`](../examples/agentbox-provider-example) — a **real,
+  working** provider (Vercel-backed): a faithful copy of the built-in Vercel
+  provider, repackaged as a plugin built only on `@madarco/agentbox-provider-sdk`. It
+  exercises the *whole* surface — `prepare` (base-snapshot bake), `buildAttach`
+  (no-SSH PTY bridge), an id-addressed `checkpoint` override, the box-runtime
+  asset split, and prepared-state. Copy this when building a real cloud provider.
 
 ## How it works
 
-- **`@agentbox/provider-sdk`** is the single public dependency a plugin needs. It
+- **`@madarco/agentbox-provider-sdk`** is the single public dependency a plugin needs. It
   re-exports the whole provider-facing surface (`Provider`, `CloudBackend`,
   `ProviderModule`, `createCloudProvider`, doctor + prepared-state helpers,
   `resolveSharedRuntimeAsset`, …) with the private internal packages inlined, so a
@@ -28,7 +39,7 @@ package is [`examples/agentbox-provider-sample`](../examples/agentbox-provider-s
 A package named `agentbox-provider-<name>` (or `@scope/agentbox-provider-<name>`)
 that:
 
-1. Depends on `@agentbox/provider-sdk` (`^1`).
+1. Depends on `@madarco/agentbox-provider-sdk` (`^1`).
 2. Declares its contract version in `package.json`:
    ```json
    { "agentbox": { "providerApiVersion": 1 } }
@@ -36,7 +47,7 @@ that:
 3. Exports a **`providerModule`** (or `providerModules` for a multi-provider
    package) — the uniform surface AgentBox loads it through:
    ```ts
-   import { createCloudProvider, type CloudBackend, type ProviderModule } from '@agentbox/provider-sdk';
+   import { createCloudProvider, type CloudBackend, type ProviderModule } from '@madarco/agentbox-provider-sdk';
 
    const backend: CloudBackend = {
      name: 'myprovider',
@@ -76,13 +87,39 @@ shims. Do **not** vendor your own; pull them from the running CLI so they stay
 version-locked to it:
 
 ```ts
-import { resolveSharedRuntimeAsset } from '@agentbox/provider-sdk';
+import { resolveSharedRuntimeAsset } from '@madarco/agentbox-provider-sdk';
 const ctl = resolveSharedRuntimeAsset('ctl.cjs'); // absolute host path; scp it to the box
 ```
 
 Ship only your provider-specific pieces (an `install-box.sh`, a
 `custom-system-CLAUDE.md`). Providers that build from a Dockerfile don't need any
-of this.
+of this. The `agentbox-provider-example` package is the worked example: its
+`runtime-assets.ts` resolves the shared runtime via `resolveSharedRuntimeAsset`
+and vendors only `scripts/provision.sh` + `scripts/custom-system-CLAUDE.md`.
+
+## Prepare, attach, and checkpoints (cloud providers)
+
+A cloud provider that bakes its base image (no Dockerfile) typically overrides
+three optional capabilities on top of `createCloudProvider`. The SDK re-exports
+the helpers each needs, so it's all buildable on `@madarco/agentbox-provider-sdk` alone:
+
+- **`prepare`** — boot a builder sandbox, run your installer, snapshot it. Bake
+  the host's static agent config into the snapshot with
+  `stageClaudeStaticForUpload` / `stageCodexStaticForUpload` /
+  `stageOpencodeStaticForUpload`. Persist the result in your own
+  `~/.agentbox/<name>-prepared.json` via `read/writePreparedStateRaw` +
+  `preparedStatePathFor` (these accept a plugin's open-string provider name).
+- **`buildAttach`** — for a provider with no SSH, render the shared inner tmux
+  command with `renderInnerCommand` + `hostTermForCloud` and return your own
+  transport's argv.
+- **`checkpoint`** — if your cloud's snapshots are **id-addressed** (an opaque id
+  you can't name, like Vercel/E2B), the scaffold's default (which drives
+  `backend.createSnapshot(handle, name)`) doesn't fit. Override the whole
+  capability and store the snapshot *id* in the manifest with
+  `writeCloudCheckpointManifest` / `listCloudCheckpoints` /
+  `resolveCloudCheckpoint` / `removeCloudCheckpointDir` /
+  `currentCloudBaseFingerprint`. If your snapshots are name-addressed, just
+  implement `backend.createSnapshot`/`deleteSnapshot` and skip the override.
 
 ## Credentials & config
 
@@ -125,3 +162,24 @@ provision infrastructure and handle secrets).
 The CLI loads a plugin only if its `providerApiVersion` is in the CLI's supported
 set (`SUPPORTED_SDK_API_VERSIONS`). An incompatible plugin is refused at
 `plugin add` and skipped (with a warning) at load — it never crashes the CLI.
+
+## Publishing the SDK (maintainers)
+
+The SDK ships to npm as **`@madarco/agentbox-provider-sdk`** (source at
+`packages/provider-sdk`). It's a self-contained bundle — tsup inlines the internal
+`@agentbox/*` packages (`noExternal`), so the only runtime deps a consumer pulls
+are `execa` + `yaml`. Publish it **in lockstep** with a CLI release whose
+`SUPPORTED_SDK_API_VERSIONS` includes the SDK's `SDK_API_VERSION`; additive
+surface changes are a minor bump, a breaking `Provider`/`CloudBackend`/
+`ProviderModule` change is a major bump **and** an `SDK_API_VERSION` bump.
+
+```bash
+# 1. Prove the *published artifact* is complete (packs, installs the tarball in a
+#    throwaway dir, asserts every export the example depends on — a file:/workspace
+#    link can't catch a missing file or an export that didn't ship).
+pnpm --filter @madarco/agentbox-provider-sdk pack:test
+
+# 2. Publish (manual — needs the npm token). prepublishOnly rebuilds dist;
+#    publishConfig.access=public handles the scoped-package default.
+cd packages/provider-sdk && npm publish
+```

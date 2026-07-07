@@ -1,7 +1,7 @@
 {
   "name": "agentbox-provider-sample",
   "version": "0.1.0",
-  "description": "Minimal reference AgentBox provider plugin (stub backend) built on @agentbox/provider-sdk",
+  "description": "Minimal reference AgentBox provider plugin (stub backend) built on @madarco/agentbox-provider-sdk",
   "type": "module",
   "main": "./dist/index.js",
   "exports": {
@@ -16,7 +16,7 @@
     "build": "tsup src/index.ts --format esm --target node20 --no-splitting"
   },
   "dependencies": {
-    "@agentbox/provider-sdk": "^1.0.0"
+    "@madarco/agentbox-provider-sdk": "^1.0.0"
   },
   "devDependencies": {
     "tsup": "^8.3.5",

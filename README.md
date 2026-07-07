@@ -181,6 +181,23 @@ pnpm tray:restart    # quit + relaunch the dev build
 
 > Note: `agentbox app start|restart` targets the **installed** `/Applications` copy, not this dev build. Use the `pnpm tray:*` scripts while iterating on the tray here; run `agentbox install tray` to refresh `/Applications` from the current CLI build.
 
+### Custom providers (plugins)
+
+AgentBox's provider surface is open — you can run agents on your own cloud/infra by shipping a **provider plugin** (its own npm package built on [`@madarco/agentbox-provider-sdk`](https://www.npmjs.com/package/@madarco/agentbox-provider-sdk)), with no changes to AgentBox. Build and test against the bundled example provider locally:
+
+```sh
+# build the SDK, then build + register the example provider
+pnpm --filter @madarco/agentbox-provider-sdk build
+cd examples/agentbox-provider-example && npm install && npm run build
+node ../../apps/cli/dist/index.js plugin add .      # register it
+node ../../apps/cli/dist/index.js doctor            # shows the provider's group
+
+# verify the SDK artifact in isolation (packs + installs the tarball, asserts exports)
+pnpm --filter @madarco/agentbox-provider-sdk pack:test
+```
+
+Full guide: [Build a provider](https://agent-box.sh/docs/build-a-provider) (and the authoring reference [`docs/provider-plugins.md`](./docs/provider-plugins.md)). Reference packages: [`examples/agentbox-provider-sample`](./examples/agentbox-provider-sample) (stub) and [`examples/agentbox-provider-example`](./examples/agentbox-provider-example) (a real, Vercel-backed provider).
+
 # Author
 
 [Marco D'Alia](https://www.madarco.net) - [@madarco](https://x.com/madarco) - [Linkedin](https://www.linkedin.com/in/marcodalia/)

@@ -25,8 +25,13 @@ import { dirname, resolve as pathResolve } from 'node:path';
 
 import type { ProviderKind } from '@agentbox/config';
 
-/** Providers that bake a `~/.agentbox/<provider>-prepared.json` artifact. Same set as the config `ProviderKind` (the single source of truth). */
-export type PreparedProviderKind = ProviderKind;
+/**
+ * Providers that bake a `~/.agentbox/<provider>-prepared.json` artifact. The
+ * built-in set is the config `ProviderKind`; the `(string & {})` arm keeps
+ * autocomplete for those while also admitting an external plugin's open-string
+ * provider name (a plugin manages its own prepared-state — see docs/provider-plugins.md).
+ */
+export type PreparedProviderKind = ProviderKind | (string & {});
 
 /**
  * The cross-provider record. `TImage` is the provider's opaque image
@@ -55,6 +60,12 @@ export interface PreparedBaseSnapshot<TImage = string, TExtra = unknown> {
 }
 
 export function preparedStatePathFor(provider: PreparedProviderKind): string {
+  // The name lands in a filename; a plugin's open-string name could otherwise
+  // carry a path separator. Provider names are `[a-z0-9-]` by convention — reject
+  // anything else rather than resolve outside ~/.agentbox.
+  if (!/^[A-Za-z0-9._-]+$/.test(provider)) {
+    throw new Error(`invalid provider name for prepared-state: ${JSON.stringify(provider)}`);
+  }
   return pathResolve(homedir(), '.agentbox', `${provider}-prepared.json`);
 }
 

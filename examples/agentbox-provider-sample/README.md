@@ -1,7 +1,7 @@
 # agentbox-provider-sample
 
 A minimal **reference** AgentBox provider plugin, built only on
-[`@agentbox/provider-sdk`](../../packages/provider-sdk). The backend is a stub (it
+[`@madarco/agentbox-provider-sdk`](../../packages/provider-sdk). The backend is a stub (it
 does not provision real boxes) — its job is to show the smallest thing that plugs
 in end-to-end: implement a `CloudBackend`, wrap it with `createCloudProvider`, and
 export a `providerModule`.

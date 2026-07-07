@@ -2,7 +2,7 @@
  * The external-provider plugin registry: `~/.agentbox/plugins.json`.
  *
  * A community provider ships as its own npm package (`agentbox-provider-<name>`)
- * built against `@agentbox/provider-sdk`. The user installs it themselves, then
+ * built against `@madarco/agentbox-provider-sdk`. The user installs it themselves, then
  * `agentbox plugin add <pkg>` validates it and records it here; the CLI and the
  * host relay both read this file to resolve + lazily `import()` the package at
  * runtime (a true variable specifier — built-ins are bundle-inlined, external

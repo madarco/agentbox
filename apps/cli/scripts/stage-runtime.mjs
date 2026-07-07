@@ -130,7 +130,7 @@ for (const [srcRel, destRel, exec] of hetznerFiles) {
 }
 
 // _shared — provider-NEUTRAL box-side runtime assets exposed to external
-// provider plugins via `@agentbox/provider-sdk`'s `resolveSharedRuntimeAsset`.
+// provider plugins via `@madarco/agentbox-provider-sdk`'s `resolveSharedRuntimeAsset`.
 // A VPS-style plugin brings only its own install script + system prompt and
 // pulls ctl + the shims from here, so it always installs the *running* CLI's
 // `ctl.cjs` (version-locked to the CLI, not to whatever the plugin bundled).

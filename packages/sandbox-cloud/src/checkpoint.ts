@@ -90,6 +90,22 @@ function backendDir(backend: string, projectRoot: string): string {
   return join(CLOUD_CHECKPOINTS_ROOT, backend, projectDirSegment(projectRoot));
 }
 
+/**
+ * Backend names that have a checkpoint directory under `CLOUD_CHECKPOINTS_ROOT`.
+ * Lets the CLI's `checkpoint list` surface checkpoints from **plugin** cloud
+ * providers (whose names aren't in the built-in `CLOUD_PROVIDER_NAMES`) without
+ * loading them — a checkpoint store is just named directories on disk.
+ */
+export async function listCloudBackendDirs(): Promise<string[]> {
+  try {
+    return (await readdir(CLOUD_CHECKPOINTS_ROOT, { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
 function checkpointDir(backend: string, projectRoot: string, name: string): string {
   return join(backendDir(backend, projectRoot), name);
 }

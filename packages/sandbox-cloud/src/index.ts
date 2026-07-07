@@ -52,6 +52,7 @@ export {
   cloudSnapshotName,
   currentCloudBaseFingerprint,
   listAllCloudCheckpoints,
+  listCloudBackendDirs,
   listCloudCheckpoints,
   probeCloudCheckpoint,
   removeCloudCheckpointDir,

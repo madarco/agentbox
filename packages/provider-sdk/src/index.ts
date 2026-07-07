@@ -1,5 +1,5 @@
 /**
- * `@agentbox/provider-sdk` — the public, semver'd surface for building an
+ * `@madarco/agentbox-provider-sdk` — the public, semver'd surface for building an
  * AgentBox sandbox provider as an installable community package.
  *
  * A provider package implements the thin `CloudBackend` (~13 methods over a
