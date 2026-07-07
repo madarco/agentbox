@@ -157,6 +157,35 @@ export async function recordLastAgent(
 }
 
 /**
+ * Set (or clear) a box's cosmetic `displayName`. A locked read-modify-write so
+ * it can't clobber a concurrent state change. Trims the input; an empty/blank
+ * value clears the label (falls back to `name`). No-op when the box isn't in
+ * state (a race with `destroy`). The label is display/lookup-only — it does not
+ * touch the container, git branch, or URL. Reused by the CLI and the hub.
+ */
+export async function setBoxDisplayName(
+  boxId: string,
+  displayName: string | undefined,
+  path: string = STATE_FILE,
+): Promise<void> {
+  const trimmed = displayName?.trim();
+  const next = trimmed ? trimmed : undefined;
+  await mutateState(
+    (state) => ({
+      version: 1,
+      boxes: state.boxes.map((b) => {
+        if (b.id !== boxId) return b;
+        if (next) return { ...b, displayName: next };
+        const rest = { ...b };
+        delete rest.displayName;
+        return rest;
+      }),
+    }),
+    path,
+  );
+}
+
+/**
  * Persist a cloud box's last resolved SSH target (`box.cloud.ssh`). A locked
  * read-modify-write so it can't clobber a concurrent state change. No-op when
  * the box isn't in state (a race with `destroy`) or isn't a cloud record.
@@ -260,7 +289,8 @@ export async function removeBoxRecord(id: string, path: string = STATE_FILE): Pr
  *   1. exact id
  *   2. unique id prefix
  *   3. exact name
- *   4. exact container name
+ *   4. exact displayName (cosmetic label)
+ *   5. exact container name
  *
  * Returns `'ambiguous'` if step 2 finds more than one match (steps 1, 3, 4
  * are exact-match so they cannot be ambiguous on their own).
@@ -278,6 +308,12 @@ export function findBox(idOrName: string, state: StateFile): FindBoxResult {
 
   const byName = state.boxes.find((b) => b.name === q);
   if (byName) return { kind: 'ok', box: byName };
+
+  // A renamed box is addressable by its cosmetic `displayName`. Lowest-precedence
+  // exact match (after id/name) so a label that happens to equal another box's
+  // id/name never shadows it; first match wins on displayName collisions.
+  const byDisplayName = state.boxes.find((b) => b.displayName === q);
+  if (byDisplayName) return { kind: 'ok', box: byDisplayName };
 
   // For docker records `container` is the docker container name; for cloud
   // records it's `cloud:<sandboxId>` (post 7.2 — no more synthetic

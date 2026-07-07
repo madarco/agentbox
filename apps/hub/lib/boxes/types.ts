@@ -11,6 +11,9 @@ export interface Box {
   repo: string;
   branch: string;
   task: string;
+  // Cosmetic user-set label (via rename), null when unset. `task` already folds
+  // this in as the primary label; kept separate so the rename UI can seed its input.
+  displayName?: string | null;
   agent: AgentId | string;
   status: BoxStatus;
   createdAt: number;

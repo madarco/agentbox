@@ -12,6 +12,7 @@ export {
   removeBoxRecord,
   reserveProjectIndex,
   resolveBoxRef,
+  setBoxDisplayName,
   writeState,
 } from './state.js';
 export {

@@ -4,11 +4,13 @@ import { join } from 'node:path';
 import type { BoxRecord } from '@agentbox/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  findBox,
   readState,
   recordBox,
   recordLastAgent,
   removeBoxRecord,
   reserveProjectIndex,
+  setBoxDisplayName,
   writeState,
 } from '../src/state.js';
 
@@ -140,6 +142,86 @@ describe('state.ts', () => {
     const reloaded = await readState(file);
     expect(reloaded.boxes).toHaveLength(1);
     expect(reloaded.boxes[0]?.lastAgent).toBeUndefined();
+  });
+
+  it('setBoxDisplayName sets, trims, and clears the cosmetic label', async () => {
+    const box: BoxRecord = {
+      id: 'a1b2c3d4',
+      name: 'demo',
+      container: 'agentbox-a1b2c3d4',
+      image: 'agentbox/box:dev',
+      workspacePath: '/tmp/ws',
+      createdAt: '2026-05-12T12:00:00.000Z',
+    };
+    await recordBox(box, file);
+
+    // Sets + trims, leaving name untouched.
+    await setBoxDisplayName('a1b2c3d4', '  auth-work  ', file);
+    let reloaded = await readState(file);
+    expect(reloaded.boxes[0]?.displayName).toBe('auth-work');
+    expect(reloaded.boxes[0]?.name).toBe('demo');
+
+    // Blank clears the label back to undefined.
+    await setBoxDisplayName('a1b2c3d4', '   ', file);
+    reloaded = await readState(file);
+    expect(reloaded.boxes[0]?.displayName).toBeUndefined();
+
+    // undefined also clears.
+    await setBoxDisplayName('a1b2c3d4', 'x', file);
+    await setBoxDisplayName('a1b2c3d4', undefined, file);
+    reloaded = await readState(file);
+    expect(reloaded.boxes[0]?.displayName).toBeUndefined();
+  });
+
+  it('setBoxDisplayName is a no-op for an unknown box id', async () => {
+    const box: BoxRecord = {
+      id: 'a1b2c3d4',
+      name: 'demo',
+      container: 'agentbox-a1b2c3d4',
+      image: 'agentbox/box:dev',
+      workspacePath: '/tmp/ws',
+      createdAt: '2026-05-12T12:00:00.000Z',
+    };
+    await recordBox(box, file);
+    await setBoxDisplayName('does-not-exist', 'nope', file);
+    const reloaded = await readState(file);
+    expect(reloaded.boxes).toHaveLength(1);
+    expect(reloaded.boxes[0]?.displayName).toBeUndefined();
+  });
+
+  it('findBox resolves a box by its displayName, without shadowing id/name', async () => {
+    const a: BoxRecord = {
+      id: 'aaaaaaaa',
+      name: 'alpha',
+      displayName: 'auth-work',
+      container: 'agentbox-alpha',
+      image: 'agentbox/box:dev',
+      workspacePath: '/tmp/ws',
+      createdAt: '2026-05-12T12:00:00.000Z',
+    };
+    // b's name collides with a's displayName — name must win.
+    const b: BoxRecord = {
+      ...a,
+      id: 'bbbbbbbb',
+      name: 'auth-work',
+      displayName: undefined,
+      container: 'agentbox-beta',
+    };
+    await recordBox(a, file);
+    await recordBox(b, file);
+    const state = await readState(file);
+
+    // Lookup by displayName finds a.
+    const byDisplay = findBox('auth-work', state);
+    expect(byDisplay.kind).toBe('ok');
+    // But the exact name match on b takes precedence over a's displayName.
+    expect(byDisplay.kind === 'ok' && byDisplay.box.id).toBe('bbbbbbbb');
+
+    // A unique displayName resolves to its box.
+    await setBoxDisplayName('aaaaaaaa', 'unique-label', file);
+    const state2 = await readState(file);
+    const uniq = findBox('unique-label', state2);
+    expect(uniq.kind === 'ok' && uniq.box.id).toBe('aaaaaaaa');
   });
 
   it('rejects malformed state', async () => {

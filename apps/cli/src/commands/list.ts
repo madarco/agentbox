@@ -4,6 +4,7 @@ import type { AgentActivityState } from '@agentbox/ctl';
 import { listBoxes, type ListedBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { pathToFileURL } from 'node:url';
+import { boxLabel } from '../box-label.js';
 import { hyperlink } from '../hyperlink.js';
 import { applyLiveCloudStates } from '../lib/cloud-state.js';
 import { withWatchOptions, watchRender, type WatchableOptions } from '../watch.js';
@@ -252,7 +253,7 @@ export function renderCmuxRows(
     lines.push(projectHeader(projectLabel(root), color, width));
     for (const b of group) {
       const idx = b.projectIndex ? `${String(b.projectIndex)} ` : '';
-      const disp = tailKeep(b.name, Math.max(1, width - idx.length));
+      const disp = tailKeep(boxLabel(b), Math.max(1, width - idx.length));
       // force OSC 8: the Herdr overlay always supports it and the link is what
       // drives Ctrl+click routing, so don't gate on terminal detection. The URL
       // uses the box's unique id (not its name — the overlay is global and names
@@ -286,7 +287,7 @@ function renderTable(boxes: ListedBox[], stream: NodeJS.WriteStream): string {
   const wsCol = header.length - 1;
   const lead: Cell[][] = boxes.map((b) => [
     plain(typeof b.projectIndex === 'number' ? String(b.projectIndex) : ''),
-    plain(b.name),
+    plain(boxLabel(b)),
     plain(b.state),
     // One column for every agent (claude / codex / opencode) — see agentSummary.
     plain(agentSummary(b)),

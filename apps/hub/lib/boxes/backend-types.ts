@@ -138,6 +138,9 @@ export interface HubBackend {
   resume(id: string): Promise<ActionResult>;
   stop(id: string): Promise<ActionResult>;
   destroy(id: string): Promise<ActionResult>;
+  // Set (or clear, when displayName is empty) a box's cosmetic display label.
+  // Pure state — does not touch the container, git branch, or URL.
+  rename(id: string, displayName: string): Promise<ActionResult>;
   // Answer a pending host-action approval; resolves the parked in-box RPC.
   answerApproval(id: string, answer: 'y' | 'n'): Promise<ActionResult>;
   // Provider list enriched with base-image freshness (`baseStatus`/

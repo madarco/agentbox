@@ -53,6 +53,7 @@ export const Icons = {
     'M18 9a9 9 0 0 1-9 9',
   ]),
   plus: mk(['M12 5v14M5 12h14']),
+  pencil: mk(['M12 20h9', 'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z']),
   pause: mk(['M9 4H6v16h3zM18 4h-3v16h3z']),
   play: mk(['M6 4l14 8-14 8Z']),
   refresh: mk([

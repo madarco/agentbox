@@ -5,7 +5,7 @@ import { useTransition, type MouseEvent } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
-import { destroyBoxAction, pauseBoxAction, resumeBoxAction, stopBoxAction } from '@/lib/boxes/actions';
+import { destroyBoxAction, pauseBoxAction, renameBoxAction, resumeBoxAction, stopBoxAction } from '@/lib/boxes/actions';
 import type { ActionResult } from '@/lib/boxes/backend-types';
 import type { Box } from '@/lib/boxes/types';
 
@@ -24,6 +24,18 @@ export function BoxActions({ box, size }: { box: Box; size?: 'lg' }) {
     startTransition(async () => {
       const res = await action(box.id);
       if (!res.ok) window.alert(`Action failed: ${res.error}`);
+      router.refresh();
+    });
+  };
+
+  const rename = (e: MouseEvent) => {
+    e.stopPropagation();
+    // Cosmetic label only — does not touch the container/branch/URL. Blank clears it.
+    const next = window.prompt('Rename box (label only — leave blank to reset)', box.displayName ?? box.task);
+    if (next === null) return;
+    startTransition(async () => {
+      const res = await renameBoxAction(box.id, next.trim());
+      if (!res.ok) window.alert(`Rename failed: ${res.error}`);
       router.refresh();
     });
   };
@@ -64,6 +76,10 @@ export function BoxActions({ box, size }: { box: Box; size?: 'lg' }) {
       >
         <Icons.stop />
         {lg ? 'Stop' : null}
+      </Button>
+      <Button variant="outline" size={sz} disabled={pending} title="Rename" onClick={rename}>
+        <Icons.pencil />
+        {lg ? 'Rename' : null}
       </Button>
       <Button
         variant="destructive"

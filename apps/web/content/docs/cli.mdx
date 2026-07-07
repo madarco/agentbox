@@ -113,6 +113,10 @@ agentbox ls -g
 agentbox status 1
 agentbox status 1 --inspect
 
+# Rename a box (cosmetic label; leaves the container, branch, and URL unchanged)
+agentbox status 1 --set-name auth-work
+agentbox status 1 --clear-name
+
 # Live cpu/mem/pids/disk monitor
 agentbox top
 agentbox top --once
@@ -125,12 +129,12 @@ agentbox logs 1 web -f
 agentbox wait 1
 ```
 
-`list` (alias `ls`) lists boxes in the current project; `-g` spans all projects. `status` shows live service/task state from the in-box `agentbox-ctl` daemon, and `status --inspect` adds detailed box info (volumes, limits, paths). `top` is a live resource monitor, `logs` tails a service log, and `wait` blocks until autostart units are ready.
+`list` (alias `ls`) lists boxes in the current project; `-g` spans all projects. `status` shows live service/task state from the in-box `agentbox-ctl` daemon, and `status --inspect` adds detailed box info (volumes, limits, paths). `status --set-name <name>` (and `--clear-name`) **renames** a box — it sets a cosmetic display label shown in `list`, the hub, and the tray. The label is display-only: the container, git branch, and web/VNC URL keep the box's original name, and you can still address the box by either name. Works for every provider and any box state. `top` is a live resource monitor, `logs` tails a service log, and `wait` blocks until autostart units are ready.
 
 | Command | Useful flags |
 | --- | --- |
 | `list` / `ls` | `-j, --json`, `-g, --global`, `--watch`, `--live`, `--cmux` |
-| `status` | `-j, --json`, `--inspect` |
+| `status` | `-j, --json`, `--inspect`, `--set-name <name>`, `--clear-name` |
 | `top` | `--once`, `-j, --json`, `--interval <s>`, `--live` |
 | `logs` | `-n, --tail <n>`, `-f, --follow`, `--daemon` |
 | `wait` | `--timeout <ms>`, `--units <names...>`, `-j, --json` |
