@@ -284,7 +284,10 @@ export const createCommand = new Command('create')
       });
     } else if (isHetzner) {
       portlessEnabled = cfg.effective.portless.enabled ?? true;
-      if (portlessEnabled) await setupPortlessHost();
+      // Only surface the :443 root-password dialog for interactive runs;
+      // scripted / --yes Hetzner creates fall through to the no-root :1355 proxy.
+      if (portlessEnabled)
+        await setupPortlessHost({ allowRootPrompt: !!process.stdin.isTTY && !opts.yes });
     }
 
     // Carry gate (agentbox.yaml's `carry:` block): resolve + ask BEFORE the

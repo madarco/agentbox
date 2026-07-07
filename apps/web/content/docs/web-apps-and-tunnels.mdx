@@ -42,7 +42,7 @@ Use `on_timeout: mark_unhealthy` for slow cold starts (heavy frameworks, first-r
 
 ## Same URL inside & out
 
-The box and the host see the **same** URL for the web app, so OAuth redirects, CORS allowlists, and Next.js `allowedDevOrigins` line up. How that URL is produced depends on your Docker runtime: **OrbStack** gives every container auto-DNS (`http://agentbox-<name>.orb.local`), while **Docker Desktop** has no per-container DNS, so AgentBox offers **Portless** on first run — a proxy that yields `https://<box-name>.localhost` (or `http://<box-name>.localhost:1355` on the no-TLS fallback).
+The box and the host see the **same** URL for the web app, so OAuth redirects, CORS allowlists, and Next.js `allowedDevOrigins` line up. How that URL is produced depends on your Docker runtime: **OrbStack** gives every container auto-DNS (`http://agentbox-<name>.orb.local`), while **Docker Desktop** has no per-container DNS, so AgentBox offers **Portless** on first run — a proxy that yields `https://<box-name>.localhost`. The clean HTTPS URL runs the proxy on port `443`, which needs root, so Portless asks for your host password once (a native dialog on macOS); dismiss it and AgentBox falls back to a no-root proxy at `http://<box-name>.localhost:1355`.
 
 The in-box browser (`agentbox screen`) loads the **same** `<box-name>.localhost` URL the host uses, so the app is one origin from both sides.
 

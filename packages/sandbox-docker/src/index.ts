@@ -352,8 +352,10 @@ export {
   resetPortlessCache,
   resolvePortlessHostStateDir,
   startPortlessProxy,
+  startPortlessProxyRoot,
   type PortlessBrowserEnvOptions,
   type PortlessState,
+  type RootProxyStartResult,
 } from './portless.js';
 export {
   AmbiguousBoxError,

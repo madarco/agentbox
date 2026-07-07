@@ -474,7 +474,7 @@ and Playwright would reject `https://<box>.localhost`. The baked
 docker `create` invoke it to trust the CA in both the system store
 (`update-ca-certificates`) and the box user's NSS db (`certutil`, from
 `libnss3-tools`), and export `NODE_EXTRA_CA_CERTS` for Node clients. No-TLS host
-proxies (the `--no-tls -p 1355` default) serve plain `http` and skip this entirely.
+proxies (the no-root `--no-tls -p 1355` fallback) serve plain `http` and skip this entirely.
 
 ### 3.4 Checkpoints
 
