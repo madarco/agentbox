@@ -36,6 +36,7 @@
     "api",
     "agentbox-yaml",
     "configuration",
-    "environment"
+    "environment",
+    "build-a-provider"
   ]
 }

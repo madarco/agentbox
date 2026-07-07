@@ -3,8 +3,9 @@
 AgentBox ships five built-in providers (docker, daytona, hetzner, vercel, e2b),
 but the provider surface is open: anyone can publish a **provider plugin** as its
 own npm package and users can add it with `agentbox plugin add` — no changes to
-AgentBox itself. This doc is the authoring + operating guide. Two reference
-packages live under [`examples/`](../examples):
+AgentBox itself. This doc is the authoring + operating guide. The user-facing
+version lives on the docs site at [`/docs/build-a-provider`](https://agent-box.sh/docs/build-a-provider).
+Two reference packages live under [`examples/`](../examples):
 
 - [`agentbox-provider-sample`](../examples/agentbox-provider-sample) — a **stub**
   backend that throws on `provision`. The smallest thing that plugs in; read it
