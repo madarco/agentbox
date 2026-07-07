@@ -84,6 +84,20 @@ function shellJoin(argv: string[]): string {
   return argv.map(shellQuote).join(' ');
 }
 
+/**
+ * The line typed into a new cmux/Herdr/iTerm2 pane: land in the caller's cwd,
+ * then run the command. By default the command `exec`-replaces the pane's shell
+ * (pane closes when it exits); `keepShell` drops the `exec` so the shell — and
+ * any error output — survives the command exiting (used by `open --in`, where
+ * a failed `agentbox attach` should leave a usable pane, not a closed one).
+ */
+export function composePaneCommand(argv: string[], cwd: string, keepShell?: boolean): string {
+  const inner = shellJoin(argv);
+  return keepShell
+    ? `cd ${shellQuote(cwd)} && ${inner}`
+    : `cd ${shellQuote(cwd)} && exec ${inner}`;
+}
+
 export interface SpawnInNewTerminalArgs {
   host: Exclude<HostTerminal, 'unknown'>;
   /** Where to open the session in that host's terminology. `'same'` is rejected
@@ -139,6 +153,13 @@ export interface SpawnInNewTerminalArgs {
    * new tab lands in the submitting workspace.
    */
   herdrTargetWorkspace?: string;
+  /**
+   * Keep the new pane's shell alive after the command exits (drop the `exec`
+   * from the typed command line). No effect on tmux (which runs the command
+   * directly) or on cmux `window` mode (new-workspace types into a shell that
+   * survives anyway).
+   */
+  keepShell?: boolean;
 }
 
 export interface SpawnInNewTerminalResult {
@@ -248,7 +269,7 @@ async function spawnInCmux(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTerm
     attempts.push([...base, '--focus', 'true']);
   }
 
-  const cmdLine = `cd ${shellQuote(args.cwd)} && exec ${shellJoin(args.argv)}`;
+  const cmdLine = composePaneCommand(args.argv, args.cwd, args.keepShell);
   let lastError = '';
   for (const createArgv of attempts) {
     const created = await runQuiet(bin, createArgv, args.env);
@@ -416,8 +437,8 @@ async function spawnInHerdr(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTer
     return { launched: false, note: '', error: `herdr ${args.mode} gave no pane id` };
   }
   // `\n` runs the typed command. `cd && exec` lands in the host cwd and replaces
-  // the new pane's shell with the attach process.
-  const text = `cd ${shellQuote(args.cwd)} && exec ${shellJoin(args.argv)}\n`;
+  // the new pane's shell with the attach process (unless `keepShell`).
+  const text = `${composePaneCommand(args.argv, args.cwd, args.keepShell)}\n`;
   const sent = await herdrRequest('pane.send_text', { pane_id: paneId, text }, env);
   if (sent === null) {
     return { launched: false, note: '', error: 'herdr pane.send_text failed' };
@@ -438,8 +459,7 @@ async function spawnInITerm2(args: SpawnInNewTerminalArgs): Promise<SpawnInNewTe
   // directory parameter on its AppleScript verbs. Prepend `cd <cwd> && exec`
   // so the new tab/window/split lands in the host pane's cwd and replaces
   // the launching shell with the agentbox process.
-  const inner = shellJoin(args.argv);
-  const cmdLine = `cd ${shellQuote(args.cwd)} && exec ${inner}`;
+  const cmdLine = composePaneCommand(args.argv, args.cwd, args.keepShell);
   const cmdLit = `"${appleScriptEscape(cmdLine)}"`;
 
   // Always create the tab/window/split first, then `write text` into its
