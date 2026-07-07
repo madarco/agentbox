@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export const APP_NAME = 'AgentBoxTray';
 export const APP_PATH = `/Applications/${APP_NAME}.app`;
@@ -87,13 +88,36 @@ export async function installTray(opts: InstallTrayOptions = {}): Promise<Instal
     await execa('ditto', ['-x', '-k', zip, '/Applications']);
     // Belt-and-suspenders: clear any quarantine bit so Gatekeeper never blocks the download.
     await execa('xattr', ['-dr', 'com.apple.quarantine', APP_PATH]).catch(() => undefined);
-    await execa('open', [APP_PATH]);
+    await launchTray(say);
   } finally {
     if (scratch) rmSync(scratch, { recursive: true, force: true });
   }
 
   say(`Installed ${APP_PATH} and launched it (look for the box icon in the menu bar).`);
   return { ran: true };
+}
+
+/** True while the tray process is running. `pgrep -x` exits 1 (rejects) when nothing matches. */
+async function trayRunning(): Promise<boolean> {
+  return (await execa('pgrep', ['-x', APP_NAME]).catch(() => null)) !== null;
+}
+
+/**
+ * Launch the freshly-installed app and confirm it actually came up. `open` returns before an
+ * `LSUIElement` menu-bar app finishes registering, and right after a `ditto` extract Launch Services
+ * can briefly not resolve the new bundle — so poll, then retry `open` once before giving up.
+ * (Launch-at-login stays opt-in via the app's Settings; this only covers the post-install start.)
+ */
+async function launchTray(say: (m: string) => void): Promise<void> {
+  await execa('open', [APP_PATH]).catch(() => undefined);
+  for (let i = 0; i < 6; i++) {
+    if (await trayRunning()) return;
+    await delay(500);
+  }
+  await execa('open', [APP_PATH]).catch(() => undefined);
+  if (!(await trayRunning())) {
+    say(`The menu-bar app did not start automatically — launch it from ${APP_PATH}.`);
+  }
 }
 
 /** Download `<tag>/AgentBoxTray.zip` + its `.sha256`, verify, and return the local zip path. */
