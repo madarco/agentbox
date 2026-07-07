@@ -84,7 +84,10 @@ export async function setupPortlessHost(
   resetPortlessCache();
   state = await detectPortless();
   if (state.proxyRunning) {
-    s.stop('portless proxy started on http://<box>.localhost:1355');
+    // No port asserted here: the fallback usually lands on :1355, but if the
+    // root :443 start actually succeeded (a racy first probe), that proxy is
+    // reused instead. The real URL is resolved via `portless get` at create.
+    s.stop('portless proxy started');
   } else {
     s.stop('portless proxy did not start');
     log.warn(`Could not start the Portless proxy — run \`${portlessStartHint()}\` yourself.`);

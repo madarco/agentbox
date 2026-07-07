@@ -270,6 +270,16 @@ function escapeForAppleScript(s: string): string {
 }
 
 /**
+ * Single-quote a string for `/bin/sh`. Needed for the resolved portless path,
+ * which can live under a home dir with spaces (`/Users/Jo Smith/.nvm/…`) that
+ * the elevated shell would otherwise word-split. Single quotes survive the
+ * outer AppleScript double-quoted literal untouched.
+ */
+function shellSingleQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
  * Start the default Portless proxy — HTTPS on :443 — which requires root.
  * Portless self-elevates via its own `sudo`, so all we do is run
  * `portless proxy start && portless trust` once, as root, surfacing a single
@@ -286,7 +296,8 @@ export async function startPortlessProxyRoot(): Promise<RootProxyStartResult> {
   try {
     if (process.platform === 'darwin') {
       // Both commands run in one elevated shell so the user is asked once.
-      const shellCmd = `${bin} proxy start && ${bin} trust`;
+      const q = shellSingleQuote(bin);
+      const shellCmd = `${q} proxy start && ${q} trust`;
       const script =
         `do shell script "${escapeForAppleScript(shellCmd)}" ` +
         `with administrator privileges ` +
