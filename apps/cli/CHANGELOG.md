@@ -11,6 +11,16 @@ CLI, not the raw commits.
 
 ## [Unreleased]
 
+### Added
+
+- **`agentbox app log`** — collect the macOS tray app's diagnostics for a bug
+  report. Reads the tray's macOS unified-log entries (`--last <window>`, `-f` to
+  stream live, `--crashes` for crash reports only) and lists its crash reports from
+  `~/Library/Logs/DiagnosticReports`; `--open` reveals that folder in Finder and
+  `--out <file>` writes one self-contained bundle (versions + log + newest crash
+  report) to attach. The tray keeps no log file of its own — these are
+  macOS-native surfaces (unified logging + OS `.ips` crash reports).
+
 ### Fixed
 
 - **`agentbox hub` now starts after a fresh `npm install`.** The published
