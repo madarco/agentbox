@@ -64,11 +64,11 @@ export async function installTray(opts: InstallTrayOptions = {}): Promise<Instal
   // Quit any running instance (new + legacy name) so we can replace the bundle cleanly.
   await execa('pkill', ['-x', APP_NAME]).catch(() => undefined);
   await execa('pkill', ['-x', LEGACY_APP_NAME]).catch(() => undefined);
-  // Remove a leftover pre-rename bundle so we never have two bundles sharing the same id.
-  if (existsSync(LEGACY_APP_PATH)) rmSync(LEGACY_APP_PATH, { recursive: true, force: true });
 
   if (opts.uninstall) {
     if (existsSync(APP_PATH)) rmSync(APP_PATH, { recursive: true, force: true });
+    // Also remove a leftover pre-rename bundle.
+    if (existsSync(LEGACY_APP_PATH)) rmSync(LEGACY_APP_PATH, { recursive: true, force: true });
     say(`Removed ${APP_PATH}. (Launch-at-login is unregistered by the app itself.)`);
     return { ran: true };
   }
@@ -97,6 +97,10 @@ export async function installTray(opts: InstallTrayOptions = {}): Promise<Instal
     // Replace any existing copy, extract with ditto (preserves signature + notarization ticket).
     if (existsSync(APP_PATH)) rmSync(APP_PATH, { recursive: true, force: true });
     await execa('ditto', ['-x', '-k', zip, '/Applications']);
+    // Only now that AgentBox.app is in place, remove a leftover pre-rename bundle so the two never
+    // coexist (same id). Doing it here — not earlier — means a failed download/extract can't strand
+    // a user who only had the old bundle.
+    if (existsSync(LEGACY_APP_PATH)) rmSync(LEGACY_APP_PATH, { recursive: true, force: true });
     // Belt-and-suspenders: clear any quarantine bit so Gatekeeper never blocks the download.
     await execa('xattr', ['-dr', 'com.apple.quarantine', APP_PATH]).catch(() => undefined);
     await launchTray(say);
