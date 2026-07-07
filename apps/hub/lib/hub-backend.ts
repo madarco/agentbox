@@ -79,6 +79,9 @@ import type { Approval, Box, BoxStatus, GithubState, HubState, Project, Provider
 
 const execFileAsync = promisify(execFile);
 
+// Cosmetic rename-label cap — mirrors the CLI's --set-name cap and parseRenameBox.
+const DISPLAY_NAME_MAX = 60;
+
 // ── provider resolution (mirrors apps/cli/src/provider/loaders.ts) ──
 const IMPORTERS: Record<ProviderKind, () => Promise<{ providerModule: ProviderModule }>> = {
   docker: () => import('@agentbox/sandbox-docker'),
@@ -822,7 +825,13 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       }),
     async rename(id, displayName): Promise<ActionResult> {
       // Pure state mutation — no provider round-trip. Empty/blank clears the label.
+      // Enforce the same 60-char cap the CLI + REST route apply here, so the web
+      // server action (which calls this directly, bypassing parseRenameBox) can't
+      // persist an over-long label.
       try {
+        if (displayName.trim().length > DISPLAY_NAME_MAX) {
+          return { ok: false, error: `name too long (max ${DISPLAY_NAME_MAX} chars)` };
+        }
         const { boxes } = await readState();
         const box = boxes.find((b) => b.id === id);
         if (!box) return { ok: false, error: `box ${id} not found` };
