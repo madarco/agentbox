@@ -50,6 +50,24 @@ export function parseCreateBox(body: unknown): Parsed<CreateBoxInput> {
   };
 }
 
+// Rename a box: set (or clear, with an empty string) its cosmetic display label.
+// The backend trims + clears on blank; here we only enforce the shape + a length
+// cap (matching the CLI's --set-name cap).
+export function parseRenameBox(body: unknown): Parsed<{ displayName: string }> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const { displayName } = body;
+  if (typeof displayName !== 'string') {
+    return {
+      ok: false,
+      message: 'displayName is required (string; empty string clears the label)',
+    };
+  }
+  if (displayName.trim().length > 60) {
+    return { ok: false, message: 'displayName too long (max 60 chars)' };
+  }
+  return { ok: true, value: { displayName } };
+}
+
 export function parseAnswer(body: unknown): Parsed<'y' | 'n'> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
   const { answer } = body;

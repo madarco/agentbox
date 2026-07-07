@@ -212,6 +212,13 @@ export interface BoxRecord {
   id: string;
   name: string;
   /**
+   * Cosmetic user-chosen label, set via `agentbox status <box> --set-name`.
+   * Purely for display and lookup — unlike `name` it does NOT drive the
+   * container, git branch, or Portless URL. Absent means "fall back to name".
+   * See docs/state.md.
+   */
+  displayName?: string;
+  /**
    * Sandbox backend the box runs on. Absent on records written before the
    * multi-provider split — `readState` migrates those to `'docker'` on read.
    */

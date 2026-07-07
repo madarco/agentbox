@@ -47,6 +47,7 @@ import {
   readPreparedStateRaw,
   readState,
   secretsEnvPath,
+  setBoxDisplayName,
   syncAgentboxSshConfig,
 } from '@agentbox/sandbox-core';
 import {
@@ -140,7 +141,15 @@ function mapBox(b: ListedBox): Box {
     projectId: hashProjectPath(root),
     repo: path.basename(root),
     branch: b.gitWorktrees?.[0]?.branch ?? b.cloud?.workspaceBranch ?? '',
-    task: b.claudeSessionTitle ?? b.codexSessionTitle ?? b.opencodeSessionTitle ?? b.name,
+    // A user-set display label (via rename) wins over the live agent session
+    // title as the box's primary label; else fall back to the session title, then name.
+    task:
+      b.displayName?.trim() ||
+      b.claudeSessionTitle ||
+      b.codexSessionTitle ||
+      b.opencodeSessionTitle ||
+      b.name,
+    displayName: b.displayName?.trim() || null,
     // Normalize the frozen wire spelling ('claude-code') to the UI label ('claude').
     agent: normalizeLastAgent(b.lastAgent) ?? 'claude',
     status,
@@ -811,6 +820,18 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
         await syncAgentboxSshConfig().catch(() => {});
       }),
+    async rename(id, displayName): Promise<ActionResult> {
+      // Pure state mutation — no provider round-trip. Empty/blank clears the label.
+      try {
+        const { boxes } = await readState();
+        const box = boxes.find((b) => b.id === id);
+        if (!box) return { ok: false, error: `box ${id} not found` };
+        await setBoxDisplayName(id, displayName);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
     // Mirror POST /admin/prompts/answer's block branch, in-process: resolving
     // the entry fulfills the Promise the /rpc handler is awaiting (box unblocks),
     // and the broadcast clears any attached-terminal footer.
