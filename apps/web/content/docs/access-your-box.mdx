@@ -156,12 +156,18 @@ agentbox open mybox --path
 agentbox open mybox --unmount
 ```
 
-Because the box exposes real SSH, you can also add it to the **Codex desktop app** as an SSH connection in one step:
+Because the box exposes real SSH, you can also add it to the **Claude** or **Codex desktop apps** as an SSH connection in one step:
 
 ```bash
+# add the box to Claude desktop's SSH connections (sshConfigs in ~/.claude/settings.json)
+# and launch the app — pick the box from its Environment dropdown
+agentbox open mybox --in claude
+
 # writes an ~/.ssh/config alias and opens Codex's add-SSH-connection form
 agentbox open mybox --in codex
 ```
+
+Claude desktop has no add-SSH deep link, so AgentBox writes the entry into the app's own settings directly (upserted by id, removed again on `agentbox destroy`). From the Environment dropdown the app can start new sessions in `/workspace` — and list or resume the Claude sessions already recorded inside the box.
 
 `agentbox open` writes a managed `Host <box>` block to `~/.agentbox/ssh/config` (included from `~/.ssh/config`), so `ssh <box>` also just works and lands in `/workspace`. The alias points at `127.0.0.1` on an ephemeral loopback port that is re-resolved on every `agentbox start`.
 

@@ -6,11 +6,14 @@ import { join } from 'node:path';
 import type { BoxRecord } from '@agentbox/core';
 import {
   agentboxAliasFor,
+  claudeSettingsPath,
+  claudeSshEntryFor,
   hostOpenCommand,
   ensureCloudSshAlias,
   recordBoxSsh,
   resolveCloudSshTarget,
   syncAgentboxSshConfig,
+  upsertClaudeSshConfig,
 } from '@agentbox/sandbox-core';
 import {
   inspectBox,
@@ -51,6 +54,7 @@ interface OpenOpts {
 
 function parseOpenTarget(value: string): OpenTarget {
   if (
+    value === 'claude' ||
     value === 'codex' ||
     value === 'herdr' ||
     value === 'cmux' ||
@@ -61,7 +65,7 @@ function parseOpenTarget(value: string): OpenTarget {
     return value;
   }
   throw new InvalidArgumentError(
-    `expected one of: codex, herdr, cmux, vscode, iterm2, finder (got "${value}")`,
+    `expected one of: claude, codex, herdr, cmux, vscode, iterm2, finder (got "${value}")`,
   );
 }
 
@@ -113,6 +117,10 @@ export const openCommand = new Command('open')
       }
 
       const app = opts.in ?? 'finder';
+      if (app === 'claude') {
+        await openInClaude(box);
+        return;
+      }
       if (app === 'codex') {
         await openInCodex(box);
         return;
@@ -172,18 +180,17 @@ export const openCommand = new Command('open')
   });
 
 /**
- * `open --in codex`: write the box's SSH alias and auto-open Codex's
- * "add SSH connection" deep link, pre-filled with the alias — the same link
- * `agentbox shell --ssh-config` prints, but launched instead of printed.
- * Same gating as there: only providers with a persistent per-box identity
- * file qualify (Codex connects later on its own), and we gate BEFORE writing
- * so unsupported providers leave `~/.ssh/config` untouched.
+ * Persistent-SSH gate + alias write shared by the "register the box in a
+ * desktop app" targets (Codex, Claude). Both apps connect later on their own,
+ * so only providers with a persistent per-box identity qualify, and we gate
+ * BEFORE writing so unsupported providers leave `~/.ssh/config` untouched.
+ * Returns the box's ssh alias, freshly (re)synced into `~/.agentbox/ssh/config`.
  */
-async function openInCodex(box: BoxRecord): Promise<void> {
+async function ensurePersistentSshAlias(box: BoxRecord, appLabel: string): Promise<string> {
   const providerName = box.provider ?? 'docker';
   if (!PERSISTENT_SSH_PROVIDERS.includes(providerName)) {
     throw new Error(
-      `'--in codex' needs a box with a persistent SSH key — docker (localhost sshd) and ` +
+      `'--in ${appLabel.toLowerCase()}' needs a box with a persistent SSH key — docker (localhost sshd) and ` +
         `Hetzner cloud boxes qualify (this box is '${providerName}'). Daytona uses a 60-min ` +
         `token that expires; Vercel/E2B have no SSH. Try 'agentbox open ${box.name} --in vscode'.`,
     );
@@ -194,12 +201,11 @@ async function openInCodex(box: BoxRecord): Promise<void> {
   // message instead of a confusing "sshd may have failed to start" downstream.
   if (providerName === 'docker' && !box.sshEnabled) {
     throw new Error(
-      `box '${box.name}' predates the in-box sshd, so it can't be added to Codex over SSH. ` +
+      `box '${box.name}' predates the in-box sshd, so it can't be added to ${appLabel} over SSH. ` +
         `Recreate the box (new docker boxes run sshd), or use 'agentbox open ${box.name} --in vscode'.`,
     );
   }
 
-  let alias: string;
   if (providerName === 'docker') {
     // Docker: bring the box online (sshd up + loopback port fresh) and use the
     // alias create/start already wrote to `~/.ssh/config`.
@@ -212,24 +218,33 @@ async function openInCodex(box: BoxRecord): Promise<void> {
       );
     }
     await syncAgentboxSshConfig();
-    alias = agentboxAliasFor(online.name);
-  } else {
-    const provider = await providerForBox(box);
-    const conn = await resolveCloudSshTarget(box, provider);
-    if (!conn.identityFile) {
-      throw new Error(
-        `box '${box.name}' (provider '${providerName}') has no persistent SSH key, so it can't ` +
-          `be added to Codex over SSH.`,
-      );
-    }
-    await recordBoxSsh(box.id, {
-      host: conn.host,
-      user: conn.user,
-      identityFile: conn.identityFile,
-    });
-    await syncAgentboxSshConfig();
-    alias = conn.alias;
+    return agentboxAliasFor(online.name);
   }
+
+  const provider = await providerForBox(box);
+  const conn = await resolveCloudSshTarget(box, provider);
+  if (!conn.identityFile) {
+    throw new Error(
+      `box '${box.name}' (provider '${providerName}') has no persistent SSH key, so it can't ` +
+        `be added to ${appLabel} over SSH.`,
+    );
+  }
+  await recordBoxSsh(box.id, {
+    host: conn.host,
+    user: conn.user,
+    identityFile: conn.identityFile,
+  });
+  await syncAgentboxSshConfig();
+  return conn.alias;
+}
+
+/**
+ * `open --in codex`: write the box's SSH alias and auto-open Codex's
+ * "add SSH connection" deep link, pre-filled with the alias — the same link
+ * `agentbox shell --ssh-config` prints, but launched instead of printed.
+ */
+async function openInCodex(box: BoxRecord): Promise<void> {
+  const alias = await ensurePersistentSshAlias(box, 'Codex');
   log.info(`ssh alias '${alias}' written (Include'd from ~/.ssh/config)`);
 
   const url = codexAddUrl(alias);
@@ -245,6 +260,36 @@ async function openInCodex(box: BoxRecord): Promise<void> {
   }
   log.success(`opening Codex — the SSH connection form is pre-filled with '${alias}'`);
   process.stdout.write(url + '\n');
+}
+
+/**
+ * `open --in claude`: register the box in the Claude desktop app. Claude has
+ * no add-SSH deep link, but it reads SSH environments from its own settings
+ * (`~/.claude/settings.json` → `sshConfigs`, and `sshHost` accepts an alias
+ * from `~/.ssh/config`) — so write the box's alias there directly and launch
+ * the app; the box shows up in its Environment dropdown, where the app can
+ * also list/resume the box's existing Claude sessions over SSH.
+ */
+async function openInClaude(box: BoxRecord): Promise<void> {
+  const alias = await ensurePersistentSshAlias(box, 'Claude');
+  log.info(`ssh alias '${alias}' written (Include'd from ~/.ssh/config)`);
+
+  const entry = claudeSshEntryFor(alias, box.name);
+  upsertClaudeSshConfig(entry);
+  log.info(`added '${entry.name}' to Claude desktop's SSH connections (${claudeSettingsPath()})`);
+
+  const opened = await execa(hostOpenCommand(), ['-a', 'Claude'], { reject: false });
+  if (opened.exitCode !== 0) {
+    log.warn(
+      `could not launch Claude (is Claude.app installed?): ${opened.stderr || `exit ${String(opened.exitCode)}`}`,
+    );
+    process.stdout.write(
+      `the SSH connection '${entry.name}' is saved — open Claude manually and pick it from the Environment dropdown\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  log.success(`opening Claude — pick '${entry.name}' from the Environment dropdown`);
 }
 
 /**

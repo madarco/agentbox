@@ -14,6 +14,7 @@ import { SectionLabel } from './section-label';
 // Finder (sshfs-mount /workspace + reveal) uses the folder glyph and is gated to
 // SSH-capable providers via its `providers` in the open-targets report.
 const APPS: { app: OpenInApp; label: string; icon: keyof typeof Icons }[] = [
+  { app: 'claude', label: 'Claude', icon: 'claude' },
   { app: 'codex', label: 'Codex', icon: 'codex' },
   { app: 'vscode', label: 'VS Code', icon: 'ext' },
   { app: 'cmux', label: 'cmux', icon: 'terminal' },
