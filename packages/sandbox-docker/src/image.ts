@@ -100,8 +100,11 @@ export async function pullImage(
     stdout: 'pipe',
     reject: false,
   });
+  let heartbeat: NodeJS.Timeout | undefined;
   if (opts.onProgress) {
+    let lastLineAt = Date.now();
     const forward = (chunk: Buffer | string): void => {
+      lastLineAt = Date.now();
       const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
       for (const line of text.split(/\r?\n/)) {
         if (line.length > 0) opts.onProgress?.(line);
@@ -109,9 +112,22 @@ export async function pullImage(
     };
     subprocess.stdout?.on('data', forward);
     subprocess.stderr?.on('data', forward);
+    // Piped (non-TTY) `docker pull` prints nothing between the last
+    // "Download complete" and each "Pull complete" — the entire extraction
+    // phase is silent, which for a multi-GB image reads as a hang. Emit a
+    // keepalive so the create spinner keeps moving.
+    heartbeat = setInterval(() => {
+      if (Date.now() - lastLineAt >= 20_000) {
+        opts.onProgress?.(`still extracting ${target} — large layers can take a few minutes`);
+      }
+    }, 20_000);
   }
-  const result = await subprocess;
-  return result.exitCode === 0;
+  try {
+    const result = await subprocess;
+    return result.exitCode === 0;
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
+  }
 }
 
 export async function tagImage(source: string, target: string): Promise<void> {
