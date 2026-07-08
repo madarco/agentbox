@@ -2,9 +2,9 @@
  * `agentbox app` — start / stop / restart / status for the AgentBox macOS menu-bar app.
  *
  * Drives the running process directly (`open` / `pkill` / `pgrep`) without touching the installed
- * bundle — the lightweight lifecycle control the tray otherwise lacks (only `agentbox install tray`
+ * bundle — the lightweight lifecycle control the tray otherwise lacks (only `agentbox install app`
  * relaunches it). macOS-only; a clean, explained no-op elsewhere. The bundle install/uninstall lives
- * in `install-tray.ts`, which owns `APP_NAME` / `APP_PATH`.
+ * in `install-app.ts`, which owns `APP_NAME` / `APP_PATH`.
  */
 
 import { intro, log, outro, spinner } from '@clack/prompts';
@@ -16,7 +16,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AGENTBOX_VERSION } from '../version.js';
-import { APP_BUNDLE_ID, APP_NAME, APP_PATH, LEGACY_APP_NAME } from './install-tray.js';
+import { APP_BUNDLE_ID, APP_NAME, APP_PATH, LEGACY_APP_NAME } from './install-app.js';
 
 /** macOS writes app crash reports here as `AgentBox-<timestamp>.ips`. */
 const DIAGNOSTIC_REPORTS_DIR = join(homedir(), 'Library/Logs/DiagnosticReports');
@@ -183,7 +183,7 @@ const statusSub = new Command('status')
     } else if (installed) {
       log.info('AgentBox is installed but not running.');
     } else {
-      log.warn('AgentBox is not installed. Run `agentbox install tray`.');
+      log.warn('AgentBox is not installed. Run `agentbox install app`.');
     }
   });
 

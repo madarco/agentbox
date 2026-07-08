@@ -403,7 +403,16 @@ function summaryToken(group: CheckGroup): string {
   const worst = worstInResults(group.results);
   if (group.title === 'system') {
     if (worst === 'fail') return 'system FAIL';
-    if (worst === 'warn') return 'system warn';
+    // Name what warned so the one-liner is actionable without running doctor;
+    // deps whose hint says "optional" are labelled as such (they don't block).
+    if (worst === 'warn') {
+      const warns = group.results.filter((r) => r.status === 'warn');
+      const required = warns.filter((r) => !r.hint?.startsWith('optional')).map((r) => r.label);
+      const optional = warns.filter((r) => r.hint?.startsWith('optional')).map((r) => r.label);
+      const parts = [...required];
+      if (optional.length > 0) parts.push(`optional ${optional.join(', ')}`);
+      return `system warn: ${parts.join(', ')}`;
+    }
     return 'system ok';
   }
   if (group.title === 'integrations') {

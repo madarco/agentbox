@@ -49,7 +49,7 @@ import { AGENTBOX_VERSION } from '../version.js';
 import { installCmuxCommand } from './install-cmux.js';
 import { installHerdrCommand } from './install-herdr.js';
 import { installCodexCommand, installCodexPlugin } from './install-codex.js';
-import { installTray, installTrayCommand } from './install-tray.js';
+import { installAppCommand, installTray } from './install-app.js';
 import { runPrepare } from './prepare.js';
 
 /** Marker on the line after the frontmatter of every skill we ship. Its
@@ -655,7 +655,19 @@ export const installCommand = new Command('install')
     'pre-select the provider to set up (docker | daytona | hetzner | vercel)',
   )
   .option('-y, --yes', 'auto-confirm the prepare step')
-  .action(async (opts: InstallOptions) => {
+  .action(async (opts: InstallOptions, cmd: Command) => {
+    // Operands that didn't match a registered subcommand land here (commander
+    // allows excess arguments by default) — refuse them instead of silently
+    // dropping a typo like `install trya` and launching the wizard.
+    const stray = cmd.args[0];
+    if (stray !== undefined) {
+      const targets = cmd.commands.map((c) => c.name()).join(', ');
+      process.stderr.write(
+        `error: unknown install target '${stray}'. Valid targets: ${targets} — ` +
+          'or run `agentbox install` with no target for the setup wizard.\n',
+      );
+      process.exit(1);
+    }
     if (opts.skillsOnly) {
       intro('Installing AgentBox host commands...');
       let res: InstallHostSkillsResult;
@@ -700,4 +712,4 @@ installCommand.enablePositionalOptions();
 installCommand.addCommand(installCmuxCommand);
 installCommand.addCommand(installHerdrCommand);
 installCommand.addCommand(installCodexCommand);
-installCommand.addCommand(installTrayCommand);
+installCommand.addCommand(installAppCommand);

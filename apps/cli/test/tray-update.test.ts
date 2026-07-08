@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideTrayUpdate, parseSidecarSha } from '../src/commands/install-tray.js';
+import { decideTrayUpdate, parseSidecarSha } from '../src/commands/install-app.js';
 
 const SHA_A = 'a'.repeat(64);
 const SHA_B = 'b'.repeat(64);
