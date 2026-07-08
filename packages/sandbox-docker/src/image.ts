@@ -333,3 +333,64 @@ export async function ensureImage(
   return { ref, built: source === 'built', reason };
 }
 
+/**
+ * Read-only freshness classification of the docker base image, for surfaces
+ * (hub API, tray) that want to announce an upcoming bake without triggering
+ * it. `unknown` means "couldn't fingerprint" and MUST stay inert — the
+ * matching `ensureImage` path trusts the existing image and does not rebuild.
+ */
+export type DockerBaseFreshness =
+  | { state: 'fresh' }
+  | { state: 'unknown' }
+  | { state: 'unprepared' }
+  | { state: 'stale'; reason: string };
+
+/**
+ * Pure decision core shared by `evaluateDockerBaseFreshness`. Mirrors
+ * `ensureImage`'s rebuild predicate exactly — if the two ever disagree, the
+ * freshness surfaces would announce a bake that create then skips (or miss
+ * one it performs). `stampedSha` is `docker-prepared.json`'s fingerprint,
+ * null when the stamp is missing/invalid.
+ */
+export function classifyDockerBaseFreshness(input: {
+  imagePresent: boolean;
+  fingerprint: string | null;
+  stampedSha: string | null;
+}): DockerBaseFreshness {
+  if (!input.imagePresent) return { state: 'unprepared' };
+  if (!input.fingerprint) return { state: 'unknown' };
+  if (!input.stampedSha) return { state: 'stale', reason: 'no docker-prepared.json on disk' };
+  if (input.stampedSha !== input.fingerprint) {
+    return {
+      state: 'stale',
+      reason:
+        `build context changed (was ${input.stampedSha.slice(0, 12)}, ` +
+        `now ${input.fingerprint.slice(0, 12)})`,
+    };
+  }
+  return { state: 'fresh' };
+}
+
+/**
+ * Cheap live check: would `ensureImage` bake on the next create? The only
+ * docker work is one `docker image inspect`; the rest hashes the ~15 build
+ * context files. Never builds, pulls, or writes the prepared stamp.
+ */
+export async function evaluateDockerBaseFreshness(
+  opts: { ref?: string; claudeInstall?: 'native' | 'npm'; contextDir?: string } = {},
+): Promise<DockerBaseFreshness> {
+  // Lazy import for the same circular-init reason as in ensureImage above.
+  const { computeDockerContextFingerprint, readPreparedDockerState } =
+    await import('./prepared-state.js');
+  const ref = opts.ref ?? DEFAULT_BOX_IMAGE;
+  const imagePresent = await imageExists(ref);
+  if (!imagePresent) return { state: 'unprepared' };
+  const claudeInstall = opts.claudeInstall ?? (await resolveClaudeInstallMode());
+  const raw = await computeDockerContextFingerprint({ contextDir: opts.contextDir });
+  return classifyDockerBaseFreshness({
+    imagePresent,
+    fingerprint: raw ? claudeInstallFingerprint(raw.contextSha256, claudeInstall) : null,
+    stampedSha: readPreparedDockerState()?.base?.contextSha256 ?? null,
+  });
+}
+

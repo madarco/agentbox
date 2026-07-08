@@ -110,8 +110,9 @@ export interface ProviderOption {
   // ?freshness=1) — computing it loads provider code + hashes the build context,
   // so it stays OFF the default fast path. 'stale' means `agentbox prepare
   // --provider <id>` should be re-run; 'unknown' = couldn't verify (e.g. a dev
-  // tree without a built runtime); absent = not requested or docker. Never set
-  // for docker (its base self-heals).
+  // tree without a built runtime); absent = not requested. Docker reports real
+  // freshness too ('unprepared'/'stale' = the next create will bake first) —
+  // it stays `configured: true` regardless, since its base self-heals.
   baseStatus?: 'fresh' | 'stale' | 'unprepared' | 'unknown';
   // Human-readable reason when baseStatus === 'stale' (the fingerprint delta).
   baseStaleReason?: string;

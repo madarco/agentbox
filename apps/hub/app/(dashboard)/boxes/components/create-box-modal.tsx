@@ -89,8 +89,52 @@ function CreateBoxModal({
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<string>('streaming');
   const [loginPhase, setLoginPhase] = useState<JobLoginState['phase'] | null>(null);
+  // Two-phase create: when the provider's base image needs baking, a prepare
+  // job runs first (bakeJobId) and the create fires on its `end: done`.
+  const [bakeJobId, setBakeJobId] = useState<string | null>(null);
+  // Cloud-provider stale base: the footer swaps to a rebuild-vs-use-existing
+  // choice (mirrors the CLI wizard's stale-base prompt).
+  const [staleChoice, setStaleChoice] = useState(false);
+  // Base freshness is off the getData() hot path — fetched once via the
+  // opt-in endpoint and merged onto the store providers (same pattern as
+  // the settings ProvidersSection).
+  const [freshness, setFreshness] = useState<Record<
+    string,
+    Pick<ProviderOption, 'baseStatus' | 'baseStaleReason' | 'jobId'>
+  > | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/v1/providers?freshness=1', { credentials: 'same-origin' });
+        if (!res.ok) return;
+        const j = (await res.json()) as { providers?: ProviderOption[] };
+        if (cancelled) return;
+        const map: Record<string, Pick<ProviderOption, 'baseStatus' | 'baseStaleReason' | 'jobId'>> = {};
+        for (const p of j.providers ?? []) {
+          map[p.id] = { baseStatus: p.baseStatus, baseStaleReason: p.baseStaleReason, jobId: p.jobId };
+        }
+        setFreshness(map);
+      } catch {
+        // Best-effort: without freshness the create simply bakes inline (docker self-heals).
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const selected = projects.find((p) => p.id === projectId) ?? project;
+  // `provider` state always holds a concrete id (init 'docker'), but its TYPE is optional.
+  const providerId = provider ?? 'docker';
+  const providerOption = providers.find((p) => p.id === providerId);
+  const providerFreshness = freshness?.[providerId];
+  // An in-flight bake job counts as "bake needed" too — the create must wait on it.
+  const bakeNeeded =
+    !!providerFreshness &&
+    (!!providerFreshness.jobId ||
+      providerFreshness.baseStatus === 'unprepared' ||
+      providerFreshness.baseStatus === 'stale');
 
   // Load the selected project's branches for the base-branch picker, and default
   // the base + setup-wizard toggle from the project. Re-runs when the project
@@ -126,6 +170,55 @@ function CreateBoxModal({
       setError('pick a project');
       return;
     }
+    if (bakeNeeded) {
+      // Docker auto-bakes (its base self-heals — same rule as the CLI); a
+      // stale CLOUD base gets the CLI wizard's rebuild-vs-use-existing choice.
+      // An in-flight bake is never re-asked — the create just waits on it.
+      if (providerId !== 'docker' && providerFreshness?.baseStatus === 'stale' && !providerFreshness.jobId) {
+        setStaleChoice(true);
+        return;
+      }
+      startBake();
+      return;
+    }
+    startCreate();
+  };
+
+  // Phase 1: bake the provider's base image (or attach to an in-flight bake).
+  // `startCreate` fires from the bake stream's `end: done`.
+  const startBake = () => {
+    setError(null);
+    const inFlight = providerFreshness?.jobId;
+    if (inFlight) {
+      setBakeJobId(inFlight);
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const res = await fetch(`/api/v1/providers/${encodeURIComponent(providerId)}/prepare`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'same-origin',
+          // No force: a fresh-again base becomes a fast no-op job; a stale
+          // fingerprint still triggers the rebuild.
+          body: JSON.stringify({}),
+        });
+        const j = (await res.json().catch(() => null)) as
+          | { jobId?: string; error?: { message?: string } }
+          | null;
+        if (!res.ok || !j?.jobId) {
+          setError(j?.error?.message ?? `base image build request failed (${res.status})`);
+          return;
+        }
+        setBakeJobId(j.jobId);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    });
+  };
+
+  const startCreate = () => {
+    setError(null);
     startTransition(async () => {
       const res = await createBoxAction({
         projectId,
@@ -151,17 +244,17 @@ function CreateBoxModal({
 
   return (
     // Widen the dialog while the build log streams so long lines are readable.
-    <Dialog onClose={onClose} className={jobId ? 'max-w-[900px]' : 'max-w-[560px]'}>
+    <Dialog onClose={onClose} className={jobId || bakeJobId ? 'max-w-[900px]' : 'max-w-[560px]'}>
       <DialogHeader>
         <DialogIcon>
           <Icons.box />
         </DialogIcon>
         <div>
-          <DialogTitle>Create box</DialogTitle>
+          <DialogTitle>{!jobId && bakeJobId ? 'Building base image' : 'Create box'}</DialogTitle>
           <DialogDescription>{selected ? selected.name : 'Start a box in a project'}</DialogDescription>
         </div>
         {/* Live job state next to the close button: pulsating while working, a pill when settled. */}
-        {jobId ? (
+        {jobId || bakeJobId ? (
           <div className="ml-auto mr-8 flex-none pt-0.5">
             <JobStatusBadge status={jobStatus} loginPhase={loginPhase} />
           </div>
@@ -175,6 +268,24 @@ function CreateBoxModal({
             onDone={() => router.refresh()}
             onLogin={(l) => setLoginPhase(l?.phase ?? null)}
           />
+        ) : bakeJobId ? (
+          // Phase 1: the base-image bake streams here; `end: done` fires the create,
+          // which swaps this for the create job's stream above.
+          <>
+            <p className="font-mono text-xs text-muted-foreground">
+              Building the {providerOption?.label ?? providerId} base image — one-time, can take several
+              minutes. The box is created automatically when it finishes.
+            </p>
+            <JobLogStream
+              jobId={bakeJobId}
+              onStatus={setJobStatus}
+              onDone={(status) => {
+                if (status === 'done') startCreate();
+                else setError(`base image build ${status}`);
+              }}
+            />
+            {error ? <div className="font-mono text-xs text-destructive">{error}</div> : null}
+          </>
         ) : (
           <>
             {!project ? (
@@ -199,6 +310,18 @@ function CreateBoxModal({
                 ))}
               </Select>
             </Field>
+            {bakeNeeded ? (
+              <p
+                className="-mt-2 font-mono text-xs text-amber-600 dark:text-amber-400"
+                title={providerFreshness?.baseStaleReason}
+              >
+                {providerFreshness?.jobId
+                  ? 'A base-image build is already running — the box will be created when it finishes.'
+                  : providerFreshness?.baseStatus === 'unprepared'
+                    ? 'First use of this provider: the base image will be downloaded or built first (can take 5–10 minutes).'
+                    : 'The base image is out of date and will be rebuilt first (can take 5–10 minutes).'}
+              </p>
+            ) : null}
             <Field label="Agent">
               <Select value={agent} onChange={(e) => setAgent(e.target.value as Agent)}>
                 <option value="claude">Claude</option>
@@ -287,14 +410,50 @@ function CreateBoxModal({
         )}
       </DialogBody>
       <DialogFooter>
-        {jobId ? (
+        {jobId || bakeJobId ? (
           <>
             {jobStatus === 'streaming' ? (
               <span className="mr-auto self-center font-mono text-xs text-muted-foreground">
-                The box + agent start in the background — you can close this.
+                {jobId
+                  ? 'The box + agent start in the background — you can close this.'
+                  : // The bake→create chain lives in this modal; closing it would
+                    // finish the bake server-side but never fire the create.
+                    'Keep this open — the box is created when the build finishes.'}
               </span>
             ) : null}
             <Button onClick={onClose}>Close</Button>
+          </>
+        ) : staleChoice ? (
+          // Cloud stale base: the CLI wizard's rebuild-vs-use-existing choice.
+          <>
+            <span
+              className="mr-auto self-center font-mono text-xs text-muted-foreground"
+              title={providerFreshness?.baseStaleReason}
+            >
+              The {providerOption?.label ?? providerId} base image is out of date.
+            </span>
+            <Button variant="outline" onClick={() => setStaleChoice(false)} disabled={pending}>
+              Cancel
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setStaleChoice(false);
+                startCreate();
+              }}
+              disabled={pending}
+            >
+              Use existing image
+            </Button>
+            <Button
+              onClick={() => {
+                setStaleChoice(false);
+                startBake();
+              }}
+              disabled={pending}
+            >
+              Rebuild &amp; create
+            </Button>
           </>
         ) : (
           <>

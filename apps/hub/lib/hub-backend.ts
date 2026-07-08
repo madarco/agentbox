@@ -459,11 +459,24 @@ const freshnessCache = new Map<ProviderKind, { at: number; stored: string; live:
 /**
  * Live base-image/snapshot freshness for one provider, mirroring the CLI's
  * `evaluateBaseFreshness` (apps/cli/src/checkpoint-lookup.ts) but reusing the
- * hub's own provider `IMPORTERS`. Docker self-heals → always fresh. Any failure
- * to compute the live fingerprint degrades to 'unknown' (never a false 'stale').
+ * hub's own provider `IMPORTERS`. Docker gets a real check too (unlike the
+ * CLI, which lets `ensureImage` self-heal silently): the tray/web create
+ * flows use `unprepared`/`stale` to announce the upcoming bake instead of
+ * hiding a multi-minute build inside the create job. Any failure to compute
+ * the live fingerprint degrades to 'unknown' (never a false 'stale').
  */
 async function providerBaseFreshness(id: ProviderKind, claudeInstall?: 'native' | 'npm'): Promise<BaseStatus> {
-  if (id === 'docker') return { state: 'fresh' };
+  if (id === 'docker') {
+    // Bypasses the cloud-fingerprint freshnessCache: the check is one
+    // `docker image inspect` plus hashing the staged context files, and
+    // freshness is only computed on the opt-in `?freshness=1` path.
+    try {
+      const { evaluateDockerBaseFreshness } = await import('@agentbox/sandbox-docker');
+      return await evaluateDockerBaseFreshness({ claudeInstall });
+    } catch {
+      return { state: 'unknown' };
+    }
+  }
   const stored = currentCloudBaseFingerprint(id);
   const cached = freshnessCache.get(id);
   // Reuse the memoized LIVE fingerprint only while both the stored fingerprint
@@ -499,7 +512,7 @@ async function listProvidersWithFreshness(base: ProviderOption[]): Promise<Provi
   }
   return Promise.all(
     base.map(async (p) => {
-      if (!isProviderKind(p.id) || p.id === 'docker') return p;
+      if (!isProviderKind(p.id)) return p;
       const fresh = await providerBaseFreshness(p.id, claudeInstall);
       return {
         ...p,

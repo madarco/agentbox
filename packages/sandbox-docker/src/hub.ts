@@ -16,6 +16,7 @@ import {
   shouldReclaimForVersion,
 } from './relay.js';
 import { detectEngine } from './sync/host-export.js';
+import { BUILD_CONTEXT_DIR } from './image.js';
 
 /**
  * `agentbox hub` lifecycle. The hub is the embedded relay + Next UI in ONE
@@ -287,6 +288,11 @@ async function spawnHub(
       AGENTBOX_CLI_ENTRY: cliEntry,
       // The hub is the localhost profile (token gate); bind loopback.
       AGENTBOX_HUB_HOST: HOST,
+      // The hub bundle ships no staged docker build context of its own, so its
+      // in-process docker base-freshness check couldn't fingerprint (degrading
+      // to 'unknown'). Hand it the CLI's resolved context so hub-side
+      // fingerprints match what the create/prepare workers compute.
+      AGENTBOX_DOCKER_CONTEXT: BUILD_CONTEXT_DIR,
     },
   });
   child.unref();

@@ -14,6 +14,13 @@ base image** directly from the hub, the same way they create boxes. This doc giv
 **dependency / blocker matrix** first (the crux — e.g. the "Vercel needs the Vercel CLI" concern),
 then the implementation plan.
 
+> **Update (2026-07):** `?freshness=1` now reports **real docker freshness** too
+> (`evaluateDockerBaseFreshness` in `@agentbox/sandbox-docker` — a read-only mirror of
+> `ensureImage`'s rebuild predicate; docker stays `configured: true`). The tray and the web
+> create modal consume it for a **two-phase create**: an `unprepared`/`stale` base runs the
+> prepare job first ("Building base image…", streamed) and chains into the create on
+> `end: done`; a stale *cloud* base asks Rebuild vs Use-Existing (mirrors the CLI wizard).
+
 **Decisions taken (user):**
 - Full scope = credential **login** *and* image **bake**; **all five** providers.
 - **All credentials are plain API-key / token fields** — a uniform "paste your key(s)" form per

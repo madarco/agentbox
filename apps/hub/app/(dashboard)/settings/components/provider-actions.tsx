@@ -88,6 +88,11 @@ function statusBadge(p: ProviderOption) {
         </Badge>
       );
     }
+    // Docker: configured stays true (create self-heals) but the base image
+    // hasn't been built yet — the first create will bake it.
+    if (p.baseStatus === 'unprepared') {
+      return <Badge className="gap-1.5 normal-case">needs bake</Badge>;
+    }
     return (
       <Badge className="badge-run gap-1.5 normal-case">
         <span className="badge-dot" />
