@@ -141,7 +141,7 @@ export function Access({ box }: { box: Box }) {
           <div className="flex flex-wrap items-center gap-3 px-4.5 p-3.5">
             <div className="min-w-[150px] flex-1">
               <div className="text-[13.5px] font-medium">Apps</div>
-              <div className="mt-0.5 text-[11.5px] text-muted-foreground">Open the box in a host app</div>
+              <div className="mt-0.5 text-[11.5px] text-muted-foreground">Open the box project from the host</div>
             </div>
             <div className="flex flex-none flex-wrap justify-end gap-1.5">
               {eligible.map(({ app, label, icon }) => {
