@@ -30,6 +30,25 @@ export interface Box {
   // box has no such endpoint or it isn't reachable (e.g. paused/stopped).
   webUrl?: string | null;
   vncUrl?: string | null;
+  // ── Raw host-side fields (host/localhost topology only; the hosted/Postgres
+  // source leaves them all undefined). Native clients (the tray app) key off
+  // these instead of the UI-normalized fields above. ──
+  // Raw provider runtime state. ABSENT on synthetic job boxes — its presence is
+  // how a client tells a real box whose agent errored (state 'running', status
+  // 'error') from a failed create job (no state). 'destroyed' exists only for
+  // assignability from BoxState; the list never emits it.
+  state?: 'running' | 'paused' | 'stopped' | 'missing' | 'destroyed';
+  name?: string;
+  // Absolute host path of the project — host topology only, never hosted.
+  projectRoot?: string;
+  projectIndex?: number;
+  vncEnabled?: boolean;
+  gitWorktrees?: Array<{ kind?: string; branch?: string }>;
+  claudeSessionTitle?: string;
+  codexSessionTitle?: string;
+  opencodeSessionTitle?: string;
+  claudeActivity?: string;
+  codexActivity?: string;
 }
 
 export interface Project {

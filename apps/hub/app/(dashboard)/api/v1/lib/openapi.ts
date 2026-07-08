@@ -100,10 +100,11 @@ export function buildOpenApi(): Record<string, unknown> {
         post: {
           tags: ['Boxes'],
           summary: 'Run a lifecycle action',
-          description: 'One of pause | resume | stop | destroy.',
+          description:
+            'One of start | pause | resume | stop | destroy. start brings a stopped box back up (resumes if paused, no-op if already running); it does not restart the agent session — that happens on the next attach.',
           parameters: [
             { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
-            { name: 'action', in: 'path', required: true, schema: { type: 'string', enum: ['pause', 'resume', 'stop', 'destroy'] } },
+            { name: 'action', in: 'path', required: true, schema: { type: 'string', enum: ['start', 'pause', 'resume', 'stop', 'destroy'] } },
           ],
           responses: {
             '200': { description: 'Done', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
@@ -448,6 +449,29 @@ export function buildOpenApi(): Record<string, unknown> {
             commits: { type: ['number', 'null'] },
             filesTouched: { type: ['number', 'null'] },
             error: { type: ['string', 'null'] },
+            displayName: { type: ['string', 'null'], description: 'Cosmetic user-set label (rename); null when unset' },
+            webUrl: { type: ['string', 'null'], description: 'Host-openable web-service URL; null when absent/unreachable (e.g. paused)' },
+            vncUrl: { type: ['string', 'null'], description: 'Host-openable VNC desktop URL; null when absent/unreachable' },
+            state: {
+              type: 'string',
+              enum: ['running', 'paused', 'stopped', 'missing'],
+              description:
+                'Raw provider runtime state (host topology only). Absent on synthetic creating/error rows — presence distinguishes a real box whose agent errored from a failed create job.',
+            },
+            name: { type: 'string' },
+            provider: { type: 'string', description: "Raw provider id ('docker', 'daytona', …; plugin ids possible)" },
+            projectRoot: { type: 'string', description: 'Absolute host path of the project. Host topology only — never emitted by the hosted plane' },
+            projectIndex: { type: 'number' },
+            vncEnabled: { type: 'boolean' },
+            gitWorktrees: {
+              type: 'array',
+              items: { type: 'object', properties: { kind: { type: 'string' }, branch: { type: 'string' } } },
+            },
+            claudeSessionTitle: { type: 'string' },
+            codexSessionTitle: { type: 'string' },
+            opencodeSessionTitle: { type: 'string' },
+            claudeActivity: { type: 'string', description: 'working | idle | waiting | end-plan | question | compacting | error | unknown' },
+            codexActivity: { type: 'string' },
           },
           required: ['id', 'projectId', 'status', 'agent'],
         },

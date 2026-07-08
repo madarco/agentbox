@@ -1,9 +1,9 @@
-// POST /api/v1/boxes/:id/:action — lifecycle: pause | resume | stop | destroy.
+// POST /api/v1/boxes/:id/:action — lifecycle: start | pause | resume | stop | destroy.
 // Mutations need the in-process host backend; the Postgres/plane path 503s (hosted
 // writes are a documented follow-up).
 import { backendOrNull } from '../../../lib/backend';
 import { fail, failFromAction, ok } from '../../../lib/envelope';
-import { isLifecycleAction } from '../../../lib/validate';
+import { isLifecycleAction, LIFECYCLE_ACTIONS } from '../../../lib/validate';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,7 +14,7 @@ export async function POST(
 ): Promise<Response> {
   const { id, action } = await ctx.params;
   if (!isLifecycleAction(action)) {
-    return fail('invalid_request', `unknown action: ${action}`, { allowed: ['pause', 'resume', 'stop', 'destroy'] });
+    return fail('invalid_request', `unknown action: ${action}`, { allowed: [...LIFECYCLE_ACTIONS] });
   }
   // In-flight create jobs surface in GET /boxes as synthetic `creating`/`error`
   // boxes with a `job:` id — they have no real container yet, so lifecycle would

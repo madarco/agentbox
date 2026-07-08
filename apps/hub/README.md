@@ -44,7 +44,7 @@ statuses, no schema).
 - **Envelope:** success returns the resource directly; errors are
   `{ error: { code, message, details? } }` with a matching HTTP status.
 - **Routes:** `GET /boxes`, `GET /boxes/:id`,
-  `POST /boxes/:id/{pause,resume,stop,destroy}`, `POST /boxes` (create →
+  `POST /boxes/:id/{start,pause,resume,stop,destroy}`, `POST /boxes` (create →
   `202 {jobId}`), `GET|POST /projects`, `GET /approvals`,
   `POST /approvals/:id/answer`, `GET /jobs/:id`, `GET /jobs/:id/logs` (SSE),
   `GET /health`, `GET /openapi.json` (OpenAPI 3.1), `GET /docs` (Scalar).

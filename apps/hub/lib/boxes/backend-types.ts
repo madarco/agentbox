@@ -157,6 +157,9 @@ export interface HubBackend {
   // authMode is an env-derived concern layered on by source.ts, not the host
   // backend — so the backend produces everything else.
   getData(): Promise<Omit<HubState, 'authMode'>>;
+  // Start a fully-stopped box (resumes when paused, no-op when running). Does
+  // not restore agent tmux sessions — that's a CLI-only concern.
+  start(id: string): Promise<ActionResult>;
   pause(id: string): Promise<ActionResult>;
   resume(id: string): Promise<ActionResult>;
   stop(id: string): Promise<ActionResult>;

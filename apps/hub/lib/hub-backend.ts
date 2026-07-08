@@ -169,6 +169,18 @@ function mapBox(b: ListedBox): Box {
     error: status === 'error' ? (b.claudeSessionTitle ?? 'Agent reported an error') : null,
     webUrl: eps.find((e) => e.kind === 'web')?.url ?? null,
     vncUrl: eps.find((e) => e.kind === 'vnc')?.url ?? null,
+    // Raw host-side fields for native clients (tray) — see Box for semantics.
+    state: b.state,
+    name: b.name,
+    projectRoot: root,
+    projectIndex: b.projectIndex,
+    vncEnabled: b.vncEnabled ?? false,
+    gitWorktrees: b.gitWorktrees?.map((w) => ({ kind: w.kind, branch: w.branch })),
+    claudeSessionTitle: b.claudeSessionTitle,
+    codexSessionTitle: b.codexSessionTitle,
+    opencodeSessionTitle: b.opencodeSessionTitle,
+    claudeActivity: b.claudeActivity,
+    codexActivity: b.codexActivity,
   };
 }
 
@@ -323,6 +335,10 @@ function mapJobToBox(job: QueueJob, status: BoxStatus): Box {
     commits: null,
     filesTouched: null,
     error: status === 'error' ? (job.reason ?? 'create failed') : null,
+    // Raw host-side fields so native clients can group/label the synthetic row.
+    // `state` is deliberately absent — that's the synthetic-box marker.
+    name: job.boxName,
+    projectRoot: root,
   };
 }
 
@@ -882,6 +898,19 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     async providersWithFreshness(): Promise<ProviderOption[]> {
       return listProvidersWithFreshness(listProviders(await loadQueue()));
     },
+    start: (id) =>
+      runLifecycle(id, async (box, provider) => {
+        // Mirrors the CLI dashboard's resumeBox: docker `start` rejects a paused
+        // container, so probe first. No-op when already running (idempotent).
+        // Unlike CLI `agentbox start` this does not restore agent tmux sessions
+        // (restoreAgentSessions is CLI-only) — the agent restarts on next attach.
+        const state = await provider.probeState(box);
+        if (state === 'running') return;
+        if (state === 'paused') await provider.resume(box);
+        else await provider.start(box);
+        // Refresh the box's SSH-config alias now it's back online (IP may have changed).
+        await hubWriteSshConfig(box, provider);
+      }),
     pause: (id) => runLifecycle(id, (box, provider) => provider.pause(box)),
     resume: (id) =>
       runLifecycle(id, async (box, provider) => {
