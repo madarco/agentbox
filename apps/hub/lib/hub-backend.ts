@@ -66,8 +66,12 @@ import type {
   DirEntry,
   GitInfo,
   HubBackend,
+  OpenInApp,
+  OpenTargets,
+  OpenTargetsReport,
   ServicesResult,
 } from './boxes/backend-types';
+import { hubProfile } from './auth-config';
 import type { Approval, Box, BoxStatus, GithubState, HubState, Project, ProviderOption, User } from './boxes/types';
 
 /*
@@ -159,6 +163,7 @@ function mapBox(b: ListedBox): Box {
     createdAt,
     lastActivity: createdAt,
     host: hostLabel(b),
+    provider: b.provider ?? 'docker',
     commits: null,
     filesTouched: null,
     error: status === 'error' ? (b.claudeSessionTitle ?? 'Agent reported an error') : null,
@@ -314,6 +319,7 @@ function mapJobToBox(job: QueueJob, status: BoxStatus): Box {
     createdAt,
     lastActivity: createdAt,
     host: job.providerName === 'docker' ? 'local · docker' : job.providerName,
+    provider: job.providerName ?? 'docker',
     commits: null,
     filesTouched: null,
     error: status === 'error' ? (job.reason ?? 'create failed') : null,
@@ -777,6 +783,60 @@ function parseGitStatus(out: string): GitInfo {
   return { ok: true, branch: branch === '(detached)' ? undefined : branch, dirty, ahead, behind };
 }
 
+// ── host "open in" launchers ──
+// These re-shell the installed CLI (`agentbox open ...`), which owns the SSH
+// alias / codex:// deep link / terminal-spawn / IDE-launch logic — the same
+// pattern the relay uses for cp/checkpoint host actions (host-actions.ts). They
+// launch host GUI apps, so they only work on a localhost hub on macOS.
+
+/** Whether this hub can launch host GUI apps: the user's own Mac, not a remote profile. */
+function canOpenInHostApps(): boolean {
+  return hubProfile() === 'localhost' && process.platform === 'darwin';
+}
+
+/**
+ * Turn an execFile rejection from a re-shelled `agentbox` command into a
+ * human-readable error. The CLI reports failures through clack `log.error`,
+ * which lands on stdout wrapped in gutter glyphs and ANSI codes, so prefer
+ * stdout over stderr, strip the decoration, and drop empty lines.
+ */
+function cleanCliError(e: { stderr?: string; stdout?: string; message?: string }): string {
+  const raw = e.stdout?.trim() || e.stderr?.trim() || e.message || 'command failed';
+  const cleaned = raw
+    .replace(/[\u0000-\u001f]+/g, '\n') // ANSI/control bytes (incl. ESC) -> line breaks
+    .replace(/\[[0-9;]*m/g, '') // leftover ANSI colour codes
+    .split('\n')
+    .map((line) => line.replace(/^[^\p{L}\p{N}'"(]+/u, '').trim()) // drop leading gutter glyphs/punct
+    .filter((line) => line.length > 0)
+    .join(' ');
+  return cleaned || 'command failed';
+}
+
+// Cache the target probe: it spawns a `node` process (`open --targets`), and app
+// installs change rarely, so a page load shouldn't re-spawn it every time.
+const OPEN_TARGETS_TTL_MS = 60_000;
+let openTargetsCache: { at: number; value: OpenTargetsReport } | null = null;
+
+/** Probe installed host apps via the CLI's `open --targets --json` (cached). */
+async function probeOpenTargets(): Promise<OpenTargetsReport | null> {
+  const now = Date.now();
+  if (openTargetsCache && now - openTargetsCache.at < OPEN_TARGETS_TTL_MS) {
+    return openTargetsCache.value;
+  }
+  const entry = process.env['AGENTBOX_CLI_ENTRY'];
+  if (!entry) return null;
+  try {
+    const { stdout } = await execFileAsync(process.execPath, [entry, 'open', '--targets', '--json'], {
+      timeout: 10_000,
+    });
+    const value = JSON.parse(stdout) as OpenTargetsReport;
+    openTargetsCache = { at: now, value };
+    return value;
+  } catch {
+    return null;
+  }
+}
+
 export function createHubBackend(handle: RelayServerHandle): HubBackend {
   return {
     // authMode is layered on by source.ts (an env-derived concern), so the host
@@ -1087,6 +1147,33 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         return failed.length > 0 ? { ok: false, error: `failed to restart: ${failed.join(', ')}` } : { ok: true };
       } catch (err) {
         return { ok: false, error: errMsg(err) };
+      }
+    },
+
+    async openTargets(): Promise<OpenTargets> {
+      if (!canOpenInHostApps()) return { supported: false, targets: null };
+      return { supported: true, targets: await probeOpenTargets() };
+    },
+
+    async openIn(id, app: OpenInApp): Promise<ActionResult> {
+      if (!canOpenInHostApps()) {
+        return { ok: false, error: 'open-in actions require a local hub running on macOS' };
+      }
+      const entry = process.env['AGENTBOX_CLI_ENTRY'];
+      if (!entry) return { ok: false, error: 'hub is missing AGENTBOX_CLI_ENTRY; cannot launch host apps' };
+      try {
+        // Re-shell `agentbox open <id> --in <app>` (routes vscode -> code, the
+        // rest to their host-app launchers). It launches and returns; the timeout
+        // guards against a hung launcher, not the app staying open.
+        await execFileAsync(process.execPath, [entry, 'open', id, '--in', app], { timeout: 20_000 });
+        return { ok: true };
+      } catch (err) {
+        // execFile rejects on non-zero exit. The CLI prints its real error via
+        // clack (stdout, with gutter glyphs), not stderr — clean that up so the
+        // UI shows the reason (e.g. the codex "only Hetzner boxes qualify" gate)
+        // rather than execFile's generic "Command failed: node …".
+        const e = err as { stderr?: string; stdout?: string; message?: string };
+        return { ok: false, error: cleanCliError(e) };
       }
     },
   };

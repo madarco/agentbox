@@ -201,6 +201,71 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/boxes/{id}/open': {
+        post: {
+          tags: ['Box services'],
+          summary: 'Open the box in a host app',
+          description:
+            'Launch the box in a host GUI app (Codex, VS Code/Cursor, cmux, Herdr, iTerm2) by re-shelling `agentbox open --in <app>`. Only works on a localhost hub running on macOS; a remote hub / non-macOS host refuses. An app must be installed and provider-eligible (e.g. Codex is Hetzner-only) — see GET /open-targets.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { app: { type: 'string', enum: ['codex', 'herdr', 'cmux', 'vscode', 'iterm2'] } },
+                  required: ['app'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Launched', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/open-targets': {
+        get: {
+          tags: ['Box services'],
+          summary: 'Which host apps this hub can open a box in',
+          description:
+            'Reports whether the hub can launch host GUI apps (`supported` — true only on a localhost hub on macOS) and, if so, which of Codex/Herdr/cmux/VS Code/iTerm2 are installed plus their provider eligibility. Backs the box detail page "Apps" launchers.',
+          responses: {
+            '200': {
+              description: 'Open targets',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      supported: { type: 'boolean' },
+                      targets: {
+                        type: ['object', 'null'],
+                        additionalProperties: {
+                          type: 'object',
+                          properties: {
+                            available: { type: 'boolean' },
+                            providers: { type: 'array', items: { type: 'string' } },
+                          },
+                          required: ['available'],
+                        },
+                      },
+                    },
+                    required: ['supported', 'targets'],
+                  },
+                },
+              },
+            },
+            '401': errorResponse,
+          },
+        },
+      },
       '/projects': {
         get: {
           tags: ['Projects'],

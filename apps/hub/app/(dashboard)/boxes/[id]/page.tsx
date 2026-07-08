@@ -71,12 +71,9 @@ export default function BoxDetailPage() {
         <Stat k="Last activity" v={<Ago ms={box.lastActivity} />} mono />
       </StatGrid>
 
-      {box.webUrl || box.vncUrl ? (
-        <>
-          <SectionLabel>Access</SectionLabel>
-          <Access webUrl={box.webUrl} vncUrl={box.vncUrl} />
-        </>
-      ) : null}
+      {/* Access owns its "Access" heading and self-hides when the box has no
+          web/VNC endpoint and no launchable host app. */}
+      <Access box={box} />
 
       <SectionLabel>Git operations</SectionLabel>
       <GitActions box={box} />

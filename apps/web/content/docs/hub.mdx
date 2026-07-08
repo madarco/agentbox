@@ -25,11 +25,15 @@ That starts the hub (if it isn't already running) and opens it in your browser a
   (running / paused / stopped / error) and per-box **pause / resume / stop /
   destroy** controls.
 - **Box detail** — a box's task, agent, branch, host, and timestamps, plus common
-  box operations: **Git** (pull, push, [push to the host repo only](/docs/sync-and-git),
+  box operations: **Access** (open the box's [web / VNC URL](/docs/web-apps-and-tunnels),
+  and, on a local hub running on macOS, an **Apps** row that opens the box in a host
+  app — Codex, VS Code / Cursor, cmux, Herdr, or iTerm2, whichever are installed and
+  supported for the box's provider; the same as [`agentbox open --in`](/docs/access-your-box)),
+  **Git** (pull, push, [push to the host repo only](/docs/sync-and-git),
   change branch, create a new `agentbox/*` branch) and **Services** (live state of the
   box's [`agentbox.yaml` services](/docs/services-and-tasks), with restart-one and
   restart-all). The same operations are on the [REST API](/docs/api) and the
-  [CLI](/docs/cli) (`agentbox git`, `agentbox services`).
+  [CLI](/docs/cli) (`agentbox git`, `agentbox services`, `agentbox open`).
 - **Approvals** — the host-action requests a box is blocked on (a `git push` to a
   protected branch, `cp`, `download`, gh/integration writes). **Approve** unblocks
   the box; **Deny** returns an error to it. This is the same gate the relay prompts

@@ -144,6 +144,24 @@ export function isGitOp(v: string): v is GitOp {
   return (GIT_OPS as readonly string[]).includes(v);
 }
 
+// Host apps a box can be launched in (mirrors OPEN_IN_APPS in the CLI's
+// _open-in.ts; hardcoded to keep @agentbox/* out of the Next bundle).
+export const OPEN_IN_APPS = ['codex', 'herdr', 'cmux', 'vscode', 'iterm2'] as const;
+export type OpenInApp = (typeof OPEN_IN_APPS)[number];
+
+export function isOpenInApp(v: string): v is OpenInApp {
+  return (OPEN_IN_APPS as readonly string[]).includes(v);
+}
+
+export function parseOpenIn(body: unknown): Parsed<{ app: OpenInApp }> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const { app } = body;
+  if (typeof app !== 'string' || !isOpenInApp(app)) {
+    return { ok: false, message: `app must be one of ${OPEN_IN_APPS.join(', ')}`, details: { got: app } };
+  }
+  return { ok: true, value: { app } };
+}
+
 function optionalString(v: unknown, field: string): Parsed<string | undefined> {
   if (v === undefined) return { ok: true, value: undefined };
   if (typeof v !== 'string') return { ok: false, message: `${field} must be a string` };

@@ -81,6 +81,8 @@ function mapBox(r: Registration, s: Snapshot | undefined): Box {
     createdAt,
     lastActivity: createdAt,
     host: r.backend ? `${r.kind ?? 'cloud'} · ${r.backend}` : (r.kind ?? 'cloud'),
+    // Hosted source never offers host "open in" (remote hub) — value is informational.
+    provider: r.kind ?? 'docker',
     commits: null,
     filesTouched: null,
     error: deriveStatus(s) === 'error' ? (claude?.sessionTitle ?? 'Agent reported an error') : null,

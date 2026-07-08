@@ -9,6 +9,29 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 // output; on failure `error` is the trimmed stderr (or a resolve error).
 export type BoxOpResult = { ok: true; stdout?: string; stderr?: string } | { ok: false; error: string };
 
+// Host apps a box can be opened in (`agentbox open --in <app>`). Mirrors the
+// CLI's OPEN_IN_APPS (apps/cli/src/commands/_open-in.ts); duplicated here to keep
+// @agentbox/* packages out of the Next bundle, like AGENTS/PROVIDERS in validate.ts.
+export type OpenInApp = 'codex' | 'herdr' | 'cmux' | 'vscode' | 'iterm2';
+
+// One app's install/eligibility, as reported by the CLI's `open --targets --json`.
+// `providers` (when present) limits the app to boxes on those providers (e.g.
+// codex -> ['hetzner']); omitted means any provider.
+export interface OpenTargetInfo {
+  available: boolean;
+  providers?: string[];
+}
+
+export type OpenTargetsReport = Record<OpenInApp, OpenTargetInfo>;
+
+// `supported` is false when the hub can't launch host GUI apps at all (a remote
+// hub profile, or a non-macOS host) — the UI then shows no Open-in controls.
+// `targets` is null in that case, or when the host probe failed.
+export interface OpenTargets {
+  supported: boolean;
+  targets: OpenTargetsReport | null;
+}
+
 // One supervised service, normalized from either a live `agentbox-ctl status`
 // pull or the persisted box-status snapshot. Fields absent in the persisted
 // snapshot (pid/restarts/lastExitCode/command) are filled with nulls/defaults.
@@ -198,4 +221,13 @@ export interface HubBackend {
   getServices(id: string): Promise<ServicesResult>;
   // Restart one service by name, or every service when name is omitted.
   restartService(id: string, name?: string): Promise<BoxOpResult>;
+
+  // ── host "open in" launchers (localhost hub on macOS only) ──
+  // Which host apps are installed + provider-eligible, for the detail-page menu.
+  // `supported: false` when the hub can't launch host GUIs (remote/non-macOS).
+  openTargets(): Promise<OpenTargets>;
+  // Launch the box in a host app by re-shelling the installed `agentbox open
+  // <id> --in <app>` (which owns all the SSH-alias / deep-link / terminal-spawn
+  // logic). Refuses when openTargets() would report unsupported.
+  openIn(id: string, app: OpenInApp): Promise<ActionResult>;
 }

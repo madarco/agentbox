@@ -19,6 +19,9 @@ export interface Box {
   createdAt: number;
   lastActivity: number;
   host: string;
+  // Sandbox provider (docker | daytona | hetzner | vercel | e2b). Drives which
+  // host "open in" targets are offered for this box on the detail page.
+  provider: string;
   // null when the metric has no host-side source yet (rendered as "—").
   commits: number | null;
   filesTouched: number | null;
