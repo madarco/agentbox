@@ -10,12 +10,13 @@ function stateWithLatest(npmLatest?: string): UpdateState {
 }
 
 describe('nudgeEligible', () => {
-  it('excludes dev builds and npx, keeps direct global installs', () => {
+  it('only nudges npm/pnpm installs with a real version', () => {
     expect(nudgeEligible('npm', '0.22.1')).toBe(true);
     expect(nudgeEligible('pnpm', '0.22.1')).toBe(true);
-    // A globally-installed bin invoked from the shell has no npm user-agent
-    // and classifies as `direct` — the common case must stay eligible.
-    expect(nudgeEligible('direct', '0.22.1')).toBe(true);
+    // `direct` means a checkout run via symlink — self-update would skip the
+    // package step, so pointing at it would be a dead end. (A global bin
+    // invoked from the shell classifies as npm/pnpm via symlink resolution.)
+    expect(nudgeEligible('direct', '0.22.1')).toBe(false);
     expect(nudgeEligible('npx', '0.22.1')).toBe(false);
     expect(nudgeEligible('npm', '0.0.0-dev')).toBe(false);
   });

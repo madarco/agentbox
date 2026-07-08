@@ -26,14 +26,16 @@ const PKG = '@madarco/agentbox';
 const REGISTRY_URL = `https://registry.npmjs.org/${PKG}/latest`;
 
 /**
- * The nudge (and the registry check feeding it) only makes sense for an
- * installed release build: a dev checkout reports `0.0.0-dev`, and npx always
- * resolves latest anyway. A globally-installed bin invoked directly from the
- * shell carries no npm user-agent and classifies as `direct` — that's the
- * common case, so `direct` with a real version stays eligible.
+ * The nudge (and the registry check feeding it) only makes sense when
+ * `agentbox self-update` can actually act: an npm/pnpm global install with a
+ * real release version. A dev checkout reports `0.0.0-dev`, npx always
+ * resolves latest anyway, and `direct` (a checkout run via symlink) has no
+ * global install to update — nudging those would point at a self-update that
+ * skips. `detectExecutionMethod` resolves the bin symlink, so a global
+ * install invoked straight from the shell classifies as npm/pnpm.
  */
 export function nudgeEligible(method: ExecMethod, version: string): boolean {
-  return version !== '0.0.0-dev' && method !== 'npx';
+  return version !== '0.0.0-dev' && (method === 'npm' || method === 'pnpm');
 }
 
 /**

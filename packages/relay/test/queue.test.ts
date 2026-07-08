@@ -373,6 +373,16 @@ describe('startQueueLoop working-agent gate', () => {
     ...over,
   });
 
+  // Positive assertions poll instead of sleeping a fixed 40ms — on a loaded
+  // CI runner the 10ms loop's first tick can land after the window (flaked
+  // repeatedly on GitHub Actions). Negative assertions keep the short sleep.
+  const waitFor = async (cond: () => boolean, timeoutMs = 2000): Promise<void> => {
+    const start = Date.now();
+    while (!cond() && Date.now() - start < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  };
+
   it('does not start a job when the working count is at the ceiling', async () => {
     const prefix = `qvitest-wgate-ceil-${String(process.pid)}-`;
     const id = `${prefix}1`;
@@ -418,7 +428,7 @@ describe('startQueueLoop working-agent gate', () => {
         },
         intervalMs: 10,
       });
-      await new Promise((r) => setTimeout(r, 40));
+      await waitFor(() => spawned.includes(id));
       await handle.stop();
       expect(spawned).toContain(id);
     } finally {
@@ -448,7 +458,7 @@ describe('startQueueLoop working-agent gate', () => {
         spawnWorker: async () => 123,
         intervalMs: 10,
       });
-      await new Promise((r) => setTimeout(r, 40));
+      await waitFor(() => runningCalled);
       await handle.stop();
       expect(runningCalled).toBe(true);
       expect(workingCalled).toBe(false);
@@ -475,7 +485,7 @@ describe('startQueueLoop working-agent gate', () => {
         spawnWorker: async () => 123,
         intervalMs: 10,
       });
-      await new Promise((r) => setTimeout(r, 40));
+      await waitFor(() => runningCalled);
       await handle.stop();
       expect(runningCalled).toBe(true);
       expect(logs.some((l) => l.includes('registry/statusStore not wired'))).toBe(true);
