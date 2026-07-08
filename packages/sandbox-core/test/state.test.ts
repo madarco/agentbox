@@ -75,6 +75,64 @@ describe('state.ts', () => {
     expect(reloaded.boxes[0]?.provider).toBe('docker');
   });
 
+  it('backfills top-level `ssh` from a legacy `cloud.ssh` on read', async () => {
+    // Records written before the SSH target moved to `box.ssh` carry it under
+    // `box.cloud.ssh`; readState must backfill so the managed ~/.ssh/config alias
+    // survives (syncAgentboxSshConfig only reads `box.ssh`).
+    const legacy = {
+      version: 1,
+      boxes: [
+        {
+          id: 'hz000001',
+          name: 'hz',
+          provider: 'hetzner',
+          container: 'cloud:hz000001',
+          image: 'snap',
+          workspacePath: '/tmp/ws',
+          createdAt: '2026-05-12T12:00:00.000Z',
+          cloud: {
+            backend: 'hetzner',
+            sandboxId: 'hz000001',
+            ssh: { host: '1.2.3.4', user: 'vscode', identityFile: '/box/hz/key' },
+          },
+        },
+      ],
+    };
+    await writeState(legacy as unknown as Parameters<typeof writeState>[0], file);
+    const reloaded = await readState(file);
+    expect(reloaded.boxes[0]?.ssh).toEqual({
+      host: '1.2.3.4',
+      user: 'vscode',
+      identityFile: '/box/hz/key',
+    });
+  });
+
+  it('does not clobber an existing top-level `ssh` with the legacy copy', async () => {
+    const box = {
+      version: 1,
+      boxes: [
+        {
+          id: 'hz000002',
+          name: 'hz2',
+          provider: 'hetzner',
+          container: 'cloud:hz000002',
+          image: 'snap',
+          workspacePath: '/tmp/ws',
+          createdAt: '2026-05-12T12:00:00.000Z',
+          ssh: { host: '9.9.9.9', user: 'vscode', identityFile: '/new/key' },
+          cloud: {
+            backend: 'hetzner',
+            sandboxId: 'hz000002',
+            ssh: { host: '1.1.1.1', user: 'vscode', identityFile: '/old/key' },
+          },
+        },
+      ],
+    };
+    await writeState(box as unknown as Parameters<typeof writeState>[0], file);
+    const reloaded = await readState(file);
+    expect(reloaded.boxes[0]?.ssh?.host).toBe('9.9.9.9');
+  });
+
   it('preserves an explicit non-docker provider on read', async () => {
     const box: BoxRecord = {
       id: 'cloud001',

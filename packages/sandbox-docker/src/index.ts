@@ -370,6 +370,7 @@ export {
   openBoxInFinder,
   pauseBox,
   pruneBoxes,
+  refreshBoxSshd,
   resyncBox,
   snapshotPresent,
   startBox,

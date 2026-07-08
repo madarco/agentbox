@@ -2,7 +2,13 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/prom
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { BoxRecord, DockerBoxFields, FindBoxResult, StateFile } from '@agentbox/core';
+import type {
+  BoxRecord,
+  DockerBoxFields,
+  FindBoxResult,
+  SshTargetRecord,
+  StateFile,
+} from '@agentbox/core';
 
 export const STATE_DIR = join(homedir(), '.agentbox');
 export const STATE_FILE = join(STATE_DIR, 'state.json');
@@ -97,6 +103,12 @@ export async function readState(path: string = STATE_FILE): Promise<StateFile> {
       if ((b.provider ?? 'docker') === 'docker' && !b.docker) {
         b.docker = projectDockerFields(b);
       }
+      // The SSH target moved from `box.cloud.ssh` to top-level `box.ssh`.
+      // Backfill on read so an already-created box (e.g. a Hetzner box) keeps its
+      // `~/.agentbox/ssh/config` alias — `syncAgentboxSshConfig` only reads
+      // `box.ssh`, and it would otherwise vanish until the box is next started.
+      const legacySsh = (b.cloud as { ssh?: SshTargetRecord } | undefined)?.ssh;
+      if (!b.ssh && legacySsh) b.ssh = legacySsh;
     }
     return parsed;
   } catch (err) {

@@ -12,7 +12,13 @@ import {
   resolveCloudSshTarget,
   syncAgentboxSshConfig,
 } from '@agentbox/sandbox-core';
-import { inspectBox, openBoxInFinder, startBox, unpauseBox } from '@agentbox/sandbox-docker';
+import {
+  inspectBox,
+  openBoxInFinder,
+  refreshBoxSshd,
+  startBox,
+  unpauseBox,
+} from '@agentbox/sandbox-docker';
 import { Command, InvalidArgumentError } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { hyperlink } from '../hyperlink.js';
@@ -315,9 +321,11 @@ async function openInTerminalApp(box: BoxRecord, host: 'herdr' | 'cmux' | 'iterm
 }
 
 /**
- * Bring a docker box online (unpause/start) and return the freshest record.
- * `startBox` re-resolves the ephemeral sshd host port and re-syncs
- * `~/.ssh/config`, so its returned record carries the live `ssh` target.
+ * Bring a docker box online (unpause/start) and return the freshest record with
+ * a live SSH target. `startBox` already re-resolves the ephemeral sshd host port;
+ * for a box that is *already running*, we still `refreshBoxSshd` because a
+ * `docker restart` (or docker daemon restart) outside `agentbox start`
+ * reallocates the `-p 0:22` host port, leaving the recorded `Port` stale.
  */
 async function bringDockerBoxOnline(box: BoxRecord): Promise<BoxRecord> {
   const insp = await inspectBox(box.id);
@@ -331,7 +339,8 @@ async function bringDockerBoxOnline(box: BoxRecord): Promise<BoxRecord> {
   } else if (insp.state === 'missing') {
     throw new Error(`box ${box.name} has no container; was it destroyed?`);
   }
-  return box;
+  // Already running (or just unpaused): re-verify the sshd port is current.
+  return await refreshBoxSshd(box);
 }
 
 /**

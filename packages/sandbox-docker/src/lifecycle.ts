@@ -297,6 +297,40 @@ export async function resyncBox(
  * VNC + web get re-allocated by Docker on `start`, so we re-resolve and
  * persist those too.
  */
+/**
+ * Ensure the box's localhost sshd is up and its recorded loopback port is
+ * current, then re-sync `~/.agentbox/ssh/config`. Called on `start` (the daemon
+ * died with the container) AND before any `agentbox open`/`--in codex` on a box
+ * that is *already running* — Docker reallocates the ephemeral `-p 0:22` host
+ * port whenever the container restarts, and a `docker restart` (or daemon
+ * restart) outside `agentbox start` leaves the recorded `Port` stale. Idempotent:
+ * `mintSshKey` reuses the on-disk key, install + launch are no-ops when up, and
+ * we only re-persist + re-sync when the resolved port actually changed.
+ * Best-effort — mutates and returns `box`.
+ */
+export async function refreshBoxSshd(box: BoxRecord): Promise<BoxRecord> {
+  if (!box.sshEnabled) return box;
+  const ssh = await setUpBoxSshd(
+    box.container,
+    join(boxRunDirFor(box), 'ssh'),
+    `agentbox-${box.name}-${box.id}`,
+  );
+  if (!ssh.sshHostPort) return box;
+  const port = ssh.sshHostPort;
+  const changed = port !== box.sshHostPort || box.ssh?.port !== port;
+  box.sshHostPort = port;
+  box.ssh = { host: '127.0.0.1', user: 'vscode', identityFile: ssh.identityFile, port };
+  if (changed) {
+    await recordBox(box);
+    try {
+      await syncAgentboxSshConfig();
+    } catch {
+      /* best-effort */
+    }
+  }
+  return box;
+}
+
 export async function startBox(idOrName: string): Promise<StartedBox> {
   const box = await resolveBox(idOrName);
   // .git bind-mounts are baked into the container at create time; if a host
@@ -368,27 +402,9 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
       await recordBox(box);
     }
   }
-  // sshd died with the container; relaunch it and re-resolve the (reallocated)
-  // loopback host port, then regenerate `~/.agentbox/ssh/config` so `ssh <box>`
-  // / `agentbox open` keep working after a restart. Idempotent: mintSshKey reuses
-  // the on-disk key, install + launch are no-ops when already up. Best-effort.
-  if (box.sshEnabled) {
-    const ssh = await setUpBoxSshd(box.container, join(boxRunDirFor(box), 'ssh'), `agentbox-${box.name}-${box.id}`);
-    if (ssh.sshHostPort) {
-      const port = ssh.sshHostPort;
-      const changed = port !== box.sshHostPort || box.ssh?.port !== port;
-      box.sshHostPort = port;
-      box.ssh = { host: '127.0.0.1', user: 'vscode', identityFile: ssh.identityFile, port };
-      if (changed) {
-        await recordBox(box);
-        try {
-          await syncAgentboxSshConfig();
-        } catch {
-          /* best-effort */
-        }
-      }
-    }
-  }
+  // sshd died with the container; relaunch it, re-resolve the (reallocated)
+  // loopback host port, and regenerate `~/.agentbox/ssh/config`.
+  await refreshBoxSshd(box);
   // Docker reallocated the ephemeral host ports above, so both Portless
   // routes now point at stale ports — re-register them. Best-effort and
   // silent (startBox has no onLog); if the proxy/Portless is gone the box
