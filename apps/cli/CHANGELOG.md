@@ -9,6 +9,24 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.23.5] - 2026-07-08
+
+### Added
+
+- Failed box creates can now be dismissed on demand. When a `create` fails it
+  lingers as an "error" box; the hub UI and the macOS menu-bar app now offer a
+  **Dismiss** action to clear it immediately instead of waiting for it to
+  auto-expire.
+
+### Fixed
+
+- `agentbox prepare` (and the docker/cloud workspace seeds) no longer abort with
+  an `EACCES` permission error when your agent config (`~/.claude`, `~/.codex`,
+  `~/.agents`, `~/.local/share/opencode`) contains read-only files — e.g. skills
+  or plugins symlinked into the Nix store, or dotfiles managed declaratively by
+  Nix/home-manager, Ansible, or chezmoi. The staging copy is now forced
+  user-writable.
+
 ## [0.23.4] - 2026-07-08
 
 ### Added
