@@ -945,14 +945,19 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       // A synthetic `job:` box is a failed create with no real container — "destroy"
       // it by clearing its queue manifest (what the tray/UI Dismiss action hits).
       if (id.startsWith('job:')) {
-        const jobId = id.slice('job:'.length);
-        const job = await readJob(jobId);
-        if (!job) return { ok: true }; // already gone — idempotent
-        if (job.status !== 'failed' && job.status !== 'cancelled' && job.status !== 'done') {
-          return { ok: false, error: 'box is still being created; dismiss is not available yet' };
+        // Mirror runLifecycle's contract: a thrown fs error becomes { ok:false, error }.
+        try {
+          const jobId = id.slice('job:'.length);
+          const job = await readJob(jobId);
+          if (!job) return { ok: true }; // already gone — idempotent
+          if (job.status !== 'failed' && job.status !== 'cancelled' && job.status !== 'done') {
+            return { ok: false, error: 'box is still being created; dismiss is not available yet' };
+          }
+          await deleteJob(jobId);
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, error: errMsg(err) };
         }
-        await deleteJob(jobId);
-        return { ok: true };
       }
       return runLifecycle(id, async (box, provider) => {
         await provider.destroy(box);
