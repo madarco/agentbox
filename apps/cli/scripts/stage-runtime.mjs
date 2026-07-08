@@ -39,6 +39,7 @@ const dockerfileSrc = 'packages/sandbox-docker/Dockerfile.box';
 const execBitFiles = new Set([
   'packages/sandbox-docker/scripts/agentbox-vnc-start',
   'packages/sandbox-docker/scripts/agentbox-dockerd-start',
+  'packages/sandbox-docker/scripts/agentbox-sshd-start',
   'packages/sandbox-docker/scripts/agentbox-portless-trust',
   'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
   'packages/sandbox-docker/scripts/agentbox-open',
@@ -53,6 +54,7 @@ const contextFiles = [
   'apps/cli/share/agentbox-setup/SKILL.md',
   'packages/sandbox-docker/scripts/agentbox-vnc-start',
   'packages/sandbox-docker/scripts/agentbox-dockerd-start',
+  'packages/sandbox-docker/scripts/agentbox-sshd-start',
   'packages/sandbox-docker/scripts/agentbox-portless-trust',
   'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
   'packages/sandbox-docker/scripts/agentbox-open',

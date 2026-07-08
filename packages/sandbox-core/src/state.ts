@@ -186,23 +186,23 @@ export async function setBoxDisplayName(
 }
 
 /**
- * Persist a cloud box's last resolved SSH target (`box.cloud.ssh`). A locked
+ * Persist a box's last resolved SSH target (`box.ssh`). A locked
  * read-modify-write so it can't clobber a concurrent state change. No-op when
- * the box isn't in state (a race with `destroy`) or isn't a cloud record.
- * `syncAgentboxSshConfig` reads this back to regenerate `~/.agentbox/ssh/config`
- * offline, without re-resolving the target from the provider.
+ * the box isn't in state (a race with `destroy`). Works for any provider — the
+ * docker localhost sshd (host `127.0.0.1` + ephemeral `port`) and cloud
+ * providers (Hetzner VPS IP) both land here. `syncAgentboxSshConfig` reads it
+ * back to regenerate `~/.agentbox/ssh/config` offline, without re-resolving the
+ * target from the provider.
  */
 export async function recordBoxSsh(
   boxId: string,
-  ssh: { host: string; user: string; identityFile?: string },
+  ssh: { host: string; user: string; identityFile?: string; port?: number },
   path: string = STATE_FILE,
 ): Promise<void> {
   await mutateState(
     (state) => ({
       version: 1,
-      boxes: state.boxes.map((b) =>
-        b.id === boxId && b.cloud ? { ...b, cloud: { ...b.cloud, ssh } } : b,
-      ),
+      boxes: state.boxes.map((b) => (b.id === boxId ? { ...b, ssh } : b)),
     }),
     path,
   );

@@ -19,49 +19,13 @@
  * deleted after the snapshot completes.
  */
 
-import { mkdir, readFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
-import { execa } from 'execa';
+import { dirname, resolve } from 'node:path';
+import { mintSshKey, type MintedSshKey } from '@agentbox/sandbox-core';
 
-export interface MintedSshKey {
-  /** Directory holding the key files. */
-  dir: string;
-  /** Absolute path to the private key. */
-  privatePath: string;
-  /** Absolute path to the public key. */
-  publicPath: string;
-  /** Public key contents (one OpenSSH-format line). */
-  publicKey: string;
-}
-
-/**
- * Mint a fresh ed25519 keypair into `targetDir/id_ed25519` (+ `.pub`). The
- * directory is created if missing. Throws if the private key already exists
- * — callers handle reuse explicitly (we don't silently overwrite).
- *
- * `comment` is embedded in the public key (the `agentbox/<box-id>` tag) so
- * the key is identifiable in `~/.ssh/authorized_keys` on a forensic look.
- */
-export async function mintSshKey(targetDir: string, comment: string): Promise<MintedSshKey> {
-  const dir = resolve(targetDir);
-  const priv = join(dir, 'id_ed25519');
-  const pub = `${priv}.pub`;
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-
-  // `ssh-keygen -N ''` for no passphrase; `-q` to suppress the random art.
-  // Caller is responsible for ensuring the dir is fresh — if `priv` already
-  // exists, ssh-keygen would prompt to overwrite (and we don't pipe stdin so
-  // it would hang). `mintPrepareKey` creates a fresh dir per call; the
-  // per-box minter in backend.ts uses a fresh stamp directory too.
-  await execa(
-    'ssh-keygen',
-    ['-t', 'ed25519', '-N', '', '-C', comment, '-f', priv, '-q'],
-    { stdio: 'pipe' },
-  );
-
-  const publicKey = (await readFile(pub, 'utf8')).trim();
-  return { dir, privatePath: priv, publicPath: pub, publicKey };
-}
+// `mintSshKey` / `MintedSshKey` are provider-neutral and now live in
+// `@agentbox/sandbox-core` (shared with the docker localhost sshd). Re-exported
+// here so the Hetzner-internal call sites keep importing from `./ssh-key.js`.
+export { mintSshKey, type MintedSshKey };
 
 /**
  * Mint a temporary keypair for the prepare orchestrator. Returns the same

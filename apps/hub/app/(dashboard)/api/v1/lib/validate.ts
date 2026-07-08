@@ -146,7 +146,7 @@ export function isGitOp(v: string): v is GitOp {
 
 // Host apps a box can be launched in (mirrors OPEN_IN_APPS in the CLI's
 // _open-in.ts; hardcoded to keep @agentbox/* out of the Next bundle).
-export const OPEN_IN_APPS = ['codex', 'herdr', 'cmux', 'vscode', 'iterm2'] as const;
+export const OPEN_IN_APPS = ['codex', 'herdr', 'cmux', 'vscode', 'iterm2', 'finder'] as const;
 export type OpenInApp = (typeof OPEN_IN_APPS)[number];
 
 export function isOpenInApp(v: string): v is OpenInApp {

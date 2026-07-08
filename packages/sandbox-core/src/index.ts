@@ -40,6 +40,7 @@ export {
   type CloudSshAlias,
   type CloudSshOptions,
 } from './cloud-ssh.js';
+export { mintSshKey, type MintedSshKey } from './ssh-key.js';
 export {
   BOX_WORKSPACE,
   boxGitCheckout,

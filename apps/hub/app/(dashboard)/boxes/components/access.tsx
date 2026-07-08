@@ -8,15 +8,18 @@ import type { OpenInApp, OpenTargets } from '@/lib/boxes/backend-types';
 import type { Box } from '@/lib/boxes/types';
 import { SectionLabel } from './section-label';
 
-// Display order + labels for the five host "open in" apps (mirrors the tray's
-// Open In menu and the CLI's OPEN_IN_APPS). Codex gets its glyph; the terminal
-// multiplexers share the terminal icon; VS Code/Cursor uses the external glyph.
+// Display order + labels for the host "open in" apps (mirrors the tray's Open In
+// menu and the CLI's OPEN_IN_APPS). Codex gets its glyph; the terminal
+// multiplexers share the terminal icon; VS Code/Cursor uses the external glyph;
+// Finder (sshfs-mount /workspace + reveal) uses the folder glyph and is gated to
+// SSH-capable providers via its `providers` in the open-targets report.
 const APPS: { app: OpenInApp; label: string; icon: keyof typeof Icons }[] = [
   { app: 'codex', label: 'Codex', icon: 'codex' },
   { app: 'vscode', label: 'VS Code', icon: 'ext' },
   { app: 'cmux', label: 'cmux', icon: 'terminal' },
   { app: 'herdr', label: 'Herdr', icon: 'terminal' },
   { app: 'iterm2', label: 'iTerm2', icon: 'terminal' },
+  { app: 'finder', label: 'Finder', icon: 'folder' },
 ];
 
 function CopyButton({ url }: { url: string }) {

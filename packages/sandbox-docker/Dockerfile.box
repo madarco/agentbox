@@ -418,6 +418,18 @@ RUN chmod +x /usr/local/bin/agentbox-vnc-start
 COPY packages/sandbox-docker/scripts/agentbox-dockerd-start /usr/local/bin/agentbox-dockerd-start
 RUN chmod +x /usr/local/bin/agentbox-dockerd-start
 
+# In-box OpenSSH daemon: bound to :22, published by the host only on
+# 127.0.0.1:<ephemeral>. Powers `agentbox open` (sshfs mount of /workspace) and
+# lets the Codex app add the box as an SSH connection. Host keys + hardening
+# drop-in are written at container start by agentbox-sshd-start (root, exec -d),
+# not baked, so every box gets a distinct host key. No EXPOSE 22 — publishing is
+# explicit via `-p` and OrbStack honors only a single EXPOSE (kept on 6080).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-server \
+    && rm -rf /var/lib/apt/lists/*
+COPY packages/sandbox-docker/scripts/agentbox-sshd-start /usr/local/bin/agentbox-sshd-start
+RUN chmod +x /usr/local/bin/agentbox-sshd-start
+
 # In-box Portless CA trust helper — trusts the symmetric `<box>.localhost` CA in
 # the system store + the box user's NSS db (Chromium/Playwright). Invoked at
 # create when the host Portless proxy is TLS. certutil ships in libnss3-tools above.

@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { ConfigError, loadConfig } from '@agentbox/ctl';
-import { makeSyncContext } from '@agentbox/sandbox-core';
+import { makeSyncContext, syncAgentboxSshConfig } from '@agentbox/sandbox-core';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { makeDockerSync } from './sync/docker-sync.js';
 import { buildClaudeMounts, resolveClaudeVolume } from './sync/agents/claude.js';
@@ -29,6 +29,7 @@ import {
 } from './docker.js';
 import { dockerVolumeName, launchDockerdDaemon } from './dockerd.js';
 import { generateVncPassword, launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
+import { setUpBoxSshd, SSH_CONTAINER_PORT } from './ssh.js';
 import { WEB_CONTAINER_PORT } from './web.js';
 import { detectGitRepos, pickFreshBranch } from './git-worktree.js';
 import {
@@ -808,6 +809,14 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     { hostPort: 0, containerPort: WEB_CONTAINER_PORT, hostIp: '127.0.0.1' },
   ];
 
+  // sshd is always-on: publish container :22 on an ephemeral loopback host port
+  // so `agentbox open` (sshfs) and the Codex app can reach the box over SSH. Like
+  // the web/VNC mappings this must be set at `docker run` (port maps are immutable)
+  // and re-resolved on every start (the host port is reassigned).
+  const sshPortMappings = [
+    { hostPort: 0, containerPort: SSH_CONTAINER_PORT, hostIp: '127.0.0.1' },
+  ];
+
   // Identity vars that make the box self-aware. `projectIndex` was allocated
   // earlier (right after `id`/`name`) so dir-segment helpers could see it; we
   // just read the binding here.
@@ -872,6 +881,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     vncContainerPort: vncEnabled ? VNC_CONTAINER_PORT : undefined,
     vncPassword: vncPassword,
     webContainerPort: WEB_CONTAINER_PORT,
+    sshEnabled: true,
+    sshContainerPort: SSH_CONTAINER_PORT,
     dockerVolume,
     dockerCacheShared: dockerCacheShared || undefined,
     projectRoot: opts.projectRoot,
@@ -887,7 +898,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     image: imageRef,
     extraVolumes,
     limits: effectiveLimits,
-    portMappings: [...vncPortMappings, ...webPortMappings],
+    portMappings: [...vncPortMappings, ...webPortMappings, ...sshPortMappings],
     env: {
       AGENTBOX_BOX_ID: id,
       ...agentboxEnv,
@@ -1118,6 +1129,22 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     );
   }
 
+  // sshd: mint the per-box key under the box dir's ssh/, install it into the
+  // box's authorized_keys, launch sshd, resolve the loopback host port. The key
+  // dir lives inside boxDir so `destroy` (which rm -rf's boxRunDirFor) wipes the
+  // private key with it. Best-effort — a failed bring-up leaves the box usable
+  // over `docker exec`, just without `agentbox open`/SSH.
+  const ssh = await setUpBoxSshd(
+    containerName,
+    join(boxDir, 'ssh'),
+    `agentbox-${name}-${id}`,
+  );
+  if (ssh.up && ssh.sshHostPort) {
+    log(`sshd up on host 127.0.0.1:${String(ssh.sshHostPort)} (loopback-only)`);
+  } else {
+    log(`sshd did not come up: ${ssh.reason ?? 'unknown'} (open/SSH unavailable; docker exec still works)`);
+  }
+
   // Portless: register `https://<box-name>.localhost -> 127.0.0.1:<webHostPort>`
   // and a parallel `https://vnc-<box-name>.localhost -> 127.0.0.1:<vncHostPort>`
   // for the noVNC viewer. Best-effort — Portless is user-installed and never
@@ -1185,12 +1212,26 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     carry: carrySummary,
     vncHostPort: vncHostPort ?? undefined,
     webHostPort: webHostPort ?? undefined,
+    sshHostPort: ssh.sshHostPort ?? undefined,
+    ssh: ssh.sshHostPort
+      ? { host: '127.0.0.1', user: 'vscode', identityFile: ssh.identityFile, port: ssh.sshHostPort }
+      : undefined,
     portlessAlias: portlessAliasName,
     portlessUrl,
     portlessVncAlias: portlessVncAliasName,
     portlessVncUrl,
   };
   await recordBox(record);
+  // Regenerate `~/.agentbox/ssh/config` so `ssh <box>`, `agentbox open` (sshfs)
+  // and the Codex launcher have a live alias. Reads state.json (just written) —
+  // best-effort, never fail create over the ssh-config write.
+  if (record.ssh) {
+    try {
+      await syncAgentboxSshConfig();
+    } catch (err) {
+      log(`ssh-config sync failed (best-effort): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   return { record, imageBuilt: built, resync: resyncResult };
 }

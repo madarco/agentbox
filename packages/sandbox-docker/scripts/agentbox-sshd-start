@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Start the per-box OpenSSH daemon, bound to container :22. The host publishes
+# it only on 127.0.0.1:<ephemeral> (`docker run -p 127.0.0.1:0:22`), so it is
+# never reachable off-host; auth is key-only against the per-box key the host
+# installs into vscode's authorized_keys. This is what lets `agentbox open`
+# sshfs-mount /workspace and the Codex app add the box as an SSH connection.
+#
+# Launched by the host via `docker exec -d --user root` after the container is
+# up (root: sshd manages host keys + /run/sshd). Idempotent — re-running while
+# sshd is alive is a no-op, so `agentbox start` can blindly call us again.
+
+set -euo pipefail
+
+if pgrep -x sshd >/dev/null 2>&1; then
+  exit 0
+fi
+
+mkdir -p /run/sshd
+mkdir -p /var/log/agentbox 2>/dev/null || true
+
+# Generate host keys if absent (first boot). `-A` is a no-op for key types that
+# already exist, so it's safe to re-run; the keys persist across stop/start.
+ssh-keygen -A >/dev/null 2>&1 || true
+
+# Drop-in hardening: key-only, vscode-only, no root. The managed SSH config on
+# the host pins `UserKnownHostsFile /dev/null` + `StrictHostKeyChecking
+# accept-new`, so distinct per-box host keys on the shared 127.0.0.1 loopback
+# don't trip host-key-mismatch warnings.
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/agentbox.conf <<'EOF'
+Port 22
+AddressFamily inet
+ListenAddress 0.0.0.0
+PasswordAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin no
+AllowUsers vscode
+X11Forwarding no
+PermitTunnel no
+# Subsystem sftp stays at the base image default so sshfs works.
+EOF
+
+# -e keeps sshd's log on stderr for the launcher; it still forks and daemonizes.
+/usr/sbin/sshd -e >>/var/log/agentbox/sshd.log 2>&1

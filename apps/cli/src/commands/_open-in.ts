@@ -12,24 +12,46 @@ import { existsSync as realExistsSync } from 'node:fs';
 import { homedir as realHomedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
-export type OpenInApp = 'codex' | 'herdr' | 'cmux' | 'vscode' | 'iterm2';
-export type OpenTarget = OpenInApp | 'finder';
+// `finder` is a first-class open target: `agentbox open <box>` (no `--in`) is
+// equivalent to `--in finder` and sshfs-mounts /workspace + reveals it. It's an
+// app like the others so the Hub/Tray "Open In" surfaces can list it, gated to
+// SSH-capable providers via its `providers` in detectOpenTargets.
+export type OpenInApp = 'codex' | 'herdr' | 'cmux' | 'vscode' | 'iterm2' | 'finder';
+export type OpenTarget = OpenInApp;
 
-export const OPEN_IN_APPS: readonly OpenInApp[] = ['codex', 'herdr', 'cmux', 'vscode', 'iterm2'];
+export const OPEN_IN_APPS: readonly OpenInApp[] = [
+  'codex',
+  'herdr',
+  'cmux',
+  'vscode',
+  'iterm2',
+  'finder',
+];
 
 /**
  * Providers whose per-box SSH identity outlives the CLI call (see
  * packages/sandbox-core/src/cloud-ssh.ts). Codex connects on its own later, so
- * an expiring token credential (Daytona) or no SSH at all (docker/vercel/e2b)
- * disqualifies the box.
+ * an expiring token credential (Daytona) or no SSH at all (vercel/e2b)
+ * disqualifies the box. Docker qualifies: its localhost sshd is key-authed by a
+ * per-box key that persists under the box dir (only the loopback host port
+ * changes across restart, and `agentbox open`/start re-syncs `~/.ssh/config`).
  */
-export const PERSISTENT_SSH_PROVIDERS: readonly string[] = ['hetzner'];
+export const PERSISTENT_SSH_PROVIDERS: readonly string[] = ['docker', 'hetzner'];
 
 /**
  * Providers `agentbox code` can attach an IDE to: docker via the Dev Containers
  * attached-container URI, clouds via a Remote-SSH alias.
  */
 export const IDE_PROVIDERS: readonly string[] = ['docker', 'hetzner', 'daytona'];
+
+/**
+ * Providers `agentbox open` can sshfs-mount `/workspace` from — they expose real
+ * SSH: docker's localhost sshd, Hetzner's VPS, Daytona's token gateway. Vercel/E2B
+ * have no SSH (their `buildAttach` yields a non-SSH `sbx exec` / SDK PTY bridge),
+ * so `open` fails fast with a readable pointer to `agentbox download`. Plugin
+ * providers stay opted out until they declare SSH support.
+ */
+export const SSH_MOUNT_PROVIDERS: readonly string[] = ['docker', 'hetzner', 'daytona'];
 
 export interface DetectSeams {
   env: NodeJS.ProcessEnv;
@@ -122,6 +144,12 @@ export function detectOpenTargets(seams: DetectSeams = realSeams()): OpenTargets
     },
     iterm2: {
       available: macAppInstalled('iTerm.app', seams),
+    },
+    finder: {
+      // The OS file-manager reveal always works (Finder on macOS, xdg-open
+      // elsewhere); provider gating is what limits `open` to SSH-capable boxes.
+      available: true,
+      providers: [...SSH_MOUNT_PROVIDERS],
     },
   };
 }

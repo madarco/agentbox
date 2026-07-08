@@ -389,6 +389,14 @@ export {
   type VncLaunchResult,
   type VncUrls,
 } from './vnc.js';
+export {
+  installAuthorizedKey,
+  launchSshdDaemon,
+  setUpBoxSshd,
+  SSH_CONTAINER_PORT,
+  type BoxSshSetup,
+  type SshLaunchResult,
+} from './ssh.js';
 export { browserSessionActive, ensureBoxBrowser, type BoxBrowserResult } from './browser.js';
 export {
   allocateShellSessionName,

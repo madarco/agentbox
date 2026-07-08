@@ -82,15 +82,17 @@ agentbox url 2
 agentbox screen 2
 agentbox code 2
 
-# Open /workspace in Finder
+# sshfs-mount /workspace and reveal in Finder (needs `brew install macfuse sshfs`)
 agentbox open 2
+agentbox open 2 --unmount     # tear the mount down
 
 # Open the box in a host app
-agentbox open 2 --in codex    # auto-open Codex's add-SSH-connection form (Hetzner boxes)
+agentbox open 2 --in codex    # auto-open Codex's add-SSH-connection form (docker + Hetzner boxes)
 agentbox open 2 --in herdr    # new Herdr workspace running `agentbox attach`
 agentbox open 2 --in cmux     # new cmux workspace running `agentbox attach`
 agentbox open 2 --in vscode   # same as `agentbox code`
 agentbox open 2 --in iterm2   # new iTerm2 window running `agentbox attach`
+agentbox open 2 --in finder   # same as bare `agentbox open` (sshfs mount + reveal)
 agentbox open --targets       # which apps are installed (add --json for machines)
 
 # Multiplexed box dashboard (TUI)
