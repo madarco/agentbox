@@ -43,6 +43,19 @@ describe('pathHasBinary', () => {
 });
 
 describe('detectOpenTargets', () => {
+  it('detects claude via the app bundle on darwin only, gated to persistent-SSH providers', () => {
+    const mac = seams({ existing: ['/Applications/Claude.app'] });
+    expect(detectOpenTargets(mac).claude).toEqual({
+      available: true,
+      providers: [...PERSISTENT_SSH_PROVIDERS],
+    });
+    const home = seams({ existing: ['/home/u/Applications/Claude.app'] });
+    expect(detectOpenTargets(home).claude.available).toBe(true);
+    const linux = seams({ platform: 'linux', existing: ['/Applications/Claude.app'] });
+    expect(detectOpenTargets(linux).claude.available).toBe(false);
+    expect(detectOpenTargets(seams({})).claude.available).toBe(false);
+  });
+
   it('detects codex via /Applications on darwin only', () => {
     const mac = seams({ existing: ['/Applications/Codex.app'] });
     expect(detectOpenTargets(mac).codex).toEqual({
@@ -212,6 +225,7 @@ describe('defaultHerdrSocketPath', () => {
 describe('renderTargets', () => {
   it('renders one line per app with provider scope', () => {
     const out = renderTargets({
+      claude: { available: true, providers: ['docker', 'hetzner'] },
       codex: { available: false, providers: ['hetzner'] },
       herdr: { available: true },
       cmux: { available: true },
@@ -220,7 +234,8 @@ describe('renderTargets', () => {
       finder: { available: true, providers: ['docker', 'hetzner', 'daytona'] },
     });
     expect(out).toBe(
-      'codex: not installed\n' +
+      'claude: available (docker, hetzner boxes)\n' +
+        'codex: not installed\n' +
         'herdr: available\n' +
         'cmux: available\n' +
         'vscode: available (docker, hetzner, daytona boxes)\n' +

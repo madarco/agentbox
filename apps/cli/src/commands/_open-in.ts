@@ -16,10 +16,11 @@ import { delimiter, join } from 'node:path';
 // equivalent to `--in finder` and sshfs-mounts /workspace + reveals it. It's an
 // app like the others so the Hub/Tray "Open In" surfaces can list it, gated to
 // SSH-capable providers via its `providers` in detectOpenTargets.
-export type OpenInApp = 'codex' | 'herdr' | 'cmux' | 'vscode' | 'iterm2' | 'finder';
+export type OpenInApp = 'claude' | 'codex' | 'herdr' | 'cmux' | 'vscode' | 'iterm2' | 'finder';
 export type OpenTarget = OpenInApp;
 
 export const OPEN_IN_APPS: readonly OpenInApp[] = [
+  'claude',
   'codex',
   'herdr',
   'cmux',
@@ -182,6 +183,13 @@ export function resolveCmuxBinary(seams: DetectSeams = realSeams()): string | un
 /** Probe which `--in` targets are installed on this host. */
 export function detectOpenTargets(seams: DetectSeams = realSeams()): OpenTargetsReport {
   return {
+    claude: {
+      // Claude desktop has no add-SSH deep link; `open --in claude` writes the
+      // box into the app's own settings (sshConfigs) instead — same persistent
+      // SSH requirement as codex, since the app connects on its own later.
+      available: macAppInstalled('Claude.app', seams),
+      providers: [...PERSISTENT_SSH_PROVIDERS],
+    },
     codex: {
       available: macAppInstalled('Codex.app', seams),
       providers: [...PERSISTENT_SSH_PROVIDERS],
