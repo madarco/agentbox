@@ -19,6 +19,7 @@ import {
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
+import { resolveVscodeCli } from './_open-in.js';
 
 export interface CodeOptions {
   // commander stores `--no-wait` / `--no-auto-terminals` under the positive
@@ -269,18 +270,21 @@ async function launchIde(folderUri: string, forced?: IdeFlavor): Promise<LaunchR
   if (cursor !== null) return cursor;
   // Neither CLI present. Last resort: protocol handler via `open`. We pick
   // vscode:// since that's the documented historical fallback.
-  log.warn('neither `code` nor `cursor` found in PATH; falling back to `open vscode://...`');
+  log.warn('neither `code` nor `cursor` found on PATH or in /Applications; falling back to `open vscode://...`');
   return launchOne('vscode', folderUri);
 }
 
 /**
- * Try the IDE's CLI. Returns null if the binary isn't in PATH so the caller
- * can try the next flavor; otherwise returns the launch result (success or
- * non-127 failure both count as "we ran this one").
+ * Try the IDE's CLI. Returns null if neither the PATH shim nor the macOS
+ * `.app` bundle CLI is present, so the caller can try the next flavor;
+ * otherwise returns the launch result (success or non-127 failure both count
+ * as "we ran this one").
  */
 async function tryCli(flavor: IdeFlavor, folderUri: string): Promise<LaunchResult | null> {
   const profile = ideProfile(flavor);
-  const code = await spawnCommand(profile.cli, ['--folder-uri', folderUri]);
+  const bin = resolveVscodeCli(profile.cli);
+  if (!bin) return null;
+  const code = await spawnCommand(bin, ['--folder-uri', folderUri]);
   if (code === 127) return null;
   return { code, flavor, via: 'cli' };
 }
@@ -292,10 +296,13 @@ async function tryCli(flavor: IdeFlavor, folderUri: string): Promise<LaunchResul
  */
 async function launchOne(flavor: IdeFlavor, folderUri: string): Promise<LaunchResult> {
   const profile = ideProfile(flavor);
-  const cliCode = await spawnCommand(profile.cli, ['--folder-uri', folderUri]);
-  if (cliCode !== 127) return { code: cliCode, flavor, via: 'cli' };
+  const bin = resolveVscodeCli(profile.cli);
+  if (bin) {
+    const cliCode = await spawnCommand(bin, ['--folder-uri', folderUri]);
+    if (cliCode !== 127) return { code: cliCode, flavor, via: 'cli' };
+  }
   log.warn(
-    `\`${profile.cli}\` not found in PATH; falling back to \`${hostOpenCommand()} ${profile.protocolScheme}://...\` (the %2B URL-encoding bug may break attach)`,
+    `\`${profile.cli}\` not found on PATH or in /Applications; falling back to \`${hostOpenCommand()} ${profile.protocolScheme}://...\` (the %2B URL-encoding bug may break attach)`,
   );
   const url = `${profile.protocolScheme}://${folderUri.replace(/^vscode-remote:\/\//, 'vscode-remote/')}`;
   const fallback = await spawnCommand(hostOpenCommand(), [url]);

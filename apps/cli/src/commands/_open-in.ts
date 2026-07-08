@@ -84,6 +84,60 @@ export function defaultHerdrSocketPath(seams: DetectSeams = realSeams()): string
 const CMUX_APP_CLI_SUFFIX = 'cmux.app/Contents/Resources/bin/cmux';
 
 /**
+ * VS Code-family desktop apps, in try order. Each maps its macOS `.app` bundle
+ * to the `--folder-uri`-capable CLI *inside* the bundle. A freshly-dragged
+ * install has the bundle but no `code`/`cursor` shim on PATH (that shim only
+ * appears after the user runs "Shell Command: Install 'code' command in PATH"),
+ * so detection and launch must fall back to the bundle — otherwise the tray's
+ * Open In… menu hides VS Code entirely on an otherwise-ready machine.
+ */
+interface VscodeApp {
+  /** IDE flavor (matches `IdeFlavor` in sandbox-docker). */
+  flavor: 'vscode' | 'cursor';
+  /** PATH binary name, tried before the bundle. */
+  cli: string;
+  /** macOS bundle name under /Applications or ~/Applications. */
+  appName: string;
+  /** Path to the bundled CLI, relative to the .app bundle. */
+  bundleCliSuffix: string;
+}
+
+const VSCODE_APPS: readonly VscodeApp[] = [
+  {
+    flavor: 'vscode',
+    cli: 'code',
+    appName: 'Visual Studio Code.app',
+    bundleCliSuffix: 'Contents/Resources/app/bin/code',
+  },
+  {
+    flavor: 'cursor',
+    cli: 'cursor',
+    appName: 'Cursor.app',
+    bundleCliSuffix: 'Contents/Resources/app/bin/cursor',
+  },
+];
+
+/**
+ * Resolve a VS Code-family `--folder-uri` CLI: PATH first, then the macOS
+ * bundle's bundled `code`/`cursor` binary (so a drag-installed app with no PATH
+ * shim still launches, and via the real CLI rather than the `open <scheme>://`
+ * protocol handler whose %2B URL-encoding can break the Remote attach). `cli`
+ * is a flavor CLI name (`code` / `cursor`); returns undefined when neither the
+ * CLI nor its bundle is present.
+ */
+export function resolveVscodeCli(cli: string, seams: DetectSeams = realSeams()): string | undefined {
+  if (pathHasBinary(cli, seams)) return cli;
+  if (seams.platform !== 'darwin') return undefined;
+  const app = VSCODE_APPS.find((a) => a.cli === cli);
+  if (!app) return undefined;
+  for (const root of ['/Applications', join(seams.homedir(), 'Applications')]) {
+    const p = join(root, app.appName, app.bundleCliSuffix);
+    if (seams.existsSync(p)) return p;
+  }
+  return undefined;
+}
+
+/**
  * Locate a cmux control CLI usable from *outside* cmux: explicit env override,
  * then PATH, then the macOS app bundle (cmux does not install itself on PATH;
  * `/Applications` and `~/Applications` both count, matching detectOpenTargets).
@@ -117,7 +171,12 @@ export function detectOpenTargets(seams: DetectSeams = realSeams()): OpenTargets
       available: pathHasBinary('cmux', seams) || macAppInstalled('cmux.app', seams),
     },
     vscode: {
-      available: pathHasBinary('code', seams) || pathHasBinary('cursor', seams),
+      // PATH shim OR the .app bundle — a freshly-dragged VS Code/Cursor has no
+      // `code`/`cursor` on PATH until the user runs the "Install 'code' command"
+      // step, but `agentbox open --in vscode` can launch it from the bundle.
+      available: VSCODE_APPS.some(
+        (a) => pathHasBinary(a.cli, seams) || macAppInstalled(a.appName, seams),
+      ),
       providers: [...IDE_PROVIDERS],
     },
     iterm2: {

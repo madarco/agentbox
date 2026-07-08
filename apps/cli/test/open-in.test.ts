@@ -8,6 +8,7 @@ import {
   pathHasBinary,
   renderTargets,
   resolveCmuxBinary,
+  resolveVscodeCli,
   type DetectSeams,
 } from '../src/commands/_open-in.js';
 
@@ -88,6 +89,16 @@ describe('detectOpenTargets', () => {
     expect(detectOpenTargets(seams({})).vscode.available).toBe(false);
   });
 
+  it('detects vscode via the .app bundle when no PATH shim (fresh install)', () => {
+    const viaCode = seams({ existing: ['/Applications/Visual Studio Code.app'] });
+    expect(detectOpenTargets(viaCode).vscode.available).toBe(true);
+    const viaCursor = seams({ existing: ['/home/u/Applications/Cursor.app'] });
+    expect(detectOpenTargets(viaCursor).vscode.available).toBe(true);
+    // The bundle is a macOS-only concept — Linux still needs the PATH binary.
+    const linux = seams({ platform: 'linux', existing: ['/Applications/Visual Studio Code.app'] });
+    expect(detectOpenTargets(linux).vscode.available).toBe(false);
+  });
+
   it('detects iterm2 via the app bundle on darwin only', () => {
     const mac = seams({ existing: ['/Applications/iTerm.app'] });
     expect(detectOpenTargets(mac).iterm2).toEqual({ available: true });
@@ -145,6 +156,32 @@ describe('resolveCmuxBinary', () => {
     expect(resolveCmuxBinary(viaHome)).toBe(
       '/home/u/Applications/cmux.app/Contents/Resources/bin/cmux',
     );
+  });
+});
+
+describe('resolveVscodeCli', () => {
+  it('prefers the PATH shim', () => {
+    const s = seams({ path: '/usr/local/bin', existing: ['/usr/local/bin/code'] });
+    expect(resolveVscodeCli('code', s)).toBe('code');
+  });
+
+  it('falls back to the .app bundle CLI on darwin', () => {
+    const appCli = '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code';
+    const s = seams({ existing: [appCli] });
+    expect(resolveVscodeCli('code', s)).toBe(appCli);
+
+    const cursorCli = '/home/u/Applications/Cursor.app/Contents/Resources/app/bin/cursor';
+    const sc = seams({ existing: [cursorCli] });
+    expect(resolveVscodeCli('cursor', sc)).toBe(cursorCli);
+  });
+
+  it('is undefined with no PATH shim and no bundle, or on linux', () => {
+    expect(resolveVscodeCli('code', seams({}))).toBeUndefined();
+    const linux = seams({
+      platform: 'linux',
+      existing: ['/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code'],
+    });
+    expect(resolveVscodeCli('code', linux)).toBeUndefined();
   });
 });
 
