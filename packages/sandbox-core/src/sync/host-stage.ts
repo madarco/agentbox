@@ -100,6 +100,18 @@ async function mkStageDir(prefix: string): Promise<string> {
   return mkdtemp(join(tmpdir(), `agentbox-${prefix}-stage-`));
 }
 
+// A stage dir is a throwaway scratch copy that we rewrite in place (filter
+// settings.json, sanitize config.toml, rewrite plugin paths) and then `rm`.
+// `rsync -a` implies `-p`, so it preserves the *source's* modes — and when the
+// source is read-only (skill/plugin symlinks into the Nix store, or any
+// root-owned / 0444 dotfiles), the copy comes out read-only too. That breaks us
+// two ways: the in-place `writeFile` rewrites fail with EACCES, and `rm` can't
+// unlink children of a 0555 dir (`EACCES unlink .../skills/*/SKILL.md`). Force
+// the copy user-writable — a scratch dir has no business inheriting the store's
+// perms. Only GNU rsync honors this; macOS's openrsync ignores it (and doesn't
+// hit the read-only-source case in practice), so it's a safe no-op there.
+const STAGE_WRITABLE_CHMOD = '--chmod=Du+rwx,Fu+rw';
+
 function emptyResult(warnings: string[] = []): StageResult {
   return { tarballPath: null, cleanup: async () => {}, warnings };
 }
@@ -298,6 +310,7 @@ export async function stageClaudeStaticForUpload(
     ];
     await execa('rsync', [
       '-a',
+      STAGE_WRITABLE_CHMOD,
       '--copy-unsafe-links',
       ...excludes,
       `${hostClaude}/`,
@@ -444,6 +457,7 @@ export async function stageCodexStaticForUpload(
     const codexBroken = await findBrokenSymlinks(hostCodex);
     await execa('rsync', [
       '-a',
+      STAGE_WRITABLE_CHMOD,
       '-L',
       ...codexBroken.map((r) => `--exclude=/${r}`),
       ...CODEX_STATIC_EXCLUDES.map((p) => `--exclude=${p}`),
@@ -490,6 +504,7 @@ export async function stageAgentsStaticForUpload(
     const broken = await findBrokenSymlinks(hostAgents);
     await execa('rsync', [
       '-a',
+      STAGE_WRITABLE_CHMOD,
       '-L',
       ...broken.map((r) => `--exclude=/${r}`),
       `${hostAgents}/`,
@@ -574,6 +589,7 @@ export async function stageOpencodeStaticForUpload(
       const dataBroken = await findBrokenSymlinks(hostData);
       await execa('rsync', [
         '-a',
+        STAGE_WRITABLE_CHMOD,
         '-L',
         ...dataBroken.map((r) => `--exclude=/${r}`),
         ...OPENCODE_DATA_EXCLUDES.map((p) => `--exclude=${p}`),
@@ -586,6 +602,7 @@ export async function stageOpencodeStaticForUpload(
       const cfgBroken = await findBrokenSymlinks(hostConfig);
       await execa('rsync', [
         '-a',
+        STAGE_WRITABLE_CHMOD,
         '-L',
         ...cfgBroken.map((r) => `--exclude=/${r}`),
         `${hostConfig}/`,
