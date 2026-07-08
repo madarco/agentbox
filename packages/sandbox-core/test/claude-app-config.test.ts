@@ -5,9 +5,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   claudeSettingsPath,
   claudeSshEntryFor,
+  pruneOrphanClaudeSshConfigs,
   removeClaudeSshConfigs,
   upsertClaudeSshConfig,
-} from '../src/lib/claude-app-config.js';
+} from '../src/claude-app-config.js';
 
 // apps/cli tests have no global $HOME isolation — point HOME at a scratch dir
 // for this file so we never touch the user's REAL ~/.claude/settings.json.
@@ -132,5 +133,21 @@ describe('removeClaudeSshConfigs', () => {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, JSON.stringify({ sshConfigs: [{ sshHost: 'x' }] }));
     expect(removeClaudeSshConfigs(() => true)).toBe(0);
+  });
+});
+
+describe('pruneOrphanClaudeSshConfigs', () => {
+  it('drops agentbox entries for dead boxes, keeps live + foreign ones', () => {
+    upsertClaudeSshConfig(claudeSshEntryFor('alive', 'alive'));
+    upsertClaudeSshConfig(claudeSshEntryFor('dead', 'dead'));
+    upsertClaudeSshConfig({ id: 'user-vps', name: 'My VPS', sshHost: 'me@vps.example' });
+    expect(pruneOrphanClaudeSshConfigs(new Set(['alive']))).toBe(1);
+    const s = readSettings();
+    expect((s['sshConfigs'] as { id: string }[]).map((e) => e.id)).toEqual([
+      'agentbox-alive',
+      'user-vps',
+    ]);
+    // A foreign entry never counts as an orphan, even with no live boxes.
+    expect(pruneOrphanClaudeSshConfigs(new Set(['alive']))).toBe(0);
   });
 });

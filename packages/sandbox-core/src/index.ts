@@ -42,6 +42,14 @@ export {
 } from './cloud-ssh.js';
 export { mintSshKey, type MintedSshKey } from './ssh-key.js';
 export {
+  claudeSettingsPath,
+  claudeSshEntryFor,
+  pruneOrphanClaudeSshConfigs,
+  removeClaudeSshConfigs,
+  upsertClaudeSshConfig,
+  type ClaudeSshConfigEntry,
+} from './claude-app-config.js';
+export {
   BOX_WORKSPACE,
   boxGitCheckout,
   boxGitNewBranch,

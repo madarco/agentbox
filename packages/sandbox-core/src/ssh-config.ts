@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pruneOrphanClaudeSshConfigs } from './claude-app-config.js';
 import { readState } from './state.js';
 
 /**
@@ -184,6 +185,18 @@ export async function syncAgentboxSshConfig(statePath: string = stateFilePath())
   await fs.writeFile(path, header + blocks.join('\n'), { mode: 0o600 });
   await fs.chmod(path, 0o600);
   await ensureSshInclude();
+
+  // Sweep Claude desktop's sshConfigs (written by `open --in claude`) of
+  // entries whose box is gone — piggybacking on the sync means every destroy
+  // path prunes (CLI, hub, dashboard), and any later sync self-heals one that
+  // didn't. Aliases are keyed by box NAME (an entry survives a transiently
+  // ssh-less record). Best-effort: a corrupt settings.json must never break
+  // box lifecycle.
+  try {
+    pruneOrphanClaudeSshConfigs(new Set(state.boxes.map((b) => agentboxAliasFor(b.name))));
+  } catch {
+    /* best-effort */
+  }
 }
 
 /**

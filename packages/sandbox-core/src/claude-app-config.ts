@@ -95,10 +95,24 @@ export function upsertClaudeSshConfig(entry: ClaudeSshConfigEntry): void {
 }
 
 /**
- * Drop every `sshConfigs` entry whose id matches `predicate` (used by destroy
- * to prune the box's entry). No-op when the file is missing, has no
- * `sshConfigs`, or nothing matches — the file is only rewritten on a change.
- * Throws on an unparseable file (callers treat this as best-effort).
+ * Drop every AgentBox-owned (`agentbox-`-prefixed) entry whose alias no longer
+ * matches a live box. Called (best-effort) from `syncAgentboxSshConfig`, which
+ * every lifecycle path runs — CLI destroy, hub/dashboard destroys via
+ * `provider.destroy`+sync, and any later create/start — so an entry left by a
+ * path that skipped the sync is swept on the next one. Foreign entries (no
+ * `agentbox-` prefix) are never touched.
+ */
+export function pruneOrphanClaudeSshConfigs(liveAliases: ReadonlySet<string>): number {
+  return removeClaudeSshConfigs(
+    (id) => id.startsWith('agentbox-') && !liveAliases.has(id.slice('agentbox-'.length)),
+  );
+}
+
+/**
+ * Drop every `sshConfigs` entry whose id matches `predicate`. No-op when the
+ * file is missing, has no `sshConfigs`, or nothing matches — the file is only
+ * rewritten on a change. Throws on an unparseable file (callers treat this as
+ * best-effort).
  */
 export function removeClaudeSshConfigs(predicate: (id: string) => boolean): number {
   const path = claudeSettingsPath();

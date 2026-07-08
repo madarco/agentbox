@@ -6,8 +6,7 @@ import { destroyBox, portlessUnalias } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
-import { agentboxAliasFor, syncAgentboxSshConfig } from '@agentbox/sandbox-core';
-import { removeClaudeSshConfigs } from '../lib/claude-app-config.js';
+import { syncAgentboxSshConfig } from '@agentbox/sandbox-core';
 import { handleLifecycleError } from './_errors.js';
 
 interface DestroyOptions {
@@ -125,20 +124,6 @@ export const destroyCommand = new Command('destroy')
         process.stdout.write(
           `destroyed ${box.name} (${providerName} sandbox ${box.cloud?.sandboxId ?? '<unknown>'})\n`,
         );
-      }
-
-      // Best-effort: drop the box's entry from Claude desktop's SSH
-      // connections (written by `open --in claude`), which would otherwise
-      // point at a dead alias forever. Never blocks destroy.
-      try {
-        const removed = removeClaudeSshConfigs(
-          (id) => id === `agentbox-${agentboxAliasFor(box.name)}`,
-        );
-        if (removed > 0) {
-          process.stdout.write(`  ✓ removed from Claude desktop's SSH connections\n`);
-        }
-      } catch {
-        /* best-effort */
       }
     } catch (err) {
       handleLifecycleError(err);

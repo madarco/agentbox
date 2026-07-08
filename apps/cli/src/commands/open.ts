@@ -6,11 +6,14 @@ import { join } from 'node:path';
 import type { BoxRecord } from '@agentbox/core';
 import {
   agentboxAliasFor,
+  claudeSettingsPath,
+  claudeSshEntryFor,
   hostOpenCommand,
   ensureCloudSshAlias,
   recordBoxSsh,
   resolveCloudSshTarget,
   syncAgentboxSshConfig,
+  upsertClaudeSshConfig,
 } from '@agentbox/sandbox-core';
 import {
   inspectBox,
@@ -22,11 +25,6 @@ import {
 import { Command, InvalidArgumentError } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { hyperlink } from '../hyperlink.js';
-import {
-  claudeSettingsPath,
-  claudeSshEntryFor,
-  upsertClaudeSshConfig,
-} from '../lib/claude-app-config.js';
 import { providerForBox } from '../provider/registry.js';
 import { spawnInNewTerminal } from '../terminal/host.js';
 import { runPath } from './path.js';
