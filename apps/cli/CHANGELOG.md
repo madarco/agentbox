@@ -9,6 +9,43 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.22.2] - 2026-07-08
+
+### Added
+
+- **Open a box in a host app: `agentbox open <box> --in codex|herdr|cmux|vscode|iterm2`.**
+  `codex` writes the box's SSH alias and auto-opens Codex's add-SSH-connection
+  form via its `codex://` deep link (persistent-SSH boxes, i.e. Hetzner — the
+  same link `shell --ssh-config` prints, now launched for you); `herdr`, `cmux`,
+  and `iterm2` open a new workspace/window in that terminal app running the box
+  attach (the box is auto-started, and a failed attach leaves a live shell);
+  `vscode` is equivalent to `agentbox code`. Plain `agentbox open` still opens
+  the workspace in Finder. `agentbox open --targets [--json]` reports which of
+  these apps are installed. cmux blocks external control by default — enable
+  `socketControlMode: automation` (or a socket password) in its settings.
+- **Menu-bar app: per-box "Open In…" submenu** listing only the apps installed
+  on your machine (probed once at launch) and eligible for that box's provider;
+  "Copy Web URL" moved into it, keeping Open Web / Open VNC at the top level.
+- **Rename a box** with `agentbox status <box> --set-name <name>` (or
+  `--clear-name`) — a cosmetic display label; the container, git branch, and
+  URLs are untouched, and box lookups accept the label. Shown in `list`, with a
+  Rename button in the hub (`POST /api/v1/boxes/:id/rename`) and a "Rename…"
+  item in the menu-bar app.
+- **Update detection.** After you update the package yourself (`npm update -g`),
+  the next interactive command offers the post-update refresh (host skills, box
+  image, relay, menu-bar app). At most once a day a background probe checks for
+  a newer release and prints a nudge — disable with the new `update.check`
+  config key. `agentbox self-update` now also updates the menu-bar app (only
+  when the published build actually changed) and reports current vs latest.
+
+### Fixed
+
+- Boxes created or resumed **through the hub** now get their `~/.agentbox/ssh/config`
+  entry too — hub-created Hetzner boxes were missing their `ssh <box>` alias.
+- Non-interactive box creates (menu-bar app / hub queue, `--yes`, CI) now adopt
+  an already-running Portless proxy instead of silently skipping Portless on a
+  machine that never opted in from a terminal.
+
 ## [0.22.1] - 2026-07-07
 
 ### Added
