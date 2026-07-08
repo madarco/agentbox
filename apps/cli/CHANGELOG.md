@@ -9,6 +9,26 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.23.4] - 2026-07-08
+
+### Added
+
+- The hub box page's Access card now always lists every "open in" app (Claude,
+  Codex, VS Code, cmux, Herdr, iTerm2, Finder) plus Open web / Open VNC —
+  buttons that can't work right now are disabled with an instant hover tooltip
+  explaining why (app not installed, not supported for the box's provider, box
+  paused/stopped, no web service, VNC off) instead of being hidden.
+- `agentbox open --targets` reports *why* an unavailable app is unavailable
+  (new optional `reason` field in `--json`); the hub and the menu-bar app show
+  it. The menu-bar app (from v0.1.6) mirrors the always-listed behavior and
+  gains an OPEN IN section in the box details window with the same tooltips.
+
+### Fixed
+
+- Finder is no longer reported as an always-available open target: it now
+  requires `sshfs` on PATH, so a missing sshfs shows up front as a disabled
+  button with the install hint instead of an error only after clicking.
+
 ## [0.23.3] - 2026-07-08
 
 ### Fixed

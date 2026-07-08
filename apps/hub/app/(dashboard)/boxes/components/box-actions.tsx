@@ -15,6 +15,9 @@ export function BoxActions({ box, size }: { box: Box; size?: 'lg' }) {
   const running = box.status === 'running';
   const paused = box.status === 'paused';
   const stopped = box.status === 'stopped';
+  // Synthetic create-job box (id `job:<id>`, no real container): the only sensible
+  // action is Dismiss (clear a failed create). Pause/Stop/Rename would error server-side.
+  const synthetic = box.id.startsWith('job:');
   const lg = size === 'lg';
   const sz = lg ? 'sm' : 'icon-sm';
 
@@ -39,6 +42,24 @@ export function BoxActions({ box, size }: { box: Box; size?: 'lg' }) {
       router.refresh();
     });
   };
+
+  if (synthetic) {
+    // Only errored creates can be dismissed; a `creating` job has nothing to clear yet.
+    return (
+      <div className={cn('flex gap-1.5', lg ? '' : 'justify-end')}>
+        <Button
+          variant="destructive"
+          size={sz}
+          title="Dismiss"
+          disabled={pending || box.status !== 'error'}
+          onClick={(e) => run(e, destroyBoxAction, `Dismiss failed box ${box.id}? This clears the failed create.`)}
+        >
+          <Icons.trash />
+          {lg ? 'Dismiss' : null}
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className={cn('flex gap-1.5', lg ? '' : 'justify-end')}>

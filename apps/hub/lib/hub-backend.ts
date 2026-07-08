@@ -20,6 +20,7 @@ import {
 import { normalizeLastAgent, type BoxRecord, type ExecResult, type Provider } from '@agentbox/core';
 import type { BoxStatus as CtlBoxStatus, StatusReply } from '@agentbox/ctl';
 import {
+  deleteJob,
   enqueuePrepareJob,
   enqueueQueueJob,
   hashRpcParams,
@@ -940,12 +941,25 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           }
         }
       }),
-    destroy: (id) =>
-      runLifecycle(id, async (box, provider) => {
+    async destroy(id): Promise<ActionResult> {
+      // A synthetic `job:` box is a failed create with no real container — "destroy"
+      // it by clearing its queue manifest (what the tray/UI Dismiss action hits).
+      if (id.startsWith('job:')) {
+        const jobId = id.slice('job:'.length);
+        const job = await readJob(jobId);
+        if (!job) return { ok: true }; // already gone — idempotent
+        if (job.status !== 'failed' && job.status !== 'cancelled' && job.status !== 'done') {
+          return { ok: false, error: 'box is still being created; dismiss is not available yet' };
+        }
+        await deleteJob(jobId);
+        return { ok: true };
+      }
+      return runLifecycle(id, async (box, provider) => {
         await provider.destroy(box);
         // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
         await syncAgentboxSshConfig().catch(() => {});
-      }),
+      });
+    },
     async rename(id, displayName): Promise<ActionResult> {
       // Pure state mutation — no provider round-trip. Empty/blank clears the label.
       // Enforce the same 60-char cap the CLI + REST route apply here, so the web

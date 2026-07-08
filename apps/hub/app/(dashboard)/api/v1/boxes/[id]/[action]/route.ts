@@ -19,7 +19,9 @@ export async function POST(
   // In-flight create jobs surface in GET /boxes as synthetic `creating`/`error`
   // boxes with a `job:` id — they have no real container yet, so lifecycle would
   // 404 in the backend and contradict the GET. Reject with a clear 409 instead.
-  if (id.startsWith('job:')) {
+  // `destroy` is the exception: it dismisses a failed create (clears the queue
+  // manifest), so let it fall through to the backend which handles `job:` ids.
+  if (id.startsWith('job:') && action !== 'destroy') {
     return fail('conflict', `box ${id} is still being created; ${action} is not available yet`, {
       jobId: id.slice('job:'.length),
     });
