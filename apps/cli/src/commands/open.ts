@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { BoxRecord } from '@agentbox/core';
 import {
+  agentboxAliasFor,
   hostOpenCommand,
   ensureCloudSshAlias,
   recordBoxSsh,
@@ -27,6 +28,7 @@ import {
   PERSISTENT_SSH_PROVIDERS,
   renderTargets,
   resolveCmuxBinary,
+  SSH_MOUNT_PROVIDERS,
   type OpenTarget,
 } from './_open-in.js';
 
@@ -59,22 +61,22 @@ function parseOpenTarget(value: string): OpenTarget {
 
 export const openCommand = new Command('open')
   .description(
-    "Open a box in Finder (default; docker: rsync'd snapshot; cloud: sshfs mount) or in a host app via --in",
+    'Mount a box /workspace via sshfs and reveal in Finder (default), or open it in a host app via --in',
   )
   .argument(
     '[box]',
     'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
   )
-  .option('--no-refresh', "skip the rsync; open whatever's already on disk (docker only)")
+  .option('--no-refresh', "legacy docker (no sshd) only: skip the rsync; open what's on disk")
   .option(
     '--include-node-modules',
-    'include /workspace/node_modules in the merged export (docker only; off by default)',
+    'legacy docker (no sshd) only: include /workspace/node_modules in the export',
   )
-  .option('--path', 'print the host workspace / mount path instead of launching Finder')
+  .option('--path', 'print the host mount path instead of launching Finder')
   .option('--print', 'alias of --path')
   .option(
     '--unmount',
-    'cloud only: unmount any existing sshfs mount for the box and exit',
+    'unmount any existing sshfs mount for the box and exit',
   )
   .option(
     '--in <app>',
@@ -107,13 +109,30 @@ export const openCommand = new Command('open')
         return;
       }
 
-      const isCloud = (box.provider ?? 'docker') !== 'docker';
+      const providerName = box.provider ?? 'docker';
 
-      if (isCloud) {
-        await runCloudOpen(box, opts);
+      // Live sshfs mount of /workspace for any SSH-capable provider (docker's
+      // localhost sshd, Hetzner's VPS, Daytona's token gateway). A docker box
+      // that predates the localhost sshd (no `sshEnabled`) still falls through to
+      // the rsync-snapshot export below.
+      if (SSH_MOUNT_PROVIDERS.includes(providerName) && (providerName !== 'docker' || box.sshEnabled)) {
+        await runSshfsMount(box, opts);
         return;
       }
 
+      // Providers with no SSH (vercel, e2b) can't be sshfs-mounted and have no
+      // docker-style host export. Fail fast with a readable pointer — before any
+      // bring-online — instead of a cryptic SSH-parse error deeper in.
+      if (providerName !== 'docker') {
+        throw new Error(
+          `'agentbox open' live-mounts /workspace over sshfs, which ${providerName} boxes don't ` +
+            `support (no SSH). Use 'agentbox download ${box.name}' to copy files to your host, ` +
+            `or 'agentbox open ${box.name} --in vscode'.`,
+        );
+      }
+
+      // Legacy docker box (no localhost sshd): rsync the merged /workspace export
+      // to a host dir and reveal in Finder. Kept until this moves under `download`.
       if (opts.path || opts.print) {
         await runPath(box, {
           refresh: opts.refresh, // print refreshes by default; --no-refresh skips
@@ -147,39 +166,57 @@ async function openInCodex(box: BoxRecord): Promise<void> {
   const providerName = box.provider ?? 'docker';
   if (!PERSISTENT_SSH_PROVIDERS.includes(providerName)) {
     throw new Error(
-      `'--in codex' needs a box with a persistent SSH key — only Hetzner cloud boxes qualify ` +
-        `(this box is '${providerName}'). Docker boxes aren't reachable over SSH and Daytona uses ` +
-        `a 60-min token that expires. Try 'agentbox open ${box.name} --in vscode' instead.`,
+      `'--in codex' needs a box with a persistent SSH key — docker (localhost sshd) and ` +
+        `Hetzner cloud boxes qualify (this box is '${providerName}'). Daytona uses a 60-min ` +
+        `token that expires; Vercel/E2B have no SSH. Try 'agentbox open ${box.name} --in vscode'.`,
     );
   }
-  const provider = await providerForBox(box);
-  const conn = await resolveCloudSshTarget(box, provider);
-  if (!conn.identityFile) {
-    throw new Error(
-      `box '${box.name}' (provider '${providerName}') has no persistent SSH key, so it can't ` +
-        `be added to Codex over SSH.`,
-    );
-  }
-  await recordBoxSsh(box.id, {
-    host: conn.host,
-    user: conn.user,
-    identityFile: conn.identityFile,
-  });
-  await syncAgentboxSshConfig();
-  log.info(`ssh alias '${conn.alias}' written (Include'd from ~/.ssh/config)`);
 
-  const url = codexAddUrl(conn.alias);
+  let alias: string;
+  if (providerName === 'docker') {
+    // Docker: bring the box online (sshd up + loopback port fresh) and use the
+    // alias create/start already wrote to `~/.ssh/config`.
+    let online = await bringDockerBoxOnline(box);
+    if (!online.ssh) online = await resolveBoxOrExit(online.id);
+    if (!online.ssh?.identityFile) {
+      throw new Error(
+        `box '${box.name}' has no SSH key on disk — its in-box sshd may have failed to start. ` +
+          `Try 'agentbox start ${box.name}' and retry.`,
+      );
+    }
+    await syncAgentboxSshConfig();
+    alias = agentboxAliasFor(online.name);
+  } else {
+    const provider = await providerForBox(box);
+    const conn = await resolveCloudSshTarget(box, provider);
+    if (!conn.identityFile) {
+      throw new Error(
+        `box '${box.name}' (provider '${providerName}') has no persistent SSH key, so it can't ` +
+          `be added to Codex over SSH.`,
+      );
+    }
+    await recordBoxSsh(box.id, {
+      host: conn.host,
+      user: conn.user,
+      identityFile: conn.identityFile,
+    });
+    await syncAgentboxSshConfig();
+    alias = conn.alias;
+  }
+  log.info(`ssh alias '${alias}' written (Include'd from ~/.ssh/config)`);
+
+  const url = codexAddUrl(alias);
   const opened = await execa(hostOpenCommand(), [url], { reject: false });
   if (opened.exitCode !== 0) {
     log.warn(
       `could not auto-open the Codex link (is Codex.app installed?): ${opened.stderr || `exit ${String(opened.exitCode)}`}`,
     );
-    const link = hyperlink(`Add ${conn.alias} to Codex SSH`, url, process.stdout);
+    const link = hyperlink(`Add ${alias} to Codex SSH`, url, process.stdout);
     process.stdout.write(`open manually: ${link}\n${url}\n`);
     process.exitCode = 1;
     return;
   }
-  log.success(`opening Codex — the SSH connection form is pre-filled with '${conn.alias}'`);
+  log.success(`opening Codex — the SSH connection form is pre-filled with '${alias}'`);
   process.stdout.write(url + '\n');
 }
 
@@ -278,13 +315,33 @@ async function openInTerminalApp(box: BoxRecord, host: 'herdr' | 'cmux' | 'iterm
 }
 
 /**
- * Cloud `open`: mount the sandbox's `/workspace` via sshfs at a per-box host
- * path (`~/.agentbox/mounts/<box-name>/`) and reveal in Finder. Reuses the
- * SSH alias `agentbox code` already manages — the alias maps to a fresh
- * 60-min Daytona SSH token, written into `~/.ssh/config` per call so sshfs
- * has a live target without baking the token into the mount itself.
+ * Bring a docker box online (unpause/start) and return the freshest record.
+ * `startBox` re-resolves the ephemeral sshd host port and re-syncs
+ * `~/.ssh/config`, so its returned record carries the live `ssh` target.
  */
-async function runCloudOpen(box: BoxRecord, opts: OpenOpts): Promise<void> {
+async function bringDockerBoxOnline(box: BoxRecord): Promise<BoxRecord> {
+  const insp = await inspectBox(box.id);
+  if (insp.state === 'paused') {
+    log.info('box is paused; unpausing');
+    await unpauseBox(box.id);
+  } else if (insp.state === 'stopped') {
+    log.info('box is stopped; starting');
+    const started = await startBox(box.id);
+    return started.record;
+  } else if (insp.state === 'missing') {
+    throw new Error(`box ${box.name} has no container; was it destroyed?`);
+  }
+  return box;
+}
+
+/**
+ * `open`: mount the box's `/workspace` via sshfs at a per-box host path
+ * (`~/.agentbox/mounts/<box-name>/`) and reveal in Finder. Docker boxes ride
+ * their always-on localhost sshd (the alias is already in `~/.ssh/config` from
+ * create/start); cloud boxes reuse the SSH alias `agentbox code` manages
+ * (Daytona maps it to a fresh 60-min token per call).
+ */
+async function runSshfsMount(box: BoxRecord, opts: OpenOpts): Promise<void> {
   const mountRoot = join(homedir(), '.agentbox', 'mounts', box.name);
 
   if (opts.unmount) {
@@ -306,15 +363,31 @@ async function runCloudOpen(box: BoxRecord, opts: OpenOpts): Promise<void> {
   const sshfsBin = await locateBinary('sshfs');
   if (!sshfsBin) {
     throw new Error(
-      'sshfs not found on PATH. Install with `brew install macfuse sshfs` (macOS) or your distro\'s package manager, then retry. Cloud `agentbox open` mounts the sandbox /workspace via sshfs.',
+      'sshfs not found on PATH. Install with `brew install macfuse sshfs` (macOS) or your distro\'s package manager, then retry. `agentbox open` mounts the box /workspace via sshfs.',
     );
   }
 
-  // Same SSH alias machinery `agentbox code` uses — bring the box online and
-  // (re)write the alias (a fresh 60-min token for Daytona) so sshfs gets a live
-  // mount target.
-  const provider = await providerForBox(box);
-  const { alias } = await ensureCloudSshAlias(box, provider);
+  let alias: string;
+  if ((box.provider ?? 'docker') === 'docker') {
+    // Docker: bring the box online so sshd is up + the loopback port is fresh,
+    // then rely on the alias already written to `~/.ssh/config` by create/start.
+    let online = await bringDockerBoxOnline(box);
+    if (!online.ssh) online = await resolveBoxOrExit(online.id);
+    if (!online.ssh) {
+      throw new Error(
+        `box '${box.name}' has no SSH endpoint — its in-box sshd may have failed to start. ` +
+          `Try 'agentbox start ${box.name}' and retry, or 'agentbox open ${box.name} --in vscode'.`,
+      );
+    }
+    await syncAgentboxSshConfig();
+    alias = agentboxAliasFor(online.name);
+  } else {
+    // Same SSH alias machinery `agentbox code` uses — bring the box online and
+    // (re)write the alias (a fresh 60-min token for Daytona) so sshfs gets a
+    // live mount target.
+    const provider = await providerForBox(box);
+    ({ alias } = await ensureCloudSshAlias(box, provider));
+  }
 
   // Ensure the mount dir exists. If something's already mounted there (a
   // stale mount from a previous run) we tear it down before re-mounting —
@@ -344,7 +417,15 @@ async function runCloudOpen(box: BoxRecord, opts: OpenOpts): Promise<void> {
     { reject: false },
   );
   if (mount.exitCode !== 0) {
-    throw new Error(`sshfs mount failed (exit ${String(mount.exitCode)}): ${mount.stderr || mount.stdout}`);
+    const err = `${mount.stderr || ''}${mount.stdout || ''}`;
+    // sshfs is on PATH but the mount failed — on macOS the usual cause is a
+    // missing/unapproved macFUSE kernel extension (sshfs is built against it).
+    const macfuseHint =
+      process.platform === 'darwin' && /fuse|macfuse|load|not permitted|mount_macfuse/i.test(err)
+        ? ` — is macFUSE installed and approved? Run 'brew install macfuse' (may need a reboot and ` +
+          `approving the system extension in System Settings › Privacy & Security), then retry.`
+        : '';
+    throw new Error(`sshfs mount failed (exit ${String(mount.exitCode)}): ${err}${macfuseHint}`);
   }
   // Reveal the mount in the OS file manager (Finder on macOS, the default
   // handler via xdg-open on Linux). Best-effort — the mount path is already

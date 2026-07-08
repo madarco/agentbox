@@ -86,14 +86,14 @@ describe('syncAgentboxSshConfig + Include model', () => {
     image: 'snap',
     workspacePath: '/x',
     createdAt: 'now',
+    ssh: { host, user: 'vscode', identityFile: `/box/${name}/key` },
     cloud: {
       backend: 'hetzner',
       sandboxId: name,
-      ssh: { host, user: 'vscode', identityFile: `/box/${name}/key` },
     },
   });
 
-  it('writes one Host block per box with a resolved cloud.ssh target', async () => {
+  it('writes one Host block per box with a resolved box.ssh target', async () => {
     await writeState([hzBox('hz1', '1.2.3.4'), hzBox('hz2', '5.6.7.8')]);
     await syncAgentboxSshConfig();
     const cfg = await readOwned();
@@ -105,7 +105,28 @@ describe('syncAgentboxSshConfig + Include model', () => {
     expect(cfg).toContain('  HostName 5.6.7.8');
   });
 
-  it('skips docker boxes and cloud boxes without a resolved cloud.ssh', async () => {
+  it('emits a Port line for a docker box with a loopback sshd target', async () => {
+    await writeState([
+      {
+        id: 'id-dk',
+        name: 'dk',
+        provider: 'docker',
+        container: 'agentbox-dk',
+        image: 'i',
+        workspacePath: '/x',
+        createdAt: 'now',
+        ssh: { host: '127.0.0.1', user: 'vscode', identityFile: '/box/dk/key', port: 54321 },
+      },
+    ]);
+    await syncAgentboxSshConfig();
+    const cfg = await readOwned();
+    expect(cfg).toContain('Host dk');
+    expect(cfg).toContain('  HostName 127.0.0.1');
+    expect(cfg).toContain('  Port 54321');
+    expect(cfg).toContain('  IdentityFile /box/dk/key');
+  });
+
+  it('skips boxes without a resolved box.ssh (docker or cloud)', async () => {
     await writeState([
       hzBox('hz1', '1.2.3.4'),
       {

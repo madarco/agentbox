@@ -17,6 +17,7 @@ export type {
   FindBoxResult,
   GitWorktreeRecord,
   ProviderName,
+  SshTargetRecord,
   StateFile,
 } from './box-record.js';
 export { dockerField } from './box-record.js';

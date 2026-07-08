@@ -56,7 +56,9 @@ import { launchCtlDaemon } from './ctl.js';
 import { ensureHomeOwnedByVscode } from './home-ownership.js';
 import { launchDockerdDaemon, SHARED_DOCKER_CACHE_VOLUME } from './dockerd.js';
 import { launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
+import { setUpBoxSshd } from './ssh.js';
 import { WEB_CONTAINER_PORT } from './web.js';
+import { syncAgentboxSshConfig } from '@agentbox/sandbox-core';
 import { detectPortless, portlessAlias, portlessGetUrl, portlessUnalias } from './portless.js';
 import { getBoxEndpoints, type BoxEndpoint, type BoxEndpoints } from './endpoints.js';
 import {
@@ -366,6 +368,27 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
       await recordBox(box);
     }
   }
+  // sshd died with the container; relaunch it and re-resolve the (reallocated)
+  // loopback host port, then regenerate `~/.agentbox/ssh/config` so `ssh <box>`
+  // / `agentbox open` keep working after a restart. Idempotent: mintSshKey reuses
+  // the on-disk key, install + launch are no-ops when already up. Best-effort.
+  if (box.sshEnabled) {
+    const ssh = await setUpBoxSshd(box.container, join(boxRunDirFor(box), 'ssh'), `agentbox-${box.name}-${box.id}`);
+    if (ssh.sshHostPort) {
+      const port = ssh.sshHostPort;
+      const changed = port !== box.sshHostPort || box.ssh?.port !== port;
+      box.sshHostPort = port;
+      box.ssh = { host: '127.0.0.1', user: 'vscode', identityFile: ssh.identityFile, port };
+      if (changed) {
+        await recordBox(box);
+        try {
+          await syncAgentboxSshConfig();
+        } catch {
+          /* best-effort */
+        }
+      }
+    }
+  }
   // Docker reallocated the ephemeral host ports above, so both Portless
   // routes now point at stale ports — re-register them. Best-effort and
   // silent (startBox has no onLog); if the proxy/Portless is gone the box
@@ -646,6 +669,16 @@ export async function destroyBox(
   }
 
   await removeBoxRecord(box.id);
+  // Drop this box's `~/.agentbox/ssh/config` alias (regenerated from state, which
+  // no longer lists it). Best-effort — a stale alias is harmless (points at a
+  // dead loopback port) but confusing. No-op for boxes that never had sshd.
+  if (box.ssh) {
+    try {
+      await syncAgentboxSshConfig();
+    } catch {
+      /* best-effort */
+    }
+  }
 
   return { record: box, removedContainer, removedVolumes, removedSnapshot };
 }

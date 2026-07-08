@@ -27,12 +27,17 @@ export interface SshAliasOptions {
   user: string;
   /**
    * Per-box private key path for providers that authenticate by identity
-   * file (Hetzner). Omit for token-in-User auth (Daytona) — without this
-   * field VSCode's Remote-SSH would try ~/.ssh/id_* defaults and fail with
-   * "permission denied" against a Hetzner VPS that only trusts the per-box
-   * key under `~/.agentbox/boxes/<id>/ssh/id_ed25519`.
+   * file (docker localhost sshd, Hetzner). Omit for token-in-User auth
+   * (Daytona) — without this field VSCode's Remote-SSH would try ~/.ssh/id_*
+   * defaults and fail with "permission denied" against a Hetzner VPS that only
+   * trusts the per-box key under `~/.agentbox/boxes/<id>/ssh/id_ed25519`.
    */
   identityFile?: string;
+  /**
+   * Non-default SSH port. Docker publishes its in-box sshd on an ephemeral
+   * `127.0.0.1:<port>`; omit for cloud providers reachable on 22.
+   */
+  port?: number;
 }
 
 function sshConfigPath(): string {
@@ -89,6 +94,9 @@ function buildBlock(opts: SshAliasOptions): string {
     `  HostName ${opts.hostname}`,
     `  User ${opts.user}`,
   ];
+  if (opts.port) {
+    lines.push(`  Port ${String(opts.port)}`);
+  }
   if (opts.identityFile) {
     // `IdentitiesOnly yes` stops ssh-agent from offering unrelated keys
     // first — some sshd configs cap auth attempts and would lock us out
@@ -147,7 +155,7 @@ export async function ensureSshInclude(): Promise<void> {
 
 /**
  * Regenerate the AgentBox-owned `~/.agentbox/ssh/config` from `state.json`: one
- * `Host <name>` block per box that carries a resolved `cloud.ssh` target. Reads
+ * `Host <name>` block per box that carries a resolved `box.ssh` target. Reads
  * only persisted state — no provider calls, never wakes a paused box — so a
  * destroyed box's block simply disappears on the next sync. Also ensures the
  * `Include` line in `~/.ssh/config`.
@@ -156,7 +164,7 @@ export async function syncAgentboxSshConfig(statePath: string = stateFilePath())
   const state = await readState(statePath);
   const blocks: string[] = [];
   for (const box of state.boxes) {
-    const ssh = box.cloud?.ssh;
+    const ssh = box.ssh;
     if (!ssh) continue;
     blocks.push(
       buildBlock({
@@ -164,6 +172,7 @@ export async function syncAgentboxSshConfig(statePath: string = stateFilePath())
         hostname: ssh.host,
         user: ssh.user,
         identityFile: ssh.identityFile,
+        port: ssh.port,
       }),
     );
   }

@@ -81,7 +81,7 @@ export async function resolveCloudSshTarget(
 }
 
 /**
- * Bring a cloud box online, persist its resolved SSH target to `box.cloud.ssh`,
+ * Bring a cloud box online, persist its resolved SSH target to `box.ssh`,
  * and regenerate `~/.agentbox/ssh/config` (+ the `~/.ssh/config` Include),
  * returning the connection target. Shared by `agentbox code` (VS Code
  * Remote-SSH), `agentbox open` (sshfs mount), and `agentbox shell --ssh-config`

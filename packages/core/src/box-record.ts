@@ -164,16 +164,24 @@ export interface CloudBoxFields {
    * correctly even if the host config changed. Mirrors config's `GitPushMode`.
    */
   gitPushMode?: 'auto' | 'relay' | 'lease';
-  /**
-   * Last resolved SSH connection target for this box (host/user, plus the
-   * per-box identity file for identity-authed providers like Hetzner). Persisted
-   * whenever we're already online (create/start/code/open/shell) so the
-   * `~/.agentbox/ssh/config` file can be regenerated purely from state — the
-   * regenerate never hits a provider API or wakes a paused box. The host IP can
-   * change across stop/start, so this is refreshed on start/resume. Absent for
-   * providers with no SSH.
-   */
-  ssh?: { host: string; user: string; identityFile?: string };
+}
+
+/**
+ * Last resolved SSH connection target for a box — host/user, the per-box
+ * identity file (identity-authed providers: docker localhost sshd, Hetzner),
+ * and an optional port (docker publishes its sshd on an ephemeral loopback
+ * port; cloud providers use the default 22). Persisted on `BoxRecord.ssh`
+ * whenever we're already online (create/start/code/open/shell) so
+ * `~/.agentbox/ssh/config` can be regenerated purely from state — the
+ * regenerate never hits a provider API or wakes a paused box. The host IP /
+ * loopback port can change across stop/start, so it is refreshed on start/resume.
+ * Absent for providers with no SSH.
+ */
+export interface SshTargetRecord {
+  host: string;
+  user: string;
+  identityFile?: string;
+  port?: number;
 }
 
 export interface GitWorktreeRecord {
@@ -316,6 +324,18 @@ export interface BoxRecord {
   webContainerPort?: number;
   /** Host port mapped to container :80 (Docker). */
   webHostPort?: number;
+  /** In-box localhost sshd is enabled for this box (Docker). */
+  sshEnabled?: boolean;
+  /** Container-side sshd port (22). Docker. */
+  sshContainerPort?: number;
+  /** Ephemeral loopback host port mapped to the container's sshd (Docker). */
+  sshHostPort?: number;
+  /**
+   * Last resolved SSH connection target. Regenerated into `~/.agentbox/ssh/config`
+   * by `syncAgentboxSshConfig`. Docker: `127.0.0.1` + the per-box key + the
+   * ephemeral `sshHostPort`; cloud (Hetzner): the VPS IP + per-box key.
+   */
+  ssh?: SshTargetRecord;
   /** Portless route name registered for this box's web port. Docker only. */
   portlessAlias?: string;
   /** Full user-facing URL the Portless proxy serves for this box. Docker only. */

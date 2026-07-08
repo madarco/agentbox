@@ -12,7 +12,7 @@ export type BoxOpResult = { ok: true; stdout?: string; stderr?: string } | { ok:
 // Host apps a box can be opened in (`agentbox open --in <app>`). Mirrors the
 // CLI's OPEN_IN_APPS (apps/cli/src/commands/_open-in.ts); duplicated here to keep
 // @agentbox/* packages out of the Next bundle, like AGENTS/PROVIDERS in validate.ts.
-export type OpenInApp = 'codex' | 'herdr' | 'cmux' | 'vscode' | 'iterm2';
+export type OpenInApp = 'codex' | 'herdr' | 'cmux' | 'vscode' | 'iterm2' | 'finder';
 
 // One app's install/eligibility, as reported by the CLI's `open --targets --json`.
 // `providers` (when present) limits the app to boxes on those providers (e.g.

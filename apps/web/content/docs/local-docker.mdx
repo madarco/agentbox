@@ -100,7 +100,7 @@ The bind-mounted host `.git/` means commits land on the host immediately; pushes
 | Base image | `agentbox/box:dev` (Debian-based) |
 | Build method | Pulled from GHCR by build-context fingerprint; built locally on a pull miss (`--build` forces) |
 | Docker-in-Docker | Yes (always-on in-box `dockerd`) |
-| SSH | None — local Docker exec + TTY bridge |
+| SSH | Always-on sshd, published on `127.0.0.1` only (powers `agentbox open` sshfs + Codex); attach still uses Docker exec + TTY bridge |
 | Arch | Host-native (arm64 on Apple Silicon, amd64 on Intel/Linux) |
 | Live snapshots | Instant `docker pause`/`unpause` (cgroup freezer); checkpoints are layered `docker commit` |
 | Preview URL | `https://<box-name>.localhost` (Portless) + mapped loopback ports |

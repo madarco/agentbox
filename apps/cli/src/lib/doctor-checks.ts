@@ -6,7 +6,7 @@
  * a cloud API. Remote snapshot inventory lives in `agentbox prepare --status`.
  */
 
-import { accessSync, constants as fsConstants, mkdirSync } from 'node:fs';
+import { accessSync, constants as fsConstants, existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -114,9 +114,47 @@ async function checkSsh(): Promise<CheckResult> {
       };
 }
 
+/** True when `bin` resolves on PATH (definitive install check, no version-flag quirks). */
+async function onPath(bin: string): Promise<string | null> {
+  const r = await execa('which', [bin], { reject: false });
+  if (r.exitCode !== 0) return null;
+  const p = (r.stdout ?? '').trim();
+  return p.length > 0 ? p : null;
+}
+
+// sshfs + macFUSE are OPTIONAL deps of `agentbox open` (the sshfs live-mount of a
+// box's /workspace), so a miss is `warn`, never `fail`.
+async function checkSshfs(): Promise<CheckResult> {
+  const path = await onPath('sshfs');
+  if (path) return { label: 'sshfs', status: 'ok', detail: path };
+  const hint =
+    process.platform === 'darwin'
+      ? 'optional: `brew install macfuse sshfs` — needed for `agentbox open` (sshfs mount)'
+      : 'optional: install sshfs (e.g. `apt install sshfs`) — needed for `agentbox open` (sshfs mount)';
+  return { label: 'sshfs', status: 'warn', detail: 'not found', hint };
+}
+
+/** macOS-only: macFUSE isn't a PATH binary — probe its filesystem bundle. */
+function checkMacfuse(): CheckResult {
+  const present =
+    existsSync('/Library/Filesystems/macfuse.fs') || existsSync('/Library/Filesystems/osxfuse.fs');
+  return present
+    ? { label: 'macfuse', status: 'ok', detail: '/Library/Filesystems/macfuse.fs' }
+    : {
+        label: 'macfuse',
+        status: 'warn',
+        detail: 'not installed',
+        hint: 'optional: `brew install macfuse` — the FUSE backend `agentbox open` mounts through',
+      };
+}
+
 export async function runSystemChecks(): Promise<CheckResult[]> {
-  const [git, ssh] = await Promise.all([checkGit(), checkSsh()]);
-  return [checkNode(), checkPlatform(), checkAgentboxHome(), git, ssh];
+  const [git, ssh, sshfs] = await Promise.all([checkGit(), checkSsh(), checkSshfs()]);
+  const results = [checkNode(), checkPlatform(), checkAgentboxHome(), git, ssh, sshfs];
+  // macFUSE is a macOS concept; on Linux FUSE is a kernel module and sshfs alone
+  // is the signal, so don't show a spurious row.
+  if (process.platform === 'darwin') results.push(checkMacfuse());
+  return results;
 }
 
 /**

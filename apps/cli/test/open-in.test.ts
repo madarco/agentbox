@@ -5,6 +5,7 @@ import {
   detectOpenTargets,
   IDE_PROVIDERS,
   PERSISTENT_SSH_PROVIDERS,
+  SSH_MOUNT_PROVIDERS,
   pathHasBinary,
   renderTargets,
   resolveCmuxBinary,
@@ -109,15 +110,30 @@ describe('detectOpenTargets', () => {
     expect(detectOpenTargets(seams({})).iterm2.available).toBe(false);
   });
 
+  it('finder is always available, gated to SSH-mount providers', () => {
+    expect(detectOpenTargets(seams({})).finder).toEqual({
+      available: true,
+      providers: [...SSH_MOUNT_PROVIDERS],
+    });
+    // Available on linux too (xdg-open reveal), unlike the macOS-only apps.
+    expect(detectOpenTargets(seams({ platform: 'linux' })).finder.available).toBe(true);
+  });
+
   it('never throws on linux (no /Applications probes)', () => {
     expect(() => detectOpenTargets(seams({ platform: 'linux' }))).not.toThrow();
   });
 });
 
 describe('provider eligibility constants', () => {
-  it('codex is hetzner-only; vscode covers docker + ssh clouds', () => {
-    expect(PERSISTENT_SSH_PROVIDERS).toEqual(['hetzner']);
+  it('codex/persistent-ssh covers docker + hetzner; vscode covers docker + ssh clouds', () => {
+    expect(PERSISTENT_SSH_PROVIDERS).toEqual(['docker', 'hetzner']);
     expect(IDE_PROVIDERS).toEqual(['docker', 'hetzner', 'daytona']);
+  });
+
+  it('open sshfs-mounts docker + hetzner + daytona; vercel/e2b excluded (no SSH)', () => {
+    expect(SSH_MOUNT_PROVIDERS).toEqual(['docker', 'hetzner', 'daytona']);
+    expect(SSH_MOUNT_PROVIDERS).not.toContain('vercel');
+    expect(SSH_MOUNT_PROVIDERS).not.toContain('e2b');
   });
 });
 
@@ -201,13 +217,15 @@ describe('renderTargets', () => {
       cmux: { available: true },
       vscode: { available: true, providers: ['docker', 'hetzner', 'daytona'] },
       iterm2: { available: true },
+      finder: { available: true, providers: ['docker', 'hetzner', 'daytona'] },
     });
     expect(out).toBe(
       'codex: not installed\n' +
         'herdr: available\n' +
         'cmux: available\n' +
         'vscode: available (docker, hetzner, daytona boxes)\n' +
-        'iterm2: available\n',
+        'iterm2: available\n' +
+        'finder: available (docker, hetzner, daytona boxes)\n',
     );
   });
 });

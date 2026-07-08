@@ -143,16 +143,30 @@ The first attach to a fresh box downloads the IDE server (~70MB, keyed to your d
 
 ## Open files
 
-`agentbox open [box]` opens the box's `/workspace` in Finder. The merged `/workspace` only exists inside the container, so `open` first rsyncs it to a per-box host directory and then launches Finder. The export is a snapshot, refreshed on demand — re-run to re-sync. See [CLI commands](/docs/cli) for flags like `--no-refresh`, `--include-node-modules`, and `--path`.
+`agentbox open [box]` **live-mounts** the box's `/workspace` on your host and reveals it in Finder. Every box runs a localhost-only SSH server (published on `127.0.0.1` only, key-authenticated by a per-box key), so `open` mounts `/workspace` over `sshfs` at `~/.agentbox/mounts/<box>/`. Unlike a snapshot, edits flow both ways in real time. This needs `sshfs` on the host — `brew install macfuse sshfs` on macOS. See [CLI commands](/docs/cli) for `--path` (print the mount path) and `--unmount`.
 
 ```bash
-# rsync /workspace and open it in Finder
+# sshfs-mount /workspace and open it in Finder
 agentbox open mybox
 
-# print the host path without opening Finder (for editors/scripts)
-agentbox open mybox --path --no-refresh
+# print the mount path without opening Finder (for editors/scripts)
+agentbox open mybox --path
+
+# tear the mount down
+agentbox open mybox --unmount
 ```
 
+Because the box exposes real SSH, you can also add it to the **Codex desktop app** as an SSH connection in one step:
+
+```bash
+# writes an ~/.ssh/config alias and opens Codex's add-SSH-connection form
+agentbox open mybox --in codex
+```
+
+`agentbox open` writes a managed `Host <box>` block to `~/.agentbox/ssh/config` (included from `~/.ssh/config`), so `ssh <box>` also just works and lands in `/workspace`. The alias points at `127.0.0.1` on an ephemeral loopback port that is re-resolved on every `agentbox start`.
+
+`open` works on any SSH-capable provider — Docker, Hetzner, and Daytona. Vercel and E2B boxes have no SSH, so `open` there fails with a short message pointing you at `agentbox download` (copy the files to your host) instead. `agentbox doctor` lists `sshfs` and `macFUSE` as optional checks so you can see at a glance whether the mount will work.
+
 <Callout type="warn" title="HEADS UP">
-`agentbox open` is a snapshot for browsing, not a sync-back. To merge box changes into your host workspace use `agentbox download` (see [Sync and git](/docs/sync-and-git)), and capture state with [checkpoints](/docs/checkpoints-and-pausing) before you destroy — the export under `~/.agentbox/boxes/<id>/` is wiped on destroy.
+The sshd is bound to loopback only and never reachable off-host. It's a live mount, not a checkpoint — capture durable state with [checkpoints](/docs/checkpoints-and-pausing) before you destroy. The per-box key under `~/.agentbox/boxes/<id>/ssh/` is wiped on destroy.
 </Callout>
