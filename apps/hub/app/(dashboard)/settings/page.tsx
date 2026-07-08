@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { Ago } from '@/components/ago';
 import { Icons, LangDot } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +14,21 @@ import { ProvidersSection } from './components/provider-actions';
 export default function SettingsPage() {
   const { state } = useStore();
   const gh = state.github;
+  const [version, setVersion] = useState<string | null>(null);
+
+  // Pure REST: read the running hub's version off the public health probe.
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/v1/health', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { version?: string } | null) => {
+        if (alive && j?.version) setVersion(j.version);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   return (
     <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8 max-sm:px-4">
@@ -101,6 +117,10 @@ export default function SettingsPage() {
           </Card>
         </>
       )}
+
+      <div className="mt-10 text-center font-mono text-[11px] text-muted-foreground">
+        AgentBox {version ?? '…'}
+      </div>
     </div>
   );
 }

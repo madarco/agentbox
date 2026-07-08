@@ -7,5 +7,12 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export function GET(): Response {
-  return ok({ ok: true, apiVersion: 'v1', profile: hubProfile() });
+  return ok({
+    ok: true,
+    apiVersion: 'v1',
+    // The hub runs the CLI's version (inherited via AGENTBOX_CLI_VERSION at spawn);
+    // apps/hub's own package.json is a 0.0.0 placeholder, so don't read that.
+    version: process.env.AGENTBOX_CLI_VERSION ?? 'dev',
+    profile: hubProfile(),
+  });
 }
