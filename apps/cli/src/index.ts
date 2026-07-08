@@ -243,7 +243,7 @@ if (AGENTBOX_VERSION !== '0.0.0-dev') {
     versionPromptShown = true;
     try {
       const yes = await confirm({
-        message: `agentbox was updated (${state.lastRunVersion} → ${AGENTBOX_VERSION}) — refresh skills, box image, relay, and the menu-bar app now?`,
+        message: `agentbox was updated (${state.lastRunVersion} → ${AGENTBOX_VERSION}) — download new version now?`,
         initialValue: true,
       });
       if (yes) {
