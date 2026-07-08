@@ -1,5 +1,5 @@
 /**
- * `agentbox install tray` — install the AgentBox macOS menu-bar app.
+ * `agentbox install app` — install the AgentBox macOS menu-bar app.
  *
  * The app is distributed separately (it's macOS-only, and keeps this cross-platform CLI small):
  * a signed+notarized `AgentBox.zip` is published to the public `madarco/agentbox` repo under the
@@ -218,13 +218,13 @@ async function downloadAndVerify(
   return { zipPath, sha: actual };
 }
 
-export const installTrayCommand = new Command('tray')
-  .description('Download and install the AgentBox Tray macOS menu-bar app into /Applications')
+export const installAppCommand = new Command('app')
+  .description('Download and install the AgentBox macOS menu-bar app into /Applications')
   .option('--uninstall', 'quit and remove the menu-bar app')
   .option('--tag <tag>', 'release tag to install from (default: tray-latest)')
   .option('--zip <path>', 'install a local AgentBox.zip instead of downloading')
   .action(async (opts: { uninstall?: boolean; tag?: string; zip?: string }) => {
-    intro(opts.uninstall ? 'Removing AgentBox Tray…' : 'Installing AgentBox Tray…');
+    intro(opts.uninstall ? 'Removing the AgentBox app…' : 'Installing the AgentBox app…');
     const res = await installTray(opts);
     outro(res.ran ? 'Done' : `Skipped (${res.reason ?? 'nothing to do'})`);
     if (!res.ran && res.reason && res.reason !== 'not-macos') process.exitCode = 1;

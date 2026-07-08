@@ -2,7 +2,7 @@
  * `~/.agentbox/update-state.json` — one stamp file for all update machinery:
  * the last CLI version the user acknowledged (drives the "you updated —
  * refresh now?" prompt in `index.ts`), the sha256 of the installed tray-app
- * zip (drives the sidecar-compare in `install-tray.ts`), and the daily
+ * zip (drives the sidecar-compare in `install-app.ts`), and the daily
  * remote-check cache (the ONLY place the CLI touches the network outside an
  * explicit install/update command).
  */

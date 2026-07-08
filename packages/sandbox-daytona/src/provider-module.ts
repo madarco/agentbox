@@ -20,7 +20,9 @@ export async function doctorChecks(): Promise<CheckResult[]> {
         {
           label: 'credentials',
           status: 'warn',
-          detail: status.reason ?? 'not configured',
+          // The SDK's reason is a paragraph (env-var enumeration) — doctor just
+          // needs the vercel/e2b-style one-liner; `prepare --status` keeps it.
+          detail: 'not configured',
           hint: '`agentbox daytona login`',
         },
       ];

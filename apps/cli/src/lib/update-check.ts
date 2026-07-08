@@ -13,7 +13,7 @@ import { readFile } from 'node:fs/promises';
 import { GLOBAL_CONFIG_FILE, loadEffectiveConfig, parseUserConfig } from '@agentbox/config';
 import { detectExecutionMethod, type ExecMethod } from '../exec-method.js';
 import { AGENTBOX_VERSION } from '../version.js';
-import { fetchTraySidecarSha, trayInstalled } from '../commands/install-tray.js';
+import { fetchTraySidecarSha, trayInstalled } from '../commands/install-app.js';
 import { isNewer } from './semver-lite.js';
 import {
   readUpdateState,

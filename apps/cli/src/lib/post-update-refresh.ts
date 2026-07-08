@@ -24,7 +24,7 @@ import {
   fetchTraySidecarSha,
   installTray,
   trayInstalled,
-} from '../commands/install-tray.js';
+} from '../commands/install-app.js';
 import { AGENTBOX_VERSION } from '../version.js';
 import { log } from './prompt.js';
 import { readUpdateState, remoteCheckFresh, writeUpdateState } from './update-state.js';
@@ -61,7 +61,7 @@ export async function maybeUpdateTray(say: (msg: string) => void): Promise<void>
   say(
     res.ran
       ? 'menu-bar app updated'
-      : `menu-bar app not updated (${res.reason ?? 'unknown'}) — run \`agentbox install tray\` manually`,
+      : `menu-bar app not updated (${res.reason ?? 'unknown'}) — run \`agentbox install app\` manually`,
   );
 }
 
