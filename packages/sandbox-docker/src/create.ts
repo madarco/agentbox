@@ -1213,9 +1213,14 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     vncHostPort: vncHostPort ?? undefined,
     webHostPort: webHostPort ?? undefined,
     sshHostPort: ssh.sshHostPort ?? undefined,
-    ssh: ssh.sshHostPort
-      ? { host: '127.0.0.1', user: 'vscode', identityFile: ssh.identityFile, port: ssh.sshHostPort }
-      : undefined,
+    // Only advertise an ssh-config alias when sshd actually bound (`up`). Docker
+    // publishes the -p 0:22 host port regardless, so gating on the port alone
+    // would point `~/.ssh/config` at a dead loopback port when sshd failed to
+    // start. A later `start`/`open` re-runs setUpBoxSshd and records it once up.
+    ssh:
+      ssh.up && ssh.sshHostPort
+        ? { host: '127.0.0.1', user: 'vscode', identityFile: ssh.identityFile, port: ssh.sshHostPort }
+        : undefined,
     portlessAlias: portlessAliasName,
     portlessUrl,
     portlessVncAlias: portlessVncAliasName,

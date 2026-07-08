@@ -315,7 +315,11 @@ export async function refreshBoxSshd(box: BoxRecord): Promise<BoxRecord> {
     join(boxRunDirFor(box), 'ssh'),
     `agentbox-${box.name}-${box.id}`,
   );
-  if (!ssh.sshHostPort) return box;
+  // Only (re)write the alias when sshd actually bound. If it didn't come up we
+  // leave the last-known target untouched rather than pointing `~/.ssh/config` at
+  // a dead loopback port (matches the create-time gate) — a later retry records
+  // it once sshd is healthy.
+  if (!ssh.up || !ssh.sshHostPort) return box;
   const port = ssh.sshHostPort;
   const changed = port !== box.sshHostPort || box.ssh?.port !== port;
   box.sshHostPort = port;

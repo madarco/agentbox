@@ -101,6 +101,17 @@ export const openCommand = new Command('open')
 
       const box = await resolveBoxOrExit(idOrName);
 
+      // `--unmount` is a pure host-side mount teardown — independent of the box's
+      // provider or whether it currently has sshd — so handle it up front before
+      // any provider dispatch (a legacy docker box would otherwise fall through to
+      // the rsync path and never unmount).
+      if (opts.unmount) {
+        const mountRoot = join(homedir(), '.agentbox', 'mounts', box.name);
+        const ok = await tryUnmount(mountRoot);
+        process.stdout.write(ok ? `unmounted ${mountRoot}\n` : `nothing mounted at ${mountRoot}\n`);
+        return;
+      }
+
       const app = opts.in ?? 'finder';
       if (app === 'codex') {
         await openInCodex(box);
@@ -175,6 +186,16 @@ async function openInCodex(box: BoxRecord): Promise<void> {
       `'--in codex' needs a box with a persistent SSH key — docker (localhost sshd) and ` +
         `Hetzner cloud boxes qualify (this box is '${providerName}'). Daytona uses a 60-min ` +
         `token that expires; Vercel/E2B have no SSH. Try 'agentbox open ${box.name} --in vscode'.`,
+    );
+  }
+
+  // A docker box created before the localhost sshd shipped has no SSH surface —
+  // `PERSISTENT_SSH_PROVIDERS` gates by provider, so catch that here with a clear
+  // message instead of a confusing "sshd may have failed to start" downstream.
+  if (providerName === 'docker' && !box.sshEnabled) {
+    throw new Error(
+      `box '${box.name}' predates the in-box sshd, so it can't be added to Codex over SSH. ` +
+        `Recreate the box (new docker boxes run sshd), or use 'agentbox open ${box.name} --in vscode'.`,
     );
   }
 
@@ -353,12 +374,7 @@ async function bringDockerBoxOnline(box: BoxRecord): Promise<BoxRecord> {
 async function runSshfsMount(box: BoxRecord, opts: OpenOpts): Promise<void> {
   const mountRoot = join(homedir(), '.agentbox', 'mounts', box.name);
 
-  if (opts.unmount) {
-    const ok = await tryUnmount(mountRoot);
-    if (ok) process.stdout.write(`unmounted ${mountRoot}\n`);
-    else process.stdout.write(`nothing mounted at ${mountRoot}\n`);
-    return;
-  }
+  // `--unmount` is handled up front in the action (provider-independent).
 
   if (opts.path || opts.print) {
     // Don't mount when we only print — print is meant to be lightweight.
