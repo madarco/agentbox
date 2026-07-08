@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { OpenInApp, OpenTargets } from '@/lib/boxes/backend-types';
 import type { Box } from '@/lib/boxes/types';
 import { SectionLabel } from './section-label';
@@ -50,15 +51,18 @@ function CopyButton({ url }: { url: string }) {
   );
 }
 
-// Wraps a disabled control so the reason still surfaces on hover: Button's
-// `disabled:pointer-events-none` suppresses the title tooltip on the button
-// itself, so the title lives on this span (same trick as create-box-modal).
+// Wraps a disabled control so the reason surfaces on hover, instantly (the
+// Tooltip defaults to 0 delay). The trigger is a span because Button's
+// `disabled:pointer-events-none` would swallow the hover on the button itself.
 function DisabledTip({ reason, children }: { reason: string | null; children: ReactNode }) {
   if (!reason) return <>{children}</>;
   return (
-    <span title={reason} className="cursor-not-allowed">
-      {children}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="cursor-not-allowed">{children}</span>
+      </TooltipTrigger>
+      <TooltipContent>{reason}</TooltipContent>
+    </Tooltip>
   );
 }
 
