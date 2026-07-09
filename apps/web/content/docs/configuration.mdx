@@ -158,6 +158,7 @@ See [checkpoints and pausing](/docs/checkpoints-and-pausing).
 | `box.resyncOnStart` | bool | `true` | on starting a session, merge the host's current branch + overlay changes (box wins on conflict, warns the agent) |
 | `box.bundleDepth` | int | adaptive | cap git-bundle history shipped to cloud sandboxes; `0` = full history; ignored for docker |
 | `box.dockerCacheShared` | bool | `false` | share the in-box docker image cache across boxes; only one box can run at a time when set |
+| `box.credentialSync` | bool | `true` | automatically sync refreshed agent credentials from boxes to the host backup and out to all other running boxes (Claude's OAuth refresh rotates the refresh token, killing every other copy). `--no-credential-sync` at create disables the in-box watcher for that box. See [run an agent](/docs/run-an-agent) |
 
 See [teleport a project](/docs/teleport-a-project), [environment](/docs/environment), [browser and screen](/docs/browser-and-screen), [sync and git](/docs/sync-and-git), and [Docker in Docker](/docs/docker-in-docker).
 

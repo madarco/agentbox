@@ -1,7 +1,7 @@
 # Settings sync across boxes + automatic credential fan-out — implementation plan
 
-Status: **Phase 0 done (2026-07-09) — Phase 1 next**. One session per phase; update the
-status line and the per-phase checkboxes as work lands.
+Status: **ALL PHASES SHIPPED (2026-07-09)** on branch `feat/settings-sync`. Kept as the
+implementation record; see the follow-ups section at the bottom for what remains.
 
 ## Context
 
@@ -165,3 +165,31 @@ naturally, so a plain `claude -p` turn forced a real refresh):
 - No `Provider` interface change → no provider-SDK republish expected; re-check the SDK
   re-export surface before shipping (the sandbox-core merge-core addition is additive).
 - apps/cli tests touching `~/.agentbox` must isolate `$HOME` per file.
+
+## Ship record + follow-ups (2026-07-09)
+
+All phases landed on `feat/settings-sync` (one commit per phase). Live-verified:
+cloud pull + propagate (vercel box → host → docker shared volume), the full
+rotation loop (real claude refresh in a docker box → simulated watcher POST →
+relay newest-wins accept → fan-out CLI → running vercel box passed a real
+`claude -p` turn on the fanned-out token), and the pause/unpause reconcile on a
+vercel box holding a rotated-dead blob.
+
+Follow-ups:
+
+- [ ] **Re-bake runtime images/snapshots** so boxes actually run the watcher:
+      docker base image rebuild (new ctl in the build context), and
+      `agentbox prepare --provider hetzner|vercel|e2b` (+ daytona) re-runs.
+      Existing boxes keep the old ctl until recreated — the resume reconcile and
+      the manual `agentbox credentials propagate` cover them meanwhile.
+- [ ] **Implicit SDK auto-resume bypasses the reconcile**: an `exec` against a
+      paused vercel/e2b sandbox wakes it without `provider.resume`, so the box
+      keeps its pause-time credentials until the next explicit
+      resume/start/reconnect (documented in cloud-providers.md). Consider
+      hooking the keepalive/poller reattach path.
+- [ ] **Live-session re-read (open PoC item)**: a long-running in-box claude
+      session may hold a stale refresh token in memory and 401 once even after
+      the file was fixed; observe in practice (documented in run-an-agent.mdx).
+- [ ] The relay runs inside the hub when the hub is up — after touching relay
+      code, `pnpm --filter @agentbox/hub build:standalone` + `AGENTBOX_HUB_BIN=…
+      hub restart` (per CLAUDE.md), or the fan-out handler stays stale.

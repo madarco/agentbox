@@ -39,6 +39,24 @@ agentbox download --with-env
 Run `agentbox download --dry-run` first to see exactly which files would change on the host before committing to the copy.
 </Callout>
 
+## Sync agent settings between boxes
+
+Installed a skill or plugin *inside* a box and want it everywhere? `agentbox download claude [box]` pulls box-installed Claude skills/plugins/agents/commands back to your host `~/.claude` (additive — nothing on the host is ever overwritten), and then offers to **propagate** them to your other boxes: same project, all boxes, or none. `download codex` and `download opencode` do the same for their config/auth files. Works on every provider: docker boxes are read from their config volume (even while stopped), cloud boxes from the live box (auto-resuming a paused one).
+
+```bash
+# Pull new skills/plugins from a box into host ~/.claude, then choose:
+#   Propagate to other boxes? › same project / all boxes / no
+agentbox download claude mybox
+
+# Non-interactive: pull and push to every box in this project
+agentbox download claude mybox --propagate project -y
+
+# Preview only
+agentbox download claude mybox --dry-run
+```
+
+Propagation is additive per target: docker boxes get one write to their shared config volume (covering paused ones too), running cloud boxes are pushed over the provider transport, and Claude's plugin registries are merged without touching entries a target already has. Paused cloud boxes are skipped with a note — resume them and re-run to include them. Declining the host write doesn't block propagation: the items are staged from the source box either way.
+
 Cloud boxes (`--provider daytona`, `vercel`, `hetzner`) do a bulk tar pull of `/workspace` and do **not** support gitignore-aware change detection or `--dry-run`. On cloud, the git-aware sync-back path is in-box `git push`. See [Daytona](/docs/daytona), [Vercel](/docs/vercel), [Hetzner](/docs/hetzner).
 
 ## Copy files

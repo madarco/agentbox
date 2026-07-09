@@ -56,8 +56,15 @@ sandbox: when it's `running` it calls `reEnsureCloudBox` directly (re-resolve
 preview URLs, re-open the Hetzner tunnel + forwards, re-register host portless
 aliases + the relay poller, relaunch the in-box ctl/dockerd/vnc daemons) and
 skips `backend.start`; only a `paused`/`stopped` sandbox falls back to the
-power-cycling `resume`/`start`. Docker's `reconnect` is the idempotent `startBox`
-(a `docker start` on a live container is a no-op). `recover --provider <cloud>
+power-cycling `resume`/`start`. `reEnsureCloudBox` also finishes with a
+best-effort `reconcileAgentCredentials` (gated by `box.credentialSync`): a
+woken box carries pause-time agent credentials, and if another box rotated the
+claude refresh token meanwhile that copy is dead — claude is compared both
+directions via `claudeAiOauth.expiresAt` (push host-newer / capture box-newer),
+codex/opencode are host-wins push-if-different. Note the SDK's *implicit*
+auto-resume (an `exec` against a paused vercel/e2b sandbox) bypasses this hook
+until the next explicit resume/start/reconnect. Docker's `reconnect` is the
+idempotent `startBox` (a `docker start` on a live container is a no-op). `recover --provider <cloud>
 --adopt` additionally rebuilds a missing `BoxRecord` from `backend.list()` (the
 `agentbox.name` tag), minting fresh relay/bridge tokens that reach the in-box
 agent when `reconnect` relaunches the ctl daemon (it writes

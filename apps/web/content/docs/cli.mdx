@@ -221,7 +221,7 @@ agentbox services restart 1                # restart every service
 agentbox services restart 1 web            # restart one service
 ```
 
-`download` pulls `/workspace` back into your host workspace, honouring `.gitignore`. It has typed subcommands for agent state: `download env`, `download claude`, `download codex`, `download opencode`, `download config`. `cp` copies files or directories in either direction, like `docker cp`. `git` runs git/gh operations against the box from the host through the relay, so push and fetch use your host credentials and the box never sees them.
+`download` pulls `/workspace` back into your host workspace, honouring `.gitignore`. It has typed subcommands for agent state: `download env`, `download claude`, `download codex`, `download opencode`, `download config`. The agent subcommands work on every provider (docker reads the config volume, cloud reads the live box) and can propagate the pulled items to your other boxes with `--propagate project|all|none` — see [sync and git](/docs/sync-and-git). `cp` copies files or directories in either direction, like `docker cp`. `git` runs git/gh operations against the box from the host through the relay, so push and fetch use your host credentials and the box never sees them.
 
 `cp` takes multiple sources in one call — list several files/dirs (or a shell-expanded wildcard like `./*.log`) before the destination, which must then be a directory (trailing `/`). Wildcards are expanded by your shell, so a box-path glob (`mybox:/workspace/*.log`) only expands when run from inside the box; from the host, glob box contents from inside the box or list the files explicitly.
 
