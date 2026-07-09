@@ -6,7 +6,9 @@ import {
   resolveOpencodeVolume,
   SHARED_OPENCODE_VOLUME,
 } from '@agentbox/sandbox-docker';
+import { pullOpencodeConfigViaTransport } from '@agentbox/sandbox-core';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { cloudTransportForPull } from './_agent-pull.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface DownloadOpencodeOpts {
@@ -28,18 +30,26 @@ export const downloadOpencodeCommand = new Command('opencode')
     try {
       const box = await resolveBoxOrExit(idOrName);
 
-      // We read the opencode-config *volume*, not the container, so the box can
-      // be stopped — no unpause/start dance.
-      const volume =
-        box.opencodeConfigVolume ?? resolveOpencodeVolume({ isolate: false, boxId: box.id }).volume;
-      if (volume === SHARED_OPENCODE_VOLUME) {
-        log.warn(
-          `Reading the shared ${SHARED_OPENCODE_VOLUME} volume — it aggregates OpenCode config from ANY box, not just ${box.name}.`,
-        );
+      let pull: (dryRun: boolean) => Promise<{ newItems: string[] }>;
+      if ((box.provider ?? 'docker') !== 'docker') {
+        // Cloud: read the live box FS over the provider's SyncTransport.
+        const transport = await cloudTransportForPull(box);
+        pull = (dryRun) => pullOpencodeConfigViaTransport(transport, { dryRun });
+      } else {
+        // Docker: we read the opencode-config *volume*, not the container, so
+        // the box can be stopped — no unpause/start dance.
+        const volume =
+          box.opencodeConfigVolume ?? resolveOpencodeVolume({ isolate: false, boxId: box.id }).volume;
+        if (volume === SHARED_OPENCODE_VOLUME) {
+          log.warn(
+            `Reading the shared ${SHARED_OPENCODE_VOLUME} volume — it aggregates OpenCode config from ANY box, not just ${box.name}.`,
+          );
+        }
+        const image = box.image || DEFAULT_BOX_IMAGE;
+        pull = (dryRun) => pullOpencodeConfig({ volume }, { image, dryRun });
       }
-      const image = box.image || DEFAULT_BOX_IMAGE;
 
-      const preview = await pullOpencodeConfig({ volume }, { image, dryRun: true });
+      const preview = await pull(true);
 
       if (preview.newItems.length === 0) {
         process.stdout.write('no new OpenCode config to download\n');
@@ -66,7 +76,7 @@ export const downloadOpencodeCommand = new Command('opencode')
         }
       }
 
-      const result = await pullOpencodeConfig({ volume }, { image, dryRun: false });
+      const result = await pull(false);
       process.stdout.write(`downloaded ${result.newItems.length} item(s)\n`);
     } catch (err) {
       handleLifecycleError(err);

@@ -6,7 +6,9 @@ import {
   resolveClaudeVolume,
   SHARED_CLAUDE_VOLUME,
 } from '@agentbox/sandbox-docker';
+import { pullClaudeExtrasViaTransport, type PullClaudeResult } from '@agentbox/sandbox-core';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { cloudTransportForPull } from './_agent-pull.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface DownloadClaudeOpts {
@@ -33,18 +35,26 @@ export const downloadClaudeCommand = new Command('claude')
     try {
       const box = await resolveBoxOrExit(idOrName);
 
-      // We read the claude-config *volume*, not the container, so the box can
-      // be stopped — no unpause/start dance (unlike `download` / `download env`).
-      const volume =
-        box.claudeConfigVolume ?? resolveClaudeVolume({ isolate: false, boxId: box.id }).volume;
-      if (volume === SHARED_CLAUDE_VOLUME) {
-        log.warn(
-          `Reading the shared ${SHARED_CLAUDE_VOLUME} volume — it aggregates Claude extensions installed in ANY box, not just ${box.name}.`,
-        );
+      let pull: (dryRun: boolean) => Promise<PullClaudeResult>;
+      if ((box.provider ?? 'docker') !== 'docker') {
+        // Cloud: read the live box FS over the provider's SyncTransport.
+        const transport = await cloudTransportForPull(box);
+        pull = (dryRun) => pullClaudeExtrasViaTransport(transport, { dryRun });
+      } else {
+        // Docker: we read the claude-config *volume*, not the container, so the
+        // box can be stopped — no unpause/start dance (unlike `download`).
+        const volume =
+          box.claudeConfigVolume ?? resolveClaudeVolume({ isolate: false, boxId: box.id }).volume;
+        if (volume === SHARED_CLAUDE_VOLUME) {
+          log.warn(
+            `Reading the shared ${SHARED_CLAUDE_VOLUME} volume — it aggregates Claude extensions installed in ANY box, not just ${box.name}.`,
+          );
+        }
+        const image = box.image || DEFAULT_BOX_IMAGE;
+        pull = (dryRun) => pullClaudeExtras({ volume }, { image, dryRun });
       }
-      const image = box.image || DEFAULT_BOX_IMAGE;
 
-      const preview = await pullClaudeExtras({ volume }, { image, dryRun: true });
+      const preview = await pull(true);
 
       if (preview.newItems.length === 0 && preview.mergedRegistries.length === 0) {
         process.stdout.write('no new Claude extensions to download into ~/.claude\n');
@@ -76,7 +86,7 @@ export const downloadClaudeCommand = new Command('claude')
         }
       }
 
-      const result = await pullClaudeExtras({ volume }, { image, dryRun: false });
+      const result = await pull(false);
       process.stdout.write(
         `downloaded ${result.newItems.length} extension(s)` +
           `${result.mergedRegistries.length > 0 ? `, merged ${result.mergedRegistries.join(', ')}` : ''}` +

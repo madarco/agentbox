@@ -6,7 +6,9 @@ import {
   resolveCodexVolume,
   SHARED_CODEX_VOLUME,
 } from '@agentbox/sandbox-docker';
+import { pullCodexConfigViaTransport } from '@agentbox/sandbox-core';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { cloudTransportForPull } from './_agent-pull.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface DownloadCodexOpts {
@@ -28,18 +30,26 @@ export const downloadCodexCommand = new Command('codex')
     try {
       const box = await resolveBoxOrExit(idOrName);
 
-      // We read the codex-config *volume*, not the container, so the box can
-      // be stopped — no unpause/start dance.
-      const volume =
-        box.codexConfigVolume ?? resolveCodexVolume({ isolate: false, boxId: box.id }).volume;
-      if (volume === SHARED_CODEX_VOLUME) {
-        log.warn(
-          `Reading the shared ${SHARED_CODEX_VOLUME} volume — it aggregates Codex config from ANY box, not just ${box.name}.`,
-        );
+      let pull: (dryRun: boolean) => Promise<{ newItems: string[] }>;
+      if ((box.provider ?? 'docker') !== 'docker') {
+        // Cloud: read the live box FS over the provider's SyncTransport.
+        const transport = await cloudTransportForPull(box);
+        pull = (dryRun) => pullCodexConfigViaTransport(transport, { dryRun });
+      } else {
+        // Docker: we read the codex-config *volume*, not the container, so the
+        // box can be stopped — no unpause/start dance.
+        const volume =
+          box.codexConfigVolume ?? resolveCodexVolume({ isolate: false, boxId: box.id }).volume;
+        if (volume === SHARED_CODEX_VOLUME) {
+          log.warn(
+            `Reading the shared ${SHARED_CODEX_VOLUME} volume — it aggregates Codex config from ANY box, not just ${box.name}.`,
+          );
+        }
+        const image = box.image || DEFAULT_BOX_IMAGE;
+        pull = (dryRun) => pullCodexConfig({ volume }, { image, dryRun });
       }
-      const image = box.image || DEFAULT_BOX_IMAGE;
 
-      const preview = await pullCodexConfig({ volume }, { image, dryRun: true });
+      const preview = await pull(true);
 
       if (preview.newItems.length === 0) {
         process.stdout.write('no new Codex config to download into ~/.codex\n');
@@ -66,7 +76,7 @@ export const downloadCodexCommand = new Command('codex')
         }
       }
 
-      const result = await pullCodexConfig({ volume }, { image, dryRun: false });
+      const result = await pull(false);
       process.stdout.write(`downloaded ${result.newItems.length} item(s) into ~/.codex\n`);
     } catch (err) {
       handleLifecycleError(err);
