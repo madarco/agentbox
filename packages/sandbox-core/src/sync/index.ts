@@ -15,6 +15,39 @@ export {
   type RecordedOp,
 } from './recording-transport.js';
 export { AGENT_SYNC_SPECS, resolveAgentSpec, agentIds } from './registry.js';
+export {
+  mergeInstalledPlugins,
+  mergeKnownMarketplaces,
+  pickNewItems,
+  referencedPluginVersionKeys,
+  PULL_CATEGORIES,
+  SKILL_EXCLUDE_PREFIXES,
+  CONTAINER_PLUGINS_PREFIX,
+  type MergeResult,
+  type PullCategory,
+} from './claude-pull.js';
+export {
+  claudeInventoryScript,
+  parseClaudeInventory,
+  computeClaudePullPlan,
+  writeClaudeMergedRegistries,
+  pullClaudeExtrasViaTransport,
+  pullCodexConfigViaTransport,
+  pullOpencodeConfigViaTransport,
+  flatInventoryScript,
+  parseFlatInventory,
+  CLAUDE_PULL_DIR_CATEGORIES,
+  CODEX_PULL_ITEMS,
+  OPENCODE_PULL_DATA_ITEMS,
+  OPENCODE_PULL_CONFIG_ITEMS,
+  CLAUDE_BOX_CONFIG_DIR,
+  CODEX_BOX_CONFIG_DIR,
+  OPENCODE_BOX_DATA_DIR,
+  type ClaudeInventory,
+  type ClaudePullPlan,
+  type PullClaudeResult,
+  type FlatInventoryEntry,
+} from './agent-pull.js';
 export type {
   AgentId,
   AgentSyncSpec,

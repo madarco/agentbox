@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -11,12 +11,14 @@ import {
   trustWorkspace,
 } from '@agentbox/sandbox-core';
 import {
-  mergeInstalledPlugins,
-  mergeKnownMarketplaces,
-  pickNewItems,
+  claudeInventoryScript,
+  computeClaudePullPlan,
+  parseClaudeInventory,
   referencedPluginVersionKeys,
-  SKILL_EXCLUDE_PREFIXES,
-} from '../claude-pull.js';
+  writeClaudeMergedRegistries,
+} from '@agentbox/sandbox-core';
+import type { PullClaudeResult } from '@agentbox/sandbox-core';
+export type { PullClaudeResult } from '@agentbox/sandbox-core';
 import { ensureVolume, volumeExists } from '../../docker.js';
 import { detectEngine, orbstackVolumePath } from '../host-export.js';
 import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
@@ -1376,47 +1378,11 @@ export async function claudeSessionInfo(
   return { running: true, sessionName: name, startedAt };
 }
 
-export interface PullClaudeResult {
-  /**
-   * Box-installed extensions not present on the host. `category` is one of
-   * skills/agents/commands (then `name` is the dir name) or `plugins` (then
-   * `name` is the `<marketplace>/<plugin>` cache key).
-   */
-  newItems: Array<{ category: string; name: string }>;
-  /** Registry JSONs that gained box-only entries (e.g. `known_marketplaces.json`). */
-  mergedRegistries: string[];
-}
-
 export interface PullClaudeOptions {
   /** Image for the throwaway helper container; use the box's image to avoid extra pulls. */
   image: string;
   /** When true, compute the delta but write nothing. */
   dryRun?: boolean;
-}
-
-const PULL_DIR_CATEGORIES = ['skills', 'agents', 'commands'] as const;
-
-/**
- * Immediate child item names of `dir`, or [] if it doesn't exist. Symlinks
- * count: the host's `~/.claude/skills/<name>` is a symlink into `~/.agents`
- * (Claude Code's user-skills convention), so `isDirectory()` alone would miss
- * them and every host skill would look "new".
- */
-async function listChildDirs(dir: string): Promise<string[]> {
-  try {
-    const entries = await readdir(dir, { withFileTypes: true });
-    return entries.filter((e) => e.isDirectory() || e.isSymbolicLink()).map((e) => e.name);
-  } catch {
-    return [];
-  }
-}
-
-async function readJsonFile(path: string): Promise<unknown> {
-  try {
-    return JSON.parse(await readFile(path, 'utf8'));
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -1427,48 +1393,22 @@ async function readJsonFile(path: string): Promise<unknown> {
  * throwaway helper container (the exact mirror of the forward sync), so this
  * also works while the box is stopped.
  *
- * Plugin registry JSONs (`installed_plugins.json`, `known_marketplaces.json`)
- * are merged host-side: only box-only keys are added, with the forward sync's
- * `/home/vscode/.claude/plugins/` rewrite reversed back to the host path.
+ * The inventory/delta/registry-merge logic is the shared core in
+ * `@agentbox/sandbox-core` (`agent-pull.ts`) — the same plan drives the
+ * cloud transport pull. Only the container-based inventory run and the
+ * rsync-out step are docker-specific here.
  */
 export async function pullClaudeExtras(
   spec: ClaudeConfigSpec,
   opts: PullClaudeOptions,
 ): Promise<PullClaudeResult> {
-  const hostHome = homedir();
-  const hostClaude = join(hostHome, '.claude');
+  const hostClaude = join(homedir(), '.claude');
 
   // Inventory pass: enumerate the volume's contents via a read-only helper
   // container. `--user 0` so root can read files claude wrote as uid 1000.
-  // base64 -w0 keeps each registry JSON on one parseable line.
-  const inventoryScript = [
-    'for cat in skills agents commands; do',
-    '  [ -d "/src/$cat" ] || continue;',
-    '  for d in "/src/$cat"/*/; do',
-    '    [ -d "$d" ] || continue;',
-    '    printf "DIR %s %s\\n" "$cat" "$(basename "$d")";',
-    '  done;',
-    'done;',
-    'if [ -d /src/plugins/cache ]; then',
-    '  for m in /src/plugins/cache/*/; do',
-    '    [ -d "$m" ] || continue;',
-    '    for p in "$m"*/; do',
-    '      [ -d "$p" ] || continue;',
-    '      printf "PLUGIN %s/%s\\n" "$(basename "$m")" "$(basename "$p")";',
-    '    done;',
-    '  done;',
-    'fi;',
-    'for f in installed_plugins known_marketplaces; do',
-    '  [ -f "/src/plugins/$f.json" ] || continue;',
-    '  printf "JSON %s " "$f";',
-    '  base64 -w0 "/src/plugins/$f.json";',
-    '  printf "\\n";',
-    'done',
-  ].join(' ');
-
   const inv = await execa(
     'docker',
-    ['run', '--rm', '--user', '0', '-v', `${spec.volume}:/src:ro`, opts.image, 'sh', '-c', inventoryScript],
+    ['run', '--rm', '--user', '0', '-v', `${spec.volume}:/src:ro`, opts.image, 'sh', '-c', claudeInventoryScript('/src')],
     { reject: false },
   );
   if (inv.exitCode !== 0) {
@@ -1477,68 +1417,10 @@ export async function pullClaudeExtras(
     );
   }
 
-  const boxDirs: Record<string, string[]> = { skills: [], agents: [], commands: [] };
-  const boxPlugins: string[] = [];
-  const boxJson: Record<string, unknown> = {};
-  for (const line of (inv.stdout ?? '').split('\n')) {
-    if (line.startsWith('DIR ')) {
-      const rest = line.slice(4);
-      const sp = rest.indexOf(' ');
-      if (sp === -1) continue;
-      const cat = rest.slice(0, sp);
-      const name = rest.slice(sp + 1);
-      if (cat in boxDirs) boxDirs[cat]!.push(name);
-    } else if (line.startsWith('PLUGIN ')) {
-      boxPlugins.push(line.slice(7));
-    } else if (line.startsWith('JSON ')) {
-      const rest = line.slice(5);
-      const sp = rest.indexOf(' ');
-      if (sp === -1) continue;
-      const which = rest.slice(0, sp);
-      try {
-        boxJson[which] = JSON.parse(Buffer.from(rest.slice(sp + 1), 'base64').toString('utf8'));
-      } catch {
-        // Leave undefined; the merge helpers tolerate it.
-      }
-    }
-  }
-
-  // Compute deltas host-side (the host ~/.claude is directly accessible —
-  // only the volume needed a container).
-  const newItems: PullClaudeResult['newItems'] = [];
-  const applyPaths: Array<{ src: string; dest: string }> = [];
-  for (const cat of PULL_DIR_CATEGORIES) {
-    const hostNames = await listChildDirs(join(hostClaude, cat));
-    const excludes = cat === 'skills' ? SKILL_EXCLUDE_PREFIXES : [];
-    for (const name of pickNewItems(boxDirs[cat] ?? [], hostNames, excludes)) {
-      newItems.push({ category: cat, name });
-      applyPaths.push({ src: `/src/${cat}/${name}`, dest: `/dst/${cat}/${name}` });
-    }
-  }
-  const hostPluginKeys: string[] = [];
-  for (const m of await listChildDirs(join(hostClaude, 'plugins', 'cache'))) {
-    for (const p of await listChildDirs(join(hostClaude, 'plugins', 'cache', m))) {
-      hostPluginKeys.push(`${m}/${p}`);
-    }
-  }
-  for (const key of pickNewItems(boxPlugins, hostPluginKeys)) {
-    newItems.push({ category: 'plugins', name: key });
-    applyPaths.push({ src: `/src/plugins/cache/${key}`, dest: `/dst/plugins/cache/${key}` });
-  }
-
-  // Additive merge of the two plugin registries (reverses the forward path
-  // rewrite). Computed regardless so the preview can report it.
-  const hostInstalled = await readJsonFile(join(hostClaude, 'plugins', 'installed_plugins.json'));
-  const hostMarkets = await readJsonFile(join(hostClaude, 'plugins', 'known_marketplaces.json'));
-  const mergedInstalled = mergeInstalledPlugins(hostInstalled, boxJson['installed_plugins'], {
-    hostHome,
-  });
-  const mergedMarkets = mergeKnownMarketplaces(hostMarkets, boxJson['known_marketplaces'], {
-    hostHome,
-  });
-  const mergedRegistries: string[] = [];
-  if (mergedInstalled.changed) mergedRegistries.push('installed_plugins.json');
-  if (mergedMarkets.changed) mergedRegistries.push('known_marketplaces.json');
+  // Delta + registry merges are computed host-side (the host ~/.claude is
+  // directly accessible — only the volume needed a container).
+  const plan = await computeClaudePullPlan(parseClaudeInventory((inv.stdout ?? '').toString()));
+  const { newItems, mergedRegistries } = plan;
 
   if (opts.dryRun || (newItems.length === 0 && mergedRegistries.length === 0)) {
     return { newItems, mergedRegistries };
@@ -1549,10 +1431,11 @@ export async function pullClaudeExtras(
   // host-side delta is the real guard); --exclude=node_modules because the
   // box carries linux/amd64 binaries useless on the darwin host (claude/host
   // rebuilds lazily, same rationale as the forward sync's exclude).
-  if (applyPaths.length > 0) {
-    const cmds = applyPaths.map(({ src, dest }) => {
+  if (plan.copyRels.length > 0) {
+    const cmds = plan.copyRels.map((rel) => {
+      const dest = `/dst/${rel}`;
       const parent = dest.slice(0, dest.lastIndexOf('/'));
-      return `mkdir -p '${parent}' && rsync -a --ignore-existing --exclude=node_modules '${src}/' '${dest}/'`;
+      return `mkdir -p '${parent}' && rsync -a --ignore-existing --exclude=node_modules '/src/${rel}/' '${dest}/'`;
     });
     const apply = await execa(
       'docker',
@@ -1579,23 +1462,8 @@ export async function pullClaudeExtras(
     }
   }
 
-  // Registry JSONs are written host-side (host path is directly writable;
-  // no container needed) — only when the merge actually added keys.
-  if (mergedMarkets.changed || mergedInstalled.changed) {
-    await mkdir(join(hostClaude, 'plugins'), { recursive: true });
-    if (mergedMarkets.changed) {
-      await writeFile(
-        join(hostClaude, 'plugins', 'known_marketplaces.json'),
-        `${JSON.stringify(mergedMarkets.data, null, 2)}\n`,
-      );
-    }
-    if (mergedInstalled.changed) {
-      await writeFile(
-        join(hostClaude, 'plugins', 'installed_plugins.json'),
-        `${JSON.stringify(mergedInstalled.data, null, 2)}\n`,
-      );
-    }
-  }
+  // Registry JSONs are written host-side — only when the merge added keys.
+  await writeClaudeMergedRegistries(plan);
 
   return { newItems, mergedRegistries };
 }

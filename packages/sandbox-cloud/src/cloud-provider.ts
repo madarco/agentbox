@@ -32,6 +32,7 @@ import type {
   ProviderCheckpoint,
   ProviderSync,
   ResyncResult,
+  SyncTransport,
 } from '@agentbox/core';
 import {
   allocateProjectIndex,
@@ -43,6 +44,7 @@ import {
   removeBoxRecord,
 } from '@agentbox/sandbox-core';
 import { makeCloudSync } from './sync/cloud-sync.js';
+import { createCloudSyncTransport } from './sync/sync-transport.js';
 import {
   buildTmuxConfigShellSnippet,
   ensureRelay,
@@ -1337,6 +1339,10 @@ export function createCloudProvider(
 
     sync(box: BoxRecord): ProviderSync {
       return makeCloudSync(backend, handleFor(box));
+    },
+
+    syncTransport(box: BoxRecord): SyncTransport {
+      return createCloudSyncTransport({ backend, handle: handleFor(box) });
     },
 
     // Session-start live-box resync (Phase 7.5): merge the host's current state

@@ -4,6 +4,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
+import {
+  OPENCODE_PULL_CONFIG_ITEMS,
+  OPENCODE_PULL_DATA_ITEMS,
+} from '@agentbox/sandbox-core';
 import { ensureVolume, volumeExists } from '../../docker.js';
 
 /**
@@ -522,24 +526,6 @@ export interface PullOpencodeOptions {
   /** When true, compute the delta but write nothing. */
   dryRun?: boolean;
 }
-
-/** Data-dir items (volume root -> host ~/.local/share/opencode). */
-const OPENCODE_PULL_DATA_ITEMS = ['auth.json'] as const;
-/**
- * Config-dir items (volume `config/` -> host ~/.config/opencode). Covers both
- * the `.json` and `.jsonc` global config and OpenCode's user-extension subdirs.
- */
-const OPENCODE_PULL_CONFIG_ITEMS = [
-  'opencode.json',
-  'opencode.jsonc',
-  'agents',
-  'commands',
-  'modes',
-  'plugins',
-  'skills',
-  'tools',
-  'themes',
-] as const;
 
 /**
  * Reverse of {@link ensureOpencodeVolume}: pull box-side OpenCode config/auth

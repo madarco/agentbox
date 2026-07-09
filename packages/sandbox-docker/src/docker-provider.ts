@@ -19,9 +19,11 @@ import type {
   Provider,
   ProviderSync,
   ResyncResult,
+  SyncTransport,
 } from '@agentbox/core';
 import { claudeInstallFingerprint, makeSyncContext } from '@agentbox/sandbox-core';
 import { makeDockerSync } from './sync/docker-sync.js';
+import { createDockerSyncTransport } from './sync/sync-transport.js';
 import { createBox, type CreateBoxOptions } from './create.js';
 import { destroyBox, inspectBox, pauseBox, startBox, stopBox, unpauseBox } from './lifecycle.js';
 import { execInBox, inspectContainerStatus } from './docker.js';
@@ -150,6 +152,10 @@ export const dockerProvider: Provider = {
 
   sync(box: BoxRecord): ProviderSync {
     return makeDockerSync({ container: box.container });
+  },
+
+  syncTransport(box: BoxRecord): SyncTransport {
+    return createDockerSyncTransport({ container: box.container, image: box.image });
   },
 
   async inspect(box: BoxRecord): Promise<InspectedBox> {
