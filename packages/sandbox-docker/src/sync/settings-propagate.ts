@@ -93,8 +93,9 @@ export function volumeSettingsTarget(volume: string, image: string, label: strin
       ]);
       return r.exitCode === 0 ? String(r.stdout ?? '') : null;
     },
-    async writeText(rel: string, content: string): Promise<void> {
+    async writeText(rel: string, content: string, opts?: { mode?: number }): Promise<void> {
       const parent = posixDirname(rel);
+      const chmod = opts?.mode !== undefined ? ` && chmod ${opts.mode.toString(8)} '/dst/${rel}'` : '';
       const r = await run(
         [
           'run',
@@ -107,7 +108,7 @@ export function volumeSettingsTarget(volume: string, image: string, label: strin
           image,
           'sh',
           '-c',
-          `${parent ? `mkdir -p '/dst/${parent}' && ` : ''}cat > '/dst/${rel}' && chown 1000:1000 '/dst/${rel}'`,
+          `${parent ? `mkdir -p '/dst/${parent}' && ` : ''}cat > '/dst/${rel}' && chown 1000:1000 '/dst/${rel}'${chmod}`,
         ],
         content,
       );

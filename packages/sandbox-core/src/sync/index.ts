@@ -105,8 +105,15 @@ export {
   hostClaudeBackupExpired,
   hostBackupHasCredentials,
   extractCredentials,
+  parseCredentialsUpdate,
+  claudeExpiresAt,
+  shouldAcceptCredentialUpdate,
+  writeCredentialBackup,
+  readCredentialBackup,
+  pushCredentialToBox,
   SEED_MARKER,
   type CredentialAgentKind,
+  type CredentialsUpdate,
   type ExtractCredentialsOptions,
 } from './concerns/credentials.js';
 export {

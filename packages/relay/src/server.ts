@@ -63,6 +63,7 @@ import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
 import { resolveWorktree } from './worktree.js';
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
+import { CREDENTIALS_UPDATED_EVENT, CredentialsFanout } from './credentials-fanout.js';
 import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
 import { MemoryStore } from './store/memory-store.js';
 import type { Store } from './store/store.js';
@@ -315,6 +316,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   // Box mode parks host-only RPCs until the host poller answers; host mode
   // executes them inline (the historical behavior).
   const hostActions = mode === 'box' ? new HostActionQueue() : null;
+  // Host-mode handler for refreshed agent credentials (newest-wins backup
+  // write + debounced `agentbox credentials propagate` spawn). In box mode the
+  // event rides the local ring buffer to the bridge instead — the host's
+  // poller hands it to this handler on the other side.
+  const credentialsFanout = mode === 'box' ? null : new CredentialsFanout({ log });
   if (mode === 'box' && (!opts.bridgeToken || opts.bridgeToken.length === 0)) {
     throw new Error("relay mode='box' requires a non-empty bridgeToken");
   }
@@ -479,6 +485,18 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         await store.setStatus(reg.boxId, reg.name, reg.projectIndex, body.payload);
         log(`box-status box=${reg.boxId}`);
         send(res, 202, { ok: true });
+        return;
+      }
+      // Refreshed agent credentials: handled out-of-band in host mode — the
+      // payload is a secret and must never land in the event ring buffer. In
+      // box mode it falls through to the ring so the bridge drains it to the
+      // host poller (which routes it to the host relay's handler).
+      if (body.type === CREDENTIALS_UPDATED_EVENT && credentialsFanout) {
+        const verdict = await credentialsFanout.handle(reg.boxId, body.payload);
+        log(
+          `credentials-updated box=${reg.boxId} accepted=${String(verdict.accepted)} (${verdict.reason})`,
+        );
+        send(res, 202, { ok: true, accepted: verdict.accepted });
         return;
       }
       const ev = await store.appendEvent({
@@ -1061,6 +1079,15 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             previewToken: reg.previewToken,
             onEvents: async (evs) => {
               for (const ev of evs) {
+                // Credential updates carry a secret blob — route to the
+                // fan-out handler, never into the host event ring buffer.
+                if (ev.type === CREDENTIALS_UPDATED_EVENT && credentialsFanout) {
+                  const verdict = await credentialsFanout.handle(reg.boxId, ev.payload);
+                  log(
+                    `credentials-updated box=${reg.boxId} accepted=${String(verdict.accepted)} (${verdict.reason})`,
+                  );
+                  continue;
+                }
                 await store.appendEvent({
                   boxId: reg.boxId,
                   type: ev.type,

@@ -127,7 +127,8 @@ export interface SettingsTarget {
   label: string;
   exists(rel: string): Promise<boolean>;
   readText(rel: string): Promise<string | null>;
-  writeText(rel: string, content: string): Promise<void>;
+  /** `opts.mode` sets the file mode (e.g. 0o600 for credential blobs). */
+  writeText(rel: string, content: string, opts?: { mode?: number }): Promise<void>;
   /** Copy a staged item into the target at `rel` (parents created, additive). */
   copyIn(stagingAbs: string, rel: string, kind: 'dir' | 'file'): Promise<void>;
 }
@@ -152,13 +153,16 @@ export function transportSettingsTarget(
     readText(rel: string): Promise<string | null> {
       return t.readText(abs(rel));
     },
-    async writeText(rel: string, content: string): Promise<void> {
+    async writeText(rel: string, content: string, opts?: { mode?: number }): Promise<void> {
       const stage = await mkdtemp(join(tmpdir(), 'agentbox-target-write-'));
       try {
         const tmp = join(stage, 'file');
         await writeFile(tmp, content);
         await t.exec(['sh', '-c', `mkdir -p '${dirname(abs(rel))}'`]);
         await t.pushFile(tmp, abs(rel));
+        if (opts?.mode !== undefined) {
+          await t.exec(['sh', '-c', `chmod ${opts.mode.toString(8)} '${abs(rel)}'`]);
+        }
       } finally {
         await rm(stage, { recursive: true, force: true });
       }

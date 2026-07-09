@@ -25,8 +25,9 @@
  * same call carry's apply mechanism and skills' box→host pull already made.
  */
 
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import type { SyncTransport } from '@agentbox/core';
 import { AGENT_SYNC_SPECS, resolveAgentSpec } from '../registry.js';
 import type { AgentId } from '../agents/types.js';
@@ -158,4 +159,142 @@ export async function extractCredentials(
     }
   }
   return extracted;
+}
+
+// ---------------------------------------------------------------------------
+// credential fan-out (box → host backup → other boxes)
+// ---------------------------------------------------------------------------
+
+/** Wire payload of the ctl watcher's `credentials-updated` relay event. */
+export interface CredentialsUpdate {
+  agent: CredentialAgentKind;
+  /** The decoded credential file content. */
+  content: string;
+}
+
+/** Refuse absurd payloads before parsing (a credential file is ~1-5 KB). */
+const MAX_CREDENTIAL_BYTES = 256 * 1024;
+
+/**
+ * Parse + validate a `credentials-updated` event payload. Returns null for
+ * anything malformed: unknown agent, oversized/undecodable content, or a blob
+ * that fails the agent's `isRealAgentCredential` shape.
+ */
+export function parseCredentialsUpdate(payload: unknown): CredentialsUpdate | null {
+  if (payload === null || typeof payload !== 'object') return null;
+  const obj = payload as Record<string, unknown>;
+  const agent = obj['agent'];
+  if (typeof agent !== 'string' || !AGENT_SYNC_SPECS.some((s) => s.id === agent)) return null;
+  const b64 = obj['contentBase64'];
+  if (typeof b64 !== 'string' || b64.length === 0 || b64.length > MAX_CREDENTIAL_BYTES) return null;
+  let content: string;
+  try {
+    content = Buffer.from(b64, 'base64').toString('utf8');
+  } catch {
+    return null;
+  }
+  if (!isRealAgentCredential(agent as CredentialAgentKind, content)) return null;
+  return { agent: agent as CredentialAgentKind, content };
+}
+
+/** `claudeAiOauth.expiresAt` (ms epoch) of a claude blob, or null. */
+export function claudeExpiresAt(text: string): number | null {
+  try {
+    const parsed = JSON.parse(text) as { claudeAiOauth?: { expiresAt?: unknown } };
+    const exp = parsed?.claudeAiOauth?.expiresAt;
+    return typeof exp === 'number' && Number.isFinite(exp) ? exp : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Newest-wins acceptance gate for an incoming credential vs the current host
+ * backup. Claude blobs carry `expiresAt`, which strictly increases on every
+ * OAuth refresh (verified live) — accept only a strictly newer one. Codex /
+ * opencode auth files carry no ordering field: accept whenever the content
+ * differs (last-writer-wins). Identical content is always a no-op.
+ */
+export function shouldAcceptCredentialUpdate(
+  agent: CredentialAgentKind,
+  incoming: string,
+  existing: string | null,
+): { accept: boolean; reason: string } {
+  if (existing === null) return { accept: true, reason: 'no existing backup' };
+  if (existing === incoming) return { accept: false, reason: 'unchanged' };
+  if (resolveAgentSpec(agent).credential.realShape === 'claude-oauth') {
+    const incomingExp = claudeExpiresAt(incoming);
+    const existingExp = claudeExpiresAt(existing);
+    if (incomingExp === null) return { accept: false, reason: 'incoming blob has no expiresAt' };
+    if (existingExp !== null && incomingExp <= existingExp) {
+      return { accept: false, reason: 'not newer than backup' };
+    }
+    return { accept: true, reason: 'newer expiresAt' };
+  }
+  return { accept: true, reason: 'content changed' };
+}
+
+/** Atomically write an agent's host credential backup (0600, tmp + rename). */
+export async function writeCredentialBackup(
+  agent: CredentialAgentKind,
+  content: string,
+  opts: { backupPath?: string } = {},
+): Promise<void> {
+  const path = opts.backupPath ?? resolveAgentSpec(agent).credential.hostBackup;
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp-${String(process.pid)}`;
+  await writeFile(tmp, content, { mode: 0o600 });
+  await rename(tmp, path);
+  await chmod(path, 0o600).catch(() => {});
+}
+
+/** Read an agent's host credential backup, or null when absent. */
+export async function readCredentialBackup(
+  agent: CredentialAgentKind,
+  opts: { backupPath?: string } = {},
+): Promise<string | null> {
+  const path = opts.backupPath ?? resolveAgentSpec(agent).credential.hostBackup;
+  try {
+    return await readFile(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Push a credential blob into a live box at the agent's canonical path over a
+ * `SyncTransport`, normalizing owner to the box user and mode to 0600. The
+ * chown/chmod runs as the transport's default exec user first and falls back
+ * to sudo (upload primitives on some backends write as root; the box user has
+ * passwordless sudo). Never hardcode uid 1000 — the vscode uid varies per
+ * provider.
+ */
+export async function pushCredentialToBox(
+  transport: SyncTransport,
+  agent: CredentialAgentKind,
+  content: string,
+): Promise<void> {
+  const abs = resolveAgentSpec(agent).credential.boxAbsPath;
+  const dir = abs.slice(0, abs.lastIndexOf('/'));
+  const stage = await mkdtemp(join(tmpdir(), 'agentbox-cred-push-'));
+  try {
+    const tmp = join(stage, 'credential');
+    await writeFile(tmp, content, { mode: 0o600 });
+    const mk = await transport.exec(['sh', '-c', `mkdir -p '${dir}'`]);
+    if (mk.exitCode !== 0) {
+      throw new Error(`mkdir ${dir} in box failed: ${mk.stderr.trim()}`);
+    }
+    await transport.pushFile(tmp, abs);
+    const normalize = `chown "$(id -un):" '${abs}' && chmod 600 '${abs}'`;
+    const norm = await transport.exec([
+      'sh',
+      '-c',
+      `{ ${normalize}; } 2>/dev/null || sudo sh -c "${normalize.replaceAll('"', '\\"')}"`,
+    ]);
+    if (norm.exitCode !== 0) {
+      throw new Error(`chown/chmod of ${abs} in box failed: ${norm.stderr.trim()}`);
+    }
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
 }

@@ -41,6 +41,7 @@ import { appCommand } from './commands/app.js';
 import { attachCommand } from './commands/attach.js';
 import { claudeCommand } from './commands/claude.js';
 import { checkpointCommand } from './commands/checkpoint.js';
+import { credentialsCommand } from './commands/credentials.js';
 import { codeCommand } from './commands/code.js';
 import { codexCommand } from './commands/codex.js';
 import { opencodeCommand } from './commands/opencode.js';
@@ -141,6 +142,8 @@ program.addCommand(destroyCommand);
 program.addCommand(prepareCommand);
 program.addCommand(pruneCommand);
 program.addCommand(checkpointCommand);
+// Hidden: spawned by the relay's credential fan-out (also a manual recovery tool).
+program.addCommand(credentialsCommand, { hidden: true });
 program.addCommand(configCommand);
 program.addCommand(queueCommand);
 program.addCommand(relayCommand);
