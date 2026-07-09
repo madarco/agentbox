@@ -1,7 +1,7 @@
 # Settings sync across boxes + automatic credential fan-out — implementation plan
 
-Status: **Phase 0 in progress**. One session per phase; update the status line and the
-per-phase checkboxes as work lands.
+Status: **Phase 0 done (2026-07-09) — Phase 1 next**. One session per phase; update the
+status line and the per-phase checkboxes as work lands.
 
 ## Context
 
@@ -36,22 +36,30 @@ Decisions:
 
 ## Phase 0 — empirical PoCs
 
-Validate the load-bearing assumptions before building:
+Validate the load-bearing assumptions before building. Run 2026-07-09 on the live
+docker box `agentbox-test-repo-gh-ba1e38b65` (whose access token had expired
+naturally, so a plain `claude -p` turn forced a real refresh):
 
-- [ ] **Rotation comparator**: in a box, force a refresh (set `claudeAiOauth.expiresAt`
-      in the past, run `claude -p`) and confirm `.credentials.json` gets a new
-      `refreshToken` and a strictly larger `expiresAt`. Afterwards re-sync the new blob
-      to the shared volume + `~/.agentbox/claude-credentials.json` so all box copies
-      stay consistent.
-- [ ] **Old-refresh-token invalidation**: confirm a copy of the *pre-refresh* blob can
-      no longer refresh (this is the premise of the whole feature).
-- [ ] **Live-session re-read**: does a running `claude` session re-read
-      `.credentials.json` when it next needs a token, or does it cache the blob in
-      memory? If cached, fan-out fixes future sessions/boxes only — document honestly.
-- [ ] **Paused docker box + isolated volume**: confirm a helper container can write
-      `agentbox-claude-config-<id>` while its box is paused (volumes are
-      container-independent), so credential fan-out never needs to skip a docker box.
-- [ ] **Watcher mechanism**: settle on mtime/hash polling in ctl (15s), not `fs.watch`
+- [x] **Rotation comparator** — confirmed. The refresh rotated BOTH `accessToken` and
+      `refreshToken`, and `claudeAiOauth.expiresAt` moved strictly forward (+19.3h).
+      `expiresAt` newest-wins is a valid comparator.
+- [x] **Old-refresh-token invalidation** — confirmed. A saved copy of the pre-refresh
+      blob (with `expiresAt` in the past, in a throwaway `$HOME`) got
+      `Not logged in · Please run /login`, exit 1: the refresh token is single-use;
+      rotation kills every other copy. Notably the host backup
+      `~/.agentbox/claude-credentials.json` was byte-identical to the pre-refresh blob
+      before the test — i.e. the bug reproduced exactly (the backup died the moment the
+      box refreshed); it was manually re-synced from the post-refresh blob, which is
+      precisely what the fan-out automates.
+- [ ] **Live-session re-read** — OPEN (cannot be forced without waiting out a real
+      access-token expiry inside a running session). Design assumes the worst case: a
+      long-running session may hold a stale refresh token in memory and 401 once even
+      after fan-out fixed the file; a session restart picks up the fresh blob. Document
+      this in the user docs; observe in practice during Phase 7 verification.
+- [x] **Paused docker box + isolated volume** — confirmed. A helper container wrote a
+      marker into `agentbox-claude-config` while the box was paused; the file was
+      visible in-box after unpause. Fan-out never needs to skip a docker box.
+- [x] **Watcher mechanism** — decided: mtime/hash polling in ctl (15s), not `fs.watch`
       (credential writes are atomic renames; inotify on the renamed path is unreliable).
 
 ## Phase 1 — pull refactor (merge core out of sandbox-docker)
