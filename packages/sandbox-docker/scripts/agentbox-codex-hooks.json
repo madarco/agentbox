@@ -1,5 +1,5 @@
 {
-  "$comment": "Codex 0.134.0 expects `~/.codex/hooks.json` to be `{ hooks: { Event: [...] } }` (matching the `HooksFile` Rust struct), NOT a top-level event map. The `hooks` feature flag must also be enabled (`codex --enable hooks`) and hook trust must be either persisted via the in-TUI dialog or bypassed at launch (`--dangerously-bypass-hook-trust`). startCodexSession() does both. In practice the hook firing on the JSON-config path is still unreliable in 0.134.0 (TUI mode skips them on at least some startup paths) — the real mechanism that lights up state in production is the tmux-pane scraper in packages/ctl/src/codex-scraper.ts. These hooks remain as a defense-in-depth seed so any future codex build that fixes the firing also lights up state without further work.",
+  "description": "AgentBox activity-state hooks (defense-in-depth seed; production state comes from the tmux-pane scraper in packages/ctl/src/codex-scraper.ts). Codex's strict parser allows only `description` and `hooks` at the top level. Loading needs `codex --enable hooks --dangerously-bypass-hook-trust` (both supplied by startCodexSession()).",
   "hooks": {
     "SessionStart": [
       {
