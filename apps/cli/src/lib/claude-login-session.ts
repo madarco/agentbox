@@ -52,22 +52,30 @@ export interface LoginRequest {
   createdAt: string;
 }
 
-export type LoginMode = 'code' | 'headless' | 'interactive';
+export type LoginMode = 'code' | 'headless' | 'guided' | 'interactive';
 
 /**
  * Pick the login flavor from the invocation shape. `--code` always means
- * "deliver a code to a pending session". Otherwise a real TTY gets today's
- * fully-interactive flow; anything non-interactive (orchestrator pipe, CI) or
- * an explicit `--headless` gets the two-call worker flow.
+ * "deliver a code to a pending session". Anything non-interactive (orchestrator
+ * pipe, CI) or an explicit `--headless` gets the two-call worker flow.
+ *
+ * A real TTY gets `guided`: we drive the login container under a pty and prompt
+ * for the code ourselves. The `interactive` passthrough — which hands the
+ * terminal to claude's own TUI, and breaks on terminals whose keyboard protocol
+ * that TUI mishandles (kitty's CSI-u) — is now opt-in via `--interactive`, and
+ * the automatic fallback when the optional node-pty prebuild is missing.
  */
 export function selectLoginMode(o: {
   isTTY: boolean;
   headless: boolean;
   code: boolean;
+  interactive: boolean;
+  ptyAvailable: boolean;
 }): LoginMode {
   if (o.code) return 'code';
   if (o.headless || !o.isTTY) return 'headless';
-  return 'interactive';
+  if (o.interactive || !o.ptyAvailable) return 'interactive';
+  return 'guided';
 }
 
 /** `~/.agentbox` honoring `AGENTBOX_HOME` (mirrors lib/log-file.ts). */
@@ -223,31 +231,6 @@ export function cleanupStaleSessions(now: number = Date.now()): void {
   }
 }
 
-// Strip CSI (color/cursor) escapes only. OSC hyperlinks (OSC 8) embed the URL
-// itself, so leaving them in lets the URL regex still match inside them. Built
-// via RegExp(string) so the ESC byte and the `/` intermediate stay unambiguous.
-const CSI = new RegExp('\\u001b\\[[0-9;?]*[ -\\/]*[@-~]', 'g');
-// Match an OAuth approval URL on any current Claude/Anthropic auth host
-// (claude.com/cai/oauth/…, claude.ai, console.anthropic.com) and REQUIRE the
-// literal `oauth` in the path/query so an unrelated claude.com link can't
-// match. The char class excludes whitespace, quotes/brackets, and control bytes
-// (so an OSC-8 hyperlink's trailing BEL terminates the match cleanly).
-const URL_BODY = "[^\\s'\"`<>)\\]\\u0000-\\u001f]";
-const OAUTH_URL = new RegExp(
-  `https?://(?:claude\\.com|claude\\.ai|console\\.anthropic\\.com)/${URL_BODY}*oauth${URL_BODY}*`,
-  'i',
-);
-
-/**
- * Pull the OAuth approval URL out of accumulated (possibly ANSI-styled) login
- * output. Claude's `--claudeai` paste-code flow prints a
- * `https://claude.ai/oauth/authorize?...` (or console.anthropic.com) link. We
- * strip color escapes first, then match the first such URL; surrounding
- * quotes/brackets and trailing punctuation are trimmed.
- */
-export function extractOAuthUrl(text: string): string | null {
-  const clean = text.replace(CSI, '');
-  const m = clean.match(OAUTH_URL);
-  if (!m) return null;
-  return m[0].replace(/["'`)\]>]+$/, '').replace(/[.,;]+$/, '');
-}
+// The URL extractor now lives with the other per-agent prompt detectors; keep
+// re-exporting it here, where the headless flow's callers already look for it.
+export { extractOAuthUrl } from './agent-login-specs.js';

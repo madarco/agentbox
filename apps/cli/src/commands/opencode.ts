@@ -1,7 +1,7 @@
 import { access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { confirm, intro, log, outro, spinner } from '../lib/prompt.js';
+import { confirm, intro, log, outro, spinner, text } from '../lib/prompt.js';
 import {
   findProjectRoot,
   loadEffectiveConfig,
@@ -47,6 +47,9 @@ import { parseMaxOption } from '../lib/queue/parse-max-option.js';
 import { submitQueueJob } from '../lib/queue/submit.js';
 import { captureOpenTerminalContext } from '../terminal/queue-open.js';
 import { hostAwareOpenIn } from '../terminal/host.js';
+import { opencodeLoginBinding } from '../lib/agent-login-bindings.js';
+import { runGuidedLogin } from '../lib/guided-login.js';
+import { loadPtyBackend } from '../pty/pty-backend.js';
 import { maybeResyncWorkspace } from '../lib/resync-start.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
 import {
@@ -196,12 +199,82 @@ function buildOpencodeCliOverrides(opts: OpencodeCreateOptions): Partial<UserCon
  * opencode-config volume — credentials persist there and seed every later box.
  * Interactive provider picker; `extraArgs` (e.g. `--provider anthropic`) are
  * forwarded verbatim.
+ *
+ * This is the legacy passthrough: it hands the terminal to opencode's own TUI.
+ * See {@link signInToOpencode} for why that is no longer the default.
  */
 async function runOpencodeLoginContainer(image: string, extraArgs: string[]): Promise<number> {
   const { exitCode } = runInteractiveOpencodeLogin(
     buildOpencodeLoginRunArgv({ volume: SHARED_OPENCODE_VOLUME, image, extraArgs }),
   );
   return exitCode;
+}
+
+/** The provider id already selected by a forwarded `-p` / `--provider[=id]`, if any. */
+function forwardedProvider(extraArgs: string[]): string | null {
+  for (let i = 0; i < extraArgs.length; i++) {
+    const a = extraArgs[i] ?? '';
+    if (a === '-p' || a === '--provider') return extraArgs[i + 1] ?? null;
+    const eq = /^--provider=(.+)$/.exec(a);
+    if (eq) return eq[1] ?? null;
+  }
+  return null;
+}
+
+/**
+ * Sign in to OpenCode without giving the container's TUI the user's terminal (it
+ * misbehaves on terminals whose keyboard protocol it mishandles — kitty's CSI-u).
+ *
+ * Guided mode is bounded by opencode's shape: `auth login` is a per-provider
+ * prompt TREE, not one prompt. We skip its provider picker by asking for the id
+ * on the host and passing `--provider` (opencode's own provider list comes from
+ * models.dev, so we can't enumerate it without duplicating that registry), then
+ * drive the two prompt shapes we recognize — "Enter your API key" and an OAuth
+ * URL. Anything else (e.g. github-copilot's nested deployment-type select) is
+ * reported as unsupported and falls back to the passthrough.
+ */
+async function signInToOpencode(
+  image: string,
+  extraArgs: string[],
+  opts: { passthrough?: boolean } = {},
+): Promise<{ ok: boolean; error?: string; cancelled?: boolean }> {
+  const passthrough = async (args: string[]): Promise<{ ok: boolean; error?: string }> => {
+    const exitCode = await runOpencodeLoginContainer(image, args);
+    return exitCode === 0
+      ? { ok: true }
+      : { ok: false, error: `\`opencode auth login\` exited with code ${String(exitCode)}` };
+  };
+
+  if (opts.passthrough === true || !(await loadPtyBackend())) return passthrough(extraArgs);
+
+  let args = extraArgs;
+  if (!forwardedProvider(args)) {
+    if (!process.stdin.isTTY) return passthrough(args);
+    const provider = (
+      await text({
+        message: 'Which provider? (id or name, e.g. anthropic, openai, github-copilot)',
+        placeholder: 'leave blank to use OpenCode\'s own picker',
+      })
+    ).trim();
+    // No id → we can't skip the picker, so opencode must drive its own terminal.
+    if (provider.length === 0) return passthrough(args);
+    args = [...args, '--provider', provider];
+  }
+
+  const loginArgs = args;
+  const res = await runGuidedLogin('opencode', () =>
+    opencodeLoginBinding({ image, extraArgs: loginArgs }),
+  );
+  // A bad provider id fails the same way in the passthrough — report it instead
+  // of re-running the login just to print the same error.
+  if (res.unsupported?.startsWith('unknown provider')) {
+    return { ok: false, error: `opencode: ${res.unsupported}` };
+  }
+  if (res.unsupported) {
+    log.info(`Guided sign-in can't drive this provider (${res.unsupported}); using OpenCode's own prompts.`);
+    return passthrough(args);
+  }
+  return { ok: res.ok, error: res.error, cancelled: res.cancelled };
 }
 
 /**
@@ -236,8 +309,8 @@ async function maybeRunOpencodeLogin(args: { image: string; yes: boolean }): Pro
   );
   s.stop('image ready');
 
-  const exitCode = await runOpencodeLoginContainer(args.image, []);
-  if (exitCode !== 0) {
+  const res = await signInToOpencode(args.image, []);
+  if (!res.ok) {
     log.warn('OpenCode login did not complete; continuing — run `agentbox opencode login` to retry.');
     return;
   }
@@ -291,8 +364,8 @@ async function maybeRunCloudOpencodeLogin(args: { image: string; yes: boolean })
   );
   s.stop('image ready');
 
-  const exitCode = await runOpencodeLoginContainer(args.image, []);
-  if (exitCode !== 0) {
+  const res = await signInToOpencode(args.image, []);
+  if (!res.ok) {
     log.warn('OpenCode login did not complete; continuing — run `agentbox opencode login` to retry.');
     return;
   }
@@ -952,7 +1025,11 @@ const opencodeLoginCommand = new Command('login')
     '[args...]',
     'extra args forwarded to `opencode auth login`; place after `--`, e.g. `agentbox opencode login -- --provider anthropic`',
   )
-  .action(async (args: string[]) => {
+  .option(
+    '--interactive',
+    "attach your terminal to OpenCode's own login TUI (legacy passthrough)",
+  )
+  .action(async (args: string[], opts: { interactive?: boolean }) => {
     intro('Signing in to OpenCode...');
     if (!process.stdin.isTTY) {
       log.error('`agentbox opencode login` needs an interactive terminal.');
@@ -971,10 +1048,14 @@ const opencodeLoginCommand = new Command('login')
       await ensureOpencodeVolume({ volume: SHARED_OPENCODE_VOLUME }, { syncFromHost: true, image });
       s.stop('image ready');
 
-      const exitCode = await runOpencodeLoginContainer(image, args);
-      if (exitCode !== 0) {
-        log.warn(`\`opencode auth login\` exited with code ${String(exitCode)}`);
-        process.exit(exitCode);
+      const res = await signInToOpencode(image, args, { passthrough: opts.interactive === true });
+      if (res.cancelled) {
+        outro('sign-in cancelled');
+        process.exit(1);
+      }
+      if (!res.ok) {
+        log.error(res.error ?? 'login failed');
+        process.exit(1);
       }
       outro('signed in — credentials saved for future boxes');
     } catch (err) {

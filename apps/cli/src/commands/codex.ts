@@ -47,6 +47,9 @@ import { submitQueueJob } from '../lib/queue/submit.js';
 import { captureOpenTerminalContext } from '../terminal/queue-open.js';
 import { hostAwareOpenIn } from '../terminal/host.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
+import { codexLoginBinding } from '../lib/agent-login-bindings.js';
+import { runGuidedLogin } from '../lib/guided-login.js';
+import { loadPtyBackend } from '../pty/pty-backend.js';
 import { maybeResyncWorkspace } from '../lib/resync-start.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
 import { agentResumeArgs } from '../agent-sessions.js';
@@ -212,12 +215,52 @@ function buildCodexCliOverrides(opts: CodexCreateOptions): Partial<UserConfig> {
  * Run `codex login` in a throwaway container against the shared codex-config
  * volume — credentials persist there and seed every later box. Defaults to the
  * `--device-auth` device-code flow (see {@link buildCodexLoginRunArgv}).
+ *
+ * This is the legacy passthrough: it hands the terminal to codex's own TUI. See
+ * {@link signInToCodex} for why that is no longer the default.
  */
 async function runCodexLoginContainer(image: string, extraArgs: string[]): Promise<number> {
   const { exitCode } = runInteractiveCodexLogin(
     buildCodexLoginRunArgv({ volume: SHARED_CODEX_VOLUME, image, extraArgs }),
   );
   return exitCode;
+}
+
+/**
+ * Sign in to Codex without giving the container's TUI the user's terminal (it
+ * misbehaves on terminals whose keyboard protocol it mishandles — kitty's
+ * CSI-u). Guided mode drives the login under a pty and prints the device URL +
+ * one-time code from the host; the `--device-auth` flow completes in the browser,
+ * so nothing is ever typed and this works with no TTY at all.
+ *
+ * Falls back to the passthrough when the optional node-pty prebuild is missing,
+ * when the caller forces it, or when a forwarded arg selects a login method whose
+ * prompts we can't drive (e.g. `-- --api-key`).
+ */
+async function signInToCodex(
+  image: string,
+  extraArgs: string[],
+  opts: { passthrough?: boolean } = {},
+): Promise<{ ok: boolean; error?: string; cancelled?: boolean }> {
+  const passthrough = async (): Promise<{ ok: boolean; error?: string }> => {
+    const exitCode = await runCodexLoginContainer(image, extraArgs);
+    return exitCode === 0
+      ? { ok: true }
+      : { ok: false, error: `\`codex login\` exited with code ${String(exitCode)}` };
+  };
+
+  // Only the device-code flow prints a URL we can relay. Any other method
+  // (`--api-key`, `--with-access-token`, …) drives its own prompts or reads
+  // stdin, so don't make the user wait out the guided URL timeout first.
+  const deviceAuth = extraArgs.length === 0 || extraArgs.includes('--device-auth');
+  if (opts.passthrough === true || !deviceAuth || !(await loadPtyBackend())) return passthrough();
+
+  const res = await runGuidedLogin('codex', () => codexLoginBinding({ image, extraArgs }));
+  if (res.unsupported) {
+    log.info(`Guided sign-in can't drive this login method (${res.unsupported}); using codex's own prompts.`);
+    return passthrough();
+  }
+  return { ok: res.ok, error: res.error, cancelled: res.cancelled };
 }
 
 /**
@@ -252,8 +295,8 @@ async function maybeRunCodexLogin(args: { image: string; yes: boolean }): Promis
   );
   s.stop('image ready');
 
-  const exitCode = await runCodexLoginContainer(args.image, []);
-  if (exitCode !== 0) {
+  const res = await signInToCodex(args.image, []);
+  if (!res.ok) {
     log.warn('Codex login did not complete; continuing — run `agentbox codex login` to retry.');
     return;
   }
@@ -305,8 +348,8 @@ async function maybeRunCloudCodexLogin(args: { image: string; yes: boolean }): P
   );
   s.stop('image ready');
 
-  const exitCode = await runCodexLoginContainer(args.image, []);
-  if (exitCode !== 0) {
+  const res = await signInToCodex(args.image, []);
+  if (!res.ok) {
     log.warn('Codex login did not complete; continuing — run `agentbox codex login` to retry.');
     return;
   }
@@ -1127,10 +1170,16 @@ const codexLoginCommand = new Command('login')
     '[args...]',
     'extra args forwarded to `codex login` (default: --device-auth); place after `--`, e.g. `agentbox codex login -- --api-key`',
   )
-  .action(async (args: string[]) => {
+  .option(
+    '--interactive',
+    "attach your terminal to codex's own login TUI (legacy passthrough; needs an interactive terminal)",
+  )
+  .action(async (args: string[], opts: { interactive?: boolean }) => {
     intro('Signing in to Codex...');
-    if (!process.stdin.isTTY) {
-      log.error('`agentbox codex login` needs an interactive terminal.');
+    // The guided device-code flow needs no keystroke, so it works without a TTY;
+    // the passthrough hands codex the terminal and cannot.
+    if (!process.stdin.isTTY && opts.interactive) {
+      log.error('`agentbox codex login --interactive` needs an interactive terminal.');
       process.exit(1);
     }
     try {
@@ -1146,10 +1195,14 @@ const codexLoginCommand = new Command('login')
       await ensureCodexVolume({ volume: SHARED_CODEX_VOLUME }, { syncFromHost: true, image });
       s.stop('image ready');
 
-      const exitCode = await runCodexLoginContainer(image, args);
-      if (exitCode !== 0) {
-        log.warn(`\`codex login\` exited with code ${String(exitCode)}`);
-        process.exit(exitCode);
+      const res = await signInToCodex(image, args, { passthrough: opts.interactive === true });
+      if (res.cancelled) {
+        outro('sign-in cancelled');
+        process.exit(1);
+      }
+      if (!res.ok) {
+        log.error(res.error ?? 'login failed');
+        process.exit(1);
       }
       outro('signed in — credentials saved for future boxes');
     } catch (err) {

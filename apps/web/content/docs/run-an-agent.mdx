@@ -81,6 +81,11 @@ agentbox codex login                  # device-auth flow for Codex
 agentbox opencode login -- --provider anthropic
 ```
 
+Sign-in runs in a throwaway container, but the agent's own login TUI never takes over your terminal: AgentBox drives it behind the scenes, prints the approval URL, and prompts you for the code (or API key) itself. That keeps the flow identical in every terminal emulator. Two escape hatches:
+
+- `--interactive` hands your terminal to the agent's own login TUI — the old behavior. Use it for a login method the guided prompt can't drive (an exotic `agentbox claude login -- --sso`, or OpenCode's GitHub Copilot picker, which AgentBox falls back to automatically).
+- `--headless` (claude, and the automatic choice with no TTY) prints the URL and a greppable `AGENTBOX_LOGIN_URL=` marker, then you finish with `agentbox claude login --code <CODE>` — so an orchestrating agent can drive the sign-in. Codex's device-code flow needs no keystroke at all, so it already works without a terminal.
+
 ```console
 $ agentbox claude
 ? Sign in with your Claude subscription? (saved and reused by every box) › Yes

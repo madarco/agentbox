@@ -88,6 +88,8 @@ import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { loadPtyBackend } from '../pty/pty-backend.js';
+import { claudeLoginBinding } from '../lib/agent-login-bindings.js';
+import { runGuidedLogin } from '../lib/guided-login.js';
 import {
   cleanupStaleSessions,
   findLiveSession,
@@ -254,6 +256,9 @@ function buildClaudeCliOverrides(opts: ClaudeCreateOptions): Partial<UserConfig>
  * claude-config volume, then extract the result to the host backup so every
  * future box (shared or isolate) is seeded from it. Returns the login
  * command's exit code.
+ *
+ * This is the legacy passthrough: it hands the terminal to claude's own TUI. See
+ * {@link signInToClaude} for why that is no longer the default.
  */
 async function runClaudeLoginContainer(image: string, extraArgs: string[]): Promise<number> {
   const { exitCode } = runInteractiveClaudeLogin(
@@ -273,6 +278,34 @@ async function runClaudeLoginContainer(image: string, extraArgs: string[]): Prom
     await syncClaudeCredentials({ volume: SHARED_CLAUDE_VOLUME }, { image, isolate: false });
   }
   return exitCode;
+}
+
+/**
+ * Sign in to Claude, the way every caller should: guided (drive the login
+ * container under a pty, prompt for the code with our own clack prompt) so the
+ * container's TUI never touches the user's terminal — it misbehaves on terminals
+ * whose keyboard protocol it mishandles (kitty's CSI-u).
+ *
+ * Falls back to the passthrough when the optional node-pty prebuild is missing,
+ * or when the caller forces it. Returns rather than exiting, so the first-run
+ * offers can warn and continue.
+ */
+async function signInToClaude(
+  image: string,
+  extraArgs: string[],
+  opts: { passthrough?: boolean } = {},
+): Promise<{ ok: boolean; error?: string; cancelled?: boolean }> {
+  const usePassthrough = opts.passthrough === true || !(await loadPtyBackend());
+  if (usePassthrough) {
+    const exitCode = await runClaudeLoginContainer(image, extraArgs);
+    return exitCode === 0
+      ? { ok: true }
+      : { ok: false, error: `\`claude auth login\` exited with code ${String(exitCode)}` };
+  }
+  const res = await runGuidedLogin('claude', (writeLog) =>
+    claudeLoginBinding({ image, extraArgs, writeLog }),
+  );
+  return { ok: res.ok, error: res.error, cancelled: res.cancelled };
 }
 
 /**
@@ -341,8 +374,8 @@ async function maybeRunClaudeLogin(args: {
   );
   s.stop('image ready');
 
-  const exitCode = await runClaudeLoginContainer(args.image, ['--claudeai']);
-  if (exitCode !== 0) {
+  const res = await signInToClaude(args.image, ['--claudeai']);
+  if (!res.ok) {
     log.warn('Claude login did not complete; continuing — run `agentbox claude login` to retry.');
     return;
   }
@@ -389,8 +422,8 @@ async function maybeRunCloudClaudeLogin(args: {
   );
   s.stop('image ready');
 
-  const exitCode = await runClaudeLoginContainer(args.image, ['--claudeai']);
-  if (exitCode !== 0) {
+  const res = await signInToClaude(args.image, ['--claudeai']);
+  if (!res.ok) {
     log.warn('Claude login did not complete; continuing — run `agentbox claude login` to retry.');
     return;
   }
@@ -1634,7 +1667,7 @@ async function deliverLoginCode(code: string): Promise<void> {
 
 const claudeLoginCommand = new Command('login')
   .description(
-    'Sign in to Claude for use in sandboxes (forwards args to `claude auth login`, e.g. --sso, --console). Runs in a throwaway container against the shared claude-config volume — usable before the first `agentbox claude`. Non-interactive (no TTY) or `--headless`: prints the auth URL, then finish with `--code <CODE>`.',
+    'Sign in to Claude for use in sandboxes (forwards args to `claude auth login`, e.g. --sso, --console). Runs in a throwaway container against the shared claude-config volume — usable before the first `agentbox claude`. In a terminal it prints the auth URL and prompts for the code. Non-interactive (no TTY) or `--headless`: prints the auth URL, then finish with `--code <CODE>`.',
   )
   .argument(
     '[args...]',
@@ -1645,11 +1678,17 @@ const claudeLoginCommand = new Command('login')
     'drive login without a terminal: print the auth URL, then finish with `--code` (auto-selected when stdin is not a TTY)',
   )
   .option('--code <code>', 'deliver the OAuth code to a pending headless login session')
-  .action(async (args: string[], opts: { headless?: boolean; code?: string }) => {
+  .option(
+    '--interactive',
+    "attach your terminal to claude's own login TUI (legacy passthrough; try this if the guided prompt can't drive your login method)",
+  )
+  .action(async (args: string[], opts: { headless?: boolean; code?: string; interactive?: boolean }) => {
     const mode = selectLoginMode({
       isTTY: !!process.stdin.isTTY,
       headless: !!opts.headless,
       code: typeof opts.code === 'string',
+      interactive: !!opts.interactive,
+      ptyAvailable: !!(await loadPtyBackend()),
     });
     try {
       if (mode === 'code') {
@@ -1672,10 +1711,19 @@ const claudeLoginCommand = new Command('login')
       // Throwaway `docker run` against the shared volume — the written
       // credentials persist there and `syncClaudeCredentials` mirrors them to
       // the host backup, so every later box (shared or isolate) is seeded.
-      const exitCode = await runClaudeLoginContainer(image, args);
-      if (exitCode !== 0) {
-        log.warn(`\`claude auth login\` exited with code ${String(exitCode)}`);
-        process.exit(exitCode);
+      const res = await signInToClaude(image, args, { passthrough: mode === 'interactive' });
+      if (res.cancelled) {
+        outro('sign-in cancelled');
+        process.exit(1);
+      }
+      if (!res.ok) {
+        log.error(res.error ?? 'login failed');
+        // A login method whose output we can't recognize (an exotic `-- --sso`
+        // shape) never reaches a prompt; the passthrough still drives it.
+        if (res.error?.includes('never printed an auth URL')) {
+          log.info('Try `agentbox claude login --interactive` to use claude\'s own login TUI.');
+        }
+        process.exit(1);
       }
       outro('signed in — credentials saved for future boxes');
     } catch (err) {

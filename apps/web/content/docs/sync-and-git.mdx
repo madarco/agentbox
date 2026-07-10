@@ -125,6 +125,8 @@ The relay builds the remote and branch itself from the box's registered worktree
 | `fetch` | `--prune`/`-p`, `--prune-tags`, `--tags`/`--no-tags`, `--force`/`-f`, `--dry-run` |
 | `clone` | `--branch <name>`, `--depth <n>` |
 
+A `clone` whose source is unmistakably local (a `file://` URL or a filesystem path) needs no host credentials, so it falls through to real `git` before the gate.
+
 All of `push`/`pull`/`fetch` additionally take `--quiet`/`-q`, `--verbose`/`-v`, and `--progress`/`--no-progress`. Anything else exits `2` with `unsupported flag '<x>'`. Flags that would rewrite or delete remote refs (`--delete`, `--mirror`, `push --prune`, `push --force`) stay off the list on purpose — use `--force-with-lease` for a force-push.
 
 ### Keep the branch on your machine, not online
