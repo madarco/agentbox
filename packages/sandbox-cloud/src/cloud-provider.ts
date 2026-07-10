@@ -32,6 +32,7 @@ import type {
   ProviderCheckpoint,
   ProviderSync,
   ResyncResult,
+  SyncTransport,
 } from '@agentbox/core';
 import {
   allocateProjectIndex,
@@ -43,6 +44,7 @@ import {
   removeBoxRecord,
 } from '@agentbox/sandbox-core';
 import { makeCloudSync } from './sync/cloud-sync.js';
+import { createCloudSyncTransport } from './sync/sync-transport.js';
 import {
   buildTmuxConfigShellSnippet,
   ensureRelay,
@@ -55,7 +57,10 @@ import {
   registerBoxWithRelay,
   TERM_FALLBACK_SNIPPET,
 } from '@agentbox/sandbox-docker';
-import { ensureAgentVolumesForCloud } from './sync/agent-credentials.js';
+import {
+  ensureAgentVolumesForCloud,
+  reconcileAgentCredentials,
+} from './sync/agent-credentials.js';
 import {
   cloudSnapshotName,
   currentCloudBaseFingerprint,
@@ -499,6 +504,22 @@ export function createCloudProvider(
         // best-effort
       }
     }
+    // A woken box carries pause-time credentials; if another box rotated the
+    // claude refresh token meanwhile, this copy is dead. Reconcile with the
+    // host backups (newest-wins both directions; codex/opencode host-wins).
+    // Best-effort — resume/start/reconnect never fail on this. Gated by the
+    // same box.credentialSync switch as the ctl watcher (the create stamped it
+    // into the sandbox env; re-read the config here since the host flag is
+    // what the user controls).
+    try {
+      const credentialSync = (await loadEffectiveConfig(box.workspacePath)).effective.box
+        .credentialSync;
+      if (credentialSync) {
+        await reconcileAgentCredentials(backend, h, { onLog: () => {} });
+      }
+    } catch {
+      // best-effort
+    }
     return next;
   }
 
@@ -603,10 +624,18 @@ export function createCloudProvider(
       // the per-service preview-URL map. Best-effort: [] when there's no yaml.
       const exposeServicePorts = await readExposedServicePorts(req.workspacePath);
 
+      // Caller-resolved value wins (it sees CLI overrides like
+      // --no-credential-sync that this local config load can't).
+      const credentialSyncOff =
+        (req.credentialSync ??
+          (await loadEffectiveConfig(req.projectRoot ?? req.workspacePath)).effective.box
+            .credentialSync) === false;
       const provisionEnv = {
         AGENTBOX_BOX_ID: id,
         AGENTBOX_BOX_NAME: name,
         AGENTBOX_BOX_KIND: 'cloud',
+        // Absent = enabled; the ctl credential watcher only checks for '0'.
+        ...(credentialSyncOff ? { AGENTBOX_CREDENTIAL_SYNC: '0' } : {}),
         // In-sandbox relay is on the box's loopback at the in-box port.
         // 8788 is distinct from the host relay's 8787 so a nested agentbox
         // run inside the box can claim :8787 without colliding.
@@ -1337,6 +1366,10 @@ export function createCloudProvider(
 
     sync(box: BoxRecord): ProviderSync {
       return makeCloudSync(backend, handleFor(box));
+    },
+
+    syncTransport(box: BoxRecord): SyncTransport {
+      return createCloudSyncTransport({ backend, handle: handleFor(box) });
     },
 
     // Session-start live-box resync (Phase 7.5): merge the host's current state

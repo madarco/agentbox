@@ -77,6 +77,8 @@ interface CreateOptions {
   useBranch?: string;
   /** -v / --verbose: also stream raw build / provision output to stderr. */
   verbose?: boolean;
+  /** --no-credential-sync => false; default true (config box.credentialSync). */
+  credentialSync?: boolean;
 }
 
 function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
@@ -88,6 +90,7 @@ function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
   if (opts.withEnv === true) box.withEnv = true;
   if (opts.vnc === false) box.vnc = false;
   if (opts.sharedDockerCache === true) box.dockerCacheShared = true;
+  if (opts.credentialSync === false) box.credentialSync = false;
   if (opts.bundleDepth !== undefined) box.bundleDepth = opts.bundleDepth;
   const out: Partial<UserConfig> = {};
   if (Object.keys(box).length > 0) out.box = box;
@@ -218,6 +221,10 @@ export const createCommand = new Command('create')
     '--carry <mode>',
     "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip). Default: 'ask' (prompt).",
     'ask',
+  )
+  .option(
+    '--no-credential-sync',
+    'disable automatic credential sync for this box (the in-box watcher that fans refreshed agent tokens out to your other boxes)',
   )
   .option(
     '-v, --verbose',
@@ -435,6 +442,7 @@ export const createCommand = new Command('create')
         envFilesToImport: wiz.envFilesToImport,
         carry: carryEntries,
         vnc: { enabled: cfg.effective.box.vnc },
+        credentialSync: cfg.effective.box.credentialSync,
         limits: resolveLimits(cfg.effective.box, opts),
         bundleDepth: cfg.effective.box.bundleDepth,
         fromBranch,

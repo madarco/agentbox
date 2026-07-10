@@ -33,6 +33,7 @@ import {
   syncClaudeCredentials,
 } from '@agentbox/sandbox-docker';
 import {
+  AGENT_SYNC_SPECS,
   stageClaudeStaticForUpload,
   stageClaudeCredentialsForUpload,
   stageCodexStaticForUpload,
@@ -42,10 +43,15 @@ import {
   stageOpencodeStateForUpload,
   extractCredentials,
   hostClaudeBackupExpired,
+  isRealAgentCredential,
+  pushCredentialToBox,
+  readCredentialBackup,
+  shouldAcceptCredentialUpdate,
+  writeCredentialBackup,
   SEED_MARKER,
   type StageResult,
 } from '@agentbox/sandbox-core';
-import type { CloudBackend, CloudHandle, CloudVolumeMount } from '@agentbox/core';
+import type { CloudBackend, CloudHandle, CloudVolumeMount, SyncTransport } from '@agentbox/core';
 import { createCloudSyncTransport } from './sync-transport.js';
 
 /** Identifier for one of the three agents we sync into cloud sandboxes. */
@@ -534,4 +540,78 @@ export async function extractCloudAgentCredentials(
 ): Promise<CloudAgentKind[]> {
   const transport = createCloudSyncTransport({ backend, handle });
   return extractCredentials(transport, { onLog: opts.onLog, backups: opts.backups });
+}
+
+/**
+ * Reconcile a just-woken cloud box's agent credentials with the host backups.
+ * A resumed box carries whatever blobs it had at pause — if another box
+ * rotated the claude refresh token meanwhile, the resumed copy is dead
+ * (claude's OAuth refresh invalidates every other copy).
+ *
+ * Per agent, per the fan-out ordering rules (`shouldAcceptCredentialUpdate`):
+ *  - claude: `expiresAt` decides both directions — host newer → push into the
+ *    box; box newer (it refreshed right before pause and the fan-out missed
+ *    it) → capture to the host backup (the box's own ctl watcher re-posts on
+ *    daemon start, which fans it out to the rest of the fleet);
+ *  - codex/opencode: host-wins on resume (the box was frozen, so the host
+ *    backup is at least as fresh) — push when the content differs;
+ *  - a missing host backup is captured from a real box blob for any agent.
+ *
+ * Best-effort per agent: a reconcile failure never fails resume/start.
+ */
+export async function reconcileAgentCredentials(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  opts: ReconcileAgentCredentialsOptions = {},
+): Promise<void> {
+  return reconcileAgentCredentialsViaTransport(
+    createCloudSyncTransport({ backend, handle }),
+    opts,
+  );
+}
+
+export interface ReconcileAgentCredentialsOptions {
+  onLog?: (line: string) => void;
+  /** Override host backup paths per agent (tests). Defaults to the registry `hostBackup`. */
+  backups?: Partial<Record<CloudAgentKind, string>>;
+}
+
+/** Transport-seam core of {@link reconcileAgentCredentials} (unit-testable). */
+export async function reconcileAgentCredentialsViaTransport(
+  transport: SyncTransport,
+  opts: ReconcileAgentCredentialsOptions = {},
+): Promise<void> {
+  const log = opts.onLog ?? (() => {});
+  for (const spec of AGENT_SYNC_SPECS) {
+    const backupPath = opts.backups?.[spec.id];
+    try {
+      const hostText = await readCredentialBackup(spec.id, { backupPath });
+      const boxText = await transport.readText(spec.credential.boxAbsPath);
+      const hostReal = hostText !== null && isRealAgentCredential(spec.id, hostText);
+      const boxReal = boxText !== null && boxText.length > 0 && isRealAgentCredential(spec.id, boxText);
+      if (!hostReal && !boxReal) continue;
+      if (!hostReal && boxReal) {
+        await writeCredentialBackup(spec.id, boxText, { backupPath });
+        log(`captured ${spec.id} credential from box (no host backup)`);
+        continue;
+      }
+      if (
+        boxReal &&
+        spec.credential.realShape === 'claude-oauth' &&
+        shouldAcceptCredentialUpdate(spec.id, boxText, hostText).accept
+      ) {
+        await writeCredentialBackup(spec.id, boxText, { backupPath });
+        log(`captured newer ${spec.id} credential from box`);
+        continue;
+      }
+      if (!boxReal || shouldAcceptCredentialUpdate(spec.id, hostText!, boxText).accept) {
+        await pushCredentialToBox(transport, spec.id, hostText!);
+        log(`refreshed ${spec.id} credential in box from host backup`);
+      }
+    } catch (err) {
+      log(
+        `WARN: ${spec.id} credential reconcile failed (${err instanceof Error ? err.message : String(err)}) — skipping`,
+      );
+    }
+  }
 }

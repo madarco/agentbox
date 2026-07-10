@@ -99,6 +99,14 @@ export interface CreateBoxRequest {
   vnc?: { enabled: boolean };
   limits?: CreateBoxLimits;
   /**
+   * `box.credentialSync` resolved by the caller (`false` = disable the in-box
+   * credential watcher; stamped into the box as `AGENTBOX_CREDENTIAL_SYNC=0`).
+   * Undefined → the provider resolves the config key itself. The CLI threads
+   * it so `--no-credential-sync` (a CLI override the provider's own config
+   * load can't see) actually reaches the box.
+   */
+  credentialSync?: boolean;
+  /**
    * Cap on commits shipped in the cloud-seed git bundle (daytona, hetzner).
    * `undefined` → adaptive default (last 200 commits, re-bundle at 100 if the
    * result exceeds 20 MB). `0` → full history (`git bundle create --all`).

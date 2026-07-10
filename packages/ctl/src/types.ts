@@ -248,6 +248,14 @@ export const BOX_STATUS_SCHEMA = 1 as const;
 /** Relay event type carrying a `BoxStatus` payload. */
 export const BOX_STATUS_EVENT = 'box-status';
 
+/**
+ * Relay event type carrying a refreshed agent credential blob (the
+ * credentials watcher's payload). The host relay mirrors this constant
+ * (`packages/relay/src/server.ts`, like `box-status`) — it special-cases the
+ * type so the secret payload never lands in the event ring buffer.
+ */
+export const CREDENTIALS_UPDATED_EVENT = 'credentials-updated';
+
 export type CtlRequest =
   | { op: 'status' }
   | { op: 'task-status' }

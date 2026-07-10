@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
 import {
+  CODEX_PULL_ITEMS,
   sanitizeCodexConfigForBox,
   mergeCodexConfigForBox,
   MINIMAL_TRUSTED_CODEX_CONFIG,
@@ -800,9 +801,6 @@ export interface PullCodexOptions {
   /** When true, compute the delta but write nothing. */
   dryRun?: boolean;
 }
-
-/** Top-level codex-config items `download codex` considers. */
-const CODEX_PULL_ITEMS = ['config.toml', 'auth.json', 'prompts'] as const;
 
 /**
  * Reverse of {@link ensureCodexVolume}: pull box-side codex config/auth from

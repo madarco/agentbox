@@ -2,6 +2,7 @@ export { dockerProvider, type DockerCreateOptions } from './docker-provider.js';
 export { providerModule, dockerChecks } from './provider-module.js';
 export { downloadFromBox, uploadToBox, type BoxCpResult } from './box-cp.js';
 export { createDockerSyncTransport, type DockerSyncTransportInit } from './sync/sync-transport.js';
+export { stageItemsFromVolume, volumeSettingsTarget } from './sync/settings-propagate.js';
 export { makeDockerSync, type DockerSyncHandle } from './sync/docker-sync.js';
 
 export {

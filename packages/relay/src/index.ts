@@ -37,6 +37,12 @@ export type {
 export { HostActionQueue } from './host-action-queue.js';
 export { CloudBoxPoller, CloudBoxPollers, type CloudBoxPollerDeps } from './cloud-poller.js';
 export { BoxRegistry, EventBuffer } from './registry.js';
+export {
+  CredentialsFanout,
+  CREDENTIALS_UPDATED_EVENT,
+  type CredentialsFanoutDeps,
+  type CredentialsHandleResult,
+} from './credentials-fanout.js';
 export { type Store, type PromptRow } from './store/store.js';
 export { MemoryStore, type MemoryStoreParts } from './store/memory-store.js';
 export {

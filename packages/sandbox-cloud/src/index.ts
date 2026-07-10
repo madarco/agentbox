@@ -18,10 +18,13 @@ export {
   ensureAgentHomeDirsOwned,
   ensureAgentVolumesForCloud,
   extractCloudAgentCredentials,
+  reconcileAgentCredentials,
+  reconcileAgentCredentialsViaTransport,
   seedAgentVolumesIfFresh,
   seedOpencodeModelState,
   type CloudAgentKind,
   type EnsureAgentVolumesResult,
+  type ReconcileAgentCredentialsOptions,
   type SeedAgentVolumesOptions,
 } from './sync/agent-credentials.js';
 export { uploadEnvFiles, type UploadEnvFilesArgs, type UploadEnvFilesResult } from './sync/env-files.js';

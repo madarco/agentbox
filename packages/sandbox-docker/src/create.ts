@@ -93,6 +93,11 @@ import {
 } from './vscode.js';
 
 export interface CreateBoxOptions {
+  /**
+   * `box.credentialSync` resolved by the caller (CLI flag override included).
+   * Undefined → fall back to the local config load below.
+   */
+  credentialSync?: boolean;
   workspacePath: string;
   name?: string;
   /**
@@ -824,6 +829,12 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     AGENTBOX: '1',
     AGENTBOX_BOX_NAME: name,
     AGENTBOX_HOST_WORKSPACE: workspace,
+    // Absent = enabled; the ctl credential watcher only checks for '0'. The
+    // caller-resolved value wins (it sees CLI overrides like
+    // --no-credential-sync that this function's own config load can't).
+    ...((opts.credentialSync ?? effectiveBoxCfg.credentialSync) === false
+      ? { AGENTBOX_CREDENTIAL_SYNC: '0' }
+      : {}),
     ...(opts.projectRoot ? { AGENTBOX_PROJECT_ROOT: opts.projectRoot } : {}),
     ...(projectIndex !== undefined
       ? { AGENTBOX_PROJECT_INDEX: String(projectIndex) }

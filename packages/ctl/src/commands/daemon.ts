@@ -12,6 +12,7 @@ import { startClaudeScraper, type ClaudeScraperHandle } from '../claude-scraper.
 import { Supervisor } from '../supervisor.js';
 import { startServer } from '../socket.js';
 import { StatusReporter } from '../status-reporter.js';
+import { CredentialsWatcher } from '../credentials-watcher.js';
 import {
   startBoxRelayForwarder,
   type BoxRelayForwarderHandle,
@@ -71,6 +72,15 @@ export const daemonCommand = new Command('daemon')
       sessionName: DEFAULT_CLAUDE_SESSION_NAME,
     });
     reporter.start();
+
+    // Fan refreshed agent credentials out through the host relay (claude's
+    // OAuth refresh rotates the refresh token, invalidating every other copy).
+    // AGENTBOX_CREDENTIAL_SYNC=0 is the wire form of box.credentialSync=false.
+    let credentialsWatcher: CredentialsWatcher | null = null;
+    if (process.env.AGENTBOX_CREDENTIAL_SYNC !== '0') {
+      credentialsWatcher = new CredentialsWatcher({ relay: sup.relayClient });
+      credentialsWatcher.start();
+    }
 
     // Codex's JSON-hook firing is unreliable in 0.134.0 (see
     // packages/sandbox-docker/scripts/agentbox-codex-hooks.json header). Run a
@@ -204,6 +214,7 @@ export const daemonCommand = new Command('daemon')
       process.stdout.write(`agentbox-ctl: ${signal} — shutting down\n`);
       if (codexScraper) codexScraper.stop();
       if (claudeScraper) claudeScraper.stop();
+      if (credentialsWatcher) credentialsWatcher.stop();
       reporter.stop();
       reporter.flush();
       server.close();

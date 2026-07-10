@@ -1,10 +1,10 @@
 /**
- * Pure, docker-free helpers for `agentbox download claude` (box -> host pull of
- * Claude extensions). Kept separate from `claude.ts` so the delta + JSON-merge
- * logic is unit-testable without spawning containers — mirrors how
- * `claude-hooks-filter.ts` factors the forward-sync transforms.
+ * Pure helpers for `agentbox download claude` (box -> host pull of Claude
+ * extensions): the delta + JSON-merge logic, unit-testable without spawning
+ * containers. Consumed by `agent-pull.ts` (the shared pull core) and, through
+ * it, by both the docker volume pull and the cloud transport pull.
  *
- * The forward sync (`ensureClaudeVolume` in claude.ts) is host-authoritative
+ * The forward sync (`ensureClaudeVolume` in sandbox-docker) is host-authoritative
  * and rewrites `$HOST_HOME/.claude/plugins/` -> `/home/vscode/.claude/plugins/`
  * in the plugin registry JSONs. This module is the reverse: additive (host
  * wins, only missing items are added) and rewrites the container path back to

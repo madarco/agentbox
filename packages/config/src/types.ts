@@ -118,6 +118,7 @@ export interface UserConfig {
     vercelNetworkPolicy?: string;
     e2bTimeoutMs?: number;
     cpMaxBytes?: number;
+    credentialSync?: boolean;
   };
   checkpoint?: {
     maxLayers?: number;
@@ -270,6 +271,7 @@ export interface EffectiveConfig {
     vercelNetworkPolicy: string;
     e2bTimeoutMs: number;
     cpMaxBytes: number;
+    credentialSync: boolean;
   };
   checkpoint: {
     maxLayers: number;
@@ -429,6 +431,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     vercelNetworkPolicy: '',
     e2bTimeoutMs: 2_700_000,
     cpMaxBytes: 100 * 1024 * 1024,
+    credentialSync: true,
   },
   checkpoint: {
     maxLayers: 3,
@@ -732,6 +735,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     description:
       'Max bytes a single host→box copy may transfer after excludes, shared by `agentbox cp` (blocked with a size breakdown unless --yes) and each `carry:` entry (rejected at resolve time). Default 104857600 (100 MiB).',
     advanced: true,
+  },
+  {
+    key: 'box.credentialSync',
+    type: 'bool',
+    description:
+      'Automatically sync refreshed agent credentials (claude/codex/opencode) from boxes to the host backup and out to all other running boxes. Claude OAuth refresh rotates the refresh token, so without this every other copy 401s after any box refreshes. Default true; --no-credential-sync at create disables the in-box watcher for that box.',
   },
   {
     key: 'box.vercelNetworkPolicy',
