@@ -81,6 +81,17 @@ export interface RunAgentLoginResult {
   unsupported?: string;
 }
 
+/**
+ * What to tell the user when the agent rejects their input and re-prompts. The
+ * same code path serves both input shapes, so the wording has to follow the
+ * need: telling someone whose API key was refused to "paste a fresh code" is
+ * nonsense.
+ */
+export function rejectionMessage(need: LoginNeed | null): string {
+  if (need?.kind === 'secret') return `that ${need.label} was not accepted — try another`;
+  return 'the code was not accepted — paste a fresh one';
+}
+
 /** Last meaningful line(s) of buffered output, stripped of escapes and clamped. */
 function tailOf(buf: string): string {
   const lines = stripAnsi(buf)
@@ -203,7 +214,7 @@ export async function runAgentLogin(opts: RunAgentLoginOptions): Promise<RunAgen
       }
 
       if (phase === 'exchanging' && spec.invalidInputPattern?.test(d)) {
-        lastError = 'the code was not accepted — paste a fresh one';
+        lastError = rejectionMessage(need);
         writeLog('input rejected; back to awaiting-code');
         setPhase('awaiting-code', { lastError, need: need ?? undefined });
       }

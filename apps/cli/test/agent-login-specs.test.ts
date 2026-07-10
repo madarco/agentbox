@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { rejectionMessage } from '../src/lib/agent-login-run.js';
 import {
   CLAUDE_LOGIN_SPEC,
   CODEX_LOGIN_SPEC,
@@ -91,6 +92,20 @@ describe('CODEX_LOGIN_SPEC.detect', () => {
   it('does not mistake prose for a one-time code', () => {
     expect(extractCodexUserCode('expires in 15 minutes')).toBeNull();
     expect(extractCodexUserCode('  ABCD-12345  ')).toBe('ABCD-12345');
+  });
+});
+
+describe('rejectionMessage', () => {
+  it('tells a secret prompt to try another, not to paste a code', () => {
+    expect(rejectionMessage({ kind: 'secret', label: 'API key' })).toBe(
+      'that API key was not accepted — try another',
+    );
+  });
+  it('tells a paste-code prompt to paste a fresh code', () => {
+    expect(rejectionMessage({ kind: 'paste-code', url: 'https://x/oauth' })).toBe(
+      'the code was not accepted — paste a fresh one',
+    );
+    expect(rejectionMessage(null)).toBe('the code was not accepted — paste a fresh one');
   });
 });
 
