@@ -513,16 +513,30 @@ describe('git-shim arg whitelist + passthrough', () => {
     }
   });
 
-  it('push --tags is rejected (better safe than compatible)', () => {
+  it('push --quiet --dry-run is allowed', () => {
     const env = makeStubShell();
     try {
-      const out = runShim(GIT_SHIM, ['push', '--tags'], env);
-      expect(out.code).toBe(2);
-      expect(out.stderr).toMatch(/unsupported flag '--tags'/);
+      const out = runShim(GIT_SHIM, ['push', '--quiet', '--dry-run'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: git push -- --quiet --dry-run');
     } finally {
       env.cleanup();
     }
   });
+
+  it.each([['--mirror'], ['--delete'], ['--prune'], ['--force']])(
+    'push %s is rejected (destructive on the remote)',
+    (flag) => {
+      const env = makeStubShell();
+      try {
+        const out = runShim(GIT_SHIM, ['push', flag], env);
+        expect(out.code).toBe(2);
+        expect(out.stderr).toMatch(new RegExp(`unsupported flag '${flag}'`));
+      } finally {
+        env.cleanup();
+      }
+    },
+  );
 
   it('push origin main is rejected (positional refspec)', () => {
     const env = makeStubShell();
@@ -530,6 +544,88 @@ describe('git-shim arg whitelist + passthrough', () => {
       const out = runShim(GIT_SHIM, ['push', 'origin', 'main'], env);
       expect(out.code).toBe(2);
       expect(out.stderr).toMatch(/positional 'origin' not allowed/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // Regression: `git fetch --quiet` used to exit 2, killing user scripts under
+  // `set -e`. --prune was the only flag fetch accepted.
+  it('fetch --quiet is allowed', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['fetch', '--quiet'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: git fetch -- --quiet');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('fetch --prune --quiet forwards both flags', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['fetch', '--prune', '--quiet'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: git fetch -- --prune --quiet');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('pull --ff-only is allowed', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['pull', '--ff-only'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: git pull -- --ff-only');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('fetch --all is rejected (the relay always passes a remote+branch)', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['fetch', '--all'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/unsupported flag '--all'/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // The two halves of the value-less invariant: a flag that takes a value can't
+  // be smuggled in glued (regex is exact-match) or split (the value reads as a
+  // positional). This is what keeps --upload-pack= and friends out for free.
+  it('fetch --upload-pack=/bin/sh is rejected (glued value)', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['fetch', '--upload-pack=/bin/sh'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/unsupported flag '--upload-pack=\/bin\/sh'/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('fetch --depth 1 is rejected (off-list flag)', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['fetch', '--depth', '1'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/unsupported flag '--depth'/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('a value after an allowed fetch flag is rejected as a positional', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['fetch', '--prune', '1'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/positional '1' not allowed/);
     } finally {
       env.cleanup();
     }

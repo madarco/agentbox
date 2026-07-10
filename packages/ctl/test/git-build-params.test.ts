@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildParams } from '../src/commands/git.js';
+import { buildParams, partitionPullArgs } from '../src/commands/git.js';
 
 const CWD = '/workspace';
 
@@ -48,5 +48,36 @@ describe('git push buildParams', () => {
       path: CWD,
       hostOnly: true,
     });
+  });
+});
+
+describe('partitionPullArgs', () => {
+  // Regression: the git shim forwards flags after a `--`, so commander leaves
+  // opts.ffOnly unset and --ff-only landed on the host `git fetch`, which
+  // rejects it ("unknown option `ff-only'"). It belongs on the local merge.
+  it('routes --ff-only to the merge, never to the fetch', () => {
+    expect(partitionPullArgs(['--ff-only'])).toEqual({
+      fetchArgs: [],
+      mergeArgs: ['--ff-only'],
+    });
+  });
+
+  it('routes fetch-only flags to the fetch', () => {
+    expect(partitionPullArgs(['--prune', '--no-tags'])).toEqual({
+      fetchArgs: ['--prune', '--no-tags'],
+      mergeArgs: [],
+    });
+  });
+
+  it('sends --quiet to both, since either step can be noisy', () => {
+    expect(partitionPullArgs(['-q'])).toEqual({ fetchArgs: ['-q'], mergeArgs: ['-q'] });
+    expect(partitionPullArgs(['--quiet', '--prune', '--ff-only'])).toEqual({
+      fetchArgs: ['--quiet', '--prune'],
+      mergeArgs: ['--quiet', '--ff-only'],
+    });
+  });
+
+  it('is a no-op on empty args', () => {
+    expect(partitionPullArgs([])).toEqual({ fetchArgs: [], mergeArgs: [] });
   });
 });

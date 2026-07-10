@@ -114,6 +114,19 @@ agentbox git push 2 --host-only --as feat/login   # ...under a chosen name
 
 Passing a branch to `pull` checks it out, then pulls latest — the clean way to rebase a box onto a fresh base and [reuse it for a new task](/docs/background-and-parallel). For all flags and the local `checkout`/`status` ops, see [CLI commands](/docs/cli).
 
+### Which flags the in-box shim accepts
+
+The relay builds the remote and branch itself from the box's registered worktree, so the shim refuses them as positionals (`git push`, not `git push origin main`) and accepts a small set of flags per op:
+
+| Op | Flags |
+| --- | --- |
+| `push` | `--force-with-lease`, `--tags`, `--dry-run` |
+| `pull` | `--ff-only`, `--prune`/`-p`, `--tags`/`--no-tags` |
+| `fetch` | `--prune`/`-p`, `--prune-tags`, `--tags`/`--no-tags`, `--force`/`-f`, `--dry-run` |
+| `clone` | `--branch <name>`, `--depth <n>` |
+
+All of `push`/`pull`/`fetch` additionally take `--quiet`/`-q`, `--verbose`/`-v`, and `--progress`/`--no-progress`. Anything else exits `2` with `unsupported flag '<x>'`. Flags that would rewrite or delete remote refs (`--delete`, `--mirror`, `push --prune`, `push --force`) stay off the list on purpose — use `--force-with-lease` for a force-push.
+
 ### Keep the branch on your machine, not online
 
 `git push --host-only` makes the box's branch available in your **host** repo without pushing to any remote — nothing is published online. Use it when you want to `git checkout` the box's work locally, keep iterating on the host, or review it before deciding whether to publish. It defaults to the box's own branch name; pass `--as <branch>` to land it under a different name, and `--force` to allow a non-fast-forward overwrite. From inside the box the agent can do the same with `agentbox-ctl git push --host-only`. Because nothing leaves the host, this skips the push-approval prompt that a real `git push` triggers.

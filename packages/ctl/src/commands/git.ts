@@ -79,6 +79,35 @@ function runLocalGit(args: string[], cwd: string): Promise<number> {
   });
 }
 
+/**
+ * `pull` is a relay fetch + a local merge, so its passthrough flags have to be
+ * split across the two: `git fetch` rejects `--ff-only`, `git merge` rejects
+ * `--prune`. Everything the git shim allows for `pull` is classified here.
+ *
+ * These arrive as passthrough args rather than commander options because the
+ * shim forwards them after a `--` separator (`agentbox-ctl git pull -- --ff-only`),
+ * which makes commander treat them as positionals and leave `opts.ffOnly` unset.
+ */
+export function partitionPullArgs(args: string[]): { fetchArgs: string[]; mergeArgs: string[] } {
+  const fetchArgs: string[] = [];
+  const mergeArgs: string[] = [];
+  for (const arg of args) {
+    switch (arg) {
+      case '--ff-only':
+        mergeArgs.push(arg);
+        break;
+      case '--quiet':
+      case '-q':
+        fetchArgs.push(arg);
+        mergeArgs.push(arg);
+        break;
+      default:
+        fetchArgs.push(arg);
+    }
+  }
+  return { fetchArgs, mergeArgs };
+}
+
 /** Run a local `git` command and capture its trimmed stdout ('' on failure). */
 function captureGit(args: string[], cwd: string): Promise<string> {
   return new Promise((resolve) => {
@@ -218,14 +247,15 @@ export const gitCommand = new Command('git')
       .allowUnknownOption(true)
       .argument(
         '[args...]',
-        'extra flags appended to the host-built `git fetch <remote> <branch>` (e.g. `--prune`). Do NOT re-pass the remote or branch; they come from --remote and the registered worktree (same gotcha as `push`).',
+        'extra flags, split between the host-built `git fetch <remote> <branch>` (e.g. `--prune`) and the local merge (`--ff-only`; `--quiet` goes to both). Do NOT re-pass the remote or branch; they come from --remote and the registered worktree (same gotcha as `push`).',
       )
       .action(
         async (
           args: string[],
           opts: CommonOptions & { ffOnly?: boolean },
         ) => {
-          const fetchCode = await postRpcAndExit('git.fetch', buildParams(opts, args), {
+          const { fetchArgs, mergeArgs: passthroughMergeArgs } = partitionPullArgs(args);
+          const fetchCode = await postRpcAndExit('git.fetch', buildParams(opts, fetchArgs), {
             errorPrefix: 'agentbox-ctl git',
           });
           if (fetchCode !== 0) process.exit(fetchCode);
@@ -250,7 +280,12 @@ export const gitCommand = new Command('git')
             );
           }
           mergeArgs.push('merge');
-          if (opts.ffOnly) mergeArgs.push('--ff-only');
+          // `--ff-only` reaches us either as a commander option (direct
+          // `agentbox-ctl` call) or as a passthrough arg (via the git shim's `--`).
+          if (opts.ffOnly && !passthroughMergeArgs.includes('--ff-only')) {
+            mergeArgs.push('--ff-only');
+          }
+          mergeArgs.push(...passthroughMergeArgs);
           mergeArgs.push(`${remote}/HEAD`);
           const mergeCode = await runLocalGit(mergeArgs, cwd);
           process.exit(mergeCode);
