@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs';
 import { chmod, mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -23,6 +24,27 @@ import { log, select } from './prompt.js';
 
 const BOX_HOME = '/home/vscode';
 const BOX_UID = 1000;
+
+// Token mode stages the rendered `~/.git-credentials` (which holds a real
+// token) into a host mkdtemp dir so it can ride the carry upload. That dir must
+// not outlive the command — carry reads it during create (foreground-only), so
+// wipe every staged dir when the process exits. Best-effort (won't catch SIGKILL).
+const tmpDirsToClean = new Set<string>();
+let tmpCleanupHooked = false;
+function scheduleTmpCleanup(dir: string): void {
+  tmpDirsToClean.add(dir);
+  if (tmpCleanupHooked) return;
+  tmpCleanupHooked = true;
+  process.on('exit', () => {
+    for (const d of tmpDirsToClean) {
+      try {
+        rmSync(d, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+    }
+  });
+}
 
 /** Which credential the box carries to push on its own. */
 type GitCredsMode = 'token' | 'ssh';
@@ -211,6 +233,7 @@ async function planTokenCreds(projectRoot: string, onLog: (l: string) => void): 
   }
   const tmpDir = await mkdtemp(join(tmpdir(), 'agentbox-gitcreds-'));
   await chmod(tmpDir, 0o700);
+  scheduleTmpCleanup(tmpDir);
   const line = `https://${encodeURIComponent(creds.username)}:${encodeURIComponent(creds.password)}@${host}`;
   const entries: ResolvedCarryEntry[] = [
     await contentEntry(tmpDir, 'git-credentials', `${line}\n`, '~/.git-credentials'),
