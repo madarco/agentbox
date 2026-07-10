@@ -178,6 +178,8 @@ Unlike every other mode, `--with-credentials` places your credentials **inside t
 
 What still needs your PC: `agentbox cp`/`download`, `checkpoint`, and pull-request ops (`gh pr create`) remain host-relay operations — with the PC off they fail with a clear message rather than hanging. Only `git push`/`fetch`/`pull` are independent. `--with-credentials` is cloud-only (a docker box already runs on your host).
 
+For an **SSH remote**, the box needs a passphrase-less key to push non-interactively (there's no ssh-agent in the box) — an HTTPS remote sidesteps this by using a token. Commit signing is enabled only when your signing key is usable without a passphrase; otherwise in-box commits are simply left unsigned so they never fail.
+
 ## Pull requests
 
 The relay also proxies the host `gh` CLI: `agentbox git pr <op> <box>` from the host, or — inside the box — plain `gh pr <op>`, which the box's `gh` shim routes through the relay the same way (the explicit form is `agentbox-ctl git pr <op>`). `gh` runs in the host main repo and infers the repo from `git remote -v`. This needs `gh` installed and `gh auth login` on the host.

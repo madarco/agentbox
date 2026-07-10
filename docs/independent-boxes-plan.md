@@ -1,6 +1,22 @@
 # Independent boxes — box-held git credentials (`git.pushMode=direct`, `--with-credentials`)
 
-Status: in progress (branch `feat/box-git-direct`).
+Status: implemented + live-verified on E2B (branch `feat/box-git-direct`).
+
+## Verification results (2026-07-10, E2B)
+
+- Host gate copies the creds (token + SSH private/public signing key), riding the carry apply path; box git config set (`credential.helper=store`, ssh host-key policy, signing). `AGENTBOX_GIT_DIRECT=1` in box.env.
+- **An in-box commit pushed straight to GitHub with the host relay STOPPED** — verified from the host via `git ls-remote`. Core "PC off" claim holds.
+- ctl direct-run branch (`git push`/`fetch`) verified locally against a bare remote with the fresh ctl (push+fetch land; without the flag it routes to the relay).
+
+### Bugs found + fixed during verification
+- **Box-user uid**: carry chowns to a fixed 1000, but the box user is 1001 on E2B/Vercel (1002 elsewhere) → the box couldn't read its own 0600 creds. `seedGitCredentials` now re-owns to `id -u`.
+- **Passphrase signing key**: forcing `commit.gpgsign=true` breaks *every* commit when the SSH signing key needs a passphrase (no agent/askpass in the box). `seedGitCredentials` now probes `ssh-keygen -y -P ''` and only enables signing when the key is usable non-interactively.
+- **Private key**: the gate now copies the *private* half of an SSH key pair, not just the `.pub`.
+
+### Known limitations (v1, documented)
+- The in-box `agentbox-ctl git push`/`git` shim direct-run needs the box to ship the **new ctl**; cloud base templates baked before this change route to the relay until re-prepared (`agentbox prepare --provider <name>`). The `AGENTBOX_GIT_DIRECT=1` flag is set regardless, so a re-prepared box uses the direct path with no further change. A plain `/usr/bin/git push` (what the ctl branch invokes) is independent today.
+- **Passphrase-protected SSH *auth* keys** can't push over SSH non-interactively in the box (no agent). HTTPS-token remotes are unaffected. Passphrase *signing* keys leave signing off (commits succeed unsigned).
+- `gh pr create` and other host ops (`cp`/`download`/`checkpoint`) still need the PC on (v1).
 
 ## Context
 
