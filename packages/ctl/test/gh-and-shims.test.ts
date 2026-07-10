@@ -627,6 +627,62 @@ describe('git-shim arg whitelist + passthrough', () => {
     }
   });
 
+  // Options we don't model also take a value. If the scan guessed flag arity,
+  // that value would read as the clone source and hand real git a REMOTE clone,
+  // slipping the relay and the whitelist. Classify every token instead.
+  it.each([
+    ['--reference', '/tmp/ref'],
+    ['--separate-git-dir', '/tmp/gitdir'],
+    ['--upload-pack', '/usr/bin/git-upload-pack'],
+    ['--reference-if-able', '/tmp/ref'],
+  ])('clone %s <path> before a remote url does not bypass the gate', (flag, value) => {
+    const env = makeStubShell();
+    try {
+      const realGit = makeRealGitStub(env);
+      const out = runShim(GIT_SHIM, ['clone', flag, value, 'https://github.com/x/y.git'], env, {
+        AGENTBOX_REAL_GIT_PATH: realGit,
+      });
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/unsupported flag/);
+      expect(out.stdout).not.toContain('REAL_GIT:');
+      expect(out.stdout).not.toContain('STUB:');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // scp-style and ssh:// remotes must not be mistaken for local paths either.
+  it.each([['git@github.com:owner/name.git'], ['ssh://git@host/owner/name.git']])(
+    'clone %s is treated as remote, not local',
+    (url) => {
+      const env = makeStubShell();
+      try {
+        const realGit = makeRealGitStub(env);
+        const out = runShim(GIT_SHIM, ['clone', url, '/tmp/dest'], env, {
+          AGENTBOX_REAL_GIT_PATH: realGit,
+        });
+        expect(out.stdout).not.toContain('REAL_GIT:');
+      } finally {
+        env.cleanup();
+      }
+    },
+  );
+
+  // Ambiguous/unrecognized source (no local token at all) ⇒ gate, not real git.
+  it('clone of a bare remote name falls to the gate, not real git', () => {
+    const env = makeStubShell();
+    try {
+      const realGit = makeRealGitStub(env);
+      const out = runShim(GIT_SHIM, ['clone', 'myremote'], env, {
+        AGENTBOX_REAL_GIT_PATH: realGit,
+      });
+      expect(out.stdout).not.toContain('REAL_GIT:');
+      expect(out.stdout).toContain('STUB: git clone myremote');
+    } finally {
+      env.cleanup();
+    }
+  });
+
   it('clone of owner/name shorthand still relays to ctl', () => {
     const env = makeStubShell();
     try {
