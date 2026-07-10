@@ -7,7 +7,7 @@ import type { ResolvedCarryEntry } from '@agentbox/core';
 import { log, select } from './prompt.js';
 
 /**
- * Host-side gate for `git.pushMode=direct` (`--with-credentials`): the box needs
+ * Host-side gate for `git.pushMode=direct` (`--dangerously-with-credentials`): the box needs
  * ONE credential to push on its own. A human MUST pick which — a GitHub token
  * (push over HTTPS, commits unsigned, smallest exposure) or their SSH private
  * key (push over SSH + sign commits, but the riskiest secret) — at an
@@ -373,7 +373,7 @@ export async function resolveGitCredsCarry(args: {
       // Abort rather than hand back a broken box (the gate already explained why).
       log.warn(
         'with-credentials: no credential to copy — not creating the box. Set up `gh auth login` ' +
-          'or an SSH key and retry, or drop --with-credentials to use the host relay.',
+          'or an SSH key and retry, or drop --dangerously-with-credentials to use the host relay.',
       );
       args.onClose?.();
       process.exit(0);

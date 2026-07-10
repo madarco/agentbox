@@ -81,9 +81,9 @@ interface CreateOptions {
   verbose?: boolean;
   /** --no-credential-sync => false; default true (config box.credentialSync). */
   credentialSync?: boolean;
-  /** --with-credentials: copy a git credential into the box (git.pushMode=direct); cloud only.
+  /** --dangerously-with-credentials: copy a git credential into the box (git.pushMode=direct); cloud only.
    *  The token-vs-SSH choice is made ONLY at the interactive prompt (TTY required). */
-  withCredentials?: boolean;
+  dangerouslyWithCredentials?: boolean;
 }
 
 function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
@@ -100,9 +100,9 @@ function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
   const out: Partial<UserConfig> = {};
   if (Object.keys(box).length > 0) out.box = box;
   if (opts.portless !== undefined) out.portless = { enabled: opts.portless };
-  // --with-credentials selects the direct push mode (box holds a copy of your
+  // --dangerously-with-credentials selects the direct push mode (box holds a copy of your
   // git credentials). The actual copy is gated by a choice prompt later.
-  if (opts.withCredentials) out.git = { pushMode: 'direct' };
+  if (opts.dangerouslyWithCredentials) out.git = { pushMode: 'direct' };
   return out;
 }
 
@@ -239,7 +239,7 @@ export const createCommand = new Command('create')
     'disable automatic credential sync for this box (the in-box watcher that fans refreshed agent tokens out to your other boxes)',
   )
   .option(
-    '--with-credentials',
+    '--dangerously-with-credentials',
     "copy a git credential INTO the box so it can push with your PC off (needs no hub). You'll be asked at an interactive prompt to choose 'token' (push over HTTPS, commits unsigned, smallest exposure) or your 'ssh' private key (signs commits, riskiest). DANGEROUS: the credential lives in the box and its snapshots. Requires a real terminal (no non-interactive / CI path). Cloud providers only. Sets git.pushMode=direct.",
   )
   .option(
@@ -269,7 +269,7 @@ export const createCommand = new Command('create')
     // bind-mounts the host `.git`, so it is never independent of the host.
     if (cfg.effective.git.pushMode === 'direct' && providerName === 'docker') {
       log.error(
-        'git.pushMode=direct / --with-credentials is not applicable to docker boxes (they run on your host and bind-mount the host .git). Use a cloud provider (e.g. --provider hetzner|e2b|vercel|daytona).',
+        'git.pushMode=direct / --dangerously-with-credentials is not applicable to docker boxes (they run on your host and bind-mount the host .git). Use a cloud provider (e.g. --provider hetzner|e2b|vercel|daytona).',
       );
       cmdLog.close();
       process.exit(1);
@@ -345,7 +345,7 @@ export const createCommand = new Command('create')
       process.exit(1);
     }
 
-    // git.pushMode=direct (--with-credentials): copy the user's git credentials
+    // git.pushMode=direct (--dangerously-with-credentials): copy the user's git credentials
     // into the box so it pushes/pulls/signs on its own (PC-off). Gated by its
     // own confirmation + security warning; the approved secret files ride the
     // same carry apply path as the carry: block above.

@@ -155,9 +155,9 @@ interface CodexCreateOptions {
   carryYes?: boolean;
   /** --carry <mode>: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
   carry?: 'skip' | 'ask';
-  /** --with-credentials: copy a git credential into the box (git.pushMode=direct); cloud only.
+  /** --dangerously-with-credentials: copy a git credential into the box (git.pushMode=direct); cloud only.
    *  Token-vs-SSH is chosen ONLY at the interactive prompt (TTY required). */
-  withCredentials?: boolean;
+  dangerouslyWithCredentials?: boolean;
   vnc?: boolean; // commander: --no-vnc => false; default true
   resync?: boolean; // commander: --no-resync => false; default true (config box.resyncOnStart)
   sharedDockerCache?: boolean;
@@ -210,7 +210,7 @@ function buildCodexCliOverrides(opts: CodexCreateOptions): Partial<UserConfig> {
   if (Object.keys(box).length > 0) out.box = box;
   if (Object.keys(codex).length > 0) out.codex = codex;
   if (opts.portless !== undefined) out.portless = { enabled: opts.portless };
-  if (opts.withCredentials) out.git = { pushMode: 'direct' };
+  if (opts.dangerouslyWithCredentials) out.git = { pushMode: 'direct' };
   const attachIn = resolveAttachInOption(opts);
   if (attachIn !== undefined) out.attach = { openIn: attachIn };
   return out;
@@ -394,7 +394,7 @@ export const codexCommand = new Command('codex')
     'ask',
   )
   .option(
-    '--with-credentials',
+    '--dangerously-with-credentials',
     "copy a git credential INTO the box so it can push with your PC off. You'll be asked at an interactive prompt to choose 'token' (HTTPS, unsigned commits, smallest exposure) or your 'ssh' private key (signs commits, riskiest). DANGEROUS: the credential lives in the box and its snapshots. Requires a real terminal (no non-interactive / CI path). Cloud only. Sets git.pushMode=direct.",
   )
   .option(
@@ -520,7 +520,7 @@ export const codexCommand = new Command('codex')
 
     if (cfg.effective.git.pushMode === 'direct' && !isCloud) {
       log.error(
-        'git.pushMode=direct / --with-credentials is not applicable to docker boxes (they run on your host and bind-mount the host .git). Use a cloud provider (e.g. --provider hetzner|e2b|vercel|daytona).',
+        'git.pushMode=direct / --dangerously-with-credentials is not applicable to docker boxes (they run on your host and bind-mount the host .git). Use a cloud provider (e.g. --provider hetzner|e2b|vercel|daytona).',
       );
       cmdLog.close();
       process.exit(1);
@@ -544,11 +544,11 @@ export const codexCommand = new Command('codex')
           : undefined;
 
     if (opts.initialPrompt && opts.initialPrompt.length > 0) {
-      // --with-credentials is foreground-only (the queue worker doesn't thread
+      // --dangerously-with-credentials is foreground-only (the queue worker doesn't thread
       // git.pushMode=direct, and copying a credential needs a human at the prompt).
       if (cfg.effective.git.pushMode === 'direct') {
         log.error(
-          '--with-credentials is not supported with -i / background runs — run it in the foreground so you can confirm the credential copy interactively.',
+          '--dangerously-with-credentials is not supported with -i / background runs — run it in the foreground so you can confirm the credential copy interactively.',
         );
         cmdLog.close();
         process.exit(1);

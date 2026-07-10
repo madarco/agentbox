@@ -1,4 +1,4 @@
-# Independent boxes — box-held git credentials (`git.pushMode=direct`, `--with-credentials`)
+# Independent boxes — box-held git credentials (`git.pushMode=direct`, `--dangerously-with-credentials`)
 
 Status: implemented + live-verified on E2B (branch `feat/box-git-direct`).
 
@@ -38,7 +38,7 @@ tradeoff (credentials now live in the box and in its snapshots), so it is **opt-
 confirmation with a security warning**.
 
 This work is **independent of and complementary to** the control-plane/hosted-hub work. It adds a
-third `git.pushMode`: `direct`, exposed via the `--with-credentials` flag.
+third `git.pushMode`: `direct`, exposed via the `--dangerously-with-credentials` flag.
 
 ### Goal / non-goals
 
@@ -55,7 +55,7 @@ third `git.pushMode`: `direct`, exposed via the `--with-credentials` flag.
 
 ### Naming + the two credential shapes
 
-`--with-credentials` (flag) → `git.pushMode=direct` (mechanism value). The gate **asks which
+`--dangerously-with-credentials` (flag) → `git.pushMode=direct` (mechanism value). The gate **asks which
 credential** to copy at an **interactive prompt** (the security trade-off). Copying a credential is
 **interactive-only by design** — it requires a live TTY and a human choosing at the prompt; there
 is NO non-interactive path (no flag value, no env var, no `-y`), so automation / CI / the `-i`
@@ -68,19 +68,19 @@ queue can't copy a secret without a person present. This is the shipped shape:
 - **ssh** — copy the SSH **private** key. Box pushes over SSH (HTTPS origin rewritten to SSH) and
   signs commits (guarded on a passphrase-less probe). Riskiest — a private key in the box.
 
-`--with-credentials` always prompts (`token` / `ssh` / cancel) on a TTY and refuses on a non-TTY.
+`--dangerously-with-credentials` always prompts (`token` / `ssh` / cancel) on a TTY and refuses on a non-TTY.
 A token can't sign commits (that's what the SSH key is for); most agent workflows are fine with
 unsigned commits, so token is the low-exposure default.
 
 ## Phases
 
-### Phase 1 — Config surface: `git.pushMode='direct'` + `--with-credentials` flags
+### Phase 1 — Config surface: `git.pushMode='direct'` + `--dangerously-with-credentials` flags
 
 - `packages/config/src/types.ts`: add `'direct'` to `GitPushMode` (~line 41) and to the
   `enumValues` + description of the `git.pushMode` registry entry (~line 864). `auto` semantics
   unchanged (lease when a control-plane URL is set, else relay); `direct` is only ever explicit.
-- `apps/cli/src/commands/{create,claude,codex,opencode}.ts`: add `--with-credentials` /
-  `--with-credentials-yes` flags as sugar for `--git-push-mode direct`. These commands already
+- `apps/cli/src/commands/{create,claude,codex,opencode}.ts`: add `--dangerously-with-credentials` /
+  `--dangerously-with-credentials-yes` flags as sugar for `--git-push-mode direct`. These commands already
   thread `gitPushMode: cfg.effective.git.pushMode` into the provider
   (`apps/cli/src/commands/claude.ts:591,844`).
 - Reject `direct` for docker with a clear error.
@@ -152,7 +152,7 @@ Unit (vitest, pure — isolate `$HOME` per file, the apps/cli no-HOME-isolation 
 - Non-TTY hard-throws (copying a credential is interactive-only — no automation path).
 
 End-to-end (manual; watch `~/.agentbox/logs/latest.log`):
-1. `create --provider e2b --with-credentials -n indep` against `../agentbox-test-repo-gh`
+1. `create --provider e2b --dangerously-with-credentials -n indep` against `../agentbox-test-repo-gh`
    (HTTPS+gh) — confirm the security prompt lists the token source, approve.
 2. **Simulate PC off:** `agentbox relay stop`. In the box, `git push`; verify via ground truth
    (`git ls-remote` shows the new commit — exit codes are unreliable on cloud shells).
@@ -161,10 +161,10 @@ End-to-end (manual; watch `~/.agentbox/logs/latest.log`):
 4. `gh pr create` from the box with the relay still stopped → PR opens.
 5. Relay stopped: `agentbox cp` / `download` / `checkpoint` → clear "needs your PC on" error.
 6. Pause/resume (`stop`/`start`) → creds survive; `git push` still works.
-7. `--provider docker --with-credentials` → rejected with a clear "not applicable to docker" error.
+7. `--provider docker --dangerously-with-credentials` → rejected with a clear "not applicable to docker" error.
 
-Docs: `apps/web/content/docs/**` git/push-mode + a new "independent boxes / `--with-credentials`"
-page, the CLI reference for `--with-credentials`, `git.pushMode` config docs, and
+Docs: `apps/web/content/docs/**` git/push-mode + a new "independent boxes / `--dangerously-with-credentials`"
+page, the CLI reference for `--dangerously-with-credentials`, `git.pushMode` config docs, and
 `docs/features.md`.
 
 ## Critical files
@@ -173,7 +173,7 @@ page, the CLI reference for `--with-credentials`, `git.pushMode` config docs, an
 - `apps/cli/src/lib/git-creds-gate.ts` (new); `apps/cli/src/carry-prompt.ts` /
   `apps/cli/src/lib/carry-gate.ts` (templates), wired into `apps/cli/src/commands/create.ts`
   (and the launchers) alongside the carry gate (`create.ts:301-320`).
-- `apps/cli/src/commands/{create,claude,codex,opencode}.ts` — `--with-credentials` flags.
+- `apps/cli/src/commands/{create,claude,codex,opencode}.ts` — `--dangerously-with-credentials` flags.
 - `packages/sandbox-cloud/src/bootstrap-launch.ts` (~133) — `AGENTBOX_GIT_DIRECT` / `GH_TOKEN`.
 - `packages/sandbox-cloud/src/sync/git-identity.ts` — credential helper + signing config.
 - `packages/ctl/src/commands/git.ts` (push ~180, fetch ~201, pull ~223) + the gh path.
