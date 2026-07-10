@@ -7,6 +7,7 @@ import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './c
 import {
   CODEX_PULL_ITEMS,
   sanitizeCodexConfigForBox,
+  mergeCodexConfigForBox,
   MINIMAL_TRUSTED_CODEX_CONFIG,
 } from '@agentbox/sandbox-core';
 import { ensureVolume, volumeExists } from '../../docker.js';
@@ -14,7 +15,9 @@ import { ensureVolume, volumeExists } from '../../docker.js';
 /**
  * Codex support mirrors the Claude support in `claude.ts`, trimmed for what
  * Codex actually has: a synced `~/.codex` config volume, a detachable tmux
- * session, and `codex login`. Codex has no plugin system, so there is no
+ * session, and `codex login`. Codex plugins ride the config sync (git
+ * marketplaces + `plugins/cache` + the `.tmp/marketplaces` snapshots; box
+ * `config.toml` is merge-reconciled, not overwritten) — there is no
  * plugin-native-deps rebuild and no setup-skill seeding here.
  */
 export const SHARED_CODEX_VOLUME = 'agentbox-codex-config';
@@ -137,6 +140,8 @@ export interface EnsureCodexVolumeOptions {
    * When true and the host's ~/.codex exists, rsync host -> volume on every
    * call. Additive (no `--delete`): host files win on overlap, box-only files
    * (e.g. an `auth.json` written by an in-box `codex login`) are preserved.
+   * `config.toml` is the exception — never rsynced; reconcileVolumeCodexConfig
+   * rewrites it as sanitized-host + box-only entries merged.
    */
   syncFromHost: boolean;
   /** Image used by the throwaway sync helper container (the box image). */
@@ -221,6 +226,16 @@ export async function ensureCodexVolume(
       '-c',
       // --exclude=hooks.json: the AgentBox activity hooks file is box-owned
       // (seeded by seedCodexHooks); never let the host copy clobber it.
+      // --exclude=/config.toml (anchored — plugin repos legitimately contain
+      // files named config.toml): box config is owned by
+      // reconcileVolumeCodexConfig (sanitize + merge), never rsynced — copying
+      // the host file here would wipe box-side `codex plugin add`/`mcp add`
+      // state before the merge could read it.
+      // The `.tmp/marketplaces` includes come FIRST (rsync filter rules are
+      // first-match-wins): git-marketplace snapshots must reach the box or
+      // in-box `codex plugin` breaks; `/.tmp/*` then drops `.tmp`'s other
+      // children (the heavy desktop-app payloads) and the unanchored `.tmp`
+      // still blocks nested `.tmp` dirs elsewhere.
       // The session-state DBs / indexes are excluded so a teleported session
       // resumes at /workspace (Codex reads the cwd from state_*.sqlite's threads
       // index, which it backfills from the box's rollouts) and the host's
@@ -229,16 +244,18 @@ export async function ensureCodexVolume(
       // excludes) already copied into the shared volume — rsync without
       // --delete only adds/updates. The globs are no-ops with `-f` when absent,
       // and never touch box-owned `sessions/` (the teleported rollouts) or
-      // `hooks.json`.
-      // Heavy host-only artifacts are also excluded (mirrors CODEX_RSYNC_EXCLUDES
-      // in host-stage.ts): `packages` (macOS standalone release binaries — the
-      // in-box codex is npm-installed), `plugins/.plugin-appserver` (the
+      // `hooks.json`. `.tmp` gets a selective purge that keeps `marketplaces/`.
+      // Heavy host-only artifacts are also excluded (mirrors the codex spec in
+      // sandbox-core's registry): `packages` (macOS standalone release binaries —
+      // the in-box codex is npm-installed), `plugins/.plugin-appserver` (the
       // platform-specific plugin app-server runtime), `computer-use` (the macOS
       // `Codex Computer Use.app` bundle), `archived_sessions` (host history), and
-      // the regenerable caches (`.tmp`, `tmp`, `cache`, `vendor_imports`,
-      // `sqlite`, `models_cache.json`). Without these the shared volume balloons
-      // to ~1.5 GB and every create's rsync crawls.
-      'rsync -a --exclude=sessions --exclude=log --exclude=history.jsonl --exclude=hooks.json' +
+      // the regenerable caches (`tmp`, `cache`, `vendor_imports`, `sqlite`,
+      // `models_cache.json`). Without these the shared volume balloons to
+      // ~1.5 GB and every create's rsync crawls.
+      'rsync -a --include=/.tmp/ --include=/.tmp/marketplaces/*** --exclude=/.tmp/*' +
+        ' --exclude=sessions --exclude=log --exclude=history.jsonl --exclude=hooks.json' +
+        ' --exclude=/config.toml' +
         skillsExclude +
         ' --exclude=state_*.sqlite* --exclude=logs_*.sqlite* --exclude=session_index.jsonl' +
         ' --exclude=external_agent_session_imports.json --exclude=shell_snapshots' +
@@ -249,12 +266,13 @@ export async function ensureCodexVolume(
         ' && rm -rf /dst/state_*.sqlite* /dst/logs_*.sqlite* /dst/session_index.jsonl' +
         ' /dst/external_agent_session_imports.json /dst/shell_snapshots' +
         ' /dst/packages /dst/plugins/.plugin-appserver /dst/computer-use' +
-        ' /dst/archived_sessions /dst/.tmp /dst/tmp /dst/cache' +
+        ' /dst/archived_sessions /dst/tmp /dst/cache' +
         ' /dst/vendor_imports /dst/sqlite /dst/models_cache.json' +
+        ' && { [ -d /dst/.tmp ] && find /dst/.tmp -mindepth 1 -maxdepth 1 ! -name marketplaces -exec rm -rf {} + || true; }' +
         skillsPurge +
         ' && chown -R 1000:1000 /dst',
     ]);
-    await sanitizeVolumeCodexConfig(spec.volume, opts.image);
+    await reconcileVolumeCodexConfig(spec.volume, opts.image);
     return { created, synced: true };
   }
 
@@ -277,10 +295,10 @@ export async function ensureCodexVolume(
     { reject: false },
   );
   // Even with nothing to sync, pre-trust /workspace so a Codex user with no host
-  // ~/.codex/config.toml doesn't hit the trust prompt. sanitizeVolumeCodexConfig
-  // writes a minimal trusted config when the host has none.
+  // ~/.codex/config.toml doesn't hit the trust prompt. reconcileVolumeCodexConfig
+  // merges the minimal trusted config into whatever the box already has.
   if (!(await pathExists(join(hostCodex, 'config.toml')))) {
-    await sanitizeVolumeCodexConfig(spec.volume, opts.image);
+    await reconcileVolumeCodexConfig(spec.volume, opts.image);
   }
   return { created, synced: false };
 }
@@ -363,60 +381,118 @@ export async function seedCodexAgentsOverride(
 }
 
 /**
- * Overwrite the box's just-synced `~/.codex/config.toml` with a sanitized copy
- * that drops host-only-path entries (desktop-Codex.app MCP servers like
- * `node_repl`, a macOS `notify` helper, local-source marketplaces) — see
- * {@link sanitizeCodexConfigForBox}. Without this the in-box codex tries to exec
- * macOS paths and prints `MCP client ... failed to start: No such file` warnings.
- *
- * Runs AFTER the rsync so the raw copy already exists: best-effort, and a no-op
- * when nothing host-only is present. On a missing host config, a TOML parse
- * failure, or a container error we leave the raw rsynced copy intact — the box
- * must never end up without a `config.toml`.
+ * Shell snippet that deletes marketplace artifacts the merged config no longer
+ * references: `plugins/cache/<name>` (installed-plugin payloads — the host's
+ * desktop-app caches carry macOS junk) and `.tmp/marketplaces/<name>` (snapshot
+ * checkouts, incl. codex's transient `.staging`). Keep-set names are
+ * shell-quoted; an empty keep-set purges everything (no marketplaces
+ * configured ⇒ nothing to keep). Exported for unit tests.
  */
-async function sanitizeVolumeCodexConfig(
+export function buildCodexOrphanPurgeScript(keptMarketplaces: string[]): string {
+  const keepFlags = keptMarketplaces.map((n) => `! -name ${shQuote(n)}`).join(' ');
+  const purgeDir = (dir: string): string =>
+    `{ [ -d ${dir} ] && find ${dir} -mindepth 1 -maxdepth 1` +
+    (keepFlags.length > 0 ? ` ${keepFlags}` : '') +
+    ` -exec rm -rf {} + || true; }`;
+  return `${purgeDir('/dst/plugins/cache')} && ${purgeDir('/dst/.tmp/marketplaces')}`;
+}
+
+/**
+ * Reconcile the box's `~/.codex/config.toml` in the codex-config volume: the
+ * sanitized host config ({@link sanitizeCodexConfigForBox} — drops
+ * desktop-Codex.app MCP servers, the macOS `notify` helper, local-source
+ * marketplaces) is the base, and the box's existing config is folded in
+ * additively ({@link mergeCodexConfigForBox}) so in-box `codex plugin add` /
+ * `codex mcp add` / bootstrapped marketplaces survive re-syncs. The rsync in
+ * {@link ensureCodexVolume} deliberately excludes `config.toml`; this function
+ * is the file's sole writer.
+ *
+ * Afterwards, in the same helper container, marketplace caches/snapshots not
+ * referenced by the *merged* config are purged (the merged set — not the
+ * sanitize set — so marketplaces installed in-box keep their caches).
+ *
+ * Best-effort throughout: on a host-config parse failure we keep an existing
+ * box config untouched (or fall back to the raw host text when the volume has
+ * none — the box must never end up without a `config.toml`); on any container
+ * error the volume is left as-is.
+ */
+async function reconcileVolumeCodexConfig(
   volume: string,
   image: string,
-): Promise<{ sanitized: boolean }> {
+): Promise<{ reconciled: boolean }> {
   try {
-    const hostConfig = join(homedir(), '.codex', 'config.toml');
-    // No host config to sanitize: still seed a minimal config that pre-trusts
-    // /workspace, so a Codex user without a host config.toml doesn't hit the
-    // "trust this folder?" prompt in the box.
-    let text: string;
-    if (!(await pathExists(hostConfig))) {
-      text = MINIMAL_TRUSTED_CODEX_CONFIG;
-    } else {
-      const sanitized = sanitizeCodexConfigForBox(await readFile(hostConfig, 'utf8'));
-      if (!sanitized.changed || sanitized.text.length === 0) return { sanitized: false };
-      text = sanitized.text;
-    }
-    // `-i` keeps stdin attached so execa's `input` reaches `cat`; without it the
-    // container gets immediate EOF and `>` truncates config.toml to empty. Write
-    // to a temp file then `mv` so a partial/failed write never clobbers the
-    // rsynced copy.
-    await execa(
+    // Read the box's current config first — the merge input, and the fallback
+    // decider when the host config doesn't parse.
+    const boxRead = await execa(
       'docker',
-      [
-        'run',
-        '--rm',
-        '-i',
-        '--user',
-        '0',
-        '-v',
-        `${volume}:/dst`,
-        image,
-        'sh',
-        '-c',
-        'cat > /dst/config.toml.tmp && chown 1000:1000 /dst/config.toml.tmp && ' +
-          'mv /dst/config.toml.tmp /dst/config.toml',
-      ],
-      { input: text },
+      ['run', '--rm', '-v', `${volume}:/dst`, image, 'sh', '-c', 'cat /dst/config.toml'],
+      { reject: false },
     );
-    return { sanitized: true };
+    const boxText = boxRead.exitCode === 0 ? boxRead.stdout : null;
+
+    const hostConfig = join(homedir(), '.codex', 'config.toml');
+    // No host config: merge the minimal /workspace-pre-trust config into
+    // whatever the box has, so a Codex user without a host config.toml doesn't
+    // hit the "trust this folder?" prompt and box-side state still survives.
+    let base: string;
+    if (!(await pathExists(hostConfig))) {
+      base = MINIMAL_TRUSTED_CODEX_CONFIG;
+    } else {
+      const hostText = await readFile(hostConfig, 'utf8');
+      try {
+        base = sanitizeCodexConfigForBox(hostText).text;
+      } catch {
+        // Host TOML doesn't parse. An existing box config is more trustworthy
+        // than the raw host text — keep it (and skip the purge: keep-set
+        // unknown). With an empty volume, seed the raw host text verbatim.
+        if (boxText !== null) return { reconciled: false };
+        await writeVolumeCodexConfig(volume, image, hostText, null);
+        return { reconciled: true };
+      }
+    }
+
+    const merged = mergeCodexConfigForBox(base, boxText);
+    await writeVolumeCodexConfig(volume, image, merged.text, merged.marketplaces);
+    return { reconciled: true };
   } catch {
-    return { sanitized: false };
+    return { reconciled: false };
   }
+}
+
+/**
+ * Write `config.toml` into the volume via a throwaway container, then (when a
+ * keep-set is known) purge orphaned marketplace dirs in the same shell. `-i`
+ * keeps stdin attached so execa's `input` reaches `cat`; without it the
+ * container gets immediate EOF and `>` truncates config.toml to empty. Write
+ * to a temp file then `mv` so a partial/failed write never clobbers the
+ * existing copy.
+ */
+async function writeVolumeCodexConfig(
+  volume: string,
+  image: string,
+  text: string,
+  keptMarketplaces: string[] | null,
+): Promise<void> {
+  const purge = keptMarketplaces === null ? '' : ` && ${buildCodexOrphanPurgeScript(keptMarketplaces)}`;
+  await execa(
+    'docker',
+    [
+      'run',
+      '--rm',
+      '-i',
+      '--user',
+      '0',
+      '-v',
+      `${volume}:/dst`,
+      image,
+      'sh',
+      '-c',
+      'cat > /dst/config.toml.tmp && chown 1000:1000 /dst/config.toml.tmp && ' +
+        'mv /dst/config.toml.tmp /dst/config.toml' +
+        purge,
+    ],
+    { input: text },
+  );
 }
 
 export interface CodexMountResult {

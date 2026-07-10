@@ -53,6 +53,13 @@ export interface SanitizeCodexConfigResult {
   text: string;
   /** True when at least one host-only entry was stripped. */
   changed: boolean;
+  /**
+   * Marketplace names still present after the local-source drop. The cloud
+   * staging path uses this as the keep-set when purging orphaned
+   * `plugins/cache/<marketplace>` dirs (the docker path uses the merged
+   * config's set instead — see {@link mergeCodexConfigForBox}).
+   */
+  keptMarketplaces: string[];
 }
 
 /**
@@ -132,5 +139,84 @@ export function sanitizeCodexConfigForBox(
     changed = true;
   }
 
-  return { text: changed ? stringify(cfg) : tomlText, changed };
+  const keptMarketplaces = isRecord(cfg['marketplaces']) ? Object.keys(cfg['marketplaces']) : [];
+  return { text: changed ? stringify(cfg) : tomlText, changed, keptMarketplaces };
+}
+
+export interface MergeCodexConfigResult {
+  /** Final box TOML: the host-sanitized base with box-only entries folded in. */
+  text: string;
+  /**
+   * Marketplace names in the merged config — the keep-set for the orphaned
+   * `plugins/cache` / `.tmp/marketplaces` purge. Taken from the merge (not the
+   * sanitize) so marketplaces installed in-box keep their caches across syncs.
+   */
+  marketplaces: string[];
+  /** True when at least one box-only entry was preserved. */
+  mergedFromBox: boolean;
+}
+
+/** Tables whose second-level entries an in-box codex adds/manages itself. */
+const BOX_MERGED_TABLES = ['marketplaces', 'plugins', 'mcp_servers', 'projects'] as const;
+
+/**
+ * Merge the box's existing `config.toml` into the sanitized host copy, so
+ * re-seeding the box config stops wiping in-box state (`codex plugin add`,
+ * `codex mcp add`, marketplaces codex bootstrapped itself, `/model` picks).
+ *
+ * Host-authoritative: the host-sanitized text is the base and wins on every
+ * overlapping key — so an in-box enable/disable flip of a plugin the host also
+ * lists reverts on the next sync, by design. Only *box-only* state survives:
+ * second-level entries of {@link BOX_MERGED_TABLES} and box-only top-level
+ * keys. The additive fold also means an entry deleted on the host lives on in
+ * the box until removed there (or the volume is isolated/recreated).
+ *
+ * `hostSanitizedText` must be parseable (it is sanitizer output or
+ * {@link MINIMAL_TRUSTED_CODEX_CONFIG}); a parse throw propagates to the
+ * caller's best-effort catch. A null or unparseable `boxText` degrades to the
+ * host text verbatim — never fail the sync over a corrupt box config.
+ */
+export function mergeCodexConfigForBox(
+  hostSanitizedText: string,
+  boxText: string | null,
+): MergeCodexConfigResult {
+  const host = parse(hostSanitizedText) as Record<string, unknown>;
+  const hostMarketplaces = (): string[] =>
+    isRecord(host['marketplaces']) ? Object.keys(host['marketplaces']) : [];
+
+  if (boxText === null) {
+    return { text: hostSanitizedText, marketplaces: hostMarketplaces(), mergedFromBox: false };
+  }
+  let box: Record<string, unknown>;
+  try {
+    box = parse(boxText) as Record<string, unknown>;
+  } catch {
+    return { text: hostSanitizedText, marketplaces: hostMarketplaces(), mergedFromBox: false };
+  }
+
+  let merged = false;
+  for (const table of BOX_MERGED_TABLES) {
+    const boxTable = box[table];
+    if (!isRecord(boxTable)) continue;
+    const hostTable = isRecord(host[table]) ? host[table] : {};
+    for (const [name, def] of Object.entries(boxTable)) {
+      if (name in hostTable) continue; // host wins on overlap
+      hostTable[name] = def;
+      merged = true;
+    }
+    if (Object.keys(hostTable).length > 0) host[table] = hostTable;
+  }
+  for (const [key, value] of Object.entries(box)) {
+    if ((BOX_MERGED_TABLES as readonly string[]).includes(key)) continue;
+    if (key in host) continue; // host wins on overlap
+    host[key] = value;
+    merged = true;
+  }
+
+  const marketplaces = isRecord(host['marketplaces']) ? Object.keys(host['marketplaces']) : [];
+  return {
+    text: merged ? stringify(host) : hostSanitizedText,
+    marketplaces,
+    mergedFromBox: merged,
+  };
 }

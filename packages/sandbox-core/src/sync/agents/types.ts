@@ -40,6 +40,13 @@ export interface AgentPathMap {
    * static-config concern migrates (Phase 7); OpenCode's are already exact.
    */
   exclude?: string[];
+  /**
+   * rsync `--include` carve-ins for this source. Consumers MUST emit these
+   * before the excludes (rsync filter rules are first-match-wins) — used to
+   * re-include a subtree of an otherwise-excluded dir (codex:
+   * `.tmp/marketplaces/` out of the excluded `.tmp`).
+   */
+  include?: string[];
 }
 
 /** Where this tool's login credential lives on the box, on the host backup, and in the cloud volume. */

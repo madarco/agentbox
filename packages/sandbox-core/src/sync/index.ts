@@ -168,8 +168,10 @@ export {
 } from './claude-hooks-filter.js';
 export {
   sanitizeCodexConfigForBox,
+  mergeCodexConfigForBox,
   isHostOnlyPath,
   BOX_WORKSPACE,
   MINIMAL_TRUSTED_CODEX_CONFIG,
   type SanitizeCodexConfigResult,
+  type MergeCodexConfigResult,
 } from './codex-config.js';

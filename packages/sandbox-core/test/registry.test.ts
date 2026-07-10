@@ -90,6 +90,7 @@ describe('agent sync registry', () => {
       'cache',
       'vendor_imports',
       'tmp',
+      '/.tmp/*',
       '.tmp',
       '.codex-global-state.json',
       '.codex-global-state.json.bak',
@@ -103,6 +104,13 @@ describe('agent sync registry', () => {
       'plugins/.plugin-appserver',
       'computer-use',
       'archived_sessions',
+    ]);
+    // The `.tmp/marketplaces` carve-in: emitted before the excludes
+    // (first-match-wins) so git-marketplace snapshots reach the box while the
+    // rest of `.tmp` (desktop-app payloads) stays out.
+    expect(resolveAgentSpec('codex').staticPaths[0]?.include).toEqual([
+      '/.tmp/',
+      '/.tmp/marketplaces/***',
     ]);
     // opencode data tree — auth.json ships separately, snapshot is host-only.
     expect(resolveAgentSpec('opencode').staticPaths[0]?.exclude).toEqual([

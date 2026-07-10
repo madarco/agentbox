@@ -88,6 +88,17 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
         // separately; `state_*.sqlite*` is the resume-cwd index (rebuilt in-box);
         // `packages`/`plugins/.plugin-appserver`/`computer-use` are heavy
         // macOS-only artifacts; the rest is host-only session/log/cache state.
+        //
+        // `.tmp` carve-in: the git-marketplace snapshots (`.tmp/marketplaces/`,
+        // ~13 MB) must reach the box or in-box `codex plugin` breaks
+        // ("marketplace root does not contain a supported manifest" — and the
+        // box can't re-clone, the git shim blocks `clone`). The includes are
+        // emitted BEFORE the excludes (first-match-wins): the root `.tmp/` dir
+        // and the marketplaces subtree transfer, `/.tmp/*` drops its other
+        // children (the ~200 MB desktop-app `bundled-marketplaces` + `plugins`
+        // payloads), and the unanchored `.tmp` still blocks nested `.tmp` dirs
+        // elsewhere in the tree.
+        include: ['/.tmp/', '/.tmp/marketplaces/***'],
         exclude: [
           'auth.json',
           'sessions',
@@ -101,6 +112,7 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
           'cache',
           'vendor_imports',
           'tmp',
+          '/.tmp/*',
           '.tmp',
           '.codex-global-state.json',
           '.codex-global-state.json.bak',

@@ -407,6 +407,9 @@ export interface StageCodexOptions {
 // `packages`/`plugins/.plugin-appserver`/`computer-use` are heavy macOS-only
 // artifacts that balloon the staged tarball (~800 MB → ~0.5 MB).
 const CODEX_STATIC_EXCLUDES = resolveAgentSpec('codex').staticPaths[0]?.exclude ?? [];
+// `--include` carve-ins (the `.tmp/marketplaces/` snapshots) — must be emitted
+// before the excludes; see the registry's codex spec for the rationale.
+const CODEX_STATIC_INCLUDES = resolveAgentSpec('codex').staticPaths[0]?.include ?? [];
 
 const CODEX_KEYCHAIN_WARNING =
   'codex: ~/.codex/auth.json missing. On macOS the codex CLI defaults to ' +
@@ -433,14 +436,54 @@ const CODEX_KEYCHAIN_WARNING =
  * `mcp_servers` / `notify` / local marketplaces via {@link
  * sanitizeCodexConfigForBox}. A missing file, a parse failure, or any IO error
  * leaves the file untouched — staging must never fail on config sanitization.
+ *
+ * Returns the marketplace names kept in the sanitized config (the keep-set for
+ * {@link purgeOrphanCodexMarketplaceDirs}); a missing config keeps nothing, and
+ * `null` signals "unknown" (parse/IO failure) so the caller skips the purge —
+ * never delete on unknown.
  */
-async function sanitizeStagedCodexConfig(configPath: string, hostHome: string): Promise<void> {
+async function sanitizeStagedCodexConfig(
+  configPath: string,
+  hostHome: string,
+): Promise<{ keptMarketplaces: string[] } | null> {
   try {
-    if (!(await pathExists(configPath))) return;
-    const { text, changed } = sanitizeCodexConfigForBox(await readFile(configPath, 'utf8'), hostHome);
+    if (!(await pathExists(configPath))) return { keptMarketplaces: [] };
+    const { text, changed, keptMarketplaces } = sanitizeCodexConfigForBox(
+      await readFile(configPath, 'utf8'),
+      hostHome,
+    );
     if (changed) await writeFile(configPath, text);
+    return { keptMarketplaces };
   } catch {
     // leave the rsynced copy as-is
+    return null;
+  }
+}
+
+/**
+ * Delete staged marketplace artifacts whose marketplace is absent from the
+ * sanitized config: `plugins/cache/<name>` (installed-plugin payloads — the
+ * host's desktop-app caches carry macOS junk like native-prebuild
+ * node_modules) and `.tmp/marketplaces/<name>` (snapshot checkouts, incl.
+ * codex's transient `.staging`). Best-effort; missing dirs are fine.
+ */
+async function purgeOrphanCodexMarketplaceDirs(
+  stageDir: string,
+  keptMarketplaces: string[],
+): Promise<void> {
+  const kept = new Set(keptMarketplaces);
+  for (const rel of ['plugins/cache', '.tmp/marketplaces']) {
+    const dir = join(stageDir, rel);
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch {
+      continue; // dir absent — nothing staged for it
+    }
+    for (const name of entries) {
+      if (kept.has(name)) continue;
+      await rm(join(dir, name), { recursive: true, force: true });
+    }
   }
 }
 
@@ -455,11 +498,16 @@ export async function stageCodexStaticForUpload(
   let tarballPath: string | null = null;
   try {
     const codexBroken = await findBrokenSymlinks(hostCodex);
+    // Rule order matters (first-match-wins): broken-symlink excludes first
+    // (exact anchored paths — a broken symlink inside a marketplace checkout
+    // would abort the `-L` rsync if the includes matched it first), then the
+    // `.tmp/marketplaces` includes, then the static excludes.
     await execa('rsync', [
       '-a',
       STAGE_WRITABLE_CHMOD,
       '-L',
       ...codexBroken.map((r) => `--exclude=/${r}`),
+      ...CODEX_STATIC_INCLUDES.map((p) => `--include=${p}`),
       ...CODEX_STATIC_EXCLUDES.map((p) => `--exclude=${p}`),
       `${hostCodex}/`,
       `${stageDir}/`,
@@ -468,7 +516,13 @@ export async function stageCodexStaticForUpload(
     // node_repl, a macOS notify helper, local-source marketplaces) from the
     // staged config.toml so the in-box codex doesn't try to exec macOS paths.
     // Best-effort: a parse failure leaves the rsynced copy intact.
-    await sanitizeStagedCodexConfig(join(stageDir, 'config.toml'), hostHome);
+    const sanitized = await sanitizeStagedCodexConfig(join(stageDir, 'config.toml'), hostHome);
+    // Drop caches/snapshots of marketplaces the sanitize removed (or that no
+    // config references). Skipped when the keep-set is unknown (sanitize
+    // failure) — never delete on unknown.
+    if (sanitized !== null) {
+      await purgeOrphanCodexMarketplaceDirs(stageDir, sanitized.keptMarketplaces);
+    }
     tarballPath = await tarballFromDir(stageDir, 'codex-static');
     return {
       tarballPath,

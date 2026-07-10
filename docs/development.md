@@ -36,6 +36,11 @@ distribution path lives under a `node_modules` segment; a clone does not.
   - Re-run `agentbox install codex` after **manifest/command** changes (not needed
     for skill text). Use `agentbox install codex --no-dev` to force the published
     GitHub path even inside a checkout (it flips the marketplace back to git).
+  - Note: local-source marketplaces (incl. this dev `[marketplaces.agentbox]`)
+    are dropped from the **box** copy of `config.toml` by the sync sanitizer, and
+    their `plugins/cache/<name>` dirs are purged from the box — the local path
+    doesn't exist in-box. Only git-sourced marketplaces reach boxes (their
+    `.tmp/marketplaces/<name>` snapshots are synced too).
 
 ## Manual end-to-end
 
