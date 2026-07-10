@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { cloneWorkspace, runBootstrap, type BootstrapDeps, type BootstrapEnv } from '../src/commands/bootstrap.js';
 
 /** A spy-able deps object; everything live by default, records launch calls. */
@@ -110,16 +110,39 @@ describe('runBootstrap idempotency', () => {
   });
 });
 
+/** Real git, bypassing the box's `/usr/local/bin/git` shim. Absent on some hosts. */
+const REAL_GIT = '/usr/bin/git';
+
 describe('cloneWorkspace', () => {
   let dir: string;
   let bare: string;
   let dest: string;
+  const originalEnv = { ...process.env };
+  const originalPath = process.env.PATH ?? '';
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'agentbox-bootstrap-'));
     const src = join(dir, 'src');
     bare = join(dir, 'origin.git');
     dest = join(dir, 'workspace');
+
+    // Run this suite inside an agentbox box and plain `git` on PATH is the shim,
+    // which intercepts `clone` and routes it at the (absent) host relay. Both the
+    // fixture and cloneWorkspace itself spawn `git` from PATH, so put real git in
+    // front for the duration of the test. Outside a box this is a no-op.
+    if (existsSync(REAL_GIT)) {
+      const binDir = join(dir, 'bin');
+      mkdirSync(binDir);
+      symlinkSync(REAL_GIT, join(binDir, 'git'));
+      process.env.PATH = `${binDir}${delimiter}${originalPath}`;
+    }
+    // A box bind-mounts the host ~/.gitconfig, whose commit.gpgsign +
+    // user.signingkey name a host key path that does not exist here, so the
+    // fixture's `git commit` fails. Same guard the shim tests use. Identity comes
+    // from the explicit `git config` calls below.
+    process.env.GIT_CONFIG_GLOBAL = '/dev/null';
+    process.env.GIT_CONFIG_SYSTEM = '/dev/null';
+
     const git = (args: string[], cwd?: string) =>
       execFileSync('git', args, { cwd, stdio: 'ignore' });
     git(['init', '-q', src]);
@@ -131,7 +154,10 @@ describe('cloneWorkspace', () => {
     git(['clone', '-q', '--bare', src, bare]);
   });
 
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it('clones the authed URL then scrubs origin back to the bare URL', async () => {
     const originUrl = 'https://github.com/acme/widgets.git';

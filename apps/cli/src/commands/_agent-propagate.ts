@@ -72,7 +72,10 @@ export async function runPropagateStep(opts: {
   if (boxes.length === 0) return;
   const projectCount = boxes.filter((b) => b.projectRoot === sourceBox.projectRoot).length;
 
-  let scope = opts.scopeFlag;
+  // Annotated, not inferred: the `opts.scopeFlag === 'none'` guard above narrows
+  // scopeFlag to 'project' | 'all' | undefined, so an inferred `scope` couldn't
+  // hold the 'none' the interactive picker can still return.
+  let scope: PropagateScope | undefined = opts.scopeFlag;
   if (scope === undefined) {
     if (opts.yes) {
       log.info('skipping propagation (-y without --propagate); re-run with --propagate project|all');
