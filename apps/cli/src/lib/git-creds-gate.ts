@@ -8,44 +8,28 @@ import { log, select } from './prompt.js';
 
 /**
  * Host-side gate for `git.pushMode=direct` (`--with-credentials`): the box needs
- * ONE credential to push on its own. We ask the user which to copy in — a
- * GitHub token (push over HTTPS, commits unsigned, smallest exposure) or their
- * SSH private key (push over SSH + sign commits, but the riskiest secret) — and
- * hand back carry entries (0600, box-user owned) that ride the normal carry
- * apply path.
+ * ONE credential to push on its own. A human MUST pick which — a GitHub token
+ * (push over HTTPS, commits unsigned, smallest exposure) or their SSH private
+ * key (push over SSH + sign commits, but the riskiest secret) — at an
+ * interactive prompt, and we hand back carry entries (0600, box-user owned) that
+ * ride the normal carry apply path.
  *
  * This deliberately breaks AgentBox's usual "credentials never enter the box"
- * invariant — the whole point of `direct` mode is a box that works with your PC
- * off, which requires it to hold a real credential. So the choice is explicit
- * and the non-TTY path fails closed (mirrors the `carry:` gate), never silently
- * copying a secret.
+ * invariant, so the safety bar is deliberately high: copying a credential
+ * requires a live TTY and an explicit in-prompt choice. There is intentionally
+ * NO non-interactive path — no flag value, no env var, no `-y` — so automation,
+ * CI, and the `-i` queue can't copy a secret without a human present.
  */
 
 const BOX_HOME = '/home/vscode';
 const BOX_UID = 1000;
 
 /** Which credential the box carries to push on its own. */
-export type GitCredsMode = 'ask' | 'token' | 'ssh';
-
-/**
- * Resolve the `--with-credentials [mode]` flag value (true when passed bare,
- * or the string 'token'/'ssh') into a mode. Bare (or via config) → 'ask'
- * (prompt on a TTY). Also honors `AGENTBOX_WITH_CREDENTIALS=token|ssh`. Throws
- * on an unknown value.
- */
-export function resolveGitCredsMode(flag: boolean | string | undefined): GitCredsMode {
-  const raw = typeof flag === 'string' ? flag : process.env.AGENTBOX_WITH_CREDENTIALS;
-  if (!raw) return 'ask';
-  const v = raw.toLowerCase();
-  if (v === 'token' || v === 'ssh' || v === 'ask') return v;
-  throw new Error(`--with-credentials: unknown mode "${raw}" (expected token, ssh, or no value to be asked)`);
-}
+type GitCredsMode = 'token' | 'ssh';
 
 export interface GitCredsGateArgs {
   /** Absolute project root (the git repo whose origin the box pushes to). */
   projectRoot: string;
-  /** Which credential to copy; 'ask' prompts on a TTY, errors on non-TTY. */
-  mode: GitCredsMode;
   onLog?: (line: string) => void;
   /** Test seam. */
   isTTY?: boolean;
@@ -319,23 +303,22 @@ export async function runGitCredsGate(args: GitCredsGateArgs): Promise<GitCredsG
   const onLog = args.onLog ?? (() => {});
   const tty = args.isTTY ?? process.stdin.isTTY;
 
-  let mode: 'token' | 'ssh';
-  if (args.mode === 'ask') {
-    if (!tty) {
-      throw new Error(
-        'with-credentials: on a non-TTY you must choose the credential explicitly — pass ' +
-          '`--with-credentials token` (push over HTTPS, recommended) or `--with-credentials ssh` ' +
-          '(copies your SSH private key).',
-      );
-    }
-    const choice = await askMode();
-    if (choice === 'cancel') return { decision: 'cancel' };
-    mode = choice;
-  } else {
-    mode = args.mode;
+  // Hard requirement: a human at a real terminal. Copying a credential into the
+  // box has no non-interactive path by design — no flag value, no env, no `-y` —
+  // so automation / CI / the `-i` queue can never do it without a person present.
+  if (!tty) {
+    throw new Error(
+      'with-credentials: copying a credential into a box requires an interactive terminal — a ' +
+        'human must choose token vs SSH key at the prompt. There is no non-interactive path ' +
+        '(no flag value, env var, or -y). Run this command directly in your terminal.',
+    );
   }
 
-  const plan = mode === 'token' ? await planTokenCreds(args.projectRoot, onLog) : await planSshCreds(args.projectRoot, onLog);
+  const choice = await askMode();
+  if (choice === 'cancel') return { decision: 'cancel' };
+  const mode: GitCredsMode = choice;
+
+  const plan = await buildCredsPlan(args.projectRoot, mode, onLog);
   if (plan.entries.length === 0) {
     log.warn(
       mode === 'token'
@@ -346,23 +329,28 @@ export async function runGitCredsGate(args: GitCredsGateArgs): Promise<GitCredsG
     return { decision: 'skip', entries: [] };
   }
 
-  // On a TTY, show what will be copied + the security warning before proceeding.
-  // (When the mode came from an explicit flag on a non-TTY, that flag is the
-  // opt-in — same rule as `--carry-yes`.)
-  if (tty) printSummary(mode, plan.items);
+  printSummary(mode, plan.items);
   onLog(`with-credentials: mode=${mode}, copying ${String(plan.entries.length)} file(s) into the box`);
   return { decision: 'approve', entries: plan.entries };
 }
 
+/** Build the carry entries for a chosen mode (no prompt). Exposed for tests. */
+export async function buildCredsPlan(
+  projectRoot: string,
+  mode: GitCredsMode,
+  onLog: (l: string) => void = () => {},
+): Promise<CredPlan> {
+  return mode === 'token' ? planTokenCreds(projectRoot, onLog) : planSshCreds(projectRoot, onLog);
+}
+
 /**
- * Shared create-path helper: when `pushMode === 'direct'`, run the gate and
- * return `existing` carry entries with the approved credential files appended;
- * on cancel, log + call `onClose` + exit(0); on hard error, log + exit(1). When
- * not in direct mode, returns `existing` untouched.
+ * Shared create-path helper: when `pushMode === 'direct'`, run the (interactive)
+ * gate and return `existing` carry entries with the approved credential files
+ * appended; on cancel, log + call `onClose` + exit(0); on hard error (incl. a
+ * non-TTY), log + exit(1). When not in direct mode, returns `existing` untouched.
  */
 export async function resolveGitCredsCarry(args: {
   pushMode: string;
-  mode: GitCredsMode;
   projectRoot: string;
   existing: ResolvedCarryEntry[];
   onLog?: (line: string) => void;
@@ -372,7 +360,6 @@ export async function resolveGitCredsCarry(args: {
   try {
     const gate = await runGitCredsGate({
       projectRoot: args.projectRoot,
-      mode: args.mode,
       onLog: args.onLog,
     });
     if (gate.decision === 'cancel') {

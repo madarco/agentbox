@@ -166,11 +166,11 @@ Only affects cloud boxes. Forcing `relay` needs a reachable host relay for the b
 The relay and lease modes both keep your credentials off the box — but relay needs your PC on, and lease needs a hosted control plane. For a cloud box you intend to leave running unattended (Hetzner, or a pause/resume box on E2B/Vercel/Daytona), **`--with-credentials`** copies one git credential **into the box** so it can push and pull on its own, with your PC off and no hub:
 
 ```bash
-agentbox create --provider hetzner --with-credentials         # asks which credential
-agentbox claude  --provider e2b     --with-credentials token   # or pick up front
+agentbox create --provider hetzner --with-credentials
+agentbox claude  --provider e2b     --with-credentials
 ```
 
-At create time it asks **which** credential to copy — the choice is a security trade-off:
+At create time it **asks** — at an interactive prompt — which credential to copy. The choice is a security trade-off:
 
 - **`token`** (recommended) — copies just a GitHub token (read from your git credential helper or `gh`). The box pushes over **HTTPS**; a github SSH remote (`git@github.com:…`) is transparently rewritten to HTTPS, so **no SSH key is ever copied**. Commits are **unsigned**. Smallest secret to expose.
 - **`ssh`** — copies your **SSH private key**. The box pushes over SSH and **signs commits**. This is the riskiest option: use a key dedicated to git, **not** the key you use to log into other servers.
@@ -178,7 +178,7 @@ At create time it asks **which** credential to copy — the choice is a security
 Inside the box, `git push`/`fetch`/`pull` then run real git against the credentialed remote — the relay is never involved.
 
 <Callout type="warn" title="This copies a real credential into the box">
-`--with-credentials` places a credential **inside the box** — where its user has passwordless sudo (no boundary) — and it is captured in **any snapshot or checkpoint** of it. Only use it for a box you trust to run unattended. The bare flag prompts on a TTY; on a non-TTY (CI) you must pick explicitly (`--with-credentials token` / `--with-credentials ssh`, or `AGENTBOX_WITH_CREDENTIALS=token|ssh`) — it never copies a secret silently.
+`--with-credentials` places a credential **inside the box** — where its user has passwordless sudo (no boundary) — and it is captured in **any snapshot or checkpoint** of it. Only use it for a box you trust to run unattended. For safety this is **interactive only**: it requires a real terminal and a human choosing token vs SSH at the prompt. There is deliberately **no non-interactive path** — no flag value, no env var, no `-y` — so automation, CI, and the `-i` queue can't copy a credential without a person present.
 </Callout>
 
 What still needs your PC: `agentbox cp`/`download`, `checkpoint`, and pull-request ops (`gh pr create`) remain host-relay operations — with the PC off they fail with a clear message rather than hanging. Only `git push`/`fetch`/`pull` are independent. `--with-credentials` is cloud-only (a docker box already runs on your host).

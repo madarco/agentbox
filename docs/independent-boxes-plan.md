@@ -55,8 +55,11 @@ third `git.pushMode`: `direct`, exposed via the `--with-credentials` flag.
 
 ### Naming + the two credential shapes
 
-`--with-credentials [mode]` (flag) → `git.pushMode=direct` (mechanism value). The gate **asks
-which credential** to copy (the security trade-off), and this is the shipped shape:
+`--with-credentials` (flag) → `git.pushMode=direct` (mechanism value). The gate **asks which
+credential** to copy at an **interactive prompt** (the security trade-off). Copying a credential is
+**interactive-only by design** — it requires a live TTY and a human choosing at the prompt; there
+is NO non-interactive path (no flag value, no env var, no `-y`), so automation / CI / the `-i`
+queue can't copy a secret without a person present. This is the shipped shape:
 
 - **token** (recommended) — copy just a GitHub token (`~/.git-credentials`). Box pushes over
   **HTTPS**; a github SSH origin is rewritten to HTTPS via global `url.insteadOf` (both the scp
@@ -65,10 +68,9 @@ which credential** to copy (the security trade-off), and this is the shipped sha
 - **ssh** — copy the SSH **private** key. Box pushes over SSH (HTTPS origin rewritten to SSH) and
   signs commits (guarded on a passphrase-less probe). Riskiest — a private key in the box.
 
-Bare `--with-credentials` prompts (`token` / `ssh` / cancel) on a TTY; non-TTY must pick
-explicitly (`--with-credentials token|ssh` or `AGENTBOX_WITH_CREDENTIALS=token|ssh`) — never copies
-a secret silently. A token can't sign commits (that's what the SSH key is for); most agent
-workflows are fine with unsigned commits, so token is the low-exposure default.
+`--with-credentials` always prompts (`token` / `ssh` / cancel) on a TTY and refuses on a non-TTY.
+A token can't sign commits (that's what the SSH key is for); most agent workflows are fine with
+unsigned commits, so token is the low-exposure default.
 
 ## Phases
 
@@ -99,14 +101,12 @@ New module `apps/cli/src/lib/git-creds-gate.ts`, modeled on `apps/cli/src/lib/ca
      is `ssh`, copy `user.signingkey` to box `~/.ssh/` and mirror `commit.gpgsign` /
      `user.signingkey` / `gpg.format` into box git config. (GPG-format signing keys: out of scope
      v1; detect and warn "not copied".)
-2. **Confirm** with a carry-style prompt (`promptForCarry` template): a redacted table (key path
-   + token *source*, never the secret) + the security/offline warning, then `yes / skip / cancel`.
-   Non-TTY gate mirrors carry: bare `-y/--yes` must **not** silently copy secrets; require
-   `--with-credentials-yes` / `AGENTBOX_WITH_CREDENTIALS_YES=1`
-   (`apps/cli/src/carry-prompt.ts:24-55`). Warning copy must state: credentials live inside the
-   box, the box `vscode` user has passwordless sudo (no boundary inside), and **credentials are
-   captured in any snapshot/checkpoint** (they must persist to survive resume, unlike relay tokens
-   in ephemeral `/run`).
+2. **Choose + confirm** at an interactive prompt (`token` / `ssh` / cancel) with a redacted summary
+   (path / token *source*, never the secret) + the security warning. **Interactive-only** — a
+   non-TTY hard-errors; there is no flag value, env var, or `-y` bypass. Warning copy must state:
+   the credential lives inside the box, the box user has passwordless sudo (no boundary inside), and
+   **it is captured in any snapshot/checkpoint** (it must persist to survive resume, unlike relay
+   tokens in ephemeral `/run`).
 3. **Transfer** by synthesizing `ResolvedCarryEntry[]` (`packages/core/src/provider.ts:34-67`)
    with `mode: 0600`, `user: 1000`, reusing the cloud apply path
    `uploadCarryPaths` (`packages/sandbox-cloud/src/sync/carry.ts:35`) — **no new transfer code**.
@@ -149,7 +149,7 @@ Unit (vitest, pure — isolate `$HOME` per file, the apps/cli no-HOME-isolation 
 - creds detection: HTTPS origin → token entry; SSH origin → key entry; signing config mirrored;
   synthesized `ResolvedCarryEntry` has `mode:0600`, `user:1000`.
 - `git.ts` push/fetch selects direct-run when `AGENTBOX_GIT_DIRECT=1`.
-- Non-TTY without `AGENTBOX_WITH_CREDENTIALS_YES` throws (does not silently copy).
+- Non-TTY hard-throws (copying a credential is interactive-only — no automation path).
 
 End-to-end (manual; watch `~/.agentbox/logs/latest.log`):
 1. `create --provider e2b --with-credentials -n indep` against `../agentbox-test-repo-gh`

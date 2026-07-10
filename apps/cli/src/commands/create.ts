@@ -18,7 +18,7 @@ import {
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
 import { runCarryGate } from '../lib/carry-gate.js';
-import { resolveGitCredsCarry, resolveGitCredsMode } from '../lib/git-creds-gate.js';
+import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { openCommandLog } from '../lib/log-file.js';
@@ -81,9 +81,9 @@ interface CreateOptions {
   verbose?: boolean;
   /** --no-credential-sync => false; default true (config box.credentialSync). */
   credentialSync?: boolean;
-  /** --with-credentials [mode]: copy git creds into the box (git.pushMode=direct); cloud only.
-   *  true (bare) => ask; 'token' | 'ssh' pick without prompting. */
-  withCredentials?: boolean | string;
+  /** --with-credentials: copy a git credential into the box (git.pushMode=direct); cloud only.
+   *  The token-vs-SSH choice is made ONLY at the interactive prompt (TTY required). */
+  withCredentials?: boolean;
 }
 
 function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
@@ -239,8 +239,8 @@ export const createCommand = new Command('create')
     'disable automatic credential sync for this box (the in-box watcher that fans refreshed agent tokens out to your other boxes)',
   )
   .option(
-    '--with-credentials [mode]',
-    "copy a git credential INTO the box so it can push with your PC off (needs no hub). Choose 'token' (push over HTTPS, commits unsigned, smallest exposure) or 'ssh' (copies your SSH private key, signs commits, riskiest). Bare flag prompts on a TTY; pass a value on non-TTY. DANGEROUS: the credential lives in the box and its snapshots. Cloud providers only. Sets git.pushMode=direct.",
+    '--with-credentials',
+    "copy a git credential INTO the box so it can push with your PC off (needs no hub). You'll be asked at an interactive prompt to choose 'token' (push over HTTPS, commits unsigned, smallest exposure) or your 'ssh' private key (signs commits, riskiest). DANGEROUS: the credential lives in the box and its snapshots. Requires a real terminal (no non-interactive / CI path). Cloud providers only. Sets git.pushMode=direct.",
   )
   .option(
     '-v, --verbose',
@@ -351,7 +351,6 @@ export const createCommand = new Command('create')
     // same carry apply path as the carry: block above.
     carryEntries = await resolveGitCredsCarry({
       pushMode: cfg.effective.git.pushMode,
-      mode: resolveGitCredsMode(opts.withCredentials),
       projectRoot,
       existing: carryEntries,
       onLog: (line) => cmdLog.write(line),

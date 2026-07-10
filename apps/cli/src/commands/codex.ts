@@ -64,7 +64,7 @@ import {
 import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
-import { resolveGitCredsCarry, resolveGitCredsMode } from '../lib/git-creds-gate.js';
+import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { providerForBox, providerForCreate } from '../provider/registry.js';
 import {
@@ -155,8 +155,9 @@ interface CodexCreateOptions {
   carryYes?: boolean;
   /** --carry <mode>: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
   carry?: 'skip' | 'ask';
-  /** --with-credentials [mode]: copy a git credential into the box (git.pushMode=direct); cloud only. */
-  withCredentials?: boolean | string;
+  /** --with-credentials: copy a git credential into the box (git.pushMode=direct); cloud only.
+   *  Token-vs-SSH is chosen ONLY at the interactive prompt (TTY required). */
+  withCredentials?: boolean;
   vnc?: boolean; // commander: --no-vnc => false; default true
   resync?: boolean; // commander: --no-resync => false; default true (config box.resyncOnStart)
   sharedDockerCache?: boolean;
@@ -393,8 +394,8 @@ export const codexCommand = new Command('codex')
     'ask',
   )
   .option(
-    '--with-credentials [mode]',
-    "copy a git credential INTO the box so it can push with your PC off. Choose 'token' (HTTPS, unsigned commits, smallest exposure) or 'ssh' (copies your SSH private key, signs commits, riskiest). Bare flag prompts on a TTY; pass a value on non-TTY. DANGEROUS: the credential lives in the box and its snapshots. Cloud only. Sets git.pushMode=direct.",
+    '--with-credentials',
+    "copy a git credential INTO the box so it can push with your PC off. You'll be asked at an interactive prompt to choose 'token' (HTTPS, unsigned commits, smallest exposure) or your 'ssh' private key (signs commits, riskiest). DANGEROUS: the credential lives in the box and its snapshots. Requires a real terminal (no non-interactive / CI path). Cloud only. Sets git.pushMode=direct.",
   )
   .option(
     '--isolate-codex-config',
@@ -563,7 +564,6 @@ export const codexCommand = new Command('codex')
       // approved entries ride the queue job and the worker applies them.
       const carryForQueue = await resolveGitCredsCarry({
         pushMode: cfg.effective.git.pushMode,
-        mode: resolveGitCredsMode(opts.withCredentials),
         projectRoot,
         existing: await runQueuedCarryGate({
           projectRoot,
@@ -617,7 +617,6 @@ export const codexCommand = new Command('codex')
 
     carryEntries = await resolveGitCredsCarry({
       pushMode: cfg.effective.git.pushMode,
-      mode: resolveGitCredsMode(opts.withCredentials),
       projectRoot,
       existing: carryEntries,
       onLog: (line) => cmdLog.write(line),

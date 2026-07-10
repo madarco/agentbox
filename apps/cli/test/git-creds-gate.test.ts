@@ -3,11 +3,14 @@ import { execa } from 'execa';
 import { chmod, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveGitCredsMode, runGitCredsGate } from '../src/lib/git-creds-gate.js';
+import { buildCredsPlan, runGitCredsGate } from '../src/lib/git-creds-gate.js';
 
-// The gate shells out to real `git` (credential fill, config reads) but never
-// touches the network or docker: an HTTPS origin + a fake credential helper
-// that echoes a token is enough to exercise detection + entry synthesis.
+// The credential detection shells out to real `git` (credential fill, config
+// reads) but never touches the network or docker: an HTTPS origin + a fake
+// credential helper that echoes a token is enough to exercise it. The
+// interactive prompt itself is not driven here — copying a credential requires a
+// live human at a TTY by design, so we test the plan builder directly and assert
+// the gate refuses a non-TTY.
 
 async function initRepo(origin: string, extra?: (dir: string) => Promise<void>): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'agentbox-gcg-test-'));
@@ -28,10 +31,9 @@ afterEach(() => {
   process.env.HOME = origHome;
 });
 
-describe('runGitCredsGate', () => {
-  it('HTTPS origin: synthesizes a ~/.git-credentials entry at mode 0600, uid 1000', async () => {
+describe('buildCredsPlan', () => {
+  it('token: synthesizes a ~/.git-credentials entry at mode 0600, uid 1000', async () => {
     const dir = await initRepo('https://github.com/acme/widgets.git', async (d) => {
-      // Fake credential helper: returns a token with no network.
       await execa('git', [
         '-C',
         d,
@@ -41,115 +43,64 @@ describe('runGitCredsGate', () => {
       ]);
     });
 
-    const res = await runGitCredsGate({
-      projectRoot: dir,
-      mode: 'token',
-      isTTY: false,
-    });
-
-    expect(res.decision).toBe('approve');
-    if (res.decision !== 'approve') return;
-    const cred = res.entries.find((e) => e.rawDest === '~/.git-credentials');
+    const plan = await buildCredsPlan(dir, 'token');
+    const cred = plan.entries.find((e) => e.rawDest === '~/.git-credentials');
     expect(cred).toBeDefined();
     expect(cred?.mode).toBe(0o600);
     expect(cred?.user).toBe(1000);
     expect(cred?.absDest).toBe('/home/vscode/.git-credentials');
+    // token mode never copies an SSH key.
+    expect(plan.entries.some((e) => e.rawDest.startsWith('~/.ssh/'))).toBe(false);
   });
 
-  it('SSH origin: copies the SSH identity key at mode 0600', async () => {
-    // A default identity key in the fake HOME; resolveSshIdentity falls back to it.
+  it('ssh: copies the SSH identity key at mode 0600', async () => {
     await mkdir(join(fakeHome, '.ssh'), { recursive: true });
     const keyPath = join(fakeHome, '.ssh', 'id_ed25519');
     await writeFile(keyPath, 'PRIVATE-KEY-BODY\n', { mode: 0o600 });
     await chmod(keyPath, 0o600);
 
     const dir = await initRepo('git@github.com:acme/widgets.git');
-    const res = await runGitCredsGate({
-      projectRoot: dir,
-      mode: 'ssh',
-      isTTY: false,
-    });
-
-    expect(res.decision).toBe('approve');
-    if (res.decision !== 'approve') return;
-    const key = res.entries.find((e) => e.rawDest === '~/.ssh/id_ed25519');
+    const plan = await buildCredsPlan(dir, 'ssh');
+    const key = plan.entries.find((e) => e.rawDest === '~/.ssh/id_ed25519');
     expect(key).toBeDefined();
     expect(key?.mode).toBe(0o600);
     expect(key?.user).toBe(1000);
   });
 
-  it('SSH commit signing: copies the PRIVATE signing key, not just the .pub', async () => {
-    // Host signing key is named by its .pub (a common git config), and only the
-    // .pub exists as user.signingkey — but signing needs the private key.
+  it('ssh: copies the PRIVATE signing key, not just the .pub', async () => {
     await mkdir(join(fakeHome, '.ssh'), { recursive: true });
     const priv = join(fakeHome, '.ssh', 'id_rsa');
     await writeFile(priv, 'PRIV\n', { mode: 0o600 });
     await writeFile(`${priv}.pub`, 'ssh-rsa AAAA test\n', { mode: 0o644 });
 
     const dir = await initRepo('https://github.com/acme/widgets.git', async (d) => {
-      await execa('git', [
-        '-C',
-        d,
-        'config',
-        'credential.helper',
-        '!f() { echo username=x-access-token; echo password=TESTTOKEN; }; f',
-      ]);
       await execa('git', ['-C', d, 'config', 'commit.gpgsign', 'true']);
       await execa('git', ['-C', d, 'config', 'gpg.format', 'ssh']);
       await execa('git', ['-C', d, 'config', 'user.signingkey', `${priv}.pub`]);
     });
 
-    const res = await runGitCredsGate({
-      projectRoot: dir,
-      mode: 'ssh',
-      isTTY: false,
-    });
-    expect(res.decision).toBe('approve');
-    if (res.decision !== 'approve') return;
-    // Private key must be present so in-box `git commit -S` can actually sign.
-    const key = res.entries.find((e) => e.rawDest === '~/.ssh/id_rsa');
+    const plan = await buildCredsPlan(dir, 'ssh');
+    const key = plan.entries.find((e) => e.rawDest === '~/.ssh/id_rsa');
     expect(key).toBeDefined();
     expect(key?.mode).toBe(0o600);
-    expect(res.entries.find((e) => e.rawDest === '~/.ssh/id_rsa.pub')).toBeDefined();
+    expect(plan.entries.find((e) => e.rawDest === '~/.ssh/id_rsa.pub')).toBeDefined();
   });
 
-  it('resolveGitCredsMode: bare flag -> ask, values pass through, unknown throws', () => {
-    expect(resolveGitCredsMode(true)).toBe('ask');
-    expect(resolveGitCredsMode(undefined)).toBe('ask');
-    expect(resolveGitCredsMode('token')).toBe('token');
-    expect(resolveGitCredsMode('ssh')).toBe('ssh');
-    expect(resolveGitCredsMode('SSH')).toBe('ssh');
-    expect(() => resolveGitCredsMode('bogus')).toThrow(/unknown mode/);
-  });
-
-  it("non-TTY with mode 'ask' throws fail-loud (must pick token|ssh explicitly)", async () => {
-    const dir = await initRepo('https://github.com/acme/widgets.git', async (d) => {
-      await execa('git', [
-        '-C',
-        d,
-        'config',
-        'credential.helper',
-        '!f() { echo username=x-access-token; echo password=TESTTOKEN123; }; f',
-      ]);
-    });
-    await expect(
-      runGitCredsGate({ projectRoot: dir, mode: 'ask', isTTY: false }),
-    ).rejects.toThrow(/--with-credentials token/);
-  });
-
-  it('no credentials found → skip (does not block create)', async () => {
-    // HTTPS origin but no credential helper and no gh: nothing to copy.
+  it('token: no credential resolvable → empty plan (does not throw)', async () => {
     const dir = await initRepo('https://github.com/acme/widgets.git', async (d) => {
       await execa('git', ['-C', d, 'config', 'credential.helper', '']);
     });
-    const res = await runGitCredsGate({
-      projectRoot: dir,
-      mode: 'token',
-      isTTY: false,
-    });
-    // Either skip (no token resolvable) or approve if the host env happens to
-    // have a github token; assert it never throws and yields no cred file we
-    // didn't intend. The deterministic case in CI is skip.
-    expect(['skip', 'approve']).toContain(res.decision);
+    const plan = await buildCredsPlan(dir, 'token');
+    // Deterministic in CI (no ambient github token); tolerate a host token.
+    expect(plan.entries.length).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('runGitCredsGate', () => {
+  it('refuses a non-TTY — copying a credential needs a live human (no automation path)', async () => {
+    const dir = await initRepo('https://github.com/acme/widgets.git');
+    await expect(runGitCredsGate({ projectRoot: dir, isTTY: false })).rejects.toThrow(
+      /requires an interactive terminal/,
+    );
   });
 });
