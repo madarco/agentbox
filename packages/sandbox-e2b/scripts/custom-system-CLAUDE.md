@@ -5,9 +5,12 @@ Debian) provisioned just for this box. Your user is `vscode` and you can use
 passwordless **sudo** to run commands as root. The whole microVM is yours — the
 user's host filesystem is not visible from here and nothing is bind-mounted.
 
-**No containers.** E2B microVMs can't run nested containers, so `docker` /
-`podman` cannot run here — not even rootless. Don't try to start a container
-engine; run build/test/dev processes directly on the microVM instead.
+**Docker is available.** The box bakes the docker engine and `dockerd` is
+started automatically, so `docker` works out of the box — no sudo needed (the
+socket is opened to your user). Build images (buildx/BuildKit), run
+containers, bring up `docker compose` stacks, and use `image:` services in
+`agentbox.yaml` directly. Because this box is persistent, pulled images and
+the docker state carry over across pause/resume.
 
 This box is **persistent**: stopping it pauses the microVM (cold-store) and
 resuming wakes it back up, so the filesystem survives a pause. You can also save

@@ -7,7 +7,7 @@ Every AgentBox box ships its own `dockerd`, so an agent can `docker build`, `doc
 
 ## Running Docker inside a box
 
-Docker-in-Docker is on by default — no flag needed. The box images bake `docker.io` + `iptables`, and an in-box `dockerd` is launched automatically (`agentbox-dockerd-start`). It is relaunched on `agentbox start`, since `dockerd` dies with the container.
+Docker-in-Docker is on by default — no flag needed. The box images bake the docker engine plus the **Compose v2** and **buildx** CLI plugins, so `docker compose` and BuildKit `docker build` work out of the box, and an in-box `dockerd` is launched automatically (`agentbox-dockerd-start`). It is relaunched on `agentbox start`, since `dockerd` dies with the container.
 
 `dockerd` is brought up **and awaited ready before the supervisor starts your services**, on both create and restart. That ordering means a `docker run` / `docker compose` declared as a [service](/docs/services-and-tasks) in `agentbox.yaml` is safe — it never races a not-yet-ready `/var/run/docker.sock`. (`examples/express-ready` ships a `postgres` service that relies on exactly this.)
 
@@ -62,7 +62,11 @@ The shared cache is mutually exclusive at runtime: only one box can mount `agent
 
 ## Cloud parity & limits
 
-[Daytona](/docs/daytona), [Hetzner](/docs/hetzner), [Vercel](/docs/vercel), and [E2B](/docs/e2b) get the same DinD setup as the default docker provider — `dockerd` is auto-launched with no opt-in, and the data root lives on the sandbox/VPS filesystem (wiped with the box on `destroy`). On Vercel and E2B the docker engine is baked into the prepare snapshot/template and pulled images carry over across pause/resume.
+[Daytona](/docs/daytona), [Hetzner](/docs/hetzner), [Vercel](/docs/vercel), and [E2B](/docs/e2b) get the same DinD setup as the default docker provider — `dockerd` is auto-launched with no opt-in, the Compose v2 + buildx plugins are baked in, and the data root lives on the sandbox/VPS filesystem (wiped with the box on `destroy`). On Vercel and E2B the docker engine is baked into the prepare snapshot/template and pulled images carry over across pause/resume.
+
+<Callout type="warn" title="EXISTING CLOUD BASES">
+The compose + buildx plugins land in the base at bake time. If you prepared a hetzner/vercel/e2b base before they were added, re-run `agentbox prepare --provider <name>` to pick them up (docker-provider boxes get them with the next image pull/build automatically).
+</Callout>
 
 | Provider | DinD |
 |----------|------|

@@ -424,6 +424,12 @@ mode … Yes, I accept" gate.
   relay and can launch boxes on other providers, so they can fully smoke-test.
 
 ## Changelog
+- 2026-07-10: **Compose + buildx CLI plugins baked into the template**
+  (`build-template.sh` downloads the official release binaries into
+  `/usr/local/lib/docker/cli-plugins` — bookworm's apt `docker-compose` is the
+  deprecated python v1, so no distro package). Also fixed the stale
+  `custom-system-CLAUDE.md` "No containers" paragraph (DinD has worked since
+  2026-06-23). **Templates built before this need a re-`prepare --provider e2b`.**
 - 2026-06-23: **Fix: cloud `-i` background jobs reported `done` even when the
   seeded agent session never came up (all cloud providers).** The `-i` queue
   worker's cloud path (`runCloudJob` → `cloudAgentStartDetached` → `runDetached`

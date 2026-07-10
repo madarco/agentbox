@@ -140,9 +140,14 @@ RUN git lfs install --system --skip-repo
 # at /var/run/docker.sock at runtime. The matching launch script is COPY'd in
 # below; the daemon is started by the host via `docker exec -d --user root`
 # (see launchDockerdDaemon), mirroring the VNC/ctl daemon pattern.
+# docker-compose-v2 + docker-buildx are the CLI plugins docker.io doesn't
+# pull in: without them `docker compose` is not a command (the docs advertise
+# Compose stacks) and `docker build` runs on the deprecated legacy builder.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         docker.io \
+        docker-compose-v2 \
+        docker-buildx \
         iptables \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /etc/docker \

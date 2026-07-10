@@ -162,8 +162,13 @@ git lfs install --system --skip-repo
 done_ "git-lfs system filter"
 
 step "docker + iptables for in-VPS DinD"
+# docker-compose-v2 + docker-buildx: the CLI plugins docker.io doesn't pull
+# in — without them `docker compose` is not a command and `docker build`
+# runs on the deprecated legacy builder (mirrors Dockerfile.box).
 apt-get install -y --no-install-recommends \
   docker.io \
+  docker-compose-v2 \
+  docker-buildx \
   iptables
 mkdir -p /etc/docker
 printf '%s\n' '{ "iptables": true }' > /etc/docker/daemon.json

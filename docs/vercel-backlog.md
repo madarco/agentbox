@@ -44,7 +44,9 @@ implementation (per the project convention), not as end-of-PR cleanup.
   signedPreviewUrl + snapshot helpers, all mapped to `@vercel/sandbox` 2.x.
 - [x] **Phase 3 — prepare + provision.sh.** Base-snapshot bake with context
   fingerprinting + skip-fast; AL2023 installer (dnf, vscode user, ctl/vnc/shims,
-  Claude native installer, codex/opencode).
+  Claude native installer, codex/opencode). 2026-07-10: compose + buildx CLI
+  plugins added (official release binaries — AL2023 ships neither); snapshots
+  baked before this need a re-`prepare --provider vercel`.
 - [x] **Phase 4 — attach.** `buildVercelAttach` drives the Vercel `sandbox` CLI's
   real PTY (`sbx exec -i … -- sudo -u vscode -H bash -lc '<tmux attach>'`). (Was a
   custom `attach-helper.js` send-keys/capture-pane bridge — replaced; see #8.)

@@ -2,7 +2,7 @@
 
 You are running inside an AgentBox sandbox: a Daytona Cloud sandbox
 provisioned just for this box, with docker-in-docker available (run `docker`
-directly, no sudo). Your user is `vscode` and you can use passwordless
+and `docker compose` directly, no sudo). Your user is `vscode` and you can use passwordless
 **sudo** to run commands as root. The whole sandbox is yours — the user's
 host filesystem is not visible from here and nothing is bind-mounted.
 

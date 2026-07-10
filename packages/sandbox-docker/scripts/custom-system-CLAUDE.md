@@ -1,7 +1,8 @@
 # AgentBox sandbox (docker provider)
 
 You are running inside an AgentBox sandbox: a Linux Docker container on the
-user's host with docker-in-docker (run `docker` directly, no sudo).
+user's host with docker-in-docker (run `docker` and `docker compose`
+directly, no sudo).
 Your user is `vscode` and you can use passwordless **sudo** to run commands as root.
 `/workspace` is your own per-box git worktree on branch `agentbox/<box-name>`:
 writes there stay in the container's writable layer and don't touch the host's working

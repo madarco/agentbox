@@ -8,8 +8,9 @@ and nothing is bind-mounted.
 
 **Docker is available.** The box bakes the docker engine and `dockerd` is
 started automatically, so `docker` works out of the box — no sudo needed (the
-socket is opened to your user). Build images, run containers, and use
-`image:` services in `agentbox.yaml` directly. Because this box is persistent,
+socket is opened to your user). Build images (buildx/BuildKit), run
+containers, bring up `docker compose` stacks, and use `image:` services in
+`agentbox.yaml` directly. Because this box is persistent,
 pulled images and the docker install carry over across pause/resume.
 
 This box is **persistent**: stopping it captures a snapshot and resuming

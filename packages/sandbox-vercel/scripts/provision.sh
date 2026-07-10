@@ -134,6 +134,22 @@ dnf install -y -q --allowerasing docker iptables
 groupadd -f docker
 usermod -aG docker vscode
 systemctl disable --now docker.service docker.socket 2>/dev/null || true
+# `docker compose` + BuildKit `docker build` come from CLI plugins the AL2023
+# repos don't ship, so install the official release binaries into the CLI's
+# plugin search path. The buildx tag comes from the releases/latest redirect,
+# not the GitHub API — anonymous API calls rate-limit per IP and cloud egress
+# IPs share pools.
+arch="$(uname -m)"   # x86_64 / aarch64 — matches the compose asset names
+install -d -m 0755 /usr/local/lib/docker/cli-plugins
+curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${arch}" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+buildx_tag="$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/docker/buildx/releases/latest | sed 's|.*/||')"
+buildx_arch="${arch/x86_64/amd64}"; buildx_arch="${buildx_arch/aarch64/arm64}"
+curl -fsSL "https://github.com/docker/buildx/releases/download/${buildx_tag}/buildx-${buildx_tag}.linux-${buildx_arch}" \
+  -o /usr/local/lib/docker/cli-plugins/docker-buildx
+chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-buildx
+docker compose version
+docker buildx version
 done_ "docker engine (in-box DinD)"
 
 step "node setcap (bind <1024 without root)"
