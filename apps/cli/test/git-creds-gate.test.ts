@@ -51,6 +51,11 @@ describe('buildCredsPlan', () => {
     expect(cred?.absDest).toBe('/home/vscode/.git-credentials');
     // token mode never copies an SSH key.
     expect(plan.entries.some((e) => e.rawDest.startsWith('~/.ssh/'))).toBe(false);
+    // an explicit mode marker rides along so seeding can't be flipped by a
+    // stray carry: ~/.git-credentials.
+    const marker = plan.entries.find((e) => e.rawDest === '~/.config/agentbox/git-direct-mode');
+    expect(marker).toBeDefined();
+    expect(marker?.absDest).toBe('/home/vscode/.config/agentbox/git-direct-mode');
   });
 
   it('ssh: copies the SSH identity key at mode 0600', async () => {

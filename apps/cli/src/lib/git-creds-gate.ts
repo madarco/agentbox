@@ -363,7 +363,19 @@ export async function buildCredsPlan(
   mode: GitCredsMode,
   onLog: (l: string) => void = () => {},
 ): Promise<CredPlan> {
-  return mode === 'token' ? planTokenCreds(projectRoot, onLog) : planSshCreds(projectRoot, onLog);
+  const plan = mode === 'token' ? await planTokenCreds(projectRoot, onLog) : await planSshCreds(projectRoot, onLog);
+  // Record the chosen mode explicitly (only when we actually have a credential
+  // to copy) so seedGitCredentials configures for it rather than inferring from
+  // file presence — a separate `carry:` entry that drops a `~/.git-credentials`
+  // must not flip an SSH-mode box to HTTPS.
+  if (plan.entries.length > 0) {
+    const markerDir = await mkdtemp(join(tmpdir(), 'agentbox-gitmode-'));
+    scheduleTmpCleanup(markerDir);
+    plan.entries.push(
+      await contentEntry(markerDir, 'git-direct-mode', `${mode}\n`, '~/.config/agentbox/git-direct-mode'),
+    );
+  }
+  return plan;
 }
 
 /**

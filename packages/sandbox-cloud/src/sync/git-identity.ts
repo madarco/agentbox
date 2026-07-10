@@ -131,15 +131,19 @@ export async function seedGitCredentials(
     // Any copied key (default OR custom basename) must be 0600 for ssh.
     `find "$HOME/.ssh" -maxdepth 1 -type f -exec chmod 600 {} + 2>/dev/null || true`,
     `HOST=${qHost}`,
-    // Token mode iff ~/.git-credentials landed; SSH mode iff ANY private key
-    // landed (default OR custom basename — the old `id_*`-only check missed a
-    // key copied from an `IdentityFile`). If NEITHER landed the credential carry
-    // failed: exit non-zero so create fails rather than stamping a broken direct
-    // box.
+    // Mode comes from the explicit marker the gate wrote (so a stray `carry:`
+    // ~/.git-credentials can't flip an SSH-mode box to HTTPS); fall back to file
+    // presence for boxes created before the marker existed. SSH mode accepts ANY
+    // private key (default OR a custom basename from an `IdentityFile`). Whatever
+    // the mode, the matching credential must actually be present — if not, the
+    // carry dropped it, so exit non-zero and fail the create rather than stamp a
+    // broken direct box.
     `AGB_HAS_KEY() { find "$HOME/.ssh" -maxdepth 1 -type f ! -name '*.pub' ! -name 'config' ! -name 'known_hosts*' ! -name 'authorized_keys' 2>/dev/null | grep -q .; }`,
-    `if [ -f "$HOME/.git-credentials" ]; then ${tokenCfg}; ` +
-      `elif AGB_HAS_KEY; then ${sshCfg}; ` +
-      `else echo "agentbox: no git credential landed in the box (carry upload failed?)" >&2; exit 3; fi`,
+    `MODE=$(cat "$HOME/.config/agentbox/git-direct-mode" 2>/dev/null)`,
+    `if [ -z "$MODE" ]; then if [ -f "$HOME/.git-credentials" ]; then MODE=token; elif AGB_HAS_KEY; then MODE=ssh; fi; fi`,
+    `if [ "$MODE" = token ] && [ -f "$HOME/.git-credentials" ]; then ${tokenCfg}; ` +
+      `elif [ "$MODE" = ssh ] && AGB_HAS_KEY; then ${sshCfg}; ` +
+      `else echo "agentbox: git.pushMode=direct but the chosen credential ($MODE) did not land in the box (carry upload failed?)" >&2; exit 3; fi`,
   ].join('\n');
 
   const r = await backend.exec(handle, bashScript(script));
