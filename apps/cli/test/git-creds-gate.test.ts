@@ -80,6 +80,42 @@ describe('runGitCredsGate', () => {
     expect(key?.user).toBe(1000);
   });
 
+  it('SSH commit signing: copies the PRIVATE signing key, not just the .pub', async () => {
+    // Host signing key is named by its .pub (a common git config), and only the
+    // .pub exists as user.signingkey — but signing needs the private key.
+    await mkdir(join(fakeHome, '.ssh'), { recursive: true });
+    const priv = join(fakeHome, '.ssh', 'id_rsa');
+    await writeFile(priv, 'PRIV\n', { mode: 0o600 });
+    await writeFile(`${priv}.pub`, 'ssh-rsa AAAA test\n', { mode: 0o644 });
+
+    const dir = await initRepo('https://github.com/acme/widgets.git', async (d) => {
+      await execa('git', [
+        '-C',
+        d,
+        'config',
+        'credential.helper',
+        '!f() { echo username=x-access-token; echo password=TESTTOKEN; }; f',
+      ]);
+      await execa('git', ['-C', d, 'config', 'commit.gpgsign', 'true']);
+      await execa('git', ['-C', d, 'config', 'gpg.format', 'ssh']);
+      await execa('git', ['-C', d, 'config', 'user.signingkey', `${priv}.pub`]);
+    });
+
+    const res = await runGitCredsGate({
+      projectRoot: dir,
+      yes: false,
+      withCredentialsYes: true,
+      isTTY: false,
+    });
+    expect(res.decision).toBe('approve');
+    if (res.decision !== 'approve') return;
+    // Private key must be present so in-box `git commit -S` can actually sign.
+    const key = res.entries.find((e) => e.rawDest === '~/.ssh/id_rsa');
+    expect(key).toBeDefined();
+    expect(key?.mode).toBe(0o600);
+    expect(res.entries.find((e) => e.rawDest === '~/.ssh/id_rsa.pub')).toBeDefined();
+  });
+
   it('non-TTY without --with-credentials-yes throws fail-loud (never silently copies)', async () => {
     const dir = await initRepo('https://github.com/acme/widgets.git', async (d) => {
       await execa('git', [

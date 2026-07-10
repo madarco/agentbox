@@ -132,6 +132,39 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
+/**
+ * Given a path to either half of an SSH key pair (private key or `.pub`),
+ * synthesize carry entries for BOTH the private key and the public key into
+ * `~/.ssh/`, skipping any already queued. Copying the private key is essential:
+ * SSH auth AND SSH commit signing both need it — a lone `.pub` can't sign or
+ * authenticate. Returns the box path of the private key (for signingkey rewrite).
+ */
+async function pushKeyPair(
+  keyPath: string,
+  entries: ResolvedCarryEntry[],
+  items: CredPlanItem[],
+  labelKind: string,
+): Promise<string | null> {
+  const priv = keyPath.endsWith('.pub') ? keyPath.slice(0, -4) : keyPath;
+  const pub = `${priv}.pub`;
+  let copiedPriv: string | null = null;
+  if (await fileExists(priv)) {
+    const name = basename(priv);
+    if (!entries.some((e) => e.rawDest === `~/.ssh/${name}`)) {
+      entries.push(await fileEntry(priv, `~/.ssh/${name}`));
+      items.push({ label: `${labelKind} ${priv.replace(homedir(), '~')}`, dest: `~/.ssh/${name}` });
+    }
+    copiedPriv = `${BOX_HOME}/.ssh/${name}`;
+  }
+  if (await fileExists(pub)) {
+    const pubName = basename(pub);
+    if (!entries.some((e) => e.rawDest === `~/.ssh/${pubName}`)) {
+      entries.push(await fileEntry(pub, `~/.ssh/${pubName}`));
+    }
+  }
+  return copiedPriv;
+}
+
 /** A carry entry for an existing host file, mode 0600, owned by the box user. */
 async function fileEntry(absSrc: string, dest: string): Promise<ResolvedCarryEntry> {
   const bytes = (await stat(absSrc)).size;
@@ -221,15 +254,10 @@ async function planGitCredentials(projectRoot: string, onLog: (l: string) => voi
       onLog(`with-credentials: could not obtain a token for ${host} (credential helper + gh both empty)`);
     }
   } else {
-    // SSH remote: copy the identity key ssh would use.
+    // SSH remote: copy the identity key ssh would use (private + public).
     const key = await resolveSshIdentity(host);
     if (key) {
-      const name = basename(key);
-      entries.push(await fileEntry(key, `~/.ssh/${name}`));
-      items.push({ label: `SSH key ${key.replace(homedir(), '~')}`, dest: `~/.ssh/${name}` });
-      if (await fileExists(`${key}.pub`)) {
-        entries.push(await fileEntry(`${key}.pub`, `~/.ssh/${name}.pub`));
-      }
+      await pushKeyPair(key, entries, items, 'SSH key');
     } else {
       onLog(`with-credentials: no SSH identity found for ${host}`);
     }
@@ -241,18 +269,12 @@ async function planGitCredentials(projectRoot: string, onLog: (l: string) => voi
   const signingKey = await git(projectRoot, ['config', '--get', 'user.signingkey']);
   if (gpgsign === 'true' && signingKey) {
     if (format === 'ssh') {
-      // user.signingkey may be a path to a key, or a literal `key::…` value.
+      // user.signingkey may be a path (often the `.pub`), or a literal `key::…`
+      // value. For a path, copy the whole pair — signing needs the PRIVATE key,
+      // even when signingkey names the `.pub`.
       const path = signingKey.replace(/^~(?=\/)/, homedir());
-      if (await fileExists(path)) {
-        const name = basename(path);
-        // Only add if not already carried (auth key may equal the signing key).
-        if (!entries.some((e) => e.rawDest === `~/.ssh/${name}`)) {
-          entries.push(await fileEntry(path, `~/.ssh/${name}`));
-          items.push({ label: `SSH signing key ${path.replace(homedir(), '~')}`, dest: `~/.ssh/${name}` });
-        }
-        if (await fileExists(`${path}.pub`) && !entries.some((e) => e.rawDest === `~/.ssh/${name}.pub`)) {
-          entries.push(await fileEntry(`${path}.pub`, `~/.ssh/${name}.pub`));
-        }
+      if (path.includes('/') && (await fileExists(path))) {
+        await pushKeyPair(path, entries, items, 'SSH signing key');
       }
     } else {
       onLog(

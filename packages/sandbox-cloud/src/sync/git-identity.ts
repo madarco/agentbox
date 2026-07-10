@@ -80,6 +80,14 @@ export async function seedGitCredentials(
 ): Promise<void> {
   const log = opts.onLog ?? (() => {});
   const cmds: string[] = [
+    // The credential files rode the carry path, which chowns to a fixed uid
+    // (1000). The box's own user is not 1000 on every provider (vercel/e2b use
+    // 1001/1002), so re-own the copied creds to whoever WE are — else the box
+    // can't read its own 0600 token/keys. Provider-agnostic: uses `id -u`.
+    `sudo -n chown -R "$(id -u):$(id -g)" "$HOME/.git-credentials" "$HOME/.ssh" 2>/dev/null || true`,
+    `chmod 600 "$HOME/.git-credentials" 2>/dev/null || true`,
+    `chmod 700 "$HOME/.ssh" 2>/dev/null || true`,
+    `chmod 600 "$HOME"/.ssh/id_* 2>/dev/null || true`,
     `git config --global credential.helper store`,
     `git config --global core.sshCommand ${quoteShellArg('ssh -o StrictHostKeyChecking=accept-new')}`,
   ];
@@ -94,7 +102,21 @@ export async function seedGitCredentials(
     const boxKey = looksLikePath ? `/home/vscode/.ssh/${signingKey.split('/').pop() ?? ''}` : signingKey;
     cmds.push(`git config --global gpg.format ssh`);
     cmds.push(`git config --global user.signingkey ${quoteShellArg(boxKey)}`);
-    cmds.push(`git config --global commit.gpgsign true`);
+    // Only enable commit.gpgsign if the private key is usable NON-interactively.
+    // A passphrase-protected key can't be decrypted without an agent/askpass in
+    // the box, so forcing gpgsign would make EVERY `git commit` fail. Guard on a
+    // passphrase-less probe (`ssh-keygen -y -P ''`) and warn if we skip it.
+    const priv = looksLikePath
+      ? `/home/vscode/.ssh/${(signingKey.split('/').pop() ?? '').replace(/\.pub$/, '')}`
+      : boxKey;
+    cmds.push(
+      `if ssh-keygen -y -P '' -f ${quoteShellArg(priv)} >/dev/null 2>&1; then ` +
+        `git config --global commit.gpgsign true; ` +
+        `else ` +
+        `git config --global --unset commit.gpgsign 2>/dev/null || true; ` +
+        `echo "agentbox: signing key ${priv} needs a passphrase — leaving commit signing OFF so in-box commits do not fail" >&2; ` +
+        `fi`,
+    );
   }
 
   const r = await backend.exec(handle, bashScript(cmds.join(' && ')));
