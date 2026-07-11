@@ -151,10 +151,15 @@ const firewallShowSub = new Command('show')
         const currentEgress = await detectEgressIp({});
         lines.push(`host egress IP (now): ${currentEgress}/32`);
         const wantCidr = `${currentEgress}/32`;
-        const allowed = firewall.inbound_rules.find(
-          (r) => r.protocol === 'tcp' && r.ports === '22' && r.sources.addresses?.includes(wantCidr),
-        );
-        if (!allowed) {
+        const sshSources = firewall.inbound_rules
+          .filter((r) => r.protocol === 'tcp' && r.ports === '22')
+          .flatMap((r) => r.sources.addresses ?? []);
+        // Reachable if the host IP is explicitly allowed OR the firewall is open
+        // (0.0.0.0/0 — an `agentbox inbound … open` box). Only an actual mismatch
+        // (host IP not covered) warrants the sync hint; narrowing an open box to
+        // the host IP would be the opposite of what the user set.
+        const reachable = sshSources.includes(wantCidr) || sshSources.includes('0.0.0.0/0');
+        if (!reachable) {
           lines.push(
             `  WARN: current egress IP does not match the firewall — run \`agentbox digitalocean firewall sync ${box.name}\` to update`,
           );

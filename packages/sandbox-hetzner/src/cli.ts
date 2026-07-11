@@ -156,10 +156,14 @@ const firewallShowSub = new Command('show')
         const currentEgress = await detectEgressIp({});
         lines.push(`host egress IP (now): ${currentEgress}/32`);
         const wantCidr = `${currentEgress}/32`;
-        const allowed = firewall.rules.find(
-          (r) => r.direction === 'in' && r.port === '22' && r.source_ips?.includes(wantCidr),
-        );
-        if (!allowed) {
+        const sshSources = firewall.rules
+          .filter((r) => r.direction === 'in' && r.port === '22')
+          .flatMap((r) => r.source_ips ?? []);
+        // Reachable if the host IP is explicitly allowed OR the firewall is open
+        // (0.0.0.0/0 — an `agentbox inbound … open` box). Narrowing an open box
+        // to the host IP would be the opposite of what the user set.
+        const reachable = sshSources.includes(wantCidr) || sshSources.includes('0.0.0.0/0');
+        if (!reachable) {
           lines.push(
             `  WARN: current egress IP does not match the firewall — run \`agentbox hetzner firewall sync ${box.name}\` to update`,
           );
