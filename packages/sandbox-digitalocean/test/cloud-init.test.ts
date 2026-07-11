@@ -1,7 +1,42 @@
 import { describe, expect, it } from 'vitest';
 import { generateBoxCloudInit, generatePrepareCloudInit } from '../src/cloud-init.js';
+import { cloudInitBoxEnv } from '../src/backend.js';
 
 const FAKE_PUBKEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILongTextForKey agentbox/test';
+
+describe('cloudInitBoxEnv', () => {
+  it('keeps AGENTBOX_* identity/portless vars', () => {
+    const out = cloudInitBoxEnv({
+      AGENTBOX_BOX_ID: 'id',
+      AGENTBOX_BOX_NAME: 'name',
+      AGENTBOX_BOX_HOST: 'name.localhost',
+      AGENTBOX_WEB_PROXY_PORT: '8080',
+    });
+    expect(out).toEqual({
+      AGENTBOX_BOX_ID: 'id',
+      AGENTBOX_BOX_NAME: 'name',
+      AGENTBOX_BOX_HOST: 'name.localhost',
+      AGENTBOX_WEB_PROXY_PORT: '8080',
+    });
+  });
+
+  it('strips relay/bridge secrets so they never reach the 0644 box.env', () => {
+    const out = cloudInitBoxEnv({
+      AGENTBOX_BOX_ID: 'id',
+      AGENTBOX_RELAY_URL: 'http://127.0.0.1:8788',
+      AGENTBOX_RELAY_TOKEN: 'secret-relay',
+      AGENTBOX_BRIDGE_TOKEN: 'secret-bridge',
+    });
+    expect(out).toEqual({ AGENTBOX_BOX_ID: 'id' });
+    expect(out).not.toHaveProperty('AGENTBOX_RELAY_TOKEN');
+    expect(out).not.toHaveProperty('AGENTBOX_BRIDGE_TOKEN');
+  });
+
+  it('drops non-AGENTBOX keys and undefined values', () => {
+    expect(cloudInitBoxEnv({ PATH: '/usr/bin', AGENTBOX_X: undefined })).toEqual({});
+    expect(cloudInitBoxEnv()).toEqual({});
+  });
+});
 
 describe('generatePrepareCloudInit', () => {
   it('emits a valid `#cloud-config` doc with the pubkey for root (top-level form)', () => {

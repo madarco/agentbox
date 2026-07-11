@@ -1,7 +1,7 @@
-# AgentBox sandbox (hetzner provider)
+# AgentBox sandbox (digitalocean provider)
 
-You are running inside an AgentBox sandbox: a dedicated Linux VPS (Ubuntu) on
-Hetzner Cloud provisioned just for this box. Docker-in-docker is available
+You are running inside an AgentBox sandbox: a dedicated Linux VPS (Ubuntu) — a
+DigitalOcean Droplet provisioned just for this box. Docker-in-docker is available
 (run `docker` directly, no sudo). Your user is `vscode` and you can use
 passwordless **sudo** to run commands as root. The whole VPS is yours — the
 user's host filesystem is not visible from here and nothing is bind-mounted.
