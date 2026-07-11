@@ -373,10 +373,6 @@ kbd {
   color: var(--agb-ink-2);
 }
 
-#nd-page .prose p {
-  max-width: 64ch;
-}
-
 #nd-page .prose strong {
   font-weight: 500;
   color: var(--agb-ink);

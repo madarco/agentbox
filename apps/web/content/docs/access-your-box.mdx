@@ -38,31 +38,6 @@ The footer's `(<state>)` slot — next to the box name — shows your `agentbox.
 
 While attached to any box session, **`Ctrl+a t` opens a fresh shell in the *same* box in a new tab** — a cmux surface in the current workspace, a new tmux window, or a new iTerm2 tab, depending on your terminal. **`Ctrl+a k` destroys the box** (after a confirmation) — the same key the dashboard uses, so it never collides with `Ctrl+a d` (detach). For per-terminal setup — where sessions open, the full chord list, and the cmux sidebar — see the integration pages for [iTerm2](/docs/integrations-iterm2), [tmux](/docs/integrations-tmux), and [cmux](/docs/integrations-cmux).
 
-### cmux: a button + shortcut that opens into the box
-
-If you use [cmux](https://cmux.com), you can add a tab-bar button and shortcut that opens a shell in the current project's box (and behaves normally everywhere else). Add this to `~/.config/cmux/cmux.json` and run `cmux reload-config`:
-
-```jsonc
-{
-  "actions": {
-    "agentbox-shell": {
-      "type": "command",
-      "title": "Shell in box",
-      // Auto-pick the project's box; fall back to a normal login shell elsewhere.
-      "command": "agentbox shell || exec $SHELL -l",
-      "target": "newTabInCurrentPane",
-      "icon": { "type": "symbol", "name": "terminal" },
-      "shortcut": "cmd+shift+t"
-    }
-  },
-  "ui": { "surfaceTabBar": { "buttons": ["cmux.newTerminal", "agentbox-shell"] } }
-}
-```
-
-`agentbox shell` with no argument auto-picks the only box in the current directory's project; outside an AgentBox project it exits non-zero and the `|| exec $SHELL -l` fallback opens an ordinary shell. This adds a **"Shell in box"** button to the surface tab bar plus a `Cmd+Shift+T` shortcut, leaving cmux's standard `Cmd+T` (new surface) untouched. If you'd rather it *be* `Cmd+T`, set the action's `shortcut` to `cmd+t` and add `"shortcuts": { "bindings": { "newSurface": "cmd+shift+t" } }` to move the built-in off it.
-
-For the AgentBox Dock panel (a live box list pinned to the cmux right sidebar via `agentbox install cmux`), see [cmux integration → The AgentBox Dock](/docs/integrations-cmux#the-agentbox-dock-right-sidebar).
-
 ## Web app URL
 
 `agentbox url [box]` opens the box's web app in your host browser. This works even when no service declares `expose:` — every box reserves the web port at create time, so the URL is always openable (you'll just get a connection error until something listens).
@@ -179,20 +154,20 @@ The sshd is bound to loopback only and never reachable off-host. It's a live mou
 
 ## Use a box with your laptop offline
 
-A cloud VPS box (Hetzner or DigitalOcean) keeps running with your laptop closed — VPS boxes don't auto-pause — so you can hand a long agent run off and pick it back up from a phone over SSH (Terminus, Blink, …). Two things stand between you and the box: its per-box firewall (pinned to your laptop's IP by default) and its SSH key (which never leaves your host). Open both up:
+Hetzner and DigitalOcean boxes keep running after you close your laptop, so you can start a long agent run and pick it up from your phone over SSH — Terminus, Blink, or any SSH client. Create one ready for it:
 
 ```bash
-# 1. let the box accept SSH from anywhere (key-only; confirms first)
-agentbox inbound mybox open
+# open SSH to any device + copy a git credential so the box pushes on its own
+agentbox claude -n mybox --provider digitalocean --inbound open --dangerously-with-credentials
 
-# 2. authorize your phone's own key, and print the connect line
-agentbox connect mybox --add-key @~/phone-key.pub
+# authorize your phone's key and print the ssh line
+agentbox connect mybox --add-key @~/phone.pub
 ```
 
-Then add an SSH host `vscode@<box-ip>` on the phone with that key and run `claude` / `codex` as usual. When you're back at your laptop, `agentbox inbound mybox lock` re-pins the firewall to your current IP (`--show` prints the policy). To move the box's *own* key onto the phone instead of adding a new one, `agentbox connect mybox --export-key` prints it — a new trust edge, so it asks first.
+`--inbound open` lets any device reach the box over SSH (key-only); `--dangerously-with-credentials` copies a git credential in so it can `git push` / `pull` without your laptop (it asks token vs SSH). On the phone, add an SSH host `vscode@<box-ip>` with that key, then run `claude` or `codex` as usual.
 
-This is the **inbound** half of a laptop-off box. Pair it with the **outbound** half — the box's own `git push` / `pull` working offline — via [`--dangerously-with-credentials`](/docs/sync-and-git#independent-boxes--dangerously-with-credentials) at create, or on a box that's already running with `agentbox connect <box> --dangerously-git-credentials`. The two are independent axes you combine for a fully self-sufficient box.
+Already have a box running? Flip it live instead: `agentbox inbound mybox open`, then `agentbox connect mybox --dangerously-git-credentials`. Close it back down with `agentbox inbound mybox lock` when you're done. See [independent boxes](/docs/sync-and-git#independent-boxes--dangerously-with-credentials).
 
-<Callout type="warn" title="open exposes port 22">
-`--inbound open` makes the box's SSH port publicly reachable. The baked sshd is key-only — no passwords, `vscode`-only, no root, the standard way internet-facing VPSes are secured — but treat the per-box key like a credential and `agentbox inbound <box> lock` once you no longer need remote access. Only Hetzner and DigitalOcean boxes have a per-box firewall + persistent key; other providers aren't reachable this way.
+<Callout type="warn" title="open exposes SSH to the internet">
+`agentbox inbound open` makes port 22 publicly reachable. Access stays key-only — no passwords, and only the `vscode` user. Run `agentbox inbound mybox lock` when you no longer need it. Hetzner and DigitalOcean only.
 </Callout>
