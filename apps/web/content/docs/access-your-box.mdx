@@ -179,20 +179,19 @@ The sshd is bound to loopback only and never reachable off-host. It's a live mou
 
 ## Use a box with your laptop offline
 
-A cloud VPS box (Hetzner or DigitalOcean) keeps running with your laptop closed — VPS boxes don't auto-pause — so you can hand a long agent run off and pick it back up from a phone over SSH (Terminus, Blink, …). Two things stand between you and the box: its per-box firewall (pinned to your laptop's IP by default) and its SSH key (which never leaves your host). Open both up:
+Hetzner and DigitalOcean boxes keep running after you close your laptop, so you can start a long agent run and pick it up from your phone over SSH — Terminus, Blink, or any SSH client. Two commands connect you:
 
 ```bash
-# 1. let the box accept SSH from anywhere (key-only; confirms first)
-agentbox inbound mybox open
-
-# 2. authorize your phone's own key, and print the connect line
-agentbox connect mybox --add-key @~/phone-key.pub
+agentbox inbound mybox open                     # let the box accept SSH from anywhere
+agentbox connect mybox --add-key @~/phone.pub   # authorize your phone's key, print the ssh line
 ```
 
-Then add an SSH host `vscode@<box-ip>` on the phone with that key and run `claude` / `codex` as usual. When you're back at your laptop, `agentbox inbound mybox lock` re-pins the firewall to your current IP (`--show` prints the policy). To move the box's *own* key onto the phone instead of adding a new one, `agentbox connect mybox --export-key` prints it — a new trust edge, so it asks first.
+On the phone, add an SSH host `vscode@<box-ip>` with that key, then run `claude` or `codex` as usual. To import the box's own key instead of adding your phone's, run `agentbox connect mybox --export-key`.
 
-This is the **inbound** half of a laptop-off box. Pair it with the **outbound** half — the box's own `git push` / `pull` working offline — via [`--dangerously-with-credentials`](/docs/sync-and-git#independent-boxes--dangerously-with-credentials) at create, or on a box that's already running with `agentbox connect <box> --dangerously-git-credentials`. The two are independent axes you combine for a fully self-sufficient box.
+Back at your laptop, run `agentbox inbound mybox lock` to close the box off again. `agentbox inbound mybox --show` prints the current setting.
 
-<Callout type="warn" title="open exposes port 22">
-`--inbound open` makes the box's SSH port publicly reachable. The baked sshd is key-only — no passwords, `vscode`-only, no root, the standard way internet-facing VPSes are secured — but treat the per-box key like a credential and `agentbox inbound <box> lock` once you no longer need remote access. Only Hetzner and DigitalOcean boxes have a per-box firewall + persistent key; other providers aren't reachable this way.
+To let the box `git push` on its own too, give it a credential: `--dangerously-with-credentials` when you create it, or `agentbox connect mybox --dangerously-git-credentials` on a box that's already running. See [independent boxes](/docs/sync-and-git#independent-boxes--dangerously-with-credentials).
+
+<Callout type="warn" title="open exposes SSH to the internet">
+`agentbox inbound open` makes port 22 publicly reachable. Access stays key-only — no passwords, and only the `vscode` user. Run `agentbox inbound mybox lock` when you no longer need it. Hetzner and DigitalOcean only.
 </Callout>
