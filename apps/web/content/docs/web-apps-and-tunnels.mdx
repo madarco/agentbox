@@ -67,7 +67,9 @@ On cloud providers the web app gets a **public HTTPS preview URL** instead of a 
 
 - **[Daytona](/docs/daytona):** a *signed* preview URL with the token embedded; default TTL 3600s, override with `--ttl <seconds>`.
 - **[Vercel](/docs/vercel):** a public token-free `sandbox.domain(port)` URL, reachable from host and box.
+- **[E2B](/docs/e2b):** a public token-free `<port>-<sandbox-id>.e2b.app` URL, reachable from host and box.
 - **[Hetzner](/docs/hetzner):** an SSH local port-forward over the per-box ControlMaster, decorated with a Portless `<box-name>.localhost` alias for the same symmetric URL as Docker.
+- **[DigitalOcean](/docs/digitalocean):** same as Hetzner — an SSH local port-forward over the per-box ControlMaster, mirrored to a Portless `<box-name>.localhost` alias. There is no public URL; the box is reached only through the host tunnel.
 
 ```bash
 agentbox url my-cloud-box
@@ -86,7 +88,9 @@ agentbox url my-cloud-box --ttl 86400
 | --- | --- |
 | Docker | Only `:80` (web) and `:6080` (noVNC) are host-published; shell in to hit other ports |
 | Hetzner | On-demand SSH forwards reach *any* in-box port |
+| DigitalOcean | On-demand SSH forwards reach *any* in-box port (same as Hetzner) |
 | Vercel | Up to 4 exposed ports (3 already spent on `80`/`6080`/`8788`) |
+| E2B | Public `<port>-<sandbox-id>.e2b.app` URL for each exposed port |
 | Daytona | Per-service preview URLs for each `expose.port` |
 
 ```bash
