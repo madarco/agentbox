@@ -30,6 +30,12 @@ describe('sshInboundRules', () => {
       sources: { addresses: ['1.2.3.4/32'] },
     });
   });
+
+  it('carries multiple sources in the single rule (host egress + whitelist / open)', () => {
+    const rules = sshInboundRules(['1.2.3.4/32', '0.0.0.0/0', '::/0']);
+    expect(rules).toHaveLength(1);
+    expect(rules[0]?.sources.addresses).toEqual(['1.2.3.4/32', '0.0.0.0/0', '::/0']);
+  });
 });
 
 describe('allowAllOutboundRules', () => {

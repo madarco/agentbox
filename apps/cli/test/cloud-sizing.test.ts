@@ -37,6 +37,35 @@ describe('cloudSizingProviderOptions', () => {
     expect(cloudSizingProviderOptions('hetzner', makeCfg())).toEqual({ location: 'nbg1' });
   });
 
+  it('omits inbound when locked (default) — backend treats absent as locked', () => {
+    expect('inbound' in cloudSizingProviderOptions('hetzner', makeCfg({ inbound: 'locked' }))).toBe(
+      false,
+    );
+    expect(
+      'inbound' in cloudSizingProviderOptions('digitalocean', makeCfg({ inbound: 'locked' })),
+    ).toBe(false);
+  });
+
+  it('emits inbound for hetzner/digitalocean when open or a CIDR list', () => {
+    expect(cloudSizingProviderOptions('hetzner', makeCfg({ inbound: 'open' })).inbound).toBe('open');
+    expect(
+      cloudSizingProviderOptions('digitalocean', makeCfg({ inbound: '203.0.113.5/32' })).inbound,
+    ).toBe('203.0.113.5/32');
+  });
+
+  it('lets the --inbound flag win over box.inbound', () => {
+    expect(
+      cloudSizingProviderOptions('hetzner', makeCfg({ inbound: 'locked' }), { inbound: 'open' })
+        .inbound,
+    ).toBe('open');
+  });
+
+  it('never emits inbound for non-VPS providers', () => {
+    expect('inbound' in cloudSizingProviderOptions('vercel', makeCfg({ inbound: 'open' }))).toBe(
+      false,
+    );
+  });
+
   it('emits no size when neither flag nor config sets one', () => {
     expect(cloudSizingProviderOptions('docker', makeCfg())).toEqual({});
     expect(cloudSizingProviderOptions('daytona', makeCfg())).toEqual({});

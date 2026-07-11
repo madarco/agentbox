@@ -131,6 +131,8 @@ agentbox hetzner firewall sync smoke
 Moved networks and `agentbox shell` suddenly times out? Run `agentbox hetzner firewall sync <box>` — that's almost always it.
 </Callout>
 
+To reach a box from **another device** (a phone over Terminus/Blink, with your laptop off), open the firewall and hand the device a key: `agentbox inbound <box> open` then `agentbox connect <box> --add-key <device.pub>`. The baked sshd is key-only (`vscode`-only, no passwords), so `open` exposes port 22 to the internet but only your keys get in. See [remote access](/docs/remote-access).
+
 ## Web apps, checkpoints, and Docker
 
 The box's standard capabilities work as on any provider, with a few Hetzner specifics:

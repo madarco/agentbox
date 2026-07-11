@@ -183,6 +183,8 @@ Inside the box, `git push`/`fetch`/`pull` then run real git against the credenti
 
 What still needs your PC: `agentbox cp`/`download`, `checkpoint`, and pull-request ops (`gh pr create`) remain host-relay operations — with the PC off they fail with a clear message rather than hanging. Only `git push`/`fetch`/`pull` are independent. `--dangerously-with-credentials` is cloud-only (a docker box already runs on your host).
 
+This is about the box's **outbound** git — it does **not** open the firewall or make the box reachable. To connect *to* the box from another device (a phone) with the laptop off, see [remote access](/docs/remote-access) (`agentbox inbound` + `agentbox connect`) — an independent axis you can combine with `--dangerously-with-credentials`.
+
 Notes: **token** mode can't sign commits (a token authenticates, it doesn't sign) — pick **ssh** if you need signed commits. In **ssh** mode the key must be passphrase-less (there's no ssh-agent in the box); a passphrase-protected signing key leaves signing off so commits never fail.
 
 ## Pull requests

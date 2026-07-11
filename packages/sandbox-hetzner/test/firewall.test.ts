@@ -17,6 +17,18 @@ describe('firewallNeedsSync', () => {
   it('syncs when there is no SSH rule at all (absent allowed source)', () => {
     expect(firewallNeedsSync(undefined, '5.6.7.8/32')).toBe(true);
   });
+
+  it('no sync when the current egress is one of several allowed sources (whitelist)', () => {
+    expect(firewallNeedsSync(['5.6.7.8/32', '1.2.3.4/32'], '1.2.3.4/32')).toBe(false);
+  });
+
+  it('syncs when the current egress is absent from the allowed list', () => {
+    expect(firewallNeedsSync(['5.6.7.8/32', '9.9.9.9/32'], '1.2.3.4/32')).toBe(true);
+  });
+
+  it('never syncs when 0.0.0.0/0 is present (open policy)', () => {
+    expect(firewallNeedsSync(['1.2.3.4/32', '0.0.0.0/0'], '5.6.7.8/32')).toBe(false);
+  });
 });
 
 describe('normalizeSourceCidr', () => {
@@ -51,5 +63,11 @@ describe('sshOnlyInboundRule', () => {
     // No destination_ips (those are for outbound rules); no other rules in
     // the array (outbound is unrestricted by absence).
     expect(rules[0]?.destination_ips).toBeUndefined();
+  });
+
+  it('carries multiple sources in the single rule (host egress + whitelist / open)', () => {
+    const rules = sshOnlyInboundRule(['1.2.3.4/32', '0.0.0.0/0', '::/0']);
+    expect(rules).toHaveLength(1);
+    expect(rules[0]?.source_ips).toEqual(['1.2.3.4/32', '0.0.0.0/0', '::/0']);
   });
 });

@@ -1,0 +1,92 @@
+---
+title: Remote access
+description: Drive a cloud box from your phone (Terminus, Blink, …) over SSH — with your laptop off
+---
+
+By default a cloud VPS box (Hetzner or DigitalOcean) is reachable **only from the laptop that created it**: its per-box firewall pins inbound SSH (port 22) to your host's egress IP, and the per-box SSH key never leaves your host. That's the safe default — but it means you can't pick up the box from a phone.
+
+Two knobs open that up so you can SSH into a box from a mobile client (Terminus, Blink, …) and keep an agent working with your laptop closed:
+
+1. **`agentbox inbound <box>`** — who the firewall lets in.
+2. **`agentbox connect <box>`** — the SSH connection details + how the device gets a key.
+
+<Callout title="This is separate from --dangerously-with-credentials">
+`--dangerously-with-credentials` (`git.pushMode=direct`) makes a box's **outbound** `git push`/`pull` work with the laptop off — it copies your git creds into the box. It does **not** open the firewall or make the box reachable. Remote *access* is the two commands on this page. See [sync & git](/docs/sync-and-git#independent-boxes--dangerously-with-credentials).
+</Callout>
+
+## 1. Open the firewall — `agentbox inbound`
+
+`--inbound` (at create) and `agentbox inbound <box>` (any time after) set the box's inbound policy:
+
+- **`locked`** (default) — SSH only from your host's current egress IP.
+- **`open`** — SSH from anywhere (`0.0.0.0/0`). The box's sshd is key-only (password auth is disabled and only `vscode` may log in), so this is the standard hardened-VPS posture — but the port is now publicly reachable.
+- **a CIDR list** — your host egress **plus** the listed CIDRs (e.g. an office range).
+
+```bash
+# at create
+agentbox create -y --provider digitalocean --inbound open
+
+# or after create (no reboot)
+agentbox inbound mybox open
+agentbox inbound mybox 203.0.113.0/24      # host egress + this range (whitelist)
+agentbox inbound mybox lock                # back to host-IP-only
+agentbox inbound mybox --show              # print the current policy
+```
+
+Mobile IPs change constantly (carrier NAT/roaming), so **`open` is the practical choice for a phone** — pinning a single cellular IP would need a re-sync on every network change. `open` requires a confirmation (skip with `-y`).
+
+Set it as the default for every VPS box with `agentbox config set box.inbound open` (see [configuration](/docs/configuration)).
+
+## 2. Get a key onto the device — `agentbox connect`
+
+`agentbox connect <box>` prints the connection bundle and manages device keys.
+
+```console
+$ agentbox connect mybox
+host:      203.0.113.42
+user:      vscode
+identity:  ~/.agentbox/digitalocean/boxes/583.../ssh/id_ed25519
+
+connect:   ssh vscode@203.0.113.42 -i ~/.agentbox/digitalocean/boxes/583.../ssh/id_ed25519
+
+reachable from anywhere (inbound: open).
+```
+
+Two ways to give the device a key:
+
+- **`--add-key <pubkey>`** (recommended) — append **your device's own** public key to the box, so the box's private key never leaves your host:
+
+  ```bash
+  agentbox connect mybox --add-key "ssh-ed25519 AAAA… phone"
+  agentbox connect mybox --add-key @~/phone-key.pub
+  ```
+
+  Then on the phone, add an SSH host `vscode@<box-ip>` using that device's key.
+
+- **`--export-key`** — print the box's **private** key to import into a mobile client. Simplest to use, but the key now lives on the phone too (a new trust edge), so it asks for confirmation:
+
+  ```bash
+  agentbox connect mybox --export-key > mybox.key   # import into Terminus/Blink
+  ```
+
+`agentbox connect --json` emits the same bundle machine-readably.
+
+## Put it together
+
+```bash
+agentbox create -y --provider digitalocean -n mobile --inbound open
+agentbox connect mobile --add-key @~/phone-key.pub
+# on the phone (Terminus): ssh vscode@<host> with your phone key → run `claude`
+```
+
+The box keeps running with your laptop off (VPS boxes don't auto-pause — see [checkpoints & pausing](/docs/checkpoints-and-pausing)), so you can hand off from laptop to phone and back. The box's public IP is stable across pause/resume and only changes on `destroy`; re-run `agentbox connect` any time to refresh the details.
+
+<Callout type="warn" title="Opening a port to the internet">
+`--inbound open` exposes port 22 publicly. It stays key-only (no passwords, `vscode`-only), which is the normal way internet-facing VPSes are secured — but treat the per-box key like a credential. Prefer `--add-key` over `--export-key` so the box key never leaves your host, and `agentbox inbound <box> lock` when you no longer need remote access.
+</Callout>
+
+## Caveats
+
+- **VPS providers only.** `agentbox inbound` / `connect` work on Hetzner and DigitalOcean (they have a per-box firewall + a persistent SSH key). Docker's sshd is loopback-only; Daytona uses a short-lived token; Vercel/E2B are SDK-only with public HTTPS preview URLs instead.
+- **Whitelist + host IP.** `whitelist` always keeps your host egress in the allowlist too, and a host-IP drift auto-heal (`agentbox recover`) merges the new host IP without dropping the whitelist.
+- **Existing boxes need the hardened base.** `--inbound open` relies on the key-only sshd baked into the base snapshot; a box from an older snapshot still works but re-run `agentbox prepare --provider <name>` to pick up the hardening.

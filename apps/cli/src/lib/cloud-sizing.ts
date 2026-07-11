@@ -43,18 +43,20 @@ export function cloudSizingProviderOptions(
   const size = flags.size?.trim() || resolveBoxSize(cfg, providerName);
   const out: Record<string, unknown> = size.length > 0 ? { size } : {};
   if (providerName === 'hetzner') {
-    const location = flags.location?.trim() || cfg.box.hetznerLocation;
+    const location = (flags.location?.trim() || cfg.box.hetznerLocation || '').trim();
     if (location.length > 0) out.location = location;
   }
   if (providerName === 'digitalocean') {
-    const location = flags.location?.trim() || cfg.box.digitaloceanRegion;
+    const location = (flags.location?.trim() || cfg.box.digitaloceanRegion || '').trim();
     if (location.length > 0) out.location = location;
   }
   // VPS-only inbound-access policy (`--inbound` / `box.inbound`). Passed through
-  // to the backend's per-box firewall; other providers ignore it.
+  // to the backend's per-box firewall; other providers ignore it. Only emitted
+  // when non-default — the backend treats an absent value as `locked`, so the
+  // common case carries nothing.
   if (providerName === 'hetzner' || providerName === 'digitalocean') {
-    const inbound = flags.inbound?.trim() || cfg.box.inbound;
-    if (inbound.length > 0) out.inbound = inbound;
+    const inbound = (flags.inbound?.trim() || cfg.box.inbound || '').trim();
+    if (inbound.length > 0 && !/^lock(ed)?$/i.test(inbound)) out.inbound = inbound;
   }
   if (providerName === 'vercel') {
     out.timeoutMs = cfg.box.vercelTimeoutMs;
