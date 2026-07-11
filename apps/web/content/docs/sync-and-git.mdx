@@ -177,6 +177,13 @@ At create time it **asks** — at an interactive prompt — which credential to 
 
 Inside the box, `git push`/`fetch`/`pull` then run real git against the credentialed remote — the relay is never involved.
 
+**Already have a box running?** Do the same thing after the fact with **`agentbox connect <box> --dangerously-git-credentials`** (Hetzner / DigitalOcean) — the post-create equivalent. It runs the same interactive token-vs-ssh prompt, copies the credential into the live box, and flips it to direct mode. Restart the box's agent session afterward (or open a fresh `agentbox shell`) so it picks up the new mode — a session already running keeps using the relay until it restarts.
+
+```bash
+agentbox connect mybox --dangerously-git-credentials   # choose token or ssh
+agentbox recover mybox                                  # restart the agent to use it
+```
+
 <Callout type="warn" title="This copies a real credential into the box">
 `--dangerously-with-credentials` places a credential **inside the box** — where its user has passwordless sudo (no boundary) — and it is captured in **any snapshot or checkpoint** of it. Only use it for a box you trust to run unattended. For safety this is **interactive and foreground only**: it requires a real terminal and a human choosing token vs SSH at the prompt. There is deliberately **no non-interactive path** — no flag value, no env var, no `-y` — and it is **rejected with `-i` / background runs**, so automation and CI can't copy a credential without a person present.
 </Callout>

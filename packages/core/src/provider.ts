@@ -395,6 +395,22 @@ export interface Provider {
    * CLI. `onLog` streams the applied source list.
    */
   setInbound?(box: BoxRecord, spec: string, onLog?: (line: string) => void): Promise<InboundPolicy>;
+  /**
+   * Switch an already-running cloud box into `git.pushMode=direct` — the
+   * post-create equivalent of `--dangerously-with-credentials`. Uploads the
+   * host-resolved credential carry `entries` into the box, wires its git config
+   * (`seedGitCredentials`), sets `AGENTBOX_GIT_DIRECT=1` in the box env, and
+   * persists `cloud.gitPushMode=direct` so a resume re-kick keeps it. The
+   * caller (CLI) runs the interactive token-vs-ssh gate to produce `entries`.
+   * Optional — only cloud providers implement it; docker omits it (it
+   * bind-mounts the host `.git`, so direct mode is N/A). A currently-running
+   * agent session must be restarted to pick up the new mode.
+   */
+  enableDirectGit?(
+    box: BoxRecord,
+    entries: ResolvedCarryEntry[],
+    opts?: { hostRepo?: string; onLog?: (line: string) => void },
+  ): Promise<void>;
   pause(box: BoxRecord): Promise<void>;
   resume(box: BoxRecord): Promise<void>;
   stop(box: BoxRecord): Promise<void>;

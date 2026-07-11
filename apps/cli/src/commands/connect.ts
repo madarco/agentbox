@@ -3,12 +3,14 @@ import { confirm, isCancel, log } from '@clack/prompts';
 import { resolveCloudSshTarget } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { runGitCredsGate } from '../lib/git-creds-gate.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface ConnectOptions {
   addKey?: string;
   exportKey?: boolean;
+  dangerouslyGitCredentials?: boolean;
   json?: boolean;
   yes?: boolean;
 }
@@ -25,7 +27,8 @@ function shellSingleQuote(s: string): string {
 export const connectCommand = new Command('connect')
   .description(
     'Print a VPS box\'s SSH connection details (to drive it from a phone / other SSH client with the laptop off), ' +
-      'add another device\'s key, or export the box key. Pair with `agentbox inbound <box> open` so the box is reachable off-network. ' +
+      'add another device\'s key, export the box key, or copy git credentials into the box so it pushes on its own ' +
+      '(--dangerously-git-credentials). Pair with `agentbox inbound <box> open` so the box is reachable off-network. ' +
       'Hetzner / DigitalOcean only.',
   )
   .argument(
@@ -40,12 +43,64 @@ export const connectCommand = new Command('connect')
     '--export-key',
     "print the box's PRIVATE key to import into a mobile SSH client (Terminus/Blink). The key leaves the host — a new trust edge; confirm required",
   )
+  .option(
+    '--dangerously-git-credentials',
+    "copy a git credential INTO a running box so it can push/pull on its own with your PC off (git.pushMode=direct) — the post-create equivalent of `create --dangerously-with-credentials`. An interactive prompt asks token (HTTPS, unsigned) vs SSH (signs, riskiest). DANGEROUS: the credential lives in the box + its snapshots. Requires a real terminal; cloud only. Restart the agent session afterward.",
+  )
   .option('--json', 'machine-readable connection bundle')
   .option('-y, --yes', 'skip the confirmation prompt for --export-key')
   .action(async (idOrName: string | undefined, opts: ConnectOptions) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
       const provider = await providerForBox(box);
+
+      // --- git-credentials mode: make an already-running box push on its own ---
+      if (opts.dangerouslyGitCredentials) {
+        if (opts.addKey || opts.exportKey) {
+          log.error('--dangerously-git-credentials cannot be combined with --add-key / --export-key.');
+          process.exit(2);
+        }
+        if (!provider.enableDirectGit || !provider.buildAttach) {
+          log.error(
+            `\`connect --dangerously-git-credentials\` needs an SSH cloud box (hetzner / digitalocean) — ` +
+              `provider '${box.provider ?? 'docker'}' isn't supported here` +
+              (provider.enableDirectGit
+                ? ''
+                : ' (docker boxes bind-mount the host .git, so git direct mode is N/A)') +
+              '.',
+          );
+          process.exit(2);
+        }
+        // Resolve the credential host-side (TTY-required token-vs-ssh prompt).
+        const projectRoot = box.projectRoot ?? box.workspacePath ?? process.cwd();
+        const gate = await runGitCredsGate({ projectRoot, onLog: (l) => log.step(l) });
+        if (gate.decision === 'cancel') {
+          log.info('cancelled');
+          return;
+        }
+        if (gate.decision === 'skip' || gate.entries.length === 0) {
+          log.warn(
+            'no git credential could be resolved for this repo (no token / ssh key found); nothing was applied.',
+          );
+          return;
+        }
+        // Bring the box online (exec needs it) — reuses the SSH-support check.
+        await resolveCloudSshTarget(box, provider, {
+          bringOnline: true,
+          logInfo: (l) => log.step(l),
+        });
+        await provider.enableDirectGit(box, gate.entries, {
+          hostRepo: projectRoot,
+          onLog: (l) => log.step(l),
+        });
+        process.stdout.write(
+          `git direct mode enabled for ${box.name} — it can now \`git push\` / \`pull\` on its own with your laptop off.\n` +
+            `Restart its agent session to pick it up (new shells/sessions get it automatically):\n` +
+            `  agentbox recover ${box.name}\n`,
+        );
+        return;
+      }
+
       if (!provider.buildAttach) {
         log.error(
           `\`connect\` needs an SSH box — provider '${box.provider ?? 'docker'}' isn't reachable over SSH ` +
