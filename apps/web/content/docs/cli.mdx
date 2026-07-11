@@ -189,7 +189,7 @@ agentbox connect 1 --add-key @phone.pub   # authorize a device's key; print the 
 
 <Callout title="TIP">Prefer `pause`/`unpause` to switch between boxes — it frees CPU and RAM while frozen and resumes instantly on docker. Use `stop` when you want the box off but kept.</Callout>
 
-`inbound`/`connect` (Hetzner/DigitalOcean) let you drive a box from a phone with the laptop off. `agentbox inbound <box> open|lock|<cidr…>` sets the per-box firewall's inbound policy (`--show` prints it); `agentbox connect <box>` prints the SSH connection bundle, `--add-key <pubkey>` authorizes another device's key (the box's own key stays on the host), and `--export-key` prints the box key for a mobile client. See [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline).
+`inbound`/`connect` (Hetzner/DigitalOcean) let you drive a box from a phone with the laptop off. `agentbox inbound <box> open|lock|<cidr…>` sets the per-box firewall's inbound policy (`--show` prints it); `agentbox connect <box>` prints the SSH connection bundle, `--add-key <pubkey>` authorizes another device's key (the box's own key stays on the host), and `--export-key` prints the box key for a mobile client, and `--dangerously-git-credentials` copies a git credential into an already-running box so it pushes on its own (the post-create equivalent of `create --dangerously-with-credentials`; restart the agent afterward). See [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline) and [sync & git](/docs/sync-and-git#independent-boxes--dangerously-with-credentials).
 
 See [Checkpoints & pausing](/docs/checkpoints-and-pausing) and the provider pages for cloud pause/stop semantics.
 

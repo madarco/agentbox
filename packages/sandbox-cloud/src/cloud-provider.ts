@@ -32,6 +32,7 @@ import type {
   Provider,
   ProviderCheckpoint,
   ProviderSync,
+  ResolvedCarryEntry,
   ResyncResult,
   SyncTransport,
 } from '@agentbox/core';
@@ -78,7 +79,7 @@ import { readExposedServicePorts } from './expose-ports.js';
 import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
 import { kickCloudBootstrap } from './bootstrap-launch.js';
 import { readGitOriginUrl, registerBoxWithPlane } from './plane-register.js';
-import { quoteShellArgv } from './shell.js';
+import { bashScript, quoteShellArgv } from './shell.js';
 import { seedGitCredentials } from './sync/git-identity.js';
 import { seedCloudWorkspace } from './sync/workspace-seed.js';
 import type { SeedCloudWorkspaceResult } from './sync/workspace-seed.js';
@@ -1175,6 +1176,44 @@ export function createCloudProvider(
       const cloud = box.cloud;
       if (cloud) await recordBox({ ...box, cloud: { ...cloud, inbound: policy } });
       return policy;
+    },
+
+    async enableDirectGit(
+      box: BoxRecord,
+      entries: ResolvedCarryEntry[],
+      opts?: { hostRepo?: string; onLog?: (line: string) => void },
+    ): Promise<void> {
+      const onLog = opts?.onLog;
+      const handle = handleFor(box);
+      const ctx = makeSyncContext({
+        boxName: box.name,
+        boxId: box.id,
+        provider: 'cloud',
+        hostWorkspace: box.workspacePath,
+        boxWorkspace: CLOUD_WORKSPACE_DIR,
+        onLog,
+      });
+      // 1. Upload the host-resolved credential files + the git-direct-mode marker.
+      await makeCloudSync(backend, handle).applyCarry(ctx, entries);
+      // 2. Wire the box's git config (credential.helper / url.insteadOf for
+      // token; core.sshCommand + guarded signing for ssh) — same as create.
+      await seedGitCredentials(backend, handle, { hostRepo: opts?.hostRepo, onLog });
+      // 3. Flip the runtime flag in /etc/agentbox/box.env so future login shells
+      // (and the next agent session) push direct. Idempotent — the box env file
+      // is 0644 and AGENTBOX_GIT_DIRECT is a non-secret routing flag.
+      const flip =
+        'if ! sudo -n grep -q "^AGENTBOX_GIT_DIRECT=" /etc/agentbox/box.env 2>/dev/null; then ' +
+        'echo AGENTBOX_GIT_DIRECT=1 | sudo -n tee -a /etc/agentbox/box.env >/dev/null; fi';
+      const r = await backend.exec(handle, bashScript(flip));
+      if (r.exitCode !== 0) {
+        throw new Error(
+          `enableDirectGit: failed to set AGENTBOX_GIT_DIRECT in box env: ${r.stderr || r.stdout || `exit ${String(r.exitCode)}`}`,
+        );
+      }
+      // 4. Persist so a resume re-kick re-threads AGENTBOX_GIT_DIRECT (else the
+      // next resume rewrites box.env from the stale mode and drops it).
+      const cloud = box.cloud;
+      if (cloud) await recordBox({ ...box, cloud: { ...cloud, gitPushMode: 'direct' } });
     },
 
     async pause(box: BoxRecord): Promise<void> {
