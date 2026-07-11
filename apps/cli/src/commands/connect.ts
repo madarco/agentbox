@@ -102,7 +102,7 @@ export const connectCommand = new Command('connect')
         const lastAgent = box.lastAgent;
         if (lastAgent && process.stdin.isTTY && !opts.yes) {
           const restart = await confirm({
-            message: `Restart the box's ${lastAgent} session now so it uses direct mode? (it resumes the same conversation)`,
+            message: `Restart the box's ${lastAgent} session now so it uses direct mode? (resumes your conversation; starts fresh if it can't)`,
             initialValue: true,
           });
           if (!isCancel(restart) && restart) {
