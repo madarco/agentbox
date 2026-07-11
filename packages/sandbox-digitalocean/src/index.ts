@@ -32,7 +32,7 @@ export const providerModule: ProviderModule = {
   ensureCredentials: ensureDigitalOceanCredentials,
   readCredStatus: readCredStatusSummary,
   setCredentials: setDigitalOceanCredentials,
-  currentBaseFingerprintLive: () => currentDigitalOceanBaseFingerprintLive(),
+  currentBaseFingerprintLive: (claudeInstall) => currentDigitalOceanBaseFingerprintLive(claudeInstall),
   doctorChecks,
 };
 
