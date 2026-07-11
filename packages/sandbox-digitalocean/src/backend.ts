@@ -40,6 +40,7 @@ import {
 import { detectEgressIp } from './egress-ip.js';
 import { createPerBoxFirewall, deletePerBoxFirewall, findFirewallForDroplet, normalizeSourceCidr } from './firewall.js';
 import { pollUntil } from './poll.js';
+import { mapDigitalOceanProvisionError, validateSizeChoice } from './preflight.js';
 import { readPreparedState } from './prepared-state.js';
 import { ensureDigitalOceanBaseSnapshot } from './prepare.js';
 import { mintSshKey } from './ssh-key.js';
@@ -57,7 +58,7 @@ export const DIGITALOCEAN_DEFAULT_BOX_IMAGE_REF = 'agentbox-base';
  */
 const SCAFFOLDING_FALLBACK_IMAGE = 'agentbox/box:dev';
 const VPS_USER = 'vscode';
-const PROVISION_SSH_DEADLINE_MS = 5 * 60_000;
+const PROVISION_SSH_DEADLINE_MS = 10 * 60_000;
 const PROVISION_DROPLET_DEADLINE_MS = 5 * 60_000;
 const ACTION_DEADLINE_MS = 5 * 60_000;
 const SNAPSHOT_DEADLINE_MS = 30 * 60_000;
@@ -262,6 +263,26 @@ export const digitaloceanBackend: CloudBackend = {
     await ensureDigitalOceanBaseSnapshot();
     const imageRef = await resolveImageRef(c, req);
 
+    // 1b. Preflight the size + region choice against the live catalog BEFORE
+    // creating any billable resources (firewall, SSH key, droplet). A bad
+    // `--size s-99vcpu` / `--location atlantis` fails fast here with a clear
+    // message instead of a late, opaque API error after cleanup churn.
+    const size = (req.size && req.size.trim()) || DIGITALOCEAN_DEFAULT_SIZE;
+    const region =
+      (req.location && req.location.trim()) ||
+      req.env?.AGENTBOX_DIGITALOCEAN_REGION ||
+      process.env.AGENTBOX_DIGITALOCEAN_REGION ||
+      DIGITALOCEAN_DEFAULT_REGION;
+    const choice = { size, region };
+    // The base snapshot's min_disk_size gates the min plan disk. We only have it
+    // for numeric snapshot refs; stock string refs (e.g. `ubuntu-24-04-x64`)
+    // skip the disk check (snapshot null).
+    const snapshotMeta =
+      typeof imageRef === 'number' ? await c.getSnapshot(String(imageRef)) : null;
+    const sizeCatalog = await c.listSizes();
+    validateSizeChoice(choice, sizeCatalog, snapshotMeta);
+    const plan = sizeCatalog.find((s) => s.slug === size);
+
     // 2. Detect egress IP + normalize firewall source.
     const egressOverride =
       req.env?.AGENTBOX_DIGITALOCEAN_FIREWALL_SOURCE ?? process.env.AGENTBOX_DIGITALOCEAN_FIREWALL_SOURCE;
@@ -307,26 +328,28 @@ export const digitaloceanBackend: CloudBackend = {
         boxEnv: Object.keys(boxEnv).length > 0 ? boxEnv : undefined,
       });
 
-      // 6. Create the droplet (tagged so the firewall applies).
-      const size = (req.size && req.size.trim()) || DIGITALOCEAN_DEFAULT_SIZE;
-      const region =
-        req.env?.AGENTBOX_DIGITALOCEAN_REGION ??
-        process.env.AGENTBOX_DIGITALOCEAN_REGION ??
-        DIGITALOCEAN_DEFAULT_REGION;
+      // 6. Create the droplet (tagged so the firewall applies). Map late DO
+      // provision errors (droplet limit, out-of-capacity) to actionable
+      // guidance while preserving the original.
       progress(`creating droplet '${req.name}' from image ${String(imageRef)} (${size} / ${region})`);
-      const created = await withDigitalOceanRetry(
-        { method: 'createDroplet', retryOnAmbiguous: false, attemptTimeoutMs: 120_000 },
-        () =>
-          c.createDroplet({
-            name: `agentbox-${sanitizeTag(req.name)}-${stamp}`,
-            region,
-            size,
-            image: imageRef,
-            user_data: cloudInit,
-            tags: [boxTag, 'agentbox'],
-            ipv6: false,
-          }),
-      );
+      let created;
+      try {
+        created = await withDigitalOceanRetry(
+          { method: 'createDroplet', retryOnAmbiguous: false, attemptTimeoutMs: 120_000 },
+          () =>
+            c.createDroplet({
+              name: `agentbox-${sanitizeTag(req.name)}-${stamp}`,
+              region,
+              size,
+              image: imageRef,
+              user_data: cloudInit,
+              tags: [boxTag, 'agentbox'],
+              ipv6: false,
+            }),
+        );
+      } catch (createErr) {
+        throw mapDigitalOceanProvisionError(createErr, choice);
+      }
       dropletId = created.droplet.id;
       progress(`droplet ${String(dropletId)} created; waiting for it to boot`);
 
@@ -359,7 +382,10 @@ export const digitaloceanBackend: CloudBackend = {
       const up = await waitForSsh(buildSshTarget(state, vpsIp), PROVISION_SSH_DEADLINE_MS);
       if (!up) {
         throw new Error(
-          `digitalocean: ssh on ${vpsIp} did not come up within ${String(PROVISION_SSH_DEADLINE_MS / 1000)}s`,
+          `digitalocean: ssh on ${vpsIp} did not come up within ${String(PROVISION_SSH_DEADLINE_MS / 1000)}s; ` +
+            `the droplet has been deleted. This is usually transient — just retry the create. ` +
+            `If it keeps failing, check that your host's egress IP is stable (the box firewall is ` +
+            `locked to it, so a mid-provision IP change blocks ssh).`,
         );
       }
 
@@ -367,7 +393,20 @@ export const digitaloceanBackend: CloudBackend = {
       await ensureTunnel(sandboxId, state, vpsIp);
       progress('ssh up; ControlMaster open');
 
-      return { sandboxId };
+      // Report the real resources for the chosen plan (DO reports memory in MB;
+      // the cloud scaffold's `provisioned …` log line + the box record read
+      // these). `plan` is present whenever the size validated against the
+      // catalog above.
+      return plan
+        ? {
+            sandboxId,
+            resources: {
+              cpu: plan.vcpus,
+              memory: Math.round(plan.memory / 1024),
+              disk: plan.disk,
+            },
+          }
+        : { sandboxId };
     } catch (err) {
       // Cleanup on failure: droplet + firewall + temp ssh dir.
       if (dropletId !== null) {
@@ -443,7 +482,9 @@ export const digitaloceanBackend: CloudBackend = {
     const up = await waitForSsh(buildSshTarget(state, vpsIp), PROVISION_SSH_DEADLINE_MS);
     if (!up) {
       throw new Error(
-        `digitalocean: ssh on ${vpsIp} did not come up within ${String(PROVISION_SSH_DEADLINE_MS / 1000)}s after start`,
+        `digitalocean: ssh on ${vpsIp} did not come up within ${String(PROVISION_SSH_DEADLINE_MS / 1000)}s after start. ` +
+          `This is usually transient — retry (\`agentbox start\` / \`agentbox recover\`). If it persists, check ` +
+          `that your host's egress IP is stable (the box firewall is locked to it, so an IP change blocks ssh).`,
       );
     }
   },

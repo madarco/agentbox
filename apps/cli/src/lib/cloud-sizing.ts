@@ -20,6 +20,8 @@ export interface CloudSizingFlags {
  *   e2b: baked at prepare time; docker: ignored).
  * - **hetzner**: `location` — datacenter, `--location` flag first, else
  *   `box.hetznerLocation`.
+ * - **digitalocean**: `location` — region, `--location` flag first, else
+ *   `box.digitaloceanRegion`.
  * - **vercel**: `timeoutMs` (session length before auto-snapshot), `networkPolicy`.
  * - **e2b**: `timeoutMs` — the session timeout the box is created with (and
  *   records as `cloud.sessionTimeoutMs`, which seeds the host keepalive loop so
@@ -38,6 +40,10 @@ export function cloudSizingProviderOptions(
   const out: Record<string, unknown> = size.length > 0 ? { size } : {};
   if (providerName === 'hetzner') {
     const location = flags.location?.trim() || cfg.box.hetznerLocation;
+    if (location.length > 0) out.location = location;
+  }
+  if (providerName === 'digitalocean') {
+    const location = flags.location?.trim() || cfg.box.digitaloceanRegion;
     if (location.length > 0) out.location = location;
   }
   if (providerName === 'vercel') {

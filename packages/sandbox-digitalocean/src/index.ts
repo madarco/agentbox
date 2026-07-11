@@ -97,8 +97,14 @@ export {
   type DigitalOceanFirewall,
   type DigitalOceanInboundRule,
   type DigitalOceanOutboundRule,
+  type DigitalOceanSize,
   type DigitalOceanSnapshot,
 } from './client.js';
+export {
+  validateSizeChoice,
+  mapDigitalOceanProvisionError,
+  type SizeChoice,
+} from './preflight.js';
 export { detectEgressIp, type DetectEgressIpOptions } from './egress-ip.js';
 export {
   allowAllOutboundRules,

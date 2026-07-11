@@ -74,6 +74,22 @@ export interface DigitalOceanSnapshot {
 }
 
 /**
+ * A DigitalOcean Droplet size (plan), narrowed to the fields the create
+ * preflight reads. `memory` is MB (DO reports it that way); `disk` is GB;
+ * `regions` is the authoritative "offered here" list; `available` is false for
+ * sold-out / retired plans. See GET /v2/sizes.
+ */
+export interface DigitalOceanSize {
+  slug: string;
+  memory: number;
+  vcpus: number;
+  disk: number;
+  available: boolean;
+  regions: string[];
+  description?: string;
+}
+
+/**
  * A firewall rule's source (inbound) / destination (outbound) selector.
  * `addresses` accepts IPv4/IPv6 + CIDR; `tags` auto-includes droplets.
  */
@@ -183,8 +199,12 @@ export interface DigitalOceanClient {
   getAction(id: number): Promise<DigitalOceanAction | null>;
   /** GET /snapshots?resource_type=droplet. Paginates. */
   listSnapshots(): Promise<DigitalOceanSnapshot[]>;
+  /** GET /snapshots/{id}. Returns null on 404. */
+  getSnapshot(id: string): Promise<DigitalOceanSnapshot | null>;
   /** DELETE /snapshots/{id}. Idempotent on 404. */
   deleteSnapshot(id: string): Promise<void>;
+  /** GET /sizes — the Droplet-plan catalog (paginated). Used by the create preflight. */
+  listSizes(): Promise<DigitalOceanSize[]>;
   /** POST /firewalls. */
   createFirewall(req: CreateFirewallRequest): Promise<DigitalOceanFirewall>;
   /** GET /firewalls/{id}. Returns null on 404. */
@@ -359,8 +379,15 @@ export function makeDigitalOceanClient(opts: MakeClientOptions = {}): DigitalOce
         'snapshots',
       );
     },
+    async getSnapshot(id) {
+      const r = await req<{ snapshot: DigitalOceanSnapshot }>('GET', `/snapshots/${encodeURIComponent(id)}`);
+      return r?.snapshot ?? null;
+    },
     async deleteSnapshot(id) {
       await req<unknown>('DELETE', `/snapshots/${encodeURIComponent(id)}`);
+    },
+    async listSizes() {
+      return paginate<DigitalOceanSize>(withPerPage('/sizes'), 'sizes');
     },
     async createFirewall(reqBody) {
       const r = await reqExpect<{ firewall: DigitalOceanFirewall }>('POST', '/firewalls', reqBody);

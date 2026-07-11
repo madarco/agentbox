@@ -123,6 +123,7 @@ export interface UserConfig {
     disk?: string;
     bundleDepth?: number;
     hetznerLocation?: string;
+    digitaloceanRegion?: string;
     vercelTimeoutMs?: number;
     vercelNetworkPolicy?: string;
     e2bTimeoutMs?: number;
@@ -279,6 +280,7 @@ export interface EffectiveConfig {
     disk: string;
     bundleDepth: number | undefined;
     hetznerLocation: string;
+    digitaloceanRegion: string;
     vercelTimeoutMs: number;
     vercelNetworkPolicy: string;
     e2bTimeoutMs: number;
@@ -442,6 +444,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     disk: '',
     bundleDepth: undefined,
     hetznerLocation: 'nbg1',
+    digitaloceanRegion: 'nyc3',
     vercelTimeoutMs: 2_700_000,
     vercelNetworkPolicy: '',
     e2bTimeoutMs: 2_700_000,
@@ -731,6 +734,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'string',
     description:
       'Hetzner datacenter location new --provider hetzner boxes are created in (e.g. `nbg1`, `fsn1`, `hel1`, `ash`). Default `nbg1`. Overridable per-create with `--location`. Hetzner-only; ignored by other providers.',
+  },
+  {
+    key: 'box.digitaloceanRegion',
+    type: 'string',
+    description:
+      'DigitalOcean region new --provider digitalocean boxes are created in (e.g. `nyc3`, `nyc1`, `sfo3`, `ams3`, `fra1`). Default `nyc3`. Overridable per-create with `--location`. DigitalOcean-only; ignored by other providers.',
   },
   {
     key: 'box.vercelTimeoutMs',

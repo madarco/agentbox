@@ -200,11 +200,11 @@ export const createCommand = new Command('create')
   )
   .option(
     '--size <spec>',
-    'VM size for cloud providers. Hetzner: server type (e.g. cx33). Daytona: cpu-mem-disk GB (e.g. 4-8-20). Vercel: vCPUs (1, 2, 4, 8). E2B: baked at prepare time. Overrides box.size / box.size<Provider>.',
+    'VM size for cloud providers. Hetzner: server type (e.g. cx33). DigitalOcean: Droplet size slug (e.g. s-4vcpu-8gb). Daytona: cpu-mem-disk GB (e.g. 4-8-20). Vercel: vCPUs (1, 2, 4, 8). E2B: baked at prepare time. Overrides box.size / box.size<Provider>.',
   )
   .option(
     '--location <name>',
-    'Hetzner datacenter for the new box (e.g. nbg1, fsn1, hel1, ash). Overrides box.hetznerLocation. Hetzner-only.',
+    'Datacenter/region for the new box. Hetzner: nbg1, fsn1, hel1, ash (overrides box.hetznerLocation). DigitalOcean: nyc3, sfo3, ams3, fra1 (overrides box.digitaloceanRegion). Hetzner/DigitalOcean-only.',
   )
   .option(
     '--bundle-depth <n>',
@@ -281,8 +281,8 @@ export const createCommand = new Command('create')
         providerName,
       ),
     );
-    if (opts.location && providerName !== 'hetzner') {
-      log.warn(`--location is hetzner-only; ignored for provider ${providerName}`);
+    if (opts.location && providerName !== 'hetzner' && providerName !== 'digitalocean') {
+      log.warn(`--location applies to hetzner/digitalocean only; ignored for provider ${providerName}`);
     }
     // Box image: same precedence pattern as --size. `--image` wins; otherwise
     // the cascaded box.image / box.image<Provider> (written by `agentbox
