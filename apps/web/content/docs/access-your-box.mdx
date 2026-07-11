@@ -182,15 +182,16 @@ The sshd is bound to loopback only and never reachable off-host. It's a live mou
 Hetzner and DigitalOcean boxes keep running after you close your laptop, so you can start a long agent run and pick it up from your phone over SSH — Terminus, Blink, or any SSH client. Two commands connect you:
 
 ```bash
-agentbox inbound mybox open                     # let the box accept SSH from anywhere
-agentbox connect mybox --add-key @~/phone.pub   # authorize your phone's key, print the ssh line
+agentbox inbound mybox open                          # let the box accept SSH from anywhere
+agentbox connect mybox --add-key @~/phone.pub        # authorize your phone's key, print the ssh line
+agentbox connect mybox --dangerously-git-credentials # optional: let the box git push on its own too
 ```
 
 On the phone, add an SSH host `vscode@<box-ip>` with that key, then run `claude` or `codex` as usual. To import the box's own key instead of adding your phone's, run `agentbox connect mybox --export-key`.
 
 Back at your laptop, run `agentbox inbound mybox lock` to close the box off again. `agentbox inbound mybox --show` prints the current setting.
 
-To let the box `git push` on its own too, give it a credential: `--dangerously-with-credentials` when you create it, or `agentbox connect mybox --dangerously-git-credentials` on a box that's already running. See [independent boxes](/docs/sync-and-git#independent-boxes--dangerously-with-credentials).
+The third command copies a git credential into the box so it can `git push` / `pull` without your laptop — the running-box form of [`--dangerously-with-credentials`](/docs/sync-and-git#independent-boxes--dangerously-with-credentials), which you can also pass when you first create the box.
 
 <Callout type="warn" title="open exposes SSH to the internet">
 `agentbox inbound open` makes port 22 publicly reachable. Access stays key-only — no passwords, and only the `vscode` user. Run `agentbox inbound mybox lock` when you no longer need it. Hetzner and DigitalOcean only.
