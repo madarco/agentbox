@@ -3,6 +3,7 @@ import { confirm, isCancel, log } from '@clack/prompts';
 import { resolveCloudSshTarget } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { restoreAgentSessions } from '../agent-sessions.js';
 import { runGitCredsGate } from '../lib/git-creds-gate.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
@@ -93,10 +94,32 @@ export const connectCommand = new Command('connect')
           hostRepo: projectRoot,
           onLog: (l) => log.step(l),
         });
+        log.success(
+          `git direct mode enabled for ${box.name} — it can now \`git push\` / \`pull\` on its own with your laptop off.`,
+        );
+        // A running agent session's env is frozen, so it keeps using the relay
+        // until restarted. Offer to restart it now (resuming the conversation).
+        const lastAgent = box.lastAgent;
+        if (lastAgent && process.stdin.isTTY && !opts.yes) {
+          const restart = await confirm({
+            message: `Restart the box's ${lastAgent} session now so it uses direct mode? (it resumes the same conversation)`,
+            initialValue: true,
+          });
+          if (!isCancel(restart) && restart) {
+            await restoreAgentSessions(box, provider, {
+              restoreOnly: lastAgent,
+              force: true,
+              onLog: (l) => log.step(l),
+            });
+            log.success(`${lastAgent} restarted in the background — it now pushes direct.`);
+            return;
+          }
+        }
         process.stdout.write(
-          `git direct mode enabled for ${box.name} — it can now \`git push\` / \`pull\` on its own with your laptop off.\n` +
-            `Restart its agent session to pick it up (new shells/sessions get it automatically):\n` +
-            `  agentbox recover ${box.name}\n`,
+          lastAgent
+            ? `A running ${lastAgent} session keeps using the relay until it restarts. When you're ready:\n` +
+                `  agentbox ${lastAgent} ${box.name}   # (or: agentbox recover ${box.name})\n`
+            : 'New shells and agent sessions get direct mode automatically.\n',
         );
         return;
       }

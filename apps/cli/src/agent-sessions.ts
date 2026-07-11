@@ -55,6 +55,18 @@ async function tmuxAlive(
   return (await execRead(provider, box, `tmux has-session -t ${q} 2>/dev/null && echo y`)) === 'y';
 }
 
+/** Kill a live agent tmux session so it can be relaunched with a fresh env. */
+async function killTmuxSession(
+  provider: Provider,
+  box: BoxRecord,
+  sessionName: string,
+): Promise<void> {
+  const q = `'${sessionName.replace(/'/g, `'\\''`)}'`;
+  await provider
+    .exec(box, ['bash', '-lc', `tmux kill-session -t ${q} 2>/dev/null || true`], { user: 'vscode' })
+    .catch(() => {});
+}
+
 /**
  * The args to resume the box's recorded session for `kind`, or null if there's
  * nothing to resume. Claude resumes the exact captured id; Codex (no id) resumes
@@ -88,6 +100,14 @@ export interface RestoreOptions {
    * the fresh path here.
    */
   restoreOnly?: 'claude' | 'codex' | 'opencode';
+  /**
+   * With `restoreOnly`: if that agent's session is already alive, KILL it first
+   * and relaunch (resuming), instead of leaving the running one untouched. Used
+   * to force the agent to pick up an environment change made after it started
+   * (e.g. `connect --dangerously-git-credentials` flipping the box to git direct
+   * mode) — a running session's env is otherwise frozen.
+   */
+  force?: boolean;
 }
 
 /** Start a fresh (no-resume) detached agent session. */
@@ -181,7 +201,14 @@ export async function restoreAgentSessions(
   const only = opts.restoreOnly;
   if (only) {
     const sessionName = sessionNameFor(only);
-    if (await tmuxAlive(provider, box, sessionName)) return;
+    if (await tmuxAlive(provider, box, sessionName)) {
+      if (!opts.force) return;
+      // Force: kill the running session so it relaunches with the current box
+      // env (e.g. after flipping to git direct mode). Claude/Codex then resume
+      // the same conversation via their in-box pointer below.
+      await killTmuxSession(provider, box, sessionName);
+      opts.onLog?.(`stopped the running ${only} session to restart it`);
+    }
     if ((only === 'claude' || only === 'codex') && (await tryResume(only, sessionName))) return;
     try {
       await startFreshSession(box, only, sessionName, cfg, isDocker);
