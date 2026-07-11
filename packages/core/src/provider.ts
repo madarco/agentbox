@@ -7,6 +7,7 @@
  */
 
 import type { BoxRecord, ProviderName } from './box-record.js';
+import type { InboundPolicy } from './cloud-backend.js';
 import type { BoxEndpoints } from './endpoints.js';
 import type { ReplaceRule } from './replace.js';
 import type { BoxResourceStats } from './types.js';
@@ -385,6 +386,15 @@ export interface Provider {
    * clouds omit it.
    */
   repairReachability?(box: BoxRecord): Promise<{ changed: boolean; detail?: string }>;
+  /**
+   * Apply an inbound-access policy to a VPS box's per-box firewall (`agentbox
+   * inbound <box> open|lock|whitelist …`). Parses the spec, applies it via the
+   * backend (host egress re-detected for locked/whitelist), persists the policy
+   * on the record, and returns it. Optional — only the hetzner / digitalocean
+   * cloud providers implement it; others throw a "not supported" error via the
+   * CLI. `onLog` streams the applied source list.
+   */
+  setInbound?(box: BoxRecord, spec: string, onLog?: (line: string) => void): Promise<InboundPolicy>;
   pause(box: BoxRecord): Promise<void>;
   resume(box: BoxRecord): Promise<void>;
   stop(box: BoxRecord): Promise<void>;

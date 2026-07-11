@@ -249,6 +249,16 @@ export interface CloudBackend {
   repairReachability?(h: CloudHandle): Promise<{ changed: boolean; detail?: string }>;
 
   /**
+   * Apply an inbound-access policy to the box's per-box firewall (VPS backends
+   * only — `agentbox inbound <box>`). The backend detects the host egress IP
+   * (for `locked`/`whitelist`), resolves the policy into the firewall source
+   * list, applies it (no reboot), and returns the applied CIDRs for logging.
+   * Backends without a per-box firewall omit it → the CLI reports "not
+   * supported for provider X".
+   */
+  setInbound?(h: CloudHandle, policy: InboundPolicy): Promise<{ sources: string[] }>;
+
+  /**
    * Browser-bound signed preview URL with the auth token embedded in the URL
    * (no header needed). Used for `agentbox url` / `agentbox screen` — anywhere
    * the host hands the URL off to a browser. Distinct from `previewUrl()`

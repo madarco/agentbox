@@ -38,13 +38,20 @@ import {
   type DigitalOceanDropletStatus,
 } from './client.js';
 import { detectEgressIp } from './egress-ip.js';
-import { createPerBoxFirewall, deletePerBoxFirewall, findFirewallForDroplet, normalizeSourceCidr } from './firewall.js';
+import {
+  createPerBoxFirewall,
+  deletePerBoxFirewall,
+  findFirewallForDroplet,
+  normalizeSourceCidr,
+  syncFirewallSource,
+} from './firewall.js';
 import { pollUntil } from './poll.js';
 import { mapDigitalOceanProvisionError, validateSizeChoice } from './preflight.js';
 import { readPreparedState } from './prepared-state.js';
 import { ensureDigitalOceanBaseSnapshot } from './prepare.js';
 import { mintSshKey } from './ssh-key.js';
 import { describeInbound, parseInboundSpec, resolveInboundSources } from '@agentbox/sandbox-core';
+import type { InboundPolicy } from '@agentbox/core';
 import { waitForSsh, sshOptArgs, type SshTargetArgs } from './ssh-cli.js';
 import { SshTunnelManager, defaultBoxSshDir } from './ssh-tunnel.js';
 import { withDigitalOceanRetry } from './retry.js';
@@ -549,6 +556,47 @@ export const digitaloceanBackend: CloudBackend = {
 
   async resume(h: CloudHandle): Promise<void> {
     await this.start(h);
+  },
+
+  async setInbound(h: CloudHandle, policy: InboundPolicy): Promise<{ sources: string[] }> {
+    // Apply an inbound-access policy to the box's firewall (`agentbox inbound`).
+    // `locked`/`whitelist` re-detect the host egress; `open` skips it.
+    const c = client();
+    const id = Number.parseInt(h.sandboxId, 10);
+    const droplet = await getDropletStrict(id);
+    const fw = await findFirewallForDroplet(c, id, droplet.tags ?? []);
+    if (!fw) {
+      throw new Error(`digitalocean: no per-box firewall found for droplet ${h.sandboxId}`);
+    }
+    const hostEgress = policy.mode === 'open' ? null : `${await detectEgressIp({})}/32`;
+    const sources = resolveInboundSources(policy, hostEgress);
+    await syncFirewallSource(c, fw, sources);
+    return { sources };
+  },
+
+  async repairReachability(h: CloudHandle): Promise<{ changed: boolean; detail?: string }> {
+    // Self-heal on a connection-establishment failure: if the host's CURRENT
+    // egress IP isn't in the firewall's SSH sources (host moved networks),
+    // re-sync — merging the stored whitelist so we don't narrow an open/
+    // whitelisted box. `open` firewalls are already reachable → no-op.
+    const c = client();
+    const id = Number.parseInt(h.sandboxId, 10);
+    const droplet = await c.getDroplet(id).catch(() => null);
+    if (!droplet) return { changed: false };
+    const policy: InboundPolicy = h.inbound ?? { mode: 'locked', sources: [] };
+    if (policy.mode === 'open') return { changed: false };
+    const fw = await findFirewallForDroplet(c, id, droplet.tags ?? []).catch(() => null);
+    if (!fw) return { changed: false };
+    const allowed = fw.inbound_rules.find((r) => r.ports === '22')?.sources.addresses ?? [];
+    if (allowed.includes('0.0.0.0/0')) return { changed: false };
+    const currentEgress = `${await detectEgressIp({})}/32`;
+    if (allowed.includes(currentEgress)) return { changed: false };
+    const sources = resolveInboundSources(policy, currentEgress);
+    await syncFirewallSource(c, fw, sources);
+    return {
+      changed: true,
+      detail: `firewall updated: SSH now allowed from ${sources.join(', ')} (was ${allowed.join(', ') || '(no rule)'})`,
+    };
   },
 
   async destroy(h: CloudHandle): Promise<void> {

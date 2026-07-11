@@ -170,18 +170,24 @@ export async function deletePerBoxFirewall(
 }
 
 /**
- * Whether the firewall's allowed SSH source needs re-syncing to the current
- * egress: true when they differ AND the firewall isn't already wide-open
- * (`0.0.0.0/0`, the explicit dynamic-IP opt-in). Pure so the hint + auto-sync
- * decision is unit-testable without the Hetzner API. An absent allowed source
- * (no SSH rule) counts as a mismatch worth syncing.
+ * Whether the firewall's allowed SSH sources need re-syncing to include the
+ * current egress: true when the current egress isn't already allowed AND the
+ * firewall isn't wide-open (`0.0.0.0/0`, the `open` policy / dynamic-IP opt-in).
+ * Pure so the hint + auto-sync decision is unit-testable without the Hetzner
+ * API. Empty sources (no SSH rule) counts as a mismatch worth syncing. Accepts
+ * a bare string for back-compat callers.
  */
 export function firewallNeedsSync(
-  allowedSource: string | undefined,
+  allowedSources: string | string[] | undefined,
   currentEgress: string,
 ): boolean {
-  if (allowedSource === '0.0.0.0/0') return false;
-  return allowedSource !== currentEgress;
+  const list = Array.isArray(allowedSources)
+    ? allowedSources
+    : allowedSources
+      ? [allowedSources]
+      : [];
+  if (list.includes('0.0.0.0/0')) return false;
+  return !list.includes(currentEgress);
 }
 
 /**
