@@ -35,9 +35,11 @@ import {
   stageOpencodeStaticForUpload,
   type StageResult,
 } from '@agentbox/sandbox-cloud';
+import { loadEffectiveConfig } from '@agentbox/config';
 import { ensureDigitalOceanCredentials } from './credentials.js';
 import { detectEgressIp } from './egress-ip.js';
 import { createPerBoxFirewall, deletePerBoxFirewall, normalizeSourceCidr } from './firewall.js';
+import { resolveProjectChoice } from './preflight.js';
 import { makeDigitalOceanClient, type DigitalOceanClient } from './client.js';
 import { generatePrepareCloudInit } from './cloud-init.js';
 import { preparedStatePath, readPreparedState, writePreparedState } from './prepared-state.js';
@@ -59,6 +61,12 @@ export interface PrepareDigitalOceanOptions {
   region?: string;
   /** Droplet size slug (defaults to `s-2vcpu-4gb` — 2 vCPU / 4 GB / 80 GB). */
   size?: string;
+  /**
+   * DigitalOcean Project (name or id) for the temp bake Droplet. Defaults to
+   * `box.digitaloceanProject`, so the bake doesn't show up in the account's
+   * default project while every box lands somewhere else.
+   */
+  project?: string;
   /**
    * How the bake installs Claude Code: `native` (default) or `npm`. Threaded
    * into install-box.sh via `AGENTBOX_CLAUDE_INSTALL`. The `npm` escape hatch
@@ -194,6 +202,27 @@ export async function prepareDigitalOcean(
       ipv6: false,
     });
     dropletId = created.droplet.id;
+
+    // 3b. Place the bake Droplet in the same DO Project as the boxes, so it doesn't
+    // surface in the account's default project for the 5-30 min it lives. Wholly
+    // best-effort: a bake is expensive, and neither a project typo nor an API blip
+    // is worth failing one over — the create path reports a bad project loudly.
+    const wantedProject = (
+      opts.project ??
+      (await loadEffectiveConfig(process.cwd())).effective.box.digitaloceanProject
+    ).trim();
+    if (wantedProject.length > 0) {
+      try {
+        const projectId = resolveProjectChoice(wantedProject, await client.listProjects());
+        await client.assignProjectResources(projectId, [`do:droplet:${String(dropletId)}`]);
+        progress(`bake droplet assigned to project ${wantedProject}`);
+      } catch (assignErr) {
+        progress(
+          `WARN — could not assign the bake droplet to project ${wantedProject} (continuing): ` +
+            `${assignErr instanceof Error ? assignErr.message : String(assignErr)}`,
+        );
+      }
+    }
 
     // 4. Wait for the droplet to become active + expose a public IPv4, then ssh.
     progress(`droplet ${String(dropletId)} created; waiting for it to boot`);

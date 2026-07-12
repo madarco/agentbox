@@ -11,7 +11,12 @@
  */
 
 import { UserFacingError } from '@agentbox/core';
-import { DigitalOceanApiError, type DigitalOceanSize, type DigitalOceanSnapshot } from './client.js';
+import {
+  DigitalOceanApiError,
+  type DigitalOceanProject,
+  type DigitalOceanSize,
+  type DigitalOceanSnapshot,
+} from './client.js';
 
 export interface SizeChoice {
   size: string;
@@ -81,6 +86,50 @@ export function validateSizeChoice(
         'Pick one with `--location <slug>` or `agentbox config set box.digitaloceanRegion <slug>`.',
     );
   }
+}
+
+/**
+ * Resolve `box.digitaloceanProject` (a project **name or id**) to a project id,
+ * throwing a `UserFacingError` listing the real projects when it matches
+ * nothing.
+ *
+ * This runs in the create preflight, before any billable resource exists,
+ * because the assignment itself cannot: DigitalOcean has no project field on
+ * droplet-create, so the assign only happens once the Droplet is up — far too
+ * late to tell someone they typed the project name wrong.
+ *
+ * Name matching is case-insensitive; an exact id match wins over a name match so
+ * a project literally named like another's id can't shadow it.
+ */
+export function resolveProjectChoice(project: string, projects: DigitalOceanProject[]): string {
+  const wanted = project.trim();
+  if (wanted.length === 0) {
+    throw new UserFacingError('DigitalOcean project must not be empty.');
+  }
+
+  const byId = projects.find((p) => p.id === wanted);
+  if (byId) return byId.id;
+
+  const matches = projects.filter((p) => p.name.toLowerCase() === wanted.toLowerCase());
+  if (matches.length === 1) return matches[0]!.id;
+
+  if (matches.length > 1) {
+    throw new UserFacingError(
+      `DigitalOcean project name "${wanted}" is ambiguous — ${String(matches.length)} projects share it.\n` +
+        `Use the id instead: ${matches.map((p) => p.id).join(', ')}.\n` +
+        'Set it with `agentbox config set box.digitaloceanProject <id>`.',
+    );
+  }
+
+  const known = projects
+    .map((p) => (p.is_default ? `${p.name} (default)` : p.name))
+    .join(', ');
+  throw new UserFacingError(
+    `DigitalOcean project "${wanted}" not found on this account.\n` +
+      (known.length > 0 ? `Your projects: ${known}.\n` : 'This account has no projects.\n') +
+      'Set it with `agentbox config set box.digitaloceanProject <name|id>`, ' +
+      'or unset it to use the account default.',
+  );
 }
 
 /**

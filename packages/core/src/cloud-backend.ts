@@ -63,6 +63,12 @@ export interface CloudProvisionRequest {
    */
   location?: string;
   /**
+   * Backend-interpreted resource grouping to place the box in. Only DigitalOcean
+   * reads it today (a Project name or UUID, from `box.digitaloceanProject`);
+   * unset leaves the box in the account's default grouping.
+   */
+  project?: string;
+  /**
    * Max session length in ms before the backend auto-snapshots/stops the
    * sandbox. Backends that don't model a session timeout ignore it; Vercel
    * maps it to `Sandbox.create({ timeout })`.

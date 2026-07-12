@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { UserFacingError } from '@agentbox/core';
 import { DigitalOceanApiError, type DigitalOceanSize, type DigitalOceanSnapshot } from '../src/client.js';
-import { mapDigitalOceanProvisionError, validateSizeChoice } from '../src/preflight.js';
+import { mapDigitalOceanProvisionError, validateSizeChoice, resolveProjectChoice } from '../src/preflight.js';
 
 function size(over: Partial<DigitalOceanSize> & { slug: string }): DigitalOceanSize {
   return {
@@ -106,5 +106,52 @@ describe('mapDigitalOceanProvisionError', () => {
   it('passes an unrecognized DO error through unchanged', () => {
     const err = new DigitalOceanApiError(400, 'bad_request', 'something else');
     expect(mapDigitalOceanProvisionError(err, choice)).toBe(err);
+  });
+});
+
+describe('resolveProjectChoice', () => {
+  const projects = [
+    { id: '8bab37f1-46a2-4ffb-a496-0e9bf27d1334', name: 'first-project', is_default: true },
+    { id: 'ffffffff-0000-1111-2222-333333333333', name: 'client-x', is_default: false },
+  ];
+
+  it('resolves a project by name, case-insensitively', () => {
+    expect(resolveProjectChoice('client-x', projects)).toBe(projects[1]!.id);
+    expect(resolveProjectChoice('Client-X', projects)).toBe(projects[1]!.id);
+  });
+
+  it('passes an id straight through', () => {
+    expect(resolveProjectChoice(projects[0]!.id, projects)).toBe(projects[0]!.id);
+  });
+
+  // This is the whole reason the check is a *preflight*: DO can only assign a
+  // project after the Droplet exists, so a typo has to be caught before we spend
+  // money, not after.
+  it('throws and lists the real projects when the name is unknown', () => {
+    expect(() => resolveProjectChoice('typo', projects)).toThrow(/not found/i);
+    try {
+      resolveProjectChoice('typo', projects);
+    } catch (err) {
+      const msg = (err as Error).message;
+      expect(msg).toContain('first-project (default)');
+      expect(msg).toContain('client-x');
+      expect(msg).toContain('box.digitaloceanProject');
+    }
+  });
+
+  it('refuses an ambiguous name rather than guessing', () => {
+    const dupes = [
+      { id: 'a', name: 'same', is_default: false },
+      { id: 'b', name: 'same', is_default: false },
+    ];
+    expect(() => resolveProjectChoice('same', dupes)).toThrow(/ambiguous/i);
+  });
+
+  it('an exact id match wins over a name that collides with it', () => {
+    const tricky = [
+      { id: 'abc', name: 'zzz', is_default: false },
+      { id: 'xyz', name: 'abc', is_default: false },
+    ];
+    expect(resolveProjectChoice('abc', tricky)).toBe('abc');
   });
 });

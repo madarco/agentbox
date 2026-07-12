@@ -101,3 +101,27 @@ describe('cloudSizingProviderOptions', () => {
     expect(cloudSizingProviderOptions('daytona', cfg, { location: 'fsn1' })).toEqual({});
   });
 });
+
+describe('digitalocean project', () => {
+  it('passes box.digitaloceanProject through as providerOptions.project', () => {
+    const cfg = makeCfg({ digitaloceanRegion: 'nyc3', digitaloceanProject: 'client-x' });
+    expect(cloudSizingProviderOptions('digitalocean', cfg)).toEqual({
+      location: 'nyc3',
+      project: 'client-x',
+    });
+  });
+
+  // Unset must emit nothing: an absent project means "the account's default",
+  // which is DigitalOcean's own behavior and costs no API call in the backend.
+  it('emits nothing when unset', () => {
+    const cfg = makeCfg({ digitaloceanRegion: 'nyc3', digitaloceanProject: '' });
+    expect(cloudSizingProviderOptions('digitalocean', cfg)).toEqual({ location: 'nyc3' });
+  });
+
+  it('is ignored for every other provider', () => {
+    const cfg = makeCfg({ digitaloceanProject: 'client-x' });
+    for (const p of ['hetzner', 'daytona', 'vercel', 'e2b', 'docker']) {
+      expect(cloudSizingProviderOptions(p, cfg).project).toBeUndefined();
+    }
+  });
+});

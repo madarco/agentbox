@@ -90,6 +90,19 @@ export interface DigitalOceanSize {
 }
 
 /**
+ * A DigitalOcean Project — the account's resource-grouping unit (billing /
+ * visibility). `id` is a UUID. Exactly one project has `is_default`, and every
+ * resource lands there unless assigned elsewhere. See GET /v2/projects.
+ */
+export interface DigitalOceanProject {
+  id: string;
+  name: string;
+  is_default: boolean;
+  purpose?: string;
+  environment?: string;
+}
+
+/**
  * A firewall rule's source (inbound) / destination (outbound) selector.
  * `addresses` accepts IPv4/IPv6 + CIDR; `tags` auto-includes droplets.
  */
@@ -205,6 +218,16 @@ export interface DigitalOceanClient {
   deleteSnapshot(id: string): Promise<void>;
   /** GET /sizes — the Droplet-plan catalog (paginated). Used by the create preflight. */
   listSizes(): Promise<DigitalOceanSize[]>;
+  /** GET /projects — the account's projects (paginated). Used by the create preflight + login picker. */
+  listProjects(): Promise<DigitalOceanProject[]>;
+  /** GET /projects/default — the project resources land in when unassigned. Returns null on 404. */
+  getDefaultProject(): Promise<DigitalOceanProject | null>;
+  /**
+   * POST /projects/{id}/resources — move resources into a project. DO has no
+   * project field on droplet-create, so this is the only way in, and it can only
+   * run once the droplet exists.
+   */
+  assignProjectResources(projectId: string, urns: string[]): Promise<void>;
   /** POST /firewalls. */
   createFirewall(req: CreateFirewallRequest): Promise<DigitalOceanFirewall>;
   /** GET /firewalls/{id}. Returns null on 404. */
@@ -388,6 +411,18 @@ export function makeDigitalOceanClient(opts: MakeClientOptions = {}): DigitalOce
     },
     async listSizes() {
       return paginate<DigitalOceanSize>(withPerPage('/sizes'), 'sizes');
+    },
+    async listProjects() {
+      return paginate<DigitalOceanProject>(withPerPage('/projects'), 'projects');
+    },
+    async getDefaultProject() {
+      const r = await req<{ project: DigitalOceanProject }>('GET', '/projects/default');
+      return r?.project ?? null;
+    },
+    async assignProjectResources(projectId, urns) {
+      await req<unknown>('POST', `/projects/${encodeURIComponent(projectId)}/resources`, {
+        resources: urns,
+      });
     },
     async createFirewall(reqBody) {
       const r = await reqExpect<{ firewall: DigitalOceanFirewall }>('POST', '/firewalls', reqBody);

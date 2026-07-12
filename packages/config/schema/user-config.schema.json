@@ -50,6 +50,7 @@
         "bundleDepth": { "type": "integer", "minimum": 0 },
         "hetznerLocation": { "type": "string", "minLength": 1 },
         "digitaloceanRegion": { "type": "string", "minLength": 1 },
+        "digitaloceanProject": { "type": "string", "minLength": 1 },
         "inbound": { "type": "string", "minLength": 1 },
         "vercelTimeoutMs": { "type": "integer", "minimum": 1 },
         "vercelNetworkPolicy": { "type": "string" },

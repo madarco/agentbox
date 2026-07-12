@@ -40,6 +40,11 @@ build images from a Dockerfile). Three things differ from Hetzner:
 
 Defaults: size `s-2vcpu-4gb`, region `nyc3`, stock image `ubuntu-24-04-x64`.
 Override per box with `box.sizeDigitalocean` / `AGENTBOX_DIGITALOCEAN_REGION`.
+**DO Project**: `box.digitaloceanProject` (name or UUID; picked at `digitalocean login`) places boxes
+in a specific DigitalOcean Project. DO has no project field on droplet-create, so the backend resolves
+the name in the create preflight (fail-fast on a typo, before anything bills) and then assigns via
+`POST /projects/{id}/resources` **best-effort** after the droplet exists — a failed assign warns and
+keeps the box rather than tearing a working box down. Unset = the account's default project.
 
 ## 1. The provider abstraction
 

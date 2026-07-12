@@ -97,11 +97,13 @@ export {
   type DigitalOceanFirewall,
   type DigitalOceanInboundRule,
   type DigitalOceanOutboundRule,
+  type DigitalOceanProject,
   type DigitalOceanSize,
   type DigitalOceanSnapshot,
 } from './client.js';
 export {
   validateSizeChoice,
+  resolveProjectChoice,
   mapDigitalOceanProvisionError,
   type SizeChoice,
 } from './preflight.js';

@@ -15,7 +15,7 @@
  */
 
 import { log } from '@clack/prompts';
-import { findProjectRoot } from '@agentbox/config';
+import { findProjectRoot, loadEffectiveConfig } from '@agentbox/config';
 import { readState, resolveBoxRef } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { makeDigitalOceanClient, type DigitalOceanDroplet } from './client.js';
@@ -45,7 +45,7 @@ const loginSub = new Command('login')
   .action(async (opts: LoginOpts) => {
     try {
       if (opts.status) {
-        printStatus();
+        await printStatus();
         return;
       }
       if (!process.stdin.isTTY) {
@@ -68,7 +68,7 @@ const loginSub = new Command('login')
     }
   });
 
-function printStatus(): void {
+async function printStatus(): Promise<void> {
   const s = readDigitalOceanCredStatus();
   if (s.source === 'none') {
     process.stdout.write(
@@ -81,6 +81,11 @@ function printStatus(): void {
   if (s.source === 'secrets.env') lines.push(`  file:   ${secretsPath()}`);
   if (s.token) lines.push(`  token:  ${maskKey(s.token)}`);
   if (s.endpoint) lines.push(`  api:    ${s.endpoint}`);
+  // Where boxes land. An unset key is meaningful (DigitalOcean's own default
+  // project), so state it rather than omitting the line — which project boxes
+  // went into being invisible is the whole reason for this feature.
+  const project = (await loadEffectiveConfig(process.cwd())).effective.box.digitaloceanProject;
+  lines.push(`  project: ${project || '(account default)'}`);
   process.stdout.write(lines.join('\n') + '\n');
 }
 

@@ -136,3 +136,47 @@ describe('makeDigitalOceanClient', () => {
     await expect(client.deleteTag('agentbox-box-x')).resolves.toBeUndefined();
   });
 });
+
+describe('projects', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    fetchMock = vi.fn();
+  });
+
+  it('paginates listProjects', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          projects: [{ id: 'p1', name: 'first-project', is_default: true }],
+          links: { pages: { next: 'https://api.digitalocean.com/v2/projects?page=2' } },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, { projects: [{ id: 'p2', name: 'client-x', is_default: false }] }),
+      );
+
+    const projects = await makeClient(fetchMock as unknown as typeof fetch).listProjects();
+    expect(projects.map((p) => p.id)).toEqual(['p1', 'p2']);
+  });
+
+  it('returns null when there is no default project (404)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(404, { message: 'not found' }));
+    const p = await makeClient(fetchMock as unknown as typeof fetch).getDefaultProject();
+    expect(p).toBeNull();
+  });
+
+  // The URN shape is the whole contract of the assign call — DigitalOcean has no
+  // project field on droplet-create, so this request is the only way a box ever
+  // reaches its project.
+  it('assigns a droplet by URN', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { resources: [] }));
+    await makeClient(fetchMock as unknown as typeof fetch).assignProjectResources('p2', [
+      'do:droplet:123',
+    ]);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.digitalocean.com/v2/projects/p2/resources');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ resources: ['do:droplet:123'] });
+  });
+});

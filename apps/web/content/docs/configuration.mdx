@@ -124,6 +124,7 @@ See [local Docker](/docs/local-docker), [Hetzner](/docs/hetzner), [Daytona](/doc
 | `box.sizeDocker` | string (advanced) | empty | reserved — docker uses `box.memory` / `box.cpus` / `box.disk` |
 | `box.hetznerLocation` | string | `nbg1` | Hetzner datacenter new boxes are created in (`nbg1`, `fsn1`, `hel1`, `ash`); override per box with `--location`. Hetzner-only |
 | `box.digitaloceanRegion` | string | `nyc3` | DigitalOcean region new boxes are created in (`nyc3`, `sfo3`, `ams3`, `fra1`, …); override per box with `--location`. DigitalOcean-only |
+| `box.digitaloceanProject` | string | empty | the [DigitalOcean Project](/docs/digitalocean#projects) new boxes are placed in — a project name or its UUID. Empty leaves them in the account's default project. Pick it at `agentbox digitalocean login`, or set it per repo in `agentbox.yaml`. DigitalOcean-only |
 | `box.inbound` | string | `locked` | inbound-access policy for the VPS per-box firewall. `locked` = SSH from your host egress IP only; `open` = SSH from anywhere (`0.0.0.0/0`, key-only — reach a box from a phone with the laptop off); a CIDR list (e.g. `203.0.113.5/32`) = host egress plus those. Override per box with `--inbound` or after create with `agentbox inbound <box>`. Hetzner/DigitalOcean-only. See [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline) |
 
 ### Box image

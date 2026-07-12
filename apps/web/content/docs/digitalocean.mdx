@@ -113,6 +113,32 @@ Before AgentBox creates any billable resource (firewall, SSH key, Droplet), it v
 New DigitalOcean accounts start with a low Droplet limit. If DigitalOcean refuses the create because you've hit it, AgentBox surfaces the limits explanation and points you at the DigitalOcean Console (**Account → your team → Droplet limit**) to request an increase. An out-of-capacity error suggests trying another `--location`.
 </Callout>
 
+## Projects
+
+DigitalOcean groups resources into **Projects** (for billing and visibility). By default every box lands in your account's **default project** — which is fine until you keep client or environment work separate.
+
+`agentbox digitalocean login` asks which project new boxes should go into (when your account has more than one) and stores the answer in `box.digitaloceanProject`. You can also set it directly, with either the project's name or its UUID:
+
+```bash
+agentbox config set box.digitaloceanProject client-x
+```
+
+Because it's a normal config key it follows the usual [precedence](/docs/configuration) — so a repo can put its own boxes in their own project via `agentbox.yaml`, while everything else uses your global choice:
+
+```yaml
+defaults:
+  box:
+    digitaloceanProject: client-x
+```
+
+Leave it unset for today's behavior (the account default project). A name that doesn't match any of your projects fails **before** anything is created, listing the real ones.
+
+<Callout title="Placement is best-effort">
+DigitalOcean has no project field on Droplet-create, so AgentBox assigns the box to its project immediately *after* creating it. If that one call fails (an API blip, a token without project write), the box is still created and fully usable — it just stays in the default project, and the create log says so. A working box is never torn down over a grouping error.
+</Callout>
+
+The temporary Droplet that `agentbox prepare` bakes the base snapshot on is placed in the same project, so it doesn't show up in the default one for the few minutes it lives.
+
 ## Firewall
 
 Each box gets its own DigitalOcean Cloud Firewall with a single inbound rule: TCP port 22 from your host's egress IP only (plus the mandatory allow-all outbound rules DigitalOcean requires, or the Droplet would have no egress). All box traffic flows over SSH, so port 22 from your IP is genuinely all that's exposed inbound.

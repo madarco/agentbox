@@ -19,9 +19,11 @@ import {
   note,
   outro,
   password,
+  select,
   spinner,
 } from '@clack/prompts';
-import { makeDigitalOceanClient } from './client.js';
+import { loadEffectiveConfig, setConfigValue } from '@agentbox/config';
+import { makeDigitalOceanClient, type DigitalOceanProject } from './client.js';
 import { ensureDigitalOceanEnvLoaded } from './env-loader.js';
 
 // Ctrl+C at a prompt resolves with the cancel symbol; turn that into a real
@@ -95,6 +97,7 @@ export async function ensureDigitalOceanCredentials(
     if (result.ok) {
       persistCredentials(creds);
       log.success(`DigitalOcean credentials saved to ${secretsPath()}`);
+      await promptForProject(creds);
       outro('Setup complete.');
       return;
     }
@@ -113,6 +116,64 @@ export async function ensureDigitalOceanCredentials(
     throw new Error(`DigitalOcean credentials rejected: ${result.message}`);
   }
 }
+
+/**
+ * Offer to pick the DigitalOcean **Project** new boxes land in, right after the
+ * token validates — the one moment we hold a known-good token.
+ *
+ * The choice goes to the **global config** (`box.digitaloceanProject`), not
+ * `secrets.env`: it is a placement preference, not a secret, and it has to take
+ * part in config layering so a repo can override it in `agentbox.yaml`.
+ *
+ * Entirely optional. Skipping (or an account with a single project, or a
+ * failure to list them) leaves the key unset, which means DigitalOcean's own
+ * behavior: everything lands in the account's default project. A network blip
+ * here must never fail an otherwise-good login.
+ */
+async function promptForProject(creds: Credentials): Promise<void> {
+  let projects: DigitalOceanProject[];
+  try {
+    const client = makeDigitalOceanClient({ token: creds.token, endpoint: creds.endpoint });
+    projects = await client.listProjects();
+  } catch (err) {
+    log.warn(
+      `Could not list your DigitalOcean projects (${err instanceof Error ? err.message : String(err)}) — ` +
+        "boxes will use the account's default project. Set it later with " +
+        '`agentbox config set box.digitaloceanProject <name|id>`.',
+    );
+    return;
+  }
+
+  // Nothing to choose between — don't ask a question with one answer.
+  if (projects.length < 2) return;
+
+  const current = (await loadEffectiveConfig(process.cwd())).effective.box.digitaloceanProject;
+  const choice = exitOnCancel(
+    await select({
+      message: 'Which DigitalOcean project should new boxes go into?',
+      initialValue: current || SKIP_PROJECT,
+      options: [
+        ...projects.map((p) => ({
+          value: p.id,
+          label: p.is_default ? `${p.name} (account default)` : p.name,
+          hint: p.id,
+        })),
+        { value: SKIP_PROJECT, label: "Skip — use the account's default project" },
+      ],
+    }),
+  );
+
+  if (choice === SKIP_PROJECT) {
+    log.info("Boxes will go into your account's default DigitalOcean project.");
+    return;
+  }
+
+  await setConfigValue('global', 'box.digitaloceanProject', choice, process.cwd());
+  const picked = projects.find((p) => p.id === choice);
+  log.success(`New boxes will be created in the "${picked?.name ?? choice}" project.`);
+}
+
+const SKIP_PROJECT = '__skip__';
 
 function hasUsableCredentials(): boolean {
   return typeof process.env.DIGITALOCEAN_TOKEN === 'string' && process.env.DIGITALOCEAN_TOKEN.length > 0;

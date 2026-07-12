@@ -579,6 +579,10 @@ export function createCloudProvider(
       const inboundOpt = req.providerOptions?.['inbound'];
       const inbound =
         typeof inboundOpt === 'string' && inboundOpt.trim() !== '' ? inboundOpt.trim() : undefined;
+      // Cloud resource grouping (DigitalOcean's `--do-project` / `box.digitaloceanProject`).
+      const projectOpt = req.providerOptions?.['project'];
+      const project =
+        typeof projectOpt === 'string' && projectOpt.trim() !== '' ? projectOpt.trim() : undefined;
 
       // Per-box tokens: `relayToken` authenticates the in-box agent to its
       // in-sandbox relay (`/events`, `/rpc` bearer); `bridgeToken` separately
@@ -670,6 +674,7 @@ export function createCloudProvider(
           resources,
           size,
           location,
+          project,
           inbound,
           timeoutMs,
           exposePorts: exposeServicePorts,

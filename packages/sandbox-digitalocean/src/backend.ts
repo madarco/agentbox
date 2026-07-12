@@ -46,7 +46,11 @@ import {
   syncFirewallSource,
 } from './firewall.js';
 import { pollUntil } from './poll.js';
-import { mapDigitalOceanProvisionError, validateSizeChoice } from './preflight.js';
+import {
+  mapDigitalOceanProvisionError,
+  resolveProjectChoice,
+  validateSizeChoice,
+} from './preflight.js';
 import { readPreparedState } from './prepared-state.js';
 import { ensureDigitalOceanBaseSnapshot } from './prepare.js';
 import { mintSshKey } from './ssh-key.js';
@@ -322,6 +326,17 @@ export const digitaloceanBackend: CloudBackend = {
     validateSizeChoice(choice, sizeCatalog, snapshotMeta);
     const plan = sizeCatalog.find((s) => s.slug === size);
 
+    // The DO Project the box should land in (`--do-project` / `box.digitaloceanProject`),
+    // resolved from a name-or-id to an id here. This has to be a *preflight* check:
+    // DigitalOcean has no project field on droplet-create, so the assignment can
+    // only run once the Droplet exists — far too late to tell someone they typed
+    // the project name wrong. Unset (the common case) costs no API call.
+    const projectWanted = (req.project ?? '').trim();
+    let projectId: string | null = null;
+    if (projectWanted.length > 0) {
+      projectId = resolveProjectChoice(projectWanted, await c.listProjects());
+    }
+
     // 2. Resolve the inbound-access policy (`--inbound` / `box.inbound`) into
     // the firewall's source CIDRs. `locked`/`whitelist` need the host egress IP
     // (env override wins, else detect); `open` (0.0.0.0/0) skips detection.
@@ -397,6 +412,26 @@ export const digitaloceanBackend: CloudBackend = {
       }
       dropletId = created.droplet.id;
       progress(`droplet ${String(dropletId)} created; waiting for it to boot`);
+
+      // 6b. Place the droplet in its DO Project. DigitalOcean has no project field
+      // on droplet-create, so this can only happen now — which means it can fail on
+      // a droplet that is otherwise perfectly good. Best-effort by design: a box
+      // that works but sits in the wrong project is a cosmetic/billing annoyance,
+      // whereas throwing here would hit the catch below and tear the whole box down.
+      // The project *name* was already validated in the preflight, so anything that
+      // fails here is a live API problem, not a typo.
+      if (projectId !== null) {
+        try {
+          await c.assignProjectResources(projectId, [`do:droplet:${String(dropletId)}`]);
+          progress(`droplet ${String(dropletId)} assigned to project ${projectWanted}`);
+        } catch (assignErr) {
+          onLog(
+            `digitalocean: WARN — could not assign droplet ${String(dropletId)} to project ` +
+              `${projectWanted} (continuing; it stays in the account's default project): ` +
+              `${assignErr instanceof Error ? assignErr.message : String(assignErr)}`,
+          );
+        }
+      }
 
       // 7. Poll until the droplet is active AND has a public IPv4 (DigitalOcean
       // returns neither at create time).

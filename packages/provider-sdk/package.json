@@ -1,6 +1,6 @@
 {
   "name": "@madarco/agentbox-provider-sdk",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Public SDK for building AgentBox sandbox providers as installable community packages",
   "license": "MIT",
   "author": "Marco D'Alia",

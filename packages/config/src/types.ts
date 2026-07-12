@@ -124,6 +124,7 @@ export interface UserConfig {
     bundleDepth?: number;
     hetznerLocation?: string;
     digitaloceanRegion?: string;
+    digitaloceanProject?: string;
     vercelTimeoutMs?: number;
     vercelNetworkPolicy?: string;
     e2bTimeoutMs?: number;
@@ -282,6 +283,7 @@ export interface EffectiveConfig {
     bundleDepth: number | undefined;
     hetznerLocation: string;
     digitaloceanRegion: string;
+    digitaloceanProject: string;
     vercelTimeoutMs: number;
     vercelNetworkPolicy: string;
     e2bTimeoutMs: number;
@@ -447,6 +449,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     bundleDepth: undefined,
     hetznerLocation: 'nbg1',
     digitaloceanRegion: 'nyc3',
+    // Empty = leave boxes in the account's default project (DigitalOcean's own
+    // behavior). There is no sane default id to pick — it differs per account.
+    digitaloceanProject: '',
     vercelTimeoutMs: 2_700_000,
     vercelNetworkPolicy: '',
     e2bTimeoutMs: 2_700_000,
@@ -743,6 +748,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'string',
     description:
       'DigitalOcean region new --provider digitalocean boxes are created in (e.g. `nyc3`, `nyc1`, `sfo3`, `ams3`, `fra1`). Default `nyc3`. Overridable per-create with `--location`. DigitalOcean-only; ignored by other providers.',
+  },
+  {
+    key: 'box.digitaloceanProject',
+    type: 'string',
+    description:
+      "DigitalOcean Project new --provider digitalocean boxes are placed in — a name or the project's UUID. Unset (the default) leaves boxes in the account's default project. Set it per repo via `agentbox.yaml`, or globally at `agentbox digitalocean login`. DigitalOcean-only; ignored by other providers.",
   },
   {
     key: 'box.vercelTimeoutMs',

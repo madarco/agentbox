@@ -85,6 +85,7 @@ maintenance:
   { name: 'box claudeInstall npm', yaml: 'box:\n  claudeInstall: npm\n' },
   { name: 'box claudeInstall native', yaml: 'box:\n  claudeInstall: native\n' },
   { name: 'box hetznerLocation', yaml: 'box:\n  hetznerLocation: fsn1\n' },
+  { name: 'box digitaloceanProject', yaml: 'box:\n  digitaloceanProject: client-x\n' },
   { name: 'maintenance only', yaml: 'maintenance:\n  pruneProjectConfigs: true\n' },
   { name: 'portless only', yaml: 'portless:\n  enabled: true\n' },
   { name: 'portless stateDir', yaml: 'portless:\n  enabled: false\n  stateDir: /tmp/portless\n' },
@@ -158,6 +159,10 @@ const INVALID: Fixture[] = [
   {
     name: 'box.hetznerLocation wrong type',
     yaml: 'box:\n  hetznerLocation: 4\n',
+  },
+  {
+    name: 'box.digitaloceanProject wrong type',
+    yaml: 'box:\n  digitaloceanProject: 7\n',
   },
   {
     name: 'box claudeInstall unknown enum value',

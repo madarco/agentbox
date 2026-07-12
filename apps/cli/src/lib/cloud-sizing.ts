@@ -24,6 +24,9 @@ export interface CloudSizingFlags {
  *   `box.hetznerLocation`.
  * - **digitalocean**: `location` — region, `--location` flag first, else
  *   `box.digitaloceanRegion`.
+ * - **digitalocean**: `project` — the DO Project the box is placed in (name or
+ *   UUID), from `box.digitaloceanProject`. Config-only, no flag. Absent = the
+ *   account's default project.
  * - **hetzner + digitalocean**: `inbound` — per-box firewall access policy
  *   (`locked`/`open`/CIDR list), `--inbound` flag first, else `box.inbound`.
  * - **vercel**: `timeoutMs` (session length before auto-snapshot), `networkPolicy`.
@@ -49,6 +52,13 @@ export function cloudSizingProviderOptions(
   if (providerName === 'digitalocean') {
     const location = (flags.location?.trim() || cfg.box.digitaloceanRegion || '').trim();
     if (location.length > 0) out.location = location;
+    // DigitalOcean Project (name or UUID). Config-only — there is no flag, since
+    // "project" already means the host repo in AgentBox and the layered config
+    // (workspace > project > global) already gives per-repo control. Absent = the
+    // account's default project, which is DO's own behavior, so the common case
+    // emits nothing.
+    const project = (cfg.box.digitaloceanProject || '').trim();
+    if (project.length > 0) out.project = project;
   }
   // VPS-only inbound-access policy (`--inbound` / `box.inbound`). Passed through
   // to the backend's per-box firewall; other providers ignore it. Only emitted
