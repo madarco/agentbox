@@ -108,6 +108,18 @@ export const PROVIDERS = [
     imageDesc:
       'Per-provider override of `box.image` for digitalocean (numeric snapshot id). Written by `agentbox prepare --provider digitalocean`.',
   },
+  {
+    name: 'remote-docker',
+    kind: 'cloud',
+    label: 'Remote Docker (your own machine over SSH)',
+    loginHint: 'point it at an SSH host you can already reach (no login needed)',
+    rebuildMinutes: '1-3',
+    blurb: 'Docker on a remote machine over SSH',
+    sizeDesc:
+      'Per-provider override of `box.size` for remote-docker. `cpu-memory` GB spec (e.g. `4-8`) mapped to the container\'s `--cpus` / `--memory`. Empty = unlimited (the remote engine\'s defaults).',
+    imageDesc:
+      'Per-provider override of `box.image` for remote-docker (a docker image ref on the REMOTE engine). Normally left empty: the provider derives a fingerprint-tagged ref (`agentbox/box:<sha12>`) and ensures it on the remote itself.',
+  },
 ] as const satisfies readonly ProviderMeta[];
 
 /** Sandbox backend new boxes are created on. Derived from the `PROVIDERS` table. */
@@ -135,9 +147,16 @@ export function providerMeta(name: ProviderKind): ProviderMeta {
  * Capitalize a provider name for its config-key suffix: `e2b` -> `E2b`,
  * `docker` -> `Docker`, `digitalocean` -> `Digitalocean`. First char upper,
  * the rest verbatim — matches the hand-written keys this table replaced.
+ *
+ * A hyphenated name camelizes across the hyphen (`remote-docker` ->
+ * `RemoteDocker`), because `box.imageRemote-docker` is not a legal config key.
  */
 export function providerKeyCap(name: string): string {
-  return name.charAt(0).toUpperCase() + name.slice(1);
+  return name
+    .split('-')
+    .filter((seg) => seg.length > 0)
+    .map((seg) => seg.charAt(0).toUpperCase() + seg.slice(1))
+    .join('');
 }
 
 /** Per-provider config key, e.g. `('image','hetzner')` -> `'box.imageHetzner'`. */

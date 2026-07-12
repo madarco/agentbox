@@ -73,6 +73,7 @@ export interface UserConfig {
     defaultCheckpointVercel?: string;
     defaultCheckpointE2b?: string;
     defaultCheckpointDigitalocean?: string;
+    defaultCheckpointRemoteDocker?: string;
     /**
      * Generic VM-size fallback for cloud providers. Provider-interpreted:
      * Hetzner = server type string (e.g. `cx33`); Daytona = `cpu-memory-disk`
@@ -88,6 +89,7 @@ export interface UserConfig {
     sizeVercel?: string;
     sizeE2b?: string;
     sizeDigitalocean?: string;
+    sizeRemoteDocker?: string;
     withPlaywright?: boolean;
     /**
      * How the base image/snapshot installs Claude Code at bake time. Bake-time
@@ -115,6 +117,7 @@ export interface UserConfig {
     imageVercel?: string;
     imageE2b?: string;
     imageDigitalocean?: string;
+    imageRemoteDocker?: string;
     imageRegistry?: string;
     dockerCacheShared?: boolean;
     memory?: number;
@@ -125,6 +128,7 @@ export interface UserConfig {
     hetznerLocation?: string;
     digitaloceanRegion?: string;
     digitaloceanProject?: string;
+    remoteDockerHost?: string;
     vercelTimeoutMs?: number;
     vercelNetworkPolicy?: string;
     e2bTimeoutMs?: number;
@@ -250,6 +254,7 @@ export interface EffectiveConfig {
     defaultCheckpointVercel: string;
     defaultCheckpointE2b: string;
     defaultCheckpointDigitalocean: string;
+    defaultCheckpointRemoteDocker: string;
     size: string;
     sizeDocker: string;
     sizeDaytona: string;
@@ -257,6 +262,7 @@ export interface EffectiveConfig {
     sizeVercel: string;
     sizeE2b: string;
     sizeDigitalocean: string;
+    sizeRemoteDocker: string;
     withPlaywright: boolean;
     claudeInstall: ClaudeInstallMethod;
     withEnv: boolean;
@@ -274,6 +280,7 @@ export interface EffectiveConfig {
     imageVercel: string;
     imageE2b: string;
     imageDigitalocean: string;
+    imageRemoteDocker: string;
     imageRegistry: string;
     dockerCacheShared: boolean;
     memory: number;
@@ -284,6 +291,7 @@ export interface EffectiveConfig {
     hetznerLocation: string;
     digitaloceanRegion: string;
     digitaloceanProject: string;
+    remoteDockerHost: string;
     vercelTimeoutMs: number;
     vercelNetworkPolicy: string;
     e2bTimeoutMs: number;
@@ -414,6 +422,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     defaultCheckpointVercel: '',
     defaultCheckpointE2b: '',
     defaultCheckpointDigitalocean: '',
+    defaultCheckpointRemoteDocker: '',
     size: '',
     sizeDocker: '',
     sizeDaytona: '',
@@ -421,6 +430,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     sizeVercel: '',
     sizeE2b: '',
     sizeDigitalocean: '',
+    sizeRemoteDocker: '',
     withPlaywright: false,
     claudeInstall: 'native',
     withEnv: false,
@@ -438,6 +448,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     imageVercel: '',
     imageE2b: '',
     imageDigitalocean: '',
+    // Empty = the provider derives the fingerprint-tagged ref itself and ensures
+    // it on the remote engine; set only to pin a hand-built image there.
+    imageRemoteDocker: '',
     // Mirrors BOX_IMAGE_REGISTRY in @agentbox/sandbox-docker. Empty disables the
     // registry pull (always build the docker base image locally).
     imageRegistry: 'ghcr.io/madarco/agentbox/box',
@@ -452,6 +465,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     // Empty = leave boxes in the account's default project (DigitalOcean's own
     // behavior). There is no sane default id to pick — it differs per account.
     digitaloceanProject: '',
+    // Empty = no default remote engine; `--provider remote-docker` then errors
+    // unless the SSH destination came from `docker:<host>` / `--remote-host`.
+    remoteDockerHost: '',
     vercelTimeoutMs: 2_700_000,
     vercelNetworkPolicy: '',
     e2bTimeoutMs: 2_700_000,
@@ -754,6 +770,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'string',
     description:
       "DigitalOcean Project new --provider digitalocean boxes are placed in — a name or the project's UUID. Unset (the default) leaves boxes in the account's default project. Set it per repo via `agentbox.yaml`, or globally at `agentbox digitalocean login`. DigitalOcean-only; ignored by other providers.",
+  },
+  {
+    key: 'box.remoteDockerHost',
+    type: 'string',
+    description:
+      "Default SSH destination new --provider remote-docker boxes run their container on — an `~/.ssh/config` alias or `[user@]host[:port]`. Overridable per-create with `agentbox docker:<host> …` or `--remote-host`. SSH auth comes entirely from your own `~/.ssh/config` + agent. remote-docker-only; ignored by other providers.",
   },
   {
     key: 'box.vercelTimeoutMs',
