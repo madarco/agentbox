@@ -126,7 +126,12 @@ export async function runPostUpdateRefresh(
   // live hub would just fight over the port.
   try {
     const hub = await getHubStatus();
-    if (hub.running || hub.pidAlive) {
+    // `running` is NOT the test: it only means /healthz answered on the shared
+    // port, which a bare relay does too. Gating on it would send a relay-only
+    // host down the hub branch and let `ensureHub` quietly promote it to a full
+    // hub on update. `ui` (healthz reported the Next UI) and a live hub pid are
+    // what actually identify a hub.
+    if (hub.ui || hub.pidAlive) {
       const stop = await stopHub();
       say(stop.stopped ? `stopped hub (pid ${String(stop.pid)})` : 'hub was not running');
       const ep = await ensureHub();
