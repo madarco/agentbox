@@ -324,17 +324,16 @@ function resolveClaudeInstall(): Promise<'native' | 'npm'> {
 }
 
 /**
- * A "base freshness" row for baked cloud providers — warns when the baked
- * snapshot's build-context fingerprint no longer matches the current runtime
- * (a CLI upgrade changed a baked file), which is the same staleness the wizard
- * nags about at create time. Returns null for docker (self-heals), for
+ * A "base freshness" row for every baked provider, docker included — warns when
+ * the baked image/snapshot's build-context fingerprint no longer matches the
+ * current runtime (a CLI upgrade changed a baked file), which is the same
+ * staleness the wizard nags about at create time. Returns null for
  * not-yet-baked providers (the provider's own "base snapshot" row already says
  * so), and when the live fingerprint can't be computed (a dev tree without a
  * built runtime) — never a false 'stale'. Local + offline (just file hashing),
  * so it honours this module's offline-safe contract.
  */
 async function baseFreshnessRow(name: ProviderName): Promise<CheckResult | null> {
-  if (name === 'docker') return null;
   const status = await evaluateBaseFreshness(name, await resolveClaudeInstall()).catch(() => null);
   if (!status) return null;
   switch (status.state) {
