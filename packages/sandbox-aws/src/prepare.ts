@@ -161,7 +161,7 @@ export async function prepareAws(opts: PrepareAwsOptions = {}): Promise<PrepareA
     securityGroupId = await createPerBoxSecurityGroup(client, {
       name: `agentbox-prepare-${stamp}`,
       vpcId: subnet.vpcId,
-      sourceCidr,
+      sourceCidrs: [sourceCidr],
       tags: { [TAG_ROLE]: 'prepare' },
     });
 

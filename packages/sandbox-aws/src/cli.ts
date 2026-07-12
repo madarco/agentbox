@@ -32,7 +32,7 @@ import {
   normalizeSourceCidr,
   securityGroupIdFromTags,
   securityGroupNeedsSync,
-  syncSecurityGroupSource,
+  syncSecurityGroupSources,
 } from './security-group.js';
 import { readPreparedState } from './prepared-state.js';
 
@@ -128,7 +128,7 @@ const firewallSyncSub = new Command('sync')
       process.stdout.write(
         `aws: updating security group ${groupId} for box '${box.name}' -> source ${source}\n`,
       );
-      const { removed } = await syncSecurityGroupSource(makeAwsClient(), groupId, source);
+      const { removed } = await syncSecurityGroupSources(makeAwsClient(), groupId, [source]);
       process.stdout.write(
         `aws: security group ${groupId} now allows SSH from ${source}` +
           (removed.length > 0 ? ` (revoked ${removed.join(', ')})` : '') +

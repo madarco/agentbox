@@ -8,7 +8,7 @@ import {
   resolveFirewallSource,
   securityGroupIdFromTags,
   securityGroupNeedsSync,
-  syncSecurityGroupSource,
+  syncSecurityGroupSources,
 } from '../src/security-group.js';
 
 function sg(sources: string[]): AwsSecurityGroup {
@@ -86,22 +86,22 @@ describe('syncSecurityGroupSource', () => {
     const calls: string[] = [];
     const client = {
       describeSecurityGroup: async () => sg(['1.1.1.1/32']),
-      authorizeSshIngress: async (_g: string, c: string) => {
-        calls.push(`authorize:${c}`);
+      authorizeSshIngress: async (_g: string, cs: string[]) => {
+        for (const c of cs) calls.push(`authorize:${c}`);
       },
-      revokeSshIngress: async (_g: string, c: string) => {
-        calls.push(`revoke:${c}`);
+      revokeSshIngress: async (_g: string, cs: string[]) => {
+        for (const c of cs) calls.push(`revoke:${c}`);
       },
     } as unknown as AwsClient;
 
-    const res = await syncSecurityGroupSource(client, 'sg-1', '2.2.2.2/32');
+    const res = await syncSecurityGroupSources(client, 'sg-1', ['2.2.2.2/32']);
     expect(calls).toEqual(['authorize:2.2.2.2/32', 'revoke:1.1.1.1/32']);
-    expect(res).toEqual({ added: '2.2.2.2/32', removed: ['1.1.1.1/32'] });
+    expect(res).toEqual({ added: ['2.2.2.2/32'], removed: ['1.1.1.1/32'] });
   });
 
   it('fails loud when the group was deleted out of band', async () => {
     const client = { describeSecurityGroup: async () => null } as unknown as AwsClient;
-    await expect(syncSecurityGroupSource(client, 'sg-1', '2.2.2.2/32')).rejects.toThrow(
+    await expect(syncSecurityGroupSources(client, 'sg-1', ['2.2.2.2/32'])).rejects.toThrow(
       UserFacingError,
     );
   });

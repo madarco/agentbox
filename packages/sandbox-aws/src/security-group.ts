@@ -81,32 +81,36 @@ export function securityGroupNeedsSync(
 }
 
 /**
- * Resolve the CIDR that SSH should be allowed from: an explicit override
- * (`AGENTBOX_AWS_FIREWALL_SOURCE`, from the box env or the process env) or the
- * host's detected egress IP. `detectEgressIp` fails loud rather than falling
- * back to `0.0.0.0/0` — an undetectable IP must not silently open the box up.
+ * Resolve the host-egress CIDR that SSH should be allowed from: an explicit
+ * override (`AGENTBOX_AWS_FIREWALL_SOURCE`, from the box env or the process env)
+ * or the detected egress IP. `detectEgressIp` fails loud rather than falling back
+ * to `0.0.0.0/0` — an undetectable IP must never silently open a box to the world.
  */
-export async function resolveFirewallSource(env?: Record<string, string>): Promise<string> {
+export async function resolveFirewallSource(
+  env?: Record<string, string>,
+  onLog?: (line: string) => void,
+): Promise<string> {
   const override = env?.AGENTBOX_AWS_FIREWALL_SOURCE ?? process.env.AGENTBOX_AWS_FIREWALL_SOURCE;
   if (typeof override === 'string' && override.trim().length > 0) {
     return normalizeSourceCidr(override);
   }
-  return normalizeSourceCidr(await detectEgressIp());
+  return normalizeSourceCidr(await detectEgressIp(onLog ? { onLog } : {}));
 }
 
 export interface CreateSecurityGroupOptions {
   /** SG name — must be unique per VPC. */
   name: string;
   vpcId: string;
-  sourceCidr: string;
+  /** Inbound SSH sources (host egress, plus any whitelist; or 0.0.0.0/0 when open). */
+  sourceCidrs: string[];
   /** Extra tags merged over the managed set (e.g. `agentbox.box`). */
   tags?: Record<string, string>;
 }
 
 /**
- * Create the per-box security group with a single inbound SSH rule. Returns the
- * group id. On any failure after the group exists, the group is deleted before
- * rethrowing — a half-made SG would block a retry (the name would collide).
+ * Create the per-box security group with its inbound SSH rule. Returns the group
+ * id. On any failure after the group exists it is deleted before rethrowing — a
+ * half-made SG would block the retry, since the name would collide.
  */
 export async function createPerBoxSecurityGroup(
   client: AwsClient,
@@ -114,12 +118,12 @@ export async function createPerBoxSecurityGroup(
 ): Promise<string> {
   const groupId = await client.createSecurityGroup(
     opts.name,
-    'AgentBox per-box security group (SSH from the host egress IP only)',
+    'AgentBox per-box security group (inbound SSH only)',
     opts.vpcId,
     { [TAG_MANAGED]: 'true', [TAG_ROLE]: 'box', ...opts.tags },
   );
   try {
-    await client.authorizeSshIngress(groupId, opts.sourceCidr);
+    await client.authorizeSshIngress(groupId, opts.sourceCidrs);
   } catch (err) {
     await client.deleteSecurityGroup(groupId).catch(() => {});
     throw err;
@@ -128,15 +132,20 @@ export async function createPerBoxSecurityGroup(
 }
 
 /**
- * Point the group's SSH rule at `nextCidr`. Authorize first, then revoke the
- * stale rules: doing it in that order means a failure halfway through leaves the
- * box *reachable* from both the old and new IP rather than from neither.
+ * Point the group's SSH rule at exactly `nextCidrs`.
+ *
+ * Authorize the additions FIRST, then revoke what's stale: a failure halfway
+ * through then leaves the box reachable from both the old and the new IP, rather
+ * than from neither. (The reverse order can lock you out of your own box.)
+ *
+ * Only the genuinely-new CIDRs are sent to Authorize — EC2 rejects the entire
+ * call with `InvalidPermission.Duplicate` if any single range already exists.
  */
-export async function syncSecurityGroupSource(
+export async function syncSecurityGroupSources(
   client: AwsClient,
   groupId: string,
-  nextCidr: string,
-): Promise<{ added: string; removed: string[] }> {
+  nextCidrs: string[],
+): Promise<{ added: string[]; removed: string[] }> {
   const sg = await client.describeSecurityGroup(groupId);
   if (!sg) {
     throw new UserFacingError(
@@ -144,12 +153,13 @@ export async function syncSecurityGroupSource(
     );
   }
   const current = allowedSshSources(sg);
-  await client.authorizeSshIngress(groupId, nextCidr);
-  const stale = current.filter((c) => c !== nextCidr);
-  for (const c of stale) {
-    await client.revokeSshIngress(groupId, c);
-  }
-  return { added: nextCidr, removed: stale };
+  const add = nextCidrs.filter((c) => !current.includes(c));
+  const remove = current.filter((c) => !nextCidrs.includes(c));
+
+  await client.authorizeSshIngress(groupId, add);
+  await client.revokeSshIngress(groupId, remove);
+
+  return { added: add, removed: remove };
 }
 
 /** The per-box SG id recorded on the instance's `agentbox.firewall` tag. */

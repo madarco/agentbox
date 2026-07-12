@@ -182,8 +182,9 @@ export interface AwsClient {
   createSecurityGroup(name: string, description: string, vpcId: string, tags: Record<string, string>): Promise<string>;
   describeSecurityGroup(groupId: string): Promise<AwsSecurityGroup | null>;
   deleteSecurityGroup(groupId: string): Promise<void>;
-  authorizeSshIngress(groupId: string, cidr: string): Promise<void>;
-  revokeSshIngress(groupId: string, cidr: string): Promise<void>;
+  /** Allow inbound SSH from each CIDR. Idempotent (a duplicate rule is a no-op). */
+  authorizeSshIngress(groupId: string, cidrs: string[]): Promise<void>;
+  revokeSshIngress(groupId: string, cidrs: string[]): Promise<void>;
 
   createImage(instanceId: string, name: string, description: string): Promise<string>;
   describeImage(imageId: string): Promise<AwsImage | null>;
@@ -230,12 +231,12 @@ export const PROBE_IAM_ACTION: Record<AwsDryRunProbe, string> = {
 
 const SSH_PORT = 22;
 
-function sshPermission(cidr: string): IpPermission {
+function sshPermission(cidrs: string[]): IpPermission {
   return {
     IpProtocol: 'tcp',
     FromPort: SSH_PORT,
     ToPort: SSH_PORT,
-    IpRanges: [{ CidrIp: cidr, Description: 'agentbox host egress' }],
+    IpRanges: cidrs.map((CidrIp) => ({ CidrIp, Description: 'agentbox inbound' })),
   };
 }
 
@@ -475,29 +476,33 @@ export function makeAwsClient(opts: AwsClientOptions = {}): AwsClient {
       }
     },
 
-    async authorizeSshIngress(groupId, cidr) {
+    async authorizeSshIngress(groupId, cidrs) {
+      if (cidrs.length === 0) return;
       try {
         await ec2.send(
           new AuthorizeSecurityGroupIngressCommand({
             GroupId: groupId,
-            IpPermissions: [sshPermission(cidr)],
+            IpPermissions: [sshPermission(cidrs)],
           }),
         );
       } catch (err) {
         const e = toAwsApiError(err);
         // Re-authorizing the same rule is a no-op, not a failure — this keeps
-        // `firewall sync` idempotent.
+        // `firewall sync` idempotent. NB: EC2 rejects the WHOLE call when ANY
+        // range duplicates, so callers must not mix new + existing CIDRs in one
+        // request; `syncSecurityGroupSources` only ever sends the missing ones.
         if (e.code === 'InvalidPermission.Duplicate') return;
         throw e;
       }
     },
 
-    async revokeSshIngress(groupId, cidr) {
+    async revokeSshIngress(groupId, cidrs) {
+      if (cidrs.length === 0) return;
       try {
         await ec2.send(
           new RevokeSecurityGroupIngressCommand({
             GroupId: groupId,
-            IpPermissions: [sshPermission(cidr)],
+            IpPermissions: [sshPermission(cidrs)],
           }),
         );
       } catch (err) {
@@ -703,7 +708,7 @@ async function sendDryRun(ec2: EC2Client, probe: AwsDryRunProbe): Promise<void> 
         new AuthorizeSecurityGroupIngressCommand({
           DryRun: true,
           GroupId: 'sg-00000000000000000',
-          IpPermissions: [sshPermission('192.0.2.1/32')],
+          IpPermissions: [sshPermission(['192.0.2.1/32'])],
         }),
       );
       return;

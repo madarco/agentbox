@@ -156,7 +156,7 @@ describe('idempotent deletes', () => {
     const client = makeAwsClient({
       ec2: fakeEc2(() => sdkError('InvalidPermission.Duplicate')),
     });
-    await expect(client.authorizeSshIngress('sg-0', '1.2.3.4/32')).resolves.toBeUndefined();
+    await expect(client.authorizeSshIngress('sg-0', ['1.2.3.4/32'])).resolves.toBeUndefined();
   });
 });
 
