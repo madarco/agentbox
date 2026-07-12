@@ -57,6 +57,6 @@ describe('resolveForkProvider', () => {
   });
 
   it('throws on an unknown provider', () => {
-    expect(() => resolveForkProvider('aws', undefined)).toThrow(/expected one of/);
+    expect(() => resolveForkProvider('nimbus', undefined)).toThrow(/expected one of/);
   });
 });

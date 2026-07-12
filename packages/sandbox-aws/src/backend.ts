@@ -301,7 +301,7 @@ export const awsBackend: CloudBackend = {
     const imageId = await resolveImageRef(c, req);
 
     const instanceType = (req.size && req.size.trim()) || AWS_DEFAULT_INSTANCE_TYPE;
-    const diskGb = Number(req.env?.AGENTBOX_AWS_DISK_GB ?? '') || AWS_DEFAULT_DISK_GB;
+    const diskGb = req.diskGb ?? AWS_DEFAULT_DISK_GB;
     const choice = { instanceType, region, diskGb };
 
     // 2. Preflight BEFORE any billable resource exists. A bad instance type, a
@@ -315,7 +315,7 @@ export const awsBackend: CloudBackend = {
     validateInstanceChoice(choice, typeInfo, offered, ami);
 
     // 3. Where it lives.
-    const subnet = await resolveDefaultSubnet(c, req.env?.AGENTBOX_AWS_SUBNET_ID);
+    const subnet = await resolveDefaultSubnet(c, req.subnetId);
 
     // 4. The inbound policy -> the SG's SSH sources. `locked`/`whitelist` need
     // the host egress IP; `open` (0.0.0.0/0) skips detection entirely.

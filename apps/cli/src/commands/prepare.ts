@@ -362,7 +362,9 @@ export async function runPrepare(
       ? cfg?.effective.box.hetznerLocation
       : providerName === 'digitalocean'
         ? cfg?.effective.box.digitaloceanRegion
-        : undefined;
+        : providerName === 'aws'
+          ? cfg?.effective.box.awsRegion
+          : undefined;
   const location = opts.location?.trim() || configuredLocation || undefined;
   // Bake-time size (daytona/e2b): CLI flag wins over the cascaded box.size /
   // box.size<Provider>. Empty resolves to undefined so the provider bakes its
@@ -453,7 +455,7 @@ export const prepareCommand = new Command('prepare')
   )
   .option(
     '-p, --provider <name>',
-    'provider to prepare (docker | daytona | hetzner | vercel | e2b | digitalocean). Omit for status-only.',
+    'provider to prepare (docker | daytona | hetzner | vercel | e2b | digitalocean | aws). Omit for status-only.',
   )
   .option('-n, --name <name>', 'snapshot name (Daytona only; default: agentbox-base-<timestamp>)')
   .option('-f, --force', 'rebuild even if the image / snapshot already exists')

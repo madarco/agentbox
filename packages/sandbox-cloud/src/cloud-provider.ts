@@ -583,6 +583,12 @@ export function createCloudProvider(
       const projectOpt = req.providerOptions?.['project'];
       const project =
         typeof projectOpt === 'string' && projectOpt.trim() !== '' ? projectOpt.trim() : undefined;
+      // AWS placement + root-volume size (`box.awsSubnetId` / `box.awsDiskGb`).
+      const subnetOpt = req.providerOptions?.['subnetId'];
+      const subnetId =
+        typeof subnetOpt === 'string' && subnetOpt.trim() !== '' ? subnetOpt.trim() : undefined;
+      const diskGbOpt = req.providerOptions?.['diskGb'];
+      const diskGb = typeof diskGbOpt === 'number' && diskGbOpt > 0 ? diskGbOpt : undefined;
 
       // Per-box tokens: `relayToken` authenticates the in-box agent to its
       // in-sandbox relay (`/events`, `/rpc` bearer); `bridgeToken` separately
@@ -675,6 +681,8 @@ export function createCloudProvider(
           size,
           location,
           project,
+          subnetId,
+          diskGb,
           inbound,
           timeoutMs,
           exposePorts: exposeServicePorts,

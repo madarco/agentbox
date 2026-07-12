@@ -69,6 +69,18 @@ export interface CloudProvisionRequest {
    */
   project?: string;
   /**
+   * Explicit subnet to launch into (aws — `box.awsSubnetId`). Empty/absent means
+   * the backend resolves a public subnet of the account's default VPC. Other
+   * backends ignore it.
+   */
+  subnetId?: string;
+  /**
+   * Root volume size in GB (aws — `box.awsDiskGb`). EC2's own 8 GB default is
+   * too small for the base image, so the backend applies its own default (40)
+   * when this is absent. Other backends ignore it.
+   */
+  diskGb?: number;
+  /**
    * Max session length in ms before the backend auto-snapshots/stops the
    * sandbox. Backends that don't model a session timeout ignore it; Vercel
    * maps it to `Sandbox.create({ timeout })`.

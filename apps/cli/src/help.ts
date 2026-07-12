@@ -38,6 +38,8 @@ export const HELP_GROUPS: HelpGroup[] = [
       'hetzner',
       'vercel',
       'e2b',
+      'digitalocean',
+      'aws',
     ],
   },
 ];

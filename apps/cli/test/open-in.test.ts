@@ -158,13 +158,17 @@ describe('detectOpenTargets', () => {
 });
 
 describe('provider eligibility constants', () => {
-  it('codex/persistent-ssh covers docker + hetzner; vscode covers docker + ssh clouds', () => {
-    expect(PERSISTENT_SSH_PROVIDERS).toEqual(['docker', 'hetzner']);
-    expect(IDE_PROVIDERS).toEqual(['docker', 'hetzner', 'daytona']);
+  it('persistent-ssh + IDE cover docker and every VPS provider', () => {
+    // Every VPS provider has a real sshd and a per-box key on this host, so all
+    // three capabilities apply to all of them. Before VPS_PROVIDERS existed these
+    // lists said 'hetzner' and DigitalOcean silently lost Remote-SSH, sshfs and
+    // `open --codex` despite being the same kind of box.
+    expect(PERSISTENT_SSH_PROVIDERS).toEqual(['docker', 'hetzner', 'digitalocean', 'aws']);
+    expect(IDE_PROVIDERS).toEqual(['docker', 'daytona', 'hetzner', 'digitalocean', 'aws']);
   });
 
-  it('open sshfs-mounts docker + hetzner + daytona; vercel/e2b excluded (no SSH)', () => {
-    expect(SSH_MOUNT_PROVIDERS).toEqual(['docker', 'hetzner', 'daytona']);
+  it('open sshfs-mounts docker + daytona + the VPS providers; vercel/e2b excluded (no SSH)', () => {
+    expect(SSH_MOUNT_PROVIDERS).toEqual(['docker', 'daytona', 'hetzner', 'digitalocean', 'aws']);
     expect(SSH_MOUNT_PROVIDERS).not.toContain('vercel');
     expect(SSH_MOUNT_PROVIDERS).not.toContain('e2b');
   });

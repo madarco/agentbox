@@ -37,6 +37,8 @@ const config = {
     '@agentbox/sandbox-hetzner',
     '@agentbox/sandbox-vercel',
     '@agentbox/sandbox-e2b',
+    '@agentbox/sandbox-digitalocean',
+    '@agentbox/sandbox-aws',
   ],
 };
 

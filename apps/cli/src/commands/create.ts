@@ -1,3 +1,4 @@
+import { isVpsProvider } from '../lib/vps-providers.js';
 import { intro, log, outro } from '@clack/prompts';
 import {
   bumpProjectGcCounter,
@@ -306,12 +307,12 @@ export const createCommand = new Command('create')
     // Portless; the URL is already reachable from anywhere. The wizard's
     // first-run `agentbox claude` hand-off is also Docker-only.
     const isDocker = providerName === 'docker';
-    const isHetzner = providerName === 'hetzner';
+    const isVps = isVpsProvider(providerName);
 
     // Resolve Portless. Docker: classic prompt-once-then-persist flow.
-    // Hetzner: default-on (per the "safe defaults for cloud providers"
-    // policy) — silently set up the host proxy when undefined; respect
-    // explicit --no-portless / config `portless.enabled: false`.
+    // VPS clouds (hetzner / digitalocean / aws): default-on (per the "safe
+    // defaults for cloud providers" policy) — silently set up the host proxy when
+    // undefined; respect explicit --no-portless / config `portless.enabled: false`.
     let portlessEnabled: boolean | undefined;
     if (isDocker) {
       portlessEnabled = await maybePromptPortless({
@@ -320,10 +321,10 @@ export const createCommand = new Command('create')
         yes: !!opts.yes,
         cwd: opts.workspace,
       });
-    } else if (isHetzner) {
+    } else if (isVps) {
       portlessEnabled = cfg.effective.portless.enabled ?? true;
       // Only surface the :443 root-password dialog for interactive runs;
-      // scripted / --yes Hetzner creates fall through to the no-root :1355 proxy.
+      // scripted / --yes VPS creates fall through to the no-root :1355 proxy.
       if (portlessEnabled)
         await setupPortlessHost({ allowRootPrompt: !!process.stdin.isTTY && !opts.yes });
     }

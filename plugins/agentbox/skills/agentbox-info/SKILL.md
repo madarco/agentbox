@@ -13,7 +13,7 @@ If you find yourself *inside* a box (`/workspace` exists and `AGENTBOX_RELAY_URL
 
 ## What AgentBox is, in one paragraph
 
-AgentBox spins up one isolated sandbox per agent run — a local Docker container (default), a Hetzner VPS (`--provider hetzner`), a Vercel Sandbox (`--provider vercel`), an E2B microVM (`--provider e2b`), or a Daytona cloud sandbox (`--provider daytona`, partial support). Each box has its own `/workspace`, but the host's `.git/` is shared, so commits made inside the box land on the host immediately. The agent inside the box has **no host credentials** — `git push`, opening URLs in the host browser, capturing checkpoints, and all other host-side operations flow through a small host process called the **relay** that runs alongside the CLI.
+AgentBox spins up one isolated sandbox per agent run — a local Docker container (default), a Hetzner VPS (`--provider hetzner`), an AWS EC2 instance (`--provider aws`), a DigitalOcean Droplet (`--provider digitalocean`), a Vercel Sandbox (`--provider vercel`), an E2B microVM (`--provider e2b`), or a Daytona cloud sandbox (`--provider daytona`, partial support). Each box has its own `/workspace`, but the host's `.git/` is shared, so commits made inside the box land on the host immediately. The agent inside the box has **no host credentials** — `git push`, opening URLs in the host browser, capturing checkpoints, and all other host-side operations flow through a small host process called the **relay** that runs alongside the CLI.
 
 ## The two starting commands
 
@@ -25,10 +25,11 @@ Provision a box and stop. The box exists and is ready, but nothing is launched i
 agentbox create                       # docker, auto-named after the workspace
 agentbox create -n review             # docker, friendly name
 agentbox create --provider hetzner    # cloud VPS (requires `agentbox prepare --provider hetzner` once)
+agentbox create --provider aws        # AWS EC2 (requires `agentbox prepare --provider aws` once)
 agentbox create --attach              # drop into a shell inside the box after create
 ```
 
-Useful flags: `-n <name>` (friendly box name), `--provider docker|daytona|hetzner|vercel|e2b`, `--attach`, `-w <path>` (workspace to mount; defaults to `cwd`), `--snapshot <ref>` (start from a checkpoint).
+Useful flags: `-n <name>` (friendly box name), `--provider docker|daytona|hetzner|vercel|e2b|digitalocean|aws`, `--attach`, `-w <path>` (workspace to mount; defaults to `cwd`), `--snapshot <ref>` (start from a checkpoint).
 
 Non-docker providers require a one-time `agentbox prepare --provider <name>` to bake the base image / snapshot.
 
@@ -66,13 +67,13 @@ agentbox dashboard                    # TUI with status + leader-key actions
 agentbox claude attach <name|n>       # reattach to a specific box
 ```
 
-`-i` works on every provider — pass `--provider daytona|hetzner|vercel|e2b` (or set `box.provider`) and the queued job creates a cloud box and pre-starts the seeded agent session detached, same as docker. The host must have valid agent credentials. Extra args after `--` are forwarded to the in-box agent (e.g. `agentbox claude -i "<prompt>" --provider vercel -- --permission-mode=plan`).
+`-i` works on every provider — pass `--provider daytona|hetzner|vercel|e2b|digitalocean|aws` (or set `box.provider`) and the queued job creates a cloud box and pre-starts the seeded agent session detached, same as docker. The host must have valid agent credentials. Extra args after `--` are forwarded to the in-box agent (e.g. `agentbox claude -i "<prompt>" --provider vercel -- --permission-mode=plan`).
 
 `-i` honors the project's `carry:` block: the carry gate runs on the host when you submit (it prompts there, since you're at the terminal), and the approved files ride the queued job and land in the box at create time. Auto-approve non-interactively with `--carry-yes` (or `AGENTBOX_CARRY_YES=1`); skip with `--carry skip` (or `AGENTBOX_CARRY=skip`).
 
 ## Forking the current session into a box
 
-From host Claude, run the **`/agentbox`** slash command (optional arg: `docker` | `daytona` | `hetzner` | `vercel` | `e2b`) to snapshot the *current* Claude Code session into a brand-new box that resumes it. With tmux or iTerm it opens in a new terminal tab; otherwise it starts in the background. The host session is unaffected — you get two parallel timelines. The underlying CLI is `agentbox fork` (`agentbox fork --help`); `/agentbox` requires `agentbox install` to have been run once. This is distinct from `-i`, which seeds a *new* prompt rather than resuming the live conversation. Fork **sends** the project's `carry:` block by default (the host is trusted; the box is the untrusted side, so host→box copy is safe) — opt out with `agentbox fork --carry skip`.
+From host Claude, run the **`/agentbox`** slash command (optional arg: `docker` | `daytona` | `hetzner` | `vercel` | `e2b` | `digitalocean` | `aws`) to snapshot the *current* Claude Code session into a brand-new box that resumes it. With tmux or iTerm it opens in a new terminal tab; otherwise it starts in the background. The host session is unaffected — you get two parallel timelines. The underlying CLI is `agentbox fork` (`agentbox fork --help`); `/agentbox` requires `agentbox install` to have been run once. This is distinct from `-i`, which seeds a *new* prompt rather than resuming the live conversation. Fork **sends** the project's `carry:` block by default (the host is trusted; the box is the untrusted side, so host→box copy is safe) — opt out with `agentbox fork --carry skip`.
 
 ## Driving one agent from another (`drive`, `agent`, `queue wait-for`)
 

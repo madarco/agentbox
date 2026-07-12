@@ -54,6 +54,8 @@
     "publish:minor": "npm version minor && git push --follow-tags"
   },
   "dependencies": {
+    "@agentbox/sandbox-aws": "workspace:*",
+    "@aws-sdk/client-ec2": "^3.699.0",
     "@clack/prompts": "^0.9.0",
     "@daytonaio/sdk": "^0.179.0",
     "@vercel/sandbox": "^2.0.1",

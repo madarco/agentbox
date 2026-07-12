@@ -22,8 +22,7 @@
  * that's missing from local state (e.g. created on another host) from what the
  * live sandbox exposes, regenerating fresh relay/bridge tokens, then recovers it.
  */
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { vpsBoxKeyPath } from '../lib/vps-providers.js';
 import { access } from 'node:fs/promises';
 import { isCancel, log, select } from '@clack/prompts';
 import {
@@ -55,16 +54,6 @@ interface RecoverOpts {
   inline?: boolean;
 }
 
-/**
- * The per-box Hetzner SSH private key. Mirrors `defaultBoxSshDir` in
- * `@agentbox/sandbox-hetzner` (kept inline so recover doesn't statically pull
- * the Hetzner SDK). A missing key means the box was created on another host —
- * we can't drive it from here.
- */
-function hetznerKeyPath(sandboxId: string): string {
-  return join(homedir(), '.agentbox', 'boxes', sandboxId, 'ssh', 'id_ed25519');
-}
-
 async function fileExists(path: string): Promise<boolean> {
   try {
     await access(path);
@@ -74,12 +63,16 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
-/** True when this box can't be controlled from this host (Hetzner key gone). */
+/**
+ * True when this box can't be controlled from this host: a VPS provider whose
+ * per-box SSH private key is gone (the box was created on another machine).
+ */
 async function hetznerKeyMissing(box: BoxRecord): Promise<boolean> {
-  if ((box.provider ?? 'docker') !== 'hetzner') return false;
   const sandboxId = box.cloud?.sandboxId;
   if (!sandboxId) return false;
-  return !(await fileExists(hetznerKeyPath(sandboxId)));
+  const keyPath = vpsBoxKeyPath(box.provider ?? 'docker', sandboxId);
+  if (!keyPath) return false;
+  return !(await fileExists(keyPath));
 }
 
 /** Read the box's checked-out branch, best-effort (adopted boxes only). */
@@ -107,7 +100,7 @@ async function recoverKnownBox(
 ): Promise<boolean> {
   if (await hetznerKeyMissing(box)) {
     log.warn(
-      `${box.name}: per-box SSH key not found at ${hetznerKeyPath(box.cloud?.sandboxId ?? box.id)} — this box was created on another host and can't be controlled from here. Skipping.`,
+      `${box.name}: per-box SSH key not found at ${vpsBoxKeyPath(box.provider ?? 'docker', box.cloud?.sandboxId ?? box.id) ?? '(n/a)'} — this box was created on another host and can't be controlled from here. Skipping.`,
     );
     return false;
   }
@@ -225,7 +218,7 @@ async function adoptUnknownBox(
   };
   if (await hetznerKeyMissing(record)) {
     log.error(
-      `cannot adopt ${record.name}: per-box SSH key not found at ${hetznerKeyPath(sb.sandboxId)} — Hetzner boxes can only be controlled from the host that created them (the private key never leaves that host).`,
+      `cannot adopt ${record.name}: per-box SSH key not found at ${vpsBoxKeyPath(record.provider ?? 'docker', sb.sandboxId) ?? '(n/a)'} — VPS boxes can only be controlled from the host that created them (the private key never leaves that host).`,
     );
     process.exit(1);
   }

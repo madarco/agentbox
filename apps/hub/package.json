@@ -2,7 +2,7 @@
   "name": "@agentbox/hub",
   "version": "0.0.0",
   "private": true,
-  "description": "AgentBox hub — the Web UI + relay core as a Next.js app (localhost, hetzner, or Vercel)",
+  "description": "AgentBox hub \u2014 the Web UI + relay core as a Next.js app (localhost, hetzner, or Vercel)",
   "type": "module",
   "scripts": {
     "dev": "next dev",
@@ -23,6 +23,7 @@
     "@agentbox/core": "workspace:*",
     "@agentbox/ctl": "workspace:*",
     "@agentbox/relay": "workspace:*",
+    "@agentbox/sandbox-aws": "workspace:*",
     "@agentbox/sandbox-cloud": "workspace:*",
     "@agentbox/sandbox-core": "workspace:*",
     "@agentbox/sandbox-daytona": "workspace:*",

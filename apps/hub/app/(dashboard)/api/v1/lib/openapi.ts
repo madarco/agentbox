@@ -334,7 +334,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Providers'],
           summary: "Set a provider's credentials",
           description: 'API keys/tokens, validated then saved to secrets.env. Never echoes secret values.',
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'digitalocean'] } }],
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'digitalocean', 'aws'] } }],
           requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: { type: 'string' }, description: 'Provider-specific fields, e.g. { apiKey } (e2b), { token } (hetzner), { apiKey } or { jwtToken, organizationId } (daytona), { token, teamId?, projectId? } (vercel).' } } } },
           responses: {
             '200': { description: 'Saved', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
@@ -349,7 +349,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Providers'],
           summary: "Bake a provider's base image",
           description: 'Async — returns a job id. Progress streams over GET /jobs/{id}/logs.',
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'digitalocean'] } }],
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'digitalocean', 'aws'] } }],
           requestBody: { required: false, content: { 'application/json': { schema: { type: 'object', properties: { force: { type: 'boolean' }, claudeInstall: { type: 'string', enum: ['native', 'npm'] } } } } } },
           responses: {
             '202': { description: 'Bake enqueued', content: { 'application/json': { schema: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } } },
@@ -526,7 +526,7 @@ export function buildOpenApi(): Record<string, unknown> {
           properties: {
             projectId: { type: 'string' },
             agent: { type: 'string', enum: ['claude', 'codex', 'opencode', 'none'] },
-            provider: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'digitalocean'], default: 'docker' },
+            provider: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'digitalocean', 'aws'], default: 'docker' },
             name: { type: 'string' },
             prompt: { type: 'string' },
             fromBranch: { type: 'string', description: "Base ref the box's per-box branch forks from (branch / tag / SHA); default the project's HEAD" },
@@ -537,7 +537,7 @@ export function buildOpenApi(): Record<string, unknown> {
         Provider: {
           type: 'object',
           properties: {
-            id: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'digitalocean'] },
+            id: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'digitalocean', 'aws'] },
             label: { type: 'string' },
             configured: { type: 'boolean', description: 'Base image baked (usable for create) on this host.' },
             hasCredentials: { type: 'boolean', description: 'Credentials present (docker: always true). Can be true while not yet configured (baked).' },

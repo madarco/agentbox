@@ -1,3 +1,4 @@
+import { isVpsProvider } from '../lib/vps-providers.js';
 import { spawn } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -196,7 +197,7 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   // `true` over the already-open master is a cheap no-op. This is an ESTABLISH
   // path — distinct from the mid-session `reconnect` closure below, which must
   // NOT touch the firewall (a checkpoint/pause drop isn't an IP change).
-  if (box.provider === 'hetzner') {
+  if (isVpsProvider(box.provider)) {
     await withFirewallRepair(
       provider,
       box,

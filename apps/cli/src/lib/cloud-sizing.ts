@@ -4,9 +4,9 @@ import { resolveBoxSize, type EffectiveConfig } from '@agentbox/config';
 export interface CloudSizingFlags {
   /** `--size <spec>` */
   size?: string;
-  /** `--location <name>` (hetzner / digitalocean) */
+  /** `--location <name>` (hetzner / digitalocean / aws) */
   location?: string;
-  /** `--inbound <spec>` (hetzner / digitalocean) */
+  /** `--inbound <spec>` (hetzner / digitalocean / aws) */
   inbound?: string;
 }
 
@@ -60,11 +60,20 @@ export function cloudSizingProviderOptions(
     const project = (cfg.box.digitaloceanProject || '').trim();
     if (project.length > 0) out.project = project;
   }
+  if (providerName === 'aws') {
+    // AMIs are region-scoped, so this also decides which base AMI can boot.
+    const location = (flags.location?.trim() || cfg.box.awsRegion || '').trim();
+    if (location.length > 0) out.location = location;
+    // Config-only (no flag): the escape hatch for an account with no default VPC.
+    const subnetId = (cfg.box.awsSubnetId || '').trim();
+    if (subnetId.length > 0) out.subnetId = subnetId;
+    if (cfg.box.awsDiskGb > 0) out.diskGb = cfg.box.awsDiskGb;
+  }
   // VPS-only inbound-access policy (`--inbound` / `box.inbound`). Passed through
   // to the backend's per-box firewall; other providers ignore it. Only emitted
   // when non-default — the backend treats an absent value as `locked`, so the
   // common case carries nothing.
-  if (providerName === 'hetzner' || providerName === 'digitalocean') {
+  if (providerName === 'hetzner' || providerName === 'digitalocean' || providerName === 'aws') {
     const inbound = (flags.inbound?.trim() || cfg.box.inbound || '').trim();
     if (inbound.length > 0 && !/^lock(ed)?$/i.test(inbound)) out.inbound = inbound;
   }

@@ -6,7 +6,7 @@ argument-hint: [provider]
 
 Fork the current Codex session into a fresh AgentBox box running Codex.
 
-Optional provider argument: `$ARGUMENTS` (docker | daytona | hetzner | vercel | e2b; default docker).
+Optional provider argument: `$ARGUMENTS` (docker | daytona | hetzner | vercel | e2b | digitalocean | aws; default docker).
 
 ## Steps
 
@@ -30,7 +30,7 @@ Optional provider argument: `$ARGUMENTS` (docker | daytona | hetzner | vercel | 
 
    If both print nothing, stop and tell the user no Codex session was found for this machine.
 
-3. **Resolve the provider flag from `$ARGUMENTS`:** empty → none; `docker` | `daytona` | `hetzner` | `vercel` | `e2b` → `--provider $ARGUMENTS`; anything else → stop and report the valid values.
+3. **Resolve the provider flag from `$ARGUMENTS`:** empty → none; `docker` | `daytona` | `hetzner` | `vercel` | `e2b` | `digitalocean` | `aws` → `--provider $ARGUMENTS`; anything else → stop and report the valid values.
 
 4. **Fork.** Run, via your shell tool:
 
