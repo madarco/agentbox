@@ -18,12 +18,16 @@ Use the /screenshot skill to capture screenshots of terminal windows and GUI win
 | `web-app.png` | web-apps-and-tunnels | done (2026-06-02, wrapped in a browser chrome showing the web.localhost address bar) | A |
 | `novnc-desktop.png` | access-your-box, browser-and-screen | done (2026-06-02, in-box browser shows the app; wrapped in a fake browser chrome → browser-in-browser) | A |
 | `agentbox-ls.png` | background-and-parallel | done (2026-06-02, recaptured) | B |
+| `hub-dashboard.png` | hub (hero) | done (2026-07-12, headless capture of the hub at 2x zoom) | A |
 | `dashboard.png` | access-your-box, background-and-parallel, cli | done (2026-06-02, recaptured) | C |
 | `claude-tui.png` | run-an-agent, cli | done (2026-06-02) | C |
 | `cursor.png` | access-your-box (Cursor / Dev Containers) | done (2026-06-02) | C |
 | `push-approval.png` | sync-and-git (push approval) | done (2026-06-02, gh pr create approval band, agent-driven) | C |
 | `herdr-permission-prompt.png` | integrations-herdr (hero) | done (2026-06-18, Claude-in-box in Herdr blocked on a `gh pr create` approval band + agents sidebar; agentbox-test-repo-gh, agent-driven like push-approval, isolated `herdr --session agbdocs`) | C |
 | `herdr-overlay.png` | integrations-herdr (plugin section) | done (2026-06-18, boxes overlay + Herdr agents sidebar, captured live in a Herdr window) | C |
+| `cmux-sidebar-state.png` | integrations-cmux (box status in the sidebar) | done | C |
+| `cmux-sidebar-dock.png` | integrations-cmux (sidebar + Dock) | done | C |
+| `cmux-dock.png` | integrations-cmux (Dock panel) | done | C |
 | diagram — core-concepts | core-concepts (box/relay model) | done (2026-06-02, `/diagrams/core-concepts.png`, nano-banana-pro) | D |
 | diagram — configuration | configuration (resolution order) | done (2026-06-02, `/diagrams/configuration.png`, nano-banana-pro) | D |
 | diagram — services DAG | services-and-tasks (`needs` DAG) | done (2026-06-02, `/diagrams/services-and-tasks.png`, nano-banana-pro) | D |
@@ -274,6 +278,46 @@ playwright-cli --session=v screenshot   # raw 1044x800 desktop canvas -> /tmp/no
 > # crop to 1140x978 (even 44px paper margin) -> novnc-desktop.png
 > ```
 
+**`hub-dashboard.png`** → hub. The hub's Boxes dashboard, boxes grouped by project.
+
+Two things make or break this shot, and both are about *what the registry holds*,
+not about the capture:
+
+1. **Boxes must live on a real git repo.** `examples/express-ready` is not a git
+   repo (its `/workspace` is tar-seeded), so its boxes have an **empty BRANCH
+   column** and the table looks broken. Create the boxes from a git project —
+   `../agentbox-test-repo` — so each row shows `agentbox/<name>`. Two docker
+   boxes there plus an existing cloud box in a second project gives two populated
+   groups (grouping is the point of the figure).
+2. **Prune empty projects first.** The dashboard lists *every* registered project,
+   including 0-box leftovers from past tests, and they fill the sidebar. Unregister
+   them (only works at zero boxes):
+
+   ```bash
+   TOK=$(cat ~/.agentbox/hub/token)
+   curl -s -H "Authorization: Bearer $TOK" http://127.0.0.1:8787/api/v1/projects   # ids
+   curl -X DELETE -H "Authorization: Bearer $TOK" http://127.0.0.1:8787/api/v1/projects/<id>
+   ```
+
+Capture headlessly (it's a web page — no window/skill needed). `playwright-cli`
+has no device-scale flag, so **render at 2x zoom into a 2x viewport** to match the
+retina density of the other figures:
+
+```bash
+agentbox hub start                                  # a bare relay on :8787 serves no UI
+TOK=$(cat ~/.agentbox/hub/token)
+playwright-cli --session=h open "http://127.0.0.1:8787/?token=$TOK"
+playwright-cli --session=h resize 2720 1640
+playwright-cli --session=h eval "() => { document.documentElement.style.zoom = '2' }"
+playwright-cli --session=h screenshot               # 2720x1640 -> crop to 2720x1180
+```
+
+> The agent's status pill mirrors the **agent** state, not just the container: an
+> expired in-box Claude login shows a red **error** pill for the first ~1-2 minutes
+> after create (it settles to green `running`). Wait for green before capturing —
+> and note the agent can't actually run its `-i` task on expired creds
+> (`agentbox claude login` refreshes them).
+
 ### Phase B — Rendered terminal
 
 **`agentbox-ls.png`** → background-and-parallel. `agentbox ls` with web/api/cloud
@@ -519,7 +563,7 @@ Verbatim prompts:
 
 ### Phase E — External / manual (you)
 
-- **`hetzner-token.png`** → hetzner. Log into the Hetzner Cloud console →
+- **`hetzner_api.jpg`** → hetzner. Log into the Hetzner Cloud console →
   Security → API Tokens → the "Read & Write" token creation page. Screenshot and
   crop to the panel.
 
