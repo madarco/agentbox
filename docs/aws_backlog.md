@@ -62,15 +62,29 @@ key-based root login works once the key is in place.
 
 ## Dogfooding (developing the provider inside a box)
 
-`agentbox.yaml` carries a **dedicated** `~/.aws/agentbox-config` + `~/.aws/agentbox-credentials`
-pair onto the box's canonical `~/.aws/config` + `~/.aws/credentials`, rather than the host's real
-`~/.aws`. The real files hold every profile on the host — including an org's management account —
-and carrying them would hand an in-box agent the keys to all of them. Scope the carried pair to one
-throwaway AWS account and the box's blast radius is exactly that account.
+```bash
+aws sso login --profile agentboxmarco   # host, SSO as usual
+pnpm aws:creds                          # -> ./aws_credentials/{config,credentials} (gitignored, 0600)
+agentbox claude                         # carry: copies them to the box's ~/.aws/
+```
 
-SSO profiles are **not** carryable: their tokens live in `~/.aws/sso/cache` and only a browser
-`aws sso login` refreshes them. The in-box path therefore needs static keys from the isolated
-account (the same trade-off the Vercel CLI store has).
+A box **cannot use an SSO profile**: SSO keeps a bearer token in `~/.aws/sso/cache` that the SDK
+exchanges for role credentials, and only `aws sso login` — a browser flow — refreshes it. A box has
+no browser.
+
+The fix is to carry not the SSO token but the credentials it *resolves to*.
+`scripts/export-aws-creds.mjs` (`pnpm aws:creds`) runs `aws configure export-credentials`, which
+materializes any profile — SSO, assume-role, static — into a plain key/secret/session-token triple.
+So **no long-lived IAM key exists anywhere**: the host keeps SSO, and the box gets an ordinary
+short-lived credential file.
+
+It also carries exactly ONE identity. The host's real `~/.aws` holds every profile on the machine,
+including an org's management account; carrying that would hand an in-box agent the keys to all of
+them. The exported file holds only the isolated dev account, so that is the box's whole blast radius.
+
+**These credentials expire** (an SSO role session is typically 1 hour), and `carry:` copies them in
+at CREATE time only — a long-lived box will eventually see `ExpiredToken`. The in-box error message
+says so and points back at `pnpm aws:creds` rather than at `aws sso login`, which cannot work there.
 
 The AWS CLI is **not** in the box image — the provider talks to EC2 through `@aws-sdk/client-ec2`,
 so the CLI is only needed for the dev loop (exercising the `aws sso login` / `aws iam create-policy`

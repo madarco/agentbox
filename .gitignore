@@ -29,3 +29,7 @@ TODO.md
 # Herdr plugin shim — generated at the plugin root (= repo root) by
 # `agentbox install herdr` / the manifest's build step; never committed.
 /agentbox-shim.sh
+
+# Host AWS session materialized for the box carry by `pnpm aws:creds`
+# (see scripts/export-aws-creds.mjs). Short-lived credentials — never committed.
+/aws_credentials/

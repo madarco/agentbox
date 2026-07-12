@@ -89,39 +89,39 @@ carry:
     dest: ~/.local/share/com.vercel.cli/config.json
     mode: 0o600
     optional: true
-  # AWS credentials for `--provider aws` (SDK default credential chain, which
-  # reads ~/.aws/{config,credentials} — there is no AWS token in secrets.env
-  # beyond the AWS_PROFILE / AWS_REGION markers).
+  # AWS credentials for `--provider aws` (the SDK's default credential chain,
+  # which reads ~/.aws/{config,credentials} — there is no AWS token in
+  # secrets.env beyond the AWS_PROFILE / AWS_REGION markers).
   #
-  # NOTE the src paths: we deliberately carry a DEDICATED `~/.aws/agentbox-*`
-  # pair, NOT the host's real ~/.aws/{config,credentials}. The real files hold
-  # every profile on the host — including the org's management account — and
-  # carrying them would hand an in-box agent the keys to all of them. Instead
-  # keep a two-profile file on the host scoped to the isolated AgentBox dev
-  # account and map it onto the box's canonical paths, so the blast radius of
-  # the box is exactly that one account. Host side, once:
+  # These come from `pnpm aws:creds`, NOT from the host's real ~/.aws. Two
+  # reasons:
   #
-  #   cat > ~/.aws/agentbox-config <<'EOF'
-  #   [default]
-  #   region = us-east-1
-  #   EOF
-  #   cat > ~/.aws/agentbox-credentials <<'EOF'
-  #   [default]
-  #   aws_access_key_id = ...
-  #   aws_secret_access_key = ...
-  #   EOF
-  #   chmod 600 ~/.aws/agentbox-*
+  #   1. A box cannot use an SSO profile. SSO keeps a bearer token in
+  #      ~/.aws/sso/cache that the SDK exchanges for role credentials, and only
+  #      `aws sso login` — a browser flow — can refresh it. A box has no browser.
+  #      `pnpm aws:creds` runs `aws configure export-credentials`, which
+  #      materializes the profile into a plain key/secret/session-token triple.
+  #      So the host keeps SSO and no long-lived IAM key exists anywhere.
+  #   2. The real ~/.aws holds every profile on this host, including the org's
+  #      management account. Carrying it would hand an in-box agent the keys to
+  #      all of them. The exported file holds exactly one identity — the isolated
+  #      AgentBox dev account — so that is the box's whole blast radius.
   #
-  # SSO profiles are NOT carryable this way: their tokens live in
-  # ~/.aws/sso/cache and are refreshed by `aws sso login`, which needs a
-  # browser. Use static keys from the isolated account for the in-box path
-  # (same trade-off as the Vercel CLI store above). Both optional: a host
-  # without the files still gets a working box.
-  - src: ~/.aws/agentbox-config
+  # Host, before creating a box:
+  #
+  #   aws sso login --profile agentboxmarco
+  #   pnpm aws:creds        # writes ./aws_credentials/ (gitignored, 0600)
+  #
+  # THESE EXPIRE. An SSO role session is typically 1 hour, and `carry:` copies
+  # the files in at CREATE time only — a long-lived box will eventually see
+  # `ExpiredToken`. Re-run `pnpm aws:creds` and re-create the box (or
+  # `agentbox cp` the files in) to refresh. Both optional: a host that has never
+  # run the script still gets a working box.
+  - src: ./aws_credentials/config
     dest: ~/.aws/config
     mode: 0o600
     optional: true
-  - src: ~/.aws/agentbox-credentials
+  - src: ./aws_credentials/credentials
     dest: ~/.aws/credentials
     mode: 0o600
     optional: true
