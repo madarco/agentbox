@@ -1,21 +1,25 @@
 ---
 title: Hub (Web UI)
-description: A local dashboard for your boxes — served by the host relay on http://127.0.0.1:8787
+description: A local dashboard for your boxes — served by the host relay at https://agentbox.localhost
 ---
 
 The **hub** is a local Web UI for your boxes: a dashboard, box detail views, and a
-live **approvals** inbox, served by the host relay on `http://127.0.0.1:8787`. It's
-the same `@agentbox/relay` core you already run, with a Next.js UI delegated onto
-its port — one process, no extra port opened.
+live **approvals** inbox, served by the host relay. It's the same `@agentbox/relay`
+core you already run, with a Next.js UI delegated onto its port — one process, no
+extra port opened.
 
 ```bash
 agentbox hub
 ```
 
 That starts the hub (if it isn't already running) and opens it in your browser at
-`http://127.0.0.1:8787/?token=<secret>`.
+`https://agentbox.localhost/?token=<secret>`. **Start it with the command, not by
+typing the URL** — the token is what unlocks the hub, and without it the page just
+answers `401 AgentBox hub is locked`. The first tokened visit stores the secret in
+a cookie (30 days) and strips it from the address, so from then on a plain
+`https://agentbox.localhost` gets you in.
 
-<Callout type="info" title="Friendly URL with Portless">When [Portless](https://portless.sh) is installed (the same proxy AgentBox uses for box web apps), the hub also registers a stable `https://agentbox.localhost` alias and opens that instead — no port to remember. It falls back to the loopback URL on OrbStack or when Portless isn't installed, and respects `portless.enabled: false`.</Callout>
+<Callout type="info" title="Where the friendly URL comes from">`https://agentbox.localhost` is registered by [Portless](https://portless.sh), the same proxy AgentBox uses for box web apps. Without it — on OrbStack, when Portless isn't installed, or with `portless.enabled: false` — the hub falls back to the loopback URL `http://127.0.0.1:8787`, which works exactly the same way.</Callout>
 
 <Figure src="/screenshots/hub-dashboard.png" caption="The hub dashboard — boxes grouped by project, with live status and lifecycle controls." />
 
