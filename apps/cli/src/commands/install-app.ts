@@ -19,6 +19,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { isNewer } from '../lib/semver-lite.js';
 import { writeUpdateState } from '../lib/update-state.js';
 
 export const APP_NAME = 'AgentBox';
@@ -184,7 +185,13 @@ export function parseVersionManifest(body: string): string | undefined {
 
 export interface TrayUpdateDecision {
   update: boolean;
-  reason: 'not-installed' | 'no-latest-sha' | 'no-stamp' | 'mismatch' | 'up-to-date';
+  reason:
+    | 'not-installed'
+    | 'no-latest-sha'
+    | 'no-stamp'
+    | 'mismatch'
+    | 'older-version'
+    | 'up-to-date';
 }
 
 /**
@@ -197,35 +204,65 @@ export function decideTrayUpdate(input: {
   installed: boolean;
   stampedSha: string | undefined;
   latestSha: string | undefined;
+  /** `CFBundleShortVersionString` of the app on disk — ground truth. */
+  installedVersion?: string | undefined;
+  /** `version` from the release's version.json. */
+  latestVersion?: string | undefined;
 }): TrayUpdateDecision {
   if (!input.installed) return { update: false, reason: 'not-installed' };
+
+  // Prefer the ACTUAL versions over the sha stamp. The stamp only exists if *this*
+  // CLI did the install, so a DMG-drag install (or one predating stamping) has no
+  // stamp and used to read as "update available" forever, even on the newest app.
+  // Comparing what is really installed against what is really published cannot lie.
+  const { installedVersion, latestVersion } = input;
+  if (
+    installedVersion !== undefined &&
+    latestVersion !== undefined &&
+    isReleaseVersion(installedVersion) &&
+    isReleaseVersion(latestVersion)
+  ) {
+    return isNewer(latestVersion, installedVersion)
+      ? { update: true, reason: 'older-version' }
+      : { update: false, reason: 'up-to-date' };
+  }
+
+  // Fall back to the sha stamp when a version is unreadable (no manifest on the
+  // release, unparseable plist).
   if (input.latestSha === undefined) return { update: false, reason: 'no-latest-sha' };
   if (input.stampedSha === undefined) return { update: true, reason: 'no-stamp' };
   if (input.stampedSha !== input.latestSha) return { update: true, reason: 'mismatch' };
   return { update: false, reason: 'up-to-date' };
 }
 
+/** A real published version we can compare — excludes `0.0.0`/unparseable. */
+function isReleaseVersion(v: string): boolean {
+  const core = v.split('-', 1)[0] ?? v;
+  const parts = core.split('.');
+  return parts.length === 3 && parts.every((p) => /^\d+$/.test(p)) && core !== '0.0.0';
+}
+
 /**
- * Pure gate for the *unprompted* startup nudge (`index.ts`), as opposed to
- * `decideTrayUpdate`, which decides whether an already-consented refresh should
- * install. A tray-only release never bumps the CLI, so the version-change hook
- * alone would never surface it — this is what makes such a release reachable.
- *
- * Declining stamps the published sha, so the same release is never asked about
- * twice; a *newer* one asks again (different sha).
+ * The version of the app actually installed at `/Applications/AgentBox.app`, or
+ * undefined when it isn't there / the plist can't be read. `plutil` handles both
+ * XML and binary plists; the app is macOS-only, so this is safe to shell.
  */
-export function shouldPromptTrayUpdate(input: {
-  installed: boolean;
-  stampedSha: string | undefined;
-  latestSha: string | undefined;
-  declinedSha: string | undefined;
-}): boolean {
-  if (input.declinedSha !== undefined && input.declinedSha === input.latestSha) return false;
-  return decideTrayUpdate({
-    installed: input.installed,
-    stampedSha: input.stampedSha,
-    latestSha: input.latestSha,
-  }).update;
+export async function readInstalledTrayVersion(): Promise<string | undefined> {
+  if (!trayInstalled()) return undefined;
+  try {
+    const { stdout } = await execa('plutil', [
+      '-extract',
+      'CFBundleShortVersionString',
+      'raw',
+      '-o',
+      '-',
+      join(APP_PATH, 'Contents', 'Info.plist'),
+    ]);
+    const v = stdout.trim();
+    return v.length > 0 ? v : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** True while the tray process is running. `pgrep -x` exits 1 (rejects) when nothing matches. */

@@ -81,9 +81,14 @@ import { runQueuedJobCommand } from './commands/_run-queued-job.js';
 import { runQueuedPrepareCommand } from './commands/_run-queued-prepare.js';
 import { claudeLoginWorkerCommand } from './commands/_claude-login-worker.js';
 import { postUpdateRefreshCommand } from './commands/_post-update-refresh.js';
-import { maybeUpdateTray, runPostUpdateRefresh } from './lib/post-update-refresh.js';
-import { shouldPromptTrayUpdate, trayInstalled } from './commands/install-app.js';
-import { maybeStartRemoteCheck, nudgeMessage, updateCheckEnabled } from './lib/update-check.js';
+import { runPostUpdateRefresh } from './lib/post-update-refresh.js';
+import { readInstalledTrayVersion } from './commands/install-app.js';
+import {
+  maybeStartRemoteCheck,
+  nudgeMessage,
+  trayNudgeMessage,
+  updateCheckEnabled,
+} from './lib/update-check.js';
 import { readUpdateState, writeUpdateState } from './lib/update-state.js';
 import { confirm } from './lib/prompt.js';
 import { detectExecutionMethod } from './exec-method.js';
@@ -209,6 +214,35 @@ const FIRST_RUN_EXEMPT = new Set([
   'screen',
 ]);
 
+// Commands that START or ATTACH to work. An update prompt here lands in the middle
+// of what you actually came to do — you asked for a box, not a maintenance chore —
+// so the post-update refresh never interrupts them. It asks on the next quiet
+// command instead (`list`, `config`, …), and both updates are always reported by
+// the passive one-line nudge, which never blocks.
+const UPDATE_PROMPT_EXEMPT = new Set([
+  'create',
+  'claude',
+  'codex',
+  'opencode',
+  'shell',
+  'sh',
+  'attach',
+  'exec',
+  'run',
+  'open',
+  'fork',
+  'url',
+  'connect',
+]);
+
+/** True when an update prompt would interrupt the command the user actually ran. */
+function isUpdatePromptEligible(args: readonly string[]): boolean {
+  if (!isFirstRunHookEligible(args)) return false;
+  const cmd = args[2];
+  if (typeof cmd !== 'string') return false;
+  return !UPDATE_PROMPT_EXEMPT.has(cmd) && cmd !== 'self-update';
+}
+
 function isFirstRunHookEligible(args: readonly string[]): boolean {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
   const rest = args.slice(2);
@@ -245,11 +279,7 @@ if (AGENTBOX_VERSION !== '0.0.0-dev') {
     // Baseline for installs that predate the stamp: written on any invocation,
     // silently — we can't know the previous version, so never prompt.
     writeUpdateState({ lastRunVersion: AGENTBOX_VERSION });
-  } else if (
-    state.lastRunVersion !== AGENTBOX_VERSION &&
-    isFirstRunHookEligible(argv) &&
-    argv[2] !== 'self-update'
-  ) {
+  } else if (state.lastRunVersion !== AGENTBOX_VERSION && isUpdatePromptEligible(argv)) {
     versionPromptShown = true;
     try {
       const yes = await confirm({
@@ -266,44 +296,11 @@ if (AGENTBOX_VERSION !== '0.0.0-dev') {
         `post-update refresh failed: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
-  } else if (
-    isFirstRunHookEligible(argv) &&
-    argv[2] !== 'self-update' &&
-    shouldPromptTrayUpdate({
-      installed: trayInstalled(),
-      stampedSha: state.traySha,
-      latestSha: state.remoteCheck?.trayLatestSha,
-      declinedSha: state.trayDeclinedSha,
-    })
-  ) {
-    // The menu-bar app ships on its own cadence, so a tray-only release bumps
-    // no CLI version and the hook above never fires for it. Reads the daily
-    // cache — no network here. Only the app is stale, so only the app is
-    // touched: `runPostUpdateRefresh` would also drop the box image and bounce
-    // the relay, which no one asked for by installing a new menu-bar app.
-    const latestSha = state.remoteCheck?.trayLatestSha;
-    const latestVersion = state.remoteCheck?.trayLatestVersion;
-    versionPromptShown = true;
-    try {
-      const yes = await confirm({
-        message: latestVersion
-          ? `the AgentBox menu-bar app has an update (${latestVersion}) — install it now?`
-          : 'the AgentBox menu-bar app has an update — install it now?',
-        initialValue: true,
-      });
-      if (yes) {
-        await maybeUpdateTray((msg) => {
-          process.stdout.write(`${msg}\n`);
-        });
-      } else {
-        writeUpdateState({ trayDeclinedSha: latestSha });
-      }
-    } catch (err) {
-      process.stderr.write(
-        `menu-bar app update failed: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-    }
   }
+  // A stale menu-bar app is NOT prompted for. It ships on its own cadence, so it
+  // would interrupt whatever you were doing, on a command that has nothing to do
+  // with it, to ask about something you can act on any time. It's reported as a
+  // one-line nudge after the command instead (see `nudgeMessage`).
 }
 
 // Daily update check: no-op while the cached result is < 24h old (zero
@@ -315,18 +312,27 @@ if (isFirstRunHookEligible(argv)) {
 
 program.parseAsync(argv).then(
   async () => {
-    // "Newer version available" nudge — printed from the cache only, after
-    // the command finished, on interactive runs of an installed build.
-    if (versionPromptShown || !isFirstRunHookEligible(argv)) return;
-    const msg = nudgeMessage(
-      readUpdateState(),
-      detectExecutionMethod({
-        userAgent: process.env.npm_config_user_agent,
-        argv1: process.argv[1],
-      }),
-    );
-    if (msg !== null && (await updateCheckEnabled())) {
-      process.stderr.write(`\n${msg}\n`);
+    // "Newer version available" nudges — printed from the cache only, after the
+    // command finished, on interactive runs of an installed build. Both the CLI
+    // and the menu-bar app report here; neither ever blocks.
+    //
+    // Gated on the same exempt list as the prompt: a box-flow command
+    // (`create` / `claude` / …) says nothing about updates at all. You asked for
+    // a box, and trailing maintenance chatter on the way out is still noise.
+    if (versionPromptShown || !isUpdatePromptEligible(argv)) return;
+    const state = readUpdateState();
+    const lines = [
+      nudgeMessage(
+        state,
+        detectExecutionMethod({
+          userAgent: process.env.npm_config_user_agent,
+          argv1: process.argv[1],
+        }),
+      ),
+      trayNudgeMessage(state, await readInstalledTrayVersion()),
+    ].filter((l): l is string => l !== null);
+    if (lines.length > 0 && (await updateCheckEnabled())) {
+      process.stderr.write(`\n${lines.join('\n')}\n`);
     }
   },
   (err: unknown) => {
