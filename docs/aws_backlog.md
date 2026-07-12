@@ -11,8 +11,8 @@ Live progress tracker for the AWS provider. The design lives in
 | # | Phase | Status |
 |---|---|---|
 | 0 | Registry row (`PROVIDERS`, `types.ts`, `user-config.schema.json`) | done |
-| 1 | Package skeleton (client, credentials, setup-iam, security-group, preflight) | todo |
-| 2 | `prepare` — the AMI bake | todo |
+| 1 | Package skeleton (client, credentials, setup-iam, security-group, preflight) | done |
+| 2 | `prepare` — the AMI bake | done |
 | 3 | The `CloudBackend` | todo |
 | 4 | Wiring (loaders, relay, hub, CLI commands, shipped skills) | todo |
 | 5 | Unit tests (mocked SDK) | todo |
@@ -43,6 +43,22 @@ New config keys:
 | `box.awsRegion` | `us-east-1` | Region for new boxes. Overridable with `--location`. |
 | `box.awsSubnetId` | `''` | Explicit subnet; empty = a public subnet of the default VPC. |
 | `box.awsDiskGb` | `40` | Root EBS volume size (EC2's own 8 GB default is too small). |
+
+## The bake logs in as root, not `ubuntu` (found during phase 2)
+
+`install-box.sh` renames whatever account owns UID 1000 to `vscode` so the image
+matches the docker provider's layout. On a Canonical AMI that account is **`ubuntu`** — and
+`usermod -l` refuses to rename an account that has running processes. Had the bake ssh'd in as
+`ubuntu` (the obvious choice, and what the original plan said), our own login shell would have
+blocked the rename and the bake would have failed.
+
+So the prepare instance is reached as `root`. That is fiddlier on EC2 than on hetzner/digitalocean,
+whose stock images make `root` the *default* cloud-init user — a top-level `ssh_authorized_keys:`
+lands there. On EC2 the default user is `ubuntu`, so the same block injects the key for the wrong
+account. `generatePrepareCloudInit` therefore writes `/root/.ssh/authorized_keys` explicitly from
+`runcmd`, which runs last and overwrites whatever cloud-init's own ssh module put there (including
+the `disable_root` forced-command banner). Ubuntu ships `PermitRootLogin prohibit-password`, so
+key-based root login works once the key is in place.
 
 ## Dogfooding (developing the provider inside a box)
 
