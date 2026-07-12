@@ -78,9 +78,8 @@ describe('update-state', () => {
     expect(state.remoteCheck).toBeUndefined();
   });
 
-  it('round-trips the tray decline stamp and the published tray version', () => {
+  it('round-trips the published tray version', () => {
     writeUpdateState({
-      trayDeclinedSha: 'd'.repeat(64),
       remoteCheck: {
         checkedAt: '2026-07-07T00:00:00.000Z',
         trayLatestSha: 'e'.repeat(64),
@@ -88,7 +87,6 @@ describe('update-state', () => {
       },
     });
     const state = readUpdateState();
-    expect(state.trayDeclinedSha).toBe('d'.repeat(64));
     expect(state.remoteCheck?.trayLatestSha).toBe('e'.repeat(64));
     expect(state.remoteCheck?.trayLatestVersion).toBe('0.1.10');
   });
@@ -98,7 +96,6 @@ describe('update-state', () => {
       updateStatePath(),
       JSON.stringify({
         version: 1,
-        trayDeclinedSha: 7,
         remoteCheck: {
           checkedAt: '2026-07-07T00:00:00.000Z',
           trayLatestSha: 'e'.repeat(64),
@@ -107,7 +104,6 @@ describe('update-state', () => {
       }),
     );
     const state = readUpdateState();
-    expect(state.trayDeclinedSha).toBeUndefined();
     expect(state.remoteCheck?.trayLatestVersion).toBeUndefined();
     expect(state.remoteCheck?.trayLatestSha).toBe('e'.repeat(64));
   });

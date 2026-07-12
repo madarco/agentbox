@@ -3,9 +3,8 @@ import {
   decideTrayUpdate,
   parseSidecarSha,
   parseVersionManifest,
-  shouldPromptTrayUpdate,
 } from '../src/commands/install-app.js';
-import { mergeRemoteCheck } from '../src/lib/update-check.js';
+import { mergeRemoteCheck, trayNudgeMessage } from '../src/lib/update-check.js';
 
 const SHA_A = 'a'.repeat(64);
 const SHA_B = 'b'.repeat(64);
@@ -74,78 +73,6 @@ describe('parseVersionManifest', () => {
   });
 });
 
-describe('shouldPromptTrayUpdate', () => {
-  // The regression this whole feature exists for: a tray-only release bumps no CLI version, so
-  // nothing else in the CLI would ever surface it.
-  it('prompts when the published tray differs from the installed one', () => {
-    expect(
-      shouldPromptTrayUpdate({
-        installed: true,
-        stampedSha: SHA_A,
-        latestSha: SHA_B,
-        declinedSha: undefined,
-      }),
-    ).toBe(true);
-  });
-
-  it('stays silent when the app is current', () => {
-    expect(
-      shouldPromptTrayUpdate({
-        installed: true,
-        stampedSha: SHA_A,
-        latestSha: SHA_A,
-        declinedSha: undefined,
-      }),
-    ).toBe(false);
-  });
-
-  it('stays silent when the published sha is unknown (offline / no cache yet)', () => {
-    expect(
-      shouldPromptTrayUpdate({
-        installed: true,
-        stampedSha: SHA_A,
-        latestSha: undefined,
-        declinedSha: undefined,
-      }),
-    ).toBe(false);
-  });
-
-  it('stays silent when the app is not installed', () => {
-    expect(
-      shouldPromptTrayUpdate({
-        installed: false,
-        stampedSha: undefined,
-        latestSha: SHA_B,
-        declinedSha: undefined,
-      }),
-    ).toBe(false);
-  });
-
-  // Anti-nag: without the decline stamp this prompt re-fires on every single command.
-  it('does not re-ask about a release the user declined', () => {
-    expect(
-      shouldPromptTrayUpdate({
-        installed: true,
-        stampedSha: SHA_A,
-        latestSha: SHA_B,
-        declinedSha: SHA_B,
-      }),
-    ).toBe(false);
-  });
-
-  it('asks again once a NEWER release lands after a decline', () => {
-    const SHA_C = 'c'.repeat(64);
-    expect(
-      shouldPromptTrayUpdate({
-        installed: true,
-        stampedSha: SHA_A,
-        latestSha: SHA_C,
-        declinedSha: SHA_B,
-      }),
-    ).toBe(true);
-  });
-});
-
 describe('mergeRemoteCheck', () => {
   const prev = {
     checkedAt: '2026-07-11T00:00:00.000Z',
@@ -186,5 +113,81 @@ describe('mergeRemoteCheck', () => {
 
   it('is empty on a first-ever probe that fetched nothing', () => {
     expect(mergeRemoteCheck({}, undefined)).toEqual({});
+  });
+});
+
+describe('decideTrayUpdate — version beats the sha stamp', () => {
+  // The false positive: the app was installed by dragging the DMG (or by a CLI
+  // that predated sha stamping), so there is no stamp — and the old sha-only
+  // logic reported "update available" forever, even on the newest app.
+  it('does NOT claim an update when the installed app is already the published one', () => {
+    expect(
+      decideTrayUpdate({
+        installed: true,
+        stampedSha: undefined, // never installed by this CLI
+        latestSha: SHA_B,
+        installedVersion: '0.1.12',
+        latestVersion: '0.1.12',
+      }),
+    ).toEqual({ update: false, reason: 'up-to-date' });
+  });
+
+  it('claims an update when the installed app is genuinely older', () => {
+    expect(
+      decideTrayUpdate({
+        installed: true,
+        stampedSha: SHA_A,
+        latestSha: SHA_B,
+        installedVersion: '0.1.11',
+        latestVersion: '0.1.12',
+      }),
+    ).toEqual({ update: true, reason: 'older-version' });
+  });
+
+  // A stale stamp must not override the versions: a reinstall of the same build
+  // changes the zip sha, but the app is still current.
+  it('trusts the versions over a mismatched stamp', () => {
+    expect(
+      decideTrayUpdate({
+        installed: true,
+        stampedSha: SHA_A,
+        latestSha: SHA_B,
+        installedVersion: '0.1.12',
+        latestVersion: '0.1.12',
+      }),
+    ).toEqual({ update: false, reason: 'up-to-date' });
+  });
+
+  it('falls back to the sha when a version is unreadable', () => {
+    expect(
+      decideTrayUpdate({
+        installed: true,
+        stampedSha: SHA_A,
+        latestSha: SHA_B,
+        installedVersion: undefined,
+        latestVersion: '0.1.12',
+      }),
+    ).toEqual({ update: true, reason: 'mismatch' });
+  });
+});
+
+describe('trayNudgeMessage', () => {
+  const st = (v?: string) => ({
+    version: 1 as const,
+    remoteCheck: { checkedAt: '2026-07-12T00:00:00.000Z', trayLatestVersion: v },
+  });
+
+  it('is silent when the installed app is current', () => {
+    expect(trayNudgeMessage(st('0.1.12'), '0.1.12')).toBeNull();
+  });
+
+  it('names both versions when behind', () => {
+    expect(trayNudgeMessage(st('0.1.12'), '0.1.11')).toContain('0.1.12');
+    expect(trayNudgeMessage(st('0.1.12'), '0.1.11')).toContain('agentbox install app');
+  });
+
+  it('is silent when either version is unknown', () => {
+    expect(trayNudgeMessage(st(undefined), '0.1.11')).toBeNull();
+    expect(trayNudgeMessage(st('0.1.12'), undefined)).toBeNull();
   });
 });

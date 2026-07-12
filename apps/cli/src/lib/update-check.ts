@@ -150,6 +150,25 @@ export function maybeStartRemoteCheck(): Promise<void> | null {
   return run().catch(() => undefined);
 }
 
+/**
+ * The menu-bar app nudge, or null. Never prompts and never blocks — a stale app
+ * is worth one line after the command, not an interruption in the middle of one.
+ *
+ * `installedVersion` is read off the installed bundle, so this is decided on what
+ * is really installed vs what is really published — NOT on the sha stamp, which
+ * only exists when this CLI did the install and therefore reported a phantom
+ * update forever on a DMG-drag install.
+ */
+export function trayNudgeMessage(
+  state: UpdateState,
+  installedVersion: string | undefined,
+): string | null {
+  const latest = state.remoteCheck?.trayLatestVersion;
+  if (!latest || !installedVersion) return null;
+  if (!isNewer(latest, installedVersion)) return null;
+  return `a newer AgentBox app (${latest}, you have ${installedVersion}) is available — run \`agentbox install app\``;
+}
+
 /** The nudge line to print after the command, or null. Reads the cache only. */
 export function nudgeMessage(
   state: UpdateState,

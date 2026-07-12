@@ -28,11 +28,6 @@ export interface UpdateState {
   lastRunVersion?: string;
   /** sha256 of the AgentBox.zip the installed tray app came from. */
   traySha?: string;
-  /**
-   * sha256 of a published tray zip the user declined. Without this the
-   * app-update prompt re-fires on every single command after a decline.
-   */
-  trayDeclinedSha?: string;
   remoteCheck?: RemoteCheck;
 }
 
@@ -48,7 +43,6 @@ export function readUpdateState(): UpdateState {
     const state: UpdateState = { version: STATE_VERSION };
     if (typeof parsed.lastRunVersion === 'string') state.lastRunVersion = parsed.lastRunVersion;
     if (typeof parsed.traySha === 'string') state.traySha = parsed.traySha;
-    if (typeof parsed.trayDeclinedSha === 'string') state.trayDeclinedSha = parsed.trayDeclinedSha;
     if (
       parsed.remoteCheck !== undefined &&
       typeof parsed.remoteCheck === 'object' &&

@@ -26,6 +26,7 @@ import {
   decideTrayUpdate,
   fetchTraySidecarSha,
   installTray,
+  readInstalledTrayVersion,
   trayInstalled,
 } from '../commands/install-app.js';
 import { AGENTBOX_VERSION } from '../version.js';
@@ -51,6 +52,8 @@ export async function maybeUpdateTray(say: (msg: string) => void): Promise<void>
     installed: true,
     stampedSha: state.traySha,
     latestSha,
+    installedVersion: await readInstalledTrayVersion(),
+    latestVersion: state.remoteCheck?.trayLatestVersion,
   });
   if (!decision.update) {
     say(
