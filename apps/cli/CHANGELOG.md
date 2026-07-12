@@ -9,6 +9,17 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.24.4] - 2026-07-12
+
+### Added
+
+- **DigitalOcean Projects** — `box.digitaloceanProject` (a project name or UUID)
+  places boxes in a specific DigitalOcean Project instead of the account's default;
+  pick it at `agentbox digitalocean login`, in the hub/app settings, or per repo in
+  `agentbox.yaml`. Unset keeps the old behavior.
+- (Provider plugins) `@madarco/agentbox-provider-sdk` 2.2.0: `CloudProvisionRequest`
+  gains an optional `project` field. Additive; must be republished separately.
+
 ## [0.24.3] - 2026-07-12
 
 ### Fixed

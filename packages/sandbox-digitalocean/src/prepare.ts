@@ -207,9 +207,14 @@ export async function prepareDigitalOcean(
     // surface in the account's default project for the 5-30 min it lives. Wholly
     // best-effort: a bake is expensive, and neither a project typo nor an API blip
     // is worth failing one over — the create path reports a bad project loudly.
+    // Resolve config against the host workspace, NOT process.cwd(): a bake driven
+    // by the hub's queued worker runs from the daemon's directory, which is not the
+    // repo — so cwd would miss a per-repo `box.digitaloceanProject` and quietly bake
+    // in the wrong project.
     const wantedProject = (
       opts.project ??
-      (await loadEffectiveConfig(process.cwd())).effective.box.digitaloceanProject
+      (await loadEffectiveConfig(opts.hostWorkspace ?? process.cwd())).effective.box
+        .digitaloceanProject
     ).trim();
     if (wantedProject.length > 0) {
       try {

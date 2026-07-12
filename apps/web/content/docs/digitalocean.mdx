@@ -131,7 +131,13 @@ defaults:
     digitaloceanProject: client-x
 ```
 
-Leave it unset for today's behavior (the account default project). A name that doesn't match any of your projects fails **before** anything is created, listing the real ones.
+Leave it unset for today's behavior (the account default project). A name that doesn't match any of your projects fails **before** anything is created, listing the real ones. To go back to the default project later:
+
+```bash
+agentbox config unset box.digitaloceanProject
+```
+
+(The settings form's **Project** field can set or change the project, but not clear it — a blank field there means "leave unchanged", since the form doesn't show the saved value. `agentbox digitalocean login` can clear it, by choosing *Skip*.)
 
 <Callout title="Placement is best-effort">
 DigitalOcean has no project field on Droplet-create, so AgentBox assigns the box to its project immediately *after* creating it. If that one call fails (an API blip, a token without project write), the box is still created and fully usable — it just stays in the default project, and the create log says so. A working box is never torn down over a grouping error.

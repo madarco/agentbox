@@ -22,7 +22,7 @@ import {
   select,
   spinner,
 } from '@clack/prompts';
-import { loadEffectiveConfig, setConfigValue } from '@agentbox/config';
+import { loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox/config';
 import { makeDigitalOceanClient, type DigitalOceanProject } from './client.js';
 import { ensureDigitalOceanEnvLoaded } from './env-loader.js';
 import { resolveProjectChoice } from './preflight.js';
@@ -165,6 +165,11 @@ async function promptForProject(creds: Credentials): Promise<void> {
   );
 
   if (choice === SKIP_PROJECT) {
+    // "Use the account's default" has to actually mean that. A previously saved
+    // global key would otherwise keep sending boxes to the old project while this
+    // line claims the opposite — so clear it rather than just not writing one.
+    // (A repo-level override in agentbox.yaml still wins; that is the point of it.)
+    if (current) await unsetConfigValue('global', 'box.digitaloceanProject', process.cwd());
     log.info("Boxes will go into your account's default DigitalOcean project.");
     return;
   }

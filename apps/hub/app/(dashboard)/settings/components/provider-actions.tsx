@@ -38,12 +38,14 @@ const CRED_FIELDS: Record<string, CredField[]> = {
   ],
   digitalocean: [
     { key: 'token', label: 'API token', placeholder: 'personal access token (read+write)' },
-    // Not a secret — this writes the `box.digitaloceanProject` config key. Optional:
-    // blank leaves boxes in the account's default project.
+    // Not a secret — this writes the `box.digitaloceanProject` config key. Blank means
+    // "leave as-is", NOT "clear": the form drops empty fields before sending and never
+    // shows the saved value, so treating blank as a clear would wipe the setting on any
+    // save. Clearing is `agentbox config unset box.digitaloceanProject`.
     {
       key: 'project',
       label: 'Project',
-      placeholder: 'name or UUID (optional)',
+      placeholder: 'name or UUID — blank leaves it unchanged',
       optional: true,
     },
   ],
