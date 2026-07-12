@@ -150,6 +150,38 @@ export function parseSidecarSha(body: string): string | undefined {
   return first && /^[0-9a-f]{64}$/.test(first) ? first : undefined;
 }
 
+/**
+ * Fetch the release's `version.json` manifest — the published tray version, as
+ * data rather than as prose in the release title. Display only: the sha
+ * sidecar still decides whether to install. Releases predating the manifest
+ * 404 here, so every caller must tolerate `undefined`.
+ */
+export async function fetchTrayLatestVersion(
+  tag: string = DEFAULT_TAG,
+): Promise<string | undefined> {
+  try {
+    const { stdout } = await execa('curl', [
+      '-fsSL',
+      '--max-time',
+      '5',
+      `${RELEASE_BASE}/${tag}/version.json`,
+    ]);
+    return parseVersionManifest(stdout);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Parse `version.json` → the version string, or undefined if malformed. */
+export function parseVersionManifest(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body) as { version?: unknown };
+    return typeof parsed.version === 'string' && parsed.version !== '' ? parsed.version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface TrayUpdateDecision {
   update: boolean;
   reason: 'not-installed' | 'no-latest-sha' | 'no-stamp' | 'mismatch' | 'up-to-date';
@@ -171,6 +203,29 @@ export function decideTrayUpdate(input: {
   if (input.stampedSha === undefined) return { update: true, reason: 'no-stamp' };
   if (input.stampedSha !== input.latestSha) return { update: true, reason: 'mismatch' };
   return { update: false, reason: 'up-to-date' };
+}
+
+/**
+ * Pure gate for the *unprompted* startup nudge (`index.ts`), as opposed to
+ * `decideTrayUpdate`, which decides whether an already-consented refresh should
+ * install. A tray-only release never bumps the CLI, so the version-change hook
+ * alone would never surface it — this is what makes such a release reachable.
+ *
+ * Declining stamps the published sha, so the same release is never asked about
+ * twice; a *newer* one asks again (different sha).
+ */
+export function shouldPromptTrayUpdate(input: {
+  installed: boolean;
+  stampedSha: string | undefined;
+  latestSha: string | undefined;
+  declinedSha: string | undefined;
+}): boolean {
+  if (input.declinedSha !== undefined && input.declinedSha === input.latestSha) return false;
+  return decideTrayUpdate({
+    installed: input.installed,
+    stampedSha: input.stampedSha,
+    latestSha: input.latestSha,
+  }).update;
 }
 
 /** True while the tray process is running. `pgrep -x` exits 1 (rejects) when nothing matches. */

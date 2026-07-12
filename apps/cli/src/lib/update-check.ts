@@ -13,12 +13,17 @@ import { readFile } from 'node:fs/promises';
 import { GLOBAL_CONFIG_FILE, loadEffectiveConfig, parseUserConfig } from '@agentbox/config';
 import { detectExecutionMethod, type ExecMethod } from '../exec-method.js';
 import { AGENTBOX_VERSION } from '../version.js';
-import { fetchTraySidecarSha, trayInstalled } from '../commands/install-app.js';
+import {
+  fetchTrayLatestVersion,
+  fetchTraySidecarSha,
+  trayInstalled,
+} from '../commands/install-app.js';
 import { isNewer } from './semver-lite.js';
 import {
   readUpdateState,
   remoteCheckFresh,
   writeUpdateState,
+  type RemoteCheck,
   type UpdateState,
 } from './update-state.js';
 
@@ -72,6 +77,40 @@ async function fetchNpmLatest(): Promise<string | undefined> {
 }
 
 /**
+ * Merge a probe's results over the previous cache, so a partial probe (one
+ * fetch failed) doesn't drop what the other cached earlier.
+ *
+ * The tray sha and the tray version describe the SAME release, so they must
+ * travel together. Carrying a stale version forward alongside a fresh sha
+ * would name the previous release in the update prompt while installing the
+ * new one — so when the sha moves and the manifest didn't come back (a 404 on
+ * a release predating the manifest, or a transient failure), the version is
+ * dropped rather than inherited. The prompt then just omits the version.
+ */
+export function mergeRemoteCheck(
+  fetched: {
+    npmLatest?: string | undefined;
+    trayLatestSha?: string | undefined;
+    trayLatestVersion?: string | undefined;
+  },
+  prev: RemoteCheck | undefined,
+): Omit<RemoteCheck, 'checkedAt'> {
+  const npmLatest = fetched.npmLatest ?? prev?.npmLatest;
+  const trayLatestSha = fetched.trayLatestSha ?? prev?.trayLatestSha;
+
+  const shaMoved =
+    fetched.trayLatestSha !== undefined && fetched.trayLatestSha !== prev?.trayLatestSha;
+  const trayLatestVersion =
+    fetched.trayLatestVersion ?? (shaMoved ? undefined : prev?.trayLatestVersion);
+
+  return {
+    ...(npmLatest !== undefined ? { npmLatest } : {}),
+    ...(trayLatestSha !== undefined ? { trayLatestSha } : {}),
+    ...(trayLatestVersion !== undefined ? { trayLatestVersion } : {}),
+  };
+}
+
+/**
  * Kick off the daily remote check if the cache is stale. Returns immediately;
  * the fetches run in the background and persist their result when they land.
  * Callers must NOT await the returned promise on the command's critical path.
@@ -88,24 +127,23 @@ export function maybeStartRemoteCheck(): Promise<void> | null {
   const run = async (): Promise<void> => {
     let npmLatest: string | undefined;
     let trayLatestSha: string | undefined;
+    let trayLatestVersion: string | undefined;
     if (await updateCheckEnabled()) {
-      [npmLatest, trayLatestSha] = await Promise.all([
+      [npmLatest, trayLatestSha, trayLatestVersion] = await Promise.all([
         nudgeEligible(method, AGENTBOX_VERSION) ? fetchNpmLatest() : Promise.resolve(undefined),
         trayInstalled() ? fetchTraySidecarSha() : Promise.resolve(undefined),
+        trayInstalled() ? fetchTrayLatestVersion() : Promise.resolve(undefined),
       ]);
     }
     // Stamp checkedAt even when disabled or offline — the daily gate must
-    // throttle regardless, or every command re-schedules this probe. Merge
-    // with the previous cache so a partial probe (one fetch failed) doesn't
-    // drop the other value cached earlier.
-    const prev = readUpdateState().remoteCheck;
-    npmLatest ??= prev?.npmLatest;
-    trayLatestSha ??= prev?.trayLatestSha;
+    // throttle regardless, or every command re-schedules this probe.
     writeUpdateState({
       remoteCheck: {
         checkedAt: new Date().toISOString(),
-        ...(npmLatest !== undefined ? { npmLatest } : {}),
-        ...(trayLatestSha !== undefined ? { trayLatestSha } : {}),
+        ...mergeRemoteCheck(
+          { npmLatest, trayLatestSha, trayLatestVersion },
+          readUpdateState().remoteCheck,
+        ),
       },
     });
   };

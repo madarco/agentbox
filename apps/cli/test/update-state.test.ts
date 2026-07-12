@@ -77,6 +77,40 @@ describe('update-state', () => {
     expect(state.lastRunVersion).toBeUndefined();
     expect(state.remoteCheck).toBeUndefined();
   });
+
+  it('round-trips the tray decline stamp and the published tray version', () => {
+    writeUpdateState({
+      trayDeclinedSha: 'd'.repeat(64),
+      remoteCheck: {
+        checkedAt: '2026-07-07T00:00:00.000Z',
+        trayLatestSha: 'e'.repeat(64),
+        trayLatestVersion: '0.1.10',
+      },
+    });
+    const state = readUpdateState();
+    expect(state.trayDeclinedSha).toBe('d'.repeat(64));
+    expect(state.remoteCheck?.trayLatestSha).toBe('e'.repeat(64));
+    expect(state.remoteCheck?.trayLatestVersion).toBe('0.1.10');
+  });
+
+  it('drops a wrong-typed tray version without dropping the sha beside it', () => {
+    writeFileSync(
+      updateStatePath(),
+      JSON.stringify({
+        version: 1,
+        trayDeclinedSha: 7,
+        remoteCheck: {
+          checkedAt: '2026-07-07T00:00:00.000Z',
+          trayLatestSha: 'e'.repeat(64),
+          trayLatestVersion: { nope: true },
+        },
+      }),
+    );
+    const state = readUpdateState();
+    expect(state.trayDeclinedSha).toBeUndefined();
+    expect(state.remoteCheck?.trayLatestVersion).toBeUndefined();
+    expect(state.remoteCheck?.trayLatestSha).toBe('e'.repeat(64));
+  });
 });
 
 describe('remoteCheckFresh', () => {
