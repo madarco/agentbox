@@ -208,7 +208,7 @@ export async function setBoxDisplayName(
  */
 export async function recordBoxSsh(
   boxId: string,
-  ssh: { host: string; user: string; identityFile?: string; port?: number },
+  ssh: { host: string; user: string; identityFile?: string; port?: number; proxyJump?: string },
   path: string = STATE_FILE,
 ): Promise<void> {
   await mutateState(

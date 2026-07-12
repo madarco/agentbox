@@ -37,13 +37,21 @@ export const OPEN_IN_APPS: readonly OpenInApp[] = [
  * per-box key that persists under the box dir (only the loopback host port
  * changes across restart, and `agentbox open`/start re-syncs `~/.ssh/config`).
  */
-export const PERSISTENT_SSH_PROVIDERS: readonly string[] = ['docker', 'hetzner'];
+export const PERSISTENT_SSH_PROVIDERS: readonly string[] = [
+  'docker',
+  'hetzner',
+  // remote-docker qualifies for the same reason docker does: a per-box key that
+  // outlives the CLI call. Its box sshd is reached by `ProxyJump`ing through the
+  // engine (ssh's own transport — no AgentBox-held tunnel to keep alive), and
+  // start/open re-resolve the published port into `~/.ssh/config`.
+  'remote-docker',
+];
 
 /**
  * Providers `agentbox code` can attach an IDE to: docker via the Dev Containers
  * attached-container URI, clouds via a Remote-SSH alias.
  */
-export const IDE_PROVIDERS: readonly string[] = ['docker', 'hetzner', 'daytona'];
+export const IDE_PROVIDERS: readonly string[] = ['docker', 'hetzner', 'daytona', 'remote-docker'];
 
 /**
  * Providers `agentbox open` can sshfs-mount `/workspace` from — they expose real
@@ -52,7 +60,12 @@ export const IDE_PROVIDERS: readonly string[] = ['docker', 'hetzner', 'daytona']
  * so `open` fails fast with a readable pointer to `agentbox download`. Plugin
  * providers stay opted out until they declare SSH support.
  */
-export const SSH_MOUNT_PROVIDERS: readonly string[] = ['docker', 'hetzner', 'daytona'];
+export const SSH_MOUNT_PROVIDERS: readonly string[] = [
+  'docker',
+  'hetzner',
+  'daytona',
+  'remote-docker',
+];
 
 export interface DetectSeams {
   env: NodeJS.ProcessEnv;

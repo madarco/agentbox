@@ -25,6 +25,7 @@ import { readCliStamp, type ProviderModule } from '@agentbox/sandbox-core';
 import { basename } from 'node:path';
 import { BACKEND_NAME, makeSnapshotName, remoteDockerBackend } from './backend.js';
 import { buildRemoteDockerAttach } from './build-attach.js';
+import { resolveBoxSshTarget } from './box-ssh.js';
 import { currentContextSha } from './image.js';
 import { prepareRemoteDocker } from './prepare.js';
 import { parseSandboxId } from './target.js';
@@ -87,6 +88,11 @@ const remoteDockerCheckpoint: ProviderCheckpoint = {
 export const remoteDockerProvider: Provider = {
   ...cloudProvider,
   buildAttach: buildRemoteDockerAttach,
+  // The box's own sshd, reached by jumping through the engine — see box-ssh.ts.
+  // Supplying this is what lets `open` / `code` / `connect` treat a remote-docker
+  // box like any other SSH-capable box, without the scaffold having to guess a
+  // target out of an attach argv that points at the engine rather than the box.
+  sshTarget: resolveBoxSshTarget,
   checkpoint: remoteDockerCheckpoint,
   prepare: prepareRemoteDocker,
   baseFingerprint: async (claudeInstall) => (await currentContextSha(claudeInstall)) ?? undefined,

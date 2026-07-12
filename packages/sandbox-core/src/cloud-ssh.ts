@@ -25,6 +25,10 @@ export interface CloudSshAlias {
    * "not supported".
    */
   identityFile?: string;
+  /** Non-default SSH port (remote-docker: the box's sshd published on the engine). */
+  port?: number;
+  /** Jump host, when the box is only reachable through another machine. */
+  proxyJump?: string;
 }
 
 export interface CloudSshOptions {
@@ -71,12 +75,33 @@ export async function resolveCloudSshTarget(
     }
   }
 
+  const alias = agentboxAliasFor(box.name);
+
+  // A provider that knows its own SSH target says so. Reverse-engineering the
+  // target out of the attach argv only works when that argv is a plain `ssh …
+  // <user>@<box>`; it isn't when the attach has to go THROUGH a machine to
+  // reach the box (remote-docker), and such a provider supplies `sshTarget`
+  // instead — including bringing its sshd up and installing the per-box key.
+  if (provider.sshTarget) {
+    const t = await provider.sshTarget(box);
+    if (!t) {
+      throw new Error(`no SSH target for ${box.name} (its sshd did not come up)`);
+    }
+    return {
+      alias,
+      host: t.host,
+      user: t.user,
+      identityFile: t.identityFile,
+      port: t.port,
+      proxyJump: t.proxyJump,
+    };
+  }
+
   const spec = await provider.buildAttach(box, 'shell', { noTmux: true });
   const target = parseSshTarget(spec.argv);
   if (!target) {
     throw new Error(`could not parse <user>@<host> from cloud SSH argv: ${spec.argv.join(' ')}`);
   }
-  const alias = agentboxAliasFor(box.name);
   return { alias, host: target.host, user: target.user, identityFile: target.identityFile };
 }
 
@@ -99,6 +124,8 @@ export async function ensureCloudSshAlias(
     host: conn.host,
     user: conn.user,
     identityFile: conn.identityFile,
+    port: conn.port,
+    proxyJump: conn.proxyJump,
   });
   await syncAgentboxSshConfig();
   return conn;
@@ -120,8 +147,8 @@ export async function ensureCloudSshAlias(
 /**
  * Cloud providers whose `buildAttach` yields a plain `ssh … <user>@<host>` argv
  * pointing AT the box — the only shape `resolveCloudSshTarget` can parse a box
- * SSH target out of. Vercel/E2B have no SSH at all; remote-docker's attach
- * targets the engine's machine, not the box.
+ * SSH target out of. Vercel/E2B have no SSH at all, and must not warn about it
+ * on every start. A provider with its own `sshTarget` needs no entry here.
  */
 const PROVIDERS_WITH_DIRECT_BOX_SSH: readonly string[] = ['hetzner', 'digitalocean', 'daytona'];
 
@@ -132,11 +159,10 @@ export async function autoWriteSshConfig(
   logWarn?: (msg: string) => void,
 ): Promise<void> {
   if (!enabled) return;
-  // A provider whose attach isn't a direct `ssh <user>@<box>` has no target to
-  // write. remote-docker's attach lands on the machine running the engine and
-  // then `docker exec`s into the box, so there is nothing here to alias — that
-  // is a shape, not a failure, and must not warn on every start/unpause.
-  if (!PROVIDERS_WITH_DIRECT_BOX_SSH.includes(provider.name)) return;
+  // A provider with neither its own `sshTarget` nor a direct-ssh attach argv has
+  // no box target to write (vercel/e2b have no SSH at all). That is a shape, not
+  // a failure, and must not warn on every start/unpause.
+  if (!provider.sshTarget && !PROVIDERS_WITH_DIRECT_BOX_SSH.includes(provider.name)) return;
   try {
     const conn = await resolveCloudSshTarget(box, provider, { bringOnline: false });
     if (!conn.identityFile) return;
@@ -144,6 +170,8 @@ export async function autoWriteSshConfig(
       host: conn.host,
       user: conn.user,
       identityFile: conn.identityFile,
+      port: conn.port,
+      proxyJump: conn.proxyJump,
     });
     await syncAgentboxSshConfig();
   } catch (err) {

@@ -6,7 +6,7 @@
  * `provider` discriminator (or, for `create`, from config/flags) and calls it.
  */
 
-import type { BoxRecord, ProviderName } from './box-record.js';
+import type { BoxRecord, ProviderName, SshTargetRecord } from './box-record.js';
 import type { InboundPolicy } from './cloud-backend.js';
 import type { BoxEndpoints } from './endpoints.js';
 import type { ReplaceRule } from './replace.js';
@@ -481,6 +481,23 @@ export interface Provider {
   // ---- optional capabilities (the CLI feature-detects these) ----
   /** Build the argv the CLI's PTY wrapper attaches to (shell/agent/logs). */
   buildAttach?(box: BoxRecord, kind: AttachKind, opts?: BuildAttachOptions): Promise<AttachSpec>;
+  /**
+   * The box's SSH connection target, for `agentbox open` (sshfs) / `code`
+   * (Remote-SSH) / `connect`. Providers that omit it fall back to parsing the
+   * `buildAttach` argv, which only works when that argv is a plain `ssh …
+   * <user>@<box>` — true when the box IS the machine (hetzner), false when the
+   * attach has to go THROUGH a machine to reach the box.
+   *
+   * remote-docker implements it: its box is a container on someone else's
+   * engine, so the target is `127.0.0.1:<published sshd port>` reached via a
+   * `proxyJump` through the engine. Implementations are responsible for making
+   * the box actually reachable (installing the per-box key, starting sshd) —
+   * this is called on the paths that persist `box.ssh`.
+   *
+   * Returns null when the box has no SSH target right now (e.g. sshd failed to
+   * come up); callers then skip the alias rather than writing a broken one.
+   */
+  sshTarget?(box: BoxRecord): Promise<SshTargetRecord | null>;
   uploadPath?(
     box: BoxRecord,
     hostSrcs: string[],

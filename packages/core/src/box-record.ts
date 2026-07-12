@@ -200,6 +200,15 @@ export interface SshTargetRecord {
   user: string;
   identityFile?: string;
   port?: number;
+  /**
+   * SSH jump host (`ProxyJump`), for a box that is not directly reachable but
+   * sits behind a machine that is. remote-docker's box is a container on someone
+   * else's engine: its sshd is published on THAT machine's loopback, so ssh
+   * hops through the engine and dials `127.0.0.1:<port>` from there. Spelled as
+   * an ssh destination (`[user@]host[:port]` or an `~/.ssh/config` alias).
+   * Absent for providers whose box is directly reachable.
+   */
+  proxyJump?: string;
 }
 
 export interface GitWorktreeRecord {
