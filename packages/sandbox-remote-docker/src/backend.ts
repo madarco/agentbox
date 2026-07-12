@@ -36,9 +36,10 @@ import type {
 } from '@agentbox/core';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { CLOUD_VNC_PORT, CLOUD_WEB_PROXY_PORT, bashScript } from '@agentbox/sandbox-cloud';
-import { readState, type SshTargetArgs } from '@agentbox/sandbox-core';
+import { readState, sshExec, type SshTargetArgs } from '@agentbox/sandbox-core';
 import { ensureRemoteImage } from './image.js';
 import {
+  CONTAINER_USER,
   dockerExecArgv,
   dockerOnRemote,
   dockerOnRemoteOrThrow,
@@ -129,6 +130,18 @@ interface Ctx {
   container: string;
 }
 
+/**
+ * Is the remote engine itself running inside an AgentBox sandbox? Only true in
+ * the agentbox-in-agentbox dev loop this repo is developed with (CLAUDE.md ->
+ * "Use Agentbox inside Agentbox"), where the nested dockerd lacks the
+ * capabilities a normal engine has. `/etc/agentbox/box.env` is written into
+ * every box by the create path, so its presence is the box's own identity file.
+ */
+async function remoteIsNested(target: SshTargetArgs): Promise<boolean> {
+  const res = await sshExec(target, 'test -f /etc/agentbox/box.env');
+  return res.exitCode === 0;
+}
+
 /** Resolve a handle into a live SSH connection + the container it names. */
 async function ctxFor(h: CloudHandle): Promise<Ctx> {
   const { target: remote, container } = parseSandboxId(h.sandboxId);
@@ -193,6 +206,8 @@ export function buildRunArgv(opts: {
   dockerVolume: string;
   cpu?: number;
   memory?: number;
+  /** The remote engine is itself inside an AgentBox sandbox — see `remoteIsNested`. */
+  nestedEngine?: boolean;
 }): string[] {
   const argv = [
     'run',
@@ -214,6 +229,20 @@ export function buildRunArgv(opts: {
     '--security-opt=seccomp=unconfined',
     '--cgroupns=private',
   ];
+  if (opts.nestedEngine) {
+    // The engine is itself inside an AgentBox sandbox, which has no
+    // CAP_SYS_PTRACE. Its dockerd therefore cannot bind-mount /proc/<pid>/ns/net
+    // for a container whose init runs as a different uid than the daemon —
+    // and the box image's default USER is vscode (1000), so `docker run` dies
+    // with "bind-mount /proc/N/ns/net: permission denied". Forcing init to uid 0
+    // makes its /proc readable by the daemon and netns setup succeeds.
+    //
+    // The local docker provider does the same thing (see `runBox`), but keys it
+    // off ITS OWN `AGENTBOX=1`. Here that would be the wrong signal: the CLI can
+    // run inside a box while the engine sits on a real machine that has no such
+    // limitation. What matters is whether the ENGINE is nested, so we ask it.
+    argv.push('--user', '0');
+  }
   if (opts.cpu) argv.push('--cpus', String(opts.cpu));
   if (opts.memory) argv.push('--memory', `${String(opts.memory)}g`);
   // /var/lib/docker on a volume, not the container layer: without it, every
@@ -282,12 +311,18 @@ export const remoteDockerBackend: CloudBackend = {
     const dockerVolume = `agentbox-docker-${container}`;
     await dockerOnRemoteOrThrow(target, ['volume', 'create', dockerVolume]);
 
+    const nestedEngine = await remoteIsNested(target);
+    if (nestedEngine) {
+      log('[provision] remote engine is itself an AgentBox box — running the box init as root');
+    }
+
     const argv = buildRunArgv({
       container,
       image,
       env: req.env ?? {},
       ports: portsToPublish(req.exposePorts),
       dockerVolume,
+      nestedEngine,
       ...(cpu !== undefined ? { cpu } : {}),
       ...(memory !== undefined ? { memory } : {}),
     });
@@ -397,7 +432,7 @@ export const remoteDockerBackend: CloudBackend = {
   async exec(h, cmd: string, opts: CloudExecOptions = {}): Promise<CloudExecResult> {
     const ctx = await ctxFor(h);
     const argv = dockerExecArgv(ctx.container, cmd, {
-      user: opts.user ?? 'vscode',
+      user: opts.user ?? CONTAINER_USER,
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
       ...(opts.env ? { env: opts.env } : {}),
     });

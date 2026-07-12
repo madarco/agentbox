@@ -117,6 +117,14 @@ export async function ensureCloudSshAlias(
  * brought it up), so `bringOnline: false` avoids a redundant lifecycle pass.
  * Re-resolving on start is what refreshes a Hetzner box's changed public IP.
  */
+/**
+ * Cloud providers whose `buildAttach` yields a plain `ssh … <user>@<host>` argv
+ * pointing AT the box — the only shape `resolveCloudSshTarget` can parse a box
+ * SSH target out of. Vercel/E2B have no SSH at all; remote-docker's attach
+ * targets the engine's machine, not the box.
+ */
+const PROVIDERS_WITH_DIRECT_BOX_SSH: readonly string[] = ['hetzner', 'digitalocean', 'daytona'];
+
 export async function autoWriteSshConfig(
   box: BoxRecord,
   provider: Provider,
@@ -124,6 +132,11 @@ export async function autoWriteSshConfig(
   logWarn?: (msg: string) => void,
 ): Promise<void> {
   if (!enabled) return;
+  // A provider whose attach isn't a direct `ssh <user>@<box>` has no target to
+  // write. remote-docker's attach lands on the machine running the engine and
+  // then `docker exec`s into the box, so there is nothing here to alias — that
+  // is a shape, not a failure, and must not warn on every start/unpause.
+  if (!PROVIDERS_WITH_DIRECT_BOX_SSH.includes(provider.name)) return;
   try {
     const conn = await resolveCloudSshTarget(box, provider, { bringOnline: false });
     if (!conn.identityFile) return;

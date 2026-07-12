@@ -158,15 +158,18 @@ describe('detectOpenTargets', () => {
 });
 
 describe('provider eligibility constants', () => {
-  it('codex/persistent-ssh covers docker + hetzner + remote-docker; vscode covers docker + ssh clouds', () => {
-    expect(PERSISTENT_SSH_PROVIDERS).toEqual(['docker', 'hetzner', 'remote-docker']);
-    expect(IDE_PROVIDERS).toEqual(['docker', 'hetzner', 'daytona', 'remote-docker']);
+  it('codex/persistent-ssh covers docker + hetzner; vscode covers docker + ssh clouds', () => {
+    expect(PERSISTENT_SSH_PROVIDERS).toEqual(['docker', 'hetzner']);
+    expect(IDE_PROVIDERS).toEqual(['docker', 'hetzner', 'daytona']);
   });
 
-  it('open sshfs-mounts docker + hetzner + daytona + remote-docker; vercel/e2b excluded (no SSH)', () => {
-    expect(SSH_MOUNT_PROVIDERS).toEqual(['docker', 'hetzner', 'daytona', 'remote-docker']);
+  it('open sshfs-mounts docker + hetzner + daytona; vercel/e2b/remote-docker excluded', () => {
+    expect(SSH_MOUNT_PROVIDERS).toEqual(['docker', 'hetzner', 'daytona']);
     expect(SSH_MOUNT_PROVIDERS).not.toContain('vercel');
     expect(SSH_MOUNT_PROVIDERS).not.toContain('e2b');
+    // remote-docker's box sshd is only reachable through a forwarded port, so
+    // its attach argv is not a direct `ssh <user>@<box>` — see the backlog.
+    expect(SSH_MOUNT_PROVIDERS).not.toContain('remote-docker');
   });
 });
 

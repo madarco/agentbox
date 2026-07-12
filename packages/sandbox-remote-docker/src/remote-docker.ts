@@ -133,6 +133,15 @@ export function dockerExecArgv(
 }
 
 /**
+ * The user every exec and every file transfer runs as. It must be ONE user:
+ * a file written as root that `exec` (as vscode) later has to delete leaves the
+ * box wedged — and on a nested engine, where the container init is forced to
+ * uid 0, `docker exec` with no `-u` would default to root and do exactly that.
+ * So both sides name the user explicitly rather than inheriting the container's.
+ */
+export const CONTAINER_USER = 'vscode';
+
+/**
  * Stream a local file into a file inside the container, over the ControlMaster.
  *
  * Not `docker cp`: that would need the bytes staged on the remote host first
@@ -148,7 +157,7 @@ export async function pipeFileIntoContainer(
   remotePath: string,
 ): Promise<void> {
   const remote = loginShell(
-    `docker ${quoteShellArgv(['exec', '-i', container, 'sh', '-c', `cat > ${quoteShellArg(remotePath)}`])}`,
+    `docker ${quoteShellArgv(['exec', '-i', '-u', CONTAINER_USER, container, 'sh', '-c', `cat > ${quoteShellArg(remotePath)}`])}`,
   );
   const res = await execa('ssh', [...sshOptArgs(target), sshDestination(target), remote], {
     reject: false,
@@ -170,7 +179,9 @@ export async function pipeFileFromContainer(
   remotePath: string,
   output: Writable,
 ): Promise<void> {
-  const remote = loginShell(`docker ${quoteShellArgv(['exec', container, 'cat', remotePath])}`);
+  const remote = loginShell(
+    `docker ${quoteShellArgv(['exec', '-u', CONTAINER_USER, container, 'cat', remotePath])}`,
+  );
   const child = execa('ssh', [...sshOptArgs(target), sshDestination(target), remote], {
     reject: false,
     stdout: 'pipe',
