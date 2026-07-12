@@ -648,6 +648,11 @@ export function makeAwsClient(opts: AwsClientOptions = {}): AwsClient {
         const e = toAwsApiError(err);
         if (e.code === 'DryRunOperation') return true;
         if (e.code === 'UnauthorizedOperation') return false;
+        // The probe ids intentionally refer to resources that do not exist. EC2
+        // evaluates IAM before it looks a resource up, so a NotFound means the
+        // call got *past* authorization — i.e. permitted. Denial would have come
+        // back as UnauthorizedOperation instead.
+        if (/^Invalid.*\.NotFound$/.test(e.code)) return true;
         throw e;
       }
     },
@@ -672,9 +677,25 @@ function toImage(i: { ImageId?: string; Name?: string; State?: string; Architect
 }
 
 /**
+ * Placeholder resource ids for the DryRun probes.
+ *
+ * These are the LEGACY 8-hex-char id form, and that is load-bearing. EC2 parses
+ * resource ids *before* it evaluates IAM, so a placeholder that fails the parse
+ * never reaches the permission check: the probe comes back
+ * `Invalid<X>ID.Malformed` and the action is reported as undetermined rather
+ * than allowed/denied. Every 17-char id we tried — including well-formed hex
+ * like `i-1234567890abcdef0` — is rejected as malformed, while the 8-char form
+ * parses and reaches evaluation (`Invalid<X>ID.NotFound`). Verified live against
+ * StopInstances / StartInstances / TerminateInstances / CreateTags /
+ * AuthorizeSecurityGroupIngress / RunInstances, 2026-07-12.
+ */
+const PROBE_INSTANCE_ID = 'i-01234567';
+const PROBE_SECURITY_GROUP_ID = 'sg-12345678';
+const PROBE_IMAGE_ID = 'ami-12345678';
+
+/**
  * Send a minimal, side-effect-free `DryRun` probe for each permission we need.
- * The parameters only have to be well-formed enough to pass shape validation —
- * with `DryRun: true` EC2 evaluates IAM and then stops, so nothing is created
+ * With `DryRun: true` EC2 evaluates IAM and then stops, so nothing is created
  * and the placeholder resource ids are never dereferenced.
  *
  * Each arm sends its own concrete command rather than building a union and
@@ -690,7 +711,7 @@ async function sendDryRun(ec2: EC2Client, probe: AwsDryRunProbe): Promise<void> 
           MinCount: 1,
           MaxCount: 1,
           InstanceType: 't3.medium' as _InstanceType,
-          ImageId: 'ami-00000000000000000',
+          ImageId: PROBE_IMAGE_ID,
         }),
       );
       return;
@@ -707,7 +728,7 @@ async function sendDryRun(ec2: EC2Client, probe: AwsDryRunProbe): Promise<void> 
       await ec2.send(
         new AuthorizeSecurityGroupIngressCommand({
           DryRun: true,
-          GroupId: 'sg-00000000000000000',
+          GroupId: PROBE_SECURITY_GROUP_ID,
           IpPermissions: [sshPermission(['192.0.2.1/32'])],
         }),
       );
@@ -716,7 +737,7 @@ async function sendDryRun(ec2: EC2Client, probe: AwsDryRunProbe): Promise<void> 
       await ec2.send(
         new CreateTagsCommand({
           DryRun: true,
-          Resources: ['i-00000000000000000'],
+          Resources: [PROBE_INSTANCE_ID],
           Tags: [{ Key: 'agentbox.probe', Value: '1' }],
         }),
       );
@@ -725,24 +746,24 @@ async function sendDryRun(ec2: EC2Client, probe: AwsDryRunProbe): Promise<void> 
       await ec2.send(
         new CreateImageCommand({
           DryRun: true,
-          InstanceId: 'i-00000000000000000',
+          InstanceId: PROBE_INSTANCE_ID,
           Name: 'agentbox-dryrun',
         }),
       );
       return;
     case 'TerminateInstances':
       await ec2.send(
-        new TerminateInstancesCommand({ DryRun: true, InstanceIds: ['i-00000000000000000'] }),
+        new TerminateInstancesCommand({ DryRun: true, InstanceIds: [PROBE_INSTANCE_ID] }),
       );
       return;
     case 'StopInstances':
       await ec2.send(
-        new StopInstancesCommand({ DryRun: true, InstanceIds: ['i-00000000000000000'] }),
+        new StopInstancesCommand({ DryRun: true, InstanceIds: [PROBE_INSTANCE_ID] }),
       );
       return;
     case 'StartInstances':
       await ec2.send(
-        new StartInstancesCommand({ DryRun: true, InstanceIds: ['i-00000000000000000'] }),
+        new StartInstancesCommand({ DryRun: true, InstanceIds: [PROBE_INSTANCE_ID] }),
       );
       return;
   }
