@@ -36,7 +36,17 @@ const CRED_FIELDS: Record<string, CredField[]> = {
     { key: 'teamId', label: 'Team ID', placeholder: 'team_… (optional)', optional: true },
     { key: 'projectId', label: 'Project ID', placeholder: 'prj_… (optional)', optional: true },
   ],
-  digitalocean: [{ key: 'token', label: 'API token', placeholder: 'personal access token (read+write)' }],
+  digitalocean: [
+    { key: 'token', label: 'API token', placeholder: 'personal access token (read+write)' },
+    // Not a secret — this writes the `box.digitaloceanProject` config key. Optional:
+    // blank leaves boxes in the account's default project.
+    {
+      key: 'project',
+      label: 'Project',
+      placeholder: 'name or UUID (optional)',
+      optional: true,
+    },
+  ],
 };
 
 export function ProvidersSection() {

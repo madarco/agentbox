@@ -326,7 +326,7 @@ export const digitaloceanBackend: CloudBackend = {
     validateSizeChoice(choice, sizeCatalog, snapshotMeta);
     const plan = sizeCatalog.find((s) => s.slug === size);
 
-    // The DO Project the box should land in (`--do-project` / `box.digitaloceanProject`),
+    // The DO Project the box should land in (`box.digitaloceanProject`),
     // resolved from a name-or-id to an id here. This has to be a *preflight* check:
     // DigitalOcean has no project field on droplet-create, so the assignment can
     // only run once the Droplet exists — far too late to tell someone they typed

@@ -25,6 +25,7 @@ import {
 import { loadEffectiveConfig, setConfigValue } from '@agentbox/config';
 import { makeDigitalOceanClient, type DigitalOceanProject } from './client.js';
 import { ensureDigitalOceanEnvLoaded } from './env-loader.js';
+import { resolveProjectChoice } from './preflight.js';
 
 // Ctrl+C at a prompt resolves with the cancel symbol; turn that into a real
 // quit so the command never silently continues as if the user answered "No".
@@ -294,6 +295,29 @@ export async function setDigitalOceanCredentials(
     };
   }
   persistCredentials(creds);
+
+  // The optional Project field from the hub / tray settings form. It is NOT a
+  // secret and must not land in secrets.env: `box.digitaloceanProject` is the
+  // single source of truth (it also has to layer, so a repo can override it).
+  // Resolve the name to an id here so a typo is reported inline in the form
+  // rather than surfacing much later as a failed create.
+  const project = (fields.project ?? '').trim();
+  if (project.length > 0) {
+    try {
+      const client = makeDigitalOceanClient({ token: creds.token, endpoint: creds.endpoint });
+      const projectId = resolveProjectChoice(project, await client.listProjects());
+      await setConfigValue('global', 'box.digitaloceanProject', projectId, process.cwd());
+    } catch (err) {
+      // The token is already saved and good — only the project is bad, so say
+      // exactly that rather than implying the credentials were rejected.
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        status: { configured: true, label: 'token (project not set)' },
+      };
+    }
+  }
+
   const label = result.ok ? 'token' : 'token (unvalidated)';
   return { ok: true, status: { configured: true, label } };
 }
