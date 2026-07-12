@@ -9,6 +9,17 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.24.5] - 2026-07-12
+
+### Fixed
+
+- Update checks no longer interrupt `create` / `claude` / `codex` and the other
+  box commands — they say nothing about updates at all, and a newer menu-bar app
+  is now a one-line note after a quiet command instead of a prompt.
+- The menu-bar app no longer reports a phantom update when it is already current
+  (it was comparing an install stamp rather than the app's actual version, so an
+  app installed from the DMG always looked stale).
+
 ## [0.24.4] - 2026-07-12
 
 ### Added
