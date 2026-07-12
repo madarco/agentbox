@@ -51,6 +51,7 @@
         "daytonaClass": { "type": "string", "enum": ["linux-vm", "container"] },
         "daytonaRegion": { "type": "string", "minLength": 1 },
         "daytonaTimeoutMs": { "type": "integer", "minimum": 0 },
+        "daytonaVmBaseImage": { "type": "string", "minLength": 1 },
         "hetznerLocation": { "type": "string", "minLength": 1 },
         "digitaloceanRegion": { "type": "string", "minLength": 1 },
         "digitaloceanProject": { "type": "string", "minLength": 1 },

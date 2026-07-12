@@ -31,11 +31,13 @@
  * container can write the host VM's filesystem. The repair persists into the
  * snapshot, so every box booted from this base has working sudo from the start.
  */
+import { createHash } from 'node:crypto';
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
 import type { Daytona } from '@daytona/sdk';
 import { SandboxClass } from '@daytona/sdk';
 import { seedAgentStaticIntoCloudBox } from '@agentbox/sandbox-cloud';
 import { BOX_IMAGE_REGISTRY, registryRefForSha } from '@agentbox/sandbox-core';
+import { waitForSnapshotActive } from './snapshot-wait.js';
 
 /**
  * Restore sudo's setuid bit (and quiet its hostname warning) from inside the
@@ -73,6 +75,14 @@ export interface VmBaseBakeOptions {
   dockerBaseSha: string;
   /** Registry override (`box.imageRegistry`); empty = the public default. */
   registry?: string;
+  /**
+   * Explicit base image (`box.daytonaVmBaseImage`), bypassing the
+   * fingerprint-tagged lookup. The escape hatch for a build context with no
+   * published image — chiefly a locally modified `Dockerfile.box`, i.e. anyone
+   * developing on the monorepo, since a local `pnpm build` regenerates
+   * `packages/ctl/dist/bin.cjs` and shifts the context sha off CI's.
+   */
+  baseImage?: string;
   resources?: { cpu: number; memory: number; disk: number };
   hostWorkspace?: string;
   /** Host path to the daytona `/etc/claude-code/CLAUDE.md` overlay. */
@@ -126,38 +136,52 @@ export async function ghcrTagExists(ref: string): Promise<boolean> {
  */
 export async function bakeDaytonaVmBase(opts: VmBaseBakeOptions): Promise<string> {
   const log = opts.onLog ?? (() => {});
+  const override = opts.baseImage?.trim();
   const registry = opts.registry && opts.registry.length > 0 ? opts.registry : BOX_IMAGE_REGISTRY;
-  const imageRef = registryRefForSha(opts.dockerBaseSha, registry);
+  const imageRef = override || registryRefForSha(opts.dockerBaseSha, registry);
 
-  if (!(await ghcrTagExists(imageRef))) {
+  // An explicit override is the user's problem to get right — if it doesn't
+  // exist, Daytona's own error is clearer than a guess from us, and silently
+  // downgrading them to a container would ignore what they asked for.
+  if (!override && !(await ghcrTagExists(imageRef))) {
     throw new VmBaseImageUnavailableError(
       `the linux-vm base needs a published box image, and '${imageRef}' isn't in the registry.`,
     );
   }
+  if (override) log(`using box.daytonaVmBaseImage override: ${imageRef}`);
 
   // Tier 1: the plain box image as a VM snapshot. Content-addressed by the
-  // docker sha, so re-baking a different agent config reuses it.
-  const vmBaseName = `agentbox-vmbase-${opts.dockerBaseSha.slice(0, 12)}`;
-  const existing = await snapshotIfActive(opts.client, vmBaseName);
-  if (existing) {
+  // docker sha, so a re-bake with different agent config reuses it (this is the
+  // expensive step — it pulls a ~2 GB image). An overridden image gets its own
+  // name so it can't collide with a fingerprint-derived one.
+  const vmBaseStem = override
+    ? `agentbox-vmbase-x${sha12(override)}`
+    : `agentbox-vmbase-${opts.dockerBaseSha.slice(0, 12)}`;
+
+  let vmBaseName = vmBaseStem;
+  if (await snapshotIsActive(opts.client, vmBaseName)) {
     log(`reusing linux-vm base image snapshot '${vmBaseName}'`);
   } else {
-    log(`creating linux-vm base image snapshot '${vmBaseName}' from ${imageRef}…`);
-    await opts.client.snapshot.create(
-      {
-        name: vmBaseName,
-        image: imageRef,
-        sandboxClass: SandboxClass.LINUX_VM,
-        regionId: opts.regionId,
-        ...(opts.resources ? { resources: opts.resources } : {}),
-      },
-      { onLogs: (c: string) => log(String(c).split('\n').filter(Boolean).join(' ')) },
-    );
+    vmBaseName = await createVmBaseSnapshot(opts, vmBaseStem, imageRef, log);
   }
 
   // Tier 2: boot it, provision in-place, snapshot the result.
   log('booting a throwaway sandbox to seed the base…');
-  const sandbox = await opts.client.create({ snapshot: vmBaseName }, { timeout: 900 });
+  let sandbox;
+  try {
+    sandbox = await opts.client.create({ snapshot: vmBaseName }, { timeout: 900 });
+  } catch {
+    // A snapshot recreated under a recently-deleted name reports `active` but
+    // cannot boot ("Sandbox failed to start: internal error") — Daytona's delete
+    // is async and racing it corrupts the new snapshot. Nothing distinguishes
+    // this from a healthy snapshot until you try to boot it, so treat a boot
+    // failure as "the base is poisoned", rebuild under a name that has never
+    // existed, and retry once.
+    log(`linux-vm base '${vmBaseName}' failed to boot; rebuilding it under a fresh name…`);
+    await deleteSnapshotQuietly(opts.client, vmBaseName);
+    vmBaseName = await createVmBaseSnapshot(opts, `${vmBaseStem}-${nonce()}`, imageRef, log);
+    sandbox = await opts.client.create({ snapshot: vmBaseName }, { timeout: 900 });
+  }
   const handle: CloudHandle = { sandboxId: sandbox.id, sandboxClass: 'linux-vm' };
   try {
     const wait = await opts.backend.exec(handle, buildDockerWaitCommand());
@@ -186,11 +210,16 @@ export async function bakeDaytonaVmBase(opts: VmBaseBakeOptions): Promise<string
     // It does not stop for you.
     log('stopping the sandbox to capture a cold snapshot…');
     await sandbox.stop();
-    log(`capturing base snapshot '${opts.snapshotName}'…`);
-    await sandbox._experimental_createSnapshot(opts.snapshotName, 900);
-    await waitForSnapshotActive(opts.client, opts.snapshotName);
-    log(`snapshot '${opts.snapshotName}' is active`);
-    return opts.snapshotName;
+    // Never reuse a name (see the boot-failure comment above): a re-bake gets a
+    // fresh one and the snapshot it replaces is deleted afterwards. The name
+    // doesn't need to be deterministic — prepared state records whatever we
+    // pinned, and that's what the skip-rebuild check reads.
+    const finalName = `${opts.snapshotName}-${nonce()}`;
+    log(`capturing base snapshot '${finalName}'…`);
+    await sandbox._experimental_createSnapshot(finalName, 900);
+    await waitForSnapshotActive(opts.client, finalName);
+    log(`snapshot '${finalName}' is active`);
+    return finalName;
   } finally {
     // Always reap the throwaway — an orphan VM bills by the hour.
     try {
@@ -202,7 +231,40 @@ export async function bakeDaytonaVmBase(opts: VmBaseBakeOptions): Promise<string
   }
 }
 
-async function snapshotIfActive(client: Daytona, name: string): Promise<boolean> {
+/** Stable 12-hex digest of an image ref, for a collision-free snapshot name. */
+function sha12(s: string): string {
+  return createHash('sha256').update(s).digest('hex').slice(0, 12);
+}
+
+/** Short, monotonic, never-reused token for a snapshot name. */
+function nonce(): string {
+  return Math.floor(Date.now() / 1000).toString(36);
+}
+
+async function createVmBaseSnapshot(
+  opts: VmBaseBakeOptions,
+  name: string,
+  imageRef: string,
+  log: (line: string) => void,
+): Promise<string> {
+  log(`creating linux-vm base image snapshot '${name}' from ${imageRef}…`);
+  await opts.client.snapshot.create(
+    {
+      name,
+      image: imageRef,
+      sandboxClass: SandboxClass.LINUX_VM,
+      regionId: opts.regionId,
+      // Always explicit: a snapshot with no `resources` gets Daytona's 1 vCPU /
+      // 1 GiB / 3 GiB default, and the box image does not fit in 3 GiB — the
+      // build dies mid-pull with a bare "internal error".
+      resources: opts.resources ?? { cpu: 2, memory: 4, disk: 8 },
+    },
+    { onLogs: (c: string) => log(String(c).split('\n').filter(Boolean).join(' ')) },
+  );
+  return name;
+}
+
+async function snapshotIsActive(client: Daytona, name: string): Promise<boolean> {
   try {
     const snap = await client.snapshot.get(name);
     return snap?.state === 'active';
@@ -211,29 +273,12 @@ async function snapshotIfActive(client: Daytona, name: string): Promise<boolean>
   }
 }
 
-/**
- * `_experimental_createSnapshot` returns once the capture is requested; the
- * snapshot reaches `active` shortly after. Deleting the source sandbox before
- * then is untested, so wait.
- */
-async function waitForSnapshotActive(client: Daytona, name: string): Promise<void> {
-  const deadline = Date.now() + 900_000;
-  for (;;) {
-    let state: string | undefined;
-    try {
-      state = (await client.snapshot.get(name))?.state;
-    } catch {
-      state = undefined;
-    }
-    if (state === 'active') return;
-    if (state === 'error' || state === 'build_failed') {
-      throw new Error(`daytona snapshot '${name}' ended in state '${state}'`);
-    }
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `daytona snapshot '${name}' did not become active within 15 min (state: ${state ?? 'unknown'})`,
-      );
-    }
-    await new Promise((r) => setTimeout(r, 3000));
+/** Best-effort delete — used to reap a superseded or poisoned snapshot. */
+export async function deleteSnapshotQuietly(client: Daytona, name: string): Promise<void> {
+  try {
+    const snap = await client.snapshot.get(name);
+    await client.snapshot.delete(snap);
+  } catch {
+    /* already gone, or never existed */
   }
 }

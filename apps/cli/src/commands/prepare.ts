@@ -366,6 +366,10 @@ export async function runPrepare(
   // a snapshot of one class can't create a sandbox of the other.
   const sandboxClass =
     providerName === 'daytona' && cfg ? resolveDaytonaClass(cfg.effective) : undefined;
+  // Escape hatch for a build context with no published box image (a locally
+  // modified Dockerfile.box): bake the VM base from an explicit image instead.
+  const vmBaseImage =
+    providerName === 'daytona' ? cfg?.effective.box.daytonaVmBaseImage || undefined : undefined;
   // Bake-time datacenter/region (Hetzner + DigitalOcean + Daytona): CLI flag
   // wins over the provider's location config key; other providers ignore it.
   const configuredLocation =
@@ -395,6 +399,7 @@ export async function runPrepare(
       location,
       size,
       sandboxClass,
+      vmBaseImage,
       onLog: (line) => sp.message(line.slice(0, 80)),
     });
     if (result.snapshotName !== undefined) {

@@ -349,6 +349,13 @@ export interface PrepareOptions {
    */
   sandboxClass?: string;
   /**
+   * Explicit registry image the daytona `linux-vm` base is baked from
+   * (`box.daytonaVmBaseImage`), bypassing the fingerprint-tagged published
+   * image. The escape hatch for a build context CI never published — chiefly a
+   * locally modified `Dockerfile.box`. Daytona-only.
+   */
+  vmBaseImage?: string;
+  /**
    * Progress sink for the build-side log stream (Docker BuildKit output,
    * Daytona's `onLogs` chunks). Wired to the CLI spinner / latest.log.
    */

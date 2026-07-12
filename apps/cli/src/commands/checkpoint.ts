@@ -88,7 +88,7 @@ const createSub = new Command('create')
     '--replace',
     "if a checkpoint with the same name exists, rm it first (idempotent recapture; safe to retry when the previous run's stdout was lost)",
   )
-  .option('-y, --yes', 'skip the vercel "box will reboot" confirmation prompt')
+  .option('-y, --yes', 'skip the vercel/daytona "box will reboot" confirmation prompt')
   .action(async (idOrName: string | undefined, opts: CreateOpts) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
@@ -486,15 +486,22 @@ async function runCloudCheckpointCreate(box: BoxRecord, opts: CreateOpts): Promi
     throw new Error(`provider '${box.provider ?? 'docker'}' doesn't support checkpoints`);
   }
 
-  // Vercel snapshots stop + reboot the box (the live tmux/agent process doesn't
-  // survive; on-disk state does). Warn + confirm before yanking it. Only for a
-  // direct host invocation with a TTY — the relay spawns this same command
-  // headless for the in-box trigger (stdin ignored → isTTY false), and that
-  // path is already gated by a wrapper-visible prompt in the relay. Other
-  // providers snapshot without stopping, so they stay prompt-free.
-  if ((box.provider ?? 'docker') === 'vercel' && !opts.yes && process.stdin.isTTY) {
+  // Vercel and Daytona snapshots stop + reboot the box (the live tmux/agent
+  // process doesn't survive; on-disk state does) — Daytona because a cold,
+  // filesystem-only capture requires the sandbox stopped and the API won't stop
+  // it for you. Warn + confirm before yanking it. Only for a direct host
+  // invocation with a TTY — the relay spawns this same command headless for the
+  // in-box trigger (stdin ignored → isTTY false), and that path is already gated
+  // by a wrapper-visible prompt in the relay. Other providers snapshot without
+  // stopping, so they stay prompt-free.
+  const providerName = box.provider ?? 'docker';
+  if (
+    (providerName === 'vercel' || providerName === 'daytona') &&
+    !opts.yes &&
+    process.stdin.isTTY
+  ) {
     const ok = await confirm({
-      message: 'Create checkpoint? The vercel box will stop and reboot.',
+      message: `Create checkpoint? The ${providerName} box will stop and reboot.`,
       initialValue: false,
     });
     if (!ok) {

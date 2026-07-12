@@ -125,6 +125,7 @@ export interface UserConfig {
     daytonaClass?: string;
     daytonaRegion?: string;
     daytonaTimeoutMs?: number;
+    daytonaVmBaseImage?: string;
     hetznerLocation?: string;
     digitaloceanRegion?: string;
     digitaloceanProject?: string;
@@ -287,6 +288,7 @@ export interface EffectiveConfig {
     daytonaClass: string;
     daytonaRegion: string;
     daytonaTimeoutMs: number;
+    daytonaVmBaseImage: string;
     hetznerLocation: string;
     digitaloceanRegion: string;
     digitaloceanProject: string;
@@ -458,6 +460,8 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     // region with VM runners), container keeps Daytona's own default.
     daytonaRegion: '',
     daytonaTimeoutMs: 1_500_000,
+    // Empty = the fingerprint-tagged image CI publishes to GHCR.
+    daytonaVmBaseImage: '',
     hetznerLocation: 'nbg1',
     digitaloceanRegion: 'nyc3',
     // Empty = leave boxes in the account's default project (DigitalOcean's own
@@ -765,6 +769,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       'Idle timeout (ms) a new --provider daytona box is created with, after which Daytona auto-stops it. The host keepalive loop pushes this forward while the agent is working, so only genuinely idle boxes lapse. Default 1500000 (25 min). 0 disables auto-stop entirely. Unlike vercel/e2b (absolute session TTLs) this is an *inactivity* window. Daytona-only.',
+  },
+  {
+    key: 'box.daytonaVmBaseImage',
+    type: 'string',
+    description:
+      'Registry image the daytona `linux-vm` base snapshot is baked from. Empty (the default) uses the fingerprint-tagged box image CI publishes (`ghcr.io/madarco/agentbox/box:sha-<context-sha>`). Daytona can only build a VM snapshot from a prebuilt image, never a Dockerfile, so a build context with no published image (a locally modified `Dockerfile.box`) has nothing to boot and falls back to the container class -- set this to bake a VM from your own published image instead. Must be amd64 and carry an explicit tag or digest. Daytona-only.',
   },
   {
     key: 'box.hetznerLocation',

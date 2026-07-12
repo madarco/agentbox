@@ -20,7 +20,16 @@ export const pauseCommand = new Command('pause')
         process.stdout.write(`paused ${record.container}\n`);
       } else {
         await (await providerForBox(box)).pause(box);
-        process.stdout.write(`paused ${box.name} (${box.provider} sandbox archived)\n`);
+        // What "pause" costs you differs by backend, and the difference is the
+        // thing a user needs to know before walking away: a daytona linux-vm box
+        // freezes CPU + memory, so running processes survive the resume; every
+        // other cloud shape is cold storage (filesystem only).
+        const frozen = box.cloud?.sandboxClass === 'linux-vm';
+        process.stdout.write(
+          frozen
+            ? `paused ${box.name} (${box.provider} VM frozen — memory and running processes preserved)\n`
+            : `paused ${box.name} (${box.provider} sandbox archived)\n`,
+        );
       }
     } catch (err) {
       handleLifecycleError(err);

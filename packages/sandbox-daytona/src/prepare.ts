@@ -31,10 +31,19 @@ import {
   stageAllAgentStatic,
   type AgentStaticStage,
 } from '@agentbox/sandbox-core';
-import { daytonaBackend, getClient, parseDaytonaSize } from './backend.js';
+import {
+  DAYTONA_DEFAULT_RESOURCES,
+  daytonaBackend,
+  getClient,
+  parseDaytonaSize,
+} from './backend.js';
 import { resolveDaytonaCustomClaudeMd, resolveDockerfileContext } from './dockerfile-context.js';
 import { ensureDaytonaEnvLoaded } from './env-loader.js';
-import { bakeDaytonaVmBase, VmBaseImageUnavailableError } from './prepare-vm.js';
+import {
+  bakeDaytonaVmBase,
+  deleteSnapshotQuietly,
+  VmBaseImageUnavailableError,
+} from './prepare-vm.js';
 import {
   computeDaytonaContextFingerprint,
   computeDockerBaseSha,
@@ -262,7 +271,11 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         snapshotName,
         dockerBaseSha,
         registry: opts.registry,
-        ...(sizeResources ? { resources: sizeResources } : {}),
+        baseImage: opts.vmBaseImage,
+        // Always explicit: a snapshot created with no `resources` gets Daytona's
+        // 1 vCPU / 1 GiB / 3 GiB default, and the box image does not fit in 3 GiB
+        // (the build dies mid-pull with a bare "internal error").
+        resources: sizeResources ?? { ...DAYTONA_DEFAULT_RESOURCES },
         hostWorkspace: opts.hostWorkspace,
         claudeMdOverlay: daytonaClaudeMd,
         onLog: log,
@@ -275,6 +288,15 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
           class: 'linux-vm',
         });
         log(`recorded daytona-prepared.json (fingerprint ${fingerprint.contextSha256.slice(0, 12)})`);
+      }
+      // Reap the snapshot this bake replaces. Only after the new one is recorded
+      // — a failed bake must never leave the user with no base at all. Never the
+      // one we just made, and never a container snapshot (a user who flips the
+      // class back would want it).
+      const superseded = prepared?.base?.imageRef;
+      if (superseded && superseded !== baked && prepared?.extras?.class === 'linux-vm') {
+        log(`removing superseded snapshot '${superseded}'`);
+        await deleteSnapshotQuietly(getClient(opts.location ?? DAYTONA_VM_REGION), superseded);
       }
       return { snapshotName: baked };
     } catch (err) {

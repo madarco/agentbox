@@ -20,6 +20,7 @@ import type {
 import { resolveDockerfileContext } from './dockerfile-context.js';
 import { ensureDaytonaEnvLoaded } from './env-loader.js';
 import { readPreparedDaytonaState } from './prepared-state.js';
+import { waitForSnapshotActive } from './snapshot-wait.js';
 import { withDaytonaRetry } from './retry.js';
 
 /**
@@ -53,6 +54,16 @@ function retry<T>(
  * the same box image the Docker provider builds locally.
  */
 export const DEFAULT_BOX_IMAGE_REF = 'agentbox/box:dev';
+
+/**
+ * Default sandbox shape — matches Daytona's own `daytona-vm-medium` preset.
+ *
+ * This MUST be passed explicitly at snapshot-create time. Daytona's true default
+ * for a snapshot with no `resources` is 1 vCPU / 1 GiB / **3 GiB disk**, and the
+ * box image doesn't fit in 3 GiB: the snapshot build dies mid-pull with a bare
+ * "internal error".
+ */
+export const DAYTONA_DEFAULT_RESOURCES = { cpu: 2, memory: 4, disk: 8 } as const;
 
 /**
  * Clients keyed by region target ('' = the account default).
@@ -434,12 +445,21 @@ export const daytonaBackend: CloudBackend = {
       'pause',
       async () => {
         const sb = await getSandbox(h.sandboxId);
-        if (h.sandboxClass === 'linux-vm') return sb.pause();
-        if (h.sandboxClass === 'container') return sb.archive();
+        // Try the recorded class first, then the other. The recorded class can
+        // be wrong or absent — pre-feature records, the keepalive loop's
+        // synthetic handles, and a checkpoint restored while `box.daytonaClass`
+        // names the *other* class (the box's real class comes from the snapshot,
+        // not from config). Whichever call is wrong is rejected outright rather
+        // than doing something surprising, so trying both is safe.
+        const preferVm = h.sandboxClass !== 'container';
         try {
-          await sb.pause();
-        } catch {
-          await sb.archive();
+          await (preferVm ? sb.pause() : sb.archive());
+        } catch (err) {
+          try {
+            await (preferVm ? sb.archive() : sb.pause());
+          } catch {
+            throw err; // report the failure for the class we believed it was
+          }
         }
       },
       { attemptTimeoutMs: 60_000 },
@@ -628,21 +648,32 @@ export const daytonaBackend: CloudBackend = {
   },
 
   async createSnapshot(h: CloudHandle, snapshotName: string): Promise<void> {
-    // Daytona's `_experimental_createSnapshot` puts the sandbox into the
-    // `snapshotting` state, captures its filesystem, then returns. The
-    // resulting snapshot is org-scoped and visible via the Daytona dashboard
-    // and `client.snapshot.list()`. We give it a generous timeout (15min,
-    // matching `provision`) because a large `/workspace` plus warmed agent
-    // volumes can take a while to snapshot.
+    // A cold (filesystem-only) snapshot requires the sandbox STOPPED, and the
+    // API does not stop it for you — a capture attempted on a running sandbox
+    // is rejected. So: stop, capture, start again. The caller is responsible for
+    // reconnecting the box afterwards (the stop kills ctl/dockerd/tmux) — see
+    // `makeDaytonaCheckpoint`.
     //
-    // No retry on ambiguous failures: a 504 mid-snapshot could leave a
-    // half-built named snapshot in Daytona that a retry would collide on.
-    // Matches `provision`'s policy.
+    // The hot variant (filesystem + memory, linux-vm only) would avoid the stop
+    // entirely, but it needs `includeMemory`, and the published TS SDK silently
+    // drops that argument. Out of reach until upstream fixes the wrapper.
+    //
+    // No retry on ambiguous failures: a 504 mid-capture could leave a half-built
+    // named snapshot that a retry would collide on. Matches `provision`'s policy.
     return retry(
       'createSnapshot',
       async () => {
         const sb = await getSandbox(h.sandboxId);
-        await sb._experimental_createSnapshot(snapshotName);
+        await sb.stop();
+        try {
+          await sb._experimental_createSnapshot(snapshotName, 900);
+          await waitForSnapshotActive(getClient(), snapshotName);
+        } finally {
+          // Always bring the box back, even if the capture failed — leaving a
+          // user's box stopped because a checkpoint errored is a worse outcome
+          // than the failed checkpoint itself.
+          await sb.start();
+        }
       },
       { attemptTimeoutMs: 900_000, retryOnAmbiguous: false },
     );
