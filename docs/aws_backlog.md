@@ -4,6 +4,10 @@ Live progress tracker for the AWS provider. The design lives in
 [`aws-provider-plan.md`](./aws-provider-plan.md); the shared cloud model lives in
 [`cloud-providers.md`](./cloud-providers.md).
 
+**Picking this up from the host?** Start at
+[`plans/aws-provider-handoff.md`](./plans/aws-provider-handoff.md) — branch, exact commands to create
+the AWS account, and the phase-7 e2e + orphan sweep.
+
 **Status: phases 0-6 done (code, tests, docs). Phase 7 (live e2e) blocked on an AWS account — the provider has never booted a real instance.**
 
 ## Phases
