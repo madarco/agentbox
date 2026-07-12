@@ -29,6 +29,9 @@ export type DaytonaSandboxClass = 'linux-vm' | 'container';
 export const DAYTONA_VM_REGION = 'us-east-1';
 
 export function resolveDaytonaClass(cfg: EffectiveConfig): DaytonaSandboxClass {
+  // Anything that isn't an explicit `container` resolves to the default rather
+  // than being forwarded to the SDK — Daytona also has `windows`/`android`
+  // classes we don't support, and a typo shouldn't reach the API.
   return cfg.box.daytonaClass === 'container' ? 'container' : 'linux-vm';
 }
 
@@ -40,7 +43,10 @@ export function resolveDaytonaClass(cfg: EffectiveConfig): DaytonaSandboxClass {
  * behavior for existing users byte-for-byte.
  */
 export function resolveDaytonaRegion(cfg: EffectiveConfig): string {
-  const explicit = cfg.box.daytonaRegion.trim();
+  // `?? ''` rather than trusting the type: callers can hand us a config that
+  // predates these keys (a partially-merged or hand-built object), and a
+  // resolver that throws on a missing optional key is a poor neighbour.
+  const explicit = (cfg.box.daytonaRegion ?? '').trim();
   if (explicit.length > 0) return explicit;
   return resolveDaytonaClass(cfg) === 'linux-vm' ? DAYTONA_VM_REGION : '';
 }

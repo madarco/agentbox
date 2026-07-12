@@ -16,10 +16,24 @@ function makeCfg(box: Record<string, unknown> = {}): EffectiveConfig {
       vercelTimeoutMs: 2_700_000,
       vercelNetworkPolicy: 'strict',
       e2bTimeoutMs: 120_000,
+      daytonaClass: 'linux-vm',
+      daytonaRegion: '',
+      daytonaTimeoutMs: 1_500_000,
       ...box,
     },
   } as unknown as EffectiveConfig;
 }
+
+/**
+ * What every daytona call emits on top of whatever the test is asserting. The
+ * class and region are coupled (only us-east-1 has linux-vm runners), and the
+ * timeout rides the same keepalive rail as vercel/e2b.
+ */
+const DAYTONA_BASE = {
+  timeoutMs: 1_500_000,
+  sandboxClass: 'linux-vm',
+  location: 'us-east-1',
+};
 
 describe('cloudSizingProviderOptions', () => {
   it('threads the e2b session timeout for e2b boxes', () => {
@@ -68,12 +82,12 @@ describe('cloudSizingProviderOptions', () => {
 
   it('emits no size when neither flag nor config sets one', () => {
     expect(cloudSizingProviderOptions('docker', makeCfg())).toEqual({});
-    expect(cloudSizingProviderOptions('daytona', makeCfg())).toEqual({});
+    expect(cloudSizingProviderOptions('daytona', makeCfg())).toEqual(DAYTONA_BASE);
   });
 
   it('emits the resolved size for every provider', () => {
     const cfg = makeCfg({ size: '4-8-20' });
-    expect(cloudSizingProviderOptions('daytona', cfg)).toEqual({ size: '4-8-20' });
+    expect(cloudSizingProviderOptions('daytona', cfg)).toEqual({ ...DAYTONA_BASE, size: '4-8-20' });
     expect(cloudSizingProviderOptions('docker', cfg)).toEqual({ size: '4-8-20' });
     expect(cloudSizingProviderOptions('hetzner', cfg)).toEqual({
       size: '4-8-20',
@@ -98,7 +112,38 @@ describe('cloudSizingProviderOptions', () => {
     expect(cloudSizingProviderOptions('hetzner', cfg, { location: ' fsn1 ' })).toEqual({
       location: 'fsn1',
     });
-    expect(cloudSizingProviderOptions('daytona', cfg, { location: 'fsn1' })).toEqual({});
+    // --location is a hetzner/digitalocean flag; daytona's region comes from
+    // box.daytonaRegion (coupled to the class), not from the flag.
+    expect(cloudSizingProviderOptions('daytona', cfg, { location: 'fsn1' })).toEqual(DAYTONA_BASE);
+  });
+});
+
+describe('daytona class / region coupling', () => {
+  it('pins linux-vm boxes to us-east-1 — the only region with VM runners', () => {
+    expect(cloudSizingProviderOptions('daytona', makeCfg())).toMatchObject({
+      sandboxClass: 'linux-vm',
+      location: 'us-east-1',
+    });
+  });
+
+  it('emits no region for container boxes, leaving them on the account default', () => {
+    // This is what preserves today's behavior byte-for-byte for anyone who opts
+    // out of VMs (e.g. for EU data residency).
+    const out = cloudSizingProviderOptions('daytona', makeCfg({ daytonaClass: 'container' }));
+    expect(out).toMatchObject({ sandboxClass: 'container' });
+    expect('location' in out).toBe(false);
+  });
+
+  it('lets an explicit region override the class-derived one', () => {
+    expect(
+      cloudSizingProviderOptions('daytona', makeCfg({ daytonaRegion: 'eu' })),
+    ).toMatchObject({ location: 'eu' });
+  });
+
+  it('passes daytonaTimeoutMs=0 through, so "disable auto-stop" is not silently dropped', () => {
+    expect(cloudSizingProviderOptions('daytona', makeCfg({ daytonaTimeoutMs: 0 }))).toMatchObject({
+      timeoutMs: 0,
+    });
   });
 });
 

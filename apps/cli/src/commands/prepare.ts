@@ -27,6 +27,8 @@ import {
   isProviderKind,
   loadEffectiveConfig,
   resolveBoxSize,
+  resolveDaytonaClass,
+  resolveDaytonaRegion,
   setConfigValue,
   unsetConfigValue,
 } from '@agentbox/config';
@@ -351,18 +353,29 @@ export async function runPrepare(
 
   const cwd = opts.cwd ?? process.cwd();
   const cfg = await loadEffectiveConfig(cwd).catch(() => null);
-  // Docker base-image registry override (box.imageRegistry; empty = always build).
-  const registry = providerName === 'docker' ? cfg?.effective.box.imageRegistry : undefined;
+  // Base-image registry override. Docker uses it to pull instead of building;
+  // daytona's linux-vm bake MUST have it (a VM snapshot can only boot from a
+  // published image), so it reads the same key.
+  const registry =
+    providerName === 'docker' || providerName === 'daytona'
+      ? cfg?.effective.box.imageRegistry
+      : undefined;
   // Bake-time Claude install method: CLI flag wins over the config key.
   const claudeInstall = opts.claudeInstall ?? cfg?.effective.box.claudeInstall ?? 'native';
-  // Bake-time datacenter/region (Hetzner + DigitalOcean): CLI flag wins over
-  // the provider's location config key; other providers ignore it.
+  // Bake-time sandbox class (daytona): the class is baked into the snapshot and
+  // a snapshot of one class can't create a sandbox of the other.
+  const sandboxClass =
+    providerName === 'daytona' && cfg ? resolveDaytonaClass(cfg.effective) : undefined;
+  // Bake-time datacenter/region (Hetzner + DigitalOcean + Daytona): CLI flag
+  // wins over the provider's location config key; other providers ignore it.
   const configuredLocation =
     providerName === 'hetzner'
       ? cfg?.effective.box.hetznerLocation
       : providerName === 'digitalocean'
         ? cfg?.effective.box.digitaloceanRegion
-        : undefined;
+        : providerName === 'daytona' && cfg
+          ? resolveDaytonaRegion(cfg.effective)
+          : undefined;
   const location = opts.location?.trim() || configuredLocation || undefined;
   // Bake-time size (daytona/e2b): CLI flag wins over the cascaded box.size /
   // box.size<Provider>. Empty resolves to undefined so the provider bakes its
@@ -381,6 +394,7 @@ export async function runPrepare(
       claudeInstall,
       location,
       size,
+      sandboxClass,
       onLog: (line) => sp.message(line.slice(0, 80)),
     });
     if (result.snapshotName !== undefined) {

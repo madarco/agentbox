@@ -117,3 +117,5 @@ export {
   type PreparedBaseSnapshot,
   type PreparedProviderKind,
 } from './prepared-state.js';
+
+export { BOX_IMAGE_REGISTRY, registryRefForSha } from './box-registry.js';

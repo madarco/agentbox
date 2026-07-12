@@ -335,10 +335,19 @@ export interface PrepareOptions {
   size?: string;
   /**
    * Datacenter / region the bake VPS is created in. Hetzner reads it (defaults
-   * to `box.hetznerLocation`, else `nbg1`); other providers ignore it (their
-   * base template/snapshot has no per-region placement at bake time).
+   * to `box.hetznerLocation`, else `nbg1`); Daytona reads it as the region the
+   * base snapshot is registered in — which matters because only `us-east-1` has
+   * linux-vm runners. Other providers ignore it (their base template/snapshot
+   * has no per-region placement at bake time).
    */
   location?: string;
+  /**
+   * Sandbox class to bake for. Daytona only (`linux-vm` | `container`) — the
+   * class is a property of the *snapshot*, and a snapshot of one class cannot
+   * create a sandbox of the other, so it must be fixed at bake time. Resolved
+   * from `box.daytonaClass`.
+   */
+  sandboxClass?: string;
   /**
    * Progress sink for the build-side log stream (Docker BuildKit output,
    * Daytona's `onLogs` chunks). Wired to the CLI spinner / latest.log.

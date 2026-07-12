@@ -50,6 +50,28 @@ export type PreparedDaytonaState = PreparedBaseSnapshot<string, DaytonaPreparedE
  * rebuild" rather than stamp a misleading fingerprint.
  */
 export function resolveDaytonaContextFiles(): ContextFile[] | null {
+  const docker = resolveDockerContextFilesForDaytona();
+  if (!docker) return null;
+  const overlay = resolveDaytonaCustomClaudeMd();
+  if (!overlay) return null;
+  return [
+    ...docker,
+    // Daytona-specific overlay: separate logical name so a docker/daytona
+    // CLAUDE.md drift produces different fingerprints (the daytona snapshot
+    // contains both files in distinct locations).
+    { rel: 'daytona/custom-system-CLAUDE.md', abs: overlay },
+  ];
+}
+
+/**
+ * Just the DOCKER half of the context — no daytona overlay, no seed-schema salt.
+ *
+ * This is the exact file set (and therefore the exact sha) that CI hashes when
+ * it publishes `ghcr.io/madarco/agentbox/box:sha-<...>`, so it — and only it —
+ * can name the published image. The linux-vm bake needs that ref because Daytona
+ * builds a VM snapshot only from a prebuilt registry image, never a Dockerfile.
+ */
+export function resolveDockerContextFilesForDaytona(): ContextFile[] | null {
   const ctx = resolveDockerfileContext();
   if (!ctx) return null;
   // sandbox-daytona's package root = parent of src/ or parent of dist/.
@@ -64,20 +86,24 @@ export function resolveDaytonaContextFiles(): ContextFile[] | null {
   // Simpler: just point devRoot at sandbox-docker's package root when it
   // exists (legacy monorepo layout).
   const dockerPackageRoot = resolve(monorepoRoot, 'packages', 'sandbox-docker');
-  const docker = resolveContextFilesFrom(DOCKER_CONTEXT_FILE_MAP, {
+  return resolveContextFilesFrom(DOCKER_CONTEXT_FILE_MAP, {
     contextDir: ctx.context,
     devRoot: existsSync(dockerPackageRoot) ? dockerPackageRoot : packageRoot,
   });
-  if (!docker) return null;
-  const overlay = resolveDaytonaCustomClaudeMd();
-  if (!overlay) return null;
-  return [
-    ...docker,
-    // Daytona-specific overlay: separate logical name so a docker/daytona
-    // CLAUDE.md drift produces different fingerprints (the daytona snapshot
-    // contains both files in distinct locations).
-    { rel: 'daytona/custom-system-CLAUDE.md', abs: overlay },
-  ];
+}
+
+/**
+ * The raw docker build-context sha — the tag of the published GHCR box image.
+ *
+ * Deliberately NOT folded with `claudeInstallFingerprint` (unlike the daytona
+ * snapshot fingerprint): CI builds the image with no `--build-arg`, so only the
+ * `native` variant is ever published. An npm-install bake has no GHCR tag at
+ * all, which is why the VM path falls back to the container class for it.
+ */
+export async function computeDockerBaseSha(): Promise<string | null> {
+  const files = resolveDockerContextFilesForDaytona();
+  if (!files) return null;
+  return computeContextSha256(files);
 }
 
 export interface DaytonaFingerprint {
