@@ -1,8 +1,8 @@
 # AWS EC2 provider — handoff to the host
 
 Session handoff, 2026-07-12. Phases 0-6 of [`../aws-provider-plan.md`](../aws-provider-plan.md)
-are **done and committed**; phase 7 (the live end-to-end) is the only thing left and it needs an
-AWS account that does not exist yet.
+are **done and committed**. The account phase 7 needed now exists (see below) and the live
+end-to-end is in progress on the host.
 
 Live status lives in [`../aws_backlog.md`](../aws_backlog.md). The design lives in
 [`../aws-provider-plan.md`](../aws-provider-plan.md). This file is just "how to pick it up from the
@@ -28,8 +28,11 @@ ad7e57475 feat(aws): wire the provider into the CLI, relay and hub
 988ebaa28 feat(aws): register the aws provider + dogfood carry
 ```
 
-`pnpm build && pnpm test && pnpm lint && pnpm typecheck` are all green (29 test tasks, 65 of them
-new in `packages/sandbox-aws`). The CLI resolves `--provider aws` end to end — `agentbox aws --help`,
+`packages/sandbox-aws` is a new workspace package, so **run `pnpm install` first** — without it the
+build fails in the dts step with `Cannot find module '@agentbox/core'` (the package has no
+`node_modules` yet). After that, `pnpm build && pnpm test && pnpm lint && pnpm typecheck` are all
+green (29 test tasks, 65 of them new in `packages/sandbox-aws`). The CLI resolves `--provider aws`
+end to end — `agentbox aws --help`,
 `aws login --status`, `doctor --provider aws`, `config list` — and `create --provider aws` fails
 cleanly at the base-AMI gate having provisioned nothing.
 
@@ -39,7 +42,14 @@ and not the API. Treat it as unshipped until phase 7 runs.
 ## What's already set up in AWS
 
 - Org `o-vpchgdp30j`, management account **Waldos** (`042743439392`).
-- OU **AgentBoxMarco** (`ou-eysz-m5n5dw65`) under root `r-eysz` — created, **empty**.
+- OU **AgentBoxMarco** (`ou-eysz-m5n5dw65`) under root `r-eysz`.
+- Account **AgentBoxMarco** (`048679570010`), created 2026-07-12 and moved into that OU.
+- Host profile `agentboxmarco` — chains `OrganizationAccountAccessRole` off `source_profile = waldos`
+  (which holds static keys), region `us-east-1`. No IAM user, no SSO, no access key in the account.
+
+  Note for anyone re-doing this in **zsh**: write the profile with a *quoted* heredoc (`<<'EOF'`) or
+  `${ACCT}:role`. In an unquoted heredoc zsh parses `$ACCT:role` as a history modifier (`:r` = strip
+  extension), silently eating the `:r` and producing `…:048679570010ole/…`.
 
 ## Step 1 — create the account (you, on the host)
 
