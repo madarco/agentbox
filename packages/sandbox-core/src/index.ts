@@ -21,7 +21,7 @@ export {
   pickFreshBranch,
   type DetectedGitRepo,
 } from './git-detect.js';
-export { hostOpenCommand } from './host-open.js';
+export { hostOpenCommand, writeHostClipboardText } from './host-open.js';
 export {
   agentboxSshConfigPath,
   agentboxAliasFor,
