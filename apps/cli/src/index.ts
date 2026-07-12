@@ -81,7 +81,8 @@ import { runQueuedJobCommand } from './commands/_run-queued-job.js';
 import { runQueuedPrepareCommand } from './commands/_run-queued-prepare.js';
 import { claudeLoginWorkerCommand } from './commands/_claude-login-worker.js';
 import { postUpdateRefreshCommand } from './commands/_post-update-refresh.js';
-import { runPostUpdateRefresh } from './lib/post-update-refresh.js';
+import { maybeUpdateTray, runPostUpdateRefresh } from './lib/post-update-refresh.js';
+import { shouldPromptTrayUpdate, trayInstalled } from './commands/install-app.js';
 import { maybeStartRemoteCheck, nudgeMessage, updateCheckEnabled } from './lib/update-check.js';
 import { readUpdateState, writeUpdateState } from './lib/update-state.js';
 import { confirm } from './lib/prompt.js';
@@ -263,6 +264,43 @@ if (AGENTBOX_VERSION !== '0.0.0-dev') {
     } catch (err) {
       process.stderr.write(
         `post-update refresh failed: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+  } else if (
+    isFirstRunHookEligible(argv) &&
+    argv[2] !== 'self-update' &&
+    shouldPromptTrayUpdate({
+      installed: trayInstalled(),
+      stampedSha: state.traySha,
+      latestSha: state.remoteCheck?.trayLatestSha,
+      declinedSha: state.trayDeclinedSha,
+    })
+  ) {
+    // The menu-bar app ships on its own cadence, so a tray-only release bumps
+    // no CLI version and the hook above never fires for it. Reads the daily
+    // cache — no network here. Only the app is stale, so only the app is
+    // touched: `runPostUpdateRefresh` would also drop the box image and bounce
+    // the relay, which no one asked for by installing a new menu-bar app.
+    const latestSha = state.remoteCheck?.trayLatestSha;
+    const latestVersion = state.remoteCheck?.trayLatestVersion;
+    versionPromptShown = true;
+    try {
+      const yes = await confirm({
+        message: latestVersion
+          ? `the AgentBox menu-bar app has an update (${latestVersion}) — install it now?`
+          : 'the AgentBox menu-bar app has an update — install it now?',
+        initialValue: true,
+      });
+      if (yes) {
+        await maybeUpdateTray((msg) => {
+          process.stdout.write(`${msg}\n`);
+        });
+      } else {
+        writeUpdateState({ trayDeclinedSha: latestSha });
+      }
+    } catch (err) {
+      process.stderr.write(
+        `menu-bar app update failed: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
   }

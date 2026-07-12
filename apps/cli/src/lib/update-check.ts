@@ -13,7 +13,11 @@ import { readFile } from 'node:fs/promises';
 import { GLOBAL_CONFIG_FILE, loadEffectiveConfig, parseUserConfig } from '@agentbox/config';
 import { detectExecutionMethod, type ExecMethod } from '../exec-method.js';
 import { AGENTBOX_VERSION } from '../version.js';
-import { fetchTraySidecarSha, trayInstalled } from '../commands/install-app.js';
+import {
+  fetchTrayLatestVersion,
+  fetchTraySidecarSha,
+  trayInstalled,
+} from '../commands/install-app.js';
 import { isNewer } from './semver-lite.js';
 import {
   readUpdateState,
@@ -88,10 +92,12 @@ export function maybeStartRemoteCheck(): Promise<void> | null {
   const run = async (): Promise<void> => {
     let npmLatest: string | undefined;
     let trayLatestSha: string | undefined;
+    let trayLatestVersion: string | undefined;
     if (await updateCheckEnabled()) {
-      [npmLatest, trayLatestSha] = await Promise.all([
+      [npmLatest, trayLatestSha, trayLatestVersion] = await Promise.all([
         nudgeEligible(method, AGENTBOX_VERSION) ? fetchNpmLatest() : Promise.resolve(undefined),
         trayInstalled() ? fetchTraySidecarSha() : Promise.resolve(undefined),
+        trayInstalled() ? fetchTrayLatestVersion() : Promise.resolve(undefined),
       ]);
     }
     // Stamp checkedAt even when disabled or offline — the daily gate must
@@ -101,11 +107,13 @@ export function maybeStartRemoteCheck(): Promise<void> | null {
     const prev = readUpdateState().remoteCheck;
     npmLatest ??= prev?.npmLatest;
     trayLatestSha ??= prev?.trayLatestSha;
+    trayLatestVersion ??= prev?.trayLatestVersion;
     writeUpdateState({
       remoteCheck: {
         checkedAt: new Date().toISOString(),
         ...(npmLatest !== undefined ? { npmLatest } : {}),
         ...(trayLatestSha !== undefined ? { trayLatestSha } : {}),
+        ...(trayLatestVersion !== undefined ? { trayLatestVersion } : {}),
       },
     });
   };

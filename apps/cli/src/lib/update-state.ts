@@ -18,6 +18,8 @@ export interface RemoteCheck {
   checkedAt: string;
   npmLatest?: string;
   trayLatestSha?: string;
+  /** Published tray version, for display only — the sha decides the install. */
+  trayLatestVersion?: string;
 }
 
 export interface UpdateState {
@@ -26,6 +28,11 @@ export interface UpdateState {
   lastRunVersion?: string;
   /** sha256 of the AgentBox.zip the installed tray app came from. */
   traySha?: string;
+  /**
+   * sha256 of a published tray zip the user declined. Without this the
+   * app-update prompt re-fires on every single command after a decline.
+   */
+  trayDeclinedSha?: string;
   remoteCheck?: RemoteCheck;
 }
 
@@ -41,6 +48,7 @@ export function readUpdateState(): UpdateState {
     const state: UpdateState = { version: STATE_VERSION };
     if (typeof parsed.lastRunVersion === 'string') state.lastRunVersion = parsed.lastRunVersion;
     if (typeof parsed.traySha === 'string') state.traySha = parsed.traySha;
+    if (typeof parsed.trayDeclinedSha === 'string') state.trayDeclinedSha = parsed.trayDeclinedSha;
     if (
       parsed.remoteCheck !== undefined &&
       typeof parsed.remoteCheck === 'object' &&
@@ -53,6 +61,9 @@ export function readUpdateState(): UpdateState {
           : {}),
         ...(typeof parsed.remoteCheck.trayLatestSha === 'string'
           ? { trayLatestSha: parsed.remoteCheck.trayLatestSha }
+          : {}),
+        ...(typeof parsed.remoteCheck.trayLatestVersion === 'string'
+          ? { trayLatestVersion: parsed.remoteCheck.trayLatestVersion }
           : {}),
       };
     }
