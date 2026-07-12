@@ -9,6 +9,20 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.24.3] - 2026-07-12
+
+### Fixed
+
+- **`agentbox self-update` left a running hub broken.** The hub and the relay are
+  separate processes, but the post-update refresh only ever restarted the relay.
+  An update replaces the installed package directory underneath whatever is still
+  running, so a hub left alive across an update kept executing files that no longer
+  existed — it failed with `Cannot find module …/dist-<hash>.js` on the first
+  operation that needed a part of itself it hadn't loaded yet (destroying a box,
+  for instance), and boxes it created died on startup. It stayed that way until
+  the hub was restarted by hand. The refresh now restarts the hub too. A host
+  running only the relay is unaffected and stays a relay.
+
 ## [0.24.2] - 2026-07-12
 
 ### Fixed
