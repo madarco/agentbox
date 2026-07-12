@@ -89,6 +89,42 @@ carry:
     dest: ~/.local/share/com.vercel.cli/config.json
     mode: 0o600
     optional: true
+  # AWS credentials for `--provider aws` (SDK default credential chain, which
+  # reads ~/.aws/{config,credentials} — there is no AWS token in secrets.env
+  # beyond the AWS_PROFILE / AWS_REGION markers).
+  #
+  # NOTE the src paths: we deliberately carry a DEDICATED `~/.aws/agentbox-*`
+  # pair, NOT the host's real ~/.aws/{config,credentials}. The real files hold
+  # every profile on the host — including the org's management account — and
+  # carrying them would hand an in-box agent the keys to all of them. Instead
+  # keep a two-profile file on the host scoped to the isolated AgentBox dev
+  # account and map it onto the box's canonical paths, so the blast radius of
+  # the box is exactly that one account. Host side, once:
+  #
+  #   cat > ~/.aws/agentbox-config <<'EOF'
+  #   [default]
+  #   region = us-east-1
+  #   EOF
+  #   cat > ~/.aws/agentbox-credentials <<'EOF'
+  #   [default]
+  #   aws_access_key_id = ...
+  #   aws_secret_access_key = ...
+  #   EOF
+  #   chmod 600 ~/.aws/agentbox-*
+  #
+  # SSO profiles are NOT carryable this way: their tokens live in
+  # ~/.aws/sso/cache and are refreshed by `aws sso login`, which needs a
+  # browser. Use static keys from the isolated account for the in-box path
+  # (same trade-off as the Vercel CLI store above). Both optional: a host
+  # without the files still gets a working box.
+  - src: ~/.aws/agentbox-config
+    dest: ~/.aws/config
+    mode: 0o600
+    optional: true
+  - src: ~/.aws/agentbox-credentials
+    dest: ~/.aws/credentials
+    mode: 0o600
+    optional: true
   - src: ~/.agentbox/claude-credentials.json
     dest: ~/.agentbox/claude-credentials.json
     mode: 0o600
@@ -174,6 +210,14 @@ carry:
     dest: ~/.agentbox/e2b-prepared.json
     mode: 0o600
     optional: true
+  - src: ~/.agentbox/digitalocean-prepared.json
+    dest: ~/.agentbox/digitalocean-prepared.json
+    mode: 0o600
+    optional: true
+  - src: ~/.agentbox/aws-prepared.json
+    dest: ~/.agentbox/aws-prepared.json
+    mode: 0o600
+    optional: true
 
 tasks:
   # Idempotent dep install. Re-runs on every supervisor restart, so guard
@@ -215,6 +259,37 @@ tasks:
       chmod +x ~/.local/bin/agentbox
       ~/.local/bin/agentbox --version
     needs: [build]
+
+  # AWS CLI v2, for developing/testing `--provider aws` inside a box. It is
+  # deliberately NOT baked into the box image: the provider itself talks to EC2
+  # through `@aws-sdk/client-ec2`, so the CLI is only needed for the dev loop —
+  # exercising the `agentbox aws login` guided setup (which shells out to
+  # `aws sso login` / `aws iam create-policy`) and sweeping for orphan
+  # instances / AMIs / EBS snapshots after a live e2e. Gated on the carried
+  # ~/.aws/config so a box that isn't doing AWS work downloads nothing.
+  # Idempotent: a no-op once `aws` is on PATH.
+  aws-cli:
+    command: |
+      set -e
+      if command -v aws >/dev/null 2>&1; then
+        echo "aws cli already present — skipping"
+        exit 0
+      fi
+      if [ ! -f "$HOME/.aws/config" ]; then
+        echo "no ~/.aws/config carried in — skipping aws cli install"
+        exit 0
+      fi
+      case "$(uname -m)" in
+        aarch64|arm64) ARCH=aarch64 ;;
+        x86_64|amd64) ARCH=x86_64 ;;
+        *) echo "unsupported arch $(uname -m) — skipping aws cli install"; exit 0 ;;
+      esac
+      TMP=$(mktemp -d)
+      trap 'rm -rf "$TMP"' EXIT
+      curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "$TMP/awscliv2.zip"
+      unzip -q "$TMP/awscliv2.zip" -d "$TMP"
+      sudo "$TMP/aws/install"
+      aws --version
 
   portless:
     command: portless proxy start --no-tls -p 1355

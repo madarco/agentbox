@@ -108,6 +108,18 @@ export const PROVIDERS = [
     imageDesc:
       'Per-provider override of `box.image` for digitalocean (numeric snapshot id). Written by `agentbox prepare --provider digitalocean`.',
   },
+  {
+    name: 'aws',
+    kind: 'cloud',
+    label: 'AWS EC2 (cloud VPS)',
+    loginHint: 'pick an AWS profile, or paste an access key pair',
+    rebuildMinutes: '7-10',
+    blurb: 'AWS EC2 instances',
+    sizeDesc:
+      'Per-provider override of `box.size` for aws. EC2 instance type (e.g. `t3.medium`, `t3.large`, `c7i.xlarge`).',
+    imageDesc:
+      'Per-provider override of `box.image` for aws (AMI id, e.g. `ami-0abc…`). Written by `agentbox prepare --provider aws`.',
+  },
 ] as const satisfies readonly ProviderMeta[];
 
 /** Sandbox backend new boxes are created on. Derived from the `PROVIDERS` table. */

@@ -73,6 +73,7 @@ export interface UserConfig {
     defaultCheckpointVercel?: string;
     defaultCheckpointE2b?: string;
     defaultCheckpointDigitalocean?: string;
+    defaultCheckpointAws?: string;
     /**
      * Generic VM-size fallback for cloud providers. Provider-interpreted:
      * Hetzner = server type string (e.g. `cx33`); Daytona = `cpu-memory-disk`
@@ -88,6 +89,7 @@ export interface UserConfig {
     sizeVercel?: string;
     sizeE2b?: string;
     sizeDigitalocean?: string;
+    sizeAws?: string;
     withPlaywright?: boolean;
     /**
      * How the base image/snapshot installs Claude Code at bake time. Bake-time
@@ -115,6 +117,7 @@ export interface UserConfig {
     imageVercel?: string;
     imageE2b?: string;
     imageDigitalocean?: string;
+    imageAws?: string;
     imageRegistry?: string;
     dockerCacheShared?: boolean;
     memory?: number;
@@ -125,6 +128,15 @@ export interface UserConfig {
     hetznerLocation?: string;
     digitaloceanRegion?: string;
     digitaloceanProject?: string;
+    awsRegion?: string;
+    /**
+     * Explicit subnet for `--provider aws` boxes. Empty = use a public subnet
+     * of the account's default VPC (resolved at provision time). The escape
+     * hatch for accounts with no default VPC.
+     */
+    awsSubnetId?: string;
+    /** Root EBS volume size (GB) for `--provider aws` boxes. EC2's own 8 GB default is far too small. */
+    awsDiskGb?: number;
     vercelTimeoutMs?: number;
     vercelNetworkPolicy?: string;
     e2bTimeoutMs?: number;
@@ -250,6 +262,7 @@ export interface EffectiveConfig {
     defaultCheckpointVercel: string;
     defaultCheckpointE2b: string;
     defaultCheckpointDigitalocean: string;
+    defaultCheckpointAws: string;
     size: string;
     sizeDocker: string;
     sizeDaytona: string;
@@ -257,6 +270,7 @@ export interface EffectiveConfig {
     sizeVercel: string;
     sizeE2b: string;
     sizeDigitalocean: string;
+    sizeAws: string;
     withPlaywright: boolean;
     claudeInstall: ClaudeInstallMethod;
     withEnv: boolean;
@@ -274,6 +288,7 @@ export interface EffectiveConfig {
     imageVercel: string;
     imageE2b: string;
     imageDigitalocean: string;
+    imageAws: string;
     imageRegistry: string;
     dockerCacheShared: boolean;
     memory: number;
@@ -284,6 +299,9 @@ export interface EffectiveConfig {
     hetznerLocation: string;
     digitaloceanRegion: string;
     digitaloceanProject: string;
+    awsRegion: string;
+    awsSubnetId: string;
+    awsDiskGb: number;
     vercelTimeoutMs: number;
     vercelNetworkPolicy: string;
     e2bTimeoutMs: number;
@@ -414,6 +432,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     defaultCheckpointVercel: '',
     defaultCheckpointE2b: '',
     defaultCheckpointDigitalocean: '',
+    defaultCheckpointAws: '',
     size: '',
     sizeDocker: '',
     sizeDaytona: '',
@@ -421,6 +440,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     sizeVercel: '',
     sizeE2b: '',
     sizeDigitalocean: '',
+    sizeAws: '',
     withPlaywright: false,
     claudeInstall: 'native',
     withEnv: false,
@@ -438,6 +458,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     imageVercel: '',
     imageE2b: '',
     imageDigitalocean: '',
+    imageAws: '',
     // Mirrors BOX_IMAGE_REGISTRY in @agentbox/sandbox-docker. Empty disables the
     // registry pull (always build the docker base image locally).
     imageRegistry: 'ghcr.io/madarco/agentbox/box',
@@ -452,6 +473,11 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     // Empty = leave boxes in the account's default project (DigitalOcean's own
     // behavior). There is no sane default id to pick — it differs per account.
     digitaloceanProject: '',
+    awsRegion: 'us-east-1',
+    // Empty = resolve a public subnet of the account's default VPC at provision
+    // time. There is no sane default id to pick — it differs per account/region.
+    awsSubnetId: '',
+    awsDiskGb: 40,
     vercelTimeoutMs: 2_700_000,
     vercelNetworkPolicy: '',
     e2bTimeoutMs: 2_700_000,
@@ -754,6 +780,25 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'string',
     description:
       "DigitalOcean Project new --provider digitalocean boxes are placed in — a name or the project's UUID. Unset (the default) leaves boxes in the account's default project. Set it per repo via `agentbox.yaml`, or globally at `agentbox digitalocean login`. DigitalOcean-only; ignored by other providers.",
+  },
+  {
+    key: 'box.awsRegion',
+    type: 'string',
+    description:
+      'AWS region new --provider aws boxes are created in (e.g. `us-east-1`, `eu-central-1`). Default `us-east-1`. Overridable per-create with `--location`. AMIs are region-scoped, so a box must run in the region its base AMI was baked in. AWS-only; ignored by other providers.',
+  },
+  {
+    key: 'box.awsSubnetId',
+    type: 'string',
+    description:
+      "Subnet new --provider aws boxes are launched into (e.g. `subnet-0abc…`). Unset (the default) resolves a public subnet of the account's default VPC. Set it when the account has no default VPC. AWS-only; ignored by other providers.",
+    advanced: true,
+  },
+  {
+    key: 'box.awsDiskGb',
+    type: 'int',
+    description:
+      "Root EBS volume size (GB) for new --provider aws boxes. Default 40 (EC2's own 8 GB default is too small for the base image). AWS-only; ignored by other providers.",
   },
   {
     key: 'box.vercelTimeoutMs',
