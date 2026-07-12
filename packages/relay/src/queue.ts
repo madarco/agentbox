@@ -707,6 +707,14 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
         });
       }
 
+      // Flip jobs whose worker died mid-flight to `failed`. Must run before the
+      // no-queued-work early return below, or a dead worker with nothing else
+      // queued is never noticed — which is precisely the case that leaves a UI
+      // progress card waiting on a job that will never finish.
+      await recoverOrphanedWorkers(log, onStatusChange, true).catch((err) => {
+        log(`queue: orphan reap failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+
       const jobs = await loadQueue();
       const hasQueued = jobs.some((j) => j.status === 'queued');
       if (!hasQueued) return;
@@ -863,15 +871,29 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
  * host reboot or a relay crash mid-flight. The slot is recouped automatically
  * because `countRunning` reads live provider state, but the manifest must be
  * advanced or `agentbox queue list` keeps lying about what's in progress.
+ *
+ * `requirePid` distinguishes the two callers:
+ * - startup (`false`): a `running` manifest with no PID at all was orphaned by a
+ *   relay that died between marking the job running and recording the PID. There
+ *   is no worker to wait for, so fail it.
+ * - every tick (`true`): only reap a PID we know is dead. A `running` job whose
+ *   PID isn't written *yet* is in the spawn window of the current tick — reaping
+ *   that would kill jobs as they start.
+ *
+ * Running this per-tick is what makes a worker that dies mid-flight visible. It
+ * used to run only at startup, so a crashed worker left the job `running`
+ * forever: no terminal status, no SSE `end`, and a UI progress card that waits
+ * on a job that is never coming back.
  */
 async function recoverOrphanedWorkers(
   log: (line: string) => void,
   onChange?: (job: QueueJob) => void,
+  requirePid = false,
 ): Promise<void> {
   const jobs = await loadQueue();
   for (const j of jobs) {
     if (j.status !== 'running') continue;
-    if (typeof j.pid === 'number' && processAlive(j.pid)) continue;
+    if (typeof j.pid === 'number' ? processAlive(j.pid) : requirePid) continue;
     const failed: QueueJob = {
       ...j,
       status: 'failed',
@@ -1104,10 +1126,19 @@ async function defaultSpawnWorker(job: QueueJob): Promise<number | null> {
   const fd = openSync(job.logPath, 'a');
   // A prepare (image-bake) job runs a different worker; both stream to logPath.
   const command = job.kind === 'prepare' ? '_run-queued-prepare' : '_run-queued-job';
+  // Pin an explicit cwd. Without one the worker inherits the daemon's, and this
+  // daemon is long-lived while its own directory is not: `npm install -g` (what
+  // `self-update` runs) replaces the package tree, so a relay/hub that keeps
+  // running across an update sits in a deleted directory. The child then dies on
+  // `process.cwd()` at startup — `ENOENT: uv_cwd` — before any of our code runs,
+  // which reads as a create that hangs with a Node stack trace for a status line.
+  // STATE_DIR is ours and always exists; the worker takes its workspace from the
+  // job manifest, never from cwd.
   const child = spawn(process.execPath, [entry, command, job.id], {
     detached: true,
     stdio: ['ignore', fd, fd],
     env: process.env,
+    cwd: STATE_DIR,
   });
   child.unref();
   // The fd stays open in the child; close our own copy.

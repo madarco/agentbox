@@ -537,3 +537,73 @@ describe('loadQueue / writeJob round trip', () => {
     }
   });
 });
+
+describe('orphan reaping (worker died mid-flight)', () => {
+  // A worker that dies after being spawned used to leave its manifest `running`
+  // forever: the reaper only ran at startup. No terminal status meant no SSE
+  // `end`, so a UI progress card sat there advancing against a job that was
+  // never coming back. Reaping per-tick is what makes the failure visible.
+  it('flips a running job whose pid is dead to failed', async () => {
+    const { QUEUE_DIR } = await import('../src/queue.js');
+    const id = `queue-vitest-${String(process.pid)}-dead`;
+    const changed: QueueJob[] = [];
+    try {
+      // 999999 is above the OS pid ceiling, so it can never be alive.
+      await writeJob(job({ id, status: 'running', pid: 999999 }));
+      const handle = startQueueLoop({
+        log: () => {},
+        loadConfig: async () => ({
+          enabled: true,
+          maxConcurrent: 1,
+          maxWorking: 0,
+          idleGraceMs: 15_000,
+        }),
+        countRunning: async () => 0,
+        spawnWorker: async () => 123,
+        onStatusChange: (j) => changed.push(j),
+        intervalMs: 10,
+      });
+      await new Promise((r) => setTimeout(r, 80));
+      await handle.stop();
+
+      const reaped = (await loadQueue()).find((j) => j.id === id);
+      expect(reaped?.status).toBe('failed');
+      expect(reaped?.reason).toBe('worker-died');
+      // The UI only learns about it through this callback.
+      expect(changed.some((j) => j.id === id && j.status === 'failed')).toBe(true);
+    } finally {
+      await rm(join(QUEUE_DIR, `${id}.json`), { force: true });
+    }
+  });
+
+  // The spawn window: between marking a job `running` and recording its pid it
+  // has no pid. Reaping those on a tick would kill jobs as they start.
+  it('leaves a running job with no pid alone on a tick', async () => {
+    const { QUEUE_DIR } = await import('../src/queue.js');
+    const id = `queue-vitest-${String(process.pid)}-nopid`;
+    try {
+      const handle = startQueueLoop({
+        log: () => {},
+        loadConfig: async () => ({
+          enabled: true,
+          maxConcurrent: 1,
+          maxWorking: 0,
+          idleGraceMs: 15_000,
+        }),
+        countRunning: async () => 0,
+        spawnWorker: async () => 123,
+        intervalMs: 10,
+      });
+      // Written AFTER the loop's startup pass, so only the per-tick reaper sees it.
+      await new Promise((r) => setTimeout(r, 30));
+      await writeJob(job({ id, status: 'running' }));
+      await new Promise((r) => setTimeout(r, 80));
+      await handle.stop();
+
+      const still = (await loadQueue()).find((j) => j.id === id);
+      expect(still?.status).toBe('running');
+    } finally {
+      await rm(join(QUEUE_DIR, `${id}.json`), { force: true });
+    }
+  });
+});
