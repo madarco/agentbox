@@ -49,7 +49,14 @@ import { AGENTBOX_VERSION } from '../version.js';
 import { installCmuxCommand } from './install-cmux.js';
 import { installHerdrCommand } from './install-herdr.js';
 import { installCodexCommand, installCodexPlugin } from './install-codex.js';
-import { installAppCommand, installTray } from './install-app.js';
+import {
+  fetchTrayLatestVersion,
+  installAppCommand,
+  installTray,
+  readInstalledTrayVersion,
+  trayInstalled,
+} from './install-app.js';
+import { isNewer } from '../lib/semver-lite.js';
 import { runPrepare } from './prepare.js';
 
 /** Marker on the line after the frontmatter of every skill we ship. Its
@@ -601,20 +608,47 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
   const providerGroup = await runProviderChecks(providerName);
   process.stdout.write('  ' + formatCompact([sysGroup, providerGroup]) + '\n');
 
-  // 6b) Offer the macOS menu-bar app (downloaded from GitHub Releases).
+  // 6b) The macOS menu-bar app (downloaded from GitHub Releases). Never offer to
+  // *install* one that is already installed — re-running the wizard used to ask
+  // anyway, and answering yes just re-downloaded the same build. Ask only when it
+  // is genuinely missing, or genuinely behind.
   if (process.platform === 'darwin') {
-    const wantTray = opts.yes
-      ? true
-      : await confirm({ message: 'Install the AgentBox menu-bar app?', initialValue: true });
-    if (wantTray === true) {
-      const sp = spinner();
-      sp.start('Downloading menu-bar app');
-      try {
-        const res = await installTray({ quiet: true });
-        sp.stop(res.ran ? 'Menu-bar app: installed' : `Menu-bar app: skipped (${res.reason ?? ''})`);
-      } catch (err) {
-        sp.stop('Menu-bar app: failed');
-        log.warn(err instanceof Error ? err.message : String(err));
+    const installedVersion = trayInstalled() ? await readInstalledTrayVersion() : undefined;
+    const latestVersion = trayInstalled()
+      ? (readUpdateState().remoteCheck?.trayLatestVersion ?? (await fetchTrayLatestVersion()))
+      : undefined;
+    const behind =
+      installedVersion !== undefined &&
+      latestVersion !== undefined &&
+      isNewer(latestVersion, installedVersion);
+
+    let action: 'install' | 'update' | 'none' = 'install';
+    if (trayInstalled()) action = behind ? 'update' : 'none';
+
+    if (action === 'none') {
+      log.info(
+        `Menu-bar app: already installed${installedVersion ? ` (${installedVersion})` : ''}`,
+      );
+    } else {
+      const message =
+        action === 'update'
+          ? `Update the AgentBox menu-bar app (${installedVersion ?? '?'} → ${latestVersion ?? '?'})?`
+          : 'Install the AgentBox menu-bar app?';
+      const wantTray = opts.yes ? true : await confirm({ message, initialValue: true });
+      if (wantTray === true) {
+        const sp = spinner();
+        sp.start(action === 'update' ? 'Updating menu-bar app' : 'Downloading menu-bar app');
+        try {
+          const res = await installTray({ quiet: true });
+          sp.stop(
+            res.ran
+              ? `Menu-bar app: ${action === 'update' ? 'updated' : 'installed'}`
+              : `Menu-bar app: skipped (${res.reason ?? ''})`,
+          );
+        } catch (err) {
+          sp.stop(`Menu-bar app: failed`);
+          log.warn(err instanceof Error ? err.message : String(err));
+        }
       }
     }
   }
