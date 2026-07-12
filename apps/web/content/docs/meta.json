@@ -28,6 +28,7 @@
     "local-docker",
     "hetzner",
     "digitalocean",
+    "aws",
     "daytona",
     "vercel",
     "e2b",

@@ -4,7 +4,7 @@ Live progress tracker for the AWS provider. The design lives in
 [`aws-provider-plan.md`](./aws-provider-plan.md); the shared cloud model lives in
 [`cloud-providers.md`](./cloud-providers.md).
 
-**Status: Phase 0 done. Phases 1-6 in progress. Phase 7 (live e2e) blocked on an AWS account.**
+**Status: phases 0-6 done (code, tests, docs). Phase 7 (live e2e) blocked on an AWS account — the provider has never booted a real instance.**
 
 ## Phases
 
@@ -13,10 +13,10 @@ Live progress tracker for the AWS provider. The design lives in
 | 0 | Registry row (`PROVIDERS`, `types.ts`, `user-config.schema.json`) | done |
 | 1 | Package skeleton (client, credentials, setup-iam, security-group, preflight) | done |
 | 2 | `prepare` — the AMI bake | done |
-| 3 | The `CloudBackend` | todo |
-| 4 | Wiring (loaders, relay, hub, CLI commands, shipped skills) | todo |
-| 5 | Unit tests (mocked SDK) | todo |
-| 6 | Docs | todo |
+| 3 | The `CloudBackend` | done |
+| 4 | Wiring (loaders, relay, hub, CLI commands, shipped skills) | done |
+| 5 | Unit tests (mocked SDK) | done — 65 tests |
+| 6 | Docs | done |
 | 7 | Live end-to-end | blocked — needs an AWS account |
 
 ## Phase 0 — done

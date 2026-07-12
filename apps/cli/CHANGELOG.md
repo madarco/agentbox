@@ -9,6 +9,11 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## Unreleased
+
+- Added an **AWS EC2** provider (`--provider aws`): one instance per box in your own AWS account, over OpenSSH. Credentials come from the AWS SDK default chain (a `~/.aws` profile, incl. SSO) — no IAM user is created; `agentbox aws login` dry-runs the IAM actions it needs and hands you the policy if any are missing.
+- `agentbox open --codex`, VS Code Remote-SSH and the sshfs mount now work on DigitalOcean boxes (they were gated to Hetzner).
+
 ## [0.24.6] - 2026-07-12
 
 ### Fixed

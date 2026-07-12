@@ -96,7 +96,8 @@ Uses `portless` to give box web apps the same URL from inside the box and on the
 - `agentbox daytona login` — interactive Daytona API key setup, saved to `~/.agentbox/secrets.env`
 - `agentbox e2b login` — interactive E2B API key setup, saved to `~/.agentbox/secrets.env`
 - `agentbox digitalocean login` — interactive DigitalOcean Personal Access Token setup, saved to `~/.agentbox/secrets.env`
-- `agentbox prepare [--provider daytona|hetzner|vercel|e2b|digitalocean]` — build the image and initial snapshot (e2b builds from a Dockerfile via `Template.build()`)
+- `agentbox aws login` — pick an AWS profile (or paste an access key pair) + dry-run the IAM permissions AgentBox needs, saved to `~/.agentbox/secrets.env`
+- `agentbox prepare [--provider daytona|hetzner|vercel|e2b|digitalocean|aws]` — build the image and initial snapshot (e2b builds from a Dockerfile via `Template.build()`; aws bakes an AMI)
 - `agentbox hetzner claude`, `agentbox hetzner codex`, `agentbox hetzner create`, etc.
 
 ## How to use
@@ -155,7 +156,7 @@ Full documentation lives at **[agent-box.sh/docs](https://agent-box.sh/docs)**:
 - [Quickstart](https://agent-box.sh/docs) and [Core concepts](https://agent-box.sh/docs/core-concepts)
 - [Teleport a project](https://agent-box.sh/docs/teleport-a-project), [Run an agent](https://agent-box.sh/docs/run-an-agent), [Access your box](https://agent-box.sh/docs/access-your-box)
 - [Configuration](https://agent-box.sh/docs/configuration), [Services & tasks](https://agent-box.sh/docs/services-and-tasks), [Sync & git](https://agent-box.sh/docs/sync-and-git)
-- Cloud providers: [Hetzner](https://agent-box.sh/docs/hetzner), [Daytona](https://agent-box.sh/docs/daytona), [Vercel](https://agent-box.sh/docs/vercel), [E2B](https://agent-box.sh/docs/e2b), [DigitalOcean](https://agent-box.sh/docs/digitalocean)
+- Cloud providers: [Hetzner](https://agent-box.sh/docs/hetzner), [Daytona](https://agent-box.sh/docs/daytona), [Vercel](https://agent-box.sh/docs/vercel), [E2B](https://agent-box.sh/docs/e2b), [DigitalOcean](https://agent-box.sh/docs/digitalocean), [AWS EC2](https://agent-box.sh/docs/aws)
 - Full [CLI reference](https://agent-box.sh/docs/cli)
 
 ## Development

@@ -120,10 +120,13 @@ See [local Docker](/docs/local-docker), [Hetzner](/docs/hetzner), [Daytona](/doc
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `box.size` | string | empty | generic cloud size, provider-interpreted: hetzner = server type (`cx33`), digitalocean = Droplet size slug (`s-4vcpu-8gb`), daytona = `cpu-memory-disk` GB (`4-8-20`), vercel = vCPU count (`1`/`2`/`4`/`8`), e2b = `cpu-memory` GB (`4-8`, baked at `prepare` time); docker ignores it |
-| `box.sizeDaytona` / `box.sizeHetzner` / `box.sizeDigitalocean` / `box.sizeVercel` / `box.sizeE2b` | string (advanced) | empty | per-provider override of `box.size` |
+| `box.sizeDaytona` / `box.sizeHetzner` / `box.sizeDigitalocean` / `box.sizeAws` / `box.sizeVercel` / `box.sizeE2b` | string (advanced) | empty | per-provider override of `box.size` |
 | `box.sizeDocker` | string (advanced) | empty | reserved — docker uses `box.memory` / `box.cpus` / `box.disk` |
 | `box.hetznerLocation` | string | `nbg1` | Hetzner datacenter new boxes are created in (`nbg1`, `fsn1`, `hel1`, `ash`); override per box with `--location`. Hetzner-only |
 | `box.digitaloceanRegion` | string | `nyc3` | DigitalOcean region new boxes are created in (`nyc3`, `sfo3`, `ams3`, `fra1`, …); override per box with `--location`. DigitalOcean-only |
+| `box.awsRegion` | string | `us-east-1` | AWS region new boxes are created in; override per box with `--location`. AMIs are region-scoped, so this also decides which base AMI can boot. AWS-only |
+| `box.awsSubnetId` | string (advanced) | empty | subnet new boxes launch into; empty = a public subnet of the account's default VPC. Set it when the account has no default VPC. AWS-only |
+| `box.awsDiskGb` | int | `40` | root EBS volume size (GB) for new boxes (EC2's own 8 GB default is too small for the base image). AWS-only |
 | `box.digitaloceanProject` | string | empty | the [DigitalOcean Project](/docs/digitalocean#projects) new boxes are placed in — a project name or its UUID. Empty leaves them in the account's default project. Pick it at `agentbox digitalocean login`, or set it per repo in `agentbox.yaml`. DigitalOcean-only |
 | `box.inbound` | string | `locked` | inbound-access policy for the VPS per-box firewall. `locked` = SSH from your host egress IP only; `open` = SSH from anywhere (`0.0.0.0/0`, key-only — reach a box from a phone with the laptop off); a CIDR list (e.g. `203.0.113.5/32`) = host egress plus those. Override per box with `--inbound` or after create with `agentbox inbound <box>`. Hetzner/DigitalOcean-only. See [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline) |
 
@@ -132,7 +135,7 @@ See [local Docker](/docs/local-docker), [Hetzner](/docs/hetzner), [Daytona](/doc
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `box.image` | string (advanced) | `agentbox/box:dev` | generic image ref; the default is a sentinel cloud backends read as "boot from the prepared base snapshot" |
-| `box.imageDocker` / `box.imageDaytona` / `box.imageHetzner` / `box.imageDigitalocean` / `box.imageVercel` | string (advanced) | empty | per-provider override; the cloud ones are written by `agentbox prepare --provider <name>` |
+| `box.imageDocker` / `box.imageDaytona` / `box.imageHetzner` / `box.imageDigitalocean` / `box.imageAws` / `box.imageVercel` | string (advanced) | empty | per-provider override; the cloud ones are written by `agentbox prepare --provider <name>` |
 | `box.imageRegistry` | string (advanced, docker only) | `ghcr.io/madarco/agentbox/box` | registry to pull the prebuilt base from before building locally; empty = always build |
 
 <Callout type="warn" title="HEADS UP">

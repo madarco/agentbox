@@ -19,7 +19,7 @@ the **local Docker** provider, which needs no account.
 - **Node** `>=20.10` on your `PATH`.
 - **MacOS** or **Linux**
 - An agent CLI — e.g. `claude`, `codex` or `opencode`.
-- (Optional) an account for Vercel, Hetzner, DigitalOcean or Daytona.
+- (Optional) an account for Vercel, Hetzner, DigitalOcean, AWS or Daytona.
 
 NB: Agentbox will open a link for OAuth and acquire the tokens for your AI subscription and for cloud providers API keys.
 
@@ -39,7 +39,7 @@ npm -g i @madarco/agentbox && agentbox install
 ```
 
 During `agentbox install` you'll be prompted to log in to any cloud providers you
-want to use (Vercel, Hetzner, DigitalOcean, Daytona, E2B) — this is **not** needed for the
+want to use (Vercel, Hetzner, DigitalOcean, AWS, Daytona, E2B) — this is **not** needed for the
 default local Docker provider. You'll then be asked to build the base image for
 each selected provider (e.g. the local Ubuntu Docker image, the Vercel base
 sandbox, the E2B template, etc.) so the first box starts fast.

@@ -14,11 +14,13 @@ AgentBox runs on six backends today, behind a single `Provider` interface
 | `e2b` | E2B Sandbox (Firecracker microVM) | When you want a Firecracker microVM with public HTTPS preview URLs and **the base image built straight from a Dockerfile** (`Template.build()`) — the only cloud provider that bakes from a Dockerfile rather than a one-time snapshot. In-box docker (DinD) supported, no SSH; 1-hour platform session cap on Hobby. See §3c. |
 | `digitalocean` | DigitalOcean Droplet (1:1 per box) | Same VPS-over-OpenSSH shape as Hetzner — bare-Droplet control (root, full kernel, your own region), pure OpenSSH, and a Cloud Firewall locked to your egress IP. Auth is a single Personal Access Token; the firewall attaches at boot via a per-box tag (with explicit allow-all egress, since DO blocks outbound otherwise); checkpoints are droplet snapshots. ~$24/mo per running `s-2vcpu-4gb` box. See §3d. |
 
+| `aws` | AWS EC2 instance (1:1 per box) | Same VPS-over-OpenSSH shape as Hetzner, inside an account you already govern (IAM, VPC, org policies, existing spend). Credentials come from the AWS SDK's default chain — a `~/.aws` profile (incl. SSO) or a static key pair — so AgentBox mints no IAM user. The per-box firewall is a security group; checkpoints are AMIs. ~$30/mo per running `t3.medium`, plus ~$3/mo for the root volume even while stopped. See §3e. |
+
 Switch backends per box: `agentbox create --provider daytona` (or `--provider
-hetzner` / `--provider vercel` / `--provider e2b` / `--provider digitalocean`),
-or pin project-wide via `box.provider: <name>` in `agentbox.yaml`. The rest of
-the CLI surface (`shell`, `claude`, `url`, `cp`, `checkpoint`, …) routes on
-`box.provider` and Just Works for all six.
+hetzner` / `--provider vercel` / `--provider e2b` / `--provider digitalocean` /
+`--provider aws`), or pin project-wide via `box.provider: <name>` in
+`agentbox.yaml`. The rest of the CLI surface (`shell`, `claude`, `url`, `cp`,
+`checkpoint`, …) routes on `box.provider` and Just Works for all seven.
 
 ### §3d. DigitalOcean specifics
 
@@ -45,6 +47,55 @@ in a specific DigitalOcean Project. DO has no project field on droplet-create, s
 the name in the create preflight (fail-fast on a typo, before anything bills) and then assigns via
 `POST /projects/{id}/resources` **best-effort** after the droplet exists — a failed assign warns and
 keeps the box rather than tearing a working box down. Unset = the account's default project.
+
+### §3e. AWS EC2 specifics
+
+AWS is the same VPS-over-OpenSSH shape (1 instance per box, ControlMaster for
+all I/O, a per-box firewall locked to the host egress IP, a one-time base image
+baked by `agentbox prepare --provider aws` since EC2 can't build from a
+Dockerfile). What differs, and why each one is load-bearing:
+
+- **Auth is not a token.** Credentials come from the AWS SDK's default chain, so
+  `agentbox aws login` mostly just *points* at an identity the user already has:
+  it lists `~/.aws` profiles and stores `AWS_PROFILE` + `AWS_REGION`. A static
+  key pair is the fallback branch. **We never create an IAM user or mint an
+  access key** — a long-lived key in `secrets.env` is strictly worse than the SSO
+  session the user already has, and it would demand `iam:CreateUser` at setup for
+  privilege the provider never needs at runtime. Instead, `setup-iam.ts` dry-runs
+  every API we need (EC2's `DryRun` evaluates IAM and stops, creating nothing)
+  and reports the exact missing actions plus a paste-able policy.
+- **The public IP changes across stop/start.** No Elastic IP, so a resumed box
+  answers on a *different* address. `backend.ts` re-reads the IP on every call and
+  tears down a ControlMaster that was opened against a stale one (`tunnelIps`).
+  Miss this and every exec after a resume hangs until it times out.
+- **`sandboxId` is a string** (`i-0abc…`). Hetzner/DO parse theirs as a number.
+- **The firewall is a security group.** Egress is allow-all by default (like
+  Hetzner, unlike DO), so no outbound rules are added. The SG is created *before*
+  `RunInstances` and passed to it, so there is no unprotected window, and its id
+  is recorded on the instance's `agentbox.firewall` tag. **It cannot be deleted
+  while its ENI is attached** — destroy terminates, waits for `terminated`, then
+  deletes with a retry loop.
+- **The bake logs in as `root`, not `ubuntu`.** `install-box.sh` renames the
+  UID-1000 user to `vscode`, and on a Canonical AMI that user *is* `ubuntu` —
+  `usermod -l` refuses to rename an account with running processes, so an
+  `ubuntu` login shell would block its own bake. Root key auth is also fiddlier
+  here than on hetzner/DO (whose stock images make root the default cloud-init
+  user, so a top-level `ssh_authorized_keys:` lands there): on EC2 the default
+  user is `ubuntu`, so `generatePrepareCloudInit` writes
+  `/root/.ssh/authorized_keys` explicitly from `runcmd`, which runs last and
+  overwrites cloud-init's own `disable_root` banner.
+- **Checkpoints are AMIs, and an AMI's EBS snapshots are separate objects.**
+  `deleteSnapshot` deregisters the AMI *and* deletes the backing snapshots —
+  deregistering alone leaks storage that bills forever, invisibly.
+- **AMIs are region-scoped.** The bake region is recorded in
+  `~/.agentbox/aws-prepared.json`, and a create in another region fails loud
+  rather than letting EC2 return a confusing `InvalidAMIID.NotFound`.
+- **Networking**: the account's default VPC + a public subnet. AgentBox never
+  creates a VPC; a missing default VPC fails loud with the `create-default-vpc`
+  fix, and `box.awsSubnetId` is the escape hatch.
+
+Defaults: instance type `t3.medium` (2 vCPU / 4 GB, x86_64), region `us-east-1`,
+40 GB gp3 encrypted root, Ubuntu 24.04 (Canonical), IMDSv2 required.
 
 ## 1. The provider abstraction
 

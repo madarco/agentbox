@@ -1,0 +1,146 @@
+---
+title: AWS EC2
+description: Run your agents on an EC2 instance in your own AWS account, with full root and Docker-in-Docker
+---
+
+Run your agents on an EC2 instance in your own AWS account — no local Docker needed. Each box is its own instance (1:1) that you drive with the same `agentbox` commands as a local box, reached over pure OpenSSH (no third-party agent in the box — you own root). Heads up: an EC2 instance is a real VM, and a *stopped* one still bills for its EBS volume — pause is stop/start, not free — and its security group locks to your current egress IP.
+
+Switch per box with `--provider aws`, or pin it project-wide with `box.provider: aws` in [`agentbox.yaml`](/docs/agentbox-yaml). Pick AWS for bare-VM control inside an account you already govern (IAM, VPC, org policies, existing spend commitments) and full [Docker-in-Docker](/docs/docker-in-docker). Cost is roughly $30/mo per *running* `t3.medium` box (~$0.042/hr), plus ~$3/mo for the 40 GB gp3 root volume, which you keep paying while the box is stopped. Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [digitalocean](/docs/digitalocean), [daytona](/docs/daytona), [vercel](/docs/vercel), and [e2b](/docs/e2b).
+
+## Set up
+
+The easiest path is the interactive wizard — it signs you in and bakes the base AMI in one flow:
+
+```bash
+agentbox install        # then select aws
+```
+
+AgentBox uses the **AWS SDK's default credential chain**, so if you already have a working `~/.aws` you are most of the way there: the wizard lists your profiles, you pick one, and it stores `AWS_PROFILE` + `AWS_REGION` in `~/.agentbox/secrets.env`. Nothing is created in your account by that step, and no long-lived key is minted. If you have no profile, the wizard takes an access key pair instead.
+
+For CI or scripted setup, run the explicit equivalents:
+
+```bash
+agentbox aws login                 # credentials only
+agentbox prepare --provider aws    # bake the base AMI (~10 min, once)
+```
+
+<Callout title="NOTE">
+`prepare` is a one-time prerequisite: EC2 cannot build an image from a Dockerfile, so AgentBox boots a throwaway instance, installs the runtime, and captures it as an AMI. Every box then launches from that AMI in seconds. Re-run it only when AgentBox itself changes (`agentbox doctor` tells you when the base is stale).
+</Callout>
+
+### SSO profiles
+
+An SSO profile works fine — the SDK reads the cached token. When it expires, `agentbox aws login` offers to run `aws sso login --profile <p>` for you rather than dumping an `ExpiredToken` stack trace. The one place SSO does *not* work is inside a box (a box has no browser to complete the sign-in), so a box that needs to drive AWS itself needs a static key pair.
+
+## IAM permissions
+
+AgentBox does **not** create an IAM user or mint an access key for you. It uses whatever identity your profile resolves to, and it checks up front whether that identity can actually do the job: `agentbox aws login` dry-runs every API it needs (EC2's `DryRun` flag evaluates IAM and then stops, creating nothing) and tells you exactly which actions are missing — instead of failing opaquely twenty minutes into a bake.
+
+If something is missing, it writes the policy to `~/.agentbox/aws/agentbox-ec2-policy.json`, copies it to your clipboard, and offers to open the IAM console on the JSON tab so you can paste it in.
+
+The minimum policy is EC2-only — no IAM, billing, or Organizations access:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AgentBoxReadEC2",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceTypes",
+        "ec2:DescribeInstanceTypeOfferings",
+        "ec2:DescribeImages",
+        "ec2:DescribeSnapshots",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeRegions",
+        "ec2:DescribeAvailabilityZones"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AgentBoxManageBoxes",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:TerminateInstances",
+        "ec2:CreateTags"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AgentBoxManageFirewall",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ec2:DeleteSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupIngress"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AgentBoxManageImages",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateImage", "ec2:DeregisterImage", "ec2:DeleteSnapshot"],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+`Resource: "*"` is not laziness: EC2's `Describe*` actions do not accept a resource ARN at all, and `RunInstances` legitimately touches AMIs, subnets, volumes and network interfaces. Narrowing it meaningfully requires tag-based conditions, which would break the very first `prepare` (the bake instance has to exist before it can be tagged).
+
+## Networking
+
+AgentBox never creates a VPC. It launches into your account's **default VPC** and a public subnet of it, and creates only a **per-box security group** allowing inbound SSH from your current egress IP — nothing else. Egress is unrestricted (an EC2 security group allows all outbound by default), so the box can `git clone` and `npm install` normally.
+
+If the account has no default VPC — normal for a brand-new member account — `agentbox aws login` offers to create one (`aws ec2 create-default-vpc` under the hood). If you'd rather run in a VPC you already have, point AgentBox at a public subnet of it:
+
+```bash
+agentbox config set box.awsSubnetId subnet-0abc123
+```
+
+### When your IP changes
+
+The security group is locked to the egress IP AgentBox saw at create time. Move to a different network and SSH stops working. AgentBox self-heals this on the next connect, but you can also fix it directly:
+
+```bash
+agentbox aws firewall show <box>   # what the box allows vs where you are now
+agentbox aws firewall sync <box>   # re-point it at your current IP
+```
+
+For a box that must be reachable from a changing IP, opt in explicitly with `agentbox inbound <box> open` (SSH from anywhere, still key-only) or whitelist a range.
+
+## Configuration
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `box.awsRegion` | `us-east-1` | Region for new boxes. Also `--location`. |
+| `box.sizeAws` | `t3.medium` | EC2 instance type. Also `--size`. |
+| `box.awsDiskGb` | `40` | Root EBS volume size (GB). |
+| `box.awsSubnetId` | *(unset)* | Explicit subnet; unset = a public subnet of the default VPC. |
+| `box.imageAws` | *(set by prepare)* | Base AMI id. |
+| `box.defaultCheckpointAws` | *(unset)* | Checkpoint new boxes start from. |
+
+## Things worth knowing
+
+**The public IP changes when you pause and resume.** An EC2 instance without an Elastic IP gets a new address every time it starts. AgentBox handles this — it re-reads the address and rebuilds its SSH connection — but any URL or SSH config you wrote down by hand will be stale.
+
+**AMIs are region-scoped.** A base AMI (or a checkpoint) baked in `us-east-1` cannot boot an instance in `eu-central-1`. If you change `box.awsRegion`, re-run `agentbox prepare --provider aws` for the new region. AgentBox fails loud on the mismatch rather than letting EC2 return a confusing "image not found".
+
+**Pause is not free.** `agentbox pause` stops the instance, which stops the hourly compute charge — but the EBS root volume keeps billing (~$3/mo for the default 40 GB). `agentbox destroy` removes the instance, its volume, and its security group.
+
+**Checkpoints are AMIs.** `agentbox checkpoint create` captures the box as an AMI. Deleting a checkpoint deregisters the AMI *and* deletes the EBS snapshots behind it — deregistering alone would leak storage that bills forever.
+
+## Clean up
+
+```bash
+agentbox destroy <box>          # instance + volume + security group
+agentbox prune --provider aws   # find anything AgentBox lost track of
+```
