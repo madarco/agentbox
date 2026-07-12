@@ -5,6 +5,7 @@ import {
   parseVersionManifest,
   shouldPromptTrayUpdate,
 } from '../src/commands/install-app.js';
+import { mergeRemoteCheck } from '../src/lib/update-check.js';
 
 const SHA_A = 'a'.repeat(64);
 const SHA_B = 'b'.repeat(64);
@@ -142,5 +143,48 @@ describe('shouldPromptTrayUpdate', () => {
         declinedSha: SHA_B,
       }),
     ).toBe(true);
+  });
+});
+
+describe('mergeRemoteCheck', () => {
+  const prev = {
+    checkedAt: '2026-07-11T00:00:00.000Z',
+    npmLatest: '0.24.0',
+    trayLatestSha: SHA_A,
+    trayLatestVersion: '0.1.9',
+  };
+
+  it('keeps the cached value when a fetch failed but nothing moved', () => {
+    expect(mergeRemoteCheck({ trayLatestSha: SHA_A }, prev)).toEqual({
+      npmLatest: '0.24.0',
+      trayLatestSha: SHA_A,
+      trayLatestVersion: '0.1.9',
+    });
+  });
+
+  // The sha and the version describe the SAME release. Inheriting the old version next to a fresh
+  // sha would name the previous release in the prompt while installing the new one.
+  it('drops a stale version when the sha moved but the manifest did not come back', () => {
+    const merged = mergeRemoteCheck({ trayLatestSha: SHA_B }, prev);
+    expect(merged.trayLatestSha).toBe(SHA_B);
+    expect(merged.trayLatestVersion).toBeUndefined();
+  });
+
+  it('pairs a fresh sha with its fresh version', () => {
+    const merged = mergeRemoteCheck({ trayLatestSha: SHA_B, trayLatestVersion: '0.1.10' }, prev);
+    expect(merged.trayLatestSha).toBe(SHA_B);
+    expect(merged.trayLatestVersion).toBe('0.1.10');
+  });
+
+  it('falls back to the whole cached entry when every fetch failed (offline)', () => {
+    expect(mergeRemoteCheck({}, prev)).toEqual({
+      npmLatest: '0.24.0',
+      trayLatestSha: SHA_A,
+      trayLatestVersion: '0.1.9',
+    });
+  });
+
+  it('is empty on a first-ever probe that fetched nothing', () => {
+    expect(mergeRemoteCheck({}, undefined)).toEqual({});
   });
 });
