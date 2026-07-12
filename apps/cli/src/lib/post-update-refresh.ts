@@ -14,8 +14,11 @@
 
 import {
   DEFAULT_BOX_IMAGE,
+  ensureHub,
   ensureRelay,
+  getHubStatus,
   removeImage,
+  stopHub,
   stopRelay,
 } from '@agentbox/sandbox-docker';
 import { installHostSkills } from '../commands/install.js';
@@ -109,13 +112,38 @@ export async function runPostUpdateRefresh(
     warn('box image removal', err);
   }
 
+  // The hub and the relay are separate long-lived processes with separate pid
+  // files, and BOTH must be restarted here. An update replaces the installed
+  // package directory underneath whichever one is still running, which leaves it
+  // in a directory that no longer exists — so it fails on anything it loads
+  // lazily ("Cannot find module .../dist-<hash>.js", the bundle's chunks were
+  // replaced) and any worker it spawns dies on `process.cwd()`. The hub was
+  // previously skipped entirely, so a hub running across an update stayed broken
+  // until someone restarted it by hand.
+  //
+  // The hub serves the relay on the same port, so restart the hub when it's the
+  // one running and leave the relay path alone — starting a bare relay under a
+  // live hub would just fight over the port.
   try {
-    const stop = await stopRelay();
-    say(stop.stopped ? `stopped relay (pid ${String(stop.pid)})` : 'relay was not running');
-    const ep = await ensureRelay();
-    say(`relay back up on ${ep.hostUrl}`);
+    const hub = await getHubStatus();
+    // `running` is NOT the test: it only means /healthz answered on the shared
+    // port, which a bare relay does too. Gating on it would send a relay-only
+    // host down the hub branch and let `ensureHub` quietly promote it to a full
+    // hub on update. `ui` (healthz reported the Next UI) and a live hub pid are
+    // what actually identify a hub.
+    if (hub.ui || hub.pidAlive) {
+      const stop = await stopHub();
+      say(stop.stopped ? `stopped hub (pid ${String(stop.pid)})` : 'hub was not running');
+      const ep = await ensureHub();
+      say(`hub back up on ${ep.hostUrl}`);
+    } else {
+      const stop = await stopRelay();
+      say(stop.stopped ? `stopped relay (pid ${String(stop.pid)})` : 'relay was not running');
+      const ep = await ensureRelay();
+      say(`relay back up on ${ep.hostUrl}`);
+    }
   } catch (err) {
-    warn('relay reload', err);
+    warn('relay/hub reload', err);
   }
 
   try {
