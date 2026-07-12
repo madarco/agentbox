@@ -68,7 +68,7 @@ async function reportLatest(): Promise<void> {
 
 export const updateCommand = new Command('self-update')
   .description(
-    'Update agentbox: self-update via npm/pnpm (unless run via npx), refresh the host skills, wipe the box image so it rebuilds, reload the relay, and update the menu-bar app',
+    'Update agentbox: self-update via npm/pnpm (unless run via npx), refresh the host skills, re-check the box image (rebuilt on the next create only if its build context changed), reload the relay/hub, and update the menu-bar app',
   )
   .option('-y, --yes', 'skip the confirmation prompt')
   .option('--dry-run', "show what would happen, don't change anything")

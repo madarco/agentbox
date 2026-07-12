@@ -8,16 +8,16 @@
  * Every step is best-effort: a failure warns and continues, and never blocks
  * the command the user actually ran. Nothing here touches box state —
  * `~/.agentbox/state.json`, containers, volumes, and checkpoints are never
- * read or written; the box image untag rebuilds/pulls on the next create and
- * leaves running containers on their existing layers.
+ * read or written, and the box image is never deleted (it is fingerprinted;
+ * `ensureImage` rebuilds it on the next create iff the build context changed).
  */
 
 import {
   DEFAULT_BOX_IMAGE,
   ensureHub,
   ensureRelay,
+  evaluateDockerBaseFreshness,
   getHubStatus,
-  removeImage,
   stopHub,
   stopRelay,
 } from '@agentbox/sandbox-docker';
@@ -104,15 +104,30 @@ export async function runPostUpdateRefresh(
     }
   }
 
+  // The box image used to be DELETED here — a blunt "be sure it's fresh" from before
+  // the image was fingerprinted. It is redundant now: `ensureImage` hashes the build
+  // context on every create and rebuilds when that hash differs from the one stamped
+  // in docker-prepared.json, *even if the image already exists*. So deleting it never
+  // caused a rebuild that wouldn't have happened anyway — it only threw away an image
+  // whose context was byte-identical, making the next create re-pull (or rebuild) for
+  // nothing. A CLI update that doesn't touch the build context now costs nothing.
+  //
+  // Report the comparison instead. It is a local file hash — no docker, no network.
   try {
-    const removed = await removeImage(DEFAULT_BOX_IMAGE);
+    // The same evaluator the hub/app use for their "stale — re-bake" pill, so the
+    // CLI and the app can never disagree about whether a re-bake is coming.
+    const freshness = await evaluateDockerBaseFreshness();
     say(
-      removed
-        ? `removed image ${DEFAULT_BOX_IMAGE} (rebuilds on next create/claude)`
-        : `image ${DEFAULT_BOX_IMAGE} not present (nothing to remove)`,
+      freshness.state === 'fresh'
+        ? `box image ${DEFAULT_BOX_IMAGE} already current (build context unchanged)`
+        : freshness.state === 'stale'
+          ? `box image ${DEFAULT_BOX_IMAGE}: build context changed — rebuilds on next create`
+          : freshness.state === 'unprepared'
+            ? `box image ${DEFAULT_BOX_IMAGE} not present — pulled on next create`
+            : `box image ${DEFAULT_BOX_IMAGE}: freshness unknown — left alone`,
     );
   } catch (err) {
-    warn('box image removal', err);
+    warn('box image check', err);
   }
 
   // The hub and the relay are separate long-lived processes with separate pid
