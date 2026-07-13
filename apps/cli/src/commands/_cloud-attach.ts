@@ -72,11 +72,10 @@ export interface CloudAgentAttachArgs {
   extraArgs?: string[];
   /**
    * Where to open the attached session in the host's terminal (`split`/`window`/
-   * `tab`/`same`). Forwarded to `runWrappedAttach`. Daytona attaches are forced
-   * to `same` for now because `provider.buildAttach()` may return a `cleanup`
-   * that tears down per-call SSH tunnels — running cleanup while a detached
-   * new pane still holds the connection would kill the pane. Hetzner's
-   * ControlMaster is per-box-lifetime so spawn-and-detach is safe there.
+   * `tab`/`same`). Forwarded to `runWrappedAttach`. Honoured by every provider:
+   * a new pane re-invokes `agentbox <agent> attach`, which builds its own spec —
+   * so `spec.cleanup` tearing down THIS call's per-attach resources (daytona's
+   * SSH token) can't affect it.
    */
   openIn?: AttachOpenIn;
 }
@@ -264,7 +263,12 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   // above, and `agentbox recover`).
   const reconnect = async (
     signal: AbortSignal,
-  ): Promise<{ command: string; argv: string[]; env?: Record<string, string> } | null> => {
+  ): Promise<{
+    command: string;
+    argv: string[];
+    env?: Record<string, string>;
+    initialInput?: string;
+  } | null> => {
     const deadline = Date.now() + RECONNECT_TIMEOUT_MS;
     let backoff = 500;
     for (;;) {

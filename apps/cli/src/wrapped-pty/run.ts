@@ -264,18 +264,22 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     // shell never says anything.
     const target = pty;
     let sent = false;
+    let armed = false;
     const send = (): void => {
       if (sent) return;
       sent = true;
       clearTimeout(fallback);
-      sub.dispose();
       try {
         target.write(input);
       } catch {
         // pty already gone — the exit path below reports it.
       }
     };
-    const sub = target.onData(() => {
+    // The backend's `onData` returns void, not a disposable, so the listener
+    // can't be removed — `sent`/`armed` make it idempotent instead.
+    target.onData(() => {
+      if (sent || armed) return;
+      armed = true;
       setTimeout(send, INITIAL_INPUT_SETTLE_MS).unref?.();
     });
     const fallback = setTimeout(send, INITIAL_INPUT_DEADLINE_MS);
