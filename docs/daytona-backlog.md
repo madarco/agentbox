@@ -51,6 +51,28 @@ Design notes worth keeping:
   already resumes a paused box.
 - Daytona's `autoStopInterval` is still set, as the backstop for when the relay isn't running.
 
+### A fifth linux-vm quirk: the VM does not inherit the image's ENV
+
+A container gets the image's `ENV` from its *metadata*. A linux-vm keeps the rootfs and drops the
+metadata, so **every `ENV` in `Dockerfile.box` silently disappears** — same family as the
+setuid-stripping the sudo repair works around. Measured on a VM box: `DISPLAY`,
+`AGENT_BROWSER_EXECUTABLE_PATH`, `BROWSER`, `COLORTERM`, `DEBIAN_FRONTEND` all empty (`LANG` survives
+only because something else writes it to a file).
+
+The visible symptom was `agentbox screen`: the noVNC page opened but the desktop stayed empty, and
+Chrome died with `Missing X server or $DISPLAY` — because `DISPLAY=:1` is an image `ENV`.
+
+The bake now reads the image's env from its **registry config blob** (a few hundred bytes — no image
+pull, and no second copy of the values to rot) and restores it in two places, because two kinds of
+process need it and neither reads the other's:
+
+- `/etc/profile.d/` + `/etc/environment` — login shells and PAM (the ssh attach, any `bash -lc`).
+- the sandbox's **env vars at create**, recorded in `daytona-prepared.json` (`extras.env`) — this is
+  what a plain non-login `exec` sees, and a plain exec is how the host starts `agent-browser`, hence
+  Chromium.
+
+Getting only one of the two would have looked fixed in a shell and still failed for the browser.
+
 ### Three bugs it uncovered
 
 1. **`agentbox pause` was broken for container-class boxes** — `■ Sandbox is not stopped`. Daytona

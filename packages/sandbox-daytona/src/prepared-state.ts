@@ -37,6 +37,17 @@ const SCHEMA = 1 as const;
 export interface DaytonaPreparedExtras {
   size?: string;
   class?: DaytonaSandboxClass;
+  /**
+   * The box image's `ENV` (`KEY=VALUE` strings), recorded by the linux-vm bake.
+   *
+   * A VM does NOT inherit the image's env — the conversion keeps the rootfs and
+   * drops the metadata — so the bake writes it into the VM's `/etc` AND records
+   * it here, because those two cover different processes: on-disk covers login
+   * shells, while `create` hands this list to the sandbox as env vars, which is
+   * what a plain non-login `exec` (how `agent-browser` starts Chromium) sees.
+   * Absent on container bakes, which inherit `ENV` normally.
+   */
+  env?: string[];
 }
 
 export type PreparedDaytonaState = PreparedBaseSnapshot<string, DaytonaPreparedExtras>;
@@ -166,11 +177,14 @@ export function writePreparedDaytonaState(opts: {
   size?: string;
   /** Sandbox class the snapshot was baked as. Absent on pre-class bakes = container. */
   class?: DaytonaSandboxClass;
+  /** The image env the linux-vm bake had to restore (see DaytonaPreparedExtras). */
+  env?: string[];
 }): void {
   const stamp = readCliStamp();
   const extras: DaytonaPreparedExtras = {
     ...(opts.size ? { size: opts.size } : {}),
     ...(opts.class ? { class: opts.class } : {}),
+    ...(opts.env && opts.env.length > 0 ? { env: opts.env } : {}),
   };
   const state: PreparedDaytonaState = {
     schema: SCHEMA,

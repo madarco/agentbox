@@ -288,10 +288,11 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
       });
       if (fingerprint) {
         writePreparedDaytonaState({
-          snapshotName: baked,
+          snapshotName: baked.snapshotName,
           contextSha256: fingerprint.contextSha256,
           size: sizeKey,
           class: 'linux-vm',
+          env: baked.env,
         });
         log(`recorded daytona-prepared.json (fingerprint ${fingerprint.contextSha256.slice(0, 12)})`);
       }
@@ -300,11 +301,11 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
       // one we just made, and never a container snapshot (a user who flips the
       // class back would want it).
       const superseded = prepared?.base?.imageRef;
-      if (superseded && superseded !== baked && prepared?.extras?.class === 'linux-vm') {
+      if (superseded && superseded !== baked.snapshotName && prepared?.extras?.class === 'linux-vm') {
         log(`removing superseded snapshot '${superseded}'`);
         await deleteSnapshotQuietly(getClient(opts.location ?? DAYTONA_VM_REGION), superseded);
       }
-      return { snapshotName: baked };
+      return { snapshotName: baked.snapshotName };
     } catch (err) {
       if (!(err instanceof VmBaseImageUnavailableError)) throw err;
       // No published image for this context (a locally edited Dockerfile.box is

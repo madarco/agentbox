@@ -1,6 +1,47 @@
 import { describe, expect, it } from 'vitest';
-import { buildDockerWaitCommand, buildSudoRepairCommand } from '../src/prepare-vm.js';
+import {
+  buildDockerWaitCommand,
+  buildEnvRestoreCommand,
+  buildSudoRepairCommand,
+} from '../src/prepare-vm.js';
 import { defaultSnapshotName } from '../src/prepare.js';
+
+describe('buildEnvRestoreCommand', () => {
+  // A container inherits the image's ENV from its metadata; a linux-vm keeps the
+  // rootfs and drops the metadata, so every ENV vanishes. DISPLAY=:1 above all —
+  // without it the in-box browser dies with "Missing X server or $DISPLAY".
+  const env = ['DISPLAY=:1', 'BROWSER=/usr/local/bin/agentbox-open', "ODD=a'b"];
+  const cmd = buildEnvRestoreCommand(env);
+
+  function decodeStaged(nth: number): string {
+    const blobs = [...cmd.matchAll(/printf %s '([A-Za-z0-9+/=]+)'/g)].map((m) => m[1]!);
+    return Buffer.from(blobs[nth]!, 'base64').toString('utf8');
+  }
+
+  it('writes a profile.d script for login shells', () => {
+    const profile = decodeStaged(0);
+    expect(profile).toContain("export DISPLAY=':1'");
+    expect(profile).toContain("export BROWSER='/usr/local/bin/agentbox-open'");
+    expect(cmd).toContain('/etc/profile.d/agentbox-image-env.sh');
+  });
+
+  it('also writes /etc/environment, which profile.d does not cover', () => {
+    const envFile = decodeStaged(1);
+    expect(envFile).toContain('DISPLAY=:1');
+    expect(cmd).toContain('tee -a /etc/environment');
+  });
+
+  it('survives a value containing a quote', () => {
+    // The command is itself shipped through a shell, so the payload goes as
+    // base64 rather than inline quoting — a stray quote must not break the script.
+    // POSIX single-quote escaping: a' -> 'a'\''b'
+    expect(decodeStaged(0)).toContain("export ODD='a'\\''b'");
+  });
+
+  it('needs root, so it runs after the sudo repair', () => {
+    expect(cmd).toContain('sudo tee');
+  });
+});
 
 describe('buildSudoRepairCommand', () => {
   // Converting the box container image into a VM rootfs strips setuid bits, so

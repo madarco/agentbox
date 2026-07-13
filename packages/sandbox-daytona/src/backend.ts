@@ -238,9 +238,27 @@ export const daytonaBackend: CloudBackend = {
           }
         }
         const resources = sizeResources ?? req.resources;
+        const prepared = readPreparedDaytonaState();
+        const baseRef = req.snapshot ?? req.image;
+        const bootingPreparedBase =
+          prepared?.base?.imageRef !== undefined && baseRef === prepared.base.imageRef;
+        // A linux-vm does NOT inherit the box image's `ENV` — the conversion keeps
+        // the rootfs and drops the metadata — so the bake recorded it and we hand
+        // it to the sandbox here. The bake also wrote it into the VM's /etc, but
+        // that only reaches LOGIN shells; a plain `exec` (which is how the host
+        // starts `agent-browser`, hence Chromium) sees only these env vars. Without
+        // it there is no DISPLAY and the in-box browser dies with "Missing X server".
+        // The box's own env (relay tokens, …) wins over the image's.
+        const imageEnv: Record<string, string> = {};
+        if (bootingPreparedBase) {
+          for (const kv of prepared.extras?.env ?? []) {
+            const i = kv.indexOf('=');
+            if (i > 0) imageEnv[kv.slice(0, i)] = kv.slice(i + 1);
+          }
+        }
         const baseParams = {
           ...(resources ? { resources } : {}),
-          envVars: req.env,
+          envVars: { ...imageEnv, ...req.env },
           ...(req.volumes && req.volumes.length > 0
             ? { volumes: req.volumes.map(toDaytonaVolumeMount) }
             : {}),
@@ -260,14 +278,11 @@ export const daytonaBackend: CloudBackend = {
         // locally shifted fingerprint) a linux-vm bake degrades to a container.
         // Believing config over reality dead-ended the user immediately after a
         // successful `prepare`, with "no linux-vm base snapshot — run prepare".
-        const prepared = readPreparedDaytonaState();
-        const baseRef = req.snapshot ?? req.image;
         // Absent `class` on a recorded base = baked before classes existed, i.e.
         // a container.
-        const bakedClass =
-          prepared?.base?.imageRef && baseRef === prepared.base.imageRef
-            ? (prepared.extras?.class ?? 'container')
-            : undefined;
+        const bakedClass = bootingPreparedBase
+          ? (prepared.extras?.class ?? 'container')
+          : undefined;
         const sandboxClass = bakedClass ?? req.sandboxClass;
         if (bakedClass && req.sandboxClass && bakedClass !== req.sandboxClass) {
           req.onLog?.(

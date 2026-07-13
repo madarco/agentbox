@@ -132,10 +132,117 @@ export async function ghcrTagExists(ref: string): Promise<boolean> {
 }
 
 /**
- * Bake the linux-vm base snapshot. Returns the final snapshot's name.
+ * The image's declared environment (`ENV` in Dockerfile.box, plus PATH), read
+ * from its config blob in the registry.
+ *
+ * A container inherits `ENV` from the image's *metadata*. A linux-vm does not:
+ * the conversion turns the image into a rootfs, and metadata is not a file, so
+ * every `ENV` silently disappears — `DISPLAY=:1` above all, which is why the
+ * in-box browser died with "Missing X server or $DISPLAY" on a VM box while
+ * working fine on docker and container-class daytona. (Same family as the
+ * setuid-stripping the sudo repair works around.)
+ *
+ * Read rather than hardcoded: Dockerfile.box owns these values, and a copy here
+ * would rot the first time someone adds an ENV. The config blob is a few hundred
+ * bytes — no image pull.
+ *
+ * Returns null when the env can't be read (non-GHCR override, network trouble):
+ * the caller warns and bakes anyway rather than failing the whole prepare.
  */
-export async function bakeDaytonaVmBase(opts: VmBaseBakeOptions): Promise<string> {
+export async function fetchImageEnv(ref: string): Promise<string[] | null> {
+  const m = /^ghcr\.io\/(.+):([^:]+)$/.exec(ref);
+  if (!m) return null;
+  const [, repo, tag] = m;
+  const accept = [
+    'application/vnd.oci.image.index.v1+json',
+    'application/vnd.oci.image.manifest.v1+json',
+    'application/vnd.docker.distribution.manifest.list.v2+json',
+    'application/vnd.docker.distribution.manifest.v2+json',
+  ].join(',');
+  try {
+    const tokenRes = await fetch(
+      `https://ghcr.io/token?scope=repository:${repo}:pull&service=ghcr.io`,
+    );
+    if (!tokenRes.ok) return null;
+    const { token } = (await tokenRes.json()) as { token?: string };
+    if (!token) return null;
+    const headers = { Authorization: `Bearer ${token}`, Accept: accept };
+
+    const get = async (r: string): Promise<Record<string, unknown> | null> => {
+      const res = await fetch(`https://ghcr.io/v2/${repo}/${r}`, { headers });
+      return res.ok ? ((await res.json()) as Record<string, unknown>) : null;
+    };
+
+    let manifest = await get(`manifests/${tag}`);
+    // Multi-arch index -> pick the linux/amd64 child (Daytona is x86_64 only).
+    const children = manifest?.manifests as
+      | Array<{ digest: string; platform?: { os?: string; architecture?: string } }>
+      | undefined;
+    if (children) {
+      const amd64 = children.find(
+        (c) => c.platform?.os === 'linux' && c.platform.architecture === 'amd64',
+      );
+      if (!amd64) return null;
+      manifest = await get(`manifests/${amd64.digest}`);
+    }
+    const configDigest = (manifest?.config as { digest?: string } | undefined)?.digest;
+    if (!configDigest) return null;
+    const config = await get(`blobs/${configDigest}`);
+    const env = (config?.config as { Env?: unknown } | undefined)?.Env;
+    if (!Array.isArray(env)) return null;
+    return env.filter((e): e is string => typeof e === 'string' && e.includes('='));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Put the image's `ENV` back on disk in the VM, where a rootfs can carry it.
+ *
+ * Two files, because two kinds of process need it and neither reads the other's:
+ *   - `/etc/profile.d/` — login shells (the ssh attach, any `bash -lc`).
+ *   - `/etc/environment` — PAM, and it's the conventional home for these.
+ *
+ * The values are also handed to `create` as sandbox env vars (see the backend),
+ * which is what covers plain non-login `exec` — the path `agent-browser` runs on.
+ */
+export function buildEnvRestoreCommand(env: string[]): string {
+  const shQuote = (v: string): string => `'${v.replace(/'/g, `'\\''`)}'`;
+  const profile = env
+    .map((e) => {
+      const i = e.indexOf('=');
+      return `export ${e.slice(0, i)}=${shQuote(e.slice(i + 1))}`;
+    })
+    .join('\n');
+  const envFile = env.join('\n');
+  const b64 = (s: string): string => Buffer.from(`${s}\n`, 'utf8').toString('base64');
+  // base64 through a pipe: the values contain quotes and colons, and this command
+  // is itself shipped through a shell.
+  return (
+    `printf %s '${b64(profile)}' | base64 -d | sudo tee /etc/profile.d/agentbox-image-env.sh >/dev/null && ` +
+    `sudo chmod 644 /etc/profile.d/agentbox-image-env.sh && ` +
+    `printf %s '${b64(envFile)}' | base64 -d | sudo tee -a /etc/environment >/dev/null`
+  );
+}
+
+/** What a VM bake produced: the snapshot, and the image env it had to restore. */
+export interface VmBaseBakeResult {
+  snapshotName: string;
+  /**
+   * The image's `ENV`, recorded so `create` can also hand it to the sandbox.
+   * The on-disk copy covers login shells; sandbox env vars cover the plain
+   * non-login `exec` that `agent-browser` (and every other host-driven command)
+   * runs on. Empty when the registry couldn't be read.
+   */
+  env: string[];
+}
+
+/**
+ * Bake the linux-vm base snapshot.
+ */
+export async function bakeDaytonaVmBase(opts: VmBaseBakeOptions): Promise<VmBaseBakeResult> {
   const log = opts.onLog ?? (() => {});
+  let imageEnv: string[] = [];
   const override = opts.baseImage?.trim();
   const registry = opts.registry && opts.registry.length > 0 ? opts.registry : BOX_IMAGE_REGISTRY;
   const imageRef = override || registryRefForSha(opts.dockerBaseSha, registry);
@@ -200,6 +307,26 @@ export async function bakeDaytonaVmBase(opts: VmBaseBakeOptions): Promise<string
       );
     }
 
+    // The conversion drops the image's ENV along with the setuid bits. Put it
+    // back on disk (needs the sudo we just repaired). Without it a VM box has no
+    // DISPLAY, and the in-box browser dies with "Missing X server or $DISPLAY".
+    imageEnv = (await fetchImageEnv(imageRef)) ?? [];
+    if (imageEnv.length > 0) {
+      log(`restoring the image's ${String(imageEnv.length)} env vars (the VM conversion drops them)…`);
+      const envFix = await opts.backend.exec(handle, buildEnvRestoreCommand(imageEnv));
+      if (envFix.exitCode !== 0) {
+        throw new Error(
+          `failed to restore the image environment in the VM base (exit ${String(envFix.exitCode)}): ` +
+            `${envFix.stdout}${envFix.stderr}`,
+        );
+      }
+    } else {
+      log(
+        `warning: could not read the environment of '${imageRef}' from the registry — ` +
+          `a VM box may come up without DISPLAY (no in-box browser).`,
+      );
+    }
+
     await seedAgentStaticIntoCloudBox(opts.backend, handle, {
       hostWorkspace: opts.hostWorkspace,
       claudeMdOverlay: opts.claudeMdOverlay,
@@ -219,7 +346,7 @@ export async function bakeDaytonaVmBase(opts: VmBaseBakeOptions): Promise<string
     await sandbox._experimental_createSnapshot(finalName, 900);
     await waitForSnapshotActive(opts.client, finalName);
     log(`snapshot '${finalName}' is active`);
-    return finalName;
+    return { snapshotName: finalName, env: imageEnv };
   } finally {
     // Always reap the throwaway — an orphan VM bills by the hour.
     try {
