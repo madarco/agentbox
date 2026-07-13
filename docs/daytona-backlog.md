@@ -7,6 +7,86 @@ Status legend:
 - 🟡 **friction** — has a workaround; smooths UX when fixed.
 - 🟢 **polish** — nice-to-have / cleanup / aesthetics.
 
+## Idle auto-stop was inert, and three bugs behind it (2026-07-13)
+
+Closing out the linux-vm handoff's untested paths. All five were run against live Daytona; four of
+the five were fine, and the fifth — the auto-stop — turned out not to work at all, taking three
+other bugs down with it.
+
+### The finding: our own polling kept every box alive
+
+`box.daytonaTimeoutMs` (25 min) is passed as Daytona's `autoStopInterval`, an **inactivity window
+that any request to the sandbox resets**. The host relay's `CloudBoxPoller` long-polls each cloud
+box's preview URL continuously — so *our own polling was the activity*. Daytona's timer restarted on
+every poll and an idle box ran, and billed, forever. The feature was inert exactly when AgentBox was
+in normal use; it only worked with the relay down.
+
+Measured with `autoStopInterval: 3`:
+
+| sandbox | traffic | result |
+| --- | --- | --- |
+| control | none | stopped at **3.0 min** |
+| test | one request / 15 s | **still running at 7.0 min** (28 requests) |
+| the same test box, once requests ceased | none | stopped **3 min later** |
+
+The third row is the control that names the cause — a node server ran in the box throughout, so it
+is the **requests** that reset the clock, not activity inside the sandbox. (It also proves the
+instrument: the REST state-polling used to observe all this does *not* count as activity, or the
+control would never have stopped.)
+
+**Fix:** the host enforces the timeout. `CloudBackend.timeoutModel` (`'inactivity'` | `'absolute'`)
+marks the difference, and `cloud-keepalive.ts` pauses a box whose agent has been idle for the box's
+own `daytonaTimeoutMs` (`shouldIdlePause`). **vercel/e2b are unaffected** — their deadlines are
+absolute and nothing the box receives defers them.
+
+Design notes worth keeping:
+
+- The pause window is the **box's own** `daytonaTimeoutMs`, not the 5-min autopause/keepalive
+  renewal window. Using the renewal window would have paused boxes 5× sooner than the config key
+  advertises.
+- A box with **no agent state** is never auto-paused (an attached shell with no agent is exactly who
+  we must not stop under). The window is therefore measured on *agent* idleness, not raw requests —
+  a deliberate divergence from what Daytona's own timer would have counted.
+- We **pause**, not stop: a linux-vm freeze keeps memory and running processes, and every attach path
+  already resumes a paused box.
+- Daytona's `autoStopInterval` is still set, as the backstop for when the relay isn't running.
+
+### Three bugs it uncovered
+
+1. **`agentbox pause` was broken for container-class boxes** — `■ Sandbox is not stopped`. Daytona
+   archives only a *stopped* sandbox, and `pause()` went straight to `sb.archive()`. Not a linux-vm
+   regression: `main` has the same bare call. It survived because the class plumbing made linux-vm
+   the default and the container path was never re-tested (this handoff's open item #4). Now stops
+   first.
+2. **`agentbox shell <box> -- cmd` never resumed a paused cloud box** — it called `provider.exec`
+   with no `probeState`/`start` guard, so it just failed (daytona: a 502 from the proxy). Every other
+   cloud entry point already resumed. Pre-existing and provider-wide; the idle sweep merely made
+   paused boxes common enough to trip it.
+3. **The container fallback asked for a container in a VM-only region.** With no published box image
+   (`box.claudeInstall: npm`, or any locally shifted build fingerprint — i.e. every monorepo
+   contributor) the linux-vm bake correctly falls back to a container, but the CLI had already
+   resolved the *class-derived* region and passed `us-east-1`, which has no container runners. The
+   whole `prepare` died instead of degrading. The CLI now passes only an explicitly pinned
+   `box.daytonaRegion`.
+
+### Verified working (the handoff's other open items)
+
+- A real logged-in **`claude -p` turn** in a linux-vm box.
+- In-box **`agentbox-ctl git push`** through the host relay — the commit landed on GitHub (checked
+  with `git ls-remote`, not the exit code).
+- **Container-class create** end-to-end after the class plumbing.
+- The **`--claude-install npm` → container fallback** (once bug 3 above was fixed).
+- **Pause/resume preserves processes**: a marker `sleep` kept the same PID across a host-driven
+  freeze, and its tmux session survived.
+
+### Still open
+
+- 🟡 **A container box's Claude credentials come from the shared volume and go stale.** A fresh
+  container box failed its first `claude -p` with `OAuth session expired and could not be refreshed`,
+  while a VM box (which takes the per-create upload path, since VM ignores volume mounts) worked.
+  The shared `agentbox-credentials` volume is only re-seeded on a content-hash change, so a
+  refreshed host token doesn't necessarily reach it. Needs its own look.
+
 ## Linux-VM sandbox class — PoC findings (2026-07-12)
 
 Daytona added a second sandbox **class** (`linux-vm` beside the default `container`). PoC run live

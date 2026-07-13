@@ -3,6 +3,16 @@
 **Branch:** `agentbox/fork-153553` (pushed) · **Status:** shipped and live-verified, with named gaps below
 **Date:** 2026-07-12
 
+> **Closed out 2026-07-13** on `feat/daytona-linux-vm` (cut from this branch's tip). All five
+> "not verified" items below were run against live Daytona. Four were fine; **the auto-stop (#1) was
+> inert** — the host relay's own polling resets Daytona's inactivity clock, so an idle box never
+> lapsed and billed indefinitely. Fixing it uncovered three more bugs (container-class `pause` was
+> broken outright; `shell -- cmd` never resumed a paused cloud box; the container fallback asked for
+> a container in a VM-only region). Full write-up, with the measurements, in
+> [`docs/daytona-backlog.md`](../daytona-backlog.md) → "Idle auto-stop was inert". The
+> `.github/workflows/box-image.yml` path-filter gap noted below the fold is fixed too — and it was
+> real: this branch *does* shift `bin.cjs`, so merging it would have published no image.
+
 ## What landed
 
 Daytona boxes now default to Daytona's **`linux-vm`** sandbox class instead of `container`.

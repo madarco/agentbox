@@ -278,11 +278,48 @@ rebuilt once under a never-used name.
 
 `box.daytonaTimeoutMs` (default **25 min**, `0` disables) is passed as Daytona's
 `autoStopInterval`. Unlike vercel/e2b — where the timeout is an absolute session
-TTL — Daytona's is an **inactivity window**, so the backend's `renewTimeout` maps
-to `refreshActivity()`: there's no deadline to extend, the box just has to look
-active. The existing host keepalive loop (`packages/relay/src/cloud-keepalive.ts`)
-drives it, so a working agent holds its box open and only a genuinely idle one
-lapses to stopped.
+TTL — Daytona's is an **inactivity window**, reset by *any* request to the
+sandbox.
+
+**That window never elapses for a box AgentBox is tracking.** The host relay's
+`CloudBoxPoller` long-polls each cloud box's preview URL continuously (it's how
+host↔box comms work), and that traffic is itself the activity Daytona measures.
+So Daytona's timer restarts on every poll, and an idle box would run — and bill
+— forever. Measured against live Daytona with `autoStopInterval: 3`
+(2026-07-13):
+
+| sandbox | traffic | result |
+| --- | --- | --- |
+| control | none | stopped at **3.0 min** |
+| test | one request / 15 s | **still running at 7.0 min** (28 requests) |
+| the same test box, after the requests stopped | none | stopped **3 min later** |
+
+The third row is the control that names the cause: a node server kept running in
+the box the whole time, so it's the **requests** that reset the clock, not
+activity inside the sandbox.
+
+So the **host enforces the timeout itself**. `packages/relay/src/cloud-keepalive.ts`
+pauses a box whose agent has been idle for its own `daytonaTimeoutMs`
+(`shouldIdlePause`) — the box's configured window, deliberately not the 5-min
+keepalive/autopause renewal window, or we'd pause five times sooner than the key
+advertises. `CloudBackend.timeoutModel` (`'inactivity'` for daytona,
+`'absolute'` elsewhere) is what selects this path: **vercel and e2b are
+unaffected**, since their deadlines can't be deferred by anything the box
+receives, so an idle box still lapses on its own.
+
+Two consequences worth knowing:
+
+- The window is measured against the **agent's** idle state, not raw requests.
+  A box with no agent at all (a plain `agentbox shell` box) is never
+  auto-paused — we have no evidence it's unused, and an attached human is
+  precisely who we must not pull the floor out from under.
+- Daytona's `autoStopInterval` is still set, and still useful: it's the backstop
+  for when the relay *isn't* running (laptop asleep, `agentbox relay stop`) —
+  exactly when the host can't do it and no polling is resetting the clock.
+
+Pausing (rather than stopping) is deliberate: a `linux-vm` box is frozen with
+its memory, so running processes and tmux sessions survive, and every attach
+path resumes a paused box automatically.
 
 ### 2.0.1 Sizing
 

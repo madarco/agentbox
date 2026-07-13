@@ -24,9 +24,15 @@ Daytona offers two sandbox classes. `box.daytonaClass` selects one; changing it 
 Daytona runs VM sandboxes in **`us-east-1` only** — it's the sole region with VM runners. Choosing `linux-vm` therefore pins your boxes to US-East. If you need EU data residency or lower EU latency, set `box.daytonaClass: container` and you keep today's behavior (and your choice of region via `box.daytonaRegion`).
 </Callout>
 
-## Idle boxes stop themselves
+## Idle boxes pause themselves
 
-A Daytona box auto-stops after **25 minutes idle** (`box.daytonaTimeoutMs`; `0` disables). While an agent is actually working, the host keeps the box alive, so only a genuinely idle box lapses. Stopping preserves the filesystem and frees the disk quota; `agentbox start` brings it back.
+An idle Daytona box is paused after **25 minutes** (`box.daytonaTimeoutMs`; `0` disables). While an agent is actually working the box is held open, so only a genuinely idle one lapses. A `linux-vm` box is frozen (memory and running processes survive); a `container` box is archived to cold storage. Either way the filesystem is preserved, and simply using the box again — `agentbox shell`, `agentbox claude`, … — resumes it automatically.
+
+<Callout title="The host does this, not Daytona">
+Daytona's own idle timer is an *inactivity* window that any request to the sandbox resets — including the continuous polling AgentBox's host relay does to talk to the box. That polling is itself activity, so Daytona's timer never fires for a box AgentBox is tracking. The host therefore enforces the timeout itself. Daytona's timer remains as a backstop for when the relay isn't running (laptop asleep, `agentbox relay stop`), which is exactly when the host can't.
+
+One consequence: the timeout is measured against your **agent's** activity, not raw requests to the box. A box you're only using through an attached shell, with no agent running, is left alone entirely.
+</Callout>
 
 ## Set up
 
@@ -165,7 +171,7 @@ Two differences from Docker: there is no `--merged` (Daytona snapshots are flatt
 | Arch | x86_64 (amd64) |
 | Live snapshots | ~2 s filesystem capture; the box stops and reboots for it |
 | Pause | `linux-vm`: true VM freeze (CPU + memory, running processes survive). `container`: archive to cold storage — no quota while archived, slower first resume |
-| Idle | Auto-stops after 25 min idle (`box.daytonaTimeoutMs`); held open while an agent is working |
+| Idle | Paused after 25 min idle (`box.daytonaTimeoutMs`), by the host — Daytona's own idle timer never fires while the relay is polling the box; held open while an agent is working |
 | Preview URL | Signed CloudFront `https://{port}-{token}.proxy.daytona.work` (1h TTL, up to 24h via `--ttl`) |
 
 ## Caveats
