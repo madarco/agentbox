@@ -341,8 +341,22 @@ export function createCloudProvider(
     let webPreview: { url: string; token?: string } | undefined;
     try {
       webPreview = await backend.previewUrl(h, webPort);
-    } catch {
+    } catch (err) {
+      // Falling back to the cached URL is only safe for backends whose preview
+      // URLs are stable across a stop/start (a public `*.vercel.run` host). For
+      // a tunnel-backed backend (aws/hetzner: `ssh -L` on an ephemeral local
+      // port) the cached URL points at a local port nothing listens on anymore,
+      // so swallowing this silently strands the box on a dead URL that answers
+      // 502 while the box itself is perfectly healthy. Keep the fallback, but
+      // never let it fail quietly.
       const cached = box.cloud?.previewUrls?.[webPort];
+      process.stderr.write(
+        `agentbox: warn: could not re-mint the web preview URL for port ${String(webPort)} ` +
+          `(${err instanceof Error ? err.message : String(err)})` +
+          (cached
+            ? `; reusing the cached ${cached}, which may be stale\n`
+            : '; the box has no web URL\n'),
+      );
       webPreview = cached ? { url: cached } : undefined;
     }
     // Re-mint per-service preview URLs from `agentbox.yaml`. Daytona's

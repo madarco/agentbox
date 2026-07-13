@@ -79,6 +79,8 @@ const VPS_USER = 'vscode';
 
 const PROVISION_INSTANCE_DEADLINE_MS = 5 * 60_000;
 const PROVISION_SSH_DEADLINE_MS = 10 * 60_000;
+/** running -> stopping -> stopped is ~30-60s; 5 min is slack for a wedged guest. */
+const STOP_DEADLINE_MS = 5 * 60_000;
 const TERMINATE_DEADLINE_MS = 3 * 60_000;
 const AMI_DEADLINE_MS = 30 * 60_000;
 const EXEC_DEFAULT_TIMEOUT_MS = 120_000;
@@ -500,9 +502,28 @@ export const awsBackend: CloudBackend = {
   },
 
   async stop(h: CloudHandle): Promise<void> {
-    await client().stopInstance(h.sandboxId);
+    const c = client();
+    await c.stopInstance(h.sandboxId);
     await tunnels.close(h.sandboxId);
     tunnelIps.delete(h.sandboxId);
+
+    // Wait for `stopped`, don't just fire StopInstances and return. EC2 goes
+    // running -> stopping -> stopped, and StartInstances is rejected from
+    // `stopping` with "The instance is not in a state from which it can be
+    // started." Returning early makes `agentbox pause && agentbox unpause` — the
+    // exact sequence a context-switch does — fail on a race the user cannot see
+    // or avoid. The stop takes ~30-60s; a checkpoint/destroy that follows also
+    // needs the volume quiesced.
+    await pollUntil(
+      `instance ${h.sandboxId} stopped`,
+      async () => {
+        const i = await c.describeInstance(h.sandboxId);
+        // Gone (or already reaped) is as stopped as it gets — don't hang.
+        if (!i || i.state === 'terminated') return true;
+        return i.state === 'stopped' ? true : null;
+      },
+      { deadlineMs: STOP_DEADLINE_MS, intervalMs: 3_000, maxIntervalMs: 8_000 },
+    );
   },
 
   async pause(h: CloudHandle): Promise<void> {
