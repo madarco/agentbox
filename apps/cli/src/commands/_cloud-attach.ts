@@ -216,10 +216,17 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     if (resume) extraArgs = resume;
   }
   const command = buildCloudAttachInnerCommand(args.binary, extraArgs);
-  // Daytona-only: force inline attach. `spec.cleanup` would otherwise run as
-  // soon as the host process returns from the spawn (before the new pane has
-  // released the per-call SSH tunnel), breaking the detached attach.
-  const safeOpenIn: AttachOpenIn | undefined = box.provider === 'daytona' ? 'same' : args.openIn;
+  // Every cloud provider honours `attach.openIn`.
+  //
+  // Daytona used to be pinned to inline here, on the theory that `spec.cleanup`
+  // — which revokes the per-attach SSH token — would fire as soon as this
+  // process returned from spawning the new pane and cut the pane's connection
+  // out from under it. It can't: the new pane re-invokes `agentbox <agent>
+  // attach`, which builds its own spec and mints its OWN token, and Daytona's
+  // revoke is token-scoped (verified against the live API: minting A and B, then
+  // revoking A, leaves B working). The token this process minted is simply never
+  // used on the new-pane path.
+  const safeOpenIn: AttachOpenIn | undefined = args.openIn;
 
   // New-terminal attaches (tab/window/split) re-invoke `agentbox <agent> attach`
   // in the fresh pane, and that re-invocation carries NO `extraArgs` — so for a
