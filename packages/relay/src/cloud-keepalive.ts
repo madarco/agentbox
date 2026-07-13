@@ -43,7 +43,7 @@ import {
   type UserConfig,
 } from '@agentbox/config';
 import type { CloudBackend } from '@agentbox/core';
-import { findBox, readState } from '@agentbox/sandbox-core';
+import { findBox, readState, recordBox } from '@agentbox/sandbox-core';
 import { loadAutopauseConfig, type AutopauseConfig } from './autopause.js';
 import { resolveCloudBackend } from './host-actions.js';
 import { readActiveAgent, type WorkingAgentState } from './queue.js';
@@ -185,6 +185,8 @@ export interface CloudKeepaliveLoopDeps {
   resolveBackend?: (name: string) => Promise<CloudBackend>;
   /** Injectable for tests; defaults to the state.json box lookup. */
   lookupBox?: (boxId: string) => Promise<CloudBoxLookup | null>;
+  /** Injectable for tests; defaults to writing `cloud.lastState: 'paused'`. */
+  persistPaused?: (boxId: string) => Promise<void>;
   /** Injectable for tests; fallback create timeout when a record lacks one. */
   fallbackCreateTimeoutMs?: (backend: string) => Promise<number>;
   /** Injectable for tests; defaults to `Date.now`. */
@@ -207,6 +209,7 @@ export function startCloudKeepaliveLoop(
   const loadConfig = deps.loadConfig ?? loadAutopauseConfig;
   const resolveBackend = deps.resolveBackend ?? resolveCloudBackend;
   const lookupBox = deps.lookupBox ?? defaultLookupBox;
+  const persistPaused = deps.persistPaused ?? defaultPersistPaused;
   const fallbackCreateTimeoutMs = deps.fallbackCreateTimeoutMs ?? defaultFallbackCreateTimeoutMs;
   const nowFn = deps.now ?? Date.now;
   const intervalMs = deps.intervalMs ?? DEFAULT_INTERVAL_MS;
@@ -339,6 +342,9 @@ export function startCloudKeepaliveLoop(
           await backend.pause({ sandboxId: lookup.sandboxId });
           idlePaused.set(boxId, e.lastActivityMs);
           backoffUntil.delete(boxId);
+          // Best-effort, and deliberately after the pause is already a fact: a
+          // failed record write must not look like a failed pause and re-arm.
+          await persistPaused(boxId).catch(() => {});
           const mins = e.lastActivityMs != null ? Math.round((now - e.lastActivityMs) / 60_000) : null;
           log(
             `cloud-keepalive: paused idle box ${boxId} (${e.backend})` +
@@ -395,6 +401,21 @@ async function defaultLookupBox(boxId: string): Promise<CloudBoxLookup | null> {
     createdAtMs: toEpoch(hit.box.createdAt),
     createTimeoutMs: hit.box.cloud?.sessionTimeoutMs ?? null,
   };
+}
+
+/**
+ * Mark an auto-paused box `paused` on its record. `agentbox list` / `top` / the
+ * hub read `cloud.lastState` rather than probing the SDK on every render, so
+ * without this the box we just paused keeps showing as `running` until someone
+ * runs a live probe. Mirrors cloud-provider's `persistLastState` (which covers
+ * the CLI-driven `pause`/`stop`); best-effort, since the pause itself already
+ * happened and a state-write failure must not turn into a retry loop.
+ */
+async function defaultPersistPaused(boxId: string): Promise<void> {
+  const state = await readState();
+  const hit = findBox(boxId, state);
+  if (hit.kind !== 'ok' || !hit.box.cloud) return;
+  await recordBox({ ...hit.box, cloud: { ...hit.box.cloud, lastState: 'paused' } });
 }
 
 /**

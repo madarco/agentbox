@@ -316,6 +316,62 @@ describe('startCloudKeepaliveLoop', () => {
     expect(paused).toEqual(['sb-123']);
   });
 
+  it('records the box as paused so `list` does not keep showing it running', async () => {
+    const registry = new BoxRegistry();
+    registerCloud(registry, 'b1', 'daytona');
+    const persisted: string[] = [];
+    const got = deferred<void>();
+    const backend = inactivityBackend(() => {});
+
+    const loop = startCloudKeepaliveLoop({
+      registry,
+      statusStore: idleStatus(WINDOW + 60_000),
+      log: () => {},
+      intervalMs: 5,
+      now: () => NOW,
+      loadConfig: async () => CFG,
+      resolveBackend: async () => backend,
+      lookupBox: lookupAtNow,
+      persistPaused: async (boxId: string) => {
+        persisted.push(boxId);
+        got.resolve();
+      },
+    });
+
+    await got.promise;
+    await loop.stop();
+    expect(persisted).toEqual(['b1']);
+  });
+
+  it('keeps the box paused even if recording the state fails', async () => {
+    // The pause already happened; a failed record write must not look like a
+    // failed pause and re-arm the box for another pause next tick.
+    const registry = new BoxRegistry();
+    registerCloud(registry, 'b1', 'daytona');
+    let pauses = 0;
+    const backend = inactivityBackend(() => {
+      pauses++;
+    });
+
+    const loop = startCloudKeepaliveLoop({
+      registry,
+      statusStore: idleStatus(WINDOW + 60_000),
+      log: () => {},
+      intervalMs: 5,
+      now: () => NOW,
+      loadConfig: async () => CFG,
+      resolveBackend: async () => backend,
+      lookupBox: lookupAtNow,
+      persistPaused: async () => {
+        throw new Error('state.json is locked');
+      },
+    });
+
+    await new Promise((r) => setTimeout(r, 60)); // many ticks
+    await loop.stop();
+    expect(pauses).toBe(1);
+  });
+
   it('pauses such a box only once, not on every tick', async () => {
     // A paused box keeps reporting the same idle snapshot, so it would re-qualify
     // forever without the already-paused guard.

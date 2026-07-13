@@ -352,8 +352,24 @@ export const shellCommand = new Command('shell')
         // `whoami`. exec is the same primitive used at create-time and for
         // file ops; it returns when the command exits.
         if (oneShot) {
+          // Resume first if the box isn't running. `exec` goes straight at the
+          // sandbox, so against a paused one it just fails (daytona: a 502 from
+          // the proxy). Every other cloud entry point — the interactive attach
+          // below, `cloudAgentAttach`, `cloudAgentStartDetached` — already does
+          // this; the one-shot path was the hole, and a box can be paused by the
+          // user, by a provider TTL, or by the relay's idle sweep. `start()`
+          // returns the record with refreshed preview URLs / relay tokens, so
+          // exec must use it rather than the stale `box`.
+          let target = box;
+          const state = await provider.probeState(target);
+          if (state === 'missing') {
+            throw new Error(`cloud sandbox for ${target.name} is missing; was it destroyed?`);
+          }
+          if (state !== 'running') {
+            target = await provider.start(target);
+          }
           const argv = oneShotBashArgv(effectiveCmd, login);
-          const r = await provider.exec(box, argv, { user });
+          const r = await provider.exec(target, argv, { user });
           if (r.stdout) process.stdout.write(r.stdout);
           if (r.stderr) process.stderr.write(r.stderr);
           process.exit(r.exitCode);
