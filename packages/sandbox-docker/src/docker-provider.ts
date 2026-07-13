@@ -265,11 +265,13 @@ export const dockerProvider: Provider = {
     }
 
     // `--force` skips the registry pull and always builds a fresh local image.
-    // npm mode must also build locally — the published GHCR image is native-only.
+    // npm mode pulls like any other: CI publishes both install variants, and the
+    // fingerprint is folded with the mode, so the pull asks for the npm image's
+    // own tag. An unpublished tag still falls back to a local build.
     const npm = claudeInstall === 'npm';
     const { source } = await pullOrBuild(ref, fingerprint, {
       onProgress: opts.onLog,
-      allowPull: opts.force || npm ? false : opts.allowPull,
+      allowPull: opts.force ? false : opts.allowPull,
       registry: opts.registry,
       buildArgs: npm ? { AGENTBOX_CLAUDE_INSTALL: 'npm' } : undefined,
     });

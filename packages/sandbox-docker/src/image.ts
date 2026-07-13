@@ -331,8 +331,12 @@ export async function ensureImage(
     onProgress: opts.onProgress,
     dockerfile: opts.dockerfile,
     contextDir: opts.contextDir,
-    // The published GHCR image is native-only, so npm mode must build locally.
-    allowPull: npm ? false : opts.allowPull,
+    // npm mode pulls too. CI publishes both install variants, and `fingerprint`
+    // is already folded with the mode above — so the pull asks for the npm
+    // image's own tag and hits. (It used to be native-only, which meant npm
+    // users rebuilt the image locally on every first create, forever.) A tag
+    // that genuinely isn't published still falls back to a local build.
+    allowPull: opts.allowPull,
     registry: opts.registry,
     buildArgs: npm ? { AGENTBOX_CLAUDE_INSTALL: 'npm' } : undefined,
   });
