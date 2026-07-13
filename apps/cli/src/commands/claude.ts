@@ -5,6 +5,7 @@ import {
   resolveDefaultCheckpoint,
   type AttachOpenIn,
   type UserConfig,
+  resolveBoxImage,
 } from '@agentbox/config';
 import { ensureProjectRepoOnControlPlane } from '../control-plane/ensure-repo-installed.js';
 import {
@@ -898,7 +899,13 @@ export const claudeCommand = new Command('claude')
           workspacePath: opts.workspace,
           name: opts.name,
           checkpointRef: effectiveCheckpointRef,
-          image: cfg.effective.box.image,
+          // `resolveBoxImage`, not the bare `box.image`: `agentbox prepare` pins
+          // its baked base into the PER-PROVIDER key (`box.imageDaytona`, …), and
+          // only this resolver reads it. Passing the generic key handed the
+          // provider the default sentinel instead of the snapshot — so a daytona
+          // box ignored the base that had just been baked for it (and, on the
+          // linux-vm class, failed outright: a VM can only boot from a snapshot).
+          image: resolveBoxImage(cfg.effective, providerName),
           withPlaywright,
           withEnv: cfg.effective.box.withEnv,
           envFilesToImport: wiz.envFilesToImport,
@@ -990,7 +997,7 @@ export const claudeCommand = new Command('claude')
         fromBranch,
         useBranch,
         resyncOnStart: opts.resync,
-        image: cfg.effective.box.image,
+        image: resolveBoxImage(cfg.effective, providerName),
         claudeConfig: { isolate: cfg.effective.box.isolateClaudeConfig },
         claudeEnv: resolved.env,
         withPlaywright,

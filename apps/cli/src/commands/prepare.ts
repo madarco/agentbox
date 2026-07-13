@@ -27,8 +27,10 @@ import {
   isProviderKind,
   loadEffectiveConfig,
   resolveBoxSize,
+  resolveDaytonaClass,
   setConfigValue,
   unsetConfigValue,
+  type EffectiveConfig,
 } from '@agentbox/config';
 import {
   DEFAULT_BOX_IMAGE,
@@ -319,6 +321,38 @@ export interface RunPrepareOptions {
 }
 
 /**
+ * The bake-time datacenter/region to hand the provider, or `undefined` to let
+ * it choose. CLI flag wins over the provider's location config key; providers
+ * without a location concept always get `undefined`.
+ *
+ * Daytona contributes only an EXPLICIT `box.daytonaRegion`, never the region
+ * *derived* from `box.daytonaClass`. The derived region belongs to the class,
+ * and the class can still change inside the bake: with no published box image
+ * (npm install mode, or a locally shifted build fingerprint) the linux-vm bake
+ * falls back to a container. Pre-deriving `us-east-1` here made that fallback
+ * ask for a container in the one region that has no container runners — so the
+ * whole prepare died ("No runners are configured in region 'us-east-1' for
+ * sandbox class 'container'") instead of degrading. Leaving it undefined lets
+ * each path pick its own: the VM bake defaults to `DAYTONA_VM_REGION`, the
+ * container bake to the account default.
+ */
+export function resolvePrepareLocation(
+  providerName: string,
+  cliLocation: string | undefined,
+  effective: EffectiveConfig | undefined,
+): string | undefined {
+  const configured =
+    providerName === 'hetzner'
+      ? effective?.box.hetznerLocation
+      : providerName === 'digitalocean'
+        ? effective?.box.digitaloceanRegion
+        : providerName === 'daytona'
+          ? effective?.box.daytonaRegion
+          : undefined;
+  return cliLocation?.trim() || configured || undefined;
+}
+
+/**
  * Run `provider.prepare` for `providerName`. Extracted so the install wizard
  * can drive the same code path as `agentbox prepare --provider X`.
  * Caller is responsible for any `intro(...)` framing; this function manages
@@ -351,19 +385,24 @@ export async function runPrepare(
 
   const cwd = opts.cwd ?? process.cwd();
   const cfg = await loadEffectiveConfig(cwd).catch(() => null);
-  // Docker base-image registry override (box.imageRegistry; empty = always build).
-  const registry = providerName === 'docker' ? cfg?.effective.box.imageRegistry : undefined;
+  // Base-image registry override. Docker uses it to pull instead of building;
+  // daytona's linux-vm bake MUST have it (a VM snapshot can only boot from a
+  // published image), so it reads the same key.
+  const registry =
+    providerName === 'docker' || providerName === 'daytona'
+      ? cfg?.effective.box.imageRegistry
+      : undefined;
   // Bake-time Claude install method: CLI flag wins over the config key.
   const claudeInstall = opts.claudeInstall ?? cfg?.effective.box.claudeInstall ?? 'native';
-  // Bake-time datacenter/region (Hetzner + DigitalOcean): CLI flag wins over
-  // the provider's location config key; other providers ignore it.
-  const configuredLocation =
-    providerName === 'hetzner'
-      ? cfg?.effective.box.hetznerLocation
-      : providerName === 'digitalocean'
-        ? cfg?.effective.box.digitaloceanRegion
-        : undefined;
-  const location = opts.location?.trim() || configuredLocation || undefined;
+  // Bake-time sandbox class (daytona): the class is baked into the snapshot and
+  // a snapshot of one class can't create a sandbox of the other.
+  const sandboxClass =
+    providerName === 'daytona' && cfg ? resolveDaytonaClass(cfg.effective) : undefined;
+  // Escape hatch for a build context with no published box image (a locally
+  // modified Dockerfile.box): bake the VM base from an explicit image instead.
+  const vmBaseImage =
+    providerName === 'daytona' ? cfg?.effective.box.daytonaVmBaseImage || undefined : undefined;
+  const location = resolvePrepareLocation(providerName, opts.location, cfg?.effective);
   // Bake-time size (daytona/e2b): CLI flag wins over the cascaded box.size /
   // box.size<Provider>. Empty resolves to undefined so the provider bakes its
   // default resources.
@@ -381,6 +420,8 @@ export async function runPrepare(
       claudeInstall,
       location,
       size,
+      sandboxClass,
+      vmBaseImage,
       onLog: (line) => sp.message(line.slice(0, 80)),
     });
     if (result.snapshotName !== undefined) {

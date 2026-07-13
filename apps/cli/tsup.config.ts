@@ -40,11 +40,11 @@ export default defineConfig({
   external: [
     '@homebridge/node-pty-prebuilt-multiarch',
     '@xterm/headless',
-    // @daytonaio/sdk pulls a heavy CJS tree (AWS S3 SDK, axios, dotenv, ...)
+    // @daytona/sdk pulls a heavy CJS tree (AWS S3 SDK, axios, dotenv, ...)
     // that uses dynamic `require()` — bundling it breaks esbuild's ESM
     // `__require` shim ("Dynamic require of 'util' is not supported"). Keep
     // it external; the published `agent-box` package lists it as a real dep.
-    '@daytonaio/sdk',
+    '@daytona/sdk',
     // @vercel/sandbox bundles undici, which uses dynamic `require('assert')`
     // etc. — same ESM `__require` breakage. External + real dep, like daytona.
     '@vercel/sandbox',

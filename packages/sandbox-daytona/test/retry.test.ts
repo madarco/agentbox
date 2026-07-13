@@ -8,7 +8,7 @@ import {
   DaytonaRateLimitError,
   DaytonaTimeoutError,
   DaytonaValidationError,
-} from '@daytonaio/sdk';
+} from '@daytona/sdk';
 import { isRetriable, withDaytonaRetry } from '../src/retry.js';
 
 describe('isRetriable', () => {

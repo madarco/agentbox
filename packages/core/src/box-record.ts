@@ -140,6 +140,17 @@ export interface CloudBoxFields {
    */
   inbound?: InboundPolicy;
   /**
+   * Daytona sandbox class this box actually booted as (`linux-vm` | `container`).
+   * Recorded from the class of the *snapshot* it booted from, not from config —
+   * a user who flips `box.daytonaClass` while `box.imageDaytona` still points at
+   * a snapshot of the other class must not have us lie about the running box.
+   *
+   * Threaded back into `CloudHandle.sandboxClass` so lifecycle ops can branch:
+   * a VM pauses and cannot be archived, a container archives and cannot be
+   * paused. Absent on non-Daytona backends and pre-feature records.
+   */
+  sandboxClass?: string;
+  /**
    * True when this box's `/workspace` was seeded from the host checkout (the
    * laptop `create` path), i.e. it has a real fork base shared with the host.
    * Left unset for `inBoxClone` / plane boxes (they clone in-box from a leased

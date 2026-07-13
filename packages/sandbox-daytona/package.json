@@ -2,7 +2,7 @@
   "name": "@agentbox/sandbox-daytona",
   "version": "0.0.0",
   "private": true,
-  "description": "Daytona Cloud sandbox provider — CloudBackend over @daytonaio/sdk",
+  "description": "Daytona Cloud sandbox provider — CloudBackend over @daytona/sdk",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -29,11 +29,12 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "@agentbox/config": "workspace:*",
     "@agentbox/core": "workspace:*",
     "@agentbox/sandbox-cloud": "workspace:*",
     "@agentbox/sandbox-core": "workspace:*",
     "@clack/prompts": "^0.9.0",
-    "@daytonaio/sdk": "^0.179.0",
+    "@daytona/sdk": "^0.196.0",
     "commander": "^12.1.0"
   },
   "devDependencies": {

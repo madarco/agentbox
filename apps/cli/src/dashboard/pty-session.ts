@@ -41,6 +41,10 @@ function bgSpec(c: {
 // alone is enough for xterm/VS Code but iTerm2 wants 1002 present too).
 export const MOUSE_ENABLE_SEQ = '\x1b[?1000h\x1b[?1002h\x1b[?1006h';
 const MOUSE_MODES = [1000, 1002, 1003, 1005, 1006, 1015];
+/** Settle after the remote shell's first output before typing into it. */
+const INITIAL_INPUT_SETTLE_MS = 400;
+/** Type anyway if the remote shell never says anything. */
+const INITIAL_INPUT_DEADLINE_MS = 3000;
 export const MOUSE_DISABLE_SEQ = MOUSE_MODES.map((n) => `\x1b[?${String(n)}l`).join('');
 
 // modifyOtherKeys=1 — ask the outer terminal to disambiguate modifier+key combos
@@ -107,6 +111,11 @@ export class PtySession {
   private readonly pty: IPtyLike;
   private readonly cleanup?: () => Promise<void>;
   private disposed = false;
+  /** Staged command for transports that can't take one as an argument — see `armInitialInput`. */
+  private readonly initialInput?: string;
+  private initialInputArmed = false;
+  private initialInputSent = false;
+  private initialInputDeadline?: ReturnType<typeof setTimeout>;
   // Reused per cell read — valid only until the next cell() call (the renderer
   // consumes it synchronously within composeRow).
   private readonly out: CellLike = { ...BLANK };
@@ -125,6 +134,7 @@ export class PtySession {
     onExit: (boxId: string) => void,
     cleanup?: () => Promise<void>,
     env?: NodeJS.ProcessEnv,
+    initialInput?: string,
   ) {
     this.boxId = boxId;
     this.keepAlive = keepAlive;
@@ -152,6 +162,7 @@ export class PtySession {
       this.term.write(d, () => {
         if (this.active) onRenderable();
       });
+      this.armInitialInput();
     });
     this.term.onData((d) => {
       if (!this.disposed) this.pty.write(d);
@@ -164,6 +175,42 @@ export class PtySession {
     this.pty.onExit(() => {
       if (!this.disposed) onExit(this.boxId);
     });
+    // Hand the remote shell its command (daytona: its SSH gateway only gives a
+    // terminal to a shell session, so the attach carries no remote command and
+    // the command arrives here instead).
+    this.initialInput = initialInput;
+    // Nothing to wait for if the remote never speaks — type anyway on a deadline.
+    if (initialInput) {
+      this.initialInputDeadline = setTimeout(
+        () => this.sendInitialInput(),
+        INITIAL_INPUT_DEADLINE_MS,
+      );
+      this.initialInputDeadline.unref?.();
+    }
+  }
+
+  /**
+   * Type the staged command once the remote shell is at a prompt.
+   *
+   * Writing at spawn loses the race: the bytes reach the shell while it's still
+   * starting, its line editor hasn't taken over the tty yet, and the trailing
+   * newline is swallowed — leaving the command on a `>` continuation prompt
+   * instead of running. So we wait for the shell's first output plus a short
+   * settle. Mirrors `runWrappedAttach`; the two paths must agree, or a daytona
+   * box that attaches from the CLI fails from the dashboard.
+   */
+  private armInitialInput(): void {
+    if (!this.initialInput || this.initialInputSent || this.initialInputArmed) return;
+    this.initialInputArmed = true;
+    const t = setTimeout(() => this.sendInitialInput(), INITIAL_INPUT_SETTLE_MS);
+    t.unref?.();
+  }
+
+  private sendInitialInput(): void {
+    if (!this.initialInput || this.initialInputSent || this.disposed) return;
+    this.initialInputSent = true;
+    if (this.initialInputDeadline) clearTimeout(this.initialInputDeadline);
+    this.pty.write(this.initialInput);
   }
 
   write(bytes: Buffer): void {

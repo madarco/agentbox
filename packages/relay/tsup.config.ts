@@ -5,7 +5,7 @@ import { defineConfig } from 'tsup';
 //   dist/bin.cjs  — self-contained CJS bin baked into the relay docker image.
 //
 // Runtime contract: `@agentbox/sandbox-daytona` and `@agentbox/sandbox-cloud`
-// (and their transitive `@daytonaio/sdk`) are resolved at runtime via
+// (and their transitive `@daytona/sdk`) are resolved at runtime via
 // dynamic `import()` from host-actions.ts. Both are excluded from the
 // relay bundle here to avoid:
 //   1. a `relay → sandbox-{daytona,cloud} → sandbox-docker → relay`
@@ -22,7 +22,7 @@ import { defineConfig } from 'tsup';
 const externalAtRuntime = [
   '@agentbox/sandbox-daytona',
   '@agentbox/sandbox-cloud',
-  '@daytonaio/sdk',
+  '@daytona/sdk',
   // `pg` is only used by the Postgres store on the hosted control plane, loaded
   // via a lazy dynamic `import('pg')`. Keep it out of both relay bundles (esp.
   // the self-contained bin.cjs) so the laptop relay never carries it.

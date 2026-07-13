@@ -23,18 +23,30 @@
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { Image } from '@daytonaio/sdk';
+import { Image } from '@daytona/sdk';
 import type { PrepareOptions, PrepareResult } from '@agentbox/core';
+import { DAYTONA_VM_REGION, type DaytonaSandboxClass } from '@agentbox/config';
 import {
   claudeInstallFingerprint,
   stageAllAgentStatic,
   type AgentStaticStage,
 } from '@agentbox/sandbox-core';
-import { getClient, parseDaytonaSize } from './backend.js';
+import {
+  DAYTONA_DEFAULT_RESOURCES,
+  daytonaBackend,
+  getClient,
+  parseDaytonaSize,
+} from './backend.js';
 import { resolveDaytonaCustomClaudeMd, resolveDockerfileContext } from './dockerfile-context.js';
 import { ensureDaytonaEnvLoaded } from './env-loader.js';
 import {
+  bakeDaytonaVmBase,
+  deleteSnapshotQuietly,
+  VmBaseImageUnavailableError,
+} from './prepare-vm.js';
+import {
   computeDaytonaContextFingerprint,
+  computeDockerBaseSha,
   preparedMatches,
   readPreparedDaytonaState,
   writePreparedDaytonaState,
@@ -48,10 +60,17 @@ import {
  * context again. Falls back to a timestamp when fingerprinting fails
  * (partial dev rebuild).
  */
-export function defaultSnapshotName(fingerprint: string | null, sizeKey?: string): string {
+export function defaultSnapshotName(
+  fingerprint: string | null,
+  sizeKey?: string,
+  sandboxClass?: DaytonaSandboxClass,
+): string {
   // The size suffix keeps re-sized bakes from colliding on one name, so a
-  // `--size 2-4-8` snapshot doesn't overwrite the `4-8-20` one.
-  const suffix = sizeKey ? `-${sizeKey}` : '';
+  // `--size 2-4-8` snapshot doesn't overwrite the `4-8-20` one. Same for the
+  // class: a VM and a container snapshot of the same context are different
+  // artifacts and cannot substitute for each other. Container stays unsuffixed
+  // so existing snapshot names keep resolving.
+  const suffix = `${sizeKey ? `-${sizeKey}` : ''}${sandboxClass === 'linux-vm' ? '-vm' : ''}`;
   if (fingerprint) return `agentbox-base-${fingerprint.slice(0, 12)}${suffix}`;
   return `agentbox-base-${Math.floor(Date.now() / 1000).toString()}${suffix}`;
 }
@@ -137,6 +156,10 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     ? `${String(sizeResources.cpu)}-${String(sizeResources.memory)}-${String(sizeResources.disk)}`
     : undefined;
 
+  // The class is fixed at bake time — a snapshot of one class cannot create a
+  // sandbox of the other — so it belongs in the snapshot name and the cache key.
+  let sandboxClass: DaytonaSandboxClass =
+    opts.sandboxClass === 'container' ? 'container' : 'linux-vm';
   const rawFingerprint = await computeDaytonaContextFingerprint();
   // Fold the install mode into the sha so native↔npm are distinct cache
   // identities (`native` leaves the hash unchanged) — the snapshot name and the
@@ -147,14 +170,16 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         contextSha256: claudeInstallFingerprint(rawFingerprint.contextSha256, claudeInstall),
       }
     : rawFingerprint;
-  const snapshotName =
-    opts.name ?? defaultSnapshotName(fingerprint?.contextSha256 ?? null, sizeKey);
+  // Not const: a linux-vm bake that finds no published base image downgrades to
+  // container below, and must then drop the `-vm` suffix from its name.
+  let snapshotName =
+    opts.name ?? defaultSnapshotName(fingerprint?.contextSha256 ?? null, sizeKey, sandboxClass);
 
   const prepared = readPreparedDaytonaState();
   if (
     !opts.force &&
     fingerprint &&
-    preparedMatches(prepared, fingerprint.contextSha256, sizeKey)
+    preparedMatches(prepared, fingerprint.contextSha256, sizeKey, sandboxClass)
   ) {
     // Confirm the snapshot still exists on Daytona before short-circuiting.
     // A "yes locally, no on the server" mismatch must rebuild.
@@ -180,7 +205,13 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     }
   } else if (!opts.force && fingerprint && prepared?.base?.contextSha256) {
     const bakedSize = prepared.extras?.size;
-    if (prepared.base.contextSha256 === fingerprint.contextSha256 && bakedSize !== sizeKey) {
+    const bakedClass = prepared.extras?.class ?? 'container';
+    const sameContext = prepared.base.contextSha256 === fingerprint.contextSha256;
+    if (sameContext && bakedClass !== sandboxClass) {
+      log(
+        `daytona sandbox class changed (was ${bakedClass}, now ${sandboxClass}); rebuilding snapshot`,
+      );
+    } else if (sameContext && bakedSize !== sizeKey) {
       log(
         `daytona size changed (was ${bakedSize ?? 'default'}, now ${sizeKey ?? 'default'}); ` +
           `rebuilding snapshot`,
@@ -208,6 +239,70 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         '(or its staged runtime/daytona/ copy). Ensure `pnpm -w build` ran so the ' +
         'CLI staging populated runtime/daytona/.',
     );
+  }
+
+  if (sandboxClass === 'linux-vm') {
+    const dockerBaseSha = await computeDockerBaseSha(claudeInstall);
+    if (!dockerBaseSha) {
+      throw new Error(
+        'could not fingerprint the docker build context, which names the published box image ' +
+          'a linux-vm base must boot from. Ensure `pnpm -w build` ran, or set ' +
+          '`agentbox config set box.daytonaClass container`.',
+      );
+    }
+    try {
+      const baked = await bakeDaytonaVmBase({
+        client: getClient(opts.location ?? DAYTONA_VM_REGION),
+        backend: daytonaBackend,
+        regionId: opts.location ?? DAYTONA_VM_REGION,
+        snapshotName,
+        dockerBaseSha,
+        registry: opts.registry,
+        baseImage: opts.vmBaseImage,
+        // Always explicit: a snapshot created with no `resources` gets Daytona's
+        // 1 vCPU / 1 GiB / 3 GiB default, and the box image does not fit in 3 GiB
+        // (the build dies mid-pull with a bare "internal error").
+        resources: sizeResources ?? { ...DAYTONA_DEFAULT_RESOURCES },
+        hostWorkspace: opts.hostWorkspace,
+        claudeMdOverlay: daytonaClaudeMd,
+        onLog: log,
+      });
+      if (fingerprint) {
+        writePreparedDaytonaState({
+          snapshotName: baked.snapshotName,
+          contextSha256: fingerprint.contextSha256,
+          size: sizeKey,
+          class: 'linux-vm',
+          env: baked.env,
+        });
+        log(`recorded daytona-prepared.json (fingerprint ${fingerprint.contextSha256.slice(0, 12)})`);
+      }
+      // Reap the snapshot this bake replaces. Only after the new one is recorded
+      // — a failed bake must never leave the user with no base at all. Never the
+      // one we just made, and never a container snapshot (a user who flips the
+      // class back would want it).
+      const superseded = prepared?.base?.imageRef;
+      if (superseded && superseded !== baked.snapshotName && prepared?.extras?.class === 'linux-vm') {
+        log(`removing superseded snapshot '${superseded}'`);
+        await deleteSnapshotQuietly(getClient(opts.location ?? DAYTONA_VM_REGION), superseded);
+      }
+      return { snapshotName: baked.snapshotName };
+    } catch (err) {
+      if (!(err instanceof VmBaseImageUnavailableError)) throw err;
+      // No published image for this context (a locally edited Dockerfile.box is
+      // the usual cause — a contributor, not an end user). Daytona cannot build
+      // a VM from a Dockerfile, so the only thing we *can* bake is a container.
+      log(
+        `daytona: ${err.message} This usually means a locally modified Dockerfile.box. ` +
+          `Daytona can't build a linux-vm base from a Dockerfile, so falling back to a ` +
+          `container snapshot (no pause/resume).`,
+      );
+      sandboxClass = 'container';
+      // Re-derive the name without the `-vm` suffix, or we'd register a
+      // container snapshot under a name that advertises a VM.
+      snapshotName =
+        opts.name ?? defaultSnapshotName(fingerprint?.contextSha256 ?? null, sizeKey, sandboxClass);
+    }
   }
 
   const stages = await stageAllAgentStatic({ hostWorkspace: opts.hostWorkspace });
@@ -255,12 +350,19 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
 
     image = image.dockerfileCommands(buildDaytonaSeedCommands(usable), seedContextDir);
 
-    const client = getClient();
+    // Region: a container snapshot registers wherever the client points (the
+    // account default unless the user pinned `box.daytonaRegion`).
+    const client = getClient(opts.location ?? '');
     log(
       `creating Daytona snapshot '${snapshotName}'${sizeResources ? ` (${sizeKey})` : ''}…`,
     );
     const snapshot = await client.snapshot.create(
-      { name: snapshotName, image, ...(sizeResources ? { resources: sizeResources } : {}) },
+      {
+        name: snapshotName,
+        image,
+        ...(sizeResources ? { resources: sizeResources } : {}),
+        ...(opts.location ? { regionId: opts.location } : {}),
+      },
       {
         onLogs: (chunk: string) => log(String(chunk).split('\n').filter(Boolean).join(' ')),
       },
@@ -271,6 +373,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         snapshotName: snapshot.name ?? snapshotName,
         contextSha256: fingerprint.contextSha256,
         size: sizeKey,
+        class: 'container',
       });
       log(
         `recorded daytona-prepared.json (fingerprint ${fingerprint.contextSha256.slice(0, 12)})`,

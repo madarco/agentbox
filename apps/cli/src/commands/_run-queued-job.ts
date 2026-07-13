@@ -20,6 +20,7 @@ import {
   loadEffectiveConfig,
   resolveDefaultCheckpoint,
   type UserConfig,
+  resolveBoxImage,
 } from '@agentbox/config';
 import {
   createBox,
@@ -322,7 +323,7 @@ async function runDockerJob(
     fromBranch: opts.fromBranch,
     useSnapshot,
     checkpointRef,
-    image: cfg.effective.box.image,
+    image: resolveBoxImage(cfg.effective, providerName),
     claudeConfig:
       !job.noAgent && job.agent === 'claude-code'
         ? { isolate: cfg.effective.box.isolateClaudeConfig }
@@ -511,7 +512,7 @@ async function runCloudJob(
     // `--branch` accepts branch/tag names but not SHAs; absent → HEAD.
     fromBranch: opts.fromBranch,
     checkpointRef,
-    image: cfg.effective.box.image,
+    image: resolveBoxImage(cfg.effective, providerName),
     withPlaywright,
     withEnv: cfg.effective.box.withEnv,
     vnc: { enabled: cfg.effective.box.vnc },

@@ -55,7 +55,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^0.9.0",
-    "@daytonaio/sdk": "^0.179.0",
+    "@daytona/sdk": "^0.196.0",
     "@vercel/sandbox": "^2.0.1",
     "@xterm/headless": "^5.5.0",
     "better-auth": "^1.6.0",

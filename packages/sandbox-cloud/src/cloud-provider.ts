@@ -273,8 +273,13 @@ export function createCloudProvider(
     }
     // Carry the persisted inbound policy so firewall ops (repairReachability
     // drift re-sync, setInbound) can merge the whitelist with the current host
-    // egress instead of clobbering it.
-    return { sandboxId, inbound: box.cloud?.inbound };
+    // egress instead of clobbering it. Same for the Daytona sandbox class,
+    // which pause/resume branch on and which no SDK call can read back.
+    return {
+      sandboxId,
+      inbound: box.cloud?.inbound,
+      sandboxClass: box.cloud?.sandboxClass,
+    };
   }
 
   /** Resolve a fresh per-cloud-box id + name + branch. */
@@ -555,8 +560,12 @@ export function createCloudProvider(
       // defaults.
       const resources = opts.defaultResources ?? { cpu: 2, memory: 4, disk: 8 };
       const timeoutOverride = req.providerOptions?.['timeoutMs'];
+      // `>= 0`, not `> 0`: daytona treats 0 as "disable auto-stop entirely", and
+      // dropping it would silently hand the box Daytona's own 15-min default —
+      // the opposite of what the user asked for. The other providers' schemas
+      // enforce `minimum: 1`, so they can't reach 0 anyway.
       const timeoutMs =
-        typeof timeoutOverride === 'number' && timeoutOverride > 0 ? timeoutOverride : undefined;
+        typeof timeoutOverride === 'number' && timeoutOverride >= 0 ? timeoutOverride : undefined;
       const networkPolicyOpt = req.providerOptions?.['networkPolicy'];
       const networkPolicy =
         typeof networkPolicyOpt === 'string' && networkPolicyOpt.trim() !== ''
@@ -583,6 +592,10 @@ export function createCloudProvider(
       const projectOpt = req.providerOptions?.['project'];
       const project =
         typeof projectOpt === 'string' && projectOpt.trim() !== '' ? projectOpt.trim() : undefined;
+      // Sandbox class (daytona's `box.daytonaClass`): `linux-vm` | `container`.
+      const classOpt = req.providerOptions?.['sandboxClass'];
+      const sandboxClass =
+        typeof classOpt === 'string' && classOpt.trim() !== '' ? classOpt.trim() : undefined;
 
       // Per-box tokens: `relayToken` authenticates the in-box agent to its
       // in-sandbox relay (`/events`, `/rpc` bearer); `bridgeToken` separately
@@ -633,7 +646,12 @@ export function createCloudProvider(
       // Daytona only attaches volumes at create time, not after. Backends
       // without a volume primitive return an empty list and we degrade to
       // "user logs in inside the box" the way cloud worked before.
-      const agentVolumes = await ensureAgentVolumesForCloud(backend, { onLog: log });
+      const agentVolumes = await ensureAgentVolumesForCloud(backend, {
+        onLog: log,
+        // Daytona's linux-vm class accepts volume mounts and never honors them
+        // (see ensureAgentVolumesForCloud) — take the per-create upload path.
+        volumesUsable: sandboxClass !== 'linux-vm',
+      });
 
       // Read the `expose:` service ports up front so port-capped backends
       // (vercel) can declare them at create time — a preview URL only routes to
@@ -676,6 +694,7 @@ export function createCloudProvider(
           location,
           project,
           inbound,
+          sandboxClass,
           timeoutMs,
           exposePorts: exposeServicePorts,
           networkPolicy,
@@ -1106,6 +1125,10 @@ export function createCloudProvider(
             // Inbound-access policy the backend applied to the per-box firewall
             // (VPS providers). Persisted so drift re-syncs preserve the whitelist.
             inbound: handle.inbound,
+            // Daytona sandbox class, read back from the class of the snapshot the
+            // box actually booted from (not from config, which can disagree).
+            // pause() branches on it: a VM pauses, a container archives.
+            sandboxClass: handle.sandboxClass,
             // Only host-seeded boxes share a fork base with the host, so only
             // they can be resynced back to the host tip on session start (7.5).
             // inBoxClone / plane boxes clone from a leased URL — left unset.
@@ -1364,9 +1387,31 @@ export function createCloudProvider(
       // skipping TTY when a command is provided would break tmux + readline).
       // A `detached` build only creates the session (no `exec tmux attach`), so
       // it runs as a plain non-interactive exec — no TTY needed.
+      // Backends whose transport withholds a TTY from an exec session (daytona's
+      // SSH gateway) can't take the command as an argument at all: without a
+      // terminal `tmux attach` exits on the spot, the wrapper reads that as the
+      // box dropping, and it reconnects straight back into the same failure.
+      // Connect to a bare login shell — which DOES get a terminal — and hand the
+      // command over on stdin. Detached builds and `logs` genuinely want a
+      // non-interactive exec, so they keep passing the command.
+      const viaStdin = backend.attachExecLacksTty === true && !opts?.detached && kind !== 'logs';
+      // The command is far too big and too quote-heavy to type at an interactive
+      // prompt — the shell's line editor mangles it and lands on a `>`
+      // continuation. So stage it as a script first (a plain exec, which needs no
+      // TTY and is not affected by any of this) and type one short line to run it.
+      const scriptPath = viaStdin ? attachScriptPath(opts?.sessionName ?? kind) : '';
+      if (viaStdin) {
+        const b64 = Buffer.from(inner, 'utf8').toString('base64');
+        await backend.exec(
+          handle,
+          `printf %s '${b64}' | base64 -d > ${scriptPath} && chmod 700 ${scriptPath}`,
+        );
+      }
       const argv = opts?.detached
         ? [...baseArgv.slice(1), inner]
-        : [...baseArgv.slice(1), '-t', inner];
+        : viaStdin
+          ? [...baseArgv.slice(1)]
+          : [...baseArgv.slice(1), '-t', inner];
       // Keep argv[0] = the program name (ssh) so callers can split.
       const fullArgv = [baseArgv[0]!, ...argv];
       const cleanup = backend.revokeAttachToken
@@ -1374,7 +1419,13 @@ export function createCloudProvider(
             await backend.revokeAttachToken!(handle, baseArgv);
           }
         : undefined;
-      return { argv: fullArgv, cleanup };
+      return {
+        argv: fullArgv,
+        // `exec` so the script replaces the login shell: the user never lands
+        // back on a prompt when they detach from tmux.
+        ...(viaStdin ? { initialInput: `exec bash ${scriptPath}\n` } : {}),
+        cleanup,
+      };
     },
 
     async uploadPath(
@@ -1657,6 +1708,16 @@ function makeCloudCheckpoint(backend: CloudBackend): ProviderCheckpoint {
 export function hostTermForCloud(): string {
   const t = process.env['TERM'];
   return t && /^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(t) ? t : 'xterm-256color';
+}
+
+/**
+ * Where the attach command is staged in the box for `attachExecLacksTty`
+ * backends. Per session name, so concurrent attaches to different agents don't
+ * overwrite each other; re-attaching the same session just rewrites the file.
+ */
+export function attachScriptPath(sessionName: string): string {
+  const safe = sessionName.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 40) || 'attach';
+  return `/tmp/agentbox-attach-${safe}.sh`;
 }
 
 export function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions): string {

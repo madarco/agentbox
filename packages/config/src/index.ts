@@ -68,6 +68,13 @@ export {
 export { resolveBoxSize } from './size.js';
 
 export {
+  DAYTONA_VM_REGION,
+  resolveDaytonaClass,
+  resolveDaytonaRegion,
+  type DaytonaSandboxClass,
+} from './daytona.js';
+
+export {
   boxImageConfigKey,
   resolveBoxImage,
 } from './image.js';
