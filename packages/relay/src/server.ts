@@ -61,7 +61,7 @@ import { GitHubAppLeaser, loadGitHubAppConfig, type GitHubAppConfig } from './gi
 import { leaseTokenResult } from './lease.js';
 import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
 import { resolveWorktree } from './worktree.js';
-import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
+import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers, raisePrompt } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
 import { CREDENTIALS_UPDATED_EVENT, CredentialsFanout } from './credentials-fanout.js';
 import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
@@ -86,6 +86,7 @@ import type {
   PostEventBody,
   PostRpcBody,
   PromptAnswerBody,
+  PromptRaiseBody,
   RegisterBoxBody,
   RelayEvent,
   SetNoticeBody,
@@ -933,16 +934,21 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
               subscribers,
               reg.boxId,
               {
-                kind: 'confirm',
-                message: `Open link from box ${reg.name} on the host?`,
+                // `open-link`: link-capable clients (hub web UI) open the URL
+                // client-side and answer `openedByClient`; a plain terminal
+                // `y` still opens on the host (hostOpen).
+                kind: 'open-link',
+                message: `Open link from box ${reg.name}?`,
                 detail: url,
+                url,
+                hostOpen: true,
                 defaultAnswer: 'n',
                 context: { command: 'browser.open', argv: [url] },
               },
               { ttlMs: BROWSER_OPEN_PROMPT_TTL_MS },
             )
               .then((verdict) => {
-                if (verdict.answer === 'y' && !verdict.cancelled) {
+                if (verdict.answer === 'y' && !verdict.cancelled && !verdict.openedByClient) {
                   void runHostCommand([hostOpenCommand(), url], BROWSER_OPEN_RPC_TIMEOUT_MS);
                 }
               })
@@ -1288,7 +1294,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       // can target the prompt-resolved broadcast (other wrappers clear their
       // stale footer).
       const targetBox = prompts.boxFor(body.id);
-      const hit = prompts.resolve(body.id, body.answer, body.cancelled);
+      const hit = prompts.resolve(body.id, body.answer, body.cancelled, body.openedByClient);
       if (!hit) {
         // Already answered (idempotent) or never existed.
         send(res, 404, { error: 'no pending prompt with that id' });
@@ -1298,6 +1304,48 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         subscribers.broadcast(targetBox, 'prompt-resolved', { id: body.id });
       }
       send(res, 204, null);
+      return;
+    }
+
+    if (route === 'POST /admin/prompts/raise') {
+      // Daemon-created prompt (hub backend, queued worker): parks a
+      // non-blocking entry the approvals surfaces render, returns its id.
+      // The creator clears it via /admin/prompts/answer when its underlying
+      // flow completes; a TTL reaps it if nobody does. Loopback-only like
+      // every /admin route.
+      const body = await readJsonBody<PromptRaiseBody>(req);
+      if (
+        !body ||
+        typeof body.boxId !== 'string' ||
+        body.boxId.length === 0 ||
+        (body.kind !== 'confirm' && body.kind !== 'open-link') ||
+        typeof body.message !== 'string' ||
+        body.message.length === 0
+      ) {
+        send(res, 400, { error: 'expected {boxId, kind:"confirm"|"open-link", message, ...}' });
+        return;
+      }
+      const ttlMs =
+        typeof body.ttlMs === 'number' && Number.isFinite(body.ttlMs) && body.ttlMs > 0
+          ? body.ttlMs
+          : undefined;
+      const { id } = raisePrompt(
+        prompts,
+        subscribers,
+        body.boxId,
+        {
+          kind: body.kind,
+          message: body.message,
+          detail: body.detail,
+          url: typeof body.url === 'string' ? body.url : undefined,
+          userCode: typeof body.userCode === 'string' ? body.userCode : undefined,
+          hostOpen: body.hostOpen === true,
+          defaultAnswer: 'n',
+        },
+        { ttlMs },
+      );
+      log(`prompt-raise box=${body.boxId} kind=${body.kind} id=${id}`);
+      send(res, 200, { id });
       return;
     }
 

@@ -34,7 +34,7 @@ export function BoxApprovals({ boxId }: { boxId: string }) {
               </div>
             </div>
             <div className="flex-none pt-0.5">
-              <ApprovalActions id={a.id} />
+              <ApprovalActions approval={a} />
             </div>
           </div>
         ))}

@@ -6,7 +6,7 @@ import { Command } from 'commander';
 import { pathToFileURL } from 'node:url';
 import { boxLabel } from '../box-label.js';
 import { hyperlink } from '../hyperlink.js';
-import { applyLiveCloudStates } from '../lib/cloud-state.js';
+import { applyLiveCloudStates, type LiveStateAuthFailure } from '../lib/cloud-state.js';
 import { withWatchOptions, watchRender, type WatchableOptions } from '../watch.js';
 
 interface ListOptions extends WatchableOptions {
@@ -347,30 +347,51 @@ function renderTable(boxes: ListedBox[], stream: NodeJS.WriteStream): string {
 async function scopedBoxes(
   all: boolean,
   live: boolean,
-): Promise<{ boxes: ListedBox[]; projectRoot: string; scoped: boolean }> {
+): Promise<{
+  boxes: ListedBox[];
+  projectRoot: string;
+  scoped: boolean;
+  authFailures: LiveStateAuthFailure[];
+}> {
   const boxes = await listBoxes();
   if (all) {
     // Default: cloud state is the fast persisted `cloud.lastState` from
     // listBoxes. `--live` overrides it with an authoritative SDK probe.
-    if (live) await applyLiveCloudStates(boxes);
-    return { boxes, projectRoot: '', scoped: false };
+    const authFailures = live ? await applyLiveCloudStates(boxes) : [];
+    return { boxes, projectRoot: '', scoped: false, authFailures };
   }
   const { root } = await findProjectRoot(process.cwd());
   const scoped = boxes.filter((b) => b.projectRoot === root);
   // Probe only the scoped boxes — don't round-trip every cloud box on the host.
-  if (live) await applyLiveCloudStates(scoped);
-  return { boxes: scoped, projectRoot: root, scoped: true };
+  const authFailures = live ? await applyLiveCloudStates(scoped) : [];
+  return { boxes: scoped, projectRoot: root, scoped: true, authFailures };
+}
+
+/**
+ * One line per provider whose credentials were rejected during `--live`: the
+ * affected rows silently keep their last-known state, and without this the
+ * stale rows would read as authoritative.
+ */
+function renderAuthFailures(failures: LiveStateAuthFailure[]): string {
+  return failures
+    .map(
+      (f) =>
+        `${f.provider}: credentials rejected — ${f.hint} ` +
+        `(${String(f.boxCount)} box${f.boxCount === 1 ? '' : 'es'} showing last-known state)`,
+    )
+    .join('\n');
 }
 
 async function buildListText(all: boolean, live: boolean): Promise<string> {
-  const { boxes, projectRoot, scoped } = await scopedBoxes(all, live);
+  const { boxes, projectRoot, scoped, authFailures } = await scopedBoxes(all, live);
   if (boxes.length === 0) {
     if (scoped) {
       return `no boxes in this project (${projectRoot}) — run \`agentbox create\`, or \`agentbox list --global\` to see all`;
     }
     return 'no boxes — run `agentbox create` to make one';
   }
-  const table = renderTable(boxes, process.stdout);
+  const warn = authFailures.length > 0 ? `\n${renderAuthFailures(authFailures)}` : '';
+  const table = renderTable(boxes, process.stdout) + warn;
   if (!scoped) return table;
   // basename of projectRoot — matches dashboard sidebar's projectLabel().
   const name = projectRoot.split('/').filter(Boolean).pop() ?? projectRoot;

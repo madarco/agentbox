@@ -101,6 +101,8 @@ export interface User {
 export interface Approval {
   id: string;
   boxId: string;
+  /** 'confirm' (y/N) or 'open-link' (a URL the CLIENT opens). Absent on old relays = confirm. */
+  kind?: 'confirm' | 'open-link';
   message: string;
   detail?: string;
   command?: string;
@@ -108,6 +110,10 @@ export interface Approval {
   argv?: string[];
   defaultAnswer: 'y' | 'n';
   createdAt: number;
+  /** `open-link` only: the URL. Opened client-side (window.open), never on the relay host. */
+  url?: string;
+  /** `open-link` only: a device-flow user code to display next to the link. */
+  userCode?: string;
 }
 
 // A provider the box could be created on. `configured` = usable on this host

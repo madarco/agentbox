@@ -17,6 +17,7 @@
 
 import { log } from '@clack/prompts';
 import { findProjectRoot } from '@agentbox/config';
+import { isAuthError } from '@agentbox/sandbox-cloud';
 import { readState, resolveBoxRef } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { makeAwsClient, type AwsInstance } from './client.js';
@@ -56,7 +57,7 @@ const loginSub = new Command('login')
   .action(async (opts: LoginOpts) => {
     try {
       if (opts.status) {
-        printStatus();
+        await printStatus();
         return;
       }
       if (!process.stdin.isTTY) {
@@ -80,7 +81,7 @@ const loginSub = new Command('login')
     }
   });
 
-function printStatus(): void {
+async function printStatus(): Promise<void> {
   const s = readAwsCredStatus();
   if (s.source === 'none') {
     process.stdout.write(
@@ -94,6 +95,11 @@ function printStatus(): void {
   if (s.region) lines.push(`  region: ${s.region}`);
   lines.push(`  file: ${secretsPath()}`);
 
+  // "Configured" and "working" are different claims — an SSO session expires
+  // daily while the AWS_PROFILE pointer stays valid forever. One cheap
+  // DescribeVpcs answers which one this is.
+  lines.push(`  session: ${await describeSessionValidity(s.profile)}`);
+
   const base = readPreparedState().base;
   lines.push(
     base
@@ -101,6 +107,22 @@ function printStatus(): void {
       : '  base AMI: not baked — run `agentbox prepare --provider aws`',
   );
   process.stdout.write(lines.join('\n') + '\n');
+}
+
+async function describeSessionValidity(profile?: string): Promise<string> {
+  try {
+    const vpc = await makeAwsClient().describeDefaultVpc();
+    return `valid${vpc?.ownerId ? ` (account ${vpc.ownerId})` : ''}`;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isAuthError(err)) {
+      return (
+        `EXPIRED or rejected (${message})\n` +
+        `    fix: aws sso login --profile ${profile ?? '<profile>'}  (or re-run \`agentbox aws login\`)`
+      );
+    }
+    return `could not verify (${message})`;
+  }
 }
 
 const firewallSyncSub = new Command('sync')

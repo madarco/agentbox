@@ -83,6 +83,7 @@ export {
   PendingPrompts,
   PromptSubscribers,
   type PromptResolution,
+  raisePrompt,
 } from './prompts.js';
 export { HubNotifier } from './hub-notifier.js';
 export { BoxNotices } from './notices.js';

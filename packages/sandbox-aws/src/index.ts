@@ -81,6 +81,11 @@ export {
   type ResolvedAsset,
   type RuntimeAsset,
 } from './runtime-assets.js';
+export {
+  parseDeviceLoginOutput,
+  startAwsSsoDeviceLogin,
+  type AwsSsoDeviceLogin,
+} from './sso-device-login.js';
 export { mintPrepareKey, mintSshKey, type MintedSshKey } from './ssh-key.js';
 export {
   scpDownload,

@@ -175,7 +175,11 @@ export interface HubBackend {
   // Best-effort on the browser launch; only errors when the box is unusable.
   screen(id: string): Promise<ActionResult>;
   // Answer a pending host-action approval; resolves the parked in-box RPC.
-  answerApproval(id: string, answer: 'y' | 'n'): Promise<ActionResult>;
+  answerApproval(
+    id: string,
+    answer: 'y' | 'n',
+    openedByClient?: boolean,
+  ): Promise<ActionResult>;
   // Provider list enriched with base-image freshness (`baseStatus`/
   // `baseStaleReason`). Off the getData() hot path — computing it loads provider
   // code + hashes the runtime build context (memoized with a short TTL). Backs

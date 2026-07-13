@@ -768,6 +768,45 @@ export async function clearRelayNotice(boxId: string, id: string): Promise<void>
 }
 
 /**
+ * Best-effort: park a daemon-raised prompt on the host relay
+ * (`POST /admin/prompts/raise`) — e.g. an `open-link` re-auth request from
+ * the queued worker after a cloud provider rejected its credentials. The
+ * approvals surfaces (hub UI, tray, wrapper footer) render it; a TTL reaps
+ * it if nobody answers. Returns the prompt id, or null when the relay is
+ * unreachable / too old to know the route. Never throws.
+ */
+export async function raiseRelayPrompt(args: {
+  boxId: string;
+  kind: 'confirm' | 'open-link';
+  message: string;
+  detail?: string;
+  url?: string;
+  userCode?: string;
+  hostOpen?: boolean;
+  ttlMs?: number;
+}): Promise<string | null> {
+  try {
+    const body = await adminPostForJson('/admin/prompts/raise', args);
+    const id = (body as { id?: unknown } | null)?.id;
+    return typeof id === 'string' && id.length > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Best-effort: resolve a prompt previously parked via {@link raiseRelayPrompt}
+ * (the creator's flow finished — or failed — so the card must not linger).
+ */
+export async function clearRelayPrompt(id: string): Promise<void> {
+  try {
+    await adminPost('/admin/prompts/answer', { id, answer: 'y', cancelled: true });
+  } catch {
+    // best-effort
+  }
+}
+
+/**
  * Mint a one-time host-initiated token from the host relay, scoped to
  * `(boxId, method, paramsHash)`. The caller passes the returned token to
  * `agentbox-ctl` via `--host-initiated-token`, which forwards it in the RPC

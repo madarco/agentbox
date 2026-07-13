@@ -31,9 +31,11 @@ import {
   type PendingApproval,
   type QueueAgentKind,
   type QueueJob,
+  raisePrompt,
   type RelayServerHandle,
 } from '@agentbox/relay';
 import type { BoxGitDeps, ProviderModule } from '@agentbox/sandbox-core';
+import { isNotAuthenticatedError, type NotAuthenticatedError } from '@agentbox/sandbox-cloud';
 import {
   BOX_WORKSPACE,
   autoWriteSshConfig,
@@ -575,6 +577,7 @@ function mapApproval(p: PendingApproval): Approval {
   return {
     id: p.id,
     boxId: p.boxId,
+    kind: p.ev.kind,
     message: p.ev.message,
     detail: p.ev.detail,
     command: p.ev.context?.command,
@@ -582,6 +585,8 @@ function mapApproval(p: PendingApproval): Approval {
     argv: p.ev.context?.argv,
     defaultAnswer: p.ev.defaultAnswer ?? 'n',
     createdAt: Date.parse(p.createdAt) || Date.now(),
+    url: p.ev.url,
+    userCode: p.ev.userCode,
   };
 }
 
@@ -682,15 +687,80 @@ async function verifyFromBranch(repo: string, ref: string): Promise<{ ok: true }
 }
 
 async function runLifecycle(id: string, op: (box: BoxRecord, provider: Provider) => Promise<void>): Promise<ActionResult> {
+  let box: BoxRecord | undefined;
   try {
     const { boxes } = await readState();
-    const box = boxes.find((b) => b.id === id);
+    box = boxes.find((b) => b.id === id);
     if (!box) return { ok: false, error: `box ${id} not found` };
     const provider = await providerForBox(box);
     await op(box, provider);
     return { ok: true };
   } catch (err) {
+    // A rejected-credentials failure is fixable from the UI: kick off the
+    // re-auth flow (device-code login + an open-link approval) alongside the
+    // error the caller shows. Best-effort — the error message itself already
+    // carries the manual fix.
+    if (box && isNotAuthenticatedError(err)) onAuthFailure?.(box, err);
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Installed by `createHubBackend` (it owns the relay handle the approvals
+ * surfaces read from); module-level so `runLifecycle` — which predates the
+ * backend object — can reach it.
+ */
+let onAuthFailure: ((box: BoxRecord, err: NotAuthenticatedError) => void) | null = null;
+
+/** One re-auth flow per provider at a time — every failing action funnels here. */
+const reauthInFlight = new Set<string>();
+
+/**
+ * Start a device-code re-login for the failed provider and park an `open-link`
+ * approval carrying its verification URL. The hub web UI renders it with an
+ * "Open link" button that opens CLIENT-side (works against a remote hub); the
+ * URL is also in `detail` for clients that predate the kind (tray). When the
+ * CLI child finishes — the human approved in their browser — the prompt is
+ * cleared; Deny kills the child.
+ *
+ * AWS-only today: it is the one provider whose sessions routinely expire
+ * (SSO ~8h). The seam is provider-keyed so others can join.
+ */
+async function raiseReauthPrompt(
+  handle: RelayServerHandle,
+  box: BoxRecord,
+  err: NotAuthenticatedError,
+): Promise<void> {
+  if (err.provider !== 'aws' || reauthInFlight.has(err.provider)) return;
+  reauthInFlight.add(err.provider);
+  try {
+    const { startAwsSsoDeviceLogin } = await import('@agentbox/sandbox-aws');
+    const flow = await startAwsSsoDeviceLogin();
+    if (!flow) return; // not an SSO profile / no aws CLI — the error text is the guidance
+    const { id, resolution } = raisePrompt(handle.prompts, handle.subscribers, box.id, {
+      kind: 'open-link',
+      message: `AWS session expired — sign in to re-authenticate (profile ${flow.profile})`,
+      detail: flow.url,
+      url: flow.url,
+      userCode: flow.userCode,
+      hostOpen: false,
+      defaultAnswer: 'n',
+    });
+    void resolution.then((r) => {
+      // 'n' = the user dismissed the card (or the TTL reaped it): stop the
+      // CLI child so it doesn't poll AWS for the rest of the device-code
+      // window. 'y' means "I opened it" — the child keeps polling.
+      if (r.answer === 'n') flow.cancel();
+    });
+    await flow.done;
+    // Login finished (or died): drop the card if it is still pending.
+    if (handle.prompts.resolve(id, 'y', true)) {
+      handle.subscribers.broadcast(box.id, 'prompt-resolved', { id });
+    }
+  } catch (e) {
+    console.warn(`[hub] aws re-auth flow failed: ${errMsg(e)}`);
+  } finally {
+    reauthInFlight.delete(err.provider);
   }
 }
 
@@ -880,6 +950,9 @@ async function probeOpenTargets(): Promise<OpenTargetsReport | null> {
 }
 
 export function createHubBackend(handle: RelayServerHandle): HubBackend {
+  onAuthFailure = (box, err) => {
+    void raiseReauthPrompt(handle, box, err);
+  };
   return {
     // authMode is layered on by source.ts (an env-derived concern), so the host
     // backend produces everything else.
@@ -992,10 +1065,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     // Mirror POST /admin/prompts/answer's block branch, in-process: resolving
     // the entry fulfills the Promise the /rpc handler is awaiting (box unblocks),
     // and the broadcast clears any attached-terminal footer.
-    answerApproval(id, answer): Promise<ActionResult> {
+    answerApproval(id, answer, openedByClient): Promise<ActionResult> {
       const boxId = handle.prompts.boxFor(id);
       if (!boxId) return Promise.resolve({ ok: false, error: 'no pending approval' });
-      if (!handle.prompts.resolve(id, answer)) {
+      if (!handle.prompts.resolve(id, answer, undefined, openedByClient)) {
         return Promise.resolve({ ok: false, error: 'no pending approval' });
       }
       handle.subscribers.broadcast(boxId, 'prompt-resolved', { id });

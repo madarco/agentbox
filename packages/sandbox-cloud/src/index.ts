@@ -8,6 +8,7 @@ export {
   type CreateCloudProviderOptions,
 } from './cloud-provider.js';
 export { kickCloudBootstrap, type KickCloudBootstrapArgs } from './bootstrap-launch.js';
+export { isAuthError, isNotAuthenticatedError, NotAuthenticatedError } from './auth-error.js';
 export {
   seedCloudWorkspace,
   type SeedCloudWorkspaceArgs,

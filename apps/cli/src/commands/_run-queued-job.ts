@@ -22,11 +22,13 @@ import {
   type UserConfig,
 } from '@agentbox/config';
 import {
+  clearRelayPrompt,
   createBox,
   DEFAULT_BOX_IMAGE,
   detectEngine,
   ensureImage,
   hostBackupHasCredentials,
+  raiseRelayPrompt,
   rebuildPluginNativeDeps,
   recordLastAgent,
   SHARED_CLAUDE_VOLUME,
@@ -37,6 +39,7 @@ import {
   ensureOpencodeInstalled,
   volumeClaudeCredentials,
 } from '@agentbox/sandbox-docker';
+import { isNotAuthenticatedError, type NotAuthenticatedError } from '@agentbox/sandbox-cloud';
 import {
   readJob,
   takeQueueLoginCode,
@@ -251,11 +254,55 @@ export const runQueuedJobCommand = new Command('_run-queued-job')
         } catch {
           /* best-effort */
         }
+        // Rejected cloud credentials are fixable from the UI: kick a re-auth
+        // flow so the hub/tray shows a "sign in" card next to the failed job.
+        // Best-effort — the job's `reason` already carries the manual fix.
+        if (isNotAuthenticatedError(err)) {
+          await raiseCloudReauthPrompt(job, err, (line) => log.write(line));
+        }
       }
       log.close();
       process.exit(1);
     }
   });
+
+/**
+ * A cloud provider rejected this job's credentials. Start the device-code
+ * re-login (AWS-only today) and park an `open-link` approval on the host
+ * relay so the hub/tray shows a clickable "sign in" card next to the failed
+ * job. The worker stays alive until the login completes or AWS's device-code
+ * window lapses (~10 min) — exiting earlier would kill the polling child the
+ * URL points at. Best-effort at every step.
+ */
+async function raiseCloudReauthPrompt(
+  job: QueueJob,
+  err: NotAuthenticatedError,
+  logLine: (line: string) => void,
+): Promise<void> {
+  if (err.provider !== 'aws') return;
+  try {
+    const { startAwsSsoDeviceLogin } = await import('@agentbox/sandbox-aws');
+    const flow = await startAwsSsoDeviceLogin();
+    if (!flow) return; // not an SSO profile / no aws CLI — job.reason is the guidance
+    // No box exists for a failed create; the job id keys the hub's synthetic
+    // error box, so the card lands next to it.
+    const promptId = await raiseRelayPrompt({
+      boxId: job.boxId ?? job.id,
+      kind: 'open-link',
+      message: `AWS session expired — sign in to re-authenticate (profile ${flow.profile})`,
+      detail: flow.url,
+      url: flow.url,
+      userCode: flow.userCode,
+      hostOpen: false,
+    });
+    logLine(`aws re-auth: waiting for sign-in at ${flow.url}`);
+    const ok = await flow.done;
+    logLine(`aws re-auth: ${ok ? 'completed — retry the job' : 'not completed'}`);
+    if (promptId) await clearRelayPrompt(promptId);
+  } catch (e) {
+    logLine(`aws re-auth flow failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
 
 async function runDockerJob(
   job: QueueJob,

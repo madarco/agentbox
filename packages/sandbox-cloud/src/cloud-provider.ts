@@ -75,6 +75,7 @@ import {
 } from './checkpoint.js';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { isSnapshotGoneError } from './snapshot-error.js';
+import { isAuthError, isNotAuthenticatedError, NotAuthenticatedError } from './auth-error.js';
 import { readExposedServicePorts } from './expose-ports.js';
 import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
 import { kickCloudBootstrap } from './bootstrap-launch.js';
@@ -300,7 +301,21 @@ export function createCloudProvider(
       const state = await backend.state(h);
       // CloudState aligns with BoxRuntimeState by construction.
       return state;
-    } catch {
+    } catch (err) {
+      // Credential failures must NOT read as `missing`: with an expired SSO
+      // token every box would render as destroyed while being perfectly
+      // healthy. Rethrow so callers can keep the last-known state (list --live
+      // does) or surface the actionable message (single-box commands do).
+      if (isAuthError(err)) {
+        throw isNotAuthenticatedError(err)
+          ? err
+          : new NotAuthenticatedError(
+              providerName,
+              `${providerName}: could not verify box state — the cloud rejected the credentials ` +
+                `(${err instanceof Error ? err.message : String(err)}).`,
+              `run \`agentbox ${providerName} login\` (for AWS SSO: \`aws sso login --profile ${process.env.AWS_PROFILE ?? '<profile>'}\`)`,
+            );
+      }
       return 'missing';
     }
   }

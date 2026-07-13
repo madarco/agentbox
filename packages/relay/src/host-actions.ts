@@ -723,18 +723,26 @@ async function runBrowserOpenMirror(
       deps.subscribers,
       deps.boxId,
       {
-        kind: 'confirm',
-        message: `Open link from cloud box ${deps.boxName ?? deps.boxId} on the host?`,
+        // `open-link` (not a plain confirm) so link-capable clients — the hub
+        // web UI — render a real "open" affordance and open the URL on THEIR
+        // side, which is the only side that works when the relay runs on a
+        // remote control plane. `hostOpen` keeps the local behavior: a plain
+        // terminal `y` still opens on this machine (below).
+        kind: 'open-link',
+        message: `Open link from cloud box ${deps.boxName ?? deps.boxId}?`,
         detail: url,
+        url,
+        hostOpen: true,
         defaultAnswer: 'n',
         context: { command: 'browser.open', argv: [url] },
       },
       { ttlMs: TTL_MS },
     );
-    if (verdict.answer === 'y' && !verdict.cancelled) {
+    if (verdict.answer === 'y' && !verdict.cancelled && !verdict.openedByClient) {
       // Open on the host's default handler (`open` on macOS, `xdg-open` on
       // Linux). Spawn detached so the relay loop isn't blocked; the box never
-      // observes the outcome.
+      // observes the outcome. Skipped when the answering client (hub web UI)
+      // already opened the link itself.
       const { spawn } = await import('node:child_process');
       const child = spawn(hostOpenCommand(), [url], { stdio: 'ignore', detached: true });
       child.unref();

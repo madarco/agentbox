@@ -74,7 +74,7 @@ export default function ApprovalsPage() {
                       </span>
                     </TableCell>
                     <TableCell className="text-right">
-                      <ApprovalActions id={a.id} />
+                      <ApprovalActions approval={a} />
                     </TableCell>
                   </TableRow>
                 );

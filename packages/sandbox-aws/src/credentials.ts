@@ -34,6 +34,7 @@ import {
   text,
 } from '@clack/prompts';
 import type { CredSetResult } from '@agentbox/sandbox-core';
+import { isAuthError, NotAuthenticatedError } from '@agentbox/sandbox-cloud';
 import { makeAwsClient, type AwsClient } from './client.js';
 import { AWS_KEYS, ensureAwsEnvLoaded, parseEnvFile } from './env-loader.js';
 import {
@@ -75,9 +76,18 @@ export async function ensureAwsCredentials(opts: EnsureAwsCredentialsOptions = {
   ensureAwsEnvLoaded();
 
   if (!opts.force && hasUsableCredentials()) return;
-  // Non-TTY (scripted / CI): stay silent and let the API report the auth error,
-  // rather than hanging on a prompt nobody can answer.
-  if (!process.stdin.isTTY) return;
+  // Non-TTY (hub, queued worker, CI): we cannot prompt, and silently returning
+  // just defers to a raw SDK `CredentialsProviderError` twenty seconds later.
+  // Fail here, with the fix.
+  if (!process.stdin.isTTY) {
+    throw new NotAuthenticatedError(
+      'aws',
+      'AWS credentials are not configured and this session cannot prompt for them.\n' +
+        'Run `agentbox aws login` in a terminal (or set AWS_PROFILE / AWS_ACCESS_KEY_ID + ' +
+        'AWS_SECRET_ACCESS_KEY in the environment for non-interactive use).',
+      'run `agentbox aws login`',
+    );
+  }
 
   intro('AWS setup');
 
@@ -259,10 +269,12 @@ async function validateCredentials(fields: CredFields): Promise<ValidationResult
     s.stop('AWS credential check failed');
     const message = err instanceof Error ? err.message : String(err);
     const code = (err as { code?: string }).code ?? '';
+    // 'expired' is the recoverable subset (offer `aws sso login` + retry);
+    // everything else the shared classifier flags is a hard 'auth' failure.
     if (/ExpiredToken|TokenRefreshRequired|SSOTokenProviderFailure|expired/i.test(`${code} ${message}`)) {
       return { ok: false, kind: 'expired', message };
     }
-    if (/AuthFailure|UnrecognizedClient|InvalidClientTokenId|SignatureDoesNotMatch|AccessDenied|Unauthorized|CredentialsProviderError/i.test(`${code} ${message}`)) {
+    if (isAuthError(err)) {
       return { ok: false, kind: 'auth', message };
     }
     return { ok: false, kind: 'network', message };

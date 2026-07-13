@@ -10,6 +10,7 @@
  */
 
 import { UserFacingError } from '@agentbox/core';
+import { isAuthError, NotAuthenticatedError } from '@agentbox/sandbox-cloud';
 import { AwsApiError, type AwsImage, type AwsInstanceTypeInfo } from './client.js';
 
 export interface InstanceChoice {
@@ -129,27 +130,42 @@ export function mapAwsProvisionError(err: unknown, choice: InstanceChoice): unkn
           'to attach.',
       );
 
-    case 'AuthFailure':
-    case 'ExpiredToken':
-    case 'ExpiredTokenException':
-    case 'InvalidClientTokenId':
-      // In a box the advice has to be different: the credentials there are a
-      // short-lived triple copied in at create time, and `aws sso login` cannot
-      // work (no browser). Telling someone to run it would send them in circles.
-      return new UserFacingError(
-        process.env.AGENTBOX_BOX_NAME
-          ? `AWS rejected the credentials (${err.message}).\n` +
-              'This box carries a short-lived AWS session, copied in when it was created, and it ' +
-              'has expired.\n' +
-              'On the HOST: `aws sso login --profile <p>` then `pnpm aws:creds`, and either ' +
-              're-create this box or `agentbox cp` the refreshed ~/.aws/credentials back in.'
-          : `AWS rejected the credentials (${err.message}).\n` +
-              'If you use SSO, the session has expired: run `aws sso login --profile ' +
-              `${process.env.AWS_PROFILE ?? '<profile>'}\`.\n` +
-              'Otherwise re-run `agentbox aws login`.',
-      );
-
     default:
+      // Everything the shared classifier recognizes as a credential failure —
+      // including the SDK-chain names (`CredentialsProviderError`,
+      // `SSOTokenProviderFailure`, `TokenRefreshRequired`) the old explicit
+      // case list missed. UnauthorizedOperation is handled above: that is a
+      // missing IAM *permission*, and "log in again" would be the wrong advice.
+      if (isAuthError(err)) return awsNotAuthenticatedError(err.message);
       return err;
   }
+}
+
+/**
+ * The canonical "AWS rejected the credentials" error, box-aware. In a box the
+ * advice has to be different: the credentials there are a short-lived triple
+ * copied in at create time, and `aws sso login` cannot work (no browser) —
+ * telling someone to run it would send them in circles.
+ */
+export function awsNotAuthenticatedError(cause: string): NotAuthenticatedError {
+  const profile = process.env.AWS_PROFILE ?? '<profile>';
+  const ssoHint = `aws sso login --profile ${profile}`;
+  if (process.env.AGENTBOX_BOX_NAME) {
+    return new NotAuthenticatedError(
+      'aws',
+      `AWS rejected the credentials (${cause}).\n` +
+        'This box carries a short-lived AWS session, copied in when it was created, and it ' +
+        'has expired.\n' +
+        'On the HOST: `aws sso login --profile <p>` then `pnpm aws:creds`, and either ' +
+        're-create this box or `agentbox cp` the refreshed ~/.aws/credentials back in.',
+      'refresh the credentials from the host',
+    );
+  }
+  return new NotAuthenticatedError(
+    'aws',
+    `AWS rejected the credentials (${cause}).\n` +
+      `If you use SSO, the session has expired: run \`${ssoHint}\`.\n` +
+      'Otherwise re-run `agentbox aws login`.',
+    `run \`${ssoHint}\``,
+  );
 }

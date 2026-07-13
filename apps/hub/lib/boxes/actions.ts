@@ -36,10 +36,14 @@ export async function renameBoxAction(id: string, displayName: string): Promise<
   return res;
 }
 
-export async function answerApprovalAction(id: string, answer: 'y' | 'n'): Promise<ActionResult> {
+export async function answerApprovalAction(
+  id: string,
+  answer: 'y' | 'n',
+  openedByClient?: boolean,
+): Promise<ActionResult> {
   const backend = globalThis.__AGENTBOX_HUB_BACKEND;
   if (!backend) return { ok: false, error: 'hub backend unavailable (run the hub server)' };
-  const res = await backend.answerApproval(id, answer);
+  const res = await backend.answerApproval(id, answer, openedByClient);
   if (res.ok) revalidatePath('/', 'layout');
   return res;
 }

@@ -32,6 +32,11 @@ export function ApprovalBanner() {
           <span className="truncate font-mono text-[12.5px] text-secondary-foreground">{a.command ?? a.message}</span>
         </div>
         {a.detail ? <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground">{a.detail}</div> : null}
+        {a.userCode ? (
+          <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+            code: <span className="font-mono font-semibold">{a.userCode}</span>
+          </div>
+        ) : null}
         {a.cwd ? <div className="mt-0.5 truncate font-mono text-[11px] text-[#a4a9b0]">{a.cwd}</div> : null}
       </div>
       <div className="flex flex-none items-center gap-3">
@@ -43,7 +48,7 @@ export function ApprovalBanner() {
             </Link>
           </div>
         ) : null}
-        <ApprovalActions id={a.id} />
+        <ApprovalActions approval={a} />
       </div>
     </div>
   );

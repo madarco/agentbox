@@ -251,12 +251,14 @@ export interface CheckpointRpcParams {
 
 /**
  * First-cut prompt UX is a y/N confirmation in the host wrapper's footer.
- * `select` / `text` are reserved for a follow-up that grows the footer to
- * two rows; keeping the kind in the wire from day one means the host
- * wrapper can ignore unknown kinds gracefully when an older box hits a
- * newer relay (and vice-versa).
+ * `open-link` carries a URL the answering CLIENT should open (an OAuth
+ * device-code page, an in-box agent's link) — see the `url`/`hostOpen`
+ * fields on {@link PromptAskEvent}. `select` / `text` are reserved for a
+ * follow-up that grows the footer to two rows; keeping the kind in the
+ * wire from day one means the host wrapper can ignore unknown kinds
+ * gracefully when an older box hits a newer relay (and vice-versa).
  */
-export type PromptKind = 'confirm';
+export type PromptKind = 'confirm' | 'open-link';
 
 export interface PromptContext {
   /** Short label, e.g. "git push" or "cp toHost: /workspace/x -> ~/dl/x". */
@@ -284,6 +286,23 @@ export interface PromptAskEvent {
   /** Default when the user just hits Enter; default 'n' so y/N is the safe shape. */
   defaultAnswer?: 'y' | 'n';
   context?: PromptContext;
+  /**
+   * `open-link` only: the link. Clients that can open URLs (the hub web UI,
+   * the tray) open it CLIENT-side and answer with `openedByClient: true` —
+   * the rule that keeps the flow working when the relay runs on a remote
+   * control plane, where "open a browser on the host" is useless. Also
+   * mirrored into `detail` so older clients still render a copyable URL.
+   */
+  url?: string;
+  /** `open-link` only: a device-flow user code to show next to the link. */
+  userCode?: string;
+  /**
+   * `open-link` only: when true, the prompt's creator opens the URL on the
+   * HOST after a plain `y` (the local `agentbox-ctl open` mirror). Clients
+   * that already opened it client-side suppress that via `openedByClient`.
+   * Auth flows set false: the URL must reach the human, not the host.
+   */
+  hostOpen?: boolean;
 }
 
 /** Body of `POST /admin/prompts/answer`. */
@@ -292,6 +311,24 @@ export interface PromptAnswerBody {
   answer: 'y' | 'n';
   /** Set when the user dismissed the prompt (Esc / Ctrl-c); treated as 'n'. */
   cancelled?: boolean;
+  /**
+   * `open-link` prompts: the answering client already opened `url` itself,
+   * so the creator must not host-open it too.
+   */
+  openedByClient?: boolean;
+}
+
+/** Body of `POST /admin/prompts/raise` — a daemon-created, non-blocking prompt. */
+export interface PromptRaiseBody {
+  boxId: string;
+  kind: PromptKind;
+  message: string;
+  detail?: string;
+  url?: string;
+  userCode?: string;
+  hostOpen?: boolean;
+  /** Auto-expire (resolve to 'n', cancelled) after this many ms. */
+  ttlMs?: number;
 }
 
 /**

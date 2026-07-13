@@ -189,6 +189,7 @@ export {
 export { volumeExists } from './docker.js';
 export {
   clearRelayNotice,
+  clearRelayPrompt,
   DEFAULT_RELAY_PORT,
   ensureRelay,
   forgetBoxFromRelay,
@@ -201,6 +202,7 @@ export {
   RELAY_CONTAINER_NAME,
   RELAY_IMAGE_REF,
   RELAY_NETWORK_NAME,
+  raiseRelayPrompt,
   setRelayNotice,
   stopRelay,
   type EnsureRelayOptions,

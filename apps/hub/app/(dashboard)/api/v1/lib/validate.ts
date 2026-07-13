@@ -71,11 +71,16 @@ export function parseRenameBox(body: unknown): Parsed<{ displayName: string }> {
   return { ok: true, value: { displayName } };
 }
 
-export function parseAnswer(body: unknown): Parsed<'y' | 'n'> {
+export function parseAnswer(
+  body: unknown,
+): Parsed<{ answer: 'y' | 'n'; openedByClient?: boolean }> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { answer } = body;
+  const { answer, openedByClient } = body;
   if (answer !== 'y' && answer !== 'n') return { ok: false, message: "answer must be 'y' or 'n'" };
-  return { ok: true, value: answer };
+  return {
+    ok: true,
+    value: { answer, ...(openedByClient === true ? { openedByClient: true } : {}) },
+  };
 }
 
 export function parseLoginCode(body: unknown): Parsed<{ code: string }> {

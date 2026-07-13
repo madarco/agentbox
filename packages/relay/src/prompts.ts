@@ -10,6 +10,12 @@ import type { PromptAnswerBody, PromptAskEvent } from './types.js';
 export interface PromptResolution {
   answer: 'y' | 'n';
   cancelled?: boolean;
+  /**
+   * `open-link` prompts: the answering client opened the URL itself, so the
+   * creator's host-open fallback must not fire (it would double-open, or —
+   * on a remote control plane — pointlessly open a browser on the server).
+   */
+  openedByClient?: boolean;
 }
 
 interface PendingPromptEntry {
@@ -106,11 +112,11 @@ export class PendingPrompts {
    * otherwise. The /admin/prompts/answer handler uses the bool to decide
    * 204 vs 404 — the wrapper treats both as "we're done."
    */
-  resolve(id: string, answer: 'y' | 'n', cancelled?: boolean): boolean {
+  resolve(id: string, answer: 'y' | 'n', cancelled?: boolean, openedByClient?: boolean): boolean {
     const entry = this.entries.get(id);
     if (!entry) return false;
     this.entries.delete(id);
-    entry.resolve({ answer, cancelled });
+    entry.resolve({ answer, cancelled, openedByClient });
     this.onChange?.();
     return true;
   }
@@ -243,6 +249,43 @@ export async function askPrompt(
     });
   }
   return promise;
+}
+
+/**
+ * Non-blocking sibling of {@link askPrompt} for daemon-created prompts (the
+ * hub backend, the queued worker via `POST /admin/prompts/raise`). Parks the
+ * prompt and returns its id immediately; the creator observes `resolution`
+ * (or ignores it) and clears the prompt itself via `resolve()` / the answer
+ * route when its underlying flow completes. Unlike `askPrompt` this never
+ * consults the auto-approve policy: a raised prompt reports a condition only
+ * a human can fix (e.g. "sign in again"), so a silent 'y' would be a lie.
+ *
+ * `ttlMs` (default 15 min) reaps the prompt when nobody answers, so a missed
+ * re-auth request doesn't pin the approvals list forever.
+ */
+export function raisePrompt(
+  prompts: PendingPrompts,
+  subscribers: PromptSubscribers,
+  boxId: string,
+  params: Omit<PromptAskEvent, 'id'>,
+  opts?: { ttlMs?: number },
+): { id: string; resolution: Promise<PromptResolution> } {
+  const ev: PromptAskEvent = { id: randomUUID(), ...params };
+  const resolution = prompts.add(boxId, ev);
+  subscribers.broadcast(boxId, 'prompt-ask', ev);
+  const ttlMs = opts?.ttlMs ?? 15 * 60_000;
+  if (ttlMs > 0) {
+    const timer = setTimeout(() => {
+      if (prompts.resolve(ev.id, params.defaultAnswer ?? 'n', true)) {
+        subscribers.broadcast(boxId, 'prompt-resolved', { id: ev.id });
+      }
+    }, ttlMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    void resolution.then(() => {
+      clearTimeout(timer);
+    });
+  }
+  return { id: ev.id, resolution };
 }
 
 /** Helper for the answer body — used by the relay server to validate. */
