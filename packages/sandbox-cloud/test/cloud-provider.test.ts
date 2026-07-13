@@ -7,6 +7,7 @@ import type {
   CloudState,
 } from '@agentbox/core';
 import { createCloudProvider } from '../src/cloud-provider.js';
+import { NotAuthenticatedError } from '../src/auth-error.js';
 
 /**
  * Composition-level smoke tests for `createCloudProvider`. We don't exercise
@@ -136,5 +137,74 @@ describe('createCloudProvider composition', () => {
       { kind: 'web', ttl: 1234 },
     );
     expect(url).toBe('https://signed-8080-1234.example');
+  });
+});
+
+/**
+ * `probeState` must distinguish "the cloud says the box is gone" from "the
+ * cloud would not talk to me". Reporting the second as `missing` is what made
+ * an expired SSO token render every healthy box as destroyed (the hub maps
+ * missing -> stopped), which reads as "someone deleted my boxes".
+ */
+describe('probeState credential handling', () => {
+  const box = {
+    id: 'b1',
+    name: 'b1',
+    container: 'cloud:sb-1',
+    image: 'img',
+    workspacePath: '/tmp',
+    createdAt: new Date().toISOString(),
+    cloud: { backend: 'test-backend', sandboxId: 'sb-1' },
+  };
+
+  it('rethrows a credential failure as NotAuthenticatedError instead of claiming missing', async () => {
+    const authErr = new Error('Token is expired. To refresh this SSO session run `aws sso login`.');
+    const p = createCloudProvider(
+      makeBackend({
+        state: async (): Promise<CloudState> => {
+          throw authErr;
+        },
+      }),
+    );
+    await expect(p.probeState(box)).rejects.toMatchObject({
+      name: 'NotAuthenticatedError',
+      provider: 'test-backend',
+    });
+  });
+
+  it('preserves an already-typed NotAuthenticatedError (does not double-wrap)', async () => {
+    const original = new NotAuthenticatedError('aws', 'AWS rejected the credentials', 'run `aws sso login`');
+    const p = createCloudProvider(
+      makeBackend({
+        state: async (): Promise<CloudState> => {
+          throw original;
+        },
+      }),
+    );
+    await expect(p.probeState(box)).rejects.toBe(original);
+  });
+
+  it('still reports a genuine not-found as missing (the behavior everything else relies on)', async () => {
+    const gone = new Error('The instance ID i-0123 does not exist') as Error & { code: string };
+    gone.code = 'InvalidInstanceID.NotFound';
+    const p = createCloudProvider(
+      makeBackend({
+        state: async (): Promise<CloudState> => {
+          throw gone;
+        },
+      }),
+    );
+    await expect(p.probeState(box)).resolves.toBe('missing');
+  });
+
+  it('a transient network error is still missing, not an auth failure', async () => {
+    const p = createCloudProvider(
+      makeBackend({
+        state: async (): Promise<CloudState> => {
+          throw new Error('connect ETIMEDOUT');
+        },
+      }),
+    );
+    await expect(p.probeState(box)).resolves.toBe('missing');
   });
 });

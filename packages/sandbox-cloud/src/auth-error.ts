@@ -35,6 +35,11 @@ const AUTH_MESSAGE_RE =
  */
 export function isAuthError(err: unknown): boolean {
   if (err === null || typeof err !== 'object') return false;
+  // Our own already-classified error. Load-bearing: a backend that rethrows a
+  // NotAuthenticatedError would otherwise fail every message/code test below
+  // (its `name` is not an AWS code, and its message is our own prose) and get
+  // swallowed as a resource failure — the exact bug this module exists to fix.
+  if (isNotAuthenticatedError(err)) return true;
   const e = err as {
     code?: unknown;
     name?: unknown;
