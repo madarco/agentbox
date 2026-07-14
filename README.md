@@ -200,6 +200,10 @@ pnpm --filter @madarco/agentbox-provider-sdk pack:test
 
 Full guide: [Build a provider](https://agent-box.sh/docs/build-a-provider) (and the authoring reference [`docs/provider-plugins.md`](./docs/provider-plugins.md)). Reference packages: [`examples/agentbox-provider-sample`](./examples/agentbox-provider-sample) (stub) and [`examples/agentbox-provider-example`](./examples/agentbox-provider-example) (a real, Vercel-backed provider).
 
+# Contributing
+
+Bug reports, docs fixes, and provider work are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). First-time contributors sign a one-line [CLA](./.github/CLA.md) on their first pull request. Security issues go through [SECURITY.md](./SECURITY.md), not a public issue.
+
 # Author
 
 [Marco D'Alia](https://www.madarco.net) - [@madarco](https://x.com/madarco) - [Linkedin](https://www.linkedin.com/in/marcodalia/)

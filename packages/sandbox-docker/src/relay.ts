@@ -314,7 +314,7 @@ interface StagedRelay {
  *
  * Copies the CLI package tree (`dist/` + `runtime/` + `share/`) PLUS the
  * externalized npm deps (`node_modules/`): the CLI bundle is not self-contained
- * (apps/cli/tsup.config.ts keeps commander/execa/@daytonaio/sdk/... external).
+ * (apps/cli/tsup.config.ts keeps commander/execa/@daytona/sdk/... external).
  * The staged tree mirrors the package layout exactly, so the bundled entry's
  * own sibling-relative resolvers and its external `require`s all resolve inside
  * the home.

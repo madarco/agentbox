@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { log } from '@clack/prompts';
+import { log, spinner } from '@clack/prompts';
 import { Command } from 'commander';
 import { loadEffectiveConfig, type UserConfig } from '@agentbox/config';
 import {
@@ -321,7 +321,8 @@ export const shellCommand = new Command('shell')
       // resolveBoxOrShift handles the `agentbox shell -- ls` case: commander
       // binds "ls" to [box], which doesn't resolve; if auto-pick succeeds we
       // treat "ls" as the first cmd token instead.
-      const { box, shifted } = await resolveBoxOrShift(idOrName);
+      // eslint-disable-next-line prefer-const -- `box` is reassigned by provider.start() below
+      let { box, shifted } = await resolveBoxOrShift(idOrName);
       const effectiveCmd = shifted && idOrName ? [idOrName, ...cmd] : cmd;
 
       // `--ssh-config` short-circuits the shell: it only writes the SSH alias
@@ -344,6 +345,26 @@ export const shellCommand = new Command('shell')
       if ((box.provider ?? 'docker') !== 'docker') {
         const provider = await providerForBox(box);
         const oneShot = effectiveCmd.length > 0;
+
+        // Resume first if the box isn't running — BOTH branches below need it.
+        // `exec` goes straight at the sandbox and fails against a paused one
+        // (daytona: a 502 from the proxy), and `buildAttach` mints an SSH
+        // token/tunnel a paused sandbox can't serve either. `agentbox shell` is
+        // a normal way back into a box that's been paused — by the user, by a
+        // provider TTL, or by the relay's idle sweep — so it has to wake it, the
+        // way `cloudAgentAttach` and `cloudAgentStartDetached` already do.
+        // `start()` returns the record with refreshed preview URLs / relay
+        // tokens, so everything downstream must use IT, not the stale `box`.
+        const state = await provider.probeState(box);
+        if (state === 'missing') {
+          throw new Error(`cloud sandbox for ${box.name} is missing; was it destroyed?`);
+        }
+        if (state !== 'running') {
+          const s = spinner();
+          s.start(state === 'paused' ? 'resuming box' : 'starting box');
+          box = await provider.start(box);
+          s.stop('box running');
+        }
 
         // One-shot (`agentbox shell <box> -- cmd`) goes through the backend
         // `exec` primitive, not the interactive PTY attach. The PTY path
@@ -381,6 +402,7 @@ export const shellCommand = new Command('shell')
             command: spec.argv[0],
             dockerArgv: spec.argv.slice(1),
             env: spec.env,
+            initialInput: spec.initialInput,
             relayBaseUrl: RELAY_HOST_URL,
             boxId: box.id,
             boxName: box.name,

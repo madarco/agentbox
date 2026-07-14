@@ -58,4 +58,32 @@ describe('provider table is the single source of truth', () => {
         .sort(),
     );
   });
+
+  // `loginHint` is what the install wizard shows next to each provider, so it has
+  // to describe the flow the user is about to get. Daytona's said "approve a
+  // browser sign-in link" — but its login never does OAuth: it offers to open the
+  // dashboard's keys page and then prompts you to PASTE a key
+  // (packages/sandbox-daytona/src/credentials.ts). Vercel is the one provider
+  // that genuinely signs you in through a browser, and the wrong Daytona copy was
+  // cloned from it — so pin both, or the fix rots back.
+  describe('loginHint describes the real flow', () => {
+    const hintFor = (name: string): string =>
+      PROVIDERS.find((p) => p.name === name)?.loginHint ?? '';
+
+    it('daytona says paste-a-key, not browser sign-in', () => {
+      expect(hintFor('daytona')).toMatch(/paste an API key/i);
+      expect(hintFor('daytona')).not.toMatch(/sign-?in|browser|oauth|approve/i);
+    });
+
+    it('vercel keeps its browser sign-in — it really does OAuth', () => {
+      expect(hintFor('vercel')).toMatch(/browser sign-?in/i);
+    });
+
+    it('the other paste-a-token providers stay paste-a-token', () => {
+      for (const name of ['hetzner', 'e2b', 'digitalocean']) {
+        expect(hintFor(name)).toMatch(/paste/i);
+        expect(hintFor(name)).not.toMatch(/browser|sign-?in/i);
+      }
+    });
+  });
 });

@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
-import { stringify as stringifyYaml } from 'yaml';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import {
   configPathFor,
   findProjectRoot,
@@ -248,6 +248,14 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
+/**
+ * Read the file as a RAW yaml mapping for round-tripping. Deliberately not
+ * `parseUserConfig`: that drops keys it doesn't recognize, and this document is
+ * written straight back to disk — so parsing here would silently DELETE any key
+ * the current registry doesn't know (e.g. one written by a newer agentbox) on
+ * the next `config set`. Validation of the merged doc still happens in
+ * `setConfigValue`; the key being set is validated by `lookupKey`.
+ */
 async function readExistingDoc(path: string): Promise<Partial<UserConfig>> {
   let text: string;
   try {
@@ -256,7 +264,19 @@ async function readExistingDoc(path: string): Promise<Partial<UserConfig>> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
     throw err;
   }
-  return parseUserConfig(text, path);
+  let doc: unknown;
+  try {
+    doc = parseYaml(text);
+  } catch (err) {
+    throw new UserConfigError(
+      `${path}: yaml parse error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (doc === null || doc === undefined) return {};
+  if (typeof doc !== 'object' || Array.isArray(doc)) {
+    throw new UserConfigError(`${path}: top-level must be a mapping`);
+  }
+  return doc as Partial<UserConfig>;
 }
 
 /**

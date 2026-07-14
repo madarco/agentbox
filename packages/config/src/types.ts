@@ -125,6 +125,10 @@ export interface UserConfig {
     pidsLimit?: number;
     disk?: string;
     bundleDepth?: number;
+    daytonaClass?: string;
+    daytonaRegion?: string;
+    daytonaTimeoutMs?: number;
+    daytonaVmBaseImage?: string;
     hetznerLocation?: string;
     digitaloceanRegion?: string;
     digitaloceanProject?: string;
@@ -288,6 +292,10 @@ export interface EffectiveConfig {
     pidsLimit: number;
     disk: string;
     bundleDepth: number | undefined;
+    daytonaClass: string;
+    daytonaRegion: string;
+    daytonaTimeoutMs: number;
+    daytonaVmBaseImage: string;
     hetznerLocation: string;
     digitaloceanRegion: string;
     digitaloceanProject: string;
@@ -409,6 +417,12 @@ export interface LoadedConfig {
   projectHash: string;
   /** True if we walked up to an agentbox.yaml; false if we fell back to cwd. */
   hasAgentboxYaml: boolean;
+  /**
+   * Non-fatal issues found while parsing the layers — today, unknown keys
+   * (skipped, not applied). Empty on a clean load. `agentbox doctor` lists
+   * these; the CLI also prints them via the warning sink (see `setConfigWarningSink`).
+   */
+  warnings: string[];
 }
 
 export const BUILT_IN_DEFAULTS: EffectiveConfig = {
@@ -460,6 +474,13 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     pidsLimit: 0,
     disk: '',
     bundleDepth: undefined,
+    daytonaClass: 'linux-vm',
+    // Empty = derive from the class: linux-vm implies us-east-1 (the only
+    // region with VM runners), container keeps Daytona's own default.
+    daytonaRegion: '',
+    daytonaTimeoutMs: 1_500_000,
+    // Empty = the fingerprint-tagged image CI publishes to GHCR.
+    daytonaVmBaseImage: '',
     hetznerLocation: 'nbg1',
     digitaloceanRegion: 'nyc3',
     // Empty = leave boxes in the account's default project (DigitalOcean's own
@@ -752,6 +773,30 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       'Cap git bundle history shipped to cloud sandboxes (daytona, hetzner). 0 = full history. Unset = adaptive default (last 200 commits; re-bundle at 100 if the bundle exceeds 20 MB). Ignored for docker (which bind-mounts .git/).',
+  },
+  {
+    key: 'box.daytonaClass',
+    type: 'string',
+    description:
+      'Daytona sandbox class for new --provider daytona boxes: `linux-vm` (default) or `container`. `linux-vm` gives real pause/resume (CPU + memory frozen, running processes survive) and a much faster base bake, but runs only in `us-east-1` — the sole region with VM runners. Choose `container` to stay in a shared region (e.g. `eu`). Changing this needs a re-bake: `agentbox prepare --provider daytona --force`. Daytona-only.',
+  },
+  {
+    key: 'box.daytonaRegion',
+    type: 'string',
+    description:
+      'Daytona region new --provider daytona boxes are created in (e.g. `us`, `eu`, `us-east-1`). Empty (the default) derives it from `box.daytonaClass`: `linux-vm` implies `us-east-1`, `container` uses the account default. Only `us-east-1` has linux-vm runners, so pairing `linux-vm` with another region fails at create. Daytona-only.',
+  },
+  {
+    key: 'box.daytonaTimeoutMs',
+    type: 'int',
+    description:
+      'Idle timeout (ms) a new --provider daytona box is created with, after which Daytona auto-stops it. The host keepalive loop pushes this forward while the agent is working, so only genuinely idle boxes lapse. Default 1500000 (25 min). 0 disables auto-stop entirely. Unlike vercel/e2b (absolute session TTLs) this is an *inactivity* window. Daytona-only.',
+  },
+  {
+    key: 'box.daytonaVmBaseImage',
+    type: 'string',
+    description:
+      'Registry image the daytona `linux-vm` base snapshot is baked from. Empty (the default) uses the fingerprint-tagged box image CI publishes (`ghcr.io/madarco/agentbox/box:sha-<context-sha>`). Daytona can only build a VM snapshot from a prebuilt image, never a Dockerfile, so a build context with no published image (a locally modified `Dockerfile.box`) has nothing to boot and falls back to the container class -- set this to bake a VM from your own published image instead. Must be amd64 and carry an explicit tag or digest. Daytona-only.',
   },
   {
     key: 'box.hetznerLocation',

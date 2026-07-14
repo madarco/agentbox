@@ -11,7 +11,7 @@ import type { CtlConfig, TaskSpec } from '../src/config.js';
 vi.setConfig({ testTimeout: 20000 });
 
 function taskCfg(task: TaskSpec): CtlConfig {
-  return { services: [], tasks: [task], replacements: {} };
+  return { services: [], tasks: [task], replacements: {}, warnings: [] };
 }
 
 async function waitForTaskDone(sup: Supervisor, name: string, timeoutMs = 3000): Promise<void> {

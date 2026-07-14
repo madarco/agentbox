@@ -1,0 +1,97 @@
+---
+title: islo
+description: Run your agents on islo.dev microVMs — a community AgentBox provider plugin with pause/resume, public preview URLs, and fast async exec
+---
+
+Run your agents on [islo.dev](https://islo.dev) microVMs with the same `agentbox` commands as a
+local box. **islo is a community provider** — a [plugin](/docs/build-a-provider) published as its
+own package (`agentbox-provider-islo`), not bundled into the CLI. It gives you name-addressed
+sandboxes with first-class pause/resume, a public HTTPS preview URL per port, and a fast two-step
+exec API — no local Docker needed.
+
+Switch per box with `--provider islo`, or pin it project-wide with `box.provider: islo` in
+[`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See the built-ins
+[local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona),
+[vercel](/docs/vercel), and [e2b](/docs/e2b).
+
+<Callout type="info" title="Community provider">
+  Maintained outside the AgentBox core, at
+  [`zozo123/agentbox-provider-islo`](https://github.com/zozo123/agentbox-provider-islo)
+  ([npm](https://www.npmjs.com/package/agentbox-provider-islo)). Built only on
+  [`@madarco/agentbox-provider-sdk`](https://www.npmjs.com/package/@madarco/agentbox-provider-sdk)
+  and the official [`@islo-labs/sdk`](https://www.npmjs.com/package/@islo-labs/sdk). Report bugs
+  at the [issue tracker](https://github.com/zozo123/agentbox-provider-islo/issues) or
+  **support@incredibuild.com**.
+</Callout>
+
+## Install
+
+Install the plugin, then register it so `--provider islo` resolves:
+
+```bash
+npm i -g agentbox-provider-islo
+agentbox plugin add agentbox-provider-islo
+agentbox plugin list            # → islo … (SDK v2)
+```
+
+## Credentials
+
+Mint an islo API key with the [islo CLI](https://islo.dev) and expose it as `ISLO_API_KEY`:
+
+```bash
+islo api-key create agentbox --show
+export ISLO_API_KEY=isl_...      # or add ISLO_API_KEY=… to ~/.agentbox/secrets.env
+agentbox doctor                  # shows the `islo:` group
+```
+
+The key is auto-exchanged for a short-lived session JWT and refreshed transparently. Credentials
+persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. See
+[environment](/docs/environment). Optional overrides: `ISLO_BASE_URL`, `ISLO_COMPUTE_URL`,
+`ISLO_IMAGE`.
+
+## Use it
+
+islo needs an explicit base image that carries the AgentBox runtime, and the box runs without the
+VNC stack (see [Base image](#base-image)):
+
+```bash
+export ISLO_IMAGE=ghcr.io/zozo123/agentbox-islo-runtime:0.24.6
+agentbox create --provider islo --no-vnc
+```
+
+From there, [run an agent](/docs/run-an-agent) and [access your box](/docs/access-your-box) as
+usual. Lifecycle maps onto islo natively:
+
+| AgentBox                | islo                                               |
+| ----------------------- | -------------------------------------------------- |
+| `create` / `list`       | `createSandbox` / `listSandboxes`                  |
+| `stop` / `pause`        | `stopSandbox` / `pauseSandbox`                     |
+| `start` / `resume`      | `resumeSandbox` (waits until the VM is running)    |
+| `destroy`               | `deleteSandbox`                                    |
+| exec, `cp`, preview URL | async exec, compute file endpoint, public `shares` |
+
+## Base image
+
+Like every AgentBox **cloud** provider, a full `create` needs the AgentBox runtime
+(`agentbox-ctl`, node, the agents) present in the box; the built-in providers bake this with a
+per-provider [`prepare`](/docs/build-a-provider) step. islo has no `prepare` yet, so you pick the
+base image explicitly with `ISLO_IMAGE`.
+
+islo rejects large images (`503 RESOURCE_UNAVAILABLE`) — the stock AgentBox image is ~1.3 GB
+compressed and will not boot. The plugin therefore publishes a **slim runtime image** (~110 MB):
+node, git, tmux, sudo, rsync, a uid-1000 `vscode` user with passwordless sudo, and a
+version-matched `agentbox-ctl`. It carries no VNC or browser stack, so pass `--no-vnc`:
+
+```bash
+export ISLO_IMAGE=ghcr.io/zozo123/agentbox-islo-runtime:0.24.6
+agentbox create --provider islo --no-vnc
+```
+
+A custom image works too, as long as it carries those same pieces and stays comfortably under
+1 GB compressed.
+
+Because the slim image omits the agent CLIs and the VNC/browser stack, an islo box today supports
+the box lifecycle (workspace seeding, [`agentbox.yaml`](/docs/agentbox-yaml) tasks and services,
+preview URLs, `cp`, pause/resume, checkpoints) but not the in-box agents, VNC desktop, or headless
+browser. Native base-image baking (`prepare`) and a no-SSH interactive `buildAttach` are planned
+follow-ups.

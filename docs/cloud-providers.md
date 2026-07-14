@@ -195,7 +195,137 @@ users who go through `install` skip both the error and the nudge.
 
 ## 2. The Daytona shape
 
-### 2.0 Sizing
+### 2.0 Sandbox class: `linux-vm` (default) vs `container`
+
+Daytona has two sandbox **classes**, and they are not interchangeable — the class
+is a property of the *snapshot*, and a snapshot of one class cannot create a
+sandbox of the other. `box.daytonaClass` picks it; changing it forces a re-bake.
+
+|                                | `linux-vm` (default)                                     | `container`                          |
+| ------------------------------ | -------------------------------------------------------- | ------------------------------------ |
+| `agentbox pause` / `unpause`   | **real VM freeze** — CPU *and memory*; running processes and tmux sessions survive | archive (cold storage, filesystem only) |
+| Archive                        | not supported (rejected)                                  | yes — this is what pause maps to     |
+| Checkpoints                    | cold snapshot (~2 s capture)                              | cold snapshot                        |
+| Base bake                      | ~1 min (boots a prebuilt registry image)                  | ~7 min (Dockerfile build)            |
+| Region                         | **`us-east-1` only**                                      | any (`us`, `eu`, …)                  |
+| Volume mounts                  | **silently ignored** (see 2.2)                            | supported                            |
+
+**The region lock is the tradeoff.** Only `us-east-1` has linux-vm runners; asking
+for a VM anywhere else fails at create with *"No runners are configured in region
+'<r>' for sandbox class 'linux-vm'"*. So `box.daytonaRegion` defaults to empty and
+is *derived* from the class — `linux-vm` ⇒ `us-east-1`, `container` ⇒ the account
+default — rather than to a constant that would contradict the default class. If you
+need EU data residency or lower EU latency, set `box.daytonaClass=container`.
+
+Only two calls are region-sensitive: `snapshot.create` (takes `regionId`) and
+`Daytona.create` (takes its region from the **client target**, not a param — the
+`regionId` create param is ignored). `get`/`exec`/`list`/lifecycle are
+region-agnostic, so the backend keeps a small per-target client cache rather than
+threading a region through every call.
+
+#### Why the VM base is baked from a registry image
+
+Daytona builds a VM snapshot **only from a prebuilt registry image**, never from a
+Dockerfile — handing `snapshot.create` a declarative `Image` with
+`sandboxClass: LINUX_VM` fails with `build snapshot: rpc error: code =
+Unauthenticated`. So `prepare --provider daytona` can't use the declarative
+builder for VMs. Instead it boots the box image CI already publishes to GHCR
+(`ghcr.io/madarco/agentbox/box:sha-<docker-context-sha>`, public + amd64), then
+seeds and cold-snapshots it — the same "boot, provision in place, snapshot" shape
+Hetzner and Vercel use.
+
+Consequences:
+
+- **`--claude-install npm` gets a VM too, as of the two-variant publish.** The
+  install mode is part of the image's identity (the sha is folded with
+  `claudeInstallFingerprint`, same as the docker pull path), and CI now matrixes
+  over it, so both `native` and `npm` images are published under their own
+  fingerprint tags. Only the native build claims `latest` / the version tag — it
+  is the default image. (Before this, only native was ever built, so npm mode had
+  no image to boot from and prepare fell back to a container.)
+- **Monorepo contributors can't bake a VM by default.** A local `pnpm build`
+  regenerates `packages/ctl/dist/bin.cjs`, which shifts the build-context sha off
+  the one CI published, so no tag matches. Prepare falls back to a container.
+  Set **`box.daytonaVmBaseImage`** to bake from an explicit image instead (this is
+  also the knob for a private registry mirror).
+
+#### `sudo` is repaired at bake time
+
+Converting the container image into a VM rootfs **strips setuid bits**: `sudo`
+lands as mode 0755 and cannot escalate (only `mount`/`umount`/`su` keep theirs).
+That would break the seed (`/etc/claude-code/CLAUDE.md` needs root) and the
+passwordless sudo the in-box agent is told it has. `create({ user: 'root' })` is
+not a way out — the sandbox then fails to start.
+
+The bake repairs it through the docker socket, which the image already grants
+(`dockerd` runs at boot; `vscode` is in the `docker` group, which is
+root-equivalent by construction):
+
+```
+docker run --rm --privileged -v /:/host alpine \
+  sh -c 'chown root:root /host/usr/bin/sudo && chmod 4755 /host/usr/bin/sudo'
+```
+
+The fix persists into the snapshot, so every box booted from that base has working
+sudo from the start.
+
+#### Snapshot names are never reused
+
+Recreating a snapshot under a **recently deleted name** yields one that reports
+`active` but cannot boot (*"Sandbox failed to start: internal error"*) — Daytona's
+delete is async and racing it corrupts the new snapshot. So every capture takes a
+fresh name (a nonce suffix), the bake reaps the snapshot it replaces *after* the
+new one is recorded, and a base that fails to boot is treated as poisoned and
+rebuilt once under a never-used name.
+
+#### Idle handling
+
+`box.daytonaTimeoutMs` (default **25 min**, `0` disables) is passed as Daytona's
+`autoStopInterval`. Unlike vercel/e2b — where the timeout is an absolute session
+TTL — Daytona's is an **inactivity window**, reset by *any* request to the
+sandbox.
+
+**That window never elapses for a box AgentBox is tracking.** The host relay's
+`CloudBoxPoller` long-polls each cloud box's preview URL continuously (it's how
+host↔box comms work), and that traffic is itself the activity Daytona measures.
+So Daytona's timer restarts on every poll, and an idle box would run — and bill
+— forever. Measured against live Daytona with `autoStopInterval: 3`
+(2026-07-13):
+
+| sandbox | traffic | result |
+| --- | --- | --- |
+| control | none | stopped at **3.0 min** |
+| test | one request / 15 s | **still running at 7.0 min** (28 requests) |
+| the same test box, after the requests stopped | none | stopped **3 min later** |
+
+The third row is the control that names the cause: a node server kept running in
+the box the whole time, so it's the **requests** that reset the clock, not
+activity inside the sandbox.
+
+So the **host enforces the timeout itself**. `packages/relay/src/cloud-keepalive.ts`
+pauses a box whose agent has been idle for its own `daytonaTimeoutMs`
+(`shouldIdlePause`) — the box's configured window, deliberately not the 5-min
+keepalive/autopause renewal window, or we'd pause five times sooner than the key
+advertises. `CloudBackend.timeoutModel` (`'inactivity'` for daytona,
+`'absolute'` elsewhere) is what selects this path: **vercel and e2b are
+unaffected**, since their deadlines can't be deferred by anything the box
+receives, so an idle box still lapses on its own.
+
+Two consequences worth knowing:
+
+- The window is measured against the **agent's** idle state, not raw requests.
+  A box with no agent at all (a plain `agentbox shell` box) is never
+  auto-paused — we have no evidence it's unused, and an attached human is
+  precisely who we must not pull the floor out from under.
+- Daytona's `autoStopInterval` is still set, and still useful: it's the backstop
+  for when the relay *isn't* running (laptop asleep, `agentbox relay stop`) —
+  exactly when the host can't do it and no polling is resetting the clock.
+
+Pausing (rather than stopping) is deliberate: a `linux-vm` box is frozen with
+its memory, so running processes and tmux sessions survive, and every attach
+path resumes a paused box automatically.
+
+### 2.0.1 Sizing
 
 Default sandbox shape is **2 vCPU / 4 GB RAM / 8 GB disk**. Size is
 `cpu-mem-disk` GB (e.g. `4-8-20`), from `--size` / `box.sizeDaytona` /
@@ -234,16 +364,36 @@ the host workspace into the sandbox:
 
 ### 2.2 Agent state split: snapshot bake + credentials volume
 
+> **`linux-vm` caveat — volume mounts are silently ignored.** A VM sandbox
+> *accepts* `create({ volumes: [...] })`, echoes the mount back in its DTO, and
+> then the path simply does not exist in the guest. So the shared
+> `agentbox-credentials` volume described below **does not work on VM boxes**.
+> They take the per-create upload path instead — the same one Hetzner uses (it has
+> no shared-volume primitive either): `ensureAgentVolumesForCloud` is told the
+> volume is unusable and returns no mounts, and credentials are uploaded into
+> `~/.agentbox-creds/<agent>/` at create time. The practical difference: a
+> credential refresh no longer propagates to already-running boxes by rewriting one
+> volume — each box gets its own copy at create. Container boxes are unaffected.
+
 Agent state lives in two distinct places:
 
 **Static config** (plugins, skills, marketplaces, settings, `_claude.json`,
-codex `config.toml` + `prompts/`, opencode `config/`) is **layered into a
-published Daytona snapshot** at `agentbox prepare --provider daytona` time
-via the documented snapshot API — see `prepareDaytona` in
-`packages/sandbox-daytona/src/prepare.ts`. It builds an `Image` fluently
-(`Image.fromDockerfile(Dockerfile.box).addLocalFile(...).runCommands(...)`)
-and calls `daytona.snapshot.create({ name, image })`. Daytona handles the
-build + register in one server-side operation; the resulting snapshot
+codex `config.toml` + `prompts/`, opencode `config/`) is baked into the base
+snapshot at `agentbox prepare --provider daytona` time — see `prepareDaytona` in
+`packages/sandbox-daytona/src/prepare.ts`. **How** it's baked depends on the class:
+
+- **container** — layered with Daytona's declarative builder:
+  `Image.fromDockerfile(Dockerfile.box)` + `.dockerfileCommands(...)`, then
+  `daytona.snapshot.create({ name, image })`. Build + register in one server-side
+  operation.
+- **linux-vm** — the declarative builder is unavailable (§2.0), so the seed runs
+  against a *live* sandbox instead: boot the GHCR base, upload the staged
+  tarballs, extract them, cold-snapshot the result. The upload+extract step is
+  provider-neutral (`seedAgentStaticIntoCloudBox` in `@agentbox/sandbox-cloud`,
+  built on just `uploadFile` + `exec`), so Hetzner can adopt it in place of its
+  inline ssh/scp copy.
+
+Either way the resulting snapshot
 already contains `/home/vscode/.claude/`, `/home/vscode/.codex/`, and
 `/home/vscode/.local/share/opencode/` populated from the host's filtered
 config. Subsequent boxes boot from this snapshot — no per-create extract.
@@ -796,11 +946,14 @@ against that machine's owner.
 
 ## 4. Authentication
 
-`agentbox daytona login` is the supported path. It prompts for
-`DAYTONA_API_KEY` (required) and `DAYTONA_ORGANIZATION_ID` (optional)
-and persists them to `~/.agentbox/secrets.env`. Subsequent runs read
-that file; project `.env` is never harvested. First-time use of
-`--provider daytona` triggers the login prompt automatically.
+`agentbox daytona login` is the supported path. There is **no browser sign-in** —
+it offers to open the dashboard's keys page for convenience, then prompts you to
+paste a **`DAYTONA_API_KEY`**, and persists it to `~/.agentbox/secrets.env`.
+`DAYTONA_ORGANIZATION_ID` is asked for **only** when the pasted value is a JWT
+(it starts with `eyJ`), and there it's required — an API key doesn't need one,
+since the SDK derives the org from the key. Subsequent runs read that file;
+project `.env` is never harvested. First-time use of `--provider daytona`
+triggers the login prompt automatically.
 
 `agentbox hetzner login` is the analogous command for Hetzner. It
 prompts for `HCLOUD_TOKEN` (Read+Write API token from a Hetzner project's

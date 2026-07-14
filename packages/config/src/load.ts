@@ -18,9 +18,32 @@ import {
 } from './types.js';
 
 /**
+ * Process-wide sink for non-fatal config warnings (unknown keys). Registered by
+ * the CLI so every `loadEffectiveConfig` call surfaces them without threading a
+ * logger through ~84 call sites.
+ *
+ * A provider plugin bundles its own copy of this module (the SDK inlines
+ * `@agentbox/config`) and registers NO sink — so a stale plugin silently
+ * tolerates keys it hasn't heard of, while the host CLI still tells the user.
+ */
+let warningSink: ((message: string) => void) | null = null;
+
+export function setConfigWarningSink(fn: ((message: string) => void) | null): void {
+  warningSink = fn;
+}
+
+function collectWarning(into: string[], message: string): void {
+  into.push(message);
+  warningSink?.(message);
+}
+
+/**
  * ENOENT-tolerant read of a UserConfig file. Anything else propagates.
  */
-async function loadOptionalUserConfig(path: string): Promise<Partial<UserConfig>> {
+async function loadOptionalUserConfig(
+  path: string,
+  warnings: string[],
+): Promise<Partial<UserConfig>> {
   let text: string;
   try {
     text = await readFile(path, 'utf8');
@@ -28,7 +51,7 @@ async function loadOptionalUserConfig(path: string): Promise<Partial<UserConfig>
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
     throw err;
   }
-  return parseUserConfig(text, path);
+  return parseUserConfig(text, path, { onWarning: (m) => collectWarning(warnings, m) });
 }
 
 /**
@@ -42,6 +65,7 @@ async function loadOptionalUserConfig(path: string): Promise<Partial<UserConfig>
  */
 export async function loadProjectAgentboxDefaults(
   workspacePath: string,
+  warnings: string[] = [],
 ): Promise<Partial<UserConfig>> {
   const path = workspaceConfigFile(workspacePath);
   let text: string;
@@ -64,7 +88,9 @@ export async function loadProjectAgentboxDefaults(
   }
   const defaults = (doc as Record<string, unknown>)['defaults'];
   if (defaults === undefined || defaults === null) return {};
-  return parseUserConfigObject(defaults, `${path} defaults`);
+  return parseUserConfigObject(defaults, `${path} defaults`, {
+    onWarning: (m) => collectWarning(warnings, m),
+  });
 }
 
 export interface LoadEffectiveConfigOptions {
@@ -87,10 +113,11 @@ export async function loadEffectiveConfig(
   const projectPath = projectConfigFile(projectRoot.root);
   const workspacePath = projectRoot.hasAgentboxYaml ? workspaceConfigFile(projectRoot.root) : null;
 
+  const warnings: string[] = [];
   const [globalValues, projectValues, workspaceValues] = await Promise.all([
-    loadOptionalUserConfig(GLOBAL_CONFIG_FILE),
-    loadOptionalUserConfig(projectPath),
-    workspacePath ? loadProjectAgentboxDefaults(projectRoot.root) : Promise.resolve({}),
+    loadOptionalUserConfig(GLOBAL_CONFIG_FILE, warnings),
+    loadOptionalUserConfig(projectPath, warnings),
+    workspacePath ? loadProjectAgentboxDefaults(projectRoot.root, warnings) : Promise.resolve({}),
   ]);
 
   const cliValues = opts.cliOverrides ?? {};
@@ -115,6 +142,7 @@ export async function loadEffectiveConfig(
     projectRoot: projectRoot.root,
     projectHash: hashProjectPath(projectRoot.root),
     hasAgentboxYaml: projectRoot.hasAgentboxYaml,
+    warnings,
   };
 }
 

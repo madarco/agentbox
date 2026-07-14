@@ -21,7 +21,7 @@ agentbox unpause alpha   # docker unpause — resumes mid-instruction
 The `<box>` argument is optional — it defaults to the only box in the current project, otherwise resolves by name, id, or project index (see [CLI commands](/docs/cli) for all flags).
 
 <Callout title="TIP">
-Pausing is the right move when juggling boxes in parallel — see [Background & parallel runs](/docs/background-and-parallel). A paused box keeps its full RAM working set, so resuming is instant but it still consumes memory. `stop` a box you won't touch for a while. On [Daytona](/docs/daytona), `pause` instead archives the sandbox to cold storage — it uses no quota while archived, but the first resume is slower.
+Pausing is the right move when juggling boxes in parallel — see [Background & parallel runs](/docs/background-and-parallel). A paused box keeps its full RAM working set, so resuming is instant but it still consumes memory. `stop` a box you won't touch for a while. On [Daytona](/docs/daytona), what `pause` does depends on the sandbox class: a `linux-vm` box (the default) is frozen with its memory intact, so even running processes survive the resume; a `container` box is archived to cold storage instead — no quota while archived, but the first resume is slower and nothing running survives.
 </Callout>
 
 ## Stop & start

@@ -8,6 +8,7 @@ import {
   resolveDefaultCheckpoint,
   type AttachOpenIn,
   type UserConfig,
+  resolveBoxImage,
 } from '@agentbox/config';
 import { ensureProjectRepoOnControlPlane } from '../control-plane/ensure-repo-installed.js';
 import {
@@ -664,7 +665,7 @@ export const codexCommand = new Command('codex')
           workspacePath: opts.workspace,
           name: opts.name,
           checkpointRef,
-          image: cfg.effective.box.image,
+          image: resolveBoxImage(cfg.effective, providerName),
           withPlaywright,
           withEnv: cfg.effective.box.withEnv,
           carry: carryEntries,
@@ -750,7 +751,7 @@ export const codexCommand = new Command('codex')
         fromBranch,
         useBranch,
         resyncOnStart: opts.resync,
-        image: cfg.effective.box.image,
+        image: resolveBoxImage(cfg.effective, providerName),
         codexConfig: { isolate: cfg.effective.box.isolateCodexConfig },
         withPlaywright,
         withEnv: cfg.effective.box.withEnv,

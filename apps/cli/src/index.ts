@@ -35,7 +35,7 @@ import { fileURLToPath as _fileURLToPath } from 'node:url';
 
 import { Command } from 'commander';
 import { applyEngineOverrideAtStartup } from './engine-override.js';
-import { buildGroupedHelp } from './help.js';
+import { buildCompactHelp, buildGroupedHelp } from './help.js';
 import { agentCommand } from './commands/agent.js';
 import { appCommand } from './commands/app.js';
 import { attachCommand } from './commands/attach.js';
@@ -107,6 +107,11 @@ import { updateCommand } from './commands/update.js';
 import { urlCommand } from './commands/url.js';
 import { waitCommand } from './commands/wait.js';
 import { rewriteProviderPrefix } from './provider/argv-prefix.js';
+import { installConfigWarningSink } from './lib/config-warnings.js';
+
+// Unknown config keys are non-fatal (a plugin's bundled parser may be older than
+// the CLI that wrote them) — the host CLI is the one that tells the user.
+installConfigWarningSink();
 
 const program = new Command();
 
@@ -190,7 +195,31 @@ program.addCommand(pluginCommand);
 program.addCommand(doctorCommand);
 
 program.configureHelp({ visibleCommands: () => [] });
-program.addHelpText('after', () => '\n' + buildGroupedHelp(program));
+program.addHelpText('after', () => '\n' + buildCompactHelp(program));
+
+// The default `--help` shows only the core workflow (buildCompactHelp);
+// the full grouped list is `agentbox help`. commander's built-in help command
+// would render the compact view, so replace it with our own (hidden — the
+// compact footer references it, no need to list it too).
+program.helpCommand(false);
+program.addCommand(
+  new Command('help')
+    .description('List every command, grouped; `help <command>` for one command')
+    .argument('[command]', 'command to show help for')
+    .action((name: string | undefined) => {
+      if (name) {
+        const sub = program.commands.find(
+          (c) => c.name() === name || c.aliases().includes(name),
+        );
+        if (!sub) program.error(`unknown command '${name}'`);
+        sub!.help();
+      }
+      // helpInformation() yields the usage/options header without the
+      // addHelpText blocks, so the compact view isn't duplicated here.
+      process.stdout.write(program.helpInformation() + '\n' + buildGroupedHelp(program) + '\n');
+    }),
+  { hidden: true },
+);
 
 await applyEngineOverrideAtStartup();
 

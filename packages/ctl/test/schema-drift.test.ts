@@ -23,9 +23,15 @@ interface Fixture {
   // assertion.
   runtimeOnly?: true;
   // `schemaOnly` is the mirror image: the JSON schema rejects, but the runtime
-  // supervisor accepts. Used for `carry:` — the supervisor only whitelists the
-  // top-level key (the host CLI parses its contents), so it never validates
-  // carry item shape, while the schema does.
+  // supervisor accepts. Two reasons:
+  //   - `carry:` — the supervisor only whitelists the top-level key (the host
+  //     CLI parses its contents), so it never validates carry item shape.
+  //   - UNKNOWN KEYS — a deliberate disagreement. The schema stays strict
+  //     because it drives editor autocomplete, where a typo should be flagged
+  //     as you type. The supervisor only warns and skips, because it ships
+  //     inside the box image: a box baked before a key existed must still boot
+  //     on a workspace whose agentbox.yaml uses it. (`cfg.warnings` carries the
+  //     report; see config.ts `warnUnknownKeys`.)
   schemaOnly?: true;
 }
 
@@ -320,10 +326,12 @@ const INVALID: Fixture[] = [
   },
   {
     name: 'unknown top-level key',
+    schemaOnly: true,
     yaml: `extra: 1\nservices:\n  web:\n    command: foo\n`,
   },
   {
     name: 'typo of defaults (defualts) is rejected as unknown top-level key',
+    schemaOnly: true,
     yaml: `defualts:\n  box:\n    snapshot: true\n`,
   },
   {
@@ -332,10 +340,12 @@ const INVALID: Fixture[] = [
   },
   {
     name: 'unknown service key',
+    schemaOnly: true,
     yaml: `services:\n  web:\n    command: foo\n    restartt: always\n`,
   },
   {
     name: 'unknown backoff key',
+    schemaOnly: true,
     yaml: `services:\n  web:\n    command: foo\n    backoff:\n      jitter_ms: 100\n`,
   },
   {
@@ -348,18 +358,22 @@ const INVALID: Fixture[] = [
   },
   {
     name: 'task with restart field',
+    schemaOnly: true,
     yaml: `tasks:\n  build:\n    command: pnpm build\n    restart: always\n`,
   },
   {
     name: 'task with autostart field',
+    schemaOnly: true,
     yaml: `tasks:\n  build:\n    command: pnpm build\n    autostart: false\n`,
   },
   {
     name: 'task with ready_when',
+    schemaOnly: true,
     yaml: `tasks:\n  build:\n    command: pnpm build\n    ready_when:\n      port: 3000\n`,
   },
   {
     name: 'task with backoff',
+    schemaOnly: true,
     yaml: `tasks:\n  build:\n    command: pnpm build\n    backoff:\n      initial_ms: 100\n`,
   },
   {
@@ -556,6 +570,7 @@ services:
   },
   {
     name: 'expose with unknown key',
+    schemaOnly: true,
     yaml: `
 services:
   dev:
@@ -624,6 +639,7 @@ services:
   },
   {
     name: 'top-level ports is an unknown key (now nested under image)',
+    schemaOnly: true,
     yaml: `services:\n  web:\n    command: pnpm dev\n    ports: ["3000:3000"]\n`,
   },
   {
@@ -632,6 +648,7 @@ services:
   },
   {
     name: 'image mapping with unknown key',
+    schemaOnly: true,
     yaml: `services:\n  db:\n    image:\n      name: postgres\n      bogus: 1\n`,
   },
   {

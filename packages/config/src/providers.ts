@@ -52,7 +52,7 @@ export const PROVIDERS = [
     name: 'daytona',
     kind: 'cloud',
     label: 'Daytona (cloud sandbox)',
-    loginHint: 'approve a browser sign-in link',
+    loginHint: 'paste an API key from the Daytona dashboard',
     rebuildMinutes: '7',
     blurb: 'Daytona Cloud sandboxes',
     sizeDesc:

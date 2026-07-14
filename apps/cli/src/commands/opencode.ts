@@ -8,6 +8,7 @@ import {
   resolveDefaultCheckpoint,
   type AttachOpenIn,
   type UserConfig,
+  resolveBoxImage,
 } from '@agentbox/config';
 import { ensureProjectRepoOnControlPlane } from '../control-plane/ensure-repo-installed.js';
 import {
@@ -657,7 +658,7 @@ export const opencodeCommand = new Command('opencode')
           workspacePath: opts.workspace,
           name: opts.name,
           checkpointRef,
-          image: cfg.effective.box.image,
+          image: resolveBoxImage(cfg.effective, providerName),
           withPlaywright,
           withEnv: cfg.effective.box.withEnv,
           carry: carryEntries,
@@ -725,7 +726,7 @@ export const opencodeCommand = new Command('opencode')
         fromBranch,
         useBranch,
         resyncOnStart: opts.resync,
-        image: cfg.effective.box.image,
+        image: resolveBoxImage(cfg.effective, providerName),
         opencodeConfig: { isolate: cfg.effective.box.isolateOpencodeConfig },
         withPlaywright,
         withEnv: cfg.effective.box.withEnv,

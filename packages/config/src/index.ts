@@ -35,6 +35,7 @@ export {
   coerceFromString,
   parseUserConfig,
   parseUserConfigObject,
+  type ParseOptions,
 } from './parse.js';
 
 export {
@@ -57,6 +58,7 @@ export {
 export {
   loadEffectiveConfig,
   loadProjectAgentboxDefaults,
+  setConfigWarningSink,
   type LoadEffectiveConfigOptions,
 } from './load.js';
 
@@ -66,6 +68,13 @@ export {
 } from './checkpoint.js';
 
 export { resolveBoxSize } from './size.js';
+
+export {
+  DAYTONA_VM_REGION,
+  resolveDaytonaClass,
+  resolveDaytonaRegion,
+  type DaytonaSandboxClass,
+} from './daytona.js';
 
 export {
   boxImageConfigKey,

@@ -20,7 +20,7 @@ import {
   DaytonaRateLimitError,
   DaytonaTimeoutError,
   DaytonaValidationError,
-} from '@daytonaio/sdk';
+} from '@daytona/sdk';
 
 export interface WithRetryOptions {
   /** Method name, used in retry log lines. */

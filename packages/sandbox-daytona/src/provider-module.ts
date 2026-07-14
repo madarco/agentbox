@@ -4,17 +4,23 @@
  * CLI dispatches to it generically (see `@agentbox/sandbox-core`'s `ProviderModule`).
  */
 
+import { loadEffectiveConfig, resolveDaytonaClass } from '@agentbox/config';
 import { errSummary, type CheckResult, type CredStatusSummary } from '@agentbox/sandbox-core';
-import { getDaytonaStatus } from './status.js';
+import { readPreparedDaytonaState } from './prepared-state.js';
+import { getDaytonaStatus, hasDaytonaCredentials } from './status.js';
 
-export async function readCredStatusSummary(): Promise<CredStatusSummary> {
-  const status = await getDaytonaStatus();
-  return { configured: status.configured };
+export function readCredStatusSummary(): CredStatusSummary {
+  // Credentials only — no network. This runs in the install wizard's provider
+  // step just to answer "logged in?", and it used to fetch the whole snapshot +
+  // volume inventory to do it.
+  return { configured: hasDaytonaCredentials().configured };
 }
 
 export async function doctorChecks(): Promise<CheckResult[]> {
   try {
-    const status = await getDaytonaStatus();
+    // Snapshots only: the rows below render the snapshot count and nothing else,
+    // so the volume list was a second API round-trip whose result was discarded.
+    const status = await getDaytonaStatus({ volumes: false });
     if (!status.configured) {
       return [
         {
@@ -28,21 +34,51 @@ export async function doctorChecks(): Promise<CheckResult[]> {
       ];
     }
     const credRes: CheckResult = { label: 'credentials', status: 'ok', detail: 'configured' };
-    const snapRes: CheckResult =
-      status.snapshots.length > 0
-        ? {
-            label: 'base snapshot',
-            status: 'ok',
-            detail: `${String(status.snapshots.length)} agentbox snapshot(s)`,
-          }
-        : {
-            label: 'base snapshot',
-            status: 'warn',
-            detail: 'none',
-            hint: '`agentbox prepare --provider daytona`',
-          };
-    return [credRes, snapRes];
+    return [credRes, await baseSnapshotCheck(status.snapshots.length)];
   } catch (err) {
     return [{ label: 'credentials', status: 'warn', detail: errSummary(err) }];
   }
+}
+
+/**
+ * A snapshot existing isn't enough: a snapshot's class is immutable and can only
+ * create sandboxes of that same class, so a container base with
+ * `box.daytonaClass: linux-vm` configured is unusable — every create would fail.
+ * Counting snapshots would report that as healthy, so compare the class too.
+ */
+async function baseSnapshotCheck(snapshotCount: number): Promise<CheckResult> {
+  if (snapshotCount === 0) {
+    return {
+      label: 'base snapshot',
+      status: 'warn',
+      detail: 'none',
+      hint: '`agentbox prepare --provider daytona`',
+    };
+  }
+  const prepared = readPreparedDaytonaState();
+  // Absent `class` = a snapshot baked before classes existed, which was
+  // necessarily a container.
+  const bakedClass = prepared?.base ? (prepared.extras?.class ?? 'container') : undefined;
+
+  let wantClass: string | undefined;
+  try {
+    wantClass = resolveDaytonaClass((await loadEffectiveConfig(process.cwd())).effective);
+  } catch {
+    // No project config to read (e.g. doctor run outside a project) — the count
+    // is still worth reporting; just don't claim anything about the class.
+  }
+
+  if (bakedClass && wantClass && bakedClass !== wantClass) {
+    return {
+      label: 'base snapshot',
+      status: 'warn',
+      detail: `baked as '${bakedClass}' but box.daytonaClass is '${wantClass}' — creates will fail`,
+      hint: '`agentbox prepare --provider daytona --force`',
+    };
+  }
+  return {
+    label: 'base snapshot',
+    status: 'ok',
+    detail: `${String(snapshotCount)} agentbox snapshot(s)${bakedClass ? ` (base: ${bakedClass})` : ''}`,
+  };
 }

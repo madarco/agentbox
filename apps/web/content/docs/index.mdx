@@ -42,7 +42,9 @@ During `agentbox install` you'll be prompted to log in to any cloud providers yo
 want to use (Vercel, Hetzner, DigitalOcean, Daytona, E2B) — this is **not** needed for the
 default local Docker provider. You'll then be asked to build the base image for
 each selected provider (e.g. the local Ubuntu Docker image, the Vercel base
-sandbox, the E2B template, etc.) so the first box starts fast.
+sandbox, the E2B template, etc.) so the first box starts fast, and finally whether
+to make that provider the **default for new boxes** — say yes and a plain
+`agentbox claude` goes there, with no `--provider` flag or provider prefix.
 
 <Callout title="NOTE">
   You can run `agentbox install` again at any time to add more providers — each
@@ -97,6 +99,10 @@ prefix the command with the provider name — for example:
 agentbox hetzner claude
 agentbox vercel codex
 ```
+
+The prefix is only needed when the provider isn't your default. If you said yes to
+"make it the default for new boxes" during `agentbox install`, plain `agentbox claude`
+already goes there — see [`box.provider`](/docs/configuration#provider).
 
 ### Watch it work
 

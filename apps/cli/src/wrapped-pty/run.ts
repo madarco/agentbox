@@ -56,6 +56,12 @@ export interface WrappedAttachOptions {
   /** Extra env merged over `process.env` for the spawned child (e.g. the
    *  Vercel provider's `VERCEL_AUTH_TOKEN` for the `sbx` CLI). */
   env?: Record<string, string>;
+  /**
+   * Typed into the PTY right after spawn (see `AttachSpec.initialInput`).
+   * Daytona's SSH gateway only gives a terminal to a shell session, so its
+   * attach connects command-less and sends the tmux command this way.
+   */
+  initialInput?: string;
   /** Relay base URL — http://127.0.0.1:8787 in normal use. */
   relayBaseUrl: string;
   boxId: string;
@@ -110,10 +116,19 @@ export interface WrappedAttachOptions {
   reconnect?: (
     signal: AbortSignal,
     exitCode: number,
-  ) => Promise<{ command: string; argv: string[]; env?: Record<string, string> } | null>;
+  ) => Promise<{
+    command: string;
+    argv: string[];
+    env?: Record<string, string>;
+    initialInput?: string;
+  } | null>;
 }
 
 const FOOTER_ROWS = 1;
+/** Settle time after the remote shell's first output before typing into it. */
+const INITIAL_INPUT_SETTLE_MS = 400;
+/** Type anyway if the remote shell never says anything. */
+const INITIAL_INPUT_DEADLINE_MS = 3000;
 /** Min visible inner-PTY rows below which we collapse the band back into the
  *  one-line footer (today's behavior). Keeps a tiny terminal usable instead of
  *  driving the inner program to a 0-row pane. */
@@ -234,6 +249,43 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     rows: innerRows,
     env: opts.env ? { ...process.env, ...opts.env } : process.env,
   });
+  /**
+   * Hand the remote shell its command. The pty buffers the write, so it lands
+   * whether or not the shell has finished printing its prompt.
+   */
+  const sendInitialInput = (input: string | undefined): void => {
+    if (!input) return;
+    // Wait for the remote shell to actually be at a prompt before typing.
+    // Writing at spawn loses the race: the bytes reach the shell while it is
+    // still starting, its line editor has not taken over the tty yet, and the
+    // trailing newline is swallowed — leaving the command sitting on a `>`
+    // continuation prompt instead of running. So: send on the first output from
+    // the remote side, plus a short settle, and give up on a deadline if the
+    // shell never says anything.
+    const target = pty;
+    let sent = false;
+    let armed = false;
+    const send = (): void => {
+      if (sent) return;
+      sent = true;
+      clearTimeout(fallback);
+      try {
+        target.write(input);
+      } catch {
+        // pty already gone — the exit path below reports it.
+      }
+    };
+    // The backend's `onData` returns void, not a disposable, so the listener
+    // can't be removed — `sent`/`armed` make it idempotent instead.
+    target.onData(() => {
+      if (sent || armed) return;
+      armed = true;
+      setTimeout(send, INITIAL_INPUT_SETTLE_MS).unref?.();
+    });
+    const fallback = setTimeout(send, INITIAL_INPUT_DEADLINE_MS);
+    fallback.unref?.();
+  };
+  sendInitialInput(opts.initialInput);
   // When the current pty was (re)spawned — feeds the crash-loop guard below.
   let lastSpawnAt = Date.now();
   // Resize the current pty, tolerating a dead one: during a reconnect the old
@@ -938,14 +990,24 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
    */
   const reconnectFlow = async (
     code: number,
-  ): Promise<{ command: string; argv: string[]; env?: Record<string, string> } | null> => {
+  ): Promise<{
+    command: string;
+    argv: string[];
+    env?: Record<string, string>;
+    initialInput?: string;
+  } | null> => {
     const controller = new AbortController();
     reconnecting = true; // swallow stdin (no live pty) while we re-establish
     reconnectAbort = controller;
     reconnectBanner = 'box rebooting — reconnecting…';
     startSpinner();
     applyBandChange();
-    let spec: { command: string; argv: string[]; env?: Record<string, string> } | null = null;
+    let spec: {
+      command: string;
+      argv: string[];
+      env?: Record<string, string>;
+      initialInput?: string;
+    } | null = null;
     try {
       spec = (await opts.reconnect?.(controller.signal, code)) ?? null;
     } catch (e) {
@@ -1019,6 +1081,8 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       rows: innerNow,
       env: next.env ? { ...process.env, ...next.env } : process.env,
     });
+    // A reconnect is a brand-new ssh session, so it needs the command again.
+    sendInitialInput(next.initialInput);
     wireOutput();
     lastSpawnAt = Date.now();
     // The checkpoint that caused this drop is consumed — clear its tracking so a

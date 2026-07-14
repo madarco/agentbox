@@ -28,6 +28,12 @@ export {
   type ReconcileAgentCredentialsOptions,
   type SeedAgentVolumesOptions,
 } from './sync/agent-credentials.js';
+export {
+  buildAgentStaticSeedCommands,
+  seedAgentStaticIntoCloudBox,
+  type SeedAgentStaticOptions,
+  type SeedAgentStaticResult,
+} from './sync/agent-static.js';
 export { uploadEnvFiles, type UploadEnvFilesArgs, type UploadEnvFilesResult } from './sync/env-files.js';
 export { createCloudSyncTransport, type CloudSyncTransportInit } from './sync/sync-transport.js';
 export { makeCloudSync, type CloudSyncOptions } from './sync/cloud-sync.js';

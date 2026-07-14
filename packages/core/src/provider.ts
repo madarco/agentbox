@@ -237,6 +237,16 @@ export interface AttachSpec {
    * leaking it into the process argv.
    */
   env?: Record<string, string>;
+  /**
+   * Typed into the PTY immediately after spawn, as if the user had entered it.
+   *
+   * For transports that only allocate a terminal for a *shell* session and not
+   * for an exec one (Daytona's SSH gateway: `ssh -tt host 'cmd'` lands on "not
+   * a tty", while `ssh -tt host` gets a real /dev/pts). Interactive attach needs
+   * a terminal — tmux exits instantly without one — so those backends connect
+   * with NO remote command and hand the command over on stdin instead.
+   */
+  initialInput?: string;
   /** Optional cleanup invoked after the PTY detaches. */
   cleanup?: () => Promise<void>;
 }
@@ -335,8 +345,10 @@ export interface PrepareOptions {
   size?: string;
   /**
    * Datacenter / region the bake VPS is created in. Hetzner reads it (defaults
-   * to `box.hetznerLocation`, else `nbg1`); other providers ignore it (their
-   * base template/snapshot has no per-region placement at bake time).
+   * to `box.hetznerLocation`, else `nbg1`); Daytona reads it as the region the
+   * base snapshot is registered in — which matters because only `us-east-1` has
+   * linux-vm runners. Other providers ignore it (their base template/snapshot
+   * has no per-region placement at bake time).
    */
   location?: string;
   /**
@@ -346,6 +358,20 @@ export interface PrepareOptions {
    * Ignored by every provider that owns its own infrastructure.
    */
   host?: string;
+  /**
+   * Sandbox class to bake for. Daytona only (`linux-vm` | `container`) — the
+   * class is a property of the *snapshot*, and a snapshot of one class cannot
+   * create a sandbox of the other, so it must be fixed at bake time. Resolved
+   * from `box.daytonaClass`.
+   */
+  sandboxClass?: string;
+  /**
+   * Explicit registry image the daytona `linux-vm` base is baked from
+   * (`box.daytonaVmBaseImage`), bypassing the fingerprint-tagged published
+   * image. The escape hatch for a build context CI never published — chiefly a
+   * locally modified `Dockerfile.box`. Daytona-only.
+   */
+  vmBaseImage?: string;
   /**
    * Progress sink for the build-side log stream (Docker BuildKit output,
    * Daytona's `onLogs` chunks). Wired to the CLI spinner / latest.log.

@@ -9,6 +9,75 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.25.1] - 2026-07-13
+
+### Fixed
+
+- `box.claudeInstall: npm` now pulls the prebuilt box image instead of building
+  it locally every time. The pull was hard-disabled for npm mode, from back when
+  only the native image was published — most visible as the throwaway container
+  behind `claude` sign-in baking from scratch. 0.25.0 started publishing the npm
+  image; this actually uses it.
+
+## [0.25.0] - 2026-07-13
+
+### Breaking
+
+- Daytona boxes now default to the `linux-vm` sandbox class, which Daytona runs
+  in **`us-east-1` only** — so new boxes are pinned to US-East. Set
+  `box.daytonaClass: container` to keep the old behavior and your choice of
+  region. Existing container base snapshots keep working (a box boots the class
+  its base was baked as); run `agentbox prepare --provider daytona --force` to
+  move to a VM base.
+
+### Added
+
+- **Daytona `linux-vm` sandbox class** (`box.daytonaClass`, default `linux-vm`).
+  `agentbox pause` is now a true VM freeze — CPU and memory are preserved, so
+  running processes and tmux sessions survive `unpause`. Checkpoints work
+  (~2 s capture; the old endpoint 404'd), and the base bake drops from ~7 min to
+  ~66 s. New keys: `box.daytonaRegion`, `box.daytonaTimeoutMs`,
+  `box.daytonaVmBaseImage`.
+- Idle Daytona boxes now pause themselves after `box.daytonaTimeoutMs` (25 min).
+  The host enforces this: Daytona's own idle timer is reset by any request to the
+  sandbox — including AgentBox's own polling — so it never fired, and idle boxes
+  billed indefinitely.
+- The box image is published for `box.claudeInstall: npm` too, so npm-mode users
+  get a pull hit instead of a silent local image build — and can use `linux-vm`
+  boxes, which can only boot from a published image.
+
+### Changed
+
+- Daytona attach honors `attach.openIn` (`split`/`tab`/`window`) like every other
+  provider, instead of always taking over the current terminal.
+
+### Fixed
+
+- `agentbox pause` on a container-class Daytona box failed outright with
+  `Sandbox is not stopped`.
+- `agentbox shell` against a paused cloud box now resumes it first, rather than
+  failing — both the interactive and the one-shot `-- cmd` forms, on every cloud
+  provider.
+- `agentbox daytona claude` (and `codex`/`opencode`, queued `-i` jobs, and the
+  dashboard) now boot from the base snapshot `prepare` baked. They read the
+  generic `box.image` instead of the per-provider key, so they ignored it — a
+  silent ~7-min rebuild per create, and on `linux-vm` a hard failure.
+- Daytona interactive attach dropped instantly into "box rebooting —
+  reconnecting…" on a perfectly healthy box.
+- `agentbox screen` on a `linux-vm` box opened the VNC desktop but no browser:
+  the image's environment (`DISPLAY`, …) is dropped by the VM conversion, and is
+  now restored.
+- `agentbox prepare --provider daytona` no longer dies when it has to fall back
+  to a container base, and `create` no longer demands a VM base that the fallback
+  never produced.
+- The box image is republished whenever its content changes. The publish workflow
+  filtered on paths that missed most of the image's real inputs, so an image
+  could silently go unpublished — which on Daytona quietly downgraded a VM box to
+  a container.
+- `@madarco/agentbox-provider-sdk` 2.3.0: `CloudBackend` gains `timeoutModel` and
+  `attachExecLacksTty`, `AttachSpec` gains `initialInput`, and the box record
+  carries `sandboxClass`. Additive only.
+
 ## [0.24.6] - 2026-07-12
 
 ### Fixed

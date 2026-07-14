@@ -144,10 +144,22 @@ export interface EnsureAgentVolumesResult {
  */
 export async function ensureAgentVolumesForCloud(
   backend: CloudBackend,
-  opts: { onLog?: (line: string) => void } = {},
+  opts: { onLog?: (line: string) => void; volumesUsable?: boolean } = {},
 ): Promise<EnsureAgentVolumesResult> {
   const log = opts.onLog ?? (() => {});
   const allAgents = AGENT_SPECS.map((s) => s.kind);
+  // `volumesUsable: false` means the backend has a volume API but this
+  // particular sandbox shape can't use it. Daytona's linux-vm class *accepts* a
+  // volume mount and even echoes it back in the sandbox DTO — the path just
+  // never appears in the guest. Silently mounting nothing would leave the agent
+  // credential-less with no diagnostic, so route these boxes down the same
+  // per-create upload path hetzner/vercel/e2b already use.
+  if (opts.volumesUsable === false) {
+    log(
+      `cloud backend '${backend.name}' cannot mount volumes for this sandbox class — agent credentials seeded per-create only`,
+    );
+    return { mounts: [], env: buildForwardedEnv(allAgents), agents: allAgents };
+  }
   if (typeof backend.ensureVolume !== 'function') {
     // Non-volume backends (e2b, vercel, hetzner) still get credentials seeded
     // per-create — `seedAgentVolumesIfFresh` falls back to a direct upload+

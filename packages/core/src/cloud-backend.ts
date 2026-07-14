@@ -58,10 +58,21 @@ export interface CloudProvisionRequest {
    */
   size?: string;
   /**
-   * Backend-interpreted datacenter / region. Only Hetzner reads it today
-   * (`nbg1`, `fsn1`, …); other backends have a fixed or account-level region.
+   * Backend-interpreted datacenter / region. Hetzner reads it as a datacenter
+   * (`nbg1`, `fsn1`, …); Daytona as a region (`us`, `eu`, `us-east-1`) that
+   * also selects which SDK client target is used, since `create` takes its
+   * region from the client rather than a param. Other backends have a fixed or
+   * account-level region.
    */
   location?: string;
+  /**
+   * Backend-interpreted sandbox class. Only Daytona reads it: `linux-vm` (real
+   * pause/resume, one region, no volume mounts) or `container` (archivable,
+   * Dockerfile-buildable). The class is a property of the *snapshot* the box
+   * boots from, so this is the class the caller expects — the backend still
+   * derives the truth from the prepared state and records that.
+   */
+  sandboxClass?: string;
   /**
    * Backend-interpreted resource grouping to place the box in. Only DigitalOcean
    * reads it today (a Project name or UUID, from `box.digitaloceanProject`);
@@ -126,6 +137,17 @@ export interface CloudHandle {
    * whitelist. Omitted by backends without a per-box firewall.
    */
   inbound?: InboundPolicy;
+  /**
+   * Daytona sandbox class (`linux-vm` | `container`), persisted on the record
+   * and threaded back in so lifecycle ops can branch without an extra API call.
+   * It cannot be read off the SDK's `Sandbox` (the class lives only on the
+   * api-client DTO), and the two classes need different calls: a VM pauses and
+   * cannot be archived; a container archives and cannot be paused.
+   *
+   * Absent for non-Daytona backends and for records written before the class
+   * existed — `pause()` falls back to trying both.
+   */
+  sandboxClass?: string;
 }
 
 export type CloudState = 'running' | 'paused' | 'stopped' | 'missing';
@@ -390,4 +412,50 @@ export interface CloudBackend {
     targetDeadlineEpochMs: number,
     currentDeadlineEpochMs: number,
   ): Promise<void>;
+
+  /**
+   * How the provider's session timeout behaves — which decides who stops an
+   * idle box.
+   *
+   *   - `absolute` (default): the timeout is a deadline. It expires on its own
+   *     schedule and nothing the box RECEIVES defers it, so an idle box lapses
+   *     by itself once the host stops renewing. vercel + e2b.
+   *   - `inactivity`: the timeout is an idle window that ANY request to the
+   *     sandbox resets. daytona.
+   *
+   * The distinction is load-bearing, not cosmetic. The host relay long-polls
+   * every cloud box's preview URL continuously (`CloudBoxPoller`), and on an
+   * inactivity-model provider that traffic is itself activity — it resets the
+   * clock on every poll, so the box NEVER lapses and an idle one bills until
+   * something stops it. Measured on Daytona 2026-07-13: an untouched sandbox
+   * (autoStopInterval=3) stopped at 3.0 min, while an otherwise identical one
+   * receiving a request every 15 s was still running at 7 min and only stopped
+   * 3 min after the requests ceased.
+   *
+   * So for `inactivity` backends the host must do the stopping itself: the
+   * keepalive loop pauses a box whose agent has been idle for a full window,
+   * rather than waiting for a lapse that will never arrive.
+   */
+  readonly timeoutModel?: 'absolute' | 'inactivity';
+
+  /**
+   * Set when the backend's `attachArgv` transport allocates a terminal for a
+   * SHELL session but not for an EXEC one — i.e. passing a remote command costs
+   * you the TTY.
+   *
+   * Daytona's SSH gateway does exactly this (measured 2026-07-13):
+   *
+   *     ssh -tt <token>@ssh.app.daytona.io 'tty'   ->  not a tty
+   *     ssh -tt <token>@ssh.app.daytona.io          ->  /dev/pts/1
+   *
+   * Interactive attach can't live with that — `tmux attach` exits immediately
+   * with no terminal, which the wrapper reads as the box dropping, so it
+   * reconnects into the same instant failure. `buildAttach` therefore drops the
+   * remote command for these backends and sends it as `AttachSpec.initialInput`
+   * instead, connecting to a plain login shell that does get a terminal.
+   *
+   * Only interactive attach is affected. Detached session-creation and `logs`
+   * pass a command deliberately and want no TTY, so they keep the exec form.
+   */
+  readonly attachExecLacksTty?: boolean;
 }

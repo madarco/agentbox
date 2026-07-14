@@ -104,6 +104,12 @@ export interface CtlConfig {
   tasks: TaskSpec[];
   /** Named reusable replacement rule-sets (top-level `replacements:` block). */
   replacements: Record<string, ReplaceRule[]>;
+  /**
+   * Non-fatal issues — today, unknown keys (skipped, not applied). The daemon
+   * logs these at startup and keeps running; `agentbox-ctl validate` prints them.
+   * Empty on a clean parse.
+   */
+  warnings: string[];
 }
 
 export const DEFAULT_BACKOFF: BackoffSpec = {
@@ -180,7 +186,7 @@ function parseBackoff(raw: unknown, where: string): BackoffSpec {
   if (!isPlainObject(raw)) {
     throw new ConfigError(`${where}.backoff must be a mapping`);
   }
-  rejectUnknownKeys(raw, BACKOFF_KEYS, `${where}.backoff`);
+  warnUnknownKeys(raw, BACKOFF_KEYS, `${where}.backoff`);
   const initialMs = parseNonNegativeInt(
     raw.initial_ms,
     `${where}.backoff.initial_ms`,
@@ -194,14 +200,28 @@ function parseBackoff(raw: unknown, where: string): BackoffSpec {
   return { initialMs, maxMs, factor };
 }
 
-function rejectUnknownKeys(
+/**
+ * Unknown keys are collected, not fatal. This parser ships INSIDE the box image
+ * (`agentbox-ctl`), so a box baked from an older image reads an `agentbox.yaml`
+ * written against a newer CLI. Throwing there would mean every key we add to the
+ * schema bricks every existing box image. The key is skipped and reported;
+ * everything else (wrong types, bad DAG, unknown `needs:` target) still throws.
+ *
+ * Module-scoped because the 8 call sites sit in nested parse helpers.
+ * `parseConfig` is the single synchronous entry point and resets it on entry.
+ */
+let unknownKeyWarnings: string[] = [];
+
+function warnUnknownKeys(
   obj: Record<string, unknown>,
   allowed: Set<string>,
   where: string,
 ): void {
   for (const key of Object.keys(obj)) {
     if (!allowed.has(key)) {
-      throw new ConfigError(`${where} has unknown key "${key}"`);
+      unknownKeyWarnings.push(
+        `${where} has unknown key "${key}" — ignored (typo, or written by a newer agentbox)`,
+      );
     }
   }
 }
@@ -274,7 +294,7 @@ function parseReadyWhen(raw: unknown, where: string): ReadyProbe | undefined {
   if (!isPlainObject(raw)) {
     throw new ConfigError(`${where}.ready_when must be a mapping`);
   }
-  rejectUnknownKeys(raw, PROBE_KEYS, `${where}.ready_when`);
+  warnUnknownKeys(raw, PROBE_KEYS, `${where}.ready_when`);
 
   const kinds: Array<'port' | 'log_match' | 'http'> = [];
   if (raw.port !== undefined) kinds.push('port');
@@ -483,7 +503,7 @@ function parseImage(raw: unknown, where: string, defaultName: string): ParsedIma
   if (!isPlainObject(raw)) {
     throw new ConfigError(`${where}.image must be an image ref string or a mapping`);
   }
-  rejectUnknownKeys(raw, IMAGE_KEYS, `${where}.image`);
+  warnUnknownKeys(raw, IMAGE_KEYS, `${where}.image`);
   const name = assertString(raw.name, `${where}.image.name`).trim();
   if (name.length === 0) throw new ConfigError(`${where}.image.name must not be empty`);
   const ports = parsePorts(raw.ports, `${where}.image`);
@@ -512,7 +532,7 @@ function parseExpose(raw: unknown, where: string): ExposeSpec | undefined {
   if (!isPlainObject(raw)) {
     throw new ConfigError(`${where}.expose must be a mapping`);
   }
-  rejectUnknownKeys(raw, EXPOSE_KEYS, `${where}.expose`);
+  warnUnknownKeys(raw, EXPOSE_KEYS, `${where}.expose`);
   if (raw.port === undefined) {
     throw new ConfigError(`${where}.expose.port is required`);
   }
@@ -538,7 +558,7 @@ function parseService(name: string, raw: unknown): ServiceSpec {
   if (!isPlainObject(raw)) {
     throw new ConfigError(`${where} must be a mapping`);
   }
-  rejectUnknownKeys(raw, SERVICE_KEYS, where);
+  warnUnknownKeys(raw, SERVICE_KEYS, where);
 
   const hasImage = raw.image !== undefined && raw.image !== null;
   const hasCommand = raw.command !== undefined && raw.command !== null;
@@ -617,7 +637,7 @@ function parseTask(name: string, raw: unknown): TaskSpec {
   if (!isPlainObject(raw)) {
     throw new ConfigError(`${where} must be a mapping`);
   }
-  rejectUnknownKeys(raw, TASK_KEYS, where);
+  warnUnknownKeys(raw, TASK_KEYS, where);
   const command = parseCommand(raw.command, where);
   const cwd = raw.cwd === undefined ? undefined : assertString(raw.cwd, `${where}.cwd`);
   const env = parseEnv(raw.env, where);
@@ -709,17 +729,20 @@ function validateUnitGraph(tasks: TaskSpec[], services: ServiceSpec[]): void {
 }
 
 export function parseConfig(text: string): CtlConfig {
+  unknownKeyWarnings = [];
   let doc: unknown;
   try {
     doc = parseYaml(text);
   } catch (err) {
     throw new ConfigError(`yaml parse error: ${err instanceof Error ? err.message : String(err)}`);
   }
-  if (doc === null || doc === undefined) return { services: [], tasks: [], replacements: {} };
+  if (doc === null || doc === undefined) {
+    return { services: [], tasks: [], replacements: {}, warnings: [] };
+  }
   if (!isPlainObject(doc)) {
     throw new ConfigError('top-level config must be a mapping');
   }
-  rejectUnknownKeys(doc, TOP_LEVEL_KEYS, '(root)');
+  warnUnknownKeys(doc, TOP_LEVEL_KEYS, '(root)');
 
   const services: ServiceSpec[] = [];
   const servicesRaw = doc.services;
@@ -779,7 +802,7 @@ export function parseConfig(text: string): CtlConfig {
     throw new ConfigError(err instanceof Error ? err.message : String(err));
   }
 
-  return { services, tasks, replacements };
+  return { services, tasks, replacements, warnings: unknownKeyWarnings };
 }
 
 export async function loadConfig(path: string): Promise<CtlConfig> {
@@ -788,7 +811,7 @@ export async function loadConfig(path: string): Promise<CtlConfig> {
     text = await readFile(path, 'utf8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { services: [], tasks: [], replacements: {} };
+      return { services: [], tasks: [], replacements: {}, warnings: [] };
     }
     throw err;
   }

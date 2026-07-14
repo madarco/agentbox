@@ -3,19 +3,46 @@ title: Daytona
 description: Run your agents in a managed Daytona cloud sandbox seeded from your host repo
 ---
 
-Run your agents in a managed Daytona cloud sandbox (default **2 vCPU / 4 GB RAM / 8 GB disk**) when the work outgrows your laptop or a teammate needs to attach — no local Docker needed. Each box is a remote Daytona sandbox you drive with the same `agentbox` commands as a local box, seeded from your host repo with renewable agent tokens on a shared per-org volume. Heads up: Daytona's snapshot/checkpoint path is still slow and experimental, and a running box bills per-second (no free pause).
+Run your agents in a managed Daytona cloud sandbox (default **2 vCPU / 4 GB RAM / 8 GB disk**) when the work outgrows your laptop or a teammate needs to attach — no local Docker needed. Each box is a remote Daytona sandbox you drive with the same `agentbox` commands as a local box, seeded from your host repo.
+
+By default a Daytona box is a **Linux VM**, which means `agentbox pause` genuinely freezes it — CPU *and memory* — so a long build or a running agent picks up exactly where it left off on `unpause`. No other AgentBox provider preserves running processes across a pause.
 
 Switch per box with `--provider daytona`, or pin it project-wide with `box.provider: daytona` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [vercel](/docs/vercel), and [e2b](/docs/e2b).
 
+## Sandbox class
+
+Daytona offers two sandbox classes. `box.daytonaClass` selects one; changing it needs a re-bake (`agentbox prepare --provider daytona --force`), because the class is baked into the snapshot and a snapshot of one class can't create a box of the other.
+
+|                        | `linux-vm` *(default)*                                                  | `container`                    |
+| ---------------------- | ----------------------------------------------------------------------- | ------------------------------ |
+| `agentbox pause`       | **freezes CPU + memory** — running processes and tmux sessions survive   | cold storage (filesystem only) |
+| Base bake              | ~1 min                                                                   | ~7 min                         |
+| Checkpoint capture     | ~2 s                                                                     | ~2 s                           |
+| Region                 | **`us-east-1` only**                                                     | any (`us`, `eu`, …)            |
+
+<Callout type="warn" title="THE TRADEOFF">
+Daytona runs VM sandboxes in **`us-east-1` only** — it's the sole region with VM runners. Choosing `linux-vm` therefore pins your boxes to US-East. If you need EU data residency or lower EU latency, set `box.daytonaClass: container` and you keep today's behavior (and your choice of region via `box.daytonaRegion`).
+</Callout>
+
+## Idle boxes pause themselves
+
+An idle Daytona box is paused after **25 minutes** (`box.daytonaTimeoutMs`; `0` disables). While an agent is actually working the box is held open, so only a genuinely idle one lapses. A `linux-vm` box is frozen (memory and running processes survive); a `container` box is archived to cold storage. Either way the filesystem is preserved, and simply using the box again — `agentbox shell`, `agentbox claude`, … — resumes it automatically.
+
+<Callout title="The host does this, not Daytona">
+Daytona's own idle timer is an *inactivity* window that any request to the sandbox resets — including the continuous polling AgentBox's host relay does to talk to the box. That polling is itself activity, so Daytona's timer never fires for a box AgentBox is tracking. The host therefore enforces the timeout itself. Daytona's timer remains as a backstop for when the relay isn't running (laptop asleep, `agentbox relay stop`), which is exactly when the host can't.
+
+One consequence: the timeout is measured against your **agent's** activity, not raw requests to the box. A box you're only using through an attached shell, with no agent running, is left alone entirely.
+</Callout>
+
 ## Set up
 
-The easiest path is the interactive wizard — it signs you in and bakes the base snapshot in one flow:
+The easiest path is the interactive wizard — it takes your API key and bakes the base snapshot in one flow:
 
 ```bash
 agentbox install        # then select daytona
 ```
 
-Approve the browser sign-in when prompted (or paste a `DAYTONA_API_KEY`; an optional `DAYTONA_ORGANIZATION_ID` can also be entered). Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider daytona` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots in seconds instead of eating a ~7-minute cold Dockerfile build.
+Paste a **`DAYTONA_API_KEY`** when prompted; the wizard offers to open [the keys page](https://app.daytona.io/dashboard/keys) in your browser first so you can generate one. (There's no browser sign-in — the key is the whole auth. If you paste a **JWT** instead of an API key, you'll also be asked for a `DAYTONA_ORGANIZATION_ID`, which an API key doesn't need: the SDK derives the org from it.) Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider daytona` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots in seconds instead of eating a ~7-minute cold Dockerfile build.
 
 For CI or scripted setup, run the explicit equivalents:
 
@@ -37,9 +64,14 @@ agentbox daytona claude
 Unlike Docker, Daytona does **not** auto-build the box image on first `create`. Run `agentbox prepare --provider daytona` once per org: it builds a **base snapshot** server-side (runtime + your agent static config — plugins, skills, settings, Codex/OpenCode config) and pins it into project config as `box.image`, so later creates boot in seconds.
 
 ```bash
-# one-off, ~7 min — bakes the base snapshot
+# one-off — bakes the base snapshot (~1 min for linux-vm, ~7 min for container)
 agentbox prepare --provider daytona
 ```
+
+A `linux-vm` base is baked from the prebuilt box image AgentBox publishes, so it's fast — Daytona can only build a VM snapshot from a published image, never from a Dockerfile. Two cases have no published image to boot, and both fall back to a `container` snapshot with a warning rather than failing:
+
+- **`box.claudeInstall: npm`** — only the default (native) image is published.
+- **A locally modified `Dockerfile.box`** — i.e. you're developing on the AgentBox repo itself. Point `box.daytonaVmBaseImage` at an image you've published to bake a VM anyway. It's also the knob for a private registry mirror.
 
 When you upgrade AgentBox, `create --provider daytona` notices if the new install would bake a different snapshot (the comparison is checksum-based on the baked files — CLI version strings on their own don't count) and offers to rebake inline; with `-y` or non-TTY it instead warns loudly and boots on the existing snapshot. `agentbox daytona login` also nudges you toward `agentbox prepare --provider daytona` on the first successful login.
 
@@ -71,7 +103,9 @@ Docker bind-mounts your `.git/`; Daytona can't, so each box is seeded from a hos
 
 ## Credentials & resync
 
-Agent *static config* is baked into the snapshot at `prepare` time. *Renewable tokens* (Claude `.credentials.json`, Codex/OpenCode `auth.json`) live on a shared per-org volume, kept separate so they refresh without republishing the snapshot.
+Agent *static config* is baked into the snapshot at `prepare` time. *Renewable tokens* (Claude `.credentials.json`, Codex/OpenCode `auth.json`) are kept separate so they refresh without republishing the snapshot.
+
+Where those tokens live depends on the class. A `container` box mounts them from a shared per-org volume, so one re-upload reaches every box. A `linux-vm` box **can't** — Daytona VMs silently ignore volume mounts — so each box gets its own copy uploaded at create time (the same approach [Hetzner](/docs/hetzner) uses). The practical difference: on `linux-vm`, refreshing credentials affects boxes created *after* the refresh; already-running boxes keep the copy they booted with.
 
 After re-authing an agent on the host, run `agentbox daytona resync` to re-upload the tokens.
 
@@ -106,7 +140,11 @@ AgentBox gives the host browser and the in-box agent **symmetric** `https://<box
 
 ## Checkpoints & snapshots
 
-Cloud checkpoints map to Daytona snapshots, each paired with a local host manifest. The box must be running to capture one, so AgentBox resumes or starts it first.
+Cloud checkpoints map to Daytona snapshots, each paired with a local host manifest. Capture takes about two seconds.
+
+<Callout type="warn" title="THE BOX REBOOTS">
+Daytona can only capture a snapshot while the sandbox is **stopped**, so `agentbox checkpoint create` stops the box, captures, and starts it again — then reconnects it. On-disk state survives; anything *running* (your agent's tmux session, a dev server) does not. AgentBox asks you to confirm first; pass `-y` to skip the prompt.
+</Callout>
 
 ```bash
 # capture /workspace state (deps installed, DB seeded, …) and make it the default
@@ -127,11 +165,13 @@ Two differences from Docker: there is no `--merged` (Daytona snapshots are flatt
 | Spec | |
 | --- | --- |
 | Base image | Daytona snapshot baked from `Dockerfile.box` |
-| Build method | Server-side snapshot via `agentbox prepare --provider daytona` (~7 min); no first-create auto-build |
+| Build method | Server-side snapshot via `agentbox prepare --provider daytona` (~1 min for `linux-vm` from the published image; ~7 min for `container` from the Dockerfile); no first-create auto-build |
 | Docker-in-Docker | Yes (CAP_SYS_ADMIN; dockerd at create + start) |
 | SSH | None — in-box bridge relay long-polled by the host (SSH-token attach for interactive sessions) |
 | Arch | x86_64 (amd64) |
-| Live snapshots | Slow/experimental snapshots (`_experimental_createSnapshot`); no native pause — a running box bills per-second |
+| Live snapshots | ~2 s filesystem capture; the box stops and reboots for it |
+| Pause | `linux-vm`: true VM freeze (CPU + memory, running processes survive). `container`: archive to cold storage — no quota while archived, slower first resume |
+| Idle | Paused after 25 min idle (`box.daytonaTimeoutMs`), by the host — Daytona's own idle timer never fires while the relay is polling the box; held open while an agent is working |
 | Preview URL | Signed CloudFront `https://{port}-{token}.proxy.daytona.work` (1h TTL, up to 24h via `--ttl`) |
 
 ## Caveats

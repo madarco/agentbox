@@ -10,6 +10,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "provider": {
+          "enum": ["docker", "daytona", "hetzner", "vercel", "e2b", "digitalocean"],
+          "description": "Sandbox backend new boxes are created on. Overridden per-run by --provider."
+        },
         "hostSnapshot": { "type": "boolean" },
         "defaultCheckpoint": { "type": "string", "minLength": 1 },
         "defaultCheckpointDocker": { "type": "string", "minLength": 1 },
@@ -51,6 +55,10 @@
         "pidsLimit": { "type": "integer", "minimum": 0 },
         "disk": { "type": "string" },
         "bundleDepth": { "type": "integer", "minimum": 0 },
+        "daytonaClass": { "type": "string", "enum": ["linux-vm", "container"] },
+        "daytonaRegion": { "type": "string", "minLength": 1 },
+        "daytonaTimeoutMs": { "type": "integer", "minimum": 0 },
+        "daytonaVmBaseImage": { "type": "string", "minLength": 1 },
         "hetznerLocation": { "type": "string", "minLength": 1 },
         "digitaloceanRegion": { "type": "string", "minLength": 1 },
         "digitaloceanProject": { "type": "string", "minLength": 1 },

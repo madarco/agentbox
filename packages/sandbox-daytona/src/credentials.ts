@@ -162,7 +162,7 @@ async function validateCredentials(creds: Credentials): Promise<ValidationResult
   try {
     // Dynamic import so the SDK only loads when we actually need it (keeps the
     // Docker hot path lean, same reason as the provider registry).
-    const { Daytona } = await import('@daytonaio/sdk');
+    const { Daytona } = await import('@daytona/sdk');
     const client = new Daytona();
     await client.list();
     s.stop('Daytona credentials accepted');

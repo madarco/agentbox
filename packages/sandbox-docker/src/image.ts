@@ -2,7 +2,11 @@ import { execa } from 'execa';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { claudeInstallFingerprint } from '@agentbox/sandbox-core';
+import {
+  BOX_IMAGE_REGISTRY,
+  claudeInstallFingerprint,
+  registryRefForSha,
+} from '@agentbox/sandbox-core';
 
 export const DEFAULT_BOX_IMAGE = 'agentbox/box:dev';
 
@@ -23,25 +27,11 @@ async function resolveClaudeInstallMode(): Promise<'native' | 'npm'> {
   }
 }
 
-/**
- * Public registry repo the box image is published to (see
- * `.github/workflows/box-image.yml`). The CLI pulls a fingerprint-tagged
- * image from here on first use instead of building locally — a multi-minute
- * build collapses to a `docker pull`. An empty registry (config override)
- * disables pulling and always builds.
- */
-export const BOX_IMAGE_REGISTRY = 'ghcr.io/madarco/agentbox/box';
-
-/**
- * The pull target for a given build-context fingerprint. The tag *is* the
- * content identity: a local staged context that matches a published build
- * has the same sha, so a pull hit can be retagged to `agentbox/box:dev` and
- * stamped into docker-prepared.json without risk of a stale image (a locally
- * edited context has a different sha, its tag 404s, and we build instead).
- */
-export function registryRefForSha(sha: string, registry: string = BOX_IMAGE_REGISTRY): string {
-  return `${registry}:sha-${sha.slice(0, 16)}`;
-}
+// The registry ref lives in @agentbox/sandbox-core: daytona's linux-vm bake
+// needs it too (a VM snapshot can only be built from a prebuilt registry image),
+// and importing it from here would drag execa into that import graph. Re-exported
+// so existing `@agentbox/sandbox-docker` consumers keep working.
+export { BOX_IMAGE_REGISTRY, registryRefForSha };
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -341,8 +331,12 @@ export async function ensureImage(
     onProgress: opts.onProgress,
     dockerfile: opts.dockerfile,
     contextDir: opts.contextDir,
-    // The published GHCR image is native-only, so npm mode must build locally.
-    allowPull: npm ? false : opts.allowPull,
+    // npm mode pulls too. CI publishes both install variants, and `fingerprint`
+    // is already folded with the mode above — so the pull asks for the npm
+    // image's own tag and hits. (It used to be native-only, which meant npm
+    // users rebuilt the image locally on every first create, forever.) A tag
+    // that genuinely isn't published still falls back to a local build.
+    allowPull: opts.allowPull,
     registry: opts.registry,
     buildArgs: npm ? { AGENTBOX_CLAUDE_INSTALL: 'npm' } : undefined,
   });
