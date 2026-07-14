@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { STATE_DIR } from '@agentbox/config';
-import { and, asc, eq, gt, inArray, lte } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, lt, lte, or } from 'drizzle-orm';
 import type { SqliteRemoteDatabase } from 'drizzle-orm/sqlite-proxy';
 import type { BoxStatusSnapshot } from '../status-store.js';
 import type { BoxRegistration, GitRpcResult, RelayEvent } from '../types.js';
@@ -414,5 +414,36 @@ export class SqliteStore implements Store {
       .update(sqliteCreateJobs)
       .set({ status, result, finishedAt: new Date().toISOString() })
       .where(eq(sqliteCreateJobs.id, id));
+  }
+
+  // --- retention (ISO strings compare lexicographically, matching the columns) ---
+
+  async prunePrompts(beforeIso: string): Promise<number> {
+    const db = await this.db();
+    const rows = await db
+      .delete(sqlitePrompts)
+      .where(
+        or(
+          and(eq(sqlitePrompts.status, 'answered'), lt(sqlitePrompts.createdAt, beforeIso)),
+          and(isNotNull(sqlitePrompts.expiresAt), lt(sqlitePrompts.expiresAt, beforeIso)),
+        ),
+      )
+      .returning({ id: sqlitePrompts.id });
+    return rows.length;
+  }
+
+  async pruneCreateJobs(beforeIso: string): Promise<number> {
+    const db = await this.db();
+    const rows = await db
+      .delete(sqliteCreateJobs)
+      .where(
+        and(
+          inArray(sqliteCreateJobs.status, ['done', 'failed']),
+          isNotNull(sqliteCreateJobs.finishedAt),
+          lt(sqliteCreateJobs.finishedAt, beforeIso),
+        ),
+      )
+      .returning({ id: sqliteCreateJobs.id });
+    return rows.length;
   }
 }

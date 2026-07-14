@@ -69,6 +69,7 @@ export {
   DEFAULT_SQLITE_STORE_PATH,
 } from './store/sqlite-store.js';
 export { PG_SCHEMA_SQL, SQLITE_SCHEMA_SQL } from './store/schema.js';
+export { WriteThroughStore, type WriteThroughParts } from './store/write-through-store.js';
 export { RemoteStore, type RemoteStoreOptions } from './store/remote-store.js';
 export {
   applyStoreOp,
@@ -183,6 +184,11 @@ export {
   type KeepaliveScanEntry,
   type RenewDecision,
 } from './cloud-keepalive.js';
+export {
+  startRetentionLoop,
+  type RetentionLoopDeps,
+  type RetentionLoopHandle,
+} from './retention.js';
 export {
   countWorkingSlots,
   defaultCountRunningBoxes,
