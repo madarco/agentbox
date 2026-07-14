@@ -180,7 +180,7 @@ describe('compact --help (default view)', () => {
     }
   });
 
-  it('shows the core workflow, an example, and the help --all recap', () => {
+  it('shows the core workflow, an example, and the `agentbox help` recap', () => {
     const help = buildCompactHelp(buildProgram());
     expect(help).toContain('claude|codex|opencode');
     expect(help).toContain('url|screen|open|code');
@@ -190,7 +190,7 @@ describe('compact --help (default view)', () => {
     expect(help).toContain('Example:');
     expect(help).toContain('agentbox git push');
     expect(help).toContain('Run `agentbox <command> --help`');
-    expect(help).toContain('`agentbox help --all`');
+    expect(help).toContain('`agentbox help`');
     expect(help).toContain('drive|queue');
     expect(help).toContain('connect|download|services|inbound');
   });

@@ -191,16 +191,15 @@ program.configureHelp({ visibleCommands: () => [] });
 program.addHelpText('after', () => '\n' + buildCompactHelp(program));
 
 // The default `--help` shows only the core workflow (buildCompactHelp);
-// the full grouped list moved behind `agentbox help --all`. commander's
-// built-in help command can't take extra flags, so replace it with our own
-// (hidden — the compact footer references it, no need to list it too).
+// the full grouped list is `agentbox help`. commander's built-in help command
+// would render the compact view, so replace it with our own (hidden — the
+// compact footer references it, no need to list it too).
 program.helpCommand(false);
 program.addCommand(
   new Command('help')
-    .description('Show help; --all lists every command, grouped')
+    .description('List every command, grouped; `help <command>` for one command')
     .argument('[command]', 'command to show help for')
-    .option('-a, --all', 'list every command, grouped')
-    .action((name: string | undefined, opts: { all?: boolean }) => {
+    .action((name: string | undefined) => {
       if (name) {
         const sub = program.commands.find(
           (c) => c.name() === name || c.aliases().includes(name),
@@ -208,13 +207,9 @@ program.addCommand(
         if (!sub) program.error(`unknown command '${name}'`);
         sub!.help();
       }
-      if (opts.all) {
-        // helpInformation() yields the usage/options header without the
-        // addHelpText blocks, so the compact view isn't duplicated here.
-        process.stdout.write(program.helpInformation() + '\n' + buildGroupedHelp(program) + '\n');
-        return;
-      }
-      program.help();
+      // helpInformation() yields the usage/options header without the
+      // addHelpText blocks, so the compact view isn't duplicated here.
+      process.stdout.write(program.helpInformation() + '\n' + buildGroupedHelp(program) + '\n');
     }),
   { hidden: true },
 );

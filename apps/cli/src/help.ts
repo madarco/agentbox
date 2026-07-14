@@ -101,7 +101,7 @@ export function buildGroupedHelp(program: Command): string {
 
 // Compact view rendered by the default `agentbox --help`: only the core
 // start → attach → git flow → destroy workflow, with related commands
-// aggregated onto one line. Everything else lives in `agentbox help --all`
+// aggregated onto one line. Everything else lives in `agentbox help`
 // (which renders HELP_GROUPS above). Aggregated rows need an explicit
 // description since no single command's live description fits; single-command
 // rows may override an overly long live description.
@@ -162,7 +162,7 @@ const COMPACT_EXAMPLE = [
 
 const COMPACT_FOOTER = [
   'Run `agentbox <command> --help` for command options.',
-  'More in `agentbox help --all`: claude|codex|opencode-specific commands, drive|queue,',
+  'More in `agentbox help`: claude|codex|opencode-specific commands, drive|queue,',
   'connect|download|services|inbound, lifecycle (pause|stop|checkpoint), providers, config, …',
 ];
 
