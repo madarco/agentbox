@@ -13,6 +13,8 @@ export interface HetznerDeployOptions {
   envPath: string;
   /** Branch / tag / sha of the agentbox repo to deploy (default `main`). */
   repoRef?: string;
+  /** Git repo the VPS clones (default the public agentbox repo). */
+  repoUrl?: string;
   log: (line: string) => void;
 }
 
@@ -24,6 +26,7 @@ export async function runHetznerDeploy(opts: HetznerDeployOptions): Promise<{ ur
   const result = await deployControlPlaneToHetzner({
     envContent,
     repoRef: opts.repoRef,
+    repoUrl: opts.repoUrl,
     onLog: opts.log,
   });
   const deployPath = join(homedir(), '.agentbox', 'control-plane', 'deploy.json');

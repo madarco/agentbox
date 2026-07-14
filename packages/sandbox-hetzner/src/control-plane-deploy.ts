@@ -13,7 +13,7 @@
  * Secrets ride scp (per-deploy key), never cloud-init user-data (cloud metadata).
  */
 
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { readFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeHetznerClient, type HetznerServer } from './client.js';
@@ -49,6 +49,40 @@ export interface ControlPlaneHetznerDeployResult {
 }
 
 const REMOTE_APP_DIR = '/opt/agentbox/apps/hub';
+// Host bind-mounted into the app container at /root/.agentbox: store.db, auth.db,
+// custody/, boxes/<id>/ssh, secrets.env (provider creds), logs. Persists the hub
+// across `compose up` / VPS reboots.
+const REMOTE_DATA_DIR = '/opt/agentbox/hub-data';
+
+// Provider credentials the resident worker needs to provision cloud boxes. Only
+// these keys are copied from the host `~/.agentbox/secrets.env` — never the whole
+// file (it may hold unrelated secrets).
+const PROVIDER_SECRET_KEYS = [
+  'HCLOUD_TOKEN',
+  'E2B_API_KEY',
+  'DAYTONA_API_KEY',
+  'DAYTONA_JWT_TOKEN',
+  'DAYTONA_ORG_ID',
+];
+
+/** Extract just the provider-credential lines from the host `~/.agentbox/secrets.env`. */
+async function collectProviderSecrets(): Promise<string> {
+  let body = '';
+  try {
+    body = await readFile(join(homedir(), '.agentbox', 'secrets.env'), 'utf8');
+  } catch {
+    return '';
+  }
+  const out: string[] = [];
+  for (const line of body.split(/\r?\n/)) {
+    const stripped = line.startsWith('export ') ? line.slice('export '.length) : line;
+    const eq = stripped.indexOf('=');
+    if (eq <= 0) continue;
+    const key = stripped.slice(0, eq).trim();
+    if (PROVIDER_SECRET_KEYS.includes(key)) out.push(`${key}=${stripped.slice(eq + 1)}`);
+  }
+  return out.length > 0 ? out.join('\n') + '\n' : '';
+}
 
 function caddyfile(domain: string): string {
   // Caddy auto-provisions a Let's Encrypt cert for the site address and reverse-
@@ -167,6 +201,20 @@ export async function deployControlPlaneToHetzner(
     throw new Error('repo clone did not complete on the VPS (cloud-init failed)');
   }
 
+  // The full-hub compose keys the deploy adds on top of the App/auth env:
+  //  - the persistent data dir (bind-mounted at /root/.agentbox),
+  //  - the public URL a hub-created box registers against (control-plane topology),
+  //  - the admin PC egress CIDR (== this deploying machine) added to a hetzner
+  //    box's firewall so the PC can still SSH direct (phase 4).
+  const hubEnvExtra =
+    `AGENTBOX_HUB_DATA_DIR=${REMOTE_DATA_DIR}\n` +
+    `AGENTBOX_HUB_PUBLIC_URL=${url}\n` +
+    `AGENTBOX_HUB_ADMIN_CIDR=${hostCidr}\n`;
+  const providerSecrets = await collectProviderSecrets();
+  if (!providerSecrets) {
+    log('warning: no provider credentials found in ~/.agentbox/secrets.env — the worker can only create boxes for providers whose creds you push later');
+  }
+
   // Stage the secret env + Caddy config locally, then scp them up.
   const staging = join(tmpdir(), `agentbox-cp-deploy-${stamp}`);
   await mkdir(staging, { recursive: true });
@@ -174,13 +222,20 @@ export async function deployControlPlaneToHetzner(
     const envLocal = join(staging, 'control-plane.env');
     const caddyLocal = join(staging, 'Caddyfile');
     const composeLocal = join(staging, 'docker-compose.caddy.yml');
-    await writeFile(envLocal, opts.envContent, { mode: 0o600 });
+    const secretsLocal = join(staging, 'secrets.env');
+    await writeFile(envLocal, opts.envContent + hubEnvExtra, { mode: 0o600 });
     await writeFile(caddyLocal, caddyfile(domain));
     await writeFile(composeLocal, CADDY_COMPOSE);
-    log('uploading env + Caddy config…');
+    await writeFile(secretsLocal, providerSecrets, { mode: 0o600 });
+    log('creating the persistent data dir on the VPS…');
+    await sshExec(target, `mkdir -p ${REMOTE_DATA_DIR} && chmod 700 ${REMOTE_DATA_DIR}`);
+    log('uploading env + provider secrets + Caddy config…');
     await scpUpload(target, envLocal, `${REMOTE_APP_DIR}/.env`);
     await scpUpload(target, caddyLocal, `${REMOTE_APP_DIR}/Caddyfile`);
     await scpUpload(target, composeLocal, `${REMOTE_APP_DIR}/docker-compose.caddy.yml`);
+    // Provider creds live in the data volume (read as ~/.agentbox/secrets.env),
+    // NOT in the compose env — so they're never in `docker inspect`/compose logs.
+    await scpUpload(target, secretsLocal, `${REMOTE_DATA_DIR}/secrets.env`);
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
