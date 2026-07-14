@@ -133,4 +133,12 @@ export interface Store {
     status: 'done' | 'failed',
     result: { boxId?: string; error?: string },
   ): Promise<void>;
+
+  // --- retention (durable stores only; the laptop's memory is process-lifetime).
+  // A resident control box runs forever, so answered prompts + finished jobs must
+  // be swept or the tables only grow. Both return the number of rows removed. ---
+  /** Delete answered prompts (and expired-past-`expires_at` rows) older than `beforeIso`. */
+  prunePrompts?(beforeIso: string): Promise<number>;
+  /** Delete done/failed create jobs whose `finishedAt` is older than `beforeIso`. */
+  pruneCreateJobs?(beforeIso: string): Promise<number>;
 }

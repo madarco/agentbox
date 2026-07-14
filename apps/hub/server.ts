@@ -125,6 +125,22 @@ async function main(): Promise<void> {
     process.stdout.write('agentbox-hub: auth ready\n');
   }
 
+  // Resident create worker (control box). Gated on AGENTBOX_HUB_WORKER=on so the
+  // localhost profile never starts it; runs in-process because SQLite is
+  // single-writer (phase 1). Node-only module, dynamically imported so Next
+  // never sees the provider/git graph.
+  let worker: { stop: () => Promise<void> } | undefined;
+  if (process.env.AGENTBOX_HUB_WORKER === 'on') {
+    const { startHubWorker } = await import('./lib/hub-worker');
+    worker = startHubWorker({
+      store: daemon.handle.store,
+      log: (line) => process.stdout.write(`agentbox-hub-worker: ${line}\n`),
+      publicUrl: process.env.AGENTBOX_HUB_PUBLIC_URL,
+      adminCidr: process.env.AGENTBOX_HUB_ADMIN_CIDR,
+      mockCreate: process.env.AGENTBOX_HUB_WORKER_MOCK === '1',
+    });
+  }
+
   process.stdout.write(`agentbox-hub: listening on ${host}:${String(port)} (dev=${String(dev)})\n`);
   if (mode === 'token') {
     process.stdout.write(`agentbox-hub: open http://${host}:${String(port)}/?token=${process.env.AGENTBOX_HUB_TOKEN ?? ''}\n`);
@@ -132,7 +148,7 @@ async function main(): Promise<void> {
 
   const shutdown = (signal: string): void => {
     process.stdout.write(`agentbox-hub: ${signal} — shutting down\n`);
-    daemon.stop().finally(() => process.exit(0));
+    void (worker?.stop() ?? Promise.resolve()).finally(() => daemon.stop().finally(() => process.exit(0)));
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));

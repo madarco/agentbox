@@ -2,6 +2,7 @@ import { startRelayServer, type RelayServerHandle, type RelayServerOptions } fro
 import { startAutopauseLoop } from './autopause.js';
 import { startCloudKeepaliveLoop } from './cloud-keepalive.js';
 import { startQueueLoop } from './queue.js';
+import { startRetentionLoop } from './retention.js';
 
 export interface RelayDaemonHandle {
   /** The underlying relay server (url, store, close, …). */
@@ -43,6 +44,9 @@ export async function startRelayDaemon(opts: RelayServerOptions): Promise<RelayD
     // then transitions creating → running without waiting for the 15s SSE ping.
     onStatusChange: () => handle.hubNotifier.notify(),
   });
+  // Sweep answered prompts + finished create jobs on a resident control box
+  // (durable store). A no-op when the store lacks the prune methods (localhost).
+  const retention = startRetentionLoop({ store: handle.store, log });
   // `poke` isn't on the declared QueueLoopHandle (only `stop` is); same cast bin.ts used.
   handle.setQueuePoke(() => {
     (queue as { poke?: () => void }).poke?.();
@@ -51,7 +55,12 @@ export async function startRelayDaemon(opts: RelayServerOptions): Promise<RelayD
   return {
     handle,
     stop: async () => {
-      await Promise.allSettled([autopause.stop(), cloudKeepalive.stop(), queue.stop()]);
+      await Promise.allSettled([
+        autopause.stop(),
+        cloudKeepalive.stop(),
+        queue.stop(),
+        retention.stop(),
+      ]);
       await handle.close();
     },
   };

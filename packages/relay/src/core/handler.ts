@@ -1,4 +1,4 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import type { GitHubAppLeaser } from '../github-app.js';
 import { leaseTokenResult } from '../lease.js';
 import { gateApproval } from '../permission.js';
@@ -7,8 +7,8 @@ import type { Store } from '../store/store.js';
 import { applyStoreOp, isStoreRpcMethod, type StoreRpcRequest } from '../store/store-rpc.js';
 import { resolveWorktree } from '../worktree.js';
 import { handleCustodyRequest, type CustodyRouteDeps } from '../custody/routes.js';
+import { handleRemoteBoxesRequest } from '../remote-boxes.js';
 import type { CustodyStore } from '../custody/store.js';
-import type { CreateJobRequest } from '../store/store.js';
 import { isScratchBranch } from '@agentbox/core';
 import type {
   BoxRegistration,
@@ -296,45 +296,16 @@ export async function handleRelayRequest(
     return ok({ result: result ?? null });
   }
 
-  if (req.method === 'POST' && req.path === '/remote/boxes') {
-    // Enqueue a durable create job; a worker (self-host loop / Vercel cron)
-    // drains it and clones the repo into a fresh cloud box via a leased token.
-    if (!store.enqueueCreateJob) return err(501, 'create-job queue not available on this store');
-    const body = parseJson<CreateJobRequest>(req.bodyText);
-    if (!body || typeof body.repoUrl !== 'string' || typeof body.provider !== 'string') {
-      return err(400, 'expected {repoUrl, provider, branch?, name?, agent?, prompt?}');
-    }
-    const allowed = deps.createProviders;
-    if (allowed && allowed.length > 0 && !allowed.includes(body.provider)) {
-      return err(
-        400,
-        `provider '${body.provider}' is not supported by this control plane (allowed: ${allowed.join(', ')})`,
-      );
-    }
-    const id = randomUUID();
-    await store.enqueueCreateJob({
-      id,
-      status: 'queued',
-      request: {
-        repoUrl: body.repoUrl,
-        provider: body.provider,
-        branch: body.branch,
-        name: body.name,
-        agent: body.agent,
-        prompt: body.prompt,
-      },
-      createdAt: new Date().toISOString(),
-    });
-    log(`enqueued create job ${id} (${body.provider} ${body.repoUrl})`);
-    return ok({ jobId: id }, 202);
-  }
-
-  if (req.method === 'GET' && req.path.startsWith('/remote/boxes/')) {
-    if (!store.getCreateJob) return err(501, 'create-job queue not available on this store');
-    const id = decodeURIComponent(req.path.slice('/remote/boxes/'.length));
-    const job = await store.getCreateJob(id);
-    return job ? ok(job) : err(404, 'no such job');
-  }
+  // Create-queue surface (`/remote/boxes`) — a shared dispatcher mounted in both
+  // this hosted-plane handler and the relay daemon (`server.ts`), so the control
+  // box and the Vercel plane serve identical enqueue/status semantics.
+  const remote = await handleRemoteBoxesRequest(req, {
+    store,
+    adminToken: deps.adminToken,
+    createProviders: deps.createProviders,
+    log,
+  });
+  if (remote) return remote.body === undefined ? { status: remote.status } : ok(remote.body, remote.status);
 
   return err(404, 'not found');
 }

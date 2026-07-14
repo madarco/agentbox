@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, lte } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, lt, lte, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { Pool } from 'pg';
 import type { BoxStatusSnapshot } from '../status-store.js';
@@ -340,5 +340,38 @@ export class PostgresStore implements Store {
       .update(pgCreateJobs)
       .set({ status, result, finishedAt: new Date() })
       .where(eq(pgCreateJobs.id, id));
+  }
+
+  // --- retention (timestamptz columns compare against a Date) ---
+
+  async prunePrompts(beforeIso: string): Promise<number> {
+    const db = await this.db();
+    const before = new Date(beforeIso);
+    const rows = await db
+      .delete(pgPrompts)
+      .where(
+        or(
+          and(eq(pgPrompts.status, 'answered'), lt(pgPrompts.createdAt, before)),
+          and(isNotNull(pgPrompts.expiresAt), lt(pgPrompts.expiresAt, before)),
+        ),
+      )
+      .returning({ id: pgPrompts.id });
+    return rows.length;
+  }
+
+  async pruneCreateJobs(beforeIso: string): Promise<number> {
+    const db = await this.db();
+    const before = new Date(beforeIso);
+    const rows = await db
+      .delete(pgCreateJobs)
+      .where(
+        and(
+          inArray(pgCreateJobs.status, ['done', 'failed']),
+          isNotNull(pgCreateJobs.finishedAt),
+          lt(pgCreateJobs.finishedAt, before),
+        ),
+      )
+      .returning({ id: pgCreateJobs.id });
+    return rows.length;
   }
 }

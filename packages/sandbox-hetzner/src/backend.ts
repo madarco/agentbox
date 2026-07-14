@@ -371,6 +371,15 @@ export const hetznerBackend: CloudBackend = {
           ? normalizeSourceCidr(egressOverride)
           : `${await detectEgressIp({ onLog })}/32`;
     const sources = resolveInboundSources(inboundPolicy, hostEgress);
+    // Control-plane-topology creates: the control box locks the box to its own
+    // egress IP; add the admin-supplied PC egress CIDR(s) so direct PC→box SSH
+    // still works. Skipped when `open` (already 0.0.0.0/0). Deduped.
+    if (inboundPolicy.mode !== 'open' && req.extraInboundCidrs && req.extraInboundCidrs.length > 0) {
+      for (const cidr of req.extraInboundCidrs) {
+        const normalized = normalizeSourceCidr(cidr);
+        if (!sources.includes(normalized)) sources.push(normalized);
+      }
+    }
     progress(`firewall inbound: ${describeInbound(inboundPolicy)} -> ${sources.join(', ')}`);
 
     // 3. Mint per-box SSH key into a temp dir keyed by a fresh uuid; we

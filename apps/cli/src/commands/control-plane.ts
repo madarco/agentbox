@@ -68,6 +68,42 @@ async function waitForHealthz(url: string, deadlineMs: number): Promise<boolean>
   return false;
 }
 
+/**
+ * The hetzner hub-auth env block appended to `control-plane.env`. The full-hub
+ * compose sets the profile literally, but these secrets (`BETTER_AUTH_SECRET`,
+ * admin email/password) are read from the `.env` by the compose file, so a
+ * network-reachable hub is login-gated.
+ */
+function hetznerAuthBody(hubAuth: {
+  AGENTBOX_HUB_AUTH: string;
+  BETTER_AUTH_SECRET: string;
+  AGENTBOX_HUB_ADMIN_EMAIL: string;
+  AGENTBOX_HUB_ADMIN_PASSWORD: string;
+}): string {
+  return (
+    `AGENTBOX_HUB_PROFILE=hetzner\n` +
+    `AGENTBOX_HUB_AUTH=${hubAuth.AGENTBOX_HUB_AUTH}\n` +
+    `BETTER_AUTH_SECRET=${hubAuth.BETTER_AUTH_SECRET}\n` +
+    `AGENTBOX_HUB_ADMIN_EMAIL=${hubAuth.AGENTBOX_HUB_ADMIN_EMAIL}\n` +
+    `AGENTBOX_HUB_ADMIN_PASSWORD=${hubAuth.AGENTBOX_HUB_ADMIN_PASSWORD}\n`
+  );
+}
+
+/**
+ * Ensure `control-plane.env` carries the hub-auth block (a prior `setup --deploy
+ * none` writes only the App creds). Appends it when `BETTER_AUTH_SECRET` is
+ * absent; returns false only if the operator cancels the login prompt.
+ */
+async function ensureHetznerHubAuth(): Promise<boolean> {
+  const body = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, 'utf8') : '';
+  if (/^BETTER_AUTH_SECRET=/m.test(body)) return true;
+  const hubAuth = await resolveHubAuthEnv();
+  if (!hubAuth) return false;
+  await writeFile(ENV_PATH, body + hetznerAuthBody(hubAuth), { mode: 0o600 });
+  await chmod(ENV_PATH, 0o600);
+  return true;
+}
+
 type DeployTarget = 'vercel' | 'hetzner' | 'none';
 
 interface SetupOpts {
@@ -145,13 +181,7 @@ const setupSub = new Command('setup')
         // hetzner reads ENV_PATH (written to the VPS .env); append the auth env +
         // the Postgres auth profile so docker-compose enforces login there too.
         if (target === 'hetzner' && hubAuth) {
-          const authBody =
-            `AGENTBOX_HUB_PROFILE=vercel\n` +
-            `AGENTBOX_HUB_AUTH=${hubAuth.AGENTBOX_HUB_AUTH}\n` +
-            `BETTER_AUTH_SECRET=${hubAuth.BETTER_AUTH_SECRET}\n` +
-            `AGENTBOX_HUB_ADMIN_EMAIL=${hubAuth.AGENTBOX_HUB_ADMIN_EMAIL}\n` +
-            `AGENTBOX_HUB_ADMIN_PASSWORD=${hubAuth.AGENTBOX_HUB_ADMIN_PASSWORD}\n`;
-          await writeFile(ENV_PATH, envBody + authBody, { mode: 0o600 });
+          await writeFile(ENV_PATH, envBody + hetznerAuthBody(hubAuth), { mode: 0o600 });
           await chmod(ENV_PATH, 0o600);
         }
         try {
@@ -452,7 +482,7 @@ const workerSub = new Command('worker')
  * admin bearer (`AGENTBOX_RELAY_ADMIN_TOKEN` > the setup-written env file).
  * Returns null and prints an actionable error when either is missing.
  */
-async function resolveCustodyTarget(
+export async function resolveCustodyTarget(
   urlFlag: string | undefined,
 ): Promise<{ url: string; adminToken: string } | null> {
   const cfg = await loadEffectiveConfig(process.cwd());
@@ -640,10 +670,70 @@ const custodyCmd = new Command('custody')
   .addCommand(custodyListSub)
   .addCommand(custodyPullSub);
 
+interface DeployOpts {
+  ref?: string;
+  repo?: string;
+}
+
+// Re-deploy the FULL hub to a fresh Hetzner VPS, REUSING the existing
+// ~/.agentbox/control-plane App creds + env — no GitHub-App manifest flow. Pins
+// the VPS clone to --ref so a feature branch can be deployed for live verify.
+const deployHetznerSub = new Command('hetzner')
+  .description('Deploy the full hub to a new Hetzner VPS, reusing the App creds from `control-plane setup`')
+  .option('--ref <ref>', 'branch / tag / sha the VPS clones + builds', DEFAULT_DEPLOY_REF)
+  .option('--repo <url>', 'git repo the VPS clones', DEFAULT_DEPLOY_REPO)
+  .action(async (opts: DeployOpts) => {
+    try {
+      if (!existsSync(ENV_PATH)) {
+        log.error('No control-plane env found. Run `agentbox control-plane setup` first (it creates the GitHub App + admin token).');
+        process.exitCode = 1;
+        return;
+      }
+      if (!(await ensureHetznerHubAuth())) {
+        log.warn('login prompt cancelled — deploying without web-UI auth.');
+      }
+      // `--repo` accepts an owner/repo slug or a full git URL; the VPS clones a URL.
+      const repoSpec = opts.repo ?? DEFAULT_DEPLOY_REPO;
+      const repoUrl = repoSpec.includes('://') ? repoSpec : `https://github.com/${repoSpec}.git`;
+      const ds = spinner();
+      ds.start('deploying the control box to hetzner');
+      let deployedUrl: string;
+      try {
+        deployedUrl = (
+          await runHetznerDeploy({
+            envPath: ENV_PATH,
+            repoRef: opts.ref ?? DEFAULT_DEPLOY_REF,
+            repoUrl,
+            log: (line) => ds.message(line),
+          })
+        ).url;
+        ds.stop(`deployed: ${deployedUrl}`);
+      } catch (e) {
+        ds.stop('deploy failed');
+        log.error(e instanceof Error ? e.message : String(e));
+        process.exitCode = 1;
+        return;
+      }
+      const url = await applyControlPlaneUrl(deployedUrl);
+      log.success(`Pointed the CLI at ${url} (relay.controlPlaneUrl).`);
+      const ok = await waitForHealthz(url, 60_000);
+      log[ok ? 'success' : 'warn'](
+        ok ? `Control box is healthy (${url}/healthz).` : `Could not confirm ${url}/healthz yet — check the deployment.`,
+      );
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const deployCmd = new Command('deploy')
+  .description('Deploy the full hub to a VPS, reusing the App creds from `control-plane setup`')
+  .addCommand(deployHetznerSub);
+
 export const controlPlaneCommand = new Command('control-plane')
   .description('EXPERIMENTAL - Set up + manage the hosted control plane (GitHub App, deploy config, reachability)')
   .addCommand(statusSub, { isDefault: true })
   .addCommand(setupSub)
+  .addCommand(deployCmd)
   .addCommand(setUrlSub)
   .addCommand(unsetUrlSub)
   .addCommand(addSub)

@@ -452,7 +452,20 @@ sha matches); list returns a 2-entry manifest with **no `data` field**; pull byt
 identical; an unchanged re-push returns `changed:false` (hash hit); on-disk modes are 0600 files
 / 0700 dirs; an unknown scope (`secrets/…`) is 400.
 
-## Phase 3 — The Hetzner deploy ships the full hub + resident create worker
+## Phase 3 — The Hetzner deploy ships the full hub + resident create worker — CODE DONE (box `cbx-phase3`, 2026-07-14); live-hetzner verify PENDING-HOST
+
+- [x] Blocker A — write-through durable store into the in-memory caches + boot hydration (loops + hub backend see state on a hetzner+SQLite hub; localhost byte-identical).
+- [x] Blocker B — retention sweep (answered prompts + finished create jobs) on a periodic daemon loop.
+- [x] Deploy the full hub, not the plane: standalone `server.ts` Dockerfile, app+Caddy compose (Postgres dropped), SQLite, persistent `~/.agentbox` volume.
+- [x] Resident in-process worker (gated `AGENTBOX_HUB_WORKER=on`); seeds agent creds from custody `agents/`, mirrors box SSH keys to custody, registers boxes on the hub.
+- [x] Dual-IP firewall: control-plane-topology hetzner creates add the admin PC egress CIDR to the box firewall.
+- [x] Enqueue from the PC: `agentbox create --via-hub` + a shared `/remote/boxes` dispatcher mounted in `server.ts`.
+- [x] Deploy ergonomics: `agentbox control-plane deploy hetzner [--ref]` reusing the existing App creds.
+- [x] In-box docker smoke green (build + boot + auth + custody + enqueue→worker + restart persistence).
+- [ ] **Live hetzner verify (real VPS + real e2b/hetzner boxes, phone-UI, usable-box `claude -p` + ls-remote push) — PENDING-HOST.**
+
+Result + deviations recorded under [what actually shipped](#phase-3--what-actually-shipped);
+open items went to the [Backlog](#backlog).
 
 **Why third:** with SQLite (no db container) and custody (creds available VPS-side), the deploy
 can finally ship the real thing.
@@ -505,6 +518,280 @@ logged-in `claude -p` turn (box *usable*, not just ready — established convent
 `agentbox-ctl git push` on `agentbox/*` verified via `git ls-remote`; approvals raised by a box
 are answerable from the phone UI; VPS reboot → hub + worker come back (compose
 `restart: unless-stopped`) with registry/queue intact (SQLite volume). Destroy leaves no orphans.
+
+### Phase 3 — implementation plan (box cbx-phase3)
+
+Two mandatory blockers first (from the [Backlog](#backlog)), then the six deploy/worker items.
+This plan resolves the design questions the phase text left open; deviations from the text above
+are called out inline.
+
+#### Blocker A — background loops + hub backend must see a durable store's state
+
+**The problem, precisely.** The daemon's loops (`startAutopauseLoop`, `startCloudKeepaliveLoop`,
+`startQueueLoop`) and `createHubBackend` read the **concrete** in-memory `handle.registry` /
+`handle.statusStore` / `handle.events` / `handle.prompts` objects, never the `Store`. On the
+laptop that is correct — `MemoryStore` *wraps those very instances* (`memory-store.ts`), so a
+write through `store.setStatus` and a read via `statusStore.get` hit the same map. But inject a
+durable `SqliteStore` and the handlers write to SQLite while the concrete instances stay empty:
+`cloud-keepalive` sees `registry.list() === []` (never renews a cloud box), and
+`createHubBackend.getData()` reads `handle.statusStore.get(id) === undefined` (the phone UI shows
+no agent status). (autopause is docker-only — it `docker inspect`s a `containerName`, which a
+VPS-created cloud box never has — so it is inert on the control box either way; keepalive + hub
+status are the live symptoms.)
+
+**Design chosen: write-through the durable store into the in-memory caches + hydrate on boot.**
+Of the two options the backlog offers ("route the consumers through the Store" vs "make the
+durable stores write through to the in-process caches"), write-through is the *least invasive*
+and the only one that keeps the localhost/MemoryStore profile byte-identical:
+
+- **Consumers are untouched.** autopause / keepalive / queue-loop / hub-backend keep reading the
+  concrete `registry`/`statusStore`/`events` synchronously — no async-store rewrite, no risk of
+  changing localhost timing/behavior.
+- **localhost is literally the same code path.** The write-through wrapper is only constructed
+  when `opts.store` is a *durable* store; a loginless localhost hub and every unit test still get
+  `new MemoryStore({ registry, events, statusStore })` verbatim.
+- **Single-writer makes the mirror safe.** Phase 1 already constrains the control box to one hub
+  process (SQLite single-writer). One writer ⇒ the in-memory mirror can never go stale behind
+  another process; DB is the source of truth across restarts, the mirror is a within-process cache.
+
+Implementation:
+
+- New `packages/relay/src/store/write-through-store.ts` — `class WriteThroughStore implements
+  Store`. It delegates every read to the inner durable store and, on each **mutating** call, also
+  applies the change to the injected `{ registry, events, statusStore }`:
+  `registerBox → registry.register`, `forgetBox → registry.forget`, `setStatus →
+  statusStore.set`, `deleteStatus → statusStore.delete`, `appendEvent → events.append`. Prompt +
+  create-job methods are pure delegation (they have no in-memory mirror the loops read). It also
+  forwards `migrate()` and the off-interface `listStatuses()`.
+- `hydrate()` on the wrapper: `for (const reg of await inner.listBoxes()) registry.register(reg)`,
+  then (when `inner.listStatuses`) re-populate `statusStore` (name/projectIndex looked up from the
+  just-hydrated registry). Events are a ring buffer — ephemeral, not hydrated.
+- Wiring: in `createRelayServer`, `const store = opts.store ? new WriteThroughStore(opts.store,
+  { registry, events, statusStore }) : new MemoryStore({ registry, events, statusStore })`.
+  `startRelayServer` (the async one) awaits `store.hydrate?.()` right after the socket bind and
+  before returning, so the daemon's loops start against a populated registry.
+- Prompts need **no** change: the control box runs `mode: 'host'` + `promptMode: 'block'`, so a
+  box's host-action blocks in-process on `PendingPrompts` (`handle.prompts`) and the hub backend
+  reads it there — exactly as on localhost. (The store's `createPrompt` mailbox is the poll-mode
+  path, unused by the block-mode control box.)
+
+#### Blocker B — retention sweep (answered prompts + finished jobs)
+
+- Two new **optional** `Store` methods: `prunePrompts(beforeIso)` — delete rows that are
+  `answered` OR past their `expires_at` and older than `beforeIso`; `pruneCreateJobs(beforeIso)` —
+  delete `done`/`failed` jobs whose `finishedAt < beforeIso`. Implemented on `SqliteStore` +
+  `PostgresStore` (one drizzle `delete` each); absent on `MemoryStore` (process-lifetime memory —
+  nothing to sweep) and `WriteThroughStore` forwards them.
+- New `packages/relay/src/retention.ts` — `startRetentionLoop({ store, log, intervalMs })`: an
+  hourly tick that calls the two prune methods when present, `beforeIso = now − RETENTION_MS`
+  (24 h). Started in `startRelayDaemon` after the other loops; a no-op when the store lacks the
+  methods (localhost). Constants (not a config key) for now — internal housekeeping, not a
+  user-facing tunable; noted in the Backlog if it needs to become one.
+
+#### 1. Deploy the full hub (Dockerfile + compose + `control-plane-deploy.ts`)
+
+- **`apps/hub/Dockerfile`** — build stage: `pnpm install --frozen-lockfile` → `pnpm turbo run
+  build --filter=@agentbox/hub` (builds the workspace-dep `dist/`) → `pnpm --filter @agentbox/hub
+  build:standalone` (produces `apps/hub/dist-standalone/apps/hub/server.js`, the same artifact
+  `agentbox hub` spawns). Runtime stage keeps the whole built monorepo (`COPY --from=build /repo
+  .`) so the standalone's *externals* (`next`, `react`, `pg`, `better-auth`, the cloud SDKs)
+  resolve from the workspace `node_modules`, and adds `git` + `openssh-client` (the worker's clone
+  step + hetzner box ssh/scp). New `CMD ["node", "apps/hub/dist-standalone/apps/hub/server.js"]`
+  — the standalone `server.ts` runs `ensureAuthReady()` itself at boot, so the old
+  `db:auth-migrate` CMD step is dropped.
+- **`apps/hub/docker-compose.yml`** — rewritten to **app-only** (Postgres + the `db` service
+  dropped; unreleased, so no back-compat alias). `app` env: `AGENTBOX_HUB_PROFILE=hetzner`,
+  `AGENTBOX_HUB_HOST=0.0.0.0`, `AGENTBOX_HUB_PORT=3000` (Caddy already proxies `app:3000`),
+  `AGENTBOX_HUB_WORKER=on`, `HOME=/root`, plus the secret env passed through from the compose
+  env-file (`AGENTBOX_RELAY_ADMIN_TOKEN`, `BETTER_AUTH_SECRET`, admin email/password,
+  `GITHUB_APP_*`, `AGENTBOX_HUB_ADMIN_CIDR`). `restart: unless-stopped`. A **host bind mount**
+  `${AGENTBOX_HUB_DATA_DIR:-/opt/agentbox/hub-data}:/root/.agentbox` is the persistent volume —
+  it holds `hub/store.db`, `hub/auth.db`, `hub/custody/…`, `boxes/<id>/ssh/…`, `secrets.env`,
+  logs, and (crucially) is a **host path** so the deploy can `scp` provider secrets into it before
+  `compose up`.
+- **`control-plane-deploy.ts`** — same firewall / cloud-init / Caddy+sslip.io / `deploy.json`
+  shape, with: (a) the scp'd `.env` gains the worker/profile/admin-CIDR keys; (b) a new scp of the
+  **provider secrets** subset (`HCLOUD_TOKEN`, `E2B_API_KEY`, `DAYTONA_API_KEY`,
+  `DAYTONA_ORG_ID`) filtered from the host `~/.agentbox/secrets.env` into
+  `<data-dir>/secrets.env` (0600) on the VPS; (c) the deploy detects the **PC egress IP** (reuse
+  `detectEgressIp`) and writes it as `AGENTBOX_HUB_ADMIN_CIDR` into the `.env`; (d) `mkdir -p` the
+  host data dir before the secrets scp. The app service now needs the data-dir bind, so the
+  compose overlay/base is updated accordingly.
+
+#### 2. Resident in-process worker
+
+- **Promote `makeControlPlaneCreateBox`** (pure lease→clone→create orchestration, only imports a
+  relay type) from `apps/cli/src/control-plane/create-box.ts` into `@agentbox/relay`
+  (`create-worker.ts`), so both the CLI `worker` command *and* the hub can build a `CreateBoxFn`
+  from it (an app can't import another app). The CLI command re-imports it from the package.
+- **`apps/hub/lib/hub-worker.ts`** (new, Node-only, loaded by `server.ts`): builds the hub's
+  `CreateBoxFn` deps — `leaseRemoteUrl` via `GitHubAppLeaser`(`loadGitHubAppConfig()`),
+  `cloneRepo` via `git`, and `createBox` via the hub's own provider `IMPORTERS` map (mirrors
+  `hub-backend.ts`), calling `provider.create({ workspacePath, name, projectRoot,
+  controlPlaneUrl: <hub public URL>, extraInboundCidrs: <admin CIDR>, onLog })`. Around
+  `provider.create` it wraps the two custody steps below.
+- **`server.ts`**: after `startRelayDaemon`, when `process.env.AGENTBOX_HUB_WORKER === 'on'` and
+  the store supports the queue, start an interval loop `drainCreateJobs(store, createBox,
+  os.hostname())`. Stopped on shutdown alongside the daemon.
+- **Agent-credential seed from custody** (the phase text's "point that path at the custody
+  `agents/` scope"): before `provider.create`, a `seedHostBackupsFromCustody()` step reads the
+  in-process `FsCustodyStore` `agents/<id>/<credential.boxRelPath>` for each `AGENT_SYNC_SPECS`
+  entry and writes it to that spec's `credential.hostBackup` (`~/.agentbox/<id>-credentials.json`)
+  — the exact file `provider.create`'s existing seed step reads. So a PC `credentials push`
+  (phase 2) is what logs hub-created boxes in, no second code path.
+- **SSH-key mirror to custody**: after `provider.create`, copy `~/.agentbox/boxes/<id>/ssh/*`
+  into custody `boxes/<id>/ssh/*` (via `FsCustodyStore.put`) so phase 4's `hub pull` can fetch a
+  hub-created hetzner box's key.
+
+#### 3. Provider credentials + runtime bits (folded into 1 + 2)
+
+Covered by the secrets scp (item 1c) landing at `<data-dir>/secrets.env` → the container's
+`~/.agentbox/secrets.env`, which the provider modules' `ensureCredentials()`/`env-loader` read;
+and by `git` + `openssh-client` in the runtime image (item 1). `providerForCreate` is replaced in
+the hub by the `IMPORTERS` map it already uses elsewhere.
+
+#### 4. Dual-IP firewall
+
+- Add optional `extraInboundCidrs?: string[]` to the box create options
+  (`CreateBoxInput`/whatever `provider.create` accepts) → thread through `CloudProvisionRequest`
+  → in `hetznerBackend.provision`, when `req.controlPlaneUrl` is set and the inbound mode isn't
+  `open`, append `req.extraInboundCidrs` (normalized) to the computed `sources` before
+  `createPerBoxFirewall`. `sshOnlyInboundRule` already accepts multiple `source_ips`, so the VPS
+  egress + the admin CIDR land on one `:22` rule. Fail-loud egress detection unchanged. The
+  worker (item 2) supplies the admin CIDR from `AGENTBOX_HUB_ADMIN_CIDR`.
+
+#### 5. Enqueue from the PC + shared `/remote/boxes` dispatcher
+
+- **The `/remote/boxes` endpoints live only in `core/handler.ts` (the Vercel plane); the control
+  box runs `server.ts`, which 404s `/remote/*`.** So extract a shared
+  `handleRemoteBoxesRequest(req, { store, adminToken, createProviders, log })` (mirrors phase 2's
+  custody `handleCustodyRequest` shared-dispatcher pattern) and mount it in **both** `server.ts`
+  (admin-bearer gated, using `opts.adminToken`) and `core/handler.ts`. Same POST-enqueue /
+  GET-status semantics, same `CreateJobRequest` body.
+- **`agentbox create --via-hub`**: a new branch in `apps/cli/src/commands/create.ts` that, instead
+  of creating locally, resolves `{ url, adminToken }` (same resolver as custody), builds a
+  `CreateJobRequest` from the resolved create args (`repoUrl` = the project's git origin,
+  `provider`, `branch` = from-branch, `name`, `agent`, `prompt`), `POST`s `/remote/boxes`, then
+  polls `GET /remote/boxes/:id` and streams job status until `done`/`failed`. The hub UI create
+  modal already enqueues via `enqueueQueueJob`/the backend — no new UI.
+
+#### 6. Deploy ergonomics — `agentbox control-plane deploy hetzner [--ref <ref>]`
+
+- A new `deploy` subcommand that **reuses** the existing `~/.agentbox/control-plane/`
+  (`control-plane.env` + `github-app.pem`) without re-running the GitHub-App manifest flow:
+  fail with a clear message if `control-plane.env` is absent (run `setup` first); ensure the
+  hub-auth block is present (append via `resolveHubAuthEnv()` if missing, same as `setup`); then
+  `runHetznerDeploy({ envPath: ENV_PATH, repoRef: ref, log })`. `--ref` (default `main`) pins the
+  VPS clone — **the host runs `--ref agentbox/cbx-phase3` for the live verify**.
+
+#### Files
+
+New: `packages/relay/src/store/write-through-store.ts`, `packages/relay/src/retention.ts`,
+`packages/relay/src/remote-boxes.ts` (shared dispatcher), `apps/hub/lib/hub-worker.ts`.
+Moved: `makeControlPlaneCreateBox` → `packages/relay/src/create-worker.ts`.
+Touched: `packages/relay/src/{server,daemon,store/store,store/sqlite-store,store/postgres-store,
+core/handler,index,control-plane}.ts`; `packages/sandbox-hetzner/src/{control-plane-deploy,backend}.ts`
++ cloud-provider/core types for `extraInboundCidrs`; `apps/hub/{Dockerfile,docker-compose.yml,
+server.ts}`; `apps/cli/src/{commands/create,commands/control-plane,control-plane/create-box}.ts`;
+`apps/web/content/docs/{control-plane,hub}.mdx`.
+
+#### Tests (docker-free vitest)
+
+- `write-through-store.test.ts` — the store conformance suite against a `WriteThroughStore` over a
+  `:memory:` `SqliteStore`, plus assertions that a `registerBox`/`setStatus` mutation is visible
+  on the injected concrete `registry`/`statusStore`, and that `hydrate()` re-populates them.
+- Retention: unit-test `prunePrompts`/`pruneCreateJobs` on the SQLite store, and `startRetentionLoop`
+  with an injected fake store + clock.
+- `remote-boxes` shared dispatcher: 401 without bearer, 400 bad body, 202 enqueue, GET job — over
+  both handlers (in-process, injected store), mirroring the custody route tests.
+- CLI: a `--via-hub` request-builder unit test (repoUrl/branch/agent mapping), fake-fetch client.
+
+#### In-box docker smoke (manual; not a vitest test)
+
+1. `docker build --network=host -f apps/hub/Dockerfile -t agentbox-hub .` at the repo root
+   (validates item 7: the image builds self-contained from the `--ref` checkout).
+2. Run the container with `AGENTBOX_HUB_PROFILE=hetzner`, `AGENTBOX_HUB_HOST=0.0.0.0`,
+   `AGENTBOX_HUB_PORT=3000`, `AGENTBOX_HUB_WORKER=on`, auth on with a seeded admin, a tmpfs/host
+   volume for `/root/.agentbox`, **no `POSTGRES_URL`**, and a **mock/injected `CreateBoxFn`**
+   (via an `AGENTBOX_HUB_WORKER_MOCK=1` seam so the box never touches a real cloud). Assert:
+   `/healthz` → `db:true`; better-auth signup/login; custody push/pull round-trip over HTTP;
+   `POST /remote/boxes` enqueues; the resident worker claims the job and drives the mock to
+   `done`; a retention tick removes an aged answered-prompt + finished-job row; `docker restart`
+   the container → registry/queue/auth survive on the volume.
+3. **Localhost regression**: `AGENTBOX_HUB_PROFILE` unset (`agentbox hub` on MemoryStore) — the hub
+   backend still sees status + prompts (the loop/backend routing change is the risk; test both
+   profiles).
+4. `pnpm test` + `pnpm typecheck` + `pnpm lint` at the repo root, all green.
+
+#### Live hetzner verify — PENDING-HOST
+
+The end-to-end live checklist (real VPS, real e2b + hetzner boxes, phone-UI login/approvals,
+`claude -p` usable-box turn, `git ls-remote` push check, reboot persistence, destroy-no-orphans)
+runs on the host, since this box can't reach the real clouds from inside. The host runs:
+`agentbox control-plane deploy hetzner --ref agentbox/cbx-phase3` (App creds already set up).
+
+### Phase 3 — what actually shipped
+
+Everything above landed as planned. Notes + deviations:
+
+- **Blocker A is a write-through wrapper only around durable stores.** `WriteThroughStore`
+  (`packages/relay/src/store/write-through-store.ts`) delegates reads to the inner store and mirrors
+  mutations into the concrete `registry`/`events`/`statusStore`; `startRelayServer` calls
+  `store.hydrate()` before the daemon loops start. The localhost path never constructs it
+  (`opts.store` is undefined → `MemoryStore` verbatim), so it is byte-identical — confirmed by the
+  in-box smoke booting the *localhost* logic through the same relay suite (342 relay tests green).
+  Prompts needed no change: the control box runs host mode + block-mode prompts, so approvals live in
+  the in-process `PendingPrompts` the hub backend already reads.
+- **`/remote/boxes` had to become a shared dispatcher** (`packages/relay/src/remote-boxes.ts`),
+  because it lived only in `core/handler.ts` (the Vercel plane) and the control box runs `server.ts`,
+  which 404s `/remote/*`. Same shape as phase 2's custody dispatcher; mounted in both, admin-bearer
+  gated, fail-closed. `core/handler.ts`'s inline handler was replaced by a call to it.
+- **`makeControlPlaneCreateBox` moved into `@agentbox/relay`** (`create-worker.ts`) so the hub
+  (`apps/hub/lib/hub-worker.ts`) and the CLI `control-plane worker` command share one orchestration;
+  the CLI's `control-plane/create-box.ts` is now a thin re-export. The hub worker resolves providers
+  via its own `IMPORTERS` map (an app can't import the CLI's provider registry).
+- **The worker sets `controlPlaneUrl` on its creates** (so a hub-made box registers on the control
+  box and its approvals route to the phone UI). This makes the box **control-plane topology** while
+  the workspace is still host-seeded (local clone). That combination is the resident-worker shape;
+  the host live-verify should confirm the seeded control-plane box pushes on `agentbox/*` and its
+  approvals surface — flagged in the Backlog.
+- **Dual-IP firewall rides `providerOptions.extraInboundCidrs`** → gated at the cloud-provider layer
+  on `req.controlPlaneUrl` → a new `CloudProvisionRequest.extraInboundCidrs` the hetzner backend
+  appends to the firewall `sources`. No new top-level `CreateBoxRequest` field; the admin CIDR is the
+  deploying PC's egress (reused from the firewall's own `detectEgressIp`).
+- **The deploy keeps provider secrets out of compose env.** They are scp'd from the host
+  `~/.agentbox/secrets.env` (only `HCLOUD_TOKEN`/`E2B_API_KEY`/`DAYTONA_*`) into the data volume as
+  `~/.agentbox/secrets.env`, which the provider modules load — so they never appear in `docker
+  inspect`/compose logs. `AGENTBOX_HUB_PROFILE`/`AGENTBOX_HUB_HOST`/`AGENTBOX_HUB_PORT`/
+  `AGENTBOX_HUB_WORKER` are set literally in the compose `environment:`; only the auth secrets +
+  data-dir/public-url/admin-CIDR ride the scp'd `.env`.
+- **Retention window is constants, not a config key** (24 h keep / hourly sweep) — internal
+  housekeeping, not a user-facing tunable. Promote to a `hub.retention*` key if it ever needs tuning
+  (Backlog).
+
+**Verification (all green, from inside the box):**
+
+| check | result |
+| --- | --- |
+| `pnpm test` (repo root, 29 tasks) | relay 342/1skip, cli 845/1skip |
+| `pnpm typecheck` (31 tasks) | green |
+| `pnpm lint` (17 tasks) | green |
+| New unit tests | write-through (13), retention (4), remote-boxes (8), hub-enqueue (5) |
+| In-box docker smoke (below) | green |
+
+**In-box docker smoke** (manual; `docker build --network=host -f apps/hub/Dockerfile -t
+agentbox-hub .` then a container with `AGENTBOX_HUB_PROFILE=hetzner`, `AGENTBOX_HUB_WORKER=on`,
+`AGENTBOX_HUB_WORKER_MOCK=1`, a seeded admin, a host `~/.agentbox` volume, no `POSTGRES_URL`):
+`/healthz` → `ok:true` (SQLite, zero Postgres); better-auth admin login `200`; custody PUT/GET
+round-trips identical (manifest carries no values); `POST /remote/boxes` enqueues; the resident
+worker claims the job and drives the mock `CreateBoxFn` to `done` with a boxId; `docker restart` →
+the job row, custody, and better-auth all survive on the volume (`store.db`/`auth.db`/`custody/`
+present). Retention correctness is covered by the deterministic `retention.test.ts` (the loop's
+24 h/hourly cadence makes an in-container demonstration impractical).
+
+**Localhost regression:** unaffected by construction — `WriteThroughStore` is only built for a durable
+`opts.store`, `hydrate()` runs only for it, and `startRetentionLoop` no-ops when the store lacks the
+prune methods (MemoryStore). The relay suite exercises the MemoryStore/host-mode path.
 
 ## Phase 4 — The PC operates through the control box
 
@@ -568,20 +855,34 @@ unaffected throughout (`pnpm --filter @agentbox/relay test` + a local docker smo
 
 Findings and follow-ups discovered while implementing, kept out of the phase they were found in.
 
-- **The daemon's background loops and the hub backend still read in-memory state, not the `Store`
-  (phase 3 blocker).** `startRelayServer` only falls back to `MemoryStore` — inject any other store
-  and the handlers write to it, but the `BoxRegistry` / `EventBuffer` / `BoxStatusStore` instances on
-  the handle stay empty. The autopause loop, the cloud-keepalive loop, the queue loop, and
-  `createHubBackend` (`handle.statusStore.get(id)`, `handle.prompts`) all read those objects. On the
-  localhost profile nothing changes (MemoryStore *is* those objects), but on the control box
-  (hetzner + SQLite) a box's live status reaches `store.setStatus` and no further: autopause would
-  never fire and the hub UI would show no agent status. Phase 3 must route those consumers through
-  the `Store` (or have the durable stores write through to the in-process caches). Phase 1 does not
-  regress anything here — it just makes the gap load-bearing for the first time.
-- **Prompt and create-job rows are never deleted.** Neither durable store prunes answered prompts or
-  finished jobs (events are ring-trimmed; prompts/jobs are not). On the laptop that memory is
-  process-lifetime; on an always-on control box the tables only grow. Add a retention sweep (and use
-  the `expires_at` column already on the row) when the worker becomes resident in phase 3.
+- **(phase 3) A hub-created box is control-plane topology but host-seeded (local clone).** The
+  resident worker sets `controlPlaneUrl` (so the box registers on the control box) yet hands
+  `provider.create` a locally-cloned workspace rather than `inBoxClone`. That mix is untested against
+  a real cloud from inside a box — the host live-verify must confirm a seeded control-plane box
+  completes a `claude -p` turn and pushes on `agentbox/*` (ls-remote). If it misbehaves, switch the
+  worker to `inBoxClone` (leased URL) for control-plane creates.
+- **(phase 3) SSH-key mirror to custody is best-effort + hetzner/DO-only.** `mirrorBoxSshToCustody`
+  reads `defaultBoxSshDir(sandboxId, provider)` after create; e2b/vercel mint no keypair (no-op). Not
+  exercised by the mock smoke — verify on the host that a hub-created hetzner box's keys land in
+  custody `boxes/<id>/ssh/` (phase 4's `hub pull` depends on it). No destroy-time custody GC yet
+  (compounds the phase-2 `custody rm` gap).
+- **(phase 3) Retention window is hard-coded** (24 h keep, hourly sweep). Promote to a
+  `hub.retentionHours` config key if tuning is ever wanted; today it's internal housekeeping.
+- **(phase 3) Worker seeds host credential-backup files, not a per-box isolate.**
+  `seedHostBackupsFromCustody` writes `~/.agentbox/<id>-credentials.json` on the VPS before each
+  create, so concurrent creates share one backup set. Fine for the single-writer control box; revisit
+  if the worker ever runs creates in parallel.
+- **(phase 3) The hub runtime image is the whole built monorepo (~2 GB).** The standalone bundle
+  ships no node_modules, so the image keeps `/repo` for the externals (next/react/pg/SDKs) to resolve
+  from. Correct but unoptimized; a traced prod-deps prune would shrink it if VPS disk matters.
+- **~~The daemon's background loops and the hub backend still read in-memory state, not the `Store`
+  (phase 3 blocker).~~ DONE (phase 3)** — `WriteThroughStore` mirrors a durable store's writes into
+  the in-memory `registry`/`events`/`statusStore` and hydrates them on boot, so the loops + hub
+  backend see state on a hetzner+SQLite hub. localhost is unchanged (the wrapper is only built for a
+  durable `opts.store`).
+- **~~Prompt and create-job rows are never deleted.~~ DONE (phase 3)** — optional
+  `Store.prunePrompts`/`pruneCreateJobs` (SQLite+Postgres, using `expires_at`/`finishedAt`) swept by
+  `startRetentionLoop` in the daemon.
 - **`listStatuses()` is off-interface.** Both durable stores implement it and the hub's
   `postgres-source.ts` calls it on the concrete class. Promote it to `Store` when phase 4 retargets
   the PC's shared state, so the hub can read statuses without knowing the backend.

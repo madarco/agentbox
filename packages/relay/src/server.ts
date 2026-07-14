@@ -62,12 +62,14 @@ import { leaseTokenResult } from './lease.js';
 import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
 import { resolveWorktree } from './worktree.js';
 import { handleCustodyRequest } from './custody/routes.js';
+import { handleRemoteBoxesRequest, isRemoteBoxesPath } from './remote-boxes.js';
 import type { CustodyStore } from './custody/store.js';
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
 import { CREDENTIALS_UPDATED_EVENT, CredentialsFanout } from './credentials-fanout.js';
 import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
 import { MemoryStore } from './store/memory-store.js';
+import { WriteThroughStore } from './store/write-through-store.js';
 import type { Store } from './store/store.js';
 import { DEFAULT_BOX_RELAY_PORT } from './types.js';
 import { buildCpArgv, cpFlags, normalizeCpParams } from './cp-rpc.js';
@@ -315,7 +317,15 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   // hosted control plane injects a Postgres-backed store instead. Handlers go
   // through `store.*`; the concrete instances stay exposed on the handle for
   // the autopause / queue loops (bin.ts) and the unit tests that read them.
-  const store: Store = opts.store ?? new MemoryStore({ registry, events, statusStore });
+  // Persisted-state seam. localhost/tests get a MemoryStore wrapping the concrete
+  // instances above (byte-identical to the pre-seam relay). A control box injects
+  // a durable store (SQLite/Postgres); wrap it so every write also mirrors into
+  // those instances — the daemon's loops + the hub backend read them synchronously
+  // and would otherwise see an empty registry/statusStore (Backlog: phase-3
+  // blocker A). `startRelayServer` hydrates the mirror from the store on boot.
+  const store: Store = opts.store
+    ? new WriteThroughStore(opts.store, { registry, events, statusStore })
+    : new MemoryStore({ registry, events, statusStore });
   // Per-box `box.autoApproveHostActions`: when a box registered with the flag,
   // host-action confirms resolve to 'y' without a prompt, but every bypass
   // lands in the event ring buffer (visible via `/admin/events`) so it's
@@ -508,12 +518,33 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
     }
 
+    // Create-queue surface (`/remote/boxes`) — admin-bearer-gated like custody
+    // (not loopback: the control box is behind Caddy). The shared dispatcher is
+    // the SAME one the Vercel plane's `core/handler.ts` mounts, so the PC can
+    // `agentbox create --via-hub` against the control box exactly as against the
+    // hosted plane. Runs before the loopback rejection below.
+    if (isRemoteBoxesPath(url.pathname)) {
+      const bodyText = req.method === 'POST' ? await readRawBody(req) : '';
+      const remoteRes = await handleRemoteBoxesRequest(
+        {
+          method: req.method ?? 'GET',
+          path: url.pathname,
+          bearer: bearerToken(req),
+          bodyText,
+        },
+        { store, adminToken: custodyAdminToken, log },
+      );
+      if (remoteRes) {
+        send(res, remoteRes.status, remoteRes.body ?? null);
+        return;
+      }
+    }
+
     // Admin endpoints are reachable from loopback only. The relay binds to
     // 0.0.0.0 so containers can reach /events and /rpc via host.docker.internal,
     // but admin operations (register-box, forget-box, list events, etc.) are
-    // for the host CLI and must not be exposed to boxes. `/remote/*` is a
-    // hosted-control-plane surface (box creation) served by the Next.js app's
-    // handler, not the laptop relay — so it does not exist here.
+    // for the host CLI and must not be exposed to boxes. Any other `/remote/*`
+    // is a hosted-plane surface not served by this relay.
     if (url.pathname.startsWith('/admin/') || url.pathname.startsWith('/remote/')) {
       if (url.pathname.startsWith('/remote/')) {
         send(res, 404, { error: 'not found', route });
@@ -2176,6 +2207,10 @@ function runHostCommand(
 
 export async function startRelayServer(opts: RelayServerOptions): Promise<RelayServerHandle> {
   const handle = createRelayServer(opts);
+  // Hydrate the in-memory mirror from a durable store before the caller starts
+  // the daemon loops, so a control box's registry/statusStore survive a restart
+  // (no-op for the MemoryStore laptop path — it has no `hydrate`).
+  if (handle.store instanceof WriteThroughStore) await handle.store.hydrate();
   await new Promise<void>((resolve, reject) => {
     handle.server.once('error', reject);
     handle.server.listen(opts.port, opts.host ?? '0.0.0.0', () => {

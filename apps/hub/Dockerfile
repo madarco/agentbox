@@ -1,28 +1,35 @@
-# AgentBox hub — self-host image.
-# Build context is the REPO ROOT (the app needs its workspace dep @agentbox/relay):
-#   docker build -f apps/hub/Dockerfile -t agentbox-hub .
+# AgentBox hub — self-host / control-box image.
+# Build context is the REPO ROOT (the app needs its workspace deps):
+#   docker build --network=host -f apps/hub/Dockerfile -t agentbox-hub .
 # Or via the bundled compose: `docker compose up` from apps/hub/.
+#
+# Ships the FULL hub: server.ts (relay daemon + Next UI + resident create worker)
+# from the standalone build — the same artifact `agentbox hub` spawns — NOT the
+# `next start` [...path] plane. SQLite store (no Postgres container).
 
 FROM node:22-slim AS build
 WORKDIR /repo
 RUN corepack enable
 COPY . .
 RUN pnpm install --frozen-lockfile
-# Build the app + its workspace deps in dependency order via turbo. The relay
-# bundles @agentbox/config / sandbox-core / integrations, so those packages must
-# build (emit dist/) before the relay does — `--filter` pulls in `^build` deps.
+# Build the app's workspace deps (dist/) in dependency order, then assemble the
+# spawnable standalone hub (next build + esbuild-bundled server.ts + chunks).
 RUN pnpm turbo run build --filter=@agentbox/hub
+RUN pnpm --filter @agentbox/hub build:standalone
 
 FROM node:22-slim AS runtime
 WORKDIR /repo
 RUN corepack enable
+# git + openssh-client: the resident create worker clones the repo VPS-side and
+# a hetzner box needs ssh/scp on PATH for its ControlMaster.
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
-ENV PORT=3000
-# The whole built monorepo (reliable for a pnpm workspace; not size-optimized).
+# The whole built monorepo: the standalone bundle ships no node_modules, so its
+# externals (next, react, pg, better-auth, the cloud SDKs) resolve from the
+# workspace node_modules present here. Not size-optimized; fine for a VPS.
 COPY --from=build /repo .
-WORKDIR /repo/apps/hub
 EXPOSE 3000
-# Create/upgrade the auth tables + seed the admin (self-skips when auth is off,
-# i.e. no BETTER_AUTH_SECRET), then serve the production build. Runs at boot (not
-# build) so it sees the container's POSTGRES_URL + auth env.
-CMD ["sh", "-c", "pnpm run db:auth-migrate && pnpm exec next start -p 3000"]
+# server.ts self-migrates auth (ensureAuthReady) + the store on boot, so there is
+# no separate migrate step. It anchors its own cwd from required-server-files.json.
+CMD ["node", "apps/hub/dist-standalone/apps/hub/server.js"]

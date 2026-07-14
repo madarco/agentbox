@@ -53,7 +53,13 @@ export {
 } from './permission.js';
 export { resolveWorktree } from './worktree.js';
 export { leaseTokenResult } from './lease.js';
-export { drainOneCreateJob, drainCreateJobs, type CreateBoxFn } from './create-worker.js';
+export {
+  drainOneCreateJob,
+  drainCreateJobs,
+  makeControlPlaneCreateBox,
+  type CreateBoxFn,
+  type CreateBoxDeps,
+} from './create-worker.js';
 export { type CreateJobRequest, type CreateJobRow } from './store/store.js';
 export { toAuthedHttpsUrl, parseGitRemote, repoSlugFromRemote } from './git-pat.js';
 export {
@@ -69,6 +75,7 @@ export {
   DEFAULT_SQLITE_STORE_PATH,
 } from './store/sqlite-store.js';
 export { PG_SCHEMA_SQL, SQLITE_SCHEMA_SQL } from './store/schema.js';
+export { WriteThroughStore, type WriteThroughParts } from './store/write-through-store.js';
 export { RemoteStore, type RemoteStoreOptions } from './store/remote-store.js';
 export {
   applyStoreOp,
@@ -96,6 +103,14 @@ export {
   type CustodyResponse,
   type CustodyRouteDeps,
 } from './custody/routes.js';
+export {
+  handleRemoteBoxesRequest,
+  isRemoteBoxesPath,
+  REMOTE_BOXES_PREFIX,
+  type RemoteBoxesRequest,
+  type RemoteBoxesResponse,
+  type RemoteBoxesDeps,
+} from './remote-boxes.js';
 export {
   askPrompt,
   type AutoApprovePolicy,
@@ -183,6 +198,11 @@ export {
   type KeepaliveScanEntry,
   type RenewDecision,
 } from './cloud-keepalive.js';
+export {
+  startRetentionLoop,
+  type RetentionLoopDeps,
+  type RetentionLoopHandle,
+} from './retention.js';
 export {
   countWorkingSlots,
   defaultCountRunningBoxes,
