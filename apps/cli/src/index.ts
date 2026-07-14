@@ -35,7 +35,7 @@ import { fileURLToPath as _fileURLToPath } from 'node:url';
 
 import { Command } from 'commander';
 import { applyEngineOverrideAtStartup } from './engine-override.js';
-import { buildGroupedHelp } from './help.js';
+import { buildCompactHelp, buildGroupedHelp } from './help.js';
 import { agentCommand } from './commands/agent.js';
 import { appCommand } from './commands/app.js';
 import { attachCommand } from './commands/attach.js';
@@ -188,7 +188,36 @@ program.addCommand(pluginCommand);
 program.addCommand(doctorCommand);
 
 program.configureHelp({ visibleCommands: () => [] });
-program.addHelpText('after', () => '\n' + buildGroupedHelp(program));
+program.addHelpText('after', () => '\n' + buildCompactHelp(program));
+
+// The default `--help` shows only the core workflow (buildCompactHelp);
+// the full grouped list moved behind `agentbox help --all`. commander's
+// built-in help command can't take extra flags, so replace it with our own
+// (hidden — the compact footer references it, no need to list it too).
+program.helpCommand(false);
+program.addCommand(
+  new Command('help')
+    .description('Show help; --all lists every command, grouped')
+    .argument('[command]', 'command to show help for')
+    .option('-a, --all', 'list every command, grouped')
+    .action((name: string | undefined, opts: { all?: boolean }) => {
+      if (name) {
+        const sub = program.commands.find(
+          (c) => c.name() === name || c.aliases().includes(name),
+        );
+        if (!sub) program.error(`unknown command '${name}'`);
+        sub!.help();
+      }
+      if (opts.all) {
+        // helpInformation() yields the usage/options header without the
+        // addHelpText blocks, so the compact view isn't duplicated here.
+        process.stdout.write(program.helpInformation() + '\n' + buildGroupedHelp(program) + '\n');
+        return;
+      }
+      program.help();
+    }),
+  { hidden: true },
+);
 
 await applyEngineOverrideAtStartup();
 

@@ -17,8 +17,8 @@ export const HELP_GROUPS: HelpGroup[] = [
     title: 'Access',
     commands: ['dashboard', 'attach', 'url', 'screen', 'code', 'shell', 'open', 'logs', 'drive'],
   },
-  { title: 'Inspect', commands: ['list', 'status', 'top', 'agent'] },
-  { title: 'Lifecycle', commands: ['start', 'stop', 'destroy', 'pause', 'unpause'] },
+  { title: 'Inspect', commands: ['list', 'status', 'services', 'top', 'agent'] },
+  { title: 'Lifecycle', commands: ['start', 'stop', 'destroy', 'pause', 'unpause', 'recover'] },
   { title: 'Sync & state', commands: ['download', 'cp', 'checkpoint', 'queue'] },
   {
     title: 'Advanced',
@@ -29,15 +29,20 @@ export const HELP_GROUPS: HelpGroup[] = [
       'doctor',
       'self-update',
       'install',
+      'plugin',
       'app',
       'config',
       'git',
+      'inbound',
+      'connect',
       'relay',
+      'hub',
       'docker',
       'daytona',
       'hetzner',
       'vercel',
       'e2b',
+      'digitalocean',
     ],
   },
 ];
@@ -91,5 +96,100 @@ export function buildGroupedHelp(program: Command): string {
     }
   }
   lines.push('', 'Run `agentbox <command> --help` for command-specific options.');
+  return lines.join('\n');
+}
+
+// Compact view rendered by the default `agentbox --help`: only the core
+// start → attach → git flow → destroy workflow, with related commands
+// aggregated onto one line. Everything else lives in `agentbox help --all`
+// (which renders HELP_GROUPS above). Aggregated rows need an explicit
+// description since no single command's live description fits; single-command
+// rows may override an overly long live description.
+export interface CompactRow {
+  commands: string[];
+  /** Left column; defaults to the names joined with `|` (single command: name|aliases). */
+  term?: string;
+  /** Required when commands.length > 1; single-command rows default to the live description. */
+  description?: string;
+}
+
+export interface CompactGroup {
+  title: string;
+  rows: CompactRow[];
+}
+
+export const COMPACT_HELP: CompactGroup[] = [
+  {
+    title: 'Run an agent',
+    rows: [
+      {
+        commands: ['claude', 'codex', 'opencode'],
+        description: 'Start the agent in a new isolated box',
+      },
+    ],
+  },
+  {
+    title: 'Work with boxes',
+    rows: [
+      { commands: ['attach'], description: "Re-attach to a box's agent session" },
+      { commands: ['list'], description: 'List agent boxes (-g for all projects)' },
+      {
+        commands: ['url', 'screen', 'open', 'code'],
+        description: "Open a box's web app, VNC, files, or editor",
+      },
+      { commands: ['destroy'], description: 'Destroy a box' },
+    ],
+  },
+  {
+    title: 'Git',
+    rows: [
+      {
+        commands: ['git'],
+        term: 'git push|pull|pr',
+        description: 'Push box commits to the host, pull host changes into the box, open PRs',
+      },
+    ],
+  },
+];
+
+const COMPACT_EXAMPLE = [
+  'Example:',
+  '  agentbox claude        # start Claude Code in a new box',
+  '  agentbox attach        # re-attach to its session',
+  '  agentbox git push      # push the box\'s commits to your host repo',
+  '  agentbox destroy       # remove the box',
+];
+
+const COMPACT_FOOTER = [
+  'Run `agentbox <command> --help` for command options.',
+  'More in `agentbox help --all`: claude|codex|opencode-specific commands, drive|queue,',
+  'connect|download|services|inbound, lifecycle (pause|stop|checkpoint), providers, config, …',
+];
+
+export function buildCompactHelp(program: Command): string {
+  const byName = new Map(program.commands.map((c) => [c.name(), c] as const));
+
+  const rowTerm = (row: CompactRow): string => {
+    if (row.term) return row.term;
+    if (row.commands.length === 1) {
+      const cmd = byName.get(row.commands[0]!);
+      if (cmd) return term(cmd);
+    }
+    return row.commands.join('|');
+  };
+
+  const allTerms = COMPACT_HELP.flatMap((g) => g.rows.map(rowTerm));
+  const pad = Math.max(0, ...allTerms.map((t) => t.length)) + 3;
+
+  const lines: string[] = ['Commands:'];
+  for (const g of COMPACT_HELP) {
+    lines.push('', `  ${g.title}`);
+    for (const row of g.rows) {
+      const cmd = byName.get(row.commands[0]!);
+      const description = row.description ?? cmd?.description() ?? '';
+      lines.push(`    ${rowTerm(row).padEnd(pad)}${description}`);
+    }
+  }
+  lines.push('', ...COMPACT_EXAMPLE, '', ...COMPACT_FOOTER);
   return lines.join('\n');
 }
