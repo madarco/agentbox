@@ -2,9 +2,9 @@ import { isCancel, log, note, select, spinner } from '@clack/prompts';
 import { Command } from 'commander';
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { hostname, homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox/config';
 import {
@@ -29,6 +29,12 @@ import {
   openInBrowser,
   resolveOwnerRepo,
 } from '../control-plane/ensure-repo-installed.js';
+import {
+  CustodyClient,
+  collectAgentCredentialUploads,
+  planPush,
+  type UploadItem,
+} from '../control-plane/custody-client.js';
 import { handleLifecycleError } from './_errors.js';
 
 const CP_DIR = join(homedir(), '.agentbox', 'control-plane');
@@ -441,6 +447,199 @@ const workerSub = new Command('worker')
     }
   });
 
+/**
+ * Resolve the control-plane URL (`--url` > `relay.controlPlaneUrl`) and the
+ * admin bearer (`AGENTBOX_RELAY_ADMIN_TOKEN` > the setup-written env file).
+ * Returns null and prints an actionable error when either is missing.
+ */
+async function resolveCustodyTarget(
+  urlFlag: string | undefined,
+): Promise<{ url: string; adminToken: string } | null> {
+  const cfg = await loadEffectiveConfig(process.cwd());
+  const url = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
+  if (!url) {
+    log.error('No control plane configured. Run `agentbox control-plane set-url <url>` (or pass --url).');
+    return null;
+  }
+  loadControlPlaneEnv();
+  const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '';
+  if (!adminToken) {
+    log.error(
+      'No admin token available. Set AGENTBOX_RELAY_ADMIN_TOKEN, or run this from the machine that\n' +
+        'ran `agentbox control-plane setup` (it writes the token to ~/.agentbox/control-plane).',
+    );
+    return null;
+  }
+  return { url, adminToken };
+}
+
+/** Slug a project into a custody `projects/<slug>` key: `owner__repo`, else the dir name. */
+async function projectSlug(explicit: string | undefined, projectRoot: string): Promise<string> {
+  if (explicit) return explicit.replace(/[^A-Za-z0-9._-]/g, '-');
+  const ownerRepo = await resolveOwnerRepo(projectRoot);
+  if (ownerRepo) return `${ownerRepo.owner}__${ownerRepo.repo}`;
+  return basename(projectRoot).replace(/[^A-Za-z0-9._-]/g, '-') || 'project';
+}
+
+/** Upload a set of items with a hash-skip pass; logs one line per decision. */
+async function pushItems(
+  client: CustodyClient,
+  items: UploadItem[],
+  prefix: string,
+  force: boolean,
+): Promise<void> {
+  if (items.length === 0) {
+    log.info('Nothing to push.');
+    return;
+  }
+  const manifest = await client.list(prefix);
+  const plan = planPush(items, manifest, { force });
+  let uploaded = 0;
+  let skipped = 0;
+  for (const item of items) {
+    const decision = plan.find((d) => d.path === item.path)!;
+    if (decision.action === 'skip') {
+      skipped++;
+      continue;
+    }
+    const res = await client.put(item.path, item.data);
+    if (res.changed) uploaded++;
+    else skipped++;
+  }
+  log.success(`Pushed ${String(uploaded)} item(s), skipped ${String(skipped)} unchanged.`);
+}
+
+const credentialsPushSub = new Command('push')
+  .description('Push host agent-credential backups (claude/codex/opencode) to the control box custody store')
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .option('--agent <id>', 'push only one agent: claude | codex | opencode')
+  .option('--force', 'upload even when the stored hash matches')
+  .action(async (opts: { url?: string; agent?: string; force?: boolean }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const only = opts.agent as 'claude' | 'codex' | 'opencode' | undefined;
+      if (opts.agent && !['claude', 'codex', 'opencode'].includes(opts.agent)) {
+        log.error(`unknown --agent "${opts.agent}" (expected claude | codex | opencode)`);
+        process.exitCode = 1;
+        return;
+      }
+      const items = await collectAgentCredentialUploads(only);
+      const client = new CustodyClient(target);
+      await pushItems(client, items, 'agents', opts.force === true);
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const credentialsCmd = new Command('credentials')
+  .description('Manage agent credentials on the control box custody store')
+  .addCommand(credentialsPushSub);
+
+const secretsPushSub = new Command('push')
+  .description('Push project secret/env files to the control box custody store')
+  .argument('[files...]', 'files to push (default: ./.env if present)')
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .option('--project <slug>', 'custody project slug (default: owner__repo, else the directory name)')
+  .option('--force', 'upload even when the stored hash matches')
+  .action(async (files: string[], opts: { url?: string; project?: string; force?: boolean }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const root = process.cwd();
+      const slug = await projectSlug(opts.project, root);
+      const chosen = files.length > 0 ? files : existsSync(join(root, '.env')) ? [join(root, '.env')] : [];
+      if (chosen.length === 0) {
+        log.error('No files to push (no ./.env found; pass files explicitly).');
+        process.exitCode = 1;
+        return;
+      }
+      const items: UploadItem[] = [];
+      for (const f of chosen) {
+        items.push({ path: `projects/${slug}/${basename(f)}`, data: await readFile(f) });
+      }
+      const client = new CustodyClient(target);
+      await pushItems(client, items, `projects/${slug}`, opts.force === true);
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const secretsCmd = new Command('secrets')
+  .description('Manage per-project secrets/envs on the control box custody store')
+  .addCommand(secretsPushSub);
+
+const custodyListSub = new Command('list')
+  .description('List custody entries (paths + hashes; values are never returned)')
+  .argument('[prefix]', 'scope to a prefix, e.g. agents or projects/owner__repo')
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .action(async (prefix: string | undefined, opts: { url?: string }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const client = new CustodyClient(target);
+      const entries = await client.list(prefix);
+      if (entries.length === 0) {
+        log.info('No custody entries.');
+        return;
+      }
+      for (const e of entries) {
+        process.stdout.write(`${e.path}  ${String(e.size)}B  ${e.sha256.slice(0, 12)}\n`);
+      }
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const custodyPullSub = new Command('pull')
+  .description('Download a custody scope to a local directory (0600 files)')
+  .argument('<scope>', 'custody scope/prefix, e.g. agents, projects/owner__repo, boxes/<id>')
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .option('--dest <dir>', 'destination directory (default: ./agentbox-custody)')
+  .action(async (scope: string, opts: { url?: string; dest?: string }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const dest = opts.dest ?? join(process.cwd(), 'agentbox-custody');
+      const client = new CustodyClient(target);
+      const entries = await client.list(scope);
+      if (entries.length === 0) {
+        log.info(`No custody entries under '${scope}'.`);
+        return;
+      }
+      let pulled = 0;
+      for (const e of entries) {
+        const data = await client.get(e.path);
+        if (data === null) continue;
+        const out = join(dest, e.path);
+        await mkdir(dirname(out), { recursive: true, mode: 0o700 });
+        await writeFile(out, data, { mode: 0o600 });
+        await chmod(out, 0o600);
+        pulled++;
+      }
+      log.success(`Pulled ${String(pulled)} entr${pulled === 1 ? 'y' : 'ies'} under '${scope}' to ${dest}.`);
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const custodyCmd = new Command('custody')
+  .description('Inspect + download the control box custody store')
+  .addCommand(custodyListSub)
+  .addCommand(custodyPullSub);
+
 export const controlPlaneCommand = new Command('control-plane')
   .description('EXPERIMENTAL - Set up + manage the hosted control plane (GitHub App, deploy config, reachability)')
   .addCommand(statusSub, { isDefault: true })
@@ -448,4 +647,7 @@ export const controlPlaneCommand = new Command('control-plane')
   .addCommand(setUrlSub)
   .addCommand(unsetUrlSub)
   .addCommand(addSub)
-  .addCommand(workerSub);
+  .addCommand(workerSub)
+  .addCommand(credentialsCmd)
+  .addCommand(secretsCmd)
+  .addCommand(custodyCmd);

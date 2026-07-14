@@ -27,3 +27,9 @@ export {
 } from './github-app.js';
 export { drainOneCreateJob, drainCreateJobs, type CreateBoxFn } from './create-worker.js';
 export { type CreateJobRequest, type CreateJobRow } from './store/store.js';
+export {
+  type CustodyStore,
+  type CustodyEntry,
+  type CustodyPutResult,
+} from './custody/store.js';
+export { FsCustodyStore, DEFAULT_CUSTODY_DIR } from './custody/fs-store.js';

@@ -6,6 +6,8 @@ import { isValidBoxStatus } from '../status-store.js';
 import type { Store } from '../store/store.js';
 import { applyStoreOp, isStoreRpcMethod, type StoreRpcRequest } from '../store/store-rpc.js';
 import { resolveWorktree } from '../worktree.js';
+import { handleCustodyRequest, type CustodyRouteDeps } from '../custody/routes.js';
+import type { CustodyStore } from '../custody/store.js';
 import type { CreateJobRequest } from '../store/store.js';
 import { isScratchBranch } from '@agentbox/core';
 import type {
@@ -60,6 +62,11 @@ export interface ControlPlaneDeps {
    * whose `create()` needs host execution (e.g. hetzner).
    */
   createProviders?: string[];
+  /**
+   * Custody store (agent creds / project secrets / box SSH keys). Absent →
+   * `/admin/custody/*` fail-closes with 503. See `../custody/routes.ts`.
+   */
+  custody?: CustodyStore | null;
   log?: (line: string) => void;
 }
 
@@ -128,6 +135,10 @@ export async function handleRelayRequest(
   if (isAdmin && !timingSafeEqualStr(req.bearer, deps.adminToken)) {
     return err(401, 'invalid admin token');
   }
+
+  const custodyDeps: CustodyRouteDeps = { custody: deps.custody, adminToken: deps.adminToken, log };
+  const custody = await handleCustodyRequest(req, custodyDeps);
+  if (custody) return custody.body === undefined ? { status: custody.status } : ok(custody.body, custody.status);
 
   // --- box endpoints (per-box bearer) ---
   if (req.method === 'POST' && req.path === '/events') {
