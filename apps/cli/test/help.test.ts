@@ -1,6 +1,12 @@
 import { Command } from 'commander';
 import { describe, expect, it } from 'vitest';
-import { COMPACT_HELP, HELP_GROUPS, buildCompactHelp, buildGroupedHelp } from '../src/help.js';
+import {
+  COMPACT_HELP,
+  HELP_GROUPS,
+  SHORT_DESCRIPTIONS,
+  buildCompactHelp,
+  buildGroupedHelp,
+} from '../src/help.js';
 import { agentCommand } from '../src/commands/agent.js';
 import { appCommand } from '../src/commands/app.js';
 import { attachCommand } from '../src/commands/attach.js';
@@ -148,13 +154,29 @@ describe('grouped --help', () => {
   it('renders each group title and the help footer', () => {
     const help = buildGroupedHelp(buildProgram());
     for (const g of HELP_GROUPS) expect(help).toContain(g.title);
-    expect(help).toContain('Advanced');
+    expect(help).toContain('Providers');
     expect(help).toContain('Run `agentbox <command> --help`');
     // url/screen are top-level commands listed under Access.
     expect(help).toMatch(/^\s+url\s/m);
     expect(help).toMatch(/^\s+screen\s/m);
+    // Provider commands render as rows in the Providers group.
+    expect(help).toMatch(/^\s+hetzner\s/m);
+    expect(help).toMatch(/^\s+digitalocean\s/m);
     // `path` was folded into `open --path`; not a standalone command.
     expect(help).not.toMatch(/^\s+path\s/m);
+  });
+
+  it('every SHORT_DESCRIPTIONS key resolves to a registered command', () => {
+    const registered = new Set(buildProgram().commands.map((c) => c.name()));
+    for (const name of Object.keys(SHORT_DESCRIPTIONS)) {
+      expect(registered.has(name), `${name} in SHORT_DESCRIPTIONS`).toBe(true);
+    }
+  });
+
+  it('no rendered line wraps (all lines within the width budget)', () => {
+    for (const line of buildGroupedHelp(buildProgram()).split('\n')) {
+      expect(line.length, `line too long: "${line}"`).toBeLessThanOrEqual(100);
+    }
   });
 });
 

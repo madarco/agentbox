@@ -19,33 +19,82 @@ export const HELP_GROUPS: HelpGroup[] = [
   },
   { title: 'Inspect', commands: ['list', 'status', 'services', 'top', 'agent'] },
   { title: 'Lifecycle', commands: ['start', 'stop', 'destroy', 'pause', 'unpause', 'recover'] },
-  { title: 'Sync & state', commands: ['download', 'cp', 'checkpoint', 'queue'] },
+  { title: 'Git & sync', commands: ['git', 'download', 'cp', 'checkpoint', 'queue'] },
   {
-    title: 'Advanced',
+    title: 'Providers',
     commands: [
       'prepare',
-      'wait',
-      'prune',
-      'doctor',
-      'self-update',
-      'install',
-      'plugin',
-      'app',
-      'config',
-      'git',
-      'inbound',
-      'connect',
-      'relay',
-      'hub',
       'docker',
       'daytona',
       'hetzner',
       'vercel',
       'e2b',
       'digitalocean',
+      'plugin',
+      'inbound',
+      'connect',
+    ],
+  },
+  {
+    title: 'Advanced',
+    commands: [
+      'wait',
+      'prune',
+      'doctor',
+      'self-update',
+      'install',
+      'app',
+      'config',
+      'relay',
+      'hub',
     ],
   },
 ];
+
+// Short one-line descriptions for the grouped `agentbox help` list. The
+// commands' own (often multi-sentence) descriptions stay untouched — they
+// still render in full on `agentbox <command> --help`. Only commands whose
+// live description would wrap need an entry; buildGroupedHelp falls back to
+// the live description and clips as a safety net either way.
+export const SHORT_DESCRIPTIONS: Record<string, string> = {
+  create: 'Create and start a new agent box (no agent launched)',
+  claude: 'Create a box and launch Claude Code (detachable tmux session)',
+  codex: 'Create a box and launch OpenAI Codex (detachable tmux session)',
+  opencode: 'Create a box and launch OpenCode (detachable tmux session)',
+  fork: 'Fork the current host agent session into a new box and resume it there',
+  attach: 'Attach to the running agent tmux session in a box',
+  url: "Open a box's web app URL in the browser",
+  shell: 'Open an interactive shell in a box (detachable tmux session)',
+  open: 'Mount a box /workspace in Finder (sshfs), or open it in a host app',
+  drive: 'Drive a box tmux session: snapshot screen, send keys, wait for output',
+  top: 'Live resource monitor (cpu/mem/disk) for a box, project, or all boxes',
+  agent: "Query and wait on the in-box coding agent's state",
+  start: 'Start a stopped box',
+  stop: 'Stop a box (disk preserved)',
+  destroy: 'Destroy a box and discard its writable layer',
+  pause: 'Pause a box (docker cgroup freeze / cloud archive)',
+  unpause: 'Resume a paused box',
+  recover: 'Reconnect to an already-running box without power-cycling it',
+  download: "Download a box's /workspace back to the host (gitignore-aware)",
+  cp: 'Copy files between host and box (like `docker cp`)',
+  checkpoint: 'List and manage project checkpoints (warm state new boxes start from)',
+  prepare: "Build provider base images / snapshots, or show what's prepared",
+  docker: 'Local Docker provider (the default) — sugar for `--provider docker`',
+  daytona: 'Daytona cloud provider — credentials + `--provider daytona` sugar',
+  hetzner: 'Hetzner Cloud VPS provider — credentials, firewall + provider sugar',
+  vercel: 'Vercel Sandbox provider — credentials + `--provider vercel` sugar',
+  e2b: 'E2B sandbox provider — credentials + `--provider e2b` sugar',
+  digitalocean: 'DigitalOcean Droplet provider — credentials, firewall + provider sugar',
+  inbound: "Set a VPS box's inbound-access policy (per-box firewall)",
+  connect: "Print a VPS box's SSH details to drive it from another device",
+  prune: 'Clean up orphan state records (--all: orphan docker resources)',
+  doctor: 'Diagnose system compatibility and provider readiness',
+  'self-update': 'Update agentbox, host skills, box image, relay/hub, and the tray app',
+  install: 'Interactive setup wizard: pick a provider, log in, prepare its image',
+  app: 'Control the AgentBox menu-bar app',
+  config: 'Read / write layered config (global, project, workspace)',
+  hub: 'Run the AgentBox hub — relay + Web UI on http://127.0.0.1:8787',
+};
 
 function term(cmd: Command): string {
   const aliases = cmd.aliases();
@@ -84,6 +133,7 @@ export function buildGroupedHelp(program: Command): string {
     }
   }
   const pad = Math.max(0, ...terms.map((t) => t.length)) + 2;
+  const descBudget = MAX_HELP_LINE - 4 - pad;
 
   const lines: string[] = ['Commands:'];
   for (const g of groups) {
@@ -92,11 +142,23 @@ export function buildGroupedHelp(program: Command): string {
     for (const name of g.commands) {
       const cmd = byName.get(name);
       if (!cmd) continue;
-      lines.push(`    ${term(cmd).padEnd(pad)}${cmd.description()}`);
+      const description = SHORT_DESCRIPTIONS[name] ?? cmd.description();
+      lines.push(`    ${term(cmd).padEnd(pad)}${clip(description, descBudget)}`);
     }
   }
   lines.push('', 'Run `agentbox <command> --help` for command-specific options.');
   return lines.join('\n');
+}
+
+// Hard ceiling for a rendered help line — one row per command, no wrapping
+// even on modest terminals. Descriptions past the budget clip at a word
+// boundary; the curated SHORT_DESCRIPTIONS above should make this a no-op.
+const MAX_HELP_LINE = 100;
+
+function clip(text: string, budget: number): string {
+  if (text.length <= budget) return text;
+  const cut = text.lastIndexOf(' ', budget - 1);
+  return `${text.slice(0, cut > budget / 2 ? cut : budget - 1).trimEnd()}…`;
 }
 
 // Compact view rendered by the default `agentbox --help`: only the core
@@ -146,7 +208,7 @@ export const COMPACT_HELP: CompactGroup[] = [
       {
         commands: ['git'],
         term: 'git push|pull|pr',
-        description: 'Push box commits to the host, pull host changes into the box, open PRs',
+        description: 'Push box commits to the remote, pull host changes into the box, open PRs',
       },
     ],
   },
@@ -154,16 +216,20 @@ export const COMPACT_HELP: CompactGroup[] = [
 
 const COMPACT_EXAMPLE = [
   'Example:',
-  '  agentbox claude        # start Claude Code in a new box',
-  '  agentbox attach        # re-attach to its session',
-  '  agentbox git push      # push the box\'s commits to your host repo',
-  '  agentbox destroy       # remove the box',
+  '  agentbox claude                  # launch Claude, one box per task/branch',
+  '  agentbox attach 1                # re-attach to the <N> box',
+  '',
+  '  # Then ask your agent to push/pr or do it from your pc:',
+  '  agentbox git push 1              # push to remote',
+  '  agentbox git push 1 --host-only  # move back the branch to your pc',
+  '  agentbox git pr create 1 -f      # create a PR from the box',
+  '  agentbox destroy                 # remove the box',
 ];
 
 const COMPACT_FOOTER = [
   'Run `agentbox <command> --help` for command options.',
-  'More in `agentbox help`: claude|codex|opencode-specific commands, drive|queue,',
-  'connect|download|services|inbound, lifecycle (pause|stop|checkpoint), providers, config, …',
+  'More in `agentbox help`: dashboard, pause|stop|checkpoint, claude|codex|opencode, ',
+  'connect|download|services|inbound, drive|queue, config, …',
 ];
 
 export function buildCompactHelp(program: Command): string {
