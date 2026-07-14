@@ -62,6 +62,7 @@ import { leaseTokenResult } from './lease.js';
 import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
 import { resolveWorktree } from './worktree.js';
 import { handleCustodyRequest } from './custody/routes.js';
+import { handleRemoteBoxesRequest, isRemoteBoxesPath } from './remote-boxes.js';
 import type { CustodyStore } from './custody/store.js';
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
@@ -517,12 +518,33 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
     }
 
+    // Create-queue surface (`/remote/boxes`) — admin-bearer-gated like custody
+    // (not loopback: the control box is behind Caddy). The shared dispatcher is
+    // the SAME one the Vercel plane's `core/handler.ts` mounts, so the PC can
+    // `agentbox create --via-hub` against the control box exactly as against the
+    // hosted plane. Runs before the loopback rejection below.
+    if (isRemoteBoxesPath(url.pathname)) {
+      const bodyText = req.method === 'POST' ? await readRawBody(req) : '';
+      const remoteRes = await handleRemoteBoxesRequest(
+        {
+          method: req.method ?? 'GET',
+          path: url.pathname,
+          bearer: bearerToken(req),
+          bodyText,
+        },
+        { store, adminToken: custodyAdminToken, log },
+      );
+      if (remoteRes) {
+        send(res, remoteRes.status, remoteRes.body ?? null);
+        return;
+      }
+    }
+
     // Admin endpoints are reachable from loopback only. The relay binds to
     // 0.0.0.0 so containers can reach /events and /rpc via host.docker.internal,
     // but admin operations (register-box, forget-box, list events, etc.) are
-    // for the host CLI and must not be exposed to boxes. `/remote/*` is a
-    // hosted-control-plane surface (box creation) served by the Next.js app's
-    // handler, not the laptop relay — so it does not exist here.
+    // for the host CLI and must not be exposed to boxes. Any other `/remote/*`
+    // is a hosted-plane surface not served by this relay.
     if (url.pathname.startsWith('/admin/') || url.pathname.startsWith('/remote/')) {
       if (url.pathname.startsWith('/remote/')) {
         send(res, 404, { error: 'not found', route });

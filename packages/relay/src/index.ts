@@ -98,6 +98,14 @@ export {
   type CustodyRouteDeps,
 } from './custody/routes.js';
 export {
+  handleRemoteBoxesRequest,
+  isRemoteBoxesPath,
+  REMOTE_BOXES_PREFIX,
+  type RemoteBoxesRequest,
+  type RemoteBoxesResponse,
+  type RemoteBoxesDeps,
+} from './remote-boxes.js';
+export {
   askPrompt,
   type AutoApprovePolicy,
   isPromptAnswerBody,
