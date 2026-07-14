@@ -279,6 +279,116 @@ real host Claude backup set, list, pull to a temp dir, byte-compare; unchanged r
 no-op (hash hit); on-disk modes are 0600/0700; endpoints 401 without the admin bearer;
 `pnpm --filter @agentbox/relay test` green.
 
+### Phase 2 — implementation plan (box cbx-phase2)
+
+**Where the endpoints have to live (a correction to the plan text above).** The plan says
+"relay-core endpoints … on `core/handler.ts`". That handler is the *hosted plane* (Next
+`[...path]` route, Postgres). But the thing phase 3 deploys to the VPS is the **full hub** —
+`apps/hub/server.ts` → `startRelayDaemon` → `packages/relay/src/server.ts` — which has its own
+router and does **not** delegate to `core/handler.ts`. Custody wired only into `core/handler.ts`
+would therefore be unreachable on the actual control box. So: the routes are a **shared
+dispatcher** (`custody/routes.ts`) mounted in **both** handlers. Same code, same gate, both
+profiles.
+
+**Gate: admin bearer only — no loopback bypass.** `server.ts` gates `/admin/*` on
+`isLoopbackAddress(req.socket.remoteAddress)`. On the control box the hub sits behind Caddy on
+the same host, so *every* proxied request looks loopback — a loopback-gated custody route would
+be world-readable over HTTPS. Custody therefore requires a matching admin bearer in both
+handlers and never accepts loopback as proof; missing/empty admin token → `503` (fail-closed,
+same posture as `core/handler.ts`'s "admin token unset"), no custody store wired → `503`, wrong
+token → `401`. No box-token path in this phase.
+
+**CustodyStore seam** — `packages/relay/src/custody/store.ts`, path-and-bytes only (no fs
+handles, no streams), so an S3/R2 backend is a mechanical swap (key = path, sha256 = object
+metadata):
+
+```ts
+export interface CustodyEntry {
+  path: string;      // custody-relative, e.g. 'agents/claude/.credentials.json'
+  size: number;
+  sha256: string;    // hex digest of the bytes — the only change signal
+  mode: number;      // fs backend: 0o600
+  updatedAt: string; // ISO; informational, never used for change detection
+}
+export interface CustodyStore {
+  put(path: string, data: Buffer): Promise<CustodyEntry & { changed: boolean }>;
+  get(path: string): Promise<{ entry: CustodyEntry; data: Buffer } | null>;
+  stat(path: string): Promise<CustodyEntry | null>;
+  list(prefix?: string): Promise<CustodyEntry[]>;   // the manifest
+  delete(path: string): Promise<boolean>;
+}
+```
+
+`FsCustodyStore` (`custody/fs-store.ts`) roots at `~/.agentbox/hub/custody/`
+(`DEFAULT_CUSTODY_DIR`, sibling of `store.db`/`auth.db`; injectable for tests), `0700` dirs /
+`0600` files, atomic writes (tmp + `rename` + `chmod`).
+
+**Hash manifest.** No sidecar/manifest file — the fs store derives `sha256` by reading the
+(small: credentials, `.env`, SSH keys) file, so the manifest can never drift from the bytes. Two
+skips, both content-hash, never timestamps: `put()` hashes the existing entry and returns
+`changed:false` without rewriting when equal (mtime untouched), and the CLI fetches the manifest
+first and skips uploads whose local digest already matches (so an unchanged `credentials push`
+sends zero bytes).
+
+**Path grammar** (`normalizeCustodyPath`, fail-closed → `400`): `agents/<claude|codex|opencode>/…`
+| `projects/<slug>/…` | `boxes/<boxId>/…` (SSH material at `boxes/<id>/ssh/…`). Segments match
+`[A-Za-z0-9._-]+`, `.`/`..` rejected, no absolute paths, depth ≤ 6, path ≤ 256 chars.
+
+**Endpoint surface** (`custody/routes.ts` → `handleCustodyRequest(req, store) → RelayResponse |
+null`; `null` = not a custody path, so each host router falls through unchanged):
+
+| route | body / result |
+| --- | --- |
+| `GET /admin/custody[?prefix=…]` | `{ entries: CustodyEntry[] }` — the manifest; values never included |
+| `PUT /admin/custody/<path>` | `{ data: <base64> }` → `{ …entry, changed }` |
+| `GET /admin/custody/<path>` | `{ …entry, data: <base64> }` |
+| `DELETE /admin/custody/<path>` | `204` / `404` |
+
+Values are never logged: the log line is `custody put <path> (<n> bytes, changed)` — path, size,
+changed-flag only.
+
+**Agent-credential manifest — reused, not reinvented.** The set of files a cloud create seeds
+from is `AGENT_SYNC_SPECS` (`packages/sandbox-core/src/sync/registry.ts`): per agent,
+`credential.hostBackup` (`~/.agentbox/{claude,codex,opencode}-credentials.json`),
+`credential.boxRelPath` (`.credentials.json` / `auth.json` / `auth.json`) and
+`credential.realShape` (the `isRealAgentCredential` guard that keeps an empty/placeholder blob
+from overwriting a good one). `credentials push` iterates exactly that registry — no second list
+— and stores each real backup at `agents/<id>/<credential.boxRelPath>` (the box-canonical name,
+so phase 3's seed step reads it back with the same registry).
+
+**CLI** (on the existing `agentbox control-plane` command; URL from `--url` /
+`relay.controlPlaneUrl`, admin token from `AGENTBOX_RELAY_ADMIN_TOKEN` or the setup-written
+`~/.agentbox/control-plane/control-plane.env`):
+
+- `credentials push [--agent <id>] [--force]` — registry-driven, hash-skipped.
+- `secrets push [file…] [--project <slug>]` — files land at `projects/<slug>/<basename>`; slug
+  defaults to the git origin's `owner__repo`, else the project-dir basename. With no file args it
+  pushes `.env` from the project root **only if it exists** (nothing implicit beyond that).
+- `custody pull <scope> [--dest <dir>]` — manifest under the prefix → `GET` each → write `0600`
+  under `<dest>/<custody path>` (default dest `./agentbox-custody`).
+- `custody list [prefix]` — the manifest (paths + hashes, no values).
+
+**Opportunistic push seam.** `agentbox credentials propagate --agent <id>` is already the single
+host-side point every credential refresh flows through (the relay's `CredentialsFanout` spawns it
+debounced on a box's `credentials-updated`; it is also the manual recovery command). It ends by
+best-effort pushing that agent's backup to custody when a control plane + admin token are
+configured — silent no-op otherwise, and a hash hit when nothing changed.
+
+**Files.** New: `packages/relay/src/custody/{store,fs-store,routes}.ts` (+ exports from
+`index.ts` and `control-plane.ts`), `apps/cli/src/control-plane/custody-client.ts` (fetch client +
+the pure push planner). Touched: `packages/relay/src/core/handler.ts` (mount + `custody` dep),
+`packages/relay/src/server.ts` (mount + `custody`/`adminToken` options),
+`apps/hub/server.ts` + `apps/hub/lib/plane.ts` (wire an `FsCustodyStore`),
+`apps/cli/src/commands/control-plane.ts` (subcommands),
+`apps/cli/src/commands/credentials.ts` (the opportunistic push).
+
+**Tests** (temp dirs only; no docker, no network): `custody-store.test.ts` (fs store: round-trip,
+hash-skip, modes, traversal rejection, prefix listing), `custody-routes.test.ts` (both handlers:
+401 without bearer, 503 unconfigured, 400 bad path, base64 round-trip, in-process HTTP against
+`startRelayServer` with an injected root), and a CLI planner test for the hash-skip decision.
+Plus the round-trip smoke over HTTP (commands recorded below) and the full repo suite
+(`pnpm test`, `pnpm typecheck`, `pnpm lint`).
+
 ## Phase 3 — The Hetzner deploy ships the full hub + resident create worker
 
 **Why third:** with SQLite (no db container) and custody (creds available VPS-side), the deploy
