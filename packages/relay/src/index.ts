@@ -53,7 +53,13 @@ export {
 } from './permission.js';
 export { resolveWorktree } from './worktree.js';
 export { leaseTokenResult } from './lease.js';
-export { drainOneCreateJob, drainCreateJobs, type CreateBoxFn } from './create-worker.js';
+export {
+  drainOneCreateJob,
+  drainCreateJobs,
+  makeControlPlaneCreateBox,
+  type CreateBoxFn,
+  type CreateBoxDeps,
+} from './create-worker.js';
 export { type CreateJobRequest, type CreateJobRow } from './store/store.js';
 export { toAuthedHttpsUrl, parseGitRemote, repoSlugFromRemote } from './git-pat.js';
 export {

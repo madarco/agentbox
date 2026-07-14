@@ -26,11 +26,20 @@ export {
   loadGitHubAppConfig,
   type GitHubAppConfig,
 } from './github-app.js';
-export { drainOneCreateJob, drainCreateJobs, type CreateBoxFn } from './create-worker.js';
+export {
+  drainOneCreateJob,
+  drainCreateJobs,
+  makeControlPlaneCreateBox,
+  type CreateBoxFn,
+  type CreateBoxDeps,
+} from './create-worker.js';
 export { type CreateJobRequest, type CreateJobRow } from './store/store.js';
+export { toAuthedHttpsUrl, parseGitRemote, repoSlugFromRemote } from './git-pat.js';
 export {
   type CustodyStore,
   type CustodyEntry,
   type CustodyPutResult,
+  CUSTODY_SCOPES,
+  normalizeCustodyPath,
 } from './custody/store.js';
 export { FsCustodyStore, DEFAULT_CUSTODY_DIR } from './custody/fs-store.js';

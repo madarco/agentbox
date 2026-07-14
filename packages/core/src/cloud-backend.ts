@@ -114,6 +114,15 @@ export interface CloudProvisionRequest {
    * firewall's inbound sources; other backends ignore it. Absent ⇒ `locked`.
    */
   inbound?: string;
+  /**
+   * Extra inbound source CIDRs added to the per-box firewall on top of whatever
+   * `inbound` resolves to (VPS backends only). Used for control-plane-topology
+   * creates: a box the control-box VPS provisions locks to the VPS egress IP,
+   * so the admin's PC egress CIDR is added here to keep direct PC→box SSH
+   * working. Ignored unless the inbound mode is not `open` and the backend has a
+   * per-box firewall (hetzner / digitalocean). Absent ⇒ no extra sources.
+   */
+  extraInboundCidrs?: string[];
   /** Env vars baked into the sandbox at provision time. */
   env?: Record<string, string>;
   /** Persistent volumes to attach. Backends without a volume API ignore this. */

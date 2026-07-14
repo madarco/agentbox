@@ -588,6 +588,15 @@ export function createCloudProvider(
       const inboundOpt = req.providerOptions?.['inbound'];
       const inbound =
         typeof inboundOpt === 'string' && inboundOpt.trim() !== '' ? inboundOpt.trim() : undefined;
+      // Extra firewall source CIDRs for a control-plane-topology box: the control
+      // box locks a box it creates to its OWN egress IP, so the admin's PC egress
+      // CIDR is added here to keep direct PC→box SSH working (phase 4). Only
+      // honored when a control plane is configured (control-plane topology).
+      const extraCidrsOpt = req.providerOptions?.['extraInboundCidrs'];
+      const extraInboundCidrs =
+        req.controlPlaneUrl && Array.isArray(extraCidrsOpt)
+          ? extraCidrsOpt.filter((c): c is string => typeof c === 'string' && c.trim() !== '')
+          : undefined;
       // Cloud resource grouping (DigitalOcean's `--do-project` / `box.digitaloceanProject`).
       const projectOpt = req.providerOptions?.['project'];
       const project =
@@ -700,6 +709,7 @@ export function createCloudProvider(
           project,
           host,
           inbound,
+          ...(extraInboundCidrs && extraInboundCidrs.length > 0 ? { extraInboundCidrs } : {}),
           sandboxClass,
           timeoutMs,
           exposePorts: exposeServicePorts,
