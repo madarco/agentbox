@@ -452,7 +452,7 @@ const workerSub = new Command('worker')
  * admin bearer (`AGENTBOX_RELAY_ADMIN_TOKEN` > the setup-written env file).
  * Returns null and prints an actionable error when either is missing.
  */
-async function resolveCustodyTarget(
+export async function resolveCustodyTarget(
   urlFlag: string | undefined,
 ): Promise<{ url: string; adminToken: string } | null> {
   const cfg = await loadEffectiveConfig(process.cwd());

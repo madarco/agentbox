@@ -41,6 +41,8 @@ import {
 import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
 import { runPrepare } from './prepare.js';
 import { claudeCommand } from './claude.js';
+import { resolveCustodyTarget } from './control-plane.js';
+import { enqueueCreateViaHub, pollHubJob } from '../control-plane/hub-enqueue.js';
 
 interface CreateOptions {
   workspace: string;
@@ -89,6 +91,10 @@ interface CreateOptions {
   /** --dangerously-with-credentials: copy a git credential into the box (git.pushMode=direct); cloud only.
    *  The token-vs-SSH choice is made ONLY at the interactive prompt (TTY required). */
   dangerouslyWithCredentials?: boolean;
+  /** --via-hub: enqueue the create on the control box instead of building locally. */
+  viaHub?: boolean;
+  /** --url <url>: control-plane URL for --via-hub (else relay.controlPlaneUrl). */
+  url?: string;
 }
 
 function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
@@ -153,6 +159,69 @@ async function attachShell(record: BoxRecord): Promise<never> {
     mode: 'shell',
   });
   process.exit(code);
+}
+
+/** The project's `origin` remote URL — the repo the hub worker clones VPS-side. */
+function originUrl(projectRoot: string): string | null {
+  try {
+    return execSync('git config --get remote.origin.url', { cwd: projectRoot }).toString().trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `--via-hub` path: enqueue a create job on the control box and stream its
+ * progress. Never touches a local provider. Exits the process with the job's
+ * outcome (0 on done, 1 on failure), mirroring how the local path exits.
+ */
+async function runCreateViaHub(
+  opts: CreateOptions,
+  providerName: string,
+  projectRoot: string,
+  cmdLog: ReturnType<typeof openCommandLog>,
+): Promise<void> {
+  if (providerName === 'docker') {
+    log.error('--via-hub needs a cloud provider (a docker box runs on this machine). Try --provider hetzner|e2b|vercel|daytona.');
+    cmdLog.close();
+    process.exit(1);
+  }
+  const repoUrl = originUrl(projectRoot);
+  if (!repoUrl) {
+    log.error('--via-hub needs a git `origin` remote (the hub worker clones it VPS-side). None found in this project.');
+    cmdLog.close();
+    process.exit(1);
+  }
+  const target = await resolveCustodyTarget(opts.url);
+  if (!target) {
+    cmdLog.close();
+    process.exit(1);
+  }
+  const request = {
+    repoUrl,
+    provider: providerName,
+    branch: opts.fromBranch?.trim() || undefined,
+    name: opts.name?.trim() || undefined,
+  };
+  try {
+    const jobId = await enqueueCreateViaHub(target, request);
+    log.info(`enqueued on the control plane (job ${jobId})`);
+    const job = await pollHubJob(target, jobId, {
+      onStatus: (j) => log.step(`job ${jobId}: ${j.status}`),
+    });
+    if (job.status === 'done') {
+      outro(`box created on the control plane: ${job.result?.boxId ?? '(id pending)'}`);
+      cmdLog.close();
+      process.exit(0);
+    }
+    log.error(`create job failed: ${job.result?.error ?? 'unknown error'}`);
+    cmdLog.close();
+    process.exit(1);
+  } catch (err) {
+    log.error(err instanceof Error ? err.message : String(err));
+    cmdLog.close();
+    process.exit(1);
+  }
 }
 
 export const createCommand = new Command('create')
@@ -262,6 +331,11 @@ export const createCommand = new Command('create')
     '-v, --verbose',
     'also stream the raw provider output (docker build / Daytona snapshot create) to stderr. The same content always lands in ~/.agentbox/logs/create.log — pass -v when you want to watch it live without tailing the log.',
   )
+  .option(
+    '--via-hub',
+    "enqueue the create on the control box (POST /remote/boxes) instead of building it on this machine; the resident hub worker provisions the box VPS-side. Cloud providers only. Needs a control plane configured (`control-plane set-url`) + admin token.",
+  )
+  .option('--url <url>', 'control-plane URL for --via-hub (default: relay.controlPlaneUrl)')
   .action(async (opts: CreateOptions) => {
     const cmdLog = openCommandLog('create');
     intro('Setting up a new box...');
@@ -286,6 +360,16 @@ export const createCommand = new Command('create')
       opts.provider ?? cfg.effective.box.provider ?? 'docker',
     );
     const remoteHost = opts.remoteHost ?? specRemoteHost;
+
+    // --via-hub: hand the create to the control box's queue instead of building
+    // it here. The resident hub worker clones the repo VPS-side and provisions
+    // the box, so this returns once the job is enqueued/finished — no local
+    // provider work. Cloud providers only (a docker box runs on THIS machine).
+    if (opts.viaHub) {
+      await runCreateViaHub(opts, providerName, projectRoot, cmdLog);
+      return;
+    }
+
     // `direct` push mode (box holds a copy of your git credentials) is only
     // meaningful for cloud boxes: a docker box runs on your host machine and
     // bind-mounts the host `.git`, so it is never independent of the host.
