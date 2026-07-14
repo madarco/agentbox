@@ -3,7 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // Mock the light deps so `restoreAgentSessions` runs without docker/config IO.
 // loadEffectiveConfig only supplies session names + skip-permissions here.
-vi.mock('@agentbox/config', () => ({
+// Partial mock (spread the real module): the graph under test also pulls other
+// @agentbox/config exports — e.g. the relay's SqliteStore reads STATE_DIR — and
+// a wholesale factory would make every one of them undefined at import time.
+vi.mock('@agentbox/config', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@agentbox/config')>()),
   loadEffectiveConfig: vi.fn(async () => ({
     effective: {
       claude: { sessionName: 'claude' },

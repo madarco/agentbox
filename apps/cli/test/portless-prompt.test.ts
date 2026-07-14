@@ -2,8 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { maybePromptPortless, resolvePortlessNonInteractive } from '../src/portless-prompt.js';
 
 // Mock the two side-effecting dependencies so the test stays pure (no docker,
-// no config write, no network) — we only assert the decision logic.
-vi.mock('@agentbox/config', () => ({
+// no config write, no network) — we only assert the decision logic. Partial mock
+// (spread the real module): a wholesale factory undefines every other
+// @agentbox/config export for the whole graph, so it breaks the moment some
+// transitive import needs one (e.g. STATE_DIR).
+vi.mock('@agentbox/config', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@agentbox/config')>()),
   setConfigValue: vi.fn(async () => {}),
 }));
 
