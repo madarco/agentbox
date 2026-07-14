@@ -105,6 +105,13 @@ export const SHORT_DESCRIPTIONS: Record<string, string> = {
   hub: 'Run the AgentBox hub — relay + Web UI on http://127.0.0.1:8787',
 };
 
+// Left-column overrides for the grouped `agentbox help` list, keyed by the
+// HELP_GROUPS entry — for rows that read better as a full invocation than as
+// the bare (sub)command name.
+const TERM_OVERRIDES: Record<string, string> = {
+  'git pr': 'pr create -f',
+};
+
 function term(cmd: Command): string {
   const aliases = cmd.aliases();
   return aliases.length ? `${cmd.name()}|${aliases.join('|')}` : cmd.name();
@@ -145,11 +152,13 @@ export function buildGroupedHelp(program: Command): string {
     return cmd ? { cmd, depth: parts.length - 1 } : undefined;
   };
 
+  const rowTerm = (name: string, cmd: Command): string => TERM_OVERRIDES[name] ?? term(cmd);
+
   const termWidths: number[] = [];
   for (const g of groups) {
     for (const name of g.commands) {
       const row = resolve(name);
-      if (row) termWidths.push(term(row.cmd).length + row.depth * 2);
+      if (row) termWidths.push(rowTerm(name, row.cmd).length + row.depth * 2);
     }
   }
   const pad = Math.max(0, ...termWidths) + 2;
@@ -165,7 +174,7 @@ export function buildGroupedHelp(program: Command): string {
       const description = SHORT_DESCRIPTIONS[name] ?? row.cmd.description();
       const indent = '    ' + '  '.repeat(row.depth);
       lines.push(
-        `${indent}${term(row.cmd).padEnd(pad - row.depth * 2)}${clip(description, descBudget)}`,
+        `${indent}${rowTerm(name, row.cmd).padEnd(pad - row.depth * 2)}${clip(description, descBudget)}`,
       );
     }
   }
@@ -240,7 +249,10 @@ export const COMPACT_HELP: CompactGroup[] = [
 const COMPACT_EXAMPLE = [
   'Example:',
   '  agentbox claude                  # launch Claude, one box per task/branch',
-  '  agentbox attach 1                # re-attach to the <N> box',
+  '  agentbox hetzner|e2b|… claude    # launch Claude on a specific provider',
+  '  ! agentbox fork hetzner|e2b|…    # from Claude chat: teleport the current session',
+  '',
+  '  agentbox attach 1                # detach with Ctrl+a d, then re-attach',
   '',
   '  # Then ask your agent to push/pr or do it from your pc:',
   '  agentbox git push 1              # push to remote',
