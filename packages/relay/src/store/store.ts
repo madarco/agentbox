@@ -81,6 +81,13 @@ export interface CreateJobRow {
  * job queue (Phase 5) extend this interface in their own phases.
  */
 export interface Store {
+  /**
+   * Create/upgrade the backing tables. Durable stores (Postgres, SQLite) only —
+   * the in-memory and remote stores have nothing to migrate, hence optional.
+   * Idempotent; safe to call on every boot.
+   */
+  migrate?(): Promise<void>;
+
   // --- boxes (was BoxRegistry) ---
   registerBox(reg: BoxRegistration): Promise<void>;
   getBox(boxId: string): Promise<BoxRegistration | undefined>;

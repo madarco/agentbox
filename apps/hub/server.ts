@@ -13,6 +13,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import next from 'next';
+import { makeStore, type Store } from '@agentbox/relay/control-plane';
 import { startRelayDaemon } from '@agentbox/relay/daemon';
 import { createHubBackend } from './lib/hub-backend';
 
@@ -28,11 +29,35 @@ const host = process.env.AGENTBOX_HUB_HOST ?? '127.0.0.1';
 process.env.AGENTBOX_HUB_PROFILE ??= host === '127.0.0.1' ? 'localhost' : 'hetzner';
 if (host !== '127.0.0.1') process.env.AGENTBOX_HUB_AUTH ??= 'on';
 
+/**
+ * Pick the relay's persisted-state backend.
+ *
+ * - An explicit RELAY_STORE_URL / POSTGRES_URL always wins (`postgres://…`, a
+ *   `sqlite:` URL, or a bare path).
+ * - The control box (hetzner profile) otherwise defaults to SQLite at
+ *   `~/.agentbox/hub/store.db` — one always-on process on a small VPS has no
+ *   reason to run a database container, and its registry/approvals/queue must
+ *   still survive a restart.
+ * - localhost stays on the in-memory store (returns undefined): the laptop relay
+ *   is one process whose real box state lives with the providers, and the
+ *   daemon's loops read the in-memory registry directly.
+ */
+async function resolveStore(storeDbPath: string): Promise<Store | undefined> {
+  const spec =
+    process.env.RELAY_STORE_URL ??
+    process.env.POSTGRES_URL ??
+    (process.env.AGENTBOX_HUB_PROFILE === 'hetzner' ? `sqlite:${storeDbPath}` : undefined);
+  if (!spec) return undefined;
+  const store = makeStore(spec);
+  await store.migrate?.();
+  return store;
+}
+
 async function main(): Promise<void> {
   // localhost: provision the token gate secret and hand it to the middleware via
   // env (unless auth is explicitly off). Do this before Next starts so the mode
   // is settled for the first request.
-  const { authMode } = await import('./lib/auth-config');
+  const { authMode, STORE_DB_PATH } = await import('./lib/auth-config');
   if (process.env.AGENTBOX_HUB_PROFILE === 'localhost' && process.env.AGENTBOX_HUB_AUTH !== 'off') {
     const { ensureHubToken } = await import('./lib/hub-token');
     process.env.AGENTBOX_HUB_TOKEN = await ensureHubToken();
@@ -58,9 +83,13 @@ async function main(): Promise<void> {
   await app.prepare();
   const handle = app.getRequestHandler();
 
+  const store = await resolveStore(STORE_DB_PATH);
+
   const daemon = await startRelayDaemon({
     port,
     host,
+    // Omitted → the relay builds its in-memory store (the localhost default).
+    store,
     logger: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
     // Next parses req.url itself when parsedUrl is omitted.
     uiHandler: (req, res) => {

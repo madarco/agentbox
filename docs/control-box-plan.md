@@ -75,7 +75,14 @@ control box holds copies of what boxes need.
 
 ---
 
-## Phase 1 — SQLite parity for the hub core
+## Phase 1 — SQLite parity for the hub core — DONE (box `cbx-phase1`, 2026-07-14)
+
+- [x] Core store on drizzle, dual dialect (`SqliteStore` + `PostgresStore` on one schema).
+- [x] `makeStore()` sqlite branch; hetzner hub profile defaults to SQLite when `POSTGRES_URL` is unset.
+- [x] better-auth on SQLite verified (hetzner profile boots, `auth.db` created, `pg` path still boots).
+
+Result + deviations are recorded under [implementation plan](#phase-1--implementation-plan-box-cbx-phase1)
+below; open items went to the [Backlog](#backlog).
 
 **Why first:** the control box should be a single always-on process on a small VPS. Postgres is
 the serverless profile's constraint, not the VPS's; SQLite drops a container from the compose
@@ -113,6 +120,129 @@ Postgres conformance still green against a disposable `postgres:16`; `AGENTBOX_H
 AGENTBOX_HUB_HOST=0.0.0.0 pnpm --filter @agentbox/hub hub:dev` boots with zero Postgres, `/healthz`
 reports `db:true`, better-auth signup/login works, a registered box + prompt row survive a
 process restart. `pnpm typecheck` before push.
+
+### Phase 1 — implementation plan (box cbx-phase1)
+
+**Driver decision (verified against the installed tree, not assumed).** `drizzle-orm@0.45.2` (the
+current latest) ships **no `node:sqlite` driver**: its SQLite subpaths are `better-sqlite3`,
+`bun-sqlite`, `libsql`, `op-sqlite`, `expo-sqlite`, `durable-sqlite`, `prisma/sqlite` and
+`sqlite-proxy`. So the plan's first option does not exist, and its `better-sqlite3` fallback would
+add a **native dependency** — against the repo's one-sanctioned-native-dep rule, and it would need a
+toolchain in the hub image. Taking the plan's third option (a thin adapter):
+
+- **SQLite = `drizzle-orm/sqlite-proxy` over `node:sqlite`.** `sqlite-proxy` is drizzle's
+  bring-your-own-executor SQLite driver: you hand it
+  `(sql, params, method) => Promise<{ rows }>` and drizzle's SQLite dialect does the rest. A ~20-line
+  callback over `DatabaseSync` from `node:sqlite` is the whole adapter, so we get drizzle's typed
+  query builder with **zero native deps** and the same driver the hub's better-auth already uses.
+  Verified live in this box (Node 24): insert/`onConflictDoUpdate`/select/`delete … returning`/
+  `count(*)` and json-mode columns all round-trip. Rows must be positional for drizzle's mapper —
+  `StatementSync.setReturnArrays(true)` when present, else `Object.values(row)` (our queries are
+  single-table, so no duplicate-column collapse).
+- **Postgres = `drizzle-orm/node-postgres`** over the existing `pg` Pool. `drizzle-orm/node-postgres`
+  statically `import`s `pg`, so it stays behind the **same lazy dynamic import** as today's pool
+  factory (importing it at module top would drag `pg` into the box's `bin.cjs` load path).
+- `drizzle-orm` itself is pure JS with no hard dependencies (28 optional peers, none required) — it
+  is a normal dependency of `@agentbox/relay` and is bundled; only the two **drivers** (`pg`,
+  `node:sqlite`) stay external/lazy, which is the requirement.
+- Node floor: `node:sqlite` needs ≥ 22.5 (the repo's engines floor is 20.10). `SqliteStore` checks
+  `process.versions.node` on first open and fails with an explicit message.
+
+**Files.**
+
+- `packages/relay/src/store/schema.ts` (new) — one schema module holding both dialect table sets
+  (`boxes`, `events`, `box_status`, `prompts`, `create_jobs`) with identical column names, plus the
+  idempotent DDL for each dialect and the shared row→domain mappers.
+- `packages/relay/src/store/sqlite-store.ts` (new) — `SqliteStore` (`node:sqlite` + sqlite-proxy).
+- `packages/relay/src/store/postgres-store.ts` — ported onto the drizzle schema; every hand-written
+  query string removed.
+- `packages/relay/src/store/index.ts` — `makeStore()` gains the sqlite branch.
+- `packages/relay/src/{index,control-plane}.ts` — export `SqliteStore`; `SCHEMA_SQL` becomes
+  `PG_SCHEMA_SQL` / `SQLITE_SCHEMA_SQL` (unreleased — clean rename, no alias).
+- `packages/relay/{package.json,tsup.config.ts}` — add `drizzle-orm`; `pg` stays external.
+- `apps/hub/server.ts` — pick the store from the profile (hetzner → sqlite when `POSTGRES_URL` is
+  unset) and pass it to `startRelayDaemon`.
+- `apps/hub/lib/auth-config.ts` — `STORE_DB_PATH` (`~/.agentbox/hub/store.db`), sibling of `auth.db`.
+
+**Schema shape.** Column names and JSON payloads are identical across dialects; only the physical
+types differ, so the existing Postgres tables are unchanged (no migration of deployed data):
+
+| table | key columns | pg types | sqlite types |
+| --- | --- | --- | --- |
+| `boxes` | `box_id` pk, `token` (idx), `origin_url`, `data`, `registered_at` | `text` / `jsonb` / `timestamptz` | `text` / `text` json-mode / `text` ISO |
+| `events` | `id` pk auto, `box_id`, `type`, `ts`, `payload`, `received_at` | `bigint` identity / `jsonb` | `integer` autoincrement / `text` json-mode |
+| `box_status` | `box_id` pk, `name`, `project_index`, `status`, `updated_at` | `jsonb` | `text` json-mode |
+| `prompts` | `id` pk, `box_id`, `ev`, `method`, `params`, `status`, `answer`, `cancelled`, `result`, `created_at`, `expires_at` | `jsonb` / `boolean` | `text` json-mode / `integer` boolean-mode |
+| `create_jobs` | `id` pk, `status`, `request`, `result`, `claimed_by`, `created_at`, `started_at`, `finished_at` | `jsonb` | `text` json-mode |
+
+Timestamps are written as JS-side ISO strings in both dialects (rather than a `now()` default) so the
+two stores share one mapper; reads normalize `Date | string → ISO`. Two table sets are unavoidable —
+drizzle's `pg-core` and `sqlite-core` builders produce dialect-typed objects, and a query is typed to
+its dialect — so the stores keep parallel (but now typed, drizzle-built) query bodies over one shared
+schema + mapper module rather than one generic body.
+
+**Deviation from the plan text:** the idempotent `CREATE TABLE IF NOT EXISTS` DDL stays as SQL
+strings (renamed, colocated with the schema). Drizzle only emits DDL through drizzle-kit migration
+*folders*, which do not survive tsup bundling into `bin.cjs` / the hub standalone build. All
+**queries** are drizzle; only the boot DDL is literal SQL. `SqliteStore` applies its DDL + `PRAGMA
+journal_mode=WAL` / `busy_timeout` lazily on first open, so it is always migrated before use.
+
+**Tests.** `sqlite-store.test.ts` runs the existing `runStoreConformance` suite against a
+`SqliteStore` on a `:memory:` DB (and one on-disk case for persistence), so it stays docker/network
+free and joins Memory in the default `pnpm --filter @agentbox/relay test` run. Postgres keeps its
+opt-in `AGENTBOX_TEST_DATABASE_URL` gate, run here against a disposable `postgres:16`. Boot smoke:
+`AGENTBOX_HUB_PROFILE=hetzner` with the sqlite store — register a box + park a prompt row, restart
+the process, assert both survive.
+
+### Phase 1 — what actually shipped
+
+Everything above landed as planned. What the implementation added to it:
+
+- **`node:sqlite` is loaded through `createRequire`, not `await import()`.** It is a *prefix-only*
+  builtin, so it is absent from `module.builtinModules` — and vite 5 / vite-node decide "is this a
+  builtin?" from exactly that list, strip the `node:`, and try to load a package called `sqlite` from
+  disk. A plain dynamic import breaks every vitest run that touches the store, and no vitest config
+  hook fixes it (vite-node externalizes builtins by its own list, so `server.deps.external` and a
+  `resolveId` plugin both miss). `createRequire` hands the load to Node's own resolver, which is the
+  only one that gets prefix-only builtins right; tsup/esbuild were never the problem. Revisit when the
+  repo moves to vite 6 / vitest 3.
+- **Bundle posture (verified on the built artifacts, not assumed).** `relay/dist/bin.cjs` — the bin
+  baked into every box image — contains **neither store** (0 references, byte-identical size to
+  before). In the CLI, drizzle lands in lazily-reachable chunks (`sqlite-proxy-*.js`,
+  `node-postgres-*.js`) that `index.js` does not import: `pg` and `node:sqlite` are never on the
+  laptop's load path, and CLI startup is unchanged. drizzle-orm itself is bundled (pure JS, no hard
+  deps), so no new runtime dependency ships to users.
+- **Store gained an optional `migrate?()`** so `makeStore()` callers can migrate without casting;
+  `SqliteStore` also applies its schema lazily on first open, so it cannot be used un-migrated.
+- **Postgres test fixture fix (pre-existing bug, not the port):** its `TRUNCATE` omitted
+  `create_jobs`, and the queue case re-uses fixed job ids with `ON CONFLICT DO NOTHING` — so it only
+  passed against a virgin database and failed on the second run. `create_jobs` is now truncated too.
+
+**Verification (all green, from inside the box):**
+
+| check | result |
+| --- | --- |
+| `SqliteStore` on the store conformance suite (+ an on-disk restart case) | 11/11 |
+| `pnpm --filter @agentbox/relay test` | 298 passed, 1 skipped (the opt-in pg suite) |
+| Postgres conformance vs a disposable `postgres:16` (`AGENTBOX_TEST_DATABASE_URL=…`) | 10/10, twice in a row (re-runnable) |
+| `pnpm build` / `pnpm typecheck` (repo root) / relay lint | green (18 + 31 tasks) |
+| Boot smoke (below) | 13/13 |
+
+**Boot smoke** (script kept out of the repo — it drives two real processes): boots the actual
+`apps/hub/server.ts` with `AGENTBOX_HUB_PROFILE=hetzner`, `AGENTBOX_HUB_HOST=0.0.0.0`, a throwaway
+`HOME` and **no `POSTGRES_URL`**, so it must pick SQLite. Asserts: `/healthz` ok with zero Postgres;
+better-auth creates `auth.db` on the sqlite dialect ("auth ready"); a box registered over
+`/admin/register-box` plus an event it posts with its bearer token are both in the store; after
+SIGTERM + reboot the box, its token, and the event counts are all still there. Then a **poll-mode
+relay over the same `store.db`** (the shape phase 3's control box runs): the box *the hub registered*
+authenticates against it (one store, two processes), its `/rpc` parks a prompt row, and after a
+restart that row is still pending and still answerable via `/admin/prompts/answer`. A variant with
+`POSTGRES_URL` set confirms the same hub picks `PostgresStore` and persists across a restart too.
+
+**Concurrency constraint confirmed:** SQLite is single-writer, so phase 3's create worker must run
+in the hub *process* (an interval loop), not as a second container against the same file. WAL +
+`busy_timeout=5000` are set, and the smoke above shows two processes *can* share the file — but that
+is the approval/registry read path, not a second writer competing on the queue.
 
 ## Phase 2 — Custody store on the control box (agent creds, SSH keys, secrets/envs)
 
@@ -258,3 +388,37 @@ unaffected throughout (`pnpm --filter @agentbox/relay test` + a local docker smo
 - `pnpm typecheck` before every push; relay conformance suites are the regression net for
   phases 1–2; live cloud verification (usable-box bar: a real `claude -p` turn + ls-remote-checked
   push) for phases 3–4.
+
+---
+
+## Backlog
+
+Findings and follow-ups discovered while implementing, kept out of the phase they were found in.
+
+- **The daemon's background loops and the hub backend still read in-memory state, not the `Store`
+  (phase 3 blocker).** `startRelayServer` only falls back to `MemoryStore` — inject any other store
+  and the handlers write to it, but the `BoxRegistry` / `EventBuffer` / `BoxStatusStore` instances on
+  the handle stay empty. The autopause loop, the cloud-keepalive loop, the queue loop, and
+  `createHubBackend` (`handle.statusStore.get(id)`, `handle.prompts`) all read those objects. On the
+  localhost profile nothing changes (MemoryStore *is* those objects), but on the control box
+  (hetzner + SQLite) a box's live status reaches `store.setStatus` and no further: autopause would
+  never fire and the hub UI would show no agent status. Phase 3 must route those consumers through
+  the `Store` (or have the durable stores write through to the in-process caches). Phase 1 does not
+  regress anything here — it just makes the gap load-bearing for the first time.
+- **Prompt and create-job rows are never deleted.** Neither durable store prunes answered prompts or
+  finished jobs (events are ring-trimmed; prompts/jobs are not). On the laptop that memory is
+  process-lifetime; on an always-on control box the tables only grow. Add a retention sweep (and use
+  the `expires_at` column already on the row) when the worker becomes resident in phase 3.
+- **`listStatuses()` is off-interface.** Both durable stores implement it and the hub's
+  `postgres-source.ts` calls it on the concrete class. Promote it to `Store` when phase 4 retargets
+  the PC's shared state, so the hub can read statuses without knowing the backend.
+- **DDL is still literal SQL.** All *queries* are drizzle, but `PG_SCHEMA_SQL` / `SQLITE_SCHEMA_SQL`
+  are hand-written `CREATE TABLE IF NOT EXISTS` strings, because drizzle only emits DDL through
+  drizzle-kit migration *folders*, which do not survive tsup bundling into `bin.cjs` / the hub
+  standalone build. They are colocated with the schema, but nothing enforces that they match it — a
+  drift test (or a build-time `drizzle-kit generate` inlined as a string) would.
+- **`node:sqlite` is loaded via `createRequire`** because vite 5 / vite-node cannot resolve
+  prefix-only builtins (details in the phase 1 notes). Swap it back to `await import('node:sqlite')`
+  once the repo is on vite 6 / vitest 3.
+- **Event trimming is a `DELETE` per append** in both durable stores (unchanged from the pre-drizzle
+  Postgres store). Fine at current volume; batch it if the control box gets chatty.
