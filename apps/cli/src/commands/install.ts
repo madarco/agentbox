@@ -7,6 +7,7 @@
  *      `ensure*Credentials` flow, including Vercel's "install sandbox CLI
  *      then browser login" handling).
  *   4. Confirm-then-run base image / snapshot prepare (default-yes for docker).
+ *   4b. Confirm-then-pin it as `box.provider` (the backend new boxes go to).
  *   5. Install the host `/agentbox` skill files into Claude / Codex / OpenCode.
  *   6. Write the first-run marker.
  *   7. Tutorial outro.
@@ -40,7 +41,13 @@ import {
   type CheckResult,
   type ProviderName,
 } from '../lib/doctor-checks.js';
-import { PROVIDER_NAMES, providerMeta, type ProviderKind } from '@agentbox/config';
+import {
+  loadEffectiveConfig,
+  PROVIDER_NAMES,
+  providerMeta,
+  setConfigValue,
+  type ProviderKind,
+} from '@agentbox/config';
 import { isRuntimeProvider, loadProviderModule } from '../provider/loaders.js';
 import { isFirstRun, markSetupComplete } from '../lib/first-run.js';
 import { maybePromptStar } from '../lib/star-prompt.js';
@@ -466,10 +473,52 @@ async function runProviderLogin(name: ProviderName): Promise<boolean> {
   return true;
 }
 
-function tutorialBody(provider: ProviderName): string {
-  // Docker is the default provider, so the prefix is implicit; the cloud
-  // providers need the explicit `agentbox <provider> claude` shorthand.
-  const startCmd = provider === 'docker' ? 'agentbox claude    ' : `agentbox ${provider} claude`;
+/**
+ * Offer to pin the provider the wizard just set up as `box.provider`, so plain
+ * `agentbox claude` routes to it. Without this the wizard can walk you through a
+ * Hetzner login and snapshot bake and `agentbox claude` still creates a docker
+ * box. Written --global: the wizard is machine-level setup, not project-level.
+ *
+ * Skipped when the effective provider already resolves to this one (the common
+ * docker-on-a-fresh-machine path, where the built-in default already matches).
+ * Returns whether new boxes will now default to `name`.
+ */
+async function maybeSetDefaultProvider(name: ProviderName, autoYes: boolean): Promise<boolean> {
+  const cfg = await loadEffectiveConfig(process.cwd());
+  if (cfg.effective.box.provider === name) return true;
+
+  const label = providerMeta(name as ProviderKind).label;
+  const wantDefault = autoYes
+    ? true
+    : await confirm({
+        message: `Make ${label} the default for new boxes? (plain \`agentbox claude\` will use it)`,
+        initialValue: true,
+      });
+  if (!wantDefault) {
+    log.info(
+      `left the default as ${cfg.effective.box.provider} — start a ${name} box with \`agentbox ${name} claude\`, ` +
+        `or set it later with \`agentbox config set box.provider ${name} --global\``,
+    );
+    return false;
+  }
+
+  try {
+    const r = await setConfigValue('global', 'box.provider', name, process.cwd(), { raw: true });
+    log.info(`box.provider = ${name}   (wrote ${r.path})`);
+    return true;
+  } catch (err) {
+    log.warn(
+      `could not write box.provider: ${err instanceof Error ? err.message : String(err)} — ` +
+        `set it with \`agentbox config set box.provider ${name} --global\``,
+    );
+    return false;
+  }
+}
+
+function tutorialBody(provider: ProviderName, isDefault: boolean): string {
+  // The `agentbox <provider> …` prefix is only needed when the provider isn't
+  // the default one new boxes are created on.
+  const startCmd = isDefault ? 'agentbox claude    ' : `agentbox ${provider} claude`;
   return (
     `Get started:\n` +
     `  ${startCmd}                       # for claude, codex, opencode\n` +
@@ -582,6 +631,9 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
     );
   }
 
+  // 4b) Pin it as the default backend for new boxes (`box.provider`).
+  const isDefaultProvider = await maybeSetDefaultProvider(providerName, opts.yes ?? false);
+
   // 5) Host /agentbox skill (idempotent).
   const sp = spinner();
   sp.start('installing host /agentbox skill…');
@@ -690,7 +742,7 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
   }
 
   // 7) Tutorial outro.
-  note(tutorialBody(providerName), 'Next steps');
+  note(tutorialBody(providerName, isDefaultProvider), 'Next steps');
 
   outro(
     opts.fromAutoTrigger
@@ -722,9 +774,9 @@ export const installCommand = new Command('install')
   .option('--dry-run', 'print what would be written without changing anything')
   .option(
     '-p, --provider <name>',
-    'pre-select the provider to set up (docker | daytona | hetzner | vercel)',
+    `pre-select the provider to set up (${PROVIDER_NAMES.join(' | ')})`,
   )
-  .option('-y, --yes', 'auto-confirm the prepare step')
+  .option('-y, --yes', 'auto-confirm the prepare step and the default-provider prompt')
   .action(async (opts: InstallOptions, cmd: Command) => {
     // Operands that didn't match a registered subcommand land here (commander
     // allows excess arguments by default) — refuse them instead of silently

@@ -98,11 +98,16 @@ The largest group. A pattern runs through it: a generic key plus per-provider ov
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `box.provider` | enum `docker`/`daytona`/`hetzner`/`vercel` | `docker` | backend new boxes are created on |
+| `box.provider` | enum `docker`/`daytona`/`hetzner`/`vercel`/`e2b`/`digitalocean` | `docker` | backend new boxes are created on |
+
+This is what plain `agentbox claude` (or `create`, `codex`, `opencode`) uses when you don't pass `--provider`. `agentbox install` offers to set it for you at the end of the wizard, so the provider you just logged in to and prepared becomes the one new boxes go to. Set it yourself at any time:
 
 ```bash
-agentbox config set box.provider hetzner --global
+agentbox config set box.provider hetzner --global    # every project on this machine
+agentbox config set box.provider hetzner             # this project only
 ```
+
+A per-run `--provider docker` (or the `agentbox docker claude` prefix) still overrides it.
 
 See [local Docker](/docs/local-docker), [Hetzner](/docs/hetzner), [Daytona](/docs/daytona), [Vercel](/docs/vercel), and [core concepts](/docs/core-concepts).
 
