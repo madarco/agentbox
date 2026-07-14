@@ -68,6 +68,7 @@ import { BoxRegistry, EventBuffer } from './registry.js';
 import { CREDENTIALS_UPDATED_EVENT, CredentialsFanout } from './credentials-fanout.js';
 import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
 import { MemoryStore } from './store/memory-store.js';
+import { WriteThroughStore } from './store/write-through-store.js';
 import type { Store } from './store/store.js';
 import { DEFAULT_BOX_RELAY_PORT } from './types.js';
 import { buildCpArgv, cpFlags, normalizeCpParams } from './cp-rpc.js';
@@ -315,7 +316,15 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   // hosted control plane injects a Postgres-backed store instead. Handlers go
   // through `store.*`; the concrete instances stay exposed on the handle for
   // the autopause / queue loops (bin.ts) and the unit tests that read them.
-  const store: Store = opts.store ?? new MemoryStore({ registry, events, statusStore });
+  // Persisted-state seam. localhost/tests get a MemoryStore wrapping the concrete
+  // instances above (byte-identical to the pre-seam relay). A control box injects
+  // a durable store (SQLite/Postgres); wrap it so every write also mirrors into
+  // those instances — the daemon's loops + the hub backend read them synchronously
+  // and would otherwise see an empty registry/statusStore (Backlog: phase-3
+  // blocker A). `startRelayServer` hydrates the mirror from the store on boot.
+  const store: Store = opts.store
+    ? new WriteThroughStore(opts.store, { registry, events, statusStore })
+    : new MemoryStore({ registry, events, statusStore });
   // Per-box `box.autoApproveHostActions`: when a box registered with the flag,
   // host-action confirms resolve to 'y' without a prompt, but every bypass
   // lands in the event ring buffer (visible via `/admin/events`) so it's
@@ -2176,6 +2185,10 @@ function runHostCommand(
 
 export async function startRelayServer(opts: RelayServerOptions): Promise<RelayServerHandle> {
   const handle = createRelayServer(opts);
+  // Hydrate the in-memory mirror from a durable store before the caller starts
+  // the daemon loops, so a control box's registry/statusStore survive a restart
+  // (no-op for the MemoryStore laptop path — it has no `hydrate`).
+  if (handle.store instanceof WriteThroughStore) await handle.store.hydrate();
   await new Promise<void>((resolve, reject) => {
     handle.server.once('error', reject);
     handle.server.listen(opts.port, opts.host ?? '0.0.0.0', () => {

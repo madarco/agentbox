@@ -17,6 +17,7 @@ export {
   DEFAULT_SQLITE_STORE_PATH,
 } from './store/sqlite-store.js';
 export { PG_SCHEMA_SQL, SQLITE_SCHEMA_SQL } from './store/schema.js';
+export { WriteThroughStore, type WriteThroughParts } from './store/write-through-store.js';
 export { makeStore } from './store/index.js';
 export { MemoryStore } from './store/memory-store.js';
 export { type Store, type PromptRow } from './store/store.js';

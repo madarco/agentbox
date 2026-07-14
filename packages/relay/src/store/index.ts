@@ -7,6 +7,7 @@ export type { Store } from './store.js';
 export { MemoryStore, type MemoryStoreParts } from './memory-store.js';
 export { PostgresStore, type PostgresStoreOptions } from './postgres-store.js';
 export { SqliteStore, type SqliteStoreOptions, DEFAULT_SQLITE_STORE_PATH } from './sqlite-store.js';
+export { WriteThroughStore, type WriteThroughParts } from './write-through-store.js';
 export { PG_SCHEMA_SQL, SQLITE_SCHEMA_SQL } from './schema.js';
 
 /**
