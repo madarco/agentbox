@@ -29,7 +29,12 @@ if (!url) {
       adminPool = new Pool({ connectionString: url });
     }
     // Fresh state per test; RESTART IDENTITY makes event ids deterministic.
-    await adminPool.query('TRUNCATE boxes, events, box_status, prompts RESTART IDENTITY');
+    // create_jobs is in the list because the queue test re-uses fixed ids (j1/j2)
+    // and enqueue is ON CONFLICT DO NOTHING — leftovers from an earlier run would
+    // otherwise make the claim test pass only against a virgin database.
+    await adminPool.query(
+      'TRUNCATE boxes, events, box_status, prompts, create_jobs RESTART IDENTITY',
+    );
     return store;
   });
 

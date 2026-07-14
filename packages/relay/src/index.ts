@@ -62,11 +62,13 @@ export {
   type GenericRequest,
   type RelayResponse,
 } from './core/handler.js';
+export { PostgresStore, type PostgresStoreOptions } from './store/postgres-store.js';
 export {
-  PostgresStore,
-  type PostgresStoreOptions,
-  SCHEMA_SQL,
-} from './store/postgres-store.js';
+  SqliteStore,
+  type SqliteStoreOptions,
+  DEFAULT_SQLITE_STORE_PATH,
+} from './store/sqlite-store.js';
+export { PG_SCHEMA_SQL, SQLITE_SCHEMA_SQL } from './store/schema.js';
 export { RemoteStore, type RemoteStoreOptions } from './store/remote-store.js';
 export {
   applyStoreOp,

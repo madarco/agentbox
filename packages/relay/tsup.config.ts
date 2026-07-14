@@ -26,6 +26,9 @@ const externalAtRuntime = [
   // `pg` is only used by the Postgres store on the hosted control plane, loaded
   // via a lazy dynamic `import('pg')`. Keep it out of both relay bundles (esp.
   // the self-contained bin.cjs) so the laptop relay never carries it.
+  // (The SQLite store's driver is `node:sqlite`, a builtin — external by
+  // definition — and is likewise only imported lazily, so a Node < 22.5 host
+  // never touches it unless it asks for a SQLite store.)
   'pg',
 ];
 
