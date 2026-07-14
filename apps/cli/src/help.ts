@@ -226,11 +226,16 @@ const COMPACT_EXAMPLE = [
   '  agentbox destroy                 # remove the box',
 ];
 
-const COMPACT_FOOTER = [
-  'Run `agentbox <command> --help` for command options.',
-  'More in `agentbox help`: dashboard, pause|stop|checkpoint, claude|codex|opencode, ',
-  'connect|download|services|inbound, drive|queue, config, …',
+// Rendered as a last pseudo-group inside the Commands block (same indentation
+// as the real groups) so the pointer to the full list doesn't get lost in the
+// footer text.
+const COMPACT_MORE = [
+  '  More in `agentbox help`',
+  '    dashboard, pause|stop|checkpoint, claude|codex|opencode,',
+  '    connect|download|services|inbound, drive|queue, config, …',
 ];
+
+const COMPACT_FOOTER = ['Run `agentbox <command> --help` for command options.'];
 
 export function buildCompactHelp(program: Command): string {
   const byName = new Map(program.commands.map((c) => [c.name(), c] as const));
@@ -256,6 +261,6 @@ export function buildCompactHelp(program: Command): string {
       lines.push(`    ${rowTerm(row).padEnd(pad)}${description}`);
     }
   }
-  lines.push('', ...COMPACT_EXAMPLE, '', ...COMPACT_FOOTER);
+  lines.push('', ...COMPACT_MORE, '', ...COMPACT_EXAMPLE, '', ...COMPACT_FOOTER);
   return lines.join('\n');
 }
