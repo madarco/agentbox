@@ -12,7 +12,7 @@ The **control plane** is an optional hosted service that takes over the *central
 - **permission state** — pending approvals live in the plane's database; boxes poll for the verdict and you answer from anywhere (CLI or the deployment).
 - **registry / events / status** — one cross-machine view of every box.
 
-It is the same `@agentbox/relay` core wrapped as a **Next.js + Postgres app**. The identical code deploys to **Vercel** (managed) or **self-hosts on a VPS** (Postgres + `next start` via docker-compose) — only the host differs. It is stateless per request and does **no host execution**: host-local actions (`cp`, `download`, `checkpoint`) stay on the laptop relay; cloud boxes push to GitHub directly with a leased token.
+It is the same `@agentbox/relay` core in two shapes. On **Vercel** (managed) it is a stateless **Next.js + Postgres** app that does no host execution. On a **Hetzner VPS** it is the **control box** — the full always-on hub (relay daemon + web UI + a resident create worker) on **SQLite**, a full host that can provision boxes itself. Host-local actions your laptop must do (`cp`, `download`, `checkpoint`) stay on the laptop relay; cloud boxes push to GitHub directly with a leased token.
 
 <Callout type="info" title="Cloud boxes only">Only **cloud** boxes (hetzner, vercel, e2b, daytona) get the laptop-off guarantee. Local **docker** boxes still need the laptop relay for host-local actions (they bind-mount the host `.git`), so a docker box on a sleeping laptop is simply offline.</Callout>
 
@@ -45,9 +45,18 @@ Requires `agentbox vercel login` (and `gh auth login` for the auto-fork — with
 
 <Callout type="info" title="Boots before it's wired">The control plane is built to **boot even with no secrets set** — a fresh deploy answers `/healthz` (reporting what's configured) and never 500s; admin/leasing endpoints return a clean 503 until the env is set + redeployed. So the button flow (deploy bare → AgentBox sets secrets → redeploy) is never a broken state. Deploying the published repo means you deploy a fork; re-sync it (`gh repo sync`) or re-run with `--ref` for updates.</Callout>
 
-### Hetzner
+### Hetzner — the control box
 
-`--deploy hetzner` provisions a small VPS (cloud-init installs Docker and `git clone`s `--repo` at `--ref`), brings up the docker-compose (Postgres + the app + Caddy), and serves it over **HTTPS at `https://<ip>.sslip.io`** — Caddy auto-obtains a Let's Encrypt cert, so there's no DNS to configure. The firewall locks SSH to your egress IP and opens `:80`/`:443`. Needs `agentbox hetzner login`. No repo ownership required (the VPS clones the public repo).
+`--deploy hetzner` provisions a small VPS and ships the **full hub** — the same `server.ts` (relay daemon + web UI + a resident create worker) that `agentbox hub` runs locally, not the stateless Vercel plane. cloud-init installs Docker and `git clone`s `--repo` at `--ref`; the docker-compose is just **the app + Caddy** (no Postgres — the hub uses **SQLite** at `~/.agentbox/hub/store.db`), served over **HTTPS at `https://<ip>.sslip.io`** (Caddy auto-obtains a Let's Encrypt cert, no DNS to configure). A persistent host volume holds `~/.agentbox` (store, auth, custody, box SSH keys), so the hub + queue survive a VPS reboot. The firewall locks SSH to your egress IP and opens `:80`/`:443`. Needs `agentbox hetzner login`.
+
+Already ran `setup`? Re-deploy the control box without re-creating the GitHub App:
+
+```bash
+agentbox control-plane deploy hetzner            # reuses ~/.agentbox/control-plane creds
+agentbox control-plane deploy hetzner --ref my-branch   # pin the VPS clone to a ref
+```
+
+The deploy also copies the provider credentials the worker needs (`HCLOUD_TOKEN`, `E2B_API_KEY`, `DAYTONA_API_KEY`/`DAYTONA_ORG_ID`) from your host `~/.agentbox/secrets.env` into the VPS data volume, and records **your PC's egress IP** so a hetzner box the control box creates still allows direct SSH from your laptop.
 
 ### Self-host (docker-compose)
 
@@ -56,7 +65,7 @@ Skip the deploy step and run the written env anywhere:
 ```bash
 cd apps/hub
 docker compose --env-file ~/.agentbox/control-plane/control-plane.env up --build
-# Postgres + the app on :8787
+# the full hub (SQLite, no Postgres) on :8787
 agentbox control-plane set-url http://<host>:8787
 ```
 
@@ -72,12 +81,20 @@ agentbox control-plane add
 
 You don't usually need to run it: when you launch `agentbox claude` / `codex` / `opencode` against a configured control plane, AgentBox checks whether the project's repo is authorized and, if not, prompts you to open the add-repo page (asked once per project; unattended runs only warn).
 
-## Creating boxes from the plane
+## Creating boxes from the control box
 
-The plane can enqueue box creation (`POST /remote/boxes`, admin-bearer) and return a job id. A long-running **worker** drains that queue and provisions the boxes — it leases a token, clones the repo, and hands the checkout to the normal provider create path:
+The hub enqueues box creation (`POST /remote/boxes`, admin-bearer) and returns a job id. On the **Hetzner control box** a **resident worker runs inside the hub process** (no separate command) — it claims each job, leases a token, clones the repo, and hands the checkout to the normal provider create path. Enqueue from your laptop instead of building locally:
 
 ```bash
-# Run alongside the plane (self-host) or as a scheduled job; needs the App key + provider creds
+agentbox create --provider e2b --via-hub
+```
+
+This POSTs the job to the control box and streams its progress; the box is provisioned VPS-side, so you can create one even with the provider's credentials unconfigured on your laptop (or the laptop off after the enqueue). The hub web UI's create button enqueues the same way. The worker registers each box on the control box, so it shows up in the web UI and its approvals are answerable from your phone. Agent credentials come from what you [pushed to custody](#) (`credentials push`), so hub-created boxes are logged in.
+
+For a self-hosted plane (or Vercel), the worker can also run as a standalone command:
+
+```bash
+# needs the App key + provider creds; drains the same /remote/boxes queue
 agentbox control-plane worker --store "$POSTGRES_URL"
 agentbox control-plane worker --store "$POSTGRES_URL" --once   # drain once and exit
 ```
