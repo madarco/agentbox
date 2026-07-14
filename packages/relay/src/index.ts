@@ -78,6 +78,25 @@ export {
 } from './store/store-rpc.js';
 export { makeStore } from './store/index.js';
 export {
+  type CustodyStore,
+  type CustodyEntry,
+  type CustodyPutResult,
+  CustodyPathError,
+  normalizeCustodyPath,
+  normalizeCustodyPrefix,
+  custodyDigest,
+  CUSTODY_SCOPES,
+} from './custody/store.js';
+export { FsCustodyStore, DEFAULT_CUSTODY_DIR } from './custody/fs-store.js';
+export {
+  handleCustodyRequest,
+  isCustodyPath,
+  CUSTODY_PATH_PREFIX,
+  type CustodyRequest,
+  type CustodyResponse,
+  type CustodyRouteDeps,
+} from './custody/routes.js';
+export {
   askPrompt,
   type AutoApprovePolicy,
   isPromptAnswerBody,
