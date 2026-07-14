@@ -259,6 +259,9 @@ const COMPACT_EXAMPLE = [
   '  agentbox git push 1 --host-only  # move back the branch to your pc',
   '  agentbox git pr create 1 -f      # create a PR from the box',
   '  agentbox destroy                 # remove the box',
+  '',
+  '  # Or ask your host agent (via the /agentbox-info skill) to spin up',
+  '  # boxes for subtasks and orchestrate them for you',
 ];
 
 // Rendered as a last pseudo-group inside the Commands block (same indentation
