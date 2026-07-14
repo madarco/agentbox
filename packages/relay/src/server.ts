@@ -61,6 +61,8 @@ import { GitHubAppLeaser, loadGitHubAppConfig, type GitHubAppConfig } from './gi
 import { leaseTokenResult } from './lease.js';
 import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
 import { resolveWorktree } from './worktree.js';
+import { handleCustodyRequest } from './custody/routes.js';
+import type { CustodyStore } from './custody/store.js';
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
 import { CREDENTIALS_UPDATED_EVENT, CredentialsFanout } from './credentials-fanout.js';
@@ -131,6 +133,19 @@ export interface RelayServerOptions {
    * Null/absent → `git.lease-token` returns a clear "not configured" error.
    */
   githubApp?: GitHubAppConfig | null;
+  /**
+   * Custody store (agent creds / project secrets / box SSH keys). Absent → the
+   * `/admin/custody/*` routes are not served here. The control box (hetzner
+   * profile) wires an {@link FsCustodyStore}. See `./custody/routes.ts`.
+   */
+  custody?: CustodyStore | null;
+  /**
+   * Admin bearer that gates `/admin/custody/*` (the ONLY proof accepted — the
+   * loopback bypass that covers the other `/admin/*` routes does not apply to
+   * custody, since a control box behind Caddy makes every request look
+   * loopback). Required for custody to serve; other admin routes are unaffected.
+   */
+  adminToken?: string;
   /**
    * Optional delegate for requests that matched no relay route (e.g. Next's
    * `getRequestHandler()`). Invoked at the top-level 404 fallthrough, so every
@@ -226,6 +241,24 @@ async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
         reject(err instanceof Error ? err : new Error(String(err)));
       }
     });
+    req.on('error', reject);
+  });
+}
+
+async function readRawBody(req: IncomingMessage): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let total = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > MAX_BODY_BYTES) {
+        reject(new Error('request body too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
 }
@@ -334,6 +367,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   // boxes reach it via the poller).
   const githubAppConfig = opts.githubApp === undefined ? loadGitHubAppConfig() : opts.githubApp;
   const leaser = githubAppConfig ? new GitHubAppLeaser(githubAppConfig) : null;
+  const custody = opts.custody ?? null;
+  const custodyAdminToken = opts.adminToken ?? '';
   const uiHandler = opts.uiHandler;
 
   // Host-mode pollers for cloud-tagged boxes; started on /admin/register-box,
@@ -447,6 +482,30 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
       send(res, 404, { error: 'not found', route });
       return;
+    }
+
+    // Custody (`/admin/custody/*`) is admin-bearer-gated, NOT loopback-gated:
+    // on the control box the hub sits behind Caddy on the same host, so every
+    // proxied request looks loopback. The shared dispatcher enforces the bearer
+    // (and fail-closes with 503 when custody or the admin token is unset), so
+    // this must run BEFORE the loopback rejection below.
+    if (url.pathname === '/admin/custody' || url.pathname.startsWith('/admin/custody/')) {
+      const bodyText =
+        req.method === 'PUT' || req.method === 'POST' ? await readRawBody(req) : '';
+      const custodyRes = await handleCustodyRequest(
+        {
+          method: req.method ?? 'GET',
+          path: url.pathname,
+          query: url.searchParams,
+          bearer: bearerToken(req),
+          bodyText,
+        },
+        { custody, adminToken: custodyAdminToken, log },
+      );
+      if (custodyRes) {
+        send(res, custodyRes.status, custodyRes.body ?? null);
+        return;
+      }
     }
 
     // Admin endpoints are reachable from loopback only. The relay binds to

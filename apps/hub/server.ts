@@ -13,7 +13,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import next from 'next';
-import { makeStore, type Store } from '@agentbox/relay/control-plane';
+import { makeStore, FsCustodyStore, type Store, type CustodyStore } from '@agentbox/relay/control-plane';
 import { startRelayDaemon } from '@agentbox/relay/daemon';
 import { createHubBackend } from './lib/hub-backend';
 
@@ -85,11 +85,20 @@ async function main(): Promise<void> {
 
   const store = await resolveStore(STORE_DB_PATH);
 
+  // Custody (agent creds / project secrets / box SSH keys) is served only when
+  // an admin token is set — the hetzner control box. The dispatcher fail-closes
+  // 503 without the token, so wiring the fs store unconditionally is safe: a
+  // loginless localhost hub simply never serves the routes.
+  const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '';
+  const custody: CustodyStore | undefined = adminToken.length > 0 ? new FsCustodyStore() : undefined;
+
   const daemon = await startRelayDaemon({
     port,
     host,
     // Omitted → the relay builds its in-memory store (the localhost default).
     store,
+    custody,
+    adminToken,
     logger: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
     // Next parses req.url itself when parsedUrl is omitted.
     uiHandler: (req, res) => {
