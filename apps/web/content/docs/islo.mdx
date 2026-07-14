@@ -31,7 +31,7 @@ Install the plugin, then register it so `--provider islo` resolves:
 ```bash
 npm i -g agentbox-provider-islo
 agentbox plugin add agentbox-provider-islo
-agentbox plugin list            # → islo … (SDK v1)
+agentbox plugin list            # → islo … (SDK v2)
 ```
 
 ## Credentials
@@ -51,8 +51,12 @@ persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. 
 
 ## Use it
 
+islo needs an explicit base image that carries the AgentBox runtime, and the box runs without the
+VNC stack (see [Base image](#base-image)):
+
 ```bash
-agentbox create --provider islo
+export ISLO_IMAGE=ghcr.io/zozo123/agentbox-islo-runtime:0.24.6
+agentbox create --provider islo --no-vnc
 ```
 
 From there, [run an agent](/docs/run-an-agent) and [access your box](/docs/access-your-box) as
@@ -68,10 +72,26 @@ usual. Lifecycle maps onto islo natively:
 
 ## Base image
 
-islo boxes boot from islo's default image or the `ISLO_IMAGE` you set. Like every AgentBox
-**cloud** provider, a full `create` needs the AgentBox runtime (`agentbox-ctl`, node, the agents)
-present in the box; the built-in providers bake this with a per-provider
-[`prepare`](/docs/build-a-provider) step. For islo, point `ISLO_IMAGE` at an islo-hosted image
-that already carries the runtime. Native base-image baking (`prepare`) and a no-SSH interactive
-`buildAttach` are planned follow-ups; the underlying sandbox lifecycle (provision, exec, file
-transfer, pause/resume, preview URLs, destroy) is complete today.
+Like every AgentBox **cloud** provider, a full `create` needs the AgentBox runtime
+(`agentbox-ctl`, node, the agents) present in the box; the built-in providers bake this with a
+per-provider [`prepare`](/docs/build-a-provider) step. islo has no `prepare` yet, so you pick the
+base image explicitly with `ISLO_IMAGE`.
+
+islo rejects large images (`503 RESOURCE_UNAVAILABLE`) — the stock AgentBox image is ~1.3 GB
+compressed and will not boot. The plugin therefore publishes a **slim runtime image** (~110 MB):
+node, git, tmux, sudo, rsync, a uid-1000 `vscode` user with passwordless sudo, and a
+version-matched `agentbox-ctl`. It carries no VNC or browser stack, so pass `--no-vnc`:
+
+```bash
+export ISLO_IMAGE=ghcr.io/zozo123/agentbox-islo-runtime:0.24.6
+agentbox create --provider islo --no-vnc
+```
+
+A custom image works too, as long as it carries those same pieces and stays comfortably under
+1 GB compressed.
+
+Because the slim image omits the agent CLIs and the VNC/browser stack, an islo box today supports
+the box lifecycle (workspace seeding, [`agentbox.yaml`](/docs/agentbox-yaml) tasks and services,
+preview URLs, `cp`, pause/resume, checkpoints) but not the in-box agents, VNC desktop, or headless
+browser. Native base-image baking (`prepare`) and a no-SSH interactive `buildAttach` are planned
+follow-ups.
