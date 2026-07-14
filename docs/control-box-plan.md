@@ -114,6 +114,79 @@ AGENTBOX_HUB_HOST=0.0.0.0 pnpm --filter @agentbox/hub hub:dev` boots with zero P
 reports `db:true`, better-auth signup/login works, a registered box + prompt row survive a
 process restart. `pnpm typecheck` before push.
 
+### Phase 1 — implementation plan (box cbx-phase1)
+
+**Driver decision (verified against the installed tree, not assumed).** `drizzle-orm@0.45.2` (the
+current latest) ships **no `node:sqlite` driver**: its SQLite subpaths are `better-sqlite3`,
+`bun-sqlite`, `libsql`, `op-sqlite`, `expo-sqlite`, `durable-sqlite`, `prisma/sqlite` and
+`sqlite-proxy`. So the plan's first option does not exist, and its `better-sqlite3` fallback would
+add a **native dependency** — against the repo's one-sanctioned-native-dep rule, and it would need a
+toolchain in the hub image. Taking the plan's third option (a thin adapter):
+
+- **SQLite = `drizzle-orm/sqlite-proxy` over `node:sqlite`.** `sqlite-proxy` is drizzle's
+  bring-your-own-executor SQLite driver: you hand it
+  `(sql, params, method) => Promise<{ rows }>` and drizzle's SQLite dialect does the rest. A ~20-line
+  callback over `DatabaseSync` from `node:sqlite` is the whole adapter, so we get drizzle's typed
+  query builder with **zero native deps** and the same driver the hub's better-auth already uses.
+  Verified live in this box (Node 24): insert/`onConflictDoUpdate`/select/`delete … returning`/
+  `count(*)` and json-mode columns all round-trip. Rows must be positional for drizzle's mapper —
+  `StatementSync.setReturnArrays(true)` when present, else `Object.values(row)` (our queries are
+  single-table, so no duplicate-column collapse).
+- **Postgres = `drizzle-orm/node-postgres`** over the existing `pg` Pool. `drizzle-orm/node-postgres`
+  statically `import`s `pg`, so it stays behind the **same lazy dynamic import** as today's pool
+  factory (importing it at module top would drag `pg` into the box's `bin.cjs` load path).
+- `drizzle-orm` itself is pure JS with no hard dependencies (28 optional peers, none required) — it
+  is a normal dependency of `@agentbox/relay` and is bundled; only the two **drivers** (`pg`,
+  `node:sqlite`) stay external/lazy, which is the requirement.
+- Node floor: `node:sqlite` needs ≥ 22.5 (the repo's engines floor is 20.10). `SqliteStore` checks
+  `process.versions.node` on first open and fails with an explicit message.
+
+**Files.**
+
+- `packages/relay/src/store/schema.ts` (new) — one schema module holding both dialect table sets
+  (`boxes`, `events`, `box_status`, `prompts`, `create_jobs`) with identical column names, plus the
+  idempotent DDL for each dialect and the shared row→domain mappers.
+- `packages/relay/src/store/sqlite-store.ts` (new) — `SqliteStore` (`node:sqlite` + sqlite-proxy).
+- `packages/relay/src/store/postgres-store.ts` — ported onto the drizzle schema; every hand-written
+  query string removed.
+- `packages/relay/src/store/index.ts` — `makeStore()` gains the sqlite branch.
+- `packages/relay/src/{index,control-plane}.ts` — export `SqliteStore`; `SCHEMA_SQL` becomes
+  `PG_SCHEMA_SQL` / `SQLITE_SCHEMA_SQL` (unreleased — clean rename, no alias).
+- `packages/relay/{package.json,tsup.config.ts}` — add `drizzle-orm`; `pg` stays external.
+- `apps/hub/server.ts` — pick the store from the profile (hetzner → sqlite when `POSTGRES_URL` is
+  unset) and pass it to `startRelayDaemon`.
+- `apps/hub/lib/auth-config.ts` — `STORE_DB_PATH` (`~/.agentbox/hub/store.db`), sibling of `auth.db`.
+
+**Schema shape.** Column names and JSON payloads are identical across dialects; only the physical
+types differ, so the existing Postgres tables are unchanged (no migration of deployed data):
+
+| table | key columns | pg types | sqlite types |
+| --- | --- | --- | --- |
+| `boxes` | `box_id` pk, `token` (idx), `origin_url`, `data`, `registered_at` | `text` / `jsonb` / `timestamptz` | `text` / `text` json-mode / `text` ISO |
+| `events` | `id` pk auto, `box_id`, `type`, `ts`, `payload`, `received_at` | `bigint` identity / `jsonb` | `integer` autoincrement / `text` json-mode |
+| `box_status` | `box_id` pk, `name`, `project_index`, `status`, `updated_at` | `jsonb` | `text` json-mode |
+| `prompts` | `id` pk, `box_id`, `ev`, `method`, `params`, `status`, `answer`, `cancelled`, `result`, `created_at`, `expires_at` | `jsonb` / `boolean` | `text` json-mode / `integer` boolean-mode |
+| `create_jobs` | `id` pk, `status`, `request`, `result`, `claimed_by`, `created_at`, `started_at`, `finished_at` | `jsonb` | `text` json-mode |
+
+Timestamps are written as JS-side ISO strings in both dialects (rather than a `now()` default) so the
+two stores share one mapper; reads normalize `Date | string → ISO`. Two table sets are unavoidable —
+drizzle's `pg-core` and `sqlite-core` builders produce dialect-typed objects, and a query is typed to
+its dialect — so the stores keep parallel (but now typed, drizzle-built) query bodies over one shared
+schema + mapper module rather than one generic body.
+
+**Deviation from the plan text:** the idempotent `CREATE TABLE IF NOT EXISTS` DDL stays as SQL
+strings (renamed, colocated with the schema). Drizzle only emits DDL through drizzle-kit migration
+*folders*, which do not survive tsup bundling into `bin.cjs` / the hub standalone build. All
+**queries** are drizzle; only the boot DDL is literal SQL. `SqliteStore` applies its DDL + `PRAGMA
+journal_mode=WAL` / `busy_timeout` lazily on first open, so it is always migrated before use.
+
+**Tests.** `sqlite-store.test.ts` runs the existing `runStoreConformance` suite against a
+`SqliteStore` on a `:memory:` DB (and one on-disk case for persistence), so it stays docker/network
+free and joins Memory in the default `pnpm --filter @agentbox/relay test` run. Postgres keeps its
+opt-in `AGENTBOX_TEST_DATABASE_URL` gate, run here against a disposable `postgres:16`. Boot smoke:
+`AGENTBOX_HUB_PROFILE=hetzner` with the sqlite store — register a box + park a prompt row, restart
+the process, assert both survive.
+
 ## Phase 2 — Custody store on the control box (agent creds, SSH keys, secrets/envs)
 
 **Why second:** everything phase 3's worker seeds into a new box, and everything phase 4
