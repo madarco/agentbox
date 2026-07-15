@@ -56,6 +56,8 @@ export {
   SshTunnelManager,
   controlSockPath,
   defaultBoxSshDir,
+  boxSshNamespaceForProvider,
+  boxSshDirForProvider,
   pickFreePort,
   type PortForward,
   type SshTunnelOpenOptions,

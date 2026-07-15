@@ -347,6 +347,39 @@ export function defaultBoxSshDir(boxId: string, namespace?: string): string {
 }
 
 /**
+ * The per-box ssh-dir namespace for a provider, or `undefined` for none. Kept in
+ * ONE place because it is easy to get wrong: hetzner stores keys **un-namespaced**
+ * (`~/.agentbox/boxes/<id>/ssh/`), digitalocean namespaces by `'digitalocean'`.
+ * `null` means the provider mints no per-box keypair (e2b/vercel/daytona/docker),
+ * so there is no ssh dir to read, mirror to custody, or download on adoption.
+ */
+export function boxSshNamespaceForProvider(provider: string): string | null | undefined {
+  switch (provider) {
+    case 'hetzner':
+      return undefined;
+    case 'digitalocean':
+      return 'digitalocean';
+    default:
+      // remote-docker keys are keyed by an embedded SSH destination the host
+      // already owns, not by a downloadable per-box key; everything else mints
+      // nothing. Neither participates in SSH-key custody.
+      return null;
+  }
+}
+
+/**
+ * The on-disk ssh dir for a provider's box, or `null` when the provider mints no
+ * downloadable per-box keypair. Shared by the hub-worker custody mirror, the
+ * PC-side custody push-up, and `agentbox hub pull`, so all three agree on the
+ * exact path and never re-introduce a namespace mismatch.
+ */
+export function boxSshDirForProvider(provider: string, sandboxId: string): string | null {
+  const ns = boxSshNamespaceForProvider(provider);
+  if (ns === null) return null;
+  return defaultBoxSshDir(sandboxId, ns);
+}
+
+/**
  * Ask the kernel for a free port in the ephemeral range: bind a fresh server on
  * `127.0.0.1:0`, capture the port the kernel assigned, and close. There's a tiny
  * race where the port could be claimed before `ssh -O forward` lands, but in
