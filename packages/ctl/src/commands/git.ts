@@ -199,11 +199,14 @@ async function leaseAndPush(opts: CommonOptions, extra: string[]): Promise<numbe
     return 1;
   }
   const originalUrl = await captureGit(['remote', 'get-url', remote], cwd);
-  await runLocalGit(['remote', 'set-url', remote, remoteUrl], cwd);
+  // Real git, not the PATH shim: the shim intercepts `push` and refuses the
+  // positional remote/branch, and a baked box always has the shim first on
+  // PATH — spawning bare `git push` here would die (or loop) inside it.
+  await runRealGit(['remote', 'set-url', remote, remoteUrl], cwd);
   try {
-    return await runLocalGit(['push', remote, branch, ...extra], cwd);
+    return await runRealGit(['push', remote, branch, ...extra], cwd);
   } finally {
-    if (originalUrl) await runLocalGit(['remote', 'set-url', remote, originalUrl], cwd);
+    if (originalUrl) await runRealGit(['remote', 'set-url', remote, originalUrl], cwd);
   }
 }
 
