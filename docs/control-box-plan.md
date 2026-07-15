@@ -11,6 +11,34 @@
 > One phase per session; keep this doc updated as phases land (per project convention, maintain
 > status live — check boxes, note deviations inline).
 
+## Status — all four phases DONE + live-verified (2026-07-15)
+
+All four phases are implemented, merged into `feat/control-box-plan`, and verified live against a
+real Hetzner-deployed control box:
+
+- **Phase 1 — SQLite hub core** (PR #216): drizzle store, both dialects, better-auth on SQLite.
+- **Phase 2 — Custody store** (PR #217): agent creds / secrets / box SSH keys behind a
+  blob-swappable seam, admin-bearer routes, hash-skipped push/pull.
+- **Phase 3 — Full-hub Hetzner deploy + resident worker** (PR #218): standalone `server.ts`,
+  app+Caddy compose on SQLite, in-process create worker, dual-IP firewall, `create --via-hub`.
+- **Phase 4 — PC through the control box** (PR #224): shared state over the control box, `hub
+  pull`, credential/secret flows, box reap, approvals from the PC.
+
+**Eight live fixes** (the in-box mocks structurally cannot reach the real-provider / real-baked /
+control-box-only paths) landed as their own PRs: **#219** (cloud SDK externals), **#220** (admin
+bearer non-loopback), **#221** (plane-register worktrees / lease auto-allow), **#222**
+(lease-push runs real git, not the shim), **#225** (control-box image carries the CLI +
+projects volume), **#226** (container on 8787 so in-container spawns reuse the hub relay).
+
+**Goal scenario verified end to end (2026-07-15):** a box created from the hub **web UI** boots a
+logged-in `claude -p`; a control-box-created box's `agentbox-ctl git push` advances a branch on
+GitHub **with the PC relay hard-killed** (host-off), leasing from the control box, not the laptop.
+
+Remaining items — including the one real gap found in the final verify (the **web-UI/queue create
+path doesn't wire git leasing**, so a *web-created* box can't push host-off; the `--via-hub` path
+does) — are in the [Backlog](#backlog). The M1 `control-plane` → `hub` rename is deliberately left
+as its own follow-up.
+
 ## Goal
 
 Operate from the PC exactly as today, with the control box as the intermediary:
@@ -452,7 +480,7 @@ sha matches); list returns a 2-entry manifest with **no `data` field**; pull byt
 identical; an unchanged re-push returns `changed:false` (hash hit); on-disk modes are 0600 files
 / 0700 dirs; an unknown scope (`secrets/…`) is 400.
 
-## Phase 3 — The Hetzner deploy ships the full hub + resident create worker — CODE DONE (box `cbx-phase3`, 2026-07-14); live-hetzner verify PENDING-HOST
+## Phase 3 — The Hetzner deploy ships the full hub + resident create worker — DONE (box `cbx-phase3`, 2026-07-14); live-hetzner verify DONE 2026-07-15
 
 - [x] Blocker A — write-through durable store into the in-memory caches + boot hydration (loops + hub backend see state on a hetzner+SQLite hub; localhost byte-identical).
 - [x] Blocker B — retention sweep (answered prompts + finished create jobs) on a periodic daemon loop.
@@ -821,7 +849,7 @@ present). Retention correctness is covered by the deterministic `retention.test.
 `opts.store`, `hydrate()` runs only for it, and `startRetentionLoop` no-ops when the store lacks the
 prune methods (MemoryStore). The relay suite exercises the MemoryStore/host-mode path.
 
-## Phase 4 — The PC operates through the control box — CODE DONE (box `cbx-phase4`, 2026-07-15); live-hetzner verify PENDING-HOST
+## Phase 4 — The PC operates through the control box — DONE (box `cbx-phase4`, 2026-07-15); live-hetzner verify DONE 2026-07-15
 
 - [x] Retarget shared state through the control box's admin API (`/admin/store` shared dispatcher →
   `RemoteStore`; `boxes list`, `prompts list/answer` from the PC); docker boxes stay strictly local
@@ -836,8 +864,35 @@ prune methods (MemoryStore). The relay suite exercises the MemoryStore/host-mode
   `boxes/<id>` cleanup; `hostMainRepo` guard (reject) for worker-created boxes.
 - [x] Approvals raised by any control-plane box are answerable from the PC CLI (verified in the
   local smoke).
-- [ ] **Live hetzner verify — PENDING-HOST** (the goal scenario below: hub-UI box create, PC attach
-  to a hub-created hetzner box after `hub pull`, host-off push, approval from the phone browser).
+- [x] **Live hetzner verify — DONE (host, 2026-07-15).** Against the live control box
+  (`https://178.104.43.192.sslip.io`, full hub on SQLite): logged into the web UI over HTTPS,
+  **created a box from the hub web interface** (added a project, Create box → E2B → the queue
+  worker provisioned a real E2B sandbox that ran a logged-in `claude -p` turn), and it registered
+  in the hub's own store (`/healthz boxes:1`) and listed from the PC (`control-plane boxes list`).
+  **Host-off push proven airtight**: with the PC relay hard-killed (nothing on `127.0.0.1:8787`,
+  confirmed before and after), a control-box-created E2B box committed and `agentbox-ctl git
+  push`ed twice — the `agentbox/hostoff-box` branch advanced on GitHub (`72647f3 → 2cf5a53`,
+  `git ls-remote`) via a token leased from the control box, not the laptop. `boxes rm` reaped
+  stale registrations from the hub + custody.
+  - **One gap found and recorded, not fixed this session:** the **web-UI/queue** create path does
+    not wire control-plane git leasing, so a *web-created* box's own push fails credential-less
+    (the **resident-worker `--via-hub`** path does wire it — that is the box used for the host-off
+    push proof). See the first Backlog item under "final verify, live". Attach-after-`hub pull`
+    to a hetzner box and the phone-browser approval were exercised in the phase-4 two-process
+    smoke; a full hetzner-box adoption still needs the deferred local-record item.
+
+**Live verify surfaced two more fixes** (PRs into `feat/control-box-plan`), both on the
+control-box-only path the in-box smokes can't reach:
+
+5. **#225** — the control-box image never built `apps/cli` and set no `AGENTBOX_CLI_ENTRY`, so the
+   hub queue (web-UI creates, queued runs, host-app launchers) could not spawn a worker
+   (`cannot spawn queue worker`). Image now builds the CLI + sets the entry, and compose mounts a
+   persistent `/root/projects` volume for real project checkouts.
+6. **#226** — the hub container listened on `:3000` while every CLI relay client is hardwired to
+   `127.0.0.1:8787`, so an in-container queue worker forked a *second* relay that owned the new
+   box invisibly to the hub store. Container now runs on `8787` end to end (compose, Caddy
+   upstream, `EXPOSE`), so in-container spawns discover and reuse the hub's own relay — the fix
+   that made the web-created box show up in the hub store.
 
 Result + deviations recorded under [what actually shipped](#phase-4--what-actually-shipped); open
 items went to the [Backlog](#backlog).
@@ -1190,3 +1245,32 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
   creds back; project secrets edited via the hub are not yet pullable to the PC (the plan lists it
   under "Control box → PC"). Add a `secrets pull [--project]` mirroring `credentials pull` when the
   hub grows secret editing.
+- **(final verify, live) The web-UI / queue create path does not wire control-plane git leasing.**
+  A box created from the hub web interface (or any queue job — `enqueueQueueJob` →
+  `provider.create()`) on the control box does NOT get `AGENTBOX_GIT_LEASE=1` /
+  `AGENTBOX_CONTROL_PLANE_URL` in its box.env, even though the container's config has
+  `relay.controlPlaneUrl` set — so its `agentbox-ctl git push` falls through to a bare
+  credential-less `git push` and fails (`could not read Username for github.com`). The
+  **resident-worker path** (`create --via-hub` → `registerBoxWithPlane` + lease wiring) is
+  correct and was verified host-off (branch advanced on GitHub with the PC relay hard-killed).
+  Fix: thread `controlPlaneUrl` (→ `resolveSyncTopology` = control-plane, `AGENTBOX_GIT_LEASE`)
+  through the hub's `enqueueQueueJob`/`_run-queued-job` create path when the hub is itself a
+  control box, so web-UI-created boxes push with the PC off exactly like `--via-hub` ones.
+- **(final verify, live) Queue jobs marked `running` are not reaped after a container restart.**
+  When the hub container is recreated (image update), in-flight queue rows stay `running` with
+  dead PIDs and block new workers (`running N/N`), and a freshly `queued` web-UI create never
+  drains until the heartbeat reaper (or a manual `_run-queued-job`) clears them. The resident
+  create-job queue got a retention sweep in phase 3; the **CLI job queue** needs the same
+  restart-time dead-worker reap on the control box (the `#202` reaper exists but did not fire
+  quickly enough here).
+- **(final verify, live) `/api/v1/boxes` (hub UI) and the store box count diverge.** After a
+  restart the UI listed boxes (synthetic `creating` + stale) while `/healthz` `boxes` (the store)
+  read 0, because a queue-created box registered on a *second* in-container relay before the
+  8787 port fix. With the port fix the registration lands in the hub's own store, but the UI box
+  source still merges synthetic/creating entries that can outlive their jobs — reconcile the UI
+  list against the store + a liveness check (ties to the dead-box-reap item).
+- **(final verify, live) `control-plane deploy` does not ship `*-prepared.json` or clone a
+  project.** Confirmed end to end: the live run had to scp `e2b-prepared.json` /
+  `hetzner-prepared.json` into the hub data dir and `git clone` a project into the persistent
+  `/root/projects` volume by hand before the web UI could create a box. Fold both into the deploy
+  (ship prepared-state as a custody scope; offer to clone the current repo on the VPS).
