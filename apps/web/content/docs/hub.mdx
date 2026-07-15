@@ -87,7 +87,10 @@ agentbox hub --no-open    # start without opening a browser, just print the URL
 agentbox hub status       # is it running? (add --json)
 agentbox hub stop         # stop the hub process
 agentbox hub restart      # stop then start
+agentbox hub pull <box>   # download a control-box-created box's SSH keys so this laptop can attach
 ```
+
+`hub pull` needs a configured [control box](/docs/control-plane): it downloads a box the control box created into `~/.agentbox/boxes/<sandboxId>/ssh/`, so `agentbox attach` / port-forward / `cp` work exactly as for a box you created locally.
 
 ## How it relates to the relay
 
