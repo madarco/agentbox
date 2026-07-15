@@ -147,6 +147,11 @@ export interface HubState {
   // Active gate: 'password' (hetzner/vercel) drives the topbar sign-out; 'token'
   // (localhost) and 'off' show none.
   authMode: AuthMode;
+  // The control box this hub operates through (`relay.controlPlaneUrl`), when
+  // configured. Present on the PC's localhost hub; null on the control box
+  // itself. The topbar links to it so the local hub doesn't pretend to be the
+  // brain when a control box holds the shared state.
+  controlPlane?: { url: string } | null;
 }
 
 export const statusMeta: Record<BoxStatus, { label: string; badgeClass: string }> = {

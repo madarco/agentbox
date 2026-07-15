@@ -229,6 +229,21 @@ async function computeNeedsSetup(root: string, provider: string): Promise<boolea
 }
 
 /**
+ * The control box this hub operates through (`relay.controlPlaneUrl`), or null.
+ * Present on the PC's localhost hub; the control box's own hub leaves the key
+ * unset, so it correctly reports no control box (it IS one). Best-effort.
+ */
+async function readControlPlane(): Promise<{ url: string } | null> {
+  try {
+    const cfg = await loadEffectiveConfig(os.homedir());
+    const url = (cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
+    return url ? { url } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The project list unions the on-disk registry (`~/.agentbox/projects`, which
  * includes folders that have *zero* boxes) with the roots of live boxes. It also
  * self-heals: any box root not yet registered is registered here, so projects
@@ -973,6 +988,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // Block-mode approvals live in-process on the relay handle, not the Store.
         approvals: handle.prompts.all().map(mapApproval),
         providers: listProviders(jobs),
+        controlPlane: await readControlPlane(),
       };
     },
     async providersWithFreshness(opts): Promise<ProviderOption[]> {
@@ -1033,11 +1049,28 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           return { ok: false, error: errMsg(err) };
         }
       }
-      return runLifecycle(id, async (box, provider) => {
+      const local = await runLifecycle(id, async (box, provider) => {
         await provider.destroy(box);
         // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
         await syncAgentboxSshConfig().catch(() => {});
       });
+      if (local.ok) return local;
+      // Not in host state — on the control box a worker-created box lives only in
+      // the Store (its temp seed clone was deleted after create), so there is no
+      // BoxRecord to drive `provider.destroy`. Reap its control-box state instead
+      // (registration + status + SSH-key custody). The cloud resource, if any,
+      // stays a backlog follow-up (needs the sandboxId + provider creds + a
+      // reconstructed record).
+      const reg = await handle.store.getBox(id);
+      if (!reg) return local;
+      await handle.store.forgetBox(id);
+      await handle.store.deleteStatus(id);
+      if (handle.custody) {
+        const key = reg.sandboxId ?? id;
+        const entries = await handle.custody.list(`boxes/${key}`).catch(() => []);
+        for (const e of entries) await handle.custody.delete(e.path).catch(() => false);
+      }
+      return { ok: true };
     },
     async rename(id, displayName): Promise<ActionResult> {
       // Pure state mutation — no provider round-trip. Empty/blank clears the label.
