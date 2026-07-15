@@ -89,6 +89,9 @@ export class RemoteStore implements Store {
   deleteStatus(boxId: string): Promise<void> {
     return this.call('deleteStatus', [boxId]);
   }
+  listStatuses(): Promise<Array<{ boxId: string; status: BoxStatusSnapshot }>> {
+    return this.call('listStatuses', []);
+  }
 
   createPrompt(row: PromptRow): Promise<void> {
     return this.call('createPrompt', [row]);

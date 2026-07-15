@@ -87,6 +87,10 @@ export class MemoryStore implements Store {
     return Promise.resolve();
   }
 
+  listStatuses(): Promise<Array<{ boxId: string; status: BoxStatusSnapshot }>> {
+    return Promise.resolve(this.statusStore.list());
+  }
+
   createPrompt(row: PromptRow): Promise<void> {
     this.prompts.set(row.id, { ...row });
     return Promise.resolve();
