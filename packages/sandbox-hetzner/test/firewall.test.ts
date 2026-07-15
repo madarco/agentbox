@@ -1,5 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { firewallNeedsSync, normalizeSourceCidr, sshOnlyInboundRule } from '../src/firewall.js';
+import {
+  createPerBoxFirewall,
+  firewallNeedsSync,
+  normalizeSourceCidr,
+  sshOnlyInboundRule,
+} from '../src/firewall.js';
+import { HetznerApiError, type HetznerClient, type HetznerFirewall } from '../src/client.js';
+
+describe('createPerBoxFirewall retries transient 5xx', () => {
+  it('retries a 502 Bad Gateway and returns the firewall (does not abort the create)', async () => {
+    let calls = 0;
+    const fw: HetznerFirewall = { id: 7, name: 'box-fw', rules: [], applied_to: [] };
+    const client = {
+      createFirewall: async () => {
+        calls += 1;
+        if (calls === 1) throw new HetznerApiError(502, 'http_502', 'bad gateway');
+        return fw;
+      },
+    } as unknown as HetznerClient;
+
+    const result = await createPerBoxFirewall(client, { name: 'box-fw', sources: ['1.2.3.4/32'] });
+    expect(result.id).toBe(7);
+    expect(calls).toBe(2);
+  });
+});
 
 describe('firewallNeedsSync', () => {
   it('no sync when the allowed source already matches the current egress', () => {

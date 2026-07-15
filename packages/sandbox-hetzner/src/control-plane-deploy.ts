@@ -155,8 +155,12 @@ export async function deployControlPlaneToHetzner(
   const hostCidr = normalizeSourceCidr(await detectEgressIp());
 
   log('creating the control-plane firewall (:22 host-only, :80/:443 open)…');
+  // retryOnAmbiguous: true — a firewall is free and per-deploy-uniquely named,
+  // so a retry after a hidden success leaves at most a harmless orphan; unlike
+  // the server create below (billable), a transient 502/504/429 must not abort
+  // the deploy on its very first step.
   const firewall = await withHetznerRetry(
-    { method: 'createFirewall', retryOnAmbiguous: false, attemptTimeoutMs: 60_000 },
+    { method: 'createFirewall', retryOnAmbiguous: true, attemptTimeoutMs: 60_000 },
     () =>
       client.createFirewall({
         name,

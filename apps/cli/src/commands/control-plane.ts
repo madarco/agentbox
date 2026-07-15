@@ -186,9 +186,9 @@ const setupSub = new Command('setup')
           await writeFile(ENV_PATH, envBody + hetznerAuthBody(hubAuth), { mode: 0o600 });
           await chmod(ENV_PATH, 0o600);
         }
+        const ds = spinner();
+        ds.start(`deploying the control plane to ${target}`);
         try {
-          const ds = spinner();
-          ds.start(`deploying the control plane to ${target}`);
           const onLog = (line: string): void => ds.message(line);
           const repo = opts.repo ?? DEFAULT_DEPLOY_REPO;
           const ref = opts.ref ?? DEFAULT_DEPLOY_REF;
@@ -205,6 +205,9 @@ const setupSub = new Command('setup')
           }
           ds.stop(`deployed: ${deployedUrl}`);
         } catch (e) {
+          // Stop the spinner (code 1) before printing — otherwise it keeps
+          // animating its last "creating the firewall…" frame under the error.
+          ds.stop(`deploy to ${target} failed`, 1);
           log.warn(`deploy to ${target} failed: ${e instanceof Error ? e.message : String(e)}`);
           printManualDeploy();
         }
