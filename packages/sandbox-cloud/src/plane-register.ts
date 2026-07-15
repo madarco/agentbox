@@ -19,6 +19,19 @@ export interface RegisterBoxWithPlaneArgs {
   name: string;
   originUrl: string;
   backend: string;
+  /**
+   * Registered worktrees (containerPath/branch/sanctionedBranch). The plane's
+   * lease gate auto-allows only the box's sanctioned `agentbox/*` branch, and
+   * it reads that from the REGISTRATION (host-authoritative), never from box
+   * params — without this a control-plane box's `git push` blocks on a human
+   * approval that auto-approve should have covered.
+   */
+  worktrees?: Array<{
+    containerPath: string;
+    hostMainRepo: string;
+    branch: string;
+    sanctionedBranch?: string;
+  }>;
   bridgeToken?: string;
   previewUrl?: string;
   previewToken?: string;
@@ -53,6 +66,7 @@ export async function registerBoxWithPlane(args: RegisterBoxWithPlaneArgs): Prom
       kind: 'cloud',
       backend: args.backend,
       originUrl: args.originUrl,
+      worktrees: args.worktrees,
       bridgeToken: args.bridgeToken,
       previewUrl: args.previewUrl,
       previewToken: args.previewToken,
