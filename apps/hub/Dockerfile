@@ -35,7 +35,7 @@ ENV AGENTBOX_CLI_ENTRY=/repo/apps/cli/dist/index.js
 # externals (next, react, pg, better-auth, the cloud SDKs) resolve from the
 # workspace node_modules present here. Not size-optimized; fine for a VPS.
 COPY --from=build /repo .
-EXPOSE 3000
+EXPOSE 8787
 # server.ts self-migrates auth (ensureAuthReady) + the store on boot, so there is
 # no separate migrate step. It anchors its own cwd from required-server-files.json.
 CMD ["node", "apps/hub/dist-standalone/apps/hub/server.js"]
