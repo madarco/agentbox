@@ -79,6 +79,7 @@ import { readExposedServicePorts } from './expose-ports.js';
 import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
 import { kickCloudBootstrap } from './bootstrap-launch.js';
 import { readGitOriginUrl, registerBoxWithPlane } from './plane-register.js';
+import { pushBoxSshToCustody } from './custody-ssh.js';
 import { bashScript, quoteShellArgv } from './shell.js';
 import { seedGitCredentials } from './sync/git-identity.js';
 import { seedCloudWorkspace } from './sync/workspace-seed.js';
@@ -485,6 +486,7 @@ export function createCloudProvider(
             name: box.name,
             originUrl,
             backend: backend.name,
+            sandboxId: box.cloud.sandboxId,
             worktrees: [
               {
                 containerPath: '/workspace',
@@ -1054,6 +1056,7 @@ export function createCloudProvider(
                 name,
                 originUrl,
                 backend: backend.name,
+                sandboxId: handle.sandboxId,
                 // hostMainRepo is the create-time seed checkout; on a hub
                 // worker it is a temp clone that gets deleted after create, so
                 // host-side git RPCs won't work against it — but the lease
@@ -1075,6 +1078,16 @@ export function createCloudProvider(
                 autoApproveHostActions,
                 autoApproveSafeHostActions,
               });
+              // Reverse custody: a PC-created box that just registered on the
+              // control box pushes its per-box SSH key up too, so the hub /
+              // mobile can also reach it (no-op for e2b/vercel — no keypair).
+              await pushBoxSshToCustody({
+                controlPlaneUrl: req.controlPlaneUrl,
+                adminToken,
+                provider: backend.name,
+                sandboxId: handle.sandboxId,
+                log,
+              }).catch(() => 0);
             } catch (err) {
               log(
                 `register with control plane failed (continuing): ${err instanceof Error ? err.message : String(err)}`,

@@ -4,7 +4,7 @@ import { leaseTokenResult } from '../lease.js';
 import { gateApproval } from '../permission.js';
 import { isValidBoxStatus } from '../status-store.js';
 import type { Store } from '../store/store.js';
-import { applyStoreOp, isStoreRpcMethod, type StoreRpcRequest } from '../store/store-rpc.js';
+import { handleStoreRpcRequest } from '../store/store-rpc-routes.js';
 import { resolveWorktree } from '../worktree.js';
 import { handleCustodyRequest, type CustodyRouteDeps } from '../custody/routes.js';
 import { handleRemoteBoxesRequest } from '../remote-boxes.js';
@@ -201,6 +201,7 @@ export async function handleRelayRequest(
       name: body.name,
       kind: body.kind === 'cloud' ? 'cloud' : 'docker',
       backend: body.backend || undefined,
+      sandboxId: body.sandboxId || undefined,
       registeredAt: new Date().toISOString(),
       containerName: body.containerName || undefined,
       createdAt: body.createdAt || undefined,
@@ -284,16 +285,13 @@ export async function handleRelayRequest(
     return hit ? ok(null, 204) : err(404, 'no pending prompt with that id');
   }
 
-  if (req.method === 'POST' && req.path === '/admin/store') {
-    // Generic Store RPC for a federated laptop relay's RemoteStore. Admin-gated
-    // (checked above); the method name is an explicit allow-list.
-    const body = parseJson<StoreRpcRequest>(req.bodyText);
-    if (!body || typeof body.method !== 'string' || !Array.isArray(body.args)) {
-      return err(400, 'expected {method, args}');
-    }
-    if (!isStoreRpcMethod(body.method)) return err(400, `unknown store op: ${body.method}`);
-    const result = await applyStoreOp(store, body.method, body.args);
-    return ok({ result: result ?? null });
+  // Generic Store RPC for a federated laptop relay's RemoteStore — a shared
+  // dispatcher mounted in both this hosted-plane handler and the relay daemon
+  // (`server.ts`), so a PC's RemoteStore works against the control box and the
+  // Vercel plane identically.
+  const storeRpc = await handleStoreRpcRequest(req, { store, adminToken: deps.adminToken, log });
+  if (storeRpc) {
+    return storeRpc.body === undefined ? { status: storeRpc.status } : ok(storeRpc.body, storeRpc.status);
   }
 
   // Create-queue surface (`/remote/boxes`) — a shared dispatcher mounted in both
@@ -303,6 +301,7 @@ export async function handleRelayRequest(
     store,
     adminToken: deps.adminToken,
     createProviders: deps.createProviders,
+    custody: deps.custody,
     log,
   });
   if (remote) return remote.body === undefined ? { status: remote.status } : ok(remote.body, remote.status);

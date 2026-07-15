@@ -83,6 +83,14 @@ export {
   type StoreRpcRequest,
   type StoreRpcResponse,
 } from './store/store-rpc.js';
+export {
+  handleStoreRpcRequest,
+  isStoreRpcPath,
+  STORE_RPC_PATH,
+  type StoreRpcRouteRequest,
+  type StoreRpcRouteResponse,
+  type StoreRpcRouteDeps,
+} from './store/store-rpc-routes.js';
 export { makeStore } from './store/index.js';
 export {
   type CustodyStore,

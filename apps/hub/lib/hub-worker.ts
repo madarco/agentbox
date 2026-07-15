@@ -27,7 +27,7 @@ import {
   type CreateBoxFn,
   type Store,
 } from '@agentbox/relay/control-plane';
-import { AGENT_SYNC_SPECS, defaultBoxSshDir } from '@agentbox/sandbox-core';
+import { AGENT_SYNC_SPECS, boxSshDirForProvider } from '@agentbox/sandbox-core';
 import type { ProviderModule } from '@agentbox/sandbox-core';
 
 const execFileAsync = promisify(execFile);
@@ -71,30 +71,34 @@ async function seedHostBackupsFromCustody(custody: FsCustodyStore, log: (l: stri
 
 /**
  * Mirror a just-created box's minted SSH key material into custody
- * `boxes/<boxId>/ssh/` so phase 4's `hub pull` can fetch it. Only the VPS
- * backends (hetzner / digitalocean) mint a per-box keypair; the SDK backends
- * (e2b / vercel) don't, so this is a best-effort no-op for them.
+ * `boxes/<sandboxId>/ssh/` so phase 4's `hub pull` can fetch it. Keyed by the
+ * provider sandbox id (NOT the box id) because that is the id the on-disk ssh
+ * dir and the `hub pull` destination use, so a download lands the bytes at the
+ * exact path attach/cp read. Only the VPS backends (hetzner / digitalocean) mint
+ * a per-box keypair — `boxSshDirForProvider` returns `null` for the SDK backends
+ * (e2b / vercel), so this is a no-op for them. It also fixes the phase-3 bug
+ * where hetzner's un-namespaced dir was read with a namespace, mirroring nothing.
  */
 async function mirrorBoxSshToCustody(
   custody: FsCustodyStore,
-  boxId: string,
   provider: string,
   sandboxId: string | undefined,
   log: (l: string) => void,
 ): Promise<void> {
-  if (!sandboxId || (provider !== 'hetzner' && provider !== 'digitalocean')) return;
-  const sshDir = defaultBoxSshDir(sandboxId, provider);
+  if (!sandboxId) return;
+  const sshDir = boxSshDirForProvider(provider, sandboxId);
+  if (!sshDir) return;
   try {
     const files = await readdir(sshDir, { withFileTypes: true }).catch(() => []);
     const { readFile } = await import('node:fs/promises');
     for (const f of files) {
       if (!f.isFile()) continue;
       const data = await readFile(join(sshDir, f.name));
-      await custody.put(`boxes/${boxId}/ssh/${f.name}`, data);
+      await custody.put(`boxes/${sandboxId}/ssh/${f.name}`, data);
     }
-    if (files.length > 0) log(`mirrored ${provider} box ${boxId} ssh keys to custody`);
+    if (files.length > 0) log(`mirrored ${provider} box ${sandboxId} ssh keys to custody`);
   } catch (err) {
-    log(`ssh-mirror ${boxId} failed: ${err instanceof Error ? err.message : String(err)}`);
+    log(`ssh-mirror ${sandboxId} failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -166,13 +170,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         ...(extraInboundCidrs ? { providerOptions: { extraInboundCidrs } } : {}),
         onLog,
       });
-      await mirrorBoxSshToCustody(
-        custody,
-        created.record.id,
-        provider,
-        created.record.cloud?.sandboxId,
-        log,
-      );
+      await mirrorBoxSshToCustody(custody, provider, created.record.cloud?.sandboxId, log);
       return { id: created.record.id };
     },
     tmpDir: (jobId) => join(tmpdir(), `agentbox-hub-worker-${jobId}`),

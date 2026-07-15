@@ -18,5 +18,5 @@ export async function getDashboardData(): Promise<HubState> {
     return { ...(await getPostgresDashboardData()), authMode: authMode() };
   }
   // No source (e.g. plain `next start` with no Postgres) — nothing to read.
-  return { user: { login: 'user', name: 'user' }, github: { available: false, installed: false, appName: 'GitHub App', account: '', installedAt: 0, repos: [] }, projects: [], boxes: [], approvals: [], providers: [], authMode: authMode() };
+  return { user: { login: 'user', name: 'user' }, github: { available: false, installed: false, appName: 'GitHub App', account: '', installedAt: 0, repos: [] }, projects: [], boxes: [], approvals: [], providers: [], controlPlane: null, authMode: authMode() };
 }

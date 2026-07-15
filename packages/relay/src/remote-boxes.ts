@@ -12,6 +12,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { timingSafeEqual } from 'node:crypto';
+import type { CustodyStore } from './custody/store.js';
 import type { CreateJobRequest, Store } from './store/store.js';
 
 /** Structurally identical to `RelayResponse` in `core/handler.ts` (kept local to avoid a cycle). */
@@ -39,6 +40,12 @@ export interface RemoteBoxesDeps {
    * (the full-host control box). A serverless plane sets the SDK-native set.
    */
   createProviders?: string[];
+  /**
+   * The custody store, if wired. A reap (`DELETE`) also removes the box's
+   * `boxes/<sandboxId>/` SSH-key subtree from here so a destroyed box leaves no
+   * key material behind. Absent → the reap only clears the registration/status.
+   */
+  custody?: CustodyStore | null;
   log?: (line: string) => void;
 }
 
@@ -127,6 +134,34 @@ export async function handleRemoteBoxesRequest(
     const id = decodeURIComponent(req.path.slice(`${REMOTE_BOXES_PREFIX}/`.length));
     const job = await store.getCreateJob(id);
     return job ? { status: 200, body: job } : { status: 404, body: { error: 'no such job' } };
+  }
+
+  // Reap a control-plane box's state from the control box: registration + status
+  // + its SSH-key custody subtree. NOT the cloud resource — that teardown needs
+  // provider creds + a reconstructed BoxRecord (the hub backend does it when it
+  // can). The PC drives this via `control-plane boxes rm`; the hub UI's Destroy
+  // button reaps a Store-registered box the same way.
+  if (req.method === 'DELETE' && req.path.startsWith(`${REMOTE_BOXES_PREFIX}/`)) {
+    const boxId = decodeURIComponent(req.path.slice(`${REMOTE_BOXES_PREFIX}/`.length));
+    if (boxId.length === 0) return { status: 404, body: { error: 'no such box' } };
+    const reg = await store.getBox(boxId);
+    const existed = await store.forgetBox(boxId);
+    await store.deleteStatus(boxId);
+    let custodyRemoved = 0;
+    if (deps.custody) {
+      // Keyed by sandboxId on disk + in custody; fall back to boxId for
+      // registrations minted before sandboxId was carried.
+      const key = reg?.sandboxId ?? boxId;
+      const entries = await deps.custody.list(`boxes/${key}`).catch(() => []);
+      for (const e of entries) {
+        if (await deps.custody.delete(e.path).catch(() => false)) custodyRemoved += 1;
+      }
+    }
+    if (!existed && !reg && custodyRemoved === 0) {
+      return { status: 404, body: { error: 'no such box' } };
+    }
+    log(`reaped box ${boxId} (registration=${String(existed)}, custody=${String(custodyRemoved)})`);
+    return { status: 200, body: { boxId, removed: existed, custodyRemoved } };
   }
 
   return { status: 405, body: { error: 'method not allowed' } };

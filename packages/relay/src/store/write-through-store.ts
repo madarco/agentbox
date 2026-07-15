@@ -9,9 +9,8 @@ export interface WriteThroughParts {
   statusStore: BoxStatusStore;
 }
 
-/** A durable store that also exposes the off-interface bulk-status read. */
+/** A durable store that also exposes the optional retention sweeps. */
 interface StoreWithStatuses extends Store {
-  listStatuses?(): Promise<Array<{ boxId: string; status: BoxStatusSnapshot }>>;
   prunePrompts?(beforeIso: string): Promise<number>;
   pruneCreateJobs?(beforeIso: string): Promise<number>;
 }
@@ -54,11 +53,9 @@ export class WriteThroughStore implements Store {
    */
   async hydrate(): Promise<void> {
     for (const reg of await this.inner.listBoxes()) this.registry.register(reg);
-    if (this.inner.listStatuses) {
-      for (const { boxId, status } of await this.inner.listStatuses()) {
-        const reg = this.registry.get(boxId);
-        await this.statusStore.set(boxId, reg?.name ?? boxId, reg?.projectIndex, status);
-      }
+    for (const { boxId, status } of await this.inner.listStatuses()) {
+      const reg = this.registry.get(boxId);
+      await this.statusStore.set(boxId, reg?.name ?? boxId, reg?.projectIndex, status);
     }
   }
 
@@ -134,9 +131,8 @@ export class WriteThroughStore implements Store {
     this.statusStore.delete(boxId);
   }
 
-  /** Off-interface bulk read (postgres-source.ts) — forwarded for parity. */
   listStatuses(): Promise<Array<{ boxId: string; status: BoxStatusSnapshot }>> {
-    return this.inner.listStatuses?.() ?? Promise.resolve([]);
+    return this.inner.listStatuses();
   }
 
   // --- prompt mailbox (pure delegation; no in-memory mirror the loops read) ---

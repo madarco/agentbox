@@ -112,6 +112,13 @@ export interface Store {
   ): Promise<void>;
   getStatus(boxId: string): Promise<BoxStatusSnapshot | undefined>;
   deleteStatus(boxId: string): Promise<void>;
+  /**
+   * Every box's latest status snapshot in one round-trip (avoids N+1 over
+   * `listBoxes` + per-box `getStatus`). The hub UI renders every box's live
+   * status from this; promoted onto the interface in phase 4 so the hub can
+   * read statuses without knowing the concrete backend.
+   */
+  listStatuses(): Promise<Array<{ boxId: string; status: BoxStatusSnapshot }>>;
 
   // --- prompt mailbox (poll-mode approvals; Phase 2) ---
   createPrompt(row: PromptRow): Promise<void>;

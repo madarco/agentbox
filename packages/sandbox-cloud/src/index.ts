@@ -10,6 +10,12 @@ export {
 } from './cloud-provider.js';
 export { kickCloudBootstrap, type KickCloudBootstrapArgs } from './bootstrap-launch.js';
 export {
+  registerBoxWithPlane,
+  readGitOriginUrl,
+  type RegisterBoxWithPlaneArgs,
+} from './plane-register.js';
+export { pushBoxSshToCustody, type PushBoxSshArgs } from './custody-ssh.js';
+export {
   seedCloudWorkspace,
   type SeedCloudWorkspaceArgs,
   type SeedCloudWorkspaceResult,

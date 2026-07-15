@@ -20,6 +20,12 @@ export interface RegisterBoxWithPlaneArgs {
   originUrl: string;
   backend: string;
   /**
+   * Provider-native sandbox id. Persisted on the plane registration so a PC can
+   * adopt the box (`agentbox hub pull`) — the SSH key material is keyed by this
+   * id on disk — and a reap can find its custody `boxes/<sandboxId>/` subtree.
+   */
+  sandboxId?: string;
+  /**
    * Registered worktrees (containerPath/branch/sanctionedBranch). The plane's
    * lease gate auto-allows only the box's sanctioned `agentbox/*` branch, and
    * it reads that from the REGISTRATION (host-authoritative), never from box
@@ -65,6 +71,7 @@ export async function registerBoxWithPlane(args: RegisterBoxWithPlaneArgs): Prom
       name: args.name,
       kind: 'cloud',
       backend: args.backend,
+      sandboxId: args.sandboxId,
       originUrl: args.originUrl,
       worktrees: args.worktrees,
       bridgeToken: args.bridgeToken,

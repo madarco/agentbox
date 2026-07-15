@@ -40,6 +40,7 @@ const STORE_RPC_METHODS = new Set<string>([
   'setStatus',
   'getStatus',
   'deleteStatus',
+  'listStatuses',
   'createPrompt',
   'getPrompt',
   'answerPrompt',
@@ -79,6 +80,8 @@ export function applyStoreOp(store: Store, method: string, args: unknown[]): Pro
       return store.getStatus(args[0] as string);
     case 'deleteStatus':
       return store.deleteStatus(args[0] as string);
+    case 'listStatuses':
+      return store.listStatuses();
     case 'createPrompt':
       return store.createPrompt(args[0] as PromptRow);
     case 'getPrompt':

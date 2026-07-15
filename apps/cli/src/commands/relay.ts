@@ -7,8 +7,49 @@ import {
   type RelayStatus,
 } from '@agentbox/sandbox-docker';
 import { readState } from '@agentbox/sandbox-core';
+import { loadEffectiveConfig } from '@agentbox/config';
 import { Command } from 'commander';
 import { handleLifecycleError } from './_errors.js';
+
+interface ControlPlaneInfo {
+  url: string;
+  reachable: boolean;
+  boxes?: number;
+  events?: number;
+}
+
+/**
+ * Probe the configured control box (`relay.controlPlaneUrl`) `/healthz`, so
+ * `relay status` shows the intermediary the PC operates through. Returns null
+ * when no control box is configured. Never throws (an unreachable box is a
+ * status line, not an error).
+ */
+async function probeControlPlane(): Promise<ControlPlaneInfo | null> {
+  let url = '';
+  try {
+    const cfg = await loadEffectiveConfig(process.cwd());
+    url = (cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
+  } catch {
+    return null;
+  }
+  if (!url) return null;
+  try {
+    const ctrl = AbortSignal.timeout(6000);
+    const res = await fetch(`${url}/healthz`, { signal: ctrl });
+    if (!res.ok) return { url, reachable: false };
+    const body = (await res.json()) as { boxes?: number; events?: number };
+    return { url, reachable: true, boxes: body.boxes, events: body.events };
+  } catch {
+    return { url, reachable: false };
+  }
+}
+
+function renderControlPlane(cp: ControlPlaneInfo): string {
+  const head = `control box: ${cp.reachable ? 'reachable' : 'UNREACHABLE'} (this PC operates through it)`;
+  const lines = [head, `  url:    ${cp.url}`];
+  if (cp.reachable) lines.push(`  health: ${String(cp.boxes ?? 0)} box(es), ${String(cp.events ?? 0)} event(s)`);
+  return lines.join('\n');
+}
 
 /**
  * After a fresh relay process starts (cold start or restart), it has no
@@ -71,12 +112,13 @@ const statusSub = new Command('status')
   .option('--json', 'emit RelayStatus as JSON')
   .action(async (opts: StatusOpts) => {
     try {
-      const s = await getRelayStatus();
+      const [s, cp] = await Promise.all([getRelayStatus(), probeControlPlane()]);
       if (opts.json) {
-        process.stdout.write(JSON.stringify(s, null, 2) + '\n');
+        process.stdout.write(JSON.stringify({ ...s, controlPlane: cp }, null, 2) + '\n');
         return;
       }
       process.stdout.write(renderStatus(s) + '\n');
+      if (cp) process.stdout.write('\n' + renderControlPlane(cp) + '\n');
     } catch (err) {
       handleLifecycleError(err);
     }

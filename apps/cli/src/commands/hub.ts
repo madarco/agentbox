@@ -6,6 +6,10 @@ import { hostOpenCommand } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { handleLifecycleError } from './_errors.js';
 import { rehydrateFromState } from './relay.js';
+import { resolveCustodyTarget } from './control-plane.js';
+import { CustodyClient } from '../control-plane/custody-client.js';
+import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
+import { pullBoxSshKeys } from '../control-plane/hub-pull.js';
 
 /**
  * Effective `portless.enabled` for the hub's `agentbox.localhost` alias. The hub
@@ -134,6 +138,36 @@ const restartSub = new Command('restart')
     }
   });
 
+const pullSub = new Command('pull')
+  .description("Download a control-box-created box's SSH keys so this PC can attach / port-forward / cp to it")
+  .argument('<box>', 'box id or name as shown by `agentbox control-plane boxes list`')
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .action(async (box: string, opts: { url?: string }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const res = await pullBoxSshKeys({
+        admin: new ControlPlaneAdminClient(target),
+        custody: new CustodyClient(target),
+        box,
+      });
+      if (res.files.length === 0) {
+        log.warn(
+          `No SSH key material in custody for '${box}' (boxes/${res.key}/ssh). ` +
+            (res.registered ? 'The box may mint no keypair (e2b/vercel).' : 'The box is not registered on the control box.'),
+        );
+        process.exitCode = 1;
+        return;
+      }
+      log.success(`Pulled ${String(res.files.length)} key file(s) to ${res.dest} — attach / cp / port-forward now work.`);
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
 export const hubCommand = new Command('hub')
   .description(
     'Run the AgentBox hub — the relay + Web UI on http://127.0.0.1:8787 ' +
@@ -142,4 +176,5 @@ export const hubCommand = new Command('hub')
   .addCommand(startSub, { isDefault: true })
   .addCommand(statusSub)
   .addCommand(stopSub)
-  .addCommand(restartSub);
+  .addCommand(restartSub)
+  .addCommand(pullSub);

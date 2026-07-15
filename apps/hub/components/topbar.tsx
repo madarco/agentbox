@@ -66,6 +66,19 @@ export function Topbar() {
       </Button>
       <Crumbs />
       <span className="flex-1" />
+      {state.controlPlane ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          href={state.controlPlane.url}
+          target="_blank"
+          rel="noopener"
+          title={`This hub operates through the control box at ${state.controlPlane.url}`}
+        >
+          <Icons.server />
+          Control box
+        </Button>
+      ) : null}
       <Button variant="ghost" size="sm" href="https://agent-box.sh/docs" target="_blank" rel="noopener">
         <Icons.book />
         Docs
