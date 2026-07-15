@@ -186,6 +186,15 @@ async function runCreateViaHub(
     cmdLog.close();
     process.exit(1);
   }
+  if (providerName === 'remote-docker') {
+    // remote-docker authenticates as *you* through your own ~/.ssh/config + agent
+    // (no stored credential the control box could custody), and the SSH
+    // ControlMaster runs from the creating machine. The VPS has no access to your
+    // SSH identity, so it can't reach your remote host — run it from this machine.
+    log.error('--via-hub cannot run a remote-docker box: it connects to your remote host over your own ~/.ssh/config, which the control box has no access to. Run `agentbox docker:<host> …` from this machine instead.');
+    cmdLog.close();
+    process.exit(1);
+  }
   const repoUrl = originUrl(projectRoot);
   if (!repoUrl) {
     log.error('--via-hub needs a git `origin` remote (the hub worker clones it VPS-side). None found in this project.');
