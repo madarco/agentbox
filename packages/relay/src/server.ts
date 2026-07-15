@@ -61,6 +61,7 @@ import { GitHubAppLeaser, loadGitHubAppConfig, type GitHubAppConfig } from './gi
 import { leaseTokenResult } from './lease.js';
 import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
 import { resolveWorktree } from './worktree.js';
+import { adminGateAllows } from './admin-gate.js';
 import { handleCustodyRequest } from './custody/routes.js';
 import { handleRemoteBoxesRequest, isRemoteBoxesPath } from './remote-boxes.js';
 import type { CustodyStore } from './custody/store.js';
@@ -540,17 +541,21 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
     }
 
-    // Admin endpoints are reachable from loopback only. The relay binds to
-    // 0.0.0.0 so containers can reach /events and /rpc via host.docker.internal,
-    // but admin operations (register-box, forget-box, list events, etc.) are
-    // for the host CLI and must not be exposed to boxes. Any other `/remote/*`
-    // is a hosted-plane surface not served by this relay.
+    // Admin endpoints are reachable from loopback, or — on a relay with an
+    // admin token configured (the control box) — with that bearer. The relay
+    // binds to 0.0.0.0 so containers can reach /events and /rpc via
+    // host.docker.internal, but admin operations (register-box, forget-box,
+    // list events, etc.) are for the host CLI / an authenticated admin and must
+    // not be exposed to boxes. A laptop relay sets no admin token, so its gate
+    // stays loopback-only. Any other `/remote/*` is a hosted-plane surface not
+    // served by this relay.
     if (url.pathname.startsWith('/admin/') || url.pathname.startsWith('/remote/')) {
       if (url.pathname.startsWith('/remote/')) {
         send(res, 404, { error: 'not found', route });
         return;
       }
-      if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      const loopback = isLoopbackAddress(req.socket.remoteAddress);
+      if (!adminGateAllows(loopback, bearerToken(req), custodyAdminToken)) {
         send(res, 403, { error: 'admin endpoints are loopback-only' });
         return;
       }
