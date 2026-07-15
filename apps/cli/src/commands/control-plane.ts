@@ -35,6 +35,8 @@ import {
   planPush,
   type UploadItem,
 } from '../control-plane/custody-client.js';
+import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
+import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { handleLifecycleError } from './_errors.js';
 
 const CP_DIR = join(homedir(), '.agentbox', 'control-plane');
@@ -565,9 +567,45 @@ const credentialsPushSub = new Command('push')
     }
   });
 
+const credentialsPullSub = new Command('pull')
+  .description('Pull agent-credential backups from the control box custody store into ~/.agentbox')
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .option('--agent <id>', 'pull only one agent: claude | codex | opencode')
+  .action(async (opts: { url?: string; agent?: string }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      if (opts.agent && !['claude', 'codex', 'opencode'].includes(opts.agent)) {
+        log.error(`unknown --agent "${opts.agent}" (expected claude | codex | opencode)`);
+        process.exitCode = 1;
+        return;
+      }
+      const client = new CustodyClient(target);
+      let pulled = 0;
+      for (const spec of AGENT_SYNC_SPECS) {
+        if (opts.agent && spec.id !== opts.agent) continue;
+        const data = await client.get(`agents/${spec.id}/${spec.credential.boxRelPath}`);
+        if (data === null) continue;
+        await mkdir(dirname(spec.credential.hostBackup), { recursive: true });
+        await writeFile(spec.credential.hostBackup, data, { mode: 0o600 });
+        await chmod(spec.credential.hostBackup, 0o600);
+        log.info(`pulled ${spec.id} credentials → ${spec.credential.hostBackup}`);
+        pulled++;
+      }
+      if (pulled === 0) log.info('No agent credentials in custody to pull.');
+      else log.success(`Pulled ${String(pulled)} agent credential set(s).`);
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
 const credentialsCmd = new Command('credentials')
   .description('Manage agent credentials on the control box custody store')
-  .addCommand(credentialsPushSub);
+  .addCommand(credentialsPushSub)
+  .addCommand(credentialsPullSub);
 
 const secretsPushSub = new Command('push')
   .description('Push project secret/env files to the control box custody store')
@@ -665,10 +703,170 @@ const custodyPullSub = new Command('pull')
     }
   });
 
+const custodyRmSub = new Command('rm')
+  .description('Delete a custody entry (one path) from the control box')
+  .argument('<path>', 'custody path, e.g. boxes/<sandboxId>/ssh/id_ed25519 or agents/claude/.credentials.json')
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .action(async (path: string, opts: { url?: string }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const res = await fetch(`${target.url}/admin/custody/${path.split('/').map(encodeURIComponent).join('/')}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${target.adminToken}` },
+      });
+      if (res.status === 204) log.success(`Deleted custody entry '${path}'.`);
+      else if (res.status === 404) log.info(`No custody entry at '${path}'.`);
+      else {
+        log.error(`custody rm failed: ${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`);
+        process.exitCode = 1;
+      }
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
 const custodyCmd = new Command('custody')
   .description('Inspect + download the control box custody store')
   .addCommand(custodyListSub)
-  .addCommand(custodyPullSub);
+  .addCommand(custodyPullSub)
+  .addCommand(custodyRmSub);
+
+// --- control-plane box registry (the PC's admin view of the control box) ---
+
+const boxesListSub = new Command('list')
+  .description('List boxes registered on the control box')
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .option('--json', 'print raw JSON')
+  .action(async (opts: { url?: string; json?: boolean }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const client = new ControlPlaneAdminClient(target);
+      const [boxes, statuses] = await Promise.all([client.listBoxes(), client.store.listStatuses()]);
+      if (opts.json) {
+        process.stdout.write(`${JSON.stringify({ boxes, statuses }, null, 2)}\n`);
+        return;
+      }
+      if (boxes.length === 0) {
+        log.info('No boxes registered on the control box.');
+        return;
+      }
+      const statusBy = new Map(statuses.map((s) => [s.boxId, s.status]));
+      for (const b of boxes) {
+        const st = statusBy.get(b.boxId);
+        const state = st && typeof st === 'object' && 'state' in st ? String((st as { state?: unknown }).state) : '-';
+        process.stdout.write(
+          `${b.boxId}  ${b.name}  ${b.kind ?? 'docker'}${b.backend ? `/${b.backend}` : ''}  ${state}\n`,
+        );
+      }
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const boxesRmSub = new Command('rm')
+  .description('Reap a box from the control box (registration + status + SSH-key custody; NOT the cloud resource)')
+  .argument('<boxId>', 'the box id as shown by `control-plane boxes list`')
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .action(async (boxId: string, opts: { url?: string }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const client = new ControlPlaneAdminClient(target);
+      const res = await client.reapBox(boxId);
+      if (!res.removed && res.custodyRemoved === 0) {
+        log.info(`No box '${boxId}' on the control box.`);
+        return;
+      }
+      log.success(
+        `Reaped '${boxId}': registration ${res.removed ? 'removed' : 'absent'}, ` +
+          `${String(res.custodyRemoved)} custody file(s) removed. ` +
+          `(The cloud resource, if any, is untouched — destroy it from the hub or its provider.)`,
+      );
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const boxesCmd = new Command('boxes')
+  .description('List + reap boxes registered on the control box')
+  .addCommand(boxesListSub)
+  .addCommand(boxesRmSub);
+
+// --- control-plane approvals (answerable from the PC) ---
+
+const promptsListSub = new Command('list')
+  .description('List pending host-action approvals across control-box boxes')
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .option('--json', 'print raw JSON')
+  .action(async (opts: { url?: string; json?: boolean }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const client = new ControlPlaneAdminClient(target);
+      const pending = await client.pendingPrompts();
+      if (opts.json) {
+        process.stdout.write(`${JSON.stringify(pending, null, 2)}\n`);
+        return;
+      }
+      if (pending.length === 0) {
+        log.info('No pending approvals.');
+        return;
+      }
+      for (const p of pending) {
+        process.stdout.write(`${p.prompt.id}  [${p.boxName}]  ${p.prompt.message}\n`);
+      }
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const promptsAnswerSub = new Command('answer')
+  .description('Answer a pending approval on the control box')
+  .argument('<id>', 'the prompt id from `control-plane prompts list`')
+  .argument('[answer]', 'y | n (default: y)', 'y')
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .action(async (id: string, answer: string, opts: { url?: string }) => {
+    try {
+      if (answer !== 'y' && answer !== 'n') {
+        log.error(`answer must be 'y' or 'n' (got '${answer}')`);
+        process.exitCode = 1;
+        return;
+      }
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const client = new ControlPlaneAdminClient(target);
+      const ok = await client.answerPrompt(id, answer);
+      if (ok) log.success(`Answered ${id} → ${answer}.`);
+      else {
+        log.info(`No pending approval with id ${id} (already answered or expired?).`);
+        process.exitCode = 1;
+      }
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const promptsCmd = new Command('prompts')
+  .description('List + answer control-box host-action approvals from the PC')
+  .addCommand(promptsListSub)
+  .addCommand(promptsAnswerSub);
 
 interface DeployOpts {
   ref?: string;
@@ -740,4 +938,6 @@ export const controlPlaneCommand = new Command('control-plane')
   .addCommand(workerSub)
   .addCommand(credentialsCmd)
   .addCommand(secretsCmd)
-  .addCommand(custodyCmd);
+  .addCommand(custodyCmd)
+  .addCommand(boxesCmd)
+  .addCommand(promptsCmd);
