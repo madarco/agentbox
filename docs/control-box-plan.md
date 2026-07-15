@@ -462,7 +462,35 @@ identical; an unchanged re-push returns `changed:false` (hash hit); on-disk mode
 - [x] Enqueue from the PC: `agentbox create --via-hub` + a shared `/remote/boxes` dispatcher mounted in `server.ts`.
 - [x] Deploy ergonomics: `agentbox control-plane deploy hetzner [--ref]` reusing the existing App creds.
 - [x] In-box docker smoke green (build + boot + auth + custody + enqueue→worker + restart persistence).
-- [ ] **Live hetzner verify (real VPS + real e2b/hetzner boxes, phone-UI, usable-box `claude -p` + ls-remote push) — PENDING-HOST.**
+- [x] **Live hetzner verify — DONE (host, 2026-07-15).** Real deploy on a fresh Hetzner VPS
+  (`agentbox control-plane deploy hetzner --ref feat/control-box-plan` →
+  `https://<ip>.sslip.io/healthz` green, better-auth login 200); `credentials push` (3 items) →
+  `create --provider e2b --via-hub` → the in-VPS resident worker claimed the job and created a
+  real E2B box; inside it a **logged-in `claude -p` turn** succeeded (creds flowed
+  PC → custody → box) and **`agentbox-ctl git push` landed `agentbox/hub-smoke4` on GitHub**
+  (verified host-side via `git ls-remote`); VPS `reboot` → hub + worker returned with the
+  registry intact on the SQLite volume. Hub-UI create + a hetzner-provider box (dual-IP
+  firewall, SSH-keys-in-custody) are exercised in phase 4 / final verification.
+
+The live verify surfaced **four fixes**, each landed as its own PR into `feat/control-box-plan`
+(the in-box mock smoke could not have caught any of them — they all sit on the real-provider /
+real-baked-box path):
+
+1. **#219** — the standalone hub bundle inlines `@agentbox/sandbox-*` but their cloud SDKs stay
+   external, and pnpm's strict layout made them unresolvable from `dist-standalone` — worker
+   create died on `Cannot find package 'e2b'`. SDKs (`e2b`, `@daytona/sdk`, `@vercel/sandbox`)
+   are now direct `apps/hub` dependencies.
+2. **#220** — `server.ts` kept `/admin/*` loopback-only, so the resident worker's own
+   `register-box` via the public plane URL 403'd and hub-created boxes were left unregistered
+   (`unknown box token` on push). The gate now accepts a timing-safe admin-bearer match from
+   non-loopback (fail-closed when no token is configured — laptop unchanged).
+3. **#221** — plane registration carried no worktrees, so the lease gate's `agentbox/*`
+   auto-allow never applied and a hub-created box's push blocked forever on approval.
+   Registration now carries the `/workspace` worktree (branch = sanctionedBranch).
+4. **#222** — `leaseAndPush` spawned PATH `git`, which on a baked box is the agentbox git shim,
+   and the shim (correctly) refuses positional remote/branch — every leased push from a real box
+   died. It now runs the real git binary like direct mode. Baked images ship ctl, so this needed
+   an e2b re-`prepare` (template `o05kawibx9vcmxvgjnk4`).
 
 Result + deviations recorded under [what actually shipped](#phase-3--what-actually-shipped);
 open items went to the [Backlog](#backlog).
@@ -919,3 +947,27 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
 - **(phase 2) Custody is unencrypted at rest** (plan already lists encrypted-at-rest as out of
   scope). The bytes sit `0600` under `~/.agentbox/hub/custody/` on the VPS. The blob-backend swap
   (S3/R2) the seam is shaped for is where envelope encryption would slot in.
+- **(phase 3, live) The deploy does not ship prepared-state records.** The worker needs
+  `~/.agentbox/e2b-prepared.json` (and `hetzner-prepared.json`) VPS-side to create boxes on a
+  prepared provider; the live verify scp'd them into the hub data dir by hand. Teach
+  `control-plane deploy` (or a `custody`/`hub push` scope) to ship `*-prepared.json` alongside
+  `secrets.env`, and re-sync after a host-side `agentbox prepare`.
+- **(phase 3, live) Dead-box registrations are never reaped on the hub.** Killing a hub-created
+  sandbox provider-side leaves its registration (and custody `boxes/<id>/ssh/`) on the control
+  box forever (`healthz` reported 3 boxes with 1 alive). The hub needs a destroy verb for
+  control-plane boxes (phase 4 lifecycle) plus a liveness sweep that tombstones registrations
+  whose provider sandbox is gone.
+- **(phase 3, live) `hostMainRepo` of a worker-created box points at a deleted temp clone.**
+  The lease path never touches it, but any host-side git RPC (`git.push` bundle-fetch,
+  `git.fetch`) against such a box fails on the missing directory ("cannot change to
+  /tmp/agentbox-hub-worker-…"). Phase 4's PC-adoption flow should either rewrite the worktree's
+  `hostMainRepo` when the PC clones the box's repo locally, or the hub should reject host-side
+  git RPCs for worker-created boxes with a clear error.
+- **(phase 3, live) `control-plane deploy` requires a TTY** (clack prompts for the hub admin
+  email/password). Fine interactively; a `--admin-email/--admin-password(-file)` non-interactive
+  path would let CI / scripts deploy.
+- **(phase 3, live) ctl fixes need re-bakes to reach boxes.** `leaseAndPush` (#222) is baked into
+  every provider base image/template/snapshot; the e2b template was re-prepared during the live
+  verify, but the **hetzner base snapshot and any other provider bakes still ship the broken
+  lease push** until their next `agentbox prepare`. Re-prepare hetzner before relying on leased
+  pushes from hetzner boxes (tracked for the phase-4 hetzner-provider verify).
