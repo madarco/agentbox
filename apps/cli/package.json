@@ -84,6 +84,7 @@
     "@agentbox/sandbox-core": "workspace:*",
     "@agentbox/sandbox-daytona": "workspace:*",
     "@agentbox/sandbox-digitalocean": "workspace:*",
+    "@agentbox/sandbox-remote-docker": "workspace:*",
     "@agentbox/sandbox-docker": "workspace:*",
     "@agentbox/sandbox-e2b": "workspace:*",
     "@agentbox/sandbox-hetzner": "workspace:*",

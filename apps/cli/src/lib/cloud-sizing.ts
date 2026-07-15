@@ -12,6 +12,11 @@ export interface CloudSizingFlags {
   location?: string;
   /** `--inbound <spec>` (hetzner / digitalocean) */
   inbound?: string;
+  /**
+   * `--remote-host <dest>`, or the host half of a `docker:<host>` provider spec
+   * (remote-docker). The flag wins; the caller resolves the spec.
+   */
+  remoteHost?: string;
 }
 
 /**
@@ -85,6 +90,19 @@ export function cloudSizingProviderOptions(
   }
   if (providerName === 'e2b') {
     out.timeoutMs = cfg.box.e2bTimeoutMs;
+  }
+  if (providerName === 'remote-docker') {
+    // Which machine runs the container. Unlike every other provider's options
+    // this one is mandatory — there is no sensible default engine — so resolve
+    // it here and fail with a pointer rather than deep inside `provision`.
+    const host = (flags.remoteHost?.trim() || cfg.box.remoteDockerHost || '').trim();
+    if (host.length === 0) {
+      throw new Error(
+        'remote-docker needs an SSH destination: use `agentbox docker:<host> …`, pass `--remote-host <host>`, ' +
+          'or set a default with `agentbox config set box.remoteDockerHost <user@host>`',
+      );
+    }
+    out.remoteHost = host;
   }
   if (providerName === 'daytona') {
     // `timeoutMs` rides the same rail vercel/e2b use: cloud-provider records it

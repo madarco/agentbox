@@ -44,6 +44,7 @@ import {
 import { Command } from 'commander';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
 import { getRuntimeProviderNames } from '../provider/loaders.js';
+import { parseProviderSpec } from '../provider/spec.js';
 
 interface PrepareOptions {
   provider?: string;
@@ -359,15 +360,19 @@ export function resolvePrepareLocation(
  * its own spinner inside.
  */
 export async function runPrepare(
-  providerName: string,
+  providerSpec: string,
   opts: RunPrepareOptions = {},
 ): Promise<void> {
-  if (!isKnownProvider(providerName)) {
+  if (!isKnownProvider(providerSpec)) {
     process.stderr.write(
       `error: --provider must be one of: ${getRuntimeProviderNames().join(', ')}\n`,
     );
     process.exit(1);
   }
+  // `--provider docker:<host>` bakes the image on that machine's engine. Split
+  // the spec: the bare name drives every provider lookup below, the host is
+  // handed to the provider's own prepare.
+  const { name: providerName, remoteHost } = parseProviderSpec(providerSpec);
 
   if (providerName === 'daytona' && !opts.yes && process.stdin.isTTY) {
     process.stdout.write(
@@ -408,6 +413,12 @@ export async function runPrepare(
   // default resources.
   const size =
     opts.size?.trim() || (cfg ? resolveBoxSize(cfg.effective, providerName) : '') || undefined;
+  // The remote engine to bake on (remote-docker): the `docker:<host>` spec
+  // first, else the configured default. Other providers ignore it.
+  const host =
+    providerName === 'remote-docker'
+      ? remoteHost || cfg?.effective.box.remoteDockerHost || undefined
+      : undefined;
   const sp = spinner();
   sp.start(`preparing ${providerName}…`);
   try {
@@ -420,6 +431,7 @@ export async function runPrepare(
       claudeInstall,
       location,
       size,
+      host,
       sandboxClass,
       vmBaseImage,
       onLog: (line) => sp.message(line.slice(0, 80)),

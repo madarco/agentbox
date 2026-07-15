@@ -26,6 +26,7 @@ import { makeProgressReporter } from '../lib/progress.js';
 import { autoWriteSshConfig } from '@agentbox/sandbox-core';
 import { maybePromptPortless, setupPortlessHost } from '../portless-prompt.js';
 import { providerForCreate } from '../provider/registry.js';
+import { parseProviderSpec } from '../provider/spec.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
 import { resolveLimits } from '../limits.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
@@ -75,6 +76,8 @@ interface CreateOptions {
   location?: string;
   /** --inbound <spec>: VPS firewall access policy (locked | open | CIDR list). Hetzner/DigitalOcean-only. */
   inbound?: string;
+  /** --remote-host <dest>: SSH destination whose docker engine runs the box. remote-docker-only. */
+  remoteHost?: string;
   /** --from-branch <ref>: base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. */
   fromBranch?: string;
   /** -b / --use-branch <name>: reuse an existing branch directly instead of forking agentbox/<name>. */
@@ -158,7 +161,14 @@ export const createCommand = new Command('create')
   )
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
   .option('-n, --name <name>', 'friendly box name (default: <workspace-basename>-<id>)')
-  .option('--provider <name>', "sandbox backend: 'docker' (default) or 'daytona' (cloud)")
+  .option(
+    '--provider <name>',
+    "sandbox backend: docker (default), daytona, hetzner, digitalocean, vercel, e2b, remote-docker. `docker:<host>` runs the box on that machine's docker engine over SSH.",
+  )
+  .option(
+    '--remote-host <dest>',
+    'SSH destination whose docker engine runs the box — an ~/.ssh/config alias or [user@]host[:port]. Overrides box.remoteDockerHost. Same as `--provider docker:<dest>`. remote-docker-only.',
+  )
   .option(
     '--host-snapshot',
     'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)',
@@ -269,7 +279,13 @@ export const createCommand = new Command('create')
     } catch {
       /* best-effort project registration */
     }
-    const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
+    // `--provider` may be a host-qualified spec (`docker:buildbox`). Split it:
+    // `providerName` must stay a bare name — it keys the per-provider config
+    // (box.image<P>, box.defaultCheckpoint<P>) and lands on the box record.
+    const { name: providerName, remoteHost: specRemoteHost } = parseProviderSpec(
+      opts.provider ?? cfg.effective.box.provider ?? 'docker',
+    );
+    const remoteHost = opts.remoteHost ?? specRemoteHost;
     // `direct` push mode (box holds a copy of your git credentials) is only
     // meaningful for cloud boxes: a docker box runs on your host machine and
     // bind-mounts the host `.git`, so it is never independent of the host.
@@ -292,6 +308,9 @@ export const createCommand = new Command('create')
     }
     if (opts.inbound && providerName !== 'hetzner' && providerName !== 'digitalocean') {
       log.warn(`--inbound applies to hetzner/digitalocean only; ignored for provider ${providerName}`);
+    }
+    if (opts.remoteHost && providerName !== 'remote-docker') {
+      log.warn(`--remote-host applies to remote-docker only; ignored for provider ${providerName}`);
     }
     // Box image: same precedence pattern as --size. `--image` wins; otherwise
     // the cascaded box.image / box.image<Provider> (written by `agentbox
@@ -513,6 +532,7 @@ export const createCommand = new Command('create')
             size: opts.size,
             location: opts.location,
             inbound: opts.inbound,
+            remoteHost,
           }),
         },
       });

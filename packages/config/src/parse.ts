@@ -13,6 +13,19 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 /** Keys removed in a rename. Surfaced with a migration hint instead of a bare "unknown key". */
 const RENAMED_KEYS: ReadonlyMap<string, string> = new Map([['box.snapshot', 'box.hostSnapshot']]);
 
+export interface ParseOptions {
+  /**
+   * Called once per unknown key/section. Unknown keys are IGNORED, not fatal:
+   * this parser is bundled into provider plugins (`@madarco/agentbox-provider-sdk`
+   * inlines `@agentbox/config`), so a plugin pinned to an older SDK parses the
+   * user's config with a stale KEY_REGISTRY. Throwing there would mean every
+   * config key we add breaks every already-published plugin until it republishes.
+   * Type errors and renamed keys still throw — only *unknown* keys degrade to a
+   * warning.
+   */
+  onWarning?: (message: string) => void;
+}
+
 interface BranchSpec {
   name: string;
   /** Map of leaf-key (dot-suffix) → descriptor whose `key` starts with this branch. */
@@ -77,13 +90,18 @@ function coerceTypedValue(raw: unknown, desc: KeyDescriptor, where: string): unk
 }
 
 /**
- * Parse a UserConfig document text (YAML). Strict: unknown branches and
- * unknown leaves throw UserConfigError so typos surface early.
+ * Parse a UserConfig document text (YAML). Malformed values (wrong type, bad
+ * enum, renamed key) throw UserConfigError; unknown keys are reported to
+ * `opts.onWarning` and skipped (see `ParseOptions`).
  *
  * `where` is the human-readable origin for error messages, e.g. the file path.
  * Empty / whitespace-only input parses to `{}`.
  */
-export function parseUserConfig(text: string, where: string): Partial<UserConfig> {
+export function parseUserConfig(
+  text: string,
+  where: string,
+  opts: ParseOptions = {},
+): Partial<UserConfig> {
   let doc: unknown;
   try {
     doc = parseYaml(text);
@@ -96,7 +114,7 @@ export function parseUserConfig(text: string, where: string): Partial<UserConfig
   if (!isPlainObject(doc)) {
     throw new UserConfigError(`${where}: top-level must be a mapping`);
   }
-  return parseUserConfigObject(doc, where);
+  return parseUserConfigObject(doc, where, opts);
 }
 
 /**
@@ -104,7 +122,11 @@ export function parseUserConfig(text: string, where: string): Partial<UserConfig
  * object. Used when the caller has the YAML parsed (e.g. agentbox.yaml's
  * `defaults:` block).
  */
-export function parseUserConfigObject(doc: unknown, where: string): Partial<UserConfig> {
+export function parseUserConfigObject(
+  doc: unknown,
+  where: string,
+  opts: ParseOptions = {},
+): Partial<UserConfig> {
   if (doc === null || doc === undefined) return {};
   if (!isPlainObject(doc)) {
     throw new UserConfigError(`${where}: must be a mapping`);
@@ -127,15 +149,16 @@ export function parseUserConfigObject(doc: unknown, where: string): Partial<User
     }
     const branchSpec = BRANCHES.get(branchName);
     if (!branchSpec) {
-      throw new UserConfigError(
-        `${where}: unknown config section "${branchName}" (known: ${[...BRANCHES.keys()].join(', ')})`,
+      opts.onWarning?.(
+        `${where}: unknown config section "${branchName}" — ignored (typo, or set by a newer agentbox)`,
       );
+      continue;
     }
     if (branchRaw === null || branchRaw === undefined) continue;
     if (!isPlainObject(branchRaw)) {
       throw new UserConfigError(`${where}.${branchName}: must be a mapping`);
     }
-    const branchOut = parseBranchObject(branchSpec, branchName, branchRaw, '', where);
+    const branchOut = parseBranchObject(branchSpec, branchName, branchRaw, '', where, opts);
     if (Object.keys(branchOut).length > 0) {
       // We've validated that each branch matches one of UserConfig's known
       // sub-objects; the indexed write keeps the union type happy.
@@ -158,6 +181,7 @@ function parseBranchObject(
   raw: Record<string, unknown>,
   qualifiedPrefix: string,
   where: string,
+  opts: ParseOptions,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(raw)) {
@@ -171,18 +195,20 @@ function parseBranchObject(
     // Not a leaf — descend if it's a mapping AND a deeper leaf is registered
     // beneath this path. Otherwise the key is unknown / not in the registry.
     if (isPlainObject(value) && branchHasLeafBelow(branchSpec, qualified)) {
-      const sub = parseBranchObject(branchSpec, branchName, value, qualified, where);
+      const sub = parseBranchObject(branchSpec, branchName, value, qualified, where, opts);
       if (Object.keys(sub).length > 0) out[name] = sub;
       continue;
     }
+    // A rename still throws: the old name was valid in every older registry, so
+    // this can't be a forward-compat miss — it's a real migration the user must do.
     const renamedTo = RENAMED_KEYS.get(`${branchName}.${qualified}`);
     if (renamedTo) {
       throw new UserConfigError(
         `${where}.${branchName}.${qualified} was renamed to ${renamedTo} — update your config`,
       );
     }
-    throw new UserConfigError(
-      `${where}.${branchName}: unknown key "${qualified}" (known: ${[...branchSpec.leaves.keys()].join(', ')})`,
+    opts.onWarning?.(
+      `${where}.${branchName}: unknown key "${qualified}" — ignored (typo, or set by a newer agentbox)`,
     );
   }
   return out;

@@ -80,6 +80,14 @@ export interface CloudProvisionRequest {
    */
   project?: string;
   /**
+   * SSH destination whose Docker engine runs the box. Only `remote-docker` reads
+   * it — its "cloud" is a machine the user supplies, so unlike every other
+   * backend it has no infrastructure of its own to place the box on and this is
+   * mandatory. Resolved by the CLI from `docker:<host>` / `--remote-host` /
+   * `box.remoteDockerHost`. Backends that own their infrastructure ignore it.
+   */
+  host?: string;
+  /**
    * Max session length in ms before the backend auto-snapshots/stops the
    * sandbox. Backends that don't model a session timeout ignore it; Vercel
    * maps it to `Sandbox.create({ timeout })`.

@@ -130,7 +130,14 @@ export const pruneCommand = new Command('prune')
   });
 
 /** Cloud providers whose orphan sandboxes `prune --provider <p>` can enumerate + delete. */
-const CLOUD_PRUNE_PROVIDERS = ['daytona', 'hetzner', 'vercel', 'e2b', 'digitalocean'] as const;
+const CLOUD_PRUNE_PROVIDERS = [
+  'daytona',
+  'hetzner',
+  'vercel',
+  'e2b',
+  'digitalocean',
+  'remote-docker',
+] as const;
 type CloudPruneProvider = (typeof CLOUD_PRUNE_PROVIDERS)[number];
 
 function isCloudPruneProvider(name: string): name is CloudPruneProvider {

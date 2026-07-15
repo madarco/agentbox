@@ -101,6 +101,7 @@ const IMPORTERS: Record<ProviderKind, () => Promise<{ providerModule: ProviderMo
   vercel: () => import('@agentbox/sandbox-vercel'),
   e2b: () => import('@agentbox/sandbox-e2b'),
   digitalocean: () => import('@agentbox/sandbox-digitalocean'),
+  'remote-docker': () => import('@agentbox/sandbox-remote-docker'),
 };
 
 // Per-provider serialization of prepare-enqueue: `prepareProvider` reads the
@@ -373,6 +374,9 @@ const PROVIDER_CRED_KEYS: Record<ProviderKind, readonly string[]> = {
   hetzner: ['HCLOUD_TOKEN'],
   vercel: ['VERCEL_TOKEN', 'VERCEL_OIDC_TOKEN', 'VERCEL_AUTH_SOURCE'],
   digitalocean: ['DIGITALOCEAN_TOKEN'],
+  // remote-docker authenticates as you, over your own ~/.ssh/config — there is
+  // no credential to store, so there is none to check.
+  'remote-docker': [],
 };
 
 /** Set of KEY names present in `~/.agentbox/secrets.env` (values ignored). */

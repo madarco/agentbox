@@ -63,6 +63,7 @@ import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { providerForBox, providerForCreate } from '../provider/registry.js';
+import { parseProviderSpec } from '../provider/spec.js';
 import {
   prepareTeleport,
   TeleportError,
@@ -624,7 +625,9 @@ export const claudeCommand = new Command('claude')
     // then default 'docker'. The Docker-only fast path below skips entirely on
     // cloud — we delegate to the cloud-agent-create helper after running the
     // (provider-agnostic) setup wizard.
-    const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
+    const { name: providerName, remoteHost } = parseProviderSpec(
+      opts.provider ?? cfg.effective.box.provider ?? 'docker',
+    );
     const isCloud = providerName !== 'docker';
 
     if (cfg.effective.git.pushMode === 'direct' && !isCloud) {
@@ -922,7 +925,9 @@ export const claudeCommand = new Command('claude')
           gitPushMode: cfg.effective.git.pushMode,
           // Per-provider session-lifetime (e2b/vercel timeout) so the keepalive
           // seeds correctly; mirrors `agentbox create`.
-          providerOptions: cloudSizingProviderOptions(provider.name, cfg.effective),
+          providerOptions: cloudSizingProviderOptions(provider.name, cfg.effective, {
+            remoteHost,
+          }),
         },
         binary: 'claude',
         hasSeedPrompt:

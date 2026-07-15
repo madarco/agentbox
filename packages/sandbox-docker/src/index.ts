@@ -163,6 +163,11 @@ export {
 export {
   DEFAULT_BOX_IMAGE,
   BOX_IMAGE_REGISTRY,
+  // The staged build context (Dockerfile.box + the COPY tree). The remote-docker
+  // provider tars this and streams it to a remote `docker build -` on a registry
+  // miss, so it needs the same context the local build uses.
+  BUILD_CONTEXT_DIR,
+  DOCKERFILE_PATH,
   registryRefForSha,
   ensureImage,
   classifyDockerBaseFreshness,

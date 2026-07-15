@@ -98,13 +98,18 @@ The largest group. A pattern runs through it: a generic key plus per-provider ov
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `box.provider` | enum `docker`/`daytona`/`hetzner`/`vercel` | `docker` | backend new boxes are created on |
+| `box.provider` | enum `docker`/`daytona`/`hetzner`/`vercel`/`e2b`/`digitalocean`/`remote-docker` | `docker` | backend new boxes are created on |
+
+This is what plain `agentbox claude` (or `create`, `codex`, `opencode`) uses when you don't pass `--provider`. `agentbox install` offers to set it for you at the end of the wizard, so the provider you just logged in to and prepared becomes the one new boxes go to. Set it yourself at any time:
 
 ```bash
-agentbox config set box.provider hetzner --global
+agentbox config set box.provider hetzner --global    # every project on this machine
+agentbox config set box.provider hetzner             # this project only
 ```
 
-See [local Docker](/docs/local-docker), [Hetzner](/docs/hetzner), [Daytona](/docs/daytona), [Vercel](/docs/vercel), and [core concepts](/docs/core-concepts).
+A per-run `--provider docker` (or the `agentbox docker claude` prefix) still overrides it.
+
+See [local Docker](/docs/local-docker), [Remote Docker](/docs/remote-docker), [Hetzner](/docs/hetzner), [Daytona](/docs/daytona), [Vercel](/docs/vercel), and [core concepts](/docs/core-concepts).
 
 ### Resource limits (Docker)
 
@@ -120,7 +125,7 @@ See [local Docker](/docs/local-docker), [Hetzner](/docs/hetzner), [Daytona](/doc
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `box.size` | string | empty | generic cloud size, provider-interpreted: hetzner = server type (`cx33`), digitalocean = Droplet size slug (`s-4vcpu-8gb`), daytona = `cpu-memory-disk` GB (`4-8-20`), vercel = vCPU count (`1`/`2`/`4`/`8`), e2b = `cpu-memory` GB (`4-8`, baked at `prepare` time); docker ignores it |
-| `box.sizeDaytona` / `box.sizeHetzner` / `box.sizeDigitalocean` / `box.sizeVercel` / `box.sizeE2b` | string (advanced) | empty | per-provider override of `box.size` |
+| `box.sizeDaytona` / `box.sizeHetzner` / `box.sizeDigitalocean` / `box.sizeVercel` / `box.sizeE2b` / `box.sizeRemoteDocker` | string (advanced) | empty | per-provider override of `box.size` |
 | `box.sizeDocker` | string (advanced) | empty | reserved — docker uses `box.memory` / `box.cpus` / `box.disk` |
 | `box.daytonaClass` | string | `linux-vm` | Daytona [sandbox class](/docs/daytona#sandbox-class): `linux-vm` gives a true pause (CPU + memory frozen, running processes survive) and a ~1 min base bake, but runs only in `us-east-1`. `container` keeps the old behavior and any region. Changing it needs `agentbox prepare --provider daytona --force`. Daytona-only |
 | `box.daytonaRegion` | string | empty | Daytona region (`us`, `eu`, `us-east-1`). Empty derives it from the class — `linux-vm` ⇒ `us-east-1` (the only region with VM runners), `container` ⇒ the account default. Daytona-only |
@@ -128,6 +133,7 @@ See [local Docker](/docs/local-docker), [Hetzner](/docs/hetzner), [Daytona](/doc
 | `box.daytonaVmBaseImage` | string (advanced) | empty | registry image the `linux-vm` base is baked from. Empty uses the box image AgentBox publishes. Set it when there's no published image for your build context — a locally modified `Dockerfile.box` — or to bake from a private mirror. Must be amd64 with an explicit tag. Daytona-only |
 | `box.hetznerLocation` | string | `nbg1` | Hetzner datacenter new boxes are created in (`nbg1`, `fsn1`, `hel1`, `ash`); override per box with `--location`. Hetzner-only |
 | `box.digitaloceanRegion` | string | `nyc3` | DigitalOcean region new boxes are created in (`nyc3`, `sfo3`, `ams3`, `fra1`, …); override per box with `--location`. DigitalOcean-only |
+| `box.remoteDockerHost` | string | empty | default SSH destination whose Docker engine runs new boxes — an `~/.ssh/config` alias or `[user@]host[:port]`. Override per box with `agentbox docker:<host> …` or `--remote-host`. See [Remote Docker](/docs/remote-docker). remote-docker-only |
 | `box.digitaloceanProject` | string | empty | the [DigitalOcean Project](/docs/digitalocean#projects) new boxes are placed in — a project name or its UUID. Empty leaves them in the account's default project. Pick it at `agentbox digitalocean login`, or set it per repo in `agentbox.yaml`. DigitalOcean-only |
 | `box.inbound` | string | `locked` | inbound-access policy for the VPS per-box firewall. `locked` = SSH from your host egress IP only; `open` = SSH from anywhere (`0.0.0.0/0`, key-only — reach a box from a phone with the laptop off); a CIDR list (e.g. `203.0.113.5/32`) = host egress plus those. Override per box with `--inbound` or after create with `agentbox inbound <box>`. Hetzner/DigitalOcean-only. See [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline) |
 
@@ -136,7 +142,7 @@ See [local Docker](/docs/local-docker), [Hetzner](/docs/hetzner), [Daytona](/doc
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `box.image` | string (advanced) | `agentbox/box:dev` | generic image ref; the default is a sentinel cloud backends read as "boot from the prepared base snapshot" |
-| `box.imageDocker` / `box.imageDaytona` / `box.imageHetzner` / `box.imageDigitalocean` / `box.imageVercel` | string (advanced) | empty | per-provider override; the cloud ones are written by `agentbox prepare --provider <name>` |
+| `box.imageDocker` / `box.imageDaytona` / `box.imageHetzner` / `box.imageDigitalocean` / `box.imageVercel` / `box.imageRemoteDocker` | string (advanced) | empty | per-provider override; the cloud ones are written by `agentbox prepare --provider <name>`. Leave `box.imageRemoteDocker` empty — that provider derives a fingerprint-tagged ref and ensures it on the remote engine itself |
 | `box.imageRegistry` | string (advanced, docker only) | `ghcr.io/madarco/agentbox/box` | registry to pull the prebuilt base from before building locally; empty = always build |
 
 <Callout type="warn" title="HEADS UP">
@@ -148,7 +154,7 @@ Setting the generic `box.image` to a provider-native snapshot id breaks creates 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `box.defaultCheckpoint` | string | empty | checkpoint new boxes start from when `--snapshot` isn't given; set via `agentbox checkpoint set-default` |
-| `box.defaultCheckpointDocker` / `…Daytona` / `…Hetzner` / `…Vercel` | string (advanced) | empty | per-provider overrides; set via `checkpoint set-default --provider <name>` |
+| `box.defaultCheckpointDocker` / `…Daytona` / `…Hetzner` / `…Digitalocean` / `…Vercel` / `…E2b` / `…RemoteDocker` | string (advanced) | empty | per-provider overrides; set via `checkpoint set-default --provider <name>` |
 
 See [checkpoints and pausing](/docs/checkpoints-and-pausing).
 

@@ -7,16 +7,20 @@
 import { loadEffectiveConfig, resolveDaytonaClass } from '@agentbox/config';
 import { errSummary, type CheckResult, type CredStatusSummary } from '@agentbox/sandbox-core';
 import { readPreparedDaytonaState } from './prepared-state.js';
-import { getDaytonaStatus } from './status.js';
+import { getDaytonaStatus, hasDaytonaCredentials } from './status.js';
 
-export async function readCredStatusSummary(): Promise<CredStatusSummary> {
-  const status = await getDaytonaStatus();
-  return { configured: status.configured };
+export function readCredStatusSummary(): CredStatusSummary {
+  // Credentials only — no network. This runs in the install wizard's provider
+  // step just to answer "logged in?", and it used to fetch the whole snapshot +
+  // volume inventory to do it.
+  return { configured: hasDaytonaCredentials().configured };
 }
 
 export async function doctorChecks(): Promise<CheckResult[]> {
   try {
-    const status = await getDaytonaStatus();
+    // Snapshots only: the rows below render the snapshot count and nothing else,
+    // so the volume list was a second API round-trip whose result was discarded.
+    const status = await getDaytonaStatus({ volumes: false });
     if (!status.configured) {
       return [
         {

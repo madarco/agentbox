@@ -42,6 +42,24 @@ export {
 } from './cloud-ssh.js';
 export { mintSshKey, type MintedSshKey } from './ssh-key.js';
 export {
+  scpDownload,
+  scpUpload,
+  sshDestination,
+  sshExec,
+  sshOptArgs,
+  waitForSsh,
+  type SshExecOptions,
+  type SshExecResult,
+  type SshTargetArgs,
+} from './ssh-exec.js';
+export {
+  SshTunnelManager,
+  defaultBoxSshDir,
+  pickFreePort,
+  type PortForward,
+  type SshTunnelOpenOptions,
+} from './ssh-tunnel.js';
+export {
   OPEN_INBOUND_SOURCES,
   normalizeInboundCidr,
   parseInboundSpec,

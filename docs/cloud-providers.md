@@ -846,13 +846,114 @@ brief:
   from the SDK (handled by the cloud scaffold). E2B itself runs in multiple
   regions; the SDK chooses one transparently.
 
+## 3e. The remote-docker shape
+
+`remote-docker` runs a box as a container on a machine the *user* supplies,
+reached over SSH. It is the only provider whose "cloud" is not infrastructure we
+provision — it is someone's workstation, Mac mini, or team server.
+
+**Why it is a `CloudBackend` and not a second docker provider.** The docker
+provider's load-bearing mechanism is the bind mount of the host's `.git/` into
+the container at an identical absolute path: an in-box commit lands in the host
+repo with no sync at all. A bind mount cannot cross a network, and everything
+downstream of that assumption is equally local-only — the ctl unix socket on a
+host path, `-p 127.0.0.1:0:<p>` publishing on the *laptop's* loopback,
+`host.docker.internal` reaching the laptop's relay. Retargeting the docker
+provider with `DOCKER_HOST=ssh://` would retarget the `docker` calls and none of
+those assumptions; worse, the relay's git RPC would take the **docker** branch in
+`host-actions.ts` and try to push from a `.git` that isn't there. The cloud
+scaffold already solved every one of them, so the provider implements the ~14
+`CloudBackend` primitives over `docker`-on-SSH and inherits `seedCloudWorkspace`,
+the in-box relay + `CloudBoxPoller` bridge, git-push-by-bundle, carry, and
+credential sync unchanged.
+
+**Transport.** One OpenSSH ControlMaster per box (`@agentbox/sandbox-core`'s
+`SshTunnelManager`, shared with hetzner/digitalocean), and every docker command
+runs through one chokepoint: `ssh <dest> bash -lc 'docker …'`
+(`src/remote-docker.ts`). Deliberately **not** `DOCKER_HOST=ssh://`:
+
+  1. Docker's ssh transport runs `docker system dial-stdio` on the remote, which
+     needs `docker` on the **non-login-shell** PATH — precisely where OrbStack
+     (`~/.orbstack/bin`) and Colima break. A macOS remote is a supported case.
+  2. It opens a fresh SSH connection per `docker` invocation; create issues dozens.
+
+The trade is that docker's argv is composed into a shell string, so every
+argument is quoted (`quoteShellArgv`) — nothing in the package may build a remote
+command by concatenation.
+
+**Addressing.** The SSH destination is encoded INTO the sandbox id:
+
+    sandboxId = "<ssh-destination>/<container>"   e.g. "buildbox/agentbox-brave-otter"
+
+The host relay resolves a backend from a bare `CloudHandle` with no access to
+config or box state, so the handle must be self-describing. Multi-host support
+then falls out for free, and a box keeps working after `box.remoteDockerHost`
+changes. The CLI accepts a host-qualified provider spec (`docker:<host>`,
+`apps/cli/src/provider/spec.ts`) anywhere a provider name is accepted; the bare
+name is what keys config and lands on the record.
+
+**Image.** The ref IS the build-context fingerprint: `agentbox/box:<sha16>`, the
+same sha the local docker provider computes. So "is this host prepared?" is
+answered by asking the engine (`docker image inspect`), not by trusting a local
+file that could disagree with it — and it is answered **per host**, which a
+single `~/.agentbox/remote-docker-prepared.json` could never be. Ensure order:
+present → pull the fingerprint-tagged GHCR image (published multi-arch, so an
+amd64 remote gets amd64 from an arm64 laptop) → stream the local build context to
+`docker build -` on the remote. `prepare` is therefore **optional** (unlike the
+VPS providers': a remote engine can build from a Dockerfile), and only records
+history for `prepare --status` / `doctor`.
+
+**Checkpoints.** `docker commit` on the engine. The snapshot name carries the
+host, because `deleteSnapshot`/`snapshotExists` are handed nothing but that string
+(no handle) and a docker ref admits neither `@` nor `:` outside the tag:
+
+    "<ssh-destination>#<docker-image-ref>"   e.g. "dev@10.0.0.9:2222#agentbox-ckpt-9f2a_repo:setup"
+
+A checkpoint is bound to the engine that made it. Booting it on another machine
+reads as "snapshot gone", so the scaffold prunes the dangling manifest and builds
+from base rather than failing.
+
+**Box SSH (`open` / `code`).** The box's sshd is published on the *engine's*
+loopback, so no local ssh can dial it directly. Rather than hold an `ssh -L`
+forward open for the alias's lifetime, the generated `~/.agentbox/ssh/config`
+block uses **`ProxyJump`**: ssh hops through the engine, which dials
+`127.0.0.1:<published>` itself. That is plain OpenSSH, so VS Code Remote-SSH and
+sshfs work with no tunnel for AgentBox to keep alive. The published port is
+ephemeral and is re-resolved on every start. This is what `Provider.sshTarget`
+exists for: a provider that knows its own SSH target says so, instead of having it
+reverse-engineered from the `buildAttach` argv (an inference that only holds when
+the box IS the machine).
+
+**Nested engines.** When the engine is itself an AgentBox box (the
+agentbox-in-agentbox dev loop), its dockerd has no `CAP_SYS_PTRACE` and cannot
+bind-mount `/proc/<pid>/ns/net` for a container init running as a different uid
+than the daemon. The provider detects this by asking the *engine*
+(`test -f /etc/agentbox/box.env`) — not by reading its own `AGENTBOX=1`, which
+would be the wrong signal, since the CLI can run in a box while the engine sits on
+a real machine — and forces the box init to uid 0.
+
+**No credential.** There is nothing in `secrets.env`: the provider authenticates
+as the user, through their own `~/.ssh/config`, agent and `known_hosts`. Its
+`providerModule` deliberately omits `ensureCredentials` / `readCredStatus`, so the
+CLI and hub show no login row. `agentbox remote-docker check|use|hosts` replace it.
+
+**Known limits.** Published ports are fixed at `docker run` (same constraint as
+Vercel): a service added to `agentbox.yaml` after create is reachable through the
+WebProxy but gets no direct preview URL until the box is recreated. Concurrent
+boxes share the machine with no arbitration beyond `--size`. The engine is
+trusted — this is a "your own machine" provider, not an isolation boundary
+against that machine's owner.
+
 ## 4. Authentication
 
-`agentbox daytona login` is the supported path. It prompts for
-`DAYTONA_API_KEY` (required) and `DAYTONA_ORGANIZATION_ID` (optional)
-and persists them to `~/.agentbox/secrets.env`. Subsequent runs read
-that file; project `.env` is never harvested. First-time use of
-`--provider daytona` triggers the login prompt automatically.
+`agentbox daytona login` is the supported path. There is **no browser sign-in** —
+it offers to open the dashboard's keys page for convenience, then prompts you to
+paste a **`DAYTONA_API_KEY`**, and persists it to `~/.agentbox/secrets.env`.
+`DAYTONA_ORGANIZATION_ID` is asked for **only** when the pasted value is a JWT
+(it starts with `eyJ`), and there it's required — an API key doesn't need one,
+since the SDK derives the org from the key. Subsequent runs read that file;
+project `.env` is never harvested. First-time use of `--provider daytona`
+triggers the login prompt automatically.
 
 `agentbox hetzner login` is the analogous command for Hetzner. It
 prompts for `HCLOUD_TOKEN` (Read+Write API token from a Hetzner project's

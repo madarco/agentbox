@@ -158,13 +158,13 @@ describe('detectOpenTargets', () => {
 });
 
 describe('provider eligibility constants', () => {
-  it('codex/persistent-ssh covers docker + hetzner; vscode covers docker + ssh clouds', () => {
-    expect(PERSISTENT_SSH_PROVIDERS).toEqual(['docker', 'hetzner']);
-    expect(IDE_PROVIDERS).toEqual(['docker', 'hetzner', 'daytona']);
+  it('codex/persistent-ssh covers docker + hetzner + remote-docker; vscode covers docker + ssh clouds', () => {
+    expect(PERSISTENT_SSH_PROVIDERS).toEqual(['docker', 'hetzner', 'remote-docker']);
+    expect(IDE_PROVIDERS).toEqual(['docker', 'hetzner', 'daytona', 'remote-docker']);
   });
 
-  it('open sshfs-mounts docker + hetzner + daytona; vercel/e2b excluded (no SSH)', () => {
-    expect(SSH_MOUNT_PROVIDERS).toEqual(['docker', 'hetzner', 'daytona']);
+  it('open sshfs-mounts docker + hetzner + daytona + remote-docker; vercel/e2b excluded (no SSH)', () => {
+    expect(SSH_MOUNT_PROVIDERS).toEqual(['docker', 'hetzner', 'daytona', 'remote-docker']);
     expect(SSH_MOUNT_PROVIDERS).not.toContain('vercel');
     expect(SSH_MOUNT_PROVIDERS).not.toContain('e2b');
   });

@@ -1,4 +1,5 @@
 export {
+  CLOUD_VNC_PORT,
   CLOUD_WEB_PROXY_PORT,
   CLOUD_WORKSPACE_DIR,
   createCloudProvider,

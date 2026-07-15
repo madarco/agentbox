@@ -93,14 +93,6 @@ maintenance:
 
 const INVALID: Fixture[] = [
   {
-    name: 'unknown branch',
-    yaml: 'foo:\n  bar: 1\n',
-  },
-  {
-    name: 'unknown leaf',
-    yaml: 'box:\n  snorshot: true\n',
-  },
-  {
     name: 'wrong type for bool',
     yaml: 'box:\n  hostSnapshot: yes\n', // yaml parses bare yes as bool, but YAML 1.2 returns string
   },
@@ -121,10 +113,6 @@ const INVALID: Fixture[] = [
     yaml: 'box:\n  memory: "2g"\n',
   },
   {
-    name: 'box.cpu unknown sibling',
-    yaml: 'box:\n  cpu: 2\n',
-  },
-  {
     name: 'unknown enum value',
     yaml: 'engine:\n  kind: podman\n',
   },
@@ -137,24 +125,12 @@ const INVALID: Fixture[] = [
     yaml: 'autopause:\n  idleMinutes: "30"\n',
   },
   {
-    name: 'autopause unknown leaf',
-    yaml: 'autopause:\n  idleMins: 30\n',
-  },
-  {
     name: 'queue wrong type for int',
     yaml: 'queue:\n  maxWorking: "3"\n',
   },
   {
-    name: 'queue unknown leaf',
-    yaml: 'queue:\n  maxWorkers: 3\n',
-  },
-  {
     name: 'queue openIn unknown enum value',
     yaml: 'queue:\n  openIn: same\n',
-  },
-  {
-    name: 'deleted key box.vercelVcpus',
-    yaml: 'box:\n  vercelVcpus: 4\n',
   },
   {
     name: 'box.hetznerLocation wrong type',
@@ -173,17 +149,30 @@ const INVALID: Fixture[] = [
     yaml: 'maintenance:\n  pruneProjectConfigsEvery: "50"\n',
   },
   {
-    name: 'maintenance unknown leaf',
-    yaml: 'maintenance:\n  pruneProjectDirs: true\n',
-  },
-  {
     name: 'portless wrong type for bool',
     yaml: 'portless:\n  enabled: 1\n',
   },
-  {
-    name: 'portless unknown leaf',
-    yaml: 'portless:\n  enable: true\n',
-  },
+];
+
+/**
+ * Unknown keys are the ONE place parser and schema deliberately disagree.
+ *
+ * The schema stays `additionalProperties: false` — it powers editor
+ * autocomplete, where flagging a typo as you type is exactly what you want. The
+ * *parser* only warns and skips, because it is inlined into provider plugins and
+ * into the box image: a copy older than the CLI that wrote the config must not
+ * refuse to run (see parse.ts's ParseOptions, docs/provider-plugins.md).
+ */
+const UNKNOWN_KEYS: Fixture[] = [
+  { name: 'unknown branch', yaml: 'foo:\n  bar: 1\n' },
+  { name: 'unknown leaf', yaml: 'box:\n  snorshot: true\n' },
+  { name: 'box.cpu unknown sibling', yaml: 'box:\n  cpu: 2\n' },
+  { name: 'autopause unknown leaf', yaml: 'autopause:\n  idleMins: 30\n' },
+  { name: 'maintenance unknown leaf', yaml: 'maintenance:\n  pruneProjectDirs: true\n' },
+  { name: 'portless unknown leaf', yaml: 'portless:\n  enable: true\n' },
+  { name: 'queue unknown leaf', yaml: 'queue:\n  maxWorkers: 3\n' },
+  // A key we deleted reads exactly like a key we've never heard of.
+  { name: 'deleted key box.vercelVcpus', yaml: 'box:\n  vercelVcpus: 4\n' },
 ];
 
 describe('user-config: parser ↔ JSON schema agreement', () => {
@@ -213,6 +202,23 @@ describe('user-config: parser ↔ JSON schema agreement', () => {
         // booleans, so `box: { snapshot: yes }` parses to the string "yes".
         // Both parser and schema must reject (string != boolean).
         expect({ name: f.name, ok }).toMatchObject({ ok: false });
+      });
+    }
+  });
+
+  describe('UNKNOWN-KEY fixtures: schema rejects, parser warns and skips', () => {
+    for (const f of UNKNOWN_KEYS) {
+      it(f.name, () => {
+        // Parser accepts, reports the key, and does not apply it.
+        const warnings: string[] = [];
+        const fromParser = parseUserConfig(f.yaml, `<test:${f.name}>`, {
+          onWarning: (m) => warnings.push(m),
+        });
+        expect(fromParser).toBeTypeOf('object');
+        expect(warnings).toHaveLength(1);
+        // Schema still rejects (editor autocomplete stays strict).
+        const doc = parseYaml(f.yaml) ?? {};
+        expect({ name: f.name, ok: validate(doc) }).toMatchObject({ ok: false });
       });
     }
   });

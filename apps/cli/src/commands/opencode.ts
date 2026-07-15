@@ -65,6 +65,7 @@ import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { providerForCreate } from '../provider/registry.js';
+import { parseProviderSpec } from '../provider/spec.js';
 import { prepareTeleport, TeleportError } from '../session-teleport/index.js';
 import { clampSpinnerLine } from '../spinner-line.js';
 import { makeProgressReporter } from '../lib/progress.js';
@@ -509,7 +510,9 @@ export const opencodeCommand = new Command('opencode')
     const projectRoot = (await findProjectRoot(opts.workspace)).root;
     // Resolve provider. Cloud path skips docker-only steps (login offer,
     // Portless, createBox) and delegates to cloudAgentCreate.
-    const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
+    const { name: providerName, remoteHost } = parseProviderSpec(
+      opts.provider ?? cfg.effective.box.provider ?? 'docker',
+    );
     const isCloud = providerName !== 'docker';
 
     if (cfg.effective.git.pushMode === 'direct' && !isCloud) {
@@ -670,7 +673,9 @@ export const opencodeCommand = new Command('opencode')
           controlPlaneUrl: cfg.effective.relay.controlPlaneUrl,
           gitPushMode: cfg.effective.git.pushMode,
           // Per-provider session-lifetime (e2b/vercel timeout); mirrors create.
-          providerOptions: cloudSizingProviderOptions(provider.name, cfg.effective),
+          providerOptions: cloudSizingProviderOptions(provider.name, cfg.effective, {
+            remoteHost,
+          }),
         },
         binary: 'opencode',
         sessionName: cfg.effective.opencode.sessionName,

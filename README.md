@@ -81,12 +81,12 @@ Uses `portless` to give box web apps the same URL from inside the box and on the
 
 ## Cloud Providers
 
-|                     | local docker              | hetzner                | daytona            | vercel             | e2b                |
-| ------------------- | ------------------------- | ---------------------- | ------------------ | ------------------ | ------------------ |
-| Support             | ✅                        | ✅                     | ⚠️ Partial         | ✅                 | ✅                 |
-| Base image          | Dockerfile                | Setup script (Ubuntu)  | Dockerfile         | Setup script       | Dockerfile (`Template.build`) |
-| Live snapshots      | ✅                        | ✅                     | 🧪 Experimental    | ✅                 | ✅                 |
-| Private preview URLs| ✅ (portless or OrbStack) | ✅ (portless)          | ✅ (native)        | ✅ (native)        | ✅ (native)        |
+|                     | local docker              | remote docker          | hetzner                | daytona            | vercel             | e2b                |
+| ------------------- | ------------------------- | ---------------------- | ---------------------- | ------------------ | ------------------ | ------------------ |
+| Support             | ✅                        | ✅                     | ✅                     | ⚠️ Partial         | ✅                 | ✅                 |
+| Base image          | Dockerfile                | Dockerfile (on the remote) | Setup script (Ubuntu)  | Dockerfile         | Setup script       | Dockerfile (`Template.build`) |
+| Live snapshots      | ✅                        | ✅ (`docker commit`)   | ✅                     | 🧪 Experimental    | ✅                 | ✅                 |
+| Private preview URLs| ✅ (portless or OrbStack) | ✅ (portless over SSH) | ✅ (portless)          | ✅ (native)        | ✅ (native)        | ✅ (native)        |
 
 **Cloud setup** (optional — skip for local Docker)
 
@@ -96,7 +96,8 @@ Uses `portless` to give box web apps the same URL from inside the box and on the
 - `agentbox daytona login` — interactive Daytona API key setup, saved to `~/.agentbox/secrets.env`
 - `agentbox e2b login` — interactive E2B API key setup, saved to `~/.agentbox/secrets.env`
 - `agentbox digitalocean login` — interactive DigitalOcean Personal Access Token setup, saved to `~/.agentbox/secrets.env`
-- `agentbox prepare [--provider daytona|hetzner|vercel|e2b|digitalocean]` — build the image and initial snapshot (e2b builds from a Dockerfile via `Template.build()`)
+- `agentbox remote-docker check <host>` — run boxes on a machine you already own, over SSH. No login and no token: it connects as you, using your own `~/.ssh/config`. Then `agentbox docker:<host> claude`.
+- `agentbox prepare [--provider daytona|hetzner|vercel|e2b|digitalocean|docker:<host>]` — build the image and initial snapshot (e2b builds from a Dockerfile via `Template.build()`)
 - `agentbox hetzner claude`, `agentbox hetzner codex`, `agentbox hetzner create`, etc.
 
 ## How to use

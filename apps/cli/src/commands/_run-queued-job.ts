@@ -57,6 +57,7 @@ import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { buildResyncWarning, prependResyncWarning } from '../lib/resync-warning.js';
 import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from '../lib/skip-permissions.js';
 import { providerForCreate } from '../provider/registry.js';
+import { parseProviderSpec } from '../provider/spec.js';
 import { autoWriteSshConfig } from '@agentbox/sandbox-core';
 import { cloudAgentStartDetached } from './_cloud-attach.js';
 import { spawnQueuedOpenTerminal } from '../terminal/queue-open.js';
@@ -268,7 +269,9 @@ async function runDockerJob(
     cliOverrides: buildOverridesFromJob(job),
   });
   const projectRoot = (await findProjectRoot(opts.workspace)).root;
-  const providerName = job.providerName || cfg.effective.box.provider || 'docker';
+  const { name: providerName } = parseProviderSpec(
+    job.providerName || cfg.effective.box.provider || 'docker',
+  );
   const providerDefault = resolveDefaultCheckpoint(cfg.effective, providerName);
   const checkpointRef =
     opts.snapshot && opts.snapshot.length > 0
@@ -480,8 +483,12 @@ async function runCloudJob(
     cliOverrides: buildOverridesFromJob(job),
   });
   const projectRoot = (await findProjectRoot(opts.workspace)).root;
-  const providerName = job.providerName || cfg.effective.box.provider || 'docker';
-  const provider = await providerForCreate({ flag: providerName, config: cfg.effective });
+  // A queued job records the raw `--provider` spec, which may be host-qualified
+  // (`docker:buildbox`); split it so the name keys config and the host reaches
+  // the backend.
+  const providerSpec = job.providerName || cfg.effective.box.provider || 'docker';
+  const { name: providerName, remoteHost } = parseProviderSpec(providerSpec);
+  const provider = await providerForCreate({ flag: providerSpec, config: cfg.effective });
 
   const providerDefault = resolveDefaultCheckpoint(cfg.effective, providerName);
   const checkpointRef =
@@ -524,7 +531,7 @@ async function runCloudJob(
     onLog: (line) => log.write(line),
     // Same size / location / session-lifetime resolution the foreground
     // `agentbox create` does, so a queued box isn't sized differently.
-    providerOptions: cloudSizingProviderOptions(providerName, cfg.effective),
+    providerOptions: cloudSizingProviderOptions(providerName, cfg.effective, { remoteHost }),
   });
   log.write(`box created: ${result.record.id}`);
 

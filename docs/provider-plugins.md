@@ -163,6 +163,20 @@ The CLI loads a plugin only if its `providerApiVersion` is in the CLI's supporte
 set (`SUPPORTED_SDK_API_VERSIONS`). An incompatible plugin is refused at
 `plugin add` and skipped (with a warning) at load — it never crashes the CLI.
 
+**A plugin pinned to an older SDK tolerates config keys added after it shipped.**
+The SDK inlines `@agentbox/config`, so your plugin carries a snapshot of the key
+registry taken when you built it — and users run it against a CLI that keeps
+adding keys. An unknown key is therefore **skipped with a warning, never an
+error**: the config layer it appears in still loads, and `create` proceeds. (The
+host CLI is the one that tells the user; a plugin's copy stays silent, because it
+registers no warning sink.) You don't need to republish every time AgentBox adds
+a config key. Wrong *types*, renamed keys, and `agentbox config set <bad-key>`
+still fail loud — the registry is authoritative for keys it does know.
+
+The same rule holds in-box for `agentbox.yaml`: `agentbox-ctl` (baked into an
+image that may be months old) skips keys it doesn't recognize rather than
+refusing to boot.
+
 ## Publishing the SDK (maintainers)
 
 The SDK ships to npm as **`@madarco/agentbox-provider-sdk`** (source at

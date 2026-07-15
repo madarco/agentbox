@@ -9,26 +9,37 @@ import type { EffectiveConfig } from '@agentbox/config';
 import type { ProviderKind } from '@agentbox/config';
 import type { BoxRecord, Provider, ProviderName } from '@agentbox/core';
 import { getRuntimeProviderNames, isRuntimeProvider, loadProviderModule } from './loaders.js';
+import { parseProviderSpec } from './spec.js';
 
 /** A built-in `ProviderKind` OR a registered plugin provider name. */
 export type KnownProviderName = ProviderKind | (string & {});
 
-/** True for a built-in provider or a registered plugin provider. */
+/**
+ * True for a built-in provider, a registered plugin provider, or a
+ * host-qualified spec (`docker:<host>`). Every `--provider` validation goes
+ * through here, so a spec is accepted everywhere a bare name is.
+ */
 export function isKnownProvider(name: string): boolean {
-  return isRuntimeProvider(name);
+  try {
+    return isRuntimeProvider(parseProviderSpec(name).name);
+  } catch {
+    // A malformed spec (`docker:` with no host) is not a known provider; the
+    // caller's error message names it.
+    return false;
+  }
 }
 
 /**
- * Resolve a `Provider` by name, running its first-run credential gate first.
- * Each provider package's `providerModule.ensureCredentials` walks the user
- * through `agentbox <provider> login` on first use (a no-op for docker, and
- * for scripted/non-TTY callers). The base-snapshot gate lives inside
- * `backend.provision`, not here, so `agentbox prepare` can build the snapshot
- * without tripping it. Built-ins load through the bundle-inlined map; unknown
- * names fall back to the plugin registry (`loaders.ts`).
+ * Resolve a `Provider` by name or spec, running its first-run credential gate
+ * first. Each provider package's `providerModule.ensureCredentials` walks the
+ * user through `agentbox <provider> login` on first use (a no-op for docker and
+ * remote-docker, which have no credential, and for non-TTY callers). The
+ * base-snapshot gate lives inside `backend.provision`, not here, so `agentbox
+ * prepare` can build the snapshot without tripping it. Built-ins load through
+ * the bundle-inlined map; unknown names fall back to the plugin registry.
  */
 export async function getProvider(name: ProviderName): Promise<Provider> {
-  const mod = await loadProviderModule(name);
+  const mod = await loadProviderModule(parseProviderSpec(name).name);
   if (mod.ensureCredentials) await mod.ensureCredentials();
   return mod.provider;
 }
@@ -51,11 +62,11 @@ export interface CreateProviderChoice {
  */
 export async function providerForCreate(choice: CreateProviderChoice): Promise<Provider> {
   const flag = choice.flag?.trim();
-  const name = (flag && flag.length > 0 ? flag : choice.config.box.provider) as ProviderName;
-  if (typeof name !== 'string' || name.length === 0 || !isKnownProvider(name)) {
+  const spec = (flag && flag.length > 0 ? flag : choice.config.box.provider) as ProviderName;
+  if (typeof spec !== 'string' || spec.length === 0 || !isKnownProvider(spec)) {
     throw new Error(
-      `unknown sandbox provider "${String(name)}" (known: ${getRuntimeProviderNames().join(', ')})`,
+      `unknown sandbox provider "${String(spec)}" (known: ${getRuntimeProviderNames().join(', ')})`,
     );
   }
-  return getProvider(name);
+  return getProvider(spec);
 }

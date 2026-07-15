@@ -35,6 +35,7 @@ export {
   coerceFromString,
   parseUserConfig,
   parseUserConfigObject,
+  type ParseOptions,
 } from './parse.js';
 
 export {
@@ -57,6 +58,7 @@ export {
 export {
   loadEffectiveConfig,
   loadProjectAgentboxDefaults,
+  setConfigWarningSink,
   type LoadEffectiveConfigOptions,
 } from './load.js';
 

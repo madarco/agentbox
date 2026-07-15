@@ -39,6 +39,12 @@ export interface SshAliasOptions {
    * `127.0.0.1:<port>`; omit for cloud providers reachable on 22.
    */
   port?: number;
+  /**
+   * `ProxyJump` destination for a box reachable only through another machine —
+   * remote-docker's box is a container on a remote engine, so ssh hops through
+   * that engine and dials the published sshd port on its loopback.
+   */
+  proxyJump?: string;
 }
 
 function sshConfigPath(): string {
@@ -98,6 +104,11 @@ function buildBlock(opts: SshAliasOptions): string {
   if (opts.port) {
     lines.push(`  Port ${String(opts.port)}`);
   }
+  if (opts.proxyJump) {
+    // The jump host dials `HostName:Port` itself, which is why a box published
+    // on the engine's loopback is reachable at all.
+    lines.push(`  ProxyJump ${opts.proxyJump}`);
+  }
   if (opts.identityFile) {
     // `IdentitiesOnly yes` stops ssh-agent from offering unrelated keys
     // first — some sshd configs cap auth attempts and would lock us out
@@ -122,8 +133,7 @@ function buildBlock(opts: SshAliasOptions): string {
  * unreleased → clean removal, no deprecation shim.
  */
 function stripLegacyInlineBlocks(contents: string): string {
-  const pattern =
-    /^# BEGIN agentbox cloud box .*\n[\s\S]*?^# END agentbox cloud box .*\n?/gm;
+  const pattern = /^# BEGIN agentbox cloud box .*\n[\s\S]*?^# END agentbox cloud box .*\n?/gm;
   return contents.replace(pattern, '');
 }
 
@@ -174,6 +184,7 @@ export async function syncAgentboxSshConfig(statePath: string = stateFilePath())
         user: ssh.user,
         identityFile: ssh.identityFile,
         port: ssh.port,
+        proxyJump: ssh.proxyJump,
       }),
     );
   }

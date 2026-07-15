@@ -55,6 +55,9 @@ export const daemonCommand = new Command('daemon')
   .option('--workspace <path>', 'cwd for service processes', '/workspace')
   .action(async (opts: DaemonOptions) => {
     const cfg = await loadConfig(opts.config);
+    // Unknown keys never block startup — an older box image must still boot on a
+    // workspace whose agentbox.yaml uses keys a newer CLI added.
+    for (const w of cfg.warnings) process.stderr.write(`agentbox-ctl: warning: ${w}\n`);
     // Cloud backends that can't expose port 80 (Vercel) set AGENTBOX_WEB_PROXY_PORT
     // so the WebProxy binds a reachable non-privileged port. Unset → default 80.
     const webProxyPort = Number(process.env.AGENTBOX_WEB_PROXY_PORT) || undefined;

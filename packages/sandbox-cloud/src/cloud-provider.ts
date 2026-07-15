@@ -592,6 +592,11 @@ export function createCloudProvider(
       const projectOpt = req.providerOptions?.['project'];
       const project =
         typeof projectOpt === 'string' && projectOpt.trim() !== '' ? projectOpt.trim() : undefined;
+      // SSH destination whose docker engine runs the box (remote-docker's
+      // `docker:<host>` / `--remote-host` / `box.remoteDockerHost`).
+      const hostOpt = req.providerOptions?.['remoteHost'];
+      const host =
+        typeof hostOpt === 'string' && hostOpt.trim() !== '' ? hostOpt.trim() : undefined;
       // Sandbox class (daytona's `box.daytonaClass`): `linux-vm` | `container`.
       const classOpt = req.providerOptions?.['sandboxClass'];
       const sandboxClass =
@@ -693,6 +698,7 @@ export function createCloudProvider(
           size,
           location,
           project,
+          host,
           inbound,
           sandboxClass,
           timeoutMs,

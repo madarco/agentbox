@@ -10,7 +10,15 @@ const AGENTS = ['claude', 'codex', 'opencode', 'none'] as const;
 // Sandbox providers (mirrors @agentbox/config PROVIDER_NAMES; hardcoded to keep
 // that package out of the Next bundle, like AGENTS above). The backend enforces
 // that the chosen provider is actually configured on the host.
-const PROVIDERS = ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'digitalocean'] as const;
+const PROVIDERS = [
+  'docker',
+  'daytona',
+  'hetzner',
+  'vercel',
+  'e2b',
+  'digitalocean',
+  'remote-docker',
+] as const;
 // `screen` isn't lifecycle strictly speaking — it's the open-VNC prep step
 // (point the in-box browser at the web app) — but it shares the exact
 // POST /boxes/:id/:action shape and backend dispatch.

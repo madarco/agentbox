@@ -36,13 +36,13 @@ One consequence: the timeout is measured against your **agent's** activity, not 
 
 ## Set up
 
-The easiest path is the interactive wizard — it signs you in and bakes the base snapshot in one flow:
+The easiest path is the interactive wizard — it takes your API key and bakes the base snapshot in one flow:
 
 ```bash
 agentbox install        # then select daytona
 ```
 
-Approve the browser sign-in when prompted (or paste a `DAYTONA_API_KEY`; an optional `DAYTONA_ORGANIZATION_ID` can also be entered). Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider daytona` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots in seconds instead of eating a ~7-minute cold Dockerfile build.
+Paste a **`DAYTONA_API_KEY`** when prompted; the wizard offers to open [the keys page](https://app.daytona.io/dashboard/keys) in your browser first so you can generate one. (There's no browser sign-in — the key is the whole auth. If you paste a **JWT** instead of an API key, you'll also be asked for a `DAYTONA_ORGANIZATION_ID`, which an API key doesn't need: the SDK derives the org from it.) Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider daytona` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots in seconds instead of eating a ~7-minute cold Dockerfile build.
 
 For CI or scripted setup, run the explicit equivalents:
 

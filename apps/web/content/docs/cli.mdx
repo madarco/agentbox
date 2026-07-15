@@ -5,13 +5,15 @@ description: Every agentbox command grouped by task, with the flags you reach fo
 
 This is the command catalog. Conceptual depth lives in the linked task pages — here you get what each command does and the flags worth knowing.
 
-<Callout title="TIP">Run `agentbox --help` for the grouped command list, or `agentbox <command> --help` for every flag on a specific command. This page covers the commands you'll reach for most.</Callout>
+<Callout title="TIP">`agentbox --help` shows only the core workflow (start an agent, attach, git flow, list, destroy). Run `agentbox help` for the full grouped list of every command, or `agentbox <command> --help` for every flag on a specific command.</Callout>
 
 ## Two conventions that apply everywhere
 
 **Box references.** Almost every command takes an optional `[box]` argument: a project index (`1`, `2`, …), the box name, an id (or id prefix), or the container name. Omit it and AgentBox uses the only box in the current project. Paused or stopped boxes are auto-resumed when you act on them.
 
 **Provider sugar.** `agentbox <provider> <subcommand>` is rewritten to `--provider <provider>` before parsing. So `agentbox hetzner claude`, `agentbox digitalocean codex`, `agentbox vercel codex`, `agentbox e2b create`, and `agentbox docker create` all work — they're identical to passing `--provider`.
+
+A provider can be **host-qualified**: `agentbox docker:<host> claude` runs the box on that machine's Docker engine over SSH (the [remote-docker](/docs/remote-docker) provider). `<host>` is any SSH destination — an `~/.ssh/config` alias or `[user@]host[:port]` — so `agentbox docker:buildbox claude` and `agentbox create --provider docker:dev@10.0.0.9:2222` both work, as does `agentbox prepare --provider docker:buildbox`.
 
 ## Create & run
 
@@ -53,7 +55,7 @@ agentbox fork --agent codex --attach-in background
 agentbox claude -- --model sonnet
 ```
 
-Shared create/agent flags include `-n, --name`, `-w, --workspace <path>`, `--provider <name>`, `--snapshot <ref>` (start from a checkpoint), `--image <ref>`, `--build` (build the base image locally instead of pulling), `-y, --yes`, `--with-env`, `--with-playwright`, `--no-vnc`, `--portless` / `--no-portless`, `--from-branch <ref>`, `-b, --use-branch <name>`, `--memory`, `--cpus`, `--disk`, `--size <spec>` (cloud VM size — hetzner server type `cx33`, digitalocean Droplet slug `s-4vcpu-8gb`, daytona `4-8-20`, vercel vCPUs `4`), `--location <name>` (hetzner datacenter e.g. `fsn1`, or digitalocean region e.g. `fra1`), `--inbound <spec>` (VPS firewall access: `locked` / `open` / a CIDR list — reach a box from a phone with the laptop off; see [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline)), `--carry-yes` / `--carry <mode>`, and `--dangerously-with-credentials` (copy a git credential into a cloud box so it pushes/pulls with your PC off — an interactive prompt asks token vs SSH; token pushes over HTTPS/unsigned, ssh copies your SSH key and signs. Interactive-only, no CI path; see [Independent boxes](/docs/sync-and-git#independent-boxes--dangerously-with-credentials)).
+Shared create/agent flags include `-n, --name`, `-w, --workspace <path>`, `--provider <name>`, `--snapshot <ref>` (start from a checkpoint), `--image <ref>`, `--build` (build the base image locally instead of pulling), `-y, --yes`, `--with-env`, `--with-playwright`, `--no-vnc`, `--portless` / `--no-portless`, `--from-branch <ref>`, `-b, --use-branch <name>`, `--memory`, `--cpus`, `--disk`, `--size <spec>` (cloud VM size — hetzner server type `cx33`, digitalocean Droplet slug `s-4vcpu-8gb`, daytona `4-8-20`, vercel vCPUs `4`), `--location <name>` (hetzner datacenter e.g. `fsn1`, or digitalocean region e.g. `fra1`), `--remote-host <dest>` (remote-docker: the SSH destination whose Docker engine runs the box — same as `--provider docker:<dest>`), `--inbound <spec>` (VPS firewall access: `locked` / `open` / a CIDR list — reach a box from a phone with the laptop off; see [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline)), `--carry-yes` / `--carry <mode>`, and `--dangerously-with-credentials` (copy a git credential into a cloud box so it pushes/pulls with your PC off — an interactive prompt asks token vs SSH; token pushes over HTTPS/unsigned, ssh copies your SSH key and signs. Interactive-only, no CI path; see [Independent boxes](/docs/sync-and-git#independent-boxes--dangerously-with-credentials)).
 
 Agent-specific: `--attach-in <split|window|tab|same>`, `-d, --no-attach`, `-i, --initial-prompt <text>` (background queue), and for `claude` only `-c, --continue`, `--resume <id>`, `--plan <path>`, and `--dangerously-skip-permissions` (on by default in boxes). `fork` adds `--agent`, `--session <id>`, `--attach-in` (default `tab`), and a positional `[provider]` (`agentbox fork hetzner` is shorthand for `--provider hetzner`). When `--agent`/`--session` are omitted, `fork` autodetects the launching agent and current session from its env vars (Claude via `CLAUDECODE` / `CLAUDE_CODE_SESSION_ID`, Codex via `CODEX_THREAD_ID`), so a bare `agentbox fork` forks whichever agent you ran it from.
 
@@ -193,7 +195,7 @@ agentbox connect 1 --add-key @phone.pub   # authorize a device's key; print the 
 
 See [Checkpoints & pausing](/docs/checkpoints-and-pausing) and the provider pages for cloud pause/stop semantics.
 
-## Sync & state
+## Git & sync
 
 ```bash
 # Pull the box's /workspace back to the host (gitignore-aware)
@@ -316,7 +318,7 @@ agentbox prepare -p e2b --size 4-8                 # bake e2b resources (cpu-mem
 agentbox prepare -p hetzner --location fsn1        # datacenter for the bake VPS
 ```
 
-`install` is the first-run setup wizard (system check, pick a provider, log in, prepare its base image, install the host skill). `install cmux` pins a live `agentbox list` panel (all your boxes) to the [cmux](https://cmux.com) sidebar dock — see [cmux integration](/docs/integrations-cmux#the-agentbox-dock-right-sidebar). `install herdr` installs a [Herdr](https://herdr.dev) plugin with a boxes overlay, shortcuts, and Ctrl+click — see [Herdr integration](/docs/integrations-herdr#the-herdr-plugin). `install codex` registers the AgentBox [Codex](https://openai.com/index/introducing-codex/) plugin (marketplace + `codex plugin add`) and enables it by default in `~/.codex/config.toml`, so the `/agentbox` skill works in Codex with no manual toggle — it also runs automatically during `install` when Codex is detected. `install app` installs the **AgentBox** macOS menu-bar app into `/Applications` and launches it (a live view of every box with one-click actions); once installed, `agentbox app start|stop|restart|status` controls the running process (see [Maintenance](#maintenance)). `doctor` diagnoses system and provider readiness — including a per-provider **base freshness** check that warns when an already-baked snapshot is out of date (a CLI upgrade changed a baked file) and should be re-run through `agentbox prepare --provider <name>` — and reports each service integration ([Notion](/docs/integrations-notion), [Linear](/docs/integrations-linear)): host CLI installed? authed? enabled per project? `prepare` builds base images or snapshots — omit `--provider` for status only; `--claude-install <native|npm>` (or the `box.claudeInstall` config key) switches how Claude Code is installed into the base, with `npm` as a fallback for cloud egress IPs the native installer's CDN 403s. For the bake-time-sized providers, `--size <spec>` bakes the box resources into the snapshot/template (daytona `cpu-memory-disk` GB, e2b `cpu-memory` GB) — a changed size re-bakes; `--location <name>` sets the hetzner bake VPS datacenter.
+`install` is the first-run setup wizard (system check, pick a provider, log in, prepare its base image, offer to make it the default backend for new boxes via [`box.provider`](/docs/configuration#provider), install the host skill). `install cmux` pins a live `agentbox list` panel (all your boxes) to the [cmux](https://cmux.com) sidebar dock — see [cmux integration](/docs/integrations-cmux#the-agentbox-dock-right-sidebar). `install herdr` installs a [Herdr](https://herdr.dev) plugin with a boxes overlay, shortcuts, and Ctrl+click — see [Herdr integration](/docs/integrations-herdr#the-herdr-plugin). `install codex` registers the AgentBox [Codex](https://openai.com/index/introducing-codex/) plugin (marketplace + `codex plugin add`) and enables it by default in `~/.codex/config.toml`, so the `/agentbox` skill works in Codex with no manual toggle — it also runs automatically during `install` when Codex is detected. `install app` installs the **AgentBox** macOS menu-bar app into `/Applications` and launches it (a live view of every box with one-click actions); once installed, `agentbox app start|stop|restart|status` controls the running process (see [Maintenance](#maintenance)). `doctor` diagnoses system and provider readiness — including a per-provider **base freshness** check that warns when an already-baked snapshot is out of date (a CLI upgrade changed a baked file) and should be re-run through `agentbox prepare --provider <name>` — and reports each service integration ([Notion](/docs/integrations-notion), [Linear](/docs/integrations-linear)): host CLI installed? authed? enabled per project? `prepare` builds base images or snapshots — omit `--provider` for status only; `--claude-install <native|npm>` (or the `box.claudeInstall` config key) switches how Claude Code is installed into the base, with `npm` as a fallback for cloud egress IPs the native installer's CDN 403s. For the bake-time-sized providers, `--size <spec>` bakes the box resources into the snapshot/template (daytona `cpu-memory-disk` GB, e2b `cpu-memory` GB) — a changed size re-bakes; `--location <name>` sets the hetzner bake VPS datacenter.
 
 <Callout title="TIP">`agentbox config get <key> --all` shows which layer each value comes from. See the full key reference in [Configuration](/docs/configuration).</Callout>
 
@@ -329,6 +331,7 @@ The provider commands are both credential/management groups and sugar prefixes. 
 ```bash
 # Sugar prefix — identical to passing --provider
 agentbox docker create
+agentbox docker:buildbox claude    # a box on buildbox's docker engine, over SSH
 agentbox hetzner claude
 agentbox vercel codex
 agentbox e2b claude
@@ -344,11 +347,14 @@ agentbox hetzner login --status   # show what's configured (masked)
 agentbox hetzner firewall show <box>
 agentbox hetzner firewall sync <box>
 agentbox daytona resync             # re-sync the credential volume
+agentbox remote-docker check <host> # can this machine host boxes? (ssh + docker)
+agentbox remote-docker use <host>   # set the default engine
+agentbox remote-docker hosts        # engines you've baked the box image on
 ```
 
-`docker` is the default and is pure sugar (no login). Each cloud provider has a `login` subcommand (run by default); hetzner adds `firewall`, daytona adds `resync`. E2B is the only cloud whose `prepare` builds the base image **directly from a Dockerfile** via the SDK's `Template.build()` — the others bake a one-time snapshot.
+`docker` is the default and is pure sugar (no login). Each cloud provider has a `login` subcommand (run by default); hetzner adds `firewall`, daytona adds `resync`. `remote-docker` has **no login at all** — it connects as you, over your own `~/.ssh/config` — and offers `check` / `use` / `hosts` instead. E2B is the only cloud whose `prepare` builds the base image **directly from a Dockerfile** via the SDK's `Template.build()` — the others bake a one-time snapshot.
 
-See [Local Docker](/docs/local-docker), [Hetzner](/docs/hetzner), [DigitalOcean](/docs/digitalocean), [Daytona](/docs/daytona), [Vercel](/docs/vercel), and [E2B](/docs/e2b).
+See [Local Docker](/docs/local-docker), [Remote Docker](/docs/remote-docker), [Hetzner](/docs/hetzner), [DigitalOcean](/docs/digitalocean), [Daytona](/docs/daytona), [Vercel](/docs/vercel), and [E2B](/docs/e2b).
 
 ## Maintenance
 
@@ -357,6 +363,7 @@ See [Local Docker](/docs/local-docker), [Hetzner](/docs/hetzner), [DigitalOcean]
 agentbox prune --dry-run
 agentbox prune --all -y
 agentbox prune --provider hetzner
+agentbox prune --provider remote-docker   # sweeps every engine it knows about
 
 # Background jobs (agentbox claude|codex|opencode -i)
 agentbox queue list

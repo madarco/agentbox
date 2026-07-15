@@ -46,10 +46,38 @@ export async function dockerChecks(): Promise<CheckResult[]> {
   }
   const cliRes: CheckResult = { label: 'docker cli', status: 'ok', detail: cli };
 
-  // Daemon reachability via `docker info`. On Linux the most common failure is
-  // not a stopped daemon but the user missing from the `docker` group — `docker
-  // info` then exits non-zero with "permission denied" on the socket.
-  const info = await execa('docker', ['info'], { reject: false });
+  // Everything below is an independent round-trip to the daemon, and they were
+  // issued one after another: two full `docker info`s (this one and the engine
+  // probe), an image inspect, three volume inspects, and the portless probe.
+  // That's cheap on OrbStack (~80ms each) but `docker info` alone routinely
+  // takes ~2s on Docker Desktop, so serially it dominated `doctor`. Fire them
+  // together and pay for the slowest, not the sum. A down daemon just means the
+  // extra probes fail too — we discard them and report the daemon below.
+  const [info, img, vols, portless] = await Promise.all([
+    // Daemon reachability. On Linux the most common failure is not a stopped
+    // daemon but the user missing from the `docker` group — `docker info` then
+    // exits non-zero with "permission denied" on the socket.
+    execa('docker', ['info'], { reject: false }),
+    imageInfo(DEFAULT_BOX_IMAGE).then(
+      (i) => ({ ok: true as const, i }),
+      (err: unknown) => ({ ok: false as const, err }),
+    ),
+    Promise.all(
+      [SHARED_CLAUDE_VOLUME, SHARED_CODEX_VOLUME, SHARED_OPENCODE_VOLUME].map(async (n) => ({
+        name: n,
+        exists: await volumeExists(n).catch(() => false),
+      })),
+    ),
+    // OrbStack serves per-box .orb.local URLs natively; Portless only matters on
+    // plain Docker Desktop / Linux docker engine — so the engine decides whether
+    // the row exists at all.
+    (async (): Promise<CheckResult | null> => {
+      const engine = await detectEngine().catch(() => 'other' as const);
+      if (engine === 'orbstack') return null;
+      return portlessDoctorRow(await detectPortless());
+    })(),
+  ]);
+
   if (info.exitCode !== 0) {
     const permDenied = `${info.stderr ?? ''}`.toLowerCase().includes('permission denied');
     let hint: string;
@@ -73,10 +101,9 @@ export async function dockerChecks(): Promise<CheckResult[]> {
   }
   const daemonRes: CheckResult = { label: 'docker daemon', status: 'ok', detail: 'reachable' };
 
-  let imgRes: CheckResult;
-  try {
-    const img = await imageInfo(DEFAULT_BOX_IMAGE);
-    imgRes = img.exists
+  const imgRes: CheckResult = !img.ok
+    ? { label: 'box image', status: 'warn', detail: errSummary(img.err) }
+    : img.i.exists
       ? { label: 'box image', status: 'ok', detail: `${DEFAULT_BOX_IMAGE} built` }
       : {
           label: 'box image',
@@ -84,14 +111,7 @@ export async function dockerChecks(): Promise<CheckResult[]> {
           detail: `${DEFAULT_BOX_IMAGE} not built`,
           hint: 'run `agentbox prepare --provider docker` (or let the wizard do it)',
         };
-  } catch (err) {
-    imgRes = { label: 'box image', status: 'warn', detail: errSummary(err) };
-  }
 
-  const volNames = [SHARED_CLAUDE_VOLUME, SHARED_CODEX_VOLUME, SHARED_OPENCODE_VOLUME];
-  const vols = await Promise.all(
-    volNames.map(async (n) => ({ name: n, exists: await volumeExists(n).catch(() => false) })),
-  );
   const present = vols.filter((v) => v.exists).length;
   const volRes: CheckResult = {
     label: 'shared volumes',
@@ -100,11 +120,7 @@ export async function dockerChecks(): Promise<CheckResult[]> {
   };
 
   const results = [cliRes, daemonRes, imgRes, volRes];
-  // OrbStack serves per-box .orb.local URLs natively; Portless only matters on
-  // plain Docker Desktop / Linux docker engine.
-  if ((await detectEngine().catch(() => 'other')) !== 'orbstack') {
-    results.push(portlessDoctorRow(await detectPortless()));
-  }
+  if (portless) results.push(portless);
   return results;
 }
 
