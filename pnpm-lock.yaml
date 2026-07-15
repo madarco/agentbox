@@ -193,9 +193,15 @@ importers:
       '@agentbox/sandbox-vercel':
         specifier: workspace:*
         version: link:../../packages/sandbox-vercel
+      '@daytona/sdk':
+        specifier: ^0.196.0
+        version: 0.196.0(ws@8.21.0)
       '@radix-ui/react-tooltip':
         specifier: ^1.2.12
         version: 1.2.12(@types/react-dom@19.2.3(@types/react@19.2.16))(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@vercel/sandbox':
+        specifier: ^2.0.1
+        version: 2.0.1
       better-auth:
         specifier: ^1.6.0
         version: 1.6.23(@opentelemetry/api@1.9.1)(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(kysely@0.29.2)(pg@8.22.0))(next@16.2.7(@opentelemetry/api@1.9.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(pg@8.22.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vitest@2.1.9(@types/node@22.19.19)(lightningcss@1.32.0))
@@ -205,6 +211,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      e2b:
+        specifier: ^2.27.1
+        version: 2.27.1
       lucide-react:
         specifier: ^0.577.0
         version: 0.577.0(react@19.2.7)
