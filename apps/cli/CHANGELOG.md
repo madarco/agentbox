@@ -9,6 +9,18 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.26.1] - 2026-07-15
+
+### Fixed
+
+- `agentbox plugin add <package>` now works for a published community provider.
+  It was resolving `<package>/package.json` through Node's CommonJS resolver,
+  which fails for a normal ESM-only provider — its `exports` map defines only an
+  `import` entry and doesn't expose `./package.json`, so Node threw
+  `ERR_PACKAGE_PATH_NOT_EXPORTED` and `add` reported "cannot resolve package"
+  even though it was installed. The package directory is now located on disk
+  across the global install root / cwd / `NODE_PATH`.
+
 ## [0.26.0] - 2026-07-15
 
 ### Added
