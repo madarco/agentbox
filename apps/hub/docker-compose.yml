@@ -19,7 +19,7 @@ services:
       # store (no POSTGRES_URL), and the resident create worker.
       AGENTBOX_HUB_PROFILE: hetzner
       AGENTBOX_HUB_HOST: 0.0.0.0
-      AGENTBOX_HUB_PORT: '3000'
+      AGENTBOX_HUB_PORT: '8787'
       AGENTBOX_HUB_WORKER: ${AGENTBOX_HUB_WORKER:-on}
       HOME: /root
       # Secrets (from the compose env-file / shell). Login is secret-gated: with
@@ -45,4 +45,4 @@ services:
       # lost on every image rebuild).
       - ${AGENTBOX_HUB_PROJECTS_DIR:-/opt/agentbox-projects}:/root/projects
     ports:
-      - '8787:3000'
+      - '8787:8787'

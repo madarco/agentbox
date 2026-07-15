@@ -86,8 +86,8 @@ async function collectProviderSecrets(): Promise<string> {
 
 function caddyfile(domain: string): string {
   // Caddy auto-provisions a Let's Encrypt cert for the site address and reverse-
-  // proxies to the Next app on the compose network (the app listens on :3000).
-  return `${domain} {\n\treverse_proxy app:3000\n}\n`;
+  // proxies to the Next app on the compose network (the app listens on :8787).
+  return `${domain} {\n\treverse_proxy app:8787\n}\n`;
 }
 
 const CADDY_COMPOSE = `services:
