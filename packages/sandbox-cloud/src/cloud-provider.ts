@@ -485,6 +485,14 @@ export function createCloudProvider(
             name: box.name,
             originUrl,
             backend: backend.name,
+            worktrees: [
+              {
+                containerPath: '/workspace',
+                hostMainRepo: box.workspacePath,
+                branch: box.cloud.workspaceBranch ?? `agentbox/${box.name}`,
+                sanctionedBranch: box.cloud.workspaceBranch ?? `agentbox/${box.name}`,
+              },
+            ],
             bridgeToken: box.cloud.bridgeToken,
             previewUrl: relayPreview?.url,
             previewToken: relayPreview?.token,
@@ -1046,6 +1054,19 @@ export function createCloudProvider(
                 name,
                 originUrl,
                 backend: backend.name,
+                // hostMainRepo is the create-time seed checkout; on a hub
+                // worker it is a temp clone that gets deleted after create, so
+                // host-side git RPCs won't work against it — but the lease
+                // gate's sanctioned-branch auto-allow reads `branch` from this
+                // registration, which is what a control-plane box pushes with.
+                worktrees: [
+                  {
+                    containerPath: '/workspace',
+                    hostMainRepo: req.workspacePath,
+                    branch,
+                    sanctionedBranch: branch,
+                  },
+                ],
                 bridgeToken,
                 previewUrl: relayPreview?.url,
                 previewToken: relayPreview?.token,
