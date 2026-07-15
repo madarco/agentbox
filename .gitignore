@@ -29,3 +29,7 @@ TODO.md
 # Herdr plugin shim — generated at the plugin root (= repo root) by
 # `agentbox install herdr` / the manifest's build step; never committed.
 /agentbox-shim.sh
+
+# Claude Code conversation exports (/export writes YYYY-MM-DD-HHMMSS-<slug>.txt
+# at the repo root). Never commit — a transcript can hold secrets shown in output.
+/20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt
