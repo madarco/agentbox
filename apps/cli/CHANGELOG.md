@@ -9,6 +9,42 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.26.0] - 2026-07-15
+
+### Added
+
+- **`remote-docker` provider** — run a box as a container on a machine you
+  already own (a workstation, a team server) reached over **your own SSH**, no
+  cloud login. Address it as `agentbox docker:<host> claude`, or set
+  `--remote-host` / `box.remoteDockerHost`; new `remote-docker check|use|hosts`
+  helpers. Like the cloud backends the workspace is synced (a bind mount can't
+  cross a network), while the image, `docker commit` checkpoints, and in-box
+  docker stay docker-shaped. `open`/`code` reach the box via SSH `ProxyJump`,
+  and boxes are unlimited by default since the engine is your own machine.
+- The install wizard now offers to **pin the provider you just set up** as
+  `box.provider` (global), so `agentbox claude` uses the backend you configured
+  instead of silently falling back to docker. Skipped when it wouldn't change
+  anything; `-y` auto-confirms.
+
+### Changed
+
+- **Unknown config keys now warn and are skipped instead of aborting the
+  command.** A provider plugin pinned to an older SDK, or a box image baked
+  months ago, could carry a config with keys the newer schema hadn't taught it
+  yet — and every new key was effectively a breaking change for them. The rest
+  of the config still applies; `agentbox doctor` surfaces the warnings. Type
+  errors, renamed keys, and `config set <bad-key>` still fail loud.
+- **Reworked help.** The default `agentbox --help` is now a compact
+  workflow-focused view; the full grouped command list moved to `agentbox help`
+  (providers, git, and advanced commands grouped, one line each).
+- Faster install and `doctor`: the setup banner only animates on first run and
+  no longer stalls on fake "checking" time, an unchanged fork skill isn't
+  re-fetched over the network, and `doctor`'s provider probes now run in
+  parallel. The Daytona login hint was corrected — it prompts to paste an API
+  key, it does not do a browser sign-in.
+- `@madarco/agentbox-provider-sdk` **2.4.0** ships the tolerant config parser to
+  external plugins (additive; republished separately).
+
 ## [0.25.1] - 2026-07-13
 
 ### Fixed
