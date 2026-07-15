@@ -56,13 +56,27 @@ const REMOTE_DATA_DIR = '/opt/agentbox/hub-data';
 
 // Provider credentials the resident worker needs to provision cloud boxes. Only
 // these keys are copied from the host `~/.agentbox/secrets.env` — never the whole
-// file (it may hold unrelated secrets).
+// file (it may hold unrelated secrets). Keep this in sync with `PROVIDER_CRED_KEYS`
+// in apps/hub (the "configured" badge) + each provider module's managed keys — a
+// key here that isn't copied shows the provider "not configured" on the control box.
 const PROVIDER_SECRET_KEYS = [
   'HCLOUD_TOKEN',
   'E2B_API_KEY',
   'DAYTONA_API_KEY',
   'DAYTONA_JWT_TOKEN',
   'DAYTONA_ORG_ID',
+  // Vercel: only the ACCESS-TOKEN keys travel. A CLI-login setup keeps the token
+  // in the Vercel CLI store (not secrets.env) and marks it with
+  // VERCEL_AUTH_SOURCE — deliberately NOT copied, since there's no vercel CLI on
+  // the control box, so copying the marker without a token would falsely show
+  // "configured" and then fail at create time. Set a VERCEL_TOKEN (or use the hub
+  // Settings form) to run vercel from the control box.
+  'VERCEL_TOKEN',
+  'VERCEL_OIDC_TOKEN',
+  'VERCEL_TEAM_ID',
+  'VERCEL_PROJECT_ID',
+  'DIGITALOCEAN_TOKEN',
+  'DIGITALOCEAN_API_URL',
 ];
 
 /** Extract just the provider-credential lines from the host `~/.agentbox/secrets.env`. */
