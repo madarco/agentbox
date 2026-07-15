@@ -821,7 +821,26 @@ present). Retention correctness is covered by the deterministic `retention.test.
 `opts.store`, `hydrate()` runs only for it, and `startRetentionLoop` no-ops when the store lacks the
 prune methods (MemoryStore). The relay suite exercises the MemoryStore/host-mode path.
 
-## Phase 4 — The PC operates through the control box
+## Phase 4 — The PC operates through the control box — CODE DONE (box `cbx-phase4`, 2026-07-15); live-hetzner verify PENDING-HOST
+
+- [x] Retarget shared state through the control box's admin API (`/admin/store` shared dispatcher →
+  `RemoteStore`; `boxes list`, `prompts list/answer` from the PC); docker boxes stay strictly local
+  on the loopback relay.
+- [x] `agentbox relay status` + the local hub topbar surface + link the configured control box.
+- [x] Custody downloads: `agentbox hub pull <box>` (keys → `~/.agentbox/boxes/<sandboxId>/ssh/`);
+  reverse push-up of a PC-created box's key at create.
+- [x] Credential/secret flows both directions (`credentials push` / new `credentials pull`;
+  `custody rm`).
+- [x] Backlog for this phase: `listStatuses()` promoted to `Store`; a reap verb
+  (`DELETE /remote/boxes/:id` + `control-plane boxes rm` + hub-UI Destroy fallback) with custody
+  `boxes/<id>` cleanup; `hostMainRepo` guard (reject) for worker-created boxes.
+- [x] Approvals raised by any control-plane box are answerable from the PC CLI (verified in the
+  local smoke).
+- [ ] **Live hetzner verify — PENDING-HOST** (the goal scenario below: hub-UI box create, PC attach
+  to a hub-created hetzner box after `hub pull`, host-off push, approval from the phone browser).
+
+Result + deviations recorded under [what actually shipped](#phase-4--what-actually-shipped); open
+items went to the [Backlog](#backlog).
 
 **Why last:** it consumes everything above — the PC becomes a *peer* that syncs custody material
 with the control box and defers shared state to it, while keeping its direct connections.
@@ -862,6 +881,182 @@ run going, pushes on `agentbox/*` (ls-remote check); PC back on → `agentbox li
 boxes with correct state sourced from the control box; a refreshed Claude credential pushed from
 the PC is what a subsequently-created hub box logs in with. Docker boxes remain fully local and
 unaffected throughout (`pnpm --filter @agentbox/relay test` + a local docker smoke).
+
+### Phase 4 — implementation plan (box cbx-phase4)
+
+This plan resolves the design questions the phase text left open. Guiding constraint: **the PC
+reaches control-plane state through the control box's admin API; the laptop loopback relay and
+its docker boxes are never retargeted.** A blanket swap of the laptop relay's `Store` for a
+`RemoteStore` was rejected — every docker box registers on the loopback relay via
+`/admin/register-box`, so backing that relay with a remote store would ship docker registrations
+to the control box, violating "docker topology is never a control-plane target". Instead the
+retarget is **CLI-side and read-through the admin API**; the daemon stays on `MemoryStore`.
+
+**Why this is already mostly correct for autopause/queue (deviation from "move it to the hub").**
+A PC-created cloud box *with a control plane configured* is `control-plane` topology and registers
+directly on the control box (`plane-register.ts`), never on the laptop loopback relay. So the
+laptop's `startAutopauseLoop` (docker-only) and `startCloudKeepaliveLoop` (iterates the *local*
+registry) already never touch control-plane boxes — there is nothing to move off the laptop. The
+control box runs the queue loop + cloud-keepalive **in-process** already (phase 3's resident
+daemon). The remaining laptop wiring that made sense was: (a) surfacing the control box in
+`relay status` + the local hub UI, (b) a PC admin path to list/reap/answer control-plane boxes,
+(c) the create queue is already retargeted (`create --via-hub`). Recorded, not re-plumbed.
+
+**1. `listStatuses()` promoted to `Store`** (backlog). Add
+`listStatuses(): Promise<Array<{ boxId; status }>>` to the interface; `MemoryStore` gains it via a
+new `BoxStatusStore.list()`, `RemoteStore` via the RPC, `WriteThroughStore` forwards (it already
+declared it optional), the durable stores already implement it. `store-rpc` allow-list +
+`applyStoreOp` gain it; `apps/hub/lib/boxes/postgres-source.ts` is retyped to `Store`.
+
+**2. `/admin/store` mounted in `server.ts`** (shared dispatcher). Today `/admin/store` (the
+`RemoteStore` RPC envelope) exists **only** in `core/handler.ts` (the Vercel plane); the control
+box runs `server.ts`, which 404s it — so `RemoteStore` was dead against the real control box.
+Extract `handleStoreRpcRequest(req, { store, adminToken, log })` (mirrors the custody / remote-boxes
+shared-dispatcher pattern), mount it in `server.ts` (admin-bearer gated, before the loopback
+rejection) and replace `core/handler.ts`'s inline block with a call to it. The PC's admin client
+then uses `RemoteStore` for cross-machine reads (list boxes, statuses).
+
+**3. `BoxRegistration.sandboxId`** (new optional field). The registration never carried the cloud
+sandbox id, but `hub pull` needs box → sandboxId to write keys into the on-disk `~/.agentbox/boxes/
+<sandboxId>/ssh/` dir that attach reads, and a reap needs it to clean custody. Thread it through
+`RegisterBoxBody` → `plane-register.ts` payload → the cloud provider create/resume registration.
+
+**4. `DELETE /remote/boxes/:boxId` — the reap** (backlog: destroy verb + reap dead registrations).
+Add a DELETE branch to the shared `remote-boxes` dispatcher: `store.forgetBox(boxId)` +
+`store.deleteStatus(boxId)` + custody cleanup of `boxes/<sandboxId|boxId>/` (list-then-delete over
+the existing custody `list`/`delete`, so no new store method). `RemoteBoxesDeps` gains an optional
+`custody`. This is **control-box state** teardown (registration + status + SSH-key custody), not the
+cloud resource. Full cloud teardown (`provider.destroy`) of a *worker-created* box needs the
+sandboxId + provider creds VPS-side and a reconstructed `BoxRecord`; the hub backend does it when it
+can (sandboxId + importable provider), else reaps state only — the cloud-resource GC of orphaned
+worker boxes stays a backlog follow-up (the worker mints them, the control box doesn't persist a
+full `BoxRecord`). The PC drives the reap via `control-plane boxes rm`; the hub UI's existing
+Destroy button reaps a Store-registered box the same way.
+
+**5. SSH-key custody, both directions.**
+- **Fix `mirrorBoxSshToCustody`** (phase-3 backlog bug): it read `defaultBoxSshDir(sandboxId,
+  provider)`, but hetzner stores keys **un-namespaced** at `~/.agentbox/boxes/<sandboxId>/ssh/`, so
+  the namespaced lookup found nothing and nothing landed in custody. Use the provider's real ssh dir
+  (un-namespaced for hetzner, `'digitalocean'` for DO) and key custody by **sandboxId** (fallback
+  boxId) so `hub pull` finds it under the same id it writes on disk.
+- **PC → control box (reverse).** A PC-created control-plane cloud box already registers on the
+  plane; at create time, when a key was minted (hetzner/DO) and a control plane + admin token are
+  configured, push `boxes/<sandboxId>/ssh/*` to custody (`pushBoxSshToCustody`, a small fetch client
+  in `sandbox-cloud`), so the hub/mobile can also reach it.
+
+**6. `agentbox hub pull <box>`** (spelling chosen; `control-plane custody pull boxes/<id>` remains
+the low-level path). Resolve `{url, adminToken}`, fetch the registration (RemoteStore.getBox →
+`sandboxId`), download custody `boxes/<sandboxId|boxId>/ssh/*` into `~/.agentbox/boxes/
+<sandboxId|boxId>/ssh/` (0700 dir / 0600 files) so attach / cp / port-forward work. Full box
+adoption (writing a local `state.json` record with the VPS IP so `agentbox attach <name>` resolves)
+needs richer registration data than exists today and a live box; the SSH-key download is what the
+mandatory scope names and what the host verifies live. Deferred adoption noted in the Backlog.
+
+**7. Approvals from the PC CLI** (block-mode). The control box runs host + block-mode prompts, so a
+box's approval parks in the in-process `PendingPrompts`, surfaced over `GET /admin/prompts` and
+answered via `POST /admin/prompts/answer` — both now reachable non-loopback with the admin bearer
+(fix #220's gate). New `control-plane prompts list` / `prompts answer <id> [y|n]` post there. The
+existing `agent approve` stays laptop-loopback-only (docker/local boxes).
+
+**8. Credential pull-back** (phase 4 §3, control box → PC). `control-plane credentials pull` is the
+reverse of phase 2's `credentials push`: download custody `agents/*` and write each into the host's
+`~/.agentbox/<id>-credentials.json` backup (0600), so `extractAgentCredentials` output that landed in
+custody flows back to the PC. `custody rm <path>` closes the phase-2 "no custody delete CLI" gap.
+
+**9. `hostMainRepo` guard** (backlog, "reject" option chosen over "rewrite on adoption" — smaller,
+fail-closed, no silent wrong-repo pushes). `handleGitRpc` rejects a host-side git RPC when the
+resolved worktree's `hostMainRepo` is empty or its directory is gone, with a clear error naming the
+worker-created-box case, instead of letting `git -C <deleted-tmp>` fail cryptically.
+
+**10. Surface the control box.** `agentbox relay status` gains a `control plane:` section (URL +
+`/healthz` reachability + box/event counts) reusing the `control-plane status` probe. The local hub
+exposes the configured `relay.controlPlaneUrl` on its dashboard state (`controlPlane.url`) and the
+header links to it — a pure read of effective config, no new write surface (hub-web-pure-REST).
+
+**Files.** New: `packages/relay/src/store/store-rpc-routes.ts` (shared `/admin/store` dispatcher),
+`apps/cli/src/control-plane/admin-client.ts` (RemoteStore + prompt/box admin fetches over the
+resolved target), `apps/cli/src/commands/_hub-pull.ts` (or folded into `hub.ts`).
+Touched: `packages/relay/src/{server,core/handler,remote-boxes,status-store}.ts`,
+`packages/relay/src/store/{store,memory-store,remote-store,write-through-store,store-rpc,index}.ts`,
+`packages/relay/src/types.ts` (+ `sandboxId`), `packages/sandbox-cloud/src/{plane-register,
+cloud-provider}.ts`, `apps/hub/lib/{hub-worker,hub-backend,boxes/postgres-source,boxes/source}.ts`
++ hub UI header, `apps/cli/src/commands/{control-plane,hub,relay,credentials}.ts`,
+`apps/web/content/docs/{control-plane,hub}.mdx`, `docs/host-relay.md`.
+
+**Tests (docker-free vitest, temp HOME):** `listStatuses` on the conformance suite + MemoryStore;
+`store-rpc-routes` (401/503/dispatch) over both handlers; `remote-boxes` DELETE reap (forget +
+deleteStatus + custody purge, 401/404); custody prefix cleanup; the `hostMainRepo` guard; CLI
+admin-client + `hub pull` planner (fake-fetch, temp HOME). Plus the local two-process smoke below.
+
+### Phase 4 — what actually shipped
+
+Everything above landed as planned. Notes + deviations:
+
+- **The retarget is CLI-side over the admin API, not a daemon store-swap.** The laptop relay
+  stays on `MemoryStore` (docker + loopback unchanged); the PC reaches control-plane boxes/status/
+  prompts through the control box's admin API. To make that real, `/admin/store` is now a shared
+  dispatcher (`store/store-rpc-routes.ts`) mounted in **both** `server.ts` and `core/handler.ts`,
+  so `RemoteStore` works against the control box (it was dead against it before — the route lived
+  only on the Vercel plane). New CLI: `control-plane boxes list|rm`, `prompts list|answer`,
+  `credentials pull`, `custody rm`, and `hub pull`. `agentbox relay status` gained a `control box:`
+  section (URL + `/healthz` reachability); the local hub topbar links to the configured control box
+  (`HubState.controlPlane`, read from `relay.controlPlaneUrl`; null on the control box itself).
+- **`listStatuses()` promoted to `Store`** (backlog) — `MemoryStore` (new `BoxStatusStore.list()`),
+  `RemoteStore` (RPC), `WriteThroughStore` (forward), plus the store-rpc allow-list. Covered by a
+  new conformance-suite case that runs across every backend.
+- **`BoxRegistration.sandboxId`** carries the provider sandbox id through `plane-register` →
+  create/resume, so `hub pull` writes keys to the on-disk `~/.agentbox/boxes/<sandboxId>/ssh/`
+  attach reads, and a reap can find the box's custody subtree.
+- **The reap is a `DELETE /remote/boxes/:boxId`** shared-dispatcher branch (forget + deleteStatus +
+  custody `boxes/<sandboxId|boxId>/` cleanup). The PC drives it via `control-plane boxes rm`; the
+  hub UI's Destroy button reaps a Store-only box the same way (`hub-backend.destroy` falls back to a
+  reap when the box isn't in host `readState()`). **Deviation:** the reap tears down control-box
+  *state*, not the cloud resource — a worker-created box has no full `BoxRecord` on the control box
+  (its seed clone was deleted), so provider-side teardown of an orphaned worker box stays a backlog
+  follow-up (needs sandboxId + a reconstructed record + provider creds).
+- **Fixed the phase-3 SSH-mirror namespace bug** and centralized the per-provider ssh-dir rule in
+  `boxSshDirForProvider` (`sandbox-core`), shared by the hub-worker mirror, the PC push-up, and
+  `hub pull`, so the namespace mismatch can't recur. The mirror + `hub pull` are now keyed by
+  sandboxId. **PC → control box (reverse custody)**: a PC-created control-plane cloud box pushes its
+  minted SSH key to custody at create (`pushBoxSshToCustody`, no-op for e2b/vercel).
+- **`hostMainRepo` guard: "reject" chosen over "rewrite on adoption"** (`hostRepoUnavailableReason`
+  in `worktree.ts`) — a host-side `git.push`/`git.fetch` against a worktree whose `hostMainRepo` is
+  empty or gone returns a clear error naming the worker-created-box case, instead of a cryptic
+  `git -C <deleted-tmp>` failure. Full box adoption (rewriting `hostMainRepo` on PC clone) is
+  deferred to the Backlog — it needs richer registration data than exists today.
+- **`hub pull` downloads keys but does not yet write a full local `state.json` record** (adoption).
+  The mandatory scope names the SSH-key download; `attach <name>` resolving a hub-created hetzner
+  box also needs its VPS IP, which the registration doesn't carry today. Deferred to the Backlog;
+  the host live-verify exercises the download + a manual attach.
+
+**Verification (all green, from inside the box):**
+
+| check | result |
+| --- | --- |
+| `pnpm test` (repo root) | relay 375, sandbox-cloud + cli suites incl. new files, all green |
+| `pnpm typecheck` | green |
+| `pnpm lint` | green |
+| New unit tests | store-rpc-routes (8), remote-boxes DELETE reap (3), worktree guard (4), listStatuses conformance (across backends), custody-ssh (2), hub-pull (3), admin-client (3) |
+| Local two-process smoke (below) | 8/8 |
+
+**Local smoke** (script kept out of the repo — it boots a real relay process). It boots the control
+box's relay+worker core (a hetzner-profile hub minus the Next UI: `startRelayDaemon` with a
+`SqliteStore` + `FsCustodyStore` + admin bearer, block-mode prompts) on `127.0.0.1:8799`, then
+drives it with the **built CLI as the PC** (`AGENTBOX_RELAY_ADMIN_TOKEN=<admin> node
+apps/cli/dist/index.js <cmd> --url http://127.0.0.1:8799`). The walk (all 8 green):
+
+1. `POST /remote/boxes` enqueues a create job (the `create --via-hub` surface).
+2. the mock worker (`drainCreateJobs` with a stub `CreateBoxFn`) drives the job to `done`.
+3. the created box registers on the control box (`POST /admin/register-box`, cloud/hetzner, with
+   `sandboxId`).
+4. **PC** `control-plane boxes list` shows it (through `RemoteStore.listBoxes` + `listStatuses`).
+5. a `boxes/<sandboxId>/ssh/id_ed25519` is seeded into custody; **PC** `hub pull brave-otter`
+   downloads it to `~/.agentbox/boxes/<sandboxId>/ssh/` (0600).
+6. the box raises an approval (`/rpc git.lease-token` on a non-scratch branch, block-mode);
+   **PC** `control-plane prompts list` shows it.
+7. **PC** `control-plane prompts answer <id> y` resolves it (the parked `/rpc` unwinds).
+8. **PC** `control-plane boxes rm brave-otter` reaps registration + status + custody
+   (`DELETE /remote/boxes/:id`); the store + custody are empty afterward.
 
 ---
 
@@ -911,9 +1106,9 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
 - **~~Prompt and create-job rows are never deleted.~~ DONE (phase 3)** — optional
   `Store.prunePrompts`/`pruneCreateJobs` (SQLite+Postgres, using `expires_at`/`finishedAt`) swept by
   `startRetentionLoop` in the daemon.
-- **`listStatuses()` is off-interface.** Both durable stores implement it and the hub's
-  `postgres-source.ts` calls it on the concrete class. Promote it to `Store` when phase 4 retargets
-  the PC's shared state, so the hub can read statuses without knowing the backend.
+- **~~`listStatuses()` is off-interface.~~ DONE (phase 4)** — promoted to `Store`; `MemoryStore`
+  (via `BoxStatusStore.list()`), `RemoteStore` (RPC), and `WriteThroughStore` (forward) now
+  implement it, and the store-conformance suite covers it across every backend.
 - **DDL is still literal SQL.** All *queries* are drizzle, but `PG_SCHEMA_SQL` / `SQLITE_SCHEMA_SQL`
   are hand-written `CREATE TABLE IF NOT EXISTS` strings, because drizzle only emits DDL through
   drizzle-kit migration *folders*, which do not survive tsup bundling into `bin.cjs` / the hub
@@ -952,17 +1147,20 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
   prepared provider; the live verify scp'd them into the hub data dir by hand. Teach
   `control-plane deploy` (or a `custody`/`hub push` scope) to ship `*-prepared.json` alongside
   `secrets.env`, and re-sync after a host-side `agentbox prepare`.
-- **(phase 3, live) Dead-box registrations are never reaped on the hub.** Killing a hub-created
-  sandbox provider-side leaves its registration (and custody `boxes/<id>/ssh/`) on the control
-  box forever (`healthz` reported 3 boxes with 1 alive). The hub needs a destroy verb for
-  control-plane boxes (phase 4 lifecycle) plus a liveness sweep that tombstones registrations
-  whose provider sandbox is gone.
-- **(phase 3, live) `hostMainRepo` of a worker-created box points at a deleted temp clone.**
-  The lease path never touches it, but any host-side git RPC (`git.push` bundle-fetch,
-  `git.fetch`) against such a box fails on the missing directory ("cannot change to
-  /tmp/agentbox-hub-worker-…"). Phase 4's PC-adoption flow should either rewrite the worktree's
-  `hostMainRepo` when the PC clones the box's repo locally, or the hub should reject host-side
-  git RPCs for worker-created boxes with a clear error.
+- **(phase 3, live) Dead-box registrations are never reaped on the hub. PARTIAL (phase 4).** A
+  reap verb now exists — `DELETE /remote/boxes/:id` (→ `control-plane boxes rm`, and the hub-UI
+  Destroy button for a Store-only box) removes the registration + status + custody
+  `boxes/<sandboxId>/`. Still open: (a) **tearing down the cloud resource** of a worker-created box
+  from the hub — the control box holds only a `BoxRegistration` (+ `sandboxId`), not a full
+  `BoxRecord`, so `provider.destroy` can't be driven without reconstructing one; (b) an automatic
+  **liveness sweep** that reaps registrations whose provider sandbox is already gone (the reap today
+  is operator-driven).
+- **~~(phase 3, live) `hostMainRepo` of a worker-created box points at a deleted temp clone.~~
+  DONE (phase 4, "reject" option).** `handleGitRpc` now rejects a host-side `git.push`/`git.fetch`
+  against a worktree whose `hostMainRepo` is empty or missing with a clear error
+  (`hostRepoUnavailableReason`), instead of a cryptic `git -C <deleted-tmp>` failure. The
+  alternative ("rewrite `hostMainRepo` on PC adoption") is folded into the box-adoption backlog item
+  below.
 - **(phase 3, live) `control-plane deploy` requires a TTY** (clack prompts for the hub admin
   email/password). Fine interactively; a `--admin-email/--admin-password(-file)` non-interactive
   path would let CI / scripts deploy.
@@ -971,3 +1169,24 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
   verify, but the **hetzner base snapshot and any other provider bakes still ship the broken
   lease push** until their next `agentbox prepare`. Re-prepare hetzner before relying on leased
   pushes from hetzner boxes (tracked for the phase-4 hetzner-provider verify).
+- **(phase 4) `hub pull` downloads keys but doesn't fully adopt the box.** It writes the SSH key
+  material to `~/.agentbox/boxes/<sandboxId>/ssh/`, but not a local `state.json` `BoxRecord`, so
+  `agentbox attach <name>` can't yet resolve a hub-created box by name (it also needs the box's VPS
+  IP, which the `BoxRegistration` doesn't carry). Full adoption = enrich the registration (public
+  IP/host) + write a local record + rewrite `hostMainRepo` if the PC clones the repo (the deferred
+  half of the `hostMainRepo` item). Until then, adopt manually with the pulled key.
+- **(phase 4) Cloud-resource teardown of a worker-created box from the hub.** `control-plane boxes
+  rm` / the hub Destroy button reap control-box *state* only; the actual sandbox is left running
+  because the control box has no full `BoxRecord` to drive `provider.destroy`. Persist enough on the
+  registration (sandboxId is there now; add region/host as needed) and reconstruct a minimal record,
+  or run the destroy from a host that owns the box. Pairs with the liveness-sweep item above.
+- **(phase 4) Autopause/queue for cloud boxes was already resident, not "moved".** The plan text
+  framed phase 4 as moving autopause/queue for cloud boxes to the hub. In practice the control box's
+  resident daemon (phase 3) already runs the queue + cloud-keepalive in-process, and the laptop's
+  loops never see control-plane boxes (they register on the control box, not the loopback relay), so
+  nothing needed relocating. If a laptop ever *does* hold a control-plane box locally (independent
+  boxes), revisit whether its loops should defer to the hub.
+- **(phase 4) `secrets pull` (control box → PC) not implemented.** `credentials pull` brings agent
+  creds back; project secrets edited via the hub are not yet pullable to the PC (the plan lists it
+  under "Control box → PC"). Add a `secrets pull [--project]` mirroring `credentials pull` when the
+  hub grows secret editing.

@@ -101,6 +101,42 @@ agentbox control-plane worker --store "$POSTGRES_URL" --once   # drain once and 
 
 The worker provisions **cloud** boxes only.
 
+## Operate through the control box from your laptop
+
+With a control box configured (`relay.controlPlaneUrl`), your laptop keeps its direct SSH/SDK connections but reads shared state — the box registry, statuses, and pending approvals — from the control box, so your laptop, the web UI, and your phone see one world. `agentbox relay status` shows the configured control box and whether it is reachable; the local hub's topbar links to it. **Docker boxes stay entirely local** on the laptop relay — the control box only ever holds cloud/control-plane boxes.
+
+```bash
+# See the boxes registered on the control box (created from either side)
+agentbox control-plane boxes list
+
+# Attach to a control-box-created box: download its per-box SSH key first
+agentbox hub pull <box>          # keys → ~/.agentbox/boxes/<sandboxId>/ssh/
+agentbox attach <box>            # then attach / cp / port-forward work as usual
+
+# Answer a box's approval from the laptop (also answerable from the phone web UI)
+agentbox control-plane prompts list
+agentbox control-plane prompts answer <id> y
+
+# Reap a box's control-box state (registration + status + its SSH-key custody)
+agentbox control-plane boxes rm <box>
+```
+
+`hub pull` requires the control box's [dual-IP firewall](#) (a hetzner box created by the worker locks its firewall to the VPS **and** your registered egress IP), so your laptop can reach it directly once it has the key.
+
+### Credentials + secrets, both directions
+
+Custody is the control box's copy of what a box needs. Push from the laptop, pull back when the control box has fresher material:
+
+```bash
+agentbox control-plane credentials push        # host agent logins → custody (hub-created boxes log in)
+agentbox control-plane credentials pull         # custody → ~/.agentbox backups (e.g. a box refreshed a token)
+agentbox control-plane secrets push [--project] # project .env → custody
+agentbox control-plane custody list [prefix]    # manifest (paths + hashes; values never leave the box)
+agentbox control-plane custody rm <path>        # delete one custody entry
+```
+
+Re-run `credentials push` after `agentbox claude login` refreshes a credential — that is what a subsequently-created hub box logs in with.
+
 ## Security
 
 - Leased tokens are per-repo, minimal permissions (contents + pull requests), 1-hour, and never persisted (in-memory cache only). The plane holds only the App private key.
