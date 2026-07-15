@@ -16,6 +16,10 @@ RUN pnpm install --frozen-lockfile
 # spawnable standalone hub (next build + esbuild-bundled server.ts + chunks).
 RUN pnpm turbo run build --filter=@agentbox/hub
 RUN pnpm --filter @agentbox/hub build:standalone
+# The agentbox CLI too: the hub's queue (web-UI creates, queued agent runs) and
+# the host-app launchers spawn `node $AGENTBOX_CLI_ENTRY …` — without a built
+# CLI the control box can list boxes but never create one from the UI.
+RUN pnpm turbo run build --filter=@madarco/agentbox
 
 FROM node:22-slim AS runtime
 WORKDIR /repo
@@ -25,6 +29,8 @@ RUN corepack enable
 RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
+# Queue worker + host-app spawns re-exec the CLI from this entry.
+ENV AGENTBOX_CLI_ENTRY=/repo/apps/cli/dist/index.js
 # The whole built monorepo: the standalone bundle ships no node_modules, so its
 # externals (next, react, pg, better-auth, the cloud SDKs) resolve from the
 # workspace node_modules present here. Not size-optimized; fine for a VPS.

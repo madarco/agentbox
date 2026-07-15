@@ -40,5 +40,9 @@ services:
       # secrets.env (provider creds), logs. A HOST path so the deploy can scp
       # provider secrets in before `compose up`.
       - ${AGENTBOX_HUB_DATA_DIR:-./hub-data}:/root/.agentbox
+      # Persistent project clones (the full-host hub keeps real checkouts so
+      # the web UI can create boxes from them; container-local paths would be
+      # lost on every image rebuild).
+      - ${AGENTBOX_HUB_PROJECTS_DIR:-/opt/agentbox-projects}:/root/projects
     ports:
       - '8787:3000'
