@@ -115,6 +115,18 @@ export function runStoreConformance(name: string, setup: () => Promise<Store>): 
         await store.deleteStatus('b1');
         expect(await store.getStatus('b1')).toBeUndefined();
       });
+
+      it('lists every box status in one call', async () => {
+        expect(await store.listStatuses()).toEqual([]);
+        await store.setStatus('b1', 'box-one', 1, { schema: 1, boxId: 'b1', phase: 'ready' });
+        await store.setStatus('b2', 'box-two', 2, { schema: 1, boxId: 'b2', phase: 'busy' });
+        const all = await store.listStatuses();
+        const byBox = new Map(all.map((s) => [s.boxId, s.status]));
+        expect(byBox.get('b1')).toMatchObject({ phase: 'ready' });
+        expect(byBox.get('b2')).toMatchObject({ phase: 'busy' });
+        await store.deleteStatus('b1');
+        expect((await store.listStatuses()).map((s) => s.boxId)).toEqual(['b2']);
+      });
     });
 
     describe('prompt mailbox', () => {

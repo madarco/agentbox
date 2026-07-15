@@ -38,6 +38,15 @@ export interface BoxRegistration {
    * `@agentbox/sandbox-{backend}` to drive the in-sandbox channel.
    */
   backend?: string;
+  /**
+   * For `kind === 'cloud'`: the provider-native sandbox id (e.g. the Hetzner
+   * server id). The per-box SSH key material lives on disk keyed by this id
+   * (`~/.agentbox/boxes/<sandboxId>/ssh/`), so a PC that adopts a hub-created
+   * box (`agentbox hub pull`) writes the downloaded keys under the same id, and
+   * a reap can locate the box's custody `boxes/<sandboxId>/` subtree. Absent for
+   * providers that mint no keypair (e2b/vercel) and legacy registrations.
+   */
+  sandboxId?: string;
   /** Docker container name; the relay needs it to `docker pause` an idle box. */
   containerName?: string;
   /** ISO-8601 box-creation time (BoxRecord.createdAt); used as a tie-break in auto-pause ordering. */
@@ -153,6 +162,8 @@ export interface RegisterBoxBody {
   kind?: BoxKind;
   /** For cloud boxes: which backend (e.g. 'daytona'). Drives executor lazy-import. */
   backend?: string;
+  /** For cloud boxes: provider-native sandbox id (SSH-key + custody dir key). */
+  sandboxId?: string;
   containerName?: string;
   createdAt?: string;
   /**

@@ -60,10 +60,11 @@ import {
 import { GitHubAppLeaser, loadGitHubAppConfig, type GitHubAppConfig } from './github-app.js';
 import { leaseTokenResult } from './lease.js';
 import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
-import { resolveWorktree } from './worktree.js';
+import { resolveWorktree, hostRepoUnavailableReason } from './worktree.js';
 import { adminGateAllows } from './admin-gate.js';
 import { handleCustodyRequest } from './custody/routes.js';
 import { handleRemoteBoxesRequest, isRemoteBoxesPath } from './remote-boxes.js';
+import { handleStoreRpcRequest, isStoreRpcPath } from './store/store-rpc-routes.js';
 import type { CustodyStore } from './custody/store.js';
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
@@ -170,6 +171,8 @@ export interface RelayServerHandle {
   notices: BoxNotices;
   /** Fan-out for the embedded hub UI's SSE route (pending-approval changes). */
   hubNotifier: HubNotifier;
+  /** The custody store, when wired (control box). Used by the hub backend's reap. */
+  custody?: CustodyStore | null;
   /** Present only in `mode === 'box'`: the parking lot for host-only RPCs. */
   hostActions?: HostActionQueue;
   url: string;
@@ -533,10 +536,32 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           bearer: bearerToken(req),
           bodyText,
         },
-        { store, adminToken: custodyAdminToken, log },
+        { store, adminToken: custodyAdminToken, custody, log },
       );
       if (remoteRes) {
         send(res, remoteRes.status, remoteRes.body ?? null);
+        return;
+      }
+    }
+
+    // Generic Store RPC (`/admin/store`) — admin-bearer-gated shared dispatcher,
+    // the same one `core/handler.ts` mounts, so a PC's RemoteStore reads the
+    // control box's registry/status/events over HTTP. Carries its own bearer
+    // gate (not loopback: the control box is behind Caddy), so it runs before the
+    // loopback rejection below. A laptop relay has no admin token → 503.
+    if (isStoreRpcPath(url.pathname)) {
+      const bodyText = req.method === 'POST' ? await readRawBody(req) : '';
+      const storeRpcRes = await handleStoreRpcRequest(
+        {
+          method: req.method ?? 'GET',
+          path: url.pathname,
+          bearer: bearerToken(req),
+          bodyText,
+        },
+        { store, adminToken: custodyAdminToken, log },
+      );
+      if (storeRpcRes) {
+        send(res, storeRpcRes.status, storeRpcRes.body ?? null);
         return;
       }
     }
@@ -1124,6 +1149,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           typeof body.backend === 'string' && body.backend.length > 0
             ? body.backend
             : undefined,
+        sandboxId:
+          typeof body.sandboxId === 'string' && body.sandboxId.length > 0
+            ? body.sandboxId
+            : undefined,
         registeredAt: new Date().toISOString(),
         containerName:
           typeof body.containerName === 'string' && body.containerName.length > 0
@@ -1551,6 +1580,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     subscribers,
     notices,
     hubNotifier,
+    custody,
     hostActions: hostActions ?? undefined,
     url: `http://${host}:${String(opts.port)}`,
     setQueuePoke: (fn) => {
@@ -1672,6 +1702,13 @@ async function handleGitRpc(
       stdout: '',
       stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
     };
+  }
+  // A worker-created (hub) box registered its `hostMainRepo` as the create-time
+  // seed clone (a temp dir deleted after create), so `git -C <that>` would fail
+  // cryptically. Reject fail-closed with a clear message instead.
+  const unavailable = hostRepoUnavailableReason(worktree, reg.boxId, method);
+  if (unavailable) {
+    return { exitCode: 64, stdout: '', stderr: unavailable };
   }
   const op = method === 'git.push' ? 'push' : 'fetch';
   const remote = resolveRemote(params?.remote);

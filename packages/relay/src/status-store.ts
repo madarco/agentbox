@@ -100,4 +100,9 @@ export class BoxStatusStore {
   delete(boxId: string): void {
     this.map.delete(boxId);
   }
+
+  /** Every box's latest snapshot in one pass (backs `Store.listStatuses`). */
+  list(): Array<{ boxId: string; status: BoxStatusSnapshot }> {
+    return [...this.map.entries()].map(([boxId, status]) => ({ boxId, status }));
+  }
 }
