@@ -5,9 +5,10 @@
 > persistent Hetzner VPS, acting as an **intermediary between the PC and the boxes** — the PC
 > workflow stays exactly as today, but the control box holds enough state (registry, approvals,
 > credentials, SSH keys, secrets) that work can also continue from mobile with the laptop off.
-> Background: [`control-plane-roadmap.md`](./control-plane-roadmap.md) (architecture + milestones),
-> [`control-plane-backlog.md`](./control-plane-backlog.md) (what shipped),
-> [`control-plane-guide.md`](./control-plane-guide.md) (feature guide).
+> This is the single plan-of-record for the control box; the older `control-plane-*` design docs
+> were removed to avoid confusion. Related: [`host-relay.md`](./host-relay.md) (the relay core),
+> [`in-box-supervisor.md`](./in-box-supervisor.md), and the public guide at
+> [`apps/web/content/docs/deployed-hub.mdx`](../apps/web/content/docs/deployed-hub.mdx).
 > One phase per session; keep this doc updated as phases land (per project convention, maintain
 > status live — check boxes, note deviations inline).
 
@@ -1117,9 +1118,9 @@ apps/cli/dist/index.js <cmd> --url http://127.0.0.1:8799`). The walk (all 8 gree
 
 ## Cross-phase notes
 
-- **Docs in sync every phase** (project rule): `apps/web/content/docs/` (`control-plane.mdx` is
-  currently unpublished/experimental — re-publish when phase 3 lands and the flow is real),
-  `docs/host-relay.md`, `docs/cloud-providers.md`, and this file's checkboxes/status.
+- **Docs in sync every phase** (project rule): the public guide
+  `apps/web/content/docs/deployed-hub.mdx`, `docs/host-relay.md`, `docs/cloud-providers.md`, and
+  this file's checkboxes/status.
 - The M1 **rename to `hub`** (CLI verbs, `relay.controlPlaneUrl` key) is *not* one of these
   phases; do it after phase 3 when the surface is proven, as its own clean rename (unreleased —
   no aliases).

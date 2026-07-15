@@ -28,7 +28,7 @@ the relay (8787)** so no extra port is opened. Box state must stay readable as
 JSON files on localhost/hetzner; better-auth may use sqlite there.
 
 This matches the roadmap's "hub runs on your PC by default, Web UI shared between
-the hub and the local relay" direction (`docs/control-plane-roadmap.md`), and
+the hub and the local relay" direction (`docs/control-box-plan.md`), and
 adopts the roadmap rename **control-plane → hub**.
 
 ### Decisions locked (with the user)
@@ -269,7 +269,7 @@ Kept the Vercel path (`app/[...path]/route.ts` + `lib/plane.ts`) byte-intact.
   break the hosted deploy if missed): `apps/cli/src/control-plane/deploy-vercel.ts`
   (`ROOT_DIRECTORY`), `packages/sandbox-hetzner/src/control-plane-deploy.ts`
   (`REMOTE_APP_DIR`), `.dockerignore`, the `agentbox control-plane` self-host help
-  path, and the `apps/web/.../control-plane.mdx` deploy-path references. The
+  path, and the `apps/web/.../deployed-hub.mdx` deploy-path references. The
   `agentbox control-plane` **command** name + the `agentbox-control-plane` Vercel
   **project** name are unchanged (Phase 5 / deployed-resource concerns).
 - **Verified:** `next build` clean — route list shows `/` (page) coexisting with
@@ -605,7 +605,7 @@ cloud honored too through the shared worker).
 
 ## Docs to update (in the phase that changes the behavior)
 
-- `docs/control-plane-roadmap.md` / `docs/control-plane-guide.md` — the local hub
+- `docs/control-box-plan.md` — the local hub
   now serves the UI on the relay port; rename control-plane → hub where it lands.
 - `apps/web/content/docs/**` — new `agentbox hub` command + the localhost UI.
 - `apps/hub/README.md` — the three profiles and env (`AGENTBOX_HUB_PROFILE`,
