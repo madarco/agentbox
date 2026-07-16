@@ -607,8 +607,9 @@ async function expandRemoteDockerHosts(base: ProviderOption[]): Promise<Provider
   const hosts = await loadRemoteDockerHostViews();
   if (hosts.length === 0) return base;
   const perHost: ProviderOption[] = hosts.map((h) => ({
+    // id stays the `docker:<alias>` create spec; the label reads like "Docker (local)".
     id: `docker:${h.alias}`,
-    label: `docker:${h.alias}`,
+    label: `Docker (${h.alias})`,
     configured: true,
     hasCredentials: true,
     reason: h.baked
