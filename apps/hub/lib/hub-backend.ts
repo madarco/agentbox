@@ -361,8 +361,26 @@ function mapJobToBox(job: QueueJob, status: BoxStatus): Box {
  * offline (no cloud SDK), so it's cheap to compute on every getData(). A prepared
  * marker implies a prior `<provider> login`, so it's a sufficient readiness proxy.
  */
+// remote-docker keeps no single base image — it's a set of SSH host aliases in
+// `~/.agentbox/remote-docker-hosts.json`, each baked (or lazily built) on its own.
+// A direct sync read (mirrors readPreparedStateRaw/readSecretsKeys) keeps the hot
+// `listProviders` path off the remote-docker package's dynamic import.
+function remoteDockerHostCount(): number {
+  try {
+    const raw = JSON.parse(
+      readFileSync(path.join(os.homedir(), '.agentbox', 'remote-docker-hosts.json'), 'utf8'),
+    ) as { hosts?: Record<string, unknown> };
+    return raw.hosts && typeof raw.hosts === 'object' ? Object.keys(raw.hosts).length : 0;
+  } catch {
+    return 0;
+  }
+}
+
 function isProviderConfigured(id: ProviderKind): boolean {
   if (id === 'docker') return true;
+  // remote-docker is usable as soon as one host alias is registered (the image
+  // builds lazily on first create); it never writes a top-level `base` marker.
+  if (id === 'remote-docker') return remoteDockerHostCount() > 0;
   const raw = readPreparedStateRaw(id);
   return !!(raw && typeof raw === 'object' && (raw as { base?: unknown }).base);
 }
@@ -467,9 +485,12 @@ function listProviders(jobs: QueueJob[]): ProviderOption[] {
     );
     let reason: string | undefined;
     if (!configured) {
-      reason = hasCredentials
-        ? 'Credentials set — bake the base image to finish setup.'
-        : 'Not set up — add credentials, then bake the base image.';
+      reason =
+        id === 'remote-docker'
+          ? 'Add a host in Settings to run boxes on your own machine over SSH.'
+          : hasCredentials
+            ? 'Credentials set — bake the base image to finish setup.'
+            : 'Not set up — add credentials, then bake the base image.';
     }
     return { id, label, configured, hasCredentials, jobId: bake?.id, reason };
   });
@@ -553,6 +574,48 @@ async function listProvidersWithFreshness(base: ProviderOption[]): Promise<Provi
       };
     }),
   );
+}
+
+/** The registered remote-docker host aliases as create/settings-facing views. */
+async function loadRemoteDockerHostViews(): Promise<RemoteDockerHostView[]> {
+  const rd = await import('@agentbox/sandbox-remote-docker');
+  const prepared = rd.readPreparedState();
+  const cfg = await loadEffectiveConfig(os.homedir());
+  const dflt = (cfg.effective.box.remoteDockerHost || '').trim();
+  return rd.listHostAliases().map(({ alias, entry }) => {
+    const baked = prepared?.hosts[alias];
+    return {
+      alias,
+      ssh: entry.ssh,
+      baked: Boolean(baked),
+      ...(baked ? { bakedImageRef: baked.imageRef } : {}),
+      default: alias === dflt,
+    };
+  });
+}
+
+/**
+ * For the create pickers only: replace the single `remote-docker` provider entry
+ * with one `docker:<alias>` option per registered host, so a user can create a box
+ * on a specific machine. Keeps the single entry (guiding to Settings) when there
+ * are no hosts. Settings never asks for this — it renders one Remote Docker row and
+ * nests the hosts itself.
+ */
+async function expandRemoteDockerHosts(base: ProviderOption[]): Promise<ProviderOption[]> {
+  const idx = base.findIndex((p) => p.id === 'remote-docker');
+  if (idx < 0) return base;
+  const hosts = await loadRemoteDockerHostViews();
+  if (hosts.length === 0) return base;
+  const perHost: ProviderOption[] = hosts.map((h) => ({
+    id: `docker:${h.alias}`,
+    label: `docker:${h.alias}`,
+    configured: true,
+    hasCredentials: true,
+    reason: h.baked
+      ? undefined
+      : 'Image builds on first create — bake it in Settings for a faster start.',
+  }));
+  return [...base.slice(0, idx), ...perHost, ...base.slice(idx + 1)];
 }
 
 function currentUser(): User {
@@ -911,8 +974,9 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         providers: listProviders(jobs),
       };
     },
-    async providersWithFreshness(): Promise<ProviderOption[]> {
-      return listProvidersWithFreshness(listProviders(await loadQueue()));
+    async providersWithFreshness(opts): Promise<ProviderOption[]> {
+      const fresh = await listProvidersWithFreshness(listProviders(await loadQueue()));
+      return opts?.expandRemoteDockerHosts ? expandRemoteDockerHosts(fresh) : fresh;
     },
     start: (id) =>
       runLifecycle(id, async (box, provider) => {
@@ -1012,10 +1076,22 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         if (!workspace) return { ok: false, error: `unknown project ${input.projectId}` };
         // Provider gate (defense-in-depth: a client could bypass the disabled UI
         // option). Default docker; reject unknown kinds and unconfigured providers.
-        const provider = input.provider ?? 'docker';
-        if (!isProviderKind(provider)) return { ok: false, error: `unknown provider ${provider}` };
-        if (!isProviderConfigured(provider)) {
-          return { ok: false, error: `provider ${provider} is not set up on this host` };
+        const provider = (input.provider ?? 'docker').trim();
+        // A host-qualified `docker:<alias>` / `remote-docker:<alias>` spec targets a
+        // registered remote-docker host — validate the alias (the worker parses the
+        // spec out of providerName). Bare names take the configured-provider gate.
+        const hostSpec = provider.match(/^(?:docker|remote-docker):(.+)$/);
+        if (hostSpec) {
+          const alias = hostSpec[1];
+          const rd = await import('@agentbox/sandbox-remote-docker');
+          if (!rd.getHostAlias(alias)) {
+            return { ok: false, error: `unknown remote-docker host '${alias}' — add it in Settings` };
+          }
+        } else {
+          if (!isProviderKind(provider)) return { ok: false, error: `unknown provider ${provider}` };
+          if (!isProviderConfigured(provider)) {
+            return { ok: false, error: `provider ${provider} is not set up on this host` };
+          }
         }
         const noAgent = input.agent === 'none';
         // For a no-agent box `agent` is inert (the worker ignores it when noAgent);
@@ -1270,20 +1346,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
 
     // ── remote-docker host aliases ──
     async listRemoteDockerHosts(): Promise<RemoteDockerHostView[]> {
-      const rd = await import('@agentbox/sandbox-remote-docker');
-      const prepared = rd.readPreparedState();
-      const cfg = await loadEffectiveConfig(os.homedir());
-      const dflt = (cfg.effective.box.remoteDockerHost || '').trim();
-      return rd.listHostAliases().map(({ alias, entry }) => {
-        const baked = prepared?.hosts[alias];
-        return {
-          alias,
-          ssh: entry.ssh,
-          baked: Boolean(baked),
-          ...(baked ? { bakedImageRef: baked.imageRef } : {}),
-          default: alias === dflt,
-        };
-      });
+      return loadRemoteDockerHostViews();
     },
     async addRemoteDockerHost(alias, ssh, opts): Promise<ActionResult> {
       try {

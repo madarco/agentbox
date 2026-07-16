@@ -15,10 +15,16 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request): Promise<Response> {
-  const wantsFreshness = new URL(req.url).searchParams.get('freshness') === '1';
+  const params = new URL(req.url).searchParams;
+  const wantsFreshness = params.get('freshness') === '1';
+  // `?hosts=expand` (create pickers only) lists each registered remote-docker host
+  // as its own `docker:<alias>` provider option. Settings never passes it.
+  const wantsHosts = params.get('hosts') === 'expand';
   const backend = backendOrNull();
-  if (wantsFreshness && backend) {
-    return ok({ providers: await backend.providersWithFreshness() });
+  if ((wantsFreshness || wantsHosts) && backend) {
+    return ok({
+      providers: await backend.providersWithFreshness({ expandRemoteDockerHosts: wantsHosts }),
+    });
   }
   const { providers } = await readState();
   return ok({ providers });

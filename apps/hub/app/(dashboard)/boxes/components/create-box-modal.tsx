@@ -74,11 +74,16 @@ function CreateBoxModal({
 }) {
   const router = useRouter();
   const { state } = useStore();
-  const providers = state.providers.length ? state.providers : DOCKER_ONLY;
+  // The create picker's provider list is fetched (with remote-docker hosts expanded
+  // into `docker:<alias>` options); until it lands we render the store list so the
+  // form paints instantly. See the effect below.
+  const [fetchedProviders, setFetchedProviders] = useState<ProviderOption[] | null>(null);
+  const providers = fetchedProviders ?? (state.providers.length ? state.providers : DOCKER_ONLY);
   const [pending, startTransition] = useTransition();
   const [projectId, setProjectId] = useState(project?.id ?? projects[0]?.id ?? '');
   const [agent, setAgent] = useState<Agent>('claude');
-  const [provider, setProvider] = useState<CreateBoxInput['provider']>('docker');
+  // May hold a bare provider id or a `docker:<alias>` remote-docker host spec.
+  const [provider, setProvider] = useState<string>('docker');
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [fromBranch, setFromBranch] = useState('');
@@ -106,12 +111,18 @@ function CreateBoxModal({
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch('/api/v1/providers?freshness=1', { credentials: 'same-origin' });
+        // `hosts=expand` lists each remote-docker host as a `docker:<alias>` option;
+        // `freshness=1` carries base-image staleness for the two-phase bake logic.
+        const res = await fetch('/api/v1/providers?freshness=1&hosts=expand', {
+          credentials: 'same-origin',
+        });
         if (!res.ok) return;
         const j = (await res.json()) as { providers?: ProviderOption[] };
         if (cancelled) return;
+        const list = j.providers ?? [];
+        setFetchedProviders(list);
         const map: Record<string, Pick<ProviderOption, 'baseStatus' | 'baseStaleReason' | 'jobId'>> = {};
-        for (const p of j.providers ?? []) {
+        for (const p of list) {
           map[p.id] = { baseStatus: p.baseStatus, baseStaleReason: p.baseStaleReason, jobId: p.jobId };
         }
         setFreshness(map);
@@ -301,7 +312,7 @@ function CreateBoxModal({
               </Field>
             ) : null}
             <Field label="Provider">
-              <Select value={provider} onChange={(e) => setProvider(e.target.value as CreateBoxInput['provider'])}>
+              <Select value={provider} onChange={(e) => setProvider(e.target.value)}>
                 {providers.map((p) => (
                   <option key={p.id} value={p.id} disabled={!p.configured} title={p.reason}>
                     {p.label}

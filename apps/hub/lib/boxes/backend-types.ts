@@ -1,4 +1,3 @@
-import type { ProviderKind } from '@agentbox/config';
 import type { HubState, ProviderOption } from './types';
 
 // Result of a lifecycle server action.
@@ -88,9 +87,11 @@ export interface CreateBoxInput {
   projectId: string;
   // 'none' = just create the box (like `agentbox create`), don't start an agent.
   agent: 'claude' | 'codex' | 'opencode' | 'none';
-  // Sandbox provider to create on. Defaults to 'docker'. The backend rejects a
-  // provider that isn't configured (baked) on this host.
-  provider?: ProviderKind;
+  // Sandbox provider to create on. Defaults to 'docker'. A bare provider name
+  // (ProviderKind) OR a host-qualified `docker:<alias>` / `remote-docker:<alias>`
+  // spec targeting a registered remote-docker host. The backend rejects a provider
+  // that isn't configured (baked) on this host, or an unknown host alias.
+  provider?: string;
   name?: string;
   prompt?: string;
   // Base ref the box's per-box branch forks from (branch / tag / SHA), instead
@@ -180,7 +181,9 @@ export interface HubBackend {
   // `baseStaleReason`). Off the getData() hot path — computing it loads provider
   // code + hashes the runtime build context (memoized with a short TTL). Backs
   // GET /api/v1/providers?freshness=1 so the default endpoint stays fast.
-  providersWithFreshness(): Promise<ProviderOption[]>;
+  // `expandRemoteDockerHosts` (create pickers only) replaces the single
+  // remote-docker entry with one `docker:<alias>` option per registered host.
+  providersWithFreshness(opts?: { expandRemoteDockerHosts?: boolean }): Promise<ProviderOption[]>;
   // Enqueue a background create job for a registered project; returns the jobId.
   create(input: CreateBoxInput): Promise<CreateBoxResult>;
   // Persist a provider's credentials (validated against the cloud, then written
