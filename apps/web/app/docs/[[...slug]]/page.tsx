@@ -70,6 +70,12 @@ export async function generateMetadata(props: {
   const title = page.data.title;
   const description = page.data.description;
 
+  // Per-page dynamic OG image, served by app/docs-og/[...slug]/route.tsx. The
+  // URL mirrors the shape produced by that route's generateStaticParams (the
+  // page slug plus a synthetic "image.png" segment). metadataBase resolves it
+  // to an absolute URL for the tags.
+  const ogUrl = `/docs-og/${[...(params.slug ?? []), 'image.png'].join('/')}`;
+
   // Re-specify siteName + image: Next shallowly merges the `openGraph`/`twitter`
   // keys, so a page-level object replaces the root defaults rather than deep-
   // merging into them.
@@ -83,13 +89,13 @@ export async function generateMetadata(props: {
       url: `${SITE.url}${page.url}`,
       title,
       description,
-      images: [SITE.ogImage],
+      images: [{ url: ogUrl, width: 1200, height: 630, alt: title }],
     },
     twitter: {
       card: 'summary_large_image',
       title,
       description,
-      images: [SITE.ogImage.url],
+      images: [ogUrl],
       creator: SITE.twitterCreator,
     },
   };
