@@ -12,6 +12,7 @@ import {
   defaultBoxSshDir as coreDefaultBoxSshDir,
 } from '@agentbox/sandbox-core';
 
+export { controlSockPath } from '@agentbox/sandbox-core';
 export type { PortForward, SshTunnelOpenOptions } from '@agentbox/sandbox-core';
 
 const DIGITALOCEAN_SSH_NAMESPACE = 'digitalocean';
