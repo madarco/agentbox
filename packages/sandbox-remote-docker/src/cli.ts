@@ -148,35 +148,64 @@ export const remoteDockerCommand = new Command('remote-docker')
       .alias('rm')
       .description('Forget a host alias: drop it, clear the default, and its baked image record')
       .argument('<alias>', 'the alias to forget')
-      .action(async (alias: string) => {
+      .option('-y, --yes', 'skip the confirmation prompt')
+      .action(async (alias: string, opts: { yes?: boolean }) => {
         // No probe: you must be able to remove a host that's now unreachable/dead.
-        const droppedAlias = removeHostAlias(alias);
-
+        // Gather what removal touches BEFORE mutating, so the prompt can state the
+        // stakes (and a no-op alias skips the prompt entirely).
         const cfg = await loadEffectiveConfig(process.cwd());
-        const clearedScopes: string[] = [];
-        for (const scope of ['project', 'global'] as const) {
-          if (cfg.layers[scope].values.box?.remoteDockerHost === alias) {
-            await unsetConfigValue(scope, 'box.remoteDockerHost', process.cwd());
-            clearedScopes.push(scope);
-          }
-        }
+        const registeredEntry = getHostAlias(alias);
+        const configuredScopes = (['project', 'global'] as const).filter(
+          (scope) => cfg.layers[scope].values.box?.remoteDockerHost === alias,
+        );
         const inWorkspace = cfg.layers.workspace.values.box?.remoteDockerHost === alias;
-        const forgotBake = removePreparedHost(alias);
+        const isBaked = !!readPreparedState()?.hosts[alias];
 
-        if (!droppedAlias && clearedScopes.length === 0 && !inWorkspace && !forgotBake) {
+        if (!registeredEntry && configuredScopes.length === 0 && !inWorkspace && !isBaked) {
           p.log.info(`'${alias}' is not a registered, configured, or baked remote-docker host`);
           return;
         }
+
+        // Boxes carry the alias baked into their id, independent of the registry,
+        // so this is stable whether we scan before or after the drop.
+        const boxes = boxesUsingAlias(alias);
+
+        if (!opts.yes) {
+          if (!process.stdin.isTTY) {
+            p.log.error(
+              `refusing to remove '${alias}' without confirmation — re-run with \`--yes\` in a non-interactive shell`,
+            );
+            process.exitCode = 1;
+            return;
+          }
+          const detail = boxes.length
+            ? ` ${String(boxes.length)} box(es) created against it become unreachable.`
+            : '';
+          const ok = await p.confirm({
+            message: `Forget remote-docker host '${alias}'${registeredEntry ? ` (${registeredEntry.ssh})` : ''}?${detail} The remote machine is untouched.`,
+            initialValue: false,
+          });
+          if (p.isCancel(ok) || !ok) {
+            p.cancel('aborted');
+            return;
+          }
+        }
+
+        const droppedAlias = removeHostAlias(alias);
+        for (const scope of configuredScopes) {
+          await unsetConfigValue(scope, 'box.remoteDockerHost', process.cwd());
+        }
+        const forgotBake = removePreparedHost(alias);
+
         const cleared: string[] = [];
         if (droppedAlias) cleared.push('alias');
-        if (clearedScopes.length > 0) cleared.push(`${clearedScopes.join(' + ')} default`);
+        if (configuredScopes.length > 0) cleared.push(`${configuredScopes.join(' + ')} default`);
         if (forgotBake) cleared.push('baked image record');
         p.log.success(`removed ${alias}${cleared.length ? ` (${cleared.join(', ')})` : ''}`);
 
-        const boxes = boxesUsingAlias(alias);
         if (boxes.length > 0) {
           p.log.warn(
-            `${boxes.length} box(es) were created against '${alias}' and are now unreachable — ` +
+            `${String(boxes.length)} box(es) were created against '${alias}' and are now unreachable — ` +
               `re-add it with \`agentbox remote-docker add ${alias} <ssh>\`: ${boxes.join(', ')}`,
           );
         }

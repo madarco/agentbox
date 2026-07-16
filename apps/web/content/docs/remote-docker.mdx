@@ -21,6 +21,7 @@ The install wizard walks you through it — `agentbox install`, pick **Remote Do
 Register the host under an alias. The second argument is the SSH connection — an `~/.ssh/config` alias or `[user@]host[:port]`:
 
 ```bash
+agentbox remote-docker doctor marco@10.0.0.9            # check if the host is compatible
 agentbox remote-docker add buildbox marco@10.0.0.9      # alias `buildbox` → marco@10.0.0.9
 agentbox remote-docker add mini dev@10.0.0.9:2222       # a custom port works too
 ```
@@ -70,7 +71,7 @@ Remote Docker is a **cloud** provider that happens to speak Docker. That sounds 
 The [local Docker](/docs/local-docker) provider bind-mounts your repo's `.git/` straight into the container. That's what makes an in-box commit land in your host repo instantly, with no sync at all. A bind mount cannot cross a network — so on a remote engine, your workspace has to be **synced** rather than shared, exactly like [Hetzner](/docs/hetzner) or [Daytona](/docs/daytona):
 
 - **Into the box**, at create: a shallow git clone plus your uncommitted and untracked changes, carried over as-is. Your working state arrives intact.
-- **Back out**, on `git push`: the box's branch travels home as a git bundle through the host relay, and the push runs from *your* machine with *your* credentials. The remote machine never sees a git credential. See [sync-and-git](/docs/sync-and-git).
+- **Back out**, on `git push`: the box's branch travels home as a git bundle through the host relay, and the push runs from _your_ machine with _your_ credentials. The remote machine never sees a git credential. See [sync-and-git](/docs/sync-and-git).
 
 Everything reaches the box over **one SSH connection per box** (an OpenSSH ControlMaster), so `docker` commands don't pay a handshake each time. The box's web app, VNC and sshd are published on the remote's loopback and forwarded to yours, so `agentbox url` opens in your browser as usual.
 
@@ -85,25 +86,27 @@ agentbox checkpoint create my-box --name setup --set-default
 ```
 
 <Callout title="NOTE">
-A checkpoint lives on **the engine that made it**. Boot a box on a different machine and AgentBox can't find that image there, so it builds a fresh box from the base image instead of failing. Checkpoints don't follow you between machines.
+  A checkpoint lives on **the engine that made it**. Boot a box on a different machine and AgentBox
+  can't find that image there, so it builds a fresh box from the base image instead of failing.
+  Checkpoints don't follow you between machines.
 </Callout>
 
 ## Good to know
 
-- **Boxes are unlimited by default.** The remote engine is *your* machine, so a box isn't capped at some cloud default. Cap it if you want to: `--size 4-8` gives it 4 CPUs and 8 GB (`--cpus` / `--memory` on the container).
-- **Ports are fixed at create.** Docker port mappings are immutable for a container's life, so a service you add to `agentbox.yaml` *after* the box exists is still reachable through the box's web proxy, but won't get its own preview URL until you recreate it.
+- **Boxes are unlimited by default.** The remote engine is _your_ machine, so a box isn't capped at some cloud default. Cap it if you want to: `--size 4-8` gives it 4 CPUs and 8 GB (`--cpus` / `--memory` on the container).
+- **Ports are fixed at create.** Docker port mappings are immutable for a container's life, so a service you add to `agentbox.yaml` _after_ the box exists is still reachable through the box's web proxy, but won't get its own preview URL until you recreate it.
 - **macOS remotes work.** Docker Desktop, OrbStack and Colima are all found, because AgentBox runs `docker` in a login shell on the remote (which is why OrbStack's `~/.orbstack/bin` is on the PATH).
 - **The remote engine is trusted.** Anyone with root on that machine can read the box. This is a "your own machine" provider, not an isolation boundary against the machine's owner.
 - **Concurrent boxes share the machine.** Nothing arbitrates between them beyond the limits you set.
 
 ## Configuration
 
-| Key | Meaning |
-| --- | --- |
-| `box.remoteDockerHost` | Default SSH destination. Overridden by `docker:<host>` / `--remote-host`. Layerable per project via [`agentbox.yaml`](/docs/agentbox-yaml). |
-| `box.sizeRemoteDocker` | `cpu-memory` GB (e.g. `4-8`) → the container's `--cpus` / `--memory`. Empty = unlimited. |
-| `box.imageRemoteDocker` | Pin an image ref on the remote engine. Normally leave empty — AgentBox derives a fingerprint-tagged ref and ensures it there itself. |
-| `box.defaultCheckpointRemoteDocker` | Checkpoint new boxes boot from. |
+| Key                                 | Meaning                                                                                                                                     |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `box.remoteDockerHost`              | Default SSH destination. Overridden by `docker:<host>` / `--remote-host`. Layerable per project via [`agentbox.yaml`](/docs/agentbox-yaml). |
+| `box.sizeRemoteDocker`              | `cpu-memory` GB (e.g. `4-8`) → the container's `--cpus` / `--memory`. Empty = unlimited.                                                    |
+| `box.imageRemoteDocker`             | Pin an image ref on the remote engine. Normally leave empty — AgentBox derives a fingerprint-tagged ref and ensures it there itself.        |
+| `box.defaultCheckpointRemoteDocker` | Checkpoint new boxes boot from.                                                                                                             |
 
 ## Commands
 
@@ -112,13 +115,13 @@ agentbox remote-docker add <alias> <ssh>     # register a host + bake its image 
 agentbox remote-docker update <alias> <ssh>  # re-point an alias (existing boxes follow)
 agentbox remote-docker list                  # your host aliases (alias: ls)
 agentbox remote-docker doctor [alias]        # is this host usable? (ssh + docker)
-agentbox remote-docker remove <alias>        # forget an alias (+ default + bake record; alias: rm)
+agentbox remote-docker remove <alias>        # forget an alias (+ default + bake record; asks to confirm, -y to skip; alias: rm)
 agentbox prepare --provider docker:<host>
 agentbox prune --provider remote-docker   # reap containers with no local record
 ```
 
 ## Troubleshooting
 
-**`docker` is not on the login-shell PATH.** AgentBox runs `bash -lc docker …` on the remote, so `docker` must be found by a *login* shell. If `ssh <host> 'bash -lc "docker version"'` fails but `ssh <host> docker version` works, add Docker to that user's profile.
+**`docker` is not on the login-shell PATH.** AgentBox runs `bash -lc docker …` on the remote, so `docker` must be found by a _login_ shell. If `ssh <host> 'bash -lc "docker version"'` fails but `ssh <host> docker version` works, add Docker to that user's profile.
 
 **Cannot SSH to the host.** The provider uses your own SSH config and mints nothing, so the test is simply `ssh <host> true`. If that prompts for a password or a passphrase, set up key auth (or an agent) first — AgentBox connects in batch mode and will not prompt.
