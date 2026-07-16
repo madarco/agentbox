@@ -252,11 +252,11 @@ const COMPACT_EXAMPLE = [
   'Example:',
   '  agentbox claude                  # launch Claude, one box per task/branch',
   '  agentbox hetzner|e2b|… codex     # launch with other agents or providers',
-  '  ! agentbox fork hetzner|e2b|…    # teleport the current session from the chat',
+  '  > ! agentbox fork hetzner|e2b|…    # teleport the current session from the chat',
   '',
   '  agentbox attach 1                # detach with Ctrl+a d, then re-attach',
   '',
-  '  # Then ask your agent to push/pr or do it from your pc:',
+  '  # Ask your agent to push/pr from the box, or do it from your pc:',
   '  agentbox git push 1              # push to remote',
   '  agentbox git push 1 --host-only  # move back the branch to your pc',
   '  agentbox git pr create 1 -f      # create a PR from the box',
@@ -275,7 +275,7 @@ const COMPACT_MORE = [
   '    connect|download|services|inbound, drive|queue, config, …',
 ];
 
-const COMPACT_FOOTER = ['Run `agentbox <command> --help` for command options.'];
+const COMPACT_FOOTER = ['Run `agentbox help` for the full list of commands.'];
 
 export function buildCompactHelp(program: Command): string {
   const byName = new Map(program.commands.map((c) => [c.name(), c] as const));
@@ -292,7 +292,7 @@ export function buildCompactHelp(program: Command): string {
   const allTerms = COMPACT_HELP.flatMap((g) => g.rows.map(rowTerm));
   const pad = Math.max(0, ...allTerms.map((t) => t.length)) + 3;
 
-  const lines: string[] = ['Commands:'];
+  const lines: string[] = [...COMPACT_EXAMPLE, '', 'Commands:'];
   for (const g of COMPACT_HELP) {
     lines.push('', `  ${g.title}`);
     for (const row of g.rows) {
@@ -301,6 +301,6 @@ export function buildCompactHelp(program: Command): string {
       lines.push(`    ${rowTerm(row).padEnd(pad)}${description}`);
     }
   }
-  lines.push('', ...COMPACT_MORE, '', ...COMPACT_EXAMPLE, '', ...COMPACT_FOOTER);
+  lines.push('', ...COMPACT_MORE, '', ...COMPACT_FOOTER);
   return lines.join('\n');
 }

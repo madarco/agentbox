@@ -231,8 +231,9 @@ describe('compact --help (default view)', () => {
     expect(help).toMatch(/^\s+destroy\|rm\s/m);
     expect(help).toContain('Example:');
     expect(help).toContain('agentbox git push');
-    expect(help).toContain('Run `agentbox <command> --help`');
+    expect(help).toContain('Run `agentbox help` for the full list of commands.');
     expect(help).toContain('`agentbox help`');
+    expect(help.indexOf('Example:')).toBeLessThan(help.indexOf('Commands:'));
     expect(help).toContain('drive|queue');
     expect(help).toContain('connect|download|services|inbound');
   });

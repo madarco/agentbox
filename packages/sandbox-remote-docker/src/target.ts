@@ -11,14 +11,20 @@
  *                 "dev@10.0.0.9:2222/agentbox-brave-otter"
  *
  * That makes the handle self-describing and multi-host support fall out for
- * free — no host-side registry to keep in sync, and a box keeps working after
- * `box.remoteDockerHost` changes.
+ * free — no per-box registry to keep in sync.
  *
- * An SSH destination is anything OpenSSH accepts: an `~/.ssh/config` alias
- * (`buildbox`), or `[user@]host[:port]`. We deliberately do NOT parse it into
- * our own notion of identity/port beyond the `:port` suffix — the user's
- * `~/.ssh/config` is the source of truth for keys, ports and usernames, and
- * re-deriving them here would only let us contradict it.
+ * What the id bakes is a host **alias**, not a raw connection string: aliases are
+ * registered in `hosts-registry.ts` (`~/.agentbox/remote-docker-hosts.json`), and
+ * the alias→connection lookup happens at connection time (`ensureTunnel`). That
+ * indirection is deliberate — `remote-docker update <alias>` remints the
+ * connection and every existing box created against that alias follows it. The
+ * functions here stay PURE (no registry I/O): they only split/validate the
+ * destination string; resolution is a separate step at the connection chokepoints.
+ *
+ * A parsed destination is anything OpenSSH accepts once resolved: an
+ * `~/.ssh/config` alias (`buildbox`), or `[user@]host[:port]`. We deliberately do
+ * NOT parse it into our own notion of identity/port beyond the `:port` suffix —
+ * the user's `~/.ssh/config` is the source of truth for keys, ports and usernames.
  */
 
 import type { SshTargetArgs } from '@agentbox/sandbox-core';

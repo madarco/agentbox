@@ -54,6 +54,7 @@ export {
 } from './ssh-exec.js';
 export {
   SshTunnelManager,
+  controlSockPath,
   defaultBoxSshDir,
   pickFreePort,
   type PortForward,
@@ -93,6 +94,7 @@ export {
 export {
   errSummary,
   firstLine,
+  statusBadge,
   type CheckResult,
   type CheckStatus,
   type CredSetResult,

@@ -20,7 +20,7 @@ import {
   renderInnerCommand,
 } from '@agentbox/sandbox-cloud';
 import { sshDestination, sshOptArgs } from '@agentbox/sandbox-core';
-import { ensureTunnel } from './remote-docker.js';
+import { ensureTunnel, loginShell } from './remote-docker.js';
 import { parseSandboxId } from './target.js';
 
 const CONTAINER_USER = 'vscode';
@@ -53,7 +53,13 @@ export async function buildRemoteDockerAttach(
     '-lc',
     inner,
   ];
-  const remoteCommand = `docker ${quoteShellArgv(dockerArgv)}`;
+  // Wrap in a LOGIN shell for the same reason every other remote invocation does
+  // (see `loginShell` in ./remote-docker.ts): ssh runs this string in the remote
+  // user's NON-login shell, where `docker` is often not on PATH (Docker Desktop
+  // in /usr/local/bin, OrbStack in ~/.orbstack/bin). `bash -lc` sources the
+  // profile so `docker` resolves. The `-t` PTY flows through bash into `docker
+  // exec -it` unchanged.
+  const remoteCommand = loginShell(`docker ${quoteShellArgv(dockerArgv)}`);
 
   const argv = [
     'ssh',

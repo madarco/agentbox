@@ -29,6 +29,7 @@ import type { BoxRecord, SshTargetRecord } from '@agentbox/core';
 import { bashScript, quoteShellArg } from '@agentbox/sandbox-cloud';
 import { defaultBoxSshDir, mintSshKey } from '@agentbox/sandbox-core';
 import { CONTAINER_USER, dockerExecArgv, dockerOnRemote, ensureTunnel } from './remote-docker.js';
+import { resolveConnection } from './hosts-registry.js';
 import { parseSandboxId } from './target.js';
 import { parseDockerPort } from './backend.js';
 
@@ -94,6 +95,8 @@ export async function resolveBoxSshTarget(box: BoxRecord): Promise<SshTargetReco
     port,
     user: CONTAINER_USER,
     identityFile: key.privatePath,
-    proxyJump: remote.spec,
+    // The box id bakes an alias; ssh on THIS host can't resolve an AgentBox
+    // alias, so the ProxyJump must be the alias's real connection string.
+    proxyJump: resolveConnection(remote.spec),
   };
 }

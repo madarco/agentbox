@@ -11,7 +11,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { loadEffectiveConfig, type ProviderKind } from '@agentbox/config';
-import { errSummary, firstLine, type CheckResult, type CheckStatus } from '@agentbox/sandbox-core';
+import {
+  errSummary,
+  firstLine,
+  statusBadge,
+  type CheckResult,
+  type CheckStatus,
+} from '@agentbox/sandbox-core';
 import { ALL_CONNECTORS, type IntegrationConnector } from '@agentbox/integrations';
 import { getRuntimeProviderNames, loadProviderModule } from '../provider/loaders.js';
 import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
@@ -490,13 +496,6 @@ export function formatCompact(groups: CheckGroup[]): string {
 
 function pad(s: string, width: number): string {
   return s.length >= width ? s : s + ' '.repeat(width - s.length);
-}
-
-function statusBadge(s: CheckStatus): string {
-  if (s === 'ok') return '[ ok ]';
-  if (s === 'info') return '[info]';
-  if (s === 'warn') return '[warn]';
-  return '[FAIL]';
 }
 
 /** Multi-line grouped report used by `agentbox doctor`. */

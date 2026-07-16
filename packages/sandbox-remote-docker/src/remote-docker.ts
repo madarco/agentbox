@@ -30,6 +30,18 @@ import {
   type SshTargetArgs,
 } from '@agentbox/sandbox-core';
 import { parseRemoteTarget, sshTargetFor, type RemoteTarget } from './target.js';
+import { resolveConnection } from './hosts-registry.js';
+
+/**
+ * A box's sandbox id bakes an ALIAS, not a raw connection string. Turn the
+ * baked target into one that dials the alias's current connection — so
+ * `remote-docker update` retargets existing boxes. Lenient: a non-alias spec
+ * (raw destination, or a pre-registry id) passes through unchanged.
+ */
+function dialTarget(target: RemoteTarget): RemoteTarget {
+  const resolved = resolveConnection(target.spec);
+  return resolved === target.spec ? target : parseRemoteTarget(resolved);
+}
 
 /** One ControlMaster per box, namespaced so ids can't collide with a VPS provider's. */
 export const tunnels = new SshTunnelManager('remote-docker');
@@ -48,33 +60,37 @@ export async function ensureTunnel(
   sandboxId: string,
   target: RemoteTarget,
 ): Promise<SshTargetArgs> {
+  // Dial the alias's current connection; keep the tunnel keyed by sandboxId.
+  const dial = dialTarget(target);
   if (!tunnels.has(sandboxId)) {
     try {
       await tunnels.open({
         boxId: sandboxId,
-        vpsHost: target.host,
-        ...(target.user !== undefined ? { vpsUser: target.user } : {}),
-        ...(target.port !== undefined ? { port: target.port } : {}),
+        vpsHost: dial.host,
+        ...(dial.user !== undefined ? { vpsUser: dial.user } : {}),
+        ...(dial.port !== undefined ? { port: dial.port } : {}),
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      const where = dial.spec === target.spec ? `"${target.spec}"` : `"${target.spec}" (${dial.spec})`;
       throw new Error(
-        `remote-docker: cannot SSH to "${target.spec}". Check that \`ssh ${target.spec} true\` works from this machine ` +
+        `remote-docker: cannot SSH to ${where}. Check that \`ssh ${dial.spec} true\` works from this machine ` +
           `(the provider uses your own ~/.ssh/config, agent and known_hosts — it mints no keys).\n${msg}`,
       );
     }
   }
   const controlPath = tunnels.controlPath(sandboxId);
-  return sshTargetFor(target, controlPath);
+  return sshTargetFor(dial, controlPath);
 }
 
 /** Re-open a dead master (host sleep/wake, network blip) and drop stale forwards. */
 export async function refreshTunnel(sandboxId: string, target: RemoteTarget): Promise<void> {
+  const dial = dialTarget(target);
   await tunnels.refresh({
     boxId: sandboxId,
-    vpsHost: target.host,
-    ...(target.user !== undefined ? { vpsUser: target.user } : {}),
-    ...(target.port !== undefined ? { port: target.port } : {}),
+    vpsHost: dial.host,
+    ...(dial.user !== undefined ? { vpsUser: dial.user } : {}),
+    ...(dial.port !== undefined ? { port: dial.port } : {}),
   });
 }
 
@@ -208,29 +224,54 @@ export function loginShell(command: string): string {
   return `bash -lc ${quoteShellArg(command)}`;
 }
 
+/** One preflight check, so `remote-docker doctor` can render a row per step. */
+export interface RemoteEngineStep {
+  label: 'ssh' | 'docker';
+  ok: boolean;
+  /** Success line or failure reason, shown after the status badge. */
+  detail: string;
+  hint?: string;
+}
+
+export interface RemoteEngineProbe {
+  /** True iff every attempted step passed. */
+  ok: boolean;
+  /** The steps that ran, in order (ssh, then docker). A failed step is last. */
+  steps: RemoteEngineStep[];
+  /** From the docker step when `ok`. */
+  version?: string;
+  arch?: string;
+  os?: string;
+  /** First failing step's detail — convenience for single-line callers. */
+  error?: string;
+}
+
 /**
  * Preflight a destination: SSH reachable, `docker` on the login-shell PATH, and
- * the daemon actually answering. Returns the engine's version + arch for the
- * doctor / `agentbox remote-docker check` output.
+ * the daemon actually answering. Returns a per-step result so `remote-docker
+ * doctor` can render one `[ ok ]`/`[FAIL]` row per check (like `agentbox
+ * doctor`); `add` and the provider's doctorChecks read the rolled-up fields.
  */
-export async function probeRemoteEngine(
-  spec: string,
-): Promise<{ ok: true; version: string; arch: string; os: string } | { ok: false; error: string }> {
+export async function probeRemoteEngine(spec: string): Promise<RemoteEngineProbe> {
   let target: SshTargetArgs;
   try {
     target = sshTargetFor(parseRemoteTarget(spec));
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    const detail = err instanceof Error ? err.message : String(err);
+    return { ok: false, steps: [{ label: 'ssh', ok: false, detail }], error: detail };
   }
   const reach = await sshExec({ ...target, options: { ConnectTimeout: '10' } }, 'true', {
     timeoutMs: 20_000,
   });
   if (reach.exitCode !== 0) {
+    const detail = `cannot SSH to ${spec}: ${reach.stderr.trim() || `exit ${String(reach.exitCode)}`}`;
     return {
       ok: false,
-      error: `cannot SSH to ${spec}: ${reach.stderr.trim() || `exit ${String(reach.exitCode)}`}`,
+      steps: [{ label: 'ssh', ok: false, detail, hint: `\`ssh ${spec} true\` must work from here` }],
+      error: detail,
     };
   }
+  const sshStep: RemoteEngineStep = { label: 'ssh', ok: true, detail: `reachable (${spec})` };
   const res = await dockerOnRemote(
     target,
     ['version', '--format', '{{.Server.Version}}|{{.Server.Arch}}|{{.Server.Os}}'],
@@ -240,14 +281,21 @@ export async function probeRemoteEngine(
   );
   if (res.exitCode !== 0) {
     const err = res.stderr.trim() || res.stdout.trim();
-    if (/command not found|not found/i.test(err)) {
-      return {
-        ok: false,
-        error: `\`docker\` is not on ${spec}'s login-shell PATH (${err}). Install Docker there, or add it to the remote user's profile.`,
-      };
-    }
-    return { ok: false, error: `docker on ${spec} is not answering: ${err}` };
+    const notFound = /command not found|not found/i.test(err);
+    const detail = notFound
+      ? `\`docker\` is not on ${spec}'s login-shell PATH (${err}). Install Docker there, or add it to the remote user's profile.`
+      : `docker on ${spec} is not answering: ${err}`;
+    return {
+      ok: false,
+      steps: [sshStep, { label: 'docker', ok: false, detail }],
+      error: detail,
+    };
   }
   const [version = '', arch = '', os = ''] = res.stdout.trim().split('|');
-  return { ok: true, version, arch, os };
+  const dockerStep: RemoteEngineStep = {
+    label: 'docker',
+    ok: true,
+    detail: `${version} (${os}/${arch})`,
+  };
+  return { ok: true, steps: [sshStep, dockerStep], version, arch, os };
 }

@@ -11,7 +11,12 @@
  *   ~/.agentbox/[<namespace>/]boxes/<box-id>/ssh/
  *     id_ed25519        per-box private key (VPS providers only; 0600)
  *     known_hosts       per-box host-key pinning (VPS providers only)
- *     control.sock      ssh ControlMaster socket (created at runtime, removed by `-O exit`)
+ *   ~/.agentbox/cm/<hash>.sock
+ *                       ssh ControlMaster socket (created at runtime, removed by
+ *                       `-O exit`). Lives in a short, flat dir — NOT under the deep
+ *                       per-box dir — because a Unix socket path is capped at ~104
+ *                       bytes and remote-docker's box-id-derived path overflows it.
+ *                       See `controlSockPath`.
  *
  * `namespace` exists because provider sandbox-ids are only unique *within* a
  * provider — a DigitalOcean droplet id and a Hetzner server id can collide as
@@ -33,6 +38,7 @@
  * idempotent on the SSH side.
  */
 
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -41,6 +47,21 @@ import { join, resolve } from 'node:path';
 import { execa } from 'execa';
 
 const HOST = '127.0.0.1';
+
+/**
+ * ControlMaster socket path. It must be SHORT: a Unix domain socket path is
+ * capped at ~104 bytes (`sun_path`) on macOS / ~108 on Linux, and ssh appends
+ * its own `.XXXXXXXXXXXXXXXX` temp suffix (17 bytes) while creating the master.
+ * The per-box ssh dir (`~/.agentbox/[ns/]boxes/<sanitized-box-id>/ssh/`) blows
+ * past that for remote-docker, whose box-id embeds the SSH destination
+ * (`macmini_agentbox-<project>-<hash>`). So we hang the socket off a short,
+ * flat `~/.agentbox/cm/<hash>.sock` keyed by the full box ssh dir, while
+ * known_hosts / keys stay in the deep per-box dir.
+ */
+export function controlSockPath(boxSshDir: string): string {
+  const hash = createHash('sha1').update(boxSshDir).digest('hex').slice(0, 12);
+  return resolve(homedir(), '.agentbox', 'cm', `${hash}.sock`);
+}
 
 export interface SshTunnelOpenOptions {
   boxId: string;
@@ -92,7 +113,8 @@ export class SshTunnelManager {
   async open(opts: SshTunnelOpenOptions): Promise<void> {
     const boxSshDir = opts.boxSshDir ?? defaultBoxSshDir(opts.boxId, this.namespace);
     await mkdir(boxSshDir, { recursive: true, mode: 0o700 });
-    const controlPath = join(boxSshDir, 'control.sock');
+    const controlPath = controlSockPath(boxSshDir);
+    await mkdir(join(controlPath, '..'), { recursive: true, mode: 0o700 });
     const knownHosts = join(boxSshDir, 'known_hosts');
     const tunnel: BoxTunnel = {
       controlPath,
@@ -288,7 +310,7 @@ export class SshTunnelManager {
   registerExisting(boxId: string, opts: SshTunnelOpenOptions): void {
     const boxSshDir = opts.boxSshDir ?? defaultBoxSshDir(opts.boxId, this.namespace);
     this.boxes.set(boxId, {
-      controlPath: join(boxSshDir, 'control.sock'),
+      controlPath: controlSockPath(boxSshDir),
       vpsHost: opts.vpsHost,
       vpsUser: opts.vpsUser,
       identity: opts.identity,

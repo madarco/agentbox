@@ -83,6 +83,18 @@ export interface ProviderModule {
   doctorChecks: () => Promise<CheckResult[]>;
 }
 
+/**
+ * The `[ ok ]` / `[warn]` / `[FAIL]` / `[info]` badge prefix used by
+ * `agentbox doctor`'s detailed report and the `remote-docker doctor` subcommand.
+ * Colorless by design — same width per status so labels line up.
+ */
+export function statusBadge(s: CheckStatus): string {
+  if (s === 'ok') return '[ ok ]';
+  if (s === 'info') return '[info]';
+  if (s === 'warn') return '[warn]';
+  return '[FAIL]';
+}
+
 /** First line of a multi-line string (for compact error summaries). */
 export function firstLine(s: string): string {
   const i = s.indexOf('\n');

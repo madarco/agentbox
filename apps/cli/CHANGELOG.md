@@ -9,6 +9,20 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [Unreleased]
+
+### Changed
+
+- Reworked the `remote-docker` provider around named **host aliases**. Register a
+  host with `agentbox remote-docker add <alias> <[user@]host[:port]>`; boxes are
+  created against the alias (`agentbox docker:<alias> …`), and `agentbox
+  remote-docker update <alias> <new-ssh>` retargets existing boxes after an IP
+  change. `doctor`/`list`/`remove` work on aliases, and a raw connection string is
+  no longer accepted where an alias is expected. `add` now bakes the box image on the
+  host by default (`--no-bake` to skip), and `agentbox install` → Remote Docker prompts
+  for the alias + SSH connection. (Subcommands were also renamed from the old
+  `check`/`use`/`hosts` to `doctor`/`add`/`list`.)
+
 ## [0.26.1] - 2026-07-15
 
 ### Fixed

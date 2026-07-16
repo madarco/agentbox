@@ -19,6 +19,7 @@ import {
 
 interface ExecCall {
   cmd: string;
+  user?: string;
 }
 
 interface UploadCall {
@@ -61,8 +62,8 @@ function makeMockBackend(opts: {
     async state(): Promise<CloudState> {
       return 'running';
     },
-    async exec(_h, cmd: string): Promise<CloudExecResult> {
-      execCalls.push({ cmd });
+    async exec(_h, cmd: string, opts?: { user?: string }): Promise<CloudExecResult> {
+      execCalls.push({ cmd, ...(opts?.user !== undefined ? { user: opts.user } : {}) });
       const m = /^test -f (.+\/\.agentbox-seeded-at)$/.exec(cmd);
       if (m) {
         return existing.has(m[1]!)
@@ -198,6 +199,31 @@ describe('seedAgentVolumesIfFresh (credentials-only)', () => {
       ),
     ).toBe(true);
     expect(uploadCalls.some((c) => c.remotePath.includes('opencode'))).toBe(false);
+
+    await rm(codexDir, { recursive: true, force: true });
+  });
+
+  it('extracts as the box user via exec `user` (no in-shell sudo) on a non-volume backend', async () => {
+    // remote-docker regression: the box docker image doesn't grant vscode
+    // passwordless sudo, so the ephemeral extract must run AS vscode via
+    // backend.exec's `user` option — NOT an in-shell `sudo -u vscode`, which
+    // fails with "user vscode is not allowed to execute … as vscode" and leaves
+    // the box credential-less.
+    const codexDir = join(fakeHome, '.codex');
+    await mkdir(codexDir, { recursive: true });
+    await writeFile(join(codexDir, 'auth.json'), '{"token":"redacted"}\n');
+
+    const { backend, execCalls } = makeMockBackend({});
+    // No volume primitive → the ephemeral upload+extract path.
+    delete (backend as { ensureVolume?: unknown }).ensureVolume;
+    await seedAgentVolumesIfFresh(backend, { sandboxId: 's' }, { agents: ['codex'] });
+
+    const extractCall = execCalls.find(
+      (c) => c.cmd.includes('tar -xzf') && c.cmd.includes('/home/vscode/.agentbox-creds/codex'),
+    );
+    expect(extractCall).toBeDefined();
+    expect(extractCall!.user).toBe('vscode');
+    expect(extractCall!.cmd).not.toContain('sudo');
 
     await rm(codexDir, { recursive: true, force: true });
   });

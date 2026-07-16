@@ -298,16 +298,17 @@ export const createCommand = new Command('create')
     }
     const checkpointRef = resolveCheckpointRef(
       opts,
-      resolveDefaultCheckpoint(
-        cfg.effective,
-        providerName,
-      ),
+      resolveDefaultCheckpoint(cfg.effective, providerName),
     );
     if (opts.location && providerName !== 'hetzner' && providerName !== 'digitalocean') {
-      log.warn(`--location applies to hetzner/digitalocean only; ignored for provider ${providerName}`);
+      log.warn(
+        `--location applies to hetzner/digitalocean only; ignored for provider ${providerName}`,
+      );
     }
     if (opts.inbound && providerName !== 'hetzner' && providerName !== 'digitalocean') {
-      log.warn(`--inbound applies to hetzner/digitalocean only; ignored for provider ${providerName}`);
+      log.warn(
+        `--inbound applies to hetzner/digitalocean only; ignored for provider ${providerName}`,
+      );
     }
     if (opts.remoteHost && providerName !== 'remote-docker') {
       log.warn(`--remote-host applies to remote-docker only; ignored for provider ${providerName}`);
@@ -315,10 +316,7 @@ export const createCommand = new Command('create')
     // Box image: same precedence pattern as --size. `--image` wins; otherwise
     // the cascaded box.image / box.image<Provider> (written by `agentbox
     // prepare --provider X`).
-    const imageDefault = resolveBoxImage(
-      cfg.effective,
-      providerName,
-    );
+    const imageDefault = resolveBoxImage(cfg.effective, providerName);
     const effectiveImage = opts.image && opts.image.length > 0 ? opts.image : imageDefault;
 
     // Cloud providers that use the Daytona public-URL path don't need
@@ -394,10 +392,7 @@ export const createCommand = new Command('create')
     // runtime; if the local install no longer matches, the wizard offers to
     // rebuild before creating. Docker self-heals via `ensureImage`, so its
     // baseStatus is always `fresh` and the wizard is a no-op here.
-    const baseStatus = await evaluateBaseFreshness(
-      providerName,
-      cfg.effective.box.claudeInstall,
-    );
+    const baseStatus = await evaluateBaseFreshness(providerName, cfg.effective.box.claudeInstall);
     const wiz = await maybeRunSetupWizard({
       workspace: opts.workspace,
       yes: !!opts.yes,
@@ -571,7 +566,7 @@ export const createCommand = new Command('create')
           ]
         : [
             `  agentbox shell ${result.record.name}`,
-            `  agentbox claude attach ${result.record.name}`,
+            `  agentbox attach ${result.record.name}`,
             `  agentbox url ${result.record.name}`,
           ];
       log.message(

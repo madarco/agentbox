@@ -14,6 +14,7 @@ import type { PrepareOptions, PrepareResult } from '@agentbox/core';
 import { ensureRemoteImage } from './image.js';
 import { ensureTunnel } from './remote-docker.js';
 import { recordPreparedHost } from './prepared-state.js';
+import { requireHostAlias } from './hosts-registry.js';
 import { parseRemoteTarget } from './target.js';
 
 export async function prepareRemoteDocker(
@@ -23,10 +24,11 @@ export async function prepareRemoteDocker(
   const spec = (opts.host ?? '').trim();
   if (!spec) {
     throw new Error(
-      'remote-docker: prepare needs an SSH destination — `agentbox prepare --provider docker:<host>`, ' +
+      'remote-docker: prepare needs a host alias — `agentbox prepare --provider docker:<alias>`, ' +
         'or set `box.remoteDockerHost`.',
     );
   }
+  requireHostAlias(spec);
   const remote = parseRemoteTarget(spec);
   const target = await ensureTunnel(`engine:${remote.spec}`, remote);
 

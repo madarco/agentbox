@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SshTunnelManager } from '../src/ssh-tunnel.js';
+import { SshTunnelManager, controlSockPath } from '../src/ssh-tunnel.js';
 
 interface ExecaCall {
   argv: string[];
@@ -63,7 +63,11 @@ beforeEach(() => {
 });
 
 let tmpRoot: string | undefined;
+let origHome: string | undefined;
 afterEach(() => {
+  if (origHome === undefined) delete process.env.HOME;
+  else process.env.HOME = origHome;
+  origHome = undefined;
   if (tmpRoot) {
     rmSync(tmpRoot, { recursive: true, force: true });
     tmpRoot = undefined;
@@ -72,6 +76,11 @@ afterEach(() => {
 
 function makeIdentity(): string {
   tmpRoot = mkdtempSync(join(tmpdir(), 'agentbox-ssh-tunnel-test-'));
+  // Point HOME at the temp root so the short ControlMaster socket
+  // (`$HOME/.agentbox/cm/<hash>.sock`) lands under it and gets cleaned up,
+  // instead of polluting the developer's real ~/.agentbox.
+  origHome = process.env.HOME;
+  process.env.HOME = tmpRoot;
   const id = join(tmpRoot, 'id_ed25519');
   writeFileSync(id, 'fake-key', { mode: 0o600 });
   return id;
@@ -83,7 +92,7 @@ describe('SshTunnelManager.forward', () => {
     const identity = makeIdentity();
     const boxSshDir = join(tmpRoot!, 'box-ssh');
     await m.open({ boxId: 'b1', vpsHost: '1.2.3.4', identity, boxSshDir });
-    aliveSockets.add(join(boxSshDir, 'control.sock'));
+    aliveSockets.add(controlSockPath(boxSshDir));
     const p1 = await m.forward('b1', 8788);
     const p2 = await m.forward('b1', 8788);
     expect(p1).toBe(p2);
@@ -97,10 +106,10 @@ describe('SshTunnelManager.forward', () => {
     const identity = makeIdentity();
     const boxSshDir = join(tmpRoot!, 'box-ssh');
     await m.open({ boxId: 'b1', vpsHost: '1.2.3.4', identity, boxSshDir });
-    aliveSockets.add(join(boxSshDir, 'control.sock'));
+    aliveSockets.add(controlSockPath(boxSshDir));
     const p1 = await m.forward('b1', 8788);
     // Master dies (e.g. host sleep/wake).
-    aliveSockets.delete(join(boxSshDir, 'control.sock'));
+    aliveSockets.delete(controlSockPath(boxSshDir));
     const p2 = await m.forward('b1', 8788);
     expect(p1).toBeTypeOf('number');
     expect(p2).toBeTypeOf('number');
@@ -116,13 +125,13 @@ describe('SshTunnelManager.refresh', () => {
     const identity = makeIdentity();
     const boxSshDir = join(tmpRoot!, 'box-ssh');
     await m.open({ boxId: 'b1', vpsHost: '1.2.3.4', identity, boxSshDir });
-    aliveSockets.add(join(boxSshDir, 'control.sock'));
+    aliveSockets.add(controlSockPath(boxSshDir));
     await m.forward('b1', 8788);
     // Simulate dead master.
-    aliveSockets.delete(join(boxSshDir, 'control.sock'));
+    aliveSockets.delete(controlSockPath(boxSshDir));
     await m.refresh({ boxId: 'b1', vpsHost: '1.2.3.4', identity, boxSshDir });
     // After refresh, forward() should re-mint.
-    aliveSockets.add(join(boxSshDir, 'control.sock'));
+    aliveSockets.add(controlSockPath(boxSshDir));
     const newPort = await m.forward('b1', 8788);
     expect(newPort).toBeTypeOf('number');
     const opens = execaCalls.filter((c) => c.argv[0] === '-fNT');

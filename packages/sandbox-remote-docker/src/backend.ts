@@ -56,6 +56,7 @@ import {
   parseSandboxId,
   type RemoteTarget,
 } from './target.js';
+import { requireHostAlias } from './hosts-registry.js';
 
 export const BACKEND_NAME = 'remote-docker';
 
@@ -271,9 +272,13 @@ export const remoteDockerBackend: CloudBackend = {
     const spec = (req.host ?? '').trim();
     if (!spec) {
       throw new Error(
-        'remote-docker: no SSH destination. Use `agentbox docker:<host> …`, `--remote-host <host>`, or set `box.remoteDockerHost`.',
+        'remote-docker: no host. Register one with `agentbox remote-docker add <alias> <[user@]host[:port]>`, then use `agentbox docker:<alias> …` / `--remote-host <alias>` / `box.remoteDockerHost`.',
       );
     }
+    // Alias-only: the box is created against a registered alias, and its sandbox
+    // id bakes that alias. `requireHostAlias` fails fast (before any remote work)
+    // if the reference isn't registered.
+    requireHostAlias(spec);
     const remote = parseRemoteTarget(spec);
     const container = containerNameFor(req.name);
     const sandboxId = makeSandboxId(remote.spec, container);

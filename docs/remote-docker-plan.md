@@ -55,7 +55,7 @@ Then, from the repo (or any project):
 
 ```bash
 ssh agentbox-linux-vm docker version                      # must work first — nothing else will
-agentbox remote-docker check agentbox-linux-vm            # ssh + docker + arch
+agentbox remote-docker doctor agentbox-linux-vm          # ssh + docker + arch
 
 agentbox prepare --provider docker:agentbox-linux-vm      # expect an amd64 GHCR PULL, not a build
 agentbox create -y -n rd-vm --provider docker:agentbox-linux-vm &
@@ -108,14 +108,14 @@ The least-tested surface and the one with the most specific design behind it. An
 Mac you can `ssh` into with Docker Desktop / OrbStack / Colima:
 
 ```bash
-agentbox remote-docker check my-mac
+agentbox remote-docker doctor my-mac
 agentbox docker:my-mac create -y -n rd-mac
 ```
 
 The whole point of running `docker` inside `bash -lc` on the remote is that
 OrbStack lives in `~/.orbstack/bin`, which is *not* on the non-login PATH — which
 is also precisely why `DOCKER_HOST=ssh://` was rejected (it runs `docker system
-dial-stdio` on the remote without a login shell). If `remote-docker check` passes
+dial-stdio` on the remote without a login shell). If `remote-docker doctor` passes
 but a create fails with "command not found", that assumption broke.
 
 ## Test 4 — a second engine at once
@@ -164,4 +164,4 @@ host-side has to remember which is which.
 
 4. **Install-wizard step for `box.remoteDockerHost`.** The provider appears in the
    picker but has no wizard step (there is no credential to prompt for);
-   `agentbox remote-docker use <host>` covers it for now.
+   `agentbox remote-docker add <host>` covers it for now.

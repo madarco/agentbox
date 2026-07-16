@@ -9,6 +9,7 @@
  */
 export {
   SshTunnelManager,
+  controlSockPath,
   defaultBoxSshDir,
   type PortForward,
   type SshTunnelOpenOptions,

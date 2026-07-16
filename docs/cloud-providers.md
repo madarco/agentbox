@@ -935,7 +935,9 @@ a real machine — and forces the box init to uid 0.
 **No credential.** There is nothing in `secrets.env`: the provider authenticates
 as the user, through their own `~/.ssh/config`, agent and `known_hosts`. Its
 `providerModule` deliberately omits `ensureCredentials` / `readCredStatus`, so the
-CLI and hub show no login row. `agentbox remote-docker check|use|hosts` replace it.
+CLI and hub show no login row. A named host-alias registry
+(`~/.agentbox/remote-docker-hosts.json`) driven by `agentbox remote-docker
+add|update|list|doctor|remove` replaces it.
 
 **Known limits.** Published ports are fixed at `docker run` (same constraint as
 Vercel): a service added to `agentbox.yaml` after create is reachable through the

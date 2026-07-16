@@ -38,6 +38,16 @@ export function readPreparedState(): PreparedRemoteDockerState | null {
   return { schema: SCHEMA, hosts: parsed.hosts };
 }
 
+/** Drop one host from the prepared-image history. Returns whether it was present. */
+export function removePreparedHost(host: string): boolean {
+  const existing = readPreparedState();
+  if (!existing || !(host in existing.hosts)) return false;
+  const hosts = { ...existing.hosts };
+  delete hosts[host];
+  writePreparedStateRaw(PROVIDER, { schema: SCHEMA, hosts });
+  return true;
+}
+
 export function recordPreparedHost(
   host: string,
   fields: { imageRef: string; contextSha256: string },

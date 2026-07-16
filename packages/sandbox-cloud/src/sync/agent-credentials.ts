@@ -58,6 +58,14 @@ import { createCloudSyncTransport } from './sync-transport.js';
 export type CloudAgentKind = 'claude' | 'codex' | 'opencode';
 
 /**
+ * The unprivileged user every cloud box runs its agent as. All the box images /
+ * snapshots bake `/home/vscode`, so credentials must land owned by this user.
+ * Passed to `backend.exec({ user })` so the extract runs as vscode without an
+ * in-box `sudo` (which the docker image doesn't grant — see `seedCredentialsOne`).
+ */
+const CLOUD_BOX_USER = 'vscode';
+
+/**
  * Single per-org volume that holds all three agents' credentials. Mounted
  * three times via `subpath` so each agent's tokens get their own dir without
  * the volumes-API churn of registering three separate volumes.
@@ -431,17 +439,23 @@ async function seedCredentialsOne(
           );
         })()
       : // Ephemeral FS: extract straight into the box-baked `~/.agentbox-creds/
-        // <agent>/` dir. `sudo -u vscode` ensures the on-disk file ends up
-        // vscode-owned regardless of which user `backend.exec` runs as
-        // (e2b: vscode, vercel: vscode, hetzner: vscode via ssh — sudo
-        // works on all three because vscode has passwordless sudo). The
+        // <agent>/` dir, running the extract AS the box user via `backend.exec`'s
+        // `user` option — NOT an in-shell `sudo -u vscode`. Every non-volume
+        // backend resolves `user: vscode` through its own mechanism (docker `-u`,
+        // ssh-as-vscode, vercel/e2b SDK), so the files land vscode-owned WITHOUT
+        // relying on an in-box passwordless-sudo policy. That distinction matters:
+        // the shared docker image (remote-docker) does NOT grant vscode sudo, so
+        // an in-shell `sudo -u vscode` fails there ("user vscode is not allowed to
+        // execute … as vscode"), leaving the box credential-less. The
         // `--no-same-permissions --no-same-owner -m` flags mirror what
         // vercel/hetzner did in their old custom pushers.
         `set -e; ` +
-        `sudo -u vscode mkdir -p ${spec.credentialsMountPath}; ` +
-        `sudo -u vscode tar -xzf ${remoteTar} -C ${spec.credentialsMountPath} --no-same-permissions --no-same-owner -m; ` +
+        `mkdir -p ${spec.credentialsMountPath}; ` +
+        `tar -xzf ${remoteTar} -C ${spec.credentialsMountPath} --no-same-permissions --no-same-owner -m; ` +
         `rm -f ${remoteTar}`;
-    const extract = await backend.exec(handle, extractCmd);
+    const extract = hasVolume
+      ? await backend.exec(handle, extractCmd)
+      : await backend.exec(handle, extractCmd, { user: CLOUD_BOX_USER });
     if (extract.exitCode !== 0) {
       const msg =
         `${spec.kind}: credentials extract failed (exit ${String(extract.exitCode)}); ` +

@@ -65,6 +65,7 @@ import {
 } from './install-app.js';
 import { isNewer } from '../lib/semver-lite.js';
 import { runPrepare } from './prepare.js';
+import { interactiveRegisterHost } from '@agentbox/sandbox-remote-docker';
 
 /** Marker on the line after the frontmatter of every skill we ship. Its
  *  presence in an existing target means we wrote it and may overwrite freely. */
@@ -495,21 +496,17 @@ async function maybeSetDefaultProvider(name: ProviderName, autoYes: boolean): Pr
         initialValue: true,
       });
   if (!wantDefault) {
-    log.info(
-      `left the default as ${cfg.effective.box.provider} — start a ${name} box with \`agentbox ${name} claude\`, ` +
-        `or set it later with \`agentbox config set box.provider ${name} --global\``,
-    );
+    log.info(`kept ${cfg.effective.box.provider} as the default for new boxes`);
     return false;
   }
 
   try {
-    const r = await setConfigValue('global', 'box.provider', name, process.cwd(), { raw: true });
-    log.info(`box.provider = ${name}   (wrote ${r.path})`);
+    await setConfigValue('global', 'box.provider', name, process.cwd(), { raw: true });
+    log.info(`${label} is now the default for new boxes`);
     return true;
   } catch (err) {
     log.warn(
-      `could not write box.provider: ${err instanceof Error ? err.message : String(err)} — ` +
-        `set it with \`agentbox config set box.provider ${name} --global\``,
+      `could not set ${label} as the default: ${err instanceof Error ? err.message : String(err)}`,
     );
     return false;
   }
@@ -524,7 +521,7 @@ function tutorialBody(provider: ProviderName, isDefault: boolean): string {
     `  ${startCmd}                       # for claude, codex, opencode\n` +
     `   -> Setup wizard? -> Yes          # install dependencies and setup agentbox.yaml\n` +
     `   -> Ctrl+a d                      # to detach from the box and leave claude running\n` +
-    `  agentbox claude attach 1          # resume it later\n` +
+    `  agentbox attach                   # resume it later\n` +
     `  agentbox install                  # to set up another provider`
   );
 }
@@ -607,12 +604,30 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
     }
   }
 
+  // 3b) remote-docker has no credential — its "setup" is registering a host
+  // (alias + SSH connection). Do it here so the bake step below (which targets
+  // `box.remoteDockerHost`) has something to bake against.
+  let remoteDockerHostReady = true;
+  if (providerName === 'remote-docker') {
+    const alias = await interactiveRegisterHost();
+    if (!alias) {
+      remoteDockerHostReady = false;
+      log.info(
+        'no host registered — add one later with `agentbox remote-docker add <alias> <ssh>`',
+      );
+    }
+  }
+
   // 4) Optional remote/build prepare.
   const prepareMsg =
     providerName === 'docker'
       ? 'Build the box image now? (~1GB, a few minutes)'
-      : `Create the ${providerName} base snapshot now? (a few minutes, uses cloud time)`;
-  const wantPrepare = opts.yes ? true : await confirm({ message: prepareMsg, initialValue: true });
+      : providerName === 'remote-docker'
+        ? 'Bake the box image on the host now? (a few minutes; pulled from GHCR or built there)'
+        : `Create the ${providerName} base snapshot now? (a few minutes, uses cloud time)`;
+  const wantPrepare =
+    remoteDockerHostReady &&
+    (opts.yes ? true : await confirm({ message: prepareMsg, initialValue: true }));
   if (wantPrepare) {
     try {
       await runPrepare(providerName, {
@@ -625,6 +640,8 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
         `prepare failed: ${err instanceof Error ? err.message : String(err)} — you can rerun \`agentbox prepare --provider ${providerName}\` later`,
       );
     }
+  } else if (providerName === 'remote-docker') {
+    log.info('skipped — the box image builds on the host on first create');
   } else {
     log.info(
       `skipped — the ${providerName} base will build lazily on first \`agentbox ${providerName === 'docker' ? '' : providerName + ' '}create\``,
@@ -667,15 +684,14 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
       dryRun: opts.dryRun,
       quiet: true,
     });
-    if (codexRes.ran) {
+    // Only announce a real change — an already-enabled plugin is a silent no-op.
+    if (codexRes.ran && codexRes.enableStatus !== 'user-enabled') {
       log.info(
         codexRes.enableStatus === 'added'
           ? 'Codex plugin: installed and enabled by default'
-          : codexRes.enableStatus === 'user-enabled'
-            ? 'Codex plugin: already enabled'
-            : codexRes.enableStatus === 'user-disabled'
-              ? 'Codex plugin: installed (left disabled per your config)'
-              : 'Codex plugin: installed (could not edit ~/.codex/config.toml)',
+          : codexRes.enableStatus === 'user-disabled'
+            ? 'Codex plugin: installed (left disabled per your config)'
+            : 'Codex plugin: installed (could not edit ~/.codex/config.toml)',
       );
     }
   } catch (err) {
@@ -713,11 +729,8 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
     let action: 'install' | 'update' | 'none' = 'install';
     if (trayInstalled()) action = behind ? 'update' : 'none';
 
-    if (action === 'none') {
-      log.info(
-        `Menu-bar app: already installed${installedVersion ? ` (${installedVersion})` : ''}`,
-      );
-    } else {
+    // Already installed and up to date → silent no-op (only prompt to install/update).
+    if (action !== 'none') {
       const message =
         action === 'update'
           ? `Update the AgentBox menu-bar app (${installedVersion ?? '?'} → ${latestVersion ?? '?'})?`
