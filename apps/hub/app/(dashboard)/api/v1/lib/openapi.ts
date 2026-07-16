@@ -400,6 +400,20 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/hosts/{alias}/bake': {
+        post: {
+          tags: ['Hosts'],
+          summary: 'Bake the box image on a host',
+          description: 'Async — returns a job id. Progress streams over GET /jobs/{id}/logs (pull from GHCR is fast; a registry-miss build is slow).',
+          parameters: [{ name: 'alias', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            '202': { description: 'Bake enqueued', content: { 'application/json': { schema: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } } },
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/approvals': {
         get: {
           tags: ['Approvals'],

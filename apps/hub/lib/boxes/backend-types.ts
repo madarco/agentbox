@@ -258,6 +258,10 @@ export interface HubBackend {
   removeRemoteDockerHost(
     alias: string,
   ): Promise<{ ok: true; boxesAffected: string[] } | { ok: false; error: string }>;
+  // Enqueue a background bake of the box image on one host (async; returns the
+  // jobId — progress streams over GET /jobs/{id}/logs, like prepareProvider).
+  // Reuses an in-flight bake for the same host if one exists.
+  bakeRemoteDockerHost(alias: string): Promise<CreateBoxResult>;
 }
 
 // One remote-docker host alias, as surfaced by the hub API.

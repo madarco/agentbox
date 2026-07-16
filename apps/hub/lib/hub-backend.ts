@@ -1336,5 +1336,26 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
     },
+    async bakeRemoteDockerHost(alias): Promise<CreateBoxResult> {
+      try {
+        const rd = await import('@agentbox/sandbox-remote-docker');
+        if (!rd.getHostAlias(alias)) return { ok: false, error: `no such host alias ${alias}` };
+        // The `docker:<alias>` spec bakes THIS host (the worker parses it out).
+        const spec = `docker:${alias}`;
+        // Reuse an in-flight bake for the same host if present.
+        const existing = (await loadQueue()).find(
+          (j) =>
+            j.kind === 'prepare' &&
+            j.providerName === spec &&
+            (j.status === 'queued' || j.status === 'running'),
+        );
+        if (existing) return { ok: true, jobId: existing.id };
+        const { job } = await enqueuePrepareJob({ providerName: spec });
+        handle.pokeQueue();
+        return { ok: true, jobId: job.id };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
   };
 }

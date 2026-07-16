@@ -18,6 +18,7 @@ import { boxImageConfigKey, isProviderKind, loadEffectiveConfig, setConfigValue 
 import { readJob, writeJob, type QueueJob } from '@agentbox/relay';
 import { openCommandLog } from '../lib/log-file.js';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
+import { parseProviderSpec } from '../provider/spec.js';
 
 export const runQueuedPrepareCommand = new Command('_run-queued-prepare')
   .description('internal: run a queued provider image-bake job (do not invoke directly)')
@@ -87,12 +88,16 @@ async function runPrepareJob(
     throw new Error(`provider '${providerName}' does not implement prepare`);
   }
 
+  // A `docker:<alias>` spec bakes that specific remote-docker host (the hub's
+  // per-host bake). parseProviderSpec pulls the host out; other providers ignore it.
+  const remoteHost = parseProviderSpec(providerName).remoteHost;
   log.write(`baking ${providerName} (force=${String(job.prepare?.force ?? false)})`);
   const result = await provider.prepare({
     hostWorkspace: cwd,
     force: job.prepare?.force,
     registry,
     claudeInstall,
+    ...(remoteHost ? { host: remoteHost } : {}),
     onLog: (line) => log.write(line),
   });
   log.write(
