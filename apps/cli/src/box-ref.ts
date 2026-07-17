@@ -115,20 +115,23 @@ export async function resolveBoxOrExit(
     log.info('run `agentbox create` to make one, or pass a box ref explicitly');
     process.exit(2);
   }
-  if (/^[1-9][0-9]*$/.test(ref.trim())) {
-    // A pure-numeric ref is a per-project index — an index only exists once a
-    // box is local, so there's nothing for the control box to resolve.
-    log.error(`no box with index ${ref.trim()} in this project (${project.root})`);
-    log.info('run `agentbox list` to see available indices');
-    process.exit(2);
-  }
   // Not local — it may be a control-box-created box (web-UI / `--via-hub`) that
   // this PC has never adopted. Materialize it and carry on, so every by-name
   // command works against a hub box without a manual `agentbox hub adopt`.
+  //
+  // Numeric refs get this too: a per-project index is numeric, but so is a
+  // hetzner server id / DigitalOcean droplet id, and those ARE valid hub refs.
+  // Bailing to the index error first made `attach <sandboxId>` unusable for
+  // exactly the providers whose ids are numbers.
   const adopted = await tryAutoAdopt(ref, cwd);
   if (adopted) {
     log.info(`adopted ${adopted.name} from the control box`);
     return adopted;
+  }
+  if (/^[1-9][0-9]*$/.test(ref.trim())) {
+    log.error(`no box with index ${ref.trim()} in this project (${project.root})`);
+    log.info('run `agentbox list` to see available indices');
+    process.exit(2);
   }
   throw new BoxNotFoundError(ref);
 }

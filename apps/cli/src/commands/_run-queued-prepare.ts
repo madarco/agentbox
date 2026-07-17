@@ -16,13 +16,10 @@
 import { Command } from 'commander';
 import { boxImageConfigKey, isProviderKind, loadEffectiveConfig, setConfigValue } from '@agentbox/config';
 import { readJob, writeJob, type QueueJob } from '@agentbox/relay';
-import type { Provider } from '@agentbox/core';
-import { readPreparedStateRaw } from '@agentbox/sandbox-core';
-import { pullPreparedFromCustody, pushPreparedToCustody } from '@agentbox/sandbox-cloud';
 import { openCommandLog } from '../lib/log-file.js';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
 import { parseProviderSpec } from '../provider/spec.js';
-import { resolveCustodyTarget } from './control-plane.js';
+import { sharePreparedBase, tryAdoptPreparedBase } from '../control-plane/prepared-custody.js';
 
 export const runQueuedPrepareCommand = new Command('_run-queued-prepare')
   .description('internal: run a queued provider image-bake job (do not invoke directly)')
@@ -100,9 +97,12 @@ async function runPrepareJob(
   // so if the control box's custody already holds one baked from this exact
   // build context, adopt it instead of spending minutes re-baking it here.
   if (!job.prepare?.force) {
-    const adopted = await tryAdoptPreparedFromCustody(providerName, provider, claudeInstall, (l) =>
-      log.write(l),
-    );
+    const adopted = await tryAdoptPreparedBase({
+      provider,
+      providerName,
+      claudeInstall,
+      log: (l) => log.write(l),
+    });
     if (adopted) {
       log.write(`prepared ${providerName}: adopted a shared base (identical build context, no bake)`);
       return;
@@ -144,55 +144,5 @@ async function runPrepareJob(
 
   // Share the fresh bake so the other side (PC ⇄ control box) boots this same
   // base rather than building its own.
-  await sharePreparedToCustody(providerName, (l) => log.write(l));
-}
-
-/**
- * Adopt a shared bake record when its build context matches ours. See
- * `prepared-sync.ts` for the fingerprint-match-wins policy. Best-effort:
- * any failure just means we bake normally.
- */
-async function tryAdoptPreparedFromCustody(
-  providerName: string,
-  provider: Provider,
-  claudeInstall: 'native' | 'npm',
-  write: (line: string) => void,
-): Promise<boolean> {
-  // Docker's base is a local image per machine, not a shareable snapshot.
-  if (providerName === 'docker') return false;
-  try {
-    const target = await resolveCustodyTarget(undefined, { quiet: true });
-    if (!target) return false;
-    const local = readPreparedStateRaw(providerName) as { base?: unknown } | null;
-    if (local?.base) return false;
-    const fingerprint = await provider.baseFingerprint?.(claudeInstall);
-    if (!fingerprint) return false;
-    const res = await pullPreparedFromCustody(providerName, fingerprint, {
-      controlPlaneUrl: target.url,
-      adminToken: target.adminToken,
-      log: write,
-    });
-    return res.adopted;
-  } catch {
-    return false;
-  }
-}
-
-/** Share this machine's bake record. Best-effort — never fails a good bake. */
-async function sharePreparedToCustody(
-  providerName: string,
-  write: (line: string) => void,
-): Promise<void> {
-  if (providerName === 'docker') return;
-  try {
-    const target = await resolveCustodyTarget(undefined, { quiet: true });
-    if (!target) return;
-    await pushPreparedToCustody(providerName, {
-      controlPlaneUrl: target.url,
-      adminToken: target.adminToken,
-      log: write,
-    });
-  } catch {
-    /* sharing is a convenience */
-  }
+  await sharePreparedBase(providerName, (l) => log.write(l));
 }

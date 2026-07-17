@@ -38,6 +38,7 @@ import type {
 } from '@agentbox/core';
 import {
   allocateProjectIndex,
+  DEFAULT_ENV_PATTERNS,
   describeInbound,
   detectGitRepos,
   makeSyncContext,
@@ -82,6 +83,20 @@ import { kickCloudBootstrap } from './bootstrap-launch.js';
 import { readGitOriginUrl, registerBoxWithPlane } from './plane-register.js';
 import { pushBoxSshToCustody } from './custody-ssh.js';
 import { pushProjectSeedToCustody } from './custody-seed.js';
+
+/**
+ * The env/secret patterns a box's custody seed should capture: exactly what
+ * THIS create seeded into the box — the wizard's explicit picks, plus
+ * `--with-env`'s defaults when that flag is on. Undefined when the box got no
+ * env files, so no env tar is pushed.
+ */
+function seedEnvPatterns(req: CreateBoxRequest): string[] | undefined {
+  const patterns = [
+    ...(req.envFilesToImport ?? []),
+    ...(req.withEnv ? DEFAULT_ENV_PATTERNS : []),
+  ];
+  return patterns.length > 0 ? patterns : undefined;
+}
 import { bashScript, quoteShellArgv } from './shell.js';
 import { seedGitCredentials } from './sync/git-identity.js';
 import { seedCloudWorkspace } from './sync/workspace-seed.js';
@@ -1123,7 +1138,12 @@ export function createCloudProvider(
                     adminToken,
                     slug,
                     projectRoot: req.workspacePath,
-                    envPatterns: req.envFilesToImport,
+                    // Capture exactly the env set THIS box received — the
+                    // wizard's picks plus `--with-env`'s defaults — so a
+                    // hub-created box gets what a PC-created one got. Not
+                    // DEFAULT_ENV_PATTERNS unconditionally: that would ship
+                    // secrets the user deliberately declined to import.
+                    envPatterns: seedEnvPatterns(req),
                     // Honour the configured cap, so raising it actually admits a
                     // bigger seed instead of silently dropping the tar.
                     maxBodyBytes: effectiveForCreate.relay.custodyMaxBodyBytes,

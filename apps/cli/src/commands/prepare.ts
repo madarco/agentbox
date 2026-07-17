@@ -42,13 +42,10 @@ import {
   type ImageInfo,
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
-import type { Provider } from '@agentbox/core';
-import { readPreparedStateRaw } from '@agentbox/sandbox-core';
-import { pullPreparedFromCustody, pushPreparedToCustody } from '@agentbox/sandbox-cloud';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
 import { getRuntimeProviderNames } from '../provider/loaders.js';
 import { parseProviderSpec } from '../provider/spec.js';
-import { resolveCustodyTarget } from './control-plane.js';
+import { sharePreparedBase, tryAdoptPreparedBase } from '../control-plane/prepared-custody.js';
 
 interface PrepareOptions {
   provider?: string;
@@ -326,62 +323,6 @@ export interface RunPrepareOptions {
 }
 
 /**
- * Adopt the control box's bake for `providerName` when it was built from the
- * same build context as ours, so a base baked there needs no re-bake here.
- * Returns true when adopted (the caller then skips the bake entirely).
- *
- * Docker is excluded: its base is a local image built/pulled per machine, not a
- * provider-side snapshot another host could boot.
- */
-async function tryAdoptPreparedFromControlBox(
-  provider: Provider,
-  providerName: string,
-  claudeInstall: 'native' | 'npm',
-): Promise<boolean> {
-  if (providerName === 'docker') return false;
-  try {
-    const target = await resolveCustodyTarget(undefined, { quiet: true });
-    if (!target) return false;
-    // Already baked here → nothing to adopt; the normal prepare path decides
-    // whether the local record is stale.
-    const local = readPreparedStateRaw(providerName) as { base?: unknown } | null;
-    if (local?.base) return false;
-    const fingerprint = await provider.baseFingerprint?.(claudeInstall);
-    if (!fingerprint) return false;
-    const res = await pullPreparedFromCustody(providerName, fingerprint, {
-      controlPlaneUrl: target.url,
-      adminToken: target.adminToken,
-      log: (line) => log.info(line),
-    });
-    if (res.adopted) {
-      log.success(
-        `${providerName}: adopted the control box's base — no bake needed (identical build context).`,
-      );
-    }
-    return res.adopted;
-  } catch {
-    // Any failure here just means we bake normally.
-    return false;
-  }
-}
-
-/** Share this machine's fresh bake with the control box. Best-effort. */
-async function sharePreparedWithControlBox(providerName: string): Promise<void> {
-  if (providerName === 'docker') return;
-  try {
-    const target = await resolveCustodyTarget(undefined, { quiet: true });
-    if (!target) return;
-    await pushPreparedToCustody(providerName, {
-      controlPlaneUrl: target.url,
-      adminToken: target.adminToken,
-      log: (line) => log.info(line),
-    });
-  } catch {
-    // Sharing is a convenience; never fail a successful prepare over it.
-  }
-}
-
-/**
  * The bake-time datacenter/region to hand the provider, or `undefined` to let
  * it choose. CLI flag wins over the provider's location config key; providers
  * without a location concept always get `undefined`.
@@ -485,8 +426,16 @@ export async function runPrepare(
   // build (and then disagree about) the same thing. `--force` means the user
   // explicitly wants a fresh bake, so it skips the adoption.
   if (!opts.force) {
-    const adopted = await tryAdoptPreparedFromControlBox(provider, providerName, claudeInstall);
+    const adopted = await tryAdoptPreparedBase({
+      provider,
+      providerName,
+      claudeInstall,
+      log: (line) => log.info(line),
+    });
     if (adopted) {
+      log.success(
+        `${providerName}: adopted the control box's base — no bake needed (identical build context).`,
+      );
       if (!opts.suppressStatus) {
         process.stdout.write('\n');
         await showStatus({ onlyProvider: providerName });
@@ -568,7 +517,7 @@ export async function runPrepare(
 
     // Share the fresh bake so the control box (and any other machine of yours)
     // boots the same base instead of building its own.
-    await sharePreparedWithControlBox(providerName);
+    await sharePreparedBase(providerName, (line) => log.info(line));
 
     if (!opts.suppressStatus) {
       process.stdout.write('\n');
