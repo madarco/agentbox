@@ -30,6 +30,11 @@ export interface CreateBoxDeps {
     workspacePath: string;
     name: string | undefined;
     provider: string;
+    /**
+     * Agent the box is being created for. Registered on the control plane so a
+     * PC adopting this box knows which agent to relaunch.
+     */
+    agent?: string;
     onLog?: (line: string) => void;
   }): Promise<{ id: string }>;
   /** Make a per-job temp dir path. */
@@ -94,6 +99,10 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
         workspacePath: dir,
         name: request.name,
         provider: request.provider,
+        // Carry the job's agent through to the box record + its plane
+        // registration, so an adopting PC relaunches the right agent instead of
+        // guessing. Without this a hub-created box adopts with no `lastAgent`.
+        agent: request.agent,
         onLog: deps.log,
       });
       log(`created box ${box.id}`);

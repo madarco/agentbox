@@ -25,6 +25,21 @@ import type { BoxRegistration } from '@agentbox/relay';
 /** Bound on the control-box round-trip. `list` is interactive — never stall it. */
 const HUB_LIST_TIMEOUT_MS = 1500;
 
+/**
+ * How long a fetched listing is reused within one process.
+ *
+ * `list --watch` redraws every 2s by default, and each redraw rebuilds the row
+ * set — so without this, watching would probe + fetch the control box 30x a
+ * minute per viewer, and every tick's redraw would wait on the network. Box
+ * membership changes on human timescales, so serving a few seconds' old listing
+ * to a redraw costs nothing. A one-shot `ls` starts a fresh process and so
+ * always fetches.
+ */
+const HUB_LIST_MEMO_MS = 10_000;
+
+/** In-process memo of the last listing (see {@link HUB_LIST_MEMO_MS}). */
+let memo: { at: number; listing: HubListing } | null = null;
+
 /** Where the last successful hub listing is cached for the offline path. */
 export function hubBoxesCachePath(): string {
   return join(homedir(), '.agentbox', 'hub-boxes-cache.json');
@@ -58,6 +73,8 @@ export async function fetchHubListing(): Promise<HubListing | null> {
   const target = await resolveCustodyTarget(undefined, { quiet: true });
   if (!target) return null;
 
+  if (memo && Date.now() - memo.at < HUB_LIST_MEMO_MS) return memo.listing;
+
   // ONE budget for the whole lookup, spent down by each step — `list` is
   // interactive, so the ceiling has to cover probe + fetch together, not apply
   // to each of them.
@@ -81,16 +98,24 @@ export async function fetchHubListing(): Promise<HubListing | null> {
       const registrations = await admin.listBoxes();
       const fetchedAt = new Date().toISOString();
       await writeCache({ version: 1, fetchedAt, registrations }).catch(() => {});
-      return { registrations, stale: false, fetchedAt };
+      return remember({ registrations, stale: false, fetchedAt });
     }
   } catch {
     // fall through to the cache
   }
   const cached = await readCache();
   // No cache either: we know nothing about the hub's boxes right now. Say that,
-  // rather than presenting an empty list as a fresh-as-of-now answer.
-  if (!cached) return { registrations: [], stale: true };
-  return { registrations: cached.registrations, stale: true, fetchedAt: cached.fetchedAt };
+  // rather than presenting an empty list as a fresh-as-of-now answer. Memoized
+  // like a success, so a watch loop against a down control box doesn't retry
+  // (and re-probe) on every redraw.
+  if (!cached) return remember({ registrations: [], stale: true });
+  return remember({ registrations: cached.registrations, stale: true, fetchedAt: cached.fetchedAt });
+}
+
+/** Memoize a listing for the rest of this process's {@link HUB_LIST_MEMO_MS} window. */
+function remember(listing: HubListing): HubListing {
+  memo = { at: Date.now(), listing };
+  return listing;
 }
 
 /** Wrap fetch so every request shares one deadline `signal`. */

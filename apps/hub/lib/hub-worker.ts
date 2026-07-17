@@ -176,6 +176,15 @@ async function applySeedFromCustody(
   return { files, capturedAt: manifest.createdAt, repoHeadSha: manifest.repoHeadSha };
 }
 
+/**
+ * Narrow a create job's free-form `agent` to the union `provider.create` takes.
+ * An unknown value is dropped rather than passed through — the box still gets
+ * created, it just registers without an agent hint.
+ */
+function normalizeCreateAgent(agent: string | undefined): 'claude' | 'codex' | 'opencode' | undefined {
+  return agent === 'claude' || agent === 'codex' || agent === 'opencode' ? agent : undefined;
+}
+
 export interface HubWorkerHandle {
   stop: () => Promise<void>;
 }
@@ -210,7 +219,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       await runGit(branch ? ['clone', '--branch', branch, authedUrl, dest] : ['clone', authedUrl, dest]);
       await runGit(['-C', dest, 'remote', 'set-url', 'origin', repoUrl]);
     },
-    createBox: async ({ workspacePath, name, provider, onLog }) => {
+    createBox: async ({ workspacePath, name, provider, agent, onLog }) => {
       if (!isProviderKind(provider)) throw new Error(`unknown provider ${provider}`);
       const mod = (await IMPORTERS[provider]()).providerModule;
       if (mod.ensureCredentials) await mod.ensureCredentials();
@@ -221,6 +230,8 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         workspacePath,
         name,
         projectRoot: workspacePath,
+        // Registered on the plane so an adopting PC relaunches the right agent.
+        agent: normalizeCreateAgent(agent),
         // Register the box on THIS hub (control-plane topology) so the phone UI
         // sees it and approvals route back here.
         controlPlaneUrl: opts.publicUrl,

@@ -457,9 +457,17 @@ const workerSub = new Command('worker')
           // Scrub the leased token: leave the box pointing at the bare origin.
           await runGit(['-C', dest, 'remote', 'set-url', 'origin', repoUrl]);
         },
-        createBox: async ({ workspacePath, name, provider, onLog }) => {
+        createBox: async ({ workspacePath, name, provider, agent, onLog }) => {
           const p = await providerForCreate({ flag: provider, config: cfg.effective });
-          const created = await p.create({ workspacePath, name, projectRoot: workspacePath, onLog });
+          const created = await p.create({
+            workspacePath,
+            name,
+            projectRoot: workspacePath,
+            // Registered on the plane so an adopting PC relaunches the right agent.
+            agent:
+              agent === 'claude' || agent === 'codex' || agent === 'opencode' ? agent : undefined,
+            onLog,
+          });
           return { id: created.record.id };
         },
         tmpDir: (jobId) => join(tmpdir(), `agentbox-cp-worker-${jobId}`),

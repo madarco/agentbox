@@ -124,6 +124,26 @@ describe('makeControlPlaneCreateBox', () => {
     expect(logs.join('\n')).toMatch(/seed material unavailable.*custody down/);
   });
 
+  it("forwards the job's agent to the provider, so an adopting PC knows what to relaunch", async () => {
+    // Regression: the create job carried `agent` and the registration had a slot
+    // for it, but the orchestrator never passed it through — so every hub-created
+    // box registered without one and adopted with no `lastAgent`.
+    let seen: string | undefined = 'UNSET';
+    const deps: CreateBoxDeps = {
+      leaseRemoteUrl: () => Promise.resolve('https://x-access-token:t@github.com/a/b.git'),
+      cloneRepo: () => Promise.resolve(),
+      createBox: ({ agent }) => {
+        seen = agent;
+        return Promise.resolve({ id: 'box-4' });
+      },
+      tmpDir: () => '/tmp/cp-a',
+      cleanup: () => Promise.resolve(),
+    };
+    const fn = makeControlPlaneCreateBox(deps);
+    await fn({ repoUrl: 'https://github.com/a/b.git', provider: 'e2b', agent: 'codex' }, 'ja');
+    expect(seen).toBe('codex');
+  });
+
   it('creates from the bare clone when no seed step is wired', async () => {
     const deps: CreateBoxDeps = {
       leaseRemoteUrl: () => Promise.resolve('https://x-access-token:t@github.com/a/b.git'),
