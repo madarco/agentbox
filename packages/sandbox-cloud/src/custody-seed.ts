@@ -149,14 +149,25 @@ export async function buildProjectSeed(
   if (envTar) items.push({ relPath: 'env.tar.gz', data: envTar });
 
   const manifest: SeedManifest = {
-    version: 1,
-    originUrl: (await gitOut(args.projectRoot, ['remote', 'get-url', 'origin'])) ?? undefined,
-    baseBranch: (await gitOut(args.projectRoot, ['branch', '--show-current'])) ?? undefined,
-    repoHeadSha: (await gitOut(args.projectRoot, ['rev-parse', 'HEAD'])) ?? undefined,
+    ...(await readSeedRepoMeta(args.projectRoot)),
     files: items.map((i) => ({ path: i.relPath, sha256: sha256Hex(i.data), bytes: i.data.length })),
-    createdAt: new Date().toISOString(),
   };
   return { items, manifest, skippedTarBytes, envFiles: envRelPaths };
+}
+
+/**
+ * The manifest's repo metadata (origin, branch, HEAD) with an empty file list —
+ * everything about a seed that costs only a few `git` reads, no tarring.
+ */
+async function readSeedRepoMeta(projectRoot: string): Promise<SeedManifest> {
+  return {
+    version: 1,
+    originUrl: (await gitOut(projectRoot, ['remote', 'get-url', 'origin'])) ?? undefined,
+    baseBranch: (await gitOut(projectRoot, ['branch', '--show-current'])) ?? undefined,
+    repoHeadSha: (await gitOut(projectRoot, ['rev-parse', 'HEAD'])) ?? undefined,
+    files: [],
+    createdAt: new Date().toISOString(),
+  };
 }
 
 /** Run a git command in `dir`, returning trimmed stdout or null. */
@@ -263,18 +274,14 @@ export async function pushProjectSeedToCustody(
       : null);
   if (!fetchImpl) {
     log('seed: control box unreachable — skipping the seed push');
-    const empty = await buildProjectSeed({ ...args, envPatterns: undefined });
+    // Report the repo metadata only. Calling buildProjectSeed here would tar the
+    // whole untracked tree to produce a manifest nothing will ever upload —
+    // defeating the point of probing before we build anything.
+    const manifest = await readSeedRepoMeta(args.projectRoot);
     // `unreachable` — not just zero counts. A caller that treats "0 uploaded"
     // as success would tell the user their project is registered when nothing
     // ever left the machine.
-    return {
-      uploaded: 0,
-      skipped: 0,
-      manifest: empty.manifest,
-      envFiles: [],
-      dropped: [],
-      unreachable: true,
-    };
+    return { uploaded: 0, skipped: 0, manifest, envFiles: [], dropped: [], unreachable: true };
   }
   const built = await buildProjectSeed(args);
   const prefix = `projects/${args.slug}/seed`;

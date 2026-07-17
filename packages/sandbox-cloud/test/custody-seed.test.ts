@@ -285,6 +285,30 @@ describe('pushProjectSeedToCustody', () => {
     expect(res.manifest.files.map((f) => f.path)).toContain('env.tar.gz');
   });
 
+  it('reports unreachable without tarring anything', async () => {
+    const repo = await makeRepo();
+    // 203.0.113.0/24 is TEST-NET-3: routable-looking, never answers.
+    const t0 = Date.now();
+    const res = await pushProjectSeedToCustody({
+      controlPlaneUrl: 'https://203.0.113.1',
+      adminToken: 'admin',
+      slug: 'o__r',
+      projectRoot: repo,
+      envPatterns: ['.env'],
+    });
+    // `unreachable`, not a zero-count "success" — the caller must be able to
+    // tell that nothing was stored.
+    expect(res.unreachable).toBe(true);
+    expect(res.uploaded).toBe(0);
+    // Repo metadata is still reported (cheap git reads)...
+    expect(res.manifest.originUrl).toBe('https://github.com/o/r.git');
+    // ...but nothing was built: the probe exists precisely so a down control box
+    // doesn't cost a tar of the whole untracked tree.
+    expect(res.manifest.files).toEqual([]);
+    // Bounded by the probe, not by undici's ~10s connect timeout.
+    expect(Date.now() - t0).toBeLessThan(5000);
+  });
+
   it('re-uploads everything under --force', async () => {
     const repo = await makeRepo();
     const built = await buildProjectSeed({ projectRoot: repo, envPatterns: ['.env'] });
