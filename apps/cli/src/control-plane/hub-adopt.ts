@@ -26,7 +26,7 @@ import { allocateProjectIndex } from '@agentbox/sandbox-core';
 import type { BoxRegistration } from '@agentbox/relay';
 import type { CustodyClient } from './custody-client.js';
 import type { ControlPlaneAdminClient } from './admin-client.js';
-import { pullBoxSshKeys } from './hub-pull.js';
+import { downloadBoxSshKeys } from './hub-pull.js';
 
 /** Box user on every cloud provider's image (the agent never runs as root). */
 const BOX_SSH_USER = 'vscode';
@@ -222,13 +222,18 @@ export async function adoptHubBox(args: HubAdoptArgs): Promise<HubAdoptResult> {
   // Key material: only providers that mint a keypair (hetzner/DO) have any.
   // Detected by what's actually in custody rather than by provider name, so a
   // new SSH provider needs no change here.
-  const pulled = await pullBoxSshKeys({
-    admin: args.admin,
+  //
+  // Pass the provider + key we already resolved rather than the raw ref: letting
+  // the download re-resolve it meant a sandbox-id ref landed the keys in a
+  // different dir than the `identityFile` we just recorded.
+  const sshFiles = await downloadBoxSshKeys({
     custody: args.custody,
-    box: args.ref,
-  }).catch(() => null);
-  const sshFiles = pulled?.files ?? [];
-  if (sshFiles.length > 0) log(`pulled ${String(sshFiles.length)} SSH key file(s) to ${pulled!.dest}`);
+    provider: reg.backend,
+    key: sandboxId,
+  }).catch(() => []);
+  if (sshFiles.length > 0) {
+    log(`pulled ${String(sshFiles.length)} SSH key file(s) for ${reg.name}`);
+  }
 
   await recordBox(record);
   return { record, sshFiles, projectRoot, refreshed: existing !== undefined };

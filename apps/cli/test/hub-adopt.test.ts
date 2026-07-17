@@ -1,5 +1,5 @@
 import { mkdtempSync, realpathSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -260,6 +260,27 @@ describe('adoptHubBox', () => {
     // Still exactly one row — a refresh must not duplicate the box.
     const state = await readState();
     expect(state.boxes).toHaveLength(1);
+  });
+
+  it('lands keys at the path identityFile points to, even for a sandbox-id ref', async () => {
+    // Regression: the key download used to re-resolve the raw ref, matching only
+    // id/name — so a sandbox-id ref lost `provider` and wrote to the default
+    // (un-namespaced) dir while identityFile used the provider-namespaced one.
+    // DigitalOcean is namespaced, so it broke; hetzner passed only by luck.
+    const fetchImpl = fakeControlBox({
+      boxes: [
+        { boxId: 'do1', name: 'do-box', backend: 'digitalocean', sandboxId: 'drop-77', publicHost: '4.4.4.4' },
+      ],
+      custody: { 'boxes/drop-77/ssh/id_ed25519': 'DOKEY' },
+    });
+    // Adopt BY SANDBOX ID — the case that used to diverge.
+    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'drop-77', cwd: TEST_HOME });
+
+    expect(res.sshFiles).toEqual(['id_ed25519']);
+    const identity = res.record.ssh?.identityFile;
+    expect(identity).toBeDefined();
+    // The key must actually exist where the record says it is.
+    expect(await readFile(identity!, 'utf8')).toBe('DOKEY');
   });
 
   it('resolves a box by sandbox id as well as by name/id', async () => {
