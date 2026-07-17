@@ -80,8 +80,8 @@ export async function resolveBoxOrShift(
       // the control box is down — but say so, because the fallback CAN pick a
       // different box than the user meant.
       log.warn(
-        `control box unreachable — treating '${ref}' as an argument, not a box name. ` +
-          `If you meant a control-box box, retry when it's reachable.`,
+        `could not reach the control box — treating '${ref}' as an argument, not a box name. ` +
+          `If you meant a control-box box, retry once it's reachable (and authenticated).`,
       );
     }
     // Maybe commander bound a post-`--` token to [box]; try auto-pick.
@@ -169,7 +169,7 @@ export async function resolveBoxOrExit(
   if (adopted === 'unreachable') {
     // The box may well exist on the control box — don't let the error imply it
     // definitely doesn't.
-    log.warn(`control box unreachable — could not check whether '${ref}' is one of its boxes.`);
+    log.warn(`could not reach the control box — did not check whether '${ref}' is one of its boxes.`);
   }
   if (/^[1-9][0-9]*$/.test(ref.trim())) {
     log.error(`no box with index ${ref.trim()} in this project (${project.root})`);

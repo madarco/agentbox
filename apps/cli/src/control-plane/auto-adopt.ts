@@ -15,8 +15,9 @@
 import type { BoxRecord } from '@agentbox/core';
 
 /**
- * The adopted box, `'unreachable'` when the control box couldn't be asked, or
- * null when it was asked and doesn't know the ref.
+ * The adopted box, `'unreachable'` when the control box couldn't be asked (it's
+ * down, slow, or we have no token for it), or null when there was nothing to ask
+ * — no control box configured, or it answered and doesn't know the ref.
  *
  * The distinction matters to the shift path: "no such box" is a fact it can act
  * on, while "couldn't ask" means any guess it makes might target the wrong box.
@@ -49,7 +50,18 @@ export async function tryAutoAdopt(ref: string, cwd: string): Promise<AutoAdoptR
   try {
     const { resolveCustodyTarget } = await import('../commands/control-plane.js');
     const target = await resolveCustodyTarget(undefined, { quiet: true });
-    if (!target) return null;
+    if (!target) {
+      // No target covers two very different cases. With no control box
+      // configured there is genuinely nothing to ask (null). But when one IS
+      // configured and we merely lack a token, we could not ask — and returning
+      // null there tells the shift path "definitely not a hub box", which is how
+      // `agentbox claude <hub-box>` ends up running in the wrong local box.
+      const { loadEffectiveConfig } = await import('@agentbox/config');
+      const configured = await loadEffectiveConfig(cwd)
+        .then((c) => Boolean(c.effective.relay.controlPlaneUrl))
+        .catch(() => false);
+      return configured ? 'unreachable' : null;
+    }
 
     const [
       { adoptHubBox },
