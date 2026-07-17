@@ -44,6 +44,10 @@ import { isKnownProvider } from '../provider/registry.js';
 import { attachToRunningAgent } from './attach.js';
 import { rehydrateFromState } from './relay.js';
 import { handleLifecycleError } from './_errors.js';
+import { resolveCustodyTarget } from './control-plane.js';
+import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
+import { CustodyClient } from '../control-plane/custody-client.js';
+import { pullBoxSshKeys } from '../control-plane/hub-pull.js';
 
 interface RecoverOpts {
   all?: boolean;
@@ -82,6 +86,27 @@ async function hetznerKeyMissing(box: BoxRecord): Promise<boolean> {
   return !(await fileExists(hetznerKeyPath(sandboxId)));
 }
 
+/**
+ * A missing per-box key isn't fatal when a control box is configured: the box
+ * may have been created there (or by another PC that pushed its key up), and
+ * custody holds the material. Try one download before declaring the box
+ * uncontrollable. Best-effort — returns true only when the key now exists.
+ */
+async function tryPullKeyFromCustody(box: BoxRecord): Promise<boolean> {
+  try {
+    const target = await resolveCustodyTarget(undefined, { quiet: true });
+    if (!target) return false;
+    await pullBoxSshKeys({
+      admin: new ControlPlaneAdminClient(target),
+      custody: new CustodyClient(target),
+      box: box.cloud?.sandboxId ?? box.name,
+    });
+    return !(await hetznerKeyMissing(box));
+  } catch {
+    return false;
+  }
+}
+
 /** Read the box's checked-out branch, best-effort (adopted boxes only). */
 async function readBoxBranch(box: BoxRecord): Promise<string | undefined> {
   try {
@@ -105,9 +130,9 @@ async function recoverKnownBox(
   box: BoxRecord,
   opts: { attach: boolean; firewallSync: boolean },
 ): Promise<boolean> {
-  if (await hetznerKeyMissing(box)) {
+  if ((await hetznerKeyMissing(box)) && !(await tryPullKeyFromCustody(box))) {
     log.warn(
-      `${box.name}: per-box SSH key not found at ${hetznerKeyPath(box.cloud?.sandboxId ?? box.id)} — this box was created on another host and can't be controlled from here. Skipping.`,
+      `${box.name}: per-box SSH key not found at ${hetznerKeyPath(box.cloud?.sandboxId ?? box.id)} (and not in the control box's custody) — this box was created on another host and can't be controlled from here. Skipping.`,
     );
     return false;
   }
@@ -223,9 +248,9 @@ async function adoptUnknownBox(
       webPort: backend.webProxyPort,
     },
   };
-  if (await hetznerKeyMissing(record)) {
+  if ((await hetznerKeyMissing(record)) && !(await tryPullKeyFromCustody(record))) {
     log.error(
-      `cannot adopt ${record.name}: per-box SSH key not found at ${hetznerKeyPath(sb.sandboxId)} — Hetzner boxes can only be controlled from the host that created them (the private key never leaves that host).`,
+      `cannot adopt ${record.name}: per-box SSH key not found at ${hetznerKeyPath(sb.sandboxId)}, and no copy is in the control box's custody — a Hetzner box can only be controlled from a host that has its private key.`,
     );
     process.exit(1);
   }

@@ -481,13 +481,14 @@ export const digitaloceanBackend: CloudBackend = {
         ? {
             sandboxId,
             inbound: inboundPolicy,
+            publicHost: vpsIp,
             resources: {
               cpu: plan.vcpus,
               memory: Math.round(plan.memory / 1024),
               disk: plan.disk,
             },
           }
-        : { sandboxId, inbound: inboundPolicy };
+        : { sandboxId, inbound: inboundPolicy, publicHost: vpsIp };
     } catch (err) {
       // Cleanup on failure: droplet + firewall + temp ssh dir.
       if (dropletId !== null) {
@@ -526,7 +527,9 @@ export const digitaloceanBackend: CloudBackend = {
     const id = Number.parseInt(sandboxId, 10);
     if (!Number.isFinite(id)) return null;
     const droplet = await client().getDroplet(id);
-    return droplet ? { sandboxId } : null;
+    // Report the live IP: it can change across a stop/start, and the resume
+    // re-registration re-publishes it for PC adoption.
+    return droplet ? { sandboxId, publicHost: publicIpv4(droplet) } : null;
   },
 
   async list(): Promise<CloudSandboxSummary[]> {

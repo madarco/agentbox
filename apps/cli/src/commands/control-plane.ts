@@ -486,23 +486,30 @@ const workerSub = new Command('worker')
  * Resolve the control-plane URL (`--url` > `relay.controlPlaneUrl`) and the
  * admin bearer (`AGENTBOX_RELAY_ADMIN_TOKEN` > the setup-written env file).
  * Returns null and prints an actionable error when either is missing.
+ *
+ * `quiet` suppresses those errors, for callers where a control box is optional
+ * and its absence is a normal outcome rather than a user mistake (the recover
+ * key fallback, the by-name auto-adopt hook).
  */
 export async function resolveCustodyTarget(
   urlFlag: string | undefined,
+  opts: { quiet?: boolean } = {},
 ): Promise<{ url: string; adminToken: string } | null> {
   const cfg = await loadEffectiveConfig(process.cwd());
   const url = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
   if (!url) {
-    log.error('No control plane configured. Run `agentbox control-plane set-url <url>` (or pass --url).');
+    if (!opts.quiet)
+      log.error('No control plane configured. Run `agentbox control-plane set-url <url>` (or pass --url).');
     return null;
   }
   loadControlPlaneEnv();
   const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '';
   if (!adminToken) {
-    log.error(
-      'No admin token available. Set AGENTBOX_RELAY_ADMIN_TOKEN, or run this from the machine that\n' +
-        'ran `agentbox control-plane setup` (it writes the token to ~/.agentbox/control-plane).',
-    );
+    if (!opts.quiet)
+      log.error(
+        'No admin token available. Set AGENTBOX_RELAY_ADMIN_TOKEN, or run this from the machine that\n' +
+          'ran `agentbox control-plane setup` (it writes the token to ~/.agentbox/control-plane).',
+      );
     return null;
   }
   return { url, adminToken };

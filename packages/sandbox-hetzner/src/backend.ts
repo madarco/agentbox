@@ -499,6 +499,7 @@ export const hetznerBackend: CloudBackend = {
       return {
         sandboxId,
         inbound: inboundPolicy,
+        publicHost: vpsIp,
         resources: {
           cpu: provisioned.cores,
           memory: provisioned.memory,
@@ -544,7 +545,9 @@ export const hetznerBackend: CloudBackend = {
     const id = Number.parseInt(sandboxId, 10);
     if (!Number.isFinite(id)) return null;
     const server = await client().getServer(id);
-    return server ? { sandboxId } : null;
+    // Report the live IP: it can change across a stop/start, and the resume
+    // re-registration re-publishes it for PC adoption.
+    return server ? { sandboxId, publicHost: server.public_net.ipv4?.ip } : null;
   },
 
   async list(): Promise<CloudSandboxSummary[]> {

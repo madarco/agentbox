@@ -10,6 +10,7 @@ import { resolveCustodyTarget } from './control-plane.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
 import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
 import { pullBoxSshKeys } from '../control-plane/hub-pull.js';
+import { adoptHubBox, HubBoxNotFoundError } from '../control-plane/hub-adopt.js';
 
 /**
  * Effective `portless.enabled` for the hub's `agentbox.localhost` alias. The hub
@@ -168,6 +169,42 @@ const pullSub = new Command('pull')
     }
   });
 
+const adoptSub = new Command('adopt')
+  .description(
+    "Rebuild local state for a control-box-created box so it resolves by name here: writes its BoxRecord and downloads its SSH keys. After this it shows in `agentbox ls` and works with attach / cp / url / screen.",
+  )
+  .argument('<box>', 'box id, name, or sandbox id as shown by `agentbox control-plane boxes list`')
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .action(async (box: string, opts: { url?: string }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const res = await adoptHubBox({
+        admin: new ControlPlaneAdminClient(target),
+        custody: new CustodyClient(target),
+        ref: box,
+        controlPlaneUrl: target.url,
+        log: (line) => log.info(line),
+      });
+      const where = res.projectRoot
+        ? `linked to ${res.projectRoot}`
+        : 'no local clone of its repo — it shows under `agentbox ls -g` only';
+      log.success(
+        `${res.refreshed ? 'Refreshed' : 'Adopted'} ${res.record.name} (${res.record.provider} ${res.record.cloud?.sandboxId ?? ''}) — ${where}.`,
+      );
+    } catch (err) {
+      if (err instanceof HubBoxNotFoundError) {
+        log.error(`${err.message}. Run \`agentbox control-plane boxes list\` to see what's there.`);
+        process.exitCode = 1;
+        return;
+      }
+      handleLifecycleError(err);
+    }
+  });
+
 export const hubCommand = new Command('hub')
   .description(
     'Run the AgentBox hub — the relay + Web UI on http://127.0.0.1:8787 ' +
@@ -177,4 +214,5 @@ export const hubCommand = new Command('hub')
   .addCommand(statusSub)
   .addCommand(stopSub)
   .addCommand(restartSub)
-  .addCommand(pullSub);
+  .addCommand(pullSub)
+  .addCommand(adoptSub);

@@ -1184,6 +1184,22 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           typeof body.originUrl === 'string' && body.originUrl.length > 0
             ? body.originUrl
             : undefined,
+        publicHost:
+          typeof body.publicHost === 'string' && body.publicHost.length > 0
+            ? body.publicHost
+            : undefined,
+        image:
+          typeof body.image === 'string' && body.image.length > 0 ? body.image : undefined,
+        webPort:
+          typeof body.webPort === 'number' && Number.isFinite(body.webPort) && body.webPort > 0
+            ? Math.trunc(body.webPort)
+            : undefined,
+        agent:
+          typeof body.agent === 'string' && body.agent.length > 0 ? body.agent : undefined,
+        projectSlug:
+          typeof body.projectSlug === 'string' && body.projectSlug.length > 0
+            ? body.projectSlug
+            : undefined,
       };
       await store.registerBox(reg);
       log(

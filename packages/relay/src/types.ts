@@ -104,6 +104,25 @@ export interface BoxRegistration {
    * without a git origin.
    */
   originUrl?: string;
+  /**
+   * Public IP/host of the box's VM for direct-SSH providers (hetzner,
+   * digitalocean). Lets a PC adopting this box (`agentbox hub adopt`)
+   * reconstruct the `BoxRecord.ssh` target without asking the provider API.
+   * Absent for SDK-reached providers (e2b/vercel/daytona) and legacy rows.
+   */
+  publicHost?: string;
+  /** Resolved image/snapshot ref the box booted from (mirrors `CloudBoxFields.image`). */
+  image?: string;
+  /** In-box WebProxy port (mirrors `CloudBoxFields.webPort`), for `url` reconstruction. */
+  webPort?: number;
+  /** Agent the box was created for ('claude' | 'codex' | 'opencode') → `BoxRecord.lastAgent`. */
+  agent?: string;
+  /**
+   * Custody `projects/<slug>` key of the box's project (owner__repo). Links a
+   * registration to its seed material and secrets without re-deriving the slug
+   * from `originUrl` on every consumer.
+   */
+  projectSlug?: string;
 }
 
 export interface BoxWorktree {
@@ -188,6 +207,16 @@ export interface RegisterBoxBody {
   autoApproveSafeHostActions?: boolean;
   /** The box repo's origin remote URL (for GitHub-App lease repo resolution). */
   originUrl?: string;
+  /** Public VM IP/host for direct-SSH providers (PC adoption). */
+  publicHost?: string;
+  /** Resolved image/snapshot ref the box booted from. */
+  image?: string;
+  /** In-box WebProxy port. */
+  webPort?: number;
+  /** Agent the box was created for. */
+  agent?: string;
+  /** Custody `projects/<slug>` key of the box's project. */
+  projectSlug?: string;
 }
 
 /**

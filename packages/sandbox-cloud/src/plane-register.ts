@@ -45,6 +45,21 @@ export interface RegisterBoxWithPlaneArgs {
   projectIndex?: number;
   autoApproveHostActions?: boolean;
   autoApproveSafeHostActions?: boolean;
+  /**
+   * Public VM IP/host for direct-SSH backends. A PC adopting this box
+   * (`agentbox hub adopt`) rebuilds its SSH target from this — the registration
+   * is the only thing it has, and asking the provider API would need the box's
+   * cloud credentials. Omitted by SDK-reached backends.
+   */
+  publicHost?: string;
+  /** Resolved image/snapshot ref the box booted from. */
+  image?: string;
+  /** In-box WebProxy port. */
+  webPort?: number;
+  /** Agent the box was created for, so an adopting PC can relaunch the right one. */
+  agent?: string;
+  /** Custody `projects/<slug>` key linking the box to its seed material. */
+  projectSlug?: string;
 }
 
 /** Read the host workspace's `origin` remote URL (the box's push target). */
@@ -81,6 +96,11 @@ export async function registerBoxWithPlane(args: RegisterBoxWithPlaneArgs): Prom
       projectIndex: args.projectIndex,
       autoApproveHostActions: args.autoApproveHostActions,
       autoApproveSafeHostActions: args.autoApproveSafeHostActions,
+      publicHost: args.publicHost,
+      image: args.image,
+      webPort: args.webPort,
+      agent: args.agent,
+      projectSlug: args.projectSlug,
     }),
   });
   if (!res.ok) {

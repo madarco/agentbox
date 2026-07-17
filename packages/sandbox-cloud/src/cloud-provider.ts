@@ -42,6 +42,7 @@ import {
   detectGitRepos,
   makeSyncContext,
   parseInboundSpec,
+  projectSlugFromOriginUrl,
   readCliStamp,
   readState,
   recordBox,
@@ -440,6 +441,9 @@ export function createCloudProvider(
         previewUrls: Object.keys(mergedPreviews).length > 0 ? mergedPreviews : undefined,
         relayPreviewUrl: relayPreview?.url ?? box.cloud?.relayPreviewUrl,
         relayPreviewToken: relayPreview?.token ?? box.cloud?.relayPreviewToken,
+        // A VPS IP can change across stop/start — take the live handle's value
+        // when the backend reports one, so the record + the plane stay accurate.
+        publicHost: h.publicHost ?? box.cloud?.publicHost,
         // reEnsureCloudBox only runs on a freshly-woken box (start/resume), so
         // the box is now running — persist it for the fast `agentbox list` path.
         lastState: 'running',
@@ -502,6 +506,14 @@ export function createCloudProvider(
             projectIndex: box.projectIndex,
             autoApproveHostActions: box.autoApproveHostActions,
             autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+            // Keep the adoption material fresh across resumes. The VM's public
+            // IP can change on a stop/start, so prefer the live handle's value
+            // over the persisted one.
+            publicHost: h.publicHost ?? box.cloud.publicHost,
+            image: box.cloud.image,
+            webPort: box.cloud.webPort,
+            agent: box.lastAgent,
+            projectSlug: projectSlugFromOriginUrl(originUrl) ?? undefined,
           });
         } catch {
           // best-effort
@@ -1077,6 +1089,13 @@ export function createCloudProvider(
                 projectIndex,
                 autoApproveHostActions,
                 autoApproveSafeHostActions,
+                // Adoption material: everything a PC needs to rebuild this
+                // box's BoxRecord from the registration alone (`hub adopt`).
+                publicHost: handle.publicHost,
+                image,
+                webPort: wp,
+                agent: req.agent,
+                projectSlug: projectSlugFromOriginUrl(originUrl) ?? undefined,
               });
               // Reverse custody: a PC-created box that just registered on the
               // control box pushes its per-box SSH key up too, so the hub /
@@ -1172,6 +1191,9 @@ export function createCloudProvider(
             // Real resources the backend reported (Hetzner: the plan's actual
             // cores/memory/disk). Absent → readers fall back to defaultResources.
             resources: handle.resources,
+            // Public VM IP (direct-SSH backends), so the resume re-registration
+            // and a PC's `hub adopt` can rebuild the SSH target without an API call.
+            publicHost: handle.publicHost,
             // Inbound-access policy the backend applied to the per-box firewall
             // (VPS providers). Persisted so drift re-syncs preserve the whitelist.
             inbound: handle.inbound,
