@@ -210,14 +210,23 @@ function mapBox(b: ListedBox): Box {
  * exists. Lifecycle actions on these rows are a follow-up — the control box has
  * no local record to drive them yet.
  */
+/**
+ * The synthetic project a registered box groups under. A PC box has no local
+ * project root on this VPS, so it groups by its repo identity. The box row and
+ * this project MUST share the id, or the dashboard counts the box but renders it
+ * under no project card (it groups strictly by `projectId`).
+ */
+function registrationProjectKey(reg: BoxRegistration): { id: string; repo: string } {
+  const repo = reg.projectSlug ?? (reg.originUrl ? deriveRepoLabel(reg.originUrl) : reg.name);
+  return { id: hashProjectPath(repo), repo };
+}
+
 function mapRegistrationToBox(reg: BoxRegistration): Box {
   const createdAt = Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now();
-  const repoKey = reg.projectSlug ?? (reg.originUrl ? deriveRepoLabel(reg.originUrl) : reg.name);
+  const { id: projectId, repo: repoKey } = registrationProjectKey(reg);
   return {
     id: reg.boxId,
-    // Stable synthetic project id from the repo identity — a PC box has no local
-    // project root here, so it groups by its origin rather than a VPS path.
-    projectId: hashProjectPath(repoKey),
+    projectId,
     repo: repoKey,
     branch: reg.worktrees?.[0]?.branch ?? '',
     task: reg.name,
@@ -1035,14 +1044,32 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       // Boxes the Store holds but this VPS's local state doesn't — i.e.
       // registered from a PC. Deduped by box id AND sandbox id (a box the
       // control box created locally is in both, under possibly different ids).
-      const registered = await handle.store.listBoxes().catch(() => []);
-      const registeredBoxes = registered
-        .filter((r) => !liveIds.has(r.boxId) && !(r.sandboxId && liveSandboxIds.has(r.sandboxId)))
-        .map(mapRegistrationToBox);
+      const registered = (await handle.store.listBoxes().catch(() => [])).filter(
+        (r) => !liveIds.has(r.boxId) && !(r.sandboxId && liveSandboxIds.has(r.sandboxId)),
+      );
+      const registeredBoxes = registered.map(mapRegistrationToBox);
+      // Each registered box needs a project to render under (the dashboard groups
+      // strictly by projectId). Add a synthetic one per new project key not
+      // already produced by listProjects — sharing the box row's id.
+      const projects = await listProjects(listed);
+      const projectIds = new Set(projects.map((p) => p.id));
+      for (const reg of registered) {
+        const { id, repo } = registrationProjectKey(reg);
+        if (projectIds.has(id)) continue;
+        projectIds.add(id);
+        projects.push({
+          id,
+          name: repo,
+          repo,
+          defaultBranch: reg.worktrees?.[0]?.branch ?? 'main',
+          provider: reg.backend ?? 'cloud',
+          createdAt: Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now(),
+        });
+      }
       return {
         user: currentUser(),
         github: LOCAL_GITHUB,
-        projects: await listProjects(listed),
+        projects,
         boxes: [...jobBoxes, ...listed.map(mapBox), ...registeredBoxes],
         // Block-mode approvals live in-process on the relay handle, not the Store.
         approvals: handle.prompts.all().map(mapApproval),
