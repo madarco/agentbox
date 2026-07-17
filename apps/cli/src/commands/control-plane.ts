@@ -10,10 +10,15 @@ import { findProjectRoot, loadEffectiveConfig, setConfigValue, unsetConfigValue 
 import { DEFAULT_ENV_PATTERNS, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
 import {
   applyProjectSeed,
+  deadlineFetch,
+  hostReachable,
   pushPreparedToCustody,
   pushProjectSeedToCustody,
   readGitOriginUrl,
 } from '@agentbox/sandbox-cloud';
+
+/** Bound on the worker's seed download once the control box is known to be up. */
+const SEED_FETCH_MS = 120_000;
 import {
   drainCreateJobs,
   GitHubAppLeaser,
@@ -481,7 +486,17 @@ const workerSub = new Command('worker')
           if (!target) return null;
           const slug = projectSlugFromOriginUrl(repoUrl);
           if (!slug) return null;
-          const client = new CustodyClient(target);
+          // Probe + bound like every other custody call: a down control box must
+          // not park each blob `get` on undici's ~10s connect timeout and stall
+          // a create the user is waiting on (see sandbox-cloud/reachability.ts).
+          if (!(await hostReachable(target.url))) {
+            process.stdout.write('agentbox-cp-worker: control box unreachable — bare clone, no seed\n');
+            return null;
+          }
+          const client = new CustodyClient({
+            ...target,
+            fetchImpl: deadlineFetch(AbortSignal.timeout(SEED_FETCH_MS)),
+          });
           return applyProjectSeed({
             source: { get: (rel) => client.get(`projects/${slug}/seed/${rel}`) },
             dest,
