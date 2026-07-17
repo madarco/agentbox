@@ -30,6 +30,7 @@ import {
   loadQueue,
   readJob,
   writeQueueLoginCode,
+  type BoxRegistration,
   type PendingApproval,
   type QueueAgentKind,
   type QueueJob,
@@ -194,6 +195,54 @@ function mapBox(b: ListedBox): Box {
     claudeActivity: b.claudeActivity,
     codexActivity: b.codexActivity,
   };
+}
+
+/**
+ * A box the control box knows only from its Store registry — created from a PC
+ * (or another host) that registered it here but whose `state.json` this VPS
+ * doesn't have. Without this the hub's own web UI + `/api/v1/boxes` (and so the
+ * tray) list only boxes the control box created locally, hiding every
+ * PC-registered box the Store plainly holds. The mirror of the PC's
+ * `mergeHubBoxes`: surface it, from the registration alone.
+ *
+ * A live status the box pushed (via the plane's status store) is used when
+ * present; otherwise it shows `running`, since a registration means the box
+ * exists. Lifecycle actions on these rows are a follow-up — the control box has
+ * no local record to drive them yet.
+ */
+function mapRegistrationToBox(reg: BoxRegistration): Box {
+  const createdAt = Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now();
+  const repoKey = reg.projectSlug ?? (reg.originUrl ? deriveRepoLabel(reg.originUrl) : reg.name);
+  return {
+    id: reg.boxId,
+    // Stable synthetic project id from the repo identity — a PC box has no local
+    // project root here, so it groups by its origin rather than a VPS path.
+    projectId: hashProjectPath(repoKey),
+    repo: repoKey,
+    branch: reg.worktrees?.[0]?.branch ?? '',
+    task: reg.name,
+    displayName: null,
+    agent: normalizeLastAgent(reg.agent as BoxRecord['lastAgent']) ?? 'claude',
+    status: 'running',
+    createdAt,
+    lastActivity: createdAt,
+    host: `${reg.backend ?? 'cloud'} · registered`,
+    provider: reg.backend ?? 'cloud',
+    commits: null,
+    filesTouched: null,
+    error: null,
+    webUrl: null,
+    vncUrl: null,
+    state: 'running',
+    name: reg.name,
+    projectIndex: reg.projectIndex,
+  };
+}
+
+/** A short repo label from an origin URL: `owner/repo`, else the last path segment. */
+function deriveRepoLabel(originUrl: string): string {
+  const m = /[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(originUrl);
+  return m?.[1] ?? originUrl;
 }
 
 /**
@@ -971,6 +1020,9 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       // failed ones as `error`) until the real box lands in listBoxes() and
       // takes over — matched by the boxId the worker writes back to the manifest.
       const liveIds = new Set(listed.map((b) => b.id));
+      const liveSandboxIds = new Set(
+        listed.map((b) => b.cloud?.sandboxId).filter((s): s is string => Boolean(s)),
+      );
       const jobBoxes: Box[] = [];
       for (const j of jobs) {
         // A prepare (image-bake) job produces an artifact, not a box — it never
@@ -980,11 +1032,18 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         if (j.status === 'queued' || j.status === 'running') jobBoxes.push(mapJobToBox(j, 'creating'));
         else if (j.status === 'failed') jobBoxes.push(mapJobToBox(j, 'error'));
       }
+      // Boxes the Store holds but this VPS's local state doesn't — i.e.
+      // registered from a PC. Deduped by box id AND sandbox id (a box the
+      // control box created locally is in both, under possibly different ids).
+      const registered = await handle.store.listBoxes().catch(() => []);
+      const registeredBoxes = registered
+        .filter((r) => !liveIds.has(r.boxId) && !(r.sandboxId && liveSandboxIds.has(r.sandboxId)))
+        .map(mapRegistrationToBox);
       return {
         user: currentUser(),
         github: LOCAL_GITHUB,
         projects: await listProjects(listed),
-        boxes: [...jobBoxes, ...listed.map(mapBox)],
+        boxes: [...jobBoxes, ...listed.map(mapBox), ...registeredBoxes],
         // Block-mode approvals live in-process on the relay handle, not the Store.
         approvals: handle.prompts.all().map(mapApproval),
         providers: listProviders(jobs),
