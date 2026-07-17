@@ -16,6 +16,13 @@ export {
 } from './plane-register.js';
 export { pushBoxSshToCustody, type PushBoxSshArgs } from './custody-ssh.js';
 export {
+  preparedCustodyPath,
+  pullPreparedFromCustody,
+  pushPreparedToCustody,
+  type PreparedSyncTarget,
+  type PullPreparedResult,
+} from './prepared-sync.js';
+export {
   buildProjectSeed,
   pushProjectSeedToCustody,
   type BuildProjectSeedArgs,

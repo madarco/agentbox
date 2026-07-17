@@ -8,7 +8,7 @@ import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { findProjectRoot, loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox/config';
 import { DEFAULT_ENV_PATTERNS } from '@agentbox/sandbox-core';
-import { pushProjectSeedToCustody } from '@agentbox/sandbox-cloud';
+import { pushPreparedToCustody, pushProjectSeedToCustody } from '@agentbox/sandbox-cloud';
 import {
   drainCreateJobs,
   GitHubAppLeaser,
@@ -976,10 +976,40 @@ const deployHetznerSub = new Command('hetzner')
       log[ok ? 'success' : 'warn'](
         ok ? `Control box is healthy (${url}/healthz).` : `Could not confirm ${url}/healthz yet — check the deployment.`,
       );
+      if (ok) await seedPreparedToNewControlBox(url);
     } catch (err) {
       handleLifecycleError(err);
     }
   });
+
+/**
+ * Share this machine's cloud bake records with a freshly-deployed control box,
+ * so its first web-UI create boots the base you already baked instead of
+ * spending minutes re-baking an identical one. Best-effort: a fresh deploy is
+ * still perfectly usable without it (it just bakes on demand).
+ */
+async function seedPreparedToNewControlBox(url: string): Promise<void> {
+  const target = await resolveCustodyTarget(url, { quiet: true });
+  if (!target) return;
+  const shared: string[] = [];
+  for (const provider of SHAREABLE_PREPARED_PROVIDERS) {
+    const ok = await pushPreparedToCustody(provider, {
+      controlPlaneUrl: target.url,
+      adminToken: target.adminToken,
+    }).catch(() => false);
+    if (ok) shared.push(provider);
+  }
+  if (shared.length > 0) {
+    log.success(`Shared your ${shared.join(', ')} base bake(s) with the control box — it won't re-bake them.`);
+  }
+}
+
+/**
+ * Providers whose base is a provider-side snapshot another machine can boot, so
+ * the bake record is worth sharing. Docker is excluded: its base is a local
+ * image, rebuilt (or pulled) per machine.
+ */
+const SHAREABLE_PREPARED_PROVIDERS = ['hetzner', 'vercel', 'e2b', 'daytona', 'digitalocean'] as const;
 
 const deployCmd = new Command('deploy')
   .description('Deploy the full hub to a VPS, reusing the App creds from `control-plane setup`')

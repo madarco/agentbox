@@ -14,8 +14,12 @@
 
 import { createHash } from 'node:crypto';
 
-/** Top-level custody scopes. Anything else is rejected by {@link normalizeCustodyPath}. */
-export const CUSTODY_SCOPES = ['agents', 'projects', 'boxes'] as const;
+/**
+ * Top-level custody scopes. Anything else is rejected by {@link normalizeCustodyPath}.
+ * `prepared` holds each provider's bake record (`<provider>-prepared.json`), so a
+ * base baked on either side is visible to both.
+ */
+export const CUSTODY_SCOPES = ['agents', 'projects', 'boxes', 'prepared'] as const;
 export type CustodyScope = (typeof CUSTODY_SCOPES)[number];
 
 /** Agent ids valid under `agents/` — mirrors `AgentId` in @agentbox/sandbox-core. */
