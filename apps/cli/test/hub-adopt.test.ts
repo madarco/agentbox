@@ -170,6 +170,18 @@ describe('adoptHubBox', () => {
     expect(state.boxes.map((b) => b.name)).toEqual(['brave-otter']);
   });
 
+  it('omits identityFile when the provider has no per-box key dir', async () => {
+    // Regression: `identityFile` was built as `${dir ?? ''}/id_ed25519`, so a
+    // provider reporting a publicHost without a keypair (e.g. a plugin) wrote
+    // the absolute path `/id_ed25519` into the record and the ssh config.
+    const fetchImpl = fakeControlBox({
+      boxes: [{ boxId: 'p1', name: 'plugin-box', backend: 'someplugin', sandboxId: 'sb-p', publicHost: '9.9.9.9' }],
+    });
+    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'plugin-box', cwd: TEST_HOME });
+    expect(res.record.ssh?.host).toBe('9.9.9.9');
+    expect(res.record.ssh?.identityFile).toBeUndefined();
+  });
+
   it('adopts an e2b box with no key material (SDK-reached, no keypair)', async () => {
     const fetchImpl = fakeControlBox({
       boxes: [{ boxId: 'b1', name: 'calm-fox', backend: 'e2b', sandboxId: 'e2b-9', webPort: 8080 }],

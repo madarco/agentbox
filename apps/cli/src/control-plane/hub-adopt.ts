@@ -19,7 +19,7 @@
  * is unit-testable with fake clients + a temp HOME, mirroring `hub-pull.ts`.
  */
 import { execa } from 'execa';
-import type { BoxRecord, GitWorktreeRecord } from '@agentbox/core';
+import type { BoxRecord, GitWorktreeRecord, SshTargetRecord } from '@agentbox/core';
 import { boxSshDirForProvider, readState } from '@agentbox/sandbox-core';
 import { generateRelayToken, recordBox } from '@agentbox/sandbox-docker';
 import { allocateProjectIndex } from '@agentbox/sandbox-core';
@@ -197,13 +197,7 @@ export async function adoptHubBox(args: HubAdoptArgs): Promise<HubAdoptResult> {
     lastAgent: normalizeAgent(reg.agent) ?? existing?.lastAgent,
     gitWorktrees,
     createdAt: reg.createdAt ?? existing?.createdAt ?? new Date().toISOString(),
-    ssh: reg.publicHost
-      ? {
-          host: reg.publicHost,
-          user: BOX_SSH_USER,
-          identityFile: `${boxSshDirForProvider(provider, sandboxId) ?? ''}/id_ed25519`,
-        }
-      : existing?.ssh,
+    ssh: buildSshTarget(provider, sandboxId, reg.publicHost) ?? existing?.ssh,
     cloud: {
       ...existing?.cloud,
       backend: provider,
@@ -243,4 +237,28 @@ export async function adoptHubBox(args: HubAdoptArgs): Promise<HubAdoptResult> {
 /** Narrow a registration's free-form agent string to the record's union. */
 function normalizeAgent(agent: string | undefined): BoxRecord['lastAgent'] {
   return agent === 'claude' || agent === 'codex' || agent === 'opencode' ? agent : undefined;
+}
+
+/**
+ * The box's SSH target, or undefined when the registration carries no host.
+ *
+ * `identityFile` is set only when the provider actually has a per-box key dir:
+ * a provider that reports a `publicHost` but mints no keypair would otherwise
+ * get `"/id_ed25519"` — an absolute path at the filesystem root — written into
+ * the record and into the generated `~/.agentbox/ssh/config`. Omitting it leaves
+ * ssh to its normal key resolution (agent / default identities) instead of
+ * pointing at a file that cannot exist.
+ */
+function buildSshTarget(
+  provider: string,
+  sandboxId: string,
+  publicHost: string | undefined,
+): SshTargetRecord | undefined {
+  if (!publicHost) return undefined;
+  const dir = boxSshDirForProvider(provider, sandboxId);
+  return {
+    host: publicHost,
+    user: BOX_SSH_USER,
+    ...(dir ? { identityFile: `${dir}/id_ed25519` } : {}),
+  };
 }
