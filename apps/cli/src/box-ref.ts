@@ -63,7 +63,12 @@ export async function resolveBoxOrShift(
     // it BEFORE considering the shift. Otherwise, in a project with exactly one
     // local box, `agentbox claude <hub-box>` would silently launch the agent in
     // that local box and treat the hub box's name as a stray argument.
-    const adopted = await tryAutoAdopt(ref, cwd);
+    //
+    // Only a genuine miss asks the control box. `ambiguous` means the ref DID
+    // match local boxes (an id prefix hitting several), so the user must
+    // disambiguate THOSE — adopting a same-named hub box would drive a box that
+    // isn't among the ones they were choosing between.
+    const adopted = firstTry.kind === 'none' ? await tryAutoAdopt(ref, cwd) : null;
     if (adopted) {
       log.info(`adopted ${adopted.name} from the control box`);
       return { box: adopted, shifted: false };
@@ -85,9 +90,12 @@ export async function resolveBoxOrShift(
     }
   }
 
-  // Same error path as resolveBoxOrExit — but we already spent the adoption
-  // budget on this ref above, so don't let it try again.
-  const box = await resolveBoxOrExit(ref, { ...opts, adoptAttempted: ref !== undefined });
+  // Same error path as resolveBoxOrExit — but when we already spent the adoption
+  // budget on this ref above, don't let it try again.
+  const box = await resolveBoxOrExit(ref, {
+    ...opts,
+    adoptAttempted: ref !== undefined && firstTry.kind === 'none',
+  });
   return { box, shifted: false };
 }
 
