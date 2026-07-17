@@ -314,6 +314,37 @@ describe('adoptHubBox', () => {
     expect(res.record.name).toBe('named');
   });
 
+  it('never clobbers an unrelated local box that happens to share the name', async () => {
+    // Regression: adoption treated a name match as identity, so adopting a hub
+    // box called `dupe` would overwrite a local DOCKER box called `dupe` with
+    // cloud fields — corrupting the record for a completely different box.
+    const { recordBox } = await import('@agentbox/sandbox-docker');
+    await recordBox({
+      id: 'local-docker-id',
+      name: 'dupe',
+      provider: 'docker',
+      container: 'agentbox-dupe',
+      image: 'agentbox/box:dev',
+      workspacePath: '/local/ws',
+      relayToken: 'local-token',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    } as never);
+
+    const fetchImpl = fakeControlBox({
+      boxes: [{ boxId: 'hub-id', name: 'dupe', backend: 'e2b', sandboxId: 'sb-hub' }],
+    });
+    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'dupe', cwd: TEST_HOME });
+
+    expect(res.refreshed).toBe(false); // a NEW record, not a takeover
+    const state = await readState();
+    const docker = state.boxes.find((b) => b.id === 'local-docker-id');
+    expect(docker?.provider).toBe('docker');
+    expect(docker?.container).toBe('agentbox-dupe');
+    expect(docker?.cloud).toBeUndefined();
+    // Both records coexist.
+    expect(state.boxes).toHaveLength(2);
+  });
+
   it('resolves a unique id prefix, like the local resolver does', async () => {
     // Regression: local `findBox` accepts a unique id prefix, so a shortened ref
     // that works for a local box must not mysteriously fail for a hub-only one.

@@ -152,8 +152,12 @@ export async function adoptHubBox(args: HubAdoptArgs): Promise<HubAdoptResult> {
   // Re-adopt keeps the existing local identity: the relay writes status.json
   // under a path keyed by the box id + project index, so minting a new id on
   // every refresh would orphan the box's status.
+  // Identity only — sandbox id or box id. A NAME match is not identity: names
+  // are not unique across providers, so adopting a hub box called `foo` would
+  // have overwritten an unrelated local (e.g. docker) box called `foo` with
+  // cloud fields, corrupting the record for a different box entirely.
   const existing = state.boxes.find(
-    (b) => b.cloud?.sandboxId === sandboxId || b.id === reg.boxId || b.name === reg.name,
+    (b) => (b.cloud?.sandboxId !== undefined && b.cloud.sandboxId === sandboxId) || b.id === reg.boxId,
   );
 
   const projectRoot =
