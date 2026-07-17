@@ -48,6 +48,7 @@ import {
   type UploadItem,
 } from '../control-plane/custody-client.js';
 import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
+import { loadControlPlaneEnv } from '../control-plane/env-file.js';
 import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { handleLifecycleError } from './_errors.js';
 
@@ -399,16 +400,6 @@ const addSub = new Command('add')
       handleLifecycleError(err);
     }
   });
-
-/** Load the setup-written App creds into the env if not already set. */
-function loadControlPlaneEnv(): void {
-  if (process.env.GITHUB_APP_ID && process.env.GITHUB_APP_PRIVATE_KEY) return;
-  if (!existsSync(ENV_PATH)) return;
-  for (const line of readFileSync(ENV_PATH, 'utf8').split('\n')) {
-    const m = /^([A-Z_]+)=(.*)$/.exec(line.trim());
-    if (m && !process.env[m[1]!]) process.env[m[1]!] = m[2];
-  }
-}
 
 /** Run `git <args>`, rejecting on a non-zero exit. */
 function runGit(args: string[]): Promise<void> {

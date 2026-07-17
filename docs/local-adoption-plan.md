@@ -1,8 +1,8 @@
 # Local adoption — the PC as a thin client of the control box
 
-**Status: all four phases IMPLEMENTED (2026-07-17). Unit-tested + partially
-live-verified; a full live e2e against a deployed control box is the remaining
-follow-up (see "Live verification status" at the end).**
+**Status: all four phases IMPLEMENTED + live-verified end to end against a freshly
+deployed control box (2026-07-17), including the laptop-off push. See "Live
+verification status" at the end for what is proven and what is not.**
 
 This is the plan of record for closing the *local-adoption gap* described in
 [`control-box-plan.md`](./control-box-plan.md) (phase-4 backlog): once a control box is enabled,
@@ -213,13 +213,73 @@ Verified live during implementation (against the deployed control box at
   predates the scope, which is exactly the back-compat case the pull treats as
   "nothing shared". It needs a redeploy to serve the new scope.
 
-Not yet done live (needs a hub-created box, so it's the follow-up smoke pass):
+### Full goal-scenario run (2026-07-17)
 
-- Adopting a real web-UI-created box → `hub adopt`, auto-adopt on by-name use,
-  `attach` for hetzner (custody keys) and e2b/vercel (SDK).
-- A web-UI create consuming seed material from custody (the worker overlay).
-- A bake on the control box being adopted by the PC without a re-bake
-  (needs the redeploy above first).
+A **fresh control box** was deployed from this branch onto a real Hetzner VPS
+(`control-plane deploy hetzner --ref feat/local-adoption`) and the scenario run
+end to end against it with an **e2b** box. All infrastructure was torn down after
+(server + firewall + sandbox + the proof branch), and the PC's
+`relay.controlPlaneUrl` / `deploy.json` restored to their previous control box.
+
+Proven live:
+
+- **Deploy + phase 4** — the new box serves the `prepared/` scope (the older one
+  400s it), rejects unknown scopes, and the deploy **auto-seeded the PC's bake
+  records** (`daytona`, `digitalocean`, `e2b`, `hetzner`, `vercel`) into custody.
+- **Phase 1** — a PC create registered with the full adoption material
+  (`image`, `webPort`, `projectSlug`; `agent` correctly absent for a plain
+  `create`, `publicHost` correctly absent for e2b).
+- **Phase 2** — with the local record deleted, `ls -g` fetched the control box's
+  registry and rendered the box as `on hub`; `agentbox url <name>` then
+  **auto-adopted** it ("adopted adopt-smoke from the control box") and opened the
+  real URL. `agentbox shell <name> -- …` ran a command in the box through the
+  adopted record.
+- **Phase 1 project matching** — adopting from inside the box's own clone linked
+  `projectRoot`, allocated `projectIndex`, and **rewrote `hostMainRepo`** to the
+  local repo; project-scoped `ls` then listed it.
+- **Phase 3** — the create pushed seed material to `projects/<slug>/seed/`
+  (manifest only: the test repo's tree was clean).
+- **Laptop-off** — with the host relay verified dead (nothing on :8787), an
+  in-box `agentbox-ctl git push` landed commit `dcadad4` on GitHub via a leased
+  token. Confirmed by `git ls-remote`, not by exit code.
+
+Two real bugs this run found (both fixed on the branch):
+
+1. **The create path never loaded the control-plane env**, so in an ordinary
+   shell (where the operator hasn't sourced it) `AGENTBOX_RELAY_ADMIN_TOKEN` was
+   unset and **every PC create silently skipped registration**: the box came up
+   with `topology: control-plane` but the plane never heard of it, no seed was
+   stored, and its push had no token to lease with. `providerForCreate` — the one
+   choke point every create path shares — now loads it.
+2. **The seeded bake records were never consulted at create.** The providers'
+   baked-or-not gates are sync and read only local prepared-state, so a fresh
+   control box failed every create with "run `agentbox prepare` first" while a
+   perfectly good record sat in its custody. The hub worker now hydrates
+   prepared-state from custody before create (same fingerprint-match-wins rule).
+
+Still not exercised:
+
+- **The web-UI create button itself.** The deployed hub's `/api/v1` is
+  password-gated and entering a password is out of scope for an agent, so the
+  hub-created box was produced via the resident worker instead. Note the web UI's
+  queue (`/api/v1/boxes` → `enqueueQueueJob` → `_run-queued-job`) is a *different*
+  path from `--via-hub` and has **no seed overlay wired** — see the backlog item
+  below; it also predates this branch's lease wiring (`control-box-plan.md`).
+- **hetzner-provider adoption** (the custody SSH-key pull half). e2b mints no
+  keypair, so this run covered the record-only adopt path.
+
+## Backlog (found by the live run)
+
+- **The web-UI create queue has no seed overlay.** `--via-hub` and the resident
+  worker go through `makeControlPlaneCreateBox`, which applies the project's
+  custody seed. The web UI's own path (`POST /api/v1/boxes` → `enqueueQueueJob` →
+  `_run-queued-job` → `provider.create`) does not, so a box created from the UI
+  comes up without the project's untracked files / env. Wire `applyProjectSeed`
+  into that path too (it already shares the blob-source seam). Pairs with the
+  pre-existing `control-box-plan.md` item that the same path doesn't wire git
+  leasing — both point at the web-UI queue being a second, thinner create path.
+- **Adopting a hetzner box is unverified.** The record-only adopt (e2b) is
+  proven; the custody SSH-key pull + `publicHost` half has unit tests only.
 
 ## Deferred (tracked elsewhere)
 
