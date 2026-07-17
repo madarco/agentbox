@@ -268,6 +268,24 @@ Still not exercised:
 - **hetzner-provider adoption** (the custody SSH-key pull half). e2b mints no
   keypair, so this run covered the record-only adopt path.
 
+## Known limitation: a local name shadows a hub box
+
+By-name resolution is local-first — the control box is asked only when the ref
+misses locally. So a hub-only box whose **name** equals a local box's name can't
+be driven by name: the local one wins, even though `ls` lists both.
+
+This is deliberate. The alternative — asking the control box on every by-name hit
+to check for a collision — puts a network round-trip in front of *every* command
+for a case that needs the user to have picked the same explicit `--name` twice
+(generated names don't collide). The shadowed box is still addressable by its
+sandbox id or box id, which `hub adopt` / `hub pull` / auto-adopt all accept,
+including unique prefixes.
+
+Note the related pre-existing behavior: `findBox` resolves a name with a
+first-match `find` and no ambiguity error, so two local records sharing a name
+(e.g. `--name foo` in two projects) already resolve to whichever comes first.
+Adoption doesn't change that; it just makes a same-named pair easier to create.
+
 ## Backlog (found by the live run)
 
 - **The web-UI create queue has no seed overlay.** `--via-hub` and the resident
