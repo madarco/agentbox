@@ -25,6 +25,7 @@ import {
   deleteJob,
   enqueuePrepareJob,
   enqueueQueueJob,
+  FsCustodyStore,
   hashRpcParams,
   isValidBoxStatus,
   loadQueue,
@@ -36,6 +37,7 @@ import {
   type QueueJob,
   type RelayServerHandle,
 } from '@agentbox/relay';
+import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 import type { BoxGitDeps, ProviderModule } from '@agentbox/sandbox-core';
 import {
   BOX_WORKSPACE,
@@ -616,6 +618,17 @@ async function providerBaseFreshness(id: ProviderKind, claudeInstall?: 'native' 
     } catch {
       return { state: 'unknown' };
     }
+  }
+  // On a control box the bake record lives in custody, not local prepared-state
+  // (which is empty until a create hydrates it). Adopt it here too — same
+  // fingerprint-match-wins policy as the create path — so `/settings` reflects
+  // shared bakes instead of showing every provider as "needs baking". No-op on a
+  // local hub (local prepared-state already set) or when custody has no match.
+  try {
+    const mod = (await IMPORTERS[id]()).providerModule;
+    await hydratePreparedFromCustody(new FsCustodyStore(), id, mod.provider, claudeInstall ?? 'native', () => {});
+  } catch {
+    // best-effort: fall through to whatever local prepared-state holds
   }
   const stored = currentCloudBaseFingerprint(id);
   const cached = freshnessCache.get(id);
