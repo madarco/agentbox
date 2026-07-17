@@ -15,7 +15,7 @@ import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { isProviderKind, type ProviderKind } from '@agentbox/config';
+import { isProviderKind, loadEffectiveConfig, type ProviderKind } from '@agentbox/config';
 import {
   drainCreateJobs,
   FsCustodyStore,
@@ -177,6 +177,7 @@ async function hydratePreparedFromCustody(
   custody: FsCustodyStore,
   providerName: string,
   provider: { baseFingerprint?: (i?: 'native' | 'npm') => Promise<string | undefined> },
+  claudeInstall: 'native' | 'npm',
   log: (l: string) => void,
 ): Promise<void> {
   if (providerName === 'docker') return; // local image, not a shareable snapshot
@@ -190,7 +191,10 @@ async function hydratePreparedFromCustody(
     };
     const stored = record.base?.contextSha256;
     if (!stored) return;
-    const fingerprint = await provider.baseFingerprint?.();
+    // `claudeInstall` is folded into the fingerprint by `prepare`, so omitting
+    // it makes an npm-baked base read as stale and rejects a record that in fact
+    // matches. Must be the mode this machine would bake with.
+    const fingerprint = await provider.baseFingerprint?.(claudeInstall);
     if (!fingerprint) return;
     if (stored !== fingerprint) {
       log(`prepared: the shared ${providerName} bake is from a different build context — ignoring it`);
@@ -256,7 +260,10 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       // Likewise the base image: the deploy seeds `prepared/<provider>.json`
       // into custody, but the provider's baked-or-not gate only reads local
       // prepared-state — so without this a fresh control box refuses to create.
-      await hydratePreparedFromCustody(custody, provider, mod.provider, log);
+      const claudeInstall =
+        (await loadEffectiveConfig(workspacePath).catch(() => null))?.effective.box.claudeInstall ??
+        'native';
+      await hydratePreparedFromCustody(custody, provider, mod.provider, claudeInstall, log);
       const created = await mod.provider.create({
         workspacePath,
         name,
