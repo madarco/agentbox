@@ -182,6 +182,29 @@ describe('adoptHubBox', () => {
     expect(res.record.ssh?.identityFile).toBeUndefined();
   });
 
+  it('flags an SSH box adopted without its key rather than looking fine', async () => {
+    // Regression: the key download is best-effort, so a hetzner box could adopt
+    // "successfully" with an identityFile pointing at a key that isn't on disk —
+    // surfacing much later as an opaque ssh failure from attach/cp.
+    const fetchImpl = fakeControlBox({
+      boxes: [{ boxId: 'h1', name: 'keyless', backend: 'hetzner', sandboxId: 'sb-nk', publicHost: '7.7.7.7' }],
+      custody: {}, // no boxes/sb-nk/ssh/* at all
+    });
+    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'keyless', cwd: TEST_HOME });
+    expect(res.sshFiles).toEqual([]);
+    expect(res.sshKeysMissing).toBe(true);
+    // Still adopted — `url` works and the key can arrive later.
+    expect(res.record.ssh?.identityFile).toBeDefined();
+  });
+
+  it('does not flag missing keys for a provider that mints none', async () => {
+    const fetchImpl = fakeControlBox({
+      boxes: [{ boxId: 'e1', name: 'sdk-box', backend: 'e2b', sandboxId: 'sb-e' }],
+    });
+    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'sdk-box', cwd: TEST_HOME });
+    expect(res.sshKeysMissing).toBe(false);
+  });
+
   it('adopts an e2b box with no key material (SDK-reached, no keypair)', async () => {
     const fetchImpl = fakeControlBox({
       boxes: [{ boxId: 'b1', name: 'calm-fox', backend: 'e2b', sandboxId: 'e2b-9', webPort: 8080 }],

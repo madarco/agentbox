@@ -195,6 +195,12 @@ const adoptSub = new Command('adopt')
       log.success(
         `${res.refreshed ? 'Refreshed' : 'Adopted'} ${res.record.name} (${res.record.provider} ${res.record.cloud?.sandboxId ?? ''}) — ${where}.`,
       );
+      if (res.sshKeysMissing) {
+        log.warn(
+          `But the control box has no SSH key for it, so attach / cp / port-forward won't work yet. ` +
+            `The key is uploaded by the host that created the box — check that it ran with a control box configured.`,
+        );
+      }
     } catch (err) {
       if (err instanceof HubBoxNotFoundError) {
         log.error(`${err.message}. Run \`agentbox control-plane boxes list\` to see what's there.`);

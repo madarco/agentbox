@@ -51,6 +51,12 @@ export interface HubAdoptResult {
   projectRoot?: string;
   /** True when an existing local record was refreshed rather than created. */
   refreshed: boolean;
+  /**
+   * True when the box needs a per-box SSH key (the record has an `identityFile`)
+   * but custody had none. The box is adopted and `url` works, but `attach`/`cp`
+   * will fail until the key is there.
+   */
+  sshKeysMissing?: boolean;
 }
 
 /** Thrown when the ref matches no registration on the control box. */
@@ -234,9 +240,20 @@ export async function adoptHubBox(args: HubAdoptArgs): Promise<HubAdoptResult> {
   if (sshFiles.length > 0) {
     log(`pulled ${String(sshFiles.length)} SSH key file(s) for ${reg.name}`);
   }
+  // A box we just gave an `identityFile` but no key for is adopted-but-unusable:
+  // `attach`/`cp` would fail later on a missing-key ssh error rather than here,
+  // where we know why. The record is still worth writing (`url` works, and the
+  // key can be fetched later), so this is reported, not thrown.
+  const sshKeysMissing = record.ssh?.identityFile !== undefined && sshFiles.length === 0;
+  if (sshKeysMissing) {
+    log(
+      `WARN: no SSH key material in custody for ${reg.name} (boxes/${sandboxId}/ssh) — ` +
+        `attach / cp will not work until it is there. Try \`agentbox hub pull ${reg.name}\`.`,
+    );
+  }
 
   await recordBox(record);
-  return { record, sshFiles, projectRoot, refreshed: existing !== undefined };
+  return { record, sshFiles, projectRoot, refreshed: existing !== undefined, sshKeysMissing };
 }
 
 /** Narrow a registration's free-form agent string to the record's union. */
