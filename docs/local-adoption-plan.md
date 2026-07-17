@@ -288,6 +288,15 @@ Adoption doesn't change that; it just makes a same-named pair easier to create.
 
 ## Backlog (found by the live run)
 
+- **Destroying a PC box doesn't reap its control-box registration.** `agentbox destroy`
+  removes the local record and the cloud sandbox but leaves the box registered on the control
+  box, so it lingers in the Store (and now, with the web-UI merge, in the dashboard) as a ghost.
+  Destroy should also `DELETE /remote/boxes/:id` (the reap the hub Destroy button already does) when
+  `controlPlaneUrl` is set. Pairs with the hub-side teardown item in `control-box-plan.md`.
+- **The web UI shows PC-registered boxes but can't drive them yet.** `getData` now surfaces them
+  (display), but start/stop/attach from the UI need the control box to reconstruct/drive a box it
+  didn't create locally — the reverse of PC-side adoption. Follow-up.
+
 - **The web-UI create queue has no seed overlay.** `--via-hub` and the resident
   worker go through `makeControlPlaneCreateBox`, which applies the project's
   custody seed. The web UI's own path (`POST /api/v1/boxes` → `enqueueQueueJob` →
