@@ -63,6 +63,12 @@ export interface HubListing {
   /** True when these came from the cache because the control box didn't answer. */
   stale: boolean;
   /**
+   * Why the listing is stale, when it isn't simply unreachable. `no-token` means
+   * a control box IS configured but we have no admin bearer for it — the user
+   * needs to know that, rather than watch their hub boxes quietly vanish.
+   */
+  reason?: 'no-token';
+  /**
    * ISO time the listing was fetched (the cache's write time when `stale`).
    * Undefined when the control box didn't answer and there was no cache — we
    * have no listing at all, rather than an old one.
@@ -84,7 +90,16 @@ interface CacheFile {
 export async function fetchHubListing(): Promise<HubListing | null> {
   const { resolveCustodyTarget } = await import('../commands/control-plane.js');
   const target = await resolveCustodyTarget(undefined, { quiet: true });
-  if (!target) return null;
+  if (!target) {
+    // Distinguish "no control box configured" (nothing to say) from "configured
+    // but we have no admin token for it" — the latter would otherwise drop every
+    // hub box from `list` with no hint at all.
+    const { loadEffectiveConfig } = await import('@agentbox/config');
+    const configured = await loadEffectiveConfig(process.cwd())
+      .then((c) => Boolean(c.effective.relay.controlPlaneUrl))
+      .catch(() => false);
+    return configured ? { registrations: [], stale: true, reason: 'no-token' } : null;
+  }
 
   const memoTtl = memo?.listing.stale === true ? HUB_LIST_FAIL_MEMO_MS : HUB_LIST_MEMO_MS;
   if (memo && Date.now() - memo.at < memoTtl) return memo.listing;
