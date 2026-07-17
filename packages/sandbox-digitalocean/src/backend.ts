@@ -260,6 +260,7 @@ async function ensureTunnel(sandboxId: string, state: PerBoxState, vpsIp: string
   await tunnels.open({
     boxId: sandboxId,
     vpsHost: vpsIp,
+    vpsUser: VPS_USER,
     identity: state.identity,
   });
 }
