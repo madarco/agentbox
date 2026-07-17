@@ -41,6 +41,15 @@ const HUB_LIST_TIMEOUT_MS = 1500;
  */
 const HUB_LIST_MEMO_MS = 10_000;
 
+/**
+ * How long a FAILED lookup is reused. Much shorter than a success: memoizing
+ * "unreachable" is only meant to stop a watch loop re-probing a down control box
+ * every tick, but caching it as long as a success would keep hub boxes hidden
+ * for 10s after the control box comes back. This retries every other tick or so
+ * at the default 2s interval, which recovers promptly without hammering.
+ */
+const HUB_LIST_FAIL_MEMO_MS = 3_000;
+
 /** In-process memo of the last listing (see {@link HUB_LIST_MEMO_MS}). */
 let memo: { at: number; listing: HubListing } | null = null;
 
@@ -77,7 +86,8 @@ export async function fetchHubListing(): Promise<HubListing | null> {
   const target = await resolveCustodyTarget(undefined, { quiet: true });
   if (!target) return null;
 
-  if (memo && Date.now() - memo.at < HUB_LIST_MEMO_MS) return memo.listing;
+  const memoTtl = memo?.listing.stale === true ? HUB_LIST_FAIL_MEMO_MS : HUB_LIST_MEMO_MS;
+  if (memo && Date.now() - memo.at < memoTtl) return memo.listing;
 
   // ONE budget for the whole lookup, spent down by each step — `list` is
   // interactive, so the ceiling has to cover probe + fetch together, not apply
