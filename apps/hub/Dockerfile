@@ -31,6 +31,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends git openssh-cli
 ENV NODE_ENV=production
 # Queue worker + host-app spawns re-exec the CLI from this entry.
 ENV AGENTBOX_CLI_ENTRY=/repo/apps/cli/dist/index.js
+# The standalone hub bundle lives under apps/hub/dist-standalone/**, far from the
+# staged runtime tree at apps/cli/runtime, so each provider's own
+# findStagedCliRuntimeRoot (which only probes next to its bundle) misses it and
+# falls back to hashing packages/** source — a DIFFERENT base fingerprint than
+# the CLI baked with, so the hub rejects every PC-baked custody record. Pointing
+# AGENTBOX_RUNTIME_ROOT at the staged tree makes the hub compute the same
+# fingerprint the CLI does, so shared bake records are recognized as baked.
+ENV AGENTBOX_RUNTIME_ROOT=/repo/apps/cli/runtime
 # The whole built monorepo: the standalone bundle ships no node_modules, so its
 # externals (next, react, pg, better-auth, the cloud SDKs) resolve from the
 # workspace node_modules present here. Not size-optimized; fine for a VPS.

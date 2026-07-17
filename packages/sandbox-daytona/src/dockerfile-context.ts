@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { RUNTIME_ROOT_ENV } from '@agentbox/sandbox-core';
 
 /**
  * Locate `Dockerfile.box` + its build context so Daytona can `Image.fromDockerfile`
@@ -13,10 +14,12 @@ import { fileURLToPath } from 'node:url';
  * dep would defeat the point of `@agentbox/sandbox-cloud`).
  *
  * Resolution order:
- *   0. AGENTBOX_DOCKER_CONTEXT env override.
- *   1. Staged context shipped with the bundled `agent-box` package (sibling
+ *   0. AGENTBOX_DOCKER_CONTEXT env override (points straight at a context dir).
+ *   1. AGENTBOX_RUNTIME_ROOT env override → `<root>/docker` (the staged runtime
+ *      root; lets a source-deployed hub hash the SAME context the CLI baked).
+ *   2. Staged context shipped with the bundled `agent-box` package (sibling
  *      of dist/, uniform in dev + installed).
- *   2. Legacy monorepo layout: Dockerfile.box at sandbox-docker's package
+ *   3. Legacy monorepo layout: Dockerfile.box at sandbox-docker's package
  *      root, context = monorepo root.
  */
 export interface DockerfileContext {
@@ -28,6 +31,13 @@ export function resolveDockerfileContext(): DockerfileContext | null {
   const override = process.env.AGENTBOX_DOCKER_CONTEXT;
   if (override && existsSync(resolve(override, 'Dockerfile.box'))) {
     return { dockerfile: resolve(override, 'Dockerfile.box'), context: override };
+  }
+  const runtimeRoot = process.env[RUNTIME_ROOT_ENV];
+  if (runtimeRoot) {
+    const ctx = resolve(runtimeRoot, 'docker');
+    if (existsSync(resolve(ctx, 'Dockerfile.box'))) {
+      return { dockerfile: resolve(ctx, 'Dockerfile.box'), context: ctx };
+    }
   }
   const here = dirname(fileURLToPath(import.meta.url));
   const staged = resolve(here, '..', 'runtime', 'docker');
@@ -54,6 +64,11 @@ export function resolveDockerfileContext(): DockerfileContext | null {
  * source as the dev fallback.
  */
 export function resolveDaytonaCustomClaudeMd(): string | null {
+  const runtimeRoot = process.env[RUNTIME_ROOT_ENV];
+  if (runtimeRoot) {
+    const overrideMd = resolve(runtimeRoot, 'daytona', 'custom-system-CLAUDE.md');
+    if (existsSync(overrideMd)) return overrideMd;
+  }
   const here = dirname(fileURLToPath(import.meta.url));
   const staged = resolve(here, '..', 'runtime', 'daytona', 'custom-system-CLAUDE.md');
   if (existsSync(staged)) return staged;
