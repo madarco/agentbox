@@ -30,6 +30,16 @@ export interface MergedBox extends ListedBox {
   originUrl?: string;
 }
 
+export interface MergeHubBoxesOptions {
+  /**
+   * True when `registrations` came from a cache (or an empty fallback) because
+   * the control box didn't answer. A stale listing is NOT authority for absence:
+   * a box missing from it may be perfectly alive, we just couldn't ask. Cached
+   * rows still render; nothing is tagged an orphan.
+   */
+  stale?: boolean;
+}
+
 /**
  * Build the row set for `list`.
  *
@@ -38,7 +48,11 @@ export interface MergedBox extends ListedBox {
  * configured — in which case every local box is simply `local` and nothing is
  * ever tagged an orphan (we have no authority to call it one).
  */
-export function mergeHubBoxes(local: ListedBox[], registrations: BoxRegistration[] | null): MergedBox[] {
+export function mergeHubBoxes(
+  local: ListedBox[],
+  registrations: BoxRegistration[] | null,
+  opts: MergeHubBoxesOptions = {},
+): MergedBox[] {
   if (registrations === null) return local.map((b) => ({ ...b, source: 'local' as const }));
 
   const bySandboxId = new Map<string, BoxRegistration>();
@@ -55,7 +69,12 @@ export function mergeHubBoxes(local: ListedBox[], registrations: BoxRegistration
     if ((b.provider ?? 'docker') === 'docker') return { ...b, source: 'local' as const };
     const reg =
       (b.cloud?.sandboxId ? bySandboxId.get(b.cloud.sandboxId) : undefined) ?? byBoxId.get(b.id);
-    if (!reg) return { ...b, source: 'orphan' as const };
+    if (!reg) {
+      // Only a listing we actually got from the control box proves absence. On a
+      // stale/failed listing the box's hub state is simply unknown — calling it
+      // an orphan would slander every cloud box the moment you go offline.
+      return { ...b, source: opts.stale === true ? ('local' as const) : ('orphan' as const) };
+    }
     claimed.add(reg);
     // The local record wins for rendering: it carries endpoints, live shell
     // sessions and agent activity that a registration doesn't have.

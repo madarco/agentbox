@@ -371,7 +371,7 @@ async function scopedBoxes(
 ): Promise<{ boxes: MergedBox[]; projectRoot: string; scoped: boolean; hub: HubListing | null }> {
   const local = await listBoxes();
   const hub = await fetchHubListing().catch(() => null);
-  const boxes = mergeHubBoxes(local, hub ? hub.registrations : null);
+  const boxes = mergeHubBoxes(local, hub ? hub.registrations : null, { stale: hub?.stale });
   if (all) {
     // Default: cloud state is the fast persisted `cloud.lastState` from
     // listBoxes. `--live` overrides it with an authoritative SDK probe.

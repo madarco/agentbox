@@ -1032,9 +1032,10 @@ export function createCloudProvider(
           : undefined;
 
         // Per-box host-action auto-approve policy (workspace > project > global).
-        const effectiveBoxForApprove = (
+        const effectiveForCreate = (
           await loadEffectiveConfig(req.projectRoot ?? req.workspacePath)
-        ).effective.box;
+        ).effective;
+        const effectiveBoxForApprove = effectiveForCreate.box;
         const autoApproveHostActions = effectiveBoxForApprove.autoApproveHostActions;
         const autoApproveSafeHostActions = effectiveBoxForApprove.autoApproveSafeHostActions;
 
@@ -1123,6 +1124,9 @@ export function createCloudProvider(
                     slug,
                     projectRoot: req.workspacePath,
                     envPatterns: req.envFilesToImport,
+                    // Honour the configured cap, so raising it actually admits a
+                    // bigger seed instead of silently dropping the tar.
+                    maxBodyBytes: effectiveForCreate.relay.custodyMaxBodyBytes,
                     log,
                   }).catch((err: unknown) => {
                     log(

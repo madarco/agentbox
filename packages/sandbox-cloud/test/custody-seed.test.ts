@@ -58,7 +58,8 @@ describe('buildProjectSeed', () => {
 
     const paths = res.items.map((i) => i.relPath).sort();
     expect(paths).toContain('untracked.tar.gz');
-    expect(paths).toContain('env/.env');
+    expect(paths).toContain('env.tar.gz');
+    expect(await tarPaths(res.items.find((i) => i.relPath === 'env.tar.gz')!.data)).toContain('.env');
 
     const tar = res.items.find((i) => i.relPath === 'untracked.tar.gz')!;
     const inTar = await tarPaths(tar.data);
@@ -77,11 +78,33 @@ describe('buildProjectSeed', () => {
 
   it('drops an oversized untracked tar but still captures env files', async () => {
     const repo = await makeRepo();
-    const res = await buildProjectSeed({ projectRoot: repo, envPatterns: ['.env'], maxTarBytes: 1 });
+    // maxBodyBytes is the custody PUT cap; the blob ceiling is derived from it.
+    const res = await buildProjectSeed({ projectRoot: repo, envPatterns: ['.env'], maxBodyBytes: 1 });
     expect(res.skippedTarBytes).toBeGreaterThan(1);
-    expect(res.items.map((i) => i.relPath)).toEqual(['env/.env']);
+    expect(res.items.map((i) => i.relPath)).toEqual(['env.tar.gz']);
     // A partial seed still beats none — and the manifest says what's in it.
-    expect(res.manifest.files.map((f) => f.path)).toEqual(['env/.env']);
+    expect(res.manifest.files.map((f) => f.path)).toEqual(['env.tar.gz']);
+  });
+
+  it('keeps nested env files at their repo-relative paths (monorepo layouts)', async () => {
+    const repo = await makeRepo();
+    await mkdir(join(repo, 'apps', 'web'), { recursive: true });
+    await writeFile(join(repo, 'apps', 'web', '.env.local'), 'NESTED=1');
+    const res = await buildProjectSeed({ projectRoot: repo, envPatterns: ['.env', '.env.*'] });
+
+    // Regression: env files used to be one custody entry each, at
+    // `projects/<slug>/seed/env/<rel>` — which for `apps/web/.env.local` is 7
+    // segments against custody's 6-segment cap, so the push failed outright for
+    // exactly the monorepo layouts that most need seeding. A tar has no depth limit.
+    const envTar = res.items.find((i) => i.relPath === 'env.tar.gz');
+    expect(envTar).toBeDefined();
+    const inside = await tarPaths(envTar!.data);
+    expect(inside).toContain('apps/web/.env.local');
+    expect(inside).toContain('.env');
+    // Every custody path stays within the store's 6-segment limit.
+    for (const item of res.items) {
+      expect(`projects/o__r/seed/${item.relPath}`.split('/').length).toBeLessThanOrEqual(6);
+    }
   });
 
   it('produces byte-identical tars for an unchanged tree (so the hash-skip works)', async () => {
@@ -142,7 +165,7 @@ describe('pushProjectSeedToCustody', () => {
       fetchImpl,
     });
     expect(puts).toContain('projects/o__r/seed/untracked.tar.gz');
-    expect(puts).toContain('projects/o__r/seed/env/.env');
+    expect(puts).toContain('projects/o__r/seed/env.tar.gz');
     // The manifest must land last: it describes the blobs, so a consumer must
     // never see it before they exist.
     expect(puts[puts.length - 1]).toBe('projects/o__r/seed/manifest.json');

@@ -115,6 +115,28 @@ describe('mergeHubBoxes', () => {
     expect(merged).toHaveLength(2);
   });
 
+  it('never calls a local cloud box an orphan on a stale/failed listing', () => {
+    // Regression: offline with a control box configured, fetchHubListing returns
+    // `{registrations: [], stale: true}` — an EMPTY list, not null. Treating that
+    // as authority for absence marked every one of your cloud boxes `orphan` the
+    // moment the control box was unreachable. Absence is only meaningful in a
+    // listing we actually received.
+    const boxes = [
+      local({ id: 'c', name: 'my-cloud-box', provider: 'e2b', cloud: { backend: 'e2b', sandboxId: 'sb-1' } }),
+    ];
+    const merged = mergeHubBoxes(boxes, [], { stale: true });
+    expect(merged[0]!.source).toBe('local');
+    expect(merged[0]!.source).not.toBe('orphan');
+  });
+
+  it('still renders cached hub rows when the listing is stale', () => {
+    const merged = mergeHubBoxes([], [reg({ boxId: 'h1', name: 'cached-box', backend: 'e2b', sandboxId: 'sb-9' })], {
+      stale: true,
+    });
+    expect(merged.map((b) => b.name)).toEqual(['cached-box']);
+    expect(merged[0]!.needsAdopt).toBe(true);
+  });
+
   it('never calls a local docker box an orphan (docker never registers on the control box)', () => {
     const merged = mergeHubBoxes([local({ id: 'd', name: 'dock' })], []);
     expect(merged[0]!.source).toBe('local');

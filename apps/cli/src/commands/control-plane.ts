@@ -687,6 +687,7 @@ const projectPushSub = new Command('push')
       }
       const root = (await findProjectRoot(process.cwd())).root;
       const slug = await projectSlug(opts.project, root);
+      const cfg = await loadEffectiveConfig(root).catch(() => null);
       const res = await pushProjectSeedToCustody({
         controlPlaneUrl: target.url,
         adminToken: target.adminToken,
@@ -695,6 +696,8 @@ const projectPushSub = new Command('push')
         // Same default set a create carries into a box, so the seed matches what
         // a PC-created box would have had.
         envPatterns: DEFAULT_ENV_PATTERNS,
+        // Honour the configured cap, so raising it actually admits a bigger seed.
+        maxBodyBytes: cfg?.effective.relay.custodyMaxBodyBytes,
         force: opts.force,
         log: (line) => log.info(line),
       });

@@ -11,7 +11,6 @@
  * by Next.
  */
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -155,35 +154,24 @@ async function applySeedFromCustody(
     }
   }
 
+  // Both blobs extract the same way, with the same clone-wins rule.
   let files = 0;
-  const tar = await custody.get(`${prefix}/untracked.tar.gz`).catch(() => null);
-  if (tar) {
-    const tmp = join(tmpdir(), `agentbox-seed-${Date.now().toString(36)}.tar.gz`);
+  for (const name of ['untracked.tar.gz', 'env.tar.gz']) {
+    const blob = await custody.get(`${prefix}/${name}`).catch(() => null);
+    if (!blob) continue;
+    const tmp = join(tmpdir(), `agentbox-seed-${Date.now().toString(36)}-${name}`);
     try {
-      await writeFile(tmp, tar.data);
+      await writeFile(tmp, blob.data);
       await execFileAsync('tar', ['-C', dest, '-xzf', tmp, '--keep-old-files']);
       files += 1;
     } catch (err) {
       // `--keep-old-files` makes GNU tar exit non-zero on a collision even
-      // though it did the right thing, so a failure here is not necessarily
-      // fatal — the box just may lack some untracked files.
-      log(`seed: untracked tar partially applied: ${err instanceof Error ? err.message : String(err)}`);
+      // though it did the right thing (kept the clone's copy), so a failure
+      // here is not necessarily fatal — the box may just lack some seed files.
+      log(`seed: ${name} partially applied: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       await rm(tmp, { force: true }).catch(() => {});
     }
-  }
-
-  for (const entry of entries) {
-    const rel = entry.path.slice(`${prefix}/`.length);
-    if (!rel.startsWith('env/')) continue;
-    const target = join(dest, rel.slice('env/'.length));
-    // Clone wins: never overwrite a file the repo already provides.
-    if (existsSync(target)) continue;
-    const blob = await custody.get(entry.path).catch(() => null);
-    if (!blob) continue;
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, blob.data, { mode: 0o600 });
-    files += 1;
   }
   return { files, capturedAt: manifest.createdAt, repoHeadSha: manifest.repoHeadSha };
 }

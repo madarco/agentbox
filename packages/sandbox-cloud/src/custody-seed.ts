@@ -11,8 +11,14 @@
  *
  * Layout under `projects/<slug>/seed/`:
  *   untracked.tar.gz   — `git ls-files --others --exclude-standard`, tarred
- *   env/<name>         — one entry per staged env/secret file
+ *   env.tar.gz         — the staged env/secret files, at their repo-relative paths
  *   manifest.json      — what was captured, from which commit, when
+ *
+ * Env files ride a tarball rather than one custody entry each because a custody
+ * path is capped at 6 segments and its segments are `[A-Za-z0-9._-]`: a monorepo
+ * `apps/web/.env.local` would need `projects/<slug>/seed/env/apps/web/.env.local`
+ * (7), so per-file entries fail for exactly the layouts that need them most. A
+ * tar also preserves nesting, modes, and odd filenames for free.
  *
  * Uploads are hash-skipped (sha256, never timestamps), so re-creating a box
  * from an unchanged tree sends zero bytes. Every push is best-effort: seed
@@ -20,8 +26,6 @@
  * create in front of the user.
  */
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { execa } from 'execa';
 import { scanHostEnvFiles } from '@agentbox/sandbox-core';
@@ -64,12 +68,13 @@ export interface BuildProjectSeedArgs {
    */
   envPatterns?: string[];
   /**
-   * Cap for the untracked tar. Over this, the tar is dropped (env files and the
-   * manifest still go) — an oversized upload would fail the whole push, and a
-   * partial seed beats none. Mirrors `relay.custodyMaxBodyBytes`, minus room
-   * for base64 inflation.
+   * The control box's custody body cap (`relay.custodyMaxBodyBytes`). The
+   * untracked tar is dropped when it wouldn't fit (env + manifest still go) —
+   * an oversized upload would fail the whole push, and a partial seed beats
+   * none. Passing the effective config value is what makes raising that key
+   * actually admit a bigger seed. Defaults to the same 32 MiB the relay does.
    */
-  maxTarBytes?: number;
+  maxBodyBytes?: number;
   log?: (line: string) => void;
 }
 
@@ -80,8 +85,17 @@ export interface BuildProjectSeedResult {
   skippedTarBytes?: number;
 }
 
-/** 32 MiB cap, less ~33% base64 inflation and JSON overhead. */
-const DEFAULT_MAX_TAR_BYTES = 22 * 1024 * 1024;
+/** Mirrors the relay's own default custody body cap. */
+const DEFAULT_MAX_BODY_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Largest raw blob that still fits a `maxBodyBytes` custody PUT. The value is
+ * sent as base64 inside a JSON envelope, so it inflates by 4/3; the 0.7 factor
+ * is that plus headroom for the envelope itself.
+ */
+function maxBlobBytes(maxBodyBytes: number): number {
+  return Math.floor(maxBodyBytes * 0.7);
+}
 
 function sha256Hex(data: Buffer): string {
   return createHash('sha256').update(data).digest('hex');
@@ -95,7 +109,7 @@ export async function buildProjectSeed(
   args: BuildProjectSeedArgs,
 ): Promise<BuildProjectSeedResult> {
   const log = args.log ?? (() => {});
-  const maxTarBytes = args.maxTarBytes ?? DEFAULT_MAX_TAR_BYTES;
+  const maxTarBytes = maxBlobBytes(args.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES);
   const items: SeedItem[] = [];
   let skippedTarBytes: number | undefined;
 
@@ -112,17 +126,15 @@ export async function buildProjectSeed(
     }
   }
 
-  // Keep each file's path relative to the repo root (not just its basename):
-  // `.env` and `apps/web/.env` are different files, and the worker restores
-  // them where they belong.
+  // Each file keeps its repo-relative path (not just its basename): `.env` and
+  // `apps/web/.env` are different files, and the worker restores them where they
+  // belong. The tar carries the nesting — see the header for why they can't be
+  // per-file custody entries.
   const envRelPaths = args.envPatterns?.length
     ? await scanHostEnvFiles(args.projectRoot, args.envPatterns)
     : [];
-  for (const rel of envRelPaths) {
-    const data = await readFile(join(args.projectRoot, rel)).catch(() => null);
-    if (!data) continue;
-    items.push({ relPath: `env/${rel}`, data });
-  }
+  const envTar = await buildTarOf(args.projectRoot, envRelPaths);
+  if (envTar) items.push({ relPath: 'env.tar.gz', data: envTar });
 
   const manifest: SeedManifest = {
     version: 1,
@@ -159,13 +171,28 @@ async function buildUntrackedTar(repo: string): Promise<Buffer | null> {
     reject: false,
   });
   if (list.exitCode !== 0 || list.stdout.length === 0) return null;
-  const tar = await execa('tar', ['-C', repo, '--null', '-T', '-', '-cf', '-'], {
-    input: list.stdout,
+  return tarNulList(repo, list.stdout);
+}
+
+/** Tar `relPaths` (repo-relative) out of `repo`, or null when the list is empty. */
+async function buildTarOf(repo: string, relPaths: string[]): Promise<Buffer | null> {
+  if (relPaths.length === 0) return null;
+  return tarNulList(repo, relPaths.join('\0') + '\0');
+}
+
+/**
+ * Tar a NUL-delimited file list out of `dir`. NUL-delimited so spaces / quotes /
+ * newlines in filenames survive, and COPYFILE_DISABLE to suppress macOS
+ * AppleDouble sidecars.
+ */
+async function tarNulList(dir: string, nulList: string): Promise<Buffer | null> {
+  const tar = await execa('tar', ['-C', dir, '--null', '-T', '-', '-cf', '-'], {
+    input: nulList,
     env: { ...process.env, COPYFILE_DISABLE: '1' },
     encoding: 'buffer',
     reject: false,
-    // An untracked tree is normally small (ignored dirs are excluded), but
-    // don't let a pathological one blow up the host process.
+    // Normally small (ignored dirs are excluded), but don't let a pathological
+    // tree blow up the host process.
     maxBuffer: 256 * 1024 * 1024,
   });
   if (tar.exitCode !== 0) return null;
