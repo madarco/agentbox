@@ -42,13 +42,17 @@ export async function tryAutoAdopt(ref: string, cwd: string): Promise<BoxRecord 
     const target = await resolveCustodyTarget(undefined, { quiet: true });
     if (!target) return null;
 
-    const [{ adoptHubBox }, { ControlPlaneAdminClient }, { CustodyClient }, { hostReachable }] =
-      await Promise.all([
-        import('./hub-adopt.js'),
-        import('./admin-client.js'),
-        import('./custody-client.js'),
-        import('./hub-list.js'),
-      ]);
+    const [
+      { adoptHubBox },
+      { ControlPlaneAdminClient },
+      { CustodyClient },
+      { deadlineFetch, hostReachable },
+    ] = await Promise.all([
+      import('./hub-adopt.js'),
+      import('./admin-client.js'),
+      import('./custody-client.js'),
+      import('@agentbox/sandbox-cloud'),
+    ]);
     // ONE budget for the whole attempt, spent down by each step — not a fresh
     // timeout per step, which would let the worst case run to a multiple of the
     // documented ceiling.
@@ -80,10 +84,4 @@ export async function tryAutoAdopt(ref: string, cwd: string): Promise<BoxRecord 
     // mid-flight — all indistinguishable from "not a box" for the caller.
     return null;
   }
-}
-
-/** Wrap fetch so every request shares one deadline `signal`. */
-function deadlineFetch(signal: AbortSignal): typeof fetch {
-  return ((url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
-    fetch(url, { ...init, signal })) as typeof fetch;
 }

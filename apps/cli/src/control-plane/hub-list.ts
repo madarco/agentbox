@@ -17,10 +17,14 @@
  *     was destroyed from the hub, and the user should see the leftover.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { connect } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { BoxRegistration } from '@agentbox/relay';
+// One implementation, shared with the provider packages — see reachability.ts
+// for why a plain `fetch` can't be bounded here.
+import { deadlineFetch, hostReachable } from '@agentbox/sandbox-cloud';
+
+export { hostReachable };
 
 /** Bound on the control-box round-trip. `list` is interactive — never stall it. */
 const HUB_LIST_TIMEOUT_MS = 1500;
@@ -118,35 +122,6 @@ function remember(listing: HubListing): HubListing {
   return listing;
 }
 
-/** Wrap fetch so every request shares one deadline `signal`. */
-function deadlineFetch(signal: AbortSignal): typeof fetch {
-  return ((url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
-    fetch(url, { ...init, signal })) as typeof fetch;
-}
-
-/**
- * Whether `url`'s host accepts a TCP connection within `ms`. The socket is
- * always destroyed, so a down host leaves nothing holding the event loop.
- */
-export async function hostReachable(url: string, ms: number): Promise<boolean> {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return false;
-  }
-  const port = parsed.port ? Number(parsed.port) : parsed.protocol === 'http:' ? 80 : 443;
-  return new Promise<boolean>((resolve) => {
-    const socket = connect({ host: parsed.hostname, port });
-    const done = (ok: boolean) => {
-      socket.destroy();
-      resolve(ok);
-    };
-    socket.setTimeout(ms, () => done(false));
-    socket.once('connect', () => done(true));
-    socket.once('error', () => done(false));
-  });
-}
 
 async function writeCache(data: CacheFile): Promise<void> {
   const path = hubBoxesCachePath();

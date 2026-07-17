@@ -21,6 +21,10 @@
  */
 import { readPreparedStateRaw, writePreparedStateRaw } from '@agentbox/sandbox-core';
 import type { PreparedProviderKind } from '@agentbox/sandbox-core';
+import { deadlineFetch, hostReachable } from './reachability.js';
+
+/** Bound on a bake-record round-trip once the control box is known to be up. */
+const PREPARED_FETCH_MS = 10_000;
 
 /** The subset of `PreparedBaseSnapshot` this module reasons about. */
 interface PreparedRecord {
@@ -41,6 +45,18 @@ export function preparedCustodyPath(provider: PreparedProviderKind): string {
 }
 
 /**
+ * A deadline-bound fetch for the control box, or null when it isn't reachable.
+ *
+ * Bake sharing is best-effort and runs inside `prepare` — a down control box
+ * must not stall it. A caller-supplied `fetchImpl` (tests) is used as-is.
+ */
+async function reachableFetch(target: PreparedSyncTarget): Promise<typeof fetch | null> {
+  if (target.fetchImpl) return target.fetchImpl;
+  if (!(await hostReachable(target.controlPlaneUrl))) return null;
+  return deadlineFetch(AbortSignal.timeout(PREPARED_FETCH_MS));
+}
+
+/**
  * Upload this machine's bake record for `provider`. No-op when nothing is baked
  * locally. Hash-skipped by the store itself (`put` reports `changed`).
  * Best-effort: returns false rather than throwing.
@@ -52,7 +68,8 @@ export async function pushPreparedToCustody(
   const log = target.log ?? (() => {});
   const local = readPreparedStateRaw(provider) as PreparedRecord | null;
   if (!local?.base) return false;
-  const fetchImpl = target.fetchImpl ?? fetch;
+  const fetchImpl = await reachableFetch(target);
+  if (!fetchImpl) return false;
   const url = `${target.controlPlaneUrl.replace(/\/+$/, '')}/admin/custody/${preparedCustodyPath(provider)}`;
   try {
     const res = await fetchImpl(url, {
@@ -98,7 +115,8 @@ export async function pullPreparedFromCustody(
 ): Promise<PullPreparedResult> {
   const log = target.log ?? (() => {});
   if (!currentFingerprint) return { adopted: false };
-  const fetchImpl = target.fetchImpl ?? fetch;
+  const fetchImpl = await reachableFetch(target);
+  if (!fetchImpl) return { adopted: false };
   const url = `${target.controlPlaneUrl.replace(/\/+$/, '')}/admin/custody/${preparedCustodyPath(provider)}`;
   try {
     const res = await fetchImpl(url, {

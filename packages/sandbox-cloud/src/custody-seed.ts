@@ -32,6 +32,10 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { execa } from 'execa';
 import { scanHostEnvFiles } from '@agentbox/sandbox-core';
+import { deadlineFetch, hostReachable } from './reachability.js';
+
+/** Bound on the seed upload once the control box is known to be up. */
+const SEED_PUSH_MS = 120_000;
 
 /** One captured file, as recorded in the manifest. */
 export interface SeedManifestFile {
@@ -243,9 +247,21 @@ export async function pushProjectSeedToCustody(
   args: PushProjectSeedArgs,
 ): Promise<PushProjectSeedResult> {
   const log = args.log ?? (() => {});
+  // Probe before building anything: the push is best-effort and runs inside
+  // create, so a down control box must not stall it on undici's ~10s connect
+  // timeout (see reachability.ts). A caller-supplied fetch (tests) is used as-is.
+  const fetchImpl =
+    args.fetchImpl ??
+    ((await hostReachable(args.controlPlaneUrl))
+      ? deadlineFetch(AbortSignal.timeout(SEED_PUSH_MS))
+      : null);
+  if (!fetchImpl) {
+    log('seed: control box unreachable — skipping the seed push');
+    const empty = await buildProjectSeed({ ...args, envPatterns: undefined });
+    return { uploaded: 0, skipped: 0, manifest: empty.manifest, envFiles: [], dropped: [] };
+  }
   const built = await buildProjectSeed(args);
   const prefix = `projects/${args.slug}/seed`;
-  const fetchImpl = args.fetchImpl ?? fetch;
   const base = args.controlPlaneUrl.replace(/\/+$/, '');
   const headers = {
     'Content-Type': 'application/json',

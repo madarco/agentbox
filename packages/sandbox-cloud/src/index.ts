@@ -15,6 +15,7 @@ export {
   type RegisterBoxWithPlaneArgs,
 } from './plane-register.js';
 export { pushBoxSshToCustody, type PushBoxSshArgs } from './custody-ssh.js';
+export { deadlineFetch, hostReachable, DEFAULT_REACHABLE_PROBE_MS } from './reachability.js';
 export {
   preparedCustodyPath,
   pullPreparedFromCustody,
