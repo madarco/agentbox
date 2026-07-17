@@ -211,12 +211,26 @@ function mapBox(b: ListedBox): Box {
  * no local record to drive them yet.
  */
 /**
- * The synthetic project a registered box groups under. A PC box has no local
- * project root on this VPS, so it groups by its repo identity. The box row and
- * this project MUST share the id, or the dashboard counts the box but renders it
+ * The synthetic project a registered box groups under. The box row and this
+ * project MUST share the id, or the dashboard counts the box but renders it
  * under no project card (it groups strictly by `projectId`).
+ *
+ * Keyed by the box's HOST FOLDER (`worktrees[].hostMainRepo`, the PC path the
+ * box was created from) — the same key `agentbox ls` uses locally
+ * (`hashProjectPath(projectRoot)`). So a PC box groups by its folder, not its
+ * repo: two folders that share a git origin stay separate (matching the local
+ * model), and the id matches the box's own local project, so adopting it on the
+ * PC lands it in the same card rather than a duplicate.
+ *
+ * Falls back to the repo identity only when there's no host folder (e.g. a
+ * hub-worker box whose temp clone was deleted — those normally render from
+ * local state, not here).
  */
 function registrationProjectKey(reg: BoxRegistration): { id: string; repo: string } {
+  const hostFolder = reg.worktrees?.[0]?.hostMainRepo;
+  if (hostFolder && hostFolder.startsWith('/')) {
+    return { id: hashProjectPath(hostFolder), repo: path.basename(hostFolder) };
+  }
   const repo = reg.projectSlug ?? (reg.originUrl ? deriveRepoLabel(reg.originUrl) : reg.name);
   return { id: hashProjectPath(repo), repo };
 }
