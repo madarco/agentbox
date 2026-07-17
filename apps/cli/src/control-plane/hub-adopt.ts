@@ -27,6 +27,7 @@ import type { BoxRegistration } from '@agentbox/relay';
 import type { CustodyClient } from './custody-client.js';
 import type { ControlPlaneAdminClient } from './admin-client.js';
 import { downloadBoxSshKeys } from './hub-pull.js';
+import { matchRegistration } from './match-ref.js';
 
 /** Box user on every cloud provider's image (the agent never runs as root). */
 const BOX_SSH_USER = 'vscode';
@@ -128,27 +129,6 @@ async function matchLocalProject(
   return undefined;
 }
 
-/**
- * Resolve a ref against the control box's registry using the SAME rules the
- * local resolver uses (`findBox`): exact id / name / sandbox id, then a UNIQUE
- * id-or-sandbox-id prefix. Without the prefix arm, a shortened ref that works
- * for a local box mysteriously fails for a hub-only one.
- *
- * An ambiguous prefix resolves to nothing rather than picking one: adoption
- * writes state and the caller then runs a command against the box, so guessing
- * wrong is worse than not matching.
- */
-export function matchRegistration(
-  regs: BoxRegistration[],
-  ref: string,
-): BoxRegistration | undefined {
-  const exact = regs.find((r) => r.boxId === ref || r.name === ref || r.sandboxId === ref);
-  if (exact) return exact;
-  const byPrefix = regs.filter(
-    (r) => r.boxId.startsWith(ref) || r.sandboxId?.startsWith(ref) === true,
-  );
-  return byPrefix.length === 1 ? byPrefix[0] : undefined;
-}
 
 /**
  * Rebuild a local `BoxRecord` from a control-box registration, download the

@@ -99,6 +99,27 @@ describe('pullBoxSshKeys', () => {
     expect(res.files).toEqual(['id_ed25519']);
   });
 
+  it('resolves the same refs adoption does (sandbox id, unique prefix)', async () => {
+    // Regression: pull exact-matched while adopt also took a prefix, so a ref
+    // adopt accepted could make pull miss the registration, lose `provider`, and
+    // write the keys under the raw ref instead of the box's sandbox id.
+    const fetchImpl = fakeControlBox({
+      boxes: [{ boxId: 'a1b2c3', name: 'pref', backend: 'hetzner', sandboxId: 'sb-77' }],
+      custody: { 'boxes/sb-77/ssh/id_ed25519': 'K' },
+    });
+    const target = { url: 'http://cb.test', adminToken: 'admin', fetchImpl };
+    for (const ref of ['sb-77', 'a1b2']) {
+      const res = await pullBoxSshKeys({
+        admin: new ControlPlaneAdminClient(target),
+        custody: new CustodyClient(target),
+        box: ref,
+      });
+      expect(res.registered, ref).toBe(true);
+      expect(res.key, ref).toBe('sb-77');
+      expect(res.files, ref).toEqual(['id_ed25519']);
+    }
+  });
+
   it('reports no files for an unregistered / keyless box', async () => {
     const fetchImpl = fakeControlBox({ boxes: [], custody: {} });
     const target = { url: 'http://cb.test', adminToken: 'admin', fetchImpl };
