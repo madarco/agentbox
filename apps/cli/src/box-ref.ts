@@ -17,6 +17,12 @@ interface ResolveOptions {
    * not whatever shell dir the user happened to be in.
    */
   cwd?: string;
+  /**
+   * Internal: the caller already ran `tryAutoAdopt` for this ref and it missed,
+   * so don't spend the adoption budget on it a second time. Set only by
+   * `resolveBoxOrShift`, which must adopt before deciding whether to shift.
+   */
+  adoptAttempted?: boolean;
 }
 
 /**
@@ -79,8 +85,9 @@ export async function resolveBoxOrShift(
     }
   }
 
-  // Same error path as resolveBoxOrExit.
-  const box = await resolveBoxOrExit(ref, opts);
+  // Same error path as resolveBoxOrExit — but we already spent the adoption
+  // budget on this ref above, so don't let it try again.
+  const box = await resolveBoxOrExit(ref, { ...opts, adoptAttempted: ref !== undefined });
   return { box, shifted: false };
 }
 
@@ -132,7 +139,10 @@ export async function resolveBoxOrExit(
   // hetzner server id / DigitalOcean droplet id, and those ARE valid hub refs.
   // Bailing to the index error first made `attach <sandboxId>` unusable for
   // exactly the providers whose ids are numbers.
-  const adopted = await tryAutoAdopt(ref, cwd);
+  //
+  // `adoptAttempted` means our caller already tried and missed; re-running it
+  // here would spend the adoption budget twice for one command.
+  const adopted = opts.adoptAttempted ? null : await tryAutoAdopt(ref, cwd);
   if (adopted) {
     log.info(`adopted ${adopted.name} from the control box`);
     return adopted;
