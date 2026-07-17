@@ -19,7 +19,7 @@
  * is unit-testable with fake clients + a temp HOME, mirroring `hub-pull.ts`.
  */
 import { execa } from 'execa';
-import { generateBoxId, type BoxRecord, type GitWorktreeRecord } from '@agentbox/core';
+import type { BoxRecord, GitWorktreeRecord } from '@agentbox/core';
 import { boxSshDirForProvider, readState } from '@agentbox/sandbox-core';
 import { generateRelayToken, recordBox } from '@agentbox/sandbox-docker';
 import { allocateProjectIndex } from '@agentbox/sandbox-core';

@@ -3,7 +3,7 @@ import { rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 
 // Redirect HOME before importing anything that resolves ~/.agentbox — apps/cli
 // tests otherwise share the REAL home (see project memory), and adoption writes
