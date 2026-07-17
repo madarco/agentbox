@@ -7,8 +7,12 @@ import { hostname, homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { findProjectRoot, loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox/config';
-import { DEFAULT_ENV_PATTERNS } from '@agentbox/sandbox-core';
-import { pushPreparedToCustody, pushProjectSeedToCustody } from '@agentbox/sandbox-cloud';
+import { DEFAULT_ENV_PATTERNS, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
+import {
+  pushPreparedToCustody,
+  pushProjectSeedToCustody,
+  readGitOriginUrl,
+} from '@agentbox/sandbox-cloud';
 import {
   drainCreateJobs,
   GitHubAppLeaser,
@@ -517,11 +521,23 @@ export async function resolveCustodyTarget(
   return { url, adminToken };
 }
 
-/** Slug a project into a custody `projects/<slug>` key: `owner__repo`, else the dir name. */
+/**
+ * Slug a project into a custody `projects/<slug>` key: `owner__repo`, else the
+ * dir name.
+ *
+ * Delegates to the shared `projectSlugFromOriginUrl` — every producer and
+ * consumer of the `projects/<slug>` scope MUST derive the same key from the same
+ * origin, and a second local implementation is exactly how they drift apart. (It
+ * did: this used to take the *first* two path segments unsanitized, while the
+ * create path and the hub worker take the last two and sanitize — so for a
+ * nested remote like `gitlab.com/group/subgroup/repo` a push landed under
+ * `group__subgroup` while the worker looked in `subgroup__repo`.)
+ */
 async function projectSlug(explicit: string | undefined, projectRoot: string): Promise<string> {
   if (explicit) return explicit.replace(/[^A-Za-z0-9._-]/g, '-');
-  const ownerRepo = await resolveOwnerRepo(projectRoot);
-  if (ownerRepo) return `${ownerRepo.owner}__${ownerRepo.repo}`;
+  const origin = await readGitOriginUrl(projectRoot).catch(() => undefined);
+  const slug = origin ? projectSlugFromOriginUrl(origin) : null;
+  if (slug) return slug;
   return basename(projectRoot).replace(/[^A-Za-z0-9._-]/g, '-') || 'project';
 }
 

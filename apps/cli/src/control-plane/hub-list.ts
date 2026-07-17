@@ -58,6 +58,11 @@ export async function fetchHubListing(): Promise<HubListing | null> {
   const target = await resolveCustodyTarget(undefined, { quiet: true });
   if (!target) return null;
 
+  // ONE budget for the whole lookup, spent down by each step — `list` is
+  // interactive, so the ceiling has to cover probe + fetch together, not apply
+  // to each of them.
+  const deadline = Date.now() + HUB_LIST_TIMEOUT_MS;
+  const remaining = (): number => deadline - Date.now();
   try {
     // Probe the host before fetching. This is not an optimization: an
     // unreachable control box must not delay `list`, and a `fetch` cannot be
@@ -65,18 +70,18 @@ export async function fetchHubListing(): Promise<HubListing | null> {
     // undici holds the connecting socket until its own 10s connectTimeout,
     // which keeps the CLI's event loop (and the user's shell) alive long after
     // the table has printed. A socket we open ourselves, we can destroy.
-    if (await hostReachable(target.url, HUB_LIST_TIMEOUT_MS)) {
+    if ((await hostReachable(target.url, remaining())) && remaining() > 0) {
       const { ControlPlaneAdminClient } = await import('./admin-client.js');
       const admin = new ControlPlaneAdminClient({
         ...target,
-        fetchImpl: abortableFetch(HUB_LIST_TIMEOUT_MS),
+        fetchImpl: deadlineFetch(AbortSignal.timeout(remaining())),
       });
-      const registrations = await withTimeout(admin.listBoxes(), HUB_LIST_TIMEOUT_MS);
-      if (registrations) {
-        const fetchedAt = new Date().toISOString();
-        await writeCache({ version: 1, fetchedAt, registrations }).catch(() => {});
-        return { registrations, stale: false, fetchedAt };
-      }
+      // No race-and-walk-away: the signal aborts the request at the deadline,
+      // so a slow control box throws here and we fall through to the cache.
+      const registrations = await admin.listBoxes();
+      const fetchedAt = new Date().toISOString();
+      await writeCache({ version: 1, fetchedAt, registrations }).catch(() => {});
+      return { registrations, stale: false, fetchedAt };
     }
   } catch {
     // fall through to the cache
@@ -88,10 +93,10 @@ export async function fetchHubListing(): Promise<HubListing | null> {
   return { registrations: cached.registrations, stale: true, fetchedAt: cached.fetchedAt };
 }
 
-/** Wrap fetch so every request carries a hard `ms` abort deadline. */
-function abortableFetch(ms: number): typeof fetch {
+/** Wrap fetch so every request shares one deadline `signal`. */
+function deadlineFetch(signal: AbortSignal): typeof fetch {
   return ((url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
-    fetch(url, { ...init, signal: AbortSignal.timeout(ms) })) as typeof fetch;
+    fetch(url, { ...init, signal })) as typeof fetch;
 }
 
 /**
@@ -146,18 +151,3 @@ export function cacheAge(fetchedAt: string, now = Date.now()): string {
   return `${String(Math.floor(hours / 24))}d ago`;
 }
 
-/** Resolve to null if `p` hasn't settled within `ms`. */
-async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      p,
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), ms);
-        timer.unref?.();
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}

@@ -25,7 +25,11 @@ export function ownerRepoFromOriginUrl(
     path = scp[1]!;
   } else {
     try {
-      path = new URL(url).pathname;
+      // Decode: `new URL` percent-encodes the path, while the scp-like branch
+      // above doesn't. Without this, the same repo spelled two ways yields two
+      // different slugs (`re%20po` -> `re-20po` vs `re po` -> `re-po`) — which
+      // is exactly the drift this shared helper exists to prevent.
+      path = safeDecode(new URL(url).pathname);
     } catch {
       return null;
     }
@@ -39,6 +43,15 @@ export function ownerRepoFromOriginUrl(
   const repo = segments[segments.length - 1]!;
   if (owner.length === 0 || repo.length === 0) return null;
   return { owner, repo };
+}
+
+/** `decodeURIComponent`, falling back to the raw value on a malformed escape. */
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
 }
 
 /** Custody `projects/<slug>` key for an origin URL: `owner__repo`, or null. */

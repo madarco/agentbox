@@ -39,52 +39,41 @@ export async function tryAutoAdopt(ref: string, cwd: string): Promise<BoxRecord 
         import('./custody-client.js'),
         import('./hub-list.js'),
       ]);
+    // ONE budget for the whole attempt, spent down by each step — not a fresh
+    // timeout per step, which would let the worst case run to a multiple of the
+    // documented ceiling.
+    const deadline = Date.now() + ADOPT_TIMEOUT_MS;
+    const remaining = (): number => deadline - Date.now();
+
     // See hub-list.ts: a fetch to an unreachable host can't be cancelled and
     // would hold the process open past the deadline. Probe with a socket we own.
-    if (!(await hostReachable(target.url, ADOPT_TIMEOUT_MS))) return null;
+    if (!(await hostReachable(target.url, remaining()))) return null;
+    if (remaining() <= 0) return null;
 
-    // Abort on the deadline rather than just losing the race: an un-awaited
-    // fetch to an unreachable host holds its socket open and would keep the
-    // whole command alive well past the timeout.
-    const clientTarget = {
-      ...target,
-      fetchImpl: abortableFetch(ADOPT_TIMEOUT_MS),
-    };
-    const adopt = adoptHubBox({
+    // One signal shared by every request, so the budget bounds the whole
+    // adoption rather than each request separately. Aborting — rather than
+    // racing and walking away — also means we never abandon an adoption that
+    // then completes and writes state.json behind our back, which would surface
+    // as "no box matches <ref>" for a box that now exists locally.
+    const signal = AbortSignal.timeout(remaining());
+    const clientTarget = { ...target, fetchImpl: deadlineFetch(signal) };
+    const res = await adoptHubBox({
       admin: new ControlPlaneAdminClient(clientTarget),
       custody: new CustodyClient(clientTarget),
       ref,
       controlPlaneUrl: target.url,
       cwd,
     });
-    const res = await withTimeout(adopt, ADOPT_TIMEOUT_MS);
-    return res?.record ?? null;
+    return res.record;
   } catch {
-    // Unknown ref, unreachable control box, bad token — all indistinguishable
-    // from "not a box" for the caller's purposes.
+    // Unknown ref, unreachable control box, bad token, or the budget running out
+    // mid-flight — all indistinguishable from "not a box" for the caller.
     return null;
   }
 }
 
-/** Wrap fetch so every request carries a hard `ms` abort deadline. */
-function abortableFetch(ms: number): typeof fetch {
+/** Wrap fetch so every request shares one deadline `signal`. */
+function deadlineFetch(signal: AbortSignal): typeof fetch {
   return ((url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
-    fetch(url, { ...init, signal: AbortSignal.timeout(ms) })) as typeof fetch;
-}
-
-/** Resolve to null if `p` hasn't settled within `ms`. */
-async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      p,
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), ms);
-        // Don't hold the process open for the loser of the race.
-        timer.unref?.();
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+    fetch(url, { ...init, signal })) as typeof fetch;
 }
