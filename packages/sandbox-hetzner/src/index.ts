@@ -27,7 +27,7 @@ const cloudProvider = createCloudProvider(hetznerBackend, {
 export const hetznerProvider: Provider = {
   ...cloudProvider,
   prepare: prepareHetznerProvider,
-  baseFingerprint: () => currentHetznerBaseFingerprintLive(),
+  baseFingerprint: (claudeInstall) => currentHetznerBaseFingerprintLive(claudeInstall),
 };
 
 /** Uniform surface the CLI provider loader resolves this package through. */

@@ -154,7 +154,7 @@ export const e2bProvider: Provider = {
   prepare: prepareE2bProvider,
   buildAttach: buildE2bAttach,
   checkpoint: e2bCheckpoint,
-  baseFingerprint: () => currentE2bBaseFingerprintLive(),
+  baseFingerprint: (claudeInstall) => currentE2bBaseFingerprintLive(claudeInstall),
 };
 
 /** Uniform surface the CLI provider loader resolves this package through. */
