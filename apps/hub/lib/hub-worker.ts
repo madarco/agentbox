@@ -28,6 +28,7 @@ import {
   type Store,
 } from '@agentbox/relay/control-plane';
 import { AGENT_SYNC_SPECS, boxSshDirForProvider, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
+import { applyProjectSeed } from '@agentbox/sandbox-cloud';
 import type { ProviderModule } from '@agentbox/sandbox-core';
 
 const execFileAsync = promisify(execFile);
@@ -140,40 +141,15 @@ async function applySeedFromCustody(
 ): Promise<{ files: number; capturedAt?: string; repoHeadSha?: string } | null> {
   const slug = projectSlugFromOriginUrl(repoUrl);
   if (!slug) return null;
-  const prefix = `projects/${slug}/seed`;
-  const entries = await custody.list(prefix).catch(() => []);
-  if (entries.length === 0) return null;
-
-  let manifest: { createdAt?: string; repoHeadSha?: string } = {};
-  const found = await custody.get(`${prefix}/manifest.json`).catch(() => null);
-  if (found) {
-    try {
-      manifest = JSON.parse(found.data.toString('utf8')) as typeof manifest;
-    } catch {
-      // A corrupt manifest costs us only the staleness line in the log.
-    }
-  }
-
-  // Both blobs extract the same way, with the same clone-wins rule.
-  let files = 0;
-  for (const name of ['untracked.tar.gz', 'env.tar.gz']) {
-    const blob = await custody.get(`${prefix}/${name}`).catch(() => null);
-    if (!blob) continue;
-    const tmp = join(tmpdir(), `agentbox-seed-${Date.now().toString(36)}-${name}`);
-    try {
-      await writeFile(tmp, blob.data);
-      await execFileAsync('tar', ['-C', dest, '-xzf', tmp, '--keep-old-files']);
-      files += 1;
-    } catch (err) {
-      // `--keep-old-files` makes GNU tar exit non-zero on a collision even
-      // though it did the right thing (kept the clone's copy), so a failure
-      // here is not necessarily fatal — the box may just lack some seed files.
-      log(`seed: ${name} partially applied: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      await rm(tmp, { force: true }).catch(() => {});
-    }
-  }
-  return { files, capturedAt: manifest.createdAt, repoHeadSha: manifest.repoHeadSha };
+  // The hub IS the custody host, so it reads the store directly rather than
+  // over HTTP. The overlay itself is shared with the laptop worker.
+  return applyProjectSeed({
+    source: {
+      get: async (rel) => (await custody.get(`projects/${slug}/seed/${rel}`))?.data ?? null,
+    },
+    dest,
+    log,
+  });
 }
 
 /**

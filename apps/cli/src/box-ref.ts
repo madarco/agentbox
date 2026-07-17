@@ -53,6 +53,15 @@ export async function resolveBoxOrShift(
   if (firstTry.kind === 'ok') return { box: firstTry.box, shifted: false };
 
   if (ref !== undefined) {
+    // An explicit ref that names a real control-box box is unambiguous — adopt
+    // it BEFORE considering the shift. Otherwise, in a project with exactly one
+    // local box, `agentbox claude <hub-box>` would silently launch the agent in
+    // that local box and treat the hub box's name as a stray argument.
+    const adopted = await tryAutoAdopt(ref, cwd);
+    if (adopted) {
+      log.info(`adopted ${adopted.name} from the control box`);
+      return { box: adopted, shifted: false };
+    }
     // Maybe commander bound a post-`--` token to [box]; try auto-pick.
     const pick = resolveBoxRef(undefined, state, project.root);
     if (pick.kind === 'ok') return { box: pick.box, shifted: true };

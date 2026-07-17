@@ -1,10 +1,10 @@
 import { mkdtempSync, realpathSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { afterAll, describe, expect, it } from 'vitest';
-import { buildProjectSeed, pushProjectSeedToCustody } from '../src/custody-seed.js';
+import { applyProjectSeed, buildProjectSeed, pushProjectSeedToCustody } from '../src/custody-seed.js';
 
 const scratch: string[] = [];
 afterAll(async () => {
@@ -136,6 +136,45 @@ describe('buildProjectSeed', () => {
     const res = await buildProjectSeed({ projectRoot: dir });
     expect(res.items).toEqual([]);
     expect(res.manifest.files).toEqual([]);
+  });
+});
+
+describe('applyProjectSeed', () => {
+  /** A seed source backed by an in-memory map of relPath -> bytes. */
+  function source(blobs: Record<string, Buffer>) {
+    return { get: (rel: string) => Promise.resolve(blobs[rel] ?? null) };
+  }
+
+  it('overlays untracked + env tars onto a clone, and the clone wins on conflicts', async () => {
+    const repo = await makeRepo();
+    await writeFile(join(repo, 'apps-conflict.txt'), 'SEED VERSION');
+    const built = await buildProjectSeed({ projectRoot: repo, envPatterns: ['.env'] });
+    const blobs: Record<string, Buffer> = {};
+    for (const i of built.items) blobs[i.relPath] = i.data;
+    blobs['manifest.json'] = Buffer.from(JSON.stringify(built.manifest), 'utf8');
+
+    // A "fresh clone" that already has one of the seeded paths, committed since.
+    const clone = realpathSync(mkdtempSync(join(tmpdir(), 'agentbox-seed-clone-')));
+    scratch.push(clone);
+    await writeFile(join(clone, 'apps-conflict.txt'), 'CLONE VERSION');
+
+    const res = await applyProjectSeed({ source: source(blobs), dest: clone });
+
+    expect(res?.files).toBe(2); // untracked.tar.gz + env.tar.gz
+    expect(res?.repoHeadSha).toBe(built.manifest.repoHeadSha);
+    // Seed files the clone lacks are restored...
+    expect(await readFile(join(clone, 'scratch-notes.md'), 'utf8')).toBe('local notes');
+    expect(await readFile(join(clone, '.env'), 'utf8')).toBe('API_KEY=shh');
+    // ...but a path the clone already provides keeps the repo's version: a file
+    // committed since the seed was captured must not be reverted to a stale copy.
+    expect(await readFile(join(clone, 'apps-conflict.txt'), 'utf8')).toBe('CLONE VERSION');
+  });
+
+  it('is a no-op when the project has no seed', async () => {
+    const clone = realpathSync(mkdtempSync(join(tmpdir(), 'agentbox-seed-noseed-')));
+    scratch.push(clone);
+    // No manifest => nothing was ever pushed for this project.
+    expect(await applyProjectSeed({ source: source({}), dest: clone })).toBeNull();
   });
 });
 

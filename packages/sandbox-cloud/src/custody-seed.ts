@@ -26,6 +26,9 @@
  * create in front of the user.
  */
 import { createHash } from 'node:crypto';
+import { rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { execa } from 'execa';
 import { scanHostEnvFiles } from '@agentbox/sandbox-core';
@@ -320,6 +323,68 @@ export async function pushProjectSeedToCustody(
     envFiles: built.envFiles,
     dropped,
   };
+}
+
+/** Fetches a seed blob by its path relative to `projects/<slug>/seed/`. */
+export interface SeedSource {
+  get(relPath: string): Promise<Buffer | null>;
+}
+
+export interface ApplyProjectSeedResult {
+  /** Number of seed tarballs applied. */
+  files: number;
+  capturedAt?: string;
+  repoHeadSha?: string;
+}
+
+/**
+ * Overlay a project's seed material onto a fresh clone at `dest`.
+ *
+ * Shared by every create worker — the resident hub worker (which reads its own
+ * custody store directly) and the laptop `control-plane worker` (which reads it
+ * over HTTP) — so both apply the same rules. The blob source is injected
+ * precisely so neither has to reimplement this.
+ *
+ * Conflict rule: **the clone wins**. A file that was untracked when the seed was
+ * captured but has since been committed exists in both; the repo's version is
+ * the current truth, and restoring a months-old copy over it would silently
+ * revert work. `tar --keep-old-files` leaves existing paths alone.
+ */
+export async function applyProjectSeed(args: {
+  source: SeedSource;
+  /** Absolute path of the fresh checkout to overlay onto. */
+  dest: string;
+  log?: (line: string) => void;
+}): Promise<ApplyProjectSeedResult | null> {
+  const log = args.log ?? (() => {});
+  const manifestBlob = await args.source.get('manifest.json').catch(() => null);
+  if (!manifestBlob) return null;
+  let manifest: { createdAt?: string; repoHeadSha?: string } = {};
+  try {
+    manifest = JSON.parse(manifestBlob.toString('utf8')) as typeof manifest;
+  } catch {
+    // A corrupt manifest costs only the staleness line in the log.
+  }
+
+  let files = 0;
+  for (const name of ['untracked.tar.gz', 'env.tar.gz']) {
+    const blob = await args.source.get(name).catch(() => null);
+    if (!blob) continue;
+    const tmp = join(tmpdir(), `agentbox-seed-${process.pid}-${Date.now().toString(36)}-${name}`);
+    try {
+      await writeFile(tmp, blob);
+      await execa('tar', ['-C', args.dest, '-xzf', tmp, '--keep-old-files']);
+      files += 1;
+    } catch (err) {
+      // `--keep-old-files` makes GNU tar exit non-zero on a collision even
+      // though it did the right thing (kept the clone's copy), so this is not
+      // necessarily fatal — the box may just lack some seed files.
+      log(`seed: ${name} partially applied: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      await rm(tmp, { force: true }).catch(() => {});
+    }
+  }
+  return { files, capturedAt: manifest.createdAt, repoHeadSha: manifest.repoHeadSha };
 }
 
 function encodeCustodyPath(path: string): string {

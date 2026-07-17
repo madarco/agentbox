@@ -9,6 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { findProjectRoot, loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox/config';
 import { DEFAULT_ENV_PATTERNS, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
 import {
+  applyProjectSeed,
   pushPreparedToCustody,
   pushProjectSeedToCustody,
   readGitOriginUrl,
@@ -469,6 +470,23 @@ const workerSub = new Command('worker')
             onLog,
           });
           return { id: created.record.id };
+        },
+        // Overlay the project's custody seed onto the clone, exactly as the
+        // resident hub worker does — without this, boxes drained by THIS worker
+        // come up missing the untracked files + env material the seed exists to
+        // provide. Unlike the hub, this worker is not the custody host, so it
+        // reads the blobs over HTTP.
+        fetchSeedMaterial: async (repoUrl, dest) => {
+          const target = await resolveCustodyTarget(undefined, { quiet: true });
+          if (!target) return null;
+          const slug = projectSlugFromOriginUrl(repoUrl);
+          if (!slug) return null;
+          const client = new CustodyClient(target);
+          return applyProjectSeed({
+            source: { get: (rel) => client.get(`projects/${slug}/seed/${rel}`) },
+            dest,
+            log: (line) => process.stdout.write(`agentbox-cp-worker: ${line}\n`),
+          });
         },
         tmpDir: (jobId) => join(tmpdir(), `agentbox-cp-worker-${jobId}`),
         cleanup: (dir) => rm(dir, { recursive: true, force: true }),

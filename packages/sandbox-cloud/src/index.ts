@@ -23,8 +23,11 @@ export {
   type PullPreparedResult,
 } from './prepared-sync.js';
 export {
+  applyProjectSeed,
   buildProjectSeed,
   pushProjectSeedToCustody,
+  type ApplyProjectSeedResult,
+  type SeedSource,
   type BuildProjectSeedArgs,
   type BuildProjectSeedResult,
   type PushProjectSeedArgs,
