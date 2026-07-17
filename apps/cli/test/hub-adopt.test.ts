@@ -314,6 +314,30 @@ describe('adoptHubBox', () => {
     expect(res.record.name).toBe('named');
   });
 
+  it('resolves a unique id prefix, like the local resolver does', async () => {
+    // Regression: local `findBox` accepts a unique id prefix, so a shortened ref
+    // that works for a local box must not mysteriously fail for a hub-only one.
+    const fetchImpl = fakeControlBox({
+      boxes: [{ boxId: 'a1b2c3d4', name: 'prefixed', backend: 'e2b', sandboxId: 'sb-1' }],
+    });
+    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'a1b2', cwd: TEST_HOME });
+    expect(res.record.name).toBe('prefixed');
+  });
+
+  it('refuses an ambiguous prefix rather than adopting the wrong box', async () => {
+    // Adoption writes state and the caller then runs a command against the box,
+    // so guessing between two matches is worse than not matching.
+    const fetchImpl = fakeControlBox({
+      boxes: [
+        { boxId: 'a1b000', name: 'one', backend: 'e2b', sandboxId: 'sb-1' },
+        { boxId: 'a1b999', name: 'two', backend: 'e2b', sandboxId: 'sb-2' },
+      ],
+    });
+    await expect(
+      adoptHubBox({ ...clients(fetchImpl), ref: 'a1b', cwd: TEST_HOME }),
+    ).rejects.toBeInstanceOf(HubBoxNotFoundError);
+  });
+
   it('throws HubBoxNotFoundError for a ref the control box does not know', async () => {
     const fetchImpl = fakeControlBox({ boxes: [] });
     await expect(

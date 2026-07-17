@@ -128,9 +128,26 @@ async function matchLocalProject(
   return undefined;
 }
 
-/** Match a ref against a registration by box id, name, or sandbox id. */
-function matchesRef(reg: BoxRegistration, ref: string): boolean {
-  return reg.boxId === ref || reg.name === ref || reg.sandboxId === ref;
+/**
+ * Resolve a ref against the control box's registry using the SAME rules the
+ * local resolver uses (`findBox`): exact id / name / sandbox id, then a UNIQUE
+ * id-or-sandbox-id prefix. Without the prefix arm, a shortened ref that works
+ * for a local box mysteriously fails for a hub-only one.
+ *
+ * An ambiguous prefix resolves to nothing rather than picking one: adoption
+ * writes state and the caller then runs a command against the box, so guessing
+ * wrong is worse than not matching.
+ */
+export function matchRegistration(
+  regs: BoxRegistration[],
+  ref: string,
+): BoxRegistration | undefined {
+  const exact = regs.find((r) => r.boxId === ref || r.name === ref || r.sandboxId === ref);
+  if (exact) return exact;
+  const byPrefix = regs.filter(
+    (r) => r.boxId.startsWith(ref) || r.sandboxId?.startsWith(ref) === true,
+  );
+  return byPrefix.length === 1 ? byPrefix[0] : undefined;
 }
 
 /**
@@ -146,7 +163,7 @@ export async function adoptHubBox(args: HubAdoptArgs): Promise<HubAdoptResult> {
   const cwd = args.cwd ?? process.cwd();
 
   const registrations = await args.admin.listBoxes();
-  const reg = registrations.find((r) => matchesRef(r, args.ref));
+  const reg = matchRegistration(registrations, args.ref);
   if (!reg) throw new HubBoxNotFoundError(args.ref);
 
   const provider = reg.backend ?? 'docker';
