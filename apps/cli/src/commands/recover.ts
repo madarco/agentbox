@@ -48,6 +48,12 @@ import { resolveCustodyTarget } from './control-plane.js';
 import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
 import { pullBoxSshKeys } from '../control-plane/hub-pull.js';
+import { hostReachable } from '../control-plane/hub-list.js';
+
+/** Is the control box up? A live host answers in milliseconds. */
+const CUSTODY_PROBE_MS = 1500;
+/** Bound on the key download itself, once the host is known to be up. */
+const CUSTODY_PULL_MS = 10_000;
 
 interface RecoverOpts {
   all?: boolean;
@@ -96,9 +102,19 @@ async function tryPullKeyFromCustody(box: BoxRecord): Promise<boolean> {
   try {
     const target = await resolveCustodyTarget(undefined, { quiet: true });
     if (!target) return false;
+    // Probe + bound exactly like the other control-box calls: an unreachable
+    // host can't be cancelled mid-connect (undici holds the socket for ~10s),
+    // and `recover --all` would pay that for every Hetzner box in state.
+    if (!(await hostReachable(target.url, CUSTODY_PROBE_MS))) return false;
+    const signal = AbortSignal.timeout(CUSTODY_PULL_MS);
+    const clientTarget = {
+      ...target,
+      fetchImpl: ((url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
+        fetch(url, { ...init, signal })) as typeof fetch,
+    };
     await pullBoxSshKeys({
-      admin: new ControlPlaneAdminClient(target),
-      custody: new CustodyClient(target),
+      admin: new ControlPlaneAdminClient(clientTarget),
+      custody: new CustodyClient(clientTarget),
       box: box.cloud?.sandboxId ?? box.name,
     });
     return !(await hetznerKeyMissing(box));

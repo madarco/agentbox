@@ -18,6 +18,16 @@ import type { BoxRecord } from '@agentbox/core';
 const ADOPT_TIMEOUT_MS = 4000;
 
 /**
+ * Bound on the "is the control box even up?" probe, which is deliberately much
+ * tighter than the adopt budget: a TCP connect to a live host takes
+ * milliseconds, so anything slower means it's effectively down. This is what a
+ * DOWN control box costs, and `resolveBoxOrShift` runs it on tokens that are
+ * usually a shell command (`agentbox shell npm run dev`) — spending the full
+ * adopt budget there would make a routine command feel broken.
+ */
+const REACHABLE_PROBE_MS = 1500;
+
+/**
  * Try to adopt `ref` from the configured control box. Returns the freshly
  * recorded box, or null when there is no control box, it's unreachable, or it
  * doesn't know the ref.
@@ -47,7 +57,7 @@ export async function tryAutoAdopt(ref: string, cwd: string): Promise<BoxRecord 
 
     // See hub-list.ts: a fetch to an unreachable host can't be cancelled and
     // would hold the process open past the deadline. Probe with a socket we own.
-    if (!(await hostReachable(target.url, remaining()))) return null;
+    if (!(await hostReachable(target.url, Math.min(REACHABLE_PROBE_MS, remaining())))) return null;
     if (remaining() <= 0) return null;
 
     // One signal shared by every request, so the budget bounds the whole
