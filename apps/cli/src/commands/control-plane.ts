@@ -730,6 +730,13 @@ const projectPushSub = new Command('push')
         force: opts.force,
         log: (line) => log.info(line),
       });
+      if (res.unreachable) {
+        log.error(
+          `Control box unreachable at ${target.url} — nothing was pushed. The project is NOT registered; re-run when it is up.`,
+        );
+        process.exitCode = 1;
+        return;
+      }
       const head = res.manifest.repoHeadSha?.slice(0, 8) ?? 'unknown';
       log.success(
         `Pushed ${String(res.uploaded)} item(s), skipped ${String(res.skipped)} unchanged → projects/${slug}/seed (at ${head}).`,

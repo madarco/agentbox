@@ -205,11 +205,17 @@ function activityView(a: AgentActivityState | undefined): {
 }
 
 /** The status line (line 2) for a box in the compact view. */
-export function cmuxStatusCell(b: ListedBox & { needsAdopt?: boolean }, color: boolean): string {
+export function cmuxStatusCell(
+  b: ListedBox & { needsAdopt?: boolean },
+  color: boolean,
+  live = false,
+): string {
   // A box that only exists on the control box has no local agent state to show —
   // its `running` is a placeholder, not a probe. Rendering the usual glyph here
-  // claimed a live agent for a box this machine has never even adopted.
-  if (b.needsAdopt === true) {
+  // claimed a live agent for a box this machine has never even adopted. Under
+  // `--live` the state HAS been probed, so show it — same rule as the table's
+  // `stateCell`, or the dock and the table disagree on identical data.
+  if (b.needsAdopt === true && !live) {
     const s = '[on hub]';
     return color ? colorize(s, 'dim') : s;
   }
@@ -248,6 +254,7 @@ export function renderCmuxRows(
   color: boolean,
   width: number,
   linkNames = false,
+  live = false,
 ): string {
   const groups = new Map<string, ListedBox[]>();
   for (const b of boxes) {
@@ -271,7 +278,7 @@ export function renderCmuxRows(
       // can repeat across projects) so the click resolves to the right box.
       const name = linkNames ? hyperlink(disp, `agentbox://web/${b.id}`, undefined, true) : disp;
       lines.push(`${idx}${name}`);
-      lines.push('  ' + cmuxStatusCell(b, color));
+      lines.push('  ' + cmuxStatusCell(b, color, live));
     }
   }
   return lines.join('\n');
@@ -290,7 +297,7 @@ async function buildCmuxText(live: boolean, color: boolean, linkNames = false): 
   if (boxes.length === 0) return cmuxEmptyMessage();
   // Re-read width each tick so a resized panel re-truncates.
   const width = process.stdout.columns ?? 30;
-  return renderCmuxRows(boxes, color, width, linkNames);
+  return renderCmuxRows(boxes, color, width, linkNames, live);
 }
 
 /**

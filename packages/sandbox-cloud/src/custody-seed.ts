@@ -236,6 +236,12 @@ export interface PushProjectSeedResult {
    * seed is still pushed.
    */
   dropped: string[];
+  /**
+   * True when the control box could not be reached, so NOTHING was pushed.
+   * Distinct from `uploaded: 0` with everything hash-skipped, which is a
+   * successful no-op — callers must not report the two the same way.
+   */
+  unreachable?: boolean;
 }
 
 /**
@@ -258,7 +264,17 @@ export async function pushProjectSeedToCustody(
   if (!fetchImpl) {
     log('seed: control box unreachable — skipping the seed push');
     const empty = await buildProjectSeed({ ...args, envPatterns: undefined });
-    return { uploaded: 0, skipped: 0, manifest: empty.manifest, envFiles: [], dropped: [] };
+    // `unreachable` — not just zero counts. A caller that treats "0 uploaded"
+    // as success would tell the user their project is registered when nothing
+    // ever left the machine.
+    return {
+      uploaded: 0,
+      skipped: 0,
+      manifest: empty.manifest,
+      envFiles: [],
+      dropped: [],
+      unreachable: true,
+    };
   }
   const built = await buildProjectSeed(args);
   const prefix = `projects/${args.slug}/seed`;
