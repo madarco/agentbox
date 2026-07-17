@@ -6,7 +6,9 @@ import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { hostname, homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox/config';
+import { findProjectRoot, loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox/config';
+import { DEFAULT_ENV_PATTERNS } from '@agentbox/sandbox-core';
+import { pushProjectSeedToCustody } from '@agentbox/sandbox-cloud';
 import {
   drainCreateJobs,
   GitHubAppLeaser,
@@ -653,6 +655,52 @@ const secretsCmd = new Command('secrets')
   .description('Manage per-project secrets/envs on the control box custody store')
   .addCommand(secretsPushSub);
 
+const projectPushSub = new Command('push')
+  .description(
+    "Push this project's seed material (untracked files + env/secrets) to the control box, so boxes created from its web UI get the files a fresh clone can't provide. A PC create does this automatically; run this to register a project before creating a box from it.",
+  )
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .option('--project <slug>', 'custody project slug (default: owner__repo, else the directory name)')
+  .option('--force', 'upload even when the stored hash matches')
+  .action(async (opts: { url?: string; project?: string; force?: boolean }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const root = (await findProjectRoot(process.cwd())).root;
+      const slug = await projectSlug(opts.project, root);
+      const res = await pushProjectSeedToCustody({
+        controlPlaneUrl: target.url,
+        adminToken: target.adminToken,
+        slug,
+        projectRoot: root,
+        // Same default set a create carries into a box, so the seed matches what
+        // a PC-created box would have had.
+        envPatterns: DEFAULT_ENV_PATTERNS,
+        force: opts.force,
+        log: (line) => log.info(line),
+      });
+      const head = res.manifest.repoHeadSha?.slice(0, 8) ?? 'unknown';
+      log.success(
+        `Pushed ${String(res.uploaded)} item(s), skipped ${String(res.skipped)} unchanged → projects/${slug}/seed (at ${head}).`,
+      );
+      if (res.skippedTarBytes !== undefined) {
+        log.warn(
+          `The untracked-files tar (${String(Math.round(res.skippedTarBytes / 1024 / 1024))}MB) exceeded the custody body cap and was NOT pushed — ` +
+            'hub-created boxes will miss those files. Raise `relay.custodyMaxBodyBytes` on the control box to include it.',
+        );
+      }
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const projectCmd = new Command('project')
+  .description('Manage a project on the control box (seed material for hub-created boxes)')
+  .addCommand(projectPushSub);
+
 const custodyListSub = new Command('list')
   .description('List custody entries (paths + hashes; values are never returned)')
   .argument('[prefix]', 'scope to a prefix, e.g. agents or projects/owner__repo')
@@ -948,6 +996,7 @@ export const controlPlaneCommand = new Command('control-plane')
   .addCommand(workerSub)
   .addCommand(credentialsCmd)
   .addCommand(secretsCmd)
+  .addCommand(projectCmd)
   .addCommand(custodyCmd)
   .addCommand(boxesCmd)
   .addCommand(promptsCmd);

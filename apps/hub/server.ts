@@ -53,6 +53,13 @@ async function resolveStore(storeDbPath: string): Promise<Store | undefined> {
   return store;
 }
 
+/** Parse a positive-int env override; undefined (→ the relay's default) if unset or junk. */
+function positiveIntFromEnv(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 async function main(): Promise<void> {
   // localhost: provision the token gate secret and hand it to the middleware via
   // env (unless auth is explicitly off). Do this before Next starts so the mode
@@ -99,6 +106,11 @@ async function main(): Promise<void> {
     store,
     custody,
     adminToken,
+    // Custody carries project seed tars, which dwarf the relay's 1 MiB
+    // control-plane body cap. Env-tunable so a control box with unusually large
+    // untracked seeds can be raised without a rebuild (`relay.custodyMaxBodyBytes`
+    // is the PC-side spelling; the hub reads its own env).
+    custodyMaxBodyBytes: positiveIntFromEnv(process.env.AGENTBOX_CUSTODY_MAX_BODY_BYTES),
     logger: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
     // Next parses req.url itself when parsedUrl is omitted.
     uiHandler: (req, res) => {

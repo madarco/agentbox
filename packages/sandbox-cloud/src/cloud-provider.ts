@@ -81,6 +81,7 @@ import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './
 import { kickCloudBootstrap } from './bootstrap-launch.js';
 import { readGitOriginUrl, registerBoxWithPlane } from './plane-register.js';
 import { pushBoxSshToCustody } from './custody-ssh.js';
+import { pushProjectSeedToCustody } from './custody-seed.js';
 import { bashScript, quoteShellArgv } from './shell.js';
 import { seedGitCredentials } from './sync/git-identity.js';
 import { seedCloudWorkspace } from './sync/workspace-seed.js';
@@ -1107,6 +1108,29 @@ export function createCloudProvider(
                 sandboxId: handle.sandboxId,
                 log,
               }).catch(() => 0);
+              // Store this project's seed material (untracked files + env
+              // /secrets) so a LATER box created from the control box's web UI
+              // gets them too — its worker clones the repo with a leased token,
+              // which by definition can't carry the user's local state. Skipped
+              // for an in-box clone (no host working tree to capture) and
+              // hash-skipped, so an unchanged tree re-uploads nothing.
+              if (!req.inBoxClone) {
+                const slug = projectSlugFromOriginUrl(originUrl);
+                if (slug) {
+                  await pushProjectSeedToCustody({
+                    controlPlaneUrl: req.controlPlaneUrl,
+                    adminToken,
+                    slug,
+                    projectRoot: req.workspacePath,
+                    envPatterns: req.envFilesToImport,
+                    log,
+                  }).catch((err: unknown) => {
+                    log(
+                      `seed push to custody failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+                    );
+                  });
+                }
+              }
             } catch (err) {
               log(
                 `register with control plane failed (continuing): ${err instanceof Error ? err.message : String(err)}`,

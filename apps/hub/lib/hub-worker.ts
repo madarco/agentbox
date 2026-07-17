@@ -11,6 +11,7 @@
  * by Next.
  */
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -27,7 +28,7 @@ import {
   type CreateBoxFn,
   type Store,
 } from '@agentbox/relay/control-plane';
-import { AGENT_SYNC_SPECS, boxSshDirForProvider } from '@agentbox/sandbox-core';
+import { AGENT_SYNC_SPECS, boxSshDirForProvider, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
 import type { ProviderModule } from '@agentbox/sandbox-core';
 
 const execFileAsync = promisify(execFile);
@@ -119,6 +120,74 @@ export interface HubWorkerOptions {
   mockCreate?: boolean;
 }
 
+/**
+ * Overlay a project's custody seed material onto a fresh clone: the untracked
+ * files and env/secrets a PC pushed, which no clone can carry.
+ *
+ * Conflict rule: **the clone wins**. A file that was untracked when the seed was
+ * captured but has since been committed exists in both; the repo's version is
+ * the current truth, and restoring a months-old copy over it would silently
+ * revert work. Extraction uses `tar --keep-old-files` so existing paths are left
+ * alone, and env files are only written where nothing is already there.
+ *
+ * We read the custody store directly rather than over HTTP — the hub IS the
+ * custody host.
+ */
+async function applySeedFromCustody(
+  custody: FsCustodyStore,
+  repoUrl: string,
+  dest: string,
+  log: (l: string) => void,
+): Promise<{ files: number; capturedAt?: string; repoHeadSha?: string } | null> {
+  const slug = projectSlugFromOriginUrl(repoUrl);
+  if (!slug) return null;
+  const prefix = `projects/${slug}/seed`;
+  const entries = await custody.list(prefix).catch(() => []);
+  if (entries.length === 0) return null;
+
+  let manifest: { createdAt?: string; repoHeadSha?: string } = {};
+  const found = await custody.get(`${prefix}/manifest.json`).catch(() => null);
+  if (found) {
+    try {
+      manifest = JSON.parse(found.data.toString('utf8')) as typeof manifest;
+    } catch {
+      // A corrupt manifest costs us only the staleness line in the log.
+    }
+  }
+
+  let files = 0;
+  const tar = await custody.get(`${prefix}/untracked.tar.gz`).catch(() => null);
+  if (tar) {
+    const tmp = join(tmpdir(), `agentbox-seed-${Date.now().toString(36)}.tar.gz`);
+    try {
+      await writeFile(tmp, tar.data);
+      await execFileAsync('tar', ['-C', dest, '-xzf', tmp, '--keep-old-files']);
+      files += 1;
+    } catch (err) {
+      // `--keep-old-files` makes GNU tar exit non-zero on a collision even
+      // though it did the right thing, so a failure here is not necessarily
+      // fatal — the box just may lack some untracked files.
+      log(`seed: untracked tar partially applied: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      await rm(tmp, { force: true }).catch(() => {});
+    }
+  }
+
+  for (const entry of entries) {
+    const rel = entry.path.slice(`${prefix}/`.length);
+    if (!rel.startsWith('env/')) continue;
+    const target = join(dest, rel.slice('env/'.length));
+    // Clone wins: never overwrite a file the repo already provides.
+    if (existsSync(target)) continue;
+    const blob = await custody.get(entry.path).catch(() => null);
+    if (!blob) continue;
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, blob.data, { mode: 0o600 });
+    files += 1;
+  }
+  return { files, capturedAt: manifest.createdAt, repoHeadSha: manifest.repoHeadSha };
+}
+
 export interface HubWorkerHandle {
   stop: () => Promise<void>;
 }
@@ -173,6 +242,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       await mirrorBoxSshToCustody(custody, provider, created.record.cloud?.sandboxId, log);
       return { id: created.record.id };
     },
+    fetchSeedMaterial: (repoUrl, dest) => applySeedFromCustody(custody, repoUrl, dest, log),
     tmpDir: (jobId) => join(tmpdir(), `agentbox-hub-worker-${jobId}`),
     cleanup: (dir) => rm(dir, { recursive: true, force: true }),
     log,

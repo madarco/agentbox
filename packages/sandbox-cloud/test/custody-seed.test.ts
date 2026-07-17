@@ -1,0 +1,193 @@
+import { mkdtempSync, realpathSync } from 'node:fs';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execa } from 'execa';
+import { afterAll, describe, expect, it } from 'vitest';
+import { buildProjectSeed, pushProjectSeedToCustody } from '../src/custody-seed.js';
+
+const scratch: string[] = [];
+afterAll(async () => {
+  for (const dir of scratch) await rm(dir, { recursive: true, force: true });
+});
+
+/**
+ * A repo with one committed file, one untracked file, one gitignored build
+ * artifact, and a `.env` — i.e. the four cases the seed has to tell apart.
+ */
+async function makeRepo(): Promise<string> {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agentbox-seed-repo-')));
+  scratch.push(dir);
+  await execa('git', ['-C', dir, 'init', '-q']);
+  await execa('git', ['-C', dir, 'config', 'user.email', 't@t.test']);
+  await execa('git', ['-C', dir, 'config', 'user.name', 'T']);
+  await execa('git', ['-C', dir, 'remote', 'add', 'origin', 'https://github.com/o/r.git']);
+  await writeFile(join(dir, 'committed.txt'), 'tracked');
+  await writeFile(join(dir, '.gitignore'), 'ignored-build/\n.env\n');
+  await execa('git', ['-C', dir, 'add', '.']);
+  await execa('git', ['-C', dir, 'commit', '-qm', 'init']);
+  // Untracked, not ignored -> must be captured.
+  await writeFile(join(dir, 'scratch-notes.md'), 'local notes');
+  await mkdir(join(dir, 'src'), { recursive: true });
+  await writeFile(join(dir, 'src', 'wip.ts'), 'export const wip = 1;');
+  // Ignored build output -> must NOT be captured.
+  await mkdir(join(dir, 'ignored-build'), { recursive: true });
+  await writeFile(join(dir, 'ignored-build', 'out.js'), 'junk');
+  // Gitignored secret -> captured via the env patterns, not the untracked tar.
+  await writeFile(join(dir, '.env'), 'API_KEY=shh');
+  return dir;
+}
+
+/** List the paths inside a gzipped tar buffer. */
+async function tarPaths(data: Buffer): Promise<string[]> {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agentbox-seed-tar-')));
+  scratch.push(dir);
+  const file = join(dir, 't.tar.gz');
+  await writeFile(file, data);
+  const r = await execa('tar', ['-tzf', file]);
+  return r.stdout
+    .split('\n')
+    .map((s) => s.replace(/^\.\//, '').trim())
+    .filter((s) => s.length > 0);
+}
+
+describe('buildProjectSeed', () => {
+  it('captures untracked files and env/secrets, and records the origin + head', async () => {
+    const repo = await makeRepo();
+    const res = await buildProjectSeed({ projectRoot: repo, envPatterns: ['.env'] });
+
+    const paths = res.items.map((i) => i.relPath).sort();
+    expect(paths).toContain('untracked.tar.gz');
+    expect(paths).toContain('env/.env');
+
+    const tar = res.items.find((i) => i.relPath === 'untracked.tar.gz')!;
+    const inTar = await tarPaths(tar.data);
+    expect(inTar).toContain('scratch-notes.md');
+    expect(inTar).toContain('src/wip.ts');
+    // Committed files come from the clone; shipping them would be waste.
+    expect(inTar).not.toContain('committed.txt');
+    // Gitignored build output must never ride along.
+    expect(inTar.some((p) => p.startsWith('ignored-build'))).toBe(false);
+
+    expect(res.manifest.originUrl).toBe('https://github.com/o/r.git');
+    expect(res.manifest.repoHeadSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(res.manifest.files.map((f) => f.path).sort()).toEqual(paths);
+    for (const f of res.manifest.files) expect(f.sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('drops an oversized untracked tar but still captures env files', async () => {
+    const repo = await makeRepo();
+    const res = await buildProjectSeed({ projectRoot: repo, envPatterns: ['.env'], maxTarBytes: 1 });
+    expect(res.skippedTarBytes).toBeGreaterThan(1);
+    expect(res.items.map((i) => i.relPath)).toEqual(['env/.env']);
+    // A partial seed still beats none — and the manifest says what's in it.
+    expect(res.manifest.files.map((f) => f.path)).toEqual(['env/.env']);
+  });
+
+  it('produces byte-identical tars for an unchanged tree (so the hash-skip works)', async () => {
+    const repo = await makeRepo();
+    const a = await buildProjectSeed({ projectRoot: repo });
+    const b = await buildProjectSeed({ projectRoot: repo });
+    const tarOf = (r: typeof a) => r.items.find((i) => i.relPath === 'untracked.tar.gz')!.data;
+    // Regression: `tar -z` stamps the current time into the gzip header, which
+    // gave an unchanged tree a fresh sha256 every run and re-uploaded the
+    // largest blob in the seed on every create.
+    expect(tarOf(b).equals(tarOf(a))).toBe(true);
+    const shaOf = (r: typeof a) => r.manifest.files.find((f) => f.path === 'untracked.tar.gz')!.sha256;
+    expect(shaOf(b)).toBe(shaOf(a));
+  });
+
+  it('captures nothing but a manifest for a clean tree', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agentbox-seed-clean-')));
+    scratch.push(dir);
+    await execa('git', ['-C', dir, 'init', '-q']);
+    const res = await buildProjectSeed({ projectRoot: dir });
+    expect(res.items).toEqual([]);
+    expect(res.manifest.files).toEqual([]);
+  });
+});
+
+describe('pushProjectSeedToCustody', () => {
+  /** A fake custody surface recording puts, with a settable manifest. */
+  function fakeCustody(existing: Record<string, string> = {}) {
+    const puts: string[] = [];
+    const fetchImpl = (async (url: unknown, init?: { method?: string }) => {
+      const u = new URL(String(url));
+      if (u.pathname === '/admin/custody') {
+        return new Response(
+          JSON.stringify({
+            entries: Object.entries(existing).map(([path, sha256]) => ({ path, sha256 })),
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (init?.method === 'PUT') {
+        puts.push(decodeURIComponent(u.pathname.slice('/admin/custody/'.length)));
+        return new Response(JSON.stringify({ changed: true, sha256: 'x' }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }) as unknown as typeof fetch;
+    return { fetchImpl, puts };
+  }
+
+  it('uploads the seed under projects/<slug>/seed and writes the manifest last', async () => {
+    const repo = await makeRepo();
+    const { fetchImpl, puts } = fakeCustody();
+    const res = await pushProjectSeedToCustody({
+      controlPlaneUrl: 'http://cb.test',
+      adminToken: 'admin',
+      slug: 'o__r',
+      projectRoot: repo,
+      envPatterns: ['.env'],
+      fetchImpl,
+    });
+    expect(puts).toContain('projects/o__r/seed/untracked.tar.gz');
+    expect(puts).toContain('projects/o__r/seed/env/.env');
+    // The manifest must land last: it describes the blobs, so a consumer must
+    // never see it before they exist.
+    expect(puts[puts.length - 1]).toBe('projects/o__r/seed/manifest.json');
+    expect(res.uploaded).toBe(puts.length);
+    expect(res.skipped).toBe(0);
+  });
+
+  it('skips blobs custody already holds (unchanged tree uploads only the manifest)', async () => {
+    const repo = await makeRepo();
+    const built = await buildProjectSeed({ projectRoot: repo, envPatterns: ['.env'] });
+    // Pre-seed custody with the exact hashes this tree produces.
+    const existing: Record<string, string> = {};
+    for (const f of built.manifest.files) existing[`projects/o__r/seed/${f.path}`] = f.sha256;
+
+    const { fetchImpl, puts } = fakeCustody(existing);
+    const res = await pushProjectSeedToCustody({
+      controlPlaneUrl: 'http://cb.test',
+      adminToken: 'admin',
+      slug: 'o__r',
+      projectRoot: repo,
+      envPatterns: ['.env'],
+      fetchImpl,
+    });
+    expect(res.skipped).toBe(built.items.length);
+    // Only the manifest (whose timestamp always differs) is re-uploaded.
+    expect(puts).toEqual(['projects/o__r/seed/manifest.json']);
+  });
+
+  it('re-uploads everything under --force', async () => {
+    const repo = await makeRepo();
+    const built = await buildProjectSeed({ projectRoot: repo, envPatterns: ['.env'] });
+    const existing: Record<string, string> = {};
+    for (const f of built.manifest.files) existing[`projects/o__r/seed/${f.path}`] = f.sha256;
+
+    const { fetchImpl } = fakeCustody(existing);
+    const res = await pushProjectSeedToCustody({
+      controlPlaneUrl: 'http://cb.test',
+      adminToken: 'admin',
+      slug: 'o__r',
+      projectRoot: repo,
+      envPatterns: ['.env'],
+      force: true,
+      fetchImpl,
+    });
+    expect(res.skipped).toBe(0);
+    expect(res.uploaded).toBe(built.items.length + 1);
+  });
+});

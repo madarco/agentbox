@@ -16,6 +16,17 @@ export {
 } from './plane-register.js';
 export { pushBoxSshToCustody, type PushBoxSshArgs } from './custody-ssh.js';
 export {
+  buildProjectSeed,
+  pushProjectSeedToCustody,
+  type BuildProjectSeedArgs,
+  type BuildProjectSeedResult,
+  type PushProjectSeedArgs,
+  type PushProjectSeedResult,
+  type SeedItem,
+  type SeedManifest,
+  type SeedManifestFile,
+} from './custody-seed.js';
+export {
   seedCloudWorkspace,
   type SeedCloudWorkspaceArgs,
   type SeedCloudWorkspaceResult,

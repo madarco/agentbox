@@ -190,6 +190,14 @@ export interface UserConfig {
      * (the default). Set via `agentbox control-plane set-url`.
      */
     controlPlaneUrl?: string;
+    /**
+     * Per-request body cap (bytes) for the control box's custody PUTs.
+     * Defaults to 32 MiB. Custody carries a project's untracked-files seed
+     * tarball, which the relay's 1 MiB control-plane body cap is far too small
+     * for; this is scoped to custody so every other route keeps that cap.
+     * Raise it if a project's untracked seed legitimately exceeds the default.
+     */
+    custodyMaxBodyBytes?: number;
   };
   git?: {
     pushMode?: GitPushMode;
@@ -349,6 +357,7 @@ export interface EffectiveConfig {
   relay: {
     port: number;
     controlPlaneUrl: string | undefined;
+    custodyMaxBodyBytes: number;
   };
   git: {
     pushMode: GitPushMode;
@@ -538,6 +547,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   relay: {
     port: 8787,
     controlPlaneUrl: undefined,
+    custodyMaxBodyBytes: 32 * 1024 * 1024,
   },
   git: {
     pushMode: 'auto',
@@ -970,6 +980,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'string',
     description:
       'Public HTTPS URL of a deployed control plane (hosted Next.js + Postgres app). When set, new cloud boxes point at it for git-token leasing, permission state, and the box registry/events, and push to GitHub directly with a leased token so they keep working with the laptop off. Set via `agentbox control-plane set-url`.',
+  },
+  {
+    key: 'relay.custodyMaxBodyBytes',
+    type: 'int',
+    description:
+      "Per-request body cap (bytes) for the control box's custody PUTs (default 33554432 = 32 MiB). Custody carries a project's untracked-files seed tar, which the relay's 1 MiB control-plane body cap is too small for; this cap applies only to custody, so every other relay route keeps the smaller one. Raise it if a project's untracked seed legitimately exceeds the default.",
+    advanced: true,
   },
   {
     key: 'git.pushMode',

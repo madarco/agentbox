@@ -36,6 +36,20 @@ export interface CreateBoxDeps {
   tmpDir(jobId: string): string;
   /** Remove the temp checkout (best-effort). */
   cleanup(dir: string): Promise<void>;
+  /**
+   * Overlay the project's custody seed material (untracked files + env/secrets
+   * a PC pushed) onto the fresh checkout at `dest`. A clone can only ever carry
+   * committed state, so without this a hub-created box is missing exactly the
+   * local files that make the project runnable.
+   *
+   * Optional and best-effort: a worker with no custody store (or a project that
+   * was never pushed) simply creates the box from the bare clone, as before.
+   * Returns what it applied, for the job log.
+   */
+  fetchSeedMaterial?(
+    repoUrl: string,
+    dest: string,
+  ): Promise<{ files: number; capturedAt?: string; repoHeadSha?: string } | null>;
   log?: (line: string) => void;
 }
 
@@ -52,6 +66,29 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
       const authedUrl = await deps.leaseRemoteUrl(request.repoUrl);
       log(`cloning ${request.repoUrl}${request.branch ? `@${request.branch}` : ''} into ${dir}`);
       await deps.cloneRepo(authedUrl, request.repoUrl, dir, request.branch);
+      if (deps.fetchSeedMaterial) {
+        try {
+          const seed = await deps.fetchSeedMaterial(request.repoUrl, dir);
+          if (seed && seed.files > 0) {
+            // Report what the seed was captured from: it can lag the branch tip
+            // (the PC pushes it on create), and a surprising box is much easier
+            // to explain when the job log says how old its local files are.
+            const from = [
+              seed.repoHeadSha ? `at ${seed.repoHeadSha.slice(0, 8)}` : null,
+              seed.capturedAt ? `captured ${seed.capturedAt}` : null,
+            ]
+              .filter(Boolean)
+              .join(', ');
+            log(`applied ${String(seed.files)} seed file(s) from custody${from ? ` (${from})` : ''}`);
+          }
+        } catch (err) {
+          // The box is still usable without the user's local files — say so and
+          // carry on rather than failing a create the user is waiting on.
+          log(
+            `seed material unavailable (continuing with a bare clone): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
       log(`provisioning ${request.provider} box from the clone`);
       const box = await deps.createBox({
         workspacePath: dir,

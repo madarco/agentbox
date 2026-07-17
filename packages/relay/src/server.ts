@@ -144,6 +144,13 @@ export interface RelayServerOptions {
    */
   custody?: CustodyStore | null;
   /**
+   * Per-request body cap for custody PUTs (`relay.custodyMaxBodyBytes`).
+   * Defaults to 32 MiB — big enough for a project's untracked-files seed tar,
+   * and scoped to custody so the 1 MiB control-plane cap still governs every
+   * other route.
+   */
+  custodyMaxBodyBytes?: number;
+  /**
    * Admin bearer that gates `/admin/custody/*` (the ONLY proof accepted — the
    * loopback bypass that covers the other `/admin/*` routes does not apply to
    * custody, since a control box behind Caddy makes every request look
@@ -197,6 +204,14 @@ export interface RelayServerHandle {
 const BOX_STATUS_EVENT = 'box-status';
 
 const MAX_BODY_BYTES = 1024 * 1024; // 1 MiB hard cap; relay is for control-plane traffic, not payloads.
+/**
+ * Per-request cap for custody PUTs only. Custody carries project seed material
+ * (an untracked-files tarball) as base64 JSON, which the 1 MiB control-plane cap
+ * is far too small for — but raising {@link MAX_BODY_BYTES} would hand the same
+ * budget to `/rpc` and `/events`, which have no business with payloads. Override
+ * with `relay.custodyMaxBodyBytes`.
+ */
+const DEFAULT_CUSTODY_MAX_BODY_BYTES = 32 * 1024 * 1024; // 32 MiB
 const GIT_RPC_TIMEOUT_MS = 120_000; // git push/pull can be slow on big repos.
 const CHECKPOINT_RPC_TIMEOUT_MS = 600_000; // capturing node_modules/build trees can be slow.
 const DOWNLOAD_RPC_TIMEOUT_MS = 600_000; // claude/workspace pulls over rsync can take minutes.
@@ -251,13 +266,13 @@ async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
   });
 }
 
-async function readRawBody(req: IncomingMessage): Promise<string> {
+async function readRawBody(req: IncomingMessage, maxBytes: number = MAX_BODY_BYTES): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     let total = 0;
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => {
       total += chunk.length;
-      if (total > MAX_BODY_BYTES) {
+      if (total > maxBytes) {
         reject(new Error('request body too large'));
         req.destroy();
         return;
@@ -383,6 +398,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const leaser = githubAppConfig ? new GitHubAppLeaser(githubAppConfig) : null;
   const custody = opts.custody ?? null;
   const custodyAdminToken = opts.adminToken ?? '';
+  const custodyMaxBodyBytes =
+    typeof opts.custodyMaxBodyBytes === 'number' && opts.custodyMaxBodyBytes > 0
+      ? opts.custodyMaxBodyBytes
+      : DEFAULT_CUSTODY_MAX_BODY_BYTES;
   const uiHandler = opts.uiHandler;
 
   // Host-mode pollers for cloud-tagged boxes; started on /admin/register-box,
@@ -505,7 +524,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     // this must run BEFORE the loopback rejection below.
     if (url.pathname === '/admin/custody' || url.pathname.startsWith('/admin/custody/')) {
       const bodyText =
-        req.method === 'PUT' || req.method === 'POST' ? await readRawBody(req) : '';
+        req.method === 'PUT' || req.method === 'POST'
+          ? await readRawBody(req, custodyMaxBodyBytes)
+          : '';
       const custodyRes = await handleCustodyRequest(
         {
           method: req.method ?? 'GET',
