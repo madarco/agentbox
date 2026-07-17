@@ -23,7 +23,6 @@ import type { BoxRecord, GitWorktreeRecord, SshTargetRecord } from '@agentbox/co
 import { boxSshDirForProvider, readState } from '@agentbox/sandbox-core';
 import { generateRelayToken, recordBox } from '@agentbox/sandbox-docker';
 import { allocateProjectIndex } from '@agentbox/sandbox-core';
-import type { BoxRegistration } from '@agentbox/relay';
 import type { CustodyClient } from './custody-client.js';
 import type { ControlPlaneAdminClient } from './admin-client.js';
 import { downloadBoxSshKeys } from './hub-pull.js';
