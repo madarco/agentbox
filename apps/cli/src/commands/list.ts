@@ -205,7 +205,14 @@ function activityView(a: AgentActivityState | undefined): {
 }
 
 /** The status line (line 2) for a box in the compact view. */
-export function cmuxStatusCell(b: ListedBox, color: boolean): string {
+export function cmuxStatusCell(b: ListedBox & { needsAdopt?: boolean }, color: boolean): string {
+  // A box that only exists on the control box has no local agent state to show —
+  // its `running` is a placeholder, not a probe. Rendering the usual glyph here
+  // claimed a live agent for a box this machine has never even adopted.
+  if (b.needsAdopt === true) {
+    const s = '[on hub]';
+    return color ? colorize(s, 'dim') : s;
+  }
   if (b.state !== 'running') {
     const s = `[${b.state}]`;
     return color ? colorize(s, 'dim') : s;

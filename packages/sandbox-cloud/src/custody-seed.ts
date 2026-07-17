@@ -83,6 +83,11 @@ export interface BuildProjectSeedResult {
   manifest: SeedManifest;
   /** Set when the untracked tar was built but dropped for exceeding the cap. */
   skippedTarBytes?: number;
+  /**
+   * Repo-relative paths of the env/secret files captured. Callers surface these
+   * so it is never a mystery which secrets were copied to the control box.
+   */
+  envFiles: string[];
 }
 
 /** Mirrors the relay's own default custody body cap. */
@@ -144,7 +149,7 @@ export async function buildProjectSeed(
     files: items.map((i) => ({ path: i.relPath, sha256: sha256Hex(i.data), bytes: i.data.length })),
     createdAt: new Date().toISOString(),
   };
-  return { items, manifest, skippedTarBytes };
+  return { items, manifest, skippedTarBytes, envFiles: envRelPaths };
 }
 
 /** Run a git command in `dir`, returning trimmed stdout or null. */
@@ -216,6 +221,8 @@ export interface PushProjectSeedResult {
   skipped: number;
   manifest: SeedManifest;
   skippedTarBytes?: number;
+  /** Repo-relative paths of the env/secret files captured (see BuildProjectSeedResult). */
+  envFiles: string[];
 }
 
 /**
@@ -282,6 +289,7 @@ export async function pushProjectSeedToCustody(
     skipped,
     manifest: built.manifest,
     skippedTarBytes: built.skippedTarBytes,
+    envFiles: built.envFiles,
   };
 }
 

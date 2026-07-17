@@ -32,6 +32,13 @@ describe('cmuxStatusCell', () => {
 
   it('renders the container state for a non-running box', () => {
     expect(cmuxStatusCell(box({ state: 'paused' }), false)).toBe('[paused]');
+  });
+
+  it('shows an un-adopted control-box box as [on hub], not a live agent', () => {
+    // Regression: synthesized hub rows carry `state: 'running'` as a placeholder
+    // (we deliberately don't probe), so the dock rendered a live-agent glyph for
+    // a box this machine has never adopted — while the table said `on hub`.
+    expect(cmuxStatusCell({ ...box({}), needsAdopt: true }, false)).toBe('[on hub]');
     expect(cmuxStatusCell(box({ state: 'stopped' }), false)).toBe('[stopped]');
   });
 

@@ -701,8 +701,11 @@ const projectPushSub = new Command('push')
         adminToken: target.adminToken,
         slug,
         projectRoot: root,
-        // Same default set a create carries into a box, so the seed matches what
-        // a PC-created box would have had.
+        // The default env set (same one `--with-env` uses). Unlike a create —
+        // which mirrors that box's own wizard picks and must not widen them —
+        // this command has no box and no picks: the user is explicitly asking to
+        // register the project's seed, so the default set is the intent. What
+        // actually gets captured is reported below.
         envPatterns: DEFAULT_ENV_PATTERNS,
         // Honour the configured cap, so raising it actually admits a bigger seed.
         maxBodyBytes: cfg?.effective.relay.custodyMaxBodyBytes,
@@ -713,6 +716,12 @@ const projectPushSub = new Command('push')
       log.success(
         `Pushed ${String(res.uploaded)} item(s), skipped ${String(res.skipped)} unchanged → projects/${slug}/seed (at ${head}).`,
       );
+      // Name the env files that went up. This command captures the default env
+      // set rather than a per-box selection, so the user should never have to
+      // guess which secrets now live on the control box.
+      if (res.envFiles.length > 0) {
+        log.info(`env/secret files captured: ${res.envFiles.join(', ')}`);
+      }
       if (res.skippedTarBytes !== undefined) {
         log.warn(
           `The untracked-files tar (${String(Math.round(res.skippedTarBytes / 1024 / 1024))}MB) exceeded the custody body cap and was NOT pushed — ` +
