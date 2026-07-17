@@ -14,6 +14,15 @@
  */
 import type { BoxRecord } from '@agentbox/core';
 
+/**
+ * The adopted box, `'unreachable'` when the control box couldn't be asked, or
+ * null when it was asked and doesn't know the ref.
+ *
+ * The distinction matters to the shift path: "no such box" is a fact it can act
+ * on, while "couldn't ask" means any guess it makes might target the wrong box.
+ */
+export type AutoAdoptResult = BoxRecord | 'unreachable' | null;
+
 /** Bound on the whole adopt round-trip. A miss must not stall the command. */
 const ADOPT_TIMEOUT_MS = 4000;
 
@@ -36,7 +45,7 @@ const REACHABLE_PROBE_MS = 1500;
  * on hosts with no control box at all, and the control-plane clients pull in
  * config + relay code that a plain `agentbox shell typo` shouldn't pay for.
  */
-export async function tryAutoAdopt(ref: string, cwd: string): Promise<BoxRecord | null> {
+export async function tryAutoAdopt(ref: string, cwd: string): Promise<AutoAdoptResult> {
   try {
     const { resolveCustodyTarget } = await import('../commands/control-plane.js');
     const target = await resolveCustodyTarget(undefined, { quiet: true });
@@ -61,8 +70,14 @@ export async function tryAutoAdopt(ref: string, cwd: string): Promise<BoxRecord 
 
     // See hub-list.ts: a fetch to an unreachable host can't be cancelled and
     // would hold the process open past the deadline. Probe with a socket we own.
-    if (!(await hostReachable(target.url, Math.min(REACHABLE_PROBE_MS, remaining())))) return null;
-    if (remaining() <= 0) return null;
+    //
+    // `unreachable` is NOT `null`: a caller that would otherwise guess (the
+    // shift path) must be able to tell "the control box says no such box" from
+    // "the control box couldn't be asked".
+    if (!(await hostReachable(target.url, Math.min(REACHABLE_PROBE_MS, remaining())))) {
+      return 'unreachable';
+    }
+    if (remaining() <= 0) return 'unreachable';
 
     // One signal shared by every request, so the budget bounds the whole
     // adoption rather than each request separately. Aborting — rather than
@@ -79,9 +94,14 @@ export async function tryAutoAdopt(ref: string, cwd: string): Promise<BoxRecord 
       cwd,
     });
     return res.record;
-  } catch {
-    // Unknown ref, unreachable control box, bad token, or the budget running out
-    // mid-flight — all indistinguishable from "not a box" for the caller.
-    return null;
+  } catch (err) {
+    // Only the control box answering "no such box" is a definitive miss. A
+    // network failure, an expired budget, or a bad token mean we never got an
+    // answer — say so, rather than let a caller read it as "not a box".
+    //
+    // Matched by name, not `instanceof`: importing the class would pull
+    // hub-adopt.js eagerly and defeat this module's lazy loading.
+    if (err instanceof Error && err.name === 'HubBoxNotFoundError') return null;
+    return 'unreachable';
   }
 }

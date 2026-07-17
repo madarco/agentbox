@@ -1133,7 +1133,7 @@ export function createCloudProvider(
               if (!req.inBoxClone) {
                 const slug = projectSlugFromOriginUrl(originUrl);
                 if (slug) {
-                  await pushProjectSeedToCustody({
+                  const seed = await pushProjectSeedToCustody({
                     controlPlaneUrl: req.controlPlaneUrl,
                     adminToken,
                     slug,
@@ -1152,7 +1152,18 @@ export function createCloudProvider(
                     log(
                       `seed push to custody failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
                     );
+                    return null;
                   });
+                  // `unreachable` resolves rather than throwing, so the catch
+                  // above never sees it — without this the box comes up fine and
+                  // the user has no idea their project was never registered, until
+                  // a later web-UI create silently lacks their untracked files.
+                  if (seed?.unreachable) {
+                    log(
+                      'WARN: control box unreachable — this project\'s seed material (untracked files + env) was NOT stored. ' +
+                        'Boxes created from the hub will miss them until you run `agentbox control-plane project push`.',
+                    );
+                  }
                 }
               }
             } catch (err) {

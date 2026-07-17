@@ -69,9 +69,20 @@ export async function resolveBoxOrShift(
     // disambiguate THOSE — adopting a same-named hub box would drive a box that
     // isn't among the ones they were choosing between.
     const adopted = firstTry.kind === 'none' ? await tryAutoAdopt(ref, cwd) : null;
-    if (adopted) {
+    if (adopted && adopted !== 'unreachable') {
       log.info(`adopted ${adopted.name} from the control box`);
       return { box: adopted, shifted: false };
+    }
+    if (adopted === 'unreachable') {
+      // We couldn't ask, so we can't rule out that `ref` names a control-box
+      // box. Shifting anyway is what AgentBox did before hub refs existed, and
+      // refusing would break the common `agentbox shell npm run dev` whenever
+      // the control box is down — but say so, because the fallback CAN pick a
+      // different box than the user meant.
+      log.warn(
+        `control box unreachable — treating '${ref}' as an argument, not a box name. ` +
+          `If you meant a control-box box, retry when it's reachable.`,
+      );
     }
     // Maybe commander bound a post-`--` token to [box]; try auto-pick.
     const pick = resolveBoxRef(undefined, state, project.root);
@@ -151,9 +162,14 @@ export async function resolveBoxOrExit(
   // `adoptAttempted` means our caller already tried and missed; re-running it
   // here would spend the adoption budget twice for one command.
   const adopted = opts.adoptAttempted ? null : await tryAutoAdopt(ref, cwd);
-  if (adopted) {
+  if (adopted && adopted !== 'unreachable') {
     log.info(`adopted ${adopted.name} from the control box`);
     return adopted;
+  }
+  if (adopted === 'unreachable') {
+    // The box may well exist on the control box — don't let the error imply it
+    // definitely doesn't.
+    log.warn(`control box unreachable — could not check whether '${ref}' is one of its boxes.`);
   }
   if (/^[1-9][0-9]*$/.test(ref.trim())) {
     log.error(`no box with index ${ref.trim()} in this project (${project.root})`);
