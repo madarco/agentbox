@@ -357,6 +357,32 @@ export async function pushProjectSeedToCustody(
   };
 }
 
+/** Memo for {@link keepExistingFlag} — `tar --version` is stable per process. */
+let keepExistingFlagCache: string | null = null;
+
+/**
+ * The tar flag meaning "extract, but never overwrite a file that already
+ * exists" — spelled differently by the two tars we run on, with a trap:
+ *
+ * - **GNU tar** (Linux — what the control box's worker actually runs):
+ *   `--keep-old-files` treats every existing file as an ERROR and exits
+ *   non-zero, even though it correctly kept the existing copy. Its
+ *   `--skip-old-files` skips silently and exits 0.
+ * - **BSD tar** (macOS): has no `--skip-old-files`; `-k` skips and exits 0.
+ *
+ * Using `--keep-old-files` everywhere therefore worked on a developer's Mac and
+ * made every conflicting overlay on the real (Linux) control box look like a
+ * failure. Detect once and use the right one, so a non-zero exit means a real
+ * failure on both.
+ */
+async function keepExistingFlag(): Promise<string> {
+  if (keepExistingFlagCache) return keepExistingFlagCache;
+  const v = await execa('tar', ['--version'], { reject: false });
+  const isGnu = /GNU tar/i.test(`${v.stdout ?? ''}${v.stderr ?? ''}`);
+  keepExistingFlagCache = isGnu ? '--skip-old-files' : '-k';
+  return keepExistingFlagCache;
+}
+
 /** Fetches a seed blob by its path relative to `projects/<slug>/seed/`. */
 export interface SeedSource {
   get(relPath: string): Promise<Buffer | null>;
@@ -398,6 +424,7 @@ export async function applyProjectSeed(args: {
     // A corrupt manifest costs only the staleness line in the log.
   }
 
+  const skipFlag = await keepExistingFlag();
   let files = 0;
   for (const name of ['untracked.tar.gz', 'env.tar.gz']) {
     const blob = await args.source.get(name).catch(() => null);
@@ -405,13 +432,13 @@ export async function applyProjectSeed(args: {
     const tmp = join(tmpdir(), `agentbox-seed-${process.pid}-${Date.now().toString(36)}-${name}`);
     try {
       await writeFile(tmp, blob);
-      await execa('tar', ['-C', args.dest, '-xzf', tmp, '--keep-old-files']);
+      await execa('tar', ['-C', args.dest, '-xzf', tmp, skipFlag]);
       files += 1;
     } catch (err) {
-      // `--keep-old-files` makes GNU tar exit non-zero on a collision even
-      // though it did the right thing (kept the clone's copy), so this is not
-      // necessarily fatal — the box may just lack some seed files.
-      log(`seed: ${name} partially applied: ${err instanceof Error ? err.message : String(err)}`);
+      // With the right flag (see keepExistingFlag) a conflict is NOT an error,
+      // so reaching here means the extract genuinely failed and the box may
+      // lack some seed files.
+      log(`seed: ${name} could not be applied: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       await rm(tmp, { force: true }).catch(() => {});
     }
