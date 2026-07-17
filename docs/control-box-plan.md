@@ -1225,44 +1225,26 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
   verify, but the **hetzner base snapshot and any other provider bakes still ship the broken
   lease push** until their next `agentbox prepare`. Re-prepare hetzner before relying on leased
   pushes from hetzner boxes (tracked for the phase-4 hetzner-provider verify).
-- **(phase 4) Local-adoption gap — a control-box-created box is not operable from the PC by name.**
-  This is the single biggest asymmetry between the two creation origins, so the full detail:
-  - **Root cause.** A box created by the control box (web-UI create or `--via-hub`) lives in the
-    control box's Store; the PC never writes a local `state.json` `BoxRecord` for it. `hub pull`
-    downloads only the SSH-key material to `~/.agentbox/boxes/<sandboxId>/ssh/` — no record.
-  - **`agentbox ls` / `list` does not show it.** `list.ts` reads local state via
-    `listBoxes()` (`@agentbox/sandbox-docker`) and has only `--global` (all local *projects*) — no
-    control-plane source. So a hub-created box is invisible to `agentbox ls` even with `--global`.
-    The only PC-side view is the explicit `agentbox control-plane boxes list` (queries the control
-    box Store over HTTPS).
-  - **All the direct PC↔box commands miss too, not just attach.** `attach`, `cp`, `download`, `url`,
-    and `screen` each resolve the target from local state (`resolveBoxOrExit` → `readState`) and then
-    call the provider directly — none are proxied through the control box. With no local record,
-    `agentbox <cmd> <name>` can't resolve a hub-created box at all.
-  - **Reachability, by provider** (what adoption must also satisfy, beyond the record):
-    - **hetzner / DigitalOcean (SSH):** need the per-box key (via `hub pull`) **and the box's VPS
-      IP/host**, which the `BoxRegistration` does not carry today. The dual-IP firewall already
-      admits the PC's egress, so once the record + IP exist, direct SSH works.
-    - **e2b / vercel (SDK):** no per-box key — reached via the provider SDK + your API key (which the
-      PC has if the provider is configured). `url` is a **public HTTPS domain** shown in the web UI,
-      so it already works from anywhere; `attach`/`cp`/`download` still need a local record to know
-      the provider + sandbox id.
-    - **daytona:** SDK + bridge; same record requirement.
-  - **The fix.** Make `hub pull` (or a dedicated `agentbox hub adopt <box>`) write a local
-    `state.json` `BoxRecord` reconstructed from the control box's registration — provider, sandbox
-    id, VPS public IP/host, key path, origin/branch — so the box shows in `agentbox ls` and resolves
-    for `attach`/`cp`/`download`/`url`/`screen` exactly like a PC-created box. This needs the
-    registration **enriched** first (add public IP/host — `sandboxId` is already there), and it folds
-    in the deferred `hostMainRepo`-rewrite-on-PC-clone half of the `hostMainRepo` guard item, and it
-    unblocks cloud-resource teardown from the PC (the reap item below). Until then, the control box's
-    **web UI** is where a hub-created box is fully operable; from the PC you can `control-plane boxes
-    list` to see it, `hub pull` the key, and open the public preview `url` (e2b/vercel), but not
-    drive it by name.
+- **(phase 4) Local-adoption gap — MOVED to [`local-adoption-plan.md`](./local-adoption-plan.md),
+  which is now the plan of record for it.** Short form: a control-box-created box has no local
+  `state.json` `BoxRecord`, so `agentbox ls` (even `-g`) can't show it and
+  `attach`/`cp`/`download`/`url`/`screen` can't resolve it by name; SSH providers additionally
+  need the per-box key (custody has it; `hub pull` fetches it) plus the VPS IP/host, which the
+  `BoxRegistration` doesn't carry yet. The decided direction is thin-client: the control box is
+  the source of truth for cloud boxes, `agentbox ls` lists from it live, and local records become
+  a materialized cache written by adoption (`hub adopt` + auto-adopt on any by-name miss). The
+  plan also covers seed-material custody push (untracked tar + env/secrets, so hub creates of a
+  PC-added project are complete) and shared bake state (`prepared/<provider>.json` in custody,
+  fingerprint-match-wins) — four phases, file-level detail there. It folds in the deferred
+  `hostMainRepo`-rewrite-on-PC-adoption half of the `hostMainRepo` guard item and unblocks the
+  teardown item below.
 - **(phase 4) Cloud-resource teardown of a worker-created box from the hub.** `control-plane boxes
   rm` / the hub Destroy button reap control-box *state* only; the actual sandbox is left running
   because the control box has no full `BoxRecord` to drive `provider.destroy`. Persist enough on the
   registration (sandboxId is there now; add region/host as needed) and reconstruct a minimal record,
-  or run the destroy from a host that owns the box. Pairs with the liveness-sweep item above.
+  or run the destroy from a host that owns the box. Pairs with the liveness-sweep item above. The
+  registration enrichment (publicHost, image) lands in
+  [`local-adoption-plan.md`](./local-adoption-plan.md) phase 1, which unblocks this.
 - **(phase 4) Autopause/queue for cloud boxes was already resident, not "moved".** The plan text
   framed phase 4 as moving autopause/queue for cloud boxes to the hub. In practice the control box's
   resident daemon (phase 3) already runs the queue + cloud-keepalive in-process, and the laptop's
@@ -1301,4 +1283,6 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
   project.** Confirmed end to end: the live run had to scp `e2b-prepared.json` /
   `hetzner-prepared.json` into the hub data dir and `git clone` a project into the persistent
   `/root/projects` volume by hand before the web UI could create a box. Fold both into the deploy
-  (ship prepared-state as a custody scope; offer to clone the current repo on the VPS).
+  (ship prepared-state as a custody scope; offer to clone the current repo on the VPS). The
+  prepared-state half is folded into [`local-adoption-plan.md`](./local-adoption-plan.md) phase 4
+  (custody `prepared/` scope, seeded by deploy).
