@@ -1,6 +1,8 @@
 # Local adoption — the PC as a thin client of the control box
 
-**Status: planned — no code written. One session per phase.**
+**Status: all four phases IMPLEMENTED (2026-07-17). Unit-tested + partially
+live-verified; a full live e2e against a deployed control box is the remaining
+follow-up (see "Live verification status" at the end).**
 
 This is the plan of record for closing the *local-adoption gap* described in
 [`control-box-plan.md`](./control-box-plan.md) (phase-4 backlog): once a control box is enabled,
@@ -187,6 +189,37 @@ hetzner create uses it without baking.
   breaking, but check the `source` tag if it gets exposed there.
 - `pnpm typecheck` before pushing; the relay and hub are persistent daemons — rebuild + restart
   before verifying (see CLAUDE.md → hub restart with `AGENTBOX_HUB_BIN`).
+
+## Live verification status
+
+Verified live during implementation (against the deployed control box at
+`relay.controlPlaneUrl`, and against a real relay daemon):
+
+- **Phase 2** — `ls -g` with the control box reachable (~0.7s) and unreachable
+  (1.9s, cached/degraded note, no hang). This caught a real bug: `AbortSignal`
+  rejects a `fetch` promise but undici keeps the connecting socket until its own
+  10s connectTimeout, so `ls` printed instantly and then held the shell ~9s.
+  Fixed by probing reachability with a socket we own and destroy.
+- **Phase 3** — `control-plane project push` to the live control box: seed
+  landed under `projects/<slug>/seed/`, and a re-push of an unchanged tree
+  uploaded only the manifest. This caught a second real bug: `tar -z` stamps the
+  current time into the gzip header, so an unchanged tree hashed differently
+  every run and re-uploaded the seed's largest blob. Fixed by gzipping via zlib
+  (MTIME=0). Smoke data was cleaned off the control box afterwards.
+- **Phase 4** — against a real `startRelayDaemon`: the `prepared/` scope
+  round-trips, an unknown scope is still rejected (400), and a 4 MB seed tar
+  passes the custody-scoped body cap (the 1 MiB relay cap would reject it).
+  Note: the **currently deployed** control box answers 400 for `prepared/` — it
+  predates the scope, which is exactly the back-compat case the pull treats as
+  "nothing shared". It needs a redeploy to serve the new scope.
+
+Not yet done live (needs a hub-created box, so it's the follow-up smoke pass):
+
+- Adopting a real web-UI-created box → `hub adopt`, auto-adopt on by-name use,
+  `attach` for hetzner (custody keys) and e2b/vercel (SDK).
+- A web-UI create consuming seed material from custody (the worker overlay).
+- A bake on the control box being adopted by the PC without a re-bake
+  (needs the redeploy above first).
 
 ## Deferred (tracked elsewhere)
 

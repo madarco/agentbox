@@ -1198,11 +1198,12 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
 - **(phase 2) Custody is unencrypted at rest** (plan already lists encrypted-at-rest as out of
   scope). The bytes sit `0600` under `~/.agentbox/hub/custody/` on the VPS. The blob-backend swap
   (S3/R2) the seam is shaped for is where envelope encryption would slot in.
-- **(phase 3, live) The deploy does not ship prepared-state records.** The worker needs
-  `~/.agentbox/e2b-prepared.json` (and `hetzner-prepared.json`) VPS-side to create boxes on a
-  prepared provider; the live verify scp'd them into the hub data dir by hand. Teach
-  `control-plane deploy` (or a `custody`/`hub push` scope) to ship `*-prepared.json` alongside
-  `secrets.env`, and re-sync after a host-side `agentbox prepare`.
+- **(phase 3, live) The deploy does not ship prepared-state records — DONE via
+  [`local-adoption-plan.md`](./local-adoption-plan.md) phase 4.** Bake records now sync through a
+  `prepared/` custody scope: `control-plane deploy hetzner` seeds the new box with the PC's
+  records, `agentbox prepare` pushes after a bake, and both sides pull-before-bake
+  (fingerprint-match-wins). A control box deployed before the scope existed answers 400 and needs
+  a redeploy to serve it.
 - **(phase 3, live) Dead-box registrations are never reaped on the hub. PARTIAL (phase 4).** A
   reap verb now exists — `DELETE /remote/boxes/:id` (→ `control-plane boxes rm`, and the hub-UI
   Destroy button for a Store-only box) removes the registration + status + custody
@@ -1225,19 +1226,17 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
   verify, but the **hetzner base snapshot and any other provider bakes still ship the broken
   lease push** until their next `agentbox prepare`. Re-prepare hetzner before relying on leased
   pushes from hetzner boxes (tracked for the phase-4 hetzner-provider verify).
-- **(phase 4) Local-adoption gap — MOVED to [`local-adoption-plan.md`](./local-adoption-plan.md),
-  which is now the plan of record for it.** Short form: a control-box-created box has no local
-  `state.json` `BoxRecord`, so `agentbox ls` (even `-g`) can't show it and
-  `attach`/`cp`/`download`/`url`/`screen` can't resolve it by name; SSH providers additionally
-  need the per-box key (custody has it; `hub pull` fetches it) plus the VPS IP/host, which the
-  `BoxRegistration` doesn't carry yet. The decided direction is thin-client: the control box is
-  the source of truth for cloud boxes, `agentbox ls` lists from it live, and local records become
-  a materialized cache written by adoption (`hub adopt` + auto-adopt on any by-name miss). The
-  plan also covers seed-material custody push (untracked tar + env/secrets, so hub creates of a
-  PC-added project are complete) and shared bake state (`prepared/<provider>.json` in custody,
-  fingerprint-match-wins) — four phases, file-level detail there. It folds in the deferred
-  `hostMainRepo`-rewrite-on-PC-adoption half of the `hostMainRepo` guard item and unblocks the
-  teardown item below.
+- **(phase 4) Local-adoption gap — IMPLEMENTED (2026-07-17); see
+  [`local-adoption-plan.md`](./local-adoption-plan.md) for the detail and the remaining live-verify
+  pass.** The PC is now a thin client: `BoxRegistration` carries the adoption material
+  (publicHost/image/webPort/agent/projectSlug), `agentbox hub adopt` rebuilds the local `BoxRecord`
+  + pulls the box's custody SSH keys, and `resolveBoxOrExit` auto-adopts on any by-name miss, so
+  `attach`/`cp`/`download`/`url`/`screen` resolve a hub-created box. `agentbox ls` merges the
+  control box's registry with local boxes (`on hub` / `orphan` tags, cached when unreachable).
+  Project seed material (untracked tar + env/secrets) rides custody so web-UI creates of a
+  PC-added project are complete, and bake state is shared via a `prepared/` custody scope
+  (fingerprint-match-wins). This also closed the deferred `hostMainRepo`-rewrite-on-PC-adoption
+  half of the `hostMainRepo` guard item, and unblocks the teardown item below.
 - **(phase 4) Cloud-resource teardown of a worker-created box from the hub.** `control-plane boxes
   rm` / the hub Destroy button reap control-box *state* only; the actual sandbox is left running
   because the control box has no full `BoxRecord` to drive `provider.destroy`. Persist enough on the
@@ -1282,7 +1281,8 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
 - **(final verify, live) `control-plane deploy` does not ship `*-prepared.json` or clone a
   project.** Confirmed end to end: the live run had to scp `e2b-prepared.json` /
   `hetzner-prepared.json` into the hub data dir and `git clone` a project into the persistent
-  `/root/projects` volume by hand before the web UI could create a box. Fold both into the deploy
-  (ship prepared-state as a custody scope; offer to clone the current repo on the VPS). The
-  prepared-state half is folded into [`local-adoption-plan.md`](./local-adoption-plan.md) phase 4
-  (custody `prepared/` scope, seeded by deploy).
+  `/root/projects` volume by hand before the web UI could create a box. The **prepared-state half
+  is DONE** ([`local-adoption-plan.md`](./local-adoption-plan.md) phase 4: a custody `prepared/`
+  scope, seeded by the deploy and re-synced by every `prepare`). Still open: offering to clone the
+  current repo on the VPS — though a web-UI create no longer needs a pre-cloned project, since the
+  worker clones with a leased token and overlays the project's custody seed material.

@@ -5,7 +5,7 @@ description: Deploy the hub to an always-on VPS so cloud boxes keep working — 
 
 The [hub](/docs/hub) normally runs on your laptop. Deploy that same hub to an always-on VPS and it becomes a **control box**: a small server that holds the shared state your boxes need (registry, approvals, git credentials, agent logins, SSH keys) and can **create and run cloud boxes itself**. Cloud boxes keep pushing and opening PRs with your laptop off, and you can spawn new ones from the web UI on your phone.
 
-<Callout type="warn" title="Experimental">The deployed hub / control box is under active development. The `agentbox control-plane` commands are hidden from `agentbox --help` but work; expect rough edges (the local-adoption gap below is the main one). Local docker boxes are unaffected — this is only for cloud boxes.</Callout>
+<Callout type="warn" title="Experimental">The deployed hub / control box is under active development. The `agentbox control-plane` commands are hidden from `agentbox --help` but work; expect rough edges. Local docker boxes are unaffected — this is only for cloud boxes.</Callout>
 
 It's the same `@agentbox/relay` core you already run locally — the relay daemon, the web UI, and a resident create worker — deployed to a **Hetzner VPS** on **SQLite** (no database to manage), reachable over HTTPS. The control box takes over the *centralized* concerns so a sleeping laptop no longer stops your cloud boxes; it is **not** a proxy for your boxes' traffic (more on that below).
 
@@ -83,25 +83,57 @@ agentbox-ctl git push
 
 The box leases a 1-hour, single-repo token from the control box and pushes to GitHub directly. Your laptop relay is not involved, so it can be closed, asleep, or offline. Pushes to the box's own `agentbox/*` branch are auto-approved; any other branch raises an approval you answer from the web UI or CLI.
 
-## Driving a box from your laptop — and the adoption gap
+## Driving a box from your laptop
 
-Every host-side box command — `attach`, `cp`, `download`, `url`, `screen` — is a **direct PC↔box** operation: it resolves the box from your **local** state and calls the provider directly. **None are proxied through the control box** (it's a custodian, not a network relay). That makes the *creation origin* decisive:
+With a control box configured, your laptop becomes a **thin client**: the control box is the source of truth for cloud boxes, and your local state is a cache of the ones you actually drive. Boxes created either way are operable from either side.
 
-**A box you created from your PC** — the PC has the full local record and the access it needs (per-box SSH key locally for hetzner/DigitalOcean; the provider SDK + your API key for e2b/vercel/daytona). So `attach` / `cp` / `download` / `url` / `screen` work **exactly as if no control box existed**. The control box only adds visibility, git-lease, and key custody on the side.
-
-**A box the control box created** (web UI or `--via-hub`) lives in the control box's DB, and your PC has **no local record** for it — so:
-
-- It does **not** show up in `agentbox ls` (that reads local state; there's no `--global`-style control-plane source). See it from the PC with `agentbox control-plane boxes list`.
-- `agentbox attach <name>` / `cp` / `download` / `url` / `screen` **can't resolve it by name** yet.
-
-Today it is fully operable from the **web UI** (the box detail page's terminal/Apps launchers and "open VNC"). From your laptop:
+`agentbox ls` asks the control box and merges the answer with your local boxes, so a box created from the web UI shows up alongside your own:
 
 ```bash
-agentbox control-plane boxes list             # see control-box boxes
-agentbox hub pull <box>                        # download its SSH key → ~/.agentbox/boxes/<id>/ssh/
+agentbox ls -g
 ```
 
-`hub pull` gets you the key (for hetzner/DigitalOcean — the box's firewall already admits your egress IP), and for e2b/vercel the box's [`url`](/docs/web-apps-and-tunnels) is a public HTTPS domain shown in the web UI. But a clean `agentbox attach <name>` awaits **local adoption** — `hub pull` doesn't yet write a local box record (the box's VPS IP isn't carried on the registration). Until that lands, drive control-box-created boxes from the web UI, or reach them manually with the pulled key.
+```
+N  NAME          STATE    AGENT   PROVIDER  URL
+1  fix-login     running  claude  docker    …
+-  from-web-ui   on hub   -       e2b       …
+```
+
+A row marked `on hub` exists on the control box but hasn't been **adopted** here yet — nothing about it is local. Adoption happens automatically the first time you use it by name:
+
+```bash
+agentbox attach from-web-ui      # adopts it, then attaches
+```
+
+Adoption writes the local box record from the control box's registration and downloads the box's per-box SSH key from custody, so `attach`, `cp`, `download`, `url`, and `screen` then work exactly as for a box you created here. If the box's repo is also cloned on your laptop, adoption links it to that clone, so it appears in the project-scoped `agentbox ls` too, and its `git push` targets your local repo.
+
+To adopt without attaching (or to refresh a record after the box's VPS IP changed):
+
+```bash
+agentbox hub adopt <box>
+```
+
+<Callout title="What you need per provider">
+For **hetzner/DigitalOcean**, adoption pulls the per-box SSH key from custody — the box's firewall already admits your egress IP. For **e2b/vercel/daytona**, there is no per-box key: the box is reached with the provider SDK, so that provider's API key must be configured on your laptop. Their [`url`](/docs/web-apps-and-tunnels) is a public HTTPS domain that works from anywhere regardless.
+</Callout>
+
+If a cloud box is in your local state but the control box has never heard of it, `ls` marks it `orphan` — usually it was destroyed from the web UI, and the leftover record is shown rather than silently dropped.
+
+When the control box is unreachable, `ls` renders its last known hub boxes from a local cache and says so; your own local boxes are unaffected.
+
+## Adding a project so the control box can build it
+
+The control box's worker clones your repo with a leased GitHub-App token, so it gets everything you've committed — but by definition **not** your untracked files or `.env`/secrets. Those are stored as the project's **seed material** in custody.
+
+Creating a cloud box from your laptop pushes the seed automatically. To register a project before creating a box from it — so a web-UI create has the files it needs:
+
+```bash
+agentbox control-plane project push
+```
+
+Re-pushes are hash-skipped: an unchanged working tree uploads nothing. When the control box creates a box, it overlays the seed onto the fresh clone — the **clone wins** on any conflict, so a file that has since been committed keeps the repo's version, and the job log records how old the seed is.
+
+## Manage control-box boxes from your laptop
 
 ## Manage control-box boxes from your laptop
 
