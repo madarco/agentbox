@@ -191,11 +191,16 @@ export interface UserConfig {
      */
     controlPlaneUrl?: string;
     /**
-     * Per-request body cap (bytes) for the control box's custody PUTs.
-     * Defaults to 32 MiB. Custody carries a project's untracked-files seed
-     * tarball, which the relay's 1 MiB control-plane body cap is far too small
-     * for; this is scoped to custody so every other route keeps that cap.
-     * Raise it if a project's untracked seed legitimately exceeds the default.
+     * Per-request body cap (bytes) for custody PUTs. Defaults to 32 MiB.
+     * Custody carries a project's untracked-files seed tarball, which the
+     * relay's 1 MiB control-plane body cap is far too small for; this is scoped
+     * to custody so every other route keeps that cap.
+     *
+     * Two sides enforce it independently: on a PC this governs how large a seed
+     * blob the client will try to upload, while a **control box** enforces its
+     * own cap from `AGENTBOX_CUSTODY_MAX_BODY_BYTES`. Raising only this one lets
+     * the client offer a blob the control box then refuses — the push drops that
+     * blob and continues, so raise both to actually admit a bigger seed.
      */
     custodyMaxBodyBytes?: number;
   };
@@ -985,7 +990,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'relay.custodyMaxBodyBytes',
     type: 'int',
     description:
-      "Per-request body cap (bytes) for the control box's custody PUTs (default 33554432 = 32 MiB). Custody carries a project's untracked-files seed tar, which the relay's 1 MiB control-plane body cap is too small for; this cap applies only to custody, so every other relay route keeps the smaller one. Raise it if a project's untracked seed legitimately exceeds the default.",
+      "Per-request body cap (bytes) for custody PUTs (default 33554432 = 32 MiB). Custody carries a project's untracked-files seed tar, which the relay's 1 MiB control-plane body cap is too small for; this cap applies only to custody, so every other relay route keeps the smaller one. On a PC it governs how large a seed blob the client will upload; a control box enforces its own cap via AGENTBOX_CUSTODY_MAX_BODY_BYTES, so raise both to admit a bigger seed (a blob the control box refuses is dropped and the rest of the seed still pushes).",
     advanced: true,
   },
   {

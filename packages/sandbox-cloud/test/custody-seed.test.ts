@@ -203,6 +203,49 @@ describe('pushProjectSeedToCustody', () => {
     expect(puts).toEqual(['projects/o__r/seed/manifest.json']);
   });
 
+  it('drops a blob the control box refuses and still pushes the rest', async () => {
+    // The PC's cap and the control box's cap are independent settings on
+    // different machines, so a tar this side deems fine can still be refused
+    // there (an oversized body is dropped at the socket, so it surfaces as a
+    // network error, not a 413). That must degrade like the local size gate —
+    // partial seed, not a failed push.
+    const repo = await makeRepo();
+    const puts: string[] = [];
+    const fetchImpl = (async (url: unknown, init?: { method?: string }) => {
+      const u = new URL(String(url));
+      if (u.pathname === '/admin/custody') {
+        return new Response(JSON.stringify({ entries: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      const path = decodeURIComponent(u.pathname.slice('/admin/custody/'.length));
+      if (init?.method === 'PUT') {
+        if (path.endsWith('untracked.tar.gz')) throw new TypeError('fetch failed'); // socket reset
+        puts.push(path);
+        return new Response(JSON.stringify({ changed: true, sha256: 'x' }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const res = await pushProjectSeedToCustody({
+      controlPlaneUrl: 'http://cb.test',
+      adminToken: 'admin',
+      slug: 'o__r',
+      projectRoot: repo,
+      envPatterns: ['.env'],
+      fetchImpl,
+    });
+
+    expect(res.dropped).toEqual(['untracked.tar.gz']);
+    // The env tar and the manifest still land.
+    expect(puts).toContain('projects/o__r/seed/env.tar.gz');
+    expect(puts).toContain('projects/o__r/seed/manifest.json');
+    // The manifest must not advertise a blob that isn't stored.
+    expect(res.manifest.files.map((f) => f.path)).not.toContain('untracked.tar.gz');
+    expect(res.manifest.files.map((f) => f.path)).toContain('env.tar.gz');
+  });
+
   it('re-uploads everything under --force', async () => {
     const repo = await makeRepo();
     const built = await buildProjectSeed({ projectRoot: repo, envPatterns: ['.env'] });

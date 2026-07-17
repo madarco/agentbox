@@ -724,8 +724,15 @@ const projectPushSub = new Command('push')
       }
       if (res.skippedTarBytes !== undefined) {
         log.warn(
-          `The untracked-files tar (${String(Math.round(res.skippedTarBytes / 1024 / 1024))}MB) exceeded the custody body cap and was NOT pushed — ` +
-            'hub-created boxes will miss those files. Raise `relay.custodyMaxBodyBytes` on the control box to include it.',
+          `The untracked-files tar (${String(Math.round(res.skippedTarBytes / 1024 / 1024))}MB) exceeded this machine's custody body cap and was NOT pushed — ` +
+            'hub-created boxes will miss those files. To include it, raise `relay.custodyMaxBodyBytes` here AND ' +
+            'AGENTBOX_CUSTODY_MAX_BODY_BYTES on the control box (it enforces its own cap).',
+        );
+      }
+      if (res.dropped.length > 0) {
+        log.warn(
+          `The control box refused ${res.dropped.join(', ')} — hub-created boxes will miss those files. ` +
+            'If it is a size limit, raise AGENTBOX_CUSTODY_MAX_BODY_BYTES on the control box.',
         );
       }
     } catch (err) {

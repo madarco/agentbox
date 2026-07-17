@@ -223,6 +223,12 @@ export interface PushProjectSeedResult {
   skippedTarBytes?: number;
   /** Repo-relative paths of the env/secret files captured (see BuildProjectSeedResult). */
   envFiles: string[];
+  /**
+   * Seed blobs the control box refused (e.g. its own body cap is lower than
+   * this machine's). They are excluded from the stored manifest; the rest of the
+   * seed is still pushed.
+   */
+  dropped: string[];
 }
 
 /**
@@ -278,18 +284,41 @@ export async function pushProjectSeedToCustody(
     uploaded += 1;
   };
 
-  for (const item of built.items) await put(item.relPath, item.data);
-  await put('manifest.json', Buffer.from(JSON.stringify(built.manifest, null, 2), 'utf8'));
+  // A blob the control box won't take must not sink the whole push. The local
+  // size gate can't be authoritative: the PC's `relay.custodyMaxBodyBytes` is
+  // its own setting, while the CONTROL BOX enforces its own cap — so a tar this
+  // side considers fine can still be refused there (and an oversized body is
+  // dropped at the socket, so it surfaces as a network error, not a 413).
+  // Degrade exactly like the local gate does: drop the blob, keep the rest.
+  const dropped: string[] = [];
+  for (const item of built.items) {
+    try {
+      await put(item.relPath, item.data);
+    } catch (err) {
+      dropped.push(item.relPath);
+      log(
+        `seed: the control box refused ${item.relPath} (${formatBytes(item.data.length)}): ` +
+          `${err instanceof Error ? err.message : String(err)} — continuing without it. ` +
+          'If it is a size limit, raise AGENTBOX_CUSTODY_MAX_BODY_BYTES on the control box.',
+      );
+    }
+  }
+  // The manifest describes what is actually stored, so a dropped blob must not
+  // appear in it — a consumer would otherwise look for a file that isn't there.
+  const manifest: SeedManifest = {
+    ...built.manifest,
+    files: built.manifest.files.filter((f) => !dropped.includes(f.path)),
+  };
+  await put('manifest.json', Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'));
 
-  log(
-    `seed: ${String(uploaded)} uploaded, ${String(skipped)} unchanged → custody ${prefix}`,
-  );
+  log(`seed: ${String(uploaded)} uploaded, ${String(skipped)} unchanged → custody ${prefix}`);
   return {
     uploaded,
     skipped,
-    manifest: built.manifest,
+    manifest,
     skippedTarBytes: built.skippedTarBytes,
     envFiles: built.envFiles,
+    dropped,
   };
 }
 
