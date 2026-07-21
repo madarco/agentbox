@@ -29,14 +29,14 @@ export interface CheckResult {
 }
 
 export interface CheckGroup {
-  /** Group title: 'system' | 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b'. */
+  /** Group title: 'system' | 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b' | 'tenki'. */
   title: string;
   results: CheckResult[];
 }
 
-export type ProviderName = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b';
+export type ProviderName = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b' | 'tenki';
 
-const ALL_PROVIDERS: ProviderName[] = ['docker', 'daytona', 'hetzner', 'vercel', 'e2b'];
+const ALL_PROVIDERS: ProviderName[] = ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'tenki'];
 const NODE_MIN_MAJOR = 20;
 const NODE_MIN_MINOR = 10;
 
@@ -381,6 +381,49 @@ async function e2bChecks(): Promise<CheckResult[]> {
   }
 }
 
+async function tenkiChecks(): Promise<CheckResult[]> {
+  try {
+    const mod = await import('@agentbox/sandbox-tenki');
+    const cred = mod.readTenkiCredStatus();
+    const credRes: CheckResult =
+      cred.auth === 'none'
+        ? {
+            label: 'credentials',
+            status: 'warn',
+            detail: 'not configured',
+            hint: '`agentbox tenki login`',
+          }
+        : {
+            label: 'credentials',
+            status: 'ok',
+            detail: `${cred.auth} (${cred.source})`,
+          };
+
+    const prepared = mod.readPreparedState();
+    const imgRes: CheckResult = prepared.base?.image
+      ? {
+          label: 'base image',
+          status: 'ok',
+          detail: `${prepared.base.imageName ?? prepared.base.image} (${prepared.base.cliVersion ?? '—'})`,
+        }
+      : {
+          label: 'base image',
+          status: 'warn',
+          detail: 'not prepared',
+          hint: '`agentbox prepare --provider tenki`',
+        };
+    return [credRes, imgRes];
+  } catch (err) {
+    return [
+      {
+        label: 'credentials',
+        status: 'warn',
+        detail: errSummary(err),
+      },
+    ];
+  }
+}
+
 /**
  * Probe a binary, treating ENOENT (missing on PATH) as a distinct outcome
  * from a non-zero exit. `execa({reject:false})` returns a result envelope
@@ -553,6 +596,9 @@ export async function runProviderChecks(name: ProviderName): Promise<CheckGroup>
       break;
     case 'e2b':
       results = await e2bChecks();
+      break;
+    case 'tenki':
+      results = await tenkiChecks();
       break;
   }
   return { title: name, results };

@@ -8,9 +8,9 @@
 import type { EffectiveConfig } from '@agentbox/config';
 import type { BoxRecord, Provider, ProviderName } from '@agentbox/core';
 
-export type KnownProviderName = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b';
+export type KnownProviderName = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b' | 'tenki';
 
-const KNOWN: readonly KnownProviderName[] = ['docker', 'daytona', 'hetzner', 'vercel', 'e2b'];
+const KNOWN: readonly KnownProviderName[] = ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'tenki'];
 
 export function isKnownProvider(name: string): name is KnownProviderName {
   return (KNOWN as readonly string[]).includes(name);
@@ -62,6 +62,15 @@ export async function getProvider(name: ProviderName): Promise<Provider> {
       const mod = await import('@agentbox/sandbox-e2b');
       await mod.ensureE2bCredentials();
       return mod.e2bProvider;
+    }
+    case 'tenki': {
+      // Same lazy-import pattern. `ensureTenkiCredentials` walks the user
+      // through `agentbox tenki login` (single auth token) on first use. The
+      // base-image gate lives inside `backend.provision` (so `prepare` can
+      // publish it without tripping the gate), matching the e2b/hetzner shape.
+      const mod = await import('@agentbox/sandbox-tenki');
+      await mod.ensureTenkiCredentials();
+      return mod.tenkiProvider;
     }
     default:
       throw new Error(`unknown sandbox provider: ${String(name)}`);

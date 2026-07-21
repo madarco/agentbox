@@ -35,7 +35,7 @@ import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
 /** Cloud backends that store snapshots under ~/.agentbox/cloud-checkpoints/<backend>/. */
-const CLOUD_BACKENDS = ['daytona', 'hetzner', 'vercel', 'e2b'] as const;
+const CLOUD_BACKENDS = ['daytona', 'hetzner', 'vercel', 'e2b', 'tenki'] as const;
 type CloudBackend = (typeof CLOUD_BACKENDS)[number];
 
 /** Lazily resolve a cloud provider's checkpoint capability (dynamic import keeps SDKs out of the hot path). */
@@ -49,6 +49,8 @@ async function cloudProviderFor(backend: CloudBackend): Promise<import('@agentbo
       return (await import('@agentbox/sandbox-vercel')).vercelProvider;
     case 'e2b':
       return (await import('@agentbox/sandbox-e2b')).e2bProvider;
+    case 'tenki':
+      return (await import('@agentbox/sandbox-tenki')).tenkiProvider;
   }
 }
 

@@ -30,7 +30,9 @@ export function resolveBoxSize(cfg: EffectiveConfig, provider: ProviderKind | st
           ? cfg.box.sizeVercel
           : provider === 'e2b'
             ? cfg.box.sizeE2b
-            : cfg.box.sizeDocker;
+            : provider === 'tenki'
+              ? cfg.box.sizeTenki
+              : cfg.box.sizeDocker;
   if (perProvider && perProvider.length > 0) return perProvider;
   return cfg.box.size;
 }

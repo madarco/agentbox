@@ -80,7 +80,7 @@ export const pruneCommand = new Command('prune')
   .option('-y, --yes', 'skip the confirmation prompt')
   .option(
     '--provider <name>',
-    'restrict prune to a specific provider (docker | daytona | hetzner | vercel | e2b). For cloud providers, lists sandboxes that are not in this CLI\'s state.json and offers to delete them.',
+    'restrict prune to a specific provider (docker | daytona | hetzner | vercel | e2b | tenki). For cloud providers, lists sandboxes that are not in this CLI\'s state.json and offers to delete them.',
   )
   .action(async (opts: PruneOptions) => {
     try {
@@ -89,7 +89,7 @@ export const pruneCommand = new Command('prune')
         return;
       }
       if (opts.provider !== undefined && opts.provider !== 'docker') {
-        log.error(`unknown provider '${opts.provider}'; expected docker, daytona, hetzner, vercel, or e2b`);
+        log.error(`unknown provider '${opts.provider}'; expected docker, daytona, hetzner, vercel, e2b, or tenki`);
         process.exit(2);
       }
       const dryRun = opts.dryRun ?? false;
@@ -130,7 +130,7 @@ export const pruneCommand = new Command('prune')
   });
 
 /** Cloud providers whose orphan sandboxes `prune --provider <p>` can enumerate + delete. */
-const CLOUD_PRUNE_PROVIDERS = ['daytona', 'hetzner', 'vercel', 'e2b'] as const;
+const CLOUD_PRUNE_PROVIDERS = ['daytona', 'hetzner', 'vercel', 'e2b', 'tenki'] as const;
 type CloudPruneProvider = (typeof CLOUD_PRUNE_PROVIDERS)[number];
 
 function isCloudPruneProvider(name: string): name is CloudPruneProvider {

@@ -430,6 +430,7 @@ const PROVIDER_HINTS: Record<ProviderName, string> = {
   daytona: 'approve a browser sign-in link',
   vercel: 'installs the Vercel sandbox CLI, then a browser sign-in',
   e2b: 'paste an API key from the E2B dashboard',
+  tenki: 'paste an auth token from the Tenki dashboard',
 };
 
 const PROVIDER_LABEL: Record<ProviderName, string> = {
@@ -438,6 +439,7 @@ const PROVIDER_LABEL: Record<ProviderName, string> = {
   daytona: 'Daytona (cloud sandbox)',
   vercel: 'Vercel (cloud microVM)',
   e2b: 'E2B (cloud microVM)',
+  tenki: 'Tenki (cloud microVM)',
 };
 
 function ensureTty(): boolean {
@@ -499,6 +501,18 @@ async function runProviderLogin(name: ProviderName): Promise<boolean> {
     await mod.ensureVercelCredentials();
     return true;
   }
+  if (name === 'tenki') {
+    const mod = await import('@agentbox/sandbox-tenki');
+    const status = mod.readTenkiCredStatus();
+    if (status.auth !== 'none') {
+      log.info(`tenki: already configured (${status.auth})`);
+      const rotate = await confirm({ message: 'Re-authenticate Tenki?', initialValue: false });
+      if (rotate) await mod.ensureTenkiCredentials({ force: true });
+      return true;
+    }
+    await mod.ensureTenkiCredentials();
+    return true;
+  }
   // e2b
   const mod = await import('@agentbox/sandbox-e2b');
   const status = mod.readE2bCredStatus();
@@ -526,7 +540,7 @@ function tutorialBody(provider: ProviderName): string {
   );
 }
 
-const KNOWN_PROVIDERS: ProviderName[] = ['docker', 'hetzner', 'daytona', 'vercel', 'e2b'];
+const KNOWN_PROVIDERS: ProviderName[] = ['docker', 'hetzner', 'daytona', 'vercel', 'e2b', 'tenki'];
 
 function isProviderName(s: string): s is ProviderName {
   return (KNOWN_PROVIDERS as readonly string[]).includes(s);

@@ -29,5 +29,11 @@ export function cloudSizingProviderOptions(
   if (providerName === 'e2b') {
     return { timeoutMs: cfg.box.e2bTimeoutMs };
   }
+  if (providerName === 'tenki') {
+    // Session lifetime the box is created with (maps to Tenki's maxDurationMs)
+    // and records as `cloud.sessionTimeoutMs` so the host keepalive loop can
+    // push the deadline forward (via `session.extend`) while the agent works.
+    return { timeoutMs: cfg.box.tenkiTimeoutMs };
+  }
   return {};
 }

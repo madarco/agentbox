@@ -372,6 +372,8 @@ function rebuildMinutesFor(provider: ProviderName): string {
   switch (provider) {
     case 'e2b':
       return '2';
+    case 'tenki':
+      return '2';
     case 'daytona':
       return '7';
     case 'vercel':

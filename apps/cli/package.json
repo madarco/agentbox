@@ -78,6 +78,7 @@
     "@agentbox/sandbox-docker": "workspace:*",
     "@agentbox/sandbox-e2b": "workspace:*",
     "@agentbox/sandbox-hetzner": "workspace:*",
+    "@agentbox/sandbox-tenki": "workspace:*",
     "@agentbox/sandbox-vercel": "workspace:*",
     "@types/node": "^22.10.1",
     "tsup": "^8.3.5",
