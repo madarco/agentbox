@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import {
   mkdir,
   readdir,
@@ -22,6 +23,14 @@ import type { BoxRegistry } from './registry.js';
 import type { BoxStatusStore } from './status-store.js';
 
 export const QUEUE_DIR = join(STATE_DIR, 'queue');
+
+/**
+ * Concurrency ceiling for `kind: 'prepare'` (image-bake) jobs — a separate lane
+ * from box creation. Serialized to 1: bakes are resource-heavy (a docker build,
+ * a booted VPS) and each pins project config on success, so running one at a
+ * time avoids contention and write races. A second bake queues behind the first.
+ */
+export const PREPARE_MAX_CONCURRENT = 1;
 
 export type QueueJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 export type QueueAgentKind = 'claude-code' | 'codex' | 'opencode';
@@ -63,6 +72,14 @@ export interface QueueJobOpenTerminal {
 /** On-disk job manifest. Read/written under `~/.agentbox/queue/<id>.json`. */
 export interface QueueJob {
   id: string;
+  /**
+   * What the worker does with this job. `create` (default when absent) builds a
+   * box. `prepare` bakes a provider's base image — it produces an artifact, not
+   * a box, so it is excluded from the box/working concurrency gates and never
+   * surfaces as a box in the dashboard. Prepare jobs carry `prepare` (not the
+   * agent/create fields, which hold inert placeholders).
+   */
+  kind?: 'create' | 'prepare';
   agent: QueueAgentKind;
   status: QueueJobStatus;
   /** Friendly box name the worker should create the box under. */
@@ -72,6 +89,18 @@ export interface QueueJob {
   prompt: string;
   /** Extra argv tokens passed after `--`. */
   agentArgs: string[];
+  /**
+   * "Just create the box, don't start an agent" (like `agentbox create`). When
+   * true the worker builds the box and stops — no agent session, no prompt.
+   * `agent` still holds a value (required by the type) but is ignored.
+   */
+  noAgent?: boolean;
+  /**
+   * Seed the agent's first turn with the setup-wizard prompt (generate
+   * `agentbox.yaml`) — set by the hub when the project has no `agentbox.yaml`
+   * and no default snapshot. Inert when `noAgent` (no agent to run it).
+   */
+  setupWizard?: boolean;
   /** Workspace + create-time options the worker reconstructs from. */
   createOpts: QueueJobCreateOpts;
   /** Per-job concurrency ceiling (--max-running override, else the global). */
@@ -105,6 +134,47 @@ export interface QueueJob {
   reason?: string;
   /** Exit code of the worker process (only set on done/failed). */
   exitCode?: number;
+  /**
+   * Interactive Claude re-login sub-state. Set by the worker when it detects an
+   * expired/dead Claude login during create and drives a browser re-login in a
+   * throwaway docker container (job stays `running` meanwhile). The hub API/UI
+   * read `phase`/`url`/`error` to surface the flow; the code endpoint writes
+   * `code` back, which the worker consumes and clears. Absent for the normal
+   * (creds-OK) path.
+   */
+  login?: QueueJobLogin;
+  /** Bake options for a `kind: 'prepare'` job (see {@link QueueJobPrepare}). */
+  prepare?: QueueJobPrepare;
+}
+
+/**
+ * Claude re-login sub-state carried on a create job. Written **only by the create
+ * worker** (worker → UI): `phase`/`url`/`error`/`lastError`. The reverse channel
+ * (the pasted OAuth code, UI → worker) rides a separate file — see
+ * {@link queueLoginCodePath} — so the two sides never read-modify-write the same
+ * object and can't lose each other's updates.
+ */
+export interface QueueJobLogin {
+  required: boolean;
+  phase: 'starting' | 'awaiting-code' | 'exchanging' | 'done' | 'error';
+  /** OAuth approval URL the user must open; present from `awaiting-code` onward. */
+  url?: string;
+  /** Terminal failure reason (with `phase: 'error'`). */
+  error?: string;
+  /** A recoverable note (e.g. a rejected code) — the flow stays usable. */
+  lastError?: string;
+}
+
+/**
+ * Options for a `kind: 'prepare'` job: bake a provider's base image. The worker
+ * (`_run-queued-prepare`) calls `provider.prepare({ force, claudeInstall, onLog })`
+ * directly and streams progress to the job log.
+ */
+export interface QueueJobPrepare {
+  /** Rebuild even if the base image/snapshot already exists. */
+  force?: boolean;
+  /** Bake-time Claude install method (falls back to the effective config). */
+  claudeInstall?: 'native' | 'npm';
 }
 
 /**
@@ -117,6 +187,9 @@ export interface QueueJobCreateOpts {
   name?: string;
   hostSnapshot?: boolean;
   snapshot?: string;
+  /** Base ref the box's per-box `agentbox/<name>` branch forks from (branch / tag
+   *  / SHA). Absent → the host's HEAD. Mirrors the CLI's `--from-branch`. */
+  fromBranch?: string;
   image?: string;
   withPlaywright?: boolean;
   withEnv?: boolean;
@@ -185,6 +258,134 @@ export async function writeJob(job: QueueJob): Promise<void> {
   await rename(tmp, final);
 }
 
+export interface EnqueueQueueJobInput {
+  agent: QueueAgentKind;
+  boxName: string;
+  providerName: string;
+  prompt: string;
+  agentArgs: string[];
+  createOpts: QueueJobCreateOpts;
+  /**
+   * "Just create the box, don't start an agent" (like `agentbox create`). The
+   * worker runs createBox() then stops — no agent session. `agent` is still
+   * required by the type but is ignored by the worker when this is set.
+   */
+  noAgent?: boolean;
+  /** Seed the setup-wizard prompt as the agent's first turn (hub create path). */
+  setupWizard?: boolean;
+  /** Per-invocation override of queue.maxConcurrent. */
+  maxRunningOverride?: number;
+  /** Per-invocation override of queue.maxWorking. */
+  maxWorkingOverride?: number;
+  /** Host-terminal targeting captured at submit time (CLI `queue.openIn`). */
+  openTerminal?: QueueJobOpenTerminal;
+}
+
+export interface EnqueueQueueJobResult {
+  job: QueueJob;
+  /** Cross-provider running count at the time of enqueue (informational). */
+  runningCount: number;
+  /** Effective ceiling used for the job (override or global). */
+  maxConcurrent: number;
+}
+
+/**
+ * Build a queued-job manifest and write it to `~/.agentbox/queue/<id>.json`.
+ * Pure + transport-free: it does NOT ensure a relay is running and does NOT
+ * poke the scheduler — callers do that (the CLI via `POST /admin/queue/enqueue`
+ * after `ensureRelay`; the embedded hub via its in-process queue poke). Kept in
+ * `@agentbox/relay` so both the CLI `submitQueueJob` wrapper and the hub backend
+ * share one manifest-builder without the hub importing `apps/cli`. The scheduler
+ * (`startQueueLoop`) picks the manifest up on its next tick regardless.
+ */
+export async function enqueueQueueJob(
+  input: EnqueueQueueJobInput,
+): Promise<EnqueueQueueJobResult> {
+  const cfg = await loadQueueConfig();
+  const ceiling =
+    typeof input.maxRunningOverride === 'number' && input.maxRunningOverride > 0
+      ? input.maxRunningOverride
+      : cfg.maxConcurrent;
+  const maxWorking =
+    typeof input.maxWorkingOverride === 'number' && input.maxWorkingOverride > 0
+      ? input.maxWorkingOverride
+      : undefined;
+
+  const id = randomBytes(9).toString('hex');
+  const job: QueueJob = {
+    id,
+    agent: input.agent,
+    status: 'queued',
+    boxName: input.boxName,
+    providerName: input.providerName,
+    prompt: input.prompt,
+    agentArgs: input.agentArgs,
+    ...(input.noAgent ? { noAgent: true } : {}),
+    ...(input.setupWizard ? { setupWizard: true } : {}),
+    createOpts: input.createOpts,
+    maxConcurrent: ceiling,
+    ...(maxWorking !== undefined ? { maxWorking } : {}),
+    ...(input.openTerminal !== undefined ? { openTerminal: input.openTerminal } : {}),
+    createdAt: new Date().toISOString(),
+    logPath: queueLogPath(id),
+  };
+  await writeJob(job);
+
+  let runningCount = 0;
+  try {
+    runningCount = await defaultCountRunningBoxes();
+  } catch {
+    runningCount = 0;
+  }
+
+  return { job, runningCount, maxConcurrent: ceiling };
+}
+
+export interface EnqueuePrepareJobInput {
+  /** Provider to bake (docker | daytona | hetzner | vercel | e2b | plugin). */
+  providerName: string;
+  /** Rebuild even if the base already exists. */
+  force?: boolean;
+  /** Bake-time Claude install method (else the effective config decides). */
+  claudeInstall?: 'native' | 'npm';
+  /** Host dir used for config resolution; the worker defaults it if absent. */
+  workspace?: string;
+}
+
+/**
+ * Build a `kind: 'prepare'` manifest and write it to the queue. Like
+ * {@link enqueueQueueJob} this is transport-free — the caller pokes the
+ * scheduler. The agent/create fields carry inert placeholders (the prepare
+ * worker only reads `providerName` + `prepare`); the job is scheduled in its own
+ * lane (see {@link PREPARE_MAX_CONCURRENT}) and never surfaces as a box.
+ */
+export async function enqueuePrepareJob(
+  input: EnqueuePrepareJobInput,
+): Promise<{ job: QueueJob }> {
+  const id = randomBytes(9).toString('hex');
+  const prepare: QueueJobPrepare = {
+    ...(input.force ? { force: true } : {}),
+    ...(input.claudeInstall ? { claudeInstall: input.claudeInstall } : {}),
+  };
+  const job: QueueJob = {
+    id,
+    kind: 'prepare',
+    agent: 'claude-code', // placeholder — ignored for prepare
+    status: 'queued',
+    boxName: '',
+    providerName: input.providerName,
+    prompt: '',
+    agentArgs: [],
+    createOpts: { workspace: input.workspace ?? process.cwd() },
+    prepare,
+    maxConcurrent: PREPARE_MAX_CONCURRENT,
+    createdAt: new Date().toISOString(),
+    logPath: queueLogPath(id),
+  };
+  await writeJob(job);
+  return { job };
+}
+
 /** Read a single job manifest by id. Returns null when missing. */
 export async function readJob(id: string): Promise<QueueJob | null> {
   try {
@@ -242,7 +443,37 @@ export function selectNextRunnable(jobs: QueueJob[], runningCount: number): Queu
   // jobs is FIFO by createdAt already (loadQueue sorts).
   for (const j of jobs) {
     if (j.status !== 'queued') continue;
+    if (j.kind === 'prepare') continue; // prepare has its own lane
     if (runningCount < j.maxConcurrent) return j;
+  }
+  return null;
+}
+
+/** Count running prepare jobs (its own concurrency lane). Dead workers skipped. */
+export function countRunningPrepareJobs(jobs: QueueJob[]): number {
+  let n = 0;
+  for (const j of jobs) {
+    if (j.kind !== 'prepare') continue;
+    if (j.status !== 'running') continue;
+    if (typeof j.pid === 'number' && !processAlive(j.pid)) continue;
+    n += 1;
+  }
+  return n;
+}
+
+/**
+ * Pure selector for the prepare (image-bake) lane: the oldest queued prepare job
+ * while under {@link PREPARE_MAX_CONCURRENT}. Independent of the box gates.
+ */
+export function selectNextRunnablePrepare(
+  jobs: QueueJob[],
+  runningPrepare: number,
+): QueueJob | null {
+  if (runningPrepare >= PREPARE_MAX_CONCURRENT) return null;
+  for (const j of jobs) {
+    if (j.kind !== 'prepare') continue;
+    if (j.status !== 'queued') continue;
+    return j;
   }
   return null;
 }
@@ -350,6 +581,7 @@ export function selectNextRunnableByWorking(
 ): QueueJob | null {
   for (const j of jobs) {
     if (j.status !== 'queued') continue;
+    if (j.kind === 'prepare') continue; // prepare has its own lane
     const ceil =
       typeof j.maxWorking === 'number' && j.maxWorking > 0 ? j.maxWorking : globalMaxWorking;
     if (workingCount < ceil) return j;
@@ -475,6 +707,14 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
         });
       }
 
+      // Flip jobs whose worker died mid-flight to `failed`. Must run before the
+      // no-queued-work early return below, or a dead worker with nothing else
+      // queued is never noticed — which is precisely the case that leaves a UI
+      // progress card waiting on a job that will never finish.
+      await recoverOrphanedWorkers(log, onStatusChange, true).catch((err) => {
+        log(`queue: orphan reap failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+
       const jobs = await loadQueue();
       const hasQueued = jobs.some((j) => j.status === 'queued');
       if (!hasQueued) return;
@@ -505,7 +745,7 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
           const fresh = await loadQueue();
           next = selectNextRunnable(fresh, occupancy);
         }
-        if (!next) return;
+        if (!next) break;
         // Atomic claim: re-read to make sure no other process already started
         // it (the relay is the only writer of status: running, but a
         // future-second-relay scenario would clobber here without this read).
@@ -549,6 +789,49 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
           log(`queue: spawn for job ${updated.id} failed: ${msg}`);
         }
       }
+
+      // Prepare (image-bake) lane — independent of the box/working gates. A bake
+      // produces an artifact, not a box, so it neither counts against nor is
+      // blocked by running boxes. Serialized to PREPARE_MAX_CONCURRENT.
+      while (!stopped) {
+        const fresh = await loadQueue();
+        const runningPrepare = countRunningPrepareJobs(fresh);
+        const next = selectNextRunnablePrepare(fresh, runningPrepare);
+        if (!next) break;
+        const current = await readJob(next.id);
+        if (!current || current.status !== 'queued') continue;
+        const updated: QueueJob = {
+          ...current,
+          status: 'running',
+          startedAt: new Date().toISOString(),
+        };
+        await writeJob(updated);
+        onStatusChange?.(updated);
+        try {
+          const pid = await spawnWorker(updated);
+          if (typeof pid === 'number') {
+            const withPid: QueueJob = { ...updated, pid };
+            await writeJob(withPid);
+            onStatusChange?.(withPid);
+            log(
+              `queue: started prepare job ${updated.id} (${updated.providerName}) as pid ${String(pid)}; prepare ${String(runningPrepare + 1)}/${String(PREPARE_MAX_CONCURRENT)}`,
+            );
+          } else {
+            log(`queue: started prepare job ${updated.id} (${updated.providerName}); pid unknown`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const failed: QueueJob = {
+            ...updated,
+            status: 'failed',
+            finishedAt: new Date().toISOString(),
+            reason: `worker-spawn-failed: ${msg}`,
+          };
+          await writeJob(failed);
+          onStatusChange?.(failed);
+          log(`queue: spawn for prepare job ${updated.id} failed: ${msg}`);
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`queue: tick error: ${msg}`);
@@ -588,15 +871,29 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
  * host reboot or a relay crash mid-flight. The slot is recouped automatically
  * because `countRunning` reads live provider state, but the manifest must be
  * advanced or `agentbox queue list` keeps lying about what's in progress.
+ *
+ * `requirePid` distinguishes the two callers:
+ * - startup (`false`): a `running` manifest with no PID at all was orphaned by a
+ *   relay that died between marking the job running and recording the PID. There
+ *   is no worker to wait for, so fail it.
+ * - every tick (`true`): only reap a PID we know is dead. A `running` job whose
+ *   PID isn't written *yet* is in the spawn window of the current tick — reaping
+ *   that would kill jobs as they start.
+ *
+ * Running this per-tick is what makes a worker that dies mid-flight visible. It
+ * used to run only at startup, so a crashed worker left the job `running`
+ * forever: no terminal status, no SSE `end`, and a UI progress card that waits
+ * on a job that is never coming back.
  */
 async function recoverOrphanedWorkers(
   log: (line: string) => void,
   onChange?: (job: QueueJob) => void,
+  requirePid = false,
 ): Promise<void> {
   const jobs = await loadQueue();
   for (const j of jobs) {
     if (j.status !== 'running') continue;
-    if (typeof j.pid === 'number' && processAlive(j.pid)) continue;
+    if (typeof j.pid === 'number' ? processAlive(j.pid) : requirePid) continue;
     const failed: QueueJob = {
       ...j,
       status: 'failed',
@@ -695,6 +992,7 @@ export async function defaultCountWorkingBoxes(
 export function countInFlightCreateJobs(jobs: QueueJob[], accountedBoxIds: Set<string>): number {
   let n = 0;
   for (const j of jobs) {
+    if (j.kind === 'prepare') continue; // a bake is not a box
     if (j.status !== 'running') continue;
     if (j.boxId && accountedBoxIds.has(j.boxId)) continue; // counted via its box
     if (typeof j.pid === 'number' && !processAlive(j.pid)) continue; // dead worker
@@ -826,10 +1124,21 @@ async function defaultSpawnWorker(job: QueueJob): Promise<number | null> {
   }
   await mkdir(join(STATE_DIR, 'logs'), { recursive: true });
   const fd = openSync(job.logPath, 'a');
-  const child = spawn(process.execPath, [entry, '_run-queued-job', job.id], {
+  // A prepare (image-bake) job runs a different worker; both stream to logPath.
+  const command = job.kind === 'prepare' ? '_run-queued-prepare' : '_run-queued-job';
+  // Pin an explicit cwd. Without one the worker inherits the daemon's, and this
+  // daemon is long-lived while its own directory is not: `npm install -g` (what
+  // `self-update` runs) replaces the package tree, so a relay/hub that keeps
+  // running across an update sits in a deleted directory. The child then dies on
+  // `process.cwd()` at startup — `ENOENT: uv_cwd` — before any of our code runs,
+  // which reads as a create that hangs with a Node stack trace for a status line.
+  // STATE_DIR is ours and always exists; the worker takes its workspace from the
+  // job manifest, never from cwd.
+  const child = spawn(process.execPath, [entry, command, job.id], {
     detached: true,
     stdio: ['ignore', fd, fd],
     env: process.env,
+    cwd: STATE_DIR,
   });
   child.unref();
   // The fd stays open in the child; close our own copy.
@@ -847,6 +1156,37 @@ export const QUEUE_LOGS_DIR = join(STATE_DIR, 'logs');
 /** Build the per-job log path. Kept here so submit + worker agree on layout. */
 export function queueLogPath(id: string): string {
   return join(QUEUE_LOGS_DIR, `queue-${id}.log`);
+}
+
+/**
+ * The UI → worker channel for a Claude re-login code: a dedicated file next to
+ * the manifest. Only the hub writes it ({@link writeQueueLoginCode}); only the
+ * worker reads+consumes it ({@link takeQueueLoginCode}). Keeping it out of the
+ * job manifest avoids a cross-process read-modify-write race with the worker's
+ * `login` (phase/url) writes.
+ */
+export function queueLoginCodePath(id: string): string {
+  return join(QUEUE_DIR, `${id}.login-code`);
+}
+
+/** Hub side: deliver the pasted OAuth approval code to a job, written atomically. */
+export async function writeQueueLoginCode(id: string, code: string): Promise<void> {
+  await mkdir(QUEUE_DIR, { recursive: true });
+  const final = queueLoginCodePath(id);
+  const tmp = `${final}.tmp.${String(process.pid)}.${String(Date.now())}`;
+  await writeFile(tmp, code.trim(), { mode: 0o600 });
+  await rename(tmp, final);
+}
+
+/** Worker side: read + consume the pending code (deleting it); null when none. */
+export async function takeQueueLoginCode(id: string): Promise<string | null> {
+  try {
+    const code = (await readFile(queueLoginCodePath(id), 'utf8')).trim();
+    await unlink(queueLoginCodePath(id)).catch(() => {});
+    return code.length > 0 ? code : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Wait briefly for a file to appear (queue manifest after enqueue HTTP). */

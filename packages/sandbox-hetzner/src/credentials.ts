@@ -1,15 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { hostOpenCommand } from '@agentbox/sandbox-core';
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from 'node:fs';
+import { hostOpenCommand, writeManagedSecrets, type CredSetResult } from '@agentbox/sandbox-core';
 import { homedir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import {
   cancel,
   confirm,
@@ -163,50 +155,33 @@ async function validateCredentials(creds: Credentials): Promise<ValidationResult
 }
 
 function persistCredentials(creds: Credentials): void {
-  process.env.HCLOUD_TOKEN = creds.token;
-  if (creds.endpoint) process.env.HCLOUD_ENDPOINT = creds.endpoint;
-  const path = secretsPath();
-  mkdirSync(dirname(path), { recursive: true });
+  const record: Record<string, string> = { HCLOUD_TOKEN: creds.token };
+  if (creds.endpoint) record.HCLOUD_ENDPOINT = creds.endpoint;
+  writeManagedSecrets(MANAGED_KEYS, record);
+}
 
-  let existing = '';
-  if (existsSync(path)) {
-    try {
-      existing = readFileSync(path, 'utf8');
-    } catch {
-      existing = '';
-    }
+/**
+ * Non-interactive credential set (the headless path the hub drives). Validates
+ * `{ token, endpoint? }` against the Hetzner API (a cheap `listLocations`), then
+ * persists to `~/.agentbox/secrets.env`. A network failure still persists (so an
+ * offline host isn't blocked) but reports `ok:true` with a warning label.
+ */
+export async function setHetznerCredentials(
+  fields: Record<string, string>,
+): Promise<CredSetResult> {
+  const token = (fields.token ?? '').trim();
+  const endpoint = (fields.endpoint ?? '').trim() || undefined;
+  if (!token) {
+    return { ok: false, error: 'token is required', status: { configured: false } };
   }
-
-  const kept = existing
-    .split(/\r?\n/)
-    .filter((line) => {
-      const stripped = line.startsWith('export ') ? line.slice('export '.length) : line;
-      const eq = stripped.indexOf('=');
-      if (eq <= 0) return true;
-      const key = stripped.slice(0, eq).trim();
-      return !(MANAGED_KEYS as readonly string[]).includes(key);
-    })
-    .join('\n')
-    .replace(/\s+$/u, '');
-
-  const lines: string[] = [`HCLOUD_TOKEN=${creds.token}`];
-  if (creds.endpoint) lines.push(`HCLOUD_ENDPOINT=${creds.endpoint}`);
-
-  const body = (kept ? `${kept}\n` : '') + lines.join('\n') + '\n';
-
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, body, { mode: 0o600 });
-  try {
-    chmodSync(tmp, 0o600);
-  } catch {
-    // chmod best-effort; writeFileSync mode already covers most filesystems.
+  const creds: Credentials = { token, endpoint };
+  const result = await validateCredentials(creds);
+  if (!result.ok && result.kind === 'auth') {
+    return { ok: false, error: `token rejected by Hetzner: ${result.message}`, status: { configured: false } };
   }
-  renameSync(tmp, path);
-  try {
-    chmodSync(path, 0o600);
-  } catch {
-    // ignore — already attempted above.
-  }
+  persistCredentials(creds);
+  const label = result.ok ? 'token' : 'token (unvalidated)';
+  return { ok: true, status: { configured: true, label } };
 }
 
 function openDashboard(): void {

@@ -32,7 +32,8 @@ describe('provider/registry', () => {
   });
 
   it('getProvider rejects unknown names', async () => {
-    await expect(getProvider('fly' as 'docker')).rejects.toThrow(/unknown sandbox provider/);
+    // A name that is neither a built-in nor a registered plugin provider.
+    await expect(getProvider('fly' as 'docker')).rejects.toThrow(/unknown provider "fly"/);
   });
 
   it('providerForBox defaults a missing provider tag to docker', async () => {

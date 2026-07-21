@@ -17,7 +17,7 @@ import { handleLifecycleError } from './_errors.js';
  * relay regains the same registry it had before the restart. Lifts the
  * cloud poller back up so status push + git push resume seamlessly.
  */
-async function rehydrateFromState(): Promise<void> {
+export async function rehydrateFromState(): Promise<void> {
   const state = await readState();
   await rehydrateRelayRegistry(
     state.boxes.map((b) => ({
@@ -34,6 +34,7 @@ async function rehydrateFromState(): Promise<void> {
       relayPreviewToken: b.cloud?.relayPreviewToken,
       bridgeToken: b.cloud?.bridgeToken,
       autoApproveHostActions: b.autoApproveHostActions,
+      autoApproveSafeHostActions: b.autoApproveSafeHostActions,
     })),
   );
 }

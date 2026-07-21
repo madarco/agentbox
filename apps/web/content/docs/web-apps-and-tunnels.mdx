@@ -42,7 +42,7 @@ Use `on_timeout: mark_unhealthy` for slow cold starts (heavy frameworks, first-r
 
 ## Same URL inside & out
 
-The box and the host see the **same** URL for the web app, so OAuth redirects, CORS allowlists, and Next.js `allowedDevOrigins` line up. How that URL is produced depends on your Docker runtime: **OrbStack** gives every container auto-DNS (`http://agentbox-<name>.orb.local`), while **Docker Desktop** has no per-container DNS, so AgentBox offers **Portless** on first run — a proxy that yields `https://<box-name>.localhost` (or `http://<box-name>.localhost:1355` on the no-TLS fallback).
+The box and the host see the **same** URL for the web app, so OAuth redirects, CORS allowlists, and Next.js `allowedDevOrigins` line up. How that URL is produced depends on your Docker runtime: **OrbStack** gives every container auto-DNS (`http://agentbox-<name>.orb.local`), while **Docker Desktop** has no per-container DNS, so AgentBox offers **Portless** on first run — a proxy that yields `https://<box-name>.localhost`. The clean HTTPS URL runs the proxy on port `443`, which needs root, so Portless asks for your host password once (a native dialog on macOS); dismiss it and AgentBox falls back to a no-root proxy at `http://<box-name>.localhost:1355`.
 
 The in-box browser (`agentbox screen`) loads the **same** `<box-name>.localhost` URL the host uses, so the app is one origin from both sides.
 
@@ -59,7 +59,7 @@ agentbox url my-box --print
 Same origin on both sides means OAuth callbacks and CORS just work. Point your provider's redirect URI at `https://<box-name>.localhost` and it resolves correctly whether the request comes from your host browser or the in-box browser.
 </Callout>
 
-See [Local Docker](/docs/local-docker) / [Configuration](/docs/configuration) for Portless setup and the `portless.*` config keys.
+See [Local Docker](/docs/local-docker) / [Configuration](/docs/configuration) for Portless setup and the `portless.*` config keys. `agentbox doctor` flags a missing or stopped host Portless proxy on plain Docker Desktop / Linux engine (it's skipped on OrbStack) and on [Hetzner](/docs/hetzner), so you get the symmetric `.localhost` URL instead of a raw loopback fallback.
 
 ## Cloud preview URLs
 
@@ -67,7 +67,9 @@ On cloud providers the web app gets a **public HTTPS preview URL** instead of a 
 
 - **[Daytona](/docs/daytona):** a *signed* preview URL with the token embedded; default TTL 3600s, override with `--ttl <seconds>`.
 - **[Vercel](/docs/vercel):** a public token-free `sandbox.domain(port)` URL, reachable from host and box.
+- **[E2B](/docs/e2b):** a public token-free `<port>-<sandbox-id>.e2b.app` URL, reachable from host and box.
 - **[Hetzner](/docs/hetzner):** an SSH local port-forward over the per-box ControlMaster, decorated with a Portless `<box-name>.localhost` alias for the same symmetric URL as Docker.
+- **[DigitalOcean](/docs/digitalocean):** same as Hetzner — an SSH local port-forward over the per-box ControlMaster, mirrored to a Portless `<box-name>.localhost` alias. There is no public URL; the box is reached only through the host tunnel.
 
 ```bash
 agentbox url my-cloud-box
@@ -86,7 +88,9 @@ agentbox url my-cloud-box --ttl 86400
 | --- | --- |
 | Docker | Only `:80` (web) and `:6080` (noVNC) are host-published; shell in to hit other ports |
 | Hetzner | On-demand SSH forwards reach *any* in-box port |
+| DigitalOcean | On-demand SSH forwards reach *any* in-box port (same as Hetzner) |
 | Vercel | Up to 4 exposed ports (3 already spent on `80`/`6080`/`8788`) |
+| E2B | Public `<port>-<sandbox-id>.e2b.app` URL for each exposed port |
 | Daytona | Per-service preview URLs for each `expose.port` |
 
 ```bash

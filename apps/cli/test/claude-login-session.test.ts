@@ -20,18 +20,30 @@ import {
 const DEAD_PID = 2 ** 30; // astronomically unlikely to be a live process
 
 describe('selectLoginMode', () => {
+  const base = { isTTY: true, headless: false, code: false, interactive: false, ptyAvailable: true };
+
   it('--code always wins, even with a TTY', () => {
-    expect(selectLoginMode({ isTTY: true, headless: false, code: true })).toBe('code');
-    expect(selectLoginMode({ isTTY: false, headless: true, code: true })).toBe('code');
+    expect(selectLoginMode({ ...base, code: true })).toBe('code');
+    expect(selectLoginMode({ ...base, isTTY: false, headless: true, code: true })).toBe('code');
+    expect(selectLoginMode({ ...base, interactive: true, code: true })).toBe('code');
   });
   it('non-TTY (no code) → headless', () => {
-    expect(selectLoginMode({ isTTY: false, headless: false, code: false })).toBe('headless');
+    expect(selectLoginMode({ ...base, isTTY: false })).toBe('headless');
   });
   it('explicit --headless in a TTY → headless', () => {
-    expect(selectLoginMode({ isTTY: true, headless: true, code: false })).toBe('headless');
+    expect(selectLoginMode({ ...base, headless: true })).toBe('headless');
   });
-  it('plain TTY → interactive', () => {
-    expect(selectLoginMode({ isTTY: true, headless: false, code: false })).toBe('interactive');
+  it('--headless beats --interactive', () => {
+    expect(selectLoginMode({ ...base, headless: true, interactive: true })).toBe('headless');
+  });
+  it('plain TTY → guided (the container TUI never gets the terminal)', () => {
+    expect(selectLoginMode(base)).toBe('guided');
+  });
+  it('explicit --interactive in a TTY → the legacy passthrough', () => {
+    expect(selectLoginMode({ ...base, interactive: true })).toBe('interactive');
+  });
+  it('a TTY without the node-pty prebuild falls back to the passthrough', () => {
+    expect(selectLoginMode({ ...base, ptyAvailable: false })).toBe('interactive');
   });
 });
 

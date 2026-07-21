@@ -1,5 +1,5 @@
 import { confirm, log, multiselect } from './lib/prompt.js';
-import { findProjectRoot } from '@agentbox/config';
+import { findProjectRoot, isProviderKind, providerMeta } from '@agentbox/config';
 import type { ProviderName } from '@agentbox/core';
 import { DEFAULT_ENV_PATTERNS, scanHostEnvFiles } from '@agentbox/sandbox-docker';
 import { basename } from 'node:path';
@@ -369,20 +369,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
  * daytona: docker Image.build).
  */
 function rebuildMinutesFor(provider: ProviderName): string {
-  switch (provider) {
-    case 'e2b':
-      return '2';
-    case 'tenki':
-      return '2';
-    case 'daytona':
-      return '7';
-    case 'vercel':
-      return '5-10';
-    case 'hetzner':
-      return '7-10';
-    default:
-      return '1';
-  }
+  return isProviderKind(provider) ? providerMeta(provider).rebuildMinutes : '1';
 }
 
 /**

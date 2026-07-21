@@ -7,9 +7,12 @@ export {
   mutateState,
   readState,
   recordBox,
+  recordBoxSsh,
+  recordLastAgent,
   removeBoxRecord,
   reserveProjectIndex,
   resolveBoxRef,
+  setBoxDisplayName,
   writeState,
 } from './state.js';
 export {
@@ -20,11 +23,106 @@ export {
 } from './git-detect.js';
 export { hostOpenCommand } from './host-open.js';
 export {
+  agentboxSshConfigPath,
+  agentboxAliasFor,
+  ensureSshInclude,
+  syncAgentboxSshConfig,
+  hasUnmanagedHostConflict,
+  parseSshTarget,
+  readAgentboxSshAlias,
+  type SshAliasOptions,
+  type SshTarget,
+} from './ssh-config.js';
+export {
+  resolveCloudSshTarget,
+  ensureCloudSshAlias,
+  autoWriteSshConfig,
+  type CloudSshAlias,
+  type CloudSshOptions,
+} from './cloud-ssh.js';
+export { mintSshKey, type MintedSshKey } from './ssh-key.js';
+export {
+  scpDownload,
+  scpUpload,
+  sshDestination,
+  sshExec,
+  sshOptArgs,
+  waitForSsh,
+  type SshExecOptions,
+  type SshExecResult,
+  type SshTargetArgs,
+} from './ssh-exec.js';
+export {
+  SshTunnelManager,
+  controlSockPath,
+  defaultBoxSshDir,
+  pickFreePort,
+  type PortForward,
+  type SshTunnelOpenOptions,
+} from './ssh-tunnel.js';
+export {
+  OPEN_INBOUND_SOURCES,
+  normalizeInboundCidr,
+  parseInboundSpec,
+  resolveInboundSources,
+  describeInbound,
+} from './inbound.js';
+export {
+  claudeSettingsPath,
+  claudeSshEntryFor,
+  pruneOrphanClaudeSshConfigs,
+  removeClaudeSshConfigs,
+  upsertClaudeSshConfig,
+  type ClaudeSshConfigEntry,
+} from './claude-app-config.js';
+export {
+  BOX_WORKSPACE,
+  boxGitCheckout,
+  boxGitNewBranch,
+  boxGitPull,
+  boxGitPush,
+  boxGitPushHost,
+  boxRestartService,
+  boxRestartServices,
+  boxServicesStatusRaw,
+  restartServiceArgv,
+  scratchBranchName,
+  servicesStatusArgv,
+  type BoxGitDeps,
+  type HostInitiatedArgs,
+} from './box-git.js';
+export {
+  errSummary,
+  firstLine,
+  statusBadge,
+  type CheckResult,
+  type CheckStatus,
+  type CredSetResult,
+  type CredStatusSummary,
+  type ProviderModule,
+} from './doctor.js';
+export { maskSecret, secretsEnvPath, writeManagedSecrets } from './secrets.js';
+export {
+  PLUGINS_FILE,
+  SUPPORTED_SDK_API_VERSIONS,
+  isSupportedApiVersion,
+  readPluginRegistry,
+  readPluginRegistrySync,
+  addPluginRecord,
+  removePluginRecord,
+  pluginProviderNames,
+  pluginForProvider,
+  type PluginRecord,
+  type PluginsFile,
+} from './plugin-registry.js';
+export {
   carryPlaceholderContext,
   renderCarryEntries,
   type CarryBoxContext,
 } from './carry-render.js';
+export * from './sync/index.js';
 export {
+  claudeInstallFingerprint,
   computeContextSha256,
   DOCKER_CONTEXT_FILE_MAP,
   preparedStatePathFor,
@@ -39,3 +137,5 @@ export {
   type PreparedBaseSnapshot,
   type PreparedProviderKind,
 } from './prepared-state.js';
+
+export { BOX_IMAGE_REGISTRY, registryRefForSha } from './box-registry.js';

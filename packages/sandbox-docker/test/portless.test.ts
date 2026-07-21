@@ -15,6 +15,7 @@ import {
   portlessGetUrl,
   portlessInstallHint,
   portlessStartHint,
+  portlessDoctorRow,
   portlessUnalias,
   resetPortlessCache,
   resolvePortlessHostStateDir,
@@ -241,5 +242,34 @@ describe('resolvePortlessHostStateDir', () => {
     delete process.env['PORTLESS_STATE_DIR'];
     const r = await resolvePortlessHostStateDir();
     expect(r.startsWith('/')).toBe(true);
+  });
+});
+
+describe('portlessDoctorRow', () => {
+  it('warns with the install hint when Portless is not installed', () => {
+    const row = portlessDoctorRow({ installed: false, proxyRunning: false });
+    expect(row.status).toBe('warn');
+    expect(row.detail).toContain('not installed');
+    expect(row.hint).toContain(portlessInstallHint());
+  });
+
+  it('warns with the start hint when installed but the proxy is down', () => {
+    const row = portlessDoctorRow({ installed: true, version: '0.13.0', proxyRunning: false });
+    expect(row.status).toBe('warn');
+    expect(row.detail).toContain('proxy not running');
+    expect(row.hint).toContain(portlessStartHint());
+  });
+
+  it('is ok and shows the version when the proxy is running', () => {
+    const row = portlessDoctorRow({ installed: true, version: '0.13.0', proxyRunning: true });
+    expect(row.status).toBe('ok');
+    expect(row.detail).toContain('0.13.0');
+    expect(row.hint).toBeUndefined();
+  });
+
+  it('is ok without a version string when none was reported', () => {
+    const row = portlessDoctorRow({ installed: true, proxyRunning: true });
+    expect(row.status).toBe('ok');
+    expect(row.detail).toBe('running');
   });
 });

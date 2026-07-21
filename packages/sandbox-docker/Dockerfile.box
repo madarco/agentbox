@@ -32,10 +32,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 # outer terminal regardless; this just unlocks the in-pane side.
 #
 # DISABLE_AUTOUPDATER follows Anthropic's own devcontainer guidance: there's no
-# point updating Claude Code inside a sandbox that's torn down regularly, and
-# leaving it enabled triggers a "installMethod is native, but .local/bin
-# missing" warning when the host's .claude.json (synced in) reports a native
-# install method while the box uses npm-global.
+# point updating Claude Code inside a sandbox that's torn down regularly. The box
+# installs claude via Anthropic's native installer (below), so the binary lands
+# at /home/vscode/.local/bin/claude and installMethod=native (synced in from the
+# host's .claude.json) matches the box — no "installMethod is native, but
+# .local/bin missing" warning, and the autoupdater would otherwise churn the
+# pinned `stable` build.
 #
 # LANG/LC_ALL must be set via ENV (not /etc/environment, which is what the
 # devcontainers base seeds): `docker exec` doesn't source login files, so
@@ -138,9 +140,14 @@ RUN git lfs install --system --skip-repo
 # at /var/run/docker.sock at runtime. The matching launch script is COPY'd in
 # below; the daemon is started by the host via `docker exec -d --user root`
 # (see launchDockerdDaemon), mirroring the VNC/ctl daemon pattern.
+# docker-compose-v2 + docker-buildx are the CLI plugins docker.io doesn't
+# pull in: without them `docker compose` is not a command (the docs advertise
+# Compose stacks) and `docker build` runs on the deprecated legacy builder.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         docker.io \
+        docker-compose-v2 \
+        docker-buildx \
         iptables \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /etc/docker \
@@ -256,17 +263,43 @@ RUN mkdir -p /home/vscode/.agentbox-creds/claude \
 RUN mkdir -p /home/vscode/.vscode-server/extensions /home/vscode/.cursor-server/extensions \
     && chown -R vscode:vscode /home/vscode/.vscode-server /home/vscode/.cursor-server
 
-# Claude Code via Anthropic's native installer — the recommended path per
-# code.claude.com/docs/en/setup (npm-global is under "Advanced installation"
-# now, with a warning against `sudo npm install -g`). Pinned to the `stable`
-# release channel so rebuilds get a predictable ~week-old release.
-# DISABLE_AUTOUPDATER=1 (set above) prevents in-box self-updates. We run as
-# `vscode` so the binary lands at /home/vscode/.local/bin/claude — the path
-# the host's `.claude.json` (with installMethod=native) expects, so the in-box
-# integrity check doesn't fire.
+# Claude Code. AGENTBOX_CLAUDE_INSTALL selects the method (default `native`,
+# Anthropic's installer — the recommended path per code.claude.com/docs/en/setup).
+# `npm` is an opt-in fallback (`box.claudeInstall`) for hosts whose egress IP the
+# native CDN 403s. Either way the binary ends up at /home/vscode/.local/bin/claude
+# — the path the host's `.claude.json` (installMethod=native) expects, so the
+# in-box integrity check stays quiet. The two RUNs are each other's no-op in the
+# unselected mode; the native branch runs as `vscode` so the binary lands in the
+# right home (and the Dockerfile ENV PATH already includes ~/.local/bin, so
+# `command -v claude` resolves).
+ARG AGENTBOX_CLAUDE_INSTALL=native
 USER vscode
-RUN curl -fsSL https://claude.ai/install.sh | bash -s stable
+# Fetch the installer to a file (not `curl | bash`) so a blocked download — e.g.
+# a Cloudflare 403 the CDN intermittently returns under load — fails the `&&`
+# chain instead of being hidden behind bash's exit 0, and retry it (3 attempts,
+# 60s then 240s backoff) before giving up, then verify `claude` is on PATH.
+# (RUN's default shell is /bin/sh, so a plain loop — no pipefail/bash arrays.)
+RUN if [ "$AGENTBOX_CLAUDE_INSTALL" != "npm" ]; then \
+      i=1; while :; do \
+        curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh \
+          && bash /tmp/claude-install.sh stable \
+          && command -v claude >/dev/null && break; \
+        [ "$i" -ge 3 ] && { echo "claude native install failed after 3 attempts" >&2; exit 71; }; \
+        w=60; [ "$i" -ge 2 ] && w=240; \
+        echo "claude install attempt $i failed — backing off ${w}s" >&2; sleep "$w"; \
+        i=$((i+1)); \
+      done; rm -f /tmp/claude-install.sh; \
+    fi
 USER root
+# npm branch: npm-global drops `claude` at Node's prefix bin; symlink it into
+# /home/vscode/.local/bin/claude so the box stays indistinguishable from native.
+RUN if [ "$AGENTBOX_CLAUDE_INSTALL" = "npm" ]; then \
+      npm install -g @anthropic-ai/claude-code \
+        && install -d -o vscode -g vscode /home/vscode/.local/bin \
+        && ln -sf "$(command -v claude)" /home/vscode/.local/bin/claude \
+        && chown -h vscode:vscode /home/vscode/.local/bin/claude \
+        && command -v claude >/dev/null; \
+    fi
 
 # OpenAI Codex CLI. The @openai/codex npm package ships platform-native
 # prebuilds for linux arm64/amd64, so a plain global install is enough.
@@ -320,7 +353,7 @@ RUN npm install -g opencode-ai
 # wiped on `agentbox destroy`.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
+        libnss3 libnss3-tools libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
         libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
         libgbm1 libdrm2 libpango-1.0-0 libcairo2 libasound2t64 \
         fonts-liberation xdg-utils \
@@ -390,6 +423,24 @@ RUN chmod +x /usr/local/bin/agentbox-vnc-start
 COPY packages/sandbox-docker/scripts/agentbox-dockerd-start /usr/local/bin/agentbox-dockerd-start
 RUN chmod +x /usr/local/bin/agentbox-dockerd-start
 
+# In-box OpenSSH daemon: bound to :22, published by the host only on
+# 127.0.0.1:<ephemeral>. Powers `agentbox open` (sshfs mount of /workspace) and
+# lets the Codex app add the box as an SSH connection. Host keys + hardening
+# drop-in are written at container start by agentbox-sshd-start (root, exec -d),
+# not baked, so every box gets a distinct host key. No EXPOSE 22 — publishing is
+# explicit via `-p` and OrbStack honors only a single EXPOSE (kept on 6080).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-server \
+    && rm -rf /var/lib/apt/lists/*
+COPY packages/sandbox-docker/scripts/agentbox-sshd-start /usr/local/bin/agentbox-sshd-start
+RUN chmod +x /usr/local/bin/agentbox-sshd-start
+
+# In-box Portless CA trust helper — trusts the symmetric `<box>.localhost` CA in
+# the system store + the box user's NSS db (Chromium/Playwright). Invoked at
+# create when the host Portless proxy is TLS. certutil ships in libnss3-tools above.
+COPY packages/sandbox-docker/scripts/agentbox-portless-trust /usr/local/bin/agentbox-portless-trust
+RUN chmod +x /usr/local/bin/agentbox-portless-trust
+
 # Pre-`docker commit` cleanup for checkpoints. Baked into the image so the host
 # can always reach it via `docker exec --user root <ctr>
 # /usr/local/bin/agentbox-checkpoint-cleanup` regardless of the in-box state
@@ -435,13 +486,17 @@ RUN printf '%s\n' \
         'set -g escape-time 0' \
         > /etc/tmux.conf
 
-# System-wide Claude Code hint. NOTE: /etc/claude-code/CLAUDE.md is not a
+# System-wide agent hint. NOTE: /etc/claude-code/CLAUDE.md is not a
 # documented Claude Code load path today (only /etc/claude-code/managed-settings.json
 # is, and that's settings-only) — kept here so it's discoverable via
 # `cat /etc/claude-code/CLAUDE.md` and forward-compatible if Claude Code
-# adds it to its memory chain. Until then, in-box agents learn the same
-# facts via /etc/agentbox/box.env + AGENTBOX_* env vars. Content lives in
-# scripts/custom-system-CLAUDE.md (edit there, not inline) for maintainability.
+# adds it to its memory chain. Codex DOES consume it: seedCodexAgentsOverride()
+# (packages/sandbox-docker/src/codex.ts) folds this file into the codex-config
+# volume's ~/.codex/AGENTS.override.md at create time (a runtime seed, not an
+# image bake — the ~/.codex volume would shadow a baked link). Until Claude loads
+# it, Claude agents learn the same facts via /etc/agentbox/box.env + AGENTBOX_*
+# env vars. Content lives in scripts/custom-system-CLAUDE.md (edit there, not
+# inline) for maintainability.
 RUN mkdir -p /etc/claude-code
 COPY packages/sandbox-docker/scripts/custom-system-CLAUDE.md /etc/claude-code/CLAUDE.md
 RUN chmod 0644 /etc/claude-code/CLAUDE.md
@@ -485,6 +540,15 @@ RUN printf '%s\n' \
         '  . /etc/agentbox/box.env' \
         '  set +a' \
         'fi' \
+        '# Land interactive login shells in the workspace (remote-host integrations,' \
+        '# plain `ssh <box>`); interactive-only and only when still at $HOME.' \
+        'case $- in' \
+        '  *i*)' \
+        '    if [ "$PWD" = "$HOME" ] && [ -d /workspace ]; then' \
+        '      cd /workspace' \
+        '    fi' \
+        '    ;;' \
+        'esac' \
         > /etc/profile.d/agentbox.sh \
     && chmod 0644 /etc/profile.d/agentbox.sh
 

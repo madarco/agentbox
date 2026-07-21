@@ -1,4 +1,5 @@
-import { resyncBox, type BoxRecord } from '@agentbox/sandbox-docker';
+import type { BoxRecord } from '@agentbox/core';
+import { providerForBox } from '../provider/registry.js';
 import { resyncCarryFiles } from './carry-resync.js';
 import { buildResyncWarning } from './resync-warning.js';
 
@@ -7,9 +8,10 @@ import { buildResyncWarning } from './resync-warning.js';
  * merge + carry-file refresh) and return the conflict warning to inject into
  * the agent's prompt (or null when nothing conflicted / resync is off).
  *
- * Docker-only for now (cloud providers omit `resyncWorkspace`). The caller is
- * responsible for gating on the down→up transition so we never mutate files
- * under a live agent.
+ * Routed through `provider.resyncWorkspace` — providers that can't reach a live
+ * host workspace omit it and resync is skipped for that box (docker implements
+ * it; cloud until Phase 7.5 does not). The caller is responsible for gating on
+ * the down→up transition so we never mutate files under a live agent.
  */
 export async function maybeResyncWorkspace(args: {
   box: BoxRecord;
@@ -18,10 +20,16 @@ export async function maybeResyncWorkspace(args: {
   spinner?: { message: (s: string) => void };
 }): Promise<string | null> {
   if (!args.enabled) return null;
-  if ((args.box.provider ?? 'docker') !== 'docker') return null;
+  const provider = await providerForBox(args.box);
+  if (!provider.resyncWorkspace) return null;
   const onLog = (line: string): void => args.spinner?.message(line);
   args.spinner?.message('resyncing workspace with host');
-  const result = await resyncBox(args.box.id, onLog);
-  await resyncCarryFiles({ box: args.box, projectRoot: args.projectRoot, onLog });
+  const result = await provider.resyncWorkspace(args.box, onLog);
+  // Carry-file resync is docker-specific (re-copies via docker exec); cloud boxes
+  // get workspace resync only. Gate so a cloud box with approved carry entries
+  // doesn't hit docker's copyCarryPathsToBox.
+  if ((args.box.provider ?? 'docker') === 'docker') {
+    await resyncCarryFiles({ box: args.box, projectRoot: args.projectRoot, onLog });
+  }
   return buildResyncWarning(result);
 }

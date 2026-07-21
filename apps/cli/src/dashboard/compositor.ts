@@ -57,6 +57,10 @@ export type RightTarget =
        *  the environment instead of argv (e2b: `AGENTBOX_E2B_INNER_CMD` +
        *  `E2B_API_KEY`). Dropping it makes the e2b attach helper exit early. */
       env?: NodeJS.ProcessEnv;
+      /** Typed into the PTY right after spawn — see `AttachSpec.initialInput`.
+       *  Daytona's SSH gateway only gives a terminal to a shell session, so its
+       *  attach connects command-less and sends the tmux command this way. */
+      initialInput?: string;
       /** Fires when the PtySession is disposed. Used by daytona to revoke the
        *  ephemeral SSH token its `buildAttach` mints. */
       cleanup?: () => Promise<void>;
@@ -610,6 +614,7 @@ export class Compositor {
         (id) => this.onSessionExit(id),
         target.cleanup,
         target.env,
+        target.initialInput,
       );
       if (keepAlive) {
         // A re-resolve can replace an existing pooled entry for this box.

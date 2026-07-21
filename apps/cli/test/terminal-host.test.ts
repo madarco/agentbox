@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AttachOpenIn, ConfigSource, LoadedConfig } from '@agentbox/config';
-import { detectHostTerminal, hostAwareOpenIn } from '../src/terminal/host.js';
+import { composePaneCommand, detectHostTerminal, hostAwareOpenIn } from '../src/terminal/host.js';
 import { parseAttachInOption, resolveAttachInOption } from '../src/commands/_attach-in.js';
 
 describe('detectHostTerminal', () => {
@@ -139,6 +139,26 @@ describe('resolveAttachInOption', () => {
   it('still validates --attach-in when --inline is also set', () => {
     expect(() => resolveAttachInOption({ inline: true, attachIn: 'bogus' })).toThrowError(
       /--attach-in/,
+    );
+  });
+});
+
+describe('composePaneCommand', () => {
+  it('exec-replaces the shell by default', () => {
+    expect(composePaneCommand(['agentbox', 'attach', 'my-box'], '/tmp/p')).toBe(
+      "cd '/tmp/p' && exec 'agentbox' 'attach' 'my-box'",
+    );
+  });
+
+  it('keeps the shell when keepShell is set', () => {
+    expect(composePaneCommand(['agentbox', 'attach', 'my-box'], '/tmp/p', true)).toBe(
+      "cd '/tmp/p' && 'agentbox' 'attach' 'my-box'",
+    );
+  });
+
+  it('quotes argv elements and cwd with embedded quotes', () => {
+    expect(composePaneCommand(["a'b"], "/tmp/it's here", true)).toBe(
+      "cd '/tmp/it'\\''s here' && 'a'\\''b'",
     );
   });
 });

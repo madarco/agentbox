@@ -12,7 +12,7 @@
  * accepted today.
  */
 
-import { computeContextSha256, readPreparedStateRaw, writePreparedStateRaw, preparedStatePathFor } from '@agentbox/sandbox-core';
+import { claudeInstallFingerprint, computeContextSha256, readPreparedStateRaw, writePreparedStateRaw, preparedStatePathFor } from '@agentbox/sandbox-core';
 import { UserFacingError } from '@agentbox/core';
 import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets.js';
 
@@ -75,11 +75,16 @@ export function updatePreparedState(mutate: (s: PreparedVercelState) => void): v
  * hash to the one `prepare` writes — both go through the same
  * `resolveRuntimeAssets` + `computeContextSha256` chain.
  */
-export async function currentVercelBaseFingerprintLive(): Promise<string | undefined> {
+export async function currentVercelBaseFingerprintLive(
+  claudeInstall: 'native' | 'npm' = 'native',
+): Promise<string | undefined> {
   try {
     const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
-    return await computeContextSha256(
-      assets.map((a) => ({ rel: a.name, abs: a.localPath })),
+    // Fold in claudeInstall exactly as `prepare` does — otherwise an npm-baked
+    // base never matches the stored (npm-folded) fingerprint.
+    return claudeInstallFingerprint(
+      await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
+      claudeInstall,
     );
   } catch {
     return undefined;

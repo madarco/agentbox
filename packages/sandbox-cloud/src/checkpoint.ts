@@ -90,6 +90,22 @@ function backendDir(backend: string, projectRoot: string): string {
   return join(CLOUD_CHECKPOINTS_ROOT, backend, projectDirSegment(projectRoot));
 }
 
+/**
+ * Backend names that have a checkpoint directory under `CLOUD_CHECKPOINTS_ROOT`.
+ * Lets the CLI's `checkpoint list` surface checkpoints from **plugin** cloud
+ * providers (whose names aren't in the built-in `CLOUD_PROVIDER_NAMES`) without
+ * loading them — a checkpoint store is just named directories on disk.
+ */
+export async function listCloudBackendDirs(): Promise<string[]> {
+  try {
+    return (await readdir(CLOUD_CHECKPOINTS_ROOT, { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
 function checkpointDir(backend: string, projectRoot: string, name: string): string {
   return join(backendDir(backend, projectRoot), name);
 }
@@ -226,6 +242,51 @@ export function currentCloudBaseFingerprint(provider: string): string | undefine
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Freshness of a cloud provider's baked base image / snapshot, derived purely
+ * from the `contextSha256` of the baked runtime files.
+ *
+ * **Checksum-only.** CLI version strings stored alongside the fingerprint are
+ * informational and MUST NOT influence the decision: a CLI bump that doesn't
+ * change any baked file produces an identical hash → `fresh`.
+ */
+export type BaseStatus =
+  /** No prepared base on disk. */
+  | { state: 'unprepared' }
+  /**
+   * Can't compute the live fingerprint (e.g. a dev tree with no built ctl
+   * bundle). Inert: callers must not prompt for a rebuild they can't verify.
+   */
+  | { state: 'unknown' }
+  /** Stored fingerprint differs from current — the baked runtime is out of date. */
+  | { state: 'stale'; reason: string }
+  /** Stored fingerprint matches current. */
+  | { state: 'fresh' };
+
+/**
+ * Provider-agnostic compare that turns a stored + live build-context
+ * fingerprint into a {@link BaseStatus}. Shared by the CLI wizard/doctor
+ * (`evaluateBaseFreshness`) and the hub so the state model and the `stale`
+ * reason string never drift between them. `stored`/`live` are resolved by the
+ * caller (`currentCloudBaseFingerprint` + the provider's
+ * `currentBaseFingerprintLive`); docker has no baked base and should not reach
+ * here.
+ */
+export function baseFreshnessFromFingerprints(
+  stored: string | undefined,
+  live: string | undefined,
+): BaseStatus {
+  if (!stored) return { state: 'unprepared' };
+  if (!live) return { state: 'unknown' };
+  if (stored !== live) {
+    return {
+      state: 'stale',
+      reason: `baked runtime differs (base ${stored.slice(0, 12)}, current ${live.slice(0, 12)})`,
+    };
+  }
+  return { state: 'fresh' };
 }
 
 export async function removeCloudCheckpointDir(

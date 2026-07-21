@@ -77,6 +77,7 @@ function runShim(
   shimPath: string,
   args: string[],
   env: StubShellEnv,
+  extraEnv: Record<string, string> = {},
 ): { code: number; stdout: string; stderr: string } {
   const res = spawnSync('bash', [shimPath, ...args], {
     cwd: env.tmpDir,
@@ -84,10 +85,24 @@ function runShim(
       ...process.env,
       AGENTBOX_CTL_PATH: env.ctlPath,
       AGENTBOX_REAL_GIT_PATH: '/usr/bin/git',
+      ...extraEnv,
     },
     encoding: 'utf8',
   });
   return { code: res.status ?? -1, stdout: res.stdout, stderr: res.stderr };
+}
+
+/**
+ * Stub `git` that prints `REAL_GIT: <argv>` — lets a test prove the shim fell
+ * through to the real binary instead of relaying to `agentbox-ctl`.
+ */
+function makeRealGitStub(env: StubShellEnv): string {
+  const p = join(env.tmpDir, 'real-git-stub');
+  writeFileSync(p, `#!/usr/bin/env bash\nprintf 'REAL_GIT: %s\\n' "$*"\nexit 0\n`, {
+    mode: 0o755,
+  });
+  chmodSync(p, 0o755);
+  return p;
 }
 
 describe('agentbox-ctl gh pr * wire shape', () => {
@@ -513,16 +528,30 @@ describe('git-shim arg whitelist + passthrough', () => {
     }
   });
 
-  it('push --tags is rejected (better safe than compatible)', () => {
+  it('push --quiet --dry-run is allowed', () => {
     const env = makeStubShell();
     try {
-      const out = runShim(GIT_SHIM, ['push', '--tags'], env);
-      expect(out.code).toBe(2);
-      expect(out.stderr).toMatch(/unsupported flag '--tags'/);
+      const out = runShim(GIT_SHIM, ['push', '--quiet', '--dry-run'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: git push -- --quiet --dry-run');
     } finally {
       env.cleanup();
     }
   });
+
+  it.each([['--mirror'], ['--delete'], ['--prune'], ['--force']])(
+    'push %s is rejected (destructive on the remote)',
+    (flag) => {
+      const env = makeStubShell();
+      try {
+        const out = runShim(GIT_SHIM, ['push', flag], env);
+        expect(out.code).toBe(2);
+        expect(out.stderr).toMatch(new RegExp(`unsupported flag '${flag}'`));
+      } finally {
+        env.cleanup();
+      }
+    },
+  );
 
   it('push origin main is rejected (positional refspec)', () => {
     const env = makeStubShell();
@@ -535,12 +564,231 @@ describe('git-shim arg whitelist + passthrough', () => {
     }
   });
 
+  // Regression: `git fetch --quiet` used to exit 2, killing user scripts under
+  // `set -e`. --prune was the only flag fetch accepted.
+  it('fetch --quiet is allowed', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['fetch', '--quiet'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: git fetch -- --quiet');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('fetch --prune --quiet forwards both flags', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['fetch', '--prune', '--quiet'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: git fetch -- --prune --quiet');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('pull --ff-only is allowed', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['pull', '--ff-only'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: git pull -- --ff-only');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('fetch --all is rejected (the relay always passes a remote+branch)', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['fetch', '--all'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/unsupported flag '--all'/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // The two halves of the value-less invariant: a flag that takes a value can't
+  // be smuggled in glued (regex is exact-match) or split (the value reads as a
+  // positional). This is what keeps --upload-pack= and friends out for free.
+  it('fetch --upload-pack=/bin/sh is rejected (glued value)', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['fetch', '--upload-pack=/bin/sh'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/unsupported flag '--upload-pack=\/bin\/sh'/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('fetch --depth 1 is rejected (off-list flag)', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['fetch', '--depth', '1'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/unsupported flag '--depth'/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('a value after an allowed fetch flag is rejected as a positional', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['fetch', '--prune', '1'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/positional '1' not allowed/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
   it('clone --recurse-submodules is rejected', () => {
     const env = makeStubShell();
     try {
       const out = runShim(GIT_SHIM, ['clone', '--recurse-submodules', 'https://x/y.git'], env);
       expect(out.code).toBe(2);
       expect(out.stderr).toMatch(/unsupported flag '--recurse-submodules'/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // A local clone touches no credentials, so it must bypass the relay entirely
+  // — flag gate included. This is the exact call agentbox's own cloud workspace
+  // seeding makes, which is what lets `create --provider <cloud>` run in a box.
+  it('clone from file:// falls through to real git with --no-checkout intact', () => {
+    const env = makeStubShell();
+    try {
+      const realGit = makeRealGitStub(env);
+      const out = runShim(
+        GIT_SHIM,
+        ['clone', '--no-checkout', '--quiet', '--depth=200', 'file:///workspace', '/tmp/clone'],
+        env,
+        { AGENTBOX_REAL_GIT_PATH: realGit },
+      );
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain(
+        'REAL_GIT: clone --no-checkout --quiet --depth=200 file:///workspace /tmp/clone',
+      );
+      expect(out.stdout).not.toContain('STUB:');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('clone from an absolute path falls through to real git', () => {
+    const env = makeStubShell();
+    try {
+      const realGit = makeRealGitStub(env);
+      const out = runShim(GIT_SHIM, ['clone', '/srv/repo.git'], env, {
+        AGENTBOX_REAL_GIT_PATH: realGit,
+      });
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('REAL_GIT: clone /srv/repo.git');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // `--branch <val>` consumes its value, so the source scan must not mistake a
+  // branch name for the clone source and wrongly fall through.
+  it('clone --branch <name> from a remote still relays to ctl', () => {
+    const env = makeStubShell();
+    try {
+      const realGit = makeRealGitStub(env);
+      const out = runShim(GIT_SHIM, ['clone', '--branch', 'main', 'https://x/y.git'], env, {
+        AGENTBOX_REAL_GIT_PATH: realGit,
+      });
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: git clone https://x/y.git --branch main');
+      expect(out.stdout).not.toContain('REAL_GIT:');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // The fall-through must not become a hole: a real remote keeps the flag gate.
+  it('clone --no-checkout from a remote url is still rejected', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GIT_SHIM, ['clone', '--no-checkout', 'https://x/y.git'], env);
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/unsupported flag '--no-checkout'/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // Options we don't model also take a value. If the scan guessed flag arity,
+  // that value would read as the clone source and hand real git a REMOTE clone,
+  // slipping the relay and the whitelist. Classify every token instead.
+  it.each([
+    ['--reference', '/tmp/ref'],
+    ['--separate-git-dir', '/tmp/gitdir'],
+    ['--upload-pack', '/usr/bin/git-upload-pack'],
+    ['--reference-if-able', '/tmp/ref'],
+  ])('clone %s <path> before a remote url does not bypass the gate', (flag, value) => {
+    const env = makeStubShell();
+    try {
+      const realGit = makeRealGitStub(env);
+      const out = runShim(GIT_SHIM, ['clone', flag, value, 'https://github.com/x/y.git'], env, {
+        AGENTBOX_REAL_GIT_PATH: realGit,
+      });
+      expect(out.code).toBe(2);
+      expect(out.stderr).toMatch(/unsupported flag/);
+      expect(out.stdout).not.toContain('REAL_GIT:');
+      expect(out.stdout).not.toContain('STUB:');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // scp-style and ssh:// remotes must not be mistaken for local paths either.
+  it.each([['git@github.com:owner/name.git'], ['ssh://git@host/owner/name.git']])(
+    'clone %s is treated as remote, not local',
+    (url) => {
+      const env = makeStubShell();
+      try {
+        const realGit = makeRealGitStub(env);
+        const out = runShim(GIT_SHIM, ['clone', url, '/tmp/dest'], env, {
+          AGENTBOX_REAL_GIT_PATH: realGit,
+        });
+        expect(out.stdout).not.toContain('REAL_GIT:');
+      } finally {
+        env.cleanup();
+      }
+    },
+  );
+
+  // Ambiguous/unrecognized source (no local token at all) ⇒ gate, not real git.
+  it('clone of a bare remote name falls to the gate, not real git', () => {
+    const env = makeStubShell();
+    try {
+      const realGit = makeRealGitStub(env);
+      const out = runShim(GIT_SHIM, ['clone', 'myremote'], env, {
+        AGENTBOX_REAL_GIT_PATH: realGit,
+      });
+      expect(out.stdout).not.toContain('REAL_GIT:');
+      expect(out.stdout).toContain('STUB: git clone myremote');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('clone of owner/name shorthand still relays to ctl', () => {
+    const env = makeStubShell();
+    try {
+      const realGit = makeRealGitStub(env);
+      const out = runShim(GIT_SHIM, ['clone', 'owner/name', '/abs/dest'], env, {
+        AGENTBOX_REAL_GIT_PATH: realGit,
+      });
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('STUB: git clone owner/name /abs/dest');
+      expect(out.stdout).not.toContain('REAL_GIT:');
     } finally {
       env.cleanup();
     }

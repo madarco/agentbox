@@ -29,10 +29,12 @@ import {
   deleteVercelSnapshot,
   DEFAULT_BOX_IMAGE_REF,
 } from './backend.js';
-import { readCliStamp, recordBox } from '@agentbox/sandbox-core';
+import { readCliStamp, recordBox, type ProviderModule } from '@agentbox/sandbox-core';
 import { prepareVercelProvider } from './prepare.js';
 import { buildVercelAttach } from './build-attach.js';
 import { currentVercelBaseFingerprintLive } from './prepared-state.js';
+import { ensureVercelCredentials, setVercelCredentials } from './credentials.js';
+import { doctorChecks, readCredStatusSummary } from './provider-module.js';
 
 const BACKEND_NAME = 'vercel';
 
@@ -106,16 +108,44 @@ export const vercelProvider: Provider = {
   baseFingerprint: () => currentVercelBaseFingerprintLive(),
 };
 
+/** Uniform surface the CLI provider loader resolves this package through. */
+export const providerModule: ProviderModule = {
+  provider: vercelProvider,
+  backend: vercelBackend,
+  ensureCredentials: ensureVercelCredentials,
+  readCredStatus: readCredStatusSummary,
+  setCredentials: setVercelCredentials,
+  currentBaseFingerprintLive: (claudeInstall) => currentVercelBaseFingerprintLive(claudeInstall),
+  doctorChecks,
+};
+
 export { vercelBackend, DEFAULT_BOX_IMAGE_REF };
 export { ensureVercelEnvLoaded, reloadVercelEnv } from './env-loader.js';
-export { ensureVercelCredentials } from './credentials.js';
+export { ensureVercelCredentials, setVercelCredentials } from './credentials.js';
 export type { EnsureVercelCredentialsOptions } from './credentials.js';
 export {
   readVercelCredStatus,
+  resolveVercelApiAuth,
   secretsPath,
   maskKey,
   type VercelCredStatus,
 } from './credentials.js';
+export {
+  getProject,
+  createGitProject,
+  deleteProject,
+  patchProjectSettings,
+  projectHasEnv,
+  upsertProjectEnv,
+  createGitDeployment,
+  getDeployment,
+  getProductionAlias,
+  type VercelProjectFull,
+  type CreateGitProjectInput,
+  type CreateGitDeploymentInput,
+  type DeploymentStatus,
+  type VercelEnvVar,
+} from './vercel-rest.js';
 export {
   prepareVercel,
   prepareVercelProvider,

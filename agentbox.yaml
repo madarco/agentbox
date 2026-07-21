@@ -101,6 +101,20 @@ carry:
     dest: ~/.local/share/opencode/auth.json
     mode: 0o600
     optional: true
+  # The codex / opencode counterparts of ~/.agentbox/claude-credentials.json:
+  # newest-wins backups maintained by the relay's credential fan-out. A nested
+  # box's `stageCodexCredentialsForUpload` / `stageOpencodeCredentialsForUpload`
+  # PREFER these over the real paths above, so without them the nested box
+  # bootstraps from whatever token the real path happens to hold — possibly
+  # older than the fan-out's copy. Optional: absent before the first fan-out.
+  - src: ~/.agentbox/codex-credentials.json
+    dest: ~/.agentbox/codex-credentials.json
+    mode: 0o600
+    optional: true
+  - src: ~/.agentbox/opencode-credentials.json
+    dest: ~/.agentbox/opencode-credentials.json
+    mode: 0o600
+    optional: true
   # Notion CLI (`ntn`) file-based auth — INTERNAL AGENTBOX DEV ONLY, so a box
   # that creates NESTED boxes can act as their relay host and shell out to `ntn`.
   # Normal boxes never need this: they reach `ntn` through the host relay and
@@ -154,6 +168,10 @@ carry:
     optional: true
   - src: ~/.agentbox/docker-prepared.json
     dest: ~/.agentbox/docker-prepared.json
+    mode: 0o600
+    optional: true
+  - src: ~/.agentbox/e2b-prepared.json
+    dest: ~/.agentbox/e2b-prepared.json
     mode: 0o600
     optional: true
 

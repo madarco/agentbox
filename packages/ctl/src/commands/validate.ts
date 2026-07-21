@@ -15,6 +15,9 @@ export const validateCommand = new Command('validate')
     }
     try {
       const cfg = await loadConfig(path);
+      // Unknown keys are reported but don't fail the check: this yaml may have
+      // been written by a newer agentbox than the one baked into this box.
+      for (const w of cfg.warnings) process.stderr.write(`warning: ${w}\n`);
       process.stdout.write(`OK: ${String(cfg.services.length)} service(s)\n`);
     } catch (err) {
       if (err instanceof ConfigError) {

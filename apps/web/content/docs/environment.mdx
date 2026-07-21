@@ -51,7 +51,9 @@ The same identity pairs are also written to `/etc/agentbox/box.env` inside the b
 
 Why: `docker run -e` vars live only in PID 1's environment. A fresh `agentbox shell` or any `bash -l` is a new process tree that would otherwise miss them. The image-baked `/etc/profile.d/agentbox.sh` runs `set -a; . /etc/agentbox/box.env; set +a` on login, so interactive shells re-source the vars.
 
-The file is POSIX-sourceable with single-quoted values, written as root with `umask 022`. It carries the identity vars (plus the portless vars); the relay vars `AGENTBOX_RELAY_URL` / `AGENTBOX_RELAY_TOKEN` stay in the launch env and are *not* written here. Writing it is best-effort — if it fails, PID 1 still has the `docker run -e` vars and only login shells lose them.
+The file is POSIX-sourceable with single-quoted values, written as root with `umask 022`. It carries the identity vars (plus the portless vars) but **never the relay/bridge tokens** — `box.env` is world-readable (`0644`), so secrets don't belong in it. On **docker** boxes the relay vars live in PID 1's env (`docker run -e`), so writing `box.env` is best-effort — if it fails, only login shells lose the identity vars.
+
+On the **cloud** providers there is no global PID-1 env to inherit from, so the relay URL + token are persisted separately to a `0600 /run/agentbox/relay.env` (tmpfs — never captured in a checkpoint/snapshot), written by the in-box ctl daemon. `agentbox-ctl` reads it on demand (preferring its process env, falling back to the file) when it makes a relay call, so the in-box agent and the host-driven `agentbox git push` reach the relay without the token being sprayed into every login shell's environment. The `AGENTBOX_BRIDGE_TOKEN` (host-poller→box auth) stays in the daemon's process env only — never in any file.
 
 ```console
 $ agentbox shell mybox -- cat /etc/agentbox/box.env

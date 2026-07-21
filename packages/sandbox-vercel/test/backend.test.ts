@@ -23,7 +23,13 @@ vi.mock('../src/sdk.js', () => ({
   },
 }));
 
-import { vercelBackend, buildExposedPorts, VERCEL_MAX_PORTS, parseNetworkPolicy } from '../src/backend.js';
+import {
+  vercelBackend,
+  buildExposedPorts,
+  VERCEL_MAX_PORTS,
+  parseNetworkPolicy,
+  parseVercelVcpus,
+} from '../src/backend.js';
 
 function fakeSandbox(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -242,5 +248,35 @@ describe('parseNetworkPolicy', () => {
     expect(parseNetworkPolicy('github.com, *.npmjs.org ,')).toEqual({
       allow: ['github.com', '*.npmjs.org'],
     });
+  });
+});
+
+describe('parseVercelVcpus', () => {
+  it('returns undefined for empty/unset (backend default applies)', () => {
+    expect(parseVercelVcpus(undefined)).toBeUndefined();
+    expect(parseVercelVcpus('')).toBeUndefined();
+    expect(parseVercelVcpus('   ')).toBeUndefined();
+  });
+
+  it('accepts the supported vCPU counts', () => {
+    expect(parseVercelVcpus('1')).toBe(1);
+    expect(parseVercelVcpus('2')).toBe(2);
+    expect(parseVercelVcpus(' 4 ')).toBe(4);
+    expect(parseVercelVcpus('8')).toBe(8);
+  });
+
+  it('throws on unsupported counts and foreign size specs', () => {
+    expect(() => parseVercelVcpus('3')).toThrow(/expected a vCPU count/);
+    expect(() => parseVercelVcpus('0')).toThrow(/expected a vCPU count/);
+    expect(() => parseVercelVcpus('4-8')).toThrow(/expected a vCPU count/);
+    expect(() => parseVercelVcpus('cx33')).toThrow(/expected a vCPU count/);
+  });
+
+  it('names the rejected value and points at box.sizeVercel / box.size', () => {
+    // A foreign generic box.size (e.g. hetzner cx33) should get an actionable
+    // message: the offending value, the per-provider key, and the escape hatch.
+    expect(() => parseVercelVcpus('cx33')).toThrow(/"cx33"/);
+    expect(() => parseVercelVcpus('cx33')).toThrow(/box\.sizeVercel/);
+    expect(() => parseVercelVcpus('cx33')).toThrow(/box\.size/);
   });
 });

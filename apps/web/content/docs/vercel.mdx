@@ -91,10 +91,11 @@ Vercel boxes ship with a working in-box `docker`: the engine is baked into the p
 
 ## Sizing & network policy
 
-Vercel-only keys tune vCPUs (`box.vercelVcpus`), session length (`box.vercelTimeoutMs`), and egress lock (`box.vercelNetworkPolicy`) — see [configuration](/docs/configuration) for the full list and precedence. Region is fixed at `iad1`, so `--size` is a no-op; use `box.vercelVcpus` for sizing.
+On Vercel, `--size` is the **vCPU count** — one of `1`, `2`, `4`, or `8` (RAM is coupled at 2048 MB/vCPU; the default is 2). Set it per box with `--size 4`, or pin it with `box.sizeVercel` / the generic `box.size`. An unsupported value (e.g. `3`, or a foreign spec like a hetzner `cx33`) fails locally before the billable `Sandbox.create` call, naming the rejected value. Session length (`box.vercelTimeoutMs`) and egress lock (`box.vercelNetworkPolicy`) are separate Vercel-only keys — see [configuration](/docs/configuration) for the full list and precedence. Region is fixed at `iad1`.
 
 ```bash
-agentbox config set box.vercelVcpus 4 --project
+agentbox create -y --provider vercel --size 4
+agentbox config set box.sizeVercel 4 --project
 agentbox config set box.vercelNetworkPolicy "github.com,*.npmjs.org" --project
 ```
 
@@ -147,7 +148,7 @@ agentbox create --provider vercel --checkpoint setup
 - **No live stats** — `agentbox top` / `dashboard` render `—` for cloud boxes, and `list` reports them optimistically as `running`.
 - **Privileged ports are rejected** — the WebProxy runs on 8080 (not 80); `agentbox url` resolves the 8080 domain.
 - **Push through the relay** — use `agentbox-ctl git push` from a box; the relay holds the credentials. See [sync-and-git](/docs/sync-and-git).
-- **Vercel-only config keys are ignored by other providers** — don't expect `--size` to change a vercel box.
+- **`--size` on Vercel means vCPUs** — `1`/`2`/`4`/`8` only; other counts (or a size spec meant for another provider) fail fast before create.
 
 ## Related
 

@@ -10,18 +10,24 @@ name: Publish box image
 # NOTE: after the first successful run, make the GHCR package public once
 # (repo → Packages → box → Package settings → Change visibility → Public),
 # otherwise anonymous `docker pull` from end users fails.
+#
+# There is deliberately NO `paths:` filter. The context contains
+# packages/ctl/dist/bin.cjs, which tsup builds with `noExternal: [/.*/]` — it
+# inlines @agentbox/core, sandbox-core, relay and integrations. So an edit to
+# any of ctl's transitive deps shifts the fingerprint, and a path filter would
+# have to track that whole graph and would rot the next time ctl grows a
+# dependency. It ran unnoticed for a while because a missing tag merely made
+# the CLI build locally; it bites harder now that the Daytona VM bake can only
+# boot from a *published* image and silently falls back to a container without
+# one. Instead of filtering, we run every time and skip the expensive buildx
+# step when the fingerprint is already published (below) — the tag is the
+# content identity, so "already there" means "nothing to build".
 
 on:
   workflow_dispatch:
   push:
     tags: ['v*']
     branches: [main]
-    paths:
-      - 'packages/sandbox-docker/Dockerfile.box'
-      - 'packages/sandbox-docker/scripts/**'
-      - 'packages/ctl/**'
-      - 'apps/cli/share/**'
-      - '.github/workflows/box-image.yml'
 
 jobs:
   publish:
@@ -29,6 +35,18 @@ jobs:
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # How Claude Code is installed into the image. This is part of the
+        # image's IDENTITY, not a build detail: the same context built with
+        # `AGENTBOX_CLAUDE_INSTALL=npm` is a different image, and the CLI asks
+        # for a correspondingly different tag (`claudeInstallFingerprint` in
+        # pullOrBuild). Publishing only `native` meant `box.claudeInstall: npm`
+        # users never got a pull hit — a wasted local build on docker, and on
+        # daytona no VM at all, since a linux-vm base can ONLY boot from a
+        # published image. So: publish both.
+        claude-install: [native, npm]
     env:
       IMAGE: ghcr.io/madarco/agentbox/box
     steps:
@@ -50,11 +68,24 @@ jobs:
       - name: Compute image tags
         id: tags
         run: |
-          SHA="$(node apps/cli/scripts/print-box-context-sha.mjs)"
+          SHA="$(node apps/cli/scripts/print-box-context-sha.mjs --claude-install ${{ matrix.claude-install }})"
           VERSION="$(node -p "require('./apps/cli/package.json').version")"
           echo "sha=${SHA:0:16}" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "box context fingerprint: $SHA (tag sha-${SHA:0:16}), cli $VERSION"
+          echo "box context fingerprint (${{ matrix.claude-install }}): $SHA (tag sha-${SHA:0:16}), cli $VERSION"
+          # The fingerprint tag is the one the CLI resolves, and every variant gets
+          # one. `latest` and the version tag name the DEFAULT image, so only the
+          # native build may claim them — letting the npm build move `latest` would
+          # hand every default user an npm-installed Claude.
+          {
+            echo "tags<<TAGS_EOF"
+            echo "$IMAGE:sha-${SHA:0:16}"
+            if [ "${{ matrix.claude-install }}" = "native" ]; then
+              echo "$IMAGE:$VERSION"
+              echo "$IMAGE:latest"
+            fi
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -65,14 +96,42 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v6
+      # The fingerprint IS the content, so an existing tag is a finished build.
+      # This is what lets us drop the path filter: most pushes land here, find
+      # the tag, and skip the ~10-min two-arch buildx.
+      - name: Is this fingerprint already published?
+        id: probe
+        run: |
+          if docker buildx imagetools inspect "$IMAGE:sha-${{ steps.tags.outputs.sha }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "sha-${{ steps.tags.outputs.sha }} is already published - skipping the build."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "sha-${{ steps.tags.outputs.sha }} is not published - building."
+          fi
+
+      - name: Build and push
+        if: steps.probe.outputs.exists == 'false'
+        uses: docker/build-push-action@v6
         with:
           context: apps/cli/runtime/docker
           file: apps/cli/runtime/docker/Dockerfile.box
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: false
-          tags: |
-            ${{ env.IMAGE }}:sha-${{ steps.tags.outputs.sha }}
-            ${{ env.IMAGE }}:${{ steps.tags.outputs.version }}
-            ${{ env.IMAGE }}:latest
+          build-args: |
+            AGENTBOX_CLAUDE_INSTALL=${{ matrix.claude-install }}
+          tags: ${{ steps.tags.outputs.tags }}
+
+      # The image already exists, but `latest` / the version tag may still point
+      # at older content (e.g. a release commit that didn't touch the context).
+      # imagetools re-points the tags at the existing manifest — no rebuild, and
+      # it preserves the multi-arch index. Native only: those two tags name the
+      # default image (see the tag list above).
+      - name: Re-point version and latest at the existing image
+        if: steps.probe.outputs.exists == 'true' && matrix.claude-install == 'native'
+        run: |
+          docker buildx imagetools create \
+            -t "$IMAGE:${{ steps.tags.outputs.version }}" \
+            -t "$IMAGE:latest" \
+            "$IMAGE:sha-${{ steps.tags.outputs.sha }}"

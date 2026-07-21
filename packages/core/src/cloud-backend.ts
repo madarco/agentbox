@@ -19,6 +19,23 @@ export interface CloudVolumeMount {
   subpath?: string;
 }
 
+/**
+ * Inbound-access policy for a VPS-style box's per-box firewall (Hetzner /
+ * DigitalOcean). `locked` = SSH reachable only from the host's egress IP (the
+ * default); `open` = SSH reachable from anywhere (0.0.0.0/0, key-only — for
+ * driving the box from a phone/other device with the laptop off); `whitelist` =
+ * the host egress IP plus the extra `sources` CIDRs. `sources` holds ONLY the
+ * extra whitelisted CIDRs (not the host egress, which is re-detected on each
+ * sync so a host-IP drift can be merged in without clobbering the whitelist).
+ * Providers without a firewall ignore it.
+ */
+export type InboundMode = 'locked' | 'open' | 'whitelist';
+export interface InboundPolicy {
+  mode: InboundMode;
+  /** Extra whitelisted CIDRs (whitelist mode only); never includes the host egress. */
+  sources: string[];
+}
+
 export interface CloudProvisionRequest {
   name: string;
   /** Resolved base image / snapshot ref. */
@@ -35,10 +52,41 @@ export interface CloudProvisionRequest {
   /**
    * Backend-interpreted size string. Hetzner reads it as a server type
    * (e.g. `cx33`); Daytona parses it as `cpu-memory-disk` GB (e.g. `4-8-20`)
-   * and overrides `resources` when valid. Backends without a size knob ignore
-   * the field.
+   * and overrides `resources` when valid; Vercel parses it as a vCPU count
+   * (`1`/`2`/`4`/`8`). Backends whose size is fixed at bake time (e2b) ignore
+   * it here, as do backends without a size knob.
    */
   size?: string;
+  /**
+   * Backend-interpreted datacenter / region. Hetzner reads it as a datacenter
+   * (`nbg1`, `fsn1`, …); Daytona as a region (`us`, `eu`, `us-east-1`) that
+   * also selects which SDK client target is used, since `create` takes its
+   * region from the client rather than a param. Other backends have a fixed or
+   * account-level region.
+   */
+  location?: string;
+  /**
+   * Backend-interpreted sandbox class. Only Daytona reads it: `linux-vm` (real
+   * pause/resume, one region, no volume mounts) or `container` (archivable,
+   * Dockerfile-buildable). The class is a property of the *snapshot* the box
+   * boots from, so this is the class the caller expects — the backend still
+   * derives the truth from the prepared state and records that.
+   */
+  sandboxClass?: string;
+  /**
+   * Backend-interpreted resource grouping to place the box in. Only DigitalOcean
+   * reads it today (a Project name or UUID, from `box.digitaloceanProject`);
+   * unset leaves the box in the account's default grouping.
+   */
+  project?: string;
+  /**
+   * SSH destination whose Docker engine runs the box. Only `remote-docker` reads
+   * it — its "cloud" is a machine the user supplies, so unlike every other
+   * backend it has no infrastructure of its own to place the box on and this is
+   * mandatory. Resolved by the CLI from `docker:<host>` / `--remote-host` /
+   * `box.remoteDockerHost`. Backends that own their infrastructure ignore it.
+   */
+  host?: string;
   /**
    * Max session length in ms before the backend auto-snapshots/stops the
    * sandbox. Backends that don't model a session timeout ignore it; Vercel
@@ -59,6 +107,13 @@ export interface CloudProvisionRequest {
    * primitive ignore it (hetzner locks egress via its own firewall instead).
    */
   networkPolicy?: string;
+  /**
+   * Raw `--inbound` / `box.inbound` spec (`locked` | `open` | a CIDR list). The
+   * VPS backends (hetzner, digitalocean) parse it via `parseInboundSpec` and
+   * resolve it against the detected host egress IP to build the per-box
+   * firewall's inbound sources; other backends ignore it. Absent ⇒ `locked`.
+   */
+  inbound?: string;
   /** Env vars baked into the sandbox at provision time. */
   env?: Record<string, string>;
   /** Persistent volumes to attach. Backends without a volume API ignore this. */
@@ -69,6 +124,30 @@ export interface CloudProvisionRequest {
 /** Opaque handle to a provisioned sandbox. `sandboxId` is persisted on the box record. */
 export interface CloudHandle {
   sandboxId: string;
+  /**
+   * Actual resources the backend provisioned, read back from the create
+   * response (Hetzner reports the real `server_type` cores/memory/disk;
+   * Vercel echoes its vCPU count). Optional: backends that can't report it, and
+   * older records, omit it and readers fall back to `defaultResources`.
+   */
+  resources?: { cpu?: number; memory?: number; disk?: number };
+  /**
+   * The inbound-access policy the backend applied to the box's firewall (VPS
+   * backends only), persisted on the record so drift re-syncs preserve the
+   * whitelist. Omitted by backends without a per-box firewall.
+   */
+  inbound?: InboundPolicy;
+  /**
+   * Daytona sandbox class (`linux-vm` | `container`), persisted on the record
+   * and threaded back in so lifecycle ops can branch without an extra API call.
+   * It cannot be read off the SDK's `Sandbox` (the class lives only on the
+   * api-client DTO), and the two classes need different calls: a VM pauses and
+   * cannot be archived; a container archives and cannot be paused.
+   *
+   * Absent for non-Daytona backends and for records written before the class
+   * existed — `pause()` falls back to trying both.
+   */
+  sandboxClass?: string;
 }
 
 export type CloudState = 'running' | 'paused' | 'stopped' | 'missing';
@@ -194,6 +273,28 @@ export interface CloudBackend {
   refreshPreviewUrl?(h: CloudHandle, port: number): Promise<CloudPreviewUrl>;
 
   /**
+   * Re-establish host→box reachability when establishing a connection fails for
+   * a reason the backend can self-heal. Today only Hetzner implements it: a host
+   * egress-IP change locks the per-box Cloud Firewall, so this re-syncs the
+   * firewall to the current egress IP — but ONLY when it actually changed (else
+   * `{ changed: false }`, so the caller surfaces the original error). The CLI
+   * calls it ONLY on a connection-ESTABLISHMENT failure (`recover`, the initial
+   * attach connect), never on a mid-session drop (a checkpoint stops the box —
+   * not an IP change). Backends with public URLs / no host transport omit it.
+   */
+  repairReachability?(h: CloudHandle): Promise<{ changed: boolean; detail?: string }>;
+
+  /**
+   * Apply an inbound-access policy to the box's per-box firewall (VPS backends
+   * only — `agentbox inbound <box>`). The backend detects the host egress IP
+   * (for `locked`/`whitelist`), resolves the policy into the firewall source
+   * list, applies it (no reboot), and returns the applied CIDRs for logging.
+   * Backends without a per-box firewall omit it → the CLI reports "not
+   * supported for provider X".
+   */
+  setInbound?(h: CloudHandle, policy: InboundPolicy): Promise<{ sources: string[] }>;
+
+  /**
    * Browser-bound signed preview URL with the auth token embedded in the URL
    * (no header needed). Used for `agentbox url` / `agentbox screen` — anywhere
    * the host hands the URL off to a browser. Distinct from `previewUrl()`
@@ -311,4 +412,50 @@ export interface CloudBackend {
     targetDeadlineEpochMs: number,
     currentDeadlineEpochMs: number,
   ): Promise<void>;
+
+  /**
+   * How the provider's session timeout behaves — which decides who stops an
+   * idle box.
+   *
+   *   - `absolute` (default): the timeout is a deadline. It expires on its own
+   *     schedule and nothing the box RECEIVES defers it, so an idle box lapses
+   *     by itself once the host stops renewing. vercel + e2b.
+   *   - `inactivity`: the timeout is an idle window that ANY request to the
+   *     sandbox resets. daytona.
+   *
+   * The distinction is load-bearing, not cosmetic. The host relay long-polls
+   * every cloud box's preview URL continuously (`CloudBoxPoller`), and on an
+   * inactivity-model provider that traffic is itself activity — it resets the
+   * clock on every poll, so the box NEVER lapses and an idle one bills until
+   * something stops it. Measured on Daytona 2026-07-13: an untouched sandbox
+   * (autoStopInterval=3) stopped at 3.0 min, while an otherwise identical one
+   * receiving a request every 15 s was still running at 7 min and only stopped
+   * 3 min after the requests ceased.
+   *
+   * So for `inactivity` backends the host must do the stopping itself: the
+   * keepalive loop pauses a box whose agent has been idle for a full window,
+   * rather than waiting for a lapse that will never arrive.
+   */
+  readonly timeoutModel?: 'absolute' | 'inactivity';
+
+  /**
+   * Set when the backend's `attachArgv` transport allocates a terminal for a
+   * SHELL session but not for an EXEC one — i.e. passing a remote command costs
+   * you the TTY.
+   *
+   * Daytona's SSH gateway does exactly this (measured 2026-07-13):
+   *
+   *     ssh -tt <token>@ssh.app.daytona.io 'tty'   ->  not a tty
+   *     ssh -tt <token>@ssh.app.daytona.io          ->  /dev/pts/1
+   *
+   * Interactive attach can't live with that — `tmux attach` exits immediately
+   * with no terminal, which the wrapper reads as the box dropping, so it
+   * reconnects into the same instant failure. `buildAttach` therefore drops the
+   * remote command for these backends and sends it as `AttachSpec.initialInput`
+   * instead, connecting to a plain login shell that does get a terminal.
+   *
+   * Only interactive attach is affected. Detached session-creation and `logs`
+   * pass a command deliberately and want no TTY, so they keep the exec form.
+   */
+  readonly attachExecLacksTty?: boolean;
 }

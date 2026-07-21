@@ -44,7 +44,9 @@ implementation (per the project convention), not as end-of-PR cleanup.
   signedPreviewUrl + snapshot helpers, all mapped to `@vercel/sandbox` 2.x.
 - [x] **Phase 3 — prepare + provision.sh.** Base-snapshot bake with context
   fingerprinting + skip-fast; AL2023 installer (dnf, vscode user, ctl/vnc/shims,
-  Claude native installer, codex/opencode).
+  Claude native installer, codex/opencode). 2026-07-10: compose + buildx CLI
+  plugins added (official release binaries — AL2023 ships neither); snapshots
+  baked before this need a re-`prepare --provider vercel`.
 - [x] **Phase 4 — attach.** `buildVercelAttach` drives the Vercel `sandbox` CLI's
   real PTY (`sbx exec -i … -- sudo -u vscode -H bash -lc '<tmux attach>'`). (Was a
   custom `attach-helper.js` send-keys/capture-pane bridge — replaced; see #8.)
@@ -145,6 +147,13 @@ Confirmed live 2026-05-28:
    gates on `git ls-remote` (the probe branch is absent before, present after); it
    also needs the `VERCEL_TOKEN` trio in env (it predates CLI-login auth, so under
    `VERCEL_AUTH_SOURCE=cli` drive the round-trip via the CLI/`backend.exec` directly).
+   - **Update (relay token now read from a file, not login-shell env).** The in-box
+     relay token reaches `agentbox-ctl` via a `0600 /run/agentbox/relay.env` written by
+     the ctl daemon (read by `resolveRelayEnv` in `packages/ctl/src/relay-env.ts`), not
+     via login-shell env. This fixed the regression (b9e4ebf55) where the in-box agent's
+     `agentbox-ctl git push` failed "no relay configured" because the daemon's `box.env`
+     overwrite dropped the token. Applies to all cloud providers; the bridge token used
+     by the `sandbox.domain(8788)` `/bridge/*` round-trip above stays daemon-only.
    **Original plan (host — must run on a real host, not a nested box):**
    - *Why nested doesn't work:* a vercel box's `CloudBoxPoller` runs wherever the
      `agentbox` CLI runs; from inside a docker agentbox the relay/git creds chain is

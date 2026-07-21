@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyUntrackedOverlay } from '../src/in-box-git.js';
+import { classifyUntrackedOverlay } from '../src/sync/in-box-git.js';
 
 describe('classifyUntrackedOverlay', () => {
   it('copies when the box has no file at the path', () => {

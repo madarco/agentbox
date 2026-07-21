@@ -36,16 +36,34 @@ interface PendingPromptEntry {
  */
 export interface AutoApprovePolicy {
   shouldAutoApprove(boxId: string): boolean;
-  audit(boxId: string, params: Omit<PromptAskEvent, 'id'>): void;
+  audit(boxId: string, params: Omit<PromptAskEvent, 'id'>, reason?: string): void;
+}
+
+/** A pending approval, flattened for listing across all boxes (hub UI). */
+export interface PendingApproval {
+  id: string;
+  boxId: string;
+  ev: PromptAskEvent;
+  createdAt: string;
 }
 
 export class PendingPrompts {
   private readonly entries = new Map<string, PendingPromptEntry>();
   private autoApprove: AutoApprovePolicy | null = null;
+  private onChange: (() => void) | null = null;
 
   /** Install the per-box auto-approve policy (relay server, once at startup). */
   setAutoApprovePolicy(policy: AutoApprovePolicy): void {
     this.autoApprove = policy;
+  }
+
+  /**
+   * Install a change hook fired whenever the pending set is mutated (add /
+   * resolve). Wired by the relay server to the hub notifier so the embedded UI
+   * pushes an update to connected browsers.
+   */
+  setOnChange(fn: () => void): void {
+    this.onChange = fn;
   }
 
   /**
@@ -59,6 +77,18 @@ export class PendingPrompts {
     return true;
   }
 
+  /**
+   * Record a *safe-subset* auto-approval (opening a PR, a contained file copy,
+   * a sanctioned-branch push, …) to the audit sink WITHOUT the blanket
+   * `autoApproveHostActions` opt-in. The handler already decided the action is
+   * safe under `box.autoApproveSafeHostActions`; this just leaves the same
+   * `host-action-auto-approved` trail a full opt-in would, tagged with `reason`.
+   * No-op when no policy is installed (e.g. the stateless poll plane).
+   */
+  noteAutoApprove(boxId: string, params: Omit<PromptAskEvent, 'id'>, reason: string): void {
+    this.autoApprove?.audit(boxId, params, reason);
+  }
+
   add(boxId: string, ev: PromptAskEvent): Promise<PromptResolution> {
     return new Promise<PromptResolution>((resolve) => {
       this.entries.set(ev.id, {
@@ -67,6 +97,7 @@ export class PendingPrompts {
         resolve,
         createdAt: new Date().toISOString(),
       });
+      this.onChange?.();
     });
   }
 
@@ -80,6 +111,7 @@ export class PendingPrompts {
     if (!entry) return false;
     this.entries.delete(id);
     entry.resolve({ answer, cancelled });
+    this.onChange?.();
     return true;
   }
 
@@ -91,6 +123,18 @@ export class PendingPrompts {
     const out: PromptAskEvent[] = [];
     for (const entry of this.entries.values()) {
       if (entry.boxId === boxId) out.push(entry.ev);
+    }
+    return out;
+  }
+
+  /**
+   * Snapshot of every pending prompt across all boxes, with its boxId and
+   * enqueue time — the hub's Approvals view lists these.
+   */
+  all(): PendingApproval[] {
+    const out: PendingApproval[] = [];
+    for (const entry of this.entries.values()) {
+      out.push({ id: entry.ev.id, boxId: entry.boxId, ev: entry.ev, createdAt: entry.createdAt });
     }
     return out;
   }

@@ -32,12 +32,15 @@ import { bashScript, quoteShellArg } from './shell.js';
 const REMOTE_UP_TAR = '/tmp/agentbox-cp-up.tar.gz';
 const REMOTE_DOWN_TAR = '/tmp/agentbox-cp-down.tar.gz';
 
+/** In-box home for the agent user; cloud boxes always run as `vscode`. */
+const BOX_HOME = '/home/vscode';
+
 export interface CloudCpResult {
   /** Final landed path on the receiving side. */
   finalPath: string;
 }
 
-export async function uploadToCloudBox(
+async function uploadOneToCloudBox(
   backend: CloudBackend,
   handle: CloudHandle,
   hostSrc: string,
@@ -87,6 +90,25 @@ export async function uploadToCloudBox(
       finalName !== srcBasename
         ? `$SUDO cp -f ${quoteShellArg(initialPath)} ${quoteShellArg(finalPath)} && $SUDO rm -f ${quoteShellArg(initialPath)}`
         : ': # no rename';
+    // Parent-chain chown: `mkdir -p` ran as root (via $SUDO), so any new dirs
+    // between $HOME and the landed path are root-owned. When the dest is under
+    // the box home, walk back up to $HOME (exclusive) and chown each so the
+    // agent (vscode) can write siblings — e.g. session-teleport lands a rollout
+    // under `~/.codex/sessions/YYYY/MM/DD/` and Codex must then create its
+    // `state_*.sqlite` index in that subtree. System paths (/etc/*) and
+    // /workspace keep their existing ownership. The whole script runs via
+    // `bashScript()` (`bash -c '<body>'`), which protects `$(...)`/`while` from
+    // Vercel's outer `sudo -u vscode -H bash -lc` wrapping.
+    // Strictly *under* home (trailing segment) — never `=== BOX_HOME`, else
+    // `dirname` would be `/home` and the walk could reassign `/home` itself.
+    const underHome = finalPath.startsWith(BOX_HOME + '/');
+    const parentWalk = underHome
+      ? `parent=$(dirname ${quoteShellArg(finalPath)}); ` +
+        `while [ "$parent" != ${quoteShellArg(BOX_HOME)} ] && [ "$parent" != "/" ]; do ` +
+        `$SUDO chown "$(id -un):$(id -gn)" "$parent" || true; ` +
+        `parent=$(dirname "$parent"); ` +
+        `done`
+      : `: # dest outside ${BOX_HOME}; leave parent ownership untouched`;
     const script = [
       `set -euo pipefail`,
       `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi`,
@@ -97,9 +119,10 @@ export async function uploadToCloudBox(
       // sandbox's regular disk. Same flags as the credential-seed extract.
       `$SUDO tar -xzf ${quoteShellArg(REMOTE_UP_TAR)} -C ${quoteShellArg(boxParent)} --no-same-permissions --no-same-owner -m`,
       renameStep,
-      // chown only the landed path — anything we mkdir'd through stays at
-      // its existing ownership. Tolerate failure (chown bad on read-only mounts).
+      // chown the landed subtree, then the parent chain back up to $HOME.
+      // Tolerate failure (chown bad on read-only / FUSE mounts).
       `$SUDO chown -R "$(id -un):$(id -gn)" ${quoteShellArg(finalPath)} || true`,
+      parentWalk,
       `rm -f ${quoteShellArg(REMOTE_UP_TAR)}`,
     ].join('\n');
     const r = await backend.exec(handle, bashScript(script));
@@ -154,7 +177,7 @@ export async function pullCloudDirContents(
   return { finalPath: dstAbs };
 }
 
-export async function downloadFromCloudBox(
+async function downloadOneFromCloudBox(
   backend: CloudBackend,
   handle: CloudHandle,
   boxSrc: string,
@@ -208,4 +231,62 @@ export async function downloadFromCloudBox(
     await rm(stage, { recursive: true, force: true });
   }
   return { finalPath };
+}
+
+/**
+ * Copy one or more host sources into the cloud box. A single source keeps full
+ * `docker cp` semantics; ≥2 sources land under a destination directory (the
+ * cloud path has no in-box `test -d` probe, so the dir is opted into with a
+ * trailing `/`). The single-source primitive is run once per source, serially —
+ * `REMOTE_UP_TAR` is a fixed remote staging path reused each iteration.
+ */
+export async function uploadToCloudBox(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  hostSrcs: string[],
+  boxDst: string,
+  exclude?: string[],
+): Promise<CloudCpResult> {
+  if (hostSrcs.length === 1) {
+    return uploadOneToCloudBox(backend, handle, hostSrcs[0]!, boxDst, exclude);
+  }
+  if (!boxDst.endsWith('/')) {
+    throw new Error(
+      `cannot copy multiple sources to '${boxDst}': destination is not a directory (add a trailing slash, e.g. ${boxDst}/)`,
+    );
+  }
+  for (const src of hostSrcs) {
+    await uploadOneToCloudBox(backend, handle, src, boxDst, exclude);
+  }
+  return { finalPath: boxDst };
+}
+
+/**
+ * Copy one or more box sources to the host. A single source keeps full
+ * `docker cp` semantics; ≥2 sources land under a destination directory. Run
+ * serially — `REMOTE_DOWN_TAR` is a fixed remote staging path reused each
+ * iteration.
+ */
+export async function downloadFromCloudBox(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  boxSrcs: string[],
+  hostDst: string,
+  exclude?: string[],
+): Promise<CloudCpResult> {
+  if (boxSrcs.length === 1) {
+    return downloadOneFromCloudBox(backend, handle, boxSrcs[0]!, hostDst, exclude);
+  }
+  const dstAbs = hostResolve(hostDst);
+  const dstExists = existsSync(dstAbs);
+  if (!hostDst.endsWith('/') && !(dstExists && statSync(dstAbs).isDirectory())) {
+    throw new Error(
+      `cannot copy multiple sources to '${hostDst}': destination is not a directory (add a trailing slash, e.g. ${hostDst}/)`,
+    );
+  }
+  mkdirSync(dstAbs, { recursive: true });
+  for (const src of boxSrcs) {
+    await downloadOneFromCloudBox(backend, handle, src, dstAbs, exclude);
+  }
+  return { finalPath: dstAbs };
 }

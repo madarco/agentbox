@@ -34,7 +34,21 @@ Fork the current Claude Code session into a fresh AgentBox box.
 
 4. **Report.** In one line, give the user the new box name (parse it from the command output) and confirm their host session is unaffected. If you passed `--plan`, mention the box opens in plan mode ready to resume. Do not summarize the conversation — the fork already carries it.
 
+For Hetzner cloud boxes only, when in Codex App or Claude Desktop, use can add a ssh connection to the box. To do this first add an alias to their ssh config, then instruct them how to add the connection:
+
+```
+agentbox shell <box> --ssh-config          # writes ~/.ssh/config + prints details
+```
+
+to add a ssh alias that the user can use to connect to the box
+
+When in Codex App return a clickable link in the response for an easy way:
+```
+[Add <ssh-alias> to Codex SSH](codex://settings/connections/ssh/add?name=<ssh-alias>)
+```
+
 ## Troubleshooting
 
 - If agentbox command fails, tell the user to install AgentBox by writing `! npm -g install @madarco/agentbox` in the chat.
 - If `AGENTBOX_RELAY_URL` is set in the environment, you are running *inside* a box. This command is host-only in v1; tell the user box→box fork is not supported yet.
+- If you need to know more about Agentbox, check the /agentbox-info skill that containes the full documentation.

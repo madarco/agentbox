@@ -1,20 +1,34 @@
 import { spawn } from 'node:child_process';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import {
+  boxCarriedHostPaths,
   boxWorkspacePath,
   executeCloudAction,
   refreshCloudPreviewUrl,
   resolveHostPath,
 } from './host-actions.js';
+import { canAutoApproveTransfer } from './safe-transfer.js';
 import { HostActionQueue } from './host-action-queue.js';
+import { HubNotifier } from './hub-notifier.js';
 import { BoxNotices } from './notices.js';
 import { hostOpenCommand } from '@agentbox/sandbox-core';
+import {
+  isSanctionedPushBranch,
+  isScratchBranch,
+  landRefspec,
+  parseDownloadKind,
+  resolveLandDest,
+  resolveRemote,
+  sanitizeGitArgs,
+  upstreamRef,
+} from '@agentbox/core';
 import { getConnector } from '@agentbox/integrations';
 import {
   assertGhReady,
   checkoutGuards,
   GH_API_ENDPOINT_REFUSAL,
   GH_PR_READ_ONLY_OPS,
+  GH_PR_SAFE_AUTO_APPROVE_OPS,
   GH_RUN_READ_ONLY_OPS,
   injectPrCreateHead,
   isAllowedGhApiEndpoint,
@@ -22,6 +36,7 @@ import {
   isGhPrOp,
   isGhRunOp,
   PR_CREATE_NO_HEAD_REFUSAL,
+  prCreateHasExplicitHead,
   prCreateNeedsHead,
   refuseCheckoutByDefault,
   refuseMergeBypass,
@@ -42,10 +57,18 @@ import {
   runHostIntegration,
   type IntegrationRpcParams,
 } from './integrations.js';
+import { GitHubAppLeaser, loadGitHubAppConfig, type GitHubAppConfig } from './github-app.js';
+import { leaseTokenResult } from './lease.js';
+import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
+import { resolveWorktree } from './worktree.js';
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
+import { CREDENTIALS_UPDATED_EVENT, CredentialsFanout } from './credentials-fanout.js';
 import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
+import { MemoryStore } from './store/memory-store.js';
+import type { Store } from './store/store.js';
 import { DEFAULT_BOX_RELAY_PORT } from './types.js';
+import { buildCpArgv, cpFlags, normalizeCpParams } from './cp-rpc.js';
 import type {
   BoxRegistration,
   BoxWorktree,
@@ -59,6 +82,7 @@ import type {
   DownloadRpcParams,
   GitRpcParams,
   GitRpcResult,
+  HostAction,
   PostEventBody,
   PostRpcBody,
   PromptAnswerBody,
@@ -87,16 +111,47 @@ export interface RelayServerOptions {
    * in-box agent cannot impersonate the host poller.
    */
   bridgeToken?: string;
+  /**
+   * Persisted-state backend. Defaults to an in-memory store wrapping the
+   * relay's historical in-memory structures (the laptop relay + tests). A
+   * hosted control plane injects a Postgres-backed store; a federated laptop
+   * relay injects a RemoteStore. See `./store/store.ts`.
+   */
+  store?: Store;
+  /**
+   * How host-action approvals are obtained. Defaults to 'block' (the
+   * long-lived laptop relay blocks on a human). The stateless hosted plane
+   * uses 'poll' via its own handler, not this server. See `./permission.ts`.
+   */
+  promptMode?: PromptMode;
+  /**
+   * GitHub App config for `git.lease-token` (the hosted plane mints repo-scoped
+   * installation tokens and leases them to boxes). Defaults to
+   * {@link loadGitHubAppConfig} (`GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY`).
+   * Null/absent → `git.lease-token` returns a clear "not configured" error.
+   */
+  githubApp?: GitHubAppConfig | null;
+  /**
+   * Optional delegate for requests that matched no relay route (e.g. Next's
+   * `getRequestHandler()`). Invoked at the top-level 404 fallthrough, so every
+   * relay route still matches first and the UI can never shadow `/admin`,
+   * `/rpc`, etc. Lets the hub serve Next on the relay's own port.
+   */
+  uiHandler?: (req: IncomingMessage, res: ServerResponse) => void;
 }
 
 export interface RelayServerHandle {
   server: Server;
+  /** The persisted-state backend the handlers use (memory by default). */
+  store: Store;
   registry: BoxRegistry;
   events: EventBuffer;
   statusStore: BoxStatusStore;
   prompts: PendingPrompts;
   subscribers: PromptSubscribers;
   notices: BoxNotices;
+  /** Fan-out for the embedded hub UI's SSE route (pending-approval changes). */
+  hubNotifier: HubNotifier;
   /** Present only in `mode === 'box'`: the parking lot for host-only RPCs. */
   hostActions?: HostActionQueue;
   url: string;
@@ -107,6 +162,13 @@ export interface RelayServerHandle {
    * No-op until set; the queue still picks the job up via the periodic tick.
    */
   setQueuePoke: (fn: () => void) => void;
+  /**
+   * Kick the queue scheduler in-process (same effect as `POST
+   * /admin/queue/enqueue`, without a loopback round-trip). Used by the embedded
+   * hub after it enqueues a create job via `enqueueQueueJob`. No-op until
+   * `setQueuePoke` has wired the scheduler.
+   */
+  pokeQueue: () => void;
   close: () => Promise<void>;
 }
 
@@ -210,13 +272,27 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const prompts = new PendingPrompts();
   const subscribers = new PromptSubscribers();
   const notices = new BoxNotices(subscribers);
+  // Fan-out for the embedded hub UI: every change to the pending-approval set
+  // pushes a refresh to browsers subscribed on the hub's SSE route. No-op when
+  // no hub is attached (the CLI relay bin never subscribes).
+  const hubNotifier = new HubNotifier();
+  prompts.setOnChange(() => hubNotifier.notify());
+  // The persisted-state seam. Defaults to a MemoryStore wrapping the concrete
+  // instances above, so the laptop relay + tests behave exactly as before; a
+  // hosted control plane injects a Postgres-backed store instead. Handlers go
+  // through `store.*`; the concrete instances stay exposed on the handle for
+  // the autopause / queue loops (bin.ts) and the unit tests that read them.
+  const store: Store = opts.store ?? new MemoryStore({ registry, events, statusStore });
   // Per-box `box.autoApproveHostActions`: when a box registered with the flag,
   // host-action confirms resolve to 'y' without a prompt, but every bypass
   // lands in the event ring buffer (visible via `/admin/events`) so it's
-  // auditable. Wired here because registry + events are now in scope.
+  // auditable. Reads the concrete registry/events synchronously (not the async
+  // store): `askPrompt` broadcasts to SSE subscribers synchronously, so this
+  // gate must stay sync. The MemoryStore wraps these same instances, so the
+  // sync policy view and the async store view never diverge on the laptop relay.
   prompts.setAutoApprovePolicy({
     shouldAutoApprove: (boxId) => registry.get(boxId)?.autoApproveHostActions === true,
-    audit: (boxId, params) => {
+    audit: (boxId, params, reason) => {
       events.append({
         boxId,
         type: 'host-action-auto-approved',
@@ -224,9 +300,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           command: params.context?.command,
           argv: params.context?.argv,
           message: params.message,
+          ...(reason ? { reason } : {}),
         },
       });
-      log(`auto-approved host action for ${boxId}: ${params.context?.command ?? params.message}`);
+      log(
+        `auto-approved host action for ${boxId}: ${params.context?.command ?? params.message}` +
+          (reason ? ` (${reason})` : ''),
+      );
     },
   });
   const hostInitiatedTokens = new HostInitiatedTokens();
@@ -236,10 +316,25 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   // Box mode parks host-only RPCs until the host poller answers; host mode
   // executes them inline (the historical behavior).
   const hostActions = mode === 'box' ? new HostActionQueue() : null;
+  // Host-mode handler for refreshed agent credentials (newest-wins backup
+  // write + debounced `agentbox credentials propagate` spawn). In box mode the
+  // event rides the local ring buffer to the bridge instead — the host's
+  // poller hands it to this handler on the other side.
+  const credentialsFanout = mode === 'box' ? null : new CredentialsFanout({ log });
   if (mode === 'box' && (!opts.bridgeToken || opts.bridgeToken.length === 0)) {
     throw new Error("relay mode='box' requires a non-empty bridgeToken");
   }
   const bridgeToken = opts.bridgeToken ?? '';
+  // The laptop relay blocks on a human for approvals (today's behavior). The
+  // stateless hosted plane uses 'poll' via its own handler, not this server.
+  const promptMode: PromptMode = opts.promptMode ?? 'block';
+  const gateDeps: GateDeps = { mode: promptMode, store, prompts, subscribers };
+  // GitHub App leaser for `git.lease-token` (hosted plane). Off when no App is
+  // configured — the laptop relay never needs it (it pushes host-side / cloud
+  // boxes reach it via the poller).
+  const githubAppConfig = opts.githubApp === undefined ? loadGitHubAppConfig() : opts.githubApp;
+  const leaser = githubAppConfig ? new GitHubAppLeaser(githubAppConfig) : null;
+  const uiHandler = opts.uiHandler;
 
   // Host-mode pollers for cloud-tagged boxes; started on /admin/register-box,
   // stopped on /admin/forget-box. Lazy import to keep host-mode startup free
@@ -275,9 +370,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       // caller reclaim (kill by `pid`) and respawn instead of reusing it.
       send(res, 200, {
         ok: true,
-        boxes: registry.size(),
-        events: events.size(),
+        boxes: await store.countBoxes(),
+        events: await store.countEvents(),
         pid: process.pid,
+        // True when a Next UI is delegated here (the embedded hub) vs a bare relay.
+        // Lets `agentbox hub` distinguish "a hub already runs" from "a lean relay
+        // holds the port" (reclaim + respawn as the hub).
+        ui: Boolean(uiHandler),
         cliEntry: Boolean(process.env.AGENTBOX_CLI_ENTRY),
         // The spawning CLI's version/commit (inherited via env at spawn time).
         // `version` lets host-side ensureRelay reclaim a relay left over from a
@@ -307,13 +406,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
       if (route === 'GET /bridge/poll') {
         const since = Number.parseInt(url.searchParams.get('since') ?? '0', 10) || 0;
-        const newEvents = events.since(since);
+        const newEvents = await store.listEvents(since);
         const lastId = newEvents.length > 0 ? newEvents[newEvents.length - 1]!.id : since;
         const actions = hostActions.drain();
         // A box-mode relay only ever has one registered box (itself). The
         // status snapshot — if any has been pushed — belongs to that box.
-        const only = registry.list()[0];
-        const status = only ? statusStore.get(only.boxId) ?? null : null;
+        const only = (await store.listBoxes())[0];
+        const status = only ? (await store.getStatus(only.boxId)) ?? null : null;
         const reply: BridgePollResponse = {
           actions,
           events: newEvents,
@@ -353,8 +452,14 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     // Admin endpoints are reachable from loopback only. The relay binds to
     // 0.0.0.0 so containers can reach /events and /rpc via host.docker.internal,
     // but admin operations (register-box, forget-box, list events, etc.) are
-    // for the host CLI and must not be exposed to boxes.
-    if (url.pathname.startsWith('/admin/')) {
+    // for the host CLI and must not be exposed to boxes. `/remote/*` is a
+    // hosted-control-plane surface (box creation) served by the Next.js app's
+    // handler, not the laptop relay — so it does not exist here.
+    if (url.pathname.startsWith('/admin/') || url.pathname.startsWith('/remote/')) {
+      if (url.pathname.startsWith('/remote/')) {
+        send(res, 404, { error: 'not found', route });
+        return;
+      }
       if (!isLoopbackAddress(req.socket.remoteAddress)) {
         send(res, 403, { error: 'admin endpoints are loopback-only' });
         return;
@@ -362,7 +467,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     }
 
     if (route === 'POST /events') {
-      const reg = authBox(req, res, registry);
+      const reg = await authBox(req, res);
       if (!reg) return;
       const body = await readJsonBody<PostEventBody>(req);
       if (!body || typeof body.type !== 'string' || body.type.length === 0) {
@@ -377,12 +482,24 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           send(res, 400, { error: 'invalid box-status payload' });
           return;
         }
-        await statusStore.set(reg.boxId, reg.name, reg.projectIndex, body.payload);
+        await store.setStatus(reg.boxId, reg.name, reg.projectIndex, body.payload);
         log(`box-status box=${reg.boxId}`);
         send(res, 202, { ok: true });
         return;
       }
-      const ev = events.append({
+      // Refreshed agent credentials: handled out-of-band in host mode — the
+      // payload is a secret and must never land in the event ring buffer. In
+      // box mode it falls through to the ring so the bridge drains it to the
+      // host poller (which routes it to the host relay's handler).
+      if (body.type === CREDENTIALS_UPDATED_EVENT && credentialsFanout) {
+        const verdict = await credentialsFanout.handle(reg.boxId, body.payload);
+        log(
+          `credentials-updated box=${reg.boxId} accepted=${String(verdict.accepted)} (${verdict.reason})`,
+        );
+        send(res, 202, { ok: true, accepted: verdict.accepted });
+        return;
+      }
+      const ev = await store.appendEvent({
         boxId: reg.boxId,
         type: body.type,
         ts: typeof body.ts === 'string' ? body.ts : undefined,
@@ -394,7 +511,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     }
 
     if (route === 'POST /rpc') {
-      const reg = authBox(req, res, registry);
+      const reg = await authBox(req, res);
       if (!reg) return;
       const body = await readJsonBody<PostRpcBody>(req);
       if (!body || typeof body.method !== 'string' || body.method.length === 0) {
@@ -415,14 +532,76 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         return;
       }
       if (body.method === 'git.push' || body.method === 'git.fetch') {
+        // Cloud box reaching this host-mode relay directly over the forwarder
+        // (rather than via the poller): run the cloud bundle pull-back executor,
+        // which does its own gating and pushes via the host workspace.
+        if (reg.kind === 'cloud') {
+          const action: HostAction = {
+            id: '',
+            boxId: reg.boxId,
+            method: body.method,
+            params: body.params,
+            createdAt: new Date().toISOString(),
+          };
+          const result = await executeCloudAction(action, {
+            backendName: reg.backend ?? '',
+            boxId: reg.boxId,
+            boxName: reg.name,
+            prompts,
+            subscribers,
+            hostInitiatedTokens,
+            autoApproveSafeHostActions: reg.autoApproveSafeHostActions,
+            log,
+          });
+          send(res, result.exitCode === 0 ? 200 : 500, result);
+          return;
+        }
         // Only `push` mutates the user's remote; fetch is read-only and noisy.
         // Per-box `agentbox/<name>` branches are the box's own scratch branch
         // — pushes to them are the whole point of agentbox, so they bypass
         // the y/N gate. Any other branch still prompts.
         if (body.method === 'git.push') {
+          const hostOnlyParams = body.params as GitRpcParams | undefined;
+          if (hostOnlyParams?.hostOnly) {
+            // Landing the branch in the host's local repo publishes nothing,
+            // so the push-confirm gate doesn't apply. Land and return.
+            const saveResult = await handleGitSaveToHost(reg, hostOnlyParams);
+            send(res, saveResult.exitCode === 0 ? 200 : 500, saveResult);
+            return;
+          }
           const params = body.params as GitRpcParams | undefined;
           const worktree = resolveWorktree(reg, params?.path ?? '/workspace');
-          const isAgentboxBranch = worktree?.branch.startsWith('agentbox/') ?? false;
+          // The docker relay always pushes the worktree's host-selected branch
+          // (`sanctionedBranch`, falling back to the create-time `branch`) — the
+          // in-box agent can't influence which branch is pushed. Key the gate on
+          // THAT branch, not the immutable create-time `branch` (which is always
+          // `agentbox/*`): after a host `agentbox git checkout main`, the push
+          // target is `main`, so it must NOT be treated as a scratch bypass.
+          // A scratch target bypasses unconditionally; a non-scratch sanctioned
+          // target bypasses only as part of the safe subset (honors
+          // `box.autoApproveSafeHostActions`) and leaves an audit trail.
+          const dockerPushBranch = worktree?.sanctionedBranch ?? worktree?.branch;
+          const isScratch = isScratchBranch(dockerPushBranch);
+          const safeApproveOn = reg.autoApproveSafeHostActions !== false;
+          // `isSanctionedPushBranch(dockerPushBranch, dockerPushBranch)` is true
+          // only for a resolved branch — so a box with no registered worktree
+          // (undefined branch) never bypasses and still prompts.
+          const isSanctionedNonScratch =
+            !isScratch &&
+            safeApproveOn &&
+            isSanctionedPushBranch(dockerPushBranch, dockerPushBranch);
+          const bypassPushGate = isScratch || isSanctionedNonScratch;
+          if (isSanctionedNonScratch) {
+            prompts.noteAutoApprove(
+              reg.boxId,
+              {
+                kind: 'confirm',
+                message: `git push to sanctioned branch ${dockerPushBranch ?? ''} from box ${reg.name}`,
+                context: { command: 'git push', cwd: params?.path, argv: params?.args },
+              },
+              'safe: sanctioned-branch push',
+            );
+          }
           // Host-initiated pushes (driven by `agentbox git push <box>`) skip
           // the confirm prompt — but only if the host CLI minted a valid,
           // unexpired, scope-matched, params-hash-bound token via
@@ -435,10 +614,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           const tokenClaimed = typeof params?.hostInitiated === 'string';
           const incomingHash = hashRpcParams(params);
           const hostInitiatedOk =
-            !isAgentboxBranch &&
+            !bypassPushGate &&
             tokenClaimed &&
             hostInitiatedTokens.consume(params?.hostInitiated, reg.boxId, 'git.push', incomingHash);
-          if (!isAgentboxBranch && tokenClaimed && !hostInitiatedOk) {
+          if (!bypassPushGate && tokenClaimed && !hostInitiatedOk) {
             send(res, 500, {
               exitCode: 10,
               stdout: '',
@@ -447,11 +626,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             });
             return;
           }
-          if (!isAgentboxBranch && !hostInitiatedOk) {
-            const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+          if (!bypassPushGate && !hostInitiatedOk) {
+            const gate = await gateApproval(gateDeps, reg.boxId, 'git.push', body.params, {
               kind: 'confirm',
               message: `Allow git push from box ${reg.name}?`,
-              detail: `${params?.remote ?? 'origin'} ${(params?.args ?? []).join(' ')}`.trim(),
+              detail: `${resolveRemote(params?.remote)} ${(params?.args ?? []).join(' ')}`.trim(),
               defaultAnswer: 'n',
               context: {
                 command: 'git push',
@@ -459,7 +638,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                 argv: params?.args,
               },
             });
-            if (verdict.answer !== 'y') {
+            // Poll mode: parked — the box polls /rpc/status/<promptId> for the
+            // verdict + result (the push runs there, on approval).
+            if (gate.kind === 'pending') {
+              send(res, 202, { status: 'pending', promptId: gate.promptId });
+              return;
+            }
+            if (gate.kind === 'deny') {
               send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
               return;
             }
@@ -470,53 +655,114 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, status, result);
         return;
       }
+      if (body.method === 'git.lease-token') {
+        // The hosted-plane equivalent of git.push: instead of the relay pushing,
+        // it leases a repo-scoped GitHub-App token and the box pushes directly.
+        // Because that token can push ANY branch (the relay doesn't pick the
+        // branch here, unlike git.push), the sanctioned-branch auto-approve does
+        // NOT apply — only the box's own scratch branch bypasses; others prompt.
+        const params = body.params as GitRpcParams | undefined;
+        const worktree = resolveWorktree(reg, params?.path ?? '/workspace');
+        const isAgentboxBranch = isScratchBranch(worktree?.branch);
+        if (!isAgentboxBranch) {
+          const gate = await gateApproval(gateDeps, reg.boxId, 'git.lease-token', body.params, {
+            kind: 'confirm',
+            message: `Allow box ${reg.name} to lease a push token for ${reg.originUrl ?? 'its repo'}?`,
+            detail: `branch ${worktree?.branch ?? '(unregistered)'}`,
+            defaultAnswer: 'n',
+            context: { command: 'git lease-token', cwd: params?.path },
+          });
+          if (gate.kind === 'pending') {
+            send(res, 202, { status: 'pending', promptId: gate.promptId });
+            return;
+          }
+          if (gate.kind === 'deny') {
+            send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
+            return;
+          }
+        }
+        const result = await leaseTokenResult(leaser, reg);
+        send(res, result.exitCode === 0 ? 200 : 500, result);
+        return;
+      }
       if (body.method === 'cp.toHost' || body.method === 'cp.fromHost') {
         const params = body.params as CpRpcParams | undefined;
-        if (!params || typeof params.boxPath !== 'string' || typeof params.hostPath !== 'string') {
-          send(res, 400, { error: 'cp.* requires {boxPath, hostPath} strings' });
+        let norm: { sources: string[]; dest: string };
+        try {
+          norm = normalizeCpParams(body.method, params);
+        } catch (err) {
+          send(res, 400, { error: err instanceof Error ? err.message : String(err) });
           return;
         }
         if (
-          params.exclude !== undefined &&
-          (!Array.isArray(params.exclude) || params.exclude.some((p) => typeof p !== 'string'))
+          params!.exclude !== undefined &&
+          (!Array.isArray(params!.exclude) || params!.exclude.some((p) => typeof p !== 'string'))
         ) {
           send(res, 400, { error: 'cp.* exclude must be an array of strings' });
           return;
         }
         const direction = body.method === 'cp.toHost' ? 'box -> host' : 'host -> box';
-        // Resolve the host path against THIS box's workspace so a relative path
+        // Resolve host paths against THIS box's workspace so a relative path
         // doesn't land under the relay daemon's CWD (whichever project started
         // the relay), and so the consent prompt shows the real destination.
         const workspacePath = await boxWorkspacePath(reg.boxId);
-        const hostAbs = resolveHostPath(workspacePath, params.hostPath);
-        const pathDetail =
+        const { argv: cpArgs, detail, contextArgv } = buildCpArgv({
+          method: body.method,
+          boxName: reg.name,
+          sources: norm.sources,
+          dest: norm.dest,
+          resolveHost: (p) => resolveHostPath(workspacePath, p),
+          flags: cpFlags(params!),
+        });
+        const detailParts = [detail];
+        if (params!.exclude && params!.exclude.length > 0) {
+          detailParts.push(`exclude: ${params!.exclude.join(', ')}`);
+        }
+        if (params!.defaultExcludes === false) detailParts.push('(default excludes off)');
+        if (params!.yes) detailParts.push('(over size limit — confirmed)');
+        // Auto-approve a transfer that stays inside the box's project folder
+        // (box->host: check the dest; host->box: check the sources, keeping
+        // secret files behind the prompt). Anything else prompts as before.
+        const cpHostPaths =
           body.method === 'cp.toHost'
-            ? `${params.boxPath} -> ${hostAbs}`
-            : `${hostAbs} -> ${params.boxPath}`;
-        const detailParts = [pathDetail];
-        if (params.exclude && params.exclude.length > 0) {
-          detailParts.push(`exclude: ${params.exclude.join(', ')}`);
-        }
-        if (params.defaultExcludes === false) detailParts.push('(default excludes off)');
-        if (params.yes) detailParts.push('(over size limit — confirmed)');
-        const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
-          kind: 'confirm',
-          message: `Allow cp (${direction}) on ${reg.name}?`,
-          detail: detailParts.join('\n'),
-          defaultAnswer: 'n',
-          context: {
-            command: body.method,
-            argv: [params.boxPath, hostAbs],
-          },
+            ? [resolveHostPath(workspacePath, norm.dest)]
+            : norm.sources.map((s) => resolveHostPath(workspacePath, s));
+        const cpAuto = await canAutoApproveTransfer({
+          enabled: reg.autoApproveSafeHostActions !== false,
+          workspacePath,
+          hostPaths: cpHostPaths,
+          checkSecret: body.method === 'cp.fromHost',
+          carried:
+            body.method === 'cp.fromHost' ? await boxCarriedHostPaths(reg.boxId) : undefined,
         });
-        if (verdict.answer !== 'y') {
-          send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
-          return;
+        if (cpAuto) {
+          prompts.noteAutoApprove(
+            reg.boxId,
+            {
+              kind: 'confirm',
+              message: `cp (${direction}) on ${reg.name}`,
+              detail: detailParts.join('\n'),
+              context: { command: body.method, argv: contextArgv },
+            },
+            body.method === 'cp.toHost' ? 'safe: contained copy to host' : 'safe: contained copy from host',
+          );
+        } else {
+          const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+            kind: 'confirm',
+            message: `Allow cp (${direction}) on ${reg.name}?`,
+            detail: detailParts.join('\n'),
+            defaultAnswer: 'n',
+            context: {
+              command: body.method,
+              argv: contextArgv,
+            },
+          });
+          if (verdict.answer !== 'y') {
+            send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
+            return;
+          }
         }
-        const result = await handleCpRpc(reg, body.method, params, {
-          hostPath: hostAbs,
-          cwd: workspacePath,
-        });
+        const result = await handleCpRpc(cpArgs, workspacePath);
         const status = result.exitCode === 0 ? 200 : 500;
         send(res, status, result);
         return;
@@ -594,20 +840,46 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         body.method === 'download.claude'
       ) {
         const params = body.params as DownloadRpcParams | undefined;
-        const kind = (body.method.split('.')[1] ?? 'workspace') as DownloadKind;
-        const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
-          kind: 'confirm',
-          message: `Allow download (${kind}) from ${reg.name}?`,
-          detail: params?.hostPath ?? '(default host location)',
-          defaultAnswer: 'n',
-          context: {
-            command: body.method,
-            argv: params?.hostPath ? [params.hostPath] : [],
-          },
-        });
-        if (verdict.answer !== 'y') {
-          send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
-          return;
+        const kind = parseDownloadKind(body.method);
+        // `download.workspace` lands under the box's project folder (contained by
+        // construction), so it auto-approves under the safe flag. The env/config/
+        // claude kinds land in ~/.agentbox / ~/.claude (outside the project) and
+        // keep prompting.
+        const dlWorkspace = await boxWorkspacePath(reg.boxId);
+        const dlAuto =
+          kind === 'workspace' &&
+          (await canAutoApproveTransfer({
+            enabled: reg.autoApproveSafeHostActions !== false,
+            workspacePath: dlWorkspace,
+            hostPaths: dlWorkspace ? [dlWorkspace] : [],
+            checkSecret: false,
+          }));
+        if (dlAuto) {
+          prompts.noteAutoApprove(
+            reg.boxId,
+            {
+              kind: 'confirm',
+              message: `download (${kind}) from ${reg.name}`,
+              detail: params?.hostPath ?? '(default host location)',
+              context: { command: body.method, argv: params?.hostPath ? [params.hostPath] : [] },
+            },
+            'safe: contained download',
+          );
+        } else {
+          const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+            kind: 'confirm',
+            message: `Allow download (${kind}) from ${reg.name}?`,
+            detail: params?.hostPath ?? '(default host location)',
+            defaultAnswer: 'n',
+            context: {
+              command: body.method,
+              argv: params?.hostPath ? [params.hostPath] : [],
+            },
+          });
+          if (verdict.answer !== 'y') {
+            send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
+            return;
+          }
         }
         const result = await handleDownloadRpc(reg, kind);
         const status = result.exitCode === 0 ? 200 : 500;
@@ -639,7 +911,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // The box already opened the link in its own browser; this RPC is
         // just a notification. Record the event and answer at once — never
         // block the box on the host user's decision.
-        events.append({ boxId: reg.boxId, type: 'browser-open', payload: { url } });
+        await store.appendEvent({ boxId: reg.boxId, type: 'browser-open', payload: { url } });
         send(res, 200, { exitCode: 0, stdout: '', stderr: '' });
         // Offer to mirror the link to the host browser: a non-blocking,
         // auto-expiring confirm prompt in the footer/dashboard. Skipped under
@@ -681,12 +953,46 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         }
         return;
       }
-      events.append({
+      await store.appendEvent({
         boxId: reg.boxId,
         type: 'rpc-unknown',
         payload: { method: body.method },
       });
       send(res, 501, { error: 'rpc method not implemented', method: body.method });
+      return;
+    }
+
+    // Poll-mode verdict + result for a parked approval (see ./permission.ts).
+    // The box polls this after a `/rpc` returned `202 {promptId}`:
+    //   - pending          → keep polling
+    //   - denied/cancelled → exit 10
+    //   - approved         → run the action once, cache the result, return it
+    if (req.method === 'GET' && url.pathname.startsWith('/rpc/status/')) {
+      const reg = await authBox(req, res);
+      if (!reg) return;
+      const promptId = decodeURIComponent(url.pathname.slice('/rpc/status/'.length));
+      const row = await store.getPrompt(promptId);
+      if (!row || row.boxId !== reg.boxId) {
+        send(res, 404, { error: 'no such prompt', promptId });
+        return;
+      }
+      if (row.status === 'pending') {
+        send(res, 200, { status: 'pending' });
+        return;
+      }
+      if (row.answer !== 'y' || row.cancelled) {
+        send(res, 200, {
+          status: 'done',
+          result: { exitCode: 10, stdout: '', stderr: 'denied by user\n' },
+        });
+        return;
+      }
+      // Approved. Idempotent: a cached result short-circuits re-polls; the box
+      // polls sequentially so there is no concurrent first-execute race here.
+      const cached = row.result;
+      const result = cached ?? (await dispatchApprovedAction(reg, row.method, row.params));
+      if (!cached) await store.setPromptResult(promptId, result);
+      send(res, 200, { status: 'done', result });
       return;
     }
 
@@ -747,8 +1053,15 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             ? body.bridgeToken
             : undefined,
         autoApproveHostActions: body.autoApproveHostActions === true,
+        // Default on: only an explicit `false` disables the safe subset, so an
+        // older wire body without the field stays relaxed.
+        autoApproveSafeHostActions: body.autoApproveSafeHostActions !== false,
+        originUrl:
+          typeof body.originUrl === 'string' && body.originUrl.length > 0
+            ? body.originUrl
+            : undefined,
       };
-      registry.register(reg);
+      await store.registerBox(reg);
       log(
         `registered ${kind} box ${reg.boxId} (${reg.name})` +
           (worktrees && worktrees.length > 0 ? ` with ${String(worktrees.length)} worktree(s)` : ''),
@@ -764,14 +1077,28 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             previewUrl: reg.previewUrl,
             bridgeToken: reg.bridgeToken,
             previewToken: reg.previewToken,
-            onEvents: (evs) => {
+            onEvents: async (evs) => {
               for (const ev of evs) {
-                events.append({ boxId: reg.boxId, type: ev.type, payload: ev.payload, ts: ev.ts });
+                // Credential updates carry a secret blob — route to the
+                // fan-out handler, never into the host event ring buffer.
+                if (ev.type === CREDENTIALS_UPDATED_EVENT && credentialsFanout) {
+                  const verdict = await credentialsFanout.handle(reg.boxId, ev.payload);
+                  log(
+                    `credentials-updated box=${reg.boxId} accepted=${String(verdict.accepted)} (${verdict.reason})`,
+                  );
+                  continue;
+                }
+                await store.appendEvent({
+                  boxId: reg.boxId,
+                  type: ev.type,
+                  payload: ev.payload,
+                  ts: ev.ts,
+                });
               }
             },
             onStatus: (status) => {
               if (isValidBoxStatus(status)) {
-                void statusStore.set(reg.boxId, reg.name, reg.projectIndex, status);
+                void store.setStatus(reg.boxId, reg.name, reg.projectIndex, status);
               }
             },
             // Drained host-only RPCs (git.push, …) run on the host via the
@@ -788,6 +1115,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                       prompts,
                       subscribers,
                       hostInitiatedTokens,
+                      autoApproveSafeHostActions: reg.autoApproveSafeHostActions,
                       log,
                     });
                     await respond(result);
@@ -825,8 +1153,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 400, { error: 'expected {boxId}' });
         return;
       }
-      const existed = registry.forget(body.boxId);
-      statusStore.delete(body.boxId);
+      const existed = await store.forgetBox(body.boxId);
+      await store.deleteStatus(body.boxId);
       if (pollers) await pollers.stop(body.boxId);
       log(`forgot box ${body.boxId} (existed=${String(existed)})`);
       send(res, 204, null);
@@ -835,7 +1163,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
 
     if (route === 'GET /admin/box-status') {
       const box = url.searchParams.get('box') ?? '';
-      const status = box ? statusStore.get(box) : undefined;
+      const status = box ? await store.getStatus(box) : undefined;
       if (!status) {
         send(res, 404, { error: 'no status for box', box });
         return;
@@ -847,7 +1175,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     if (route === 'GET /admin/events') {
       const since = Number.parseInt(url.searchParams.get('since') ?? '0', 10) || 0;
       const box = url.searchParams.get('box') ?? undefined;
-      const list = events.since(since, box ?? undefined);
+      const list = await store.listEvents(since, box ?? undefined);
       send(res, 200, { events: list });
       return;
     }
@@ -855,7 +1183,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     if (route === 'GET /admin/registry') {
       // Redact tokens; callers on the admin path don't need them and we don't
       // want them showing up in logs if someone curls this.
-      const redacted = registry.list().map((r) => ({
+      const redacted = (await store.listBoxes()).map((r) => ({
         boxId: r.boxId,
         name: r.name,
         registeredAt: r.registeredAt,
@@ -879,7 +1207,12 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 400, { error: 'missing boxId query param' });
         return;
       }
-      send(res, 200, { prompts: prompts.forBox(boxId) });
+      // Poll mode parks prompts in the store; block mode keeps them in-process.
+      const pending =
+        promptMode === 'poll'
+          ? (await store.listPendingPrompts(boxId)).map((r) => r.ev)
+          : prompts.forBox(boxId);
+      send(res, 200, { prompts: pending });
       return;
     }
 
@@ -937,9 +1270,23 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 400, { error: 'expected {id, answer:"y"|"n", cancelled?}' });
         return;
       }
-      // Find which box this id belongs to before resolving, so we can target
-      // the prompt-resolved broadcast (other wrappers on the same box clear
-      // their stale footer).
+      // Poll mode: the answer lands on the store row; the box's /rpc/status
+      // poll picks it up and runs (or denies) the parked action.
+      if (promptMode === 'poll') {
+        const row = await store.getPrompt(body.id);
+        const hit = await store.answerPrompt(body.id, body.answer, body.cancelled);
+        if (!hit) {
+          send(res, 404, { error: 'no pending prompt with that id' });
+          return;
+        }
+        if (row) subscribers.broadcast(row.boxId, 'prompt-resolved', { id: body.id });
+        send(res, 204, null);
+        return;
+      }
+      // Block mode: resolve the in-process pending Promise (the parked /rpc
+      // call unblocks and runs/denies inline). Find the owning box first so we
+      // can target the prompt-resolved broadcast (other wrappers clear their
+      // stale footer).
       const targetBox = prompts.boxFor(body.id);
       const hit = prompts.resolve(body.id, body.answer, body.cancelled);
       if (!hit) {
@@ -1052,20 +1399,46 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       return;
     }
 
+    if (uiHandler) {
+      uiHandler(req, res);
+      return;
+    }
     send(res, 404, { error: 'not found', route });
   }
 
-  function authBox(
+  /**
+   * Run a host action that has already cleared its approval gate (poll mode:
+   * the box reached `/rpc/status` after a `y`). No re-gating here. Extended per
+   * method as the hosted plane grows.
+   */
+  async function dispatchApprovedAction(
+    reg: BoxRegistration,
+    method: string,
+    params: unknown,
+  ): Promise<GitRpcResult> {
+    if (method === 'git.push' || method === 'git.fetch') {
+      return handleGitRpc(reg, method, params as GitRpcParams | undefined);
+    }
+    if (method === 'git.lease-token') {
+      return leaseTokenResult(leaser, reg);
+    }
+    return {
+      exitCode: 64,
+      stdout: '',
+      stderr: `relay: no approved-action executor for ${method}\n`,
+    };
+  }
+
+  async function authBox(
     req: IncomingMessage,
     res: ServerResponse,
-    reg: BoxRegistry,
-  ): BoxRegistration | null {
+  ): Promise<BoxRegistration | null> {
     const token = bearerToken(req);
     if (token.length === 0) {
       send(res, 401, { error: 'missing bearer token' });
       return null;
     }
-    const match = reg.authenticate(token);
+    const match = await store.authenticateBox(token);
     if (!match) {
       send(res, 401, { error: 'unknown box token' });
       return null;
@@ -1075,16 +1448,21 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
 
   return {
     server,
+    store,
     registry,
     events,
     statusStore,
     prompts,
     subscribers,
     notices,
+    hubNotifier,
     hostActions: hostActions ?? undefined,
     url: `http://${host}:${String(opts.port)}`,
     setQueuePoke: (fn) => {
       queuePoke = fn;
+    },
+    pokeQueue: () => {
+      queuePoke?.();
     },
     close: async () => {
       if (pollers) await pollers.stopAll();
@@ -1113,6 +1491,9 @@ function sanitizeWorktrees(input: BoxWorktree[] | undefined): BoxWorktree[] | un
         containerPath: w.containerPath,
         hostMainRepo: w.hostMainRepo,
         branch: w.branch,
+        ...(typeof w.sanctionedBranch === 'string' && w.sanctionedBranch.length > 0
+          ? { sanctionedBranch: w.sanctionedBranch }
+          : {}),
       });
     }
   }
@@ -1120,20 +1501,56 @@ function sanitizeWorktrees(input: BoxWorktree[] | undefined): BoxWorktree[] | un
 }
 
 /**
- * Resolve `params.path` (a path inside the container) to the registered
- * worktree whose hostMainRepo + branch the relay should run git in.
- * `/workspace` maps to the root repo; `/workspace/<sub>` maps to the nested
- * repo when one is registered (longest prefix wins).
+ * git.push --host-only: make the box's branch available in the host's *local*
+ * repo without pushing to any remote. Docker boxes commit against the
+ * bind-mounted `.git/`, so the box's branch ref already lives in the host repo;
+ * we just copy it to the requested destination ref via a self-fetch (which
+ * enforces fast-forward and works even though the source branch is checked out
+ * in the worktree). When the destination equals the source branch this is a
+ * no-op success — the branch is already on the host.
  */
-function resolveWorktree(reg: BoxRegistration, containerPath: string): BoxWorktree | null {
-  const trees = reg.worktrees ?? [];
-  if (trees.length === 0) return null;
-  const exact = trees.find((w) => w.containerPath === containerPath);
-  if (exact) return exact;
-  const prefixMatches = trees
-    .filter((w) => containerPath === w.containerPath || containerPath.startsWith(w.containerPath + '/'))
-    .sort((a, b) => b.containerPath.length - a.containerPath.length);
-  return prefixMatches[0] ?? trees.find((w) => w.containerPath === '/workspace') ?? null;
+async function handleGitSaveToHost(
+  reg: BoxRegistration,
+  params: GitRpcParams | undefined,
+): Promise<GitRpcResult> {
+  const containerPath = params?.path ?? '/workspace';
+  const worktree = resolveWorktree(reg, containerPath);
+  if (!worktree) {
+    return {
+      exitCode: 64,
+      stdout: '',
+      stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
+    };
+  }
+  // Land the branch the box is actually on (its host-sanctioned branch, updated
+  // by `agentbox git checkout`), matching what `git.push` publishes — not the
+  // stale create-time scratch ref.
+  const src = worktree.sanctionedBranch ?? worktree.branch;
+  const dest = resolveLandDest(src, params?.as);
+  if (dest === src) {
+    return {
+      exitCode: 0,
+      stdout: `branch ${dest} already available in ${worktree.hostMainRepo}\n`,
+      stderr: '',
+    };
+  }
+  const refspec = landRefspec(src, dest, params?.force);
+  const result = await runHostCommand([
+    'git',
+    '-C',
+    worktree.hostMainRepo,
+    'fetch',
+    '.',
+    refspec,
+  ]);
+  if (result.exitCode === 0) {
+    return {
+      exitCode: 0,
+      stdout: `branch ${dest} available in ${worktree.hostMainRepo}\n${result.stdout}`,
+      stderr: result.stderr,
+    };
+  }
+  return result;
 }
 
 /**
@@ -1162,13 +1579,14 @@ async function handleGitRpc(
     };
   }
   const op = method === 'git.push' ? 'push' : 'fetch';
-  const remote = params?.remote ?? 'origin';
-  const argv = ['git', '-C', worktree.hostMainRepo, op, remote, worktree.branch];
-  if (Array.isArray(params?.args)) {
-    for (const a of params.args) {
-      if (typeof a === 'string') argv.push(a);
-    }
-  }
+  const remote = resolveRemote(params?.remote);
+  // Operate on the host-sanctioned branch (updated by `agentbox git checkout`),
+  // falling back to the create-time `branch` for records without the field.
+  // The agent can't influence this — the relay picks the branch — so pushing
+  // it is always host-controlled.
+  const pushBranch = worktree.sanctionedBranch ?? worktree.branch;
+  const argv = ['git', '-C', worktree.hostMainRepo, op, remote, pushBranch];
+  argv.push(...sanitizeGitArgs(params?.args));
   const result = await runHostCommand(argv);
   // After a successful push, mirror what `git push -u` would have left behind:
   // make the branch track `origin/<branch>` so the in-box `git status` /
@@ -1176,14 +1594,14 @@ async function handleGitRpc(
   // (`agentbox/<name>`) — they're local-only by design. Docker shares .git/
   // with the box, so update-ref of the remote-tracking ref already happened
   // during the push; only the upstream config is missing.
-  if (method === 'git.push' && result.exitCode === 0 && !worktree.branch.startsWith('agentbox/')) {
+  if (method === 'git.push' && result.exitCode === 0 && !isScratchBranch(pushBranch)) {
     await runHostCommand([
       'git',
       '-C',
       worktree.hostMainRepo,
       'branch',
-      `--set-upstream-to=${remote}/${worktree.branch}`,
-      worktree.branch,
+      `--set-upstream-to=${upstreamRef(remote, pushBranch)}`,
+      pushBranch,
     ]);
   }
   return result;
@@ -1232,7 +1650,15 @@ async function handleGhPrRpc(
     : [];
 
   if (op === 'checkout') {
-    const branches = (reg.worktrees ?? []).map((w) => w.branch);
+    // Guard against the host repo checking out onto ANY branch a box currently
+    // occupies — its create-time scratch ref AND its host-sanctioned branch
+    // (the box's live HEAD after `agentbox git checkout`), either of which the
+    // bind-mounted `.git/HEAD` would corrupt.
+    const branches = (reg.worktrees ?? []).flatMap((w) =>
+      w.sanctionedBranch && w.sanctionedBranch !== w.branch
+        ? [w.branch, w.sanctionedBranch]
+        : [w.branch],
+    );
     const guard = await checkoutGuards(worktree.hostMainRepo, branches);
     if (guard) return guard;
   }
@@ -1257,7 +1683,28 @@ async function handleGhPrRpc(
         'host-initiated token rejected: invalid, expired, or bound to different params\n',
     };
   }
-  if (!GH_PR_READ_ONLY_OPS.has(op) && !hostInitiatedOk) {
+  // Safe subset: open-PR + PR comment auto-approve under the flag (audited);
+  // review/close/reopen/merge/checkout keep prompting. A `create` with an
+  // EXPLICIT `--head` is excluded — that head could name any branch (e.g.
+  // `main`), so it falls back to the prompt; a headless `create` has its head
+  // forced to the box's sanctioned branch below, so it stays scoped.
+  const ghSafeAuto =
+    GH_PR_SAFE_AUTO_APPROVE_OPS.has(op) &&
+    reg.autoApproveSafeHostActions !== false &&
+    !prCreateHasExplicitHead(op, args);
+  if (ghSafeAuto && !hostInitiatedOk) {
+    prompts.noteAutoApprove(
+      reg.boxId,
+      {
+        kind: 'confirm',
+        message: `gh pr ${op} from box ${reg.name}`,
+        detail: args.join(' ').slice(0, 200),
+        context: { command: `gh pr ${op}`, cwd: containerPath, argv: args },
+      },
+      `safe: gh pr ${op}`,
+    );
+  }
+  if (!GH_PR_READ_ONLY_OPS.has(op) && !ghSafeAuto && !hostInitiatedOk) {
     const detail = args.join(' ').slice(0, 200);
     const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
       kind: 'confirm',
@@ -1278,7 +1725,10 @@ async function handleGhPrRpc(
   // Default `--head` to the box's branch for `create` (the host repo cwd isn't
   // on the box branch, so gh can't infer it). Done after token validation —
   // which hashes the incoming `params`, not this post-injection argv.
-  const finalArgs = injectPrCreateHead(op, worktree.branch, args);
+  // Inject the box's SANCTIONED branch (updated by `agentbox git checkout`),
+  // matching what `git.push` publishes — so a headless PR targets the branch
+  // the box's work is actually on, not the stale create-time scratch ref.
+  const finalArgs = injectPrCreateHead(op, worktree.sanctionedBranch ?? worktree.branch, args);
   // Never let `gh` fall back to the host repo's checked-out branch.
   if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
   return runHostGh(['pr', op, ...finalArgs], worktree.hostMainRepo);
@@ -1315,15 +1765,29 @@ async function handleGhRunRpc(
 
   if (!GH_RUN_READ_ONLY_OPS.has(op)) {
     const detail = args.join(' ').slice(0, 200);
-    const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
-      kind: 'confirm',
-      message: `Allow gh run ${op} from box ${reg.name}?`,
-      detail,
-      defaultAnswer: 'n',
-      context: { command: `gh run ${op}`, cwd: containerPath, argv: args },
-    });
-    if (verdict.answer !== 'y') {
-      return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+    if (reg.autoApproveSafeHostActions !== false) {
+      // `gh run rerun` only re-triggers the project's own CI — safe subset.
+      prompts.noteAutoApprove(
+        reg.boxId,
+        {
+          kind: 'confirm',
+          message: `gh run ${op} from box ${reg.name}`,
+          detail,
+          context: { command: `gh run ${op}`, cwd: containerPath, argv: args },
+        },
+        `safe: gh run ${op}`,
+      );
+    } else {
+      const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+        kind: 'confirm',
+        message: `Allow gh run ${op} from box ${reg.name}?`,
+        detail,
+        defaultAnswer: 'n',
+        context: { command: `gh run ${op}`, cwd: containerPath, argv: args },
+      });
+      if (verdict.answer !== 'y') {
+        return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+      }
     }
   }
   return runHostGh(['run', op, ...args], worktree.hostMainRepo);
@@ -1445,34 +1909,53 @@ async function handleIntegrationRpc(
   // reject a *present-but-invalid* token (attack signal). Only fall through
   // to the prompt when no token was claimed. Reads never need a token.
   if (opDesc.write) {
-    const tokenClaimed = typeof params?.hostInitiated === 'string';
-    const incomingHash = hashRpcParams(params);
-    const tokenOk =
-      tokenClaimed &&
-      hostInitiatedTokens.consume(params?.hostInitiated, reg.boxId, method, incomingHash);
-    if (tokenClaimed && !tokenOk) {
-      return {
-        exitCode: 10,
-        stdout: '',
-        stderr:
-          'host-initiated token rejected: invalid, expired, or bound to different params\n',
-      };
-    }
-    if (!tokenOk) {
-      const detail = args.join(' ').slice(0, 200);
-      const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
-        kind: 'confirm',
-        message: `Allow ${parsed.service} ${parsed.op} from box ${reg.name}?`,
-        detail,
-        defaultAnswer: 'n',
-        context: {
-          command: `integration ${parsed.service} ${parsed.op}`,
-          cwd: containerPath,
-          argv: args,
+    if (reg.autoApproveSafeHostActions !== false) {
+      // Integration writes hit the connected external service (not the host) —
+      // safe subset, audited, no prompt.
+      prompts.noteAutoApprove(
+        reg.boxId,
+        {
+          kind: 'confirm',
+          message: `${parsed.service} ${parsed.op} from box ${reg.name}`,
+          detail: args.join(' ').slice(0, 200),
+          context: {
+            command: `integration ${parsed.service} ${parsed.op}`,
+            cwd: containerPath,
+            argv: args,
+          },
         },
-      });
-      if (verdict.answer !== 'y') {
-        return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+        `safe: integration ${parsed.service} ${parsed.op}`,
+      );
+    } else {
+      const tokenClaimed = typeof params?.hostInitiated === 'string';
+      const incomingHash = hashRpcParams(params);
+      const tokenOk =
+        tokenClaimed &&
+        hostInitiatedTokens.consume(params?.hostInitiated, reg.boxId, method, incomingHash);
+      if (tokenClaimed && !tokenOk) {
+        return {
+          exitCode: 10,
+          stdout: '',
+          stderr:
+            'host-initiated token rejected: invalid, expired, or bound to different params\n',
+        };
+      }
+      if (!tokenOk) {
+        const detail = args.join(' ').slice(0, 200);
+        const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+          kind: 'confirm',
+          message: `Allow ${parsed.service} ${parsed.op} from box ${reg.name}?`,
+          detail,
+          defaultAnswer: 'n',
+          context: {
+            command: `integration ${parsed.service} ${parsed.op}`,
+            cwd: containerPath,
+            argv: args,
+          },
+        });
+        if (verdict.answer !== 'y') {
+          return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+        }
       }
     }
   }
@@ -1490,12 +1973,7 @@ async function handleIntegrationRpc(
  * Caller (the /rpc route) already gated this with askPrompt and rejected
  * non-'y' answers; we never reach this code without consent.
  */
-async function handleCpRpc(
-  reg: BoxRegistration,
-  method: 'cp.toHost' | 'cp.fromHost',
-  params: CpRpcParams,
-  opts: { hostPath: string; cwd?: string },
-): Promise<GitRpcResult> {
+async function handleCpRpc(cpArgs: string[], cwd?: string): Promise<GitRpcResult> {
   const entry = process.env.AGENTBOX_CLI_ENTRY;
   if (!entry) {
     return {
@@ -1504,20 +1982,12 @@ async function handleCpRpc(
       stderr: 'relay: AGENTBOX_CLI_ENTRY not set; cannot run cp host-side',
     };
   }
-  // `agentbox cp` is positional: <src> [dst]. Direction is encoded by which
-  // arg carries the `<boxName>:` prefix. `opts.hostPath` is already resolved to
-  // an absolute host path (against the box workspace); `opts.cwd` (the box
-  // workspace) makes the host CLI's project-config lookup box-correct too.
-  const boxRef = `${reg.name}:${params.boxPath}`;
-  const flags: string[] = [];
-  for (const pat of params.exclude ?? []) flags.push('--exclude', pat);
-  if (params.defaultExcludes === false) flags.push('--no-default-excludes');
-  if (params.yes) flags.push('--yes');
-  const argv =
-    method === 'cp.toHost'
-      ? [process.execPath, entry, 'cp', boxRef, opts.hostPath, ...flags]
-      : [process.execPath, entry, 'cp', opts.hostPath, boxRef, ...flags];
-  return runHostCommand(argv, CP_RPC_TIMEOUT_MS, opts.cwd);
+  // Re-shell the installed `agentbox cp` (it owns the tar pipe, excludes, the
+  // size guard, and provider routing). `cpArgs` is the fully-built argv from
+  // buildCpArgv (box side prefixed with `<name>:`, host paths absolute); `cwd`
+  // (the box workspace) makes the host CLI's project-config lookup box-correct.
+  const argv = [process.execPath, entry, ...cpArgs];
+  return runHostCommand(argv, CP_RPC_TIMEOUT_MS, cwd);
 }
 
 /**

@@ -1,0 +1,10 @@
+/.next/
+/dist-standalone/
+/.standalone-server/
+/node_modules/
+next-env.d.ts
+*.tsbuildinfo
+.env
+.env.local
+.vercel
+.env*

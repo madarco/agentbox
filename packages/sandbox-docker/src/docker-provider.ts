@@ -17,12 +17,18 @@ import type {
   PrepareOptions,
   PrepareResult,
   Provider,
+  ProviderSync,
+  ResyncResult,
+  SyncTransport,
 } from '@agentbox/core';
+import { claudeInstallFingerprint, makeSyncContext } from '@agentbox/sandbox-core';
+import { makeDockerSync } from './sync/docker-sync.js';
+import { createDockerSyncTransport } from './sync/sync-transport.js';
 import { createBox, type CreateBoxOptions } from './create.js';
 import { destroyBox, inspectBox, pauseBox, startBox, stopBox, unpauseBox } from './lifecycle.js';
 import { execInBox, inspectContainerStatus } from './docker.js';
 import { boxResourceStats } from './stats.js';
-import { detectEngine } from './host-export.js';
+import { detectEngine } from './sync/host-export.js';
 import { portlessGetUrl } from './portless.js';
 import { DEFAULT_BOX_IMAGE, imageExists, pullOrBuild } from './image.js';
 import {
@@ -79,6 +85,7 @@ export const dockerProvider: Provider = {
       portlessStateDir: po.portlessStateDir,
       projectRoot: req.projectRoot,
       limits: req.limits ?? undefined,
+      credentialSync: req.credentialSync,
     };
     const result = await createBox(opts);
     return {
@@ -89,6 +96,26 @@ export const dockerProvider: Provider = {
   },
 
   async start(box: BoxRecord): Promise<BoxRecord> {
+    const { record } = await startBox(box.id);
+    return { ...record, provider: 'docker' };
+  },
+
+  async reconnect(box: BoxRecord): Promise<BoxRecord> {
+    // Reconnect re-establishes host-side wiring without a needless power-cycle.
+    // A PAUSED container can't `docker start` ("cannot start a paused
+    // container") — unpause resumes its still-frozen ctl/dockerd/vnc, and the
+    // portless alias is untouched by pause, so that's all it needs. A running or
+    // stopped container goes through `startBox`, which is idempotent (a
+    // `docker start` on a live container is a no-op) and relaunches the daemons
+    // + re-registers portless — the work a host reboot / relay restart needs.
+    const insp = await inspectBox(box.id);
+    if (insp.state === 'missing' || insp.state === 'destroyed') {
+      throw new Error(`box ${box.name} has no container; was it destroyed?`);
+    }
+    if (insp.state === 'paused') {
+      const record = await unpauseBox(box.id);
+      return { ...record, provider: 'docker' };
+    }
     const { record } = await startBox(box.id);
     return { ...record, provider: 'docker' };
   },
@@ -107,6 +134,29 @@ export const dockerProvider: Provider = {
 
   async destroy(box: BoxRecord): Promise<void> {
     await destroyBox(box.id);
+  },
+
+  async resyncWorkspace(box: BoxRecord, onLog?: (line: string) => void): Promise<ResyncResult> {
+    // Merge the host's current branch into each per-box worktree + overlay the
+    // host's uncommitted/untracked (box wins). Reproduces `resyncBox`: the
+    // facade short-circuits when the box has no worktrees. Only `ctx.onLog` is
+    // read by resync (the concern reads each worktree's hostMainRepo).
+    const ctx = makeSyncContext({
+      boxName: box.name,
+      boxId: box.id,
+      provider: 'docker',
+      hostWorkspace: box.workspacePath,
+      onLog,
+    });
+    return makeDockerSync({ container: box.container }).resyncWorkspace(ctx, box.gitWorktrees ?? []);
+  },
+
+  sync(box: BoxRecord): ProviderSync {
+    return makeDockerSync({ container: box.container });
+  },
+
+  syncTransport(box: BoxRecord): SyncTransport {
+    return createDockerSyncTransport({ container: box.container, image: box.image });
   },
 
   async inspect(box: BoxRecord): Promise<InspectedBox> {
@@ -136,21 +186,21 @@ export const dockerProvider: Provider = {
 
   async uploadPath(
     box: BoxRecord,
-    hostSrc: string,
+    hostSrcs: string[],
     boxDst: string,
     exclude?: string[],
   ): Promise<{ finalPath: string }> {
-    const r = await uploadToBox(box, hostSrc, boxDst, exclude);
+    const r = await uploadToBox(box, hostSrcs, boxDst, exclude);
     return { finalPath: r.finalPath };
   },
 
   async downloadPath(
     box: BoxRecord,
-    boxSrc: string,
+    boxSrcs: string[],
     hostDst: string,
     exclude?: string[],
   ): Promise<{ finalPath: string }> {
-    const r = await downloadFromBox(box, boxSrc, hostDst, exclude);
+    const r = await downloadFromBox(box, boxSrcs, hostDst, exclude);
     return { finalPath: r.finalPath };
   },
 
@@ -173,9 +223,7 @@ export const dockerProvider: Provider = {
       return box.portlessUrl ?? (await portlessGetUrl(box.portlessAlias));
     }
     if (box.webHostPort === undefined) {
-      throw new Error(
-        `web port not resolved for box ${box.name}; is the container running?`,
-      );
+      throw new Error(`web port not resolved for box ${box.name}; is the container running?`);
     }
     return `http://127.0.0.1:${String(box.webHostPort)}`;
   },
@@ -188,7 +236,16 @@ export const dockerProvider: Provider = {
     // build-context fingerprint matches the recorded one. `--force`
     // overrides both checks.
     const ref = DEFAULT_BOX_IMAGE;
-    const fingerprint = await computeDockerContextFingerprint();
+    const claudeInstall = opts.claudeInstall ?? 'native';
+    const rawFingerprint = await computeDockerContextFingerprint();
+    // Fold the install mode into the sha so native↔npm are distinct cache
+    // identities (`native` leaves the hash unchanged).
+    const fingerprint = rawFingerprint
+      ? {
+          ...rawFingerprint,
+          contextSha256: claudeInstallFingerprint(rawFingerprint.contextSha256, claudeInstall),
+        }
+      : null;
     const prepared = readPreparedDockerState();
 
     if (!opts.force) {
@@ -208,10 +265,15 @@ export const dockerProvider: Provider = {
     }
 
     // `--force` skips the registry pull and always builds a fresh local image.
+    // npm mode pulls like any other: CI publishes both install variants, and the
+    // fingerprint is folded with the mode, so the pull asks for the npm image's
+    // own tag. An unpublished tag still falls back to a local build.
+    const npm = claudeInstall === 'npm';
     const { source } = await pullOrBuild(ref, fingerprint, {
       onProgress: opts.onLog,
       allowPull: opts.force ? false : opts.allowPull,
       registry: opts.registry,
+      buildArgs: npm ? { AGENTBOX_CLAUDE_INSTALL: 'npm' } : undefined,
     });
     if (fingerprint) {
       opts.onLog?.(

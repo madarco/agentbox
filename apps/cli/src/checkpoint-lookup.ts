@@ -22,9 +22,11 @@ import {
   resolveCheckpoint,
 } from '@agentbox/sandbox-docker';
 import {
+  baseFreshnessFromFingerprints,
   currentCloudBaseFingerprint,
   probeCloudCheckpoint,
   resolveCloudCheckpoint,
+  type BaseStatus,
 } from '@agentbox/sandbox-cloud';
 import { cloudBackendForProvider, currentCloudBaseFingerprintLive } from './provider/cloud-backend.js';
 
@@ -122,50 +124,36 @@ export async function evaluateCheckpoint(
   return evaluateCloudCheckpoint(provider, projectRoot, ref);
 }
 
-/**
- * Cloud base-image / base-snapshot freshness, derived purely from the
- * `contextSha256` of the baked runtime files. The CLI re-prompts at
- * `create`/`claude` time so a stale base (a CLI upgrade that altered any
- * baked file) doesn't silently boot incompatible boxes on an old snapshot.
- *
- * **Checksum-only.** CLI version strings stored alongside the fingerprint
- * are informational and MUST NOT influence the decision: a CLI bump that
- * doesn't change any baked file produces an identical hash → `fresh`.
- */
-export type BaseStatus =
-  /** No prepared base on disk — the ensure-gate inside `provision` raises the hard error. */
-  | { state: 'unprepared' }
-  /**
-   * Can't compute the live fingerprint (e.g. a dev tree with no built ctl
-   * bundle). Inert: callers must not prompt for a rebuild they can't verify.
-   */
-  | { state: 'unknown' }
-  /** Stored fingerprint differs from current — the baked runtime is out of date. */
-  | { state: 'stale'; reason: string }
-  /** Stored fingerprint matches current. */
-  | { state: 'fresh' };
+export type { BaseStatus };
 
 /**
  * Decide whether the provider's base image / snapshot is still up to date
- * with the CURRENT runtime context. Docker self-heals via `ensureImage` and
- * is always `fresh` here. Cloud providers compare the stored
+ * with the CURRENT runtime context. The CLI re-prompts at `create`/`claude`
+ * time so a stale base (a CLI upgrade that altered any baked file) doesn't
+ * silently boot incompatible boxes on an old snapshot. Docker self-heals via
+ * `ensureImage` and is always `fresh` here. Cloud providers compare the stored
  * `<provider>-prepared.json.base.contextSha256` (via
  * `currentCloudBaseFingerprint`) against a freshly-computed one (via
  * `currentCloudBaseFingerprintLive`), which the provider package builds the
  * same way `prepare` does — so both values are byte-identical when nothing
- * has changed.
+ * has changed. The compare itself lives in `baseFreshnessFromFingerprints`
+ * (sandbox-cloud) so the hub reports the identical state + reason string.
  */
-export async function evaluateBaseFreshness(provider: ProviderName): Promise<BaseStatus> {
-  if (provider === 'docker') return { state: 'fresh' };
+export async function evaluateBaseFreshness(
+  provider: ProviderName,
+  claudeInstall?: 'native' | 'npm',
+): Promise<BaseStatus> {
+  if (provider === 'docker') {
+    // Docker used to be hardcoded `fresh` here, on the grounds that it self-heals
+    // via `ensureImage`. It does — but only at create time, and `self-update` no
+    // longer deletes the image to force the issue, so a stale base could otherwise
+    // sit unmentioned until the next create surprised you with a multi-minute
+    // build. Report the real state, the same one the hub/app show.
+    const { evaluateDockerBaseFreshness } = await import('@agentbox/sandbox-docker');
+    return await evaluateDockerBaseFreshness({ claudeInstall });
+  }
   const stored = currentCloudBaseFingerprint(provider);
   if (!stored) return { state: 'unprepared' };
-  const current = await currentCloudBaseFingerprintLive(provider).catch(() => undefined);
-  if (!current) return { state: 'unknown' };
-  if (stored !== current) {
-    return {
-      state: 'stale',
-      reason: `baked runtime differs (base ${short(stored)}, current ${short(current)})`,
-    };
-  }
-  return { state: 'fresh' };
+  const current = await currentCloudBaseFingerprintLive(provider, claudeInstall).catch(() => undefined);
+  return baseFreshnessFromFingerprints(stored, current);
 }

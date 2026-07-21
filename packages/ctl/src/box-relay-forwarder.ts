@@ -1,4 +1,5 @@
 import { createServer, request as httpRequest, type Server } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 
 /**
  * Tiny in-box reverse proxy used by `agentbox-ctl daemon` in docker boxes.
@@ -35,12 +36,13 @@ export function startBoxRelayForwarder(
 ): Promise<BoxRelayForwarderHandle> {
   const log = opts.logger ?? ((): void => {});
   const upstream = opts.upstream;
+  const isTls = upstream.protocol === 'https:';
   const upstreamPort =
-    upstream.port.length > 0
-      ? Number.parseInt(upstream.port, 10)
-      : upstream.protocol === 'https:'
-        ? 443
-        : 80;
+    upstream.port.length > 0 ? Number.parseInt(upstream.port, 10) : isTls ? 443 : 80;
+  // The hosted control plane is reached over public HTTPS (behind the
+  // provider's proxy); the laptop relay over plain HTTP at host.docker.internal.
+  // Pick the matching client so TLS termination works for the cloud path.
+  const requestFn = isTls ? httpsRequest : httpRequest;
 
   const server: Server = createServer((req, res) => {
     const path = (req.url ?? '').split('?')[0] ?? '';
@@ -56,7 +58,7 @@ export function startBoxRelayForwarder(
     delete headers.host;
     delete headers.connection;
 
-    const upstreamReq = httpRequest(
+    const upstreamReq = requestFn(
       {
         host: upstream.hostname,
         port: upstreamPort,

@@ -39,6 +39,24 @@ set -euo pipefail
 step() { printf '\n>>> BEGIN %s\n' "$1"; }
 done_() { printf '<<< END %s\n' "$1"; }
 
+# Retry a command with exponential backoff. Usage: retry_backoff <max> cmd...
+# Waits 60s before attempt 2, 240s before attempt 3 (~5 min total budget). Used
+# for the Claude native installer, whose CDN (claude.ai / downloads.claude.ai,
+# behind Cloudflare) intermittently 403s cloud-datacenter egress IPs under load.
+retry_backoff() {
+  local max=$1; shift
+  local attempt=1
+  local -a waits=(60 240)
+  while true; do
+    if "$@"; then return 0; fi
+    if [ "$attempt" -ge "$max" ]; then return 1; fi
+    local w=${waits[$((attempt-1))]:-240}
+    echo "retry_backoff: attempt ${attempt}/${max} failed — backing off ${w}s" >&2
+    sleep "$w"
+    attempt=$((attempt+1))
+  done
+}
+
 if [ "$(id -u)" -ne 0 ]; then
   echo "provision.sh: must run as root (got uid $(id -u))" >&2
   exit 64
@@ -116,6 +134,22 @@ dnf install -y -q --allowerasing docker iptables
 groupadd -f docker
 usermod -aG docker vscode
 systemctl disable --now docker.service docker.socket 2>/dev/null || true
+# `docker compose` + BuildKit `docker build` come from CLI plugins the AL2023
+# repos don't ship, so install the official release binaries into the CLI's
+# plugin search path. The buildx tag comes from the releases/latest redirect,
+# not the GitHub API — anonymous API calls rate-limit per IP and cloud egress
+# IPs share pools.
+arch="$(uname -m)"   # x86_64 / aarch64 — matches the compose asset names
+install -d -m 0755 /usr/local/lib/docker/cli-plugins
+curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${arch}" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+buildx_tag="$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/docker/buildx/releases/latest | sed 's|.*/||')"
+buildx_arch="${arch/x86_64/amd64}"; buildx_arch="${buildx_arch/aarch64/arm64}"
+curl -fsSL "https://github.com/docker/buildx/releases/download/${buildx_tag}/buildx-${buildx_tag}.linux-${buildx_arch}" \
+  -o /usr/local/lib/docker/cli-plugins/docker-buildx
+chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-buildx
+docker compose version
+docker buildx version
 done_ "docker engine (in-box DinD)"
 
 step "node setcap (bind <1024 without root)"
@@ -251,6 +285,18 @@ export DISABLE_AUTOUPDATER=${DISABLE_AUTOUPDATER:-1}
 export DISPLAY=${DISPLAY:-:1}
 export AGENT_BROWSER_EXECUTABLE_PATH=${AGENT_BROWSER_EXECUTABLE_PATH:-/usr/local/bin/chromium}
 export BROWSER=${BROWSER:-/usr/local/bin/agentbox-open}
+# Land interactive login shells in the workspace, so remote-host integrations
+# (Codex app, VS Code Remote-SSH, plain `ssh <box>`) open in the project instead
+# of $HOME. Interactive-only so scp/sftp and `ssh box <cmd>` are untouched; only
+# when still at $HOME so a caller-chosen dir (e.g. agentbox's tmux `-c /workspace`)
+# is never overridden.
+case $- in
+  *i*)
+    if [ "$PWD" = "$HOME" ] && [ -d /workspace ]; then
+      cd /workspace
+    fi
+    ;;
+esac
 PROFILE
 chmod 0644 /etc/profile.d/agentbox.sh
 done_ "login-shell shim (/etc/profile.d/agentbox.sh)"
@@ -297,10 +343,38 @@ npm install -g @openai/codex opencode-ai agent-browser 2>&1 | tail -3 || \
   echo "provision.sh: one or more agent npm installs failed (continuing)"
 done_ "agent CLIs (codex + opencode + agent-browser, global npm)"
 
-step "Claude Code (native installer, run as vscode)"
-# Anthropic's canonical installer drops `claude` at /home/vscode/.local/bin/.
-sudo -u vscode -H bash -lc 'curl -fsSL https://claude.ai/install.sh | bash -s stable'
-done_ "Claude Code (native installer, run as vscode)"
+# AGENTBOX_CLAUDE_INSTALL selects how Claude Code is installed (default
+# `native`). `npm` is an opt-in fallback for hosts whose egress IP the native
+# installer's CDN 403s — see `box.claudeInstall`.
+if [ "${AGENTBOX_CLAUDE_INSTALL:-native}" = "npm" ]; then
+  step "Claude Code (npm: @anthropic-ai/claude-code)"
+  # npm-global drops `claude` at Node's prefix bin, not the
+  # /home/vscode/.local/bin/claude the rest of AgentBox hardcodes. Symlink it
+  # into that path so the box stays indistinguishable from a native install.
+  npm install -g @anthropic-ai/claude-code
+  install -d -o vscode -g vscode /home/vscode/.local/bin
+  ln -sf "$(command -v claude)" /home/vscode/.local/bin/claude
+  chown -h vscode:vscode /home/vscode/.local/bin/claude
+  command -v claude >/dev/null || { echo "provision.sh: npm claude install produced no claude on PATH" >&2; exit 71; }
+  done_ "Claude Code (npm: @anthropic-ai/claude-code)"
+else
+  step "Claude Code (native installer, run as vscode)"
+  # Anthropic's native installer drops `claude` at /home/vscode/.local/bin/claude
+  # with installMethod=native (matching the host-seeded .claude.json, so the
+  # startup integrity check stays quiet) and ships native-only features the npm
+  # package lacks. Its CDN (claude.ai / downloads.claude.ai) sits behind
+  # Cloudflare, which intermittently 403s cloud-datacenter egress IPs under load —
+  # so retry with backoff rather than falling back to npm. A bare `curl | bash`
+  # would hide a 403 (curl -f exits non-zero but the pipe's status is bash's 0),
+  # so keep pipefail and fold the PATH check in so a "succeeded but absent" result
+  # also retries. A failed provision is better than a claude-less snapshot.
+  if ! retry_backoff 3 sudo -u vscode -H bash -lc \
+       'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash -s stable && command -v claude >/dev/null'; then
+    echo "provision.sh: Claude native installer failed after 3 attempts (Cloudflare 403?) — aborting provision" >&2
+    exit 71
+  fi
+  done_ "Claude Code (native installer, run as vscode)"
+fi
 
 step "Chrome runtime libs (dnf)"
 # agent-browser launches Chromium at AGENT_BROWSER_EXECUTABLE_PATH

@@ -222,8 +222,9 @@ write back to the host):
   `obj`, `packages`, `dist`, `.next`, `target`) are dropped by default; `exclude:`
   is additive. Each carry entry is capped at `box.cpMaxBytes` (default 100 MiB
   after excludes) — the same limit `agentbox cp` enforces.
-- **`agentbox-ctl cp fromHost <hostPath> <boxPath>`** (ad-hoc, from inside the box)
-  — for a one-off copy. Prompts the user on the host to approve.
+- **`agentbox-ctl cp fromHost <hostPath...> <boxPath>`** (ad-hoc, from inside the box)
+  — for a one-off copy. Takes several sources in one call (last path is the dest,
+  which must be a directory). Prompts the user on the host to approve.
 
 **The per-copy size limit (important for large/legacy folders).** A single copy is
 blocked above `box.cpMaxBytes` (default **100 MB**) *after* default excludes, so it
@@ -236,9 +237,9 @@ the biggest remaining folders/subfolders. To get under the limit, EITHER:
 - pass `--yes` to copy the whole thing anyway (only when you really need it all).
 
 Example: a 2.4 GB legacy folder is mostly `packages/` (NuGet) + `.git`; those are
-excluded by default, and what's left can be split:
-`agentbox-ctl cp fromHost ../legacy/src /workspace/legacy/src` then
-`... cp fromHost ../legacy/Database /workspace/legacy/Database`.
+excluded by default, and what's left can be copied in one call by listing the
+sub-folders into a destination directory:
+`agentbox-ctl cp fromHost ../legacy/src ../legacy/Database /workspace/legacy/`.
 
 ## 7. Validate before handing off
 

@@ -1,15 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { hostOpenCommand } from '@agentbox/sandbox-core';
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from 'node:fs';
+import { hostOpenCommand, writeManagedSecrets, type CredSetResult } from '@agentbox/sandbox-core';
 import { homedir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import {
   cancel,
   confirm,
@@ -170,7 +162,7 @@ async function validateCredentials(creds: Credentials): Promise<ValidationResult
   try {
     // Dynamic import so the SDK only loads when we actually need it (keeps the
     // Docker hot path lean, same reason as the provider registry).
-    const { Daytona } = await import('@daytonaio/sdk');
+    const { Daytona } = await import('@daytona/sdk');
     const client = new Daytona();
     await client.list();
     s.stop('Daytona credentials accepted');
@@ -209,56 +201,53 @@ function applyToEnv(creds: Credentials): void {
 }
 
 function persistCredentials(creds: Credentials): void {
-  applyToEnv(creds);
-  const path = secretsPath();
-  mkdirSync(dirname(path), { recursive: true });
+  // Only the provided auth method's keys are written; `writeManagedSecrets`
+  // strips every managed key first, so a stale JWT is cleared when switching to
+  // an API key (and vice-versa). Unrelated DAYTONA_API_URL / DAYTONA_TARGET the
+  // user dropped in the file stay untouched.
+  const record: Record<string, string> = {};
+  if (creds.apiKey) record.DAYTONA_API_KEY = creds.apiKey;
+  if (creds.jwtToken) record.DAYTONA_JWT_TOKEN = creds.jwtToken;
+  if (creds.organizationId) record.DAYTONA_ORGANIZATION_ID = creds.organizationId;
+  writeManagedSecrets(MANAGED_KEYS, record);
+}
 
-  // Read existing file, strip any managed keys, append fresh values. Keeps
-  // unrelated DAYTONA_API_URL / DAYTONA_TARGET (or anything else the user
-  // dropped here) untouched.
-  let existing = '';
-  if (existsSync(path)) {
-    try {
-      existing = readFileSync(path, 'utf8');
-    } catch {
-      existing = '';
-    }
+/**
+ * Non-interactive credential set (the headless path the hub drives). Accepts
+ * either `{ apiKey }` or `{ jwtToken, organizationId }`, validates against
+ * Daytona (a cheap `list()`), then persists to `~/.agentbox/secrets.env`. A
+ * network failure still persists (offline host isn't blocked) but reports a
+ * warning label.
+ */
+export async function setDaytonaCredentials(
+  fields: Record<string, string>,
+): Promise<CredSetResult> {
+  const apiKey = (fields.apiKey ?? '').trim();
+  const jwtToken = (fields.jwtToken ?? '').trim();
+  const organizationId = (fields.organizationId ?? '').trim();
+  let creds: Credentials;
+  if (apiKey) {
+    creds = { apiKey };
+  } else if (jwtToken && organizationId) {
+    creds = { jwtToken, organizationId };
+  } else {
+    return {
+      ok: false,
+      error: 'provide apiKey, or jwtToken + organizationId',
+      status: { configured: false },
+    };
   }
-
-  const kept = existing
-    .split(/\r?\n/)
-    .filter((line) => {
-      const stripped = line.startsWith('export ') ? line.slice('export '.length) : line;
-      const eq = stripped.indexOf('=');
-      if (eq <= 0) return true;
-      const key = stripped.slice(0, eq).trim();
-      return !(MANAGED_KEYS as readonly string[]).includes(key);
-    })
-    .join('\n')
-    .replace(/\s+$/u, '');
-
-  const lines: string[] = [];
-  if (creds.apiKey) lines.push(`DAYTONA_API_KEY=${creds.apiKey}`);
-  if (creds.jwtToken) lines.push(`DAYTONA_JWT_TOKEN=${creds.jwtToken}`);
-  if (creds.organizationId) lines.push(`DAYTONA_ORGANIZATION_ID=${creds.organizationId}`);
-
-  const body = (kept ? `${kept}\n` : '') + lines.join('\n') + '\n';
-
-  // Atomic write — rename(2) is atomic on the same filesystem, so partially
-  // written secrets can't be left behind on a crash.
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, body, { mode: 0o600 });
-  try {
-    chmodSync(tmp, 0o600);
-  } catch {
-    // chmod best-effort; writeFileSync mode already covers most filesystems.
+  const result = await validateCredentials(creds);
+  if (!result.ok && result.kind === 'auth') {
+    return {
+      ok: false,
+      error: `credentials rejected by Daytona: ${result.message}`,
+      status: { configured: false },
+    };
   }
-  renameSync(tmp, path);
-  try {
-    chmodSync(path, 0o600);
-  } catch {
-    // ignore — already attempted above
-  }
+  persistCredentials(creds);
+  const label = result.ok ? (creds.apiKey ? 'key' : 'jwt') : 'key (unvalidated)';
+  return { ok: true, status: { configured: true, label } };
 }
 
 function openDashboard(): void {

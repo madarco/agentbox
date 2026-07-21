@@ -2,8 +2,10 @@ import { log } from '@clack/prompts';
 import { Command } from 'commander';
 import type { BoxStatus } from '@agentbox/ctl';
 import { boxResourceStats, inspectBox, type InspectedBox } from '@agentbox/sandbox-docker';
+import { setBoxDisplayName } from '@agentbox/sandbox-core';
 import type { BoxResourceStats } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { boxLabel } from '../box-label.js';
 import { renderEndpointLines } from '../endpoints-render.js';
 import { fmtAgo, fmtBytes, fmtPercent } from '../fmt.js';
 import { withWatchOptions, watchRender, type WatchableOptions } from '../watch.js';
@@ -14,7 +16,13 @@ import { handleLifecycleError } from './_errors.js';
 interface StatusOptions extends WatchableOptions {
   json?: boolean;
   inspect?: boolean;
+  setName?: string;
+  clearName?: boolean;
 }
+
+// Cosmetic label cap — long enough for a friendly name, short enough to keep
+// list/hub/tray rows tidy.
+const MAX_DISPLAY_NAME = 60;
 
 export const statusCommand = withWatchOptions(
   new Command('status')
@@ -24,14 +32,55 @@ export const statusCommand = withWatchOptions(
       'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
     )
     .option('-j, --json', 'machine-readable JSON output')
-    .option('--inspect', 'show detailed box info (volumes, limits, paths) plus service/task status'),
+    .option('--inspect', 'show detailed box info (volumes, limits, paths) plus service/task status')
+    .option(
+      '--set-name <name>',
+      'rename the box: set a cosmetic display label (does not change the container, git branch, or URL)',
+    )
+    .option('--clear-name', 'clear the box display label, falling back to the original name'),
 ).action(async (idOrName: string | undefined, opts: StatusOptions) => {
   try {
     if (opts.json && opts.watch) {
       log.error('cannot combine --json with --watch');
       process.exit(2);
     }
+    if (opts.setName !== undefined && opts.clearName) {
+      log.error('cannot combine --set-name with --clear-name');
+      process.exit(2);
+    }
     const box = await resolveBoxOrExit(idOrName);
+
+    // Rename is a quick state mutation, not a status pull — handle it and return
+    // before any Docker/live probing. Works for every provider and box state.
+    if (opts.setName !== undefined || opts.clearName) {
+      if (opts.json || opts.watch) {
+        log.error('cannot combine --set-name/--clear-name with --json or --watch');
+        process.exit(2);
+      }
+      const before = boxLabel(box);
+      let next: string | undefined;
+      if (opts.clearName) {
+        next = undefined;
+      } else {
+        // Strip control chars; commander guarantees a string for --set-name <name>.
+        next = [...opts.setName!]
+          .filter((c) => c >= ' ' && c.charCodeAt(0) !== 0x7f)
+          .join('')
+          .trim();
+        if (!next) {
+          log.error('--set-name requires a non-empty name (use --clear-name to reset)');
+          process.exit(2);
+        }
+        if (next.length > MAX_DISPLAY_NAME) {
+          log.error(`name too long (max ${String(MAX_DISPLAY_NAME)} chars)`);
+          process.exit(2);
+        }
+      }
+      await setBoxDisplayName(box.id, next);
+      const after = next ?? box.name;
+      process.stdout.write(`renamed ${before} -> ${after}\n`);
+      return;
+    }
 
     // Cloud boxes don't have a host Docker container to `docker exec` into for
     // a live status pull, and `inspectBox` is Docker-only. The persisted

@@ -24,6 +24,7 @@ const repoRoot = resolve(cliRoot, '..', '..'); // monorepo root
 const runtime = join(cliRoot, 'runtime');
 const dockerCtx = join(runtime, 'docker');
 const hetznerCtx = join(runtime, 'hetzner');
+const digitaloceanCtx = join(runtime, 'digitalocean');
 const daytonaCtx = join(runtime, 'daytona');
 const vercelCtx = join(runtime, 'vercel');
 const e2bCtx = join(runtime, 'e2b');
@@ -39,6 +40,8 @@ const dockerfileSrc = 'packages/sandbox-docker/Dockerfile.box';
 const execBitFiles = new Set([
   'packages/sandbox-docker/scripts/agentbox-vnc-start',
   'packages/sandbox-docker/scripts/agentbox-dockerd-start',
+  'packages/sandbox-docker/scripts/agentbox-sshd-start',
+  'packages/sandbox-docker/scripts/agentbox-portless-trust',
   'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
   'packages/sandbox-docker/scripts/agentbox-open',
   'packages/sandbox-docker/scripts/gh-shim',
@@ -52,6 +55,8 @@ const contextFiles = [
   'apps/cli/share/agentbox-setup/SKILL.md',
   'packages/sandbox-docker/scripts/agentbox-vnc-start',
   'packages/sandbox-docker/scripts/agentbox-dockerd-start',
+  'packages/sandbox-docker/scripts/agentbox-sshd-start',
+  'packages/sandbox-docker/scripts/agentbox-portless-trust',
   'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
   'packages/sandbox-docker/scripts/agentbox-open',
   'packages/sandbox-docker/scripts/gh-shim',
@@ -74,7 +79,9 @@ function copy(srcRel, destAbs, exec = false) {
     return;
   }
   mkdirSync(dirname(destAbs), { recursive: true });
-  cpSync(src, destAbs, { recursive: true });
+  // verbatimSymlinks keeps relative symlink targets intact (the hub standalone
+  // tree relies on them); the default rewrites them to absolute source paths.
+  cpSync(src, destAbs, { recursive: true, verbatimSymlinks: true });
   if (exec) chmodSync(destAbs, 0o755);
 }
 
@@ -84,6 +91,16 @@ mkdirSync(runtime, { recursive: true });
 for (const [srcRel, destRel] of direct) {
   copy(srcRel, join(runtime, destRel));
 }
+
+// Hub standalone build — `agentbox hub` spawns this Next+relay server
+// (packages/sandbox-docker/src/hub.ts resolveHubServer() looks for
+// runtime/hub/apps/hub/server.js). Built by `apps/hub` `build:standalone`, which
+// ships NO node_modules: the hub's externals (next/react/react-dom/pg/
+// better-auth/kysely + cloud SDKs) resolve from the installed @madarco/agentbox
+// package's own node_modules — a bundled pnpm store does not survive npm publish.
+// Absent in a partial dev build (warn+skip) — a publish runs build:standalone
+// first (apps/cli prepublishOnly).
+copy('apps/hub/dist-standalone', join(runtime, 'hub'));
 copy(dockerfileSrc, join(dockerCtx, 'Dockerfile.box'));
 for (const srcRel of contextFiles) {
   copy(srcRel, join(dockerCtx, srcRel), execBitFiles.has(srcRel));
@@ -98,6 +115,7 @@ const hetznerFiles = [
   ['packages/ctl/dist/bin.cjs', 'ctl.cjs', true],
   ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
   ['packages/sandbox-docker/scripts/agentbox-dockerd-start', 'agentbox-dockerd-start', true],
+  ['packages/sandbox-docker/scripts/agentbox-portless-trust', 'agentbox-portless-trust', true],
   ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
   ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
   ['packages/sandbox-docker/scripts/gh-shim', 'gh-shim', true],
@@ -112,6 +130,59 @@ const hetznerFiles = [
 ];
 for (const [srcRel, destRel, exec] of hetznerFiles) {
   copy(srcRel, join(hetznerCtx, destRel), exec);
+}
+
+// _shared — provider-NEUTRAL box-side runtime assets exposed to external
+// provider plugins via `@madarco/agentbox-provider-sdk`'s `resolveSharedRuntimeAsset`.
+// A VPS-style plugin brings only its own install script + system prompt and
+// pulls ctl + the shims from here, so it always installs the *running* CLI's
+// `ctl.cjs` (version-locked to the CLI, not to whatever the plugin bundled).
+// The CLI stamps this dir into `AGENTBOX_CLI_RUNTIME_DIR` at startup.
+const sharedCtx = join(runtime, '_shared');
+const sharedFiles = [
+  ['packages/ctl/dist/bin.cjs', 'ctl.cjs', true],
+  ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
+  ['packages/sandbox-docker/scripts/agentbox-dockerd-start', 'agentbox-dockerd-start', true],
+  ['packages/sandbox-docker/scripts/agentbox-portless-trust', 'agentbox-portless-trust', true],
+  ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
+  ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
+  ['packages/sandbox-docker/scripts/gh-shim', 'gh-shim', true],
+  ['packages/sandbox-docker/scripts/git-shim', 'git-shim', true],
+  ['packages/sandbox-docker/scripts/ntn-shim', 'ntn-shim', true],
+  ['packages/sandbox-docker/scripts/linear-shim', 'linear-shim', true],
+  ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
+  ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
+  ['packages/sandbox-docker/scripts/opencode-agentbox-plugin.js', 'opencode-agentbox-plugin.js', false],
+  ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
+];
+for (const [srcRel, destRel, exec] of sharedFiles) {
+  copy(srcRel, join(sharedCtx, destRel), exec);
+}
+
+// DigitalOcean provider — same flat box-runtime asset list as Hetzner (the
+// box-side runtime is provider-neutral), resolved by
+// `packages/sandbox-digitalocean/src/runtime-assets.ts` under
+// runtime/digitalocean/<basename>.
+const digitaloceanFiles = [
+  ['packages/sandbox-digitalocean/scripts/install-box.sh', 'scripts/install-box.sh', true],
+  ['packages/ctl/dist/bin.cjs', 'ctl.cjs', true],
+  ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
+  ['packages/sandbox-docker/scripts/agentbox-dockerd-start', 'agentbox-dockerd-start', true],
+  ['packages/sandbox-docker/scripts/agentbox-portless-trust', 'agentbox-portless-trust', true],
+  ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
+  ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
+  ['packages/sandbox-docker/scripts/gh-shim', 'gh-shim', true],
+  ['packages/sandbox-docker/scripts/git-shim', 'git-shim', true],
+  ['packages/sandbox-docker/scripts/ntn-shim', 'ntn-shim', true],
+  ['packages/sandbox-docker/scripts/linear-shim', 'linear-shim', true],
+  ['packages/sandbox-digitalocean/scripts/custom-system-CLAUDE.md', 'custom-system-CLAUDE.md', false],
+  ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
+  ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
+  ['packages/sandbox-docker/scripts/opencode-agentbox-plugin.js', 'opencode-agentbox-plugin.js', false],
+  ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
+];
+for (const [srcRel, destRel, exec] of digitaloceanFiles) {
+  copy(srcRel, join(digitaloceanCtx, destRel), exec);
 }
 
 // Daytona provider — overlay files the daytona prepare step adds on top of
@@ -215,6 +286,9 @@ function stageReadme() {
 }
 stageReadme();
 
+// Note: the macOS tray app (madarco/agentbox-tray) is distributed separately via GitHub Releases
+// (downloaded by `agentbox install tray`), NOT bundled here — keeps this cross-platform package small.
+
 if (missing > 0) {
   console.warn(
     `[stage-runtime] ${missing} asset(s) missing — fine in a partial dev rebuild, ` +
@@ -222,6 +296,6 @@ if (missing > 0) {
   );
 } else {
   console.log(
-    '[stage-runtime] staged runtime/ (relay bin + docker build context + hetzner install assets + daytona overlay + vercel assets + e2b assets + tenki attach helper)',
+    '[stage-runtime] staged runtime/ (relay bin + docker build context + hetzner install assets + digitalocean install assets + daytona overlay + vercel assets + e2b assets + tenki attach helper)',
   );
 }

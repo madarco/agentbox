@@ -8,17 +8,9 @@
  * the SDK's own "not configured" error instead of hanging on a prompt.
  */
 
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, resolve } from 'node:path';
-import { hostOpenCommand } from '@agentbox/sandbox-core';
+import { resolve } from 'node:path';
+import { hostOpenCommand, writeManagedSecrets, type CredSetResult } from '@agentbox/sandbox-core';
 import {
   cancel,
   confirm,
@@ -93,58 +85,23 @@ export async function ensureE2bCredentials(
 }
 
 function persistCredentials(creds: { apiKey: string }): void {
-  writeManaged({ E2B_API_KEY: creds.apiKey });
+  writeManagedSecrets(MANAGED_KEYS, { E2B_API_KEY: creds.apiKey });
 }
 
 /**
- * Atomically rewrite the managed E2B keys in `~/.agentbox/secrets.env`:
- * strip every prior value for a `MANAGED_KEYS` entry, then append exactly the
- * keys in `record` (mode 0600, temp-file + rename). Also mirrors the record
- * into `process.env` so the current run uses the new values immediately.
+ * Non-interactive credential set (the headless path the hub drives). Takes an
+ * `{ apiKey }`, persists it to `~/.agentbox/secrets.env`, and reports status.
+ * E2B has no cheap read-only auth probe, so — like the interactive flow — we
+ * only require a non-empty key; a bad key surfaces on first sandbox create.
  */
-function writeManaged(record: Record<string, string>): void {
-  for (const k of MANAGED_KEYS) delete process.env[k];
-  for (const [k, v] of Object.entries(record)) process.env[k] = v;
-
-  const path = secretsPath();
-  mkdirSync(dirname(path), { recursive: true });
-
-  let existing = '';
-  if (existsSync(path)) {
-    try {
-      existing = readFileSync(path, 'utf8');
-    } catch {
-      existing = '';
-    }
+export function setE2bCredentials(fields: Record<string, string>): CredSetResult {
+  const apiKey = (fields.apiKey ?? '').trim();
+  if (!apiKey) {
+    return { ok: false, error: 'apiKey is required', status: { configured: false } };
   }
-  const kept = existing
-    .split(/\r?\n/)
-    .filter((line) => {
-      const stripped = line.startsWith('export ') ? line.slice('export '.length) : line;
-      const eq = stripped.indexOf('=');
-      if (eq <= 0) return true;
-      const key = stripped.slice(0, eq).trim();
-      return !(MANAGED_KEYS as readonly string[]).includes(key);
-    })
-    .join('\n')
-    .replace(/\s+$/u, '');
-
-  const lines = Object.entries(record).map(([k, v]) => `${k}=${v}`);
-  const body = (kept ? `${kept}\n` : '') + lines.join('\n') + '\n';
-
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, body, { mode: 0o600 });
-  try {
-    chmodSync(tmp, 0o600);
-  } catch {
-    // chmod best-effort; writeFileSync mode already covers most filesystems.
-  }
-  renameSync(tmp, path);
-  try {
-    chmodSync(path, 0o600);
-  } catch {
-    // ignore — already attempted above
-  }
+  persistCredentials({ apiKey });
+  const cred = readE2bCredStatus();
+  return { ok: true, status: { configured: cred.auth !== 'none', label: cred.auth } };
 }
 
 function openDashboard(): void {

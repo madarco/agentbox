@@ -10,6 +10,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "provider": {
+          "enum": ["docker", "daytona", "hetzner", "vercel", "e2b", "digitalocean"],
+          "description": "Sandbox backend new boxes are created on. Overridden per-run by --provider."
+        },
         "hostSnapshot": { "type": "boolean" },
         "defaultCheckpoint": { "type": "string", "minLength": 1 },
         "defaultCheckpointDocker": { "type": "string", "minLength": 1 },
@@ -18,6 +22,8 @@
         "defaultCheckpointVercel": { "type": "string", "minLength": 1 },
         "defaultCheckpointE2b": { "type": "string", "minLength": 1 },
         "defaultCheckpointTenki": { "type": "string", "minLength": 1 },
+        "defaultCheckpointDigitalocean": { "type": "string", "minLength": 1 },
+        "defaultCheckpointRemoteDocker": { "type": "string", "minLength": 1 },
         "size": { "type": "string", "minLength": 1 },
         "sizeDocker": { "type": "string", "minLength": 1 },
         "sizeDaytona": { "type": "string", "minLength": 1 },
@@ -25,11 +31,15 @@
         "sizeVercel": { "type": "string", "minLength": 1 },
         "sizeE2b": { "type": "string", "minLength": 1 },
         "sizeTenki": { "type": "string", "minLength": 1 },
+        "sizeDigitalocean": { "type": "string", "minLength": 1 },
+        "sizeRemoteDocker": { "type": "string", "minLength": 1 },
         "withPlaywright": { "type": "boolean" },
+        "claudeInstall": { "enum": ["native", "npm"] },
         "withEnv": { "type": "boolean" },
         "resyncOnStart": { "type": "boolean" },
         "vnc": { "type": "boolean" },
         "autoApproveHostActions": { "type": "boolean" },
+        "autoApproveSafeHostActions": { "type": "boolean" },
         "isolateClaudeConfig": { "type": "boolean" },
         "isolateCodexConfig": { "type": "boolean" },
         "isolateOpencodeConfig": { "type": "boolean" },
@@ -40,13 +50,23 @@
         "imageVercel": { "type": "string", "minLength": 1 },
         "imageE2b": { "type": "string", "minLength": 1 },
         "imageTenki": { "type": "string", "minLength": 1 },
+        "imageDigitalocean": { "type": "string", "minLength": 1 },
+        "imageRemoteDocker": { "type": "string", "minLength": 1 },
         "dockerCacheShared": { "type": "boolean" },
         "memory": { "type": "integer", "minimum": 0 },
         "cpus": { "type": "integer", "minimum": 0 },
         "pidsLimit": { "type": "integer", "minimum": 0 },
         "disk": { "type": "string" },
         "bundleDepth": { "type": "integer", "minimum": 0 },
-        "vercelVcpus": { "type": "integer", "minimum": 1 },
+        "daytonaClass": { "type": "string", "enum": ["linux-vm", "container"] },
+        "daytonaRegion": { "type": "string", "minLength": 1 },
+        "daytonaTimeoutMs": { "type": "integer", "minimum": 0 },
+        "daytonaVmBaseImage": { "type": "string", "minLength": 1 },
+        "hetznerLocation": { "type": "string", "minLength": 1 },
+        "digitaloceanRegion": { "type": "string", "minLength": 1 },
+        "digitaloceanProject": { "type": "string", "minLength": 1 },
+        "remoteDockerHost": { "type": "string", "minLength": 1 },
+        "inbound": { "type": "string", "minLength": 1 },
         "vercelTimeoutMs": { "type": "integer", "minimum": 1 },
         "vercelNetworkPolicy": { "type": "string" },
         "tenkiTimeoutMs": { "type": "integer", "minimum": 1 },
@@ -170,6 +190,13 @@
       "properties": {
         "pruneProjectConfigs": { "type": "boolean" },
         "pruneProjectConfigsEvery": { "type": "integer" }
+      }
+    },
+    "update": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "check": { "type": "boolean" }
       }
     }
   }

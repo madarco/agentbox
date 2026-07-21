@@ -2,11 +2,12 @@ import { spawn } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { spinner } from '@clack/prompts';
+import { log, spinner } from '@clack/prompts';
 import { DEFAULT_RELAY_PORT } from '@agentbox/sandbox-docker';
 import type { BoxRecord, Provider } from '@agentbox/core';
 import type { AttachOpenIn } from '@agentbox/config';
 import { agentResumeArgs } from '../agent-sessions.js';
+import { withFirewallRepair } from '../lib/firewall-repair.js';
 import { providerForBox } from '../provider/registry.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { pasteHostClipboardImage, uploadImageFileToBox } from '../lib/paste-image.js';
@@ -71,11 +72,10 @@ export interface CloudAgentAttachArgs {
   extraArgs?: string[];
   /**
    * Where to open the attached session in the host's terminal (`split`/`window`/
-   * `tab`/`same`). Forwarded to `runWrappedAttach`. Daytona attaches are forced
-   * to `same` for now because `provider.buildAttach()` may return a `cleanup`
-   * that tears down per-call SSH tunnels — running cleanup while a detached
-   * new pane still holds the connection would kill the pane. Hetzner's
-   * ControlMaster is per-box-lifetime so spawn-and-detach is safe there.
+   * `tab`/`same`). Forwarded to `runWrappedAttach`. Honoured by every provider:
+   * a new pane re-invokes `agentbox <agent> attach`, which builds its own spec —
+   * so `spec.cleanup` tearing down THIS call's per-attach resources (daytona's
+   * SSH token) can't affect it.
    */
   openIn?: AttachOpenIn;
 }
@@ -185,6 +185,24 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     box = await provider.start(box);
     s.stop('box running');
   }
+  // Hetzner only: open the SSH tunnel UP FRONT, self-healing a stale firewall (a
+  // host egress-IP change locks the per-box firewall) BEFORE any of the later
+  // establish touches — the resume probe, the detached pre-start, buildAttach.
+  // Whichever of those connected first would otherwise be an unguarded
+  // establish: a firewall block there aborts the attach (or silently drops the
+  // resumed session, since the resume probe swallows exec errors). Doing it once
+  // here covers them all. Repairs ONLY on an actual connect failure; otherwise a
+  // `true` over the already-open master is a cheap no-op. This is an ESTABLISH
+  // path — distinct from the mid-session `reconnect` closure below, which must
+  // NOT touch the firewall (a checkpoint/pause drop isn't an IP change).
+  if (box.provider === 'hetzner') {
+    await withFirewallRepair(
+      provider,
+      box,
+      { enabled: true, onLog: (line) => log.success(line) },
+      () => provider.exec(box, ['true']),
+    );
+  }
   // Attaching to a box that just came back up (a stop / cloud idle-timeout
   // resume): if the user passed no args of their own and the box has a resumable
   // claude/codex session, launch resuming it (claude --resume <id> / codex resume
@@ -197,10 +215,17 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     if (resume) extraArgs = resume;
   }
   const command = buildCloudAttachInnerCommand(args.binary, extraArgs);
-  // Daytona-only: force inline attach. `spec.cleanup` would otherwise run as
-  // soon as the host process returns from the spawn (before the new pane has
-  // released the per-call SSH tunnel), breaking the detached attach.
-  const safeOpenIn: AttachOpenIn | undefined = box.provider === 'daytona' ? 'same' : args.openIn;
+  // Every cloud provider honours `attach.openIn`.
+  //
+  // Daytona used to be pinned to inline here, on the theory that `spec.cleanup`
+  // — which revokes the per-attach SSH token — would fire as soon as this
+  // process returned from spawning the new pane and cut the pane's connection
+  // out from under it. It can't: the new pane re-invokes `agentbox <agent>
+  // attach`, which builds its own spec and mints its OWN token, and Daytona's
+  // revoke is token-scoped (verified against the live API: minting A and B, then
+  // revoking A, leaves B working). The token this process minted is simply never
+  // used on the new-pane path.
+  const safeOpenIn: AttachOpenIn | undefined = args.openIn;
 
   // New-terminal attaches (tab/window/split) re-invoke `agentbox <agent> attach`
   // in the fresh pane, and that re-invocation carries NO `extraArgs` — so for a
@@ -213,10 +238,9 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     await startDetachedSession(provider, box, args.sessionName, command);
   }
 
-  let spec = await provider.buildAttach(box, 'agent', {
-    sessionName: args.sessionName,
-    command,
-  });
+  // The tunnel is already established (and firewall-healed) by the up-front warm
+  // -up above, so this reuses the live master.
+  let spec = await buildAttach(box, 'agent', { sessionName: args.sessionName, command });
   // claude only, and only when this host can capture a clipboard image (macOS,
   // or a Linux desktop with xclip/wl-paste). Otherwise Ctrl+V forwards verbatim.
   const canPaste = args.mode === 'claude' && (await clipboardCaptureAvailable());
@@ -231,9 +255,20 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   // a reboot this lands in a freshly-created tmux session (the snapshot is
   // filesystem-only); a blip on a still-running box re-attaches the same live
   // session. Returns null to give up (cancelled or timed out).
+  //
+  // NOTE: deliberately NO firewall repair here. This is a MID-SESSION drop — a
+  // checkpoint stops the box (the PTY drops) and we wait for it to come back;
+  // the host IP didn't change, so re-syncing the firewall would be wrong.
+  // Firewall self-heal belongs only to establish paths (the up-front warm-up
+  // above, and `agentbox recover`).
   const reconnect = async (
     signal: AbortSignal,
-  ): Promise<{ command: string; argv: string[]; env?: Record<string, string> } | null> => {
+  ): Promise<{
+    command: string;
+    argv: string[];
+    env?: Record<string, string>;
+    initialInput?: string;
+  } | null> => {
     const deadline = Date.now() + RECONNECT_TIMEOUT_MS;
     let backoff = 500;
     for (;;) {
@@ -261,7 +296,12 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
         // best-effort
       }
     }
-    return { command: spec.argv[0]!, argv: spec.argv.slice(1), env: spec.env };
+    return {
+      command: spec.argv[0]!,
+      argv: spec.argv.slice(1),
+      env: spec.env,
+      initialInput: spec.initialInput,
+    };
   };
 
   try {
@@ -270,6 +310,7 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
       command: spec.argv[0],
       dockerArgv: spec.argv.slice(1),
       env: spec.env,
+      initialInput: spec.initialInput,
       relayBaseUrl: RELAY_HOST_URL,
       boxId: box.id,
       boxName: box.name,
@@ -419,7 +460,20 @@ export async function cloudAgentStartDetached(args: {
   if (state !== 'running') {
     box = await provider.start(box);
   }
-  const command = buildCloudAttachInnerCommand(args.binary, args.extraArgs);
+  // With no user args, resume the box's recorded session instead of launching
+  // fresh — same as the interactive `cloudAgentAttach` path. Matters for a
+  // background `agentbox <agent> start <box> --no-attach` (and idle-resumed
+  // creates): the box already has a claude/codex session to reopen. The `-i`
+  // queue path always seeds a prompt, so extraArgs is non-empty and this no-ops.
+  let extraArgs = args.extraArgs;
+  if (
+    (!extraArgs || extraArgs.length === 0) &&
+    (args.binary === 'claude' || args.binary === 'codex')
+  ) {
+    const resume = await agentResumeArgs(provider, box, args.binary);
+    if (resume) extraArgs = resume;
+  }
+  const command = buildCloudAttachInnerCommand(args.binary, extraArgs);
   const { exitCode, stderr } = await startDetachedSession(
     provider,
     box,

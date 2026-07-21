@@ -23,7 +23,15 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve as pathResolve } from 'node:path';
 
-export type PreparedProviderKind = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b' | 'tenki';
+import type { ProviderKind } from '@agentbox/config';
+
+/**
+ * Providers that bake a `~/.agentbox/<provider>-prepared.json` artifact. The
+ * built-in set is the config `ProviderKind`; the `(string & {})` arm keeps
+ * autocomplete for those while also admitting an external plugin's open-string
+ * provider name (a plugin manages its own prepared-state — see docs/provider-plugins.md).
+ */
+export type PreparedProviderKind = ProviderKind | (string & {});
 
 /**
  * The cross-provider record. `TImage` is the provider's opaque image
@@ -52,6 +60,12 @@ export interface PreparedBaseSnapshot<TImage = string, TExtra = unknown> {
 }
 
 export function preparedStatePathFor(provider: PreparedProviderKind): string {
+  // The name lands in a filename; a plugin's open-string name could otherwise
+  // carry a path separator. Provider names are `[a-z0-9-]` by convention — reject
+  // anything else rather than resolve outside ~/.agentbox.
+  if (!/^[A-Za-z0-9._-]+$/.test(provider)) {
+    throw new Error(`invalid provider name for prepared-state: ${JSON.stringify(provider)}`);
+  }
   return pathResolve(homedir(), '.agentbox', `${provider}-prepared.json`);
 }
 
@@ -126,6 +140,17 @@ export async function computeContextSha256(files: ContextFile[]): Promise<string
 /** Short form for log lines — first 12 hex chars of a sha256. */
 export function shortFingerprint(sha: string): string {
   return sha.slice(0, 12);
+}
+
+/**
+ * Fold the Claude install method into a base context fingerprint so switching
+ * `box.claudeInstall` native↔npm forces a re-bake. `native` returns the base
+ * hash unchanged — existing native snapshots keep their fingerprint and never
+ * spuriously rebuild; only `npm` derives a distinct hash.
+ */
+export function claudeInstallFingerprint(baseSha: string, mode: 'native' | 'npm'): string {
+  if (mode === 'native') return baseSha;
+  return createHash('sha256').update(`${baseSha}\0claude-install=npm`).digest('hex');
 }
 
 /**

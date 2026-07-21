@@ -194,7 +194,7 @@ async function reclaimRelay(reportedPid: number | undefined, log: (line: string)
 }
 
 /** SIGTERM, wait for exit, then SIGKILL — same escalation as {@link stopRelay}. */
-async function killPid(pid: number): Promise<void> {
+export async function killPid(pid: number): Promise<void> {
   try {
     process.kill(pid, 'SIGTERM');
   } catch {
@@ -257,7 +257,7 @@ async function spawnRelay(
  *   2. legacy workspace: `<repo>/packages/sandbox-docker/dist` ↔ `<repo>/packages/relay/dist/bin.cjs`
  *   3. legacy externalized install: `<...>/node_modules/@agentbox/relay/dist/bin.cjs`
  */
-function resolveRelayBin(): string {
+export function resolveRelayBin(): string {
   const override = process.env.AGENTBOX_RELAY_BIN;
   if (override && existsSync(override)) return override;
   const here = dirname(fileURLToPath(import.meta.url));
@@ -282,7 +282,7 @@ function resolveRelayBin(): string {
  *   2. installed: `<...>/agentbox/node_modules/@agentbox/sandbox-docker/dist` ↔ `<...>/agentbox/dist/index.js`
  * Best-effort: returns null when not found (relay reports a clear error).
  */
-function resolveCliEntry(): string | null {
+export function resolveCliEntry(): string | null {
   const override = process.env.AGENTBOX_CLI_ENTRY;
   if (override && existsSync(override)) return override;
   const here = dirname(fileURLToPath(import.meta.url));
@@ -314,7 +314,7 @@ interface StagedRelay {
  *
  * Copies the CLI package tree (`dist/` + `runtime/` + `share/`) PLUS the
  * externalized npm deps (`node_modules/`): the CLI bundle is not self-contained
- * (apps/cli/tsup.config.ts keeps commander/execa/@daytonaio/sdk/... external).
+ * (apps/cli/tsup.config.ts keeps commander/execa/@daytona/sdk/... external).
  * The staged tree mirrors the package layout exactly, so the bundled entry's
  * own sibling-relative resolvers and its external `require`s all resolve inside
  * the home.
@@ -524,7 +524,7 @@ export async function getRelayStatus(): Promise<RelayStatus> {
   };
 }
 
-function pingHealthz(timeoutMs: number): Promise<boolean> {
+export function pingHealthz(timeoutMs: number): Promise<boolean> {
   return new Promise<boolean>((resolveP) => {
     const req = httpRequest(
       { host: '127.0.0.1', port: PORT, method: 'GET', path: '/healthz', timeout: timeoutMs },
@@ -543,12 +543,14 @@ function pingHealthz(timeoutMs: number): Promise<boolean> {
   });
 }
 
-interface HealthzBody {
+export interface HealthzBody {
   ok: boolean;
   boxes: number;
   events: number;
   /** The relay's own pid (for reclaiming). Absent on relays predating this field. */
   pid?: number;
+  /** True when a Next UI is delegated (the embedded hub) vs a bare relay. Absent on old relays. */
+  ui?: boolean;
   /** Whether the relay has AGENTBOX_CLI_ENTRY (can run cp/download/checkpoint). Absent on old relays. */
   cliEntry?: boolean;
   /** The agentbox version that spawned the relay. Absent on relays predating this field. */
@@ -557,7 +559,7 @@ interface HealthzBody {
   commit?: string;
 }
 
-function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
+export function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
   return new Promise<HealthzBody | null>((resolveP) => {
     const req = httpRequest(
       { host: '127.0.0.1', port: PORT, method: 'GET', path: '/healthz', timeout: timeoutMs },
@@ -583,6 +585,7 @@ function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
                 boxes: parsed.boxes,
                 events: parsed.events,
                 pid: typeof parsed.pid === 'number' ? parsed.pid : undefined,
+                ui: typeof parsed.ui === 'boolean' ? parsed.ui : undefined,
                 cliEntry: typeof parsed.cliEntry === 'boolean' ? parsed.cliEntry : undefined,
                 version:
                   typeof parsed.version === 'string' && parsed.version.length > 0
@@ -622,7 +625,7 @@ async function readPidFile(): Promise<number | null> {
   }
 }
 
-async function processAlive(pid: number): Promise<boolean> {
+export async function processAlive(pid: number): Promise<boolean> {
   try {
     // Signal 0 is the existence probe: throws if no such process.
     process.kill(pid, 0);
@@ -679,6 +682,18 @@ export interface RegisterBoxArgs {
    * without a prompt, recording each bypass as a relay event.
    */
   autoApproveHostActions?: boolean;
+  /**
+   * Mirrors `box.autoApproveSafeHostActions` (default true). When not `false`,
+   * the SAFE subset of host actions auto-resolves without a prompt. Absent →
+   * enabled; only an explicit `false` restores the always-prompt behavior.
+   */
+  autoApproveSafeHostActions?: boolean;
+  /**
+   * The box repo's origin remote URL. The hosted control plane resolves
+   * owner/repo from this when leasing a GitHub-App push token. Absent for
+   * boxes without a git origin.
+   */
+  originUrl?: string;
 }
 
 export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void> {
@@ -686,6 +701,7 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     containerPath: w.containerPath,
     hostMainRepo: w.hostMainRepo,
     branch: w.branch,
+    ...(w.sanctionedBranch ? { sanctionedBranch: w.sanctionedBranch } : {}),
   }));
   await adminPost('/admin/register-box', {
     boxId: args.boxId,
@@ -701,6 +717,8 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     previewToken: args.previewToken,
     bridgeToken: args.bridgeToken,
     autoApproveHostActions: args.autoApproveHostActions,
+    autoApproveSafeHostActions: args.autoApproveSafeHostActions,
+    originUrl: args.originUrl,
   });
 }
 
@@ -887,6 +905,8 @@ export interface BoxWithToken {
   bridgeToken?: string;
   /** Mirrors `BoxRecord.autoApproveHostActions`; re-registered on rehydrate. */
   autoApproveHostActions?: boolean;
+  /** Mirrors `BoxRecord.autoApproveSafeHostActions`; re-registered on rehydrate. */
+  autoApproveSafeHostActions?: boolean;
 }
 
 /**
@@ -914,6 +934,7 @@ export async function rehydrateRelayRegistry(boxes: BoxWithToken[]): Promise<voi
         previewToken: b.relayPreviewToken,
         bridgeToken: b.bridgeToken,
         autoApproveHostActions: b.autoApproveHostActions,
+        autoApproveSafeHostActions: b.autoApproveSafeHostActions,
       });
     } catch {
       // best-effort

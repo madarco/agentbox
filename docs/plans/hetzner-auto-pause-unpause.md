@@ -1,5 +1,21 @@
 # Implement auto pause/unpause for Hetzner
 
+> **Revised 2026-07-13 — two of this plan's premises are wrong.**
+>
+> 1. **"Daytona keeps today's behavior (never auto-paused)"** assumed Daytona stops its own idle
+>    boxes. It does not: its `autoStopInterval` is an inactivity window that the host relay's own
+>    preview polling resets on every poll, so the timer never fires for a box AgentBox is tracking
+>    (measured — see `docs/daytona-backlog.md` → "Idle auto-stop was inert"). Daytona now has a
+>    host-side idle pause of its own in `packages/relay/src/cloud-keepalive.ts`
+>    (`shouldIdlePause`, gated on `CloudBackend.timeoutModel === 'inactivity'`). Whatever this plan
+>    builds for Hetzner should converge with that, not duplicate it.
+> 2. **"a Hetzner VPS bills ~€4/mo while running"** understates the problem: a Hetzner VPS bills
+>    while **stopped** too — powering it off frees no disk. So `backend.pause()` (power off) does not
+>    actually stop the meter the way pausing a Daytona/Vercel/E2B sandbox does. A *true* pause on a
+>    VPS provider means **snapshot + destroy**, and resume means restore-from-snapshot. That is a
+>    materially bigger change than this plan's "call `backend.pause`", and it's why the cloud
+>    providers can't all share one pause primitive. Decide this before implementing.
+
 ## Context
 
 The host relay already auto-pauses **idle Docker boxes** when more than

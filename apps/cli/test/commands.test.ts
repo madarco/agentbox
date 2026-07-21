@@ -81,9 +81,9 @@ describe('lifecycle CLI surface', () => {
     );
   });
 
-  it('install takes --force and --dry-run, plus `cmux` and `herdr` subcommands', () => {
+  it('install takes --force and --dry-run, plus `cmux`, `herdr`, `codex`, and `app` subcommands', () => {
     expect(installCommand.name()).toBe('install');
-    expect(installCommand.commands.map((c) => c.name())).toEqual(['cmux', 'herdr']);
+    expect(installCommand.commands.map((c) => c.name())).toEqual(['cmux', 'herdr', 'codex', 'app']);
     const longs = installCommand.options.map((o) => o.long);
     expect(longs).toEqual(expect.arrayContaining(['--force', '--dry-run']));
   });

@@ -29,14 +29,18 @@ const { spawnSync } = (await import('node:child_process')) as unknown as {
 };
 
 const STATE = (): string => join(HOME, '.agentbox', 'star-prompt.json');
-function readState(): { installCount: number; starred: boolean } | null {
+function readState(): { installCount: number; starred: boolean; answered: boolean } | null {
   return existsSync(STATE())
-    ? (JSON.parse(readFileSync(STATE(), 'utf8')) as { installCount: number; starred: boolean })
+    ? (JSON.parse(readFileSync(STATE(), 'utf8')) as {
+        installCount: number;
+        starred: boolean;
+        answered: boolean;
+      })
     : null;
 }
-function seedState(installCount: number, starred = false): void {
+function seedState(installCount: number, starred = false, answered = false): void {
   mkdirSync(join(HOME, '.agentbox'), { recursive: true });
-  writeFileSync(STATE(), JSON.stringify({ version: 1, installCount, starred }));
+  writeFileSync(STATE(), JSON.stringify({ version: 1, installCount, starred, answered }));
 }
 
 let prevTTY: boolean | undefined;
@@ -60,14 +64,22 @@ describe('maybePromptStar — install cadence', () => {
     expect(readState()?.installCount).toBe(2);
   });
 
-  it('prompts on the 3rd and 4th install, not the 5th', async () => {
+  it('prompts on the 3rd install, then the recorded answer suppresses the 4th window', async () => {
     seedState(2);
-    await maybePromptStar({ trigger: 'install' }); // -> 3
+    await maybePromptStar({ trigger: 'install' }); // -> 3, prompts and records the answer
     expect(confirm).toHaveBeenCalledTimes(1);
+    await maybePromptStar({ trigger: 'install' }); // -> answered, no prompt (count frozen)
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(readState()?.installCount).toBe(3);
+  });
+
+  it('re-asks on the 4th install only if the 3rd never got an answer recorded', async () => {
+    seedState(3); // 3rd window passed without an answer (e.g. process died mid-prompt)
     await maybePromptStar({ trigger: 'install' }); // -> 4
-    expect(confirm).toHaveBeenCalledTimes(2);
-    await maybePromptStar({ trigger: 'install' }); // -> 5
-    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    seedState(4);
+    await maybePromptStar({ trigger: 'install' }); // -> 5, past the window
+    expect(confirm).toHaveBeenCalledTimes(1);
     expect(readState()?.installCount).toBe(5);
   });
 });
@@ -87,21 +99,31 @@ describe('maybePromptStar — guards', () => {
     await maybePromptStar({ trigger: 'self-update' });
     expect(confirm).not.toHaveBeenCalled();
   });
+
+  it('never prompts once answered, even unstarred', async () => {
+    seedState(2, false, true);
+    await maybePromptStar({ trigger: 'install' });
+    await maybePromptStar({ trigger: 'self-update' });
+    expect(confirm).not.toHaveBeenCalled();
+  });
 });
 
 describe('maybePromptStar — self-update', () => {
-  it('always prompts regardless of install count', async () => {
+  it('prompts regardless of install count until answered', async () => {
     await maybePromptStar({ trigger: 'self-update' });
     expect(confirm).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('maybePromptStar — star action', () => {
-  it('answering no does nothing', async () => {
+  it('answering no records the answer and never asks again', async () => {
     confirm.mockResolvedValue(false);
     await maybePromptStar({ trigger: 'self-update' });
     expect(spawnSync).not.toHaveBeenCalled();
     expect(readState()?.starred).toBeFalsy();
+    expect(readState()?.answered).toBe(true);
+    await maybePromptStar({ trigger: 'self-update' });
+    expect(confirm).toHaveBeenCalledTimes(1);
   });
 
   it('gh ready → stars via gh api and records starred=true', async () => {
@@ -131,6 +153,10 @@ describe('maybePromptStar — star action', () => {
       spawnSync.mock.calls.some((c) => Array.isArray(c[1]) && c[1].includes('PUT')),
     ).toBe(false);
     expect(readState()?.starred).toBeFalsy();
+    // The answer is still recorded — the browser path must not re-ask forever.
+    expect(readState()?.answered).toBe(true);
+    await maybePromptStar({ trigger: 'self-update' });
+    expect(confirm).toHaveBeenCalledTimes(1);
   });
 
   it('gh missing (ENOENT) → falls back to the browser', async () => {

@@ -51,6 +51,22 @@ The snapshot is a shell mirror of the Docker box image (Node, Python, Docker, th
 
 When you upgrade AgentBox, `create --provider hetzner` notices if the new install would bake a different snapshot (the comparison is checksum-based on the baked files — CLI version strings on their own don't count) and offers to rebake inline; with `-y` or non-TTY it instead warns loudly and boots on the existing snapshot. `agentbox hetzner login` also nudges you toward `agentbox prepare --provider hetzner` on the first successful login.
 
+<Callout title="If the bake fails installing Claude Code">
+The bake installs Claude Code with Anthropic's native installer, whose CDN
+occasionally returns a Cloudflare 403 to cloud-datacenter egress IPs (Hetzner
+among them). The bake retries three times and then aborts rather than shipping a
+Claude-less snapshot. If it keeps failing, switch to the npm installer:
+
+```bash
+agentbox prepare --provider hetzner --claude-install npm
+# or persist it: agentbox config set box.claudeInstall npm
+```
+
+`npm` installs `@anthropic-ai/claude-code` and symlinks it into the same
+`~/.local/bin/claude` path the native installer uses, so the box behaves
+identically. Bake-time only — changing it re-bakes the snapshot.
+</Callout>
+
 <Callout type="warn" title="HEADS UP">
 The bake costs a few minutes and a couple euro-cents, but you only do it once per account.
 </Callout>
@@ -77,11 +93,29 @@ See [run an agent](/docs/run-an-agent), [access your box](/docs/access-your-box)
 
 ## Sizes and regions
 
-The default VM is `cx23` (2 vCPU / 4 GB / 40 GB, ~€4/mo while running) in location `nbg1` (Nuremberg). Change the size per box with `--size`, or pin it with `box.sizeHetzner` — see [configuration](/docs/configuration).
+The default VM is `cx23` (2 vCPU / 4 GB / 40 GB, ~€4/mo while running) in location `nbg1` (Nuremberg). On Hetzner, `--size` is the **server type** and `--location` is the **datacenter**. Change them per box, or pin them with `box.sizeHetzner` and `box.hetznerLocation` (precedence: flag > `box.size<Provider>` > `box.size` / `box.hetznerLocation`) — see [configuration](/docs/configuration).
 
 ```bash
-agentbox create -y --provider hetzner --size cx33
+agentbox create -y --provider hetzner --size cx33 --location fsn1
 ```
+
+Locations are `nbg1` (Nuremberg), `fsn1` (Falkenstein), `hel1` (Helsinki), and `ash` (Ashburn, US). `--location` on a non-hetzner provider is ignored with a warning. The bake VPS location can be set the same way: `agentbox prepare --provider hetzner --location fsn1`.
+
+After the box comes up, AgentBox reports the **real** provisioned resources read back from Hetzner — e.g. `provisioned 4 vCPU / 16 GB RAM / 160 GB disk` — rather than a static guess, and stores them on the box record.
+
+### Preflight validation
+
+Before AgentBox creates any billable resource (firewall, SSH key, server), it validates your server-type + location choice against Hetzner's live `/server_types` catalog and fails fast with an actionable message — so a typo never bills you for a half-created box:
+
+- **Unknown type** (`--size cx99`) → lists valid non-deprecated x86 types.
+- **ARM type** (`--size cax31`) → rejected; AgentBox base snapshots are x86-only, so `cax*` types aren't supported.
+- **Deprecated type** (e.g. the old `cx22`) → rejected, with current alternatives.
+- **Type not offered in the location** (`--size ccx23 --location nbg1`) → lists where it *is* offered and reminds you of `--location`.
+- **Disk too small** for the base snapshot → asks for a larger type.
+
+<Callout type="warn" title="Dedicated (ccx) types and account limits">
+New Hetzner accounts start with a low server limit, and the dedicated-vCPU `ccx*` types count against it quickly. If Hetzner refuses the create with `resource_limit_exceeded`, AgentBox surfaces the account-limits explanation and points you at the [Hetzner Console](https://console.hetzner.cloud/) → your project → **Limits** to request an increase. An out-of-capacity error (`resource_unavailable`) suggests trying another `--location`.
+</Callout>
 
 ## Firewall
 
@@ -96,6 +130,8 @@ agentbox hetzner firewall sync smoke
 <Callout title="TIP">
 Moved networks and `agentbox shell` suddenly times out? Run `agentbox hetzner firewall sync <box>` — that's almost always it.
 </Callout>
+
+To reach a box from **another device** (a phone over Terminus/Blink, with your laptop off), open the firewall and hand the device a key: `agentbox inbound <box> open` then `agentbox connect <box> --add-key <device.pub>`. The baked sshd is key-only (`vscode`-only, no passwords), so `open` exposes port 22 to the internet but only your keys get in. See [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline).
 
 ## Web apps, checkpoints, and Docker
 

@@ -1,0 +1,12 @@
+# Root build context is used by apps/hub/Dockerfile (the box image
+# builds from apps/cli/runtime/docker, a different context, so this file does
+# not affect it). Keep host-built artifacts out of the image: the Dockerfile
+# runs `pnpm install` + `turbo build` to populate node_modules/dist for the
+# TARGET platform — copying the host's (wrong-arch) node_modules in breaks
+# native deps like rollup's platform binary.
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+.git
+**/*.log

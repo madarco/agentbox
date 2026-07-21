@@ -13,7 +13,7 @@ import {
   resolveClaudeVolume,
   scanPluginCacheForRebuild,
   SHARED_CLAUDE_VOLUME,
-} from '../src/claude.js';
+} from '../src/sync/agents/claude.js';
 
 describe('resolveClaudeVolume', () => {
   it('returns the shared volume name when isolate is false', () => {

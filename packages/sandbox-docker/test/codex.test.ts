@@ -3,10 +3,11 @@ import {
   buildCodexAttachArgv,
   buildCodexLoginRunArgv,
   buildCodexMounts,
+  buildCodexOrphanPurgeScript,
   DEFAULT_CODEX_SESSION,
   resolveCodexVolume,
   SHARED_CODEX_VOLUME,
-} from '../src/codex.js';
+} from '../src/sync/agents/codex.js';
 
 describe('resolveCodexVolume', () => {
   it('returns the shared volume name when isolate is false', () => {
@@ -94,5 +95,31 @@ describe('buildCodexAttachArgv', () => {
   it('attaches to a custom session name', () => {
     const argv = buildCodexAttachArgv('agentbox-box1', 'my-codex');
     expect(argv[argv.length - 1]).toBe('my-codex');
+  });
+});
+
+describe('buildCodexOrphanPurgeScript', () => {
+  it('keeps every named marketplace in both dirs', () => {
+    const script = buildCodexOrphanPurgeScript(['claude-plugins-official', 'my-market']);
+    expect(script).toContain('/dst/plugins/cache');
+    expect(script).toContain('/dst/.tmp/marketplaces');
+    expect(script).toContain('! -name claude-plugins-official');
+    expect(script).toContain('! -name my-market');
+    // only direct children, never recursive matching inside a kept marketplace
+    expect(script).toContain('-mindepth 1 -maxdepth 1');
+    // missing dirs must not fail the sync shell (`&&` chain)
+    expect(script).toContain('|| true');
+  });
+
+  it('purges everything on an empty keep-set', () => {
+    const script = buildCodexOrphanPurgeScript([]);
+    expect(script).not.toContain('! -name');
+    expect(script).toContain('-exec rm -rf {} +');
+  });
+
+  it('shell-quotes hostile marketplace names', () => {
+    const script = buildCodexOrphanPurgeScript(["evil'; rm -rf /; '", 'has space']);
+    expect(script).toContain(`! -name 'evil'\\''; rm -rf /; '\\'''`);
+    expect(script).toContain(`! -name 'has space'`);
   });
 });

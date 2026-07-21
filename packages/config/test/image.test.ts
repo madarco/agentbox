@@ -48,9 +48,11 @@ describe('resolveBoxImage', () => {
     expect(resolveBoxImage(c, 'vercel')).toBe('snap_vercel123');
   });
 
-  it('unknown provider falls into the docker bucket', () => {
+  it('unknown / plugin provider falls back to the generic box.image (not the docker bucket)', () => {
+    // An external plugin provider has no `box.image<P>` key; it must resolve to
+    // the generic `box.image` sentinel, never docker's per-provider value.
     const c = cfg({ image: 'fallback', imageDocker: 'doc' });
-    expect(resolveBoxImage(c, 'mystery')).toBe('doc');
+    expect(resolveBoxImage(c, 'digitalocean')).toBe('fallback');
     const c2 = cfg({ image: 'fallback' });
     expect(resolveBoxImage(c2, 'mystery')).toBe('fallback');
   });

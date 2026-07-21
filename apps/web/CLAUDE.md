@@ -8,11 +8,15 @@ documentation. Deployed on Vercel as a single Next.js app.
 - A **Next.js 16 App Router** app (`@agentbox/web`), pnpm workspace member.
 - **Docs** are authored as `.md` files under `content/docs/` and rendered by
   **Fumadocs** (`fumadocs-ui` / `fumadocs-core` / `fumadocs-mdx`) at `/docs`.
-- The **marketing home** is the original hand-written static page, preserved
-  verbatim at `public/home.html` and served at `/` (see rewrites below). It
-  keeps its inline `<style>` and inline `<script>` (animated terminal, rotating
-  agent name, interactive diagram) — that's why it stays a static document
-  instead of being ported to React.
+- The **marketing home** is a hand-authored static page (the "Home v4" design),
+  served at `public/home.html` at `/` (see rewrites below). It keeps its inline
+  `<style>` and inline `<script>` (the hero app/terminal mockup, the animated
+  orchestration-loop grid, the provisioning manifest, the access switcher) —
+  that's why it stays a static document instead of being ported to React. The
+  design source lives in the sibling `../agentbox-design` repo
+  (`AgentBox Home v4.html` + `feature-widgets.css`/`feature-widgets.js`, which
+  are inlined into `home.html` here); the agent glyphs live in
+  `public/assets/agent-*.png`.
 - Theme matches the AgentBox Docs design mockup (`AgentBox Docs.html`, kept in
   this folder as a non-served reference): light, green accent `#128a4f`, IBM
   Plex Sans/Mono.

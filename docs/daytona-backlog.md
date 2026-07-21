@@ -7,6 +7,169 @@ Status legend:
 - 🟡 **friction** — has a workaround; smooths UX when fixed.
 - 🟢 **polish** — nice-to-have / cleanup / aesthetics.
 
+## Idle auto-stop was inert, and three bugs behind it (2026-07-13)
+
+Closing out the linux-vm handoff's untested paths. All five were run against live Daytona; four of
+the five were fine, and the fifth — the auto-stop — turned out not to work at all, taking three
+other bugs down with it.
+
+### The finding: our own polling kept every box alive
+
+`box.daytonaTimeoutMs` (25 min) is passed as Daytona's `autoStopInterval`, an **inactivity window
+that any request to the sandbox resets**. The host relay's `CloudBoxPoller` long-polls each cloud
+box's preview URL continuously — so *our own polling was the activity*. Daytona's timer restarted on
+every poll and an idle box ran, and billed, forever. The feature was inert exactly when AgentBox was
+in normal use; it only worked with the relay down.
+
+Measured with `autoStopInterval: 3`:
+
+| sandbox | traffic | result |
+| --- | --- | --- |
+| control | none | stopped at **3.0 min** |
+| test | one request / 15 s | **still running at 7.0 min** (28 requests) |
+| the same test box, once requests ceased | none | stopped **3 min later** |
+
+The third row is the control that names the cause — a node server ran in the box throughout, so it
+is the **requests** that reset the clock, not activity inside the sandbox. (It also proves the
+instrument: the REST state-polling used to observe all this does *not* count as activity, or the
+control would never have stopped.)
+
+**Fix:** the host enforces the timeout. `CloudBackend.timeoutModel` (`'inactivity'` | `'absolute'`)
+marks the difference, and `cloud-keepalive.ts` pauses a box whose agent has been idle for the box's
+own `daytonaTimeoutMs` (`shouldIdlePause`). **vercel/e2b are unaffected** — their deadlines are
+absolute and nothing the box receives defers them.
+
+Design notes worth keeping:
+
+- The pause window is the **box's own** `daytonaTimeoutMs`, not the 5-min autopause/keepalive
+  renewal window. Using the renewal window would have paused boxes 5× sooner than the config key
+  advertises.
+- A box with **no agent state** is never auto-paused (an attached shell with no agent is exactly who
+  we must not stop under). The window is therefore measured on *agent* idleness, not raw requests —
+  a deliberate divergence from what Daytona's own timer would have counted.
+- We **pause**, not stop: a linux-vm freeze keeps memory and running processes, and every attach path
+  already resumes a paused box.
+- Daytona's `autoStopInterval` is still set, as the backstop for when the relay isn't running.
+
+### A fifth linux-vm quirk: the VM does not inherit the image's ENV
+
+A container gets the image's `ENV` from its *metadata*. A linux-vm keeps the rootfs and drops the
+metadata, so **every `ENV` in `Dockerfile.box` silently disappears** — same family as the
+setuid-stripping the sudo repair works around. Measured on a VM box: `DISPLAY`,
+`AGENT_BROWSER_EXECUTABLE_PATH`, `BROWSER`, `COLORTERM`, `DEBIAN_FRONTEND` all empty (`LANG` survives
+only because something else writes it to a file).
+
+The visible symptom was `agentbox screen`: the noVNC page opened but the desktop stayed empty, and
+Chrome died with `Missing X server or $DISPLAY` — because `DISPLAY=:1` is an image `ENV`.
+
+The bake now reads the image's env from its **registry config blob** (a few hundred bytes — no image
+pull, and no second copy of the values to rot) and restores it in two places, because two kinds of
+process need it and neither reads the other's:
+
+- `/etc/profile.d/` + `/etc/environment` — login shells and PAM (the ssh attach, any `bash -lc`).
+- the sandbox's **env vars at create**, recorded in `daytona-prepared.json` (`extras.env`) — this is
+  what a plain non-login `exec` sees, and a plain exec is how the host starts `agent-browser`, hence
+  Chromium.
+
+Getting only one of the two would have looked fixed in a shell and still failed for the browser.
+
+### Three bugs it uncovered
+
+1. **`agentbox pause` was broken for container-class boxes** — `■ Sandbox is not stopped`. Daytona
+   archives only a *stopped* sandbox, and `pause()` went straight to `sb.archive()`. Not a linux-vm
+   regression: `main` has the same bare call. It survived because the class plumbing made linux-vm
+   the default and the container path was never re-tested (this handoff's open item #4). Now stops
+   first.
+2. **`agentbox shell <box> -- cmd` never resumed a paused cloud box** — it called `provider.exec`
+   with no `probeState`/`start` guard, so it just failed (daytona: a 502 from the proxy). Every other
+   cloud entry point already resumed. Pre-existing and provider-wide; the idle sweep merely made
+   paused boxes common enough to trip it.
+3. **The container fallback asked for a container in a VM-only region.** With no published box image
+   (`box.claudeInstall: npm`, or any locally shifted build fingerprint — i.e. every monorepo
+   contributor) the linux-vm bake correctly falls back to a container, but the CLI had already
+   resolved the *class-derived* region and passed `us-east-1`, which has no container runners. The
+   whole `prepare` died instead of degrading. The CLI now passes only an explicitly pinned
+   `box.daytonaRegion`.
+
+### Verified working (the handoff's other open items)
+
+- A real logged-in **`claude -p` turn** in a linux-vm box.
+- In-box **`agentbox-ctl git push`** through the host relay — the commit landed on GitHub (checked
+  with `git ls-remote`, not the exit code).
+- **Container-class create** end-to-end after the class plumbing.
+- The **`--claude-install npm` → container fallback** (once bug 3 above was fixed).
+- **Pause/resume preserves processes**: a marker `sleep` kept the same PID across a host-driven
+  freeze, and its tmux session survived.
+
+### Still open
+
+- 🟡 **A container box's Claude credentials come from the shared volume and go stale.** A fresh
+  container box failed its first `claude -p` with `OAuth session expired and could not be refreshed`,
+  while a VM box (which takes the per-create upload path, since VM ignores volume mounts) worked.
+  The shared `agentbox-credentials` volume is only re-seeded on a content-hash change, so a
+  refreshed host token doesn't necessarily reach it. Needs its own look.
+
+## Linux-VM sandbox class — PoC findings (2026-07-12)
+
+Daytona added a second sandbox **class** (`linux-vm` beside the default `container`). PoC run live
+against `@daytona/sdk@0.196.0` before writing any provider code. Every claim below is measured, not
+read off the docs — several contradict the docs.
+
+**Green (VM works, and is fast):**
+
+| Probe | Result |
+|---|---|
+| GHCR box image → VM snapshot | **66s** (vs ~7 min for today's container Dockerfile build) |
+| `pause()` / `start()` | 5s / 1s. A running `sleep` **and** a live tmux session survive — real memory freeze |
+| Cold snapshot (`_experimental_createSnapshot`) | stop 4s → capture **2s** → `active`. Endpoint is live again (it 404'd when §5.1.1 was written) |
+| Restore from that snapshot | 1s; filesystem intact; the restored box is **still a VM** (class inherits) |
+| toolbox `exec` | runs as `vscode`, `HOME=/home/vscode` — same as container |
+| `fs.uploadFile`, `getPreviewLink`, `getSignedPreviewUrl`, `createSshAccess` | all work |
+| DinD | `dockerd` is **already running** at boot; `vscode` is in the `docker` group; `docker run hello-world` works with no sudo |
+| `archive()` on a VM | Rejected — *"Sandboxes in this region or class cannot be archived"* |
+
+**Three constraints that shape the implementation:**
+
+1. **`linux-vm` exists in exactly one region: `us-east-1`.** Both shared regions (`us` — the
+   default — and `eu`) return *"No runners are configured in region '<r>' for sandbox class
+   'linux-vm'"*. Scope is contained, though: `get` / `exec` / `list` / lifecycle are
+   **region-agnostic** (a default-target client reaches a `us-east-1` VM fine, and `list()` spans
+   regions). Only two calls are region-sensitive — `snapshot.create` needs `regionId`, and
+   `daytona.create` takes its region from the **client target** (`new Daytona({ target })`; the
+   `regionId` create param is ignored). So: a per-target client cache, not per-box region plumbing.
+
+2. **Volume mounts are silently ignored on `linux-vm`.** `create({ volumes: [...] })` is *accepted*,
+   the mount is echoed back in the sandbox DTO — and the path simply does not exist in the guest
+   (nothing in the mount table). Today every Daytona box mounts the org-scoped
+   `agentbox-credentials` volume, so **VM boxes must push credentials with `uploadFile` at create
+   instead** — the shape Hetzner already uses (it has no shared-volume primitive either).
+
+3. **The VM rootfs conversion strips setuid bits — `sudo` is mode `755`, so it cannot escalate.**
+   Only `mount`, `umount`, `su` keep theirs. This breaks the agent-static seed (installing
+   `/etc/claude-code/CLAUDE.md` needs root), and breaks the passwordless-sudo the in-box agent is
+   told it has. `create({ user: 'root' })` is **not** a way out — the sandbox fails to start.
+   The fix is the docker socket, which we already have: a privileged container repairs it, and the
+   repair **persists into the baked snapshot**:
+   ```
+   docker run --rm --privileged -v /:/host alpine \
+     sh -c 'chown root:root /host/usr/bin/sudo && chmod 4755 /host/usr/bin/sudo'
+   ```
+   Verified: `sudo -n id -un` → `root` afterwards, and it survives stop → snapshot → restore.
+   (Minor: `sudo` also warns `unable to resolve host sandbox` — add the hostname to `/etc/hosts` in
+   the same bake step.)
+
+**Also confirmed:** the declarative builder really is container-only. `snapshot.create({ image:
+Image.fromDockerfile(...), sandboxClass: LINUX_VM })` fails with `build snapshot: rpc error: code =
+Unauthenticated` — but *only once you're in a region that has VM runners*; elsewhere the region
+error masks it. So a VM base **must** come from a prebuilt registry image, which is why the bake
+targets the public multi-arch `ghcr.io/madarco/agentbox/box:sha-<fingerprint>` that
+`.github/workflows/box-image.yml` already publishes (amd64 present; anonymous pull confirmed).
+
+Consequence for §5.1.1 below: **no longer blocked** — cold snapshot-from-sandbox works on both
+classes now.
+
+---
+
 ## Already landed (for context — not in backlog)
 
 `create --provider daytona` · `list` (with `PROVIDER` column distinguishing `docker` / `daytona` rows) · `status` · `inspect` · `url --print` · `pause`/`unpause`/`stop`/`start` · `destroy` (with sync stop+delete) · `shell` (incl. `-- <cmd>` one-shot) · `claude attach`/`start`, `codex attach`/`start`, `opencode attach`/`start` (via SSH + tmux) · `cp` both directions (file + dir, via `provider.uploadPath`/`downloadPath`) · `download` bulk workspace pull (via `provider.downloadDirContents`) · in-box `agentbox-ctl git push` (host bundle pull-back executor with `askPrompt` gate) · `relay restart` rehydrates cloud pollers from persisted state · `agentbox daytona login` interactive credential setup (auto-prompts on first `--provider daytona`, persists to `~/.agentbox/secrets.env`, never harvests creds from project `.env` files).
@@ -151,8 +314,20 @@ Implementation: per-agent option added to the `.option(...)` chain + provider-na
 
 **API note**: Replaces the old `agentbox daytona publish-snapshot`, which used `sandbox._experimental_createSnapshot(name)` — Daytona deprecated that endpoint (`POST /api/sandbox/<id>/snapshot` now 404s). The new path uses the documented snapshot API (https://www.daytona.io/docs/en/snapshots/) and never touches the broken experimental method.
 
-### 5.1.1 ⏭️ Sandbox workspace-state checkpoint (deferred — no stable API)
-The user-facing need: snapshot a running box after `npm install` / build cache warm-up, so future `create`s skip the same setup. Daytona's `@daytonaio/sdk@0.179.0` has no stable API for this — only `sandbox._experimental_createSnapshot` (broken upstream as above). `@daytonaio/api-client@0.27.1`'s `sandbox-api` exposes zero snapshot endpoints; the only documented snapshot path is `snapshot.create({ name, image|buildInfo })`, which builds from an `Image`, not a running sandbox. **Workaround design** for later: capture `/workspace` as a tarball + build a derived snapshot whose Dockerfile COPYs the tarball into `/workspace`. Not in this iteration. Existing cloud-checkpoint code in `packages/sandbox-cloud/src/cloud-provider.ts` still calls `backend.createSnapshot(handle, name)` (the broken experimental method) — same upstream-blocked state.
+### 5.1.1 ✅ Sandbox workspace-state checkpoint (done — 2026-07-12)
+The user-facing need: snapshot a running box after `npm install` / build cache warm-up, so future `create`s skip the same setup.
+
+~~Deferred — no stable API~~. The endpoint this was blocked on is **live again** (Daytona changelog V0.165.0, "Sandbox Fork & Snapshot Endpoints"); it 404'd when this item was written. `sandbox._experimental_createSnapshot` now works on **both** sandbox classes, capturing the filesystem in ~2 s. No tarball workaround needed.
+
+Two properties made it more than a re-enable, so `daytonaProvider` overrides the generic cloud checkpoint (`makeDaytonaCheckpoint`, `packages/sandbox-daytona/src/checkpoint.ts`):
+
+- **A cold capture requires the sandbox STOPPED, and the API won't stop it for you.** So the backend stops → captures → starts. That kills the in-box `ctl`, dockerd, VNC and the agent's tmux session, so the checkpoint must `reconnect(box)` afterwards or the user is left with a running sandbox whose services are all dead. `agentbox checkpoint` now warns daytona users the box will reboot, as it already did for vercel.
+- **A snapshot name must never be reused** (see the PoC findings at the top). The Daytona-side name carries a nonce; the user-facing checkpoint name is unchanged, and the manifest maps one to the other.
+
+The hot (filesystem **+ memory**, linux-vm only) variant would skip the stop entirely, but it needs `includeMemory`, which the published TS SDK silently drops — out of reach until upstream fixes the wrapper. Tracked below.
+
+### 5.1.2 ⏭️ Hot (memory-inclusive) checkpoints — blocked on the SDK
+`linux-vm` supports a filesystem **+ memory** snapshot of a *running* sandbox — no stop, no reboot, and the restored box comes back with its process state intact. That is strictly better than the cold path for our use case (it's the true analogue of `docker commit`'s no-pause default). The REST layer supports it (`CreateSandboxSnapshot { name, includeMemory }`), but `@daytona/sdk@0.196.0`'s wrapper takes only `(name, timeout)` and **drops the third argument on the floor**, so it cannot be reached from the SDK. Options when we want it: call `@daytona/api-client`'s `SandboxApi.createSandboxSnapshot` directly, or wait for an upstream fix (worth filing).
 
 ### 5.2 ✅ Cloud boxes auto-start in-box dockerd (done)
 ~~Manual `dockerd &` / explicit `agentbox dockerd <box>`~~ — `cloudProvider.create()` and `cloudProvider.start()` now call `launchCloudDockerdDaemon({ backend, handle, timeoutMs: 60_000 })` automatically (best-effort, after `launchCloudCtlDaemon`, before VNC). Mirrors the docker provider's always-on pattern (`packages/sandbox-docker/src/create.ts:788` + `lifecycle.ts:276`).

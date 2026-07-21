@@ -3,9 +3,11 @@
  * `agentbox self-update`.
  *
  * Cadence (deliberately gentle, no nagging):
- *   - install:     skip runs 1, 2 and 5+; ask on the 3rd and 4th completed wizard.
- *   - self-update: ask on every run.
- *   - once the user has starred via `gh` (confirmed), never ask again.
+ *   - install:     skip runs 1, 2 and 5+; the 3rd and 4th completed wizards are
+ *                  the ask window (the 4th only fires if the 3rd went unanswered).
+ *   - self-update: ask until the user answers.
+ *   - once the user answers — yes or no — never ask again. A yes without an
+ *     authenticated `gh` opens the browser; we trust it and still stop asking.
  *
  * State lives at `~/.agentbox/star-prompt.json` (same dir as the first-run
  * marker). Self-contained — no dependency on `@agentbox/relay`, whose `gh`
@@ -27,9 +29,15 @@ interface StarState {
   version: typeof STATE_VERSION;
   installCount: number;
   starred: boolean;
+  answered: boolean;
 }
 
-const DEFAULT_STATE: StarState = { version: STATE_VERSION, installCount: 0, starred: false };
+const DEFAULT_STATE: StarState = {
+  version: STATE_VERSION,
+  installCount: 0,
+  starred: false,
+  answered: false,
+};
 
 function starStatePath(): string {
   return join(homedir(), '.agentbox', 'star-prompt.json');
@@ -44,6 +52,7 @@ function readStarState(): StarState {
       version: STATE_VERSION,
       installCount: typeof parsed.installCount === 'number' ? parsed.installCount : 0,
       starred: parsed.starred === true,
+      answered: parsed.answered === true,
     };
   } catch {
     // Corrupt/unreadable — treat as fresh rather than crashing install.
@@ -73,7 +82,7 @@ export async function maybePromptStar(opts: StarPromptOptions): Promise<void> {
   if (!process.stdout.isTTY) return;
 
   const state = readStarState();
-  if (state.starred) return;
+  if (state.starred || state.answered) return;
 
   let shouldPrompt: boolean;
   if (opts.trigger === 'install') {
@@ -90,6 +99,9 @@ export async function maybePromptStar(opts: StarPromptOptions): Promise<void> {
     message: 'Help support this open source project — would you like to star it on GitHub? Thanks!',
     initialValue: true,
   });
+  // Any explicit answer settles it — never re-ask. (Ctrl+C aborts before this.)
+  state.answered = true;
+  writeStarState(state);
   if (!yes) return;
 
   try {

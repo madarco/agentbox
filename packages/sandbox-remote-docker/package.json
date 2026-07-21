@@ -1,0 +1,47 @@
+{
+  "name": "@agentbox/sandbox-remote-docker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Remote Docker sandbox provider — CloudBackend over OpenSSH against a remote machine's Docker engine",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "eslint src test",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@agentbox/config": "workspace:*",
+    "@agentbox/core": "workspace:*",
+    "@agentbox/sandbox-cloud": "workspace:*",
+    "@agentbox/sandbox-core": "workspace:*",
+    "@agentbox/sandbox-docker": "workspace:*",
+    "@clack/prompts": "^0.9.0",
+    "commander": "^12.1.0",
+    "execa": "^9.5.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

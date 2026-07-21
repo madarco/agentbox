@@ -1,0 +1,59 @@
+{
+  "name": "@agentbox/hub",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AgentBox hub \u2014 the Web UI + relay core as a Next.js app (localhost, hetzner, or Vercel)",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "build:standalone": "AGENTBOX_HUB_STANDALONE=1 next build && node scripts/build-standalone.mjs",
+    "start": "next start",
+    "hub:dev": "tsx watch server.ts",
+    "hub:start": "next build && NODE_ENV=production tsx server.ts",
+    "db:auth-migrate": "tsx scripts/auth-migrate.ts",
+    "lint": "eslint app components lib",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "@agentbox/config": "workspace:*",
+    "@agentbox/core": "workspace:*",
+    "@agentbox/ctl": "workspace:*",
+    "@agentbox/relay": "workspace:*",
+    "@agentbox/sandbox-cloud": "workspace:*",
+    "@agentbox/sandbox-core": "workspace:*",
+    "@agentbox/sandbox-daytona": "workspace:*",
+    "@agentbox/sandbox-digitalocean": "workspace:*",
+    "@agentbox/sandbox-docker": "workspace:*",
+    "@agentbox/sandbox-e2b": "workspace:*",
+    "@agentbox/sandbox-hetzner": "workspace:*",
+    "@agentbox/sandbox-remote-docker": "workspace:*",
+    "@agentbox/sandbox-tenki": "workspace:*",
+    "@agentbox/sandbox-vercel": "workspace:*",
+    "@radix-ui/react-tooltip": "^1.2.12",
+    "better-auth": "^1.6.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.577.0",
+    "next": "^16.2.7",
+    "next-themes": "^0.4.6",
+    "pg": "^8.13.1",
+    "react": "^19",
+    "react-dom": "^19",
+    "tailwind-merge": "^3.2.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.14",
+    "@types/node": "^22.10.1",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^19.2.16",
+    "@types/react-dom": "^19.2.3",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.19.2",
+    "tw-animate-css": "^1.2.5",
+    "typescript": "^5.7.2"
+  }
+}

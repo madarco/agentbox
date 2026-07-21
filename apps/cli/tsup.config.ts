@@ -40,11 +40,11 @@ export default defineConfig({
   external: [
     '@homebridge/node-pty-prebuilt-multiarch',
     '@xterm/headless',
-    // @daytonaio/sdk pulls a heavy CJS tree (AWS S3 SDK, axios, dotenv, ...)
+    // @daytona/sdk pulls a heavy CJS tree (AWS S3 SDK, axios, dotenv, ...)
     // that uses dynamic `require()` — bundling it breaks esbuild's ESM
     // `__require` shim ("Dynamic require of 'util' is not supported"). Keep
     // it external; the published `agent-box` package lists it as a real dep.
-    '@daytonaio/sdk',
+    '@daytona/sdk',
     // @vercel/sandbox bundles undici, which uses dynamic `require('assert')`
     // etc. — same ESM `__require` breakage. External + real dep, like daytona.
     '@vercel/sandbox',
@@ -52,6 +52,10 @@ export default defineConfig({
     // constructor (`getCallerDirectory`), which esbuild's `__require` shim
     // throws on under ESM. External + real dep, like daytona/vercel.
     'e2b',
+    // `pg` is referenced only by @agentbox/relay's PostgresStore (hosted
+    // control plane), reached via a lazy `import('pg')` the laptop CLI never
+    // hits. Keep it external + unlisted so the CLI bundle stays pg-free.
+    'pg',
   ],
   noExternal: [/^@agentbox\//],
   banner: {

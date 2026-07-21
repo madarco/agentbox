@@ -9,6 +9,7 @@ import {
 import { renderEndpointLines } from '../endpoints-render.js';
 import { fmtBytes } from '../fmt.js';
 import { providerForBox } from '../provider/registry.js';
+import { agentboxAliasFor, readAgentboxSshAlias } from '@agentbox/sandbox-core';
 import { watchRender } from '../watch.js';
 import { fetchLive, renderLiveSections, renderPersistedSections } from './_status-render.js';
 import { handleLifecycleError } from './_errors.js';
@@ -153,6 +154,8 @@ async function renderCloudText(box: BoxRecord): Promise<string> {
   const provider = await providerForBox(box);
   const state = await provider.probeState(box);
   const persisted = await readBoxStatus(box);
+  const alias = agentboxAliasFor(box.name);
+  const sshAlias = await readAgentboxSshAlias(alias);
   const lim = box.resourceLimits;
   const lines: string[] = [
     `id            ${box.id}`,
@@ -170,6 +173,8 @@ async function renderCloudText(box: BoxRecord): Promise<string> {
     `web preview   ${webPreviewLine(box)}`,
     `relay preview ${box.cloud?.relayPreviewUrl ?? '(unresolved)'}`,
     `bridge token  ${box.cloud?.bridgeToken ? '(set)' : '(unset)'}`,
+    `ssh alias     ${alias}${sshAlias ? '' : ` (run \`agentbox shell ${box.name} --ssh-config\` to write it)`}`,
+    `ssh identity  ${sshAlias?.identityFile ?? '(none — write the alias first)'}`,
     `playwright    ${box.withPlaywright ? 'yes' : 'no'}`,
     `env files     ${box.withEnv ? 'yes' : 'no'}`,
     `mem limit     ${lim?.memoryBytes ? fmtBytes(lim.memoryBytes) : 'unlimited'}`,

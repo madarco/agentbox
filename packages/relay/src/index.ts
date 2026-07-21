@@ -38,15 +38,63 @@ export { HostActionQueue } from './host-action-queue.js';
 export { CloudBoxPoller, CloudBoxPollers, type CloudBoxPollerDeps } from './cloud-poller.js';
 export { BoxRegistry, EventBuffer } from './registry.js';
 export {
+  CredentialsFanout,
+  CREDENTIALS_UPDATED_EVENT,
+  type CredentialsFanoutDeps,
+  type CredentialsHandleResult,
+} from './credentials-fanout.js';
+export { type Store, type PromptRow } from './store/store.js';
+export { MemoryStore, type MemoryStoreParts } from './store/memory-store.js';
+export {
+  gateApproval,
+  type ApprovalGate,
+  type GateDeps,
+  type PromptMode,
+} from './permission.js';
+export { resolveWorktree } from './worktree.js';
+export { leaseTokenResult } from './lease.js';
+export { drainOneCreateJob, drainCreateJobs, type CreateBoxFn } from './create-worker.js';
+export { type CreateJobRequest, type CreateJobRow } from './store/store.js';
+export { toAuthedHttpsUrl, parseGitRemote, repoSlugFromRemote } from './git-pat.js';
+export {
+  handleRelayRequest,
+  type ControlPlaneDeps,
+  type GenericRequest,
+  type RelayResponse,
+} from './core/handler.js';
+export {
+  PostgresStore,
+  type PostgresStoreOptions,
+  SCHEMA_SQL,
+} from './store/postgres-store.js';
+export { RemoteStore, type RemoteStoreOptions } from './store/remote-store.js';
+export {
+  applyStoreOp,
+  isStoreRpcMethod,
+  type StoreRpcRequest,
+  type StoreRpcResponse,
+} from './store/store-rpc.js';
+export { makeStore } from './store/index.js';
+export {
   askPrompt,
   type AutoApprovePolicy,
   isPromptAnswerBody,
+  type PendingApproval,
   PendingPrompts,
   PromptSubscribers,
   type PromptResolution,
 } from './prompts.js';
+export { HubNotifier } from './hub-notifier.js';
 export { BoxNotices } from './notices.js';
 export { hashRpcParams, HostInitiatedTokens } from './host-initiated.js';
+export {
+  appJwt,
+  GitHubAppLeaser,
+  loadGitHubAppConfig,
+  type GitHubAppConfig,
+  type GitHubAppLeaserOptions,
+  type LeasedToken,
+} from './github-app.js';
 export {
   _resetIntegrationReadyCacheForTests,
   assertIntegrationReady,
@@ -93,6 +141,7 @@ export {
   type RelayServerHandle,
   type RelayServerOptions,
 } from './server.js';
+export { startRelayDaemon, type RelayDaemonHandle } from './daemon.js';
 export {
   loadAutopauseConfig,
   selectBoxesToPause,
@@ -118,25 +167,38 @@ export {
   defaultCountRunningBoxes,
   defaultCountWorkingBoxes,
   deleteJob,
+  enqueueQueueJob,
+  enqueuePrepareJob,
   loadQueue,
   loadQueueConfig,
   occupiesWorkingSlot,
+  PREPARE_MAX_CONCURRENT,
   QUEUE_DIR,
   QUEUE_LOGS_DIR,
   queueLogPath,
+  queueLoginCodePath,
   readActiveAgent,
   readJob,
+  countRunningPrepareJobs,
   selectNextRunnable,
   selectNextRunnableByWorking,
+  selectNextRunnablePrepare,
   startQueueLoop,
   STARTUP_GRACE_MS,
+  takeQueueLoginCode,
   waitForFile,
   writeJob,
+  writeQueueLoginCode,
   type CountWorkingFn,
+  type EnqueueQueueJobInput,
+  type EnqueueQueueJobResult,
+  type EnqueuePrepareJobInput,
   type QueueAgentKind,
   type QueueConfig,
   type QueueJob,
   type QueueJobCreateOpts,
+  type QueueJobLogin,
+  type QueueJobPrepare,
   type QueueJobOpenTerminal,
   type QueueJobStatus,
   type QueueLoopDeps,

@@ -1,14 +1,6 @@
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, resolve } from 'node:path';
-import { hostOpenCommand } from '@agentbox/sandbox-core';
+import { resolve } from 'node:path';
+import { hostOpenCommand, writeManagedSecrets, type CredSetResult } from '@agentbox/sandbox-core';
 import {
   cancel,
   confirm,
@@ -198,48 +190,51 @@ function persistCliCredentials(ids: { teamId: string; projectId: string }): void
  * run uses the new values immediately.
  */
 function writeManaged(record: Record<string, string>): void {
-  for (const k of MANAGED_KEYS) delete process.env[k];
-  for (const [k, v] of Object.entries(record)) process.env[k] = v;
+  writeManagedSecrets(MANAGED_KEYS, record);
+}
 
-  const path = secretsPath();
-  mkdirSync(dirname(path), { recursive: true });
-
-  let existing = '';
-  if (existsSync(path)) {
-    try {
-      existing = readFileSync(path, 'utf8');
-    } catch {
-      existing = '';
-    }
+/**
+ * Non-interactive credential set (the headless path the hub drives). Token mode
+ * only — the interactive browser (`sbx login`) flow can't run headless.
+ * Validates `{ token }` against the Vercel API (`getUser`), scopes to the given
+ * `teamId` (or the token's default team), optionally records `projectId`, then
+ * persists to `~/.agentbox/secrets.env`. Writing `VERCEL_TOKEN` clears any prior
+ * CLI-login marker (`VERCEL_AUTH_SOURCE`).
+ */
+export async function setVercelCredentials(
+  fields: Record<string, string>,
+): Promise<CredSetResult> {
+  ensureVercelEnvLoaded();
+  const token = (fields.token ?? '').trim();
+  const projectId = (fields.projectId ?? '').trim() || undefined;
+  let teamId = (fields.teamId ?? '').trim() || undefined;
+  if (!token) {
+    return { ok: false, error: 'token is required', status: { configured: false } };
   }
-  const kept = existing
-    .split(/\r?\n/)
-    .filter((line) => {
-      const stripped = line.startsWith('export ') ? line.slice('export '.length) : line;
-      const eq = stripped.indexOf('=');
-      if (eq <= 0) return true;
-      const key = stripped.slice(0, eq).trim();
-      return !(MANAGED_KEYS as readonly string[]).includes(key);
-    })
-    .join('\n')
-    .replace(/\s+$/u, '');
-
-  const lines = Object.entries(record).map(([k, v]) => `${k}=${v}`);
-  const body = (kept ? `${kept}\n` : '') + lines.join('\n') + '\n';
-
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, body, { mode: 0o600 });
   try {
-    chmodSync(tmp, 0o600);
-  } catch {
-    // chmod best-effort; writeFileSync mode already covers most filesystems.
+    const user = await getUser(token);
+    if (!teamId) teamId = user.defaultTeamId;
+  } catch (err) {
+    return {
+      ok: false,
+      error: `token rejected by Vercel: ${err instanceof Error ? err.message : String(err)}`,
+      status: { configured: false },
+    };
   }
-  renameSync(tmp, path);
-  try {
-    chmodSync(path, 0o600);
-  } catch {
-    // ignore — already attempted above
+  if (!teamId) {
+    return {
+      ok: false,
+      error: 'could not determine a Vercel team — provide teamId',
+      status: { configured: false },
+    };
   }
+  const record: Record<string, string> = { VERCEL_TOKEN: token, VERCEL_TEAM_ID: teamId };
+  if (projectId) record.VERCEL_PROJECT_ID = projectId;
+  writeManaged(record);
+  return {
+    ok: true,
+    status: { configured: true, label: projectId ? 'token' : 'token (no project)' },
+  };
 }
 
 /**
@@ -351,6 +346,28 @@ async function runCliLogin(): Promise<void> {
  */
 function resolveCliTeamId(defaultTeamId?: string): string | null {
   return process.env.VERCEL_TEAM_ID ?? readCliCurrentTeam() ?? defaultTeamId ?? null;
+}
+
+/**
+ * Resolve a token + teamId for direct Vercel REST API calls (the Git-backed
+ * control-plane deploy), reusing the same sources as the login flow: a
+ * `VERCEL_TOKEN` (env / secrets.env) else the CLI session's live access token;
+ * teamId from `VERCEL_TEAM_ID` / the CLI's selected team / the account default.
+ * Returns null when no token is available (caller tells the user to log in).
+ */
+export async function resolveVercelApiAuth(): Promise<{ token: string; teamId: string | undefined } | null> {
+  ensureVercelEnvLoaded();
+  const token = process.env.VERCEL_TOKEN ?? readCliAuth()?.token;
+  if (!token) return null;
+  let teamId: string | undefined = process.env.VERCEL_TEAM_ID ?? readCliCurrentTeam() ?? undefined;
+  if (!teamId) {
+    try {
+      teamId = (await getUser(token)).defaultTeamId;
+    } catch {
+      /* personal scope / unreachable — proceed without a teamId */
+    }
+  }
+  return { token, teamId };
 }
 
 /**

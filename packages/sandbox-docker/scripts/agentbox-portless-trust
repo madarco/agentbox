@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Trust a Portless self-signed CA *inside the box* so every in-box HTTPS client
+# accepts the symmetric `https://<box>.localhost` URL.
+#
+# Why this exists: when the host Portless proxy runs in TLS mode, AgentBox
+# serves the same `https://<box>.localhost` URL inside the box (Hetzner: an
+# in-VPS mirror proxy with its own CA at /root/.portless/ca.pem; Docker: the
+# host CA bind-mounted at /home/vscode/.portless/ca.pem). `portless proxy start`
+# at best trusts the CA in the Linux *system* store — it does NOT populate the
+# per-user NSS database that Chromium / Playwright-Chromium read on Linux, so
+# the VNC browser window and Playwright fail with a cert error. We close that
+# gap here by trusting the CA in BOTH the system store and the box user's NSS db.
+#
+# Usage: agentbox-portless-trust <ca-pem-path> [box-user]
+#   box-user defaults to `vscode` (the account that runs the agents / browser).
+# Idempotent and best-effort: prints the installed system CA path on stdout
+# (for NODE_EXTRA_CA_CERTS) and never exits non-zero — a trust failure must not
+# break box create/resume.
+
+set -uo pipefail
+
+CA_SRC="${1:-}"
+BOX_USER="${2:-vscode}"
+SYS_CA_DST="/usr/local/share/ca-certificates/agentbox-portless-ca.crt"
+NSS_NICK="agentbox-portless-ca"
+
+warn() { echo "agentbox-portless-trust: $*" >&2; }
+
+if [ -z "$CA_SRC" ] || [ ! -r "$CA_SRC" ]; then
+  warn "CA file '$CA_SRC' missing or unreadable — nothing to trust"
+  exit 0
+fi
+
+# --- System store (curl / wget / system OpenSSL / Node via the bundle) --------
+# Copy to a world-readable path first; the source may be root-only
+# (/root/.portless/ca.pem) and NODE_EXTRA_CA_CERTS / NSS need to read it as the
+# box user.
+if install -m 0644 "$CA_SRC" "$SYS_CA_DST" 2>/dev/null; then
+  if command -v update-ca-certificates >/dev/null 2>&1; then
+    update-ca-certificates >/dev/null 2>&1 || warn "update-ca-certificates failed (system store may be stale)"
+  fi
+else
+  warn "could not stage CA to $SYS_CA_DST"
+fi
+
+# --- Box user's NSS DB (Chromium / Playwright-Chromium on Linux) --------------
+# Chromium reads sql:\$HOME/.pki/nssdb for the user it runs as. certutil ships in
+# libnss3-tools (baked into the box images).
+if command -v certutil >/dev/null 2>&1; then
+  BOX_HOME="$(getent passwd "$BOX_USER" 2>/dev/null | cut -d: -f6)"
+  if [ -n "$BOX_HOME" ]; then
+    NSSDB="$BOX_HOME/.pki/nssdb"
+    # Run the NSS mutations as the box user so the db stays user-owned, even
+    # when this script runs as root (the common case: `exec --user root`).
+    if [ "$(id -un)" = "$BOX_USER" ]; then
+      run_as_user() { bash -c "$1"; }
+    else
+      run_as_user() { sudo -u "$BOX_USER" -H bash -c "$1"; }
+    fi
+    run_as_user "mkdir -p '$NSSDB'" 2>/dev/null || warn "could not create $NSSDB"
+    # Initialize an empty (password-less) db if none exists yet.
+    if [ ! -f "$NSSDB/cert9.db" ]; then
+      run_as_user "certutil -d sql:'$NSSDB' -N --empty-password" 2>/dev/null \
+        || warn "certutil -N failed"
+    fi
+    # Delete-then-add keeps re-runs (resume) idempotent.
+    run_as_user "certutil -d sql:'$NSSDB' -D -n '$NSS_NICK'" 2>/dev/null || true
+    if run_as_user "certutil -d sql:'$NSSDB' -A -t 'C,,' -n '$NSS_NICK' -i '$SYS_CA_DST'" 2>/dev/null; then
+      :
+    else
+      warn "certutil -A failed — in-box Chromium may not trust the CA"
+    fi
+  else
+    warn "user '$BOX_USER' not found — skipping NSS trust"
+  fi
+else
+  warn "certutil not found (libnss3-tools missing) — skipping NSS trust"
+fi
+
+# Emit the system CA path for the caller to wire into NODE_EXTRA_CA_CERTS.
+echo "$SYS_CA_DST"
+exit 0

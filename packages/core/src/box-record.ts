@@ -5,7 +5,9 @@
  * live flat (Docker, for historical reasons) or under `cloud` (cloud backends).
  */
 
+import type { InboundPolicy } from './cloud-backend.js';
 import type { BoxRuntimeState } from './provider.js';
+import type { SyncTopology } from './sync/types.js';
 
 /** Sandbox backend a box runs on. Open-ended so future providers need no core change. */
 export type ProviderName = 'docker' | 'daytona' | 'hetzner' | (string & {});
@@ -121,6 +123,103 @@ export interface CloudBoxFields {
    * default). Absent on backends without a session timeout / pre-feature records.
    */
   sessionTimeoutMs?: number;
+  /**
+   * Actual resources the backend provisioned, read back from the create
+   * response (Hetzner reports the real `server_type` cores/memory/disk). Shown
+   * by `agentbox status --inspect`. Absent on backends that can't report it and
+   * on pre-feature records → readers fall back to the provider's static defaults.
+   */
+  resources?: { cpu?: number; memory?: number; disk?: number };
+  /**
+   * Inbound-access policy for VPS boxes (hetzner / digitalocean per-box
+   * firewall). Persisted so a host-egress-IP drift re-sync (`repairReachability`
+   * / `agentbox inbound`) recomputes `sources ∪ current-host-egress` without
+   * losing the whitelist, and so `agentbox inbound --show` / `connect` can
+   * report the box's current exposure. Absent on non-VPS backends / pre-feature
+   * records → treated as `locked`.
+   */
+  inbound?: InboundPolicy;
+  /**
+   * Daytona sandbox class this box actually booted as (`linux-vm` | `container`).
+   * Recorded from the class of the *snapshot* it booted from, not from config —
+   * a user who flips `box.daytonaClass` while `box.imageDaytona` still points at
+   * a snapshot of the other class must not have us lie about the running box.
+   *
+   * Threaded back into `CloudHandle.sandboxClass` so lifecycle ops can branch:
+   * a VM pauses and cannot be archived, a container archives and cannot be
+   * paused. Absent on non-Daytona backends and pre-feature records.
+   */
+  sandboxClass?: string;
+  /**
+   * True when this box's `/workspace` was seeded from the host checkout (the
+   * laptop `create` path), i.e. it has a real fork base shared with the host.
+   * Left unset for `inBoxClone` / plane boxes (they clone in-box from a leased
+   * URL with no host fork base). Gates the session-start live-box resync — only
+   * host-seeded boxes can merge the host's current state back in (Phase 7.5).
+   */
+  hostSeeded?: boolean;
+  /**
+   * The box's per-box branch (`agentbox/<name>`, or `--use-branch <b>`). The
+   * merge target branch for the live-box resync; re-derived layout aside, this
+   * is the one piece resync can't recover from the box alone.
+   */
+  workspaceBranch?: string;
+  /**
+   * Last branch the HOST sanctioned for this cloud box (defaults to
+   * `workspaceBranch`, updated by host `agentbox git checkout`/`branch`/`pull
+   * <branch>`). The cloud push gate auto-approves a push only to a scratch
+   * branch OR this value — the cloud analogue of the docker registry's
+   * `BoxWorktree.sanctionedBranch`. Absent → treated as `workspaceBranch`.
+   */
+  sanctionedBranch?: string;
+  /**
+   * The box's resolved sync federation shape (`resolveSyncTopology`). `'cloud'`
+   * for a classic host-synced box, `'control-plane'` when its live relay is a
+   * hosted control plane (the box forwards `/rpc` to the plane and leases push
+   * tokens directly). Persisted so the value is stable across resumes.
+   */
+  topology?: SyncTopology;
+  /**
+   * The hosted control-plane base URL this box points at, when
+   * `topology === 'control-plane'`. Persisted (not re-derived from config) so a
+   * resume re-kick on a host whose config has changed/lacks the URL still
+   * re-threads the box's forwarder upstream + `AGENTBOX_GIT_LEASE` correctly.
+   */
+  controlPlaneUrl?: string;
+  /**
+   * Git push routing (`git.pushMode`): `'auto' | 'relay' | 'lease' | 'direct'`.
+   * Persisted (not re-derived from config) so a resume re-kick re-threads
+   * `AGENTBOX_GIT_LEASE` / `AGENTBOX_GIT_DIRECT` correctly even if the host
+   * config changed. Mirrors config's `GitPushMode`.
+   */
+  gitPushMode?: 'auto' | 'relay' | 'lease' | 'direct';
+}
+
+/**
+ * Last resolved SSH connection target for a box — host/user, the per-box
+ * identity file (identity-authed providers: docker localhost sshd, Hetzner),
+ * and an optional port (docker publishes its sshd on an ephemeral loopback
+ * port; cloud providers use the default 22). Persisted on `BoxRecord.ssh`
+ * whenever we're already online (create/start/code/open/shell) so
+ * `~/.agentbox/ssh/config` can be regenerated purely from state — the
+ * regenerate never hits a provider API or wakes a paused box. The host IP /
+ * loopback port can change across stop/start, so it is refreshed on start/resume.
+ * Absent for providers with no SSH.
+ */
+export interface SshTargetRecord {
+  host: string;
+  user: string;
+  identityFile?: string;
+  port?: number;
+  /**
+   * SSH jump host (`ProxyJump`), for a box that is not directly reachable but
+   * sits behind a machine that is. remote-docker's box is a container on someone
+   * else's engine: its sshd is published on THAT machine's loopback, so ssh
+   * hops through the engine and dials `127.0.0.1:<port>` from there. Spelled as
+   * an ssh destination (`[user@]host[:port]` or an `~/.ssh/config` alias).
+   * Absent for providers whose box is directly reachable.
+   */
+  proxyJump?: string;
 }
 
 export interface GitWorktreeRecord {
@@ -141,6 +240,16 @@ export interface GitWorktreeRecord {
   gitWorktreePath: string;
   /** Branch the worktree was created on, e.g. `agentbox/<box-name>`. */
   branch: string;
+  /**
+   * The last branch the HOST put this box on — its create-time `branch`,
+   * updated by host-driven `agentbox git checkout`/`branch`/`pull <branch>`.
+   * Distinct from `branch` (which stays the immutable scratch identity used by
+   * host-only land, checkout guards, and upstream-sync skip): the relay
+   * auto-approves a push only to a scratch branch OR this sanctioned branch,
+   * so an in-box agent self-switching to `main` and pushing still prompts.
+   * Absent on records written before this field existed → treated as `branch`.
+   */
+  sanctionedBranch?: string;
   /** Workspace-relative path the repo was found at (empty string for root). */
   relPathFromWorkspace: string;
 }
@@ -148,6 +257,13 @@ export interface GitWorktreeRecord {
 export interface BoxRecord {
   id: string;
   name: string;
+  /**
+   * Cosmetic user-chosen label, set via `agentbox status <box> --set-name`.
+   * Purely for display and lookup — unlike `name` it does NOT drive the
+   * container, git branch, or Portless URL. Absent means "fall back to name".
+   * See docs/state.md.
+   */
+  displayName?: string;
   /**
    * Sandbox backend the box runs on. Absent on records written before the
    * multi-provider split — `readState` migrates those to `'docker'` on read.
@@ -211,6 +327,15 @@ export interface BoxRecord {
    */
   autoApproveHostActions?: boolean;
   /**
+   * Resolved `box.autoApproveSafeHostActions` at create time (default true).
+   * Forwarded to the relay so the SAFE subset of host actions (open PR, PR
+   * comments, sanctioned-branch push, contained non-secret file copy, CI
+   * rerun, checkpoint, integration writes) auto-resolves without a prompt.
+   * Absent is treated as enabled (default on) by the relay. Persisted so a
+   * `relay` rehydrate re-registers with the same policy.
+   */
+  autoApproveSafeHostActions?: boolean;
+  /**
    * Carry summary recorded at create time: which host paths were copied into
    * the box from `agentbox.yaml`'s `carry:` block. Audit trail for inspect
    * (the actual file content is not retained — only the src/dest pairs and
@@ -237,6 +362,18 @@ export interface BoxRecord {
   webContainerPort?: number;
   /** Host port mapped to container :80 (Docker). */
   webHostPort?: number;
+  /** In-box localhost sshd is enabled for this box (Docker). */
+  sshEnabled?: boolean;
+  /** Container-side sshd port (22). Docker. */
+  sshContainerPort?: number;
+  /** Ephemeral loopback host port mapped to the container's sshd (Docker). */
+  sshHostPort?: number;
+  /**
+   * Last resolved SSH connection target. Regenerated into `~/.agentbox/ssh/config`
+   * by `syncAgentboxSshConfig`. Docker: `127.0.0.1` + the per-box key + the
+   * ephemeral `sshHostPort`; cloud (Hetzner): the VPS IP + per-box key.
+   */
+  ssh?: SshTargetRecord;
   /** Portless route name registered for this box's web port. Docker only. */
   portlessAlias?: string;
   /** Full user-facing URL the Portless proxy serves for this box. Docker only. */
@@ -278,6 +415,15 @@ export interface BoxRecord {
   docker?: DockerBoxFields;
   /** Cloud-backend-specific fields. Present only for cloud providers. */
   cloud?: CloudBoxFields;
+  /**
+   * The agent last launched in this box (`agentbox claude` / `codex` /
+   * `opencode`). Recorded on every launch (foreground + queued). Durable, unlike
+   * the in-box session pointers which are cleared on the running->stopped tmux
+   * edge — so it's the signal `agentbox recover` uses to know which agent to
+   * relaunch/attach, and the only such signal for an adopted box with no live
+   * session.
+   */
+  lastAgent?: 'claude' | 'codex' | 'opencode';
   createdAt: string; // ISO-8601
 }
 

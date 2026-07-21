@@ -10,7 +10,7 @@ import {
   setConfigValue,
   unsetConfigValue,
 } from '@agentbox/config';
-import type { ProviderKind } from '@agentbox/config';
+import { CLOUD_PROVIDER_NAMES, type ProviderKind } from '@agentbox/config';
 import type { BoxRecord } from '@agentbox/core';
 import {
   clearRelayNotice,
@@ -26,32 +26,32 @@ import {
 import type { CheckpointInfo } from '@agentbox/sandbox-docker';
 import {
   listAllCloudCheckpoints,
+  listCloudBackendDirs,
   listCloudCheckpoints,
   resolveCloudCheckpoint,
 } from '@agentbox/sandbox-cloud';
 import type { CloudCheckpointInfo } from '@agentbox/sandbox-cloud';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
+import { loadProviderModule } from '../provider/loaders.js';
 import { handleLifecycleError } from './_errors.js';
 
 /** Cloud backends that store snapshots under ~/.agentbox/cloud-checkpoints/<backend>/. */
-const CLOUD_BACKENDS = ['daytona', 'hetzner', 'vercel', 'e2b', 'tenki'] as const;
-type CloudBackend = (typeof CLOUD_BACKENDS)[number];
+const CLOUD_BACKENDS = CLOUD_PROVIDER_NAMES;
+type CloudBackend = ProviderKind;
+
+/**
+ * The built-in cloud backends unioned with any on-disk checkpoint-store dir, so
+ * `list`/`rm`/`set-default` also cover **plugin** cloud providers (whose names
+ * aren't in the built-in `CLOUD_PROVIDER_NAMES`). A store is just named dirs.
+ */
+async function allCloudBackends(): Promise<string[]> {
+  return [...new Set<string>([...CLOUD_BACKENDS, ...(await listCloudBackendDirs())])];
+}
 
 /** Lazily resolve a cloud provider's checkpoint capability (dynamic import keeps SDKs out of the hot path). */
-async function cloudProviderFor(backend: CloudBackend): Promise<import('@agentbox/core').Provider> {
-  switch (backend) {
-    case 'daytona':
-      return (await import('@agentbox/sandbox-daytona')).daytonaProvider;
-    case 'hetzner':
-      return (await import('@agentbox/sandbox-hetzner')).hetznerProvider;
-    case 'vercel':
-      return (await import('@agentbox/sandbox-vercel')).vercelProvider;
-    case 'e2b':
-      return (await import('@agentbox/sandbox-e2b')).e2bProvider;
-    case 'tenki':
-      return (await import('@agentbox/sandbox-tenki')).tenkiProvider;
-  }
+async function cloudProviderFor(backend: string): Promise<import('@agentbox/core').Provider> {
+  return (await loadProviderModule(backend)).provider;
 }
 
 /** Footer warning shown in attached sessions while a checkpoint runs. */
@@ -88,7 +88,7 @@ const createSub = new Command('create')
     '--replace',
     "if a checkpoint with the same name exists, rm it first (idempotent recapture; safe to retry when the previous run's stdout was lost)",
   )
-  .option('-y, --yes', 'skip the vercel "box will reboot" confirmation prompt')
+  .option('-y, --yes', 'skip the vercel/daytona "box will reboot" confirmation prompt')
   .action(async (idOrName: string | undefined, opts: CreateOpts) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
@@ -194,7 +194,7 @@ async function listAllProjects(): Promise<void> {
 
   const dockerGroups = await listAllCheckpoints();
   const cloudGroups = await Promise.all(
-    CLOUD_BACKENDS.map(async (backend) => ({
+    (await allCloudBackends()).map(async (backend) => ({
       backend,
       groups: await listAllCloudCheckpoints(backend),
     })),
@@ -204,7 +204,7 @@ async function listAllProjects(): Promise<void> {
   interface Merged {
     projectRoot?: string;
     docker: CheckpointInfo[];
-    cloud: { backend: CloudBackend; items: CloudCheckpointInfo[] }[];
+    cloud: { backend: string; items: CloudCheckpointInfo[] }[];
   }
   const bySegment = new Map<string, Merged>();
   const ensure = (segment: string): Merged => {
@@ -239,13 +239,15 @@ async function listAllProjects(): Promise<void> {
     // `*default` marker is cosmetic, so a single corrupt config falls back to
     // empty defaults rather than aborting the whole global listing.
     let defDocker = '';
-    const defCloud = new Map<CloudBackend, string>();
+    const defCloud = new Map<string, string>();
     if (m.projectRoot) {
       const cfg = await loadEffectiveConfig(m.projectRoot).catch(() => null);
       if (cfg) {
         defDocker = resolveDefaultCheckpoint(cfg.effective, 'docker');
         for (const { backend } of m.cloud) {
-          defCloud.set(backend, resolveDefaultCheckpoint(cfg.effective, backend));
+          // A plugin backend has no per-provider default key; resolveDefaultCheckpoint
+          // returns the cross-provider fallback for it (cast is a no-op at runtime).
+          defCloud.set(backend, resolveDefaultCheckpoint(cfg.effective, backend as CloudBackend));
         }
       }
     }
@@ -278,9 +280,9 @@ const lsSub = new Command('ls')
       // Merge in cloud-backend checkpoints. Each cloud provider stores its
       // snapshots under ~/.agentbox/cloud-checkpoints/<backend>/.
       const cloudLists = await Promise.all(
-        CLOUD_BACKENDS.map(async (backend) => ({
+        (await allCloudBackends()).map(async (backend) => ({
           backend,
-          def: resolveDefaultCheckpoint(cfg.effective, backend),
+          def: resolveDefaultCheckpoint(cfg.effective, backend as CloudBackend),
           items: await listCloudCheckpoints(projectRoot, backend),
         })),
       );
@@ -345,7 +347,7 @@ const setDefaultSub = new Command('set-default')
         (providerArg === undefined || providerArg === 'docker') &&
         (await listCheckpoints(projectRoot)).some((c) => c.name === ref);
       let cloudHit = false;
-      for (const backend of CLOUD_BACKENDS) {
+      for (const backend of await allCloudBackends()) {
         if (providerArg !== undefined && providerArg !== backend) continue;
         if (await resolveCloudCheckpoint(projectRoot, backend, ref)) {
           cloudHit = true;
@@ -374,8 +376,8 @@ const rmSub = new Command('rm')
       // it. Docker is always a candidate (removeCheckpoint no-ops if absent);
       // cloud stores are pre-resolved so we only act on backends that have it.
       const wantDocker = !opts.provider || opts.provider === 'docker';
-      const cloudHits: CloudBackend[] = [];
-      for (const backend of CLOUD_BACKENDS) {
+      const cloudHits: string[] = [];
+      for (const backend of await allCloudBackends()) {
         if (opts.provider && opts.provider !== backend) continue;
         if (await resolveCloudCheckpoint(projectRoot, backend, ref)) cloudHits.push(backend);
       }
@@ -395,6 +397,7 @@ const rmSub = new Command('rm')
           process.stdout.write(`removed docker checkpoint ${ref}\n`);
         }
       }
+      const failedBackends: string[] = [];
       for (const backend of cloudHits) {
         try {
           const provider = await cloudProviderFor(backend);
@@ -402,12 +405,20 @@ const rmSub = new Command('rm')
           any = true;
           process.stdout.write(`removed ${backend} checkpoint ${ref}\n`);
         } catch (err) {
+          failedBackends.push(backend);
           log.warn(
             `${backend} checkpoint remove failed: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
       }
-      if (!any) throw new Error(`checkpoint not found: ${ref}`);
+      if (!any) {
+        // The ref WAS resolved on disk (cloudHits) but every removal failed —
+        // report that, not a misleading "not found". Only truly-absent refs 404.
+        if (failedBackends.length > 0) {
+          throw new Error(`failed to remove checkpoint ${ref} from: ${failedBackends.join(', ')}`);
+        }
+        throw new Error(`checkpoint not found: ${ref}`);
+      }
 
       // Don't leave any default-checkpoint pointer dangling at a now-deleted
       // ref — future `agentbox create` would fail to resolve it. Sweep the
@@ -475,15 +486,22 @@ async function runCloudCheckpointCreate(box: BoxRecord, opts: CreateOpts): Promi
     throw new Error(`provider '${box.provider ?? 'docker'}' doesn't support checkpoints`);
   }
 
-  // Vercel snapshots stop + reboot the box (the live tmux/agent process doesn't
-  // survive; on-disk state does). Warn + confirm before yanking it. Only for a
-  // direct host invocation with a TTY — the relay spawns this same command
-  // headless for the in-box trigger (stdin ignored → isTTY false), and that
-  // path is already gated by a wrapper-visible prompt in the relay. Other
-  // providers snapshot without stopping, so they stay prompt-free.
-  if ((box.provider ?? 'docker') === 'vercel' && !opts.yes && process.stdin.isTTY) {
+  // Vercel and Daytona snapshots stop + reboot the box (the live tmux/agent
+  // process doesn't survive; on-disk state does) — Daytona because a cold,
+  // filesystem-only capture requires the sandbox stopped and the API won't stop
+  // it for you. Warn + confirm before yanking it. Only for a direct host
+  // invocation with a TTY — the relay spawns this same command headless for the
+  // in-box trigger (stdin ignored → isTTY false), and that path is already gated
+  // by a wrapper-visible prompt in the relay. Other providers snapshot without
+  // stopping, so they stay prompt-free.
+  const providerName = box.provider ?? 'docker';
+  if (
+    (providerName === 'vercel' || providerName === 'daytona') &&
+    !opts.yes &&
+    process.stdin.isTTY
+  ) {
     const ok = await confirm({
-      message: 'Create checkpoint? The vercel box will stop and reboot.',
+      message: `Create checkpoint? The ${providerName} box will stop and reboot.`,
       initialValue: false,
     });
     if (!ok) {

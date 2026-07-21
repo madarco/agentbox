@@ -5,11 +5,14 @@ import {
   type RelayServerHandle,
 } from '@agentbox/relay';
 import { loadConfig } from '../config.js';
+import { writeRelayEnvFile } from '../relay-env.js';
+import { selectInBoxTransport } from './in-box-transport.js';
 import { startCodexScraper, type CodexScraperHandle } from '../codex-scraper.js';
 import { startClaudeScraper, type ClaudeScraperHandle } from '../claude-scraper.js';
 import { Supervisor } from '../supervisor.js';
 import { startServer } from '../socket.js';
 import { StatusReporter } from '../status-reporter.js';
+import { CredentialsWatcher } from '../credentials-watcher.js';
 import {
   startBoxRelayForwarder,
   type BoxRelayForwarderHandle,
@@ -52,6 +55,9 @@ export const daemonCommand = new Command('daemon')
   .option('--workspace <path>', 'cwd for service processes', '/workspace')
   .action(async (opts: DaemonOptions) => {
     const cfg = await loadConfig(opts.config);
+    // Unknown keys never block startup — an older box image must still boot on a
+    // workspace whose agentbox.yaml uses keys a newer CLI added.
+    for (const w of cfg.warnings) process.stderr.write(`agentbox-ctl: warning: ${w}\n`);
     // Cloud backends that can't expose port 80 (Vercel) set AGENTBOX_WEB_PROXY_PORT
     // so the WebProxy binds a reachable non-privileged port. Unset → default 80.
     const webProxyPort = Number(process.env.AGENTBOX_WEB_PROXY_PORT) || undefined;
@@ -69,6 +75,15 @@ export const daemonCommand = new Command('daemon')
       sessionName: DEFAULT_CLAUDE_SESSION_NAME,
     });
     reporter.start();
+
+    // Fan refreshed agent credentials out through the host relay (claude's
+    // OAuth refresh rotates the refresh token, invalidating every other copy).
+    // AGENTBOX_CREDENTIAL_SYNC=0 is the wire form of box.credentialSync=false.
+    let credentialsWatcher: CredentialsWatcher | null = null;
+    if (process.env.AGENTBOX_CREDENTIAL_SYNC !== '0') {
+      credentialsWatcher = new CredentialsWatcher({ relay: sup.relayClient });
+      credentialsWatcher.start();
+    }
 
     // Codex's JSON-hook firing is unreliable in 0.134.0 (see
     // packages/sandbox-docker/scripts/agentbox-codex-hooks.json header). Run a
@@ -118,7 +133,8 @@ export const daemonCommand = new Command('daemon')
     const boxRelayPort = resolveBoxRelayPort();
     let inBoxRelay: RelayServerHandle | null = null;
     let inBoxForwarder: BoxRelayForwarderHandle | null = null;
-    if (process.env.AGENTBOX_BOX_KIND === 'cloud') {
+    const transport = selectInBoxTransport(process.env);
+    if (transport.kind === 'box') {
       const bridgeToken = process.env.AGENTBOX_BRIDGE_TOKEN ?? '';
       const boxId = process.env.AGENTBOX_BOX_ID ?? '';
       const boxName = process.env.AGENTBOX_BOX_NAME ?? boxId;
@@ -148,6 +164,17 @@ export const daemonCommand = new Command('daemon')
             kind: 'cloud',
             registeredAt: new Date().toISOString(),
           });
+          // Persist the relay URL + token to a 0600 file so sibling
+          // `agentbox-ctl` invocations that don't inherit this daemon's env
+          // (the interactive agent's tmux login shell, the host-driven
+          // `agentbox git push`) can still reach the in-box relay. Cloud boxes
+          // have no global env to inherit from (unlike docker's `docker run -e`).
+          try {
+            writeRelayEnvFile(`http://127.0.0.1:${String(boxRelayPort)}`, boxToken);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            process.stderr.write(`agentbox-ctl: failed to write relay env file: ${msg}\n`);
+          }
           process.stdout.write(
             `agentbox-ctl: in-sandbox relay (mode=box) listening on :${String(boxRelayPort)}\n`,
           );
@@ -157,8 +184,7 @@ export const daemonCommand = new Command('daemon')
         }
       }
     } else {
-      const upstreamUrl =
-        process.env.AGENTBOX_HOST_RELAY_URL ?? 'http://host.docker.internal:8787';
+      const upstreamUrl = transport.upstream;
       try {
         inBoxForwarder = await startBoxRelayForwarder({
           port: boxRelayPort,
@@ -168,6 +194,19 @@ export const daemonCommand = new Command('daemon')
         process.stdout.write(
           `agentbox-ctl: in-box relay forwarder listening on :${String(boxRelayPort)} -> ${upstreamUrl}\n`,
         );
+        // Control-plane cloud box: no global env (unlike docker's `-e`), so
+        // sibling ctl invocations (the tmux login shell's `git lease-token`)
+        // need the relay URL+token persisted to the 0600 file — same as the
+        // mode:'box' branch. The docker forwarder skips this (it has global env).
+        if (process.env.AGENTBOX_BOX_KIND === 'cloud') {
+          const boxToken = process.env.AGENTBOX_RELAY_TOKEN ?? '';
+          try {
+            writeRelayEnvFile(`http://127.0.0.1:${String(boxRelayPort)}`, boxToken);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            process.stderr.write(`agentbox-ctl: failed to write relay env file: ${msg}\n`);
+          }
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         process.stderr.write(`agentbox-ctl: in-box relay forwarder failed to start: ${msg}\n`);
@@ -178,6 +217,7 @@ export const daemonCommand = new Command('daemon')
       process.stdout.write(`agentbox-ctl: ${signal} — shutting down\n`);
       if (codexScraper) codexScraper.stop();
       if (claudeScraper) claudeScraper.stop();
+      if (credentialsWatcher) credentialsWatcher.stop();
       reporter.stop();
       reporter.flush();
       server.close();

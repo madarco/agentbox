@@ -44,11 +44,11 @@ describe('resolveBoxSize', () => {
     expect(resolveBoxSize(c, 'vercel')).toBe('vrc');
   });
 
-  it('unknown provider falls into the docker bucket', () => {
+  it('unknown / plugin provider falls back to the generic box.size (not the docker bucket)', () => {
+    // An external plugin provider has no `box.size<P>` key; it resolves to the
+    // generic `box.size`, never docker's per-provider value.
     const c = cfg({ size: 'fallback', sizeDocker: 'doc' });
-    // unknown string → docker key path
-    expect(resolveBoxSize(c, 'mystery')).toBe('doc');
-    // and falls back to box.size when sizeDocker is empty
+    expect(resolveBoxSize(c, 'digitalocean')).toBe('fallback');
     const c2 = cfg({ size: 'fallback' });
     expect(resolveBoxSize(c2, 'mystery')).toBe('fallback');
   });

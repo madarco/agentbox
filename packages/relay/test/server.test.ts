@@ -320,7 +320,7 @@ describe('relay prompt flow', () => {
     // handler adds it synchronously after authBox, but the await chain
     // means we need to yield. Polling the in-memory map is cheap.
     let pendingId: string | null = null;
-    for (let i = 0; i < 50 && pendingId === null; i++) {
+    for (let i = 0; i < 500 && pendingId === null; i++) {
       const list = handle.prompts.forBox('b1');
       if (list.length > 0) pendingId = list[0]!.id;
       else await new Promise((r) => setTimeout(r, 10));
@@ -339,6 +339,42 @@ describe('relay prompt flow', () => {
     expect(body.stderr).toMatch(/denied by user/);
   });
 
+  it('git.push to a non-scratch SANCTIONED branch still prompts under the strict flag', async () => {
+    // Regression: the docker gate must key "scratch bypass" on the branch it
+    // actually pushes (sanctionedBranch), not the immutable create-time branch.
+    // With autoApproveSafeHostActions:false and sanctionedBranch=main, the push
+    // targets main and MUST prompt (not silently bypass).
+    const reg = await fetchJson(handle, 'POST', '/admin/register-box', {
+      body: {
+        boxId: 'b1',
+        token: 't1',
+        name: 'box-one',
+        autoApproveSafeHostActions: false,
+        worktrees: [
+          { containerPath: '/workspace', hostMainRepo: '/tmp', branch: 'agentbox/box-one', sanctionedBranch: 'main' },
+        ],
+      },
+    });
+    expect(reg.status).toBe(204);
+    const rpcPromise = fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: { method: 'git.push', params: { path: '/workspace' } },
+    });
+    let pendingId: string | null = null;
+    for (let i = 0; i < 500 && pendingId === null; i++) {
+      const list = handle.prompts.forBox('b1');
+      if (list.length > 0) pendingId = list[0]!.id;
+      else await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(pendingId).not.toBeNull();
+    await fetchJson(handle, 'POST', '/admin/prompts/answer', {
+      body: { id: pendingId, answer: 'n' },
+    });
+    const rpc = await rpcPromise;
+    expect(rpc.status).toBe(500);
+    expect((rpc.body as { exitCode: number }).exitCode).toBe(10);
+  });
+
   it('GET /admin/prompts lists pending host-action approvals with their context', async () => {
     await register(handle, 'b1', 't1', 'box-one');
 
@@ -349,7 +385,7 @@ describe('relay prompt flow', () => {
 
     // Wait for the pending prompt to register.
     let pendingId: string | null = null;
-    for (let i = 0; i < 50 && pendingId === null; i++) {
+    for (let i = 0; i < 500 && pendingId === null; i++) {
       const list = handle.prompts.forBox('b1');
       if (list.length > 0) pendingId = list[0]!.id;
       else await new Promise((r) => setTimeout(r, 10));
@@ -472,7 +508,9 @@ exit 0
     gh._resetGhReadyCacheForTests();
   });
 
-  async function registerWithWorktree(): Promise<void> {
+  async function registerWithWorktree(
+    extra: Record<string, unknown> = {},
+  ): Promise<void> {
     // The worktree paths don't need to exist on disk: handleGhPrRpc only uses
     // hostMainRepo as a cwd for `gh`, and our stub ignores cwd.
     const r = await fetchJson(handle, 'POST', '/admin/register-box', {
@@ -483,6 +521,7 @@ exit 0
         worktrees: [
           { containerPath: '/workspace', hostMainRepo: stubDir, branch: 'agentbox/box-one' },
         ],
+        ...extra,
       },
     });
     expect(r.status).toBe(204);
@@ -537,8 +576,48 @@ exit 0
     expect(handle.prompts.size()).toBe(0);
   });
 
-  it('gh.pr.create denial via /admin/prompts/answer returns exit 10', async () => {
+  it('gh.pr.create auto-approves under the default safe flag (no prompt)', async () => {
     await registerWithWorktree();
+    const r = await fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: {
+        method: 'gh.pr.create',
+        params: { path: '/workspace', args: ['--title', 'T', '--body', 'B'] },
+      },
+    });
+    expect(r.status).toBe(200);
+    expect(handle.prompts.size()).toBe(0);
+  });
+
+  it('gh.pr.create with an explicit --head still prompts (outside the safe subset)', async () => {
+    // An explicit head can name any branch (e.g. main), so it is NOT auto —
+    // it parks a confirm prompt even under the default safe flag.
+    await registerWithWorktree();
+    const rpcPromise = fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: {
+        method: 'gh.pr.create',
+        params: { path: '/workspace', args: ['--head', 'main', '--title', 'T'] },
+      },
+    });
+    let pendingId: string | null = null;
+    for (let i = 0; i < 500 && pendingId === null; i++) {
+      const list = handle.prompts.forBox('b1');
+      if (list.length > 0) pendingId = list[0]!.id;
+      else await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(pendingId).not.toBeNull();
+    await fetchJson(handle, 'POST', '/admin/prompts/answer', {
+      body: { id: pendingId, answer: 'n' },
+    });
+    const rpc = await rpcPromise;
+    expect(rpc.status).toBe(500);
+    expect((rpc.body as { exitCode: number }).exitCode).toBe(10);
+  });
+
+  it('gh.pr.create denial via /admin/prompts/answer returns exit 10 (strict flag)', async () => {
+    // autoApproveSafeHostActions:false restores the always-prompt behavior.
+    await registerWithWorktree({ autoApproveSafeHostActions: false });
     const rpcPromise = fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
       body: {
@@ -547,7 +626,7 @@ exit 0
       },
     });
     let pendingId: string | null = null;
-    for (let i = 0; i < 50 && pendingId === null; i++) {
+    for (let i = 0; i < 500 && pendingId === null; i++) {
       const list = handle.prompts.forBox('b1');
       if (list.length > 0) pendingId = list[0]!.id;
       else await new Promise((r) => setTimeout(r, 10));

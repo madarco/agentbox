@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, symlink, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { findUnsyncableSymlinks } from '../src/claude.js';
+import { findUnsyncableSymlinks } from '../src/sync/agents/claude.js';
 
 // findUnsyncableSymlinks pre-scans the host trees for symlinks the in-container
 // rsync (run with --copy-unsafe-links) can't dereference, so they can be

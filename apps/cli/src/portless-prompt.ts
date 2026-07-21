@@ -8,6 +8,7 @@ import {
   portlessStartHint,
   resetPortlessCache,
   startPortlessProxy,
+  startPortlessProxyRoot,
 } from '@agentbox/sandbox-docker';
 
 export interface PortlessPromptArgs {
@@ -21,12 +22,23 @@ export interface PortlessPromptArgs {
 
 /**
  * Bring the host Portless into a usable state after the user opts in: install
- * the CLI if missing, then start a proxy if none is running. The proxy is
- * started with `--no-tls` on a high port so it never needs root or a CA-trust
- * prompt (box web apps are then served at `http://<box>.localhost:1355`).
- * Best-effort — any failure degrades to a printed hint, never throws.
+ * the CLI if missing, then start a proxy if none is running. We start the
+ * default HTTPS proxy on :443 so box web apps get the clean
+ * `https://<box>.localhost` (no port). Portless self-elevates via `sudo`, so
+ * this asks for the host password once — a native GUI dialog on macOS. If the
+ * user dismisses that prompt (or elevation fails) we fall back to the no-root
+ * proxy (`--no-tls -p 1355`, `http://<box>.localhost:1355`) so create still
+ * works. Best-effort — any failure degrades to a printed hint, never throws.
+ *
+ * `allowRootPrompt` gates the :443 attempt: the Docker path only reaches here
+ * after an interactive "yes", but the Hetzner path calls this directly, so it
+ * passes `false` for non-interactive / `--yes` runs to avoid a surprise
+ * password dialog (falling straight through to the no-root :1355 proxy).
  */
-export async function setupPortlessHost(): Promise<void> {
+export async function setupPortlessHost(
+  opts: { allowRootPrompt?: boolean } = {},
+): Promise<void> {
+  const allowRootPrompt = opts.allowRootPrompt ?? true;
   let state = await detectPortless();
 
   if (!state.installed) {
@@ -47,12 +59,34 @@ export async function setupPortlessHost(): Promise<void> {
     return;
   }
 
+  // Try the clean :443 proxy first (asks for the host password once). No
+  // spinner around it — the elevation prompt is modal and shouldn't race one.
+  if (allowRootPrompt) {
+    log.info(
+      'Starting the Portless proxy on https://<box>.localhost — you may be asked for your password.',
+    );
+    const rootResult = await startPortlessProxyRoot();
+    resetPortlessCache();
+    state = await detectPortless();
+    if (state.proxyRunning) {
+      log.success('Portless proxy started on https://<box>.localhost');
+      return;
+    }
+    if (rootResult === 'cancelled') {
+      log.info('Password prompt dismissed — falling back to the no-root port.');
+    }
+  }
+
+  // Fallback: no-root proxy on the high port (http://<box>.localhost:1355).
   const s = spinner();
   s.start('starting portless proxy (no TLS, port 1355 — no root needed)');
   await startPortlessProxy();
   resetPortlessCache();
   state = await detectPortless();
   if (state.proxyRunning) {
+    // No port asserted here: the fallback usually lands on :1355, but if the
+    // root :443 start actually succeeded (a racy first probe), that proxy is
+    // reused instead. The real URL is resolved via `portless get` at create.
     s.stop('portless proxy started');
   } else {
     s.stop('portless proxy did not start');
@@ -74,7 +108,9 @@ export async function setupPortlessHost(): Promise<void> {
 export async function maybePromptPortless(args: PortlessPromptArgs): Promise<boolean> {
   if (args.enabled !== undefined) return args.enabled;
   if (args.engine === 'orbstack') return false;
-  if (!process.stdin.isTTY || args.yes) return false;
+  // Non-interactive (`--yes`, CI, no TTY): can't prompt — adopt a running proxy
+  // instead of forcing the user to opt in from a terminal first.
+  if (!process.stdin.isTTY || args.yes) return resolvePortlessNonInteractive(args);
 
   const answer = await confirm({
     message:
@@ -93,4 +129,33 @@ export async function maybePromptPortless(args: PortlessPromptArgs): Promise<boo
 
   if (answer) await setupPortlessHost();
   return answer;
+}
+
+/**
+ * Resolve `portless.enabled` when we can't prompt — background queue jobs, the
+ * tray app's hub-create path, `--yes`, CI. Honors an already-decided value
+ * (config or `--portless`/`--no-portless`). Otherwise, on Docker Desktop, it
+ * adopts an already-running Portless proxy — and persists the choice so later
+ * runs skip re-detection, mirroring an interactive "yes" for a user who already
+ * has Portless up. Without this, the first box started from the tray app never
+ * uses Portless even though the proxy is live on :443, until the user happens to
+ * run `agentbox` once from a real terminal. Never installs or starts a proxy
+ * unasked; OrbStack needs no Portless (it has `.orb.local`).
+ */
+export async function resolvePortlessNonInteractive(args: {
+  engine: DockerEngine;
+  enabled: boolean | undefined;
+  cwd: string;
+}): Promise<boolean> {
+  if (args.enabled !== undefined) return args.enabled;
+  if (args.engine === 'orbstack') return false;
+  const state = await detectPortless();
+  if (state.proxyRunning) {
+    try {
+      await setConfigValue('global', 'portless.enabled', true, args.cwd, { raw: false });
+    } catch {
+      // Best-effort persist; still use the running proxy for this run.
+    }
+  }
+  return state.proxyRunning;
 }

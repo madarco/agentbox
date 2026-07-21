@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
+import type { CheckResult } from '@agentbox/sandbox-core';
 
 /**
  * Portless (https://portless.sh) — a host reverse-proxy that maps
@@ -144,6 +145,38 @@ export function portlessStartHint(): string {
   return 'portless proxy start';
 }
 
+/**
+ * A `doctor` row (see `@agentbox/sandbox-core`'s `CheckResult`) for a provider
+ * that benefits from a host Portless proxy — docker on plain Docker Desktop /
+ * Linux engine (OrbStack serves `.orb.local` natively, so its `doctorChecks`
+ * skips this) and hetzner (the SSH-forwarded loopback only becomes a
+ * `<box>.localhost` alias with host Portless). Pure — the caller passes the
+ * already-probed state so this stays offline and testable.
+ */
+export function portlessDoctorRow(state: PortlessState): CheckResult {
+  if (!state.installed) {
+    return {
+      label: 'portless',
+      status: 'warn',
+      detail: 'not installed — box web URLs fall back to raw loopback ports',
+      hint: `recommended: \`${portlessInstallHint()}\` for https://<box>.localhost URLs`,
+    };
+  }
+  if (!state.proxyRunning) {
+    return {
+      label: 'portless',
+      status: 'warn',
+      detail: 'installed, proxy not running',
+      hint: `start it: \`${portlessStartHint()}\``,
+    };
+  }
+  return {
+    label: 'portless',
+    status: 'ok',
+    detail: state.version ? `running · v${state.version}` : 'running',
+  };
+}
+
 export interface PortlessBrowserEnvOptions {
   /**
    * Where Chromium should resolve `<box-name>.localhost` to when running
@@ -207,10 +240,89 @@ export async function startPortlessProxy(): Promise<boolean> {
 }
 
 /**
+ * Absolute path to the `portless` binary. Needed because the macOS elevation
+ * shell (`osascript … with administrator privileges`) runs with a minimal PATH
+ * (`/usr/bin:/bin:/usr/sbin:/sbin`) that misses nvm / user npm prefixes where
+ * `portless` usually lives. Falls back to the bare name when it can't resolve.
+ */
+async function resolvePortlessBin(): Promise<string> {
+  try {
+    // `command -v` resolves PATH the same way the shell would for the current
+    // (login) environment, unlike the stripped-down elevated shell.
+    const r = await execa('command', ['-v', PORTLESS_BIN], { reject: false, shell: true });
+    const out = (r.stdout ?? '').trim();
+    if (r.exitCode === 0 && out.startsWith('/')) return out;
+  } catch {
+    // fall through
+  }
+  return PORTLESS_BIN;
+}
+
+/** Result of a root proxy-start attempt. */
+export type RootProxyStartResult =
+  | 'started' // proxy is up on :443 (or was already)
+  | 'cancelled' // user dismissed the elevation prompt — caller should fall back
+  | 'failed'; // elevation ran but the proxy did not come up
+
+/** Quote a string for embedding inside an AppleScript double-quoted literal. */
+function escapeForAppleScript(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
+ * Single-quote a string for `/bin/sh`. Needed for the resolved portless path,
+ * which can live under a home dir with spaces (`/Users/Jo Smith/.nvm/…`) that
+ * the elevated shell would otherwise word-split. Single quotes survive the
+ * outer AppleScript double-quoted literal untouched.
+ */
+function shellSingleQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Start the default Portless proxy — HTTPS on :443 — which requires root.
+ * Portless self-elevates via its own `sudo`, so all we do is run
+ * `portless proxy start && portless trust` once, as root, surfacing a single
+ * password prompt. `trust` is bundled so the host browser trusts the
+ * self-signed CA (otherwise 443 shows cert warnings); it is idempotent.
+ *
+ * On macOS the prompt is the native GUI dialog (`osascript … with administrator
+ * privileges`); elsewhere we inherit the terminal so Portless's own `sudo`
+ * prompt is answerable. Never throws. Returns `'cancelled'` when the user
+ * dismisses the dialog so the caller can fall back to the no-root port.
+ */
+export async function startPortlessProxyRoot(): Promise<RootProxyStartResult> {
+  const bin = await resolvePortlessBin();
+  try {
+    if (process.platform === 'darwin') {
+      // Both commands run in one elevated shell so the user is asked once.
+      const q = shellSingleQuote(bin);
+      const shellCmd = `${q} proxy start && ${q} trust`;
+      const script =
+        `do shell script "${escapeForAppleScript(shellCmd)}" ` +
+        `with administrator privileges ` +
+        `with prompt "AgentBox wants to start the Portless proxy on port 443."`;
+      const r = await execa('osascript', ['-e', script], { reject: false });
+      if (r.exitCode === 0) return 'started';
+      // osascript reports "User canceled. (-128)" when the dialog is dismissed.
+      if (/User canceled|-128/i.test(r.stderr ?? '')) return 'cancelled';
+      return 'failed';
+    }
+    // Non-macOS: let Portless's own sudo prompt reach the terminal.
+    const r = await execa(bin, ['proxy', 'start'], { reject: false, stdio: 'inherit' });
+    if (r.exitCode !== 0) return 'failed';
+    await execa(bin, ['trust'], { reject: false, stdio: 'inherit' });
+    return 'started';
+  } catch {
+    return 'failed';
+  }
+}
+
+/**
  * Candidate Portless state directories. `$PORTLESS_STATE_DIR` wins outright;
- * otherwise Portless picks `/tmp/portless` (proxy port < 1024, e.g. the sudo
- * :443 proxy) or `~/.portless` (>= 1024) — we check both since we don't know
- * the port.
+ * otherwise Portless keeps state in `~/.portless` — even for the root :443
+ * proxy, whose `proxy.pid` there stays owned by the invoking user (verified
+ * against portless 0.13.0). `/tmp/portless` is retained as a legacy fallback.
  */
 function portlessStateDirCandidates(): string[] {
   const env = process.env['PORTLESS_STATE_DIR'];

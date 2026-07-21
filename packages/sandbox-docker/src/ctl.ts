@@ -31,7 +31,18 @@ export async function launchCtlDaemon(
   // after a crash. The log dir is pre-created in the image (Dockerfile.box
   // mkdir+chown vscode); `mkdir -p` is a cheap belt-and-braces. `exec` lets
   // the shell replace itself with the daemon for a clean process tree.
-  const wrapped = `mkdir -p ${CTL_DAEMON_LOG.replace(/\/[^/]*$/, '')} && exec agentbox-ctl daemon >>${CTL_DAEMON_LOG} 2>&1`;
+  //
+  // Idempotent: skip the spawn when a daemon is already running — a normal
+  // `start` runs on a freshly-started container (daemon dead, so this no-ops),
+  // but `reconnect` (and `start` on an already-running container) would
+  // otherwise launch a duplicate. Anchor the pattern at end-of-cmdline so it
+  // matches the daemon (`node …/agentbox-ctl daemon`) but not this `sh -c`
+  // wrapper, whose argv ends in the log redirect, not "daemon".
+  const logDir = CTL_DAEMON_LOG.replace(/\/[^/]*$/, '');
+  const wrapped =
+    `mkdir -p ${logDir} && ` +
+    `{ pgrep -f 'agentbox-ctl daemon$' >/dev/null 2>&1 && exit 0; }; ` +
+    `exec agentbox-ctl daemon >>${CTL_DAEMON_LOG} 2>&1`;
   const result = await execInBox(container, ['sh', '-c', wrapped], {
     user: 'vscode',
     detach: true,

@@ -16,14 +16,15 @@
  * only runs when the caller pre-resolved a non-docker provider.
  */
 
-import type { AgentKind, BoxRecord, CreateBoxRequest, Provider } from '@agentbox/core';
+import { toQueueKind, type BoxRecord, type CreateBoxRequest, type Provider } from '@agentbox/core';
 import type { AttachOpenIn } from '@agentbox/config';
 import { log } from '@clack/prompts';
 import { makeProgressReporter } from '../lib/progress.js';
 import { printLaunchRecap } from '../lib/launch-recap.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
-import { cloudAgentAttach } from './_cloud-attach.js';
+import { recordLastAgent } from '@agentbox/sandbox-docker';
+import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 
 export interface CloudAgentCreateArgs {
   /** Pre-resolved provider (from `providerForCreate`). */
@@ -42,11 +43,11 @@ export interface CloudAgentCreateArgs {
   verbose?: boolean;
   /** Where to open the attached session; forwarded to `cloudAgentAttach`. */
   openIn?: AttachOpenIn;
-  /** When `false`, create the cloud box and skip the agent attach (background
-   *  mode). Defaults to `true`. On cloud providers the agent's tmux session is
-   *  created lazily by `cloudAgentAttach`; with `attach: false` the session
-   *  isn't started yet — a later `agentbox <agent> attach <box>` starts it on
-   *  first attach. */
+  /** When `false`, create the cloud box and start the agent in a detached tmux
+   *  session (background mode) but don't attach the host terminal — mirrors the
+   *  docker path, where the session is always created and only the terminal
+   *  attach is skipped. A later `agentbox <agent> attach <box>` finds the
+   *  running session and attaches to it. Defaults to `true`. */
   attach?: boolean;
   /**
    * Hook fired AFTER the box is provisioned and BEFORE the agent attach starts
@@ -63,11 +64,6 @@ export interface CloudAgentCreateArgs {
    * docker create path.
    */
   hasSeedPrompt?: boolean;
-}
-
-/** Agent CLI launcher kind for the prompt-arg builder. */
-function agentKindFor(mode: 'claude' | 'codex' | 'opencode'): AgentKind {
-  return mode === 'claude' ? 'claude-code' : mode;
 }
 
 /**
@@ -88,6 +84,9 @@ export async function cloudAgentCreate(args: CloudAgentCreateArgs): Promise<void
         ? `  ·  n ${String(result.record.projectIndex)}`
         : '';
     s.stop(`box ready${nSuffix}`);
+    // Record which agent this box was launched with so `agentbox recover` can
+    // relaunch/attach the right one later. Best-effort — never block the launch.
+    await recordLastAgent(result.record.id, args.mode).catch(() => {});
     let extraArgs = args.extraArgs;
     if (args.beforeStart) {
       const hook = await args.beforeStart(result.record);
@@ -102,7 +101,7 @@ export async function cloudAgentCreate(args: CloudAgentCreateArgs): Promise<void
     const resyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
     if (resyncWarning) {
       if (args.hasSeedPrompt) log.warn(resyncWarning);
-      else extraArgs = buildPromptArgs(agentKindFor(args.mode), resyncWarning, extraArgs ?? []);
+      else extraArgs = buildPromptArgs(toQueueKind(args.mode), resyncWarning, extraArgs ?? []);
     }
     await printLaunchRecap({
       record: result.record,
@@ -118,6 +117,15 @@ export async function cloudAgentCreate(args: CloudAgentCreateArgs): Promise<void
       attaching: args.attach !== false,
     });
     if (args.attach === false) {
+      // Background mode: start the agent in a detached tmux session (and verify
+      // it stayed up) without attaching the host terminal — matches docker,
+      // where the session is always created and only the attach is skipped.
+      await cloudAgentStartDetached({
+        box: result.record,
+        binary: args.binary,
+        sessionName: args.sessionName,
+        extraArgs,
+      });
       return;
     }
     await cloudAgentAttach({

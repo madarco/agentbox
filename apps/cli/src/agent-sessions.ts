@@ -20,7 +20,11 @@
  */
 import { loadEffectiveConfig } from '@agentbox/config';
 import type { BoxRecord, Provider } from '@agentbox/core';
-import { startClaudeSession, startCodexSession } from '@agentbox/sandbox-docker';
+import {
+  startClaudeSession,
+  startCodexSession,
+  startOpencodeSession,
+} from '@agentbox/sandbox-docker';
 import { cloudAgentStartDetached } from './commands/_cloud-attach.js';
 import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from './lib/skip-permissions.js';
 
@@ -51,6 +55,18 @@ async function tmuxAlive(
   return (await execRead(provider, box, `tmux has-session -t ${q} 2>/dev/null && echo y`)) === 'y';
 }
 
+/** Kill a live agent tmux session so it can be relaunched with a fresh env. */
+async function killTmuxSession(
+  provider: Provider,
+  box: BoxRecord,
+  sessionName: string,
+): Promise<void> {
+  const q = `'${sessionName.replace(/'/g, `'\\''`)}'`;
+  await provider
+    .exec(box, ['bash', '-lc', `tmux kill-session -t ${q} 2>/dev/null || true`], { user: 'vscode' })
+    .catch(() => {});
+}
+
 /**
  * The args to resume the box's recorded session for `kind`, or null if there's
  * nothing to resume. Claude resumes the exact captured id; Codex (no id) resumes
@@ -73,6 +89,56 @@ export async function agentResumeArgs(
 
 export interface RestoreOptions {
   onLog?: (line: string) => void;
+  /**
+   * Restrict the restore to a SINGLE agent: bring back exactly this one —
+   * resume its session if there's a live one or a resumable in-box pointer,
+   * otherwise start it FRESH. Used by `agentbox recover`, which knows the box's
+   * `lastAgent` and wants that agent back, not whatever other (possibly stale)
+   * pointers happen to exist in the box. When unset, resume EVERY resumable
+   * agent that was running — the `start`/`unpause` "box never went down"
+   * semantics. OpenCode has no session resume, so it only ever comes back via
+   * the fresh path here.
+   */
+  restoreOnly?: 'claude' | 'codex' | 'opencode';
+  /**
+   * With `restoreOnly`: if that agent's session is already alive, KILL it first
+   * and relaunch (resuming), instead of leaving the running one untouched. Used
+   * to force the agent to pick up an environment change made after it started
+   * (e.g. `connect --dangerously-git-credentials` flipping the box to git direct
+   * mode) — a running session's env is otherwise frozen.
+   */
+  force?: boolean;
+}
+
+/** Start a fresh (no-resume) detached agent session. */
+async function startFreshSession(
+  box: BoxRecord,
+  kind: 'claude' | 'codex' | 'opencode',
+  sessionName: string,
+  cfg: Awaited<ReturnType<typeof loadEffectiveConfig>> | null,
+  isDocker: boolean,
+): Promise<void> {
+  const args =
+    kind === 'claude'
+      ? cfg
+        ? applyClaudeSkipPermissions([], cfg.effective)
+        : []
+      : kind === 'codex'
+        ? cfg
+          ? applyCodexSkipPermissions([], cfg.effective)
+          : []
+        : [];
+  if (isDocker) {
+    if (kind === 'claude') {
+      await startClaudeSession({ container: box.container, claudeArgs: args, sessionName });
+    } else if (kind === 'codex') {
+      await startCodexSession({ container: box.container, codexArgs: args, sessionName });
+    } else {
+      await startOpencodeSession({ container: box.container, opencodeArgs: args, sessionName });
+    }
+  } else {
+    await cloudAgentStartDetached({ box, binary: kind, sessionName, extraArgs: args });
+  }
 }
 
 /**
@@ -81,7 +147,8 @@ export interface RestoreOptions {
  * per agent — a relaunch failure is logged, never thrown (a box restart must not
  * fail because an agent couldn't resume).
  *
- * The box must already be running (call after `provider.start` / `startBox`).
+ * The box must already be running (call after `provider.start` / `startBox` /
+ * `provider.reconnect`).
  */
 export async function restoreAgentSessions(
   box: BoxRecord,
@@ -90,14 +157,18 @@ export async function restoreAgentSessions(
 ): Promise<void> {
   const cfg = await loadEffectiveConfig(box.workspacePath).catch(() => null);
   const isDocker = (box.provider ?? 'docker') === 'docker';
-  const kinds: Array<{ kind: ResumableAgent; sessionName: string }> = [
-    { kind: 'claude', sessionName: cfg?.effective.claude.sessionName ?? 'claude' },
-    { kind: 'codex', sessionName: cfg?.effective.codex.sessionName ?? 'codex' },
-  ];
-  for (const { kind, sessionName } of kinds) {
-    if (await tmuxAlive(provider, box, sessionName)) continue;
+  const sessionNameFor = (kind: 'claude' | 'codex' | 'opencode'): string =>
+    kind === 'claude'
+      ? (cfg?.effective.claude.sessionName ?? 'claude')
+      : kind === 'codex'
+        ? (cfg?.effective.codex.sessionName ?? 'codex')
+        : (cfg?.effective.opencode.sessionName ?? 'opencode');
+
+  // Resume one resumable agent (claude/codex) from its in-box pointer. Returns
+  // true if it (re)launched, false if there was nothing to resume / it failed.
+  const tryResume = async (kind: ResumableAgent, sessionName: string): Promise<boolean> => {
     const resume = await agentResumeArgs(provider, box, kind);
-    if (!resume) continue;
+    if (!resume) return false;
     const args =
       kind === 'claude'
         ? cfg
@@ -117,8 +188,41 @@ export async function restoreAgentSessions(
         await cloudAgentStartDetached({ box, binary: kind, sessionName, extraArgs: args });
       }
       opts.onLog?.(`resumed ${kind} session`);
+      return true;
     } catch (err) {
       opts.onLog?.(`could not resume ${kind} session: ${(err as Error).message}`);
+      return false;
     }
+  };
+
+  // recover: bring back exactly the named agent — resume if there's a live or
+  // resumable session, else start it fresh. Don't touch other agents whose
+  // (possibly stale) pointers happen to exist.
+  const only = opts.restoreOnly;
+  if (only) {
+    const sessionName = sessionNameFor(only);
+    if (await tmuxAlive(provider, box, sessionName)) {
+      if (!opts.force) return;
+      // Force: kill the running session so it relaunches with the current box
+      // env (e.g. after flipping to git direct mode). Claude/Codex then resume
+      // the same conversation via their in-box pointer below.
+      await killTmuxSession(provider, box, sessionName);
+      opts.onLog?.(`stopped the running ${only} session to restart it`);
+    }
+    if ((only === 'claude' || only === 'codex') && (await tryResume(only, sessionName))) return;
+    try {
+      await startFreshSession(box, only, sessionName, cfg, isDocker);
+      opts.onLog?.(`started ${only} session`);
+    } catch (err) {
+      opts.onLog?.(`could not start ${only} session: ${(err as Error).message}`);
+    }
+    return;
+  }
+
+  // start/unpause: resume every resumable agent that was actually running.
+  for (const kind of ['claude', 'codex'] as ResumableAgent[]) {
+    const sessionName = sessionNameFor(kind);
+    if (await tmuxAlive(provider, box, sessionName)) continue;
+    await tryResume(kind, sessionName);
   }
 }

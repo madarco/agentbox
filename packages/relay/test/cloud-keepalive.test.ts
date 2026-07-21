@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   selectBoxesToRenew,
+  shouldIdlePause,
   startCloudKeepaliveLoop,
   type CloudBoxLookup,
   type KeepaliveScanEntry,
@@ -74,6 +75,36 @@ describe('selectBoxesToRenew', () => {
     const a = selectBoxesToRenew([e], WINDOW, NOW);
     const b = selectBoxesToRenew([e], WINDOW, NOW + 30_000);
     expect(a[0]!.targetDeadlineEpochMs).toBe(b[0]!.targetDeadlineEpochMs);
+  });
+});
+
+describe('shouldIdlePause', () => {
+  // The box's own idle timeout (box.daytonaTimeoutMs), NOT the 5-min renewal window.
+  const IDLE = 25 * 60_000;
+
+  it('pauses a box idle for its full configured timeout', () => {
+    const e = entry({ boxId: 'a', agentState: 'idle', lastActivityMs: NOW - IDLE });
+    expect(shouldIdlePause(e, IDLE, NOW)).toBe(true);
+  });
+
+  it('waits for the box timeout, not the shorter renewal window', () => {
+    // Past the 5-min renewal window (so no longer renewed) but nowhere near the
+    // 25-min idle timeout the user configured: it must coast, not be paused.
+    const e = entry({ boxId: 'a', agentState: 'idle', lastActivityMs: NOW - WINDOW - 1 });
+    expect(selectBoxesToRenew([e], WINDOW, NOW)).toEqual([]); // renewals have stopped
+    expect(shouldIdlePause(e, IDLE, NOW)).toBe(false); // but it is NOT paused yet
+  });
+
+  it('never pauses an active box, however stale its timestamp', () => {
+    const e = entry({ boxId: 'a', agentState: 'active', lastActivityMs: NOW - 100 * IDLE });
+    expect(shouldIdlePause(e, IDLE, NOW)).toBe(false);
+  });
+
+  it('never pauses a box with no agent state or no timestamp', () => {
+    const noState = entry({ boxId: 'a', agentState: null, lastActivityMs: NOW - 10 * IDLE });
+    const noStamp = entry({ boxId: 'b', agentState: 'idle', lastActivityMs: null });
+    expect(shouldIdlePause(noState, IDLE, NOW)).toBe(false);
+    expect(shouldIdlePause(noStamp, IDLE, NOW)).toBe(false);
   });
 });
 
@@ -237,5 +268,223 @@ describe('startCloudKeepaliveLoop', () => {
     await new Promise((r) => setTimeout(r, 40));
     await loop.stop();
     expect(calls).toBe(0);
+  });
+
+  // An inactivity-model backend (daytona) can't stop its own idle boxes while
+  // we poll them, so the loop does it. See `CloudBackend.timeoutModel`.
+  function inactivityBackend(onPause: (h: CloudHandle) => void): CloudBackend {
+    return {
+      name: 'daytona',
+      timeoutModel: 'inactivity',
+      renewTimeout: async () => {},
+      pause: async (h: CloudHandle) => {
+        onPause(h);
+      },
+    } as unknown as CloudBackend;
+  }
+
+  /** Box whose own idle timeout is one window (0 would mean "idle timeout disabled"). */
+  const lookupIdleWindow = async (): Promise<CloudBoxLookup> => ({
+    sandboxId: 'sb-123',
+    createdAtMs: NOW,
+    createTimeoutMs: WINDOW,
+  });
+
+  /** Idle long enough to be past the box's idle timeout. */
+  function idleStatus(idleForMs: number): BoxStatusStore {
+    return statusFor({
+      claude: { state: 'idle', updatedAt: new Date(NOW - idleForMs).toISOString() },
+    } as Partial<BoxStatusSnapshot>);
+  }
+
+  it('pauses an idle box on an inactivity-model backend', async () => {
+    const registry = new BoxRegistry();
+    registerCloud(registry, 'b1', 'daytona');
+    const paused: string[] = [];
+    const got = deferred<void>();
+    const backend = inactivityBackend((h) => {
+      paused.push(h.sandboxId);
+      got.resolve();
+    });
+
+    const loop = startCloudKeepaliveLoop({
+      registry,
+      statusStore: idleStatus(WINDOW + 60_000),
+      log: () => {},
+      intervalMs: 5,
+      now: () => NOW,
+      loadConfig: async () => CFG,
+      resolveBackend: async () => backend,
+      lookupBox: lookupIdleWindow,
+    });
+
+    await got.promise;
+    await loop.stop();
+    expect(paused).toEqual(['sb-123']);
+  });
+
+  it('passes the recorded sandbox class to pause (daytona archives a container, freezes a VM)', async () => {
+    const registry = new BoxRegistry();
+    registerCloud(registry, 'b1', 'daytona');
+    const handles: CloudHandle[] = [];
+    const got = deferred<void>();
+    const backend = inactivityBackend((h) => {
+      handles.push(h);
+      got.resolve();
+    });
+
+    const loop = startCloudKeepaliveLoop({
+      registry,
+      statusStore: idleStatus(WINDOW + 60_000),
+      log: () => {},
+      intervalMs: 5,
+      now: () => NOW,
+      loadConfig: async () => CFG,
+      resolveBackend: async () => backend,
+      lookupBox: async (): Promise<CloudBoxLookup> => ({
+        sandboxId: 'sb-123',
+        createdAtMs: NOW,
+        createTimeoutMs: WINDOW,
+        sandboxClass: 'container',
+      }),
+    });
+
+    await got.promise;
+    await loop.stop();
+    expect(handles).toEqual([{ sandboxId: 'sb-123', sandboxClass: 'container' }]);
+  });
+
+  it('records the box as paused so `list` does not keep showing it running', async () => {
+    const registry = new BoxRegistry();
+    registerCloud(registry, 'b1', 'daytona');
+    const persisted: string[] = [];
+    const got = deferred<void>();
+    const backend = inactivityBackend(() => {});
+
+    const loop = startCloudKeepaliveLoop({
+      registry,
+      statusStore: idleStatus(WINDOW + 60_000),
+      log: () => {},
+      intervalMs: 5,
+      now: () => NOW,
+      loadConfig: async () => CFG,
+      resolveBackend: async () => backend,
+      lookupBox: lookupIdleWindow,
+      persistPaused: async (boxId: string) => {
+        persisted.push(boxId);
+        got.resolve();
+      },
+    });
+
+    await got.promise;
+    await loop.stop();
+    expect(persisted).toEqual(['b1']);
+  });
+
+  it('keeps the box paused even if recording the state fails', async () => {
+    // The pause already happened; a failed record write must not look like a
+    // failed pause and re-arm the box for another pause next tick.
+    const registry = new BoxRegistry();
+    registerCloud(registry, 'b1', 'daytona');
+    let pauses = 0;
+    const backend = inactivityBackend(() => {
+      pauses++;
+    });
+
+    const loop = startCloudKeepaliveLoop({
+      registry,
+      statusStore: idleStatus(WINDOW + 60_000),
+      log: () => {},
+      intervalMs: 5,
+      now: () => NOW,
+      loadConfig: async () => CFG,
+      resolveBackend: async () => backend,
+      lookupBox: lookupIdleWindow,
+      persistPaused: async () => {
+        throw new Error('state.json is locked');
+      },
+    });
+
+    await new Promise((r) => setTimeout(r, 60)); // many ticks
+    await loop.stop();
+    expect(pauses).toBe(1);
+  });
+
+  it('pauses such a box only once, not on every tick', async () => {
+    // A paused box keeps reporting the same idle snapshot, so it would re-qualify
+    // forever without the already-paused guard.
+    const registry = new BoxRegistry();
+    registerCloud(registry, 'b1', 'daytona');
+    let pauses = 0;
+    const backend = inactivityBackend(() => {
+      pauses++;
+    });
+
+    const loop = startCloudKeepaliveLoop({
+      registry,
+      statusStore: idleStatus(WINDOW + 60_000),
+      log: () => {},
+      intervalMs: 5,
+      now: () => NOW,
+      loadConfig: async () => CFG,
+      resolveBackend: async () => backend,
+      lookupBox: lookupIdleWindow,
+    });
+
+    await new Promise((r) => setTimeout(r, 60)); // many ticks
+    await loop.stop();
+    expect(pauses).toBe(1);
+  });
+
+  it('never pauses an idle box on an absolute-TTL backend (it lapses by itself)', async () => {
+    const registry = new BoxRegistry();
+    registerCloud(registry, 'b1', 'vercel');
+    let pauses = 0;
+    const backend = {
+      name: 'vercel',
+      renewTimeout: async () => {},
+      pause: async () => {
+        pauses++;
+      },
+    } as unknown as CloudBackend;
+
+    const loop = startCloudKeepaliveLoop({
+      registry,
+      statusStore: idleStatus(WINDOW + 60_000),
+      log: () => {},
+      intervalMs: 5,
+      now: () => NOW,
+      loadConfig: async () => CFG,
+      resolveBackend: async () => backend,
+      lookupBox: lookupIdleWindow,
+    });
+
+    await new Promise((r) => setTimeout(r, 40));
+    await loop.stop();
+    expect(pauses).toBe(0);
+  });
+
+  it('leaves a box with no agent state alone (an attached shell is not idle evidence)', async () => {
+    const registry = new BoxRegistry();
+    registerCloud(registry, 'b1', 'daytona');
+    let pauses = 0;
+    const backend = inactivityBackend(() => {
+      pauses++;
+    });
+
+    const loop = startCloudKeepaliveLoop({
+      registry,
+      statusStore: statusFor({}), // no claude/codex/opencode key at all
+      log: () => {},
+      intervalMs: 5,
+      now: () => NOW,
+      loadConfig: async () => CFG,
+      resolveBackend: async () => backend,
+      lookupBox: lookupAtNow,
+    });
+
+    await new Promise((r) => setTimeout(r, 40));
+    await loop.stop();
+    expect(pauses).toBe(0);
   });
 });

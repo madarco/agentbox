@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { bootstrapCommand } from './commands/bootstrap.js';
 import { claudeSessionCommand } from './commands/claude-session.js';
 import { claudeStateCommand } from './commands/claude-state.js';
 import { codexStateCommand } from './commands/codex-state.js';
@@ -33,6 +34,7 @@ program
   .version('0.0.0');
 
 program.addCommand(daemonCommand);
+program.addCommand(bootstrapCommand);
 program.addCommand(statusCommand);
 program.addCommand(logsCommand);
 program.addCommand(validateCommand);

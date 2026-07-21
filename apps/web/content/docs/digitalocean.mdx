@@ -1,0 +1,204 @@
+---
+title: DigitalOcean
+description: Run your agents on a DigitalOcean Droplet with full root and Docker-in-Docker
+---
+
+Run your agents on a DigitalOcean Droplet you fully control — no local Docker needed. Each box is its own Droplet (1:1) you drive with the same `agentbox` commands as a local box, reached over pure OpenSSH (no third-party agent in the box — you own root). Heads up: a Droplet is a real VM that bills by the hour even while stopped — pause is power-off/power-on, not free — and its Cloud Firewall locks to your current egress IP.
+
+Switch per box with `--provider digitalocean`, or pin it project-wide with `box.provider: digitalocean` in [`agentbox.yaml`](/docs/agentbox-yaml). Pick DigitalOcean for bare-VM control (full kernel, your own region), a Cloud Firewall locked to your egress IP, and full [Docker-in-Docker](/docs/docker-in-docker). Cost is roughly $24/mo per *running* `s-2vcpu-4gb` box (~$0.036/hr). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona), [vercel](/docs/vercel), and [e2b](/docs/e2b).
+
+## Set up
+
+The easiest path is the interactive wizard — it signs you in and bakes the base snapshot in one flow:
+
+```bash
+agentbox install        # then select digitalocean
+```
+
+Paste a DigitalOcean **Personal Access Token** when prompted — a token with **read + write** scope from the *API → Tokens* page of your DigitalOcean Console. Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider digitalocean` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots ready in ~15-20s.
+
+For CI or scripted setup, run the explicit equivalents:
+
+```bash
+agentbox digitalocean login                 # credentials only
+agentbox prepare --provider digitalocean    # bake the base snapshot
+```
+
+<Callout title="NOTE">
+The token needs **write** scope — read-only tokens can't create Droplets. Auth is a single API token; there's no OAuth app or `doctl` to install.
+</Callout>
+
+## Use it
+
+```bash
+agentbox digitalocean claude
+```
+
+`agentbox digitalocean create|claude|codex|opencode` is sugar for the same command with `--provider digitalocean`.
+
+## Prepare snapshot
+
+DigitalOcean can't build an image from a Dockerfile, so a one-time base snapshot must be baked before the first `create`. `agentbox prepare --provider digitalocean` boots a throwaway Droplet, runs the install script, snapshots the result, then cleans up.
+
+```bash
+agentbox prepare --provider digitalocean
+```
+
+The snapshot is a shell mirror of the Docker box image (Node, Python, Docker, the VNC stack, Playwright Chromium, the agents, and the `agentbox-ctl` supervisor). First run takes ~15–20 minutes; after that, every `create --provider digitalocean` boots from it in ~15–20s. Re-running is idempotent — pass `--force` to rebake.
+
+When you upgrade AgentBox, `create --provider digitalocean` notices if the new install would bake a different snapshot (the comparison is checksum-based on the baked files — CLI version strings on their own don't count) and offers to rebake inline; with `-y` or non-TTY it instead warns loudly and boots on the existing snapshot. `agentbox digitalocean login` also nudges you toward `agentbox prepare --provider digitalocean` on the first successful login.
+
+<Callout title="If the bake fails installing Claude Code">
+The bake installs Claude Code with Anthropic's native installer, whose CDN
+occasionally returns a Cloudflare 403 to cloud-datacenter egress IPs. The bake
+retries three times and then aborts rather than shipping a Claude-less snapshot.
+If it keeps failing, switch to the npm installer:
+
+```bash
+agentbox prepare --provider digitalocean --claude-install npm
+# or persist it: agentbox config set box.claudeInstall npm
+```
+
+`npm` installs `@anthropic-ai/claude-code` and symlinks it into the same
+`~/.local/bin/claude` path the native installer uses, so the box behaves
+identically. Bake-time only — changing it re-bakes the snapshot.
+</Callout>
+
+<Callout type="warn" title="HEADS UP">
+The bake costs a few minutes and a few cents, but you only do it once per account.
+</Callout>
+
+## Create a box and run an agent
+
+Once login and prepare are done, `create`/`claude`/`codex`/`opencode`/`shell` behave exactly like local Docker — only `--provider digitalocean` (or the pinned config) differs. The workspace is seeded from a host git bundle plus your uncommitted and untracked changes, the same as the other clouds (see [teleport a project](/docs/teleport-a-project) and [sync & git](/docs/sync-and-git)).
+
+```console
+$ agentbox create -y --provider digitalocean
+# Droplet provisioned + firewall locked + SSH up (~60-90s cold, ~15-20s from snapshot)
+
+$ agentbox shell 1 --no-tmux -- uname -a
+Linux agentbox-7f3a ... x86_64 GNU/Linux
+```
+
+Or jump straight into an agent, which auto-creates the box:
+
+```bash
+agentbox claude --provider digitalocean
+```
+
+See [run an agent](/docs/run-an-agent), [access your box](/docs/access-your-box), and [background & parallel](/docs/background-and-parallel).
+
+## Sizes and regions
+
+The default VM is `s-2vcpu-4gb` (2 vCPU / 4 GB / 80 GB SSD, ~$24/mo while running) in region `nyc3` (New York). On DigitalOcean, `--size` is the **Droplet size slug** and `--location` is the **region**. Change them per box, or pin them with `box.sizeDigitalocean` and `box.digitaloceanRegion` (precedence: flag > `box.size<Provider>` > `box.size` / `box.digitaloceanRegion`) — see [configuration](/docs/configuration).
+
+```bash
+agentbox create -y --provider digitalocean --size s-4vcpu-8gb --location fra1
+```
+
+Common regions are `nyc1`/`nyc3` (New York), `sfo2`/`sfo3` (San Francisco), `ams3` (Amsterdam), `fra1` (Frankfurt), `lon1` (London), `sgp1` (Singapore), `tor1` (Toronto), `blr1` (Bangalore), and `syd1` (Sydney). `--location` on a provider other than DigitalOcean/Hetzner is ignored with a warning.
+
+After the box comes up, AgentBox reports the **real** provisioned resources for the chosen plan — e.g. `provisioned 4 vCPU / 8 GB RAM / 160 GB disk` — and stores them on the box record.
+
+### Preflight validation
+
+Before AgentBox creates any billable resource (firewall, SSH key, Droplet), it validates your size + region choice against DigitalOcean's live `/sizes` catalog and fails fast with an actionable message — so a typo never bills you for a half-created box:
+
+- **Unknown size** (`--size s-99vcpu`) → lists valid available size slugs.
+- **Unavailable size** → rejected, with available alternatives.
+- **Size not offered in the region** (`--size s-4vcpu-8gb --location <where it isn't sold>`) → lists where it *is* offered and reminds you of `--location`.
+- **Disk too small** for the base snapshot → asks for a larger size.
+
+<Callout type="warn" title="Account Droplet limits">
+New DigitalOcean accounts start with a low Droplet limit. If DigitalOcean refuses the create because you've hit it, AgentBox surfaces the limits explanation and points you at the DigitalOcean Console (**Account → your team → Droplet limit**) to request an increase. An out-of-capacity error suggests trying another `--location`.
+</Callout>
+
+## Projects
+
+DigitalOcean groups resources into **Projects** (for billing and visibility). By default every box lands in your account's **default project** — which is fine until you keep client or environment work separate.
+
+`agentbox digitalocean login` asks which project new boxes should go into (when your account has more than one) and stores the answer in `box.digitaloceanProject`. You can also set it directly, with either the project's name or its UUID:
+
+```bash
+agentbox config set box.digitaloceanProject client-x
+```
+
+Because it's a normal config key it follows the usual [precedence](/docs/configuration) — so a repo can put its own boxes in their own project via `agentbox.yaml`, while everything else uses your global choice:
+
+```yaml
+defaults:
+  box:
+    digitaloceanProject: client-x
+```
+
+Leave it unset for today's behavior (the account default project). A name that doesn't match any of your projects fails **before** anything is created, listing the real ones. To go back to the default project later:
+
+```bash
+agentbox config unset box.digitaloceanProject
+```
+
+(The settings form's **Project** field can set or change the project, but not clear it — a blank field there means "leave unchanged", since the form doesn't show the saved value. `agentbox digitalocean login` can clear it, by choosing *Skip*.)
+
+<Callout title="Placement is best-effort">
+DigitalOcean has no project field on Droplet-create, so AgentBox assigns the box to its project immediately *after* creating it. If that one call fails (an API blip, a token without project write), the box is still created and fully usable — it just stays in the default project, and the create log says so. A working box is never torn down over a grouping error.
+</Callout>
+
+The temporary Droplet that `agentbox prepare` bakes the base snapshot on is placed in the same project, so it doesn't show up in the default one for the few minutes it lives.
+
+## Firewall
+
+Each box gets its own DigitalOcean Cloud Firewall with a single inbound rule: TCP port 22 from your host's egress IP only (plus the mandatory allow-all outbound rules DigitalOcean requires, or the Droplet would have no egress). All box traffic flows over SSH, so port 22 from your IP is genuinely all that's exposed inbound.
+
+If you change networks (new Wi-Fi, VPN toggle), your egress IP changes and SSH times out. `agentbox digitalocean firewall sync <box>` re-detects your IP and updates that box's rule with no reboot:
+
+```bash
+agentbox digitalocean firewall sync smoke
+agentbox digitalocean firewall show smoke   # inspect the current rules
+```
+
+<Callout title="TIP">
+Moved networks and `agentbox shell` suddenly times out? Run `agentbox digitalocean firewall sync <box>` — that's almost always it.
+</Callout>
+
+To reach a box from **another device** (a phone over Terminus/Blink, with your laptop off), open the firewall and hand the device a key: `agentbox inbound <box> open` then `agentbox connect <box> --add-key <device.pub>`. The baked sshd is key-only, so `open` exposes port 22 to the internet but only your keys get in. See [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline).
+
+## Web apps, checkpoints, and Docker
+
+The box's standard capabilities work as on any provider, with a few DigitalOcean specifics:
+
+- **Web apps / preview URLs.** `agentbox url <box>` returns a URL, and the in-box portless proxy mirrors it so `https://<box-name>.localhost` resolves the same content from your host browser and from inside the box. `agentbox screen` works too. See [web apps & tunnels](/docs/web-apps-and-tunnels) and [browser & screen](/docs/browser-and-screen).
+- **Checkpoints** map to DigitalOcean Droplet snapshots. Set a per-provider default with `agentbox checkpoint set-default --provider digitalocean <ref>`. See [checkpoints & pausing](/docs/checkpoints-and-pausing).
+- **Docker-in-Docker works** unmodified. See [Docker-in-Docker](/docs/docker-in-docker).
+- **Services & tasks** from `agentbox.yaml` run via the in-box supervisor. See [services & tasks](/docs/services-and-tasks).
+
+```bash
+agentbox checkpoint create smoke setup
+```
+
+<Callout title="TIP">
+Because DigitalOcean checkpoints are full-disk snapshots, capturing one after your project's setup lets later boxes boot ready-to-go and skip workspace seeding.
+</Callout>
+
+## Specs
+
+| Spec | |
+| --- | --- |
+| Base image | Ubuntu 24.04 snapshot |
+| Build method | Baked snapshot — install script on a throwaway Droplet then `snapshot` (`agentbox prepare --provider digitalocean`); no Dockerfile |
+| Docker-in-Docker | Yes (full root, unmodified) |
+| SSH | Yes — one persistent OpenSSH ControlMaster per box |
+| Arch | x86_64 (amd64) |
+| Live snapshots | Droplet snapshots; pause = power-off/power-on and a stopped Droplet still bills |
+| Preview URL | SSH local port forward via `ssh -O forward`, mirrored to `https://<box-name>.localhost` (Portless) |
+
+## Caveats
+
+- **Pause still bills.** DigitalOcean charges the full hourly rate even for a *stopped* (powered-off) Droplet — the resources stay reserved. Destroy the box (`agentbox destroy <box> -y`) to stop billing entirely — it deletes the Droplet, its firewall, and the per-box SSH key.
+- **No live stats.** `agentbox top` and `dashboard` render `—` for CPU/mem; the create/list API doesn't stream per-Droplet metrics.
+- **No shared credential volume.** Agent credentials are pushed to each box via scp at create time (DigitalOcean has no shared-volume primitive).
+- **IPv4 only.** SSH targets the Droplet's public IPv4 address; IPv6-only host networks aren't exercised yet.
+- **Clean up orphans** with `agentbox prune --provider digitalocean` (lists Droplets not tracked in this CLI's state and offers to delete them); the `DIGITALOCEAN_TOKEN` also lives in `~/.agentbox/secrets.env` if you prefer the DigitalOcean dashboard or REST API.
+
+<Callout type="warn" title="HEADS UP">
+Destroying is the only way to stop billing. A stopped box keeps accruing the hourly charge.
+</Callout>

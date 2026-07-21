@@ -9,16 +9,16 @@ import type {
   ClaudeActivityState,
   ClaudeQuestionPayload,
 } from '@agentbox/ctl';
-import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './claude.js';
-import { codexSessionInfo, SHARED_CODEX_VOLUME, type CodexSessionInfo } from './codex.js';
-import { SHARED_AGENTS_VOLUME } from './agents.js';
+import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './sync/agents/claude.js';
+import { codexSessionInfo, SHARED_CODEX_VOLUME, type CodexSessionInfo } from './sync/agents/codex.js';
+import { SHARED_AGENTS_VOLUME } from './sync/agents/skills.js';
 import {
   opencodeSessionInfo,
   SHARED_OPENCODE_VOLUME,
   type OpencodeSessionInfo,
-} from './opencode.js';
+} from './sync/agents/opencode.js';
 import { listShellSessions, type ShellSessionSummary } from './shell-session.js';
-import { bindWorktrees, removeInBoxWorktree, resyncWorkspaceFromHost } from './in-box-git.js';
+import { bindWorktrees, removeInBoxWorktree, resyncWorkspaceFromHost } from './sync/in-box-git.js';
 import {
   cursorServerVolumeName,
   SHARED_CURSOR_EXTENSIONS_VOLUME,
@@ -35,7 +35,7 @@ import {
   type HostPaths,
   type OpenOptions,
   type OpenResult,
-} from './host-export.js';
+} from './sync/host-export.js';
 import {
   inspectContainer,
   inspectContainerStatus,
@@ -56,7 +56,9 @@ import { launchCtlDaemon } from './ctl.js';
 import { ensureHomeOwnedByVscode } from './home-ownership.js';
 import { launchDockerdDaemon, SHARED_DOCKER_CACHE_VOLUME } from './dockerd.js';
 import { launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
+import { setUpBoxSshd } from './ssh.js';
 import { WEB_CONTAINER_PORT } from './web.js';
+import { syncAgentboxSshConfig } from '@agentbox/sandbox-core';
 import { detectPortless, portlessAlias, portlessGetUrl, portlessUnalias } from './portless.js';
 import { getBoxEndpoints, type BoxEndpoint, type BoxEndpoints } from './endpoints.js';
 import {
@@ -295,6 +297,44 @@ export async function resyncBox(
  * VNC + web get re-allocated by Docker on `start`, so we re-resolve and
  * persist those too.
  */
+/**
+ * Ensure the box's localhost sshd is up and its recorded loopback port is
+ * current, then re-sync `~/.agentbox/ssh/config`. Called on `start` (the daemon
+ * died with the container) AND before any `agentbox open`/`--in codex` on a box
+ * that is *already running* — Docker reallocates the ephemeral `-p 0:22` host
+ * port whenever the container restarts, and a `docker restart` (or daemon
+ * restart) outside `agentbox start` leaves the recorded `Port` stale. Idempotent:
+ * `mintSshKey` reuses the on-disk key, install + launch are no-ops when up, and
+ * we only re-persist + re-sync when the resolved port actually changed.
+ * Best-effort — mutates and returns `box`.
+ */
+export async function refreshBoxSshd(box: BoxRecord): Promise<BoxRecord> {
+  if (!box.sshEnabled) return box;
+  const ssh = await setUpBoxSshd(
+    box.container,
+    join(boxRunDirFor(box), 'ssh'),
+    `agentbox-${box.name}-${box.id}`,
+  );
+  // Only (re)write the alias when sshd actually bound. If it didn't come up we
+  // leave the last-known target untouched rather than pointing `~/.ssh/config` at
+  // a dead loopback port (matches the create-time gate) — a later retry records
+  // it once sshd is healthy.
+  if (!ssh.up || !ssh.sshHostPort) return box;
+  const port = ssh.sshHostPort;
+  const changed = port !== box.sshHostPort || box.ssh?.port !== port;
+  box.sshHostPort = port;
+  box.ssh = { host: '127.0.0.1', user: 'vscode', identityFile: ssh.identityFile, port };
+  if (changed) {
+    await recordBox(box);
+    try {
+      await syncAgentboxSshConfig();
+    } catch {
+      /* best-effort */
+    }
+  }
+  return box;
+}
+
 export async function startBox(idOrName: string): Promise<StartedBox> {
   const box = await resolveBox(idOrName);
   // .git bind-mounts are baked into the container at create time; if a host
@@ -366,6 +406,9 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
       await recordBox(box);
     }
   }
+  // sshd died with the container; relaunch it, re-resolve the (reallocated)
+  // loopback host port, and regenerate `~/.agentbox/ssh/config`.
+  await refreshBoxSshd(box);
   // Docker reallocated the ephemeral host ports above, so both Portless
   // routes now point at stale ports — re-register them. Best-effort and
   // silent (startBox has no onLog); if the proxy/Portless is gone the box
@@ -413,6 +456,7 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
         projectIndex: box.projectIndex,
         worktrees: box.gitWorktrees,
         autoApproveHostActions: box.autoApproveHostActions,
+        autoApproveSafeHostActions: box.autoApproveSafeHostActions,
       });
     } catch {
       // best-effort
@@ -645,6 +689,16 @@ export async function destroyBox(
   }
 
   await removeBoxRecord(box.id);
+  // Drop this box's `~/.agentbox/ssh/config` alias (regenerated from state, which
+  // no longer lists it). Best-effort — a stale alias is harmless (points at a
+  // dead loopback port) but confusing. No-op for boxes that never had sshd.
+  if (box.ssh) {
+    try {
+      await syncAgentboxSshConfig();
+    } catch {
+      /* best-effort */
+    }
+  }
 
   return { record: box, removedContainer, removedVolumes, removedSnapshot };
 }

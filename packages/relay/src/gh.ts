@@ -46,6 +46,15 @@ export const GH_PR_READ_ONLY_OPS: ReadonlySet<GhPrOp> = new Set([
 ]);
 
 /**
+ * `gh pr` write ops that auto-approve under `box.autoApproveSafeHostActions`:
+ * opening a PR for the box's branch (the relay forces `--head <box-branch>`, so
+ * it can only ever target the box's own work) and commenting on a PR. The more
+ * consequential writes (`review`, `close`, `reopen`, and especially `merge` /
+ * `checkout`) are deliberately excluded — they keep prompting.
+ */
+export const GH_PR_SAFE_AUTO_APPROVE_OPS: ReadonlySet<GhPrOp> = new Set(['create', 'comment']);
+
+/**
  * Whitelisted subset of `gh run` ops exposed via RPC. `list` / `view` are
  * read-only; `rerun` re-triggers CI (a write — gated by the host confirm
  * prompt). `watch` is deliberately absent: it blocks until the run finishes,
@@ -221,6 +230,17 @@ function hasHeadArg(args: string[]): boolean {
 }
 
 /**
+ * True when the caller passed an explicit `--head`/`-H` on a `gh pr create`.
+ * The safe-subset auto-approve only covers a `create` with NO explicit head:
+ * the relay then forces `--head` to the box's sanctioned branch, so the PR can
+ * only ever target the box's own work. An explicit head (which could name any
+ * branch, e.g. `main`) falls back to the confirm prompt.
+ */
+export function prCreateHasExplicitHead(op: GhPrOp, args: string[]): boolean {
+  return op === 'create' && hasHeadArg(args);
+}
+
+/**
  * True when a `gh pr create` would run with no `--head` — i.e. we couldn't
  * resolve the box's branch to inject and the caller didn't pass one. The
  * relay must refuse rather than let `gh` fall back to the host repo's
@@ -330,6 +350,13 @@ async function probeGh(): Promise<GitRpcResult | null> {
       stdout: '',
       stderr: `gh --version failed: ${version.stderr || version.stdout}`.trimEnd() + '\n',
     };
+  }
+  // gh authenticates directly from GH_TOKEN/GITHUB_TOKEN in the environment and
+  // ignores any stored `gh auth login`. When a token is supplied that way with
+  // no stored login, `gh auth status` would falsely report "not logged in" even
+  // though every API call succeeds. Treat a present token as authenticated.
+  if ((process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? '').length > 0) {
+    return null;
   }
   const auth = await runHostGh(['auth', 'status'], process.cwd(), 15_000);
   if (auth.exitCode !== 0) {

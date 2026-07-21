@@ -12,6 +12,14 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./control-plane": {
+      "types": "./dist/control-plane.d.ts",
+      "import": "./dist/control-plane.js"
+    },
+    "./daemon": {
+      "types": "./dist/daemon.d.ts",
+      "import": "./dist/daemon.js"
+    },
     "./bin": "./dist/bin.cjs"
   },
   "bin": {
@@ -34,10 +42,12 @@
     "@agentbox/integrations": "workspace:*",
     "@agentbox/sandbox-core": "workspace:*",
     "commander": "^12.1.0",
-    "execa": "^9.5.2"
+    "execa": "^9.5.2",
+    "pg": "^8.13.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
+    "@types/pg": "^8.11.10",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

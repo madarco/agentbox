@@ -8,7 +8,7 @@ import {
   inspectContainerStatus,
   inspectVolumeMountpoint,
 } from './docker.js';
-import { detectEngine } from './host-export.js';
+import { detectEngine } from './sync/host-export.js';
 import type { BoxRecord } from './state.js';
 
 /**

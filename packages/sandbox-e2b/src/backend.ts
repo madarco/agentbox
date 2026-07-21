@@ -45,6 +45,7 @@ import type {
 import type { SandboxInfo, SandboxState } from './sdk.js';
 import { Sandbox, Template, resolveApiKey } from './sdk.js';
 import { withE2bRetry } from './retry.js';
+import { parseE2bSize } from './prepare.js';
 import { ensureE2bBaseTemplate, readPreparedState } from './prepared-state.js';
 
 /**
@@ -152,6 +153,29 @@ export const e2bBackend: CloudBackend = {
       throw new Error(
         'e2b provision: no template available — `agentbox prepare --provider e2b` must run first',
       );
+    }
+
+    // E2B resources are fixed at template-build time (E2B rejects per-create
+    // resources). If the user asked for a size that differs from what the
+    // template was baked with, warn loudly — never send it to Sandbox.create.
+    if (req.size && req.size.trim().length > 0) {
+      let requestedKey: string | undefined;
+      try {
+        const parsed = parseE2bSize(req.size);
+        if (parsed) requestedKey = `${String(parsed.cpuCount)}-${String(parsed.memoryMB / 1024)}`;
+      } catch {
+        // A foreign/malformed box.size (e.g. a hetzner server type) isn't ours
+        // to validate here — prepare surfaces that. Skip the size-drift warning.
+      }
+      const bakedSize = readPreparedState().base?.size;
+      if (requestedKey && requestedKey !== bakedSize) {
+        log(
+          `e2b: WARNING — size '${requestedKey}' is ignored at create time; ` +
+            `this template was baked at ${bakedSize ?? 'the default size'}. ` +
+            `E2B resources are fixed at bake time — re-bake with ` +
+            `\`agentbox prepare --provider e2b --size ${requestedKey} --force\` to change them.`,
+        );
+      }
     }
 
     // No-retry: Sandbox.create is billable and non-idempotent — a timeout

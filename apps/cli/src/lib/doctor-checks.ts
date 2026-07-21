@@ -6,37 +6,37 @@
  * a cloud API. Remote snapshot inventory lives in `agentbox prepare --status`.
  */
 
-import { accessSync, constants as fsConstants, mkdirSync } from 'node:fs';
+import { accessSync, constants as fsConstants, existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { loadEffectiveConfig } from '@agentbox/config';
+import { loadEffectiveConfig, type ProviderKind } from '@agentbox/config';
+import {
+  errSummary,
+  firstLine,
+  statusBadge,
+  type CheckResult,
+  type CheckStatus,
+} from '@agentbox/sandbox-core';
 import { ALL_CONNECTORS, type IntegrationConnector } from '@agentbox/integrations';
+import { getRuntimeProviderNames, loadProviderModule } from '../provider/loaders.js';
+import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
 
-/**
- * `info` is for rows that are intentionally inert (e.g. an integration the
- * user hasn't enabled). It surfaces as a distinct glyph but rolls up like
- * `ok` so it never pushes the overall doctor status to "warn" — disabling
- * Notion is a setting, not a problem.
- */
-export type CheckStatus = 'ok' | 'info' | 'warn' | 'fail';
-
-export interface CheckResult {
-  label: string;
-  status: CheckStatus;
-  detail: string;
-  hint?: string;
-}
+// The per-provider health probes live in each `@agentbox/sandbox-<name>`
+// package (`providerModule.doctorChecks`); this module just aggregates them
+// with the system + integration checks. `CheckResult`/`CheckStatus` are the
+// shared shape from sandbox-core.
+export type { CheckResult, CheckStatus };
 
 export interface CheckGroup {
-  /** Group title: 'system' | 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b' | 'tenki'. */
+  /** Group title: 'system' | a provider name | 'integrations'. */
   title: string;
   results: CheckResult[];
 }
 
-export type ProviderName = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b' | 'tenki';
+/** Provider group name — a built-in `ProviderKind` or a registered plugin provider. */
+export type ProviderName = ProviderKind | (string & {});
 
-const ALL_PROVIDERS: ProviderName[] = ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'tenki'];
 const NODE_MIN_MAJOR = 20;
 const NODE_MIN_MINOR = 10;
 
@@ -55,15 +55,6 @@ function parseNodeMajorMinor(v: string): [number, number] {
   const m = /^v?(\d+)\.(\d+)/.exec(v);
   if (!m) return [0, 0];
   return [Number(m[1]), Number(m[2])];
-}
-
-function firstLine(s: string): string {
-  const i = s.indexOf('\n');
-  return i === -1 ? s : s.slice(0, i);
-}
-
-function errSummary(err: unknown): string {
-  return err instanceof Error ? firstLine(err.message) : String(err);
 }
 
 function checkNode(): CheckResult {
@@ -129,299 +120,73 @@ async function checkSsh(): Promise<CheckResult> {
       };
 }
 
+/** True when `bin` resolves on PATH (definitive install check, no version-flag quirks). */
+async function onPath(bin: string): Promise<string | null> {
+  const r = await execa('which', [bin], { reject: false });
+  if (r.exitCode !== 0) return null;
+  const p = (r.stdout ?? '').trim();
+  return p.length > 0 ? p : null;
+}
+
+// sshfs + macFUSE are OPTIONAL deps of `agentbox open` (the sshfs live-mount of a
+// box's /workspace), so a miss is `warn`, never `fail`.
+async function checkSshfs(): Promise<CheckResult> {
+  const path = await onPath('sshfs');
+  if (path) return { label: 'sshfs', status: 'ok', detail: path };
+  const hint =
+    process.platform === 'darwin'
+      ? 'optional: `brew install macfuse sshfs` — needed for `agentbox open` (sshfs mount)'
+      : 'optional: install sshfs (e.g. `apt install sshfs`) — needed for `agentbox open` (sshfs mount)';
+  return { label: 'sshfs', status: 'warn', detail: 'not found', hint };
+}
+
+/** macOS-only: macFUSE isn't a PATH binary — probe its filesystem bundle. */
+function checkMacfuse(): CheckResult {
+  const present =
+    existsSync('/Library/Filesystems/macfuse.fs') || existsSync('/Library/Filesystems/osxfuse.fs');
+  return present
+    ? { label: 'macfuse', status: 'ok', detail: '/Library/Filesystems/macfuse.fs' }
+    : {
+        label: 'macfuse',
+        status: 'warn',
+        detail: 'not installed',
+        hint: 'optional: `brew install macfuse` — the FUSE backend `agentbox open` mounts through',
+      };
+}
+
 export async function runSystemChecks(): Promise<CheckResult[]> {
-  const [git, ssh] = await Promise.all([checkGit(), checkSsh()]);
-  return [checkNode(), checkPlatform(), checkAgentboxHome(), git, ssh];
+  const [git, ssh, sshfs, config] = await Promise.all([
+    checkGit(),
+    checkSsh(),
+    checkSshfs(),
+    checkConfig(),
+  ]);
+  const results = [checkNode(), checkPlatform(), checkAgentboxHome(), git, ssh, sshfs];
+  // macFUSE is a macOS concept; on Linux FUSE is a kernel module and sshfs alone
+  // is the signal, so don't show a spurious row.
+  if (process.platform === 'darwin') results.push(checkMacfuse());
+  results.push(...config);
+  return results;
 }
 
-async function dockerChecks(): Promise<CheckResult[]> {
-  const linux = process.platform === 'linux';
-  const cli = await probeVersion('docker');
-  if (!cli) {
-    return [
-      {
-        label: 'docker cli',
-        status: 'warn',
-        detail: 'not found',
-        hint: linux
-          ? 'install docker engine: https://docs.docker.com/engine/install/'
-          : 'install Docker Desktop, OrbStack, or docker engine',
-      },
-    ];
-  }
-  const cliRes: CheckResult = { label: 'docker cli', status: 'ok', detail: cli };
-
-  // Daemon reachability via `docker info` (same probe pattern as
-  // packages/sandbox-docker/src/docker.ts:dockerInfo). On Linux the most common
-  // failure is not a stopped daemon but the user missing from the `docker`
-  // group — `docker info` then exits non-zero with "permission denied" on the
-  // socket. Distinguish the two so the hint points at the right fix.
-  const info = await execa('docker', ['info'], { reject: false });
-  if (info.exitCode !== 0) {
-    const permDenied = `${info.stderr ?? ''}`.toLowerCase().includes('permission denied');
-    let hint: string;
-    if (permDenied && linux) {
-      hint =
-        'add your user to the docker group: `sudo usermod -aG docker $USER`, then log out/in (or run `newgrp docker`)';
-    } else if (linux) {
-      hint = 'start Docker: `sudo systemctl start docker` (install docker engine if missing)';
-    } else {
-      hint = 'start Docker (Desktop / OrbStack)';
-    }
-    return [
-      cliRes,
-      {
-        label: 'docker daemon',
-        status: 'warn',
-        detail: permDenied ? 'permission denied' : 'unreachable',
-        hint,
-      },
-    ];
-  }
-  const daemonRes: CheckResult = { label: 'docker daemon', status: 'ok', detail: 'reachable' };
-
-  // Probe the base image + shared volumes. Lazy-import to keep the docker
-  // package off the hot path for non-docker users.
-  const mod = await import('@agentbox/sandbox-docker');
-  let imgRes: CheckResult;
+/**
+ * Surface non-fatal config issues (unknown keys — skipped, not applied). They
+ * no longer abort commands, so doctor is where a user finds a typo'd key.
+ */
+async function checkConfig(): Promise<CheckResult[]> {
+  let loaded;
   try {
-    const img = await mod.imageInfo(mod.DEFAULT_BOX_IMAGE);
-    imgRes = img.exists
-      ? { label: 'box image', status: 'ok', detail: `${mod.DEFAULT_BOX_IMAGE} built` }
-      : {
-          label: 'box image',
-          status: 'warn',
-          detail: `${mod.DEFAULT_BOX_IMAGE} not built`,
-          hint: 'run `agentbox prepare --provider docker` (or let the wizard do it)',
-        };
+    loaded = await loadEffectiveConfig(process.cwd());
   } catch (err) {
-    imgRes = {
-      label: 'box image',
-      status: 'warn',
-      detail: errSummary(err),
-    };
+    return [{ label: 'config', status: 'warn', detail: errSummary(err) }];
   }
-
-  const volNames = [mod.SHARED_CLAUDE_VOLUME, mod.SHARED_CODEX_VOLUME, mod.SHARED_OPENCODE_VOLUME];
-  const vols = await Promise.all(
-    volNames.map(async (n) => ({ name: n, exists: await mod.volumeExists(n).catch(() => false) })),
-  );
-  const present = vols.filter((v) => v.exists).length;
-  const volRes: CheckResult = {
-    label: 'shared volumes',
-    status: 'ok',
-    detail: `${String(present)}/${String(vols.length)} present (seeded lazily)`,
-  };
-
-  return [cliRes, daemonRes, imgRes, volRes];
-}
-
-async function daytonaChecks(): Promise<CheckResult[]> {
-  try {
-    const mod = await import('@agentbox/sandbox-daytona');
-    const status = await mod.getDaytonaStatus();
-    if (!status.configured) {
-      return [
-        {
-          label: 'credentials',
-          status: 'warn',
-          detail: status.reason ?? 'not configured',
-          hint: '`agentbox daytona login`',
-        },
-      ];
-    }
-    const credRes: CheckResult = { label: 'credentials', status: 'ok', detail: 'configured' };
-    const snapRes: CheckResult =
-      status.snapshots.length > 0
-        ? {
-            label: 'base snapshot',
-            status: 'ok',
-            detail: `${String(status.snapshots.length)} agentbox snapshot(s)`,
-          }
-        : {
-            label: 'base snapshot',
-            status: 'warn',
-            detail: 'none',
-            hint: '`agentbox prepare --provider daytona`',
-          };
-    return [credRes, snapRes];
-  } catch (err) {
-    return [
-      {
-        label: 'credentials',
-        status: 'warn',
-        detail: errSummary(err),
-      },
-    ];
-  }
-}
-
-async function hetznerChecks(): Promise<CheckResult[]> {
-  try {
-    const mod = await import('@agentbox/sandbox-hetzner');
-    const cred = mod.readHetznerCredStatus();
-    const credRes: CheckResult =
-      cred.source === 'none'
-        ? {
-            label: 'credentials',
-            status: 'warn',
-            detail: 'HCLOUD_TOKEN not set',
-            hint: '`agentbox hetzner login`',
-          }
-        : { label: 'credentials', status: 'ok', detail: `token from ${cred.source}` };
-
-    const prepared = mod.readPreparedState();
-    const snapRes: CheckResult = prepared.base?.imageId
-      ? {
-          label: 'base snapshot',
-          status: 'ok',
-          detail: `image ${String(prepared.base.imageId)} (${prepared.base.cliVersion ?? '—'})`,
-        }
-      : {
-          label: 'base snapshot',
-          status: 'warn',
-          detail: 'not baked',
-          hint: '`agentbox prepare --provider hetzner`',
-        };
-    return [credRes, snapRes];
-  } catch (err) {
-    return [
-      {
-        label: 'credentials',
-        status: 'warn',
-        detail: errSummary(err),
-      },
-    ];
-  }
-}
-
-async function vercelChecks(): Promise<CheckResult[]> {
-  try {
-    const mod = await import('@agentbox/sandbox-vercel');
-    const cred = mod.readVercelCredStatus();
-    const credRes: CheckResult =
-      cred.auth === 'none'
-        ? {
-            label: 'credentials',
-            status: 'warn',
-            detail: 'not configured',
-            hint: '`agentbox vercel login`',
-          }
-        : {
-            label: 'credentials',
-            status: 'ok',
-            detail: `${cred.auth} (${cred.source})`,
-          };
-
-    const prepared = mod.readPreparedState();
-    const snapRes: CheckResult = prepared.base?.snapshotId
-      ? {
-          label: 'base snapshot',
-          status: 'ok',
-          detail: `${prepared.base.snapshotId.slice(0, 16)}… (${prepared.base.cliVersion ?? '—'})`,
-        }
-      : {
-          label: 'base snapshot',
-          status: 'warn',
-          detail: 'not baked',
-          hint: '`agentbox prepare --provider vercel`',
-        };
-    return [credRes, snapRes];
-  } catch (err) {
-    return [
-      {
-        label: 'credentials',
-        status: 'warn',
-        detail: errSummary(err),
-      },
-    ];
-  }
-}
-
-async function e2bChecks(): Promise<CheckResult[]> {
-  try {
-    const mod = await import('@agentbox/sandbox-e2b');
-    const cred = mod.readE2bCredStatus();
-    const credRes: CheckResult =
-      cred.auth === 'none'
-        ? {
-            label: 'credentials',
-            status: 'warn',
-            detail: 'not configured',
-            hint: '`agentbox e2b login`',
-          }
-        : {
-            label: 'credentials',
-            status: 'ok',
-            detail: `${cred.auth} (${cred.source})`,
-          };
-
-    const prepared = mod.readPreparedState();
-    const tmplRes: CheckResult = prepared.base?.templateId
-      ? {
-          label: 'base template',
-          status: 'ok',
-          detail: `${prepared.base.templateName ?? prepared.base.templateId} (${prepared.base.cliVersion ?? '—'})`,
-        }
-      : {
-          label: 'base template',
-          status: 'warn',
-          detail: 'not baked',
-          hint: '`agentbox prepare --provider e2b`',
-        };
-    return [credRes, tmplRes];
-  } catch (err) {
-    return [
-      {
-        label: 'credentials',
-        status: 'warn',
-        detail: errSummary(err),
-      },
-    ];
-  }
-}
-
-async function tenkiChecks(): Promise<CheckResult[]> {
-  try {
-    const mod = await import('@agentbox/sandbox-tenki');
-    const cred = mod.readTenkiCredStatus();
-    const credRes: CheckResult =
-      cred.auth === 'none'
-        ? {
-            label: 'credentials',
-            status: 'warn',
-            detail: 'not configured',
-            hint: '`agentbox tenki login`',
-          }
-        : {
-            label: 'credentials',
-            status: 'ok',
-            detail: `${cred.auth} (${cred.source})`,
-          };
-
-    const prepared = mod.readPreparedState();
-    const imgRes: CheckResult = prepared.base?.image
-      ? {
-          label: 'base image',
-          status: 'ok',
-          detail: `${prepared.base.imageName ?? prepared.base.image} (${prepared.base.cliVersion ?? '—'})`,
-        }
-      : {
-          label: 'base image',
-          status: 'warn',
-          detail: 'not prepared',
-          hint: '`agentbox prepare --provider tenki`',
-        };
-    return [credRes, imgRes];
-  } catch (err) {
-    return [
-      {
-        label: 'credentials',
-        status: 'warn',
-        detail: errSummary(err),
-      },
-    ];
-  }
+  if (loaded.warnings.length === 0) return [];
+  return loaded.warnings.map((detail) => ({
+    label: 'config',
+    status: 'warn' as const,
+    detail,
+    hint: 'fix the key, or ignore this if it was set by a newer agentbox',
+  }));
 }
 
 /**
@@ -579,36 +344,77 @@ async function checkOneIntegration(
   return { label: svc, status: 'ok', detail: `${versionLine} · authed` };
 }
 
-export async function runProviderChecks(name: ProviderName): Promise<CheckGroup> {
-  let results: CheckResult[];
-  switch (name) {
-    case 'docker':
-      results = await dockerChecks();
-      break;
-    case 'daytona':
-      results = await daytonaChecks();
-      break;
-    case 'hetzner':
-      results = await hetznerChecks();
-      break;
-    case 'vercel':
-      results = await vercelChecks();
-      break;
-    case 'e2b':
-      results = await e2bChecks();
-      break;
-    case 'tenki':
-      results = await tenkiChecks();
-      break;
+// `box.claudeInstall` folds into the base-image fingerprint, so freshness must
+// compare against the variant the user would actually bake with. Resolve it once
+// per doctor run (memoized) from the effective config at cwd; default 'native'.
+let claudeInstallOnce: Promise<'native' | 'npm'> | undefined;
+function resolveClaudeInstall(): Promise<'native' | 'npm'> {
+  claudeInstallOnce ??= loadEffectiveConfig(process.cwd())
+    .then((cfg): 'native' | 'npm' => (cfg.effective.box.claudeInstall === 'npm' ? 'npm' : 'native'))
+    .catch((): 'native' | 'npm' => 'native');
+  return claudeInstallOnce;
+}
+
+/**
+ * A "base freshness" row for every baked provider, docker included — warns when
+ * the baked image/snapshot's build-context fingerprint no longer matches the
+ * current runtime (a CLI upgrade changed a baked file), which is the same
+ * staleness the wizard nags about at create time. Returns null for
+ * not-yet-baked providers (the provider's own "base snapshot" row already says
+ * so), and when the live fingerprint can't be computed (a dev tree without a
+ * built runtime) — never a false 'stale'. Local + offline (just file hashing),
+ * so it honours this module's offline-safe contract.
+ */
+async function baseFreshnessRow(name: ProviderName): Promise<CheckResult | null> {
+  const status = await evaluateBaseFreshness(name, await resolveClaudeInstall()).catch(() => null);
+  if (!status) return null;
+  switch (status.state) {
+    case 'stale':
+      return {
+        label: 'base freshness',
+        status: 'warn',
+        detail: `stale — ${status.reason}`,
+        hint: `fix with: \`agentbox prepare --provider ${name}\``,
+      };
+    case 'fresh':
+      return { label: 'base freshness', status: 'ok', detail: 'up to date' };
+    default:
+      // 'unprepared' (covered by the provider's base-snapshot row) / 'unknown'
+      // (unverifiable) — stay silent rather than add an inert row.
+      return null;
   }
-  return { title: name, results };
+}
+
+export async function runProviderChecks(name: ProviderName): Promise<CheckGroup> {
+  try {
+    const mod = await loadProviderModule(name);
+    // Independent: the provider's own probes don't feed the freshness row (it
+    // reads prepared-state + the local build context). Overlap them.
+    const [results, fresh] = await Promise.all([mod.doctorChecks(), baseFreshnessRow(name)]);
+    return { title: name, results: fresh ? [...results, fresh] : results };
+  } catch (err) {
+    // A broken/incompatible plugin must not crash `doctor` — surface it as a warn.
+    return {
+      title: name,
+      results: [{ label: 'plugin', status: 'warn', detail: errSummary(err) }],
+    };
+  }
 }
 
 export async function runAllChecks(): Promise<CheckGroup[]> {
-  const sys: CheckGroup = { title: 'system', results: await runSystemChecks() };
-  const providerGroups = await Promise.all(ALL_PROVIDERS.map((n) => runProviderChecks(n)));
-  const integrations: CheckGroup = { title: 'integrations', results: await integrationsChecks() };
-  return [sys, ...providerGroups, integrations];
+  // The three phases are independent, so run them together: wall time is the
+  // slowest phase, not their sum. (`doctor --provider X` already did this —
+  // see runDoctor's Promise.all — so unscoped doctor was the slow path.)
+  const [sysResults, providerGroups, integrationResults] = await Promise.all([
+    runSystemChecks(),
+    Promise.all(getRuntimeProviderNames().map((n) => runProviderChecks(n))),
+    integrationsChecks(),
+  ]);
+  return [
+    { title: 'system', results: sysResults },
+    ...providerGroups,
+    { title: 'integrations', results: integrationResults },
+  ];
 }
 
 function worstInResults(results: CheckResult[]): CheckStatus {
@@ -636,7 +442,16 @@ function summaryToken(group: CheckGroup): string {
   const worst = worstInResults(group.results);
   if (group.title === 'system') {
     if (worst === 'fail') return 'system FAIL';
-    if (worst === 'warn') return 'system warn';
+    // Name what warned so the one-liner is actionable without running doctor;
+    // deps whose hint says "optional" are labelled as such (they don't block).
+    if (worst === 'warn') {
+      const warns = group.results.filter((r) => r.status === 'warn');
+      const required = warns.filter((r) => !r.hint?.startsWith('optional')).map((r) => r.label);
+      const optional = warns.filter((r) => r.hint?.startsWith('optional')).map((r) => r.label);
+      const parts = [...required];
+      if (optional.length > 0) parts.push(`optional ${optional.join(', ')}`);
+      return `system warn: ${parts.join(', ')}`;
+    }
     return 'system ok';
   }
   if (group.title === 'integrations') {
@@ -681,13 +496,6 @@ export function formatCompact(groups: CheckGroup[]): string {
 
 function pad(s: string, width: number): string {
   return s.length >= width ? s : s + ' '.repeat(width - s.length);
-}
-
-function statusBadge(s: CheckStatus): string {
-  if (s === 'ok') return '[ ok ]';
-  if (s === 'info') return '[info]';
-  if (s === 'warn') return '[warn]';
-  return '[FAIL]';
 }
 
 /** Multi-line grouped report used by `agentbox doctor`. */

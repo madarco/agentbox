@@ -7,6 +7,19 @@
 #
 # Strict per-op flag whitelist — better safe than compatible. Adding a flag
 # is a deliberate decision, not a default.
+#
+# INVARIANT: every push/pull/fetch flag on a whitelist must be VALUE-LESS.
+# A flag that takes a value can't be expressed anyway — the glued form
+# (`--depth=1`) fails strict_flags' exact-match regex and the split form
+# (`--depth 1`) has its value caught by refuse_positionals — which is what
+# keeps `--upload-pack=`, `--receive-pack=`, `--exec=` and `-o` out for free.
+# Allowing one would break that. (`clone` is the exception: it parses values
+# explicitly, below.)
+#
+# Deliberately still refused, don't "helpfully" add them: `--delete`/`-d` and
+# `--mirror` (destructive on the remote), `push --prune` (deletes remote refs),
+# `push --force` (use `--force-with-lease`), and `--all` — the relay always
+# passes a positional remote+branch, which `git fetch --all` rejects outright.
 
 set -euo pipefail
 
@@ -15,6 +28,10 @@ set -euo pipefail
 # NEVER `exec git` — would loop on this shim. Always exec the resolved $REAL_GIT.
 CTL="${AGENTBOX_CTL_PATH:-/usr/local/bin/agentbox-ctl}"
 REAL_GIT="${AGENTBOX_REAL_GIT_PATH:-/usr/bin/git}"
+
+# Output-verbosity flags: value-less, no side effects, accepted by all three
+# network ops. Scripts run under `set -e` reach for these first.
+COMMON_QUIET="--quiet|-q|--verbose|-v|--progress|--no-progress"
 
 die() {
   printf 'agentbox git shim: %s\n' "$*" >&2
@@ -66,24 +83,57 @@ fi
 case "$1" in
   push)
     shift
-    strict_flags "git push" "--force-with-lease" "$@"
+    strict_flags "git push" "--force-with-lease|--tags|--dry-run|$COMMON_QUIET" "$@"
     refuse_positionals "git push" "$@"
     exec "$CTL" git push -- "$@"
     ;;
   pull)
     shift
-    strict_flags "git pull" "--ff-only" "$@"
+    strict_flags "git pull" "--ff-only|--prune|-p|--tags|--no-tags|$COMMON_QUIET" "$@"
     refuse_positionals "git pull" "$@"
     exec "$CTL" git pull -- "$@"
     ;;
   fetch)
     shift
-    strict_flags "git fetch" "--prune" "$@"
+    strict_flags "git fetch" "--prune|-p|--prune-tags|--tags|--no-tags|--force|-f|--dry-run|$COMMON_QUIET" "$@"
     refuse_positionals "git fetch" "$@"
     exec "$CTL" git fetch -- "$@"
     ;;
   clone)
     shift
+    # A clone whose source is a filesystem path or `file://` URL needs no host
+    # credentials, and `agentbox-ctl git clone` only speaks github — so relaying
+    # it would be wrong, not merely strict. Fall through to the real git before
+    # the flag gate. agentbox's own cloud workspace seeding does exactly this
+    # (`git clone --no-checkout --quiet file:///workspace <tmp>`), which is how
+    # `agentbox create --provider <cloud>` runs from inside a box.
+    #
+    # Do NOT try to find "the repo positional" by skipping known flag values:
+    # options we don't model take a value too (`--reference <path>`,
+    # `--separate-git-dir <path>`, `--upload-pack <cmd>`), and that path would
+    # then read as the source — handing the real git a REMOTE clone and slipping
+    # both the relay and the whitelist. Instead classify EVERY non-flag token
+    # (values included) and only fall through when something is unmistakably
+    # local and nothing looks remote. Unknown/ambiguous ⇒ no fall-through ⇒ the
+    # strict gate below rejects it loudly. Fail-closed by default.
+    clone_local=0
+    clone_remote=0
+    for arg in "$@"; do
+      case "$arg" in
+        -*) continue ;;
+      esac
+      case "$arg" in
+        # file:// first: it also matches the `*://*` remote pattern below.
+        file://*|/*|./*|../*|~/*) clone_local=1 ;;
+        # scheme://, scp-style host:path / user@host:path, and the bare
+        # `owner/name` github shorthand that `agentbox-ctl git clone` accepts.
+        *://*|*:*|*/*) clone_remote=1 ;;
+      esac
+    done
+    if [ "$clone_local" = "1" ] && [ "$clone_remote" = "0" ]; then
+      exec "$REAL_GIT" clone "$@"
+    fi
+
     strict_flags "git clone" "--branch|--depth" "$@"
     # Walk argv: split into (url, dir, flags) so we can hand them to ctl
     # in commander's expected shape (positionals first, then options).

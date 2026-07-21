@@ -3,35 +3,21 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { ConfigError, loadConfig } from '@agentbox/ctl';
-import { renderCarryEntries } from '@agentbox/sandbox-core';
+import { makeSyncContext, syncAgentboxSshConfig } from '@agentbox/sandbox-core';
 import { loadEffectiveConfig } from '@agentbox/config';
-import {
-  buildClaudeMounts,
-  ensureClaudeVolume,
-  resolveClaudeVolume,
-  seedSetupSkillIntoVolume,
-} from './claude.js';
-import { syncClaudeCredentials } from './claude-credentials.js';
+import { makeDockerSync } from './sync/docker-sync.js';
+import { buildClaudeMounts, resolveClaudeVolume } from './sync/agents/claude.js';
 import {
   buildCodexMounts,
-  ensureCodexVolume,
   resolveCodexVolume,
-  seedCodexHooks,
   type CodexMountResult,
-} from './codex.js';
-import {
-  buildAgentsMounts,
-  ensureAgentsVolume,
-  resolveAgentsVolume,
-  type AgentsMountResult,
-} from './agents.js';
+} from './sync/agents/codex.js';
+import { buildAgentsMounts, resolveAgentsVolume, type AgentsMountResult } from './sync/agents/skills.js';
 import {
   buildOpencodeMounts,
-  ensureOpencodeVolume,
-  seedOpencodePlugin,
   resolveOpencodeVolume,
   type OpencodeMountResult,
-} from './opencode.js';
+} from './sync/agents/opencode.js';
 import {
   type BoxLimitSpec,
   containerExists,
@@ -43,6 +29,7 @@ import {
 } from './docker.js';
 import { dockerVolumeName, launchDockerdDaemon } from './dockerd.js';
 import { generateVncPassword, launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
+import { setUpBoxSshd, SSH_CONTAINER_PORT } from './ssh.js';
 import { WEB_CONTAINER_PORT } from './web.js';
 import { detectGitRepos, pickFreshBranch } from './git-worktree.js';
 import {
@@ -52,21 +39,18 @@ import {
   gitWorktreePathFor,
   regenerateRestoredWorktrees,
   removeInBoxWorktree,
-  resyncWorkspaceFromHost,
   seedWorkspace,
   seedWorkspaceFromDir,
   type RepoCarryOver,
   type RestoreWorktreePlan,
-} from './in-box-git.js';
+} from './sync/in-box-git.js';
 import {
   CONTAINER_EXPORT_MERGED,
   DEFAULT_ENV_PATTERNS,
   boxRunDirFor,
-  copyCarryPathsToBox,
-  copyHostEnvFilesToBox,
   copyHostFilesToBox,
   detectEngine,
-} from './host-export.js';
+} from './sync/host-export.js';
 import {
   detectPortless,
   portlessAlias,
@@ -109,6 +93,11 @@ import {
 } from './vscode.js';
 
 export interface CreateBoxOptions {
+  /**
+   * `box.credentialSync` resolved by the caller (CLI flag override included).
+   * Undefined → fall back to the local config load below.
+   */
+  credentialSync?: boolean;
   workspacePath: string;
   name?: string;
   /**
@@ -304,6 +293,31 @@ async function pathExists(p: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Trust the (TLS) host Portless CA inside a docker box so the in-box VNC
+ * Chromium and Playwright accept `https://<name>.localhost`. The CA is the
+ * host's, bind-mounted at /home/vscode/.portless/ca.pem (PORTLESS_STATE_DIR).
+ * The baked `agentbox-portless-trust` helper installs it into the system store
+ * + the vscode NSS db; we then drop a profile.d export of NODE_EXTRA_CA_CERTS
+ * for Node-based agents. Best-effort: never throws.
+ */
+async function trustInBoxPortlessCa(
+  container: string,
+  log: (line: string) => void,
+): Promise<void> {
+  const script =
+    'agentbox-portless-trust /home/vscode/.portless/ca.pem >/dev/null 2>&1 || true; ' +
+    "echo 'export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/agentbox-portless-ca.crt' " +
+    '> /etc/profile.d/agentbox-portless-ca.sh 2>/dev/null || true';
+  const r = await execa(
+    'docker',
+    ['exec', '--user', 'root', container, 'bash', '-lc', script],
+    { reject: false },
+  );
+  if (r.exitCode === 0) log('portless: trusted host CA in box (system store + NSS)');
+  else log('portless: in-box CA trust failed (best-effort) — in-box https may warn');
 }
 
 // ~/.claude and ~/.codex are intentionally NOT in this list: each lives in a
@@ -506,6 +520,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         containerPath: w.containerPath,
         gitWorktreePath: freshGitWorktreePath,
         branch: freshBranch,
+        sanctionedBranch: freshBranch,
         relPathFromWorkspace: w.relPathFromWorkspace,
       });
     }
@@ -546,6 +561,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
           containerPath,
           gitWorktreePath,
           branch,
+          sanctionedBranch: branch,
           relPathFromWorkspace: r.relPathFromWorkspace,
         });
         continue;
@@ -564,6 +580,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         containerPath,
         gitWorktreePath,
         branch,
+        sanctionedBranch: branch,
         relPathFromWorkspace: r.relPathFromWorkspace,
       });
     }
@@ -594,138 +611,84 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   log(`prepared volumes ${vscodeServerVolumeName(id)}, ${cursorServerVolumeName(id)}, ${dockerVolume}`);
   const ide = buildIdeMounts(id);
 
-  // Claude Code config volume. Shared by default so users sign in once across
-  // every box; --isolate-claude-config opts into a per-box volume. Either way,
-  // the host's ~/.claude is the authoritative source: we rsync host -> volume
-  // on every create so updates on the host (new login, new skills, new MCP)
-  // flow into the next box. Sync is additive — box-only state (session logs,
-  // etc.) is preserved.
+  // Agent config volumes (claude/codex/agents/opencode). Each is
+  // host-authoritative and additively synced from the host on every create (a
+  // new login/skill/MCP on the host flows into the next box; box-only state like
+  // session logs is preserved). `--isolate-<tool>-config` opts into a per-box
+  // volume. Resolve the specs + want-conditionals here (one source of truth —
+  // they also drive the mounts below), then walk the docker ProviderSync facade
+  // to run the actual volume seeds + credential sync.
   const claudeSpec = resolveClaudeVolume({
     isolate: opts.claudeConfig?.isolate ?? false,
     boxId: id,
   });
-  const claudeEnsured = await ensureClaudeVolume(claudeSpec, {
-    syncFromHost: true,
-    image: ensureRef,
-    hostWorkspace: workspace,
-  });
-  if (claudeEnsured.synced) {
-    log(`synced ${claudeSpec.volume} from ~/.claude`);
-    if ((claudeEnsured.filteredHookCount ?? 0) > 0) {
-      log(
-        `filtered ${String(claudeEnsured.filteredHookCount)} host-path hook(s) (paths under ~/)`,
-      );
-    }
-    if (claudeEnsured.installMethodFixed) {
-      log('set installMethod=native in synced .claude.json (matches box native install)');
-    }
-    if (claudeEnsured.aliasedProjectKey) {
-      log(`aliased project state for ${workspace} -> /workspace in synced .claude.json`);
-    }
-    if (claudeEnsured.workspaceTrusted) {
-      log('pre-trusted /workspace in synced .claude.json (skips the trust dialog)');
-    }
-  } else if (claudeEnsured.created) {
-    log(`created empty volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
-  } else {
-    log(`reusing volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
-  }
-  // Box-only: seed /agentbox-setup into the volume from the image. Never
-  // touches the host's ~/.claude. Re-copied every run so an image upgrade
-  // propagates to a long-lived shared volume.
-  const seeded = await seedSetupSkillIntoVolume(claudeSpec.volume, ensureRef);
-  if (seeded.seeded) log(`refreshed /agentbox-setup skill into ${claudeSpec.volume}`);
-  // Mirror the in-box OAuth credentials with the host backup: extract a
-  // box-written `.credentials.json` out to ~/.agentbox, or seed a fresh
-  // volume from a previous box's login. Best-effort.
-  const credSync = await syncClaudeCredentials(claudeSpec, {
-    image: ensureRef,
-    isolate: opts.claudeConfig?.isolate ?? false,
-  });
-  if (credSync.direction === 'extracted') {
-    log('extracted box claude credentials to host backup');
-  } else if (credSync.direction === 'seeded') {
-    log(`seeded claude credentials into ${claudeSpec.volume} from host backup`);
-  }
-  const claudeMounts = buildClaudeMounts(claudeSpec, process.env);
-
-  // Codex config volume. Mounted when the caller explicitly wants codex
-  // (`agentbox codex` passes `codexConfig`) OR the host already uses codex
-  // (`~/.codex` exists) — so a plain `agentbox create` for a Codex user still
-  // gets a working box. Same host-authoritative additive sync as the claude
-  // volume; `--isolate-codex-config` opts into a per-box volume.
+  // Codex: wanted when the caller passes `codexConfig` (`agentbox codex`) OR the
+  // host already uses codex (`~/.codex` exists) — so a plain create for a Codex
+  // user still gets a working box.
   const wantCodex =
     opts.codexConfig !== undefined || (await pathExists(join(homedir(), '.codex')));
-  let codexMounts: CodexMountResult | undefined;
-  let codexConfigVolume: string | undefined;
-  if (wantCodex) {
-    const codexSpec = resolveCodexVolume({
-      isolate: opts.codexConfig?.isolate ?? false,
-      boxId: id,
-    });
-    const codexEnsured = await ensureCodexVolume(codexSpec, {
-      syncFromHost: true,
-      image: ensureRef,
-    });
-    if (codexEnsured.synced) log(`synced ${codexSpec.volume} from ~/.codex`);
-    else if (codexEnsured.created) log(`created empty volume ${codexSpec.volume} (no host ~/.codex)`);
-    else log(`reusing volume ${codexSpec.volume}`);
-    // Box-only: seed the Codex activity hooks (~/.codex/hooks.json). Re-seeded
-    // each create so an image upgrade propagates; never touches the host.
-    const codexHooks = await seedCodexHooks(codexSpec.volume, ensureRef);
-    if (codexHooks.seeded) log(`seeded Codex activity hooks into ${codexSpec.volume}`);
-    codexMounts = buildCodexMounts(codexSpec, process.env);
-    codexConfigVolume = codexSpec.volume;
-  }
-
-  // Agents skills volume (~/.agents). Codex discovers skills from
-  // ~/.agents/skills directly, and the ~/.codex/skills symlinks point back into
-  // it, so the box needs it to see the same skill set as the host. Mounted
-  // whenever the host has a ~/.agents; shared across boxes (skills only, no
-  // auth). Same host-authoritative additive sync as the other agent volumes.
-  let agentsMounts: AgentsMountResult | undefined;
-  let agentsConfigVolume: string | undefined;
-  if (await pathExists(join(homedir(), '.agents'))) {
-    const agentsSpec = resolveAgentsVolume();
-    const agentsEnsured = await ensureAgentsVolume(agentsSpec, {
-      syncFromHost: true,
-      image: ensureRef,
-    });
-    if (agentsEnsured.synced) log(`synced ${agentsSpec.volume} from ~/.agents`);
-    else if (agentsEnsured.created) log(`created empty volume ${agentsSpec.volume}`);
-    else log(`reusing volume ${agentsSpec.volume}`);
-    agentsMounts = buildAgentsMounts(agentsSpec);
-    agentsConfigVolume = agentsSpec.volume;
-  }
-
-  // OpenCode config volume. Mounted when the caller wants opencode
-  // (`agentbox opencode` passes `opencodeConfig`) OR the host already uses
-  // OpenCode (`~/.config/opencode` or `~/.local/share/opencode` exists). One
-  // volume holds both OpenCode dirs (data at the root, config in a `config/`
-  // subdir via OPENCODE_CONFIG_DIR — see opencode.ts).
+  const codexSpec = wantCodex
+    ? resolveCodexVolume({ isolate: opts.codexConfig?.isolate ?? false, boxId: id })
+    : undefined;
+  // Agents skills (~/.agents): mounted whenever the host has one; shared across
+  // boxes (skills only, no auth). Codex discovers skills from ~/.agents/skills.
+  const agentsSpec = (await pathExists(join(homedir(), '.agents')))
+    ? resolveAgentsVolume()
+    : undefined;
+  // OpenCode: wanted when the caller passes `opencodeConfig` OR the host already
+  // uses OpenCode (`~/.config/opencode` or `~/.local/share/opencode`).
   const wantOpencode =
     opts.opencodeConfig !== undefined ||
     (await pathExists(join(homedir(), '.config', 'opencode'))) ||
     (await pathExists(join(homedir(), '.local', 'share', 'opencode')));
+  const opencodeSpec = wantOpencode
+    ? resolveOpencodeVolume({ isolate: opts.opencodeConfig?.isolate ?? false, boxId: id })
+    : undefined;
+
+  // Walk the docker ProviderSync facade (see sync/docker-sync.ts for the full
+  // per-op picture): seed every agent-config volume (claude static+skills+dynamic
+  // +box-facts, codex hooks+AGENTS.override, opencode plugin) then sync the claude
+  // credentials. The seeds run against throwaway helper containers + the box image
+  // — the box container `containerName` doesn't exist yet, which is fine (those
+  // ops don't touch it). Workspace *seed* + the mount building below stay here:
+  // they're docker-specific, non-facade steps that feed `runBox`.
+  const syncCtx = makeSyncContext({
+    boxName: name,
+    boxId: id,
+    provider: 'docker',
+    hostWorkspace: workspace,
+    projectRoot: opts.projectRoot ?? workspace,
+    onLog: log,
+  });
+  const sync = makeDockerSync({
+    container: containerName,
+    image: ensureRef,
+    claudeSpec,
+    claudeIsolate: opts.claudeConfig?.isolate ?? false,
+    codexSpec,
+    agentsSpec,
+    opencodeSpec,
+  });
+  await sync.seedAgentConfig(syncCtx);
+  await sync.seedCredentials(syncCtx);
+
+  // Container mounts, built from the same specs (pure).
+  const claudeMounts = buildClaudeMounts(claudeSpec, process.env);
+  let codexMounts: CodexMountResult | undefined;
+  let codexConfigVolume: string | undefined;
+  if (codexSpec) {
+    codexMounts = buildCodexMounts(codexSpec, process.env);
+    codexConfigVolume = codexSpec.volume;
+  }
+  let agentsMounts: AgentsMountResult | undefined;
+  let agentsConfigVolume: string | undefined;
+  if (agentsSpec) {
+    agentsMounts = buildAgentsMounts(agentsSpec);
+    agentsConfigVolume = agentsSpec.volume;
+  }
   let opencodeMounts: OpencodeMountResult | undefined;
   let opencodeConfigVolume: string | undefined;
-  if (wantOpencode) {
-    const opencodeSpec = resolveOpencodeVolume({
-      isolate: opts.opencodeConfig?.isolate ?? false,
-      boxId: id,
-    });
-    const opencodeEnsured = await ensureOpencodeVolume(opencodeSpec, {
-      syncFromHost: true,
-      image: ensureRef,
-    });
-    if (opencodeEnsured.synced) log(`synced ${opencodeSpec.volume} from ~/.config + ~/.local/share opencode`);
-    else if (opencodeEnsured.created) log(`created empty volume ${opencodeSpec.volume} (no host opencode)`);
-    else log(`reusing volume ${opencodeSpec.volume}`);
-    // Seed the AgentBox state-reporting plugin from the image-baked copy.
-    // OpenCode autoloads anything under $OPENCODE_CONFIG_DIR/plugins/; the
-    // plugin shells `agentbox-ctl opencode-state` on each lifecycle event.
-    const opencodePlugin = await seedOpencodePlugin(opencodeSpec.volume, ensureRef);
-    if (opencodePlugin.seeded) log(`seeded agentbox-state plugin into ${opencodeSpec.volume}`);
+  if (opencodeSpec) {
     opencodeMounts = buildOpencodeMounts(opencodeSpec, process.env);
     opencodeConfigVolume = opencodeSpec.volume;
   }
@@ -789,9 +752,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // > project > global). Read here, in the construction layer, so every
   // entrypoint (create/claude/codex/opencode/wizard/queued worker) gets the
   // same behavior without each caller threading the flag.
-  const autoApproveHostActions = (
-    await loadEffectiveConfig(opts.projectRoot ?? workspace)
-  ).effective.box.autoApproveHostActions;
+  const effectiveBoxCfg = (await loadEffectiveConfig(opts.projectRoot ?? workspace)).effective.box;
+  const autoApproveHostActions = effectiveBoxCfg.autoApproveHostActions;
+  const autoApproveSafeHostActions = effectiveBoxCfg.autoApproveSafeHostActions;
 
   // Per-box bearer token for the host relay. Register *before* runBox so the
   // box's supervisor can post on boot. Skip if the relay isn't reachable —
@@ -808,6 +771,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         projectIndex,
         worktrees: gitWorktreeRecords,
         autoApproveHostActions,
+        autoApproveSafeHostActions,
       });
       log(`registered box token with relay`);
     } catch (err) {
@@ -850,6 +814,14 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     { hostPort: 0, containerPort: WEB_CONTAINER_PORT, hostIp: '127.0.0.1' },
   ];
 
+  // sshd is always-on: publish container :22 on an ephemeral loopback host port
+  // so `agentbox open` (sshfs) and the Codex app can reach the box over SSH. Like
+  // the web/VNC mappings this must be set at `docker run` (port maps are immutable)
+  // and re-resolved on every start (the host port is reassigned).
+  const sshPortMappings = [
+    { hostPort: 0, containerPort: SSH_CONTAINER_PORT, hostIp: '127.0.0.1' },
+  ];
+
   // Identity vars that make the box self-aware. `projectIndex` was allocated
   // earlier (right after `id`/`name`) so dir-segment helpers could see it; we
   // just read the binding here.
@@ -857,6 +829,12 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     AGENTBOX: '1',
     AGENTBOX_BOX_NAME: name,
     AGENTBOX_HOST_WORKSPACE: workspace,
+    // Absent = enabled; the ctl credential watcher only checks for '0'. The
+    // caller-resolved value wins (it sees CLI overrides like
+    // --no-credential-sync that this function's own config load can't).
+    ...((opts.credentialSync ?? effectiveBoxCfg.credentialSync) === false
+      ? { AGENTBOX_CREDENTIAL_SYNC: '0' }
+      : {}),
     ...(opts.projectRoot ? { AGENTBOX_PROJECT_ROOT: opts.projectRoot } : {}),
     ...(projectIndex !== undefined
       ? { AGENTBOX_PROJECT_INDEX: String(projectIndex) }
@@ -907,10 +885,15 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     withPlaywright: opts.withPlaywright ? true : undefined,
     withEnv: opts.withEnv ? true : undefined,
     autoApproveHostActions: autoApproveHostActions ? true : undefined,
+    // Default on: persist only when explicitly disabled (mirrors the relay's
+    // `!== false` read); an absent field on an older record stays relaxed.
+    autoApproveSafeHostActions: autoApproveSafeHostActions === false ? false : undefined,
     vncEnabled: vncEnabled ? true : undefined,
     vncContainerPort: vncEnabled ? VNC_CONTAINER_PORT : undefined,
     vncPassword: vncPassword,
     webContainerPort: WEB_CONTAINER_PORT,
+    sshEnabled: true,
+    sshContainerPort: SSH_CONTAINER_PORT,
     dockerVolume,
     dockerCacheShared: dockerCacheShared || undefined,
     projectRoot: opts.projectRoot,
@@ -926,7 +909,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     image: imageRef,
     extraVolumes,
     limits: effectiveLimits,
-    portMappings: [...vncPortMappings, ...webPortMappings],
+    portMappings: [...vncPortMappings, ...webPortMappings, ...sshPortMappings],
     env: {
       AGENTBOX_BOX_ID: id,
       ...agentboxEnv,
@@ -1048,17 +1031,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     // current branch in + overlays the host's uncommitted/untracked changes, so
     // the box matches a fresh create from HEAD (box wins on conflict).
     if (opts.resyncOnStart !== false) {
-      const repos = await resyncWorkspaceFromHost({
-        container: containerName,
-        worktrees: gitWorktreeRecords,
-        onLog: log,
-      });
-      resyncResult = {
-        repos,
-        hadConflicts: repos.some(
-          (r) => r.mergeConflicts.length > 0 || r.overlaySkipped.length > 0,
-        ),
-      };
+      resyncResult = await sync.resyncWorkspace(syncCtx, gitWorktreeRecords);
     }
   } else {
     log('using /workspace from checkpoint image (no worktrees recorded; no rebind)');
@@ -1115,12 +1088,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
 
   if (opts.withEnv) {
     log('copying host env/config files into /workspace (--with-env)');
-    const { copied } = await copyHostEnvFilesToBox({
-      container: containerName,
-      workspaceDir: workspace,
-      patterns: DEFAULT_ENV_PATTERNS,
-      onLog: log,
-    });
+    const { copied } = await sync.seedEnvFiles(syncCtx, DEFAULT_ENV_PATTERNS);
     log(copied > 0 ? `copied ${String(copied)} env/config file(s)` : 'no env/config files found');
   }
 
@@ -1143,16 +1111,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   let carrySummary: BoxRecord['carry'] | undefined;
   if (opts.carry && opts.carry.length > 0) {
     log(`carry: copying ${String(opts.carry.length)} host path(s) into the box`);
-    const entries = await renderCarryEntries(
-      opts.carry,
-      { name, id, kind: 'docker', hostWorkspace: workspace, projectRoot: opts.projectRoot },
-      log,
-    );
-    const result = await copyCarryPathsToBox({
-      container: containerName,
-      entries,
-      onLog: log,
-    });
+    const result = await sync.applyCarry(syncCtx, opts.carry);
     log(`carry: copied ${String(result.copied)}/${String(opts.carry.length)} entry/entries`);
     for (const err of result.errors) log(`carry: ${err}`);
     if (result.applied.length > 0) {
@@ -1181,6 +1140,22 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     );
   }
 
+  // sshd: mint the per-box key under the box dir's ssh/, install it into the
+  // box's authorized_keys, launch sshd, resolve the loopback host port. The key
+  // dir lives inside boxDir so `destroy` (which rm -rf's boxRunDirFor) wipes the
+  // private key with it. Best-effort — a failed bring-up leaves the box usable
+  // over `docker exec`, just without `agentbox open`/SSH.
+  const ssh = await setUpBoxSshd(
+    containerName,
+    join(boxDir, 'ssh'),
+    `agentbox-${name}-${id}`,
+  );
+  if (ssh.up && ssh.sshHostPort) {
+    log(`sshd up on host 127.0.0.1:${String(ssh.sshHostPort)} (loopback-only)`);
+  } else {
+    log(`sshd did not come up: ${ssh.reason ?? 'unknown'} (open/SSH unavailable; docker exec still works)`);
+  }
+
   // Portless: register `https://<box-name>.localhost -> 127.0.0.1:<webHostPort>`
   // and a parallel `https://vnc-<box-name>.localhost -> 127.0.0.1:<vncHostPort>`
   // for the noVNC viewer. Best-effort — Portless is user-installed and never
@@ -1207,6 +1182,16 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
               // the proxy was started (http://…:1355 no-TLS, or https://… on :443).
               portlessUrl = await portlessGetUrl(name);
               log(`portless alias ${portlessUrl} -> 127.0.0.1:${String(webHostPort)}`);
+              // When the host proxy is TLS, the in-box VNC Chromium / Playwright
+              // hit `https://<name>.localhost` (via host.docker.internal) and
+              // reject the host's self-signed CA. The CA is already bind-mounted
+              // at /home/vscode/.portless/ca.pem (PORTLESS_STATE_DIR); trust it
+              // in the box (system store + vscode NSS db) and point Node at it.
+              // agent-browser already gets IGNORE_HTTPS_ERRORS via portlessEnv;
+              // this covers everything else. http (no-TLS :1355) has no cert.
+              if (portlessUrl.startsWith('https://')) {
+                await trustInBoxPortlessCa(containerName, log);
+              }
             } else {
               log('portless alias failed (best-effort) — box still reachable on the loopback URL');
             }
@@ -1238,12 +1223,31 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     carry: carrySummary,
     vncHostPort: vncHostPort ?? undefined,
     webHostPort: webHostPort ?? undefined,
+    sshHostPort: ssh.sshHostPort ?? undefined,
+    // Only advertise an ssh-config alias when sshd actually bound (`up`). Docker
+    // publishes the -p 0:22 host port regardless, so gating on the port alone
+    // would point `~/.ssh/config` at a dead loopback port when sshd failed to
+    // start. A later `start`/`open` re-runs setUpBoxSshd and records it once up.
+    ssh:
+      ssh.up && ssh.sshHostPort
+        ? { host: '127.0.0.1', user: 'vscode', identityFile: ssh.identityFile, port: ssh.sshHostPort }
+        : undefined,
     portlessAlias: portlessAliasName,
     portlessUrl,
     portlessVncAlias: portlessVncAliasName,
     portlessVncUrl,
   };
   await recordBox(record);
+  // Regenerate `~/.agentbox/ssh/config` so `ssh <box>`, `agentbox open` (sshfs)
+  // and the Codex launcher have a live alias. Reads state.json (just written) —
+  // best-effort, never fail create over the ssh-config write.
+  if (record.ssh) {
+    try {
+      await syncAgentboxSshConfig();
+    } catch (err) {
+      log(`ssh-config sync failed (best-effort): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   return { record, imageBuilt: built, resync: resyncResult };
 }

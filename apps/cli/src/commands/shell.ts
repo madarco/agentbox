@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { log } from '@clack/prompts';
+import { log, spinner } from '@clack/prompts';
 import { Command } from 'commander';
 import { loadEffectiveConfig, type UserConfig } from '@agentbox/config';
 import {
@@ -23,8 +23,17 @@ import {
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
+import {
+  recordBoxSsh,
+  resolveCloudSshTarget,
+  agentboxSshConfigPath,
+  hasUnmanagedHostConflict,
+  syncAgentboxSshConfig,
+} from '@agentbox/sandbox-core';
+import { hyperlink } from '../hyperlink.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
+import { codexAddUrl } from './_open-in.js';
 import { requireDockerProvider } from './_provider-guard.js';
 
 const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
@@ -37,6 +46,10 @@ interface ShellOptions {
   name?: string;
   /** --new: open a fresh auto-numbered shell instead of the default. */
   new?: boolean;
+  /** --ssh-config: write a ~/.ssh/config alias for external apps instead of opening a shell. */
+  sshConfig?: boolean;
+  /** --json: machine-readable output (only meaningful with --ssh-config). */
+  json?: boolean;
 }
 
 function buildShellCliOverrides(opts: ShellOptions): Partial<UserConfig> {
@@ -204,6 +217,83 @@ async function startOrAttachShell(box: BoxRecord, cfg: ShellSessionCfg): Promise
   process.exit(code);
 }
 
+/**
+ * `agentbox shell <box> --ssh-config`: write the box's `~/.ssh/config` alias and
+ * print connection details so an external app (the Codex app, Claude desktop)
+ * can connect over plain SSH — instead of opening a shell.
+ *
+ * Only providers with a *persistent* per-box identity file qualify: an external
+ * app connects later, so a token-in-User credential that expires (Daytona) is
+ * useless, and Docker/Vercel/E2B have no SSH at all. We resolve the target
+ * first and gate on `identityFile` BEFORE writing, so unsupported providers
+ * leave `~/.ssh/config` untouched.
+ */
+async function runSshConfig(box: BoxRecord, opts: ShellOptions): Promise<void> {
+  const provider = await providerForBox(box);
+  const conn = await resolveCloudSshTarget(box, provider);
+  if (!conn.identityFile) {
+    throw new Error(
+      `box '${box.name}' (provider '${box.provider ?? 'docker'}') has no persistent SSH key, ` +
+        `so it can't be added to Codex / Claude desktop over SSH. Only Hetzner cloud boxes are ` +
+        `supported — Docker boxes aren't reachable over SSH, and Daytona uses a 60-min token that expires.`,
+    );
+  }
+  // The alias is the bare box name; warn (don't fail) if the user already has
+  // their own `Host <name>`. Our managed `Include` is prepended, so OpenSSH
+  // (first value per keyword) now applies agentbox's entry — silently shadowing
+  // the user's, which may not be what they expect.
+  if (await hasUnmanagedHostConflict(conn.alias)) {
+    log.warn(
+      `~/.ssh/config already has a non-agentbox \`Host ${conn.alias}\` entry. agentbox's ` +
+        `Include is prepended, so SSH applies agentbox's HostName/IdentityFile first and your ` +
+        `entry is ignored — rename the box (or remove your entry) if you meant yours to win.`,
+    );
+  }
+
+  await recordBoxSsh(box.id, {
+    host: conn.host,
+    user: conn.user,
+    identityFile: conn.identityFile,
+  });
+  await syncAgentboxSshConfig();
+
+  const codexUrl = codexAddUrl(conn.alias);
+  if (opts.json) {
+    process.stdout.write(
+      JSON.stringify(
+        {
+          alias: conn.alias,
+          host: conn.host,
+          user: conn.user,
+          identityFile: conn.identityFile,
+          sshCommand: `ssh ${conn.alias}`,
+          codexAddUrl: codexUrl,
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+    return;
+  }
+
+  const codexLink = hyperlink(`Add ${conn.alias} to Codex SSH`, codexUrl, process.stdout);
+  const lines = [
+    `wrote ${agentboxSshConfigPath()} entry "${conn.alias}" (Include'd from ~/.ssh/config)`,
+    ``,
+    `ssh alias:      ${conn.alias}`,
+    `host:           ${conn.host}`,
+    `user:           ${conn.user}`,
+    `identity:       ${conn.identityFile}`,
+    `connect:        ssh ${conn.alias}`,
+    ``,
+    `Codex:          ${codexLink}`,
+    `                ${codexUrl}`,
+    `                (auto-open with: agentbox open ${box.name} --in codex)`,
+    `Claude desktop: add an SSH connection to host "${conn.alias}" (already in ~/.ssh/config)`,
+  ];
+  process.stdout.write(lines.join('\n') + '\n');
+}
+
 export const shellCommand = new Command('shell')
   .description(
     'Open an interactive shell in a box, in a detachable tmux session (auto-unpause/start)',
@@ -221,13 +311,26 @@ export const shellCommand = new Command('shell')
   .option('--no-tmux', 'run a plain docker exec shell instead of a detachable tmux session')
   .option('-n, --name <label>', 'open/attach a named shell session (a box can hold several)')
   .option('--new', 'open a fresh, auto-numbered shell session (shell-2, shell-3, ...)')
+  .option(
+    '--ssh-config',
+    'write a ~/.ssh/config alias for this box (Hetzner cloud boxes) and print connection details for Codex / Claude desktop, instead of opening a shell',
+  )
+  .option('--json', 'with --ssh-config: emit the connection details as JSON')
   .action(async (idOrName: string | undefined, cmd: string[], opts: ShellOptions) => {
     try {
       // resolveBoxOrShift handles the `agentbox shell -- ls` case: commander
       // binds "ls" to [box], which doesn't resolve; if auto-pick succeeds we
       // treat "ls" as the first cmd token instead.
-      const { box, shifted } = await resolveBoxOrShift(idOrName);
+      // eslint-disable-next-line prefer-const -- `box` is reassigned by provider.start() below
+      let { box, shifted } = await resolveBoxOrShift(idOrName);
       const effectiveCmd = shifted && idOrName ? [idOrName, ...cmd] : cmd;
+
+      // `--ssh-config` short-circuits the shell: it only writes the SSH alias
+      // and prints connection details for external apps.
+      if (opts.sshConfig) {
+        await runSshConfig(box, opts);
+        return;
+      }
 
       const cfg = await loadEffectiveConfig(box.workspacePath, {
         cliOverrides: buildShellCliOverrides(opts),
@@ -242,6 +345,26 @@ export const shellCommand = new Command('shell')
       if ((box.provider ?? 'docker') !== 'docker') {
         const provider = await providerForBox(box);
         const oneShot = effectiveCmd.length > 0;
+
+        // Resume first if the box isn't running — BOTH branches below need it.
+        // `exec` goes straight at the sandbox and fails against a paused one
+        // (daytona: a 502 from the proxy), and `buildAttach` mints an SSH
+        // token/tunnel a paused sandbox can't serve either. `agentbox shell` is
+        // a normal way back into a box that's been paused — by the user, by a
+        // provider TTL, or by the relay's idle sweep — so it has to wake it, the
+        // way `cloudAgentAttach` and `cloudAgentStartDetached` already do.
+        // `start()` returns the record with refreshed preview URLs / relay
+        // tokens, so everything downstream must use IT, not the stale `box`.
+        const state = await provider.probeState(box);
+        if (state === 'missing') {
+          throw new Error(`cloud sandbox for ${box.name} is missing; was it destroyed?`);
+        }
+        if (state !== 'running') {
+          const s = spinner();
+          s.start(state === 'paused' ? 'resuming box' : 'starting box');
+          box = await provider.start(box);
+          s.stop('box running');
+        }
 
         // One-shot (`agentbox shell <box> -- cmd`) goes through the backend
         // `exec` primitive, not the interactive PTY attach. The PTY path
@@ -279,6 +402,7 @@ export const shellCommand = new Command('shell')
             command: spec.argv[0],
             dockerArgv: spec.argv.slice(1),
             env: spec.env,
+            initialInput: spec.initialInput,
             relayBaseUrl: RELAY_HOST_URL,
             boxId: box.id,
             boxName: box.name,

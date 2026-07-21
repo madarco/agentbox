@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { log } from '@clack/prompts';
 import { Command, InvalidArgumentError } from 'commander';
-import { hostOpenCommand } from '@agentbox/sandbox-core';
+import { hostOpenCommand, ensureCloudSshAlias } from '@agentbox/sandbox-core';
 import type { BoxRecord } from '@agentbox/core';
 import type { StatusReply, WaitReadyReply } from '@agentbox/ctl';
 import { loadEffectiveConfig, type IdeFlavor as ConfigIdeFlavor, type UserConfig } from '@agentbox/config';
@@ -18,10 +18,10 @@ import {
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
-import { agentboxAliasFor, parseSshTarget, writeAgentboxSshAlias } from '../ssh-config.js';
 import { handleLifecycleError } from './_errors.js';
+import { resolveVscodeCli } from './_open-in.js';
 
-interface CodeOptions {
+export interface CodeOptions {
   // commander stores `--no-wait` / `--no-auto-terminals` under the positive
   // key (`wait` / `autoTerminals`), defaulting to true and flipping to false.
   wait?: boolean;
@@ -71,42 +71,49 @@ export const codeCommand = new Command('code')
   .action(async (idOrName: string | undefined, opts: CodeOptions) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
-
-      // Layered config: workspace = the box's host workspace, not cwd, so
-      // per-project defaults follow the box even if you run `agentbox code`
-      // from elsewhere.
-      const cfg = await loadEffectiveConfig(box.workspacePath, {
-        cliOverrides: buildCodeCliOverrides(opts),
-      });
-      const wait = cfg.effective.code.wait;
-      const autoTerminals = cfg.effective.code.autoTerminals;
-      const timeoutMs = String(cfg.effective.code.timeoutMs);
-      const ide = cfg.effective.code.ide;
-      const forcedIde: IdeFlavor | undefined = ide === 'auto' ? undefined : (ide as IdeFlavor);
-
-      const provider = box.provider ?? 'docker';
-      const folderUri =
-        provider === 'docker'
-          ? await prepareDockerAttach(box, { wait, autoTerminals, timeoutMs, regenTasks: opts.regenTasks })
-          : await prepareCloudAttach(box, { wait, timeoutMs });
-
-      if (opts.print) {
-        process.stdout.write(folderUri + '\n');
-        return;
-      }
-      const exit = await launchIde(folderUri, forcedIde);
-      if (exit.code !== 0) {
-        log.error(`failed to launch ${exit.flavor ? ideProfile(exit.flavor).displayName : 'IDE'} via ${exit.via} (exit ${String(exit.code)})`);
-        process.stdout.write(folderUri + '\n');
-        process.exit(1);
-      }
-      log.success(
-        `opening ${box.name} in ${ideProfile(exit.flavor).displayName} (${exit.via})`,
-      );
+      await runCodeOpen(box, opts);
     } catch (err) {
       handleLifecycleError(err);
     }
   });
+
+/**
+ * The `agentbox code` body after box resolution — exported so
+ * `agentbox open --in vscode` can reuse it verbatim.
+ */
+export async function runCodeOpen(box: BoxRecord, opts: CodeOptions): Promise<void> {
+  // Layered config: workspace = the box's host workspace, not cwd, so
+  // per-project defaults follow the box even if you run `agentbox code`
+  // from elsewhere.
+  const cfg = await loadEffectiveConfig(box.workspacePath, {
+    cliOverrides: buildCodeCliOverrides(opts),
+  });
+  const wait = cfg.effective.code.wait;
+  const autoTerminals = cfg.effective.code.autoTerminals;
+  const timeoutMs = String(cfg.effective.code.timeoutMs);
+  const ide = cfg.effective.code.ide;
+  const forcedIde: IdeFlavor | undefined = ide === 'auto' ? undefined : (ide as IdeFlavor);
+
+  const provider = box.provider ?? 'docker';
+  const folderUri =
+    provider === 'docker'
+      ? await prepareDockerAttach(box, { wait, autoTerminals, timeoutMs, regenTasks: opts.regenTasks })
+      : await prepareCloudAttach(box, { wait, timeoutMs });
+
+  if (opts.print) {
+    process.stdout.write(folderUri + '\n');
+    return;
+  }
+  const exit = await launchIde(folderUri, forcedIde);
+  if (exit.code !== 0) {
+    log.error(`failed to launch ${exit.flavor ? ideProfile(exit.flavor).displayName : 'IDE'} via ${exit.via} (exit ${String(exit.code)})`);
+    process.stdout.write(folderUri + '\n');
+    process.exit(1);
+  }
+  log.success(
+    `opening ${box.name} in ${ideProfile(exit.flavor).displayName} (${exit.via})`,
+  );
+}
 
 interface PrepareDockerOptions {
   wait: boolean;
@@ -210,30 +217,11 @@ async function prepareCloudAttach(box: BoxRecord, opts: PrepareCloudOptions): Pr
   // `writeFileInBox` over `backend.exec`. Not load-bearing for the editor
   // attach itself; user can author `.vscode/tasks.json` manually.
 
-  if (!p.buildAttach) {
-    throw new Error(
-      `cloud provider '${p.name}' does not support SSH attach — \`agentbox code\` requires it`,
-    );
-  }
-  // buildAttach mints a fresh 60-min SSH token via the backend's `attachArgv`.
-  // We only want the connect argv here; the inner tmux command is irrelevant
-  // (Remote-SSH starts its own session). `noTmux` skips the tmux wrap so
-  // argv is the plain `ssh ... <user>@<host>` form.
-  const spec = await p.buildAttach(box, 'shell', { noTmux: true });
-  const target = parseSshTarget(spec.argv);
-  if (!target) {
-    throw new Error(
-      `could not parse <user>@<host> from cloud SSH argv: ${spec.argv.join(' ')}`,
-    );
-  }
-
-  const alias = agentboxAliasFor(box.name);
-  await writeAgentboxSshAlias({
-    alias,
-    hostname: target.host,
-    user: target.user,
-    identityFile: target.identityFile,
-  });
+  // Mint the SSH target and (re)write the `~/.ssh/config` alias. Shared with
+  // `agentbox open` and `agentbox shell --ssh-config`. The inner tmux command
+  // is irrelevant here (Remote-SSH starts its own session). The box was already
+  // brought online + waited above, so skip the helper's lifecycle pass.
+  const { alias } = await ensureCloudSshAlias(box, p, { bringOnline: false });
   log.info(`updated ~/.ssh/config alias ${alias}`);
 
   return `vscode-remote://ssh-remote+${alias}/workspace`;
@@ -282,18 +270,21 @@ async function launchIde(folderUri: string, forced?: IdeFlavor): Promise<LaunchR
   if (cursor !== null) return cursor;
   // Neither CLI present. Last resort: protocol handler via `open`. We pick
   // vscode:// since that's the documented historical fallback.
-  log.warn('neither `code` nor `cursor` found in PATH; falling back to `open vscode://...`');
+  log.warn('neither `code` nor `cursor` found on PATH or in /Applications; falling back to `open vscode://...`');
   return launchOne('vscode', folderUri);
 }
 
 /**
- * Try the IDE's CLI. Returns null if the binary isn't in PATH so the caller
- * can try the next flavor; otherwise returns the launch result (success or
- * non-127 failure both count as "we ran this one").
+ * Try the IDE's CLI. Returns null if neither the PATH shim nor the macOS
+ * `.app` bundle CLI is present, so the caller can try the next flavor;
+ * otherwise returns the launch result (success or non-127 failure both count
+ * as "we ran this one").
  */
 async function tryCli(flavor: IdeFlavor, folderUri: string): Promise<LaunchResult | null> {
   const profile = ideProfile(flavor);
-  const code = await spawnCommand(profile.cli, ['--folder-uri', folderUri]);
+  const bin = resolveVscodeCli(profile.cli);
+  if (!bin) return null;
+  const code = await spawnCommand(bin, ['--folder-uri', folderUri]);
   if (code === 127) return null;
   return { code, flavor, via: 'cli' };
 }
@@ -305,10 +296,13 @@ async function tryCli(flavor: IdeFlavor, folderUri: string): Promise<LaunchResul
  */
 async function launchOne(flavor: IdeFlavor, folderUri: string): Promise<LaunchResult> {
   const profile = ideProfile(flavor);
-  const cliCode = await spawnCommand(profile.cli, ['--folder-uri', folderUri]);
-  if (cliCode !== 127) return { code: cliCode, flavor, via: 'cli' };
+  const bin = resolveVscodeCli(profile.cli);
+  if (bin) {
+    const cliCode = await spawnCommand(bin, ['--folder-uri', folderUri]);
+    if (cliCode !== 127) return { code: cliCode, flavor, via: 'cli' };
+  }
   log.warn(
-    `\`${profile.cli}\` not found in PATH; falling back to \`${hostOpenCommand()} ${profile.protocolScheme}://...\` (the %2B URL-encoding bug may break attach)`,
+    `\`${profile.cli}\` not found on PATH or in /Applications; falling back to \`${hostOpenCommand()} ${profile.protocolScheme}://...\` (the %2B URL-encoding bug may break attach)`,
   );
   const url = `${profile.protocolScheme}://${folderUri.replace(/^vscode-remote:\/\//, 'vscode-remote/')}`;
   const fallback = await spawnCommand(hostOpenCommand(), [url]);

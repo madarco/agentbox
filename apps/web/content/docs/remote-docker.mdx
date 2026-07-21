@@ -1,0 +1,147 @@
+---
+title: Remote Docker
+description: Run your agents on a machine you already own, using Docker over SSH
+---
+
+Run boxes on a machine you already own instead of your laptop or a cloud: the workstation under the desk, a spare Mac, a team server. AgentBox SSHes in and drives **that machine's Docker engine**, so the box gets its CPU, its RAM and its disk while your laptop stays cool and its fans stay quiet. No account, no API token, no bill — if `ssh <host> docker version` works from your terminal, you can run boxes there.
+
+```bash
+agentbox remote-docker add buildbox marco@10.0.0.9   # register the host once
+agentbox docker:buildbox claude                      # then run boxes on it
+```
+
+You register a machine under a short **alias**, then address it as `docker:<alias>`: "docker, but over there". Pick Remote Docker when you have a machine with real resources and want the local-Docker experience on it — a fast Dockerfile-based image, `docker commit` checkpoints, instant `docker pause`, and full [Docker-in-Docker](/docs/docker-in-docker). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona), [vercel](/docs/vercel), and [e2b](/docs/e2b).
+
+## Set up
+
+There is no login step, because there is no credential. The provider connects **as you**, using your own `~/.ssh/config`, your agent and your `known_hosts`. It mints no keys for the connection and reads no tokens. You need one thing on the remote machine: Docker, on the login-shell `PATH` of the user you SSH in as.
+
+The install wizard walks you through it — `agentbox install`, pick **Remote Docker**, and it prompts for the alias name and SSH connection, then offers to bake the image. Or do it directly:
+
+Register the host under an alias. The second argument is the SSH connection — an `~/.ssh/config` alias or `[user@]host[:port]`:
+
+```bash
+agentbox remote-docker doctor marco@10.0.0.9            # check if the host is compatible
+agentbox remote-docker add buildbox marco@10.0.0.9      # alias `buildbox` → marco@10.0.0.9
+agentbox remote-docker add mini dev@10.0.0.9:2222       # a custom port works too
+```
+
+`add` probes the connection end to end — SSH reachable, `docker` found, daemon answering — then **bakes the box image on the host** so your first `create` is instant (pass `--no-bake` to skip; it builds lazily on first create). Pass `--default` (or `--global`) to also make it the default host, so you can drop the `docker:<alias>` prefix. Check a host any time with:
+
+```bash
+agentbox remote-docker doctor buildbox
+```
+
+Boxes are created against the **alias**, not the raw address — so when the machine's IP changes, one command retargets every box you created on it:
+
+```bash
+agentbox remote-docker update buildbox marco@10.0.0.42  # existing boxes follow
+```
+
+To re-bake later (e.g. after an AgentBox upgrade), run `agentbox prepare --provider docker:buildbox`.
+
+This isn't a required step, unlike the cloud providers' `prepare`. A remote engine can build from a Dockerfile, so `create` ensures the image itself if it's missing — `prepare` just does the slow part when you're not watching.
+
+<Callout title="NOTE">
+Every host must be a registered alias — `docker:<alias>` (and `--remote-host <alias>` / `box.remoteDockerHost`) reject a raw connection string with "register it first". The alias is what gets baked into each box's id, which is why `update` can move a box to a new address without recreating it. The SSH connection you register can itself be an `~/.ssh/config` alias, so keys, ports and `ProxyJump` keep working — AgentBox hands it to `ssh` untouched.
+</Callout>
+
+## Use it
+
+```bash
+agentbox docker:buildbox claude          # start Claude in a box on buildbox
+agentbox docker:buildbox create          # just the box
+agentbox create --remote-host buildbox   # same thing, explicit flag
+```
+
+With a default host set, plain `--provider remote-docker` works too. Multiple machines need no extra setup — name each one as you go, and each box remembers the machine it lives on:
+
+```bash
+agentbox docker:buildbox claude     # the big Linux box
+agentbox docker:gpu-rig claude      # the GPU machine
+agentbox docker:mac-mini claude     # the Mac in the closet
+```
+
+The [hub](/docs/hub) web UI and the macOS tray also list each registered host as a **Docker (&lt;alias&gt;)** option in their create-box provider pickers, so you can start a box on a specific machine without the terminal.
+
+Everything else is the same as any other box: `list`, `shell`, `logs`, `url`, `checkpoint`, `pause`, `destroy`.
+
+## Use a Mac Mini as dev box
+
+Enable Remote Login from: System Settings → General → Sharing → turn on Remote Login
+
+then from your pc:
+
+```bash
+ssh username@mac-mini-ip
+```
+
+Then for extra safety enable key-based auth:
+
+```bash
+ssh-copy-id username@mac-mini-ip
+```
+
+The Mac must have either Docker or OrbStack installed.
+
+## How it works
+
+Remote Docker is a **cloud** provider that happens to speak Docker. That sounds like a contradiction, and the reason it isn't is worth understanding, because it explains the one real behavioral difference.
+
+The [local Docker](/docs/local-docker) provider bind-mounts your repo's `.git/` straight into the container. That's what makes an in-box commit land in your host repo instantly, with no sync at all. A bind mount cannot cross a network — so on a remote engine, your workspace has to be **synced** rather than shared, exactly like [Hetzner](/docs/hetzner) or [Daytona](/docs/daytona):
+
+- **Into the box**, at create: a shallow git clone plus your uncommitted and untracked changes, carried over as-is. Your working state arrives intact.
+- **Back out**, on `git push`: the box's branch travels home as a git bundle through the host relay, and the push runs from _your_ machine with _your_ credentials. The remote machine never sees a git credential. See [sync-and-git](/docs/sync-and-git).
+
+Everything reaches the box over **one SSH connection per box** (an OpenSSH ControlMaster), so `docker` commands don't pay a handshake each time. The box's web app, VNC and sshd are published on the remote's loopback and forwarded to yours, so `agentbox url` opens in your browser as usual.
+
+`agentbox open` and `agentbox code` work too, via `ProxyJump`: your SSH hops through the remote machine, which dials the box's published sshd port on its own loopback. That's plain OpenSSH, so VS Code Remote-SSH and sshfs work with no tunnel for AgentBox to keep alive.
+
+### Checkpoints
+
+A [checkpoint](/docs/checkpoints-and-pausing) is a `docker commit` on the remote engine — fast, and as big as a docker image.
+
+```bash
+agentbox checkpoint create my-box --name setup --set-default
+```
+
+<Callout title="NOTE">
+  A checkpoint lives on **the engine that made it**. Boot a box on a different machine and AgentBox
+  can't find that image there, so it builds a fresh box from the base image instead of failing.
+  Checkpoints don't follow you between machines.
+</Callout>
+
+## Good to know
+
+- **Boxes are unlimited by default.** The remote engine is _your_ machine, so a box isn't capped at some cloud default. Cap it if you want to: `--size 4-8` gives it 4 CPUs and 8 GB (`--cpus` / `--memory` on the container).
+- **Ports are fixed at create.** Docker port mappings are immutable for a container's life, so a service you add to `agentbox.yaml` _after_ the box exists is still reachable through the box's web proxy, but won't get its own preview URL until you recreate it.
+- **macOS remotes work.** Docker Desktop, OrbStack and Colima are all found, because AgentBox runs `docker` in a login shell on the remote (which is why OrbStack's `~/.orbstack/bin` is on the PATH).
+- **The remote engine is trusted.** Anyone with root on that machine can read the box. This is a "your own machine" provider, not an isolation boundary against the machine's owner.
+- **Concurrent boxes share the machine.** Nothing arbitrates between them beyond the limits you set.
+
+## Configuration
+
+| Key                                 | Meaning                                                                                                                                     |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `box.remoteDockerHost`              | Default SSH destination. Overridden by `docker:<host>` / `--remote-host`. Layerable per project via [`agentbox.yaml`](/docs/agentbox-yaml). |
+| `box.sizeRemoteDocker`              | `cpu-memory` GB (e.g. `4-8`) → the container's `--cpus` / `--memory`. Empty = unlimited.                                                    |
+| `box.imageRemoteDocker`             | Pin an image ref on the remote engine. Normally leave empty — AgentBox derives a fingerprint-tagged ref and ensures it there itself.        |
+| `box.defaultCheckpointRemoteDocker` | Checkpoint new boxes boot from.                                                                                                             |
+
+## Commands
+
+```bash
+agentbox remote-docker add <alias> <ssh>     # register a host + bake its image (--no-bake, --default)
+agentbox remote-docker update <alias> <ssh>  # re-point an alias (existing boxes follow)
+agentbox remote-docker list                  # your host aliases (alias: ls)
+agentbox remote-docker doctor [alias]        # is this host usable? (ssh + docker)
+agentbox remote-docker remove <alias>        # forget an alias (+ default + bake record; asks to confirm, -y to skip; alias: rm)
+agentbox prepare --provider docker:<host>
+agentbox prune --provider remote-docker   # reap containers with no local record
+```
+
+## Troubleshooting
+
+**`docker` is not on the login-shell PATH.** AgentBox runs `bash -lc docker …` on the remote, so `docker` must be found by a _login_ shell. If `ssh <host> 'bash -lc "docker version"'` fails but `ssh <host> docker version` works, add Docker to that user's profile.
+
+**Cannot SSH to the host.** The provider uses your own SSH config and mints nothing, so the test is simply `ssh <host> true`. If that prompts for a password or a passphrase, set up key auth (or an agent) first — AgentBox connects in batch mode and will not prompt.

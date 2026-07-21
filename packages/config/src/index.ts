@@ -10,6 +10,7 @@ export {
   type ConfigSource,
   type EffectiveConfig,
   type EngineKind,
+  type GitPushMode,
   type IdeFlavor,
   type KeyDescriptor,
   type KeyType,
@@ -20,9 +21,21 @@ export {
 } from './types.js';
 
 export {
+  PROVIDERS,
+  PROVIDER_NAMES,
+  CLOUD_PROVIDER_NAMES,
+  isProviderKind,
+  providerMeta,
+  providerKeyCap,
+  perProviderConfigKey,
+  type ProviderMeta,
+} from './providers.js';
+
+export {
   coerceFromString,
   parseUserConfig,
   parseUserConfigObject,
+  type ParseOptions,
 } from './parse.js';
 
 export {
@@ -45,6 +58,7 @@ export {
 export {
   loadEffectiveConfig,
   loadProjectAgentboxDefaults,
+  setConfigWarningSink,
   type LoadEffectiveConfigOptions,
 } from './load.js';
 
@@ -56,6 +70,13 @@ export {
 export { resolveBoxSize } from './size.js';
 
 export {
+  DAYTONA_VM_REGION,
+  resolveDaytonaClass,
+  resolveDaytonaRegion,
+  type DaytonaSandboxClass,
+} from './daytona.js';
+
+export {
   boxImageConfigKey,
   resolveBoxImage,
 } from './image.js';
@@ -64,8 +85,11 @@ export {
   bumpProjectGcCounter,
   listProjectsConfigured,
   pruneOrphanProjectConfigs,
+  registerProject,
   setConfigValue,
+  unregisterProject,
   unsetConfigValue,
+  type ProjectEntry,
   type PruneOrphanProjectConfigsOptions,
   type PruneOrphanProjectConfigsResult,
 } from './write.js';

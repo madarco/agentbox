@@ -1,8 +1,8 @@
 # Cloud providers
 
-> _Status: v1 ships with Daytona + Hetzner + Vercel + E2B. The provider abstraction is generic — adding another cloud is ~150 lines (see §6)._
+> _Status: v1 ships with Daytona + Hetzner + Vercel + E2B + DigitalOcean. The provider abstraction is generic — adding another cloud is ~150 lines (see §6)._
 
-AgentBox runs on five backends today, behind a single `Provider` interface
+AgentBox runs on six backends today, behind a single `Provider` interface
 (`packages/core/src/provider.ts`):
 
 | Provider | Where the box lives | When to use it |
@@ -12,12 +12,39 @@ AgentBox runs on five backends today, behind a single `Provider` interface
 | `hetzner` | Hetzner Cloud VPS (1:1 per box) | When you want bare-VPS control (root, full kernel, your own region), pure OpenSSH (no third-party agent in the box), and a Cloud Firewall locked to your egress IP. ~€4/mo per running box. |
 | `vercel` | Vercel Sandbox (Firecracker microVM) | When you want a fast snapshot-based remote env with public HTTPS preview URLs and persistent pause/resume. In-box `docker` (DinD) is baked in and auto-started; region `iad1` only. See §3b. |
 | `e2b` | E2B Sandbox (Firecracker microVM) | When you want a Firecracker microVM with public HTTPS preview URLs and **the base image built straight from a Dockerfile** (`Template.build()`) — the only cloud provider that bakes from a Dockerfile rather than a one-time snapshot. In-box docker (DinD) supported, no SSH; 1-hour platform session cap on Hobby. See §3c. |
+| `digitalocean` | DigitalOcean Droplet (1:1 per box) | Same VPS-over-OpenSSH shape as Hetzner — bare-Droplet control (root, full kernel, your own region), pure OpenSSH, and a Cloud Firewall locked to your egress IP. Auth is a single Personal Access Token; the firewall attaches at boot via a per-box tag (with explicit allow-all egress, since DO blocks outbound otherwise); checkpoints are droplet snapshots. ~$24/mo per running `s-2vcpu-4gb` box. See §3d. |
 
 Switch backends per box: `agentbox create --provider daytona` (or `--provider
-hetzner` / `--provider vercel` / `--provider e2b`), or pin project-wide via
-`box.provider: <name>` in `agentbox.yaml`. The rest of the CLI surface (`shell`,
-`claude`, `url`, `cp`, `checkpoint`, …) routes on `box.provider` and Just Works
-for all five.
+hetzner` / `--provider vercel` / `--provider e2b` / `--provider digitalocean`),
+or pin project-wide via `box.provider: <name>` in `agentbox.yaml`. The rest of
+the CLI surface (`shell`, `claude`, `url`, `cp`, `checkpoint`, …) routes on
+`box.provider` and Just Works for all six.
+
+### §3d. DigitalOcean specifics
+
+DigitalOcean is a near-exact clone of the Hetzner backend (1 Droplet per box,
+OpenSSH ControlMaster for all I/O, snapshot-based checkpoints, a one-time base
+snapshot baked by `agentbox prepare --provider digitalocean` since DO can't
+build images from a Dockerfile). Three things differ from Hetzner:
+
+- **Auth** is a single Personal Access Token (`DIGITALOCEAN_TOKEN`), pasted via
+  `agentbox digitalocean login` from `https://cloud.digitalocean.com/account/api/tokens`.
+- **Firewall attach is tag-based.** Hetzner attaches the firewall at
+  server-create; DO can't, so the per-box firewall is created *first* with a
+  unique tag and the droplet is created with that same tag — DO auto-applies it
+  at boot, leaving no unprotected window.
+- **Egress must be explicitly allowed.** A DO firewall with only inbound rules
+  blocks *all* outbound traffic, so the per-box firewall ships allow-all
+  outbound rules (tcp/udp/icmp → `0.0.0.0/0` + `::/0`) alongside the SSH-only
+  inbound rule locked to the host egress IP.
+
+Defaults: size `s-2vcpu-4gb`, region `nyc3`, stock image `ubuntu-24-04-x64`.
+Override per box with `box.sizeDigitalocean` / `AGENTBOX_DIGITALOCEAN_REGION`.
+**DO Project**: `box.digitaloceanProject` (name or UUID; picked at `digitalocean login`) places boxes
+in a specific DigitalOcean Project. DO has no project field on droplet-create, so the backend resolves
+the name in the create preflight (fail-fast on a typo, before anything bills) and then assigns via
+`POST /projects/{id}/resources` **best-effort** after the droplet exists — a failed assign warns and
+keeps the box rather than tearing a working box down. Unset = the account's default project.
 
 ## 1. The provider abstraction
 
@@ -27,7 +54,7 @@ The orchestration code uses `Provider` (`packages/core/src/provider.ts`):
 interface Provider {
   readonly name: ProviderName;          // 'docker' | 'daytona' | future
   create(req: CreateBoxRequest): Promise<CreatedBox>;
-  start/pause/resume/stop/destroy(box): Promise<…>;
+  start/reconnect/pause/resume/stop/destroy(box): Promise<…>;
   inspect/probeState(box): Promise<…>;
   exec(box, argv, opts): Promise<ExecResult>;
   resolveUrl(box, opts): Promise<string>;
@@ -49,6 +76,29 @@ snapshot manifests, and (eventually) per-service preview URLs. The `CloudBackend
 just implements the SDK primitives (`provision`, `exec`, `uploadFile`,
 `previewUrl`, `attachArgv`, optionally `createSnapshot` / `list` / …).
 
+`reconnect(box)` is the **no-power-cycle** sibling of `start`, used by
+`agentbox recover` to re-attach this host to a box that's already running (host
+reboot, relay restart, fresh CLI process). The cloud provider `probeState`s the
+sandbox: when it's `running` it calls `reEnsureCloudBox` directly (re-resolve
+preview URLs, re-open the Hetzner tunnel + forwards, re-register host portless
+aliases + the relay poller, relaunch the in-box ctl/dockerd/vnc daemons) and
+skips `backend.start`; only a `paused`/`stopped` sandbox falls back to the
+power-cycling `resume`/`start`. `reEnsureCloudBox` also finishes with a
+best-effort `reconcileAgentCredentials` (gated by `box.credentialSync`): a
+woken box carries pause-time agent credentials, and if another box rotated the
+claude refresh token meanwhile that copy is dead — claude is compared both
+directions via `claudeAiOauth.expiresAt` (push host-newer / capture box-newer),
+codex/opencode are host-wins push-if-different. Note the SDK's *implicit*
+auto-resume (an `exec` against a paused vercel/e2b sandbox) bypasses this hook
+until the next explicit resume/start/reconnect. Docker's `reconnect` is the
+idempotent `startBox` (a `docker start` on a live container is a no-op). `recover --provider <cloud>
+--adopt` additionally rebuilds a missing `BoxRecord` from `backend.list()` (the
+`agentbox.name` tag), minting fresh relay/bridge tokens that reach the in-box
+agent when `reconnect` relaunches the ctl daemon (it writes
+`/run/agentbox/relay.env`). Hetzner adoption needs the box's per-host SSH key
+(`~/.agentbox/boxes/<sandboxId>/ssh/id_ed25519`); a box created elsewhere can't
+be controlled and `recover` says so.
+
 This split is why "add a new cloud" is small: only the SDK shim differs.
 
 ### 1.0.1 `AGENTBOX_BOX_HOST` on cloud boxes
@@ -67,6 +117,14 @@ it) and persisted to `/etc/agentbox/box.env` (so `agentbox shell` login shells a
 manual `agentbox-ctl render` resolve it too). The placeholder engine prefers this
 explicit value over the derived fallback, so `https://{{AGENTBOX_BOX_HOST}}`
 matches what `agentbox url` returns.
+
+The relay/bridge **tokens** are deliberately kept out of the world-readable
+`box.env`. The per-box relay URL + token go to a `0600 /run/agentbox/relay.env`
+(tmpfs, never snapshotted) written by the in-box ctl daemon, which `agentbox-ctl`
+reads on demand (`resolveRelayEnv`); the bridge token stays in the daemon's
+process env only. This is what lets the in-box agent and the host-driven
+`agentbox git push` reach the relay on cloud boxes, which (unlike docker) have no
+global env to inherit the token from. See [`host-relay.md`](./host-relay.md).
 
 ### 1.1 Per-provider base-image pins
 
@@ -104,6 +162,26 @@ doesn't change any baked file produces an identical SHA, so the base
 stays `fresh`. See `docs/cloud-create-flow.md` → "Stale base detection
 at create" for the full state machine.
 
+### 1.2.1 Claude install method (`box.claudeInstall`)
+
+Every provider bakes Claude Code with Anthropic's **native installer**
+(`curl claude.ai/install.sh`) by default. Its CDN intermittently 403s
+cloud-datacenter egress IPs; the bake retries 3× then aborts (exit 71)
+rather than shipping a Claude-less base. `box.claudeInstall=npm` (or
+`agentbox prepare --claude-install npm`) is the opt-in escape hatch: the
+bake runs `npm install -g @anthropic-ai/claude-code` and symlinks it into
+`/home/vscode/.local/bin/claude` — the path the attach command, PATH
+shim, and host-side `installMethod=native` coercion all hardcode — so the
+box stays indistinguishable from a native install. It's **bake-time
+only** (never read at create), and the mode is folded into the base
+fingerprint (`claudeInstallFingerprint`, `@agentbox/sandbox-core`) so a
+switch re-bakes. Plumbing per provider: shell-script bakes (hetzner,
+vercel, e2b) read `AGENTBOX_CLAUDE_INSTALL` in their install script;
+docker passes a Dockerfile `--build-arg` (and folds the mode into
+`ensureImage`'s create-time fingerprint so the lazy rebuild doesn't
+clobber an npm image); daytona — whose SDK has no build-arg — builds from
+a sibling temp Dockerfile with the ARG default flipped.
+
 ### 1.3 Login → prepare nudge
 
 Each cloud's `agentbox <provider> login` only persists credentials.
@@ -117,17 +195,152 @@ users who go through `install` skip both the error and the nudge.
 
 ## 2. The Daytona shape
 
-### 2.0 Sizing
+### 2.0 Sandbox class: `linux-vm` (default) vs `container`
 
-Default sandbox shape is **2 vCPU / 4 GB RAM / 8 GB disk**. Override via
-`--size <cpu-mem-disk>` on `agentbox create` (GB units, e.g. `4-8-20`), or
-`box.sizeDaytona` / `box.size` in config. Precedence: `--size` >
-`box.sizeDaytona` > `box.size` > built-in. **Caveat:** Daytona rejects
-`resources` on the snapshot-resume path, so a custom size only takes
-effect on the from-image create (i.e. first prepare/build); subsequent
-snapshot-based creates inherit the snapshot's baked resources. Invalid
-specs (anything other than three positive integers separated by `-`) are
-logged and ignored, falling back to the default.
+Daytona has two sandbox **classes**, and they are not interchangeable — the class
+is a property of the *snapshot*, and a snapshot of one class cannot create a
+sandbox of the other. `box.daytonaClass` picks it; changing it forces a re-bake.
+
+|                                | `linux-vm` (default)                                     | `container`                          |
+| ------------------------------ | -------------------------------------------------------- | ------------------------------------ |
+| `agentbox pause` / `unpause`   | **real VM freeze** — CPU *and memory*; running processes and tmux sessions survive | archive (cold storage, filesystem only) |
+| Archive                        | not supported (rejected)                                  | yes — this is what pause maps to     |
+| Checkpoints                    | cold snapshot (~2 s capture)                              | cold snapshot                        |
+| Base bake                      | ~1 min (boots a prebuilt registry image)                  | ~7 min (Dockerfile build)            |
+| Region                         | **`us-east-1` only**                                      | any (`us`, `eu`, …)                  |
+| Volume mounts                  | **silently ignored** (see 2.2)                            | supported                            |
+
+**The region lock is the tradeoff.** Only `us-east-1` has linux-vm runners; asking
+for a VM anywhere else fails at create with *"No runners are configured in region
+'<r>' for sandbox class 'linux-vm'"*. So `box.daytonaRegion` defaults to empty and
+is *derived* from the class — `linux-vm` ⇒ `us-east-1`, `container` ⇒ the account
+default — rather than to a constant that would contradict the default class. If you
+need EU data residency or lower EU latency, set `box.daytonaClass=container`.
+
+Only two calls are region-sensitive: `snapshot.create` (takes `regionId`) and
+`Daytona.create` (takes its region from the **client target**, not a param — the
+`regionId` create param is ignored). `get`/`exec`/`list`/lifecycle are
+region-agnostic, so the backend keeps a small per-target client cache rather than
+threading a region through every call.
+
+#### Why the VM base is baked from a registry image
+
+Daytona builds a VM snapshot **only from a prebuilt registry image**, never from a
+Dockerfile — handing `snapshot.create` a declarative `Image` with
+`sandboxClass: LINUX_VM` fails with `build snapshot: rpc error: code =
+Unauthenticated`. So `prepare --provider daytona` can't use the declarative
+builder for VMs. Instead it boots the box image CI already publishes to GHCR
+(`ghcr.io/madarco/agentbox/box:sha-<docker-context-sha>`, public + amd64), then
+seeds and cold-snapshots it — the same "boot, provision in place, snapshot" shape
+Hetzner and Vercel use.
+
+Consequences:
+
+- **`--claude-install npm` gets a VM too, as of the two-variant publish.** The
+  install mode is part of the image's identity (the sha is folded with
+  `claudeInstallFingerprint`, same as the docker pull path), and CI now matrixes
+  over it, so both `native` and `npm` images are published under their own
+  fingerprint tags. Only the native build claims `latest` / the version tag — it
+  is the default image. (Before this, only native was ever built, so npm mode had
+  no image to boot from and prepare fell back to a container.)
+- **Monorepo contributors can't bake a VM by default.** A local `pnpm build`
+  regenerates `packages/ctl/dist/bin.cjs`, which shifts the build-context sha off
+  the one CI published, so no tag matches. Prepare falls back to a container.
+  Set **`box.daytonaVmBaseImage`** to bake from an explicit image instead (this is
+  also the knob for a private registry mirror).
+
+#### `sudo` is repaired at bake time
+
+Converting the container image into a VM rootfs **strips setuid bits**: `sudo`
+lands as mode 0755 and cannot escalate (only `mount`/`umount`/`su` keep theirs).
+That would break the seed (`/etc/claude-code/CLAUDE.md` needs root) and the
+passwordless sudo the in-box agent is told it has. `create({ user: 'root' })` is
+not a way out — the sandbox then fails to start.
+
+The bake repairs it through the docker socket, which the image already grants
+(`dockerd` runs at boot; `vscode` is in the `docker` group, which is
+root-equivalent by construction):
+
+```
+docker run --rm --privileged -v /:/host alpine \
+  sh -c 'chown root:root /host/usr/bin/sudo && chmod 4755 /host/usr/bin/sudo'
+```
+
+The fix persists into the snapshot, so every box booted from that base has working
+sudo from the start.
+
+#### Snapshot names are never reused
+
+Recreating a snapshot under a **recently deleted name** yields one that reports
+`active` but cannot boot (*"Sandbox failed to start: internal error"*) — Daytona's
+delete is async and racing it corrupts the new snapshot. So every capture takes a
+fresh name (a nonce suffix), the bake reaps the snapshot it replaces *after* the
+new one is recorded, and a base that fails to boot is treated as poisoned and
+rebuilt once under a never-used name.
+
+#### Idle handling
+
+`box.daytonaTimeoutMs` (default **25 min**, `0` disables) is passed as Daytona's
+`autoStopInterval`. Unlike vercel/e2b — where the timeout is an absolute session
+TTL — Daytona's is an **inactivity window**, reset by *any* request to the
+sandbox.
+
+**That window never elapses for a box AgentBox is tracking.** The host relay's
+`CloudBoxPoller` long-polls each cloud box's preview URL continuously (it's how
+host↔box comms work), and that traffic is itself the activity Daytona measures.
+So Daytona's timer restarts on every poll, and an idle box would run — and bill
+— forever. Measured against live Daytona with `autoStopInterval: 3`
+(2026-07-13):
+
+| sandbox | traffic | result |
+| --- | --- | --- |
+| control | none | stopped at **3.0 min** |
+| test | one request / 15 s | **still running at 7.0 min** (28 requests) |
+| the same test box, after the requests stopped | none | stopped **3 min later** |
+
+The third row is the control that names the cause: a node server kept running in
+the box the whole time, so it's the **requests** that reset the clock, not
+activity inside the sandbox.
+
+So the **host enforces the timeout itself**. `packages/relay/src/cloud-keepalive.ts`
+pauses a box whose agent has been idle for its own `daytonaTimeoutMs`
+(`shouldIdlePause`) — the box's configured window, deliberately not the 5-min
+keepalive/autopause renewal window, or we'd pause five times sooner than the key
+advertises. `CloudBackend.timeoutModel` (`'inactivity'` for daytona,
+`'absolute'` elsewhere) is what selects this path: **vercel and e2b are
+unaffected**, since their deadlines can't be deferred by anything the box
+receives, so an idle box still lapses on its own.
+
+Two consequences worth knowing:
+
+- The window is measured against the **agent's** idle state, not raw requests.
+  A box with no agent at all (a plain `agentbox shell` box) is never
+  auto-paused — we have no evidence it's unused, and an attached human is
+  precisely who we must not pull the floor out from under.
+- Daytona's `autoStopInterval` is still set, and still useful: it's the backstop
+  for when the relay *isn't* running (laptop asleep, `agentbox relay stop`) —
+  exactly when the host can't do it and no polling is resetting the clock.
+
+Pausing (rather than stopping) is deliberate: a `linux-vm` box is frozen with
+its memory, so running processes and tmux sessions survive, and every attach
+path resumes a paused box automatically.
+
+### 2.0.1 Sizing
+
+Default sandbox shape is **2 vCPU / 4 GB RAM / 8 GB disk**. Size is
+`cpu-mem-disk` GB (e.g. `4-8-20`), from `--size` / `box.sizeDaytona` /
+`box.size` (precedence: `--size` > `box.sizeDaytona` > `box.size` >
+built-in). **Caveat:** Daytona rejects `resources` on the snapshot-resume
+path, so size is fixed at **bake time**: `agentbox prepare --provider
+daytona --size <spec>` bakes it into the snapshot (the snapshot name gets a
+`-<cpu>-<mem>-<disk>` suffix so re-sized bakes don't collide, and the size
+is recorded in `daytona-prepared.json` `extras.size` so a changed size
+re-bakes — NOT folded into `contextSha256`, so live freshness checks are
+unchanged). A `create --size` that differs from the baked snapshot's size
+still boots but logs a loud warning pointing at `prepare … --size … --force`.
+On the rare from-image create path the size is applied directly. Invalid
+specs (anything other than positive integers separated by `-`) throw at
+prepare time with the `4-8-20` example.
 
 ### 2.1 Workspace seeding
 
@@ -151,16 +364,36 @@ the host workspace into the sandbox:
 
 ### 2.2 Agent state split: snapshot bake + credentials volume
 
+> **`linux-vm` caveat — volume mounts are silently ignored.** A VM sandbox
+> *accepts* `create({ volumes: [...] })`, echoes the mount back in its DTO, and
+> then the path simply does not exist in the guest. So the shared
+> `agentbox-credentials` volume described below **does not work on VM boxes**.
+> They take the per-create upload path instead — the same one Hetzner uses (it has
+> no shared-volume primitive either): `ensureAgentVolumesForCloud` is told the
+> volume is unusable and returns no mounts, and credentials are uploaded into
+> `~/.agentbox-creds/<agent>/` at create time. The practical difference: a
+> credential refresh no longer propagates to already-running boxes by rewriting one
+> volume — each box gets its own copy at create. Container boxes are unaffected.
+
 Agent state lives in two distinct places:
 
 **Static config** (plugins, skills, marketplaces, settings, `_claude.json`,
-codex `config.toml` + `prompts/`, opencode `config/`) is **layered into a
-published Daytona snapshot** at `agentbox prepare --provider daytona` time
-via the documented snapshot API — see `prepareDaytona` in
-`packages/sandbox-daytona/src/prepare.ts`. It builds an `Image` fluently
-(`Image.fromDockerfile(Dockerfile.box).addLocalFile(...).runCommands(...)`)
-and calls `daytona.snapshot.create({ name, image })`. Daytona handles the
-build + register in one server-side operation; the resulting snapshot
+codex `config.toml` + `prompts/`, opencode `config/`) is baked into the base
+snapshot at `agentbox prepare --provider daytona` time — see `prepareDaytona` in
+`packages/sandbox-daytona/src/prepare.ts`. **How** it's baked depends on the class:
+
+- **container** — layered with Daytona's declarative builder:
+  `Image.fromDockerfile(Dockerfile.box)` + `.dockerfileCommands(...)`, then
+  `daytona.snapshot.create({ name, image })`. Build + register in one server-side
+  operation.
+- **linux-vm** — the declarative builder is unavailable (§2.0), so the seed runs
+  against a *live* sandbox instead: boot the GHCR base, upload the staged
+  tarballs, extract them, cold-snapshot the result. The upload+extract step is
+  provider-neutral (`seedAgentStaticIntoCloudBox` in `@agentbox/sandbox-cloud`,
+  built on just `uploadFile` + `exec`), so Hetzner can adopt it in place of its
+  inline ssh/scp copy.
+
+Either way the resulting snapshot
 already contains `/home/vscode/.claude/`, `/home/vscode/.codex/`, and
 `/home/vscode/.local/share/opencode/` populated from the host's filtered
 config. Subsequent boxes boot from this snapshot — no per-create extract.
@@ -336,13 +569,37 @@ The `CloudBackend` interface is the same, but the implementation
 
 - **One VPS per box** (1:1, like Daytona). Default `cx23` (2 vCPU / 4 GB / 40 GB
   x86, ~€4/mo while running). Default location `nbg1`. Both configurable
-  per provision request.
+  per provision request (`CloudProvisionRequest.size` / `.location`, threaded
+  from the CLI by `cloudSizingProviderOptions`).
 - **Per-box VM size** — set via `--size <server-type>` on `agentbox create`,
   or `box.sizeHetzner` (per-provider override) / `box.size` (generic
   fallback) in config. Precedence: `--size` > `box.sizeHetzner` >
-  `box.size` > built-in `cx23`. Value is passed straight through as
-  Hetzner's `server_type` (e.g. `cx33`, `cx43`); unknown types fail
-  create with the API's `invalid_input`.
+  `box.size` > built-in `cx23`. Value is passed through as Hetzner's
+  `server_type` (e.g. `cx33`, `cx43`).
+- **Per-box location** — set via `--location <name>` on `agentbox create`, or
+  `box.hetznerLocation` in config (default `nbg1`). Precedence: `--location` >
+  `box.hetznerLocation`. `--location` on a non-hetzner provider is warned and
+  ignored. `agentbox prepare --provider hetzner --location <name>` sets the
+  bake VPS location the same way.
+- **Preflight validation** (`src/preflight.ts`, pure) — before any billable
+  resource is created, `validateServerChoice` checks the choice against the
+  live `/server_types` catalog + the base image, in order: type exists (else
+  suggests non-deprecated x86 names) → x86-only (`cax*`/ARM rejected — base
+  snapshots are x86) → not deprecated → the type's disk fits the snapshot's
+  `disk_size` → the location offers the type (`prices[].location`). Each failure
+  throws a `UserFacingError` with the fix. This runs *before* firewall/SSH-key
+  creation, so a bad `--size`/`--location` never bills a half-created box.
+- **Provision error mapping** (`mapHetznerProvisionError`) — the create call is
+  wrapped so late Hetzner errors become actionable: `resource_limit_exceeded` →
+  account-limits explanation + the Hetzner Console Limits page (dedicated `ccx*`
+  types trip this on new accounts); `resource_unavailable` / `placement_error` →
+  "no capacity for `<type>` in `<location>`, try another `--location`". Original
+  messages are preserved; unrecognized codes pass through untouched.
+- **Real reported resources** — `provision` reads the actual
+  `server.server_type` back from the create response and returns
+  `CloudHandle.resources {cpu, memory, disk}`. The cloud scaffold stores this on
+  the box record and logs `provisioned <c> vCPU / <m> GB RAM / <d> GB disk`
+  (falling back to the provider's static `defaultResources` for old records).
 - **Per-box ed25519 SSH key** minted at `provision` time into
   `~/.agentbox/boxes/<sandboxId>/ssh/{id_ed25519,id_ed25519.pub,known_hosts}`.
   Private key never leaves the host. Pubkey is injected via cloud-init's
@@ -423,6 +680,15 @@ decorates these URLs with Portless aliases for symmetric
 `<box-name>.localhost` URLs (handled provider-side, not in the
 backend, so the backend stays focused on plumbing).
 
+When the host Portless proxy runs in **TLS** mode, the in-box mirror serves a
+self-signed CA the box doesn't trust by default, so in-box Chromium (VNC window)
+and Playwright would reject `https://<box>.localhost`. The baked
+`agentbox-portless-trust` helper fixes this: `startInBoxPortless` (hetzner) and
+docker `create` invoke it to trust the CA in both the system store
+(`update-ca-certificates`) and the box user's NSS db (`certutil`, from
+`libnss3-tools`), and export `NODE_EXTRA_CA_CERTS` for Node clients. No-TLS host
+proxies (the no-root `--no-tls -p 1355` fallback) serve plain `http` and skip this entirely.
+
 ### 3.4 Checkpoints
 
 Map to Hetzner's `create_image` API (`type: snapshot`). Defaults to
@@ -442,10 +708,10 @@ precedence over `box.defaultCheckpoint` for Hetzner boxes. Set via
 
 ### 3.5 DinD inside the VPS
 
-Reuses the unchanged `launchCloudDockerdDaemon` scaffolding — the
-install script bakes `/usr/local/bin/agentbox-dockerd-start` (the same
-script the docker provider ships), and `createCloudProvider.create()`
-auto-launches it via `backend.exec` at provision + resume time.
+The install script bakes `/usr/local/bin/agentbox-dockerd-start` (the same
+script the docker provider ships), and the in-box bootstrap
+(`agentbox-ctl bootstrap`, kicked by `createCloudProvider.create()` /
+`reEnsureCloudBox()` at provision + resume) launches it before the ctl daemon.
 `docker run --rm hello-world` works inside the box without any
 hetzner-specific code (verified live in Phase-7 smoke).
 
@@ -572,19 +838,124 @@ brief:
   manifest's `snapshotName` field, and restore via `Sandbox.create({
   template: snapshotId })`. `createSnapshot` pauses the source while
   capturing; the next op auto-resumes it.
-- **Hard platform limits:** template-level resources (vCPU / RAM / disk are
-  baked at `Template.build()` time; per-create overrides are advisory
-  metadata only), 1-hour session cap on Hobby, max upload chunk constraints
+- **Hard platform limits:** template-level resources (vCPU / RAM baked at
+  `Template.build()` time via `agentbox prepare --provider e2b --size
+  <cpu-mem>`; E2B has no disk knob, and a per-create `--size` that differs
+  from the baked size just logs a warning — E2B rejects per-create
+  resources), 1-hour session cap on Hobby, max upload chunk constraints
   from the SDK (handled by the cloud scaffold). E2B itself runs in multiple
   regions; the SDK chooses one transparently.
 
+## 3e. The remote-docker shape
+
+`remote-docker` runs a box as a container on a machine the *user* supplies,
+reached over SSH. It is the only provider whose "cloud" is not infrastructure we
+provision — it is someone's workstation, Mac mini, or team server.
+
+**Why it is a `CloudBackend` and not a second docker provider.** The docker
+provider's load-bearing mechanism is the bind mount of the host's `.git/` into
+the container at an identical absolute path: an in-box commit lands in the host
+repo with no sync at all. A bind mount cannot cross a network, and everything
+downstream of that assumption is equally local-only — the ctl unix socket on a
+host path, `-p 127.0.0.1:0:<p>` publishing on the *laptop's* loopback,
+`host.docker.internal` reaching the laptop's relay. Retargeting the docker
+provider with `DOCKER_HOST=ssh://` would retarget the `docker` calls and none of
+those assumptions; worse, the relay's git RPC would take the **docker** branch in
+`host-actions.ts` and try to push from a `.git` that isn't there. The cloud
+scaffold already solved every one of them, so the provider implements the ~14
+`CloudBackend` primitives over `docker`-on-SSH and inherits `seedCloudWorkspace`,
+the in-box relay + `CloudBoxPoller` bridge, git-push-by-bundle, carry, and
+credential sync unchanged.
+
+**Transport.** One OpenSSH ControlMaster per box (`@agentbox/sandbox-core`'s
+`SshTunnelManager`, shared with hetzner/digitalocean), and every docker command
+runs through one chokepoint: `ssh <dest> bash -lc 'docker …'`
+(`src/remote-docker.ts`). Deliberately **not** `DOCKER_HOST=ssh://`:
+
+  1. Docker's ssh transport runs `docker system dial-stdio` on the remote, which
+     needs `docker` on the **non-login-shell** PATH — precisely where OrbStack
+     (`~/.orbstack/bin`) and Colima break. A macOS remote is a supported case.
+  2. It opens a fresh SSH connection per `docker` invocation; create issues dozens.
+
+The trade is that docker's argv is composed into a shell string, so every
+argument is quoted (`quoteShellArgv`) — nothing in the package may build a remote
+command by concatenation.
+
+**Addressing.** The SSH destination is encoded INTO the sandbox id:
+
+    sandboxId = "<ssh-destination>/<container>"   e.g. "buildbox/agentbox-brave-otter"
+
+The host relay resolves a backend from a bare `CloudHandle` with no access to
+config or box state, so the handle must be self-describing. Multi-host support
+then falls out for free, and a box keeps working after `box.remoteDockerHost`
+changes. The CLI accepts a host-qualified provider spec (`docker:<host>`,
+`apps/cli/src/provider/spec.ts`) anywhere a provider name is accepted; the bare
+name is what keys config and lands on the record.
+
+**Image.** The ref IS the build-context fingerprint: `agentbox/box:<sha16>`, the
+same sha the local docker provider computes. So "is this host prepared?" is
+answered by asking the engine (`docker image inspect`), not by trusting a local
+file that could disagree with it — and it is answered **per host**, which a
+single `~/.agentbox/remote-docker-prepared.json` could never be. Ensure order:
+present → pull the fingerprint-tagged GHCR image (published multi-arch, so an
+amd64 remote gets amd64 from an arm64 laptop) → stream the local build context to
+`docker build -` on the remote. `prepare` is therefore **optional** (unlike the
+VPS providers': a remote engine can build from a Dockerfile), and only records
+history for `prepare --status` / `doctor`.
+
+**Checkpoints.** `docker commit` on the engine. The snapshot name carries the
+host, because `deleteSnapshot`/`snapshotExists` are handed nothing but that string
+(no handle) and a docker ref admits neither `@` nor `:` outside the tag:
+
+    "<ssh-destination>#<docker-image-ref>"   e.g. "dev@10.0.0.9:2222#agentbox-ckpt-9f2a_repo:setup"
+
+A checkpoint is bound to the engine that made it. Booting it on another machine
+reads as "snapshot gone", so the scaffold prunes the dangling manifest and builds
+from base rather than failing.
+
+**Box SSH (`open` / `code`).** The box's sshd is published on the *engine's*
+loopback, so no local ssh can dial it directly. Rather than hold an `ssh -L`
+forward open for the alias's lifetime, the generated `~/.agentbox/ssh/config`
+block uses **`ProxyJump`**: ssh hops through the engine, which dials
+`127.0.0.1:<published>` itself. That is plain OpenSSH, so VS Code Remote-SSH and
+sshfs work with no tunnel for AgentBox to keep alive. The published port is
+ephemeral and is re-resolved on every start. This is what `Provider.sshTarget`
+exists for: a provider that knows its own SSH target says so, instead of having it
+reverse-engineered from the `buildAttach` argv (an inference that only holds when
+the box IS the machine).
+
+**Nested engines.** When the engine is itself an AgentBox box (the
+agentbox-in-agentbox dev loop), its dockerd has no `CAP_SYS_PTRACE` and cannot
+bind-mount `/proc/<pid>/ns/net` for a container init running as a different uid
+than the daemon. The provider detects this by asking the *engine*
+(`test -f /etc/agentbox/box.env`) — not by reading its own `AGENTBOX=1`, which
+would be the wrong signal, since the CLI can run in a box while the engine sits on
+a real machine — and forces the box init to uid 0.
+
+**No credential.** There is nothing in `secrets.env`: the provider authenticates
+as the user, through their own `~/.ssh/config`, agent and `known_hosts`. Its
+`providerModule` deliberately omits `ensureCredentials` / `readCredStatus`, so the
+CLI and hub show no login row. A named host-alias registry
+(`~/.agentbox/remote-docker-hosts.json`) driven by `agentbox remote-docker
+add|update|list|doctor|remove` replaces it.
+
+**Known limits.** Published ports are fixed at `docker run` (same constraint as
+Vercel): a service added to `agentbox.yaml` after create is reachable through the
+WebProxy but gets no direct preview URL until the box is recreated. Concurrent
+boxes share the machine with no arbitration beyond `--size`. The engine is
+trusted — this is a "your own machine" provider, not an isolation boundary
+against that machine's owner.
+
 ## 4. Authentication
 
-`agentbox daytona login` is the supported path. It prompts for
-`DAYTONA_API_KEY` (required) and `DAYTONA_ORGANIZATION_ID` (optional)
-and persists them to `~/.agentbox/secrets.env`. Subsequent runs read
-that file; project `.env` is never harvested. First-time use of
-`--provider daytona` triggers the login prompt automatically.
+`agentbox daytona login` is the supported path. There is **no browser sign-in** —
+it offers to open the dashboard's keys page for convenience, then prompts you to
+paste a **`DAYTONA_API_KEY`**, and persists it to `~/.agentbox/secrets.env`.
+`DAYTONA_ORGANIZATION_ID` is asked for **only** when the pasted value is a JWT
+(it starts with `eyJ`), and there it's required — an API key doesn't need one,
+since the SDK derives the org from the key. Subsequent runs read that file;
+project `.env` is never harvested. First-time use of `--provider daytona`
+triggers the login prompt automatically.
 
 `agentbox hetzner login` is the analogous command for Hetzner. It
 prompts for `HCLOUD_TOKEN` (Read+Write API token from a Hetzner project's
@@ -677,10 +1048,20 @@ signedPreviewUrl, attachArgv, revokeAttachToken, ensureVolume,
 createSnapshot, deleteSnapshot, list
 ```
 
-Then add a one-line case to `resolveCloudBackend` in
-`packages/relay/src/host-actions.ts` and register the name in
-`apps/cli/src/provider/registry.ts`'s `KNOWN`. Compose the full
-`Provider` with `createCloudProvider(backend)`.
+Compose the full `Provider` with `createCloudProvider(backend)` and export a
+`providerModule` (see `packages/sandbox-core/src/doctor.ts`).
+
+Two ways to ship it:
+
+- **Built-in** (first-party): add one row to the `PROVIDERS` table in
+  `packages/config/src/providers.ts` and one entry to the `IMPORTERS` map in
+  `apps/cli/src/provider/loaders.ts` (both bundle-inlined), plus the relay's
+  literal-import block in `resolveCloudBackend`
+  (`packages/relay/src/host-actions.ts`).
+- **External / community plugin**: publish `agentbox-provider-<name>` built on
+  `@madarco/agentbox-provider-sdk` and `agentbox plugin add` it — **no edits to AgentBox**.
+  This is the recommended path for third-party clouds. See
+  [`provider-plugins.md`](./provider-plugins.md).
 
 ### 7.1 Validating with the mock backend + contract tests
 

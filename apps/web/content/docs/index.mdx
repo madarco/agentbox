@@ -19,7 +19,7 @@ the **local Docker** provider, which needs no account.
 - **Node** `>=20.10` on your `PATH`.
 - **MacOS** or **Linux**
 - An agent CLI — e.g. `claude`, `codex` or `opencode`.
-- (Optional) an account for Vercel, Hetzner or Daytona.
+- (Optional) an account for Vercel, Hetzner, DigitalOcean or Daytona.
 
 NB: Agentbox will open a link for OAuth and acquire the tokens for your AI subscription and for cloud providers API keys.
 
@@ -39,10 +39,12 @@ npm -g i @madarco/agentbox && agentbox install
 ```
 
 During `agentbox install` you'll be prompted to log in to any cloud providers you
-want to use (Vercel, Hetzner, Daytona, E2B, Tenki) — this is **not** needed for the
+want to use (Vercel, Hetzner, DigitalOcean, Daytona, E2B, Tenki) — this is **not** needed for the
 default local Docker provider. You'll then be asked to build the base image for
 each selected provider (e.g. the local Ubuntu Docker image, the Vercel base
-sandbox, the E2B template, etc.) so the first box starts fast.
+sandbox, the E2B template, etc.) so the first box starts fast, and finally whether
+to make that provider the **default for new boxes** — say yes and a plain
+`agentbox claude` goes there, with no `--provider` flag or provider prefix.
 
 <Callout title="NOTE">
   You can run `agentbox install` again at any time to add more providers — each
@@ -97,6 +99,10 @@ prefix the command with the provider name — for example:
 agentbox hetzner claude
 agentbox vercel codex
 ```
+
+The prefix is only needed when the provider isn't your default. If you said yes to
+"make it the default for new boxes" during `agentbox install`, plain `agentbox claude`
+already goes there — see [`box.provider`](/docs/configuration#provider).
 
 ### Watch it work
 

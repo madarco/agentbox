@@ -1,5 +1,6 @@
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
+import { PROVIDER_NAMES } from '@agentbox/config';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -13,8 +14,8 @@ type ForkAgent = 'claude' | 'codex' | 'opencode';
 const FORK_AGENTS = ['claude', 'codex', 'opencode'] as const;
 
 /** Providers fork accepts positionally (`agentbox fork hetzner`) or via
- *  --provider. Kept in sync with the per-agent create commands' provider set. */
-const FORK_PROVIDERS = ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'tenki'] as const;
+ *  --provider. Sourced from the central `PROVIDERS` table (single source of truth). */
+const FORK_PROVIDERS = PROVIDER_NAMES;
 
 /** Resolve the provider from the positional arg (`agentbox fork <provider>`,
  *  the skill's `$ARGUMENTS` shape) and/or --provider. A blank value (an LLM
@@ -152,7 +153,7 @@ export const forkCommand = new Command('fork')
   )
   .argument(
     '[provider]',
-    "sandbox backend as a positional shorthand for --provider (e.g. `agentbox fork hetzner`): 'docker' (default), 'daytona', 'hetzner', 'vercel', 'e2b', or 'tenki'",
+    "sandbox backend as a positional shorthand for --provider (e.g. `agentbox fork hetzner`): 'docker' (default), 'daytona', 'hetzner', 'vercel', or 'e2b'",
   )
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
   .option(
@@ -165,7 +166,7 @@ export const forkCommand = new Command('fork')
   )
   .option(
     '--provider <name>',
-    "sandbox backend: 'docker' (default), 'daytona', 'hetzner', 'vercel', 'e2b', or 'tenki'. Can also be passed positionally: `agentbox fork hetzner`.",
+    "sandbox backend: 'docker' (default), 'daytona', 'hetzner', 'vercel', or 'e2b'. Can also be passed positionally: `agentbox fork hetzner`.",
   )
   .option('-n, --name <name>', 'box name (default: fork-<HHMMSS>)')
   .option(

@@ -12,10 +12,13 @@
  */
 
 import type { Provider } from '@agentbox/core';
+import type { ProviderModule } from '@agentbox/sandbox-core';
 import { createCloudProvider } from '@agentbox/sandbox-cloud';
 import { hetznerBackend, HETZNER_DEFAULT_BOX_IMAGE_REF } from './backend.js';
 import { prepareHetznerProvider } from './prepare.js';
 import { currentHetznerBaseFingerprintLive } from './prepared-state.js';
+import { ensureHetznerCredentials, setHetznerCredentials } from './credentials.js';
+import { doctorChecks, readCredStatusSummary } from './provider-module.js';
 
 const cloudProvider = createCloudProvider(hetznerBackend, {
   defaultResources: { cpu: 2, memory: 4, disk: 40 },
@@ -27,10 +30,22 @@ export const hetznerProvider: Provider = {
   baseFingerprint: () => currentHetznerBaseFingerprintLive(),
 };
 
+/** Uniform surface the CLI provider loader resolves this package through. */
+export const providerModule: ProviderModule = {
+  provider: hetznerProvider,
+  backend: hetznerBackend,
+  ensureCredentials: ensureHetznerCredentials,
+  readCredStatus: readCredStatusSummary,
+  setCredentials: setHetznerCredentials,
+  currentBaseFingerprintLive: (claudeInstall) => currentHetznerBaseFingerprintLive(claudeInstall),
+  doctorChecks,
+};
+
 export { hetznerBackend, HETZNER_DEFAULT_BOX_IMAGE_REF };
 export { ensureHetznerEnvLoaded } from './env-loader.js';
 export {
   ensureHetznerCredentials,
+  setHetznerCredentials,
   readHetznerCredStatus,
   secretsPath,
   maskKey,
@@ -44,7 +59,12 @@ export {
   type PrepareHetznerOptions,
   type PrepareHetznerResult,
 } from './prepare.js';
-export { generateBoxCloudInit, generatePrepareCloudInit, type BoxCloudInitOptions, type PrepareCloudInitOptions } from './cloud-init.js';
+export { generateBoxCloudInit, generatePrepareCloudInit, controlPlaneCloudInit, type BoxCloudInitOptions, type PrepareCloudInitOptions, type ControlPlaneCloudInitOptions } from './cloud-init.js';
+export {
+  deployControlPlaneToHetzner,
+  type ControlPlaneHetznerDeployOptions,
+  type ControlPlaneHetznerDeployResult,
+} from './control-plane-deploy.js';
 export {
   RUNTIME_ASSETS,
   candidatesFor,
@@ -86,8 +106,14 @@ export {
   type HetznerImage,
   type HetznerServer,
   type HetznerServerStatus,
+  type HetznerServerType,
   type HetznerSshKey,
 } from './client.js';
+export {
+  validateServerChoice,
+  mapHetznerProvisionError,
+  type ServerChoice,
+} from './preflight.js';
 export { detectEgressIp, type DetectEgressIpOptions } from './egress-ip.js';
 export {
   createPerBoxFirewall,

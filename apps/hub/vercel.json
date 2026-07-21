@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
+  "buildCommand": "cd ../.. && pnpm turbo run build --filter=@agentbox/hub && pnpm --filter @agentbox/hub db:auth-migrate",
+  "build": {
+    "env": {
+      "AGENTBOX_HUB_PROFILE": "vercel"
+    }
+  },
+  "env": {
+    "AGENTBOX_HUB_PROFILE": "vercel"
+  }
+}

@@ -1,0 +1,121 @@
+---
+title: Hub (Web UI)
+description: A local dashboard for your boxes — served by the host relay at https://agentbox.localhost
+---
+
+The **hub** is a local Web UI for your boxes: a dashboard, box detail views, and a
+live **approvals** inbox, served by the host relay. It's the same `@agentbox/relay`
+core you already run, with a Next.js UI delegated onto its port — one process, no
+extra port opened.
+
+```bash
+agentbox hub
+```
+
+That starts the hub (if it isn't already running) and opens it in your browser at
+`https://agentbox.localhost/?token=<secret>`. **Start it with the command, not by
+typing the URL** — the token is what unlocks the hub, and without it the page just
+answers `401 AgentBox hub is locked`. The first tokened visit stores the secret in
+a cookie (30 days) and strips it from the address, so from then on a plain
+`https://agentbox.localhost` gets you in.
+
+<Callout type="info" title="Where the friendly URL comes from">`https://agentbox.localhost` is registered by [Portless](https://portless.sh), the same proxy AgentBox uses for box web apps. Without it — on OrbStack, when Portless isn't installed, or with `portless.enabled: false` — the hub falls back to the loopback URL `http://127.0.0.1:8787`, which works exactly the same way.</Callout>
+
+<Figure src="/screenshots/hub-dashboard.png" caption="The hub dashboard — boxes grouped by project, with live status and lifecycle controls." />
+
+## What's in it
+
+- **Dashboard** — every box on this machine, grouped by project, with live status
+  (running / paused / stopped / error) and per-box **pause / resume / stop /
+  destroy** controls.
+- **Box detail** — a box's task, agent, branch, host, and timestamps, plus common
+  box operations: **Access** (open the box's [web / VNC URL](/docs/web-apps-and-tunnels),
+  and, on a local hub running on macOS, an **Apps** row that opens the box in a host
+  app — Claude, Codex, VS Code / Cursor, cmux, Herdr, iTerm2, or Finder; the same as
+  [`agentbox open --in`](/docs/access-your-box). Every button is always shown —
+  ones that can't work right now (app not installed, sshfs missing for Finder, not
+  supported for the box's provider, box paused) are disabled with the reason as a
+  hover tooltip),
+  **Git** (pull, push, [push to the host repo only](/docs/sync-and-git),
+  change branch, create a new `agentbox/*` branch) and **Services** (live state of the
+  box's [`agentbox.yaml` services](/docs/services-and-tasks), with restart-one and
+  restart-all). The same operations are on the [REST API](/docs/api) and the
+  [CLI](/docs/cli) (`agentbox git`, `agentbox services`, `agentbox open`).
+- **Approvals** — the host-action requests a box is blocked on (a `git push` to a
+  protected branch, `cp`, `download`, gh/integration writes). **Approve** unblocks
+  the box; **Deny** returns an error to it. This is the same gate the relay prompts
+  for in an attached terminal — surfaced in the browser so you can answer from
+  anywhere on your machine.
+- **Live updates** — box states and approvals stream in over SSE; no manual
+  refresh. A pending approval appears the moment a box requests it.
+
+- **Create boxes** — register a project folder and start a box (with a provider, an
+  agent, and an optional task) straight from the dashboard; the live build log
+  streams into a panel and the box appears as `creating` → `running`. Pick agent
+  **Empty — just create the box** to build a box without starting an agent (like
+  `agentbox create`); attach later with `agentbox shell`. The **Provider** picker
+  offers docker plus any cloud provider set up on this host — providers you haven't
+  configured yet show up disabled (set them up under **Settings → Sandbox
+  providers**, below). Pick a **Base branch** to fork the box from a ref other than
+  the project's current HEAD (like `--from-branch`). When a project has no
+  `agentbox.yaml` and no default snapshot, a **Run setup wizard** toggle (on by
+  default) seeds the agent's first turn to explore the repo and propose an
+  `agentbox.yaml`.
+
+- **Manage projects** — register a folder as a project (a folder picker browses
+  your machine), and remove an **empty** project (0 boxes) with the **Delete**
+  button on its dashboard/detail header. Deleting only unregisters the folder from
+  the hub — its files, git repo, and checkpoints are untouched.
+
+- **Sandbox providers** (Settings) — set up a cloud provider without a terminal:
+  paste its **credentials** (an API key/token — validated and saved to
+  `~/.agentbox/secrets.env`) and **Bake** its base image, with the build log
+  streaming live just like a box create. Once baked, the provider flips to
+  **ready** and becomes selectable in the create dialog. Docker needs no
+  credentials (its base self-heals); the rest is the same [`login` +
+  `prepare`](/docs/cli) the CLI does, driven from the browser. Provider install
+  + bake run on the host that owns Docker/SSH, so they need the local or
+  full-host hub (not the serverless plane).
+
+<Callout type="info" title="Driving it programmatically">Everything the UI does is also available over HTTP — see the [REST API](/docs/api) for launching and managing boxes from an IDE, a script, or a remote hub.</Callout>
+
+## Commands
+
+```bash
+agentbox hub              # start + open in the browser (default)
+agentbox hub --no-open    # start without opening a browser, just print the URL
+agentbox hub status       # is it running? (add --json)
+agentbox hub stop         # stop the hub process
+agentbox hub restart      # stop then start
+```
+
+## How it relates to the relay
+
+The hub is a **superset of the host relay** — it embeds the relay and adds the UI,
+on the same port (8787). The two are mutually exclusive there, so:
+
+- `agentbox hub` takes over from a bare `agentbox relay` if one is already running.
+- Once the hub is up, ordinary box commands (`agentbox create`, `claude`, …) reuse
+  it — they don't spawn a second relay.
+
+So you can run `agentbox hub` once and leave it; everything else keeps working
+through it. Stopping the hub (`agentbox hub stop`) frees the port, and the next box
+command brings a lean relay back automatically.
+
+## Auth
+
+On localhost the hub binds loopback (`127.0.0.1`) and gates access with a
+per-machine **token** — there's no login screen. `agentbox hub` generates a secret
+at `~/.agentbox/hub/token` (mode `0600`) and hands it to you in the URL; the hub
+stores it in an httpOnly cookie and redirects to the clean URL. Direct access
+without the token is refused (401). This protects the loopback bind from other
+local processes and DNS-rebinding. `AGENTBOX_HUB_AUTH=off` disables the gate.
+
+<Callout type="info" title="Requirements">The hub server needs **Node ≥ 22.5** (the lean relay and the rest of the CLI keep a lower floor). If you're below that, `agentbox hub` prints a clear error — use `agentbox relay` instead.</Callout>
+
+## Running it for a team
+
+`agentbox hub` is the single-user, on-your-machine UI. For a **shared, multi-user**
+deployment with password login and a cross-machine box registry — so cloud boxes
+keep working with your laptop off — deploy the same app as the hosted
+control plane (Vercel or a VPS, backed by Postgres).

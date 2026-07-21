@@ -1,9 +1,15 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { postRpc, postRpcAndExit } from '../src/relay-rpc.js';
+import { writeRelayEnvFile } from '../src/relay-env.js';
 
 describe('postRpc env handling', () => {
   let prevUrl: string | undefined;
   let prevToken: string | undefined;
+  let prevEnvFile: string | undefined;
+  let dir: string;
   // No explicit type: vitest's spyOn return type collides with WriteStream's
   // overloaded `write` signature, and the inferred type is fine for the
   // `mock.calls` access we actually use.
@@ -12,8 +18,13 @@ describe('postRpc env handling', () => {
   beforeEach(() => {
     prevUrl = process.env.AGENTBOX_RELAY_URL;
     prevToken = process.env.AGENTBOX_RELAY_TOKEN;
+    prevEnvFile = process.env.AGENTBOX_RELAY_ENV_FILE;
     delete process.env.AGENTBOX_RELAY_URL;
     delete process.env.AGENTBOX_RELAY_TOKEN;
+    // Point the relay-env file at a fresh temp dir so the env-missing cases
+    // don't accidentally read a real /run/agentbox/relay.env on the host.
+    dir = mkdtempSync(join(tmpdir(), 'agentbox-relay-rpc-'));
+    process.env.AGENTBOX_RELAY_ENV_FILE = join(dir, 'relay.env');
     stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   });
 
@@ -22,15 +33,28 @@ describe('postRpc env handling', () => {
     else process.env.AGENTBOX_RELAY_URL = prevUrl;
     if (prevToken === undefined) delete process.env.AGENTBOX_RELAY_TOKEN;
     else process.env.AGENTBOX_RELAY_TOKEN = prevToken;
+    if (prevEnvFile === undefined) delete process.env.AGENTBOX_RELAY_ENV_FILE;
+    else process.env.AGENTBOX_RELAY_ENV_FILE = prevEnvFile;
+    rmSync(dir, { recursive: true, force: true });
     stderrSpy.mockRestore();
   });
 
-  it('returns internalExitCode 65 + emits error when env is missing', async () => {
+  it('returns internalExitCode 65 + emits error when env and file are missing', async () => {
     const out = await postRpc('git.push', { path: '/workspace' });
     expect(out.internalExitCode).toBe(65);
     expect(stderrSpy).toHaveBeenCalled();
     const msg = String((stderrSpy.mock.calls[0] ?? [])[0] ?? '');
     expect(msg).toMatch(/AGENTBOX_RELAY_URL/);
+  });
+
+  it('falls back to the relay-env file when env is unset (no 65 short-circuit)', async () => {
+    // Unparseable URL in the file proves resolution reached the file: postRpc
+    // gets past the env check and fails at URL parsing instead of "not set".
+    writeRelayEnvFile('::not-a-url', 'file-tok');
+    const out = await postRpc('git.push', { path: '/workspace' });
+    expect(out.internalExitCode).toBe(65);
+    const msg = String((stderrSpy.mock.calls[0] ?? [])[0] ?? '');
+    expect(msg).toMatch(/invalid AGENTBOX_RELAY_URL/);
   });
 
   it('returns internalExitCode 65 when AGENTBOX_RELAY_URL is unparseable', async () => {

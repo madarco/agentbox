@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boxDirSegment, boxRunDirFor } from '../src/host-export.js';
+import { boxDirSegment, boxRunDirFor } from '../src/sync/host-export.js';
 import { snapshotPathFor } from '../src/snapshot.js';
 
 describe('boxDirSegment', () => {

@@ -13,13 +13,35 @@ import { AGENTBOX_COMMIT, AGENTBOX_VERSION } from './version.js';
 process.env.AGENTBOX_CLI_VERSION = AGENTBOX_VERSION;
 process.env.AGENTBOX_CLI_COMMIT = AGENTBOX_COMMIT;
 
+// Stamp the staged `runtime/` root so externally-installed provider plugins can
+// resolve the shared box-side assets (ctl.cjs + shims) from the RUNNING CLI via
+// `@madarco/agentbox-provider-sdk`'s `resolveSharedRuntimeAsset`. Probe both bundle
+// layouts (dist/index.js and dist/<chunk>.js) for the `_shared` marker.
+import { existsSync as _existsSync } from 'node:fs';
+import { dirname as _dirname, resolve as _resolve } from 'node:path';
+import { fileURLToPath as _fileURLToPath } from 'node:url';
+{
+  const selfDir = _dirname(_fileURLToPath(import.meta.url));
+  for (const cand of [
+    _resolve(selfDir, '..', 'runtime'),
+    _resolve(selfDir, '..', '..', 'runtime'),
+  ]) {
+    if (_existsSync(_resolve(cand, '_shared'))) {
+      process.env.AGENTBOX_CLI_RUNTIME_DIR = cand;
+      break;
+    }
+  }
+}
+
 import { Command } from 'commander';
 import { applyEngineOverrideAtStartup } from './engine-override.js';
-import { buildGroupedHelp } from './help.js';
+import { buildCompactHelp, buildGroupedHelp } from './help.js';
 import { agentCommand } from './commands/agent.js';
+import { appCommand } from './commands/app.js';
 import { attachCommand } from './commands/attach.js';
 import { claudeCommand } from './commands/claude.js';
 import { checkpointCommand } from './commands/checkpoint.js';
+import { credentialsCommand } from './commands/credentials.js';
 import { codeCommand } from './commands/code.js';
 import { codexCommand } from './commands/codex.js';
 import { opencodeCommand } from './commands/opencode.js';
@@ -33,11 +55,14 @@ import { hetznerCommand } from '@agentbox/sandbox-hetzner/cli';
 import { vercelCommand } from '@agentbox/sandbox-vercel/cli';
 import { e2bCommand } from '@agentbox/sandbox-e2b/cli';
 import { tenkiCommand } from '@agentbox/sandbox-tenki/cli';
+import { digitaloceanCommand } from '@agentbox/sandbox-digitalocean/cli';
+import { remoteDockerCommand } from '@agentbox/sandbox-remote-docker/cli';
 import { destroyCommand } from './commands/destroy.js';
 import { downloadCommand } from './commands/download.js';
 import { driveCommand } from './commands/drive.js';
 import { forkCommand } from './commands/fork.js';
 import { installCommand, runInstallWizard } from './commands/install.js';
+import { pluginCommand } from './commands/plugin.js';
 import { doctorCommand } from './commands/doctor.js';
 import { isFirstRun } from './lib/first-run.js';
 import { printCliError } from './lib/print-cli-error.js';
@@ -46,14 +71,33 @@ import { listCommand } from './commands/list.js';
 import { logsCommand } from './commands/logs.js';
 import { openCommand } from './commands/open.js';
 import { pauseCommand } from './commands/pause.js';
+import { inboundCommand } from './commands/inbound.js';
+import { connectCommand } from './commands/connect.js';
 import { prepareCommand } from './commands/prepare.js';
 import { pruneCommand } from './commands/prune.js';
 import { queueCommand } from './commands/queue.js';
 import { relayCommand } from './commands/relay.js';
+import { hubCommand } from './commands/hub.js';
+import { controlPlaneCommand } from './commands/control-plane.js';
 import { runQueuedJobCommand } from './commands/_run-queued-job.js';
+import { runQueuedPrepareCommand } from './commands/_run-queued-prepare.js';
 import { claudeLoginWorkerCommand } from './commands/_claude-login-worker.js';
+import { postUpdateRefreshCommand } from './commands/_post-update-refresh.js';
+import { runPostUpdateRefresh } from './lib/post-update-refresh.js';
+import { readInstalledTrayVersion } from './commands/install-app.js';
+import {
+  maybeStartRemoteCheck,
+  nudgeMessage,
+  trayNudgeMessage,
+  updateCheckEnabled,
+} from './lib/update-check.js';
+import { readUpdateState, writeUpdateState } from './lib/update-state.js';
+import { confirm } from './lib/prompt.js';
+import { detectExecutionMethod } from './exec-method.js';
 import { herdrCommand } from './commands/herdr.js';
+import { recoverCommand } from './commands/recover.js';
 import { screenCommand } from './commands/screen.js';
+import { servicesCommand } from './commands/services.js';
 import { shellCommand } from './commands/shell.js';
 import { startCommand } from './commands/start.js';
 import { statusCommand } from './commands/status.js';
@@ -64,6 +108,11 @@ import { updateCommand } from './commands/update.js';
 import { urlCommand } from './commands/url.js';
 import { waitCommand } from './commands/wait.js';
 import { rewriteProviderPrefix } from './provider/argv-prefix.js';
+import { installConfigWarningSink } from './lib/config-warnings.js';
+
+// Unknown config keys are non-fatal (a plugin's bundled parser may be older than
+// the CLI that wrote them) — the host CLI is the one that tells the user.
+installConfigWarningSink();
 
 const program = new Command();
 
@@ -93,6 +142,7 @@ program.addCommand(screenCommand);
 program.addCommand(downloadCommand);
 program.addCommand(cpCommand);
 program.addCommand(statusCommand);
+program.addCommand(servicesCommand);
 program.addCommand(topCommand);
 program.addCommand(dashboardCommand);
 program.addCommand(driveCommand);
@@ -101,21 +151,35 @@ program.addCommand(waitCommand);
 program.addCommand(logsCommand);
 program.addCommand(pauseCommand);
 program.addCommand(unpauseCommand);
+program.addCommand(inboundCommand);
+program.addCommand(connectCommand);
 program.addCommand(stopCommand);
 program.addCommand(startCommand);
+program.addCommand(recoverCommand);
 program.addCommand(destroyCommand);
 program.addCommand(prepareCommand);
 program.addCommand(pruneCommand);
 program.addCommand(checkpointCommand);
+// Hidden: spawned by the relay's credential fan-out (also a manual recovery tool).
+program.addCommand(credentialsCommand, { hidden: true });
 program.addCommand(configCommand);
 program.addCommand(queueCommand);
 program.addCommand(relayCommand);
+program.addCommand(hubCommand);
+// Experimental + WIP (hosted control plane / deployed hub). Hidden from the main
+// `agentbox --help` list; still runnable and self-documented via `control-plane --help`.
+program.addCommand(controlPlaneCommand, { hidden: true });
 // Internal worker spawned by the relay's queue scheduler. Hidden from
 // `--help` (it shows nothing user-facing — see _run-queued-job.ts).
 program.addCommand(runQueuedJobCommand, { hidden: true });
+// Internal worker that bakes a provider base image for a `kind: 'prepare'` queue
+// job (hub-driven), streaming progress to the job log. Hidden.
+program.addCommand(runQueuedPrepareCommand, { hidden: true });
 // Internal worker that drives `claude auth login` under a pty for the headless
 // (non-TTY / --headless) login flow. Hidden — see _claude-login-worker.ts.
 program.addCommand(claudeLoginWorkerCommand, { hidden: true });
+// Post-update worker: run by the freshly-installed binary after `self-update`.
+program.addCommand(postUpdateRefreshCommand, { hidden: true });
 // Internal entry points invoked by the Herdr plugin (`agentbox install herdr`).
 program.addCommand(herdrCommand, { hidden: true });
 program.addCommand(daytonaCommand);
@@ -123,13 +187,41 @@ program.addCommand(hetznerCommand);
 program.addCommand(vercelCommand);
 program.addCommand(e2bCommand);
 program.addCommand(tenkiCommand);
+program.addCommand(digitaloceanCommand);
+program.addCommand(remoteDockerCommand);
 program.addCommand(dockerCommand);
 program.addCommand(updateCommand);
 program.addCommand(installCommand);
+program.addCommand(appCommand);
+program.addCommand(pluginCommand);
 program.addCommand(doctorCommand);
 
 program.configureHelp({ visibleCommands: () => [] });
-program.addHelpText('after', () => '\n' + buildGroupedHelp(program));
+program.addHelpText('after', () => '\n' + buildCompactHelp(program));
+
+// The default `--help` shows only the core workflow (buildCompactHelp);
+// the full grouped list is `agentbox help`. commander's built-in help command
+// would render the compact view, so replace it with our own (hidden — the
+// compact footer references it, no need to list it too).
+program.helpCommand(false);
+program.addCommand(
+  new Command('help')
+    .description('List every command, grouped; `help <command>` for one command')
+    .argument('[command]', 'command to show help for')
+    .action((name: string | undefined) => {
+      if (name) {
+        const sub = program.commands.find(
+          (c) => c.name() === name || c.aliases().includes(name),
+        );
+        if (!sub) program.error(`unknown command '${name}'`);
+        sub!.help();
+      }
+      // helpInformation() yields the usage/options header without the
+      // addHelpText blocks, so the compact view isn't duplicated here.
+      process.stdout.write(program.helpInformation() + '\n' + buildGroupedHelp(program) + '\n');
+    }),
+  { hidden: true },
+);
 
 await applyEngineOverrideAtStartup();
 
@@ -145,11 +237,44 @@ const FIRST_RUN_EXEMPT = new Set([
   'doctor',
   'help',
   'relay',
+  'hub',
+  'app',
   '_run-queued-job',
+  '_run-queued-prepare',
   '_claude-login-worker',
+  '_post-update-refresh',
   'drive',
   'screen',
 ]);
+
+// Commands that START or ATTACH to work. An update prompt here lands in the middle
+// of what you actually came to do — you asked for a box, not a maintenance chore —
+// so the post-update refresh never interrupts them. It asks on the next quiet
+// command instead (`list`, `config`, …), and both updates are always reported by
+// the passive one-line nudge, which never blocks.
+const UPDATE_PROMPT_EXEMPT = new Set([
+  'create',
+  'claude',
+  'codex',
+  'opencode',
+  'shell',
+  'sh',
+  'attach',
+  'exec',
+  'run',
+  'open',
+  'fork',
+  'url',
+  'connect',
+]);
+
+/** True when an update prompt would interrupt the command the user actually ran. */
+function isUpdatePromptEligible(args: readonly string[]): boolean {
+  if (!isFirstRunHookEligible(args)) return false;
+  const cmd = args[2];
+  if (typeof cmd !== 'string') return false;
+  return !UPDATE_PROMPT_EXEMPT.has(cmd) && cmd !== 'self-update';
+}
 
 function isFirstRunHookEligible(args: readonly string[]): boolean {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
@@ -174,7 +299,77 @@ if (isFirstRun() && isFirstRunHookEligible(argv)) {
   }
 }
 
-program.parseAsync(argv).catch((err: unknown) => {
-  printCliError(err, process.stderr);
-  process.exit(1);
-});
+// Version-change hook: the user updated the package themselves (npm update -g)
+// — offer the post-update refresh the `self-update` command would have run.
+// Same interactivity gate as the first-run wizard, plus `self-update` itself
+// (it refreshes anyway). Dev builds (0.0.0-dev) never take part. A mismatched
+// stamp is only rewritten on refresh-completed or explicit decline — a non-TTY
+// invocation under the new binary must not swallow the next TTY prompt.
+let versionPromptShown = false;
+if (AGENTBOX_VERSION !== '0.0.0-dev') {
+  const state = readUpdateState();
+  if (state.lastRunVersion === undefined) {
+    // Baseline for installs that predate the stamp: written on any invocation,
+    // silently — we can't know the previous version, so never prompt.
+    writeUpdateState({ lastRunVersion: AGENTBOX_VERSION });
+  } else if (state.lastRunVersion !== AGENTBOX_VERSION && isUpdatePromptEligible(argv)) {
+    versionPromptShown = true;
+    try {
+      const yes = await confirm({
+        message: `agentbox was updated (${state.lastRunVersion} → ${AGENTBOX_VERSION}) — download new version now?`,
+        initialValue: true,
+      });
+      if (yes) {
+        await runPostUpdateRefresh();
+      } else {
+        writeUpdateState({ lastRunVersion: AGENTBOX_VERSION });
+      }
+    } catch (err) {
+      process.stderr.write(
+        `post-update refresh failed: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+  }
+  // A stale menu-bar app is NOT prompted for. It ships on its own cadence, so it
+  // would interrupt whatever you were doing, on a command that has nothing to do
+  // with it, to ask about something you can act on any time. It's reported as a
+  // one-line nudge after the command instead (see `nudgeMessage`).
+}
+
+// Daily update check: no-op while the cached result is < 24h old (zero
+// network on normal CLI calls); otherwise one background npm-registry +
+// tray-sidecar probe, un-awaited and never on the command's critical path.
+if (isFirstRunHookEligible(argv)) {
+  maybeStartRemoteCheck();
+}
+
+program.parseAsync(argv).then(
+  async () => {
+    // "Newer version available" nudges — printed from the cache only, after the
+    // command finished, on interactive runs of an installed build. Both the CLI
+    // and the menu-bar app report here; neither ever blocks.
+    //
+    // Gated on the same exempt list as the prompt: a box-flow command
+    // (`create` / `claude` / …) says nothing about updates at all. You asked for
+    // a box, and trailing maintenance chatter on the way out is still noise.
+    if (versionPromptShown || !isUpdatePromptEligible(argv)) return;
+    const state = readUpdateState();
+    const lines = [
+      nudgeMessage(
+        state,
+        detectExecutionMethod({
+          userAgent: process.env.npm_config_user_agent,
+          argv1: process.argv[1],
+        }),
+      ),
+      trayNudgeMessage(state, await readInstalledTrayVersion()),
+    ].filter((l): l is string => l !== null);
+    if (lines.length > 0 && (await updateCheckEnabled())) {
+      process.stderr.write(`\n${lines.join('\n')}\n`);
+    }
+  },
+  (err: unknown) => {
+    printCliError(err, process.stderr);
+    process.exit(1);
+  },
+);

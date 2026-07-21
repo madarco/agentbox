@@ -28,13 +28,15 @@ import {
   resolveCloudCheckpoint,
   writeCloudCheckpointManifest,
 } from '@agentbox/sandbox-cloud';
-import { readCliStamp } from '@agentbox/sandbox-core';
+import { readCliStamp, type ProviderModule } from '@agentbox/sandbox-core';
 import { tenkiBackend } from './backend.js';
 import { getTenkiClient } from './sdk.js';
 import { withTenkiRetry } from './retry.js';
 import { prepareTenkiProvider } from './prepare.js';
 import { buildTenkiAttach } from './build-attach.js';
 import { currentTenkiBaseFingerprintLive } from './prepared-state.js';
+import { ensureTenkiCredentials } from './credentials.js';
+import { doctorChecks, readCredStatusSummary } from './provider-module.js';
 
 const BACKEND_NAME = 'tenki';
 
@@ -138,6 +140,16 @@ export const tenkiProvider: Provider = {
   buildAttach: buildTenkiAttach,
   checkpoint: tenkiCheckpoint,
   baseFingerprint: () => currentTenkiBaseFingerprintLive(),
+};
+
+/** Uniform surface the CLI provider loader resolves this package through. */
+export const providerModule: ProviderModule = {
+  provider: tenkiProvider,
+  backend: tenkiBackend,
+  ensureCredentials: ensureTenkiCredentials,
+  readCredStatus: readCredStatusSummary,
+  currentBaseFingerprintLive: () => currentTenkiBaseFingerprintLive(),
+  doctorChecks,
 };
 
 export { tenkiBackend };

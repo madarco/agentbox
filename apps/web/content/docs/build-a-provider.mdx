@@ -1,0 +1,123 @@
+---
+title: Build a provider
+description: Build a custom AgentBox provider as a plugin on @madarco/agentbox-provider-sdk and register it with agentbox plugin add — no changes to AgentBox itself
+---
+
+AgentBox ships seven built-in providers ([local-docker](/docs/local-docker), [remote-docker](/docs/remote-docker), [hetzner](/docs/hetzner), [digitalocean](/docs/digitalocean), [daytona](/docs/daytona), [vercel](/docs/vercel), [e2b](/docs/e2b)), but the provider surface is **open**: you can build your own provider as a plugin — its own npm package — and run agents on any cloud or infrastructure with `agentbox --provider <name>`. A plugin needs **zero changes to AgentBox itself**.
+
+<Callout type="info" title="SHARE YOUR PROVIDER">
+Once your provider works end to end, open a PR against [madarco/agentbox](https://github.com/madarco/agentbox) to add a short page for it under **Community Providers** in these docs — so other users can discover and install it.
+</Callout>
+
+You build against one public package, [`@madarco/agentbox-provider-sdk`](https://www.npmjs.com/package/@madarco/agentbox-provider-sdk). It re-exports the whole provider-facing surface with AgentBox's internals inlined, so your plugin never imports AgentBox internals — that indirection is the stable seam AgentBox can refactor behind without breaking published plugins.
+
+Two reference packages live in the repo — read the first, copy the second:
+
+- [`examples/agentbox-provider-sample`](https://github.com/madarco/agentbox/tree/main/examples/agentbox-provider-sample) — a **stub** backend that throws on `provision`. The smallest thing that plugs in; shows the contract.
+- [`examples/agentbox-provider-example`](https://github.com/madarco/agentbox/tree/main/examples/agentbox-provider-example) — a **real, working** provider (Vercel-backed) built only on the SDK. Exercises the whole surface: `prepare`, `buildAttach`, an id-addressed `checkpoint`, and the box-runtime split.
+
+## The shape of a provider
+
+Implement the thin `CloudBackend` (~13 methods over your cloud's SDK), wrap it with `createCloudProvider` to get the full box lifecycle for free, and export a `providerModule`:
+
+```ts
+import {
+  createCloudProvider,
+  type CloudBackend,
+  type ProviderModule,
+} from '@madarco/agentbox-provider-sdk';
+
+const backend: CloudBackend = {
+  name: 'myprovider',
+  async provision(req) {
+    /* create the VM/sandbox, return { sandboxId } */
+  },
+  async get(id) {
+    /* … */
+  },
+  async start(h) {}, async stop(h) {}, async pause(h) {}, async resume(h) {},
+  async destroy(h) {}, async state(h) { return 'running'; },
+  async exec(h, cmd, opts) {
+    /* … */
+  },
+  async uploadFile(h, local, remote) {}, async downloadFile(h, remote, local) {},
+  async listFiles(h, dir) { return []; },
+  async previewUrl(h, port) { return { url: `https://…:${port}` }; },
+  // optional: createSnapshot/deleteSnapshot (checkpoints), list (prune),
+  // refreshPreviewUrl, signedPreviewUrl, attachArgv, renewTimeout, …
+};
+
+const provider = createCloudProvider(backend, {
+  defaultResources: { cpu: 2, memory: 4, disk: 40 },
+});
+
+export const providerModule: ProviderModule = {
+  provider,
+  doctorChecks: async () => [{ label: 'credentials', status: 'ok', detail: 'configured' }],
+  // optional: backend, ensureCredentials, readCredStatus, currentBaseFingerprintLive
+};
+```
+
+Only `provider` and `doctorChecks` are required — `createCloudProvider` supplies the entire lifecycle (workspace seeding, ctl launch, relay wiring, preview URLs, checkpoints, file copy) on top of the thin `CloudBackend`. "A cloud is one file."
+
+## What the package must ship
+
+- Name it `agentbox-provider-<name>` (or `@scope/agentbox-provider-<name>`).
+- Declare the contract version in `package.json`:
+  ```json
+  { "agentbox": { "providerApiVersion": 1 } }
+  ```
+- Depend on `@madarco/agentbox-provider-sdk` (`^1`).
+- Export a `providerModule` (or `providerModules` for a multi-provider package).
+
+## Cloud overrides (optional)
+
+A cloud provider that bakes its own base image typically overrides three optional capabilities on top of `createCloudProvider` — the SDK re-exports the helpers each one needs, so they're all buildable on the SDK alone:
+
+- **`prepare`** — boot a builder sandbox, run your installer, snapshot it. Bake the host's static agent config in with `stageClaudeStaticForUpload` / `stageCodexStaticForUpload` / `stageOpencodeStaticForUpload`; persist the result in your own `~/.agentbox/<name>-prepared.json`.
+- **`buildAttach`** — for a provider with no SSH, render the shared inner tmux command with `renderInnerCommand` + `hostTermForCloud` and return your transport's argv.
+- **`checkpoint`** — if your snapshots are **id-addressed** (an opaque id you can't name, like Vercel/E2B), override the whole capability and store the snapshot *id* in the manifest via `writeCloudCheckpointManifest` and friends. If they're name-addressed, just implement `backend.createSnapshot`/`deleteSnapshot` and skip the override.
+
+For the **box-side runtime** (a VPS-style provider that installs files onto a throwaway host), pull `ctl.cjs` and the shims from the running CLI with `resolveSharedRuntimeAsset('ctl.cjs')` so they stay version-locked — **don't vendor your own**. Ship only your provider-specific pieces (an installer script, a `custom-system-CLAUDE.md`). Providers that build from a Dockerfile don't need any of this.
+
+## Credentials
+
+Persist your API token however you like; the convention is a `0600` `~/.agentbox/secrets.env` entry read on demand (see the built-in providers' `env-loader.ts` / `credentials.ts`). Your plugin manages its own base image in `~/.agentbox/<name>-prepared.json` — AgentBox does **not** pin a plugin's image into its config.
+
+## Develop & test locally
+
+Working from a clone of the repo, against the bundled example provider:
+
+```bash
+# build the SDK, then build + register the example provider
+pnpm --filter @madarco/agentbox-provider-sdk build
+cd examples/agentbox-provider-example && npm install && npm run build
+node ../../apps/cli/dist/index.js plugin add .      # register it (a path works)
+node ../../apps/cli/dist/index.js doctor            # shows the provider's group
+
+# verify the SDK artifact in isolation (packs + installs the tarball, asserts exports)
+pnpm --filter @madarco/agentbox-provider-sdk pack:test
+```
+
+For your own package, point its `@madarco/agentbox-provider-sdk` dependency at a local build (an `npm link` or a `file:` path) while iterating, then `agentbox plugin add <path>`.
+
+## Operate
+
+```bash
+npm i -g agentbox-provider-myprovider        # or install anywhere resolvable
+agentbox plugin add agentbox-provider-myprovider   # validates + records it (a path also works)
+agentbox plugin list
+agentbox doctor                              # shows your provider's group
+agentbox create --provider myprovider        # first create triggers ensureCredentials
+agentbox plugin remove myprovider            # unregister (does not uninstall the package)
+```
+
+<Callout type="warn" title="TRUST">
+A provider plugin runs **in-process** with full host + credential access — it is trusted code, exactly like the CLI. `agentbox plugin add` is the consent boundary: it names the package and version and warns before recording. Only add plugins you trust; AgentBox does not sandbox plugin code.
+</Callout>
+
+## Compatibility & publishing
+
+The CLI loads a plugin only if its `providerApiVersion` is in the CLI's supported set — the SDK's exported `SDK_API_VERSION` is the gate. An incompatible plugin is refused at `plugin add` and skipped (with a warning) at load; it never crashes the CLI.
+
+Publish your package to npm under the `agentbox-provider-<name>` name and users install it like any other. For the full authoring reference — the complete `CloudBackend` contract, the backend conformance test suite, and publishing notes — see [`docs/provider-plugins.md`](https://github.com/madarco/agentbox/blob/main/docs/provider-plugins.md) and the [`agentbox-provider-example`](https://github.com/madarco/agentbox/tree/main/examples/agentbox-provider-example) package.

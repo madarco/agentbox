@@ -1,7 +1,12 @@
 import { spawn } from 'node:child_process';
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
-import { findProjectRoot, loadEffectiveConfig, resolveDefaultCheckpoint } from '@agentbox/config';
+import {
+  findProjectRoot,
+  loadEffectiveConfig,
+  resolveBoxImage,
+  resolveDefaultCheckpoint,
+} from '@agentbox/config';
 import {
   buildDashboardAttachArgv,
   buildShellSessionAttachArgv,
@@ -285,6 +290,7 @@ export const dashboardCommand = new Command('dashboard')
           command: spec.argv[0]!,
           args: spec.argv.slice(1),
           ...(spec.env ? { env: spec.env } : {}),
+          ...(spec.initialInput ? { initialInput: spec.initialInput } : {}),
           ...(spec.cleanup ? { cleanup: spec.cleanup } : {}),
           mode: which,
           ...(providerSupportsKeepAlive(record.provider) ? { keepAlive: true } : {}),
@@ -423,7 +429,7 @@ export const dashboardCommand = new Command('dashboard')
           workspacePath: project.root,
           useSnapshot: cfg.effective.box.hostSnapshot ?? true,
           checkpointRef,
-          image: cfg.effective.box.image,
+          image: resolveBoxImage(cfg.effective, 'docker'),
           claudeConfig: { isolate: cfg.effective.box.isolateClaudeConfig },
           claudeEnv: auth.env,
           // Pass the agent's config so createBox mounts + syncs its volume

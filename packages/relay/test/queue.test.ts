@@ -3,12 +3,15 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   countInFlightCreateJobs,
+  countRunningPrepareJobs,
   countWorkingSlots,
   defaultCountWorkingBoxes,
   loadQueue,
   occupiesWorkingSlot,
+  PREPARE_MAX_CONCURRENT,
   selectNextRunnable,
   selectNextRunnableByWorking,
+  selectNextRunnablePrepare,
   startQueueLoop,
   STARTUP_GRACE_MS,
   writeJob,
@@ -320,6 +323,47 @@ describe('countInFlightCreateJobs', () => {
   });
 });
 
+describe('prepare (image-bake) lane', () => {
+  const DEAD_PID = 2_147_483_646;
+
+  it('selectNextRunnable skips prepare jobs (they have their own lane)', () => {
+    const jobs = [job({ id: 'p', kind: 'prepare' }), job({ id: 'c', kind: 'create' })];
+    // Even with a free box slot, only the create job is selected here.
+    expect(selectNextRunnable(jobs, 0)?.id).toBe('c');
+    // A queue of only prepare jobs yields nothing on the box gate.
+    expect(selectNextRunnable([job({ id: 'p', kind: 'prepare' })], 0)).toBeNull();
+  });
+
+  it('selectNextRunnablePrepare picks the oldest queued prepare under the ceiling', () => {
+    const jobs = [
+      job({ id: 'a', kind: 'prepare', createdAt: '2024-01-01T00:00:00.000Z' }),
+      job({ id: 'b', kind: 'prepare', createdAt: '2024-01-01T00:00:01.000Z' }),
+      job({ id: 'c', kind: 'create' }),
+    ];
+    expect(selectNextRunnablePrepare(jobs, 0)?.id).toBe('a');
+    // At the ceiling → nothing starts.
+    expect(selectNextRunnablePrepare(jobs, PREPARE_MAX_CONCURRENT)).toBeNull();
+  });
+
+  it('countRunningPrepareJobs counts live prepare workers only', () => {
+    const jobs = [
+      job({ id: 'run', kind: 'prepare', status: 'running' }),
+      job({ id: 'dead', kind: 'prepare', status: 'running', pid: DEAD_PID }),
+      job({ id: 'queued', kind: 'prepare', status: 'queued' }),
+      job({ id: 'createRun', kind: 'create', status: 'running' }),
+    ];
+    expect(countRunningPrepareJobs(jobs)).toBe(1);
+  });
+
+  it('countInFlightCreateJobs ignores prepare jobs (a bake is not a box)', () => {
+    const jobs = [
+      job({ id: 'bake', kind: 'prepare', status: 'running' }),
+      job({ id: 'create', kind: 'create', status: 'running' }),
+    ];
+    expect(countInFlightCreateJobs(jobs, new Set())).toBe(1);
+  });
+});
+
 describe('startQueueLoop working-agent gate', () => {
   const cfg = (over: Partial<QueueConfig>): QueueConfig => ({
     enabled: true,
@@ -328,6 +372,16 @@ describe('startQueueLoop working-agent gate', () => {
     idleGraceMs: 15_000,
     ...over,
   });
+
+  // Positive assertions poll instead of sleeping a fixed 40ms — on a loaded
+  // CI runner the 10ms loop's first tick can land after the window (flaked
+  // repeatedly on GitHub Actions). Negative assertions keep the short sleep.
+  const waitFor = async (cond: () => boolean, timeoutMs = 2000): Promise<void> => {
+    const start = Date.now();
+    while (!cond() && Date.now() - start < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  };
 
   it('does not start a job when the working count is at the ceiling', async () => {
     const prefix = `qvitest-wgate-ceil-${String(process.pid)}-`;
@@ -374,7 +428,7 @@ describe('startQueueLoop working-agent gate', () => {
         },
         intervalMs: 10,
       });
-      await new Promise((r) => setTimeout(r, 40));
+      await waitFor(() => spawned.includes(id));
       await handle.stop();
       expect(spawned).toContain(id);
     } finally {
@@ -404,7 +458,7 @@ describe('startQueueLoop working-agent gate', () => {
         spawnWorker: async () => 123,
         intervalMs: 10,
       });
-      await new Promise((r) => setTimeout(r, 40));
+      await waitFor(() => runningCalled);
       await handle.stop();
       expect(runningCalled).toBe(true);
       expect(workingCalled).toBe(false);
@@ -431,7 +485,7 @@ describe('startQueueLoop working-agent gate', () => {
         spawnWorker: async () => 123,
         intervalMs: 10,
       });
-      await new Promise((r) => setTimeout(r, 40));
+      await waitFor(() => runningCalled);
       await handle.stop();
       expect(runningCalled).toBe(true);
       expect(logs.some((l) => l.includes('registry/statusStore not wired'))).toBe(true);
@@ -466,6 +520,90 @@ describe('loadQueue / writeJob round trip', () => {
       for (const id of [...ids, malformed]) {
         await rm(join(QUEUE_DIR, `${id}.json`), { force: true });
       }
+    }
+  });
+
+  it('persists noAgent on the manifest so the worker can skip the agent session', async () => {
+    const { QUEUE_DIR } = await import('../src/queue.js');
+    const id = `queue-vitest-${String(process.pid)}-noagent`;
+    try {
+      await writeJob(job({ id, noAgent: true }));
+      const raw = JSON.parse(await readFile(join(QUEUE_DIR, `${id}.json`), 'utf8')) as QueueJob;
+      expect(raw.noAgent).toBe(true);
+      const loaded = (await loadQueue()).find((j) => j.id === id);
+      expect(loaded?.noAgent).toBe(true);
+    } finally {
+      await rm(join(QUEUE_DIR, `${id}.json`), { force: true });
+    }
+  });
+});
+
+describe('orphan reaping (worker died mid-flight)', () => {
+  // A worker that dies after being spawned used to leave its manifest `running`
+  // forever: the reaper only ran at startup. No terminal status meant no SSE
+  // `end`, so a UI progress card sat there advancing against a job that was
+  // never coming back. Reaping per-tick is what makes the failure visible.
+  it('flips a running job whose pid is dead to failed', async () => {
+    const { QUEUE_DIR } = await import('../src/queue.js');
+    const id = `queue-vitest-${String(process.pid)}-dead`;
+    const changed: QueueJob[] = [];
+    try {
+      // 999999 is above the OS pid ceiling, so it can never be alive.
+      await writeJob(job({ id, status: 'running', pid: 999999 }));
+      const handle = startQueueLoop({
+        log: () => {},
+        loadConfig: async () => ({
+          enabled: true,
+          maxConcurrent: 1,
+          maxWorking: 0,
+          idleGraceMs: 15_000,
+        }),
+        countRunning: async () => 0,
+        spawnWorker: async () => 123,
+        onStatusChange: (j) => changed.push(j),
+        intervalMs: 10,
+      });
+      await new Promise((r) => setTimeout(r, 80));
+      await handle.stop();
+
+      const reaped = (await loadQueue()).find((j) => j.id === id);
+      expect(reaped?.status).toBe('failed');
+      expect(reaped?.reason).toBe('worker-died');
+      // The UI only learns about it through this callback.
+      expect(changed.some((j) => j.id === id && j.status === 'failed')).toBe(true);
+    } finally {
+      await rm(join(QUEUE_DIR, `${id}.json`), { force: true });
+    }
+  });
+
+  // The spawn window: between marking a job `running` and recording its pid it
+  // has no pid. Reaping those on a tick would kill jobs as they start.
+  it('leaves a running job with no pid alone on a tick', async () => {
+    const { QUEUE_DIR } = await import('../src/queue.js');
+    const id = `queue-vitest-${String(process.pid)}-nopid`;
+    try {
+      const handle = startQueueLoop({
+        log: () => {},
+        loadConfig: async () => ({
+          enabled: true,
+          maxConcurrent: 1,
+          maxWorking: 0,
+          idleGraceMs: 15_000,
+        }),
+        countRunning: async () => 0,
+        spawnWorker: async () => 123,
+        intervalMs: 10,
+      });
+      // Written AFTER the loop's startup pass, so only the per-tick reaper sees it.
+      await new Promise((r) => setTimeout(r, 30));
+      await writeJob(job({ id, status: 'running' }));
+      await new Promise((r) => setTimeout(r, 80));
+      await handle.stop();
+
+      const still = (await loadQueue()).find((j) => j.id === id);
+      expect(still?.status).toBe('running');
+    } finally {
+      await rm(join(QUEUE_DIR, `${id}.json`), { force: true });
     }
   });
 });

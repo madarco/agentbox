@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { loadConfig } from '@agentbox/ctl';
 import type { BoxStatus } from '@agentbox/ctl';
 import type { BoxEndpoint, BoxEndpoints, BoxRecord } from '@agentbox/core';
-import type { DockerEngine } from './host-export.js';
+import type { DockerEngine } from './sync/host-export.js';
 import { buildVncUrls, VNC_CONTAINER_PORT } from './vnc.js';
 import { WEB_CONTAINER_PORT } from './web.js';
 

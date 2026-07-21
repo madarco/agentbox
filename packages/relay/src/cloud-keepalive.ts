@@ -13,6 +13,13 @@
  *   - active agent -> hold the death-time a full window ahead of NOW.
  *   - idle agent   -> let it lapse a window after it went idle, then stop.
  *
+ * "Let it lapse" only works when the provider's timeout is an absolute deadline
+ * (vercel, e2b). Daytona's is an INACTIVITY window that any request resets —
+ * and this host polls every cloud box's preview URL continuously, so its clock
+ * never runs out and an idle box would bill forever. For those backends
+ * (`CloudBackend.timeoutModel === 'inactivity'`) the loop performs the stop
+ * itself: see `selectBoxesToIdlePause`.
+ *
  * The additive-vs-absolute SDK split (vercel `extendTimeout` adds to the
  * current deadline and can't read remaining; e2b `setTimeout` sets TTL from
  * now) is resolved by tracking each box's intended deadline in memory and
@@ -36,7 +43,7 @@ import {
   type UserConfig,
 } from '@agentbox/config';
 import type { CloudBackend } from '@agentbox/core';
-import { findBox, readState } from '@agentbox/sandbox-core';
+import { findBox, readState, recordBox } from '@agentbox/sandbox-core';
 import { loadAutopauseConfig, type AutopauseConfig } from './autopause.js';
 import { resolveCloudBackend } from './host-actions.js';
 import { readActiveAgent, type WorkingAgentState } from './queue.js';
@@ -108,6 +115,34 @@ export function selectBoxesToRenew(
 }
 
 /**
+ * Would an `inactivity`-model backend have stopped this box by now, had our own
+ * polling not kept resetting its idle clock (see `CloudBackend.timeoutModel`)?
+ * If so the host pauses it, standing in for the provider's dead timer.
+ *
+ * `idleWindowMs` is the BOX'S OWN idle timeout — the one it was created with
+ * (`cloud.sessionTimeoutMs`, i.e. `box.daytonaTimeoutMs`, 25 min by default) —
+ * NOT the keepalive/autopause renewal window (5 min). We are emulating the
+ * provider's timer, so we must honour the interval the user configured for it;
+ * using the renewal window would pause boxes five times sooner than
+ * `box.daytonaTimeoutMs` advertises. A window of `0` means the user disabled
+ * the idle timeout, and the caller skips the box entirely.
+ *
+ * Only a box with a definite `idle` agent is a candidate. A box with no agent
+ * state at all (`null` — a plain `agentbox shell` box, or one whose reporter
+ * hasn't spoken yet) is left alone: we have no evidence it's unused, and an
+ * attached human is exactly the case we must not pull the floor out from under.
+ * An `active` agent (incl. waiting/question) is never a candidate.
+ */
+export function shouldIdlePause(
+  e: KeepaliveScanEntry,
+  idleWindowMs: number,
+  now: number,
+): boolean {
+  if (e.agentState !== 'idle' || e.lastActivityMs == null) return false;
+  return now - e.lastActivityMs >= idleWindowMs;
+}
+
+/**
  * Collapse the multi-agent `WorkingAgentState` into the coarse keepalive state.
  * Mirrors autopause's `coarsePauseState`, but here any live session expecting
  * attention (waiting/question/end-plan) counts as `active` so we never let it
@@ -136,6 +171,12 @@ export interface CloudBoxLookup {
   createdAtMs: number | null;
   /** Recorded effective create timeout (ms), or null when not recorded. */
   createTimeoutMs: number | null;
+  /**
+   * Provider-specific sandbox class, when the record carries one. Daytona needs
+   * it to pause: a `linux-vm` freezes, a `container` archives, and each call is
+   * rejected for the other class. Without it the backend has to guess.
+   */
+  sandboxClass?: string;
 }
 
 export interface CloudKeepaliveLoopDeps {
@@ -148,6 +189,8 @@ export interface CloudKeepaliveLoopDeps {
   resolveBackend?: (name: string) => Promise<CloudBackend>;
   /** Injectable for tests; defaults to the state.json box lookup. */
   lookupBox?: (boxId: string) => Promise<CloudBoxLookup | null>;
+  /** Injectable for tests; defaults to writing `cloud.lastState: 'paused'`. */
+  persistPaused?: (boxId: string) => Promise<void>;
   /** Injectable for tests; fallback create timeout when a record lacks one. */
   fallbackCreateTimeoutMs?: (backend: string) => Promise<number>;
   /** Injectable for tests; defaults to `Date.now`. */
@@ -170,6 +213,7 @@ export function startCloudKeepaliveLoop(
   const loadConfig = deps.loadConfig ?? loadAutopauseConfig;
   const resolveBackend = deps.resolveBackend ?? resolveCloudBackend;
   const lookupBox = deps.lookupBox ?? defaultLookupBox;
+  const persistPaused = deps.persistPaused ?? defaultPersistPaused;
   const fallbackCreateTimeoutMs = deps.fallbackCreateTimeoutMs ?? defaultFallbackCreateTimeoutMs;
   const nowFn = deps.now ?? Date.now;
   const intervalMs = deps.intervalMs ?? DEFAULT_INTERVAL_MS;
@@ -181,6 +225,10 @@ export function startCloudKeepaliveLoop(
   const tracked = new Map<string, number>();
   // Per-box "don't attempt before" time, set after a failed renew.
   const backoffUntil = new Map<string, number>();
+  // Boxes we idle-paused, keyed by the `lastActivityMs` they had when we did.
+  // A paused box keeps reporting that same idle snapshot, so without this it
+  // would re-qualify for pausing on every tick.
+  const idlePaused = new Map<string, number | null>();
   // Resolved backends cached across ticks (one dynamic import per provider).
   const backendCache = new Map<string, CloudBackend | null>();
 
@@ -228,6 +276,7 @@ export function startCloudKeepaliveLoop(
       // Drop per-box state for boxes that are gone (destroyed / forgotten).
       for (const id of [...tracked.keys()]) if (!live.has(id)) tracked.delete(id);
       for (const id of [...backoffUntil.keys()]) if (!live.has(id)) backoffUntil.delete(id);
+      for (const id of [...idlePaused.keys()]) if (!live.has(id)) idlePaused.delete(id);
 
       const decisions = selectBoxesToRenew(entries, windowMs, now);
       for (const d of decisions) {
@@ -273,6 +322,59 @@ export function startCloudKeepaliveLoop(
           log(`cloud-keepalive: renew box ${d.boxId} (${d.backend}) failed: ${msg}`);
         }
       }
+
+      // Stop the idle boxes an `inactivity`-model backend can't stop by itself,
+      // because our own preview polling keeps resetting its clock.
+      for (const e of entries) {
+        const boxId = e.boxId;
+        if (e.agentState !== 'idle') continue; // cheap reject before any I/O
+        const backend = await resolveCached(e.backend);
+        if (backend?.timeoutModel !== 'inactivity') continue; // absolute TTL: it lapses on its own
+        if (typeof backend.pause !== 'function') continue;
+
+        // Don't re-pause a box we already paused: it stays `idle` with the same
+        // `updatedAt` while paused, so it would otherwise re-qualify every tick.
+        // Any fresh agent activity (a resume that does real work) moves
+        // `lastActivityMs` and re-arms it.
+        if (idlePaused.get(boxId) === e.lastActivityMs) continue;
+        const until = backoffUntil.get(boxId);
+        if (until != null && now < until) continue;
+
+        const lookup = await lookupBox(boxId);
+        if (!lookup) continue;
+        // The box's OWN idle timeout (box.daytonaTimeoutMs), not the renewal
+        // window — we're standing in for the provider's timer, so we wait as
+        // long as the user told the provider to wait. `0` disables it.
+        const idleWindowMs =
+          lookup.createTimeoutMs ?? (await fallbackCreateTimeoutMs(e.backend));
+        if (idleWindowMs <= 0) continue;
+        if (!shouldIdlePause(e, idleWindowMs, now)) continue;
+        try {
+          // Pass the recorded class: daytona freezes a linux-vm but archives a
+          // container, and each call is rejected for the other class.
+          await backend.pause({
+            sandboxId: lookup.sandboxId,
+            ...(lookup.sandboxClass ? { sandboxClass: lookup.sandboxClass } : {}),
+          });
+          idlePaused.set(boxId, e.lastActivityMs);
+          backoffUntil.delete(boxId);
+          // Best-effort, and deliberately after the pause is already a fact: a
+          // failed record write must not look like a failed pause and re-arm.
+          await persistPaused(boxId).catch(() => {});
+          const mins = e.lastActivityMs != null ? Math.round((now - e.lastActivityMs) / 60_000) : null;
+          log(
+            `cloud-keepalive: paused idle box ${boxId} (${e.backend})` +
+              (mins != null ? ` after ~${String(mins)}m idle` : '') +
+              ` — ${e.backend}'s own idle timer never fires while we poll it`,
+          );
+        } catch (err) {
+          // Already stopped, mid-transition, or a transient SDK error. Back off
+          // rather than retry every tick; `probeState` stays authoritative.
+          backoffUntil.set(boxId, now + FAILURE_BACKOFF_MS);
+          const msg = err instanceof Error ? err.message : String(err);
+          log(`cloud-keepalive: pause idle box ${boxId} (${e.backend}) failed: ${msg}`);
+        }
+      }
     } catch (err) {
       // The loop must never crash the relay or stop scheduling.
       const msg = err instanceof Error ? err.message : String(err);
@@ -310,11 +412,28 @@ async function defaultLookupBox(boxId: string): Promise<CloudBoxLookup | null> {
   if (hit.kind !== 'ok') return null;
   const sandboxId = hit.box.cloud?.sandboxId;
   if (!sandboxId) return null;
+  const sandboxClass = hit.box.cloud?.sandboxClass;
   return {
     sandboxId,
     createdAtMs: toEpoch(hit.box.createdAt),
     createTimeoutMs: hit.box.cloud?.sessionTimeoutMs ?? null,
+    ...(sandboxClass ? { sandboxClass } : {}),
   };
+}
+
+/**
+ * Mark an auto-paused box `paused` on its record. `agentbox list` / `top` / the
+ * hub read `cloud.lastState` rather than probing the SDK on every render, so
+ * without this the box we just paused keeps showing as `running` until someone
+ * runs a live probe. Mirrors cloud-provider's `persistLastState` (which covers
+ * the CLI-driven `pause`/`stop`); best-effort, since the pause itself already
+ * happened and a state-write failure must not turn into a retry loop.
+ */
+async function defaultPersistPaused(boxId: string): Promise<void> {
+  const state = await readState();
+  const hit = findBox(boxId, state);
+  if (hit.kind !== 'ok' || !hit.box.cloud) return;
+  await recordBox({ ...hit.box, cloud: { ...hit.box.cloud, lastState: 'paused' } });
 }
 
 /**

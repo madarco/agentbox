@@ -8,11 +8,42 @@
  *   cli > workspace > project > global > built-in defaults.
  */
 
+import {
+  PROVIDERS,
+  PROVIDER_NAMES,
+  perProviderConfigKey,
+  type ProviderKind,
+} from './providers.js';
+
 export type IdeFlavor = 'vscode' | 'cursor' | 'auto';
 export type EngineKind = 'orbstack' | 'docker-desktop' | 'other' | 'auto';
 export type BrowserKind = 'agent-browser' | 'playwright' | 'both';
-/** Sandbox backend new boxes are created on. */
-export type ProviderKind = 'docker' | 'daytona' | 'hetzner' | 'vercel' | 'e2b' | 'tenki';
+/** Sandbox backend new boxes are created on. Defined in `providers.ts` (the single source of truth) and re-exported here for back-compat. */
+export type { ProviderKind };
+/**
+ * How the base image/snapshot installs Claude Code at bake time. `native`
+ * (Anthropic's installer, the default) or `npm` (`@anthropic-ai/claude-code`) —
+ * an opt-in fallback for cloud egress IPs whose CDN the native installer 403s.
+ */
+export type ClaudeInstallMethod = 'native' | 'npm';
+/**
+ * How a box's `git push` reaches GitHub:
+ * - `relay` — the box asks the host relay to push with the HOST's credentials
+ *   (they never enter the box). Docker boxes always use this; for a cloud box it
+ *   runs through the host relay's cloud poller (git-bundle pull-back).
+ * - `lease` — the relay/plane leases a short-lived GitHub-App token and the box
+ *   pushes directly with it (keeps working with the laptop off). Needs a
+ *   reachable relay/plane with a GitHub App configured.
+ * - `direct` — the box holds a COPY of your git credentials (token + SSH key)
+ *   and pushes/pulls/signs entirely on its own, so it keeps working with the
+ *   laptop off and needs no hub. Selected via `--with-credentials`, which copies
+ *   the credentials in behind a confirmation prompt. Dangerous: the credentials
+ *   live inside the box and in any snapshot/checkpoint of it. Cloud boxes only.
+ * - `auto` (default) — lease when a control plane is configured for the box
+ *   (`relay.controlPlaneUrl`), else relay. Today's behavior.
+ * Docker boxes ignore this (always `relay` — they bind-mount the host `.git`).
+ */
+export type GitPushMode = 'auto' | 'relay' | 'lease' | 'direct';
 /** Where `agentbox claude|codex|opencode` opens the attached session when the host
  *  shell is running inside tmux, cmux, Herdr, or iTerm2. `same` keeps today's inline behavior. */
 export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
@@ -42,12 +73,15 @@ export interface UserConfig {
     defaultCheckpointVercel?: string;
     defaultCheckpointE2b?: string;
     defaultCheckpointTenki?: string;
+    defaultCheckpointDigitalocean?: string;
+    defaultCheckpointRemoteDocker?: string;
     /**
      * Generic VM-size fallback for cloud providers. Provider-interpreted:
      * Hetzner = server type string (e.g. `cx33`); Daytona = `cpu-memory-disk`
-     * GB spec (e.g. `4-8-20`). Per-provider `size{Provider}` wins over this.
-     * Docker/Vercel ignore it (Docker uses `memory`/`cpus`/`disk`; Vercel uses
-     * `vercelVcpus`).
+     * GB spec (e.g. `4-8-20`); Vercel = vCPU count (`1`/`2`/`4`/`8`);
+     * E2B = `cpu-memory` GB spec (e.g. `4-8`), applied at `prepare` time.
+     * Per-provider `size{Provider}` wins over this. Docker ignores it (it uses
+     * `memory`/`cpus`/`disk`).
      */
     size?: string;
     sizeDocker?: string;
@@ -56,11 +90,20 @@ export interface UserConfig {
     sizeVercel?: string;
     sizeE2b?: string;
     sizeTenki?: string;
+    sizeDigitalocean?: string;
+    sizeRemoteDocker?: string;
     withPlaywright?: boolean;
+    /**
+     * How the base image/snapshot installs Claude Code at bake time. Bake-time
+     * only (read by `agentbox prepare`, not `create`); `npm` is a fallback for
+     * cloud egress IPs the native installer's CDN 403s.
+     */
+    claudeInstall?: ClaudeInstallMethod;
     withEnv?: boolean;
     resyncOnStart?: boolean;
     vnc?: boolean;
     autoApproveHostActions?: boolean;
+    autoApproveSafeHostActions?: boolean;
     isolateClaudeConfig?: boolean;
     isolateCodexConfig?: boolean;
     isolateOpencodeConfig?: boolean;
@@ -76,6 +119,8 @@ export interface UserConfig {
     imageVercel?: string;
     imageE2b?: string;
     imageTenki?: string;
+    imageDigitalocean?: string;
+    imageRemoteDocker?: string;
     imageRegistry?: string;
     dockerCacheShared?: boolean;
     memory?: number;
@@ -83,12 +128,21 @@ export interface UserConfig {
     pidsLimit?: number;
     disk?: string;
     bundleDepth?: number;
-    vercelVcpus?: number;
+    daytonaClass?: string;
+    daytonaRegion?: string;
+    daytonaTimeoutMs?: number;
+    daytonaVmBaseImage?: string;
+    hetznerLocation?: string;
+    digitaloceanRegion?: string;
+    digitaloceanProject?: string;
+    remoteDockerHost?: string;
     vercelTimeoutMs?: number;
     vercelNetworkPolicy?: string;
     e2bTimeoutMs?: number;
     tenkiTimeoutMs?: number;
     cpMaxBytes?: number;
+    credentialSync?: boolean;
+    inbound?: string;
   };
   checkpoint?: {
     maxLayers?: number;
@@ -120,6 +174,9 @@ export interface UserConfig {
     login?: boolean;
     tmux?: boolean;
   };
+  ssh?: {
+    autoConfig?: boolean;
+  };
   engine?: {
     kind?: EngineKind;
   };
@@ -128,6 +185,18 @@ export interface UserConfig {
   };
   relay?: {
     port?: number;
+    /**
+     * Public HTTPS URL of a deployed control plane (the hosted Next.js +
+     * Postgres app). When set, newly created cloud boxes point at it for their
+     * centralized concerns — git-token leasing, permission state, the box
+     * registry/events — and push to GitHub directly with a leased token, so
+     * they keep working with the laptop off. Empty/unset = laptop-local relay
+     * (the default). Set via `agentbox control-plane set-url`.
+     */
+    controlPlaneUrl?: string;
+  };
+  git?: {
+    pushMode?: GitPushMode;
   };
   vnc?: {
     containerPort?: number;
@@ -154,6 +223,15 @@ export interface UserConfig {
   maintenance?: {
     pruneProjectConfigs?: boolean;
     pruneProjectConfigsEvery?: number;
+  };
+  update?: {
+    /**
+     * Daily background check for a newer published CLI (npm registry) and
+     * tray app (release sha sidecar), plus the "newer version available"
+     * nudge it feeds. At most one network probe per 24h; `false` disables
+     * both the probe and the nudge.
+     */
+    check?: boolean;
   };
   integrations?: {
     notion?: {
@@ -184,6 +262,8 @@ export interface EffectiveConfig {
     defaultCheckpointVercel: string;
     defaultCheckpointE2b: string;
     defaultCheckpointTenki: string;
+    defaultCheckpointDigitalocean: string;
+    defaultCheckpointRemoteDocker: string;
     size: string;
     sizeDocker: string;
     sizeDaytona: string;
@@ -191,11 +271,15 @@ export interface EffectiveConfig {
     sizeVercel: string;
     sizeE2b: string;
     sizeTenki: string;
+    sizeDigitalocean: string;
+    sizeRemoteDocker: string;
     withPlaywright: boolean;
+    claudeInstall: ClaudeInstallMethod;
     withEnv: boolean;
     resyncOnStart: boolean;
     vnc: boolean;
     autoApproveHostActions: boolean;
+    autoApproveSafeHostActions: boolean;
     isolateClaudeConfig: boolean;
     isolateCodexConfig: boolean;
     isolateOpencodeConfig: boolean;
@@ -206,6 +290,8 @@ export interface EffectiveConfig {
     imageVercel: string;
     imageE2b: string;
     imageTenki: string;
+    imageDigitalocean: string;
+    imageRemoteDocker: string;
     imageRegistry: string;
     dockerCacheShared: boolean;
     memory: number;
@@ -213,12 +299,21 @@ export interface EffectiveConfig {
     pidsLimit: number;
     disk: string;
     bundleDepth: number | undefined;
-    vercelVcpus: number;
+    daytonaClass: string;
+    daytonaRegion: string;
+    daytonaTimeoutMs: number;
+    daytonaVmBaseImage: string;
+    hetznerLocation: string;
+    digitaloceanRegion: string;
+    digitaloceanProject: string;
+    remoteDockerHost: string;
     vercelTimeoutMs: number;
     vercelNetworkPolicy: string;
     e2bTimeoutMs: number;
     tenkiTimeoutMs: number;
     cpMaxBytes: number;
+    credentialSync: boolean;
+    inbound: string;
   };
   checkpoint: {
     maxLayers: number;
@@ -250,6 +345,9 @@ export interface EffectiveConfig {
     login: boolean;
     tmux: boolean;
   };
+  ssh: {
+    autoConfig: boolean;
+  };
   engine: {
     kind: EngineKind;
   };
@@ -258,6 +356,10 @@ export interface EffectiveConfig {
   };
   relay: {
     port: number;
+    controlPlaneUrl: string | undefined;
+  };
+  git: {
+    pushMode: GitPushMode;
   };
   vnc: {
     containerPort: number;
@@ -284,6 +386,9 @@ export interface EffectiveConfig {
   maintenance: {
     pruneProjectConfigs: boolean;
     pruneProjectConfigsEvery: number;
+  };
+  update: {
+    check: boolean;
   };
   integrations: {
     notion: {
@@ -320,6 +425,12 @@ export interface LoadedConfig {
   projectHash: string;
   /** True if we walked up to an agentbox.yaml; false if we fell back to cwd. */
   hasAgentboxYaml: boolean;
+  /**
+   * Non-fatal issues found while parsing the layers — today, unknown keys
+   * (skipped, not applied). Empty on a clean load. `agentbox doctor` lists
+   * these; the CLI also prints them via the warning sink (see `setConfigWarningSink`).
+   */
+  warnings: string[];
 }
 
 export const BUILT_IN_DEFAULTS: EffectiveConfig = {
@@ -333,6 +444,8 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     defaultCheckpointVercel: '',
     defaultCheckpointE2b: '',
     defaultCheckpointTenki: '',
+    defaultCheckpointDigitalocean: '',
+    defaultCheckpointRemoteDocker: '',
     size: '',
     sizeDocker: '',
     sizeDaytona: '',
@@ -340,11 +453,15 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     sizeVercel: '',
     sizeE2b: '',
     sizeTenki: '',
+    sizeDigitalocean: '',
+    sizeRemoteDocker: '',
     withPlaywright: false,
+    claudeInstall: 'native',
     withEnv: false,
     resyncOnStart: true,
     vnc: true,
     autoApproveHostActions: false,
+    autoApproveSafeHostActions: true,
     isolateClaudeConfig: false,
     isolateCodexConfig: false,
     isolateOpencodeConfig: false,
@@ -355,6 +472,10 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     imageVercel: '',
     imageE2b: '',
     imageTenki: '',
+    imageDigitalocean: '',
+    // Empty = the provider derives the fingerprint-tagged ref itself and ensures
+    // it on the remote engine; set only to pin a hand-built image there.
+    imageRemoteDocker: '',
     // Mirrors BOX_IMAGE_REGISTRY in @agentbox/sandbox-docker. Empty disables the
     // registry pull (always build the docker base image locally).
     imageRegistry: 'ghcr.io/madarco/agentbox/box',
@@ -364,12 +485,28 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     pidsLimit: 0,
     disk: '',
     bundleDepth: undefined,
-    vercelVcpus: 2,
+    daytonaClass: 'linux-vm',
+    // Empty = derive from the class: linux-vm implies us-east-1 (the only
+    // region with VM runners), container keeps Daytona's own default.
+    daytonaRegion: '',
+    daytonaTimeoutMs: 1_500_000,
+    // Empty = the fingerprint-tagged image CI publishes to GHCR.
+    daytonaVmBaseImage: '',
+    hetznerLocation: 'nbg1',
+    digitaloceanRegion: 'nyc3',
+    // Empty = leave boxes in the account's default project (DigitalOcean's own
+    // behavior). There is no sane default id to pick — it differs per account.
+    digitaloceanProject: '',
+    // Empty = no default remote engine; `--provider remote-docker` then errors
+    // unless the SSH destination came from `docker:<host>` / `--remote-host`.
+    remoteDockerHost: '',
     vercelTimeoutMs: 2_700_000,
     vercelNetworkPolicy: '',
     e2bTimeoutMs: 2_700_000,
     tenkiTimeoutMs: 2_700_000,
     cpMaxBytes: 100 * 1024 * 1024,
+    credentialSync: true,
+    inbound: 'locked',
   },
   checkpoint: {
     maxLayers: 3,
@@ -401,6 +538,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     login: true,
     tmux: true,
   },
+  ssh: {
+    autoConfig: true,
+  },
   engine: {
     kind: 'auto',
   },
@@ -409,6 +549,10 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   relay: {
     port: 8787,
+    controlPlaneUrl: undefined,
+  },
+  git: {
+    pushMode: 'auto',
   },
   vnc: {
     containerPort: 6080,
@@ -436,6 +580,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     pruneProjectConfigs: true,
     pruneProjectConfigsEvery: 50,
   },
+  update: {
+    check: true,
+  },
   integrations: {
     notion: { enabled: false },
     linear: { enabled: false },
@@ -454,19 +601,57 @@ export interface KeyDescriptor {
   advanced?: boolean;
 }
 
+/** Join blurbs into "a, b, c, or d" for the enum description. */
+function joinOr(items: readonly string[]): string {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')}, or ${items[items.length - 1]}`;
+}
+
+/**
+ * Per-provider config-key descriptors generated from the `PROVIDERS` table so a
+ * new provider gets its `box.defaultCheckpoint<P>` / `box.size<P>` /
+ * `box.image<P>` entries automatically. The `size`/`image` descriptions come
+ * from the table (they carry provider-specific detail); the checkpoint one is
+ * uniform.
+ */
+function perProviderCheckpointKeys(): KeyDescriptor[] {
+  return PROVIDERS.map((p) => ({
+    key: perProviderConfigKey('defaultCheckpoint', p.name),
+    type: 'string',
+    description: `Per-provider override of \`box.defaultCheckpoint\` for ${p.name}. Wins over the global when set; set via \`agentbox checkpoint set-default --provider ${p.name}\`.`,
+    advanced: true,
+  }));
+}
+function perProviderSizeKeys(): KeyDescriptor[] {
+  return PROVIDERS.map((p) => ({
+    key: perProviderConfigKey('size', p.name),
+    type: 'string',
+    description: p.sizeDesc,
+    advanced: true,
+  }));
+}
+function perProviderImageKeys(): KeyDescriptor[] {
+  return PROVIDERS.map((p) => ({
+    key: perProviderConfigKey('image', p.name),
+    type: 'string',
+    description: p.imageDesc,
+    advanced: true,
+  }));
+}
+
 /**
  * Single source of truth for which keys are addressable from the CLI. The
  * parser, `set`/`unset`, and `list` all walk this. Adding a key here is the
  * one place a new field has to be registered (plus the type interface above
- * and the JSON schema).
+ * and the JSON schema). Per-provider `box.{image,size,defaultCheckpoint}<P>`
+ * keys are generated from the `PROVIDERS` table (see `providers.ts`).
  */
 export const KEY_REGISTRY: readonly KeyDescriptor[] = [
   {
     key: 'box.provider',
     type: 'enum',
-    enumValues: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'tenki'] as const,
-    description:
-      'Sandbox backend new boxes are created on: local Docker containers, Daytona Cloud sandboxes, Hetzner Cloud VPSes, Vercel Sandboxes, E2B microVMs, or Tenki sandboxes.',
+    enumValues: PROVIDER_NAMES,
+    description: `Sandbox backend new boxes are created on: ${joinOr(PROVIDERS.map((p) => p.blurb))}.`,
   },
   {
     key: 'box.hostSnapshot',
@@ -480,41 +665,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     description:
       'Checkpoint ref new boxes in this project start from when --snapshot is not given (set via `agentbox checkpoint set-default`). Used as fallback when no per-provider override is set.',
   },
-  {
-    key: 'box.defaultCheckpointDocker',
-    type: 'string',
-    description:
-      'Per-provider override of `box.defaultCheckpoint` for docker. Wins over the global when set; set via `agentbox checkpoint set-default --provider docker`.',
-    advanced: true,
-  },
-  {
-    key: 'box.defaultCheckpointDaytona',
-    type: 'string',
-    description:
-      'Per-provider override of `box.defaultCheckpoint` for daytona. Wins over the global when set; set via `agentbox checkpoint set-default --provider daytona`.',
-    advanced: true,
-  },
-  {
-    key: 'box.defaultCheckpointHetzner',
-    type: 'string',
-    description:
-      'Per-provider override of `box.defaultCheckpoint` for hetzner. Wins over the global when set; set via `agentbox checkpoint set-default --provider hetzner`.',
-    advanced: true,
-  },
-  {
-    key: 'box.defaultCheckpointVercel',
-    type: 'string',
-    description:
-      'Per-provider override of `box.defaultCheckpoint` for vercel. Wins over the global when set; set via `agentbox checkpoint set-default --provider vercel`.',
-    advanced: true,
-  },
-  {
-    key: 'box.defaultCheckpointE2b',
-    type: 'string',
-    description:
-      'Per-provider override of `box.defaultCheckpoint` for e2b. Wins over the global when set; set via `agentbox checkpoint set-default --provider e2b`.',
-    advanced: true,
-  },
+  ...perProviderCheckpointKeys(),
   {
     key: 'box.defaultCheckpointTenki',
     type: 'string',
@@ -526,43 +677,9 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.size',
     type: 'string',
     description:
-      'Default VM size for cloud providers. Provider-interpreted: hetzner = server type (e.g. `cx33`); daytona = `cpu-memory-disk` GB (e.g. `4-8-20`). Used as fallback when no per-provider override is set. Docker/Vercel ignore it.',
+      'Default VM size for cloud providers. Provider-interpreted: hetzner = server type (e.g. `cx33`); daytona = `cpu-memory-disk` GB (e.g. `4-8-20`); vercel = vCPU count (1, 2, 4, 8); e2b = `cpu-memory` GB (e.g. `4-8`). Used as fallback when no per-provider override is set. Docker ignores it.',
   },
-  {
-    key: 'box.sizeDocker',
-    type: 'string',
-    description:
-      'Per-provider override of `box.size` for docker. Reserved — docker sizing is controlled via `box.memory` / `box.cpus` / `box.disk`.',
-    advanced: true,
-  },
-  {
-    key: 'box.sizeDaytona',
-    type: 'string',
-    description:
-      'Per-provider override of `box.size` for daytona. `cpu-memory-disk` GB spec (e.g. `4-8-20`). Only honored on the image/Dockerfile create path; Daytona rejects custom resources on snapshot-resume.',
-    advanced: true,
-  },
-  {
-    key: 'box.sizeHetzner',
-    type: 'string',
-    description:
-      'Per-provider override of `box.size` for hetzner. Server type string (e.g. `cx23`, `cx33`, `cx43`).',
-    advanced: true,
-  },
-  {
-    key: 'box.sizeVercel',
-    type: 'string',
-    description:
-      'Per-provider override of `box.size` for vercel. Reserved — vercel sizing is controlled via `box.vercelVcpus`.',
-    advanced: true,
-  },
-  {
-    key: 'box.sizeE2b',
-    type: 'string',
-    description:
-      'Per-provider override of `box.size` for e2b. Reserved — e2b sizing is template-level (set at `agentbox prepare --provider e2b` time via --vcpus / --memory).',
-    advanced: true,
-  },
+  ...perProviderSizeKeys(),
   {
     key: 'box.sizeTenki',
     type: 'string',
@@ -581,6 +698,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.withPlaywright',
     type: 'bool',
     description: 'Install @playwright/cli@latest in the box at create time.',
+  },
+  {
+    key: 'box.claudeInstall',
+    type: 'enum',
+    enumValues: ['native', 'npm'] as const,
+    description:
+      "How `agentbox prepare` installs Claude Code into the base image/snapshot: `native` (Anthropic's installer, the default) or `npm` (@anthropic-ai/claude-code). A fallback for cloud egress IPs the native installer's CDN 403s. Bake-time only — change it, then re-run `agentbox prepare --provider <name>`.",
   },
   {
     key: 'box.withEnv',
@@ -606,6 +730,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
       'Auto-approve host-action confirmations (git push, cp host<->box, gh PR writes, checkpoint) for this box without an interactive prompt. Off by default; intended for unattended orchestration of trusted boxes. Each auto-approval is recorded as a relay event (visible in `agentbox agent` / the dashboard).',
   },
   {
+    key: 'box.autoApproveSafeHostActions',
+    type: 'bool',
+    description:
+      'Auto-approve the SAFE subset of host actions without a prompt: opening a PR, PR/review comments, re-running CI, pushing to the box\'s scratch or host-sanctioned branch, checkpoints, integration writes, and file copy/download that stays inside the box project folder (non-secret). Uncontained or secret file transfers, non-sanctioned-branch pushes, and PR merge/checkout still prompt. On by default; set false to prompt for every host action (the pre-relax behavior). Superseded by box.autoApproveHostActions, which approves everything. Each auto-approval is recorded as a relay event.',
+  },
+  {
     key: 'box.isolateClaudeConfig',
     type: 'bool',
     description: 'Use a per-box ~/.claude volume instead of the shared one.',
@@ -626,36 +756,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     description: 'Generic box image ref (fallback). Used as fallback when no per-provider override is set; the default `agentbox/box:dev` is treated as a sentinel by cloud backends (boot from their prepared base snapshot instead).',
     advanced: true,
   },
-  {
-    key: 'box.imageDocker',
-    type: 'string',
-    description: 'Per-provider override of `box.image` for docker (local docker image ref, e.g. `agentbox/box:dev`). Wins over the generic when set.',
-    advanced: true,
-  },
-  {
-    key: 'box.imageDaytona',
-    type: 'string',
-    description: 'Per-provider override of `box.image` for daytona (named snapshot, e.g. `agentbox-base-<fingerprint>`). Written by `agentbox prepare --provider daytona`.',
-    advanced: true,
-  },
-  {
-    key: 'box.imageHetzner',
-    type: 'string',
-    description: 'Per-provider override of `box.image` for hetzner (image description, e.g. `agentbox-base-<fingerprint>`). Written by `agentbox prepare --provider hetzner`.',
-    advanced: true,
-  },
-  {
-    key: 'box.imageVercel',
-    type: 'string',
-    description: 'Per-provider override of `box.image` for vercel (snapshot id, e.g. `snap_…`). Written by `agentbox prepare --provider vercel`.',
-    advanced: true,
-  },
-  {
-    key: 'box.imageE2b',
-    type: 'string',
-    description: 'Per-provider override of `box.image` for e2b (template id or `name:tag`, e.g. `agentbox-base:latest`). Written by `agentbox prepare --provider e2b`.',
-    advanced: true,
-  },
+  ...perProviderImageKeys(),
   {
     key: 'box.imageTenki',
     type: 'string',
@@ -706,10 +807,52 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
       'Cap git bundle history shipped to cloud sandboxes (daytona, hetzner). 0 = full history. Unset = adaptive default (last 200 commits; re-bundle at 100 if the bundle exceeds 20 MB). Ignored for docker (which bind-mounts .git/).',
   },
   {
-    key: 'box.vercelVcpus',
+    key: 'box.daytonaClass',
+    type: 'string',
+    description:
+      'Daytona sandbox class for new --provider daytona boxes: `linux-vm` (default) or `container`. `linux-vm` gives real pause/resume (CPU + memory frozen, running processes survive) and a much faster base bake, but runs only in `us-east-1` — the sole region with VM runners. Choose `container` to stay in a shared region (e.g. `eu`). Changing this needs a re-bake: `agentbox prepare --provider daytona --force`. Daytona-only.',
+  },
+  {
+    key: 'box.daytonaRegion',
+    type: 'string',
+    description:
+      'Daytona region new --provider daytona boxes are created in (e.g. `us`, `eu`, `us-east-1`). Empty (the default) derives it from `box.daytonaClass`: `linux-vm` implies `us-east-1`, `container` uses the account default. Only `us-east-1` has linux-vm runners, so pairing `linux-vm` with another region fails at create. Daytona-only.',
+  },
+  {
+    key: 'box.daytonaTimeoutMs',
     type: 'int',
     description:
-      'vCPUs for new --provider vercel boxes (Vercel couples RAM at 2048 MB/vCPU). Default 2. Vercel only accepts specific counts (e.g. 1, 2, 4, 8) — an unsupported value fails create with a 400. Vercel-only; ignored by other providers.',
+      'Idle timeout (ms) a new --provider daytona box is created with, after which Daytona auto-stops it. The host keepalive loop pushes this forward while the agent is working, so only genuinely idle boxes lapse. Default 1500000 (25 min). 0 disables auto-stop entirely. Unlike vercel/e2b (absolute session TTLs) this is an *inactivity* window. Daytona-only.',
+  },
+  {
+    key: 'box.daytonaVmBaseImage',
+    type: 'string',
+    description:
+      'Registry image the daytona `linux-vm` base snapshot is baked from. Empty (the default) uses the fingerprint-tagged box image CI publishes (`ghcr.io/madarco/agentbox/box:sha-<context-sha>`). Daytona can only build a VM snapshot from a prebuilt image, never a Dockerfile, so a build context with no published image (a locally modified `Dockerfile.box`) has nothing to boot and falls back to the container class -- set this to bake a VM from your own published image instead. Must be amd64 and carry an explicit tag or digest. Daytona-only.',
+  },
+  {
+    key: 'box.hetznerLocation',
+    type: 'string',
+    description:
+      'Hetzner datacenter location new --provider hetzner boxes are created in (e.g. `nbg1`, `fsn1`, `hel1`, `ash`). Default `nbg1`. Overridable per-create with `--location`. Hetzner-only; ignored by other providers.',
+  },
+  {
+    key: 'box.digitaloceanRegion',
+    type: 'string',
+    description:
+      'DigitalOcean region new --provider digitalocean boxes are created in (e.g. `nyc3`, `nyc1`, `sfo3`, `ams3`, `fra1`). Default `nyc3`. Overridable per-create with `--location`. DigitalOcean-only; ignored by other providers.',
+  },
+  {
+    key: 'box.digitaloceanProject',
+    type: 'string',
+    description:
+      "DigitalOcean Project new --provider digitalocean boxes are placed in — a name or the project's UUID. Unset (the default) leaves boxes in the account's default project. Set it per repo via `agentbox.yaml`, or globally at `agentbox digitalocean login`. DigitalOcean-only; ignored by other providers.",
+  },
+  {
+    key: 'box.remoteDockerHost',
+    type: 'string',
+    description:
+      "Default SSH destination new --provider remote-docker boxes run their container on — an `~/.ssh/config` alias or `[user@]host[:port]`. Overridable per-create with `agentbox docker:<host> …` or `--remote-host`. SSH auth comes entirely from your own `~/.ssh/config` + agent. remote-docker-only; ignored by other providers.",
   },
   {
     key: 'box.vercelTimeoutMs',
@@ -735,6 +878,18 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     description:
       'Max bytes a single host→box copy may transfer after excludes, shared by `agentbox cp` (blocked with a size breakdown unless --yes) and each `carry:` entry (rejected at resolve time). Default 104857600 (100 MiB).',
     advanced: true,
+  },
+  {
+    key: 'box.credentialSync',
+    type: 'bool',
+    description:
+      'Automatically sync refreshed agent credentials (claude/codex/opencode) from boxes to the host backup and out to all other running boxes. Claude OAuth refresh rotates the refresh token, so without this every other copy 401s after any box refreshes. Default true; --no-credential-sync at create disables the in-box watcher for that box.',
+  },
+  {
+    key: 'box.inbound',
+    type: 'string',
+    description:
+      "Inbound-access policy for VPS boxes (hetzner, digitalocean per-box firewall). `locked` (default) = SSH reachable only from your host's egress IP; `open` = SSH reachable from anywhere (0.0.0.0/0, key-only — to drive a box from a phone with the laptop off); a CIDR list (e.g. `203.0.113.5/32`) = host egress plus those. Override per box with `--inbound` or after create with `agentbox inbound <box>`. Ignored by non-VPS providers.",
   },
   {
     key: 'box.vercelNetworkPolicy',
@@ -825,6 +980,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     description: 'Run `agentbox shell` inside a detachable tmux session (Ctrl+a d to detach).',
   },
   {
+    key: 'ssh.autoConfig',
+    type: 'bool',
+    description:
+      'Automatically write a `~/.agentbox/ssh/config` entry (Include\'d from `~/.ssh/config`) for SSH-capable cloud boxes on create and start/resume, so `ssh <box>` just works. On by default; set false if you manage `~/.ssh/config` yourself. Explicit `agentbox shell --ssh-config`/`code`/`open` still write on demand regardless.',
+  },
+  {
     key: 'engine.kind',
     type: 'enum',
     enumValues: ['orbstack', 'docker-desktop', 'other', 'auto'] as const,
@@ -841,6 +1002,19 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description: 'Host relay TCP port (advanced).',
     advanced: true,
+  },
+  {
+    key: 'relay.controlPlaneUrl',
+    type: 'string',
+    description:
+      'Public HTTPS URL of a deployed control plane (hosted Next.js + Postgres app). When set, new cloud boxes point at it for git-token leasing, permission state, and the box registry/events, and push to GitHub directly with a leased token so they keep working with the laptop off. Set via `agentbox control-plane set-url`.',
+  },
+  {
+    key: 'git.pushMode',
+    type: 'enum',
+    enumValues: ['auto', 'relay', 'lease', 'direct'] as const,
+    description:
+      "How a box's `git push` reaches GitHub: `relay` (the host relay pushes with your host credentials — they never enter the box), `lease` (the relay/plane leases a short-lived GitHub-App token and the box pushes directly, so it works with the laptop off), `direct` (the box holds a COPY of your git credentials and pushes/pulls/signs entirely on its own — needs no host or hub, but the credentials live inside the box and its snapshots; set via `--with-credentials`, which copies them in behind a confirmation), or `auto` (default — lease when `relay.controlPlaneUrl` is set for the box, else relay). Only affects cloud boxes; docker boxes always use `relay`. Forcing `relay` needs a reachable host relay for the box; forcing `lease` needs a reachable relay/plane with a GitHub App; `direct` needs credentials to have been copied into the box at create time.",
   },
   {
     key: 'vnc.containerPort',
@@ -926,6 +1100,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'maintenance.pruneProjectConfigsEvery',
     type: 'int',
     description: 'Run the orphan project-config sweep every N successful `agentbox create`.',
+  },
+  {
+    key: 'update.check',
+    type: 'bool',
+    description:
+      'Daily background check for a newer published agentbox (npm registry) and menu-bar app (release sha sidecar), plus the "newer version available" nudge. At most one network probe per 24h; false disables both.',
   },
   {
     key: 'integrations.notion.enabled',

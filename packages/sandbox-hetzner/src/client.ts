@@ -68,9 +68,30 @@ export interface HetznerImage {
   description: string;
   image_size?: number;
   disk_size: number;
+  /** CPU architecture the image is built for. Snapshots inherit the source VPS. */
+  architecture?: 'x86' | 'arm';
   created: string;
   labels: Record<string, string>;
   bound_to?: number;
+}
+
+/**
+ * A Hetzner server type (VPS plan), narrowed to the fields the preflight
+ * validator reads. `memory`/`disk` are GB (memory is a float, e.g. `4`, `7.75`).
+ * `prices[].location` is the authoritative "offered here" list. `deprecation`
+ * is a non-null object once the type is on the deprecation path (the legacy
+ * `deprecated` boolean mirrors it). See GET /server_types.
+ */
+export interface HetznerServerType {
+  id: number;
+  name: string;
+  cores: number;
+  memory: number;
+  disk: number;
+  architecture: 'x86' | 'arm';
+  deprecated?: boolean;
+  deprecation?: { announced?: string; unavailable_after?: string } | null;
+  prices: Array<{ location: string }>;
 }
 
 export interface HetznerFirewall {
@@ -169,6 +190,8 @@ export interface HetznerClient {
   ): Promise<{ image: HetznerImage; action: HetznerAction }>;
   /** GET /images/{id}. Returns null on 404. */
   getImage(id: number): Promise<HetznerImage | null>;
+  /** GET /server_types — the VPS-plan catalog (paginated). Used by the create preflight. */
+  listServerTypes(): Promise<HetznerServerType[]>;
   /** GET /images (filterable). */
   listImages(opts?: {
     type?: 'system' | 'snapshot' | 'backup' | 'app';
@@ -337,6 +360,24 @@ export function makeHetznerClient(opts: MakeClientOptions = {}): HetznerClient {
     async getImage(id) {
       const r = await req<{ image: HetznerImage }>('GET', `/images/${String(id)}`);
       return r?.image ?? null;
+    },
+    async listServerTypes() {
+      const params = new URLSearchParams();
+      params.set('per_page', '50');
+      const all: HetznerServerType[] = [];
+      let pageNum = 1;
+      while (true) {
+        params.set('page', String(pageNum));
+        const r = await reqExpect<{
+          server_types: HetznerServerType[];
+          meta?: { pagination?: { next_page?: number | null } };
+        }>('GET', `/server_types?${params.toString()}`);
+        all.push(...r.server_types);
+        const next = r.meta?.pagination?.next_page;
+        if (typeof next !== 'number') break;
+        pageNum = next;
+      }
+      return all;
     },
     async listImages(opts) {
       const params = new URLSearchParams();

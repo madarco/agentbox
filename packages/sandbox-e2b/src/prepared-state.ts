@@ -13,7 +13,7 @@
  * accepted today.
  */
 
-import { computeContextSha256, readPreparedStateRaw, writePreparedStateRaw, preparedStatePathFor } from '@agentbox/sandbox-core';
+import { claudeInstallFingerprint, computeContextSha256, readPreparedStateRaw, writePreparedStateRaw, preparedStatePathFor } from '@agentbox/sandbox-core';
 import { UserFacingError } from '@agentbox/core';
 import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets.js';
 
@@ -26,6 +26,8 @@ export interface PreparedE2bBase {
   templateName?: string;
   /** Deterministic SHA-256 of the build context (build script + assets). */
   contextSha256?: string;
+  /** Normalized `cpu-memory` GB size the template was baked with (absent = default resources). */
+  size?: string;
   /** CLI version that produced this template (informational). */
   cliVersion?: string;
   /** Git short SHA of the CLI build (informational). */
@@ -78,11 +80,16 @@ export function updatePreparedState(mutate: (s: PreparedE2bState) => void): void
  * hash to the one `prepare` writes — both go through the same
  * `resolveRuntimeAssets` + `computeContextSha256` chain.
  */
-export async function currentE2bBaseFingerprintLive(): Promise<string | undefined> {
+export async function currentE2bBaseFingerprintLive(
+  claudeInstall: 'native' | 'npm' = 'native',
+): Promise<string | undefined> {
   try {
     const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
-    return await computeContextSha256(
-      assets.map((a) => ({ rel: a.name, abs: a.localPath })),
+    // Fold in claudeInstall exactly as `prepare` does — otherwise an npm-baked
+    // base never matches the stored (npm-folded) fingerprint.
+    return claudeInstallFingerprint(
+      await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
+      claudeInstall,
     );
   } catch {
     return undefined;

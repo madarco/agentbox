@@ -1,6 +1,7 @@
 import { Command, Option } from 'commander';
+import { resolveRemote, type GitRpcParams } from '@agentbox/core';
 import { spawn } from 'node:child_process';
-import { postRpcAndExit } from '../relay-rpc.js';
+import { postRpcAndExit, postRpcAwait } from '../relay-rpc.js';
 import { buildPrCommand } from './pr-subcommands.js';
 
 /**
@@ -27,11 +28,13 @@ interface CommonOptions {
   hostInitiatedToken?: string;
 }
 
-interface GitRpcParams {
-  path: string;
-  remote?: string;
-  args?: string[];
-  hostInitiated?: string;
+export interface PushOptions extends CommonOptions {
+  /** Land the branch in the host's local repo only; never push to the remote. */
+  hostOnly?: boolean;
+  /** With --host-only: destination branch name on the host (default: box branch). */
+  as?: string;
+  /** With --host-only: allow a non-fast-forward overwrite of the destination. */
+  force?: boolean;
 }
 
 interface GitCloneRpcParams {
@@ -41,10 +44,21 @@ interface GitCloneRpcParams {
   args?: string[];
 }
 
-function buildParams(opts: CommonOptions, extra: string[]): GitRpcParams {
+export function buildParams(opts: PushOptions, extra: string[]): GitRpcParams {
+  const args = [...extra];
   const params: GitRpcParams = { path: opts.cwd ?? process.cwd() };
   if (opts.remote) params.remote = opts.remote;
-  if (extra.length > 0) params.args = extra;
+  if (opts.hostOnly) {
+    params.hostOnly = true;
+    if (opts.as) params.as = opts.as;
+    if (opts.force) params.force = true;
+  } else if (opts.force) {
+    // Not host-only: --force is a real remote-push flag. `params.force` is only
+    // honored on the host-only land path, so forward it as a git arg here so
+    // the relay appends it to `git push <remote> <branch>`.
+    args.push('--force');
+  }
+  if (args.length > 0) params.args = args;
   if (opts.hostInitiatedToken) params.hostInitiated = opts.hostInitiatedToken;
   return params;
 }
@@ -63,6 +77,134 @@ function runLocalGit(args: string[], cwd: string): Promise<number> {
       resolve(126);
     });
   });
+}
+
+/** True in `git.pushMode=direct` boxes (credentials copied in; push direct). */
+function isDirectMode(): boolean {
+  return process.env.AGENTBOX_GIT_DIRECT === '1';
+}
+
+/**
+ * Run the REAL git binary (never the PATH `git` shim) for a network op in
+ * `direct` mode: the box holds a copy of the user's credentials, so it pushes /
+ * fetches straight to the remote with no relay and no host. Bypassing the shim
+ * is load-bearing — spawning bare `git push` would re-enter the shim and loop.
+ * `AGENTBOX_REAL_GIT_PATH` mirrors the shim's own override for unit tests.
+ */
+function runRealGit(args: string[], cwd: string): Promise<number> {
+  const bin = process.env.AGENTBOX_REAL_GIT_PATH ?? '/usr/bin/git';
+  return new Promise((resolve) => {
+    const child = spawn(bin, args, { cwd, stdio: 'inherit' });
+    child.on('close', (code) => resolve(code ?? 1));
+    child.on('error', (err) => {
+      process.stderr.write(`agentbox-ctl git: ${String(err.message ?? err)}\n`);
+      resolve(126);
+    });
+  });
+}
+
+/**
+ * Direct-mode network op (push/fetch): resolve the remote + current branch
+ * locally (the relay isn't involved) and run real git. Returns the git exit
+ * code, or 1 if the branch can't be resolved.
+ */
+async function runDirectNetworkOp(
+  op: 'push' | 'fetch',
+  opts: CommonOptions,
+  extra: string[],
+): Promise<number> {
+  const cwd = opts.cwd ?? process.cwd();
+  const remote = resolveRemote(opts.remote);
+  const branch = await captureGit(['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
+  if (!branch) {
+    process.stderr.write('agentbox-ctl git: could not resolve current branch\n');
+    return 1;
+  }
+  return runRealGit([op, remote, branch, ...extra], cwd);
+}
+
+/**
+ * `pull` is a relay fetch + a local merge, so its passthrough flags have to be
+ * split across the two: `git fetch` rejects `--ff-only`, `git merge` rejects
+ * `--prune`. Everything the git shim allows for `pull` is classified here.
+ *
+ * These arrive as passthrough args rather than commander options because the
+ * shim forwards them after a `--` separator (`agentbox-ctl git pull -- --ff-only`),
+ * which makes commander treat them as positionals and leave `opts.ffOnly` unset.
+ */
+export function partitionPullArgs(args: string[]): { fetchArgs: string[]; mergeArgs: string[] } {
+  const fetchArgs: string[] = [];
+  const mergeArgs: string[] = [];
+  for (const arg of args) {
+    switch (arg) {
+      case '--ff-only':
+        mergeArgs.push(arg);
+        break;
+      case '--quiet':
+      case '-q':
+        fetchArgs.push(arg);
+        mergeArgs.push(arg);
+        break;
+      default:
+        fetchArgs.push(arg);
+    }
+  }
+  return { fetchArgs, mergeArgs };
+}
+
+/** Run a local `git` command and capture its trimmed stdout ('' on failure). */
+function captureGit(args: string[], cwd: string): Promise<string> {
+  return new Promise((resolve) => {
+    const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    child.stdout.on('data', (c: Buffer) => (out += c.toString('utf8')));
+    child.on('close', () => resolve(out.trim()));
+    child.on('error', () => resolve(''));
+  });
+}
+
+/**
+ * Control-plane push: instead of the relay pushing host-side, the box leases a
+ * repo-scoped GitHub-App token from the control plane and pushes directly.
+ * Used when AGENTBOX_GIT_LEASE=1. The host writes that flag into
+ * /etc/agentbox/box.env at create/resume when a control-plane URL is configured
+ * (the daemon's own env isn't inherited by the login shell that runs `git
+ * push`, so the flag must live in box.env). The token lives in the remote URL
+ * config for the push only and is scrubbed (origin restored) in `finally` —
+ * never in the push argv.
+ */
+async function leaseAndPush(opts: CommonOptions, extra: string[]): Promise<number> {
+  const prefix = 'agentbox-ctl git';
+  const cwd = opts.cwd ?? process.cwd();
+  const lease = await postRpcAwait('git.lease-token', buildParams(opts, []), { errorPrefix: prefix });
+  if (lease.exitCode !== 0) {
+    if (lease.stderr) process.stderr.write(lease.stderr);
+    return lease.exitCode;
+  }
+  let remoteUrl = '';
+  try {
+    const parsed = JSON.parse(lease.stdout) as { remoteUrl?: unknown };
+    if (typeof parsed.remoteUrl === 'string') remoteUrl = parsed.remoteUrl;
+  } catch {
+    /* handled below */
+  }
+  if (!remoteUrl) {
+    process.stderr.write(`${prefix}: lease response missing remoteUrl\n`);
+    return 1;
+  }
+  const remote = resolveRemote(opts.remote);
+  const branch = await captureGit(['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
+  if (!branch) {
+    process.stderr.write(`${prefix}: could not resolve current branch\n`);
+    return 1;
+  }
+  const originalUrl = await captureGit(['remote', 'get-url', remote], cwd);
+  await runLocalGit(['remote', 'set-url', remote, remoteUrl], cwd);
+  try {
+    return await runLocalGit(['push', remote, branch, ...extra], cwd);
+  } finally {
+    if (originalUrl) await runLocalGit(['remote', 'set-url', remote, originalUrl], cwd);
+  }
 }
 
 /**
@@ -91,6 +233,9 @@ export const gitCommand = new Command('git')
       .description("Run `git push` on the host main repo against this box's branch (user is prompted on the host wrapper to confirm)")
       .option('--remote <name>', 'remote name (default: origin)')
       .option('--cwd <path>', 'container path identifying which registered worktree to use')
+      .option('--host-only', "land the branch in the host's local repo only; do NOT push to the remote (nothing is published online)")
+      .option('--as <branch>', "with --host-only: destination branch name in the host repo (default: this box's branch name)")
+      .option('--force', 'with --host-only: allow a non-fast-forward overwrite of the destination branch')
       .addOption(hostInitiatedOption())
       .allowExcessArguments(true)
       .allowUnknownOption(true)
@@ -98,10 +243,31 @@ export const gitCommand = new Command('git')
         '[args...]',
         "extra flags appended to the host-built `git push <remote> <branch>` (e.g. `--force-with-lease`, `--tags`). Do NOT re-pass the remote or branch — they are taken from --remote and the registered worktree; appending them as positionals makes git treat them as refspecs and fail with `refs/remotes/origin/HEAD cannot be resolved to branch`. Use --remote to change the remote.",
       )
-      .action(async (args: string[], opts: CommonOptions) => {
-        const code = await postRpcAndExit('git.push', buildParams(opts, args), {
-          errorPrefix: 'agentbox-ctl git',
-        });
+      .action(async (args: string[], opts: PushOptions) => {
+        if (opts.hostOnly && opts.remote) {
+          process.stderr.write('agentbox-ctl git push: --host-only does not use a remote; drop --remote\n');
+          process.exit(64);
+        }
+        // `direct` boxes hold a copy of your credentials and push straight to
+        // the remote — no relay, no host. `--host-only` needs the host repo, so
+        // it isn't available here.
+        if (isDirectMode()) {
+          if (opts.hostOnly) {
+            process.stderr.write(
+              'agentbox-ctl git push: --host-only is not available with git.pushMode=direct (there is no host repo; this box pushes to the remote itself)\n',
+            );
+            process.exit(64);
+          }
+          process.exit(await runDirectNetworkOp('push', opts, args));
+        }
+        // Control-plane boxes lease a token and push directly; everyone else
+        // routes the push through the relay (host creds / cloud poller).
+        const code =
+          process.env.AGENTBOX_GIT_LEASE === '1'
+            ? await leaseAndPush(opts, args)
+            : await postRpcAndExit('git.push', buildParams(opts, args), {
+                errorPrefix: 'agentbox-ctl git',
+              });
         process.exit(code);
       }),
   )
@@ -118,6 +284,9 @@ export const gitCommand = new Command('git')
         'extra flags appended to the host-built `git fetch <remote> <branch>` (e.g. `--prune`, `--tags`). Do NOT re-pass the remote or branch; they come from --remote and the registered worktree (same gotcha as `push`).',
       )
       .action(async (args: string[], opts: CommonOptions) => {
+        if (isDirectMode()) {
+          process.exit(await runDirectNetworkOp('fetch', opts, args));
+        }
         const code = await postRpcAndExit('git.fetch', buildParams(opts, args), {
           errorPrefix: 'agentbox-ctl git',
         });
@@ -137,20 +306,25 @@ export const gitCommand = new Command('git')
       .allowUnknownOption(true)
       .argument(
         '[args...]',
-        'extra flags appended to the host-built `git fetch <remote> <branch>` (e.g. `--prune`). Do NOT re-pass the remote or branch; they come from --remote and the registered worktree (same gotcha as `push`).',
+        'extra flags, split between the host-built `git fetch <remote> <branch>` (e.g. `--prune`) and the local merge (`--ff-only`; `--quiet` goes to both). Do NOT re-pass the remote or branch; they come from --remote and the registered worktree (same gotcha as `push`).',
       )
       .action(
         async (
           args: string[],
           opts: CommonOptions & { ffOnly?: boolean },
         ) => {
-          const fetchCode = await postRpcAndExit('git.fetch', buildParams(opts, args), {
-            errorPrefix: 'agentbox-ctl git',
-          });
+          const { fetchArgs, mergeArgs: passthroughMergeArgs } = partitionPullArgs(args);
+          // Direct mode fetches with the box's own credentials (no relay); the
+          // merge below is a local op either way.
+          const fetchCode = isDirectMode()
+            ? await runDirectNetworkOp('fetch', opts, fetchArgs)
+            : await postRpcAndExit('git.fetch', buildParams(opts, fetchArgs), {
+                errorPrefix: 'agentbox-ctl git',
+              });
           if (fetchCode !== 0) process.exit(fetchCode);
           // Merge happens in the container, where the working tree lives. No
           // creds needed; refs are already in the shared .git from the fetch.
-          const remote = opts.remote ?? 'origin';
+          const remote = resolveRemote(opts.remote);
           // Resolve branch via the current HEAD's upstream, falling back to
           // `<remote>/HEAD` so a freshly cloned worktree still pulls.
           const cwd = opts.cwd ?? process.cwd();
@@ -169,7 +343,12 @@ export const gitCommand = new Command('git')
             );
           }
           mergeArgs.push('merge');
-          if (opts.ffOnly) mergeArgs.push('--ff-only');
+          // `--ff-only` reaches us either as a commander option (direct
+          // `agentbox-ctl` call) or as a passthrough arg (via the git shim's `--`).
+          if (opts.ffOnly && !passthroughMergeArgs.includes('--ff-only')) {
+            mergeArgs.push('--ff-only');
+          }
+          mergeArgs.push(...passthroughMergeArgs);
           mergeArgs.push(`${remote}/HEAD`);
           const mergeCode = await runLocalGit(mergeArgs, cwd);
           process.exit(mergeCode);

@@ -1,5 +1,9 @@
 export { dockerProvider, type DockerCreateOptions } from './docker-provider.js';
+export { providerModule, dockerChecks } from './provider-module.js';
 export { downloadFromBox, uploadToBox, type BoxCpResult } from './box-cp.js';
+export { createDockerSyncTransport, type DockerSyncTransportInit } from './sync/sync-transport.js';
+export { stageItemsFromVolume, volumeSettingsTarget } from './sync/settings-propagate.js';
+export { makeDockerSync, type DockerSyncHandle } from './sync/docker-sync.js';
 
 export {
   attachClaudeSession,
@@ -38,7 +42,7 @@ export {
   type RebuildPluginNativeDepsResult,
   type StartClaudeSessionOptions,
   type WarmUpClaudeResult,
-} from './claude.js';
+} from './sync/agents/claude.js';
 export {
   CREDENTIALS_BACKUP_FILE,
   CODEX_CREDENTIALS_BACKUP_FILE,
@@ -58,8 +62,11 @@ export {
   type CredentialSyncDirection,
   type SyncClaudeCredentialsResult,
   type VolumeClaudeCredentials,
-} from './claude-credentials.js';
+} from './sync/claude-credentials.js';
 export {
+  BOX_SYSTEM_PROMPT_PATH,
+  buildCodexAgentsOverrideScript,
+  CODEX_OVERRIDE_WROTE_MARKER,
   buildCodexAttachArgv,
   buildCodexLoginRunArgv,
   buildCodexMounts,
@@ -72,6 +79,7 @@ export {
   pullCodexConfig,
   resolveCodexVolume,
   runInteractiveCodexLogin,
+  seedCodexAgentsOverride,
   seedCodexHooks,
   SHARED_CODEX_VOLUME,
   startCodexSession,
@@ -85,7 +93,7 @@ export {
   type PullCodexOptions,
   type PullCodexResult,
   type StartCodexSessionOptions,
-} from './codex.js';
+} from './sync/agents/codex.js';
 export {
   buildAgentsMounts,
   ensureAgentsVolume,
@@ -95,7 +103,7 @@ export {
   type AgentsMountResult,
   type EnsureAgentsVolumeOptions,
   type EnsureAgentsVolumeResult,
-} from './agents.js';
+} from './sync/agents/skills.js';
 export {
   buildOpencodeAttachArgv,
   buildOpencodeLoginRunArgv,
@@ -122,7 +130,7 @@ export {
   type PullOpencodeOptions,
   type PullOpencodeResult,
   type StartOpencodeSessionOptions,
-} from './opencode.js';
+} from './sync/agents/opencode.js';
 export { createBox, type CreateBoxOptions, type CreatedBox } from './create.js';
 export {
   agentboxHomeBytes,
@@ -151,12 +159,20 @@ export {
   type RepoCarryOver,
   type SeedWorkspaceOptions,
   type WorktreeBindSpec,
-} from './in-box-git.js';
+} from './sync/in-box-git.js';
 export {
   DEFAULT_BOX_IMAGE,
   BOX_IMAGE_REGISTRY,
+  // The staged build context (Dockerfile.box + the COPY tree). The remote-docker
+  // provider tars this and streams it to a remote `docker build -` on a registry
+  // miss, so it needs the same context the local build uses.
+  BUILD_CONTEXT_DIR,
+  DOCKERFILE_PATH,
   registryRefForSha,
   ensureImage,
+  classifyDockerBaseFreshness,
+  evaluateDockerBaseFreshness,
+  type DockerBaseFreshness,
   pullOrBuild,
   pullImage,
   tagImage,
@@ -186,6 +202,7 @@ export {
   mintHostInitiatedToken,
   registerBoxWithRelay,
   rehydrateRelayRegistry,
+  resolveRelayBin,
   RELAY_CONTAINER_NAME,
   RELAY_IMAGE_REF,
   RELAY_NETWORK_NAME,
@@ -198,15 +215,20 @@ export {
   type StopRelayResult,
 } from './relay.js';
 export {
-  stageClaudeStaticForUpload,
-  stageClaudeJsonOnlyForUpload,
-  stageClaudeCredentialsForUpload,
-  stageCodexStaticForUpload,
-  stageCodexCredentialsForUpload,
-  stageAgentsStaticForUpload,
-  stageOpencodeStaticForUpload,
-  stageOpencodeCredentialsForUpload,
-  stageOpencodeStateForUpload,
+  ensureHub,
+  getHubStatus,
+  resolveHubServer,
+  stopHub,
+  type EnsureHubOptions,
+  type HubEndpoint,
+  type HubStatus,
+  type StopHubResult,
+} from './hub.js';
+// The host-config stage producers now live in the provider-neutral sync layer
+// (`@agentbox/sandbox-core`); cloud consumers import them from there. The claude
+// per-project path helpers + Stage types stay re-exported here (from core) for
+// existing `@agentbox/sandbox-docker` importers.
+export {
   encodeClaudeProjectsKey,
   resolveClaudeMemoryDir,
   BOX_CLAUDE_PROJECT_DIR,
@@ -214,7 +236,7 @@ export {
   type StageCodexOptions,
   type StageOpencodeOptions,
   type StageResult,
-} from './host-stage.js';
+} from '@agentbox/sandbox-core';
 export {
   BOX_WORKFLOWS_DIR,
   BOX_MEMORY_DIR,
@@ -230,7 +252,7 @@ export {
   type DynamicSyncDeletion,
   type HostSyncManifest,
   type StagedTarball,
-} from './dynamic-sync.js';
+} from './sync/dynamic-sync.js';
 export { EXCLUDE_DIRS, SNAPSHOTS_ROOT, snapshotPathFor } from './snapshot.js';
 export {
   CHECKPOINTS_ROOT,
@@ -259,6 +281,7 @@ export {
   findBox,
   readState,
   recordBox,
+  recordLastAgent,
   removeBoxRecord,
   resolveBoxRef,
   type BoxRecord,
@@ -323,7 +346,7 @@ export {
   type PullResult,
   type RefreshOptions,
   type RefreshResult,
-} from './host-export.js';
+} from './sync/host-export.js';
 export {
   detectPortless,
   installPortless,
@@ -333,12 +356,15 @@ export {
   portlessGetUrl,
   portlessInstallHint,
   portlessStartHint,
+  portlessDoctorRow,
   PORTLESS_PROXY_PORT,
   resetPortlessCache,
   resolvePortlessHostStateDir,
   startPortlessProxy,
+  startPortlessProxyRoot,
   type PortlessBrowserEnvOptions,
   type PortlessState,
+  type RootProxyStartResult,
 } from './portless.js';
 export {
   AmbiguousBoxError,
@@ -350,6 +376,7 @@ export {
   openBoxInFinder,
   pauseBox,
   pruneBoxes,
+  refreshBoxSshd,
   resyncBox,
   snapshotPresent,
   startBox,
@@ -372,7 +399,21 @@ export {
   type VncLaunchResult,
   type VncUrls,
 } from './vnc.js';
-export { browserSessionActive, ensureBoxBrowser, type BoxBrowserResult } from './browser.js';
+export {
+  installAuthorizedKey,
+  launchSshdDaemon,
+  setUpBoxSshd,
+  SSH_CONTAINER_PORT,
+  type BoxSshSetup,
+  type SshLaunchResult,
+} from './ssh.js';
+export {
+  browserSessionActive,
+  ensureBoxBrowser,
+  ensureBoxBrowserShowingApp,
+  type BoxBrowserAppResult,
+  type BoxBrowserResult,
+} from './browser.js';
 export {
   allocateShellSessionName,
   buildShellSessionAttachArgv,

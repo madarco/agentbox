@@ -3,8 +3,13 @@ import { ConfigError, parseConfig } from '../src/config.js';
 
 describe('parseConfig', () => {
   it('returns empty services for empty or absent doc', () => {
-    expect(parseConfig('')).toEqual({ services: [], tasks: [], replacements: {} });
-    expect(parseConfig('services: {}')).toEqual({ services: [], tasks: [], replacements: {} });
+    expect(parseConfig('')).toEqual({ services: [], tasks: [], replacements: {}, warnings: [] });
+    expect(parseConfig('services: {}')).toEqual({
+      services: [],
+      tasks: [],
+      replacements: {},
+      warnings: [],
+    });
   });
 
   it('parses a minimal service with shell-string command', () => {
@@ -146,5 +151,46 @@ services:
     expect(() =>
       svc(`services:\n  db:\n    image:\n      name: postgres\n      container_name: "bad name"\n`),
     ).toThrow(/not a valid docker container name/);
+  });
+});
+
+/**
+ * ctl ships INSIDE the box image, so a box baked months ago parses an
+ * agentbox.yaml written against today's CLI. An unknown key must not stop the
+ * box from booting — it's skipped and reported. Real errors still throw.
+ */
+describe('unknown keys are warnings, not errors (forward compat)', () => {
+  it('unknown top-level key is skipped and reported', () => {
+    const cfg = parseConfig(`futureBlock:\n  x: 1\ntasks:\n  build:\n    command: make\n`);
+    expect(cfg.tasks).toHaveLength(1);
+    expect(cfg.warnings).toHaveLength(1);
+    expect(cfg.warnings[0]).toContain('unknown key "futureBlock"');
+  });
+
+  it('unknown service key is skipped and reported', () => {
+    const cfg = parseConfig(
+      `services:\n  web:\n    command: node server.js\n    futureKnob: true\n`,
+    );
+    expect(cfg.services[0]?.command).toBe('node server.js');
+    expect(cfg.warnings[0]).toContain('unknown key "futureKnob"');
+  });
+
+  it('unknown nested key (expose) is skipped and reported', () => {
+    const cfg = parseConfig(
+      `services:\n  web:\n    command: node server.js\n    expose:\n      port: 3000\n      as: 80\n      futureField: x\n`,
+    );
+    expect(cfg.services[0]?.expose).toEqual({ port: 3000, as: 80 });
+    expect(cfg.warnings[0]).toContain('unknown key "futureField"');
+  });
+
+  it('warnings do not leak between parses', () => {
+    parseConfig(`futureBlock:\n  x: 1\n`);
+    expect(parseConfig(`tasks:\n  build:\n    command: make\n`).warnings).toEqual([]);
+  });
+
+  it('still throws on a real error', () => {
+    expect(() => parseConfig(`services:\n  web:\n    restart: sometimes\n    command: x\n`)).toThrow(
+      ConfigError,
+    );
   });
 });

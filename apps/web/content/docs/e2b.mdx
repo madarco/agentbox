@@ -52,6 +52,16 @@ agentbox prepare --provider e2b
 
 A repeat `prepare` reuses the existing template unless you pass `--force`. The bake takes a couple of minutes the first time; subsequent layer-cached builds are faster. See [CLI commands](/docs/cli) for all flags.
 
+### Sizing (bake-time)
+
+E2B resources are set **at template-build time** — E2B rejects per-create resources, so `--size` on `create` doesn't resize a box. Bake the size you want with `agentbox prepare --provider e2b --size <cpu-memory>` (GB, e.g. `4-8` = 4 vCPU / 8 GB RAM), or pin it with `box.sizeE2b` / `box.size`:
+
+```bash
+agentbox prepare --provider e2b --size 4-8 --force
+```
+
+E2B has no disk knob, so a third `-disk` slot (`4-8-20`) is accepted but ignored with a warning. `prepare` folds the size into the skip-fast check, so a re-sized bake rebuilds while an unchanged one is reused. If you later `create --provider e2b --size 2-4` against a template baked at a different size, the box still boots — AgentBox warns loudly and points you at `prepare --provider e2b --size 2-4 --force`.
+
 When you upgrade AgentBox, `create --provider e2b` notices if the new install would bake a different runtime (the comparison is checksum-based on the baked files — CLI version strings on their own don't count) and offers to rebuild the template inline; with `-y` or non-TTY it instead prints a loud warning and boots on the existing template. `agentbox e2b login` also nudges you toward `agentbox prepare --provider e2b` on the first successful login, so the login-only path doesn't silently leave you to trip the "no base template" error on `create`.
 
 ## Create a box
@@ -74,7 +84,7 @@ agentbox e2b claude
 | Limit | |
 | --- | --- |
 | Region | SDK-chosen (transparent) |
-| Disk / RAM / vCPU | Template-level — set at `Template.build()` time; per-create `--size` is advisory only |
+| Disk / RAM / vCPU | Template-level — baked at `Template.build()` time via `prepare --provider e2b --size <cpu-memory>`; per-create `--size` warns if it differs |
 | Exposed ports | Any port via `sandbox.getHost(port)`; WebProxy runs on 8080 |
 | Session length | 1 hour (Hobby) — the attach helper caps at **55 minutes** for headroom; auto-renewed (up to the plan cap) while the agent is working |
 | Nested containers | Yes — the docker engine is baked into the prepare template; `dockerd` auto-launches on create/resume |
@@ -137,7 +147,7 @@ agentbox prune --provider e2b -y
 - **Privileged ports are rejected** — the WebProxy runs on 8080 (not 80); `agentbox url` resolves the 8080 domain.
 - **Push through the relay** — use `agentbox-ctl git push` from a box; the relay holds the credentials. See [sync-and-git](/docs/sync-and-git).
 - **E2B-only config keys are ignored by other providers** — `box.imageE2b` / `box.defaultCheckpointE2b` / `box.sizeE2b` only apply to e2b.
-- **Template-level resources** — vCPU/RAM/disk are baked at `Template.build()` time; per-create `--size` overrides are advisory metadata for the dashboard only.
+- **Template-level resources** — vCPU/RAM are baked at `Template.build()` time via `agentbox prepare --provider e2b --size 4-8`; E2B has no disk knob, and a per-create `--size` that differs from the baked size just warns.
 - **Templates are not enumerable** — the E2B SDK has no `Template.list()`, so `prune --provider e2b` covers sandboxes only. Remove built templates from the [E2B dashboard](https://e2b.dev/dashboard?tab=templates) if you need to.
 
 ## Related

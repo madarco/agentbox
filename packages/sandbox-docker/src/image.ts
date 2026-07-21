@@ -2,28 +2,36 @@ import { execa } from 'execa';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import {
+  BOX_IMAGE_REGISTRY,
+  claudeInstallFingerprint,
+  registryRefForSha,
+} from '@agentbox/sandbox-core';
 
 export const DEFAULT_BOX_IMAGE = 'agentbox/box:dev';
 
 /**
- * Public registry repo the box image is published to (see
- * `.github/workflows/box-image.yml`). The CLI pulls a fingerprint-tagged
- * image from here on first use instead of building locally — a multi-minute
- * build collapses to a `docker pull`. An empty registry (config override)
- * disables pulling and always builds.
+ * Resolve the effective `box.claudeInstall` for the current project. Docker
+ * builds its image lazily at create time, so every `ensureImage` path must
+ * agree on the mode or a native rebuild would clobber an npm-baked image (and
+ * vice-versa). Lazy-imported to keep the module load cheap; falls back to
+ * `native` if config can't be read.
  */
-export const BOX_IMAGE_REGISTRY = 'ghcr.io/madarco/agentbox/box';
-
-/**
- * The pull target for a given build-context fingerprint. The tag *is* the
- * content identity: a local staged context that matches a published build
- * has the same sha, so a pull hit can be retagged to `agentbox/box:dev` and
- * stamped into docker-prepared.json without risk of a stale image (a locally
- * edited context has a different sha, its tag 404s, and we build instead).
- */
-export function registryRefForSha(sha: string, registry: string = BOX_IMAGE_REGISTRY): string {
-  return `${registry}:sha-${sha.slice(0, 16)}`;
+async function resolveClaudeInstallMode(): Promise<'native' | 'npm'> {
+  try {
+    const { loadEffectiveConfig } = await import('@agentbox/config');
+    const cfg = await loadEffectiveConfig(process.cwd());
+    return cfg.effective.box.claudeInstall;
+  } catch {
+    return 'native';
+  }
 }
+
+// The registry ref lives in @agentbox/sandbox-core: daytona's linux-vm bake
+// needs it too (a VM snapshot can only be built from a prebuilt registry image),
+// and importing it from here would drag execa into that import graph. Re-exported
+// so existing `@agentbox/sandbox-docker` consumers keep working.
+export { BOX_IMAGE_REGISTRY, registryRefForSha };
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -82,8 +90,11 @@ export async function pullImage(
     stdout: 'pipe',
     reject: false,
   });
+  let heartbeat: NodeJS.Timeout | undefined;
   if (opts.onProgress) {
+    let lastLineAt = Date.now();
     const forward = (chunk: Buffer | string): void => {
+      lastLineAt = Date.now();
       const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
       for (const line of text.split(/\r?\n/)) {
         if (line.length > 0) opts.onProgress?.(line);
@@ -91,9 +102,22 @@ export async function pullImage(
     };
     subprocess.stdout?.on('data', forward);
     subprocess.stderr?.on('data', forward);
+    // Piped (non-TTY) `docker pull` prints nothing between the last
+    // "Download complete" and each "Pull complete" — the entire extraction
+    // phase is silent, which for a multi-GB image reads as a hang. Emit a
+    // keepalive so the create spinner keeps moving.
+    heartbeat = setInterval(() => {
+      if (Date.now() - lastLineAt >= 20_000) {
+        opts.onProgress?.(`still extracting ${target} — large layers can take a few minutes`);
+      }
+    }, 20_000);
   }
-  const result = await subprocess;
-  return result.exitCode === 0;
+  try {
+    const result = await subprocess;
+    return result.exitCode === 0;
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
+  }
 }
 
 export async function tagImage(source: string, target: string): Promise<void> {
@@ -138,6 +162,8 @@ export interface BuildImageOptions {
   ref?: string;
   dockerfile?: string;
   contextDir?: string;
+  /** `--build-arg K=V` pairs forwarded to `docker build` (e.g. AGENTBOX_CLAUDE_INSTALL). */
+  buildArgs?: Record<string, string>;
   onProgress?: (line: string) => void;
 }
 
@@ -150,7 +176,11 @@ export async function buildImage(opts: BuildImageOptions = {}): Promise<string> 
   // the default bridge network can't bind-mount /proc/<pid>/ns/net for the
   // build container, breaking any RUN that needs network (e.g. apt, curl).
   // Falling back to host networking sidesteps the missing capability.
-  const args = ['build', '-t', ref, '-f', dockerfile, contextDir];
+  const args = ['build', '-t', ref, '-f', dockerfile];
+  for (const [k, v] of Object.entries(opts.buildArgs ?? {})) {
+    args.push('--build-arg', `${k}=${v}`);
+  }
+  args.push(contextDir);
   if (process.env.AGENTBOX === '1') {
     args.splice(1, 0, '--network=host');
   }
@@ -185,6 +215,8 @@ export interface PullOrBuildOptions {
   allowPull?: boolean;
   /** Registry repo to pull from. Defaults to `BOX_IMAGE_REGISTRY`; empty disables pulling. */
   registry?: string;
+  /** `--build-arg K=V` pairs forwarded to the local `docker build` (ignored on a registry pull). */
+  buildArgs?: Record<string, string>;
 }
 
 /**
@@ -221,6 +253,7 @@ export async function pullOrBuild(
     ref,
     dockerfile: opts.dockerfile,
     contextDir: opts.contextDir,
+    buildArgs: opts.buildArgs,
     onProgress: opts.onProgress,
   });
   if (fingerprint) {
@@ -239,6 +272,12 @@ export interface EnsureImageOptions {
   allowPull?: boolean;
   /** Registry repo to pull from. Defaults to `BOX_IMAGE_REGISTRY`; empty disables pulling. */
   registry?: string;
+  /**
+   * How Claude Code is installed into the image. Folded into the build-context
+   * fingerprint so a mode switch rebuilds (and an npm image isn't clobbered by
+   * a native rebuild). Defaults to the resolved `box.claudeInstall`.
+   */
+  claudeInstall?: 'native' | 'npm';
 }
 
 export async function ensureImage(
@@ -251,9 +290,18 @@ export async function ensureImage(
   const { computeDockerContextFingerprint, readPreparedDockerState, preparedMatches } =
     await import('./prepared-state.js');
 
-  const fingerprint = await computeDockerContextFingerprint({
+  const claudeInstall = opts.claudeInstall ?? (await resolveClaudeInstallMode());
+  const rawFingerprint = await computeDockerContextFingerprint({
     contextDir: opts.contextDir,
   });
+  // Fold the install mode into the sha so native↔npm are distinct cache
+  // identities (`native` leaves the hash unchanged).
+  const fingerprint = rawFingerprint
+    ? {
+        ...rawFingerprint,
+        contextSha256: claudeInstallFingerprint(rawFingerprint.contextSha256, claudeInstall),
+      }
+    : null;
   const prepared = readPreparedDockerState();
   const exists = await imageExists(ref);
 
@@ -278,13 +326,81 @@ export async function ensureImage(
   }
 
   opts.onProgress?.(`[image] ${ref}: ${reason}`);
+  const npm = claudeInstall === 'npm';
   const { source } = await pullOrBuild(ref, fingerprint, {
     onProgress: opts.onProgress,
     dockerfile: opts.dockerfile,
     contextDir: opts.contextDir,
+    // npm mode pulls too. CI publishes both install variants, and `fingerprint`
+    // is already folded with the mode above — so the pull asks for the npm
+    // image's own tag and hits. (It used to be native-only, which meant npm
+    // users rebuilt the image locally on every first create, forever.) A tag
+    // that genuinely isn't published still falls back to a local build.
     allowPull: opts.allowPull,
     registry: opts.registry,
+    buildArgs: npm ? { AGENTBOX_CLAUDE_INSTALL: 'npm' } : undefined,
   });
   return { ref, built: source === 'built', reason };
+}
+
+/**
+ * Read-only freshness classification of the docker base image, for surfaces
+ * (hub API, tray) that want to announce an upcoming bake without triggering
+ * it. `unknown` means "couldn't fingerprint" and MUST stay inert — the
+ * matching `ensureImage` path trusts the existing image and does not rebuild.
+ */
+export type DockerBaseFreshness =
+  | { state: 'fresh' }
+  | { state: 'unknown' }
+  | { state: 'unprepared' }
+  | { state: 'stale'; reason: string };
+
+/**
+ * Pure decision core shared by `evaluateDockerBaseFreshness`. Mirrors
+ * `ensureImage`'s rebuild predicate exactly — if the two ever disagree, the
+ * freshness surfaces would announce a bake that create then skips (or miss
+ * one it performs). `stampedSha` is `docker-prepared.json`'s fingerprint,
+ * null when the stamp is missing/invalid.
+ */
+export function classifyDockerBaseFreshness(input: {
+  imagePresent: boolean;
+  fingerprint: string | null;
+  stampedSha: string | null;
+}): DockerBaseFreshness {
+  if (!input.imagePresent) return { state: 'unprepared' };
+  if (!input.fingerprint) return { state: 'unknown' };
+  if (!input.stampedSha) return { state: 'stale', reason: 'no docker-prepared.json on disk' };
+  if (input.stampedSha !== input.fingerprint) {
+    return {
+      state: 'stale',
+      reason:
+        `build context changed (was ${input.stampedSha.slice(0, 12)}, ` +
+        `now ${input.fingerprint.slice(0, 12)})`,
+    };
+  }
+  return { state: 'fresh' };
+}
+
+/**
+ * Cheap live check: would `ensureImage` bake on the next create? The only
+ * docker work is one `docker image inspect`; the rest hashes the ~15 build
+ * context files. Never builds, pulls, or writes the prepared stamp.
+ */
+export async function evaluateDockerBaseFreshness(
+  opts: { ref?: string; claudeInstall?: 'native' | 'npm'; contextDir?: string } = {},
+): Promise<DockerBaseFreshness> {
+  // Lazy import for the same circular-init reason as in ensureImage above.
+  const { computeDockerContextFingerprint, readPreparedDockerState } =
+    await import('./prepared-state.js');
+  const ref = opts.ref ?? DEFAULT_BOX_IMAGE;
+  const imagePresent = await imageExists(ref);
+  if (!imagePresent) return { state: 'unprepared' };
+  const claudeInstall = opts.claudeInstall ?? (await resolveClaudeInstallMode());
+  const raw = await computeDockerContextFingerprint({ contextDir: opts.contextDir });
+  return classifyDockerBaseFreshness({
+    imagePresent,
+    fingerprint: raw ? claudeInstallFingerprint(raw.contextSha256, claudeInstall) : null,
+    stampedSha: readPreparedDockerState()?.base?.contextSha256 ?? null,
+  });
 }
 

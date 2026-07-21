@@ -5,18 +5,29 @@ import {
   pullCodexConfig,
   resolveCodexVolume,
   SHARED_CODEX_VOLUME,
+  stageItemsFromVolume,
 } from '@agentbox/sandbox-docker';
+import {
+  agentBoxConfigDir,
+  codexStagedItems,
+  pullCodexConfigViaTransport,
+  stageItemsViaTransport,
+} from '@agentbox/sandbox-core';
+import type { SyncTransport } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { cloudTransportForPull } from './_agent-pull.js';
+import { parsePropagateFlag, runPropagateStep } from './_agent-propagate.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface DownloadCodexOpts {
   yes?: boolean;
   dryRun?: boolean;
+  propagate?: string;
 }
 
 export const downloadCodexCommand = new Command('codex')
   .description(
-    'Download box-side Codex config/auth (config.toml, auth.json, prompts) back to host ~/.codex (additive)',
+    'Download box-side Codex config/auth (config.toml, auth.json, prompts) back to host ~/.codex (additive), optionally propagating them to other boxes',
   )
   .argument(
     '[box]',
@@ -24,22 +35,40 @@ export const downloadCodexCommand = new Command('codex')
   )
   .option('-y, --yes', 'skip the confirmation prompt')
   .option('--dry-run', "list new items and exit; don't write")
+  .option(
+    '--propagate <scope>',
+    'also copy the pulled items into other boxes: project|all|none (default: ask)',
+  )
   .action(async (idOrName: string | undefined, opts: DownloadCodexOpts) => {
     try {
+      const scopeFlag = parsePropagateFlag(opts.propagate);
       const box = await resolveBoxOrExit(idOrName);
 
-      // We read the codex-config *volume*, not the container, so the box can
-      // be stopped — no unpause/start dance.
-      const volume =
-        box.codexConfigVolume ?? resolveCodexVolume({ isolate: false, boxId: box.id }).volume;
-      if (volume === SHARED_CODEX_VOLUME) {
-        log.warn(
-          `Reading the shared ${SHARED_CODEX_VOLUME} volume — it aggregates Codex config from ANY box, not just ${box.name}.`,
-        );
+      let pull: (dryRun: boolean) => Promise<{ newItems: string[] }>;
+      let transport: SyncTransport | undefined;
+      let volume: string | undefined;
+      let image = box.image || DEFAULT_BOX_IMAGE;
+      if ((box.provider ?? 'docker') !== 'docker') {
+        // Cloud: read the live box FS over the provider's SyncTransport.
+        transport = await cloudTransportForPull(box);
+        const t = transport;
+        pull = (dryRun) => pullCodexConfigViaTransport(t, { dryRun });
+      } else {
+        // Docker: we read the codex-config *volume*, not the container, so the
+        // box can be stopped — no unpause/start dance.
+        volume =
+          box.codexConfigVolume ?? resolveCodexVolume({ isolate: false, boxId: box.id }).volume;
+        if (volume === SHARED_CODEX_VOLUME) {
+          log.warn(
+            `Reading the shared ${SHARED_CODEX_VOLUME} volume — it aggregates Codex config from ANY box, not just ${box.name}.`,
+          );
+        }
+        image = box.image || DEFAULT_BOX_IMAGE;
+        const v = volume;
+        pull = (dryRun) => pullCodexConfig({ volume: v }, { image, dryRun });
       }
-      const image = box.image || DEFAULT_BOX_IMAGE;
 
-      const preview = await pullCodexConfig({ volume }, { image, dryRun: true });
+      const preview = await pull(true);
 
       if (preview.newItems.length === 0) {
         process.stdout.write('no new Codex config to download into ~/.codex\n');
@@ -55,19 +84,33 @@ export const downloadCodexCommand = new Command('codex')
         return;
       }
 
-      if (!opts.yes) {
-        const ok = await confirm({
+      const applyToHost =
+        opts.yes ||
+        (await confirm({
           message: `Download ${preview.newItems.length} Codex item(s) into ~/.codex? (existing items are never overwritten)`,
           initialValue: false,
-        });
-        if (!ok) {
-          log.info('cancelled');
-          return;
-        }
+        }));
+      if (applyToHost) {
+        const result = await pull(false);
+        process.stdout.write(`downloaded ${result.newItems.length} item(s) into ~/.codex\n`);
+      } else {
+        log.info('skipped the host ~/.codex write');
       }
 
-      const result = await pullCodexConfig({ volume }, { image, dryRun: false });
-      process.stdout.write(`downloaded ${result.newItems.length} item(s) into ~/.codex\n`);
+      // Propagation stages from the source (volume or live box), so it works
+      // whether or not the host write above was accepted.
+      const items = codexStagedItems(preview.newItems);
+      await runPropagateStep({
+        agent: 'codex',
+        sourceBox: box,
+        items,
+        stage: (stagingDir) =>
+          transport
+            ? stageItemsViaTransport(transport, agentBoxConfigDir('codex'), items, stagingDir)
+            : stageItemsFromVolume(volume!, image, items, stagingDir),
+        scopeFlag,
+        yes: opts.yes,
+      });
     } catch (err) {
       handleLifecycleError(err);
     }

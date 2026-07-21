@@ -17,7 +17,7 @@
  * Schema versioned so future shape changes can migrate.
  */
 
-import { computeContextSha256, preparedStatePathFor, readPreparedStateRaw, writePreparedStateRaw } from '@agentbox/sandbox-core';
+import { claudeInstallFingerprint, computeContextSha256, preparedStatePathFor, readPreparedStateRaw, writePreparedStateRaw } from '@agentbox/sandbox-core';
 import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets.js';
 
 /**
@@ -144,11 +144,16 @@ export function updatePreparedState(mutate: (s: PreparedHetznerState) => void): 
  * hash to the one `prepare` writes — both go through the same
  * `resolveRuntimeAssets` + `computeContextSha256` chain.
  */
-export async function currentHetznerBaseFingerprintLive(): Promise<string | undefined> {
+export async function currentHetznerBaseFingerprintLive(
+  claudeInstall: 'native' | 'npm' = 'native',
+): Promise<string | undefined> {
   try {
     const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
-    return await computeContextSha256(
-      assets.map((a) => ({ rel: a.name, abs: a.localPath })),
+    // Fold in claudeInstall exactly as `prepare` does — otherwise an npm-baked
+    // base never matches the stored (npm-folded) fingerprint.
+    return claudeInstallFingerprint(
+      await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
+      claudeInstall,
     );
   } catch {
     return undefined;

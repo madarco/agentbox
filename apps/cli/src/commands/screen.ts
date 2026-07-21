@@ -1,12 +1,12 @@
 import { spawnSync } from 'node:child_process';
 import { log } from '@clack/prompts';
 import { hostOpenCommand } from '@agentbox/sandbox-core';
+import { openWebAppOnVncScreen } from '@agentbox/sandbox-cloud';
 import {
   buildVncUrls,
   detectEngine,
-  ensureBoxBrowser,
+  ensureBoxBrowserShowingApp,
   inspectBox,
-  readBoxStatus,
   startBox,
   unpauseBox,
 } from '@agentbox/sandbox-docker';
@@ -72,22 +72,11 @@ export const screenCommand = new Command('screen')
 
         // Point the in-box browser at the box's web service so the app is shown
         // *inside* the VNC desktop (the host browser only gets the noVNC viewer).
-        // Prefer the Portless URL — `ensureBoxBrowser` routes it back out to the
-        // host proxy, so the app loads on the exact URL the host browser uses
-        // (one origin both sides). Fall back to the in-box `127.0.0.1:<port>` when
-        // there's no Portless route; a neutral page when no web service at all.
-        const persisted = await readBoxStatus(box);
-        const exposePort = persisted?.services.find((s) => s.expose)?.expose?.port;
-        const inBoxUrl =
-          exposePort !== undefined
-            ? (box.portlessUrl ?? `http://localhost:${String(exposePort)}`)
-            : 'about:blank';
-
-        const br = await ensureBoxBrowser(box.container, undefined, inBoxUrl);
+        const br = await ensureBoxBrowserShowingApp(box);
         if (br.up && !br.alreadyRunning) {
           log.info(
-            exposePort !== undefined
-              ? `opened ${inBoxUrl} in the in-box browser (visible in the VNC view)`
+            br.target !== 'about:blank'
+              ? `opened ${br.target} in the in-box browser (visible in the VNC view)`
               : 'started in-box browser',
           );
         } else if (br.alreadyRunning) {
@@ -134,31 +123,13 @@ export const screenCommand = new Command('screen')
         }
 
         // Open the box's web app *inside* the VNC desktop (the host browser only
-        // gets the noVNC viewer), mirroring the docker path. The in-box Chromium
-        // loads the same public preview URL the host uses — the box can reach its
-        // own `*.vercel.run` domain (verified), so it's one origin both sides.
-        // Only when a web service is declared; best-effort, never fails `screen`.
-        const persisted = await readBoxStatus(box);
-        const hasWebService = persisted?.services.some((s) => s.expose) ?? false;
-        if (hasWebService) {
-          try {
-            const webUrl = await p.resolveUrl(box, { kind: 'web' });
-            const q = `'${webUrl.replace(/'/g, "'\\''")}'`;
-            const br = await p.exec(box, ['bash', '-lc', `agent-browser open --headed ${q}`], {
-              user: 'vscode',
-            });
-            if (br.exitCode === 0) {
-              log.info(`opened ${webUrl} in the in-box browser (visible in the VNC view)`);
-            } else {
-              log.warn(
-                `could not open in-box browser (continuing): ${br.stderr.trim() || br.stdout.trim() || `exit ${String(br.exitCode)}`}`,
-              );
-            }
-          } catch (err) {
-            log.warn(
-              `in-box browser skipped: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
+        // gets the noVNC viewer), mirroring the docker path. Best-effort, never
+        // fails `screen`.
+        const br = await openWebAppOnVncScreen(box, p);
+        if (br.opened) {
+          log.info(`opened ${br.target ?? ''} in the in-box browser (visible in the VNC view)`);
+        } else if (br.reason && br.reason !== 'no web service') {
+          log.warn(`could not open in-box browser (continuing): ${br.reason}`);
         }
 
         const base = await p.resolveUrl(box, { kind: 'vnc', ttl });

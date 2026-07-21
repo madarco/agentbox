@@ -31,6 +31,24 @@ set -euo pipefail
 step() { printf '\n>>> BEGIN %s\n' "$1"; }
 done_() { printf '<<< END %s\n' "$1"; }
 
+# Retry a command with exponential backoff. Usage: retry_backoff <max> cmd...
+# Waits 60s before attempt 2, 240s before attempt 3 (~5 min total budget). Used
+# for the Claude native installer, whose CDN (claude.ai / downloads.claude.ai,
+# behind Cloudflare) intermittently 403s cloud-datacenter egress IPs under load.
+retry_backoff() {
+  local max=$1; shift
+  local attempt=1
+  local -a waits=(60 240)
+  while true; do
+    if "$@"; then return 0; fi
+    if [ "$attempt" -ge "$max" ]; then return 1; fi
+    local w=${waits[$((attempt-1))]:-240}
+    echo "retry_backoff: attempt ${attempt}/${max} failed — backing off ${w}s" >&2
+    sleep "$w"
+    attempt=$((attempt+1))
+  done
+}
+
 if [ "$(id -u)" -ne 0 ]; then
   echo "install-box.sh: must run as root (got uid $(id -u))" >&2
   exit 64
@@ -144,8 +162,13 @@ git lfs install --system --skip-repo
 done_ "git-lfs system filter"
 
 step "docker + iptables for in-VPS DinD"
+# docker-compose-v2 + docker-buildx: the CLI plugins docker.io doesn't pull
+# in — without them `docker compose` is not a command and `docker build`
+# runs on the deprecated legacy builder (mirrors Dockerfile.box).
 apt-get install -y --no-install-recommends \
   docker.io \
+  docker-compose-v2 \
+  docker-buildx \
   iptables
 mkdir -p /etc/docker
 printf '%s\n' '{ "iptables": true }' > /etc/docker/daemon.json
@@ -172,9 +195,10 @@ done_ "agentbox-ctl install"
 # *before* Chromium sidesteps the issue and keeps the snapshot complete.
 # Tracked as Phase-7 follow-up in docs/hertzner_backlog.md.
 
-step "baked helper scripts (vnc / dockerd / cleanup / xdg-open / gh + git + ntn + linear shims)"
+step "baked helper scripts (vnc / dockerd / portless-trust / cleanup / xdg-open / gh + git + ntn + linear shims)"
 install -m 0755 /tmp/agentbox-vnc-start          /usr/local/bin/agentbox-vnc-start
 install -m 0755 /tmp/agentbox-dockerd-start      /usr/local/bin/agentbox-dockerd-start
+install -m 0755 /tmp/agentbox-portless-trust     /usr/local/bin/agentbox-portless-trust
 install -m 0755 /tmp/agentbox-checkpoint-cleanup /usr/local/bin/agentbox-checkpoint-cleanup
 install -m 0755 /tmp/agentbox-open               /usr/local/bin/agentbox-open
 ln -sf /usr/local/bin/agentbox-open /usr/local/bin/xdg-open
@@ -191,7 +215,7 @@ install -m 0755 /tmp/agentbox-git-shim           /usr/local/bin/git
 install -m 0755 /tmp/agentbox-ntn-shim           /usr/local/bin/ntn
 ln -sf /usr/local/bin/ntn /usr/local/bin/notion
 install -m 0755 /tmp/agentbox-linear-shim        /usr/local/bin/linear
-done_ "baked helper scripts (vnc / dockerd / cleanup / xdg-open / gh + git + ntn + linear shims)"
+done_ "baked helper scripts (vnc / dockerd / portless-trust / cleanup / xdg-open / gh + git + ntn + linear shims)"
 
 step "baked config files (claude / codex / setup guide / tmux.conf)"
 install -m 0644 /tmp/agentbox-custom-CLAUDE.md      /etc/claude-code/CLAUDE.md
@@ -271,6 +295,18 @@ export LC_ALL=${LC_ALL:-en_US.UTF-8}
 export DISPLAY=${DISPLAY:-:1}
 export AGENT_BROWSER_EXECUTABLE_PATH=${AGENT_BROWSER_EXECUTABLE_PATH:-/usr/local/bin/chromium}
 export BROWSER=${BROWSER:-/usr/local/bin/agentbox-open}
+# Land interactive login shells in the workspace, so remote-host integrations
+# (Codex app, VS Code Remote-SSH, plain `ssh <box>`) open in the project instead
+# of $HOME. Interactive-only so scp/sftp and `ssh box <cmd>` are untouched; only
+# when still at $HOME so a caller-chosen dir (e.g. agentbox's tmux `-c /workspace`)
+# is never overridden.
+case $- in
+  *i*)
+    if [ "$PWD" = "$HOME" ] && [ -d /workspace ]; then
+      cd /workspace
+    fi
+    ;;
+esac
 PROFILE
 chmod 0644 /etc/profile.d/agentbox.sh
 done_ "login-shell shim (/etc/profile.d/agentbox.sh)"
@@ -334,7 +370,7 @@ done_ "VNC stack (TigerVNC + noVNC + websockify + autocutsel)"
 
 step "Chrome runtime libs"
 apt-get install -y --no-install-recommends \
-  libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
+  libnss3 libnss3-tools libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
   libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
   libgbm1 libdrm2 libpango-1.0-0 libcairo2 libasound2t64 \
   fonts-liberation xdg-utils
@@ -349,13 +385,44 @@ apt-get install -y --no-install-recommends bubblewrap
 npm install -g @openai/codex opencode-ai
 done_ "Codex CLI prereqs (bubblewrap) + agent installs"
 
-step "Claude Code (native installer, run as vscode)"
-# Anthropic's native installer drops `claude` at /home/vscode/.local/bin/.
-# Run as vscode so the binary lands in the right home and is owned by the
-# user that'll execute it. DISABLE_AUTOUPDATER is set globally via
-# /etc/profile.d/agentbox.sh below.
-sudo -u vscode -H bash -lc 'curl -fsSL https://claude.ai/install.sh | bash -s stable'
-done_ "Claude Code (native installer, run as vscode)"
+# AGENTBOX_CLAUDE_INSTALL selects how Claude Code is installed (default
+# `native`). `npm` is an opt-in fallback for hosts whose egress IP the native
+# installer's CDN 403s — see `box.claudeInstall`.
+if [ "${AGENTBOX_CLAUDE_INSTALL:-native}" = "npm" ]; then
+  step "Claude Code (npm: @anthropic-ai/claude-code)"
+  # npm-global drops `claude` at Node's prefix bin (/usr/bin on NodeSource),
+  # not the /home/vscode/.local/bin/claude the rest of AgentBox hardcodes (the
+  # attach command, the login-shell PATH shim, the host-side installMethod=native
+  # coercion). Symlink it into that path so the box stays indistinguishable from
+  # a native install downstream.
+  npm install -g @anthropic-ai/claude-code
+  install -d -o vscode -g vscode /home/vscode/.local/bin
+  ln -sf "$(command -v claude)" /home/vscode/.local/bin/claude
+  chown -h vscode:vscode /home/vscode/.local/bin/claude
+  command -v claude >/dev/null || { echo "install-box.sh: npm claude install produced no claude on PATH" >&2; exit 71; }
+  done_ "Claude Code (npm: @anthropic-ai/claude-code)"
+else
+  step "Claude Code (native installer, run as vscode)"
+  # Anthropic's native installer is the path the rest of AgentBox expects: it
+  # drops `claude` at /home/vscode/.local/bin/claude with installMethod=native
+  # (matching the host-seeded .claude.json, so the startup integrity check stays
+  # quiet) and ships native-only features the npm package lacks. Run as vscode so
+  # the binary lands in the right home; DISABLE_AUTOUPDATER is set globally via
+  # /etc/profile.d/agentbox.sh below.
+  #
+  # Its CDN (claude.ai / downloads.claude.ai) sits behind Cloudflare, which
+  # intermittently 403s cloud-datacenter egress IPs (Hetzner among them) under
+  # load. Retry with backoff rather than falling back to npm. A bare `curl | bash`
+  # would hide a 403 (curl -f exits non-zero but the pipe's status is bash's 0),
+  # so keep pipefail and fold the PATH check in so a "succeeded but absent" result
+  # also retries. A failed prepare is better than a claude-less snapshot.
+  if ! retry_backoff 3 sudo -u vscode -H bash -lc \
+       'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash -s stable && command -v claude >/dev/null'; then
+    echo "install-box.sh: Claude native installer failed after 3 attempts (Cloudflare 403?) — aborting bake" >&2
+    exit 71
+  fi
+  done_ "Claude Code (native installer, run as vscode)"
+fi
 
 step "Chromium download via Playwright (as vscode)"
 # Run the download as vscode so the cache lands under

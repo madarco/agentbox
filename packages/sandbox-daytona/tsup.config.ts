@@ -10,9 +10,9 @@ export default defineConfig({
   clean: true,
   dts: true,
   sourcemap: true,
-  // `@daytonaio/sdk` pulls in heavy server-side helpers — keep it external so
+  // `@daytona/sdk` pulls in heavy server-side helpers — keep it external so
   // it's only resolved at runtime. `commander` and `@clack/prompts` are
   // marked external so apps/cli (which already bundles them at the root) does
   // not double-include them via its `noExternal: [/^@agentbox\//]` rule.
-  external: ['@daytonaio/sdk', 'commander', '@clack/prompts'],
+  external: ['@daytona/sdk', 'commander', '@clack/prompts'],
 });

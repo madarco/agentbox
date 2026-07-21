@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CloudHandle } from '@agentbox/core';
 import { makeMockCloudBackend, type MockCloudBackend } from '../src/mock-backend.js';
-import { seedGitIdentity } from '../src/git-identity.js';
+import { seedGitIdentity } from '../src/sync/git-identity.js';
 
 const HANDLE: CloudHandle = { sandboxId: 'box1' };
 

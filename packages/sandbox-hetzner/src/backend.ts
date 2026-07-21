@@ -48,12 +48,17 @@ import { detectEgressIp } from './egress-ip.js';
 import {
   createPerBoxFirewall,
   deletePerBoxFirewall,
+  firewallNeedsSync,
   normalizeSourceCidr,
+  syncFirewallSource,
 } from './firewall.js';
 import { pollUntil } from './poll.js';
+import { mapHetznerProvisionError, validateServerChoice } from './preflight.js';
 import { readPreparedState } from './prepared-state.js';
 import { ensureHetznerBaseSnapshot } from './prepare.js';
 import { mintSshKey } from './ssh-key.js';
+import { describeInbound, parseInboundSpec, resolveInboundSources } from '@agentbox/sandbox-core';
+import type { InboundPolicy } from '@agentbox/core';
 import { waitForSsh, sshOptArgs, type SshTargetArgs } from './ssh-cli.js';
 import { SshTunnelManager, defaultBoxSshDir } from './ssh-tunnel.js';
 import { withHetznerRetry } from './retry.js';
@@ -68,13 +73,42 @@ export const HETZNER_DEFAULT_BOX_IMAGE_REF = 'agentbox-base';
  */
 const SCAFFOLDING_FALLBACK_IMAGE = 'agentbox/box:dev';
 const VPS_USER = 'vscode';
-const PROVISION_SSH_DEADLINE_MS = 5 * 60_000;
+const PROVISION_SSH_DEADLINE_MS = 10 * 60_000;
 const ACTION_DEADLINE_MS = 5 * 60_000;
 const SNAPSHOT_DEADLINE_MS = 20 * 60_000;
 // `cx22` was deprecated by Hetzner in early 2026; `cx23` is the drop-in
 // replacement with the same 2 vCPU / 4 GB / 40 GB shape on x86.
 const HETZNER_DEFAULT_SERVER_TYPE = 'cx23';
 const HETZNER_DEFAULT_LOCATION = 'nbg1';
+
+/**
+ * Secrets that must never land in the world-readable (0644) cloud-init
+ * `/etc/agentbox/box.env`. The relay token reaches in-box ctl via the daemon's
+ * 0600 `relay.env`; the bridge token stays in the daemon's process env.
+ */
+const CLOUD_INIT_BOX_ENV_EXCLUDE = new Set<string>([
+  'AGENTBOX_RELAY_URL',
+  'AGENTBOX_RELAY_TOKEN',
+  'AGENTBOX_BRIDGE_TOKEN',
+]);
+
+/**
+ * Build the cloud-init `box.env` passthrough: the `AGENTBOX_*` identity/portless
+ * vars, with the relay/bridge secrets in `CLOUD_INIT_BOX_ENV_EXCLUDE` stripped
+ * (cloud-init writes box.env 0644 — those secrets travel via the daemon's 0600
+ * `relay.env` / process env instead). Exported for unit testing.
+ */
+export function cloudInitBoxEnv(
+  env: Record<string, string | undefined> = {},
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (v !== undefined && k.startsWith('AGENTBOX_') && !CLOUD_INIT_BOX_ENV_EXCLUDE.has(k)) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
 
 /** Module-level tunnel manager — one ControlMaster per box for this process. */
 const tunnels = new SshTunnelManager();
@@ -201,13 +235,71 @@ function buildSshTarget(state: PerBoxState, vpsIp: string, controlPath?: string)
   };
 }
 
+/**
+ * The per-box firewall's current SSH source vs the host's live egress IP. Best-
+ * effort and called ONLY on a connection-failure path (the open-failed hint and
+ * `recover`'s auto-sync), never on the happy path — `egressIpCached` keeps the
+ * probe from storming across retries. Returns null when there's no firewall or
+ * we can't determine the state.
+ */
+interface FirewallEgressStatus {
+  firewallId: number;
+  /** All CIDRs the firewall currently allows for inbound SSH (`source_ips`). */
+  allowedSources: string[];
+  /** The host's current egress IP as a `/32` CIDR. */
+  currentEgress: string;
+  /** Friendly box ref for the `firewall sync` hint (the `agentbox.box` label). */
+  boxRef: string;
+}
+
+async function firewallEgressStatus(sandboxId: string): Promise<FirewallEgressStatus | null> {
+  const id = Number.parseInt(sandboxId, 10);
+  if (!Number.isFinite(id)) return null;
+  const server = await client().getServer(id);
+  if (!server) return null;
+  const firewallId = Number.parseInt(server.labels['agentbox.firewall'] ?? '', 10);
+  if (!Number.isFinite(firewallId)) return null;
+  const firewall = await client().getFirewall(firewallId);
+  const sshRule = firewall?.rules.find((r) => r.direction === 'in' && r.port === '22');
+  const allowedSources = sshRule?.source_ips ?? [];
+  // A FRESH probe (not cached): this runs only on a connection-failure path, and
+  // a stale value could read the new IP as "unchanged" and skip the heal — the
+  // very mismatch we exist to catch. The poller already de-dupes its recover
+  // calls and `recover --all` is sequential, so fresh probing here won't storm.
+  const currentEgress = `${await detectEgressIp({})}/32`;
+  return {
+    firewallId,
+    allowedSources,
+    currentEgress,
+    boxRef: server.labels['agentbox.box'] ?? sandboxId,
+  };
+}
+
 async function ensureTunnel(sandboxId: string, state: PerBoxState, vpsIp: string): Promise<void> {
   if (tunnels.has(sandboxId)) return;
-  await tunnels.open({
-    boxId: sandboxId,
-    vpsHost: vpsIp,
-    identity: state.identity,
-  });
+  try {
+    await tunnels.open({
+      boxId: sandboxId,
+      vpsHost: vpsIp,
+      identity: state.identity,
+    });
+  } catch (err) {
+    // A host egress-IP change locks us out of the per-box firewall, surfacing as
+    // an opaque SSH connect timeout. Best-effort: detect the mismatch and enrich
+    // the error with the fix. Never let the diagnostic mask the original error
+    // on a match (box is just down) or a probe failure.
+    const s = await firewallEgressStatus(sandboxId).catch(() => null);
+    if (s && firewallNeedsSync(s.allowedSources, s.currentEgress)) {
+      throw new Error(
+        `${(err as Error).message}\n\n` +
+          `hetzner: SSH is blocked by the box firewall — it allows ${s.allowedSources.join(', ') || '(no rule)'} ` +
+          `but your egress IP is now ${s.currentEgress}. Your IP changed; run:\n` +
+          `  agentbox hetzner firewall sync ${s.boxRef}\n` +
+          `(or \`agentbox recover ${s.boxRef}\`, which auto-syncs).`,
+      );
+    }
+    throw err;
+  }
 }
 
 /**
@@ -252,13 +344,34 @@ export const hetznerBackend: CloudBackend = {
     await ensureHetznerBaseSnapshot();
     const imageRef = await resolveImageId(c, req);
 
-    // 2. Detect egress IP + normalize firewall source.
+    // 1b. Preflight the server-type + location choice against the live catalog
+    // BEFORE creating any billable resources (firewall, SSH key, server). A bad
+    // `--size cax31` / `--size cx99` / `--location atlantis` fails fast here with
+    // a clear message instead of a late, opaque API error after cleanup churn.
+    const serverType = (req.size && req.size.trim()) || HETZNER_DEFAULT_SERVER_TYPE;
+    const location = (req.location && req.location.trim()) || HETZNER_DEFAULT_LOCATION;
+    const choice = { serverType, location };
+    // The base image's disk_size gates the min server disk. We only have it for
+    // numeric snapshot refs; stock string refs (e.g. `ubuntu-24.04`) skip the
+    // disk check (image null).
+    const image = typeof imageRef === 'number' ? await c.getImage(imageRef) : null;
+    const catalog = await c.listServerTypes();
+    validateServerChoice(choice, catalog, image);
+
+    // 2. Resolve the inbound-access policy (`--inbound` / `box.inbound`) into
+    // the firewall's source CIDRs. `locked`/`whitelist` need the host egress IP
+    // (env override wins, else detect); `open` (0.0.0.0/0) skips detection.
+    const inboundPolicy = parseInboundSpec(req.inbound);
     const egressOverride =
       req.env?.AGENTBOX_HETZNER_FIREWALL_SOURCE ?? process.env.AGENTBOX_HETZNER_FIREWALL_SOURCE;
-    const source = egressOverride
-      ? normalizeSourceCidr(egressOverride)
-      : `${await detectEgressIp({ onLog })}/32`;
-    progress(`firewall source: ${source}`);
+    const hostEgress =
+      inboundPolicy.mode === 'open'
+        ? null
+        : egressOverride
+          ? normalizeSourceCidr(egressOverride)
+          : `${await detectEgressIp({ onLog })}/32`;
+    const sources = resolveInboundSources(inboundPolicy, hostEgress);
+    progress(`firewall inbound: ${describeInbound(inboundPolicy)} -> ${sources.join(', ')}`);
 
     // 3. Mint per-box SSH key into a temp dir keyed by a fresh uuid; we
     // rename it to `~/.agentbox/hetzner/boxes/<sandboxId>/ssh/` once the
@@ -279,7 +392,7 @@ export const hetznerBackend: CloudBackend = {
       // 4. Firewall.
       const firewall = await createPerBoxFirewall(c, {
         name: `agentbox-${req.name}-${stamp}`,
-        sourceCidr: source,
+        sources,
         labels: {
           'agentbox.box': req.name,
           'agentbox.role': 'box',
@@ -288,42 +401,48 @@ export const hetznerBackend: CloudBackend = {
       firewallId = firewall.id;
 
       // 5. Cloud-init for the box: vscode user, pubkey, /etc/hosts alias,
-      // optional box.env passthrough from req.env.
-      const boxEnv: Record<string, string> = {};
-      for (const [k, v] of Object.entries(req.env ?? {})) {
-        if (k.startsWith('AGENTBOX_')) boxEnv[k] = v;
-      }
+      // optional box.env passthrough from req.env. The relay/bridge tokens are
+      // deliberately excluded — cloud-init writes box.env world-readable (0644),
+      // and these secrets reach the in-box ctl via the daemon's 0600 relay.env
+      // (relay token) and its process env (bridge token) instead.
+      const boxEnv = cloudInitBoxEnv(req.env);
       const cloudInit = generateBoxCloudInit({
         sshPubkey: key.publicKey,
         boxName: req.name,
         boxEnv: Object.keys(boxEnv).length > 0 ? boxEnv : undefined,
       });
 
-      // 6. Create the server.
-      const serverType = (req.size && req.size.trim()) || HETZNER_DEFAULT_SERVER_TYPE;
+      // 6. Create the server. Map late Hetzner provision errors (account limit,
+      // out-of-capacity) to actionable guidance while preserving the original.
       progress(
-        `creating VPS '${req.name}' from image ${String(imageRef)} (${serverType} / ${HETZNER_DEFAULT_LOCATION})`,
+        `creating VPS '${req.name}' from image ${String(imageRef)} (${serverType} / ${location})`,
       );
-      const created = await withHetznerRetry(
-        { method: 'createServer', retryOnAmbiguous: false, attemptTimeoutMs: 120_000 },
-        () =>
-          c.createServer({
-            name: `agentbox-${req.name}-${stamp}`,
-            server_type: serverType,
-            image: imageRef,
-            location: HETZNER_DEFAULT_LOCATION,
-            user_data: cloudInit,
-            firewalls: [{ firewall: firewall.id }],
-            labels: {
-              'agentbox.managed': 'true',
-              'agentbox.role': 'box',
-              'agentbox.box': req.name,
-              'agentbox.firewall': String(firewall.id),
-            },
-            start_after_create: true,
-          }),
-      );
+      let created;
+      try {
+        created = await withHetznerRetry(
+          { method: 'createServer', retryOnAmbiguous: false, attemptTimeoutMs: 120_000 },
+          () =>
+            c.createServer({
+              name: `agentbox-${req.name}-${stamp}`,
+              server_type: serverType,
+              image: imageRef,
+              location,
+              user_data: cloudInit,
+              firewalls: [{ firewall: firewall.id }],
+              labels: {
+                'agentbox.managed': 'true',
+                'agentbox.role': 'box',
+                'agentbox.box': req.name,
+                'agentbox.firewall': String(firewall.id),
+              },
+              start_after_create: true,
+            }),
+        );
+      } catch (createErr) {
+        throw mapHetznerProvisionError(createErr, choice);
+      }
       serverId = created.server.id;
+      const provisioned = created.server.server_type;
       const vpsIp = created.server.public_net.ipv4?.ip;
       if (!vpsIp) {
         throw new Error(`hetzner: server ${String(serverId)} came up without an IPv4 address`);
@@ -347,7 +466,12 @@ export const hetznerBackend: CloudBackend = {
       // 8. Wait for sshd to accept the new key.
       const up = await waitForSsh(buildSshTarget(state, vpsIp), PROVISION_SSH_DEADLINE_MS);
       if (!up) {
-        throw new Error(`hetzner: ssh on ${vpsIp} did not come up within ${String(PROVISION_SSH_DEADLINE_MS / 1000)}s`);
+        throw new Error(
+          `hetzner: ssh on ${vpsIp} did not come up within ${String(PROVISION_SSH_DEADLINE_MS / 1000)}s; ` +
+            `the server has been deleted. This is usually transient — just retry the create. ` +
+            `If it keeps failing, check that your host's egress IP is stable (the box firewall is ` +
+            `locked to it, so a mid-provision IP change blocks ssh).`,
+        );
       }
 
       // 9. Open ControlMaster.
@@ -359,7 +483,19 @@ export const hetznerBackend: CloudBackend = {
       // `exec` over the live ControlMaster — the symlinks baked into
       // install-box.sh route ~/.claude/.credentials.json etc. through to
       // `~/.agentbox-creds/<agent>/`.
-      return { sandboxId };
+      //
+      // Report the REAL resources from the create response (the plan's
+      // cores/memory/disk), not our static defaults — the record + the cloud
+      // scaffold's `provisioned …` log line read this.
+      return {
+        sandboxId,
+        inbound: inboundPolicy,
+        resources: {
+          cpu: provisioned.cores,
+          memory: provisioned.memory,
+          disk: provisioned.disk,
+        },
+      };
     } catch (err) {
       // Cleanup on failure: server + firewall + temp ssh dir.
       if (serverId !== null) {
@@ -437,7 +573,9 @@ export const hetznerBackend: CloudBackend = {
     const up = await waitForSsh(buildSshTarget(state, vpsIp), PROVISION_SSH_DEADLINE_MS);
     if (!up) {
       throw new Error(
-        `hetzner: ssh on ${vpsIp} did not come up within ${String(PROVISION_SSH_DEADLINE_MS / 1000)}s after start`,
+        `hetzner: ssh on ${vpsIp} did not come up within ${String(PROVISION_SSH_DEADLINE_MS / 1000)}s after start. ` +
+          `This is usually transient — retry (\`agentbox start\` / \`agentbox recover\`). If it persists, check ` +
+          `that your host's egress IP is stable (the box firewall is locked to it, so an IP change blocks ssh).`,
       );
     }
   },
@@ -610,6 +748,43 @@ export const hetznerBackend: CloudBackend = {
     return { url: `http://127.0.0.1:${String(localPort)}` };
   },
 
+  async repairReachability(h): Promise<{ changed: boolean; detail?: string }> {
+    // Re-sync the per-box firewall to the host's CURRENT egress IP, but only
+    // when it actually changed — the host laptop moved networks and the
+    // firewall is now blocking us. Called by the CLI ONLY on a connection-
+    // establishment failure (`recover`, the initial attach connect), never on a
+    // mid-session drop. A `0.0.0.0/0` firewall (explicit dynamic-IP opt-in) is
+    // already open, so it's a no-op.
+    const policy: InboundPolicy = h.inbound ?? { mode: 'locked', sources: [] };
+    if (policy.mode === 'open') return { changed: false };
+    const s = await firewallEgressStatus(h.sandboxId).catch(() => null);
+    if (!s || !firewallNeedsSync(s.allowedSources, s.currentEgress)) return { changed: false };
+    // Merge the stored whitelist with the refreshed egress so a drift heal
+    // never narrows a whitelisted box down to just the host IP.
+    const sources = resolveInboundSources(policy, s.currentEgress);
+    await syncFirewallSource(client(), s.firewallId, sources);
+    return {
+      changed: true,
+      detail: `firewall updated: SSH now allowed from ${sources.join(', ')} (was ${s.allowedSources.join(', ') || '(no rule)'})`,
+    };
+  },
+
+  async setInbound(h: CloudHandle, policy: InboundPolicy): Promise<{ sources: string[] }> {
+    // Apply an inbound-access policy to the box's firewall (`agentbox inbound`).
+    // `locked`/`whitelist` re-detect the host egress; `open` skips it.
+    const id = Number.parseInt(h.sandboxId, 10);
+    const server = await client().getServer(id);
+    if (!server) throw new Error(`hetzner: server ${h.sandboxId} not found`);
+    const firewallId = Number.parseInt(server.labels['agentbox.firewall'] ?? '', 10);
+    if (!Number.isFinite(firewallId)) {
+      throw new Error(`hetzner: no per-box firewall recorded for server ${h.sandboxId}`);
+    }
+    const hostEgress = policy.mode === 'open' ? null : `${await detectEgressIp({})}/32`;
+    const sources = resolveInboundSources(policy, hostEgress);
+    await syncFirewallSource(client(), firewallId, sources);
+    return { sources };
+  },
+
   async startInBoxPortless(h, opts): Promise<void> {
     // Bring up a `portless` proxy *inside the VPS* mirroring the host's
     // mode so `<boxName>.localhost:<P>` resolves to the same content on
@@ -628,7 +803,20 @@ export const hetznerBackend: CloudBackend = {
     const tlsFlag = opts.tls ? '' : '--no-tls';
     const startCmd = `sudo portless proxy start ${tlsFlag} -p ${String(opts.proxyPort)}`.replace(/\s+/g, ' ');
     const aliasCmd = `sudo portless alias ${shellQuote(opts.boxName)} ${String(opts.webPort)}`;
-    await this.exec(h, `${startCmd}; ${aliasCmd}`);
+    const cmds = [startCmd, aliasCmd];
+    if (opts.tls) {
+      // The TLS mirror serves its own self-signed CA at /root/.portless/ca.pem.
+      // `portless proxy start` only trusts it in the system store — not the box
+      // user's NSS db, which Chromium / Playwright read — so the VNC browser and
+      // Playwright fail with a cert error on `https://<box>.localhost`. Trust it
+      // everywhere (system store + vscode NSS db) and point Node at it via
+      // NODE_EXTRA_CA_CERTS. Best-effort: the helper never exits non-zero.
+      cmds.push(
+        'sudo agentbox-portless-trust /root/.portless/ca.pem >/dev/null 2>&1 || true',
+        `echo 'export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/agentbox-portless-ca.crt' | sudo tee /etc/profile.d/agentbox-portless-ca.sh >/dev/null || true`,
+      );
+    }
+    await this.exec(h, cmds.join('; '));
   },
 
   async attachArgv(h): Promise<string[]> {

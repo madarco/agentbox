@@ -36,6 +36,7 @@ describe('socket protocol', () => {
     await sup.init({
       tasks: [],
       replacements: {},
+      warnings: [],
       services: [
         spec({
           name: 'svc',

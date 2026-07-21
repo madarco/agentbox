@@ -26,15 +26,22 @@
     "integrations-linear",
     "---Providers---",
     "local-docker",
+    "remote-docker",
     "hetzner",
+    "digitalocean",
     "daytona",
     "vercel",
     "e2b",
     "tenki",
+    "---Community Providers---",
+    "islo",
     "---Reference---",
     "cli",
+    "hub",
+    "api",
     "agentbox-yaml",
     "configuration",
-    "environment"
+    "environment",
+    "build-a-provider"
   ]
 }

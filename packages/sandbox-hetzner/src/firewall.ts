@@ -20,17 +20,53 @@ import { HetznerApiError, type HetznerClient, type HetznerFirewall, type Hetzner
 import { withHetznerRetry } from './retry.js';
 
 /**
- * Build the SSH-only inbound rule for a given source CIDR. Outbound is
- * left unrestricted (empty rules array = "no inbound besides this one").
+ * Build the SSH-only inbound rule for one or more source CIDRs. Hetzner's
+ * `source_ips` is a list, so all allowed CIDRs ride a single tcp/22 rule (host
+ * egress for `locked`, `0.0.0.0/0`+`::/0` for `open`, host egress + the
+ * whitelist for `whitelist`). Outbound is left unrestricted (empty rules array
+ * = "no inbound besides this one"). Accepts a bare string for back-compat.
  */
-export function sshOnlyInboundRule(sourceCidr: string): HetznerFirewallRule[] {
+export function sshOnlyInboundRule(sources: string | string[]): HetznerFirewallRule[] {
+  const source_ips = Array.isArray(sources) ? sources : [sources];
   return [
     {
       direction: 'in',
       protocol: 'tcp',
       port: '22',
-      source_ips: [sourceCidr],
-      description: 'agentbox: SSH from host egress IP only',
+      source_ips,
+      description: 'agentbox: SSH inbound',
+    },
+  ];
+}
+
+/**
+ * Inbound rules for a control-plane VPS: SSH locked to the host's egress IP,
+ * but HTTP(S) open to the world (cloud boxes from arbitrary IPs reach the plane,
+ * and Caddy needs :80/:443 for the Let's Encrypt ACME challenge + serving). The
+ * Next app's own port is never exposed — Caddy fronts it on the compose network.
+ */
+export function controlPlaneInboundRules(hostCidr: string): HetznerFirewallRule[] {
+  return [
+    {
+      direction: 'in',
+      protocol: 'tcp',
+      port: '22',
+      source_ips: [hostCidr],
+      description: 'agentbox control plane: SSH from host egress IP only',
+    },
+    {
+      direction: 'in',
+      protocol: 'tcp',
+      port: '80',
+      source_ips: ['0.0.0.0/0', '::/0'],
+      description: 'agentbox control plane: HTTP (ACME challenge + redirect)',
+    },
+    {
+      direction: 'in',
+      protocol: 'tcp',
+      port: '443',
+      source_ips: ['0.0.0.0/0', '::/0'],
+      description: 'agentbox control plane: HTTPS',
     },
   ];
 }
@@ -38,8 +74,8 @@ export function sshOnlyInboundRule(sourceCidr: string): HetznerFirewallRule[] {
 export interface CreateFirewallOptions {
   /** Human-readable name persisted with the firewall (visible in the Hetzner dashboard). */
   name: string;
-  /** Source CIDR (e.g. `1.2.3.4/32`). The caller is responsible for normalizing the suffix. */
-  sourceCidr: string;
+  /** Inbound source CIDRs (already normalized/resolved by the caller). */
+  sources: string[];
   /** Labels merged onto the firewall (we always add `agentbox.managed=true`). */
   labels?: Record<string, string>;
 }
@@ -58,7 +94,7 @@ export async function createPerBoxFirewall(
     () =>
       client.createFirewall({
         name: opts.name,
-        rules: sshOnlyInboundRule(opts.sourceCidr),
+        rules: sshOnlyInboundRule(opts.sources),
         labels: {
           'agentbox.managed': 'true',
           'agentbox.role': 'box',
@@ -80,11 +116,11 @@ export async function createPerBoxFirewall(
 export async function syncFirewallSource(
   client: HetznerClient,
   firewallId: number,
-  sourceCidr: string,
+  sources: string | string[],
 ): Promise<void> {
   await withHetznerRetry(
     { method: 'setFirewallRules', retryOnAmbiguous: true, attemptTimeoutMs: 60_000 },
-    () => client.setFirewallRules(firewallId, sshOnlyInboundRule(sourceCidr)),
+    () => client.setFirewallRules(firewallId, sshOnlyInboundRule(sources)),
   );
 }
 
@@ -131,6 +167,27 @@ export async function deletePerBoxFirewall(
       throw err;
     }
   }
+}
+
+/**
+ * Whether the firewall's allowed SSH sources need re-syncing to include the
+ * current egress: true when the current egress isn't already allowed AND the
+ * firewall isn't wide-open (`0.0.0.0/0`, the `open` policy / dynamic-IP opt-in).
+ * Pure so the hint + auto-sync decision is unit-testable without the Hetzner
+ * API. Empty sources (no SSH rule) counts as a mismatch worth syncing. Accepts
+ * a bare string for back-compat callers.
+ */
+export function firewallNeedsSync(
+  allowedSources: string | string[] | undefined,
+  currentEgress: string,
+): boolean {
+  const list = Array.isArray(allowedSources)
+    ? allowedSources
+    : allowedSources
+      ? [allowedSources]
+      : [];
+  if (list.includes('0.0.0.0/0')) return false;
+  return !list.includes(currentEgress);
 }
 
 /**

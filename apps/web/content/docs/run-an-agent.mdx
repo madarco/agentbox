@@ -81,6 +81,11 @@ agentbox codex login                  # device-auth flow for Codex
 agentbox opencode login -- --provider anthropic
 ```
 
+Sign-in runs in a throwaway container, but the agent's own login TUI never takes over your terminal: AgentBox drives it behind the scenes, prints the approval URL, and prompts you for the code (or API key) itself. That keeps the flow identical in every terminal emulator. Two escape hatches:
+
+- `--interactive` hands your terminal to the agent's own login TUI — the old behavior. Use it for a login method the guided prompt can't drive (an exotic `agentbox claude login -- --sso`, or OpenCode's GitHub Copilot picker, which AgentBox falls back to automatically).
+- `--headless` (claude, and the automatic choice with no TTY) prints the URL and a greppable `AGENTBOX_LOGIN_URL=` marker, then you finish with `agentbox claude login --code <CODE>` — so an orchestrating agent can drive the sign-in. Codex's device-code flow needs no keystroke at all, so it already works without a terminal.
+
 ```console
 $ agentbox claude
 ? Sign in with your Claude subscription? (saved and reused by every box) › Yes
@@ -88,6 +93,12 @@ $ agentbox claude
 ```
 
 Setting `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` (Claude) or `OPENAI_API_KEY` (Codex) on the host forwards it into the box and skips the sign-in offer. Host `~/.claude` stays the source of truth — every `create` / `claude` syncs it in, so skills, plugins, MCP, and login flow into the next box. Cloud providers capture the login to `~/.agentbox` and push it in on create — see [hetzner](/docs/hetzner), [daytona](/docs/daytona), and [vercel](/docs/vercel).
+
+## Credential sync across boxes
+
+Claude's OAuth refresh **rotates** the refresh token: the moment any box refreshes, every other copy of that login (the host backup, other boxes) stops working and 401s. AgentBox handles this automatically: the in-box supervisor watches each agent's credential file (`~/.claude/.credentials.json`, codex/opencode `auth.json`) and reports a refreshed blob to the host relay, which keeps the newest one (for Claude, `expiresAt` decides; codex/opencode are last-writer-wins) and pushes it into all your other running boxes — docker boxes via their config volumes (paused ones included), cloud boxes over the provider transport. A paused cloud box is reconciled when it wakes: `resume`/`start` compares the box's blobs with the host backup and pushes or captures whichever is newer.
+
+This is on by default; disable it per box with `agentbox create --no-credential-sync` or globally with `agentbox config set box.credentialSync false`. A long-*running* agent session may hold the old token in memory and ask you to `/login` once even after the file was fixed — restart the session and it picks up the fresh login.
 
 <Callout title="TIP">
 Sign in once on the host. Install a skill or sign in there, and the next box picks it up automatically. See [configuration](/docs/configuration) and [sync and git](/docs/sync-and-git).

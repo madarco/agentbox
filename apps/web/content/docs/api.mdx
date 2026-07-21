@@ -1,0 +1,211 @@
+---
+title: REST API
+description: A versioned HTTP API for launching and managing boxes — for IDEs, scripts, and remote hubs
+---
+
+The hub serves a small, versioned **REST API** under `/api/v1` on the same port as
+the [hub UI](/docs/hub) and relay (`http://127.0.0.1:8787` locally). It's for
+programmatic callers — IDE integrations, scripts, macOS apps, etc. — and is the
+way to drive AgentBox when the hub runs on a **separate host** (a control
+plane), where there's no local CLI to shell out to.
+
+<Callout type="info" title="Local vs. remote">On your own machine you can also just call the CLI with `--json` (`agentbox list --json`, `agentbox status <box> --json`). The API is what you reach for across a network, or when you want one stable HTTP contract instead of spawning a process per call.</Callout>
+
+## Base URL and versioning
+
+```
+http://127.0.0.1:8787/api/v1
+```
+
+Every path is prefixed with `/api/v1`. The version is in the path so future
+breaking changes can ship as `/api/v2` without disturbing existing clients.
+
+## Auth
+
+Every endpoint except `/health`, `/openapi.json`, and `/docs` requires the hub
+token as a **Bearer** credential:
+
+```bash
+TOKEN=$(cat ~/.agentbox/hub/token)
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8787/api/v1/boxes
+```
+
+The token is the same per-machine secret the hub prints on boot (and stores at
+`~/.agentbox/hub/token`, mode `0600`). Requests without a valid token get a JSON
+`401` — never a redirect, so non-browser clients work cleanly. On a shared
+(password-protected) hub, `/api/v1` accepts the logged-in session; dedicated API
+keys arrive with the hosted deployment.
+
+## Response shape
+
+Success responses return the resource or collection directly. Errors are always:
+
+```json
+{ "error": { "code": "not_found", "message": "box not found: abc123" } }
+```
+
+with an HTTP status that matches the `code` (`400 invalid_request`,
+`401 unauthorized`, `404 not_found`, `409 conflict`, `503 backend_unavailable`).
+
+## Endpoints
+
+Endpoints are grouped by topic — the same sections you'll see in the sidebar of
+the interactive reference at `GET /docs`.
+
+### System
+
+| Method + path       | Description                          |
+| ------------------- | ------------------------------------ |
+| `GET /health`       | Liveness + API version (no auth).    |
+| `GET /openapi.json` | The OpenAPI 3.1 spec (no auth).      |
+| `GET /docs`         | Interactive API reference (no auth). |
+
+### Boxes
+
+| Method + path              | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /boxes`               | List every box (normalized view).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `GET /boxes/{id}`          | One box.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `POST /boxes`              | Create a box — returns `202 { jobId }`. Body: `{ projectId, agent, provider?, name?, prompt?, fromBranch?, setupWizard? }`. `agent: "none"` just creates the box without starting an agent (`prompt` ignored). `provider` defaults to `docker`; a cloud provider must be configured on the host (see `GET /providers`). `fromBranch` bases the box's per-box branch on a chosen ref (branch/tag/SHA) instead of the project's HEAD — validated against the host repo. `setupWizard: true` seeds the agent's first turn to generate an `agentbox.yaml` (for projects that have none); inert for `agent: "none"`. |
+| `POST /boxes/{id}/start`   | Start a stopped box (resumes if paused, no-op if already running). Does not restart the agent session — that happens on the next attach.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `POST /boxes/{id}/pause`   | Pause a running box. |
+| `POST /boxes/{id}/resume`  | Resume a paused box.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `POST /boxes/{id}/stop`    | Stop a box.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `POST /boxes/{id}/destroy` | Destroy a box (container + volumes). On a synthetic `job:` id it instead **dismisses** a failed create (clears the queue entry); a create still in progress returns `409`. The other lifecycle actions all `409` on a `job:` id.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `POST /boxes/{id}/screen`  | Open-VNC prep: points the in-box browser at the box's web app so the VNC desktop shows the app instead of a blank X screen (the `agentbox screen` step). Call it right before opening the box's `vncUrl`; browser-launch failures are logged server-side, not returned.                                                                                                                                                                                                                                                                                                                                        |
+
+### Box git
+
+| Method + path               | Description                                                                                                                                                                                                                                                                                                                                          |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /boxes/{id}/git`       | Live git summary of the box's worktree: `{ ok, branch, dirty, ahead, behind }`.                                                                                                                                                                                                                                                                      |
+| `POST /boxes/{id}/git/{op}` | Git op on the box branch (`checkout`, `branch`, `pull`, `push`, `push-host`). Body per op: `checkout {branch}`; `branch {name, from?}` (create+switch a new `agentbox/*` branch); `pull {remote?, ffOnly?}`; `push {remote?, force?}`; `push-host {as?, force?}` (land in the host repo only — publishes nothing). Returns `{ ok, stdout, stderr }`. |
+| `GET /boxes/{id}/branches`  | The box project's branches (local + remote) and current HEAD, for the box git-panel branch picker: `{ current, branches }`.                                                                                                                                                                                                                          |
+
+### Box services
+
+| Method + path                       | Description                                                                                      |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `GET /boxes/{id}/services`          | The box's `agentbox.yaml` service/task/port status (`source: live \| persisted \| unavailable`). |
+| `POST /boxes/{id}/services/restart` | Restart one service (`{ name }`) or every service (empty body).                                  |
+
+### Projects
+
+| Method + path                 | Description                                                                                                                                        |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /projects`               | Registered projects (create targets). Each carries `currentBranch` (the default base) and `needsSetup` (no `agentbox.yaml` + no default snapshot). |
+| `POST /projects`              | Register a folder as a project. Body: `{ path }` (absolute).                                                                                       |
+| `GET /projects/{id}/branches` | The project's branches (local + remote) and current HEAD, for the create base-branch picker: `{ current, branches }`.                              |
+| `DELETE /projects/{id}`       | Unregister an **empty** project (0 boxes). Folder/files on disk are untouched; `409` if it still has boxes.                                        |
+
+### Providers
+
+| Method + path                      | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /providers`                   | Sandbox providers with credential + baked status on this host: `{ id, label, configured, hasCredentials?, jobId?, reason? }`. `configured` = base image baked (usable for create); `hasCredentials` = credentials present (docker always); `jobId` = an in-flight bake, if any. Add `?freshness=1` to also report base-image staleness per provider: `baseStatus` (`fresh` \| `stale` \| `unprepared` \| `unknown`) + `baseStaleReason` when stale — `stale` means the baked snapshot is out of date and `agentbox prepare --provider <id>` should be re-run. Docker reports real freshness too (`unprepared` = the base image hasn't been built yet, `stale` = the next create will rebuild it) while staying `configured: true` — its base self-heals at create time, so freshness is a heads-up for UIs to announce the bake, never a gate. Freshness loads provider code and hashes the runtime build context (memoized ~60s for cloud providers), so it's kept off the default fast path; it's populated only on the in-process host topology (omitted on the hosted plane). |
+| `POST /providers/{id}/credentials` | Set a provider's credentials (validated against the cloud, then saved to `~/.agentbox/secrets.env`). Body is provider-specific string fields: `{ apiKey }` (e2b/daytona), `{ token }` (hetzner), `{ token, teamId?, projectId? }` (vercel). Never echoes secret values. Host-topology only (`503` on the hosted plane).                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `POST /providers/{id}/prepare`     | Bake a provider's base image — returns `202 { jobId }`. Optional body `{ force?, claudeInstall? }`. Progress streams over `GET /jobs/{id}/logs` (same as create). Prechecks the host (docker daemon; hetzner `ssh`/`scp`; credentials present) and reuses an in-flight bake for the same provider.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+
+### Approvals
+
+| Method + path                 | Description                                         |
+| ----------------------------- | --------------------------------------------------- |
+| `GET /approvals`              | Pending host-action approvals.                      |
+| `POST /approvals/{id}/answer` | Answer an approval. Body: `{ answer: "y" \| "n" }`. |
+
+### Jobs
+
+| Method + path         | Description                                             |
+| --------------------- | ------------------------------------------------------- |
+| `GET /jobs/{id}`      | Create-job status (`queued`/`running`/`done`/`failed`). |
+| `GET /jobs/{id}/logs` | Stream the build log (SSE).                             |
+
+The box view is provider-agnostic: `{ id, projectId, repo, branch, task, agent,
+status, createdAt, lastActivity, host, commits, filesTouched, error, displayName,
+webUrl, vncUrl }`, where `status` is one of
+`running | paused | stopped | creating | error`. Boxes still being created (and
+failed creates) appear as synthetic `creating`/`error` entries with a `job:` id
+until the real box lands. A failed create can be cleared with
+`POST /boxes/{id}/destroy` (dismiss). On the local host topology each box also carries raw
+host-side fields for native clients (the tray app): `state` (the raw provider
+state — absent on synthetic entries, which is how a client tells a failed create
+from a running box whose agent errored), `name`, `provider`, `projectRoot`,
+`projectIndex`, `vncEnabled`, `gitWorktrees`, per-agent session titles, and
+`claudeActivity`/`codexActivity`.
+
+## Creating a box
+
+Creation is asynchronous — it enqueues a build job and returns immediately:
+
+```bash
+# Register the folder once (skip if it's already a project):
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"path":"/abs/path/to/repo"}' \
+  http://127.0.0.1:8787/api/v1/projects
+
+# Create a box for it (grab the projectId from GET /projects):
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"projectId":"<id>","agent":"claude","name":"feature-x"}' \
+  http://127.0.0.1:8787/api/v1/boxes
+# -> 202 { "jobId": "..." }
+```
+
+A box being built shows up in `GET /boxes` with `status: "creating"` right away,
+then flips to `running` once the container is up.
+
+## Streaming logs (SSE)
+
+`GET /jobs/{id}/logs` is a Server-Sent Events stream: an `open` event, then a `log`
+event per line, then a terminal `end` event with the final status.
+
+```bash
+curl -N -H "Authorization: Bearer $TOKEN" \
+  http://127.0.0.1:8787/api/v1/jobs/<jobId>/logs
+```
+
+```
+event: open
+data: {"id":"<jobId>"}
+
+event: log
+data: "... building image ..."
+
+event: end
+data: {"status":"done"}
+```
+
+## Installing providers &amp; baking images
+
+Before a cloud provider can host boxes it needs two things on the host: its
+**credentials** and its **baked base image**. Both are drivable over the API
+(the hub settings UI uses exactly these calls), so you never have to drop to a
+terminal:
+
+```bash
+# 1. Save credentials (validated against the cloud, then written to secrets.env):
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"apiKey":"e2b_..."}' \
+  http://127.0.0.1:8787/api/v1/providers/e2b/credentials
+# -> 200 { "ok": true }   (a rejected token -> 400 with the reason)
+
+# 2. Bake the base image (async — stream the build like a create job):
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{}' http://127.0.0.1:8787/api/v1/providers/e2b/prepare
+# -> 202 { "jobId": "..." }
+curl -N -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8787/api/v1/jobs/<jobId>/logs
+```
+
+Once the bake finishes, `GET /providers` reports the provider as `configured:
+true` and it becomes a valid `provider` for `POST /boxes`. Docker needs no
+credentials; its base self-heals, so a bake there is optional (a `force` rebuild).
+
+<Callout type="info" title="Host capability">
+  These two endpoints run on the host that owns Docker/SSH and writes `~/.agentbox` — the local or
+  full-host hub. On the hosted (serverless) plane they return `503`.
+</Callout>
+
+## Exploring the API
+
+`GET /api/v1/docs` renders the full spec (an interactive reference), and
+`GET /api/v1/openapi.json` returns the raw OpenAPI 3.1 document you can feed to a
+client generator or an IDE's HTTP client.

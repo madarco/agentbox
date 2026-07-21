@@ -1,0 +1,44 @@
+name: CLA
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    # `reopened` matters: CLA is a required check, and a check that never reports is
+    # indistinguishable from one that is still pending — it would block the merge forever.
+    types: [opened, reopened, synchronize, closed]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  cla:
+    name: CLA
+    runs-on: ubuntu-latest
+    # issue_comment fires for plain issues as well as pull requests; without the
+    # `issue.pull_request` guard the sign phrase posted on any issue would invoke the
+    # action with no pull-request context.
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request &&
+       github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA')
+    steps:
+      - name: Check the contributor license agreement
+        uses: contributor-assistant/github-action@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-document: https://github.com/madarco/agentbox/blob/main/.github/CLA.md
+          path-to-signatures: signatures/v1/cla.json
+          # Signatures are committed by the bot; they must not land on the protected main branch.
+          branch: cla-signatures
+          allowlist: madarco,*[bot]
+          custom-notsigned-prcomment: >
+            Thanks for your pull request. Before it can be merged, please read our
+            [Contributor License Agreement](https://github.com/madarco/agentbox/blob/main/.github/CLA.md)
+            and sign it by posting the comment below. You only ever have to do this once.
+          custom-pr-sign-comment: I have read the CLA Document and I hereby sign the CLA
+          custom-allsigned-prcomment: All contributors have signed the CLA. Thank you!

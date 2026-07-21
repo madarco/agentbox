@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCarryOverSteps, lfsObjectRelPath, parseSeedConflicts } from '../src/workspace-seed.js';
+import { buildCarryOverSteps, lfsObjectRelPath, parseSeedConflicts } from '../src/sync/workspace-seed.js';
 
 describe('lfsObjectRelPath', () => {
   it('maps an oid to git-lfs content-addressed storage (aa/bb/<oid>)', () => {

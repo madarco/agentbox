@@ -105,6 +105,33 @@ export function parseNetworkPolicy(raw: string | undefined): NetworkPolicy | und
   return allow.length > 0 ? { allow } : undefined;
 }
 
+/** vCPU counts Vercel accepts; anything else fails `Sandbox.create` with a 400. */
+const VERCEL_VCPUS = [1, 2, 4, 8] as const;
+export type VercelVcpus = (typeof VERCEL_VCPUS)[number];
+
+/**
+ * Parse the generic `--size` / `box.size<Vercel>` spec into a vCPU count.
+ * Empty/unset → undefined (caller falls back to the default). A non-empty spec
+ * that isn't one of the accepted counts throws — better a local error than a
+ * billable 400 from `Sandbox.create`.
+ */
+export function parseVercelVcpus(spec: string | undefined): VercelVcpus | undefined {
+  const v = (spec ?? '').trim();
+  if (v === '') return undefined;
+  const n = Number(v);
+  const match = VERCEL_VCPUS.find((c) => c === n);
+  if (match === undefined) {
+    throw new Error(
+      `invalid vercel size ${JSON.stringify(v)}: expected a vCPU count (${VERCEL_VCPUS.join(', ')}). ` +
+        'Vercel couples RAM at 2048 MB/vCPU. This often means a generic `box.size` meant for ' +
+        'another provider reached vercel: set a vercel-specific size with ' +
+        '`agentbox config set box.sizeVercel 4` (or `--size 4`), or clear the generic one with ' +
+        '`agentbox config unset box.size`.',
+    );
+  }
+  return match;
+}
+
 /**
  * Default per-session timeout. 45 min is the Hobby ceiling, so it's safe across
  * all plans; persistent mode makes a hit transparent (the VM auto-snapshots and
@@ -233,6 +260,10 @@ export const vercelBackend: CloudBackend = {
       );
     }
     const networkPolicy = parseNetworkPolicy(req.networkPolicy);
+    // Validate before Sandbox.create: an unsupported vCPU count is a billable
+    // 400 round-trip, and the generic `box.size` may hold another provider's
+    // spec entirely (e.g. hetzner's `cx33`).
+    const vcpus = parseVercelVcpus(req.size);
     // No-retry: Sandbox.create is billable and non-idempotent — a timeout after
     // the request reached the origin could leave a duplicate sandbox we can't
     // reference for cleanup.
@@ -242,7 +273,7 @@ export const vercelBackend: CloudBackend = {
         const sb = await Sandbox.create({
           name: req.name,
           source: { type: 'snapshot', snapshotId },
-          resources: { vcpus: req.resources?.cpu ?? 2 },
+          resources: { vcpus: vcpus ?? 2 },
           ports: buildExposedPorts(req.exposePorts),
           timeout: req.timeoutMs ?? DEFAULT_TIMEOUT_MS,
           env: req.env,

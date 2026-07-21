@@ -6,7 +6,7 @@ import {
   encodeClaudeProjectsKey,
   resolveClaudeMemoryDir,
   BOX_CLAUDE_PROJECT_DIR,
-} from '../src/host-stage.js';
+} from '@agentbox/sandbox-core';
 import {
   BOX_MEMORY_DIR,
   BOX_WORKFLOWS_DIR,
@@ -15,7 +15,7 @@ import {
   stageDynamicSyncTarball,
   type DynamicSyncManifest,
   type HostSyncManifest,
-} from '../src/dynamic-sync.js';
+} from '../src/sync/dynamic-sync.js';
 
 describe('encodeClaudeProjectsKey', () => {
   it('encodes /workspace to -workspace', () => {

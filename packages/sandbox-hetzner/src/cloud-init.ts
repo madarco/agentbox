@@ -59,6 +59,52 @@ export function generatePrepareCloudInit(opts: PrepareCloudInitOptions): string 
   ].join('\n');
 }
 
+export interface ControlPlaneCloudInitOptions {
+  /** ed25519/rsa public key string (one line, OpenSSH format) for `root`. */
+  sshPubkey: string;
+  /** Public git repo to clone the control-plane app from. */
+  repoUrl: string;
+  /** Branch / tag / sha to check out. */
+  repoRef: string;
+}
+
+/**
+ * Cloud-init for a control-plane VPS (stock Ubuntu, not the box snapshot).
+ * Logs in as `root`, installs Docker + git, and clones the agentbox repo to
+ * `/opt/agentbox`. The orchestrator then scp's the secret env + Caddy config
+ * and runs `docker compose up` over ssh — secrets never go in user-data (which
+ * is readable from cloud metadata).
+ */
+export function controlPlaneCloudInit(opts: ControlPlaneCloudInitOptions): string {
+  const pubkey = opts.sshPubkey.trim();
+  return [
+    '#cloud-config',
+    '# AgentBox control-plane VPS — provisioned by `agentbox control-plane setup --deploy hetzner`.',
+    'disable_root: false',
+    'ssh_pwauth: false',
+    'chpasswd:',
+    '  expire: false',
+    'users:',
+    '  - name: root',
+    '    lock_passwd: false',
+    '    ssh_authorized_keys:',
+    `      - ${yamlScalar(pubkey)}`,
+    'runcmd:',
+    '  - [ passwd, -d, root ]',
+    '  - [ chage, -E, "-1", -I, "-1", -M, "99999", root ]',
+    '  - [ bash, -lc, "curl -fsSL https://get.docker.com | sh" ]',
+    '  - [ bash, -lc, "apt-get update && apt-get install -y git" ]',
+    `  - [ bash, -lc, "git clone --depth 1 --branch ${shArg(opts.repoRef)} ${shArg(opts.repoUrl)} /opt/agentbox || git clone ${shArg(opts.repoUrl)} /opt/agentbox" ]`,
+    '',
+  ].join('\n');
+}
+
+/** Single-quote a value for embedding inside a `bash -lc "..."` cloud-init step. */
+function shArg(value: string): string {
+  // Only used for repo URL/ref (no shell metachars in practice); guard anyway.
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 export interface BoxCloudInitOptions {
   /** ed25519/rsa public key string (one line, OpenSSH format). */
   sshPubkey: string;

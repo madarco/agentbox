@@ -58,9 +58,13 @@ Routed through `daytonaProvider` → `createCloudProvider(daytonaBackend)`
    (see [Snapshot bake](#snapshot-bake)).
 6. **Upload env/config files** (`uploadEnvFiles`) — the `.env`/`secrets.toml`/
    etc. the setup wizard collected.
-7. **Launch `agentbox-ctl`** (`launchCloudCtlDaemon`), **in-box dockerd**
-   (`launchCloudDockerdDaemon`, best-effort — mirrors the docker provider's
-   always-on dockerd), and **VNC stack** (`launchCloudVncDaemon`, best-effort).
+7. **Run the in-box bootstrap** (`kickCloudBootstrap` → one `backend.exec` of
+   `agentbox-ctl bootstrap`) — a single idempotent self-configure that launches
+   **dockerd** (best-effort), the **ctl daemon**, and the **VNC stack**
+   (best-effort), each only if not already live, and (on the plane / cloud-IDE
+   path) clones `/workspace` from a leased token first. This replaced the three
+   separate host-driven launches and is re-run verbatim on resume — see
+   [`in-box-supervisor.md`](./in-box-supervisor.md).
 8. **Mint preview URLs** — webproxy (8080), per-`expose.port` service URLs
    from `agentbox.yaml`, and the **bridge URL on 8788** so the host's
    `CloudBoxPoller` can reach the in-box relay.

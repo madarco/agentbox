@@ -4,8 +4,8 @@ import {
   findProjectRoot,
   loadEffectiveConfig,
   pruneOrphanProjectConfigs,
+  registerProject,
   resolveBoxImage,
-  resolveBoxSize,
   resolveDefaultCheckpoint,
   type UserConfig,
 } from '@agentbox/config';
@@ -18,12 +18,15 @@ import {
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
 import { runCarryGate } from '../lib/carry-gate.js';
+import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { makeProgressReporter } from '../lib/progress.js';
+import { autoWriteSshConfig } from '@agentbox/sandbox-core';
 import { maybePromptPortless, setupPortlessHost } from '../portless-prompt.js';
 import { providerForCreate } from '../provider/registry.js';
+import { parseProviderSpec } from '../provider/spec.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
 import { resolveLimits } from '../limits.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
@@ -67,14 +70,25 @@ interface CreateOptions {
   disk?: string;
   /** --bundle-depth <n>: cap commits in the cloud-seed git bundle. 0 = full history. */
   bundleDepth?: number;
-  /** --size <spec>: VM size for cloud providers. Hetzner: server type (cx33); Daytona: cpu-mem-disk GB (4-8-20). */
+  /** --size <spec>: VM size for cloud providers. Hetzner: server type (cx33); Daytona: cpu-mem-disk GB (4-8-20); Vercel: vCPUs (4). */
   size?: string;
+  /** --location <name>: Hetzner datacenter (nbg1, fsn1, hel1, ash). Hetzner-only. */
+  location?: string;
+  /** --inbound <spec>: VPS firewall access policy (locked | open | CIDR list). Hetzner/DigitalOcean-only. */
+  inbound?: string;
+  /** --remote-host <dest>: SSH destination whose docker engine runs the box. remote-docker-only. */
+  remoteHost?: string;
   /** --from-branch <ref>: base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. */
   fromBranch?: string;
   /** -b / --use-branch <name>: reuse an existing branch directly instead of forking agentbox/<name>. */
   useBranch?: string;
   /** -v / --verbose: also stream raw build / provision output to stderr. */
   verbose?: boolean;
+  /** --no-credential-sync => false; default true (config box.credentialSync). */
+  credentialSync?: boolean;
+  /** --dangerously-with-credentials: copy a git credential into the box (git.pushMode=direct); cloud only.
+   *  The token-vs-SSH choice is made ONLY at the interactive prompt (TTY required). */
+  dangerouslyWithCredentials?: boolean;
 }
 
 function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
@@ -86,10 +100,14 @@ function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
   if (opts.withEnv === true) box.withEnv = true;
   if (opts.vnc === false) box.vnc = false;
   if (opts.sharedDockerCache === true) box.dockerCacheShared = true;
+  if (opts.credentialSync === false) box.credentialSync = false;
   if (opts.bundleDepth !== undefined) box.bundleDepth = opts.bundleDepth;
   const out: Partial<UserConfig> = {};
   if (Object.keys(box).length > 0) out.box = box;
   if (opts.portless !== undefined) out.portless = { enabled: opts.portless };
+  // --dangerously-with-credentials selects the direct push mode (box holds a copy of your
+  // git credentials). The actual copy is gated by a choice prompt later.
+  if (opts.dangerouslyWithCredentials) out.git = { pushMode: 'direct' };
   return out;
 }
 
@@ -143,7 +161,14 @@ export const createCommand = new Command('create')
   )
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
   .option('-n, --name <name>', 'friendly box name (default: <workspace-basename>-<id>)')
-  .option('--provider <name>', "sandbox backend: 'docker' (default) or 'daytona' (cloud)")
+  .option(
+    '--provider <name>',
+    "sandbox backend: docker (default), daytona, hetzner, digitalocean, vercel, e2b, remote-docker. `docker:<host>` runs the box on that machine's docker engine over SSH.",
+  )
+  .option(
+    '--remote-host <dest>',
+    'SSH destination whose docker engine runs the box — an ~/.ssh/config alias or [user@]host[:port]. Overrides box.remoteDockerHost. Same as `--provider docker:<dest>`. remote-docker-only.',
+  )
   .option(
     '--host-snapshot',
     'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)',
@@ -187,7 +212,15 @@ export const createCommand = new Command('create')
   )
   .option(
     '--size <spec>',
-    'VM size for cloud providers. Hetzner: server type (e.g. cx33). Daytona: cpu-mem-disk GB (e.g. 4-8-20). Overrides box.size / box.size<Provider>.',
+    'VM size for cloud providers. Hetzner: server type (e.g. cx33). DigitalOcean: Droplet size slug (e.g. s-4vcpu-8gb). Daytona: cpu-mem-disk GB (e.g. 4-8-20). Vercel: vCPUs (1, 2, 4, 8). E2B: baked at prepare time. Overrides box.size / box.size<Provider>.',
+  )
+  .option(
+    '--location <name>',
+    'Datacenter/region for the new box. Hetzner: nbg1, fsn1, hel1, ash (overrides box.hetznerLocation). DigitalOcean: nyc3, sfo3, ams3, fra1 (overrides box.digitaloceanRegion). Hetzner/DigitalOcean-only.',
+  )
+  .option(
+    '--inbound <spec>',
+    'Inbound-access policy for the VPS firewall. `locked` (default, host egress IP only), `open` (0.0.0.0/0, key-only — reach the box from a phone with the laptop off), or a CIDR list (e.g. 203.0.113.5/32). Overrides box.inbound. Hetzner/DigitalOcean-only.',
   )
   .option(
     '--bundle-depth <n>',
@@ -218,6 +251,14 @@ export const createCommand = new Command('create')
     'ask',
   )
   .option(
+    '--no-credential-sync',
+    'disable automatic credential sync for this box (the in-box watcher that fans refreshed agent tokens out to your other boxes)',
+  )
+  .option(
+    '--dangerously-with-credentials',
+    "copy a git credential INTO the box so it can push with your PC off (needs no hub). You'll be asked at an interactive prompt to choose 'token' (push over HTTPS, commits unsigned, smallest exposure) or your 'ssh' private key (signs commits, riskiest). DANGEROUS: the credential lives in the box and its snapshots. Requires a real terminal (no non-interactive / CI path). Cloud providers only. Sets git.pushMode=direct.",
+  )
+  .option(
     '-v, --verbose',
     'also stream the raw provider output (docker build / Daytona snapshot create) to stderr. The same content always lands in ~/.agentbox/logs/create.log — pass -v when you want to watch it live without tailing the log.',
   )
@@ -229,29 +270,53 @@ export const createCommand = new Command('create')
       cliOverrides: buildCliOverrides(opts),
     });
     const projectRoot = (await findProjectRoot(opts.workspace)).root;
-    const providerName = opts.provider ?? cfg.effective.box.provider ?? 'docker';
+    // Register the project in the on-disk registry so the hub / web UI can list
+    // it (even before it has any box). Best-effort: never block or fail create.
+    // Other create entry points (agent commands, queue worker) are covered by
+    // the hub's self-heal backfill, which registers any box's projectRoot it sees.
+    try {
+      await registerProject(projectRoot);
+    } catch {
+      /* best-effort project registration */
+    }
+    // `--provider` may be a host-qualified spec (`docker:buildbox`). Split it:
+    // `providerName` must stay a bare name — it keys the per-provider config
+    // (box.image<P>, box.defaultCheckpoint<P>) and lands on the box record.
+    const { name: providerName, remoteHost: specRemoteHost } = parseProviderSpec(
+      opts.provider ?? cfg.effective.box.provider ?? 'docker',
+    );
+    const remoteHost = opts.remoteHost ?? specRemoteHost;
+    // `direct` push mode (box holds a copy of your git credentials) is only
+    // meaningful for cloud boxes: a docker box runs on your host machine and
+    // bind-mounts the host `.git`, so it is never independent of the host.
+    if (cfg.effective.git.pushMode === 'direct' && providerName === 'docker') {
+      log.error(
+        'git.pushMode=direct / --dangerously-with-credentials is not applicable to docker boxes (they run on your host and bind-mount the host .git). Use a cloud provider (e.g. --provider hetzner|e2b|vercel|daytona).',
+      );
+      cmdLog.close();
+      process.exit(1);
+    }
     const checkpointRef = resolveCheckpointRef(
       opts,
-      resolveDefaultCheckpoint(
-        cfg.effective,
-        providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel',
-      ),
+      resolveDefaultCheckpoint(cfg.effective, providerName),
     );
-    // VM size: `--size` flag wins; otherwise the cascaded box.size /
-    // box.size<Provider>. Resolved here (not in buildCliOverrides) so a CLI
-    // override beats a project-level per-provider key.
-    const sizeDefault = resolveBoxSize(
-      cfg.effective,
-      providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel',
-    );
-    const effectiveSize = opts.size && opts.size.length > 0 ? opts.size : sizeDefault;
+    if (opts.location && providerName !== 'hetzner' && providerName !== 'digitalocean') {
+      log.warn(
+        `--location applies to hetzner/digitalocean only; ignored for provider ${providerName}`,
+      );
+    }
+    if (opts.inbound && providerName !== 'hetzner' && providerName !== 'digitalocean') {
+      log.warn(
+        `--inbound applies to hetzner/digitalocean only; ignored for provider ${providerName}`,
+      );
+    }
+    if (opts.remoteHost && providerName !== 'remote-docker') {
+      log.warn(`--remote-host applies to remote-docker only; ignored for provider ${providerName}`);
+    }
     // Box image: same precedence pattern as --size. `--image` wins; otherwise
     // the cascaded box.image / box.image<Provider> (written by `agentbox
     // prepare --provider X`).
-    const imageDefault = resolveBoxImage(
-      cfg.effective,
-      providerName as 'docker' | 'daytona' | 'hetzner' | 'vercel',
-    );
+    const imageDefault = resolveBoxImage(cfg.effective, providerName);
     const effectiveImage = opts.image && opts.image.length > 0 ? opts.image : imageDefault;
 
     // Cloud providers that use the Daytona public-URL path don't need
@@ -274,7 +339,10 @@ export const createCommand = new Command('create')
       });
     } else if (isHetzner) {
       portlessEnabled = cfg.effective.portless.enabled ?? true;
-      if (portlessEnabled) await setupPortlessHost();
+      // Only surface the :443 root-password dialog for interactive runs;
+      // scripted / --yes Hetzner creates fall through to the no-root :1355 proxy.
+      if (portlessEnabled)
+        await setupPortlessHost({ allowRootPrompt: !!process.stdin.isTTY && !opts.yes });
     }
 
     // Carry gate (agentbox.yaml's `carry:` block): resolve + ask BEFORE the
@@ -303,6 +371,18 @@ export const createCommand = new Command('create')
       process.exit(1);
     }
 
+    // git.pushMode=direct (--dangerously-with-credentials): copy the user's git credentials
+    // into the box so it pushes/pulls/signs on its own (PC-off). Gated by its
+    // own confirmation + security warning; the approved secret files ride the
+    // same carry apply path as the carry: block above.
+    carryEntries = await resolveGitCredsCarry({
+      pushMode: cfg.effective.git.pushMode,
+      projectRoot,
+      existing: carryEntries,
+      onLog: (line) => cmdLog.write(line),
+      onClose: () => cmdLog.close(),
+    });
+
     // First-run wizard: when no agentbox.yaml exists, optionally hand off to
     // `agentbox claude` so the agent can interactively generate one. The
     // wizard runs for every provider — it's the env-file picker + first-run
@@ -312,7 +392,7 @@ export const createCommand = new Command('create')
     // runtime; if the local install no longer matches, the wizard offers to
     // rebuild before creating. Docker self-heals via `ensureImage`, so its
     // baseStatus is always `fresh` and the wizard is a no-op here.
-    const baseStatus = await evaluateBaseFreshness(providerName);
+    const baseStatus = await evaluateBaseFreshness(providerName, cfg.effective.box.claudeInstall);
     const wiz = await maybeRunSetupWizard({
       workspace: opts.workspace,
       yes: !!opts.yes,
@@ -418,11 +498,18 @@ export const createCommand = new Command('create')
         envFilesToImport: wiz.envFilesToImport,
         carry: carryEntries,
         vnc: { enabled: cfg.effective.box.vnc },
+        credentialSync: cfg.effective.box.credentialSync,
         limits: resolveLimits(cfg.effective.box, opts),
         bundleDepth: cfg.effective.box.bundleDepth,
         fromBranch,
         useBranch,
         resyncOnStart: opts.resync,
+        // When a control plane is configured, a cloud box's live relay IS the
+        // plane: the provider resolves control-plane topology, registers the box
+        // on the plane, and the box forwards /rpc + leases push tokens directly.
+        // Cloud-only in effect; the docker provider ignores it.
+        controlPlaneUrl: cfg.effective.relay.controlPlaneUrl,
+        gitPushMode: cfg.effective.git.pushMode,
         projectRoot,
         onLog: (line) => {
           s.message(line);
@@ -433,16 +520,29 @@ export const createCommand = new Command('create')
           sharedCache: cfg.effective.box.dockerCacheShared,
           portless: portlessEnabled,
           portlessStateDir: cfg.effective.portless.stateDir || undefined,
-          ...(effectiveSize ? { size: effectiveSize } : {}),
-          // Per-provider sizing / session-lifetime overrides (vercel vcpus /
-          // timeout / network policy, e2b timeout). The cloud scaffold reads
-          // them; other providers ignore them.
-          ...cloudSizingProviderOptions(provider.name, cfg.effective),
+          // Size / location / session-lifetime overrides, resolved from the
+          // flags then the cascaded config. The cloud scaffold reads them;
+          // providers ignore the keys they don't know.
+          ...cloudSizingProviderOptions(provider.name, cfg.effective, {
+            size: opts.size,
+            location: opts.location,
+            inbound: opts.inbound,
+            remoteHost,
+          }),
         },
       });
       s.stop(`box ${result.record.container} ready`);
       const createResyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
       if (createResyncWarning) log.warn(createResyncWarning);
+
+      // Default-on: write the `~/.agentbox/ssh/config` entry for SSH-capable
+      // cloud boxes (Hetzner/DigitalOcean) so `ssh <box>` just works. Best-effort
+      // and gated by `ssh.autoConfig`; skips docker and token-auth providers.
+      if (!isDocker) {
+        await autoWriteSshConfig(result.record, provider, cfg.effective.ssh.autoConfig, (m) =>
+          log.warn(m),
+        );
+      }
 
       log.info(`id:        ${result.record.id}`);
       if (typeof result.record.projectIndex === 'number') {
@@ -466,7 +566,7 @@ export const createCommand = new Command('create')
           ]
         : [
             `  agentbox shell ${result.record.name}`,
-            `  agentbox claude attach ${result.record.name}`,
+            `  agentbox attach ${result.record.name}`,
             `  agentbox url ${result.record.name}`,
           ];
       log.message(

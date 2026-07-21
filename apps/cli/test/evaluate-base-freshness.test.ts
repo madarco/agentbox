@@ -5,6 +5,20 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 // vi.mocked().
 vi.mock('@agentbox/sandbox-cloud', () => ({
   currentCloudBaseFingerprint: vi.fn(),
+  // `baseFreshnessFromFingerprints` is a pure compare (no fs/SDK), so we give the
+  // mock the real logic — its canonical impl + reason format are separately
+  // covered by sandbox-cloud/test/base-freshness.test.ts.
+  baseFreshnessFromFingerprints: (stored: string | undefined, live: string | undefined) => {
+    if (!stored) return { state: 'unprepared' };
+    if (!live) return { state: 'unknown' };
+    if (stored !== live) {
+      return {
+        state: 'stale',
+        reason: `baked runtime differs (base ${stored.slice(0, 12)}, current ${live.slice(0, 12)})`,
+      };
+    }
+    return { state: 'fresh' };
+  },
   // The other named imports of checkpoint-lookup.ts are unused by
   // evaluateBaseFreshness but must still be present so the module loads.
   probeCloudCheckpoint: vi.fn(),
@@ -18,6 +32,7 @@ vi.mock('../src/provider/cloud-backend.js', () => ({
 // don't test here); stub them so the import graph resolves.
 vi.mock('@agentbox/sandbox-docker', () => ({
   computeDockerContextFingerprint: vi.fn(),
+  evaluateDockerBaseFreshness: vi.fn(),
   imageExists: vi.fn(),
   readPreparedDockerState: vi.fn(),
   resolveCheckpoint: vi.fn(),
@@ -26,18 +41,34 @@ vi.mock('@agentbox/sandbox-docker', () => ({
 import { evaluateBaseFreshness } from '../src/checkpoint-lookup.js';
 import { currentCloudBaseFingerprint } from '@agentbox/sandbox-cloud';
 import { currentCloudBaseFingerprintLive } from '../src/provider/cloud-backend.js';
+import { evaluateDockerBaseFreshness } from '@agentbox/sandbox-docker';
 
 describe('evaluateBaseFreshness', () => {
   beforeEach(() => {
     vi.mocked(currentCloudBaseFingerprint).mockReset();
     vi.mocked(currentCloudBaseFingerprintLive).mockReset();
+    vi.mocked(evaluateDockerBaseFreshness).mockReset();
   });
 
-  it("returns 'fresh' for docker without consulting either fingerprint helper", async () => {
+  // Docker used to be hardcoded `fresh` on the grounds that `ensureImage` self-heals.
+  // It does — but only at create time, and self-update no longer deletes the image to
+  // force the issue, so a stale base has to be *reportable* or it stays invisible
+  // until a create surprises you with a multi-minute build.
+  it('reports the real docker state, not a hardcoded fresh', async () => {
+    vi.mocked(evaluateDockerBaseFreshness).mockResolvedValue({
+      state: 'stale',
+      reason: 'build context changed',
+    });
     const r = await evaluateBaseFreshness('docker');
-    expect(r).toEqual({ state: 'fresh' });
+    expect(r).toEqual({ state: 'stale', reason: 'build context changed' });
+    // ...and it must not fall through to the cloud fingerprint helpers.
     expect(currentCloudBaseFingerprint).not.toHaveBeenCalled();
     expect(currentCloudBaseFingerprintLive).not.toHaveBeenCalled();
+  });
+
+  it("passes docker through as 'fresh' when the image matches its stamp", async () => {
+    vi.mocked(evaluateDockerBaseFreshness).mockResolvedValue({ state: 'fresh' });
+    expect(await evaluateBaseFreshness('docker')).toEqual({ state: 'fresh' });
   });
 
   it("returns 'unprepared' when no fingerprint is stored", async () => {

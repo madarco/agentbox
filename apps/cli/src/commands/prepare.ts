@@ -24,9 +24,13 @@
 import { intro, log, spinner } from '@clack/prompts';
 import {
   boxImageConfigKey,
+  isProviderKind,
   loadEffectiveConfig,
+  resolveBoxSize,
+  resolveDaytonaClass,
   setConfigValue,
   unsetConfigValue,
+  type EffectiveConfig,
 } from '@agentbox/config';
 import {
   DEFAULT_BOX_IMAGE,
@@ -39,6 +43,8 @@ import {
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
+import { getRuntimeProviderNames } from '../provider/loaders.js';
+import { parseProviderSpec } from '../provider/spec.js';
 
 interface PrepareOptions {
   provider?: string;
@@ -47,6 +53,9 @@ interface PrepareOptions {
   build?: boolean;
   yes?: boolean;
   status?: boolean;
+  claudeInstall?: string;
+  location?: string;
+  size?: string;
 }
 
 interface DockerStatus {
@@ -359,6 +368,54 @@ export interface RunPrepareOptions {
   cwd?: string;
   /** Suppress the post-prepare status block. */
   suppressStatus?: boolean;
+  /**
+   * How the bake installs Claude Code (`native` | `npm`). CLI override of the
+   * `box.claudeInstall` config key; falls back to the effective config.
+   */
+  claudeInstall?: 'native' | 'npm';
+  /**
+   * Datacenter / region the bake VPS runs in (Hetzner only). CLI override of
+   * `box.hetznerLocation`; other providers ignore it.
+   */
+  location?: string;
+  /**
+   * Bake-time VM size for the snapshot/template providers (daytona:
+   * `cpu-memory-disk` GB; e2b: `cpu-memory` GB). CLI override of
+   * `box.size<Provider>` / `box.size`; docker/hetzner/vercel ignore it.
+   */
+  size?: string;
+}
+
+/**
+ * The bake-time datacenter/region to hand the provider, or `undefined` to let
+ * it choose. CLI flag wins over the provider's location config key; providers
+ * without a location concept always get `undefined`.
+ *
+ * Daytona contributes only an EXPLICIT `box.daytonaRegion`, never the region
+ * *derived* from `box.daytonaClass`. The derived region belongs to the class,
+ * and the class can still change inside the bake: with no published box image
+ * (npm install mode, or a locally shifted build fingerprint) the linux-vm bake
+ * falls back to a container. Pre-deriving `us-east-1` here made that fallback
+ * ask for a container in the one region that has no container runners — so the
+ * whole prepare died ("No runners are configured in region 'us-east-1' for
+ * sandbox class 'container'") instead of degrading. Leaving it undefined lets
+ * each path pick its own: the VM bake defaults to `DAYTONA_VM_REGION`, the
+ * container bake to the account default.
+ */
+export function resolvePrepareLocation(
+  providerName: string,
+  cliLocation: string | undefined,
+  effective: EffectiveConfig | undefined,
+): string | undefined {
+  const configured =
+    providerName === 'hetzner'
+      ? effective?.box.hetznerLocation
+      : providerName === 'digitalocean'
+        ? effective?.box.digitaloceanRegion
+        : providerName === 'daytona'
+          ? effective?.box.daytonaRegion
+          : undefined;
+  return cliLocation?.trim() || configured || undefined;
 }
 
 /**
@@ -368,13 +425,19 @@ export interface RunPrepareOptions {
  * its own spinner inside.
  */
 export async function runPrepare(
-  providerName: string,
+  providerSpec: string,
   opts: RunPrepareOptions = {},
 ): Promise<void> {
-  if (!isKnownProvider(providerName)) {
-    process.stderr.write('error: --provider must be one of: docker, daytona, hetzner, vercel, e2b\n');
+  if (!isKnownProvider(providerSpec)) {
+    process.stderr.write(
+      `error: --provider must be one of: ${getRuntimeProviderNames().join(', ')}\n`,
+    );
     process.exit(1);
   }
+  // `--provider docker:<host>` bakes the image on that machine's engine. Split
+  // the spec: the bare name drives every provider lookup below, the host is
+  // handed to the provider's own prepare.
+  const { name: providerName, remoteHost } = parseProviderSpec(providerSpec);
 
   if (providerName === 'daytona' && !opts.yes && process.stdin.isTTY) {
     process.stdout.write(
@@ -391,12 +454,35 @@ export async function runPrepare(
   }
 
   const cwd = opts.cwd ?? process.cwd();
-  // Docker base-image registry override (box.imageRegistry; empty = always build).
+  const cfg = await loadEffectiveConfig(cwd).catch(() => null);
+  // Base-image registry override. Docker uses it to pull instead of building;
+  // daytona's linux-vm bake MUST have it (a VM snapshot can only boot from a
+  // published image), so it reads the same key.
   const registry =
-    providerName === 'docker'
-      ? await loadEffectiveConfig(cwd)
-          .then((c) => c.effective.box.imageRegistry)
-          .catch(() => undefined)
+    providerName === 'docker' || providerName === 'daytona'
+      ? cfg?.effective.box.imageRegistry
+      : undefined;
+  // Bake-time Claude install method: CLI flag wins over the config key.
+  const claudeInstall = opts.claudeInstall ?? cfg?.effective.box.claudeInstall ?? 'native';
+  // Bake-time sandbox class (daytona): the class is baked into the snapshot and
+  // a snapshot of one class can't create a sandbox of the other.
+  const sandboxClass =
+    providerName === 'daytona' && cfg ? resolveDaytonaClass(cfg.effective) : undefined;
+  // Escape hatch for a build context with no published box image (a locally
+  // modified Dockerfile.box): bake the VM base from an explicit image instead.
+  const vmBaseImage =
+    providerName === 'daytona' ? cfg?.effective.box.daytonaVmBaseImage || undefined : undefined;
+  const location = resolvePrepareLocation(providerName, opts.location, cfg?.effective);
+  // Bake-time size (daytona/e2b): CLI flag wins over the cascaded box.size /
+  // box.size<Provider>. Empty resolves to undefined so the provider bakes its
+  // default resources.
+  const size =
+    opts.size?.trim() || (cfg ? resolveBoxSize(cfg.effective, providerName) : '') || undefined;
+  // The remote engine to bake on (remote-docker): the `docker:<host>` spec
+  // first, else the configured default. Other providers ignore it.
+  const host =
+    providerName === 'remote-docker'
+      ? remoteHost || cfg?.effective.box.remoteDockerHost || undefined
       : undefined;
   const sp = spinner();
   sp.start(`preparing ${providerName}…`);
@@ -407,20 +493,35 @@ export async function runPrepare(
       force: opts.force,
       allowPull: opts.build ? false : undefined,
       registry,
+      claudeInstall,
+      location,
+      size,
+      host,
+      sandboxClass,
+      vmBaseImage,
       onLog: (line) => sp.message(line.slice(0, 80)),
     });
     if (result.snapshotName !== undefined) {
       sp.stop(`prepared ${providerName}: snapshot '${result.snapshotName}'`);
-      const configKey = boxImageConfigKey(providerName);
-      try {
-        const written = await setConfigValue('project', configKey, result.snapshotName, cwd);
-        log.success(`${configKey} = ${result.snapshotName} (written to ${written.path})`);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log.warn(
-          `prepared snapshot '${result.snapshotName}', but failed to pin it into the project config: ${msg}\n` +
-            `Run \`agentbox config set --project ${configKey} ${result.snapshotName}\` manually.`,
-        );
+      if (isProviderKind(providerName)) {
+        const configKey = boxImageConfigKey(providerName);
+        try {
+          const written = await setConfigValue('project', configKey, result.snapshotName, cwd);
+          log.success(`${configKey} = ${result.snapshotName} (written to ${written.path})`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn(
+            `prepared snapshot '${result.snapshotName}', but failed to pin it into the project config: ${msg}\n` +
+              `Run \`agentbox config set --project ${configKey} ${result.snapshotName}\` manually.`,
+          );
+        }
+      } else {
+        // External plugin providers persist their baked ref in their own
+        // prepared-state (`~/.agentbox/<name>-prepared.json`), which the
+        // plugin's backend reads back when it sees the image sentinel — so
+        // there is no AgentBox config key to pin (and pinning to the generic
+        // `box.image` would poison built-in providers).
+        log.success(`prepared ${providerName}: snapshot '${result.snapshotName}'`);
       }
     } else {
       sp.stop(`${providerName.slice(0, 1).toUpperCase() + providerName.slice(1)} provider ready`);
@@ -470,7 +571,7 @@ export const prepareCommand = new Command('prepare')
   )
   .option(
     '-p, --provider <name>',
-    'provider to prepare (docker | daytona | hetzner | vercel | e2b). Omit for status-only.',
+    'provider to prepare (docker | daytona | hetzner | vercel | e2b | digitalocean). Omit for status-only.',
   )
   .option('-n, --name <name>', 'snapshot name (Daytona only; default: agentbox-base-<timestamp>)')
   .option('-f, --force', 'rebuild even if the image / snapshot already exists')
@@ -480,11 +581,32 @@ export const prepareCommand = new Command('prepare')
   )
   .option('-y, --yes', 'skip confirmation prompts (cost / time warnings)')
   .option('--status', 'show status without preparing anything')
+  .option(
+    '--claude-install <mode>',
+    'install Claude Code into the base image via the native installer (default) or npm (native | npm)',
+  )
+  .option(
+    '--location <name>',
+    'Datacenter/region the bake VPS runs in. Hetzner: nbg1, fsn1, hel1, ash (overrides box.hetznerLocation). DigitalOcean: nyc3, sfo3, ams3, fra1 (overrides box.digitaloceanRegion). Hetzner/DigitalOcean-only.',
+  )
+  .option(
+    '--size <spec>',
+    'bake-time VM size. daytona: cpu-memory-disk GB (e.g. 4-8-20). e2b: cpu-memory GB (e.g. 4-8). Overrides box.size / box.size<Provider>. Ignored by docker/hetzner/vercel.',
+  )
   .action(async (opts: PrepareOptions) => {
     // Status-only path: no provider, or explicit --status.
     if (!opts.provider || opts.status) {
       await showStatus({});
       return;
+    }
+
+    let claudeInstall: 'native' | 'npm' | undefined;
+    if (opts.claudeInstall !== undefined) {
+      if (opts.claudeInstall !== 'native' && opts.claudeInstall !== 'npm') {
+        process.stderr.write('error: --claude-install must be one of: native, npm\n');
+        process.exit(1);
+      }
+      claudeInstall = opts.claudeInstall;
     }
 
     const providerName = opts.provider.trim();
@@ -498,6 +620,9 @@ export const prepareCommand = new Command('prepare')
       force: opts.force,
       build: opts.build,
       yes: opts.yes,
+      claudeInstall,
+      location: opts.location,
+      size: opts.size,
     });
   });
 

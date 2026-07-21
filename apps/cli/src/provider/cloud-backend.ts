@@ -1,34 +1,22 @@
 /**
- * Lazily resolve a cloud `CloudBackend` by provider name. Dynamic imports keep
- * the heavy provider SDKs (Daytona/Hetzner/Vercel) off the docker hot path.
- * Returns `null` for `docker` (no cloud backend) and any unknown name.
+ * Lazily resolve a cloud `CloudBackend` by provider name via the provider
+ * loader (`loaders.ts`), which keeps the heavy provider SDKs off the docker hot
+ * path. Returns `null` for `docker` (no cloud backend) and any unknown name.
  */
 import type { CloudBackend, ProviderName } from '@agentbox/core';
+import { isProviderKind } from '@agentbox/config';
+import { loadProviderModule } from './loaders.js';
 
 export async function cloudBackendForProvider(
   provider: ProviderName,
 ): Promise<CloudBackend | null> {
-  switch (provider) {
-    case 'daytona':
-      return (await import('@agentbox/sandbox-daytona')).daytonaBackend;
-    case 'hetzner':
-      return (await import('@agentbox/sandbox-hetzner')).hetznerBackend;
-    case 'vercel':
-      return (await import('@agentbox/sandbox-vercel')).vercelBackend;
-    case 'e2b':
-      return (await import('@agentbox/sandbox-e2b')).e2bBackend;
-    case 'tenki':
-      return (await import('@agentbox/sandbox-tenki')).tenkiBackend;
-    default:
-      return null;
-  }
+  if (!isProviderKind(provider)) return null;
+  return (await loadProviderModule(provider)).backend ?? null;
 }
 
 /**
  * Compute the CURRENT build-context fingerprint for a cloud provider's base
- * image / snapshot — same shape as `cloudBackendForProvider` but resolves the
- * provider package's `*BaseFingerprintLive()` helper instead of the backend.
- * Dynamic imports keep the cloud SDKs off the docker hot path.
+ * image / snapshot via the provider's `providerModule.currentBaseFingerprintLive`.
  *
  * Returns `undefined` for docker (its base self-heals via `ensureImage`) and
  * any provider whose live computation fails (typically a dev tree without
@@ -36,19 +24,9 @@ export async function cloudBackendForProvider(
  */
 export async function currentCloudBaseFingerprintLive(
   provider: ProviderName,
+  claudeInstall?: 'native' | 'npm',
 ): Promise<string | undefined> {
-  switch (provider) {
-    case 'daytona':
-      return (await import('@agentbox/sandbox-daytona')).currentDaytonaBaseFingerprintLive();
-    case 'hetzner':
-      return (await import('@agentbox/sandbox-hetzner')).currentHetznerBaseFingerprintLive();
-    case 'vercel':
-      return (await import('@agentbox/sandbox-vercel')).currentVercelBaseFingerprintLive();
-    case 'e2b':
-      return (await import('@agentbox/sandbox-e2b')).currentE2bBaseFingerprintLive();
-    case 'tenki':
-      return (await import('@agentbox/sandbox-tenki')).currentTenkiBaseFingerprintLive();
-    default:
-      return undefined;
-  }
+  if (!isProviderKind(provider)) return undefined;
+  const mod = await loadProviderModule(provider);
+  return mod.currentBaseFingerprintLive?.(claudeInstall);
 }

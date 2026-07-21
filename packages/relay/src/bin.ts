@@ -1,10 +1,7 @@
 import { Command } from 'commander';
 import { request as httpRequest } from 'node:http';
 import { DEFAULT_RELAY_PORT } from './types.js';
-import { startRelayServer } from './server.js';
-import { startAutopauseLoop } from './autopause.js';
-import { startCloudKeepaliveLoop } from './cloud-keepalive.js';
-import { startQueueLoop } from './queue.js';
+import { startRelayDaemon } from './daemon.js';
 
 const program = new Command();
 
@@ -24,38 +21,16 @@ program
       process.stderr.write(`agentbox-relay: invalid port "${opts.port}"\n`);
       process.exit(2);
     }
-    const handle = await startRelayServer({
+    const daemon = await startRelayDaemon({
       port,
       host: opts.host,
       logger: (line) => process.stdout.write(`agentbox-relay: ${line}\n`),
     });
     process.stdout.write(`agentbox-relay: listening on ${opts.host}:${String(port)}\n`);
 
-    const autopause = startAutopauseLoop({
-      registry: handle.registry,
-      statusStore: handle.statusStore,
-      events: handle.events,
-      log: (line) => process.stdout.write(`agentbox-relay: ${line}\n`),
-    });
-    const cloudKeepalive = startCloudKeepaliveLoop({
-      registry: handle.registry,
-      statusStore: handle.statusStore,
-      log: (line) => process.stdout.write(`agentbox-relay: ${line}\n`),
-    });
-    const queue = startQueueLoop({
-      log: (line) => process.stdout.write(`agentbox-relay: ${line}\n`),
-      registry: handle.registry,
-      statusStore: handle.statusStore,
-    });
-    handle.setQueuePoke(() => {
-      (queue as { poke?: () => void }).poke?.();
-    });
-
     const shutdown = (signal: string): void => {
       process.stdout.write(`agentbox-relay: ${signal} — shutting down\n`);
-      Promise.allSettled([autopause.stop(), cloudKeepalive.stop(), queue.stop()])
-        .finally(() => handle.close())
-        .finally(() => process.exit(0));
+      daemon.stop().finally(() => process.exit(0));
     };
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));

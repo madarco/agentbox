@@ -24,6 +24,7 @@ TODO.md
 .playwright-cli/
 # pnpm local store (created when store-dir points inside the repo)
 .pnpm-store/
+.vercel
 
 # Herdr plugin shim — generated at the plugin root (= repo root) by
 # `agentbox install herdr` / the manifest's build step; never committed.

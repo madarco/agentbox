@@ -17,6 +17,7 @@ export type {
   FindBoxResult,
   GitWorktreeRecord,
   ProviderName,
+  SshTargetRecord,
   StateFile,
 } from './box-record.js';
 export { dockerField } from './box-record.js';
@@ -68,6 +69,9 @@ export type {
   CloudSandboxSummary,
   CloudState,
   CloudVolumeMount,
+  InboundMode,
+  InboundPolicy,
 } from './cloud-backend.js';
 export { AmbiguousBoxError, BoxNotFoundError, UserFacingError } from './errors.js';
 export { BOX_ID_PREFIX, generateBoxId } from './identity.js';
+export * from './sync/index.js';

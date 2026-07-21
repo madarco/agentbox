@@ -38,31 +38,6 @@ The footer's `(<state>)` slot — next to the box name — shows your `agentbox.
 
 While attached to any box session, **`Ctrl+a t` opens a fresh shell in the *same* box in a new tab** — a cmux surface in the current workspace, a new tmux window, or a new iTerm2 tab, depending on your terminal. **`Ctrl+a k` destroys the box** (after a confirmation) — the same key the dashboard uses, so it never collides with `Ctrl+a d` (detach). For per-terminal setup — where sessions open, the full chord list, and the cmux sidebar — see the integration pages for [iTerm2](/docs/integrations-iterm2), [tmux](/docs/integrations-tmux), and [cmux](/docs/integrations-cmux).
 
-### cmux: a button + shortcut that opens into the box
-
-If you use [cmux](https://cmux.com), you can add a tab-bar button and shortcut that opens a shell in the current project's box (and behaves normally everywhere else). Add this to `~/.config/cmux/cmux.json` and run `cmux reload-config`:
-
-```jsonc
-{
-  "actions": {
-    "agentbox-shell": {
-      "type": "command",
-      "title": "Shell in box",
-      // Auto-pick the project's box; fall back to a normal login shell elsewhere.
-      "command": "agentbox shell || exec $SHELL -l",
-      "target": "newTabInCurrentPane",
-      "icon": { "type": "symbol", "name": "terminal" },
-      "shortcut": "cmd+shift+t"
-    }
-  },
-  "ui": { "surfaceTabBar": { "buttons": ["cmux.newTerminal", "agentbox-shell"] } }
-}
-```
-
-`agentbox shell` with no argument auto-picks the only box in the current directory's project; outside an AgentBox project it exits non-zero and the `|| exec $SHELL -l` fallback opens an ordinary shell. This adds a **"Shell in box"** button to the surface tab bar plus a `Cmd+Shift+T` shortcut, leaving cmux's standard `Cmd+T` (new surface) untouched. If you'd rather it *be* `Cmd+T`, set the action's `shortcut` to `cmd+t` and add `"shortcuts": { "bindings": { "newSurface": "cmd+shift+t" } }` to move the built-in off it.
-
-For the AgentBox Dock panel (a live box list pinned to the cmux right sidebar via `agentbox install cmux`), see [cmux integration → The AgentBox Dock](/docs/integrations-cmux#the-agentbox-dock-right-sidebar).
-
 ## Web app URL
 
 `agentbox url [box]` opens the box's web app in your host browser. This works even when no service declares `expose:` — every box reserves the web port at create time, so the URL is always openable (you'll just get a connection error until something listens).
@@ -143,16 +118,56 @@ The first attach to a fresh box downloads the IDE server (~70MB, keyed to your d
 
 ## Open files
 
-`agentbox open [box]` opens the box's `/workspace` in Finder. The merged `/workspace` only exists inside the container, so `open` first rsyncs it to a per-box host directory and then launches Finder. The export is a snapshot, refreshed on demand — re-run to re-sync. See [CLI commands](/docs/cli) for flags like `--no-refresh`, `--include-node-modules`, and `--path`.
+`agentbox open [box]` **live-mounts** the box's `/workspace` on your host and reveals it in Finder. Every box runs a localhost-only SSH server (published on `127.0.0.1` only, key-authenticated by a per-box key), so `open` mounts `/workspace` over `sshfs` at `~/.agentbox/mounts/<box>/`. Unlike a snapshot, edits flow both ways in real time. This needs `sshfs` on the host — `brew install macfuse sshfs` on macOS. See [CLI commands](/docs/cli) for `--path` (print the mount path) and `--unmount`.
 
 ```bash
-# rsync /workspace and open it in Finder
+# sshfs-mount /workspace and open it in Finder
 agentbox open mybox
 
-# print the host path without opening Finder (for editors/scripts)
-agentbox open mybox --path --no-refresh
+# print the mount path without opening Finder (for editors/scripts)
+agentbox open mybox --path
+
+# tear the mount down
+agentbox open mybox --unmount
 ```
 
+Because the box exposes real SSH, you can also add it to the **Claude** or **Codex desktop apps** as an SSH connection in one step:
+
+```bash
+# add the box to Claude desktop's SSH connections (sshConfigs in ~/.claude/settings.json)
+# and launch the app — pick the box from its Environment dropdown
+agentbox open mybox --in claude
+
+# writes an ~/.ssh/config alias and opens Codex's add-SSH-connection form
+agentbox open mybox --in codex
+```
+
+Claude desktop has no add-SSH deep link, so AgentBox writes the entry into the app's own settings directly (upserted by id, removed again on `agentbox destroy`). From the Environment dropdown the app can start new sessions in `/workspace` — and list or resume the Claude sessions already recorded inside the box.
+
+`agentbox open` writes a managed `Host <box>` block to `~/.agentbox/ssh/config` (included from `~/.ssh/config`), so `ssh <box>` also just works and lands in `/workspace`. The alias points at `127.0.0.1` on an ephemeral loopback port that is re-resolved on every `agentbox start`.
+
+`open` works on any SSH-capable provider — Docker, Hetzner, and Daytona. Vercel and E2B boxes have no SSH, so `open` there fails with a short message pointing you at `agentbox download` (copy the files to your host) instead. `agentbox doctor` lists `sshfs` and `macFUSE` as optional checks so you can see at a glance whether the mount will work.
+
 <Callout type="warn" title="HEADS UP">
-`agentbox open` is a snapshot for browsing, not a sync-back. To merge box changes into your host workspace use `agentbox download` (see [Sync and git](/docs/sync-and-git)), and capture state with [checkpoints](/docs/checkpoints-and-pausing) before you destroy — the export under `~/.agentbox/boxes/<id>/` is wiped on destroy.
+The sshd is bound to loopback only and never reachable off-host. It's a live mount, not a checkpoint — capture durable state with [checkpoints](/docs/checkpoints-and-pausing) before you destroy. The per-box key under `~/.agentbox/boxes/<id>/ssh/` is wiped on destroy.
+</Callout>
+
+## Use a box with your laptop offline
+
+Hetzner and DigitalOcean boxes keep running after you close your laptop, so you can start a long agent run and pick it up from your phone over SSH — Terminus, Blink, or any SSH client. Create one ready for it:
+
+```bash
+# open SSH to any device + copy a git credential so the box pushes on its own
+agentbox claude -n mybox --provider digitalocean --inbound open --dangerously-with-credentials
+
+# authorize your phone's key and print the ssh line
+agentbox connect mybox --add-key @~/phone.pub
+```
+
+`--inbound open` lets any device reach the box over SSH (key-only); `--dangerously-with-credentials` copies a git credential in so it can `git push` / `pull` without your laptop (it asks token vs SSH). On the phone, add an SSH host `vscode@<box-ip>` with that key, then run `claude` or `codex` as usual.
+
+Already have a box running? Flip it live instead: `agentbox inbound mybox open`, then `agentbox connect mybox --dangerously-git-credentials`. Close it back down with `agentbox inbound mybox lock` when you're done. See [independent boxes](/docs/sync-and-git#independent-boxes--dangerously-with-credentials).
+
+<Callout type="warn" title="open exposes SSH to the internet">
+`agentbox inbound open` makes port 22 publicly reachable. Access stays key-only — no passwords, and only the `vscode` user. Run `agentbox inbound mybox lock` when you no longer need it. Hetzner and DigitalOcean only.
 </Callout>

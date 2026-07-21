@@ -13,16 +13,16 @@
 <meta property="og:url" content="https://agent-box.sh/" />
 <meta property="og:title" content="AgentBox — Teleport for agents" />
 <meta property="og:description" content="AgentBox teleports your project into an isolated VM — local or in the cloud — and runs Claude Code, Codex, or OpenCode inside it. Checkpointed, parallel, on hardware you control." />
-<meta property="og:image" content="https://agent-box.sh/public/cover.jpg" />
-<meta property="og:image:width" content="1586" />
-<meta property="og:image:height" content="992" />
+<meta property="og:image" content="https://agent-box.sh/home-og" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
 <meta property="og:image:alt" content="AgentBox — one command teleport for coding agents" />
 
 <!-- Twitter card -->
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="AgentBox — Teleport for agents" />
 <meta name="twitter:description" content="AgentBox teleports your project into an isolated VM — local or in the cloud — and runs Claude Code, Codex, or OpenCode inside it. Checkpointed, parallel, on hardware you control." />
-<meta name="twitter:image" content="https://agent-box.sh/public/cover.jpg" />
+<meta name="twitter:image" content="https://agent-box.sh/home-og" />
 <meta name="twitter:creator" content="@madarco" />
 
 <link rel="icon" type="image/svg+xml" href="/public/logo.svg" />
@@ -35,511 +35,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap" rel="stylesheet" />
 <style>
-  :root {
-    --paper: #f6f6f3;
-    --panel: #ffffff;
-    --ink: #16181c;
-    --ink-2: #3d434c;
-    --muted: #7b818b;
-    --faint: #a4a9b0;
-    --line: #e3e3dd;
-    --line-2: #ededea;
-    --accent: #128a4f;
-    --accent-soft: #eaf4ee;
-    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
-    --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
-  }
-
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html { scroll-behavior: smooth; }
-  body {
-    background: var(--paper);
-    color: var(--ink);
-    font-family: var(--sans);
-    font-size: 15px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-  }
-  a { color: inherit; text-decoration: none; }
-  .mono { font-family: var(--mono); }
-  .accent { color: var(--accent); }
-
-  /* center column with hairline frame */
-  .frame {
-    max-width: 920px;
-    margin: 0 auto;
-    position: relative;
-    border-left: 1px solid var(--line);
-    border-right: 1px solid var(--line);
-    background: var(--paper);
-    min-height: 100vh;
-  }
-  .pad { padding-left: 40px; padding-right: 40px; }
-  @media (max-width: 640px){ .pad { padding-left: 22px; padding-right: 22px; } .frame { border-left: none; border-right: none; } }
-
-  /* row separators */
-  .rule { border-top: 1px solid var(--line); }
-
-  /* ── TOP BAR ── */
-  header.top {
-    display: flex; align-items: center; justify-content: space-between;
-    height: 56px;
-    border-bottom: 1px solid var(--line);
-    font-family: var(--mono); font-size: 13px;
-  }
-  .top .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; }
-  .top .mark { width: 18px; height: 18px; border: 1.5px solid var(--ink); display: grid; place-items: center; font-size: 11px; border-radius: 3px; }
-  .top nav { display: flex; gap: 26px; color: var(--muted); }
-  .top nav a:hover { color: var(--ink); }
-  .top .src { color: var(--accent); }
-  .top .src:hover { text-decoration: underline; }
-
-  /* mobile hamburger — hidden on desktop */
-  .menu-btn { display: none; }
-  .menu-btn .i-close { display: none; }
-
-  @media (max-width: 640px){
-    .menu-btn {
-      display: grid; place-items: center; width: 34px; height: 34px;
-      border: 1px solid var(--line); border-radius: 7px;
-      background: var(--panel); color: var(--ink-2); cursor: pointer;
-      -webkit-tap-highlight-color: transparent;
-    }
-    .menu-btn svg { width: 17px; height: 17px; }
-    header.top.open .menu-btn .i-open { display: none; }
-    header.top.open .menu-btn .i-close { display: block; }
-
-    /* nav becomes a full-width dropdown under the bar */
-    .top nav {
-      position: absolute; top: 56px; left: 0; right: 0; z-index: 40;
-      flex-direction: column; gap: 0;
-      background: var(--panel); border-bottom: 1px solid var(--line);
-      box-shadow: 0 16px 28px -20px rgba(20, 24, 30, .5);
-      max-height: 0; overflow: hidden; pointer-events: none;
-      transition: max-height .26s ease;
-    }
-    header.top.open nav { max-height: 320px; pointer-events: auto; }
-    .top nav a {
-      padding: 13px 22px; color: var(--ink-2);
-      border-top: 1px solid var(--line-2);
-    }
-    .top nav a:hover { background: var(--accent-soft); }
-  }
-
-  /* ── META STRIP ── */
-  .meta {
-    display: flex; flex-wrap: wrap; gap: 0;
-    border-bottom: 1px solid var(--line);
-    font-family: var(--mono); font-size: 12px; color: var(--muted);
-  }
-  .meta span { padding: 9px 18px; border-right: 1px solid var(--line); }
-  .meta span:last-child { border-right: none; }
-  .meta b { color: var(--ink); font-weight: 500; }
-  /* mobile: one simplified line — drop labels + the long envs list */
-  @media (max-width: 640px){
-    .meta { flex-wrap: nowrap; overflow: hidden; font-size: 11px; }
-    .meta span { padding: 8px 12px; white-space: nowrap; }
-    .meta .m-envs, .meta b { display: none; }
-  }
-
-  /* ── HERO ── */
-  .hero { padding-top: 64px; padding-bottom: 52px; }
-  .kicker { font-family: var(--mono); font-size: 12.5px; color: var(--accent); letter-spacing: 0.04em; margin-bottom: 22px; }
-  .hero h1 {
-    font-size: clamp(32px, 4.4vw, 44px);
-    line-height: 1.08;
-    letter-spacing: -0.03em;
-    font-weight: 600;
-    margin-bottom: 20px;
-  }
-  .hero h1 .dim { color: var(--faint); }
-  .hero p.lede { font-size: clamp(15px, 1.6vw, 16.5px); color: var(--ink-2); max-width: 46ch; line-height: 1.6; margin-bottom: 30px; }
-  .hero p.lede b { font-weight: 500; }
-
-  /* hero two-column with fake terminal */
-  .hero-grid { display: grid; grid-template-columns: 1fr; gap: 38px; }
-  @media (min-width: 900px) {
-    .hero-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 340px); gap: 48px; align-items: center; }
-  }
-
-  .term {
-    background: #15171b;
-    border: 1px solid #262a31;
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 28px 56px -30px rgba(20, 24, 30, .55), 0 2px 8px -3px rgba(20,24,30,.25);
-    font-family: var(--mono);
-    min-width: 0;
-  }
-  .term-bar {
-    display: flex; align-items: center; gap: 6px;
-    padding: 9px 12px; background: #1b1e24; border-bottom: 1px solid #262a31;
-  }
-  .term-bar .td { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-  .td.r { background: #ec6a5e; } .td.y { background: #f4bf4f; } .td.g { background: #61c554; }
-  .term-title { margin-left: 7px; font-size: 10.5px; color: #6c727b; letter-spacing: .02em; white-space: nowrap; }
-  .term-body {
-    padding: 13px 14px 22px; height: 224px; overflow: hidden;
-    font-size: 11.5px; line-height: 1.74; color: #c8ccd3;
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 26px);
-            mask-image: linear-gradient(to bottom, transparent 0, #000 26px);
-  }
-  .term-line { white-space: pre-wrap; word-break: break-word; }
-  .term-line.gap { height: 9px; }
-  .term-line .pr { color: #4ec98a; }
-  .term-line .cmd { color: #f0f2f5; }
-  .term-line.dim { color: #7c828c; }
-  .term-line.ok { color: #5fc88f; }
-  .term-line .shellp { color: #62a9f0; }
-  .term .cursor {
-    display: inline-block; width: 6px; height: 12px; background: #7fe0a8;
-    vertical-align: -1px; margin-left: 1px; animation: term-blink 1.05s steps(1) infinite;
-  }
-  @keyframes term-blink { 50% { opacity: 0; } }
-  @media (prefers-reduced-motion: reduce) { .term .cursor { animation: none; } }
-
-  /* command line */
-  .runline {
-    display: flex; align-items: center; gap: 0;
-    border: 1px solid var(--line); border-radius: 8px;
-    background: var(--panel); overflow: hidden;
-    font-family: var(--mono); font-size: 15px;
-    max-width: 460px;
-  }
-  .runline .body { padding: 13px 16px; display: flex; align-items: center; gap: 10px; flex: 1; }
-  .runline .p { color: var(--accent); }
-  .runline .pkg { color: var(--muted); }
-  .runline .k { color: var(--ink); display: inline-flex; align-items: baseline; gap: .4ch; }
-
-  /* rotating agent name */
-  .roller { display: inline-block; height: 1.25em; overflow: hidden; vertical-align: bottom; position: relative; }
-  .roller-track { display: flex; flex-direction: column; }
-  .roller-track > span { height: 1.25em; line-height: 1.25em; color: var(--accent); white-space: nowrap; }
-  .roller.run .roller-track { animation: roll 6.6s cubic-bezier(.7,0,.2,1) infinite; }
-  @keyframes roll {
-    0%, 22%    { transform: translateY(0); }
-    28%, 55%   { transform: translateY(-1.25em); }
-    61%, 88%   { transform: translateY(-2.5em); }
-    94%, 100%  { transform: translateY(-3.75em); }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .roller.run .roller-track { animation: none; }
-  }
-  .runline button {
-    border: none; border-left: 1px solid var(--line);
-    background: var(--paper); color: var(--muted);
-    width: 46px; align-self: stretch; cursor: pointer;
-    display: grid; place-items: center; transition: color .15s, background .15s;
-  }
-  .runline button:hover { color: var(--accent); background: var(--accent-soft); }
-  .runline button svg { width: 14px; height: 14px; }
-
-  .runlink {
-    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
-    margin-top: 16px; font-family: var(--mono); font-size: 12.5px; color: var(--muted);
-    transition: color .15s;
-  }
-  .runlink span { color: var(--accent); transition: transform .15s; }
-  .runlink:hover { color: var(--accent); }
-  .runlink:hover span { transform: translateX(3px); }
-
-  /* ── ARCHITECTURE DIAGRAM ── */
-  .diagram { padding-top: 36px; padding-bottom: 32px; }
-  .dg { display: flex; align-items: stretch; gap: 16px; }
-  .dg-host { flex: 0 1 252px; }
-  .dg-vm { flex: 1 1 auto; }
-  .dg-arrow { display: flex; flex-direction: column; align-items: center; gap: 5px; color: var(--accent); flex-shrink: 0; }
-  .dg-arrow svg { width: 58px; height: 24px; }
-  .dg-arrow-lbl { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--accent); text-transform: uppercase; }
-  @media (max-width: 680px){
-    .dg { flex-direction: column; }
-    .dg-arrow { justify-content: center; transform: rotate(90deg); padding: 4px 0; }
-  }
-
-  .dg-panel { border: 1px solid var(--line); border-radius: 11px; background: var(--panel); padding: 18px; height: 100%; }
-  .dg-vm.dg-panel { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(18,138,79,0.05); }
-
-  .dg-h { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
-  .dg-h .ico { color: var(--accent); width: 22px; height: 22px; flex-shrink: 0; }
-  .dg-h .t { font-family: var(--mono); font-weight: 600; font-size: 15px; letter-spacing: -0.01em; white-space: nowrap; }
-  .dg-h .badge { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 3px 9px; }
-  .dg-h .badge svg { width: 12px; height: 12px; }
-
-  .dg-sub { display: flex; flex-direction: column; gap: 11px; }
-  .dg-card { display: flex; align-items: center; gap: 12px; border: 1px solid var(--line-2); border-radius: 8px; padding: 12px 13px; background: var(--paper); }
-  .dg-card .ico { color: var(--accent); width: 19px; height: 19px; flex-shrink: 0; }
-  .dg-card .lbl { font-family: var(--mono); font-size: 12.5px; line-height: 1.3; }
-  .dg-card .lbl small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
-
-  .dg-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-bottom: 13px; }
-  .dg-tile { border: 1px solid var(--line-2); border-radius: 8px; padding: 14px 8px 12px; background: var(--paper); text-align: center; }
-  .dg-tile .ico { color: var(--accent); margin: 0 auto 9px; display: block; line-height: 0; }
-  .dg-tile .ico svg { width: 26px; height: 26px; margin: 0 auto; }
-  .dg-h .ico svg, .dg-card .ico svg { width: 100%; height: 100%; display: block; }
-  .dg-tile .t { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
-  .dg-tile small { display: block; color: var(--muted); font-size: 10.5px; margin-top: 3px; }
-
-  .dg-did { border: 1px dashed var(--accent); border-radius: 8px; padding: 14px 13px 13px; }
-  .dg-did .did-t { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; color: var(--accent); text-align: center; margin-bottom: 12px; }
-  .dg-did .did-row { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
-
-  .diagram .lbl { font-family: var(--mono); font-size: 11.5px; color: var(--muted); padding-top: 26px; }
-
-  /* diagram — animation */
-  .dg-tile { position: relative; }
-  .dg-run { position: absolute; top: 9px; right: 9px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-  .dg-run::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--accent); animation: dg-ping 1.8s ease-out infinite; animation-delay: inherit; }
-  @keyframes dg-ping { 0% { transform: scale(1); opacity: .55; } 80%, 100% { transform: scale(3.4); opacity: 0; } }
-
-  .dg-wire { animation: dg-march .9s linear infinite; }
-  @keyframes dg-march { to { stroke-dashoffset: -18; } }
-  .dg-packet { animation: dg-fly 2.4s cubic-bezier(.55,0,.45,1) infinite; }
-  @keyframes dg-fly {
-    0% { transform: translateX(0); opacity: 0; }
-    12% { opacity: 1; }
-    74% { opacity: 1; }
-    100% { transform: translateX(43px); opacity: 0; }
-  }
-  .dg-arrow-lbl { animation: dg-pulse 2.4s ease-in-out infinite; }
-  @keyframes dg-pulse { 0%, 100% { opacity: .5; } 40% { opacity: 1; } }
-
-  .dg-vm.dg-panel { animation: dg-breath 3.6s ease-in-out infinite; }
-  @keyframes dg-breath {
-    0%, 100% { box-shadow: 0 0 0 3px rgba(18,138,79,0.05); }
-    50% { box-shadow: 0 0 0 5px rgba(18,138,79,0.11); }
-  }
-
-  /* entrance — default visible; one-shot animation when scrolled into view */
-  @keyframes dg-enter { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
-  .dg.in .dg-host { animation: dg-enter .55s ease both; }
-  .dg.in .dg-arrow { animation: dg-enter .55s ease .30s both; }
-  .dg.in .dg-vm { animation: dg-enter .55s ease .12s both, dg-breath 3.6s ease-in-out .9s infinite; }
-  .dg.in .dg-grid3 .dg-tile:nth-child(1) { animation: dg-enter .5s ease .34s both; }
-  .dg.in .dg-grid3 .dg-tile:nth-child(2) { animation: dg-enter .5s ease .44s both; }
-  .dg.in .dg-grid3 .dg-tile:nth-child(3) { animation: dg-enter .5s ease .54s both; }
-  .dg.in .dg-did { animation: dg-enter .5s ease .62s both; }
-  .dg-tile { transition: border-color .2s; }
-  .dg-tile:hover { border-color: var(--accent); }
-
-  @media (prefers-reduced-motion: reduce) {
-    .dg-wire, .dg-packet, .dg-arrow-lbl, .dg-run::after, .dg .dg-vm.dg-panel,
-    .dg.in .dg-host, .dg.in .dg-arrow, .dg.in .dg-vm, .dg.in .dg-tile, .dg.in .dg-did { animation: none !important; }
-  }
-
-  /* ── diagram — interactive teleport ── */
-  .dg { position: relative; }
-  .accent { color: var(--accent); }
-  .neg { color: #c1542b; }
-
-  /* host cards: buttons reset + affordance */
-  .dg-card.xfer, .dg-card.stay {
-    width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer;
-    background: var(--paper); border: 1px solid var(--line-2);
-    -webkit-tap-highlight-color: transparent;
-    transition: border-color .18s, transform .12s, box-shadow .18s, background .18s;
-  }
-  .dg-card.xfer:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: 0 3px 10px -6px rgba(18,138,79,.5); }
-  .dg-card.xfer:active { transform: translateY(0); }
-  .dg-card .go { margin-left: auto; color: var(--accent); font-family: var(--mono); font-size: 15px; opacity: .45; transition: opacity .18s, transform .18s; }
-  .dg-card.xfer:hover .go { opacity: 1; transform: translateX(3px); }
-  .dg-card.sending { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 2px rgba(18,138,79,.14); }
-  .dg-card.info { cursor: pointer; }
-  .dg-card#c-http { -webkit-tap-highlight-color: transparent; transition: border-color .18s, background .18s, box-shadow .18s; }
-  .dg-card#c-http .go { margin-left: auto; color: var(--accent); font-family: var(--mono); font-size: 14px; opacity: .5; transition: opacity .18s, transform .18s; }
-  .dg-card#c-http:hover { border-color: var(--accent); background: var(--accent-soft); }
-  .dg-card#c-http:hover .go { opacity: 1; transform: translateX(2px); }
-  .host-badge { color: var(--muted); border-color: var(--line); }
-
-  /* stay (git creds) — clicking shows it's pinned to host */
-  .dg-card.stay .go.lock-go { color: var(--faint); font-size: 9px; }
-  .dg-card.stay:hover { border-color: #c1542b; }
-  .dg-card.stay:hover .go.lock-go { color: #c1542b; }
-  .dg-card.stay.blocked { border-color: #c1542b; background: rgba(193,84,43,.06); box-shadow: 0 0 0 2px rgba(193,84,43,.14); animation: dg-shake .42s ease; }
-  .dg-card.stay.blocked .ico { color: #c1542b; }
-  @keyframes dg-shake { 0%,100%{transform:translateX(0)} 18%{transform:translateX(-4px)} 38%{transform:translateX(4px)} 58%{transform:translateX(-3px)} 78%{transform:translateX(2px)} }
-
-  /* VM mounts — destinations that fill in on teleport */
-  .dg-mounts { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-bottom: 13px; }
-  .dg-mount {
-    display: flex; align-items: center; gap: 10px;
-    border: 1px dashed var(--faint); border-radius: 8px; padding: 11px 12px; background: transparent;
-    transition: border-color .3s, background .3s, color .3s;
-  }
-  .dg-mount .ico { color: var(--faint); width: 18px; height: 18px; flex-shrink: 0; transition: color .3s; }
-  .dg-mount .lbl { font-family: var(--mono); font-size: 12px; color: var(--muted); line-height: 1.25; }
-  .dg-mount .lbl small { display: block; font-size: 10px; color: var(--faint); }
-  .dg-mount .chk { margin-left: auto; width: 15px; height: 15px; color: var(--accent); opacity: 0; transform: scale(.5); transition: opacity .3s, transform .3s; }
-  .dg-mount .chk svg { width: 100%; height: 100%; display: block; }
-  .dg-mount.filled { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
-  .dg-mount.filled .ico { color: var(--accent); }
-  .dg-mount.filled .lbl { color: var(--ink); }
-  .dg-mount.filled .lbl small { color: var(--accent); }
-  .dg-mount.filled .lbl small.ph { display: none; }
-  .dg-mount.filled .lbl small.done { display: block; }
-  .dg-mount .lbl small.done { display: none; }
-  .dg-mount.filled .chk { opacity: 1; transform: scale(1); }
-  .dg-mount.recv { animation: dg-recv .6s ease; }
-  @keyframes dg-recv { 0%{ transform: scale(1);} 34%{ transform: scale(1.045);} 100%{transform:scale(1);} }
-
-  /* the flying teleport packet */
-  .fly {
-    position: absolute; z-index: 6; width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px;
-    border-radius: 3px; background: var(--accent); box-shadow: 0 0 0 4px rgba(18,138,79,.16), 0 0 14px rgba(18,138,79,.5);
-    opacity: 0; pointer-events: none;
-    transition: transform .72s cubic-bezier(.5,.02,.3,1), opacity .72s ease;
-  }
-
-  /* clickable arrow */
-  .dg-arrow { cursor: pointer; transition: color .18s; }
-  .dg-arrow:hover { color: #0e6f3f; }
-  .dg-arrow:hover .dg-arrow-lbl { opacity: 1; }
-  #dg-status b { color: var(--ink); font-weight: 500; }
-
-  /* discoverable toolbar row */
-  .dg-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 20px; }
-  .dg-toolbar-lbl { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-right: 2px; }
-  .dg-btn {
-    display: inline-flex; align-items: center; gap: 8px;
-    font-family: var(--mono); font-size: 12.5px; font-weight: 500; color: var(--ink-2);
-    background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
-    padding: 8px 13px; cursor: pointer; -webkit-tap-highlight-color: transparent;
-    white-space: nowrap;
-    box-shadow: 0 1px 2px rgba(16,24,40,.05);
-    transition: border-color .16s, color .16s, background .16s, box-shadow .16s;
-  }
-  .dg-btn .d { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; display: grid; place-items: center; transition: background .16s; }
-  .dg-btn .d.x, .dg-btn.neg .d.x { width: auto; height: auto; background: transparent !important; color: #c1542b; font-size: 12px; font-weight: 700; line-height: 1; }
-  .dg-btn .go { color: var(--accent); opacity: .55; transition: opacity .16s, transform .16s; }
-  .dg-btn:hover { border-color: var(--accent); color: var(--ink); background: var(--accent-soft); box-shadow: 0 1px 2px rgba(16,24,40,.08); }
-  .dg-btn:hover .go { opacity: 1; transform: translateX(2px); }
-  .dg-btn:active { box-shadow: inset 0 1px 2px rgba(16,24,40,.1); }
-  .dg-btn.neg .d { background: #c1542b; }
-  .dg-btn.neg .go { color: #c1542b; font-size: 8px; }
-  .dg-btn.neg:hover { border-color: #c1542b; background: rgba(193,84,43,.06); color: #c1542b; }
-  .dg-btn.struck { border-color: #c1542b; color: #c1542b; background: rgba(193,84,43,.06); }
-  .dg-btn.struck .go { color: #c1542b; }
-  .dg-btn.done { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
-  .dg-btn.flash { animation: dg-btnflash .5s ease; }
-  @keyframes dg-btnflash { 0%{ box-shadow: 0 0 0 0 rgba(18,138,79,0);} 32%{ box-shadow: 0 0 0 4px rgba(18,138,79,.2);} 100%{ box-shadow: 0 1px 2px rgba(16,24,40,.05);} }
-
-  .dg-card.stay.pinned { border-color: #c1542b; background: rgba(193,84,43,.05); }
-  .dg-card.stay.pinned .ico { color: #c1542b; }
-  .dg-card.stay.pinned .lbl { color: #c1542b; }
-  .dg-card.stay.pinned .lbl small { color: #c1542b; }
-  .dg-card.stay.pinned .go.lock-go { color: #c1542b; }
-
-  /* git push sequence states */
-  .dg-card.stay { transition: border-color .25s, background .25s, color .25s; }
-  .dg-card.stay.pushing { border-color: #b07d12; background: rgba(176,125,18,.07); }
-  .dg-card.stay.pushing .ico, .dg-card.stay.pushing .lbl, .dg-card.stay.pushing .lbl small { color: #b07d12; }
-  .dg-card.stay.pushing .lbl small::after { content: ''; display: inline; animation: dg-dots 1.1s steps(1) infinite; }
-  @keyframes dg-dots { 0%{ content: ''; } 25%{ content: '.'; } 50%{ content: '..'; } 75%{ content: '...'; } 100%{ content: ''; } }
-  .dg-card.stay.pushing .go.lock-go { color: #b07d12; }
-  .dg-card.stay.pushed { border-color: var(--accent); background: var(--accent-soft); }
-  .dg-card.stay.pushed .ico, .dg-card.stay.pushed .lbl, .dg-card.stay.pushed .lbl small { color: var(--accent); }
-  .dg-card.stay.pushed .go.lock-go { color: var(--accent); }
-
-  /* changeset packet flying back to host */
-  .fly.fly-diff { border-radius: 2px; background: #b07d12; box-shadow: 0 0 0 4px rgba(176,125,18,.16), 0 0 14px rgba(176,125,18,.5); }
-
-  .dg-card.info { transition: border-color .25s, background .25s, box-shadow .25s; }
-  .dg-card.info.flash { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 2px rgba(18,138,79,.14); }
-  .dg-card#c-services.flash { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 2px rgba(18,138,79,.14); transition: border-color .25s, background .25s, box-shadow .25s; }
-
-  /* http-tunnel connector to services */
-  .dg-conn { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: visible; transition: opacity .4s; }
-  .dg-conn.out { opacity: 0; }
-  .dg-conn-path { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-dasharray: 5 5; animation: dg-march2 .7s linear infinite; }
-  @keyframes dg-march2 { to { stroke-dashoffset: -20; } }
-  .dg-conn-arrow { fill: var(--accent); }
-
-  /* VM box — stacked layers imply many parallel boxes */
-  .dg-vm-wrap { flex: 1 1 auto; position: relative; }
-  .dg-vm-wrap .dg-vm { position: relative; z-index: 1; height: 100%; }
-  .dg-vm-stack {
-    position: absolute; inset: 0; border-radius: 11px;
-    border: 1px solid var(--accent); background: var(--panel); pointer-events: none;
-  }
-  .dg-vm-stack.s1 { transform: translate(11px, 11px); opacity: .58; z-index: 0; }
-  .dg-vm-stack.s2 { transform: translate(22px, 22px); opacity: .32; z-index: 0; }
-  @media (max-width: 520px){
-    .dg-vm-stack.s1 { transform: translate(7px, 7px); }
-    .dg-vm-stack.s2 { transform: translate(14px, 14px); }
-  }
-
-  @media (max-width: 480px){ .dg-toolbar-lbl { width: 100%; margin-bottom: 2px; } }
-
-  @media (prefers-reduced-motion: reduce) {
-    .fly { transition: opacity .3s; }
-    .dg-card.stay.blocked, .dg-mount.recv { animation: none !important; }
-  }
-
-  /* ── SECTIONS ── */
-  .sec { padding-top: 52px; padding-bottom: 52px; }
-  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 30px; }
-  .sec-no { font-family: var(--mono); font-size: 12px; color: var(--accent); }
-  .sec-head h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
-  .sec-head .hint { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-left: auto; }
-  @media (max-width: 560px){ .sec-head { flex-wrap: wrap; } .sec-head .hint { margin-left: 0; flex-basis: 100%; } }
-
-  /* feature list */
-  .flist { display: flex; flex-direction: column; }
-  .fitem { display: grid; grid-template-columns: 150px 1fr; gap: 24px; padding: 18px 0; border-top: 1px solid var(--line-2); }
-  .fitem:first-child { border-top: none; }
-  .fitem .name { font-family: var(--mono); font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 9px; }
-  .fitem .name .sq { color: var(--accent); }
-  .fitem p { color: var(--ink-2); font-size: 14.5px; line-height: 1.55; }
-  .fitem p b { font-weight: 500; }
-  @media (max-width: 560px){ .fitem { grid-template-columns: 1fr; gap: 6px; } }
-
-  /* command table */
-  .ctable { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
-  .cgroup-h { font-family: var(--mono); font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--faint); padding: 12px 18px; background: var(--paper); border-bottom: 1px solid var(--line-2); border-top: 1px solid var(--line); }
-  .ctable .cgroup-h:first-child { border-top: none; }
-  .crow { display: grid; grid-template-columns: 190px 1fr; gap: 18px; padding: 11px 18px; border-top: 1px solid var(--line-2); align-items: baseline; }
-  .crow:first-of-type { border-top: none; }
-  .crow code { font-family: var(--mono); font-size: 13px; color: var(--accent); white-space: nowrap; }
-  .crow span { color: var(--ink-2); font-size: 13.5px; line-height: 1.45; }
-  @media (max-width: 560px){ .crow { grid-template-columns: 1fr; gap: 3px; } }
-
-  /* providers compact */
-  .ptable { border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-  @media (max-width: 640px){ .ptable table { min-width: 520px; } }
-  th, td { text-align: left; padding: 12px 18px; border-bottom: 1px solid var(--line-2); }
-  thead th { background: var(--panel); font-family: var(--mono); font-weight: 500; font-size: 12.5px; }
-  thead th.col { color: var(--accent); }
-  tbody td:first-child { font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
-  tbody td { color: var(--muted); }
-  tbody tr:last-child td { border-bottom: none; }
-  .yes { color: var(--accent); font-weight: 600; }
-  .warn { color: #b07d12; }
-
-  /* install */
-  .inst { display: grid; grid-template-columns: 1fr 290px; gap: 28px; align-items: start; }
-  @media (max-width: 640px){
-    .inst { grid-template-columns: minmax(0, 1fr); }
-    .inst > div { min-width: 0; }
-    .inst .runline { max-width: 100%; }
-    .inst .runline .body { min-width: 0; flex-wrap: wrap; }
-    .inst .runline .k { flex-wrap: wrap; word-break: break-word; }
-  }
-  .inst .note { color: var(--ink-2); font-size: 14px; line-height: 1.6; margin-top: 18px; }
-  .req { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 18px 20px; }
-  .req h4 { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-bottom: 14px; }
-  .req ul { list-style: none; display: flex; flex-direction: column; gap: 10px; }
-  .req li { display: flex; gap: 10px; font-size: 13.5px; color: var(--ink-2); }
-  .req li .c { color: var(--accent); font-family: var(--mono); }
-  .req li b { font-weight: 500; color: var(--ink); }
-  .req li .mono { font-size: 12.5px; }
-
-  /* footer */
-  footer { border-top: 1px solid var(--line); padding: 26px 0; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 14px; font-family: var(--mono); font-size: 12.5px; color: var(--faint); }
-  footer .links { display: flex; gap: 20px; }
-  footer .links a { color: var(--muted); }
-  footer .links a:hover { color: var(--accent); }
-  footer b { color: var(--ink); font-weight: 500; }
-
 /* ──────────────────────────────────────────────────────────
    feature-widgets.css — three interactive feature widgets
    inherits the page's :root tokens (--accent, --mono, …)
@@ -877,6 +372,715 @@
   .bx-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .bx-seg { margin-left: auto; }
 }
+
+</style>
+<meta name="ext-resource-dependency" content="assets/agent-claude.png" data-resource-id="agentClaude" />
+<style>
+  :root {
+    --paper: #f6f6f3;
+    --panel: #ffffff;
+    --ink: #16181c;
+    --ink-2: #3d434c;
+    --muted: #7b818b;
+    --faint: #a4a9b0;
+    --line: #e3e3dd;
+    --line-2: #ededea;
+    --accent: #128a4f;
+    --accent-soft: #eaf4ee;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+  .mono { font-family: var(--mono); }
+  .accent { color: var(--accent); }
+
+  /* center column with hairline frame */
+  .frame {
+    max-width: 920px;
+    margin: 0 auto;
+    border-left: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    background: var(--paper);
+    min-height: 100vh;
+  }
+  .pad { padding-left: 40px; padding-right: 40px; }
+  @media (max-width: 640px){ .pad { padding-left: 22px; padding-right: 22px; } .frame { border-left: none; border-right: none; } }
+
+  /* row separators */
+  .rule { border-top: 1px solid var(--line); }
+
+  /* ── TOP BAR ── */
+  header.top {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 56px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 13px;
+  }
+  .top .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; }
+  .top .mark { width: 18px; height: 18px; display: grid; place-items: center; color: var(--ink); }
+  .top .mark svg { width: 18px; height: 18px; display: block; }
+  .top nav { display: flex; gap: 26px; color: var(--muted); }
+  .top nav a:hover { color: var(--ink); }
+  .top .src { color: var(--accent); }
+  .top .src:hover { text-decoration: underline; }
+  .top .top-ext { display: flex; align-items: center; gap: 16px; }
+  /* mobile hamburger — hidden on desktop */
+  .menu-btn { display: none; }
+  .menu-btn .i-close { display: none; }
+
+  @media (max-width: 640px){
+    .menu-btn {
+      display: grid; place-items: center; width: 34px; height: 34px;
+      border: 1px solid var(--line); border-radius: 7px;
+      background: var(--panel); color: var(--ink-2); cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .menu-btn svg { width: 17px; height: 17px; }
+    header.top.open .menu-btn .i-open { display: none; }
+    header.top.open .menu-btn .i-close { display: block; }
+
+    /* nav becomes a full-width dropdown under the bar */
+    .top nav {
+      position: absolute; top: 56px; left: 0; right: 0; z-index: 40;
+      flex-direction: column; gap: 0;
+      background: var(--panel); border-bottom: 1px solid var(--line);
+      box-shadow: 0 16px 28px -20px rgba(20, 24, 30, .5);
+      max-height: 0; overflow: hidden; pointer-events: none;
+      transition: max-height .26s ease;
+    }
+    header.top.open nav { max-height: 320px; pointer-events: auto; }
+    .top nav a {
+      padding: 13px 22px; color: var(--ink-2);
+      border-top: 1px solid var(--line-2);
+    }
+    .top nav a:hover { background: var(--accent-soft); }
+  }
+
+  /* ── META STRIP ── */
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 0;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+    /* tighter than the .pad default: the envs list only clears the 920px frame
+       on one row at this inset — at 40px it wraps the os cell onto a second row */
+    padding-left: 16px; padding-right: 16px;
+  }
+  .meta span { padding: 9px 10px; border-right: 1px solid var(--line); }
+  .meta span:last-child { border-right: none; }
+  .meta b { color: var(--ink); font-weight: 500; }
+  @media (max-width: 640px){
+    /* keep the meta strip on a single line: hide the bold labels, the envs
+       list, and the os span, leaving just npm + license (one row, no wrap) */
+    .meta { justify-content: center; }
+    .meta b, .meta .m-envs, .meta .m-os { display: none; }
+    .meta span { padding: 9px 14px; }
+    .meta span:nth-of-type(2){ border-right: none; }
+  }
+
+  /* ── LOGO STRIP ── */
+  .logostrip {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 14px 40px;
+    padding-top: 16px; padding-bottom: 16px;
+    font-family: var(--mono); font-size: 12.5px; color: var(--ink-2);
+  }
+  .ls-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; }
+  .ls-cap { font-size: 11px; color: var(--faint); letter-spacing: 0.05em; margin-right: 2px; }
+  .ls-item { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+  .ls-item img.si { width: 15px; height: 15px; opacity: 0.72; transition: opacity 0.15s; }
+  .ls-item img.ag { width: 16px; height: 16px; filter: grayscale(1) contrast(1.05); opacity: 0.8; transition: filter 0.15s, opacity 0.15s; }
+  .ls-item svg { width: 15px; height: 15px; color: var(--muted); transition: color 0.15s; }
+  .ls-item:hover img.si { opacity: 1; }
+  .ls-item:hover img.ag { filter: none; opacity: 1; }
+  .ls-item:hover svg { color: var(--ink); }
+  @media (max-width: 900px){ .logostrip { gap: 12px 28px; } }
+  @media (max-width: 640px){
+    .logostrip{ flex-direction: column; align-items: stretch; gap: 16px; }
+    .ls-group{ display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 8px; }
+    .ls-group:nth-child(2){ justify-content: flex-start; gap: 6px 22px; }
+    .ls-cap{ flex-basis: 100%; margin-right: 0; }
+    .ls-item{ font-size: 11.5px; gap: 5px; }
+    .ls-item img.si, .ls-item svg{ width: 13px; height: 13px; }
+    .ls-item img.ag{ width: 14px; height: 14px; }
+  }
+
+  /* ── HERO ── */
+  .hero { padding-top: 64px; padding-bottom: 52px; }
+  .kicker { font-family: var(--mono); font-size: 12.5px; color: var(--accent); letter-spacing: 0.04em; margin-bottom: 22px; }
+  .hero h1 {
+    font-size: clamp(32px, 4.4vw, 44px);
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+    font-weight: 600;
+    margin-bottom: 20px;
+  }
+  .hero h1 .dim { color: var(--faint); }
+  .hero p.lede { font-size: clamp(15px, 1.6vw, 16.5px); color: var(--ink-2); max-width: 46ch; line-height: 1.6; margin-bottom: 30px; }
+  .hero p.lede b { font-weight: 500; }
+
+  /* hero two-column with fake terminal */
+  .hero-grid { display: grid; grid-template-columns: 1fr; gap: 38px; }
+  @media (min-width: 900px) {
+    .hero-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 424px); gap: 36px; align-items: center; }
+  }
+
+  .term {
+    background: #15171b;
+    border: 1px solid #262a31;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 28px 56px -30px rgba(20, 24, 30, .55), 0 2px 8px -3px rgba(20,24,30,.25);
+    font-family: var(--mono);
+    min-width: 0;
+  }
+  .term-bar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 9px 12px; background: #1b1e24; border-bottom: 1px solid #262a31;
+  }
+  .term-bar .td { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .td.r { background: #ec6a5e; } .td.y { background: #f4bf4f; } .td.g { background: #61c554; }
+  .term-title { margin-left: 7px; font-size: 10.5px; color: #6c727b; letter-spacing: .02em; white-space: nowrap; }
+  .term-body {
+    padding: 13px 14px 22px; height: 224px; overflow: hidden;
+    font-size: 11.5px; line-height: 1.74; color: #c8ccd3;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 26px);
+            mask-image: linear-gradient(to bottom, transparent 0, #000 26px);
+  }
+  .term-line { white-space: pre-wrap; word-break: break-word; }
+  .term-line.gap { height: 9px; }
+  .term-line .pr { color: #4ec98a; }
+  .term-line .cmd { color: #f0f2f5; }
+  .term-line.dim { color: #7c828c; }
+  .term-line.ok { color: #5fc88f; }
+  .term-line .shellp { color: #62a9f0; }
+  .term .cursor {
+    display: inline-block; width: 6px; height: 12px; background: #7fe0a8;
+    vertical-align: -1px; margin-left: 1px; animation: term-blink 1.05s steps(1) infinite;
+  }
+  @keyframes term-blink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .term .cursor { animation: none; } }
+
+  /* command line */
+  .runline {
+    display: flex; align-items: center; gap: 0;
+    border: 1px solid var(--line); border-radius: 8px;
+    background: var(--panel); overflow: hidden;
+    font-family: var(--mono); font-size: 15px;
+    max-width: 460px;
+  }
+  .runline .body { padding: 13px 16px; display: flex; align-items: center; gap: 10px; flex: 1; }
+  .runline .p { color: var(--accent); }
+  .runline .pkg { color: var(--muted); }
+  .runline .k { color: var(--ink); display: inline-flex; align-items: baseline; gap: .4ch; }
+
+  /* rotating agent name */
+  .roller { display: inline-block; height: 1.25em; overflow: hidden; vertical-align: bottom; position: relative; }
+  .roller-track { display: flex; flex-direction: column; }
+  .roller-track > span { height: 1.25em; line-height: 1.25em; color: var(--accent); white-space: nowrap; }
+  .roller.run .roller-track { animation: roll 6.6s cubic-bezier(.7,0,.2,1) infinite; }
+  @keyframes roll {
+    0%, 22%    { transform: translateY(0); }
+    28%, 55%   { transform: translateY(-1.25em); }
+    61%, 88%   { transform: translateY(-2.5em); }
+    94%, 100%  { transform: translateY(-3.75em); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .roller.run .roller-track { animation: none; }
+  }
+  .runline button {
+    border: none; border-left: 1px solid var(--line);
+    background: var(--paper); color: var(--muted);
+    width: 46px; align-self: stretch; cursor: pointer;
+    display: grid; place-items: center; transition: color .15s, background .15s;
+  }
+  .runline button:hover { color: var(--accent); background: var(--accent-soft); }
+  .runline button svg { width: 14px; height: 14px; }
+
+  .runlink {
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    margin-top: 16px; font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+    transition: color .15s;
+  }
+  .runlink span { color: var(--accent); transition: transform .15s; }
+  .runlink:hover { color: var(--accent); }
+  .runlink:hover span { transform: translateX(3px); }
+
+  /* ── ARCHITECTURE DIAGRAM ── */
+  .diagram { padding-top: 36px; padding-bottom: 32px; }
+  .dg { display: flex; align-items: stretch; gap: 16px; }
+  .dg-host { flex: 0 1 252px; }
+  .dg-vm { flex: 1 1 auto; }
+  .dg-arrow { display: flex; flex-direction: column; align-items: center; gap: 5px; color: var(--accent); flex-shrink: 0; }
+  .dg-arrow svg { width: 58px; height: 24px; }
+  .dg-arrow-lbl { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--accent); text-transform: uppercase; }
+  @media (max-width: 680px){
+    .dg { flex-direction: column; }
+    .dg-arrow { justify-content: center; transform: rotate(90deg); padding: 4px 0; }
+  }
+
+  .dg-panel { border: 1px solid var(--line); border-radius: 11px; background: var(--panel); padding: 18px; height: 100%; }
+  .dg-vm.dg-panel { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(18,138,79,0.05); }
+
+  .dg-h { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .dg-h .ico { color: var(--accent); width: 22px; height: 22px; flex-shrink: 0; }
+  .dg-h .t { font-family: var(--mono); font-weight: 600; font-size: 15px; letter-spacing: -0.01em; white-space: nowrap; }
+  .dg-h .badge { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 3px 9px; }
+  .dg-h .badge svg { width: 12px; height: 12px; }
+
+  .dg-sub { display: flex; flex-direction: column; gap: 11px; }
+  .dg-card { display: flex; align-items: center; gap: 12px; border: 1px solid var(--line-2); border-radius: 8px; padding: 12px 13px; background: var(--paper); }
+  .dg-card .ico { color: var(--accent); width: 19px; height: 19px; flex-shrink: 0; }
+  .dg-card .lbl { font-family: var(--mono); font-size: 12.5px; line-height: 1.3; }
+  .dg-card .lbl small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
+
+  .dg-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-bottom: 13px; }
+  .dg-tile { border: 1px solid var(--line-2); border-radius: 8px; padding: 14px 8px 12px; background: var(--paper); text-align: center; }
+  .dg-tile .ico { color: var(--accent); margin: 0 auto 9px; display: block; line-height: 0; }
+  .dg-tile .ico svg { width: 26px; height: 26px; margin: 0 auto; }
+  .dg-h .ico svg, .dg-card .ico svg { width: 100%; height: 100%; display: block; }
+  .dg-tile .t { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+  .dg-tile small { display: block; color: var(--muted); font-size: 10.5px; margin-top: 3px; }
+
+  .dg-did { border: 1px dashed var(--accent); border-radius: 8px; padding: 14px 13px 13px; }
+  .dg-did .did-t { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; color: var(--accent); text-align: center; margin-bottom: 12px; }
+  .dg-did .did-row { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+
+  .diagram .lbl { font-family: var(--mono); font-size: 11.5px; color: var(--muted); padding-top: 26px; }
+
+  /* diagram — animation */
+  .dg-tile { position: relative; }
+  .dg-run { position: absolute; top: 9px; right: 9px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .dg-run::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--accent); animation: dg-ping 1.8s ease-out infinite; animation-delay: inherit; }
+  @keyframes dg-ping { 0% { transform: scale(1); opacity: .55; } 80%, 100% { transform: scale(3.4); opacity: 0; } }
+
+  .dg-wire { animation: dg-march .9s linear infinite; }
+  @keyframes dg-march { to { stroke-dashoffset: -18; } }
+  .dg-packet { animation: dg-fly 2.4s cubic-bezier(.55,0,.45,1) infinite; }
+  @keyframes dg-fly {
+    0% { transform: translateX(0); opacity: 0; }
+    12% { opacity: 1; }
+    74% { opacity: 1; }
+    100% { transform: translateX(43px); opacity: 0; }
+  }
+  .dg-arrow-lbl { animation: dg-pulse 2.4s ease-in-out infinite; }
+  @keyframes dg-pulse { 0%, 100% { opacity: .5; } 40% { opacity: 1; } }
+
+  .dg-vm.dg-panel { animation: dg-breath 3.6s ease-in-out infinite; }
+  @keyframes dg-breath {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(18,138,79,0.05); }
+    50% { box-shadow: 0 0 0 5px rgba(18,138,79,0.11); }
+  }
+
+  /* entrance — default visible; one-shot animation when scrolled into view */
+  @keyframes dg-enter { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+  .dg.in .dg-host { animation: dg-enter .55s ease both; }
+  .dg.in .dg-arrow { animation: dg-enter .55s ease .30s both; }
+  .dg.in .dg-vm { animation: dg-enter .55s ease .12s both, dg-breath 3.6s ease-in-out .9s infinite; }
+  .dg.in .dg-grid3 .dg-tile:nth-child(1) { animation: dg-enter .5s ease .34s both; }
+  .dg.in .dg-grid3 .dg-tile:nth-child(2) { animation: dg-enter .5s ease .44s both; }
+  .dg.in .dg-grid3 .dg-tile:nth-child(3) { animation: dg-enter .5s ease .54s both; }
+  .dg.in .dg-did { animation: dg-enter .5s ease .62s both; }
+  .dg-tile { transition: border-color .2s; }
+  .dg-tile:hover { border-color: var(--accent); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dg-wire, .dg-packet, .dg-arrow-lbl, .dg-run::after, .dg .dg-vm.dg-panel,
+    .dg.in .dg-host, .dg.in .dg-arrow, .dg.in .dg-vm, .dg.in .dg-tile, .dg.in .dg-did { animation: none !important; }
+  }
+
+  /* ── diagram — interactive teleport ── */
+  .dg { position: relative; }
+  .accent { color: var(--accent); }
+  .neg { color: #c1542b; }
+
+  /* host cards: buttons reset + affordance */
+  .dg-card.xfer, .dg-card.stay {
+    width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer;
+    background: var(--paper); border: 1px solid var(--line-2);
+    -webkit-tap-highlight-color: transparent;
+    transition: border-color .18s, transform .12s, box-shadow .18s, background .18s;
+  }
+  .dg-card.xfer:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: 0 3px 10px -6px rgba(18,138,79,.5); }
+  .dg-card.xfer:active { transform: translateY(0); }
+  .dg-card .go { margin-left: auto; color: var(--accent); font-family: var(--mono); font-size: 15px; opacity: .45; transition: opacity .18s, transform .18s; }
+  .dg-card.xfer:hover .go { opacity: 1; transform: translateX(3px); }
+  .dg-card.sending { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 2px rgba(18,138,79,.14); }
+  .dg-card.info { cursor: pointer; }
+  .dg-card#c-http { -webkit-tap-highlight-color: transparent; transition: border-color .18s, background .18s, box-shadow .18s; }
+  .dg-card#c-http .go { margin-left: auto; color: var(--accent); font-family: var(--mono); font-size: 14px; opacity: .5; transition: opacity .18s, transform .18s; }
+  .dg-card#c-http:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .dg-card#c-http:hover .go { opacity: 1; transform: translateX(2px); }
+  .host-badge { color: var(--muted); border-color: var(--line); }
+
+  /* stay (git creds) — clicking shows it's pinned to host */
+  .dg-card.stay .go.lock-go { color: var(--faint); font-size: 9px; }
+  .dg-card.stay:hover { border-color: #c1542b; }
+  .dg-card.stay:hover .go.lock-go { color: #c1542b; }
+  .dg-card.stay.blocked { border-color: #c1542b; background: rgba(193,84,43,.06); box-shadow: 0 0 0 2px rgba(193,84,43,.14); animation: dg-shake .42s ease; }
+  .dg-card.stay.blocked .ico { color: #c1542b; }
+  @keyframes dg-shake { 0%,100%{transform:translateX(0)} 18%{transform:translateX(-4px)} 38%{transform:translateX(4px)} 58%{transform:translateX(-3px)} 78%{transform:translateX(2px)} }
+
+  /* VM mounts — destinations that fill in on teleport */
+  .dg-mounts { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-bottom: 13px; }
+  .dg-mount {
+    display: flex; align-items: center; gap: 10px;
+    border: 1px dashed var(--faint); border-radius: 8px; padding: 11px 12px; background: transparent;
+    transition: border-color .3s, background .3s, color .3s;
+  }
+  .dg-mount .ico { color: var(--faint); width: 18px; height: 18px; flex-shrink: 0; transition: color .3s; }
+  .dg-mount .lbl { font-family: var(--mono); font-size: 12px; color: var(--muted); line-height: 1.25; }
+  .dg-mount .lbl small { display: block; font-size: 10px; color: var(--faint); }
+  .dg-mount .chk { margin-left: auto; width: 15px; height: 15px; color: var(--accent); opacity: 0; transform: scale(.5); transition: opacity .3s, transform .3s; }
+  .dg-mount .chk svg { width: 100%; height: 100%; display: block; }
+  .dg-mount.filled { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
+  .dg-mount.filled .ico { color: var(--accent); }
+  .dg-mount.filled .lbl { color: var(--ink); }
+  .dg-mount.filled .lbl small { color: var(--accent); }
+  .dg-mount.filled .lbl small.ph { display: none; }
+  .dg-mount.filled .lbl small.done { display: block; }
+  .dg-mount .lbl small.done { display: none; }
+  .dg-mount.filled .chk { opacity: 1; transform: scale(1); }
+  .dg-mount.recv { animation: dg-recv .6s ease; }
+  @keyframes dg-recv { 0%{ transform: scale(1);} 34%{ transform: scale(1.045);} 100%{transform:scale(1);} }
+
+  /* the flying teleport packet */
+  .fly {
+    position: absolute; z-index: 6; width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px;
+    border-radius: 3px; background: var(--accent); box-shadow: 0 0 0 4px rgba(18,138,79,.16), 0 0 14px rgba(18,138,79,.5);
+    opacity: 0; pointer-events: none;
+    transition: transform .72s cubic-bezier(.5,.02,.3,1), opacity .72s ease;
+  }
+
+  /* clickable arrow */
+  .dg-arrow { cursor: pointer; transition: color .18s; }
+  .dg-arrow:hover { color: #0e6f3f; }
+  .dg-arrow:hover .dg-arrow-lbl { opacity: 1; }
+  #dg-status b { color: var(--ink); font-weight: 500; }
+
+  /* discoverable toolbar row */
+  .dg-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 20px; }
+  .dg-toolbar-lbl { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-right: 2px; }
+  .dg-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 12.5px; font-weight: 500; color: var(--ink-2);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+    padding: 8px 13px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(16,24,40,.05);
+    transition: border-color .16s, color .16s, background .16s, box-shadow .16s;
+  }
+  .dg-btn .d { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; display: grid; place-items: center; transition: background .16s; }
+  .dg-btn .d.x, .dg-btn.neg .d.x { width: auto; height: auto; background: transparent !important; color: #c1542b; font-size: 12px; font-weight: 700; line-height: 1; }
+  .dg-btn .go { color: var(--accent); opacity: .55; transition: opacity .16s, transform .16s; }
+  .dg-btn:hover { border-color: var(--accent); color: var(--ink); background: var(--accent-soft); box-shadow: 0 1px 2px rgba(16,24,40,.08); }
+  .dg-btn:hover .go { opacity: 1; transform: translateX(2px); }
+  .dg-btn:active { box-shadow: inset 0 1px 2px rgba(16,24,40,.1); }
+  .dg-btn.neg .d { background: #c1542b; }
+  .dg-btn.neg .go { color: #c1542b; font-size: 8px; }
+  .dg-btn.neg:hover { border-color: #c1542b; background: rgba(193,84,43,.06); color: #c1542b; }
+  .dg-btn.struck { border-color: #c1542b; color: #c1542b; background: rgba(193,84,43,.06); }
+  .dg-btn.struck .go { color: #c1542b; }
+  .dg-btn.done { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+  .dg-btn.flash { animation: dg-btnflash .5s ease; }
+  @keyframes dg-btnflash { 0%{ box-shadow: 0 0 0 0 rgba(18,138,79,0);} 32%{ box-shadow: 0 0 0 4px rgba(18,138,79,.2);} 100%{ box-shadow: 0 1px 2px rgba(16,24,40,.05);} }
+
+  .dg-card.stay.pinned { border-color: #c1542b; background: rgba(193,84,43,.05); }
+  .dg-card.stay.pinned .ico { color: #c1542b; }
+  .dg-card.stay.pinned .lbl { color: #c1542b; }
+  .dg-card.stay.pinned .lbl small { color: #c1542b; }
+  .dg-card.stay.pinned .go.lock-go { color: #c1542b; }
+
+  /* git push sequence states */
+  .dg-card.stay { transition: border-color .25s, background .25s, color .25s; }
+  .dg-card.stay.pushing { border-color: #b07d12; background: rgba(176,125,18,.07); }
+  .dg-card.stay.pushing .ico, .dg-card.stay.pushing .lbl, .dg-card.stay.pushing .lbl small { color: #b07d12; }
+  .dg-card.stay.pushing .lbl small::after { content: ''; display: inline; animation: dg-dots 1.1s steps(1) infinite; }
+  @keyframes dg-dots { 0%{ content: ''; } 25%{ content: '.'; } 50%{ content: '..'; } 75%{ content: '...'; } 100%{ content: ''; } }
+  .dg-card.stay.pushing .go.lock-go { color: #b07d12; }
+  .dg-card.stay.pushed { border-color: var(--accent); background: var(--accent-soft); }
+  .dg-card.stay.pushed .ico, .dg-card.stay.pushed .lbl, .dg-card.stay.pushed .lbl small { color: var(--accent); }
+  .dg-card.stay.pushed .go.lock-go { color: var(--accent); }
+
+  /* changeset packet flying back to host */
+  .fly.fly-diff { border-radius: 2px; background: #b07d12; box-shadow: 0 0 0 4px rgba(176,125,18,.16), 0 0 14px rgba(176,125,18,.5); }
+
+  .dg-card.info { transition: border-color .25s, background .25s, box-shadow .25s; }
+  .dg-card.info.flash { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 2px rgba(18,138,79,.14); }
+  .dg-card#c-services.flash { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 2px rgba(18,138,79,.14); transition: border-color .25s, background .25s, box-shadow .25s; }
+
+  /* http-tunnel connector to services */
+  .dg-conn { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: visible; transition: opacity .4s; }
+  .dg-conn.out { opacity: 0; }
+  .dg-conn-path { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-dasharray: 5 5; animation: dg-march2 .7s linear infinite; }
+  @keyframes dg-march2 { to { stroke-dashoffset: -20; } }
+  .dg-conn-arrow { fill: var(--accent); }
+
+  /* VM box — stacked layers imply many parallel boxes */
+  .dg-vm-wrap { flex: 1 1 auto; position: relative; }
+  .dg-vm-wrap .dg-vm { position: relative; z-index: 1; height: 100%; }
+  .dg-vm-stack {
+    position: absolute; inset: 0; border-radius: 11px;
+    border: 1px solid var(--accent); background: var(--panel); pointer-events: none;
+  }
+  .dg-vm-stack.s1 { transform: translate(11px, 11px); opacity: .58; z-index: 0; }
+  .dg-vm-stack.s2 { transform: translate(22px, 22px); opacity: .32; z-index: 0; }
+  @media (max-width: 520px){
+    .dg-vm-stack.s1 { transform: translate(7px, 7px); }
+    .dg-vm-stack.s2 { transform: translate(14px, 14px); }
+  }
+
+  @media (max-width: 480px){ .dg-toolbar-lbl { width: 100%; margin-bottom: 2px; } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .fly { transition: opacity .3s; }
+    .dg-card.stay.blocked, .dg-mount.recv { animation: none !important; }
+  }
+
+  /* ── TRAY APP (macOS mock) ── */
+  .trayapp { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; color: #1d1d1f; font-size: 13px; line-height: 1.3; }
+  .trayapp .nsmenu{ width: 300px; background: rgba(246,246,244,.97); backdrop-filter: blur(20px); border-radius: 11px; border: 1px solid rgba(0,0,0,.06); box-shadow: 0 0 0 .5px rgba(0,0,0,.06), 0 10px 34px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.08); padding: 5px; }
+  .trayapp .ns-item{ display: flex; align-items: center; gap: 7px; min-height: 22px; padding: 2px 8px 2px 9px; border-radius: 6px; }
+  .trayapp .ns-item .ico{ width: 16px; height: 16px; flex: none; color: rgba(60,60,67,.72); display: flex; align-items: center; justify-content: center; }
+  .trayapp .ns-item .ico svg{ width: 15px; height: 15px; }
+  .trayapp .ns-item .lbl{ flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .trayapp .ns-item .kbd{ color: rgba(60,60,67,.58); font-size: 13px; letter-spacing: .06em; flex: none; }
+  .trayapp .ns-item .chev{ flex: none; color: rgba(60,60,67,.58); }
+  .trayapp .ns-item .chev svg{ width: 9px; height: 9px; display: block; }
+  .trayapp .ns-item.sel{ background: #2662d9; color: #fff; }
+  .trayapp .ns-item.sel .ico, .trayapp .ns-item.sel .kbd, .trayapp .ns-item.sel .chev, .trayapp .ns-item.sel .sub2, .trayapp .ns-item.sel .info{ color: rgba(255,255,255,.9); }
+  .trayapp .ns-item.disabled{ color: rgba(60,60,67,.35); }
+  .trayapp .ns-item.disabled .ico{ color: rgba(60,60,67,.35); }
+  .trayapp .ns-item.danger .lbl{ color: #c1452f; }
+  .trayapp .ns-item.danger .ico{ color: #c1452f; }
+  .trayapp .ns-sep{ height: 1px; background: rgba(0,0,0,.08); margin: 5px 10px; }
+  .trayapp .ns-header{ display: flex; align-items: center; gap: 6px; padding: 5px 5px 6px 11px; }
+  .trayapp .ns-header .t{ font-size: 13.5px; font-weight: 700; color: #6e7278; letter-spacing: -.01em; flex: none; }
+  .trayapp .ns-header .spacer{ flex: 1; min-width: 4px; }
+  .trayapp .ns-head{ padding: 4px 9px 2px; font-size: 11px; font-weight: 600; color: rgba(60,60,67,.58); letter-spacing: .02em; display: flex; align-items: center; gap: 6px; }
+  .trayapp .ns-head .ico{ width: 12px; height: 12px; color: rgba(60,60,67,.35); }
+  .trayapp .ns-head .ico svg{ width: 12px; height: 12px; display: block; }
+  .trayapp .ns-item .info{ width: 17px; height: 17px; flex: none; color: rgba(60,60,67,.62); display: flex; align-items: center; justify-content: center; }
+  .trayapp .ns-item .info svg{ width: 15px; height: 15px; }
+  .trayapp .ns-box{ padding-top: 4px; padding-bottom: 4px; }
+  .trayapp .ns-box .dot{ width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .trayapp .dot-run{ background: #28a745; }
+  .trayapp .ns-box .two{ flex: 1; min-width: 0; }
+  .trayapp .ns-box .name{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: 13px; }
+  .trayapp .ns-box .sub2{ font-size: 11px; color: rgba(60,60,67,.58); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .trayapp .p-pill{ display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; flex: none; font-size: 11px; font-weight: 500; color: #0c6b3d; background: #eaf4ee; border: 1px solid #bfe3cd; border-radius: 99px; padding: 2px 8px; }
+  .trayapp .p-pill .dot{ width: 6px; height: 6px; border-radius: 50%; background: #28a745; }
+  .trayapp .icon-btn{ width: 24px; height: 26px; border-radius: 7px; border: none; background: transparent; color: rgba(60,60,67,.62); display: flex; align-items: center; justify-content: center; flex: none; padding: 0; cursor: default; }
+  .trayapp .icon-btn svg{ width: 15px; height: 15px; }
+  .trayapp .btn-new{ display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; flex: none; font-size: 11.5px; font-weight: 600; font-family: inherit; border-radius: 7px; padding: 4px 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; }
+  .trayapp .btn-new svg{ width: 11px; height: 11px; }
+  .trayapp .flyout{ position: absolute; }
+
+  .tray-scroll{ overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .hero-seg.tray-tabs{ display: none; }
+  .tray-desk{ position: relative; min-width: 820px; height: 770px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: linear-gradient(150deg, #edebe4 0%, #e3e5de 55%, #dde2da 100%); }
+  .tmenubar{ position: absolute; top: 0; left: 0; right: 0; height: 30px; display: flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 0 10px; background: rgba(250,250,248,.85); border-bottom: 1px solid rgba(0,0,0,.08); }
+  .tmenubar .mb-item{ width: 30px; height: 24px; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: #3a3a3c; }
+  .tmenubar .mb-item svg{ width: 16px; height: 16px; }
+  .tmenubar .mb-item.active{ background: rgba(0,0,0,.12); }
+  .tmenubar .mb-item.faint{ opacity: .45; }
+  .tmenubar .mb-clock{ font-size: 12.5px; color: #3a3a3c; padding: 0 6px; font-weight: 500; }
+  .tray-cap{ font-family: var(--mono); font-size: 11.5px; color: var(--muted); padding-top: 22px; }
+
+  /* hero desktop scene — menu bar app + terminal */
+  .hero-desk-wrap{ min-width: 0; }
+  .hero-desk-scroll{ overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .hero-desk{ position: relative; min-width: 420px; height: 402px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--paper); }
+  .hero-desk .term{ position: absolute; left: 14px; bottom: 14px; width: 288px; z-index: 1; border-radius: 10px; }
+  .hero-desk .term-body{ height: 196px; }
+  .hero-desk .btn-new, .hero-desk #hOpenIn, .hero-desk #hGit, .hero-desk .mb-item.abx, .hero-desk .ns-quit{ cursor: pointer; }
+  .hero-desk.menu-hidden .nsmenu{ opacity: 0; pointer-events: none; transform: translateY(-4px) scale(.985); }
+  #heroNewBox{ animation: nb-halo 2.2s cubic-bezier(.4,0,.4,1) infinite; }
+  #heroNewBox.quiet{ animation: none; }
+  @keyframes nb-halo{
+    0%{ box-shadow: 0 0 0 0 rgba(18,138,79,.50); }
+    55%{ box-shadow: 0 0 0 8px rgba(18,138,79,0); }
+    100%{ box-shadow: 0 0 0 0 rgba(18,138,79,0); }
+  }
+  @media (prefers-reduced-motion: reduce){ #heroNewBox{ animation: none; } }
+  .hero-desk .nsmenu.hero-menu{ position: absolute; right: 12px; top: 34px; width: 228px; z-index: 2; }
+  .hero-desk .nsmenu.hero-sub{ position: absolute; left: 12px; top: 152px; width: 180px; z-index: 3; backdrop-filter: none; background: #f4f4f1; opacity: 0; pointer-events: none; transform: translateX(-5px); }
+  .hero-desk .nsmenu.hero-sub.open{ opacity: 1; pointer-events: auto; transform: none; }
+  .hd-cursor{ position: absolute; z-index: 9; width: 22px; height: 22px; left: 60%; top: 78%; opacity: 0; pointer-events: none; transition: left .68s cubic-bezier(.45,.05,.25,1), top .68s cubic-bezier(.45,.05,.25,1), opacity .35s ease; }
+  .hd-cursor svg{ width: 100%; height: 100%; display: block; filter: drop-shadow(0 1.5px 2.5px rgba(0,0,0,.35)); }
+  .hero-desk-cap{ font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  .hero-desk-foot{ display: flex; align-items: center; justify-content: center; gap: 12px; padding-top: 12px; }
+  .hero-desk-foot .hero-desk-cap{ display: none; }
+  .hero-seg{ display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--panel); flex: none; }
+  .hero-seg button{ font-family: var(--mono); font-size: 11px; padding: 5px 11px; border: none; background: transparent; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: background .15s, color .15s; }
+  .hero-seg button + button{ border-left: 1px solid var(--line); }
+  .hero-seg button:hover{ color: var(--ink); }
+  .hero-seg button.on{ background: var(--accent-soft); color: var(--accent); }
+  /* fullscreen-terminal state */
+  .hero-desk .term{ transition: left .35s ease, right .35s ease, top .35s ease, bottom .35s ease; }
+  .hero-desk .nsmenu{ transition: opacity .25s ease, transform .25s ease; }
+  .hero-desk.full .nsmenu{ opacity: 0; pointer-events: none; transform: translateY(-4px) scale(.985); }
+  .hero-desk.full .term{ left: 12px; right: 12px; bottom: 12px; top: 40px; width: auto; display: flex; flex-direction: column; }
+  .hero-desk.full .term-body{ height: auto; flex: 1; }
+  @media (prefers-reduced-motion: reduce){ .hero-desk .term, .hero-desk .nsmenu{ transition: none; } }
+
+  /* cascading flyouts */
+  .hero-desk .nsmenu.hd-fly{ position: absolute; z-index: 4; opacity: 0; pointer-events: none; transform: translateX(-5px); backdrop-filter: none; background: #f4f4f1; }
+  .hero-desk .nsmenu.hd-fly.open{ opacity: 1; pointer-events: auto; transform: none; }
+  #flyOpenIn{ left: 186px; top: 176px; width: 186px; }
+  #flyGit{ left: 186px; top: 210px; width: 198px; }
+
+  /* New Box modal */
+  .hd-overlay{ position: absolute; inset: 0; z-index: 6; background: rgba(22,24,28,.30); display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+  .hd-overlay.open{ opacity: 1; pointer-events: auto; }
+  .trayapp .tmodal{ width: 378px; background: rgba(250,250,248,.99); border-radius: 13px; border: 1px solid rgba(0,0,0,.07); box-shadow: 0 0 0 .5px rgba(0,0,0,.05), 0 18px 55px rgba(0,0,0,.24), 0 4px 12px rgba(0,0,0,.09); overflow: hidden; font-size: 13px; transform: scale(.96); transition: transform .2s ease; }
+  .hd-overlay.open .tmodal{ transform: none; }
+  .trayapp .m-head{ display: flex; align-items: center; gap: 10px; padding: 12px 16px 11px; border-bottom: 1px solid rgba(0,0,0,.06); }
+  .trayapp .m-head .logo{ width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; flex: none; }
+  .trayapp .m-head .logo svg{ width: 16px; height: 16px; }
+  .trayapp .m-head .t{ font-size: 13.5px; font-weight: 700; letter-spacing: -.01em; }
+  .trayapp .m-head .s{ font-size: 11px; color: rgba(60,60,67,.58); margin-top: 1px; }
+  .trayapp .m-form{ padding: 12px 16px 2px; display: grid; grid-template-columns: 72px 1fr; row-gap: 10px; column-gap: 10px; align-items: center; }
+  .trayapp .m-form .flabel{ text-align: right; font-size: 12px; color: #3d434c; }
+  .trayapp .m-form .flabel .opt{ display: block; font-size: 10px; color: rgba(60,60,67,.35); }
+  .trayapp .m-form .flabel.top{ align-self: start; padding-top: 6px; }
+  .trayapp .popup{ display: flex; align-items: center; gap: 8px; background: #fff; border: 1px solid rgba(0,0,0,.13); border-radius: 6px; padding: 3px 3px 3px 9px; min-height: 24px; box-shadow: 0 .5px 1.5px rgba(0,0,0,.06); cursor: pointer; }
+  .trayapp .popwrap{ position: relative; }
+  .trayapp .pop-menu{ position: absolute; left: 0; right: 0; top: -4px; z-index: 8; background: #f6f6f3; border-radius: 8px; border: 1px solid rgba(0,0,0,.08); box-shadow: 0 0 0 .5px rgba(0,0,0,.05), 0 10px 28px rgba(0,0,0,.2), 0 2px 8px rgba(0,0,0,.08); padding: 4px; display: none; }
+  .trayapp .pop-menu.open{ display: block; }
+  .trayapp .pop-it{ display: flex; align-items: center; gap: 6px; padding: 3px 8px 3px 5px; border-radius: 5px; font-size: 12px; cursor: pointer; }
+  .trayapp .pop-it .ck{ width: 13px; flex: none; color: transparent; font-size: 11px; font-weight: 700; }
+  .trayapp .pop-it.on .ck{ color: inherit; }
+  .trayapp .pop-it .hint{ margin-left: auto; color: rgba(60,60,67,.58); font-size: 11px; }
+  .trayapp .pop-it:hover{ background: #2662d9; color: #fff; }
+  .trayapp .pop-it:hover .hint{ color: rgba(255,255,255,.85); }
+  .trayapp .pop-it.dis{ opacity: .5; cursor: default; }
+  .trayapp .pop-it.dis:hover{ background: transparent; color: inherit; }
+  .trayapp .pop-it.dis:hover .hint{ color: rgba(60,60,67,.58); }
+  .trayapp .popup .pv{ flex: 1; display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .trayapp .popup .pv .hint{ color: rgba(60,60,67,.58); font-size: 11px; }
+  .trayapp .popup .caret{ width: 16px; height: 18px; border-radius: 4px; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; flex: none; }
+  .trayapp .popup .caret svg{ width: 9px; height: 9px; transform: rotate(90deg); }
+  .trayapp .seg{ display: flex; background: rgba(0,0,0,.055); border-radius: 7px; padding: 2px; gap: 2px; }
+  .trayapp .seg .s-item{ flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 4px 4px; border-radius: 5px; font-size: 11.5px; color: #3d434c; cursor: pointer; }
+  .trayapp .seg .s-item img{ width: 13px; height: 13px; border-radius: 3px; }
+  .trayapp .seg .s-item.on{ background: #fff; box-shadow: 0 .5px 2px rgba(0,0,0,.14), 0 0 0 .5px rgba(0,0,0,.04); font-weight: 600; }
+  .trayapp .tfield{ background: #fff; border: 1px solid rgba(0,0,0,.13); border-radius: 6px; padding: 4px 9px; min-height: 24px; display: flex; align-items: center; box-shadow: inset 0 .5px 1.5px rgba(0,0,0,.05); font-size: 12px; }
+  .trayapp .tfield .ph{ color: rgba(60,60,67,.35); }
+  .trayapp .tfield.area{ align-items: flex-start; min-height: 52px; padding-top: 6px; }
+  .trayapp .tfield.focus{ border-color: var(--accent); box-shadow: 0 0 0 3px rgba(18,138,79,.18); }
+  .trayapp .m-foot{ display: flex; align-items: center; gap: 8px; padding: 12px 16px 13px; }
+  .trayapp .m-foot .est{ font-size: 11px; color: rgba(60,60,67,.58); display: flex; align-items: center; gap: 5px; }
+  .trayapp .m-foot .est svg{ width: 11px; height: 11px; }
+  .trayapp .m-foot .spacer{ flex: 1; }
+  .trayapp .tbtn{ display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; flex: none; font-size: 12px; font-weight: 600; font-family: inherit; border-radius: 7px; padding: 5px 11px; border: 1px solid rgba(0,0,0,.1); background: #fff; color: #1d1d1f; cursor: pointer; }
+  .trayapp .tbtn.primary{ background: var(--accent); border-color: var(--accent); color: #fff; }
+  .trayapp .tbtn .ret{ font-size: 10px; opacity: .75; font-weight: 400; margin-left: 2px; }
+  .trayapp .m-creating{ padding: 16px 16px 18px; display: none; }
+  .trayapp .tmodal.creating .m-creating{ display: block; }
+  .trayapp .tmodal.creating .m-form, .trayapp .tmodal.creating .m-foot{ display: none; }
+  .trayapp .m-crow{ display: flex; align-items: center; gap: 9px; font-size: 12.5px; }
+  .trayapp .m-crow .cdot{ width: 8px; height: 8px; border-radius: 50%; background: #28a745; flex: none; }
+  .trayapp .m-crow b{ font-weight: 600; }
+  .trayapp .m-crow .step{ margin-left: auto; color: rgba(60,60,67,.58); font-size: 11px; }
+  .trayapp .m-prog{ height: 5px; border-radius: 99px; background: rgba(0,0,0,.07); margin-top: 10px; overflow: hidden; }
+  .trayapp .m-prog i{ display: block; width: 4%; height: 100%; border-radius: 99px; background: var(--accent); transition: width 2s ease; }
+  .trayapp .m-csub{ font-size: 11px; color: rgba(60,60,67,.58); margin-top: 8px; }
+  .lede a.applink{ color: var(--accent); border-bottom: 1px solid rgba(18,138,79,.35); }
+  .lede a.applink:hover{ border-bottom-color: var(--accent); }
+
+  /* ── SECTIONS ── */
+  .sec { padding-top: 52px; padding-bottom: 52px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 30px; }
+  .sec-no { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .sec-head h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+  .sec-head .hint { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-left: auto; }
+
+  /* feature list */
+  .flist { display: flex; flex-direction: column; }
+  .fitem { display: grid; grid-template-columns: 150px 1fr; gap: 24px; padding: 18px 0; border-top: 1px solid var(--line-2); }
+  .fitem:first-child { border-top: none; }
+  .fitem .name { font-family: var(--mono); font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 9px; }
+  .fitem .name .sq { color: var(--accent); }
+  .fitem p { color: var(--ink-2); font-size: 14.5px; line-height: 1.55; }
+  .fitem p b { font-weight: 500; }
+  @media (max-width: 560px){ .fitem { grid-template-columns: 1fr; gap: 6px; } }
+
+  /* command table */
+  .ctable { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+  .cgroup-h { font-family: var(--mono); font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--faint); padding: 12px 18px; background: var(--paper); border-bottom: 1px solid var(--line-2); border-top: 1px solid var(--line); }
+  .ctable .cgroup-h:first-child { border-top: none; }
+  .crow { display: grid; grid-template-columns: 190px 1fr; gap: 18px; padding: 11px 18px; border-top: 1px solid var(--line-2); align-items: baseline; }
+  .crow:first-of-type { border-top: none; }
+  .crow code { font-family: var(--mono); font-size: 13px; color: var(--accent); white-space: nowrap; }
+  .crow span { color: var(--ink-2); font-size: 13.5px; line-height: 1.45; }
+  @media (max-width: 560px){ .crow { grid-template-columns: 1fr; gap: 3px; } }
+
+  /* providers compact */
+  .ptable { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 12px 18px; border-bottom: 1px solid var(--line-2); }
+  thead th { background: var(--panel); font-family: var(--mono); font-weight: 500; font-size: 12.5px; }
+  thead th.col { color: var(--accent); }
+  tbody td:first-child { font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
+  tbody td { color: var(--muted); }
+  tbody tr:last-child td { border-bottom: none; }
+  .yes { color: var(--accent); font-weight: 600; }
+  .warn { color: #b07d12; }
+
+  /* install */
+  .inst { display: grid; grid-template-columns: 1fr 290px; gap: 28px; align-items: start; }
+  @media (max-width: 640px){ .inst { grid-template-columns: 1fr; } }
+  .inst .note { color: var(--ink-2); font-size: 14px; line-height: 1.6; margin-top: 18px; }
+  .req { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 18px 20px; }
+  .req h4 { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-bottom: 14px; }
+  .req ul { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .req li { display: flex; gap: 10px; font-size: 13.5px; color: var(--ink-2); }
+  .req li .c { color: var(--accent); font-family: var(--mono); }
+  .req li b { font-weight: 500; color: var(--ink); }
+  .req li .mono { font-size: 12.5px; }
+
+  /* footer */
+  footer { border-top: 1px solid var(--line); padding: 26px 0; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 14px; font-family: var(--mono); font-size: 12.5px; color: var(--faint); }
+  footer .links { display: flex; gap: 20px; }
+  footer .links a { color: var(--muted); }
+  footer .links a:hover { color: var(--accent); }
+  footer b { color: var(--ink); font-weight: 500; }
+
+  /* section 04 — mobile tabbed panes */
+  @media (max-width: 700px){
+    .hero-seg.tray-tabs{ display: flex; width: max-content; margin: 0 auto 14px; }
+    .tray-scroll{ overflow-x: visible; }
+    .tray-desk{ min-width: 0; height: auto; padding: 24px 14px 28px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+    .tray-desk .tmenubar{ display: none; }
+    .tray-desk .nsmenu, .trayapp .tray-desk .tmodal{ position: static !important; display: none; transform: none; }
+    .tray-desk .nsmenu{ width: 100% !important; max-width: 320px; }
+    .trayapp .tray-desk .tmodal{ width: 100%; max-width: 340px; }
+    .tray-desk[data-pane="menu"] .pane-menu{ display: block; }
+    .tray-desk[data-pane="actions"] .pane-actions{ display: block; }
+    .tray-desk[data-pane="new"] .pane-new{ display: block; }
+    .trayapp .tray-desk .m-form{ grid-template-columns: 56px 1fr; column-gap: 8px; padding-left: 12px; padding-right: 12px; }
+    .trayapp .tray-desk .seg .s-item{ gap: 4px; padding: 4px 2px; font-size: 11px; }
+    .trayapp .tray-desk .m-form > *{ min-width: 0; }
+    .trayapp .tray-desk .popup .pv{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+  }
+
+  /* mobile refinements */
+  @media (max-width: 560px) {
+    .runline { font-size: 12.5px; }
+    .runline .body { min-width: 0; }
+    .runline .k { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+    .ptable { overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
+  }
 </style>
 </head>
 <body>
@@ -893,13 +1097,43 @@
     <rect x="494" y="410" width="120" height="10" rx="5" fill="#5fc88f"/>
   </svg>
 </template>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-abx" viewBox="0 0 385 382"><path d="M325 16H59C35.804 16 17 34.804 17 58V324C17 347.196 35.804 366 59 366H325C348.196 366 367 347.196 367 324V58C367 34.804 348.196 16 325 16Z" fill="none" stroke="currentColor" stroke-width="31"></path><path d="M255 191H129V317H255V191Z" fill="none" stroke="currentColor" stroke-width="10"></path><path d="M236 210H148V298H236V210Z" fill="currentColor"></path></symbol>
+    <symbol id="i-cube" viewBox="0 0 16 16"><path d="M8 1.5 14 4.75v6.5L8 14.5 2 11.25v-6.5L8 1.5Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"></path><path d="M2 4.75 8 8l6-3.25M8 8v6.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"></path></symbol>
+    <symbol id="i-globe" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"></circle><path d="M1.8 8h12.4M8 1.8c-1.8 1.7-2.7 3.9-2.7 6.2S6.2 12.5 8 14.2c1.8-1.7 2.7-3.9 2.7-6.2S9.8 3.5 8 1.8Z" fill="none" stroke="currentColor" stroke-width="1.2"></path></symbol>
+    <symbol id="i-plus-sq" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"></rect><path d="M8 5.2v5.6M5.2 8h5.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></symbol>
+    <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13.4 8a5.4 5.4 0 1 1-1.6-3.85M13.6 1.6v3h-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></symbol>
+    <symbol id="i-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.3"></circle><path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M12.5 3.5l-1.4 1.4M4.9 11.1l-1.4 1.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"></path></symbol>
+    <symbol id="i-power" viewBox="0 0 16 16"><path d="M8 1.8v5.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path><path d="M11.4 3.8a5.6 5.6 0 1 1-6.8 0" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></symbol>
+    <symbol id="i-chev-r" viewBox="0 0 16 16"><path d="M5.5 2.5 11 8l-5.5 5.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></symbol>
+    <symbol id="i-branch" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.3"></circle><circle cx="4.5" cy="12.5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.3"></circle><circle cx="11.5" cy="5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.3"></circle><path d="M4.5 5.2v5.6M11.5 6.7c0 2.6-2.5 3.4-5 3.7" fill="none" stroke="currentColor" stroke-width="1.3"></path></symbol>
+    <symbol id="i-stop" viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"></rect></symbol>
+    <symbol id="i-trash" viewBox="0 0 16 16"><path d="M2.5 4h11M6.5 2h3M4 4l.7 9.2c0 .7.6 1.3 1.3 1.3h4c.7 0 1.3-.6 1.3-1.3L12 4M6.5 6.8v5M9.5 6.8v5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"></path></symbol>
+    <symbol id="i-up" viewBox="0 0 16 16"><path d="M8 13V3M3.8 7.2 8 3l4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></symbol>
+    <symbol id="i-down" viewBox="0 0 16 16"><path d="M8 3v10M3.8 8.8 8 13l4.2-4.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></symbol>
+    <symbol id="i-display" viewBox="0 0 16 16"><rect x="1.8" y="2.8" width="12.4" height="8.4" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"></rect><path d="M6 13.6h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"></path></symbol>
+    <symbol id="i-restart" viewBox="0 0 16 16"><path d="M2.6 8a5.4 5.4 0 1 0 1.6-3.85M2.4 1.6v3h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></symbol>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.8 4.2c0-.8.6-1.4 1.4-1.4h3l1.4 1.6h5.2c.8 0 1.4.6 1.4 1.4v6c0 .8-.6 1.4-1.4 1.4H3.2c-.8 0-1.4-.6-1.4-1.4v-7.6Z" fill="none" stroke="currentColor" stroke-width="1.3"></path></symbol>
+    <symbol id="i-term" viewBox="0 0 16 16"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.3"></rect><path d="m4.5 6 2 2-2 2M8.2 10.2h3.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></symbol>
+    <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.1" fill="none" stroke="currentColor" stroke-width="1.3"></circle><circle cx="8" cy="5.1" r=".95" fill="currentColor"></circle><path d="M8 7.4v3.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></symbol>
+    <symbol id="i-openin" viewBox="0 0 16 16"><rect x="2.2" y="2.2" width="11.6" height="11.6" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.3"></rect><path d="M6 10 10.2 5.8M7 5.6h3.4V9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"></path></symbol>
+    <symbol id="i-asterisk" viewBox="0 0 16 16"><path d="M8 2.2v11.6M3 5.1l10 5.8M13 5.1 3 10.9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></symbol>
+    <symbol id="i-spark" viewBox="0 0 16 16"><path d="M8 1.8c.5 3.4 2.8 5.7 6.2 6.2-3.4.5-5.7 2.8-6.2 6.2-.5-3.4-2.8-5.7-6.2-6.2C5.2 7.5 7.5 5.2 8 1.8Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"></path></symbol>
+    <symbol id="i-split" viewBox="0 0 16 16"><rect x="2.2" y="2.8" width="11.6" height="10.4" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"></rect><path d="M8 2.8v10.4" stroke="currentColor" stroke-width="1.3"></path></symbol>
+    <symbol id="i-code" viewBox="0 0 16 16"><path d="m5 4.5-3.5 3.5L5 11.5M11 4.5l3.5 3.5L11 11.5M9.3 2.8 6.7 13.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></symbol>
+    <symbol id="i-doc-copy" viewBox="0 0 16 16"><path d="M5.5 4.5V3c0-.7.6-1.3 1.3-1.3h3.9L13.5 4.5v6c0 .7-.6 1.3-1.3 1.3h-1.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"></path><rect x="2.5" y="4.5" width="8" height="9.8" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.2"></rect></symbol>
+  </defs>
+</svg>
 <div class="frame">
 
   <!-- TOP BAR -->
   <header class="top pad" id="topbar">
-    <a href="#top" class="brand"><span class="mark">▣</span> agentbox</a>
+    <a href="#top" class="brand"><span class="mark"><svg viewBox="0 0 385 382" aria-hidden="true"><use href="#i-abx"></use></svg></span> agentbox</a>
     <nav id="topnav">
       <a href="#loops">how it works</a>
+      <a href="#app">app</a>
       <a href="#cli">cli</a>
       <a href="#providers">providers</a>
       <a href="#install">install</a>
@@ -917,9 +1151,9 @@
 
   <!-- META STRIP -->
   <div class="meta pad">
-    <span class="m-npm"><b>npm</b> @madarco/agentbox</span>
-    <span class="m-license"><b>license</b> MIT</span>
-    <span class="m-envs"><b>envs</b> Docker · Vercel · Hetzner · E2B · Daytona</span>
+    <span><b>npm</b> @madarco/agentbox</span>
+    <span><b>license</b> MIT</span>
+    <span class="m-envs"><b>envs</b> Docker · Vercel · Hetzner · DigitalOcean · E2B · Daytona</span>
     <span class="m-os"><b>os</b> macOS · Linux</span>
   </div>
 
@@ -929,7 +1163,7 @@
      <div class="hero-main">
       <div class="kicker">// self-hosted agent sandboxes</div>
       <h1>One command teleport<br /><span class="dim">for agents, in parallel.</span></h1>
-      <p class="lede">Move your project into a dedicated VM — local or in the cloud — and launch <b>Claude Code</b>, <b>Codex</b>, or <b>Open Code</b> inside it. Each box is isolated, checkpointed, and runs on hardware you control.</p>
+      <p class="lede">Move your project into a dedicated VM — local or in the cloud — and launch <b>Claude Code</b>, <b>Codex</b>, or <b>Open Code</b> inside it. Each box is isolated, checkpointed, and runs on hardware you control. Drive it from the CLI or the <a class="applink" href="#app"><b>macOS menu bar app</b></a>.</p>
       <div class="runline">
         <div class="body">
           <span class="p">$</span>
@@ -942,21 +1176,173 @@
       <a class="runlink" href="#install">full install instructions <span>→</span></a>
      </div>
 
-     <div class="term" id="heroTerm" aria-hidden="true">
-       <div class="term-bar">
-         <span class="td r"></span><span class="td y"></span><span class="td g"></span>
-         <span class="term-title">agentbox — zsh</span>
-       </div>
-       <div class="term-body" id="termBody"></div>
+     <div class="hero-desk-wrap" aria-hidden="true">
+      <div class="hero-desk-scroll">
+      <div class="trayapp hero-desk">
+        <div class="tmenubar">
+          <div class="mb-item active abx" title="AgentBox"><svg><use href="#i-abx"></use></svg></div>
+          <div class="mb-item faint"><svg><use href="#i-gear"></use></svg></div>
+          <div class="mb-clock">Thu Jul 9&nbsp;&nbsp;9:41 AM</div>
+        </div>
+
+        <div class="term" id="heroTerm">
+          <div class="term-bar">
+            <span class="td r"></span><span class="td y"></span><span class="td g"></span>
+            <span class="term-title">agentbox — zsh</span>
+          </div>
+          <div class="term-body" id="termBody"></div>
+        </div>
+
+        <div class="nsmenu hero-menu">
+          <div class="ns-header"><span class="t">AgentBox</span><div class="spacer"></div><button class="btn-new" id="heroNewBox" type="button"><svg><use href="#i-plus-sq"></use></svg>New Box</button></div>
+          <div class="ns-sep"></div>
+          <div class="ns-head"><span class="ico"><svg><use href="#i-folder"></use></svg></span>storefront-web</div>
+          <div class="ns-item ns-box" id="boxRow1"><span class="dot dot-run"></span><div class="two"><div class="name">payment-retries</div><div class="sub2">codex · vercel</div></div><span class="chev"><svg><use href="#i-chev-r"></use></svg></span></div>
+          <div class="ns-head"><span class="ico"><svg><use href="#i-folder"></use></svg></span>docs-site</div>
+          <div class="ns-item ns-box" id="boxRow2"><span class="dot dot-run"></span><div class="two"><div class="name">search-filters</div><div class="sub2">claude · vercel</div></div><span class="chev"><svg><use href="#i-chev-r"></use></svg></span></div>
+          <div class="ns-sep"></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-globe"></use></svg></span><span class="lbl">Open Hub</span><span class="kbd">⌘H</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-gear"></use></svg></span><span class="lbl">Settings…</span><span class="kbd">⌘,</span></div>
+          <div class="ns-item ns-quit"><span class="ico"><svg><use href="#i-power"></use></svg></span><span class="lbl">Quit AgentBox Tray</span><span class="kbd">⌘Q</span></div>
+        </div>
+
+        <div class="nsmenu hero-sub" id="heroSub">
+          <div class="ns-item disabled"><span class="lbl" style="font-size:11px;">running · vercel</span></div>
+          <div class="ns-sep"></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-globe"></use></svg></span><span class="lbl">Open Web</span><span class="kbd">↩</span></div>
+          <div class="ns-item" id="hOpenIn"><span class="ico"><svg><use href="#i-openin"></use></svg></span><span class="lbl">Open In…</span><span class="chev"><svg><use href="#i-chev-r"></use></svg></span></div>
+          <div class="ns-sep"></div>
+          <div class="ns-item" id="hGit"><span class="ico"><svg><use href="#i-branch"></use></svg></span><span class="lbl">Git</span><span class="chev"><svg><use href="#i-chev-r"></use></svg></span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-stop"></use></svg></span><span class="lbl">Stop</span></div>
+        </div>
+
+        <div class="nsmenu hd-fly" id="flyOpenIn">
+          <div class="ns-item"><span class="ico"><svg><use href="#i-asterisk"></use></svg></span><span class="lbl">Claude</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-spark"></use></svg></span><span class="lbl">Codex</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-split"></use></svg></span><span class="lbl">Herdr</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-term"></use></svg></span><span class="lbl">cmux</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-code"></use></svg></span><span class="lbl">VS Code</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-display"></use></svg></span><span class="lbl">iTerm2</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-folder"></use></svg></span><span class="lbl">Finder</span></div>
+          <div class="ns-sep"></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-doc-copy"></use></svg></span><span class="lbl">Copy Web URL</span></div>
+        </div>
+
+        <div class="nsmenu hd-fly" id="flyGit">
+          <div class="ns-item disabled"><span class="lbl" style="font-size:11px;">on main</span></div>
+          <div class="ns-sep"></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-down"></use></svg></span><span class="lbl">Pull</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-up"></use></svg></span><span class="lbl">Push</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-up"></use></svg></span><span class="lbl">Push to Host</span></div>
+          <div class="ns-sep"></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-branch"></use></svg></span><span class="lbl">Change Branch…</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-branch"></use></svg></span><span class="lbl">New Branch…</span></div>
+        </div>
+
+        <div class="hd-cursor" id="hdCursor" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M6.5 2.5v16.6l4.2-3.6 2.6 6 2.9-1.2-2.6-6h5.6L6.5 2.5Z" fill="#111" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"></path></svg>
+        </div>
+
+        <div class="hd-overlay" id="hdOverlay">
+          <div class="tmodal" id="hdModal">
+            <div class="m-head">
+              <div class="logo"><svg><use href="#i-cube"></use></svg></div>
+              <div>
+                <div class="t">New Box</div>
+                <div class="s">Isolated agent environment</div>
+              </div>
+            </div>
+            <div class="m-form">
+              <div class="flabel">Project</div>
+              <div class="popwrap" id="popProject">
+                <div class="popup"><div class="pv">docs-site <span class="hint">· 1 box running</span></div><div class="caret"><svg><use href="#i-chev-r"></use></svg></div></div>
+                <div class="pop-menu">
+                  <div class="pop-it" data-name="storefront-web" data-hint="1 box running"><span class="ck">✓</span>storefront-web<span class="hint">1 running</span></div>
+                  <div class="pop-it" data-name="checkout-api" data-hint="1 box running"><span class="ck">✓</span>checkout-api<span class="hint">1 running</span></div>
+                  <div class="pop-it on" data-name="docs-site" data-hint="1 box running"><span class="ck">✓</span>docs-site<span class="hint">1 running</span></div>
+                  <div class="pop-it" data-name="billing-api"><span class="ck">✓</span>billing-api</div>
+                  <div class="pop-it" data-name="ml-pipeline"><span class="ck">✓</span>ml-pipeline</div>
+                </div>
+              </div>
+              <div class="flabel">Provider</div>
+              <div class="popwrap" id="popProvider">
+                <div class="popup"><div class="pv">Docker <span class="hint">· local, connected</span></div><div class="caret"><svg><use href="#i-chev-r"></use></svg></div></div>
+                <div class="pop-menu">
+                  <div class="pop-it on" data-name="Docker" data-hint="local, connected"><span class="ck">✓</span>Docker<span class="hint">local · connected</span></div>
+                  <div class="pop-it" data-name="Vercel" data-hint="connected"><span class="ck">✓</span>Vercel<span class="hint">connected</span></div>
+                  <div class="pop-it" data-name="Hetzner" data-hint="connected"><span class="ck">✓</span>Hetzner<span class="hint">connected</span></div>
+                  <div class="pop-it" data-name="DigitalOcean" data-hint="connected"><span class="ck">✓</span>DigitalOcean<span class="hint">connected</span></div>
+                  <div class="pop-it dis" data-name="Daytona" data-hint="needs API key"><span class="ck">✓</span>Daytona<span class="hint">needs API key</span></div>
+                </div>
+              </div>
+              <div class="flabel">Agent</div>
+              <div class="seg">
+                <div class="s-item on"><img src="assets/agent-claude.png" alt="">Claude</div>
+                <div class="s-item"><img src="assets/agent-codex.png" alt="">Codex</div>
+                <div class="s-item"><img src="assets/agent-opencode.png" alt="">OpenCode</div>
+              </div>
+              <div class="flabel">Name<span class="opt">optional</span></div>
+              <div class="tfield"><span class="ph" id="mNamePh">auto — docs-site-3f9a2c1b</span></div>
+              <div class="flabel top">Prompt<span class="opt">optional</span></div>
+              <div class="tfield area focus"><span class="ph">What should the agent start working on?</span></div>
+            </div>
+            <div class="m-foot">
+              <span class="est"><svg><use href="#i-branch"></use></svg>from main</span>
+              <div class="spacer"></div>
+              <button class="tbtn" id="mCancel" type="button">Cancel <span class="ret">⎋</span></button>
+              <button class="tbtn primary" id="mCreate" type="button">Create Box <span class="ret">↩</span></button>
+            </div>
+            <div class="m-creating">
+              <div class="m-crow"><span class="cdot"></span><b>Creating docs-site-3f9a2c1b…</b><span class="step">step 2 of 4</span></div>
+              <div class="m-prog"><i></i></div>
+              <div class="m-csub">Pulling image · cloning main · starting services · launching agent</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div>
+      <div class="hero-desk-foot">
+        <div class="hero-desk-cap"></div>
+        <div class="hero-seg" id="heroSeg" aria-hidden="false">
+          <button type="button" class="on" data-mode="desk">app</button>
+          <button type="button" data-mode="full">terminal</button>
+        </div>
+      </div>
      </div>
     </div>
   </section>
 
+  <!-- LOGO STRIP -->
+  <div class="logostrip pad rule" aria-label="Works with">
+    <div class="ls-group">
+      <span class="ls-cap">clouds</span>
+      <span class="ls-item"><img class="si" src="https://cdn.simpleicons.org/docker/16181c" alt="" width="15" height="15">Docker</span>
+      <span class="ls-item"><img class="si" src="https://cdn.simpleicons.org/vercel/16181c" alt="" width="15" height="15">Vercel</span>
+      <span class="ls-item"><img class="si" src="https://cdn.simpleicons.org/hetzner/16181c" alt="" width="15" height="15">Hetzner</span>
+      <span class="ls-item"><img class="si" src="https://cdn.simpleicons.org/digitalocean/16181c" alt="" width="15" height="15">DigitalOcean</span>
+      <span class="ls-item"><svg><use href="#i-cube"></use></svg>Daytona</span>
+    </div>
+    <div class="ls-group">
+      <span class="ls-cap">agents</span>
+      <span class="ls-item"><img class="ag" src="assets/agent-claude.png" alt="" width="16" height="16">Claude Code</span>
+      <span class="ls-item"><img class="ag" src="assets/agent-codex.png" alt="" width="16" height="16">Codex</span>
+      <span class="ls-item"><img class="ag" src="assets/agent-opencode.png" alt="" width="16" height="16">OpenCode</span>
+    </div>
+    <div class="ls-group">
+      <span class="ls-cap">apps</span>
+      <span class="ls-item"><svg><use href="#i-split"></use></svg>Herdr</span>
+      <span class="ls-item"><svg><use href="#i-term"></use></svg>cmux</span>
+      <span class="ls-item"><img class="si" src="https://cdn.simpleicons.org/tmux/16181c" alt="" width="15" height="15">tmux</span>
+      <span class="ls-item"><img class="si" src="https://cdn.simpleicons.org/iterm2/16181c" alt="" width="15" height="15">iTerm2</span>
+      <span class="ls-item"><svg><use href="#i-code"></use></svg>VS Code</span>
+    </div>
+  </div>
+
   <!-- FEATURE 01 · LOOPS -->
   <section class="sec pad rule" id="loops">
     <div class="sec-head"><span class="sec-no">01</span><h2>Orchestrate agents in loops</h2><span class="hint">live</span></div>
-    <p class="feat-lede">The best builders don't babysit one agent — they run many in a loop.<br />
-With the AgentBox skill, your agent <b>spawns subagents in isolated VMs</b> and drives them: waits on their input, reads back plan questions, answers, hands over prompts and commands, and polls status. Full <b>git control</b> per box: switch branch, pull, push, open a PR directly from the host. Also with <b>Notion and Linear</b> integration.</p>
+    <p class="feat-lede">The best builders don't babysit one agent — they run many in a loop. 
+With the AgentBox skill, your agent spawns subagents in isolated VMs and drives them: waits on their input, reads back plan questions, answers, hands over prompts and commands, and polls status. Full git control per box: switch branch, pull, push, open a PR directly from the host. Also with <b style="font-weight: 500">Notion and Linear integration.</b></p>
 
     <div class="lp" id="lp">
       <div class="lp-main">
@@ -1007,8 +1393,8 @@ With the AgentBox skill, your agent <b>spawns subagents in isolated VMs</b> and 
   <!-- FEATURE 02 · SETUP -->
   <section class="sec pad rule" id="setup">
     <div class="sec-head"><span class="sec-no">02</span><h2>Your whole setup, baked in</h2><span class="hint">docker · sandbox</span></div>
-    <p class="feat-lede">Standing up a remote dev box — and keeping it alive — is the tedious part.<br />
-AgentBox does it for you. It carries your <b>shell &amp; editor settings</b>, your <b>Claude Code and Codex auth</b>, and your <b>skills and plugins</b>, then provisions the machine end-to-end: Linux packages installed, Docker services up and running, your project bootstrapped and ready. Agentbox.yaml for repetible runs.</p>
+    <p class="feat-lede">Standing up a remote dev box — and keeping it alive — is the tedious part. 
+AgentBox does it for you. It carries your shell &amp; editor settings, your Claude Code and Codex auth, and your skills and plugins, then provisions the machine end-to-end: Linux packages installed, Docker services up and running, your project bootstrapped and ready. Agentbox.yaml for repetible runs.</p>
 
     <div class="bx" id="bx">
       <div class="bx-bar">
@@ -1042,8 +1428,8 @@ AgentBox does it for you. It carries your <b>shell &amp; editor settings</b>, yo
   <!-- FEATURE 03 · ACCESS -->
   <section class="sec pad rule" id="access">
     <div class="sec-head"><span class="sec-no">03</span><h2>Like it never left your laptop</h2><span class="hint">full machine</span></div>
-    <p class="feat-lede">Connecting to a remote box usually means a stripped-down SSH session.<br />
-AgentBox gives you the whole machine: a live browser you can screen-share into, a local web tunnel so previews open at your-app.localhost, and a full VS Code / Cursor running inside the box that your local editor attaches to — indistinguishable from local. Plus direct integration with your IDEs and terminals like <b>cmux</b> or <b>Herdr</b>.</p>
+    <p class="feat-lede">Connecting to a remote box usually means a stripped-down SSH session. 
+AgentBox gives you the whole machine: a live browser you can screen-share into, a local web tunnel so previews open at your-app.localhost, and a full VS Code / Cursor running inside the box that your local editor attaches to — indistinguishable from local. Plus direct integration with your IDEs and terminals like cmux or Herdr.</p>
 
     <div class="ax" id="ax">
       <div class="ax-tabs" role="tablist">
@@ -1160,9 +1546,156 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
     </div>
   </section>
 
+  <!-- FEATURE 04 · MENU BAR APP -->
+  <section class="sec pad rule" id="app">
+    <div class="sec-head"><span class="sec-no">04</span><h2>Lives in your menu bar</h2><span class="hint">macOS · native</span></div>
+    <p class="feat-lede">Every box, one click away. The AgentBox tray app is pure native AppKit — see what's running across all your projects, open a box in <b style="font-weight: 500">Claude, Codex, cmux, iTerm2, VS Code or Finder</b>, drive git and restart services without touching a terminal. Ships with the CLI.</p>
+    <div class="runline" style="margin-bottom: 26px;">
+      <div class="body">
+        <span class="p">$</span>
+        <span class="k">agentbox install app</span>
+      </div>
+      <button data-copy="agentbox install app" aria-label="Copy">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M3.5 10.5h-1a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1"></path></svg>
+      </button>
+    </div>
+
+    <div class="hero-seg tray-tabs" id="trayTabs">
+      <button type="button" class="on" data-pane="menu">menu</button>
+      <button type="button" data-pane="actions">actions</button>
+      <button type="button" data-pane="new">new box</button>
+    </div>
+    <div class="trayapp tray-scroll">
+      <div class="tray-desk" data-pane="menu">
+        <div class="tmenubar">
+          <div class="mb-item active"><svg><use href="#i-abx"></use></svg></div>
+          <div class="mb-item faint"><svg><use href="#i-gear"></use></svg></div>
+          <div class="mb-item faint"><svg><use href="#i-globe"></use></svg></div>
+          <div class="mb-clock">Thu Jul 9&nbsp;&nbsp;9:41 AM</div>
+        </div>
+
+        <!-- main dropdown -->
+        <div class="nsmenu pane-menu" style="position:absolute; left:26px; top:44px; width:302px;">
+          <div class="ns-header">
+            <span class="t">AgentBox</span>
+            <span class="p-pill"><span class="dot"></span>3 running</span>
+            <div class="spacer"></div>
+            <span class="icon-btn" title="Refresh"><svg><use href="#i-refresh"></use></svg></span>
+            <span class="btn-new"><svg><use href="#i-plus-sq"></use></svg>New Box</span>
+          </div>
+          <div class="ns-sep"></div>
+          <div class="ns-head"><span class="ico"><svg><use href="#i-folder"></use></svg></span>storefront-web</div>
+          <div class="ns-item ns-box"><span class="dot dot-run"></span><div class="two"><div class="name">payment-retries</div><div class="sub2">vercel · codex · vercel</div></div><span class="info"><svg><use href="#i-info"></use></svg></span><span class="chev"><svg><use href="#i-chev-r"></use></svg></span></div>
+          <div class="ns-head"><span class="ico"><svg><use href="#i-folder"></use></svg></span>checkout-api</div>
+          <div class="ns-item ns-box"><span class="dot dot-run"></span><div class="two"><div class="name">✳ Onboarding Flow</div><div class="sub2">ba1e38b65 · claude · docker</div></div><span class="info"><svg><use href="#i-info"></use></svg></span><span class="chev"><svg><use href="#i-chev-r"></use></svg></span></div>
+          <div class="ns-head"><span class="ico"><svg><use href="#i-folder"></use></svg></span>docs-site</div>
+          <div class="ns-item ns-box sel"><span class="dot dot-run"></span><div class="two"><div class="name">search-filters</div><div class="sub2">b10a2950c · claude · vercel</div></div><span class="info"><svg><use href="#i-info"></use></svg></span><span class="chev"><svg><use href="#i-chev-r"></use></svg></span></div>
+          <div class="ns-sep"></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-globe"></use></svg></span><span class="lbl">Open Hub</span><span class="kbd">⌘H</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-gear"></use></svg></span><span class="lbl">Settings…</span><span class="kbd">⌘,</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-power"></use></svg></span><span class="lbl">Quit AgentBox Tray</span><span class="kbd">⌘Q</span></div>
+        </div>
+
+        <!-- box submenu -->
+        <div class="nsmenu flyout pane-actions" style="left:338px; top:400px; width:242px;">
+          <div class="ns-item disabled"><span class="lbl" style="font-size:11px;">running · vercel · b10a2950c</span></div>
+          <div class="ns-sep"></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-info"></use></svg></span><span class="lbl">Details…</span></div>
+          <div class="ns-sep"></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-globe"></use></svg></span><span class="lbl">Open Web</span><span class="kbd">↩</span></div>
+          <div class="ns-item disabled"><span class="ico"><svg><use href="#i-display"></use></svg></span><span class="lbl">Open VNC</span></div>
+          <div class="ns-item sel"><span class="ico"><svg><use href="#i-openin"></use></svg></span><span class="lbl">Open In…</span><span class="chev"><svg><use href="#i-chev-r"></use></svg></span></div>
+          <div class="ns-sep"></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-branch"></use></svg></span><span class="lbl">Git</span><span class="chev"><svg><use href="#i-chev-r"></use></svg></span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-stop"></use></svg></span><span class="lbl">Stop</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-restart"></use></svg></span><span class="lbl">Restart Services</span></div>
+          <div class="ns-sep"></div>
+          <div class="ns-item danger"><span class="ico"><svg><use href="#i-trash"></use></svg></span><span class="lbl">Destroy…</span></div>
+        </div>
+
+        <!-- Open In… flyout -->
+        <div class="nsmenu flyout pane-actions" style="left:588px; top:522px; width:190px;">
+          <div class="ns-item disabled"><span class="ico"><svg><use href="#i-asterisk"></use></svg></span><span class="lbl">Claude</span></div>
+          <div class="ns-item disabled"><span class="ico"><svg><use href="#i-spark"></use></svg></span><span class="lbl">Codex</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-split"></use></svg></span><span class="lbl">Herdr</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-term"></use></svg></span><span class="lbl">cmux</span></div>
+          <div class="ns-item disabled"><span class="ico"><svg><use href="#i-code"></use></svg></span><span class="lbl">VS Code</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-display"></use></svg></span><span class="lbl">iTerm2</span></div>
+          <div class="ns-item disabled"><span class="ico"><svg><use href="#i-folder"></use></svg></span><span class="lbl">Finder</span></div>
+          <div class="ns-sep"></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-doc-copy"></use></svg></span><span class="lbl">Copy Web URL</span></div>
+        </div>
+
+        <!-- git flyout -->
+        <div class="nsmenu flyout" style="left:70px; top:436px; width:206px;">
+          <div class="ns-item disabled"><span class="lbl" style="font-size:11px;">on main</span></div>
+          <div class="ns-sep"></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-down"></use></svg></span><span class="lbl">Pull</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-up"></use></svg></span><span class="lbl">Push</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-up"></use></svg></span><span class="lbl">Push to Host</span></div>
+          <div class="ns-sep"></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-branch"></use></svg></span><span class="lbl">Change Branch…</span></div>
+          <div class="ns-item"><span class="ico"><svg><use href="#i-branch"></use></svg></span><span class="lbl">New Branch…</span></div>
+        </div>
+
+        <!-- New Box modal -->
+        <div class="tmodal pane-new" style="position:absolute; left:424px; top:46px;">
+            <div class="m-head">
+              <div class="logo"><svg><use href="#i-cube"></use></svg></div>
+              <div>
+                <div class="t">New Box</div>
+                <div class="s">Isolated agent environment</div>
+              </div>
+            </div>
+            <div class="m-form">
+              <div class="flabel">Project</div>
+              <div class="popwrap">
+                <div class="popup"><div class="pv">docs-site <span class="hint">· 1 box running</span></div><div class="caret"><svg><use href="#i-chev-r"></use></svg></div></div>
+                <div class="pop-menu">
+                  <div class="pop-it" data-name="storefront-web" data-hint="1 box running"><span class="ck">✓</span>storefront-web<span class="hint">1 running</span></div>
+                  <div class="pop-it" data-name="checkout-api" data-hint="1 box running"><span class="ck">✓</span>checkout-api<span class="hint">1 running</span></div>
+                  <div class="pop-it on" data-name="docs-site" data-hint="1 box running"><span class="ck">✓</span>docs-site<span class="hint">1 running</span></div>
+                  <div class="pop-it" data-name="billing-api"><span class="ck">✓</span>billing-api</div>
+                  <div class="pop-it" data-name="ml-pipeline"><span class="ck">✓</span>ml-pipeline</div>
+                </div>
+              </div>
+              <div class="flabel">Provider</div>
+              <div class="popwrap">
+                <div class="popup"><div class="pv">Docker <span class="hint">· local, connected</span></div><div class="caret"><svg><use href="#i-chev-r"></use></svg></div></div>
+                <div class="pop-menu">
+                  <div class="pop-it on" data-name="Docker" data-hint="local, connected"><span class="ck">✓</span>Docker<span class="hint">local · connected</span></div>
+                  <div class="pop-it" data-name="Vercel" data-hint="connected"><span class="ck">✓</span>Vercel<span class="hint">connected</span></div>
+                  <div class="pop-it" data-name="Hetzner" data-hint="connected"><span class="ck">✓</span>Hetzner<span class="hint">connected</span></div>
+                  <div class="pop-it" data-name="DigitalOcean" data-hint="connected"><span class="ck">✓</span>DigitalOcean<span class="hint">connected</span></div>
+                  <div class="pop-it dis" data-name="Daytona" data-hint="needs API key"><span class="ck">✓</span>Daytona<span class="hint">needs API key</span></div>
+                </div>
+              </div>
+              <div class="flabel">Agent</div>
+              <div class="seg">
+                <div class="s-item on"><img src="assets/agent-claude.png" alt="">Claude</div>
+                <div class="s-item"><img src="assets/agent-codex.png" alt="">Codex</div>
+                <div class="s-item"><img src="assets/agent-opencode.png" alt="">OpenCode</div>
+              </div>
+              <div class="flabel">Name<span class="opt">optional</span></div>
+              <div class="tfield"><span class="ph">auto — docs-site-3f9a2c1b</span></div>
+              <div class="flabel top">Prompt<span class="opt">optional</span></div>
+              <div class="tfield area focus"><span class="ph">What should the agent start working on?</span></div>
+            </div>
+            <div class="m-foot">
+              <span class="est"><svg><use href="#i-branch"></use></svg>from main</span>
+              <div class="spacer"></div>
+              <button class="tbtn" type="button">Cancel <span class="ret">⎋</span></button>
+              <button class="tbtn primary" type="button">Create Box <span class="ret">↩</span></button>
+            </div>
+          </div>
+
+      </div>
+    </div>
+  </section>
+
   <!-- HOW IT WORKS -->
   <section class="sec pad rule" id="how">
-    <div class="sec-head"><span class="sec-no">04</span><h2>How it works</h2></div>
+    <div class="sec-head"><span class="sec-no">05</span><h2>How it works</h2></div>
     <div class="flist">
       <div class="fitem">
         <div class="name"><span class="sq">▸</span> Teleport</div>
@@ -1189,14 +1722,14 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
 
   <!-- CLI -->
   <section class="sec pad rule" id="cli">
-    <div class="sec-head"><span class="sec-no">05</span><h2>The CLI</h2></div>
+    <div class="sec-head"><span class="sec-no">06</span><h2>The CLI</h2></div>
     <div class="ctable">
       <div class="cgroup-h">create &amp; run</div>
       <div class="crow"><code>agentbox create</code><span>Create and start a new agent box.</span></div>
       <div class="crow"><code>agentbox claude</code><span>Create a sandboxed box and launch Claude Code in a detachable tmux session.</span></div>
-      <div class="crow"><code>agentbox &lt;provider&gt; claude</code><span>Launch sandboxed boxes on <b>Vercel</b>, <b>Hetzner</b>, <b>E2B</b>, <b>Daytona</b> or local <b>Docker</b>.</span></div>
+      <div class="crow"><code>agentbox &lt;provider&gt; claude</code><span>Launch sandboxed boxes on <b>Vercel</b>, <b>Hetzner</b>, <b>DigitalOcean</b>, <b>Daytona</b> or local <b>Docker</b>.</span></div>
       <div class="crow"><code>agentbox &lt;provider&gt; codex</code><span>Same, for <b>Codex</b> and <b>Open Code</b> — any agent, any provider.</span></div>
-      <div class="crow"><code>agentbox attach 2</code><span>Reattach to the running agent session on box <span class="mono">2</span> (claude, codex, or opencode — whichever is live).</span></div>
+      <div class="crow"><code>agentbox claude attach 2</code><span>Reattach to a running Claude session on box <span class="mono">2</span>.</span></div>
 
       <div class="cgroup-h">access</div>
       <div class="crow"><code>agentbox url</code><span>Open a box's web app URL in the browser.</span></div>
@@ -1221,17 +1754,17 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
 
   <!-- PROVIDERS -->
   <section class="sec pad rule" id="providers">
-    <div class="sec-head"><span class="sec-no">06</span><h2>Providers</h2><span class="hint">local or remote</span></div>
+    <div class="sec-head"><span class="sec-no">07</span><h2>Providers</h2><span class="hint">local or remote</span></div>
     <div class="ptable">
       <table>
         <thead>
-          <tr><th>capability</th><th class="col">local docker</th><th class="col">hetzner</th><th class="col">vercel</th><th class="col">e2b</th><th class="col">daytona</th></tr>
+          <tr><th>capability</th><th class="col">local docker</th><th class="col">hetzner</th><th class="col">digitalocean</th><th class="col">daytona</th><th class="col">vercel</th></tr>
         </thead>
         <tbody>
-          <tr><td>support</td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="warn">partial</span></td></tr>
-          <tr><td>base image</td><td>Dockerfile</td><td>setup script (Ubuntu)</td><td>setup script</td><td>Dockerfile</td><td>Dockerfile</td></tr>
-          <tr><td>live snapshots</td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td>experimental</td></tr>
-          <tr><td>private preview urls</td><td><span class="yes">portless · orbstack</span></td><td><span class="yes">portless</span></td><td><span class="yes">native</span></td><td><span class="yes">native</span></td><td><span class="yes">native</span></td></tr>
+          <tr><td>support</td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td></tr>
+          <tr><td>base image</td><td>Dockerfile</td><td>setup script (Ubuntu)</td><td>setup script (Ubuntu)</td><td>Dockerfile</td><td>setup script</td></tr>
+          <tr><td>live snapshots</td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td></tr>
+          <tr><td>private preview urls</td><td><span class="yes">portless · orbstack</span></td><td><span class="yes">portless</span></td><td><span class="yes">portless</span></td><td><span class="yes">native</span></td><td><span class="yes">native</span></td></tr>
         </tbody>
       </table>
     </div>
@@ -1240,7 +1773,7 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
   <!-- DIAGRAM -->
   <section class="diagram pad rule" id="security">
 
-    <div class="sec-head"><span class="sec-no">07</span><h2>Security architecture</h2><span class="hint">interactive</span></div>
+    <div class="sec-head"><span class="sec-no">08</span><h2>Security architecture</h2><span class="hint">interactive</span></div>
 
     <div class="dg-toolbar" id="dg-toolbar">
       <span class="dg-toolbar-lbl">actions</span>
@@ -1366,7 +1899,7 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
 
   <!-- INSTALL -->
   <section class="sec pad rule" id="install">
-    <div class="sec-head"><span class="sec-no">08</span><h2>Install</h2></div>
+    <div class="sec-head"><span class="sec-no">09</span><h2>Install</h2></div>
     <div class="inst">
       <div>
         <div class="runline" style="max-width:none">
@@ -1404,6 +1937,213 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
 </div>
 
 <script>
+  // hero desk / fullscreen-terminal switcher
+  (function () {
+    var seg = document.getElementById('heroSeg');
+    var desk = document.querySelector('.hero-desk');
+    if (!seg || !desk) return;
+    seg.querySelectorAll('button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        seg.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+        desk.classList.toggle('full', b.dataset.mode === 'full');
+        if (window.heroDeskClose) window.heroDeskClose();
+      });
+    });
+  })();
+
+  // hero desk — hover-driven menus, demo cursor + New Box modal
+  (function () {
+    var desk = document.querySelector('.hero-desk');
+    if (!desk) return;
+    var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // hover highlight like a real NSMenu
+    desk.querySelectorAll('.ns-item:not(.disabled)').forEach(function (it) {
+      it.addEventListener('mouseenter', function () { it.classList.add('sel'); });
+      it.addEventListener('mouseleave', function () { if (!it.classList.contains('keep')) it.classList.remove('sel'); });
+    });
+
+    var sub = document.getElementById('heroSub');
+    var flyO = document.getElementById('flyOpenIn'), flyG = document.getElementById('flyGit');
+    var bO = document.getElementById('hOpenIn'), bG = document.getElementById('hGit');
+    var rows = Array.prototype.slice.call(desk.querySelectorAll('.hero-menu .ns-box'));
+
+    function place(menu, refEl) {
+      var d = desk.getBoundingClientRect(), r = refEl.getBoundingClientRect();
+      var s = d.width / desk.offsetWidth || 1;
+      var h = menu.offsetHeight || 200;
+      var t = (r.top - d.top) / s - 6;
+      var max = desk.clientHeight - h - 10;
+      menu.style.top = Math.max(36, Math.min(t, max)) + 'px';
+    }
+    function closeFlys() {
+      [flyO, flyG].forEach(function (f) { f.classList.remove('open'); });
+      [bO, bG].forEach(function (b) { b.classList.remove('keep'); b.classList.remove('sel'); });
+    }
+    function closeSub() {
+      closeFlys();
+      sub.classList.remove('open');
+      rows.forEach(function (r) { r.classList.remove('keep'); r.classList.remove('sel'); });
+    }
+    function openSub(row) {
+      closeFlys();
+      rows.forEach(function (r) { r.classList.toggle('keep', r === row); r.classList.toggle('sel', r === row); });
+      place(sub, row);
+      sub.classList.add('open');
+    }
+    function openFly(fly, btn) {
+      closeFlys();
+      btn.classList.add('keep'); btn.classList.add('sel');
+      place(fly, btn);
+      fly.classList.add('open');
+    }
+
+    // boxes open their submenu on hover
+    rows.forEach(function (row) { row.addEventListener('mouseenter', function () { openSub(row); }); });
+    // hovering the plain items below closes it
+    desk.querySelectorAll('.hero-menu .ns-item:not(.ns-box):not(.disabled)').forEach(function (it) {
+      it.addEventListener('mouseenter', closeSub);
+    });
+    // submenu items cascade on hover
+    bO.addEventListener('mouseenter', function () { openFly(flyO, bO); });
+    bG.addEventListener('mouseenter', function () { openFly(flyG, bG); });
+    sub.querySelectorAll('.ns-item:not(.disabled)').forEach(function (it) {
+      if (it === bO || it === bG) return;
+      it.addEventListener('mouseenter', closeFlys);
+    });
+
+    // clicking the desk background closes the submenu + flyouts
+    [desk.querySelector('.hero-menu'), sub, flyO, flyG].forEach(function (m) {
+      if (m) m.addEventListener('click', function (e) { e.stopPropagation(); });
+    });
+    desk.addEventListener('click', closeSub);
+
+    // menubar icon toggles the menu; Quit closes it
+    var mbIcon = desk.querySelector('.tmenubar .mb-item.abx');
+    var quitItem = desk.querySelector('.hero-menu .ns-quit');
+    function setMenuOpen(open) {
+      desk.classList.toggle('menu-hidden', !open);
+      if (mbIcon) mbIcon.classList.toggle('active', open);
+      if (!open) { stopDemo(); closeSub(); }
+    }
+    if (mbIcon) mbIcon.addEventListener('click', function (e) { e.stopPropagation(); setMenuOpen(desk.classList.contains('menu-hidden')); });
+    if (quitItem) quitItem.addEventListener('click', function (e) { e.stopPropagation(); setMenuOpen(false); });
+
+    // ── demo cursor: hovers the menu on load ──
+    var cursor = document.getElementById('hdCursor');
+    var demoOn = !reduce, demoTimers = [];
+    function moveCursorTo(el) {
+      var d = desk.getBoundingClientRect(), r = el.getBoundingClientRect();
+      var s = d.width / desk.offsetWidth || 1;
+      cursor.style.left = ((r.left - d.left) / s + (r.width / s) * 0.62) + 'px';
+      cursor.style.top = ((r.top - d.top) / s + (r.height / s) * 0.5) + 'px';
+    }
+    function stopDemo() {
+      demoOn = false;
+      demoTimers.forEach(clearTimeout);
+      demoTimers = [];
+      cursor.style.opacity = '0';
+      desk.querySelectorAll('.hd-fly .ns-item.sel').forEach(function (x) { x.classList.remove('sel'); });
+    }
+    function after(ms, fn) { demoTimers.push(setTimeout(function () { if (demoOn) fn(); }, ms)); }
+    var row2 = document.getElementById('boxRow2');
+    if (reduce) {
+      if (row2) openSub(row2);
+      if (cursor) cursor.style.display = 'none';
+    } else if (cursor && row2) {
+      after(1000, function () {
+        cursor.style.transition = 'opacity .35s ease';
+        cursor.style.left = '46%'; cursor.style.top = '74%';
+        cursor.style.opacity = '1';
+        after(380, function () {
+          cursor.style.transition = '';
+          moveCursorTo(row2);
+          after(720, function () {
+            openSub(row2);
+            after(760, function () {
+              moveCursorTo(bO);
+              after(700, function () {
+                openFly(flyO, bO);
+                after(900, function () {
+                  var cm = flyO.querySelectorAll('.ns-item')[3]; // cmux
+                  moveCursorTo(cm);
+                  after(700, function () {
+                    cm.classList.add('sel');
+                    after(950, function () {
+                      cursor.style.opacity = '0';
+                      after(500, function () { cm.classList.remove('sel'); closeSub(); demoOn = false; });
+                    });
+                  });
+                });
+              });
+            });
+          });
+        });
+      });
+      // hand control back the moment the user's own pointer arrives
+      desk.addEventListener('mousemove', function () { if (demoOn) stopDemo(); });
+    }
+
+    // ── New Box modal ──
+    var ov = document.getElementById('hdOverlay');
+    var modal = document.getElementById('hdModal');
+    var nb = document.getElementById('heroNewBox');
+    var prog = modal ? modal.querySelector('.m-prog i') : null;
+    var createTimer = null;
+    function closeModal() {
+      if (!ov) return;
+      ov.classList.remove('open');
+      if (createTimer) { clearTimeout(createTimer); createTimer = null; }
+      setTimeout(function () { modal.classList.remove('creating'); if (prog) prog.style.width = '4%'; }, 220);
+    }
+    window.heroDeskClose = function () { stopDemo(); closeSub(); closeModal(); };
+    if (nb && ov) {
+      nb.addEventListener('click', function (e) { e.stopPropagation(); nb.classList.add('quiet'); closeSub(); ov.classList.add('open'); });
+      ov.addEventListener('click', function (e) { if (e.target === ov) closeModal(); });
+      modal.addEventListener('click', function (e) { e.stopPropagation(); });
+      // popup dropdowns (project / provider)
+      modal.addEventListener('click', function () {
+        modal.querySelectorAll('.pop-menu').forEach(function (m) { m.classList.remove('open'); });
+      });
+      modal.querySelectorAll('.popwrap').forEach(function (w) {
+        var pop = w.querySelector('.popup'), menu = w.querySelector('.pop-menu');
+        pop.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var was = menu.classList.contains('open');
+          modal.querySelectorAll('.pop-menu').forEach(function (m) { m.classList.remove('open'); });
+          if (!was) menu.classList.add('open');
+        });
+        menu.querySelectorAll('.pop-it:not(.dis)').forEach(function (it) {
+          it.addEventListener('click', function (e) {
+            e.stopPropagation();
+            menu.querySelectorAll('.pop-it').forEach(function (x) { x.classList.toggle('on', x === it); });
+            var name = it.dataset.name, hint = it.dataset.hint;
+            w.querySelector('.pv').innerHTML = name + (hint ? ' <span class="hint">· ' + hint + '</span>' : '');
+            menu.classList.remove('open');
+            if (w.id === 'popProject') {
+              var ph = document.getElementById('mNamePh');
+              if (ph) ph.textContent = 'auto — ' + name + '-3f9a2c1b';
+              var ct = modal.querySelector('.m-crow b');
+              if (ct) ct.textContent = 'Creating ' + name + '-3f9a2c1b…';
+            }
+          });
+        });
+      });
+      document.getElementById('mCancel').addEventListener('click', closeModal);
+      document.getElementById('mCreate').addEventListener('click', function () {
+        modal.classList.add('creating');
+        requestAnimationFrame(function () { if (prog) prog.style.width = '100%'; });
+        createTimer = setTimeout(closeModal, 2300);
+      });
+      modal.querySelectorAll('.seg .s-item').forEach(function (s) {
+        s.addEventListener('click', function () {
+          modal.querySelectorAll('.seg .s-item').forEach(function (x) { x.classList.toggle('on', x === s); });
+        });
+      });
+    }
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { closeSub(); closeModal(); } });
+  })();
+
   // rotating agent name in the hero command
   (function () {
     var roller = document.getElementById('agentRoller');
@@ -1433,7 +2173,7 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
       { t: 'out', s: '⬡ provisioning box on vercel…', c: 'dim' },
       { t: 'out', s: '✓ box 2 ready · codex attached', c: 'ok' },
       { t: 'gap' },
-      { t: 'cmd', s: 'agentbox attach 2' },
+      { t: 'cmd', s: 'agentbox codex attach 2' },
       { t: 'out', s: '↳ reattaching to running session…', c: 'dim' },
       { t: 'out', s: '✓ resumed codex on box 2', c: 'ok' },
       { t: 'gap' },
@@ -1526,32 +2266,6 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
       });
     });
   });
-
-  // mobile nav — hamburger toggles the dropdown
-  (function () {
-    var bar = document.getElementById('topbar');
-    var btn = document.getElementById('menuBtn');
-    var nav = document.getElementById('topnav');
-    if (!bar || !btn || !nav) return;
-    function setOpen(open) {
-      bar.classList.toggle('open', open);
-      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    }
-    btn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      setOpen(!bar.classList.contains('open'));
-    });
-    // close on link tap, outside click, or Escape
-    nav.addEventListener('click', function (e) {
-      if (e.target.closest('a')) setOpen(false);
-    });
-    document.addEventListener('click', function (e) {
-      if (bar.classList.contains('open') && !bar.contains(e.target)) setOpen(false);
-    });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') setOpen(false);
-    });
-  })();
 
   // animate the architecture diagram into view
   var dg = document.getElementById('dg');
@@ -1747,7 +2461,49 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
       });
     }
   })();
+</script>
+<script>
+  // section 04 — mobile tabs (menu / actions / new box)
+  (function () {
+    var tabs = document.getElementById('trayTabs');
+    var desk = document.querySelector('.tray-desk');
+    if (!tabs || !desk) return;
+    tabs.querySelectorAll('button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        tabs.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+        desk.setAttribute('data-pane', b.dataset.pane);
+      });
+    });
+  })();
 
+  // hero desk — scale to fit narrow viewports
+  (function () {
+    var wrap = document.querySelector('.hero-desk-scroll');
+    var desk = document.querySelector('.trayapp.hero-desk');
+    if (!wrap || !desk) return;
+    var BASE_W = 420, BASE_H = 402;
+    function fit() {
+      var w = wrap.clientWidth;
+      if (w && w < BASE_W) {
+        var s = w / BASE_W;
+        desk.style.width = BASE_W + 'px';
+        desk.style.transformOrigin = 'top left';
+        desk.style.transform = 'scale(' + s + ')';
+        wrap.style.height = Math.round(BASE_H * s) + 'px';
+        wrap.style.overflow = 'hidden';
+      } else {
+        desk.style.width = '';
+        desk.style.transform = '';
+        desk.style.transformOrigin = '';
+        wrap.style.height = '';
+        wrap.style.overflow = '';
+      }
+    }
+    fit();
+    window.addEventListener('resize', fit);
+  })();
+</script>
+<script>
   // Fill the version pill from the npm registry (via the app's /api/version,
   // which adds hourly ISR + an offline fallback). Pure progressive enhancement:
   // if it fails the pill simply stays hidden.
@@ -1761,8 +2517,32 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
       })
       .catch(function () {});
   })();
-</script>
 
+  // mobile nav — hamburger toggles the dropdown
+  (function () {
+    var bar = document.getElementById('topbar');
+    var btn = document.getElementById('menuBtn');
+    var nav = document.getElementById('topnav');
+    if (!bar || !btn || !nav) return;
+    function setOpen(open) {
+      bar.classList.toggle('open', open);
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      setOpen(!bar.classList.contains('open'));
+    });
+    nav.addEventListener('click', function (e) {
+      if (e.target.closest('a')) setOpen(false);
+    });
+    document.addEventListener('click', function (e) {
+      if (bar.classList.contains('open') && !bar.contains(e.target)) setOpen(false);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') setOpen(false);
+    });
+  })();
+</script>
 <script>
 /* feature-widgets.js — provisioning manifest · access switcher · orchestration loop
    each widget is scroll-gated and respects prefers-reduced-motion */
@@ -1878,7 +2658,7 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
     var grid = document.getElementById('lp-grid');
     var slot = document.getElementById('lp-slot');
     var boxes = [].slice.call(lp.querySelectorAll('.lp-sq:not(.empty)'));
-    var CLAUDE_SRC = 'assets/agent-claude.png';
+    var CLAUDE_SRC = (window.__resources && window.__resources.agentClaude) || 'assets/agent-claude.png';
     var gchip = {
       branch: lp.querySelector('.lp-gchip[data-g="branch"]'),
       pull: lp.querySelector('.lp-gchip[data-g="pull"]'),
@@ -2117,6 +2897,7 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
   })();
 
 })();
+
 </script>
 </body>
 </html>

@@ -9,7 +9,7 @@ import {
   parseExtractResult,
   parseSyncResult,
   parseVolumeClaudeCredentials,
-} from '../src/claude-credentials.js';
+} from '../src/sync/claude-credentials.js';
 
 describe('parseExtractResult', () => {
   it('reports copied only on COPIED=yes', () => {

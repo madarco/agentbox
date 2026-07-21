@@ -6,7 +6,7 @@ import { destroyBox, portlessUnalias } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
-import { agentboxAliasFor, removeAgentboxSshAlias } from '../ssh-config.js';
+import { syncAgentboxSshConfig } from '@agentbox/sandbox-core';
 import { handleLifecycleError } from './_errors.js';
 
 interface DestroyOptions {
@@ -113,11 +113,11 @@ export const destroyCommand = new Command('destroy')
       } else {
         const provider = await providerForBox(box);
         await provider.destroy(box);
-        // Best-effort: remove the `~/.ssh/config` block `agentbox code` may
-        // have written for this cloud box. A missing block isn't an error
-        // and a file failure shouldn't block destroy.
+        // Best-effort: regenerate `~/.agentbox/ssh/config` now the box is gone
+        // from state, dropping its `Host` block. A file failure shouldn't block
+        // destroy.
         try {
-          await removeAgentboxSshAlias(agentboxAliasFor(box.name));
+          await syncAgentboxSshConfig();
         } catch {
           /* best-effort */
         }

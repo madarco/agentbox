@@ -1,0 +1,48 @@
+# Self-host recipe for the AgentBox hosted control plane: Postgres + the Next
+# app, the SAME code that deploys to Vercel. Run from this directory:
+#
+#   export AGENTBOX_RELAY_ADMIN_TOKEN=$(openssl rand -hex 32)
+#   docker compose up --build
+#
+# Point boxes/CLI at it: `agentbox control-plane set-url http://<host>:8787`.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: pw
+      POSTGRES_DB: agentbox
+    volumes:
+      - cpdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build:
+      # Repo root — the app needs its @agentbox/relay workspace dep.
+      context: ../..
+      dockerfile: apps/hub/Dockerfile
+    environment:
+      POSTGRES_URL: postgres://postgres:pw@db:5432/agentbox
+      AGENTBOX_RELAY_ADMIN_TOKEN: ${AGENTBOX_RELAY_ADMIN_TOKEN:?set AGENTBOX_RELAY_ADMIN_TOKEN}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      # Web-UI auth (Postgres store — the same shape as the Vercel deploy). Login
+      # is secret-gated: with no BETTER_AUTH_SECRET the UI stays open (unchanged);
+      # the CLI deploy path (control-plane setup --deploy hetzner) sets these +
+      # BETTER_AUTH_SECRET so a network-reachable/Caddy-HTTPS hub is gated.
+      AGENTBOX_HUB_PROFILE: ${AGENTBOX_HUB_PROFILE:-vercel}
+      AGENTBOX_HUB_AUTH: ${AGENTBOX_HUB_AUTH:-}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
+      AGENTBOX_HUB_ADMIN_EMAIL: ${AGENTBOX_HUB_ADMIN_EMAIL:-}
+      AGENTBOX_HUB_ADMIN_PASSWORD: ${AGENTBOX_HUB_ADMIN_PASSWORD:-}
+    ports:
+      - '8787:3000'
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  cpdata:

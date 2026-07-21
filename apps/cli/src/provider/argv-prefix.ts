@@ -2,7 +2,7 @@
  * Provider-prefix argv sugar:
  *
  *   agentbox <provider> <subcmd> [...rest]
- *     where provider ∈ {docker, daytona, hetzner, vercel}
+ *     where provider ∈ the known providers, or a `docker:<host>` spec
  *     and   subcmd   ∈ SUGARED_COMMANDS
  *
  *   ↓ rewritten before commander parses
@@ -16,6 +16,11 @@
  * an explicit `--provider <flag>` later in the original argv keeps the
  * commander last-one-wins behavior: `agentbox daytona create --provider
  * hetzner` resolves to hetzner.
+ *
+ * A host-qualified spec rides the same path — `agentbox docker:buildbox claude`
+ * becomes `claude --provider docker:buildbox`, and the create command parses the
+ * host back out of it (see `./spec.ts`). It is NOT expanded to `--remote-host`
+ * here, so that the last-one-wins property above still holds for the whole spec.
  */
 import { isKnownProvider } from './registry.js';
 

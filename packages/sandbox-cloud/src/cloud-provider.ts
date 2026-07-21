@@ -12,7 +12,7 @@
  */
 
 import { basename, resolve } from 'node:path';
-import { generateBoxId } from '@agentbox/core';
+import { generateBoxId, resolveSyncTopology, UserFacingError } from '@agentbox/core';
 import type {
   AttachKind,
   AttachSpec,
@@ -26,18 +26,29 @@ import type {
   CreatedBox,
   ExecOptions,
   ExecResult,
+  GitWorktreeRecord,
+  InboundPolicy,
   InspectedBox,
   Provider,
   ProviderCheckpoint,
+  ProviderSync,
+  ResolvedCarryEntry,
+  ResyncResult,
+  SyncTransport,
 } from '@agentbox/core';
 import {
   allocateProjectIndex,
+  describeInbound,
+  detectGitRepos,
+  makeSyncContext,
+  parseInboundSpec,
   readCliStamp,
   readState,
   recordBox,
   removeBoxRecord,
-  renderCarryEntries,
 } from '@agentbox/sandbox-core';
+import { makeCloudSync } from './sync/cloud-sync.js';
+import { createCloudSyncTransport } from './sync/sync-transport.js';
 import {
   buildTmuxConfigShellSnippet,
   ensureRelay,
@@ -52,14 +63,8 @@ import {
 } from '@agentbox/sandbox-docker';
 import {
   ensureAgentVolumesForCloud,
-  extractCloudAgentCredentials,
-  refreshAgentCredentialsBackup,
-  seedAgentVolumesIfFresh,
-  seedOpencodeModelState,
-} from './agent-credentials.js';
-import { seedDynamicConfig } from './dynamic-sync.js';
-import { seedClaudeJsonAtCreate } from './claude-json-overlay.js';
-import { seedGitIdentity } from './git-identity.js';
+  reconcileAgentCredentials,
+} from './sync/agent-credentials.js';
 import {
   cloudSnapshotName,
   currentCloudBaseFingerprint,
@@ -70,15 +75,14 @@ import {
 } from './checkpoint.js';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { isSnapshotGoneError } from './snapshot-error.js';
-import { uploadEnvFiles } from './env-files.js';
-import { uploadCarryPaths } from './carry.js';
 import { readExposedServicePorts } from './expose-ports.js';
 import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
-import { launchCloudCtlDaemon } from './ctl-launch.js';
-import { launchCloudDockerdDaemon } from './dockerd-launch.js';
-import { quoteShellArgv } from './shell.js';
-import { launchCloudVncDaemon } from './vnc-launch.js';
-import { seedCloudWorkspace } from './workspace-seed.js';
+import { kickCloudBootstrap } from './bootstrap-launch.js';
+import { readGitOriginUrl, registerBoxWithPlane } from './plane-register.js';
+import { bashScript, quoteShellArgv } from './shell.js';
+import { seedGitCredentials } from './sync/git-identity.js';
+import { seedCloudWorkspace } from './sync/workspace-seed.js';
+import type { SeedCloudWorkspaceResult } from './sync/workspace-seed.js';
 
 /** Workspace mount path inside every cloud sandbox. Matches the Docker model. */
 export const CLOUD_WORKSPACE_DIR = '/workspace';
@@ -267,7 +271,15 @@ export function createCloudProvider(
     if (!sandboxId) {
       throw new Error(`cloud box ${box.name} has no sandboxId — record is malformed`);
     }
-    return { sandboxId };
+    // Carry the persisted inbound policy so firewall ops (repairReachability
+    // drift re-sync, setInbound) can merge the whitelist with the current host
+    // egress instead of clobbering it. Same for the Daytona sandbox class,
+    // which pause/resume branch on and which no SDK call can read back.
+    return {
+      sandboxId,
+      inbound: box.cloud?.inbound,
+      sandboxClass: box.cloud?.sandboxClass,
+    };
   }
 
   /** Resolve a fresh per-cloud-box id + name + branch. */
@@ -320,9 +332,12 @@ export function createCloudProvider(
   // portless aliases, persist the record, relaunch the in-box daemons
   // (ctl daemon -> in-box bridge + the agentbox.yaml tasks/services, dockerd,
   // VNC), and re-register with the host relay. Shared by `start()` (after
-  // `backend.start`) and `resume()` (after `backend.resume`) so EVERY wake path
-  // brings the box fully back, not just attach. Idempotent — the `launch*`
-  // helpers no-op when the daemon is already alive.
+  // `backend.start`), `resume()` (after `backend.resume`), and `reconnect()`
+  // (no power-cycle) so EVERY wake/recover path brings the box fully back, not
+  // just attach. Idempotent — the in-box `agentbox-ctl bootstrap` (ctl/dockerd/
+  // VNC) skips the spawn when a healthy instance is already serving (so a
+  // host-only `reconnect` on a
+  // live box doesn't pile up duplicate daemons).
   async function reEnsureCloudBox(box: BoxRecord, h: CloudHandle): Promise<BoxRecord> {
     // Preview URLs (and their tokens) can rotate across stop/start — refresh
     // the web + relay preview URLs and persist so `agentbox url` and the
@@ -430,23 +445,15 @@ export function createCloudProvider(
       },
     };
     await recordBox(next);
-    // Re-launch in-box dockerd — it dies with the sandbox. Done BEFORE the ctl
-    // supervisor (mirrors the docker provider's startBox) so a docker-based
-    // agentbox.yaml service doesn't race a not-yet-ready socket on resume.
-    // launchCloudDockerdDaemon blocks until ready. Best-effort. Skipped for
-    // backends that can't run nested containers (vercel).
-    if (opts.launchDockerd !== false) {
-      try {
-        const dockerd = await launchCloudDockerdDaemon({ backend, handle: h, timeoutMs: 60_000 });
-        if (!dockerd.up) {
-          // swallowed; surface only on follow-up `docker info`
-        }
-      } catch {
-        // best-effort
-      }
-    }
-    // Re-launch the ctl daemon — it dies with the sandbox.
-    await launchCloudCtlDaemon({
+    // Re-run the single in-box bootstrap — daemons die with the sandbox on
+    // stop/start. It's idempotent: it relaunches only what's dead (so Vercel's
+    // persistent snapshots, which keep daemons alive across resume, don't get
+    // duplicates). dockerd is started before the supervisor inside the bootstrap
+    // so a docker-based service doesn't race a not-yet-ready socket. No clone on
+    // resume — /workspace already exists. dockerd/VNC are best-effort inside the
+    // bootstrap; a dead ctl daemon throws and fails start (matching the previous
+    // behavior, where the ctl relaunch was the one un-caught step).
+    await kickCloudBootstrap({
       backend,
       handle: h,
       boxId: box.id,
@@ -455,22 +462,42 @@ export function createCloudProvider(
       relayToken: box.relayToken ?? '',
       bridgeToken: box.cloud?.bridgeToken,
       webProxyPort: backend.webProxyPort,
+      launchDockerd: opts.launchDockerd !== false,
+      vncPassword: box.vncEnabled ? box.vncPassword : undefined,
+      controlPlaneUrl: box.cloud?.controlPlaneUrl,
+      gitPushMode: box.cloud?.gitPushMode,
       boxHost: deriveCloudBoxHost(box.name, webPreview?.url),
     });
-    // Re-launch the VNC stack — Xvnc + websockify die with the sandbox.
-    // Best-effort: a failure here shouldn't block start; `agentbox screen`
-    // surfaces the missing daemon with a clear error.
-    if (box.vncEnabled && box.vncPassword) {
-      try {
-        await launchCloudVncDaemon({ backend, handle: h, vncPassword: box.vncPassword });
-      } catch {
-        // swallowed; user-visible error comes from `agentbox screen` if it
-        // can't reach websockify after a few retries.
+    // Re-register on resume. A control-plane box registers on the plane (with
+    // its origin URL, needed for lease minting); a classic-cloud box registers
+    // on the host relay so its CloudBoxPoller picks up the fresh preview
+    // URL/token. Both best-effort.
+    if (box.cloud?.controlPlaneUrl && box.relayToken) {
+      const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN;
+      const originUrl = await readGitOriginUrl(box.workspacePath).catch(() => undefined);
+      if (adminToken && originUrl) {
+        try {
+          await registerBoxWithPlane({
+            controlPlaneUrl: box.cloud.controlPlaneUrl,
+            adminToken,
+            boxId: box.id,
+            token: box.relayToken,
+            name: box.name,
+            originUrl,
+            backend: backend.name,
+            bridgeToken: box.cloud.bridgeToken,
+            previewUrl: relayPreview?.url,
+            previewToken: relayPreview?.token,
+            createdAt: box.createdAt,
+            projectIndex: box.projectIndex,
+            autoApproveHostActions: box.autoApproveHostActions,
+            autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+          });
+        } catch {
+          // best-effort
+        }
       }
-    }
-    // Re-register with the host relay so its CloudBoxPoller picks up the
-    // fresh preview URL/token.
-    if (relayPreview && box.relayToken && box.cloud?.bridgeToken) {
+    } else if (relayPreview && box.relayToken && box.cloud?.bridgeToken) {
       try {
         await registerBoxWithRelay({
           boxId: box.id,
@@ -484,10 +511,27 @@ export function createCloudProvider(
           createdAt: box.createdAt,
           projectIndex: box.projectIndex,
           autoApproveHostActions: box.autoApproveHostActions,
+          autoApproveSafeHostActions: box.autoApproveSafeHostActions,
         });
       } catch {
         // best-effort
       }
+    }
+    // A woken box carries pause-time credentials; if another box rotated the
+    // claude refresh token meanwhile, this copy is dead. Reconcile with the
+    // host backups (newest-wins both directions; codex/opencode host-wins).
+    // Best-effort — resume/start/reconnect never fail on this. Gated by the
+    // same box.credentialSync switch as the ctl watcher (the create stamped it
+    // into the sandbox env; re-read the config here since the host flag is
+    // what the user controls).
+    try {
+      const credentialSync = (await loadEffectiveConfig(box.workspacePath)).effective.box
+        .credentialSync;
+      if (credentialSync) {
+        await reconcileAgentCredentials(backend, h, { onLog: () => {} });
+      }
+    } catch {
+      // best-effort
     }
     return next;
   }
@@ -511,18 +555,17 @@ export function createCloudProvider(
       const image = opts.provisionImage
         ? await opts.provisionImage(req)
         : (req.image ?? FALLBACK_IMAGE);
-      // Per-create overrides (currently vercel's box.vercelVcpus / vercelTimeoutMs,
-      // threaded through providerOptions). Fall back to the provider's static
-      // defaults so daytona/hetzner are unaffected.
-      const baseResources = opts.defaultResources ?? { cpu: 2, memory: 4, disk: 8 };
-      const vcpuOverride = req.providerOptions?.['vcpus'];
-      const resources =
-        typeof vcpuOverride === 'number' && vcpuOverride > 0
-          ? { ...baseResources, cpu: vcpuOverride }
-          : baseResources;
+      // Per-create overrides threaded through providerOptions (see the CLI's
+      // `cloudSizingProviderOptions`). Fall back to the provider's static
+      // defaults.
+      const resources = opts.defaultResources ?? { cpu: 2, memory: 4, disk: 8 };
       const timeoutOverride = req.providerOptions?.['timeoutMs'];
+      // `>= 0`, not `> 0`: daytona treats 0 as "disable auto-stop entirely", and
+      // dropping it would silently hand the box Daytona's own 15-min default —
+      // the opposite of what the user asked for. The other providers' schemas
+      // enforce `minimum: 1`, so they can't reach 0 anyway.
       const timeoutMs =
-        typeof timeoutOverride === 'number' && timeoutOverride > 0 ? timeoutOverride : undefined;
+        typeof timeoutOverride === 'number' && timeoutOverride >= 0 ? timeoutOverride : undefined;
       const networkPolicyOpt = req.providerOptions?.['networkPolicy'];
       const networkPolicy =
         typeof networkPolicyOpt === 'string' && networkPolicyOpt.trim() !== ''
@@ -530,11 +573,34 @@ export function createCloudProvider(
           : undefined;
       // Generic VM-size string, resolved per-provider by the call site
       // (`resolveBoxSize` + `--size` flag). Each backend interprets it natively
-      // (hetzner: server type; daytona: cpu-mem-disk GB); empty/undefined ⇒
-      // backend uses its built-in default.
+      // (hetzner: server type; daytona: cpu-mem-disk GB; vercel: vCPUs);
+      // empty/undefined ⇒ backend uses its built-in default.
       const sizeOpt = req.providerOptions?.['size'];
       const size =
         typeof sizeOpt === 'string' && sizeOpt.trim() !== '' ? sizeOpt.trim() : undefined;
+      // Datacenter / region (hetzner's `--location` / `box.hetznerLocation`).
+      const locationOpt = req.providerOptions?.['location'];
+      const location =
+        typeof locationOpt === 'string' && locationOpt.trim() !== ''
+          ? locationOpt.trim()
+          : undefined;
+      // Inbound-access policy for VPS firewalls (`--inbound` / `box.inbound`).
+      const inboundOpt = req.providerOptions?.['inbound'];
+      const inbound =
+        typeof inboundOpt === 'string' && inboundOpt.trim() !== '' ? inboundOpt.trim() : undefined;
+      // Cloud resource grouping (DigitalOcean's `--do-project` / `box.digitaloceanProject`).
+      const projectOpt = req.providerOptions?.['project'];
+      const project =
+        typeof projectOpt === 'string' && projectOpt.trim() !== '' ? projectOpt.trim() : undefined;
+      // SSH destination whose docker engine runs the box (remote-docker's
+      // `docker:<host>` / `--remote-host` / `box.remoteDockerHost`).
+      const hostOpt = req.providerOptions?.['remoteHost'];
+      const host =
+        typeof hostOpt === 'string' && hostOpt.trim() !== '' ? hostOpt.trim() : undefined;
+      // Sandbox class (daytona's `box.daytonaClass`): `linux-vm` | `container`.
+      const classOpt = req.providerOptions?.['sandboxClass'];
+      const sandboxClass =
+        typeof classOpt === 'string' && classOpt.trim() !== '' ? classOpt.trim() : undefined;
 
       // Per-box tokens: `relayToken` authenticates the in-box agent to its
       // in-sandbox relay (`/events`, `/rpc` bearer); `bridgeToken` separately
@@ -585,7 +651,12 @@ export function createCloudProvider(
       // Daytona only attaches volumes at create time, not after. Backends
       // without a volume primitive return an empty list and we degrade to
       // "user logs in inside the box" the way cloud worked before.
-      const agentVolumes = await ensureAgentVolumesForCloud(backend, { onLog: log });
+      const agentVolumes = await ensureAgentVolumesForCloud(backend, {
+        onLog: log,
+        // Daytona's linux-vm class accepts volume mounts and never honors them
+        // (see ensureAgentVolumesForCloud) — take the per-create upload path.
+        volumesUsable: sandboxClass !== 'linux-vm',
+      });
 
       // Read the `expose:` service ports up front so port-capped backends
       // (vercel) can declare them at create time — a preview URL only routes to
@@ -593,10 +664,18 @@ export function createCloudProvider(
       // the per-service preview-URL map. Best-effort: [] when there's no yaml.
       const exposeServicePorts = await readExposedServicePorts(req.workspacePath);
 
+      // Caller-resolved value wins (it sees CLI overrides like
+      // --no-credential-sync that this local config load can't).
+      const credentialSyncOff =
+        (req.credentialSync ??
+          (await loadEffectiveConfig(req.projectRoot ?? req.workspacePath)).effective.box
+            .credentialSync) === false;
       const provisionEnv = {
         AGENTBOX_BOX_ID: id,
         AGENTBOX_BOX_NAME: name,
         AGENTBOX_BOX_KIND: 'cloud',
+        // Absent = enabled; the ctl credential watcher only checks for '0'.
+        ...(credentialSyncOff ? { AGENTBOX_CREDENTIAL_SYNC: '0' } : {}),
         // In-sandbox relay is on the box's loopback at the in-box port.
         // 8788 is distinct from the host relay's 8787 so a nested agentbox
         // run inside the box can claim :8787 without colliding.
@@ -617,6 +696,11 @@ export function createCloudProvider(
           snapshot,
           resources,
           size,
+          location,
+          project,
+          host,
+          inbound,
+          sandboxClass,
           timeoutMs,
           exposePorts: exposeServicePorts,
           networkPolicy,
@@ -656,141 +740,109 @@ export function createCloudProvider(
         }
       }
 
+      // Surface the real provisioned resources when the backend reports them
+      // (Hetzner reads them from the create response). Best-effort log only.
+      if (handle.resources) {
+        const r = handle.resources;
+        const parts: string[] = [];
+        if (typeof r.cpu === 'number') parts.push(`${String(r.cpu)} vCPU`);
+        if (typeof r.memory === 'number') parts.push(`${String(r.memory)} GB RAM`);
+        if (typeof r.disk === 'number') parts.push(`${String(r.disk)} GB disk`);
+        if (parts.length > 0) log(`provisioned ${parts.join(' / ')}`);
+      }
+
+      // Optional in-box clone: when the caller passes a leased, token-bearing
+      // URL (the plane / cloud-IDE path), the box clones /workspace itself at
+      // bootstrap instead of the host seeding it. The laptop path omits this and
+      // host-seeds below (carrying local uncommitted state).
+      const inBoxClone = req.inBoxClone
+        ? {
+            authedUrl: req.inBoxClone.authedUrl,
+            originUrl: req.inBoxClone.originUrl,
+            branch: req.inBoxClone.branch,
+            depth: req.bundleDepth,
+          }
+        : undefined;
+
       try {
-        // The snapshot carries /workspace from the SOURCE box — including its
-        // (now stale) per-box branch and none of this box's uncommitted work.
-        // Booting from it verbatim would leave every checkpoint-derived box on
-        // the same frozen branch with the wrong files. So we re-seed in OVERLAY
-        // mode: keep the snapshot's gitignored warm artifacts (node_modules,
-        // build caches — the checkpoint's value), but swap `.git` for a fresh
-        // host clone, move onto this box's fresh `agentbox/<box>` branch at the
-        // host base ref, and apply the host's uncommitted/untracked carry-over.
-        // Mirrors docker's `regenerateRestoredWorktrees` + `resyncWorkspaceFromHost`.
-        const seedResult = await seedCloudWorkspace({
-          backend,
-          handle,
-          workspacePath: req.workspacePath,
-          branch,
-          workspaceDir: CLOUD_WORKSPACE_DIR,
-          bundleDepth: req.bundleDepth,
-          fromBranch: req.fromBranch,
-          useBranch: req.useBranch,
-          overlay: Boolean(snapshotName),
-          // `--no-resync` (resyncOnStart === false): re-branch the box to the
-          // host tip but skip replaying the host's uncommitted/untracked state
-          // onto the warm checkpoint tree — matches docker's gated resync.
-          skipCarryOver: Boolean(snapshotName) && req.resyncOnStart === false,
-          onLog: log,
-        });
         // Checkpoint-restore conflicts (overlay): surface to the CLI so it
         // injects the same "conflicting host changes SKIPPED … agentbox-ctl
         // reload" prompt into the agent that docker does. Undefined on a fresh
-        // create (no overlay) or when nothing conflicted.
-        const resync =
-          seedResult.resync && seedResult.resync.hadConflicts ? seedResult.resync : undefined;
-
-        // Refresh the host-side credential backups from the docker shared
-        // volumes BEFORE seeding — only the docker create path keeps them
-        // current, so cloud creates would otherwise push whatever access
-        // token the docker volume last extracted (often expired by the time
-        // the user attaches). Best-effort: when there's no docker on the host
-        // or no shared volume, the helper is a noop and the seed proceeds
-        // with whatever backup exists.
-        await refreshAgentCredentialsBackup({ onLog: log });
-
-        // Seed agent credentials into the box. Volume backends (daytona)
-        // mount a per-org volume at `~/.agentbox-creds/<agent>/` and the seed
-        // is idempotent via a `.agentbox-seeded-at` marker. Non-volume
-        // backends (e2b, vercel, hetzner) push fresh into the box-baked
-        // `~/.agentbox-creds/<agent>/` dirs every create — tokens are
-        // renewable and the box FS is ephemeral. Either way the symlinks
-        // baked into the snapshot (`~/.claude/.credentials.json` ->
-        // `~/.agentbox-creds/claude/.credentials.json` etc.) route the
-        // agent-expected paths through to the seeded files.
-        if (agentVolumes.agents.length > 0) {
-          await seedAgentVolumesIfFresh(backend, handle, {
-            agents: agentVolumes.agents,
-            hostWorkspace: req.workspacePath,
-            onLog: log,
-          });
-        }
-
-        // Seed the host's selected OpenCode model into the box's (ephemeral)
-        // state dir on every create. Runs unconditionally — Hetzner has no
-        // credentials volume, so it is absent from `agentVolumes.agents` above
-        // yet still needs the model seeded.
-        await seedOpencodeModelState(backend, handle, { onLog: log });
-
-        // Overlay the in-box ~/.claude/_claude.json from the host's current
-        // ~/.claude.json on every create. Without this, E2B (which doesn't
-        // bake _claude.json at prepare-time) shows the first-run theme picker,
-        // and vercel/hetzner/daytona inherit whatever onboarding state the
-        // host had at prepare-time (stale if the user completed onboarding
-        // after `agentbox prepare`). The payload is one tiny JSON file.
-        await seedClaudeJsonAtCreate(backend, handle, {
-          hostWorkspace: req.workspacePath,
-          onLog: log,
-        });
-
-        // Seed the host's dynamic Claude config — global ~/.claude/workflows/
-        // and this project's memory/ — incrementally on every create. Runs on
-        // both fresh and checkpoint boots: the box carries a per-file manifest,
-        // so a snapshot boot only re-uploads what changed on the host since.
-        // Static config (plugins/skills/settings) is baked into the snapshot;
-        // these two trees change between runs and ship per-box, like credentials.
-        await seedDynamicConfig(backend, handle, { workspacePath: req.workspacePath, onLog: log });
-
-        // Configure a git committer identity in the box. Docker inherits the
-        // host's via a bind-mounted ~/.gitconfig; cloud boxes have none, so the
-        // agent's `git commit` and `agentbox git pull`'s merge commit would
-        // fail with "Committer identity unknown". Author as the host user when
-        // resolvable, else a generic agentbox identity. Runs on both fresh and
-        // snapshot boots (idempotent `git config --global`) so a snapshot that
-        // didn't capture ~/.gitconfig can't leave the box identity-less.
-        await seedGitIdentity(backend, handle, { hostRepo: req.workspacePath, onLog: log });
-
-        // Copy the env/config files the setup wizard collected (`.env`,
-        // `secrets.toml`, `agentbox.yaml`, …) into `/workspace`. The Docker
-        // provider does the same via copyHostEnvFilesToBox; before this hook
-        // these files were silently dropped on the cloud path.
-        if (req.envFilesToImport && req.envFilesToImport.length > 0) {
-          const { copied } = await uploadEnvFiles({
+        // create (no overlay), an in-box clone, or when nothing conflicted.
+        let resync: SeedCloudWorkspaceResult['resync'];
+        if (inBoxClone) {
+          // The box clones itself at bootstrap; no host-side seed.
+          log('skipping host workspace seed — box will clone in-box at bootstrap');
+        } else {
+          // The snapshot carries /workspace from the SOURCE box — including its
+          // (now stale) per-box branch and none of this box's uncommitted work.
+          // Booting from it verbatim would leave every checkpoint-derived box on
+          // the same frozen branch with the wrong files. So we re-seed in OVERLAY
+          // mode: keep the snapshot's gitignored warm artifacts (node_modules,
+          // build caches — the checkpoint's value), but swap `.git` for a fresh
+          // host clone, move onto this box's fresh `agentbox/<box>` branch at the
+          // host base ref, and apply the host's uncommitted/untracked carry-over.
+          // Mirrors docker's `regenerateRestoredWorktrees` + `resyncWorkspaceFromHost`.
+          const seedResult = await seedCloudWorkspace({
             backend,
             handle,
             workspacePath: req.workspacePath,
-            files: req.envFilesToImport,
+            branch,
             workspaceDir: CLOUD_WORKSPACE_DIR,
+            bundleDepth: req.bundleDepth,
+            fromBranch: req.fromBranch,
+            useBranch: req.useBranch,
+            overlay: Boolean(snapshotName),
+            // `--no-resync` (resyncOnStart === false): re-branch the box to the
+            // host tip but skip replaying the host's uncommitted/untracked state
+            // onto the warm checkpoint tree — matches docker's gated resync.
+            skipCarryOver: Boolean(snapshotName) && req.resyncOnStart === false,
             onLog: log,
           });
+          resync =
+            seedResult.resync && seedResult.resync.hadConflicts ? seedResult.resync : undefined;
+        }
+
+        // Walk the cloud ProviderSync facade (see sync/cloud-sync.ts for the full
+        // per-op picture). Order preserved from the pre-facade sequence:
+        //   seedCredentials  = refresh host backups (best-effort, expiry-gated) +
+        //                      seed the per-agent credentials for the agents that
+        //                      have a volume/dir (`agentVolumes.agents`).
+        //   seedAgentConfig  = normalize agent home-dir ownership → codex
+        //                      AGENTS.override box-facts → OpenCode model →
+        //                      _claude.json overlay → dynamic workflows/memory.
+        //   seedGitIdentity  = git committer identity (cloud has no ~/.gitconfig).
+        // Workspace *seed* (above, via seedCloudWorkspace) + static config (baked
+        // at prepare) stay outside the facade.
+        const syncCtx = makeSyncContext({
+          boxName: name,
+          boxId: id,
+          provider: 'cloud',
+          hostWorkspace: req.workspacePath,
+          projectRoot: req.projectRoot,
+          boxWorkspace: CLOUD_WORKSPACE_DIR,
+          onLog: log,
+        });
+        const sync = makeCloudSync(backend, handle, { agents: agentVolumes.agents });
+        await sync.seedCredentials(syncCtx);
+        await sync.seedAgentConfig(syncCtx);
+        await sync.seedGitIdentity(syncCtx);
+
+        // Copy the env/config files the setup wizard collected (`.env`,
+        // `secrets.toml`, `agentbox.yaml`, …) into `/workspace`.
+        if (req.envFilesToImport && req.envFilesToImport.length > 0) {
+          const { copied } = await sync.seedEnvFiles(syncCtx, req.envFilesToImport);
           if (copied > 0) log(`copied ${String(copied)} env/config file(s) into /workspace`);
         }
 
-        // carry: from agentbox.yaml — runs after the env-file copies and
-        // before the supervisor launches, mirroring the docker provider.
-        // The host CLI already resolved + got user approval before threading
-        // entries into req.carry.
+        // carry: from agentbox.yaml — runs after the env-file copies and before
+        // the supervisor launches. The host CLI already resolved + approved req.carry.
         let carrySummary:
           | { count: number; entries: Array<{ src: string; dest: string; bytes: number }> }
           | undefined;
         if (req.carry && req.carry.length > 0) {
           log(`carry: copying ${String(req.carry.length)} host path(s) into the box`);
-          const entries = await renderCarryEntries(
-            req.carry,
-            {
-              name,
-              id,
-              kind: 'cloud',
-              hostWorkspace: req.workspacePath,
-              projectRoot: req.projectRoot,
-            },
-            log,
-          );
-          const result = await uploadCarryPaths({
-            backend,
-            handle,
-            entries,
-            onLog: log,
-          });
+          const result = await sync.applyCarry(syncCtx, req.carry);
           log(`carry: copied ${String(result.copied)}/${String(req.carry.length)} entry/entries`);
           for (const err of result.errors) log(`carry: ${err}`);
           if (result.applied.length > 0) {
@@ -798,41 +850,32 @@ export function createCloudProvider(
           }
         }
 
-        // Always-on in-box dockerd, matching the Docker provider
-        // (packages/sandbox-docker/src/create.ts). Launched (and awaited ready)
-        // BEFORE the ctl supervisor: the supervisor starts agentbox.yaml
-        // services as soon as it's up, so a docker-based service must not race a
-        // not-yet-ready socket. The image already bakes
-        // /usr/local/bin/agentbox-dockerd-start; Daytona sandboxes ship with
-        // CAP_SYS_ADMIN so it starts cleanly. Best-effort — a slow or failed
-        // start shouldn't fail create; `agentbox start` re-launches it on
-        // resume because dockerd dies with the sandbox. Skipped for backends
-        // that can't run nested containers (vercel), which set launchDockerd:false.
-        if (opts.launchDockerd !== false) {
-          log('launching in-box dockerd');
-          try {
-            const dockerd = await launchCloudDockerdDaemon({ backend, handle, timeoutMs: 60_000 });
-            if (!dockerd.up)
-              log(`dockerd did not become ready (continuing): ${dockerd.reason ?? 'unknown'}`);
-          } catch (err) {
-            log(
-              `dockerd daemon launch failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
+        // git.pushMode=direct: the credential files were just carried in; wire
+        // the git config (credential.helper, ssh host-key policy, SSH signing)
+        // that makes the box push/pull/sign with them, with the host off.
+        if (req.gitPushMode === 'direct') {
+          await seedGitCredentials(backend, handle, {
+            hostRepo: req.workspacePath,
+            onLog: log,
+          });
         }
+
+        // Per-box VNC password (default-on, matching Docker). Threaded into the
+        // bootstrap below; reused later for the record + preview URLs.
+        const vncEnabled = req.vnc?.enabled !== false;
+        const vncPassword = vncEnabled ? generateVncPassword() : undefined;
 
         // The box's "web" port: the in-box WebProxy port the provider exposes.
         // Defaults to 80; Vercel uses 8080 (it can't expose privileged ports).
         const wp = backend.webProxyPort ?? CLOUD_WEB_PROXY_PORT;
 
-        // Resolve the web preview URL BEFORE launching the daemon so the box's
-        // reachable host (AGENTBOX_BOX_HOST) is wired into the supervisor's env —
-        // a first-boot `agentbox-ctl render` task must see the real host, not the
+        // Resolve the web preview URL BEFORE the bootstrap so the box's reachable
+        // host (AGENTBOX_BOX_HOST) is wired into the supervisor's env — a
+        // first-boot `agentbox-ctl render` task must see the real host, not the
         // `<name>.localhost` fallback. Best-effort: most boxes won't have a
-        // service on the WebProxy port yet, but `sb.domain(port)` resolves the
-        // routing URL regardless of whether anything listens. Reused below for
-        // portless bootstrap and previewUrls persistence. `agentbox url`
-        // re-resolves on demand.
+        // service on the WebProxy port yet, but the provider resolves the routing
+        // URL regardless of whether anything listens. Reused below for portless
+        // bootstrap and previewUrls persistence. `agentbox url` re-resolves.
         let webPreview: { url: string; token?: string } | undefined;
         try {
           webPreview = await backend.previewUrl(handle, wp);
@@ -840,8 +883,16 @@ export function createCloudProvider(
           webPreview = undefined;
         }
 
-        log('launching agentbox-ctl daemon');
-        await launchCloudCtlDaemon({
+        // Hand off to the single in-box bootstrap: it (optionally) clones the
+        // workspace, then launches dockerd → the ctl supervisor → VNC, each only
+        // if not already live. One exec replaces the three previous host-driven
+        // launches; the same kick serves resume (idempotent). dockerd is started
+        // before the supervisor (inside the bootstrap) so a docker-based
+        // agentbox.yaml service doesn't race a not-yet-ready socket. dockerd/VNC
+        // are best-effort there; only a failed ctl daemon throws. Vercel sets
+        // launchDockerd:false (no nested containers).
+        log('running in-box bootstrap (clone? + dockerd + ctl + vnc)');
+        await kickCloudBootstrap({
           backend,
           handle,
           boxId: id,
@@ -850,25 +901,14 @@ export function createCloudProvider(
           relayToken,
           bridgeToken,
           webProxyPort: backend.webProxyPort,
+          launchDockerd: opts.launchDockerd !== false,
+          vncPassword,
+          clone: inBoxClone,
+          controlPlaneUrl: req.controlPlaneUrl,
+          gitPushMode: req.gitPushMode,
           boxHost: deriveCloudBoxHost(name, webPreview?.url),
+          onLog: log,
         });
-
-        // Mint the per-box VNC password and start the in-sandbox VNC stack
-        // when VNC is opted in (default-on, matching Docker). Best-effort —
-        // a failure logs but doesn't fail create; `agentbox screen` will
-        // surface "daemon may not be up" if the URL stays 502.
-        const vncEnabled = req.vnc?.enabled !== false;
-        const vncPassword = vncEnabled ? generateVncPassword() : undefined;
-        if (vncEnabled && vncPassword) {
-          log('launching VNC stack (Xvnc + websockify + noVNC)');
-          try {
-            await launchCloudVncDaemon({ backend, handle, vncPassword });
-          } catch (err) {
-            log(
-              `VNC daemon launch failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
-        }
 
         // Portless host alias + in-VPS mirror. Default-on for backends whose
         // `previewUrl()` returns a loopback URL (Hetzner); naturally skipped
@@ -959,14 +999,58 @@ export function createCloudProvider(
           : undefined;
 
         // Per-box host-action auto-approve policy (workspace > project > global).
-        const autoApproveHostActions = (
+        const effectiveBoxForApprove = (
           await loadEffectiveConfig(req.projectRoot ?? req.workspacePath)
-        ).effective.box.autoApproveHostActions;
+        ).effective.box;
+        const autoApproveHostActions = effectiveBoxForApprove.autoApproveHostActions;
+        const autoApproveSafeHostActions = effectiveBoxForApprove.autoApproveSafeHostActions;
 
-        // Tell the host relay about this cloud box so it spawns a poller.
-        // Best-effort: a failed register doesn't break create (status / git
-        // push just won't reach the host until a later register).
-        if (relayPreview) {
+        // Register the box so its RPCs (status, git.lease-token) are recognized.
+        // Control-plane box → register on the PLANE with its origin URL (the
+        // plane mints push tokens from the registered origin); it forwards /rpc
+        // to the plane and needs no host poller. Classic-cloud box → register on
+        // the host relay so it spawns a CloudBoxPoller for /bridge. Both
+        // best-effort: a failed register doesn't break create.
+        if (req.controlPlaneUrl) {
+          const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN;
+          const originUrl = req.inBoxClone
+            ? req.inBoxClone.originUrl
+            : await readGitOriginUrl(req.workspacePath).catch(() => undefined);
+          if (!adminToken) {
+            log(
+              'control-plane URL configured but AGENTBOX_RELAY_ADMIN_TOKEN is unset; ' +
+                'box git push (lease) will fail until the box is registered on the plane',
+            );
+          } else if (!originUrl) {
+            log(
+              'control-plane box: could not resolve the workspace origin URL; ' +
+                'lease-push will fail until the box is registered on the plane with an origin',
+            );
+          } else {
+            try {
+              await registerBoxWithPlane({
+                controlPlaneUrl: req.controlPlaneUrl,
+                adminToken,
+                boxId: id,
+                token: relayToken,
+                name,
+                originUrl,
+                backend: backend.name,
+                bridgeToken,
+                previewUrl: relayPreview?.url,
+                previewToken: relayPreview?.token,
+                createdAt: new Date().toISOString(),
+                projectIndex,
+                autoApproveHostActions,
+                autoApproveSafeHostActions,
+              });
+            } catch (err) {
+              log(
+                `register with control plane failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+        } else if (relayPreview) {
           try {
             await registerBoxWithRelay({
               boxId: id,
@@ -980,6 +1064,7 @@ export function createCloudProvider(
               bridgeToken,
               createdAt: new Date().toISOString(),
               autoApproveHostActions,
+              autoApproveSafeHostActions,
             });
           } catch (err) {
             log(
@@ -1007,6 +1092,7 @@ export function createCloudProvider(
           withPlaywright: req.withPlaywright,
           withEnv: req.withEnv,
           autoApproveHostActions: autoApproveHostActions ? true : undefined,
+          autoApproveSafeHostActions: autoApproveSafeHostActions === false ? false : undefined,
           carry: carrySummary,
           portlessAlias: portlessAliasName,
           portlessUrl: portlessUrlResolved,
@@ -1039,6 +1125,24 @@ export function createCloudProvider(
             snapshotRef: resolvedCheckpointRef,
             lastState: 'running',
             sessionTimeoutMs: timeoutMs,
+            // Real resources the backend reported (Hetzner: the plan's actual
+            // cores/memory/disk). Absent → readers fall back to defaultResources.
+            resources: handle.resources,
+            // Inbound-access policy the backend applied to the per-box firewall
+            // (VPS providers). Persisted so drift re-syncs preserve the whitelist.
+            inbound: handle.inbound,
+            // Daytona sandbox class, read back from the class of the snapshot the
+            // box actually booted from (not from config, which can disagree).
+            // pause() branches on it: a VM pauses, a container archives.
+            sandboxClass: handle.sandboxClass,
+            // Only host-seeded boxes share a fork base with the host, so only
+            // they can be resynced back to the host tip on session start (7.5).
+            // inBoxClone / plane boxes clone from a leased URL — left unset.
+            hostSeeded: inBoxClone ? undefined : true,
+            workspaceBranch: branch,
+            topology: resolveSyncTopology(backend.name, req.controlPlaneUrl),
+            controlPlaneUrl: req.controlPlaneUrl,
+            gitPushMode: req.gitPushMode,
           },
           createdAt: new Date().toISOString(),
         };
@@ -1061,6 +1165,89 @@ export function createCloudProvider(
       const h = handleFor(box);
       await backend.start(h);
       return reEnsureCloudBox(box, h);
+    },
+
+    async reconnect(box: BoxRecord): Promise<BoxRecord> {
+      // Re-establish host connectivity WITHOUT a power-cycle when the sandbox is
+      // already up: `reEnsureCloudBox` re-resolves preview URLs, re-opens the
+      // Hetzner tunnel (lazily, on its first `previewUrl`), re-registers
+      // portless + the relay poller, and relaunches the in-box daemons. If the
+      // box is actually paused/stopped, fall back to the power-cycling paths.
+      const h = handleFor(box);
+      const state = await probe(box);
+      if (state === 'running') return reEnsureCloudBox(box, h);
+      if (state === 'paused') {
+        await backend.resume(h);
+        return reEnsureCloudBox(box, h);
+      }
+      if (state === 'stopped') {
+        await backend.start(h);
+        return reEnsureCloudBox(box, h);
+      }
+      throw new Error(
+        `cannot recover ${box.name}: sandbox ${box.cloud?.sandboxId ?? box.id} is ${state}`,
+      );
+    },
+
+    async repairReachability(box: BoxRecord): Promise<{ changed: boolean; detail?: string }> {
+      // Delegate to the backend (only Hetzner self-heals its firewall); other
+      // backends have no host transport to repair.
+      return (await backend.repairReachability?.(handleFor(box))) ?? { changed: false };
+    },
+
+    async setInbound(box: BoxRecord, spec: string, onLog?: (line: string) => void): Promise<InboundPolicy> {
+      if (!backend.setInbound) {
+        throw new UserFacingError(
+          `inbound access control isn't supported for provider '${providerName}' — it has no per-box firewall (only hetzner / digitalocean do).`,
+        );
+      }
+      const policy = parseInboundSpec(spec);
+      const { sources } = await backend.setInbound(handleFor(box), policy);
+      onLog?.(`${describeInbound(policy)} -> ${sources.join(', ')}`);
+      // Persist so a later drift re-sync merges the whitelist, and `--show` /
+      // `connect` report the box's current exposure. `handleFor` already
+      // asserted a sandboxId, so `box.cloud` is present here.
+      const cloud = box.cloud;
+      if (cloud) await recordBox({ ...box, cloud: { ...cloud, inbound: policy } });
+      return policy;
+    },
+
+    async enableDirectGit(
+      box: BoxRecord,
+      entries: ResolvedCarryEntry[],
+      opts?: { hostRepo?: string; onLog?: (line: string) => void },
+    ): Promise<void> {
+      const onLog = opts?.onLog;
+      const handle = handleFor(box);
+      const ctx = makeSyncContext({
+        boxName: box.name,
+        boxId: box.id,
+        provider: 'cloud',
+        hostWorkspace: box.workspacePath,
+        boxWorkspace: CLOUD_WORKSPACE_DIR,
+        onLog,
+      });
+      // 1. Upload the host-resolved credential files + the git-direct-mode marker.
+      await makeCloudSync(backend, handle).applyCarry(ctx, entries);
+      // 2. Wire the box's git config (credential.helper / url.insteadOf for
+      // token; core.sshCommand + guarded signing for ssh) — same as create.
+      await seedGitCredentials(backend, handle, { hostRepo: opts?.hostRepo, onLog });
+      // 3. Flip the runtime flag in /etc/agentbox/box.env so future login shells
+      // (and the next agent session) push direct. Idempotent — the box env file
+      // is 0644 and AGENTBOX_GIT_DIRECT is a non-secret routing flag.
+      const flip =
+        'if ! sudo -n grep -q "^AGENTBOX_GIT_DIRECT=" /etc/agentbox/box.env 2>/dev/null; then ' +
+        'echo AGENTBOX_GIT_DIRECT=1 | sudo -n tee -a /etc/agentbox/box.env >/dev/null; fi';
+      const r = await backend.exec(handle, bashScript(flip));
+      if (r.exitCode !== 0) {
+        throw new Error(
+          `enableDirectGit: failed to set AGENTBOX_GIT_DIRECT in box env: ${r.stderr || r.stdout || `exit ${String(r.exitCode)}`}`,
+        );
+      }
+      // 4. Persist so a resume re-kick re-threads AGENTBOX_GIT_DIRECT (else the
+      // next resume rewrites box.env from the stale mode and drops it).
+      const cloud = box.cloud;
+      if (cloud) await recordBox({ ...box, cloud: { ...cloud, gitPushMode: 'direct' } });
     },
 
     async pause(box: BoxRecord): Promise<void> {
@@ -1206,9 +1393,31 @@ export function createCloudProvider(
       // skipping TTY when a command is provided would break tmux + readline).
       // A `detached` build only creates the session (no `exec tmux attach`), so
       // it runs as a plain non-interactive exec — no TTY needed.
+      // Backends whose transport withholds a TTY from an exec session (daytona's
+      // SSH gateway) can't take the command as an argument at all: without a
+      // terminal `tmux attach` exits on the spot, the wrapper reads that as the
+      // box dropping, and it reconnects straight back into the same failure.
+      // Connect to a bare login shell — which DOES get a terminal — and hand the
+      // command over on stdin. Detached builds and `logs` genuinely want a
+      // non-interactive exec, so they keep passing the command.
+      const viaStdin = backend.attachExecLacksTty === true && !opts?.detached && kind !== 'logs';
+      // The command is far too big and too quote-heavy to type at an interactive
+      // prompt — the shell's line editor mangles it and lands on a `>`
+      // continuation. So stage it as a script first (a plain exec, which needs no
+      // TTY and is not affected by any of this) and type one short line to run it.
+      const scriptPath = viaStdin ? attachScriptPath(opts?.sessionName ?? kind) : '';
+      if (viaStdin) {
+        const b64 = Buffer.from(inner, 'utf8').toString('base64');
+        await backend.exec(
+          handle,
+          `printf %s '${b64}' | base64 -d > ${scriptPath} && chmod 700 ${scriptPath}`,
+        );
+      }
       const argv = opts?.detached
         ? [...baseArgv.slice(1), inner]
-        : [...baseArgv.slice(1), '-t', inner];
+        : viaStdin
+          ? [...baseArgv.slice(1)]
+          : [...baseArgv.slice(1), '-t', inner];
       // Keep argv[0] = the program name (ssh) so callers can split.
       const fullArgv = [baseArgv[0]!, ...argv];
       const cleanup = backend.revokeAttachToken
@@ -1216,25 +1425,31 @@ export function createCloudProvider(
             await backend.revokeAttachToken!(handle, baseArgv);
           }
         : undefined;
-      return { argv: fullArgv, cleanup };
+      return {
+        argv: fullArgv,
+        // `exec` so the script replaces the login shell: the user never lands
+        // back on a prompt when they detach from tmux.
+        ...(viaStdin ? { initialInput: `exec bash ${scriptPath}\n` } : {}),
+        cleanup,
+      };
     },
 
     async uploadPath(
       box: BoxRecord,
-      hostSrc: string,
+      hostSrcs: string[],
       boxDst: string,
       exclude?: string[],
     ): Promise<{ finalPath: string }> {
-      return uploadToCloudBox(backend, handleFor(box), hostSrc, boxDst, exclude);
+      return uploadToCloudBox(backend, handleFor(box), hostSrcs, boxDst, exclude);
     },
 
     async downloadPath(
       box: BoxRecord,
-      boxSrc: string,
+      boxSrcs: string[],
       hostDst: string,
       exclude?: string[],
     ): Promise<{ finalPath: string }> {
-      return downloadFromCloudBox(backend, handleFor(box), boxSrc, hostDst, exclude);
+      return downloadFromCloudBox(backend, handleFor(box), boxSrcs, hostDst, exclude);
     },
 
     async downloadDirContents(
@@ -1308,6 +1523,48 @@ export function createCloudProvider(
     // silent no-op.
     checkpoint: makeCloudCheckpoint(backend),
 
+    sync(box: BoxRecord): ProviderSync {
+      return makeCloudSync(backend, handleFor(box));
+    },
+
+    syncTransport(box: BoxRecord): SyncTransport {
+      return createCloudSyncTransport({ backend, handle: handleFor(box) });
+    },
+
+    // Session-start live-box resync (Phase 7.5): merge the host's current state
+    // back into the box, box-wins on conflict. Gated on `hostSeeded` so
+    // inBoxClone / plane boxes (no host fork base) are left untouched. The box
+    // layout is re-derived host-side (`detectGitRepos`) rather than recorded.
+    async resyncWorkspace(box: BoxRecord, onLog?: (line: string) => void): Promise<ResyncResult> {
+      if (box.cloud?.hostSeeded !== true) return { repos: [], hadConflicts: false };
+      const repos = await detectGitRepos(box.workspacePath);
+      if (repos.length === 0) return { repos: [], hadConflicts: false };
+      const branch = box.cloud.workspaceBranch ?? `agentbox/${box.name}`;
+      const worktrees: GitWorktreeRecord[] = repos.map((r) => {
+        const containerPath = r.relPathFromWorkspace
+          ? `${CLOUD_WORKSPACE_DIR}/${r.relPathFromWorkspace}`
+          : CLOUD_WORKSPACE_DIR;
+        return {
+          kind: r.kind,
+          hostMainRepo: r.hostMainRepo,
+          containerPath,
+          // Cloud boxes clone in place, so the worktree lives at its mount path.
+          gitWorktreePath: containerPath,
+          branch,
+          relPathFromWorkspace: r.relPathFromWorkspace,
+        };
+      });
+      const ctx = makeSyncContext({
+        boxName: box.name,
+        boxId: box.id,
+        provider: 'cloud',
+        hostWorkspace: box.workspacePath,
+        boxWorkspace: CLOUD_WORKSPACE_DIR,
+        onLog,
+      });
+      return makeCloudSync(backend, handleFor(box)).resyncWorkspace(ctx, worktrees);
+    },
+
     // Extract the box's agent login(s) back to the host (~/.agentbox) so the
     // next box inherits the login. Lives on the base cloud provider (not inside
     // `checkpoint.create`) so it works even for providers that override the
@@ -1315,7 +1572,16 @@ export function createCloudProvider(
     // `checkpoint create --set-default`, while the box is guaranteed running.
     async extractAgentCredentials(box: BoxRecord): Promise<string[]> {
       if (!box.cloud?.sandboxId) return [];
-      return extractCloudAgentCredentials(backend, { sandboxId: box.cloud.sandboxId });
+      // Delegate to the co-located facade — the same op as a peer method.
+      // `extractCredentials` ignores the ctx (box→host capture uses backend +
+      // handle), but the ProviderSync signature takes one.
+      const ctx = makeSyncContext({
+        boxName: box.name,
+        boxId: box.id,
+        provider: 'cloud',
+        hostWorkspace: box.workspacePath,
+      });
+      return makeCloudSync(backend, handleFor(box)).extractCredentials(ctx);
     },
 
     // stats is provider-optional; cloud backends without a metrics API just
@@ -1448,6 +1714,16 @@ function makeCloudCheckpoint(backend: CloudBackend): ProviderCheckpoint {
 export function hostTermForCloud(): string {
   const t = process.env['TERM'];
   return t && /^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(t) ? t : 'xterm-256color';
+}
+
+/**
+ * Where the attach command is staged in the box for `attachExecLacksTty`
+ * backends. Per session name, so concurrent attaches to different agents don't
+ * overwrite each other; re-attaching the same session just rewrites the file.
+ */
+export function attachScriptPath(sessionName: string): string {
+  const safe = sessionName.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 40) || 'attach';
+  return `/tmp/agentbox-attach-${safe}.sh`;
 }
 
 export function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions): string {
