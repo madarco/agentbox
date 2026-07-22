@@ -91,6 +91,12 @@ export function cloudSizingProviderOptions(
   if (providerName === 'e2b') {
     out.timeoutMs = cfg.box.e2bTimeoutMs;
   }
+  if (providerName === 'tenki') {
+    // Session lifetime the box is created with (maps to Tenki's maxDurationMs)
+    // and records as `cloud.sessionTimeoutMs` so the host keepalive loop can
+    // push the deadline forward (via `session.extend`) while the agent works.
+    out.timeoutMs = cfg.box.tenkiTimeoutMs;
+  }
   if (providerName === 'remote-docker') {
     // Which machine runs the container. Unlike every other provider's options
     // this one is mandatory — there is no sensible default engine — so resolve

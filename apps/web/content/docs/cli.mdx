@@ -383,7 +383,7 @@ agentbox remote-docker remove <alias>       # forget an alias (+ default + bake 
 
 `docker` is the default and is pure sugar (no login). Each cloud provider has a `login` subcommand (run by default); hetzner adds `firewall`, daytona adds `resync`. `remote-docker` has **no login at all** — it connects as you, over your own `~/.ssh/config` — and offers `check` / `use` / `hosts` instead. E2B is the only cloud whose `prepare` builds the base image **directly from a Dockerfile** via the SDK's `Template.build()` — the others bake a one-time snapshot.
 
-See [Local Docker](/docs/local-docker), [Remote Docker](/docs/remote-docker), [Hetzner](/docs/hetzner), [DigitalOcean](/docs/digitalocean), [Daytona](/docs/daytona), [Vercel](/docs/vercel), and [E2B](/docs/e2b).
+See [Local Docker](/docs/local-docker), [Remote Docker](/docs/remote-docker), [Hetzner](/docs/hetzner), [DigitalOcean](/docs/digitalocean), [Daytona](/docs/daytona), [Vercel](/docs/vercel), [E2B](/docs/e2b), and [Tenki](/docs/tenki).
 
 ## Maintenance
 

@@ -5,7 +5,7 @@ description: Run your agents on a real, inexpensive Hetzner VPS with full root a
 
 Run your agents on a real, inexpensive cloud VM you fully control — no local Docker needed. Each box is its own Hetzner Cloud VPS (1:1) you drive with the same `agentbox` commands as a local box, reached over pure OpenSSH (no third-party agent in the box — you own root). Heads up: a Hetzner box is a real VPS that bills ~€4/mo even when stopped — pause is poweroff/poweron, not free — and its firewall locks to your current egress IP.
 
-Switch per box with `--provider hetzner`, or pin it project-wide with `box.provider: hetzner` in [`agentbox.yaml`](/docs/agentbox-yaml). Pick Hetzner for bare-VPS control (full kernel, your own region), a Cloud Firewall locked to your egress IP, and full [Docker-in-Docker](/docs/docker-in-docker). Cost is roughly €4/mo per *running* box. Comparing options? See [local-docker](/docs/local-docker), [daytona](/docs/daytona), [vercel](/docs/vercel), and [e2b](/docs/e2b).
+Switch per box with `--provider hetzner`, or pin it project-wide with `box.provider: hetzner` in [`agentbox.yaml`](/docs/agentbox-yaml). Pick Hetzner for bare-VPS control (full kernel, your own region), a Cloud Firewall locked to your egress IP, and full [Docker-in-Docker](/docs/docker-in-docker). Cost is roughly €4/mo per *running* box. Comparing options? See [local-docker](/docs/local-docker), [daytona](/docs/daytona), [vercel](/docs/vercel), [e2b](/docs/e2b), and [tenki](/docs/tenki).
 
 ## Set up
 

@@ -214,6 +214,60 @@ function renderE2b(status: E2bStatusResult, pinnedImage?: string): string[] {
   return out;
 }
 
+interface TenkiStatusUnknown {
+  configured: false;
+  reason?: string;
+}
+interface TenkiStatusOk {
+  configured: true;
+  image?: string;
+  imageName?: string;
+  createdAt?: string;
+  cliVersion?: string;
+}
+type TenkiStatusResult = TenkiStatusUnknown | TenkiStatusOk;
+
+async function tenkiStatus(): Promise<TenkiStatusResult> {
+  try {
+    const mod = await import('@agentbox/sandbox-tenki');
+    const cred = mod.readTenkiCredStatus();
+    if (cred.auth === 'none') {
+      return { configured: false, reason: 'not configured — run `agentbox tenki login`' };
+    }
+    const prepared = mod.readPreparedState();
+    if (!prepared.base) return { configured: true };
+    return {
+      configured: true,
+      image: prepared.base.image,
+      imageName: prepared.base.imageName,
+      createdAt: prepared.base.createdAt,
+      cliVersion: prepared.base.cliVersion,
+    };
+  } catch (err) {
+    return {
+      configured: false,
+      reason: err instanceof Error ? err.message.split('\n')[0] : String(err),
+    };
+  }
+}
+
+function renderTenki(status: TenkiStatusResult, pinnedImage?: string): string[] {
+  const out: string[] = ['tenki:'];
+  if (!status.configured) {
+    out.push(`  ${status.reason ?? '(not configured)'}`);
+    return out;
+  }
+  if (!status.image) {
+    out.push('  no agentbox base image — run `agentbox prepare --provider tenki`');
+    return out;
+  }
+  const pinned = pinnedImage && pinnedImage === status.image ? '  (pinned in project)' : '';
+  out.push(
+    `  image  ${pad(status.imageName ?? status.image, 40)} ${pad(status.cliVersion ?? '—', 10)}  ${humanAge(status.createdAt)}${pinned}`,
+  );
+  return out;
+}
+
 function renderDaytona(status: DaytonaStatusResult, pinnedImage?: string): string[] {
   const out: string[] = ['daytona:'];
   if (!status.configured) {
@@ -263,6 +317,7 @@ async function showStatus(opts: { onlyProvider?: string }): Promise<void> {
   const wantDocker = !opts.onlyProvider || opts.onlyProvider === 'docker';
   const wantDaytona = !opts.onlyProvider || opts.onlyProvider === 'daytona';
   const wantE2b = !opts.onlyProvider || opts.onlyProvider === 'e2b';
+  const wantTenki = !opts.onlyProvider || opts.onlyProvider === 'tenki';
 
   if (wantDocker) {
     const status = await dockerStatus();
@@ -282,6 +337,16 @@ async function showStatus(opts: { onlyProvider?: string }): Promise<void> {
         ? cfg.effective.box.imageE2b
         : undefined;
     lines.push(...renderE2b(status, e2bPinned));
+  }
+  if (wantTenki) {
+    if (lines.length > 0) lines.push('');
+    const status = await tenkiStatus();
+    // Use the per-provider pin (box.imageTenki) so the marker tracks the right key.
+    const tenkiPinned =
+      typeof cfg?.effective.box.imageTenki === 'string' && cfg.effective.box.imageTenki.length > 0
+        ? cfg.effective.box.imageTenki
+        : undefined;
+    lines.push(...renderTenki(status, tenkiPinned));
   }
   if (pinned) {
     lines.push('');

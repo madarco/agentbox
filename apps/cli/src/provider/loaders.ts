@@ -33,6 +33,7 @@ const IMPORTERS: Record<ProviderKind, () => Promise<{ providerModule: ProviderMo
   e2b: () => import('@agentbox/sandbox-e2b'),
   digitalocean: () => import('@agentbox/sandbox-digitalocean'),
   'remote-docker': () => import('@agentbox/sandbox-remote-docker'),
+  tenki: () => import('@agentbox/sandbox-tenki'),
 };
 
 /**

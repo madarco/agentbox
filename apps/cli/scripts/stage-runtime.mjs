@@ -251,6 +251,18 @@ for (const [srcRel, destRel, exec] of e2bFiles) {
   copy(srcRel, join(e2bCtx, destRel), exec);
 }
 
+// Tenki provider — the only on-disk asset is the PTY attach helper bundle the
+// provider's `buildAttach` spawns at runtime (`node attach-helper.cjs`). Boxes
+// boot from a prepared Tenki registry image, so unlike docker/e2b there is no
+// build context or shim tree to stage. The tenki package is bundled into
+// dist/index.js (its dist/ isn't shipped), so stage the helper explicitly to
+// runtime/tenki/attach-helper.cjs where resolveAttachHelperPath() looks.
+const tenkiCtx = join(runtime, 'tenki');
+const tenkiFiles = [['packages/sandbox-tenki/dist/attach-helper.cjs', 'attach-helper.cjs', false]];
+for (const [srcRel, destRel, exec] of tenkiFiles) {
+  copy(srcRel, join(tenkiCtx, destRel), exec);
+}
+
 // README — npm reads the published package's README only from the package
 // root (apps/cli/), and there's no package.json field to point elsewhere.
 // Mirror the repo-root README here so npmjs.com has a landing page, rewriting
@@ -284,6 +296,6 @@ if (missing > 0) {
   );
 } else {
   console.log(
-    '[stage-runtime] staged runtime/ (relay bin + docker build context + hetzner install assets + digitalocean install assets + daytona overlay + vercel assets + e2b assets)',
+    '[stage-runtime] staged runtime/ (relay bin + docker build context + hetzner install assets + digitalocean install assets + daytona overlay + vercel assets + e2b assets + tenki attach helper)',
   );
 }

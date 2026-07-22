@@ -72,6 +72,7 @@ export interface UserConfig {
     defaultCheckpointHetzner?: string;
     defaultCheckpointVercel?: string;
     defaultCheckpointE2b?: string;
+    defaultCheckpointTenki?: string;
     defaultCheckpointDigitalocean?: string;
     defaultCheckpointRemoteDocker?: string;
     /**
@@ -88,6 +89,7 @@ export interface UserConfig {
     sizeHetzner?: string;
     sizeVercel?: string;
     sizeE2b?: string;
+    sizeTenki?: string;
     sizeDigitalocean?: string;
     sizeRemoteDocker?: string;
     withPlaywright?: boolean;
@@ -116,6 +118,7 @@ export interface UserConfig {
     imageHetzner?: string;
     imageVercel?: string;
     imageE2b?: string;
+    imageTenki?: string;
     imageDigitalocean?: string;
     imageRemoteDocker?: string;
     imageRegistry?: string;
@@ -136,6 +139,7 @@ export interface UserConfig {
     vercelTimeoutMs?: number;
     vercelNetworkPolicy?: string;
     e2bTimeoutMs?: number;
+    tenkiTimeoutMs?: number;
     cpMaxBytes?: number;
     credentialSync?: boolean;
     inbound?: string;
@@ -257,6 +261,7 @@ export interface EffectiveConfig {
     defaultCheckpointHetzner: string;
     defaultCheckpointVercel: string;
     defaultCheckpointE2b: string;
+    defaultCheckpointTenki: string;
     defaultCheckpointDigitalocean: string;
     defaultCheckpointRemoteDocker: string;
     size: string;
@@ -265,6 +270,7 @@ export interface EffectiveConfig {
     sizeHetzner: string;
     sizeVercel: string;
     sizeE2b: string;
+    sizeTenki: string;
     sizeDigitalocean: string;
     sizeRemoteDocker: string;
     withPlaywright: boolean;
@@ -283,6 +289,7 @@ export interface EffectiveConfig {
     imageHetzner: string;
     imageVercel: string;
     imageE2b: string;
+    imageTenki: string;
     imageDigitalocean: string;
     imageRemoteDocker: string;
     imageRegistry: string;
@@ -303,6 +310,7 @@ export interface EffectiveConfig {
     vercelTimeoutMs: number;
     vercelNetworkPolicy: string;
     e2bTimeoutMs: number;
+    tenkiTimeoutMs: number;
     cpMaxBytes: number;
     credentialSync: boolean;
     inbound: string;
@@ -435,6 +443,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     defaultCheckpointHetzner: '',
     defaultCheckpointVercel: '',
     defaultCheckpointE2b: '',
+    defaultCheckpointTenki: '',
     defaultCheckpointDigitalocean: '',
     defaultCheckpointRemoteDocker: '',
     size: '',
@@ -443,6 +452,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     sizeHetzner: '',
     sizeVercel: '',
     sizeE2b: '',
+    sizeTenki: '',
     sizeDigitalocean: '',
     sizeRemoteDocker: '',
     withPlaywright: false,
@@ -461,6 +471,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     imageHetzner: '',
     imageVercel: '',
     imageE2b: '',
+    imageTenki: '',
     imageDigitalocean: '',
     // Empty = the provider derives the fingerprint-tagged ref itself and ensures
     // it on the remote engine; set only to pin a hand-built image there.
@@ -492,6 +503,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     vercelTimeoutMs: 2_700_000,
     vercelNetworkPolicy: '',
     e2bTimeoutMs: 2_700_000,
+    tenkiTimeoutMs: 2_700_000,
     cpMaxBytes: 100 * 1024 * 1024,
     credentialSync: true,
     inbound: 'locked',
@@ -835,6 +847,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
       'Session timeout (ms) a new --provider e2b box is created with, before E2B auto-pauses it on inactivity. The host keepalive loop pushes this forward while the agent is working. Default 2700000 (45 min); the Hobby tier caps total session at ~1 h regardless. E2B-only.',
   },
   {
+    key: 'box.tenkiTimeoutMs',
+    type: 'int',
+    description:
+      'Session lifetime (ms) a new --provider tenki box is created with (maps to Tenki maxDurationMs). The host keepalive loop pushes this forward via session.extend while the agent is working. Default 2700000 (45 min). Tenki-only.',
+  },
+  {
     key: 'box.cpMaxBytes',
     type: 'int',
     description:
@@ -1082,6 +1100,17 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
       'Enable the in-box Linear integration shim (`linear` commands routed via the host relay; backed by `@schpet/linear-cli`). When false (default), the relay refuses dispatch with a clear "disabled" error and no host process is touched.',
   },
 ];
+
+// Guard against duplicate keys — e.g. a manual per-provider entry that also
+// gets emitted by the perProvider*Keys() generators above. A dupe would make
+// `agentbox config list` print the key twice.
+{
+  const seen = new Set<string>();
+  for (const d of KEY_REGISTRY) {
+    if (seen.has(d.key)) throw new Error(`KEY_REGISTRY has a duplicate key: ${d.key}`);
+    seen.add(d.key);
+  }
+}
 
 const REGISTRY_BY_KEY = new Map<string, KeyDescriptor>(KEY_REGISTRY.map((d) => [d.key, d]));
 
