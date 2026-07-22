@@ -50,6 +50,7 @@ const CRED_FIELDS: Record<string, CredField[]> = {
       optional: true,
     },
   ],
+  tenki: [{ key: 'token', label: 'Auth token', placeholder: 'tk_…' }],
 };
 
 export function ProvidersSection() {

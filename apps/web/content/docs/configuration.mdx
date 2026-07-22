@@ -98,7 +98,7 @@ The largest group. A pattern runs through it: a generic key plus per-provider ov
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `box.provider` | enum `docker`/`daytona`/`hetzner`/`vercel`/`e2b`/`digitalocean`/`remote-docker` | `docker` | backend new boxes are created on |
+| `box.provider` | enum `docker`/`daytona`/`hetzner`/`vercel`/`e2b`/`digitalocean`/`remote-docker`/`tenki` | `docker` | backend new boxes are created on |
 
 This is what plain `agentbox claude` (or `create`, `codex`, `opencode`) uses when you don't pass `--provider`. `agentbox install` offers to set it for you at the end of the wizard, so the provider you just logged in to and prepared becomes the one new boxes go to. Set it yourself at any time:
 
@@ -109,7 +109,7 @@ agentbox config set box.provider hetzner             # this project only
 
 A per-run `--provider docker` (or the `agentbox docker claude` prefix) still overrides it.
 
-See [local Docker](/docs/local-docker), [Remote Docker](/docs/remote-docker), [Hetzner](/docs/hetzner), [Daytona](/docs/daytona), [Vercel](/docs/vercel), and [core concepts](/docs/core-concepts).
+See [local Docker](/docs/local-docker), [Remote Docker](/docs/remote-docker), [Hetzner](/docs/hetzner), [Daytona](/docs/daytona), [Vercel](/docs/vercel), [E2B](/docs/e2b), [Tenki](/docs/tenki), and [core concepts](/docs/core-concepts).
 
 ### Resource limits (Docker)
 
@@ -125,7 +125,7 @@ See [local Docker](/docs/local-docker), [Remote Docker](/docs/remote-docker), [H
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `box.size` | string | empty | generic cloud size, provider-interpreted: hetzner = server type (`cx33`), digitalocean = Droplet size slug (`s-4vcpu-8gb`), daytona = `cpu-memory-disk` GB (`4-8-20`), vercel = vCPU count (`1`/`2`/`4`/`8`), e2b = `cpu-memory` GB (`4-8`, baked at `prepare` time); docker ignores it |
-| `box.sizeDaytona` / `box.sizeHetzner` / `box.sizeDigitalocean` / `box.sizeVercel` / `box.sizeE2b` / `box.sizeRemoteDocker` | string (advanced) | empty | per-provider override of `box.size` |
+| `box.sizeDaytona` / `box.sizeHetzner` / `box.sizeDigitalocean` / `box.sizeVercel` / `box.sizeE2b` / `box.sizeRemoteDocker` / `box.sizeTenki` | string (advanced) | empty | per-provider override of `box.size` |
 | `box.sizeDocker` | string (advanced) | empty | reserved — docker uses `box.memory` / `box.cpus` / `box.disk` |
 | `box.daytonaClass` | string | `linux-vm` | Daytona [sandbox class](/docs/daytona#sandbox-class): `linux-vm` gives a true pause (CPU + memory frozen, running processes survive) and a ~1 min base bake, but runs only in `us-east-1`. `container` keeps the old behavior and any region. Changing it needs `agentbox prepare --provider daytona --force`. Daytona-only |
 | `box.daytonaRegion` | string | empty | Daytona region (`us`, `eu`, `us-east-1`). Empty derives it from the class — `linux-vm` ⇒ `us-east-1` (the only region with VM runners), `container` ⇒ the account default. Daytona-only |
@@ -142,7 +142,7 @@ See [local Docker](/docs/local-docker), [Remote Docker](/docs/remote-docker), [H
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `box.image` | string (advanced) | `agentbox/box:dev` | generic image ref; the default is a sentinel cloud backends read as "boot from the prepared base snapshot" |
-| `box.imageDocker` / `box.imageDaytona` / `box.imageHetzner` / `box.imageDigitalocean` / `box.imageVercel` / `box.imageRemoteDocker` | string (advanced) | empty | per-provider override; the cloud ones are written by `agentbox prepare --provider <name>`. Leave `box.imageRemoteDocker` empty — that provider derives a fingerprint-tagged ref and ensures it on the remote engine itself |
+| `box.imageDocker` / `box.imageDaytona` / `box.imageHetzner` / `box.imageDigitalocean` / `box.imageVercel` / `box.imageRemoteDocker` / `box.imageTenki` | string (advanced) | empty | per-provider override; the cloud ones are written by `agentbox prepare --provider <name>`. Leave `box.imageRemoteDocker` empty — that provider derives a fingerprint-tagged ref and ensures it on the remote engine itself |
 | `box.imageRegistry` | string (advanced, docker only) | `ghcr.io/madarco/agentbox/box` | registry to pull the prebuilt base from before building locally; empty = always build |
 
 <Callout type="warn" title="HEADS UP">
@@ -154,7 +154,7 @@ Setting the generic `box.image` to a provider-native snapshot id breaks creates 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `box.defaultCheckpoint` | string | empty | checkpoint new boxes start from when `--snapshot` isn't given; set via `agentbox checkpoint set-default` |
-| `box.defaultCheckpointDocker` / `…Daytona` / `…Hetzner` / `…Digitalocean` / `…Vercel` / `…E2b` / `…RemoteDocker` | string (advanced) | empty | per-provider overrides; set via `checkpoint set-default --provider <name>` |
+| `box.defaultCheckpointDocker` / `…Daytona` / `…Hetzner` / `…Digitalocean` / `…Vercel` / `…E2b` / `…RemoteDocker` / `…Tenki` | string (advanced) | empty | per-provider overrides; set via `checkpoint set-default --provider <name>` |
 
 See [checkpoints and pausing](/docs/checkpoints-and-pausing).
 
@@ -182,15 +182,16 @@ See [teleport a project](/docs/teleport-a-project), [environment](/docs/environm
 | --- | --- | --- | --- |
 | `box.isolateClaudeConfig` / `box.isolateCodexConfig` / `box.isolateOpencodeConfig` | bool | `false` | give the box its own agent config volume instead of the shared one |
 
-### Vercel only
+### Provider-specific tuning (Vercel / E2B / Tenki)
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `box.vercelTimeoutMs` | int | `2700000` (45 min) | max session length before auto-snapshot; persistent mode auto-resumes |
 | `box.vercelNetworkPolicy` | string | empty (`allow-all`) | egress lock: `allow-all`, `deny-all`, or a comma-separated domain allowlist (`github.com,*.npmjs.org`) |
 | `box.e2bTimeoutMs` | int | `2700000` (45 min) | session timeout a new `--provider e2b` box is created with before E2B auto-pauses it on inactivity; the host keepalive holds it open while the agent works (Hobby caps total session at ~1 h) |
+| `box.tenkiTimeoutMs` | int | `2700000` (45 min) | session lifetime a new `--provider tenki` box is created with (Tenki `maxDurationMs`); the host keepalive pushes it forward via `session.extend` while the agent works |
 
-See [Vercel](/docs/vercel).
+See [Vercel](/docs/vercel), [E2B](/docs/e2b), and [Tenki](/docs/tenki).
 
 ## checkpoint.*
 

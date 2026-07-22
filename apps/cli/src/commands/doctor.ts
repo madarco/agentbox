@@ -31,7 +31,7 @@ export const doctorCommand = new Command('doctor')
   )
   .option(
     '-p, --provider <name>',
-    'limit checks to one provider (docker | daytona | hetzner | vercel | e2b)',
+    'limit checks to one provider (docker | daytona | hetzner | vercel | e2b | tenki)',
   )
   .action(async (opts: DoctorOptions) => {
     let groups: CheckGroup[];
@@ -39,7 +39,7 @@ export const doctorCommand = new Command('doctor')
       const name = opts.provider.trim();
       if (!isKnownProvider(name)) {
         process.stderr.write(
-          'error: --provider must be one of: docker, daytona, hetzner, vercel, e2b\n',
+          'error: --provider must be one of: docker, daytona, hetzner, vercel, e2b, tenki\n',
         );
         process.exit(1);
       }

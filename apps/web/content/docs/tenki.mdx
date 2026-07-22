@@ -1,0 +1,131 @@
+---
+title: Tenki
+description: Run your agents in a Tenki cloud sandbox (Firecracker microVM) with public preview URLs and free pause/resume
+---
+
+Run your agents in a [Tenki](https://tenki.cloud) cloud sandbox — a disposable Linux microVM built for AI agents — with a public HTTPS preview URL and free pause/resume, no local Docker needed. Each box is a remote Tenki session you drive with the same `agentbox` commands as a local box, seeded from your host repo. Comms run over Tenki's TypeScript SDK ([`@tenkicloud/sandbox`](https://www.npmjs.com/package/@tenkicloud/sandbox)): a ConnectRPC control plane plus a per-session data plane for `run` / file transfer, and an SSH-backed shell channel for interactive attach.
+
+Switch per box with `--provider tenki`, or pin it project-wide with `box.provider: tenki` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona), [vercel](/docs/vercel), and [e2b](/docs/e2b).
+
+<Callout type="warn" title="EXPERIMENTAL">
+The Tenki provider is newly added. The implementation follows the same `CloudBackend` contract as the other clouds and is fully typechecked and unit-tested, but the end-to-end path (provision → seed → exec → checkpoint → attach) should be verified against a live Tenki workspace before relying on it. See the live-verify checklist in [`docs/tenki-backlog.md`](https://github.com/madarco/agentbox/blob/main/docs/tenki-backlog.md) in the repo.
+</Callout>
+
+## Set up
+
+The easiest path is the interactive wizard — it signs you in and prepares the base image in one flow:
+
+```bash
+agentbox install        # then select tenki
+```
+
+Paste a Tenki workspace auth token (`tk_…`, created in your [Tenki dashboard](https://tenki.cloud)) when prompted. Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also prepares the base image (a one-time `agentbox prepare --provider tenki` under the hood) so every new box boots ready in seconds.
+
+For CI or scripted setup, run the explicit equivalents:
+
+```bash
+agentbox tenki login                 # credentials only
+agentbox prepare --provider tenki    # publish the base image
+```
+
+The SDK reads `TENKI_AUTH_TOKEN`; optional `TENKI_BASE_URL` / `TENKI_GATEWAY_ADDRESS` overrides point the client at a non-default / self-hosted control plane. See [environment](/docs/environment) for where `~/.agentbox/secrets.env` lives.
+
+## Use it
+
+```bash
+agentbox tenki claude
+```
+
+`agentbox tenki create|claude|codex|opencode` is sugar for the same command with `--provider tenki`.
+
+## Prepare the base image
+
+Tenki boots a session from a **registry image ref** (`workspace/name:tag`) or a snapshot id — it doesn't pull arbitrary external OCI refs at create time. So `agentbox prepare --provider tenki` gets the AgentBox box image (published to GHCR as `ghcr.io/madarco/agentbox/box`) into your Tenki workspace registry, then records the resolved ref under the per-provider key `box.imageTenki` and to `~/.agentbox/tenki-prepared.json`. Every `create --provider tenki` boots from it.
+
+```bash
+agentbox prepare --provider tenki
+```
+
+Two paths:
+
+- **Auto-build (default)** — builds a Tenki template from the GHCR parent image (`createTemplate({ parentImage }) → buildTemplate → waitForTemplateBuild`), publishes a registry image from the build snapshot, and pins the resolved ref.
+- **Explicit ref** — if you've already pushed the AgentBox image to your Tenki workspace registry, pass it (`--image <ref>` or `AGENTBOX_TENKI_BASE_IMAGE=<ref>`) and `prepare` just validates + pins it.
+
+A repeat `prepare` reuses the recorded ref unless you pass `--force`. `agentbox tenki login` nudges you toward `prepare` on first login, so the login-only path doesn't silently trip the "no base image" error on `create`.
+
+## Create a box
+
+Once you're logged in and prepared, the flow is standard. The workspace is seeded from a host git clone plus your stash and untracked files (see [teleport-a-project](/docs/teleport-a-project)), and `/workspace` is checked out on branch `agentbox/<box-name>`.
+
+```bash
+agentbox create --provider tenki
+```
+
+```bash
+# sugar: argv-prefix rewrite equivalent to --provider tenki
+agentbox tenki claude
+```
+
+From there, [run an agent](/docs/run-an-agent) and [access your box](/docs/access-your-box) as usual.
+
+## Pause / resume
+
+Tenki sessions pause via `session.pause()` and resume via `session.resume()` — free pause/resume, the same model as e2b/vercel. The host keepalive loop pushes the session's death-time forward (via the additive `session.extend`) while the agent is actively working, so a long session isn't reaped at the create-time `maxDurationMs`. `destroy` terminates the session (`session.close()`).
+
+```bash
+agentbox pause <box>
+agentbox start <box>
+```
+
+## Checkpoints
+
+Cloud checkpoints map to Tenki snapshots — `createSnapshotAndWait(sessionId, { name })` returns an id-addressed reusable snapshot (same shape as vercel/e2b). `agentbox checkpoint create` captures it; `agentbox create --checkpoint <name>` boots from it with `/workspace` intact and skips workspace seeding. Pair `checkpoint create` with `box.defaultCheckpointTenki` so repeat creates boot from your project-ready snapshot.
+
+```bash
+agentbox checkpoint create --name setup
+agentbox create --provider tenki --checkpoint setup
+```
+
+AgentBox self-heals a stale checkpoint: `create` probes the snapshot's `READY` state, prunes the dangling local manifest, and falls back to the base image.
+
+## Maintenance
+
+`agentbox prune --provider tenki` lists every Tenki session the configured token can see, filters to the ones carrying the agentbox marker (`metadata.agentbox`), cross-references this CLI's local `state.json`, and offers to delete sessions you no longer track (typically left behind by an interrupted `create`).
+
+```bash
+agentbox prune --provider tenki --dry-run
+agentbox prune --provider tenki -y
+```
+
+`agentbox doctor --provider tenki` checks the credential token + the prepared base image.
+
+## Specs
+
+| Spec | |
+| --- | --- |
+| Base image | AgentBox box image published to the Tenki workspace registry |
+| Build method | Tenki template build from the GHCR parent image (`agentbox prepare --provider tenki`); or an explicitly pre-published ref |
+| Comms | TypeScript SDK — ConnectRPC control plane + per-session data plane (`run`, `readFile`/`writeFile`) |
+| Docker-in-Docker | Not enabled yet (`launchDockerd: false`) pending verification of nested-container support in a Tenki microVM |
+| SSH | None for exec/files; interactive attach bridges the host PTY to `session.ssh()` |
+| Live snapshots | Free pause/resume (`session.pause`/`resume`) + id-addressed snapshots (`createSnapshotAndWait`) |
+| Preview URL | Public HTTPS, returned by `session.exposePort(port)`; WebProxy runs on 8080 |
+
+## Caveats
+
+- **No live stats** — `agentbox top` / `dashboard` render `—` for cloud boxes, and `list` reports them optimistically from the last known state.
+- **Privileged ports** — the WebProxy runs on 8080 (not 80), matching the other microVM providers; `agentbox url` resolves the 8080 preview.
+- **Push through the relay** — use `agentbox-ctl git push` from a box; the relay holds the credentials. See [sync-and-git](/docs/sync-and-git).
+- **Tenki-only config keys are ignored by other providers** — `box.imageTenki` / `box.defaultCheckpointTenki` / `box.sizeTenki` / `box.tenkiTimeoutMs` only apply to tenki. `box.tenkiTimeoutMs` (default 2700000, 45 min) tunes the session lifetime new boxes are created with; the host keepalive extends it while the agent works. See [configuration](/docs/configuration).
+- **In-box docker is off by default** — DinD inside a Tenki microVM is unverified; a `docker`-based `agentbox.yaml` service won't start until it's confirmed and enabled.
+- **Attach window size** — the SDK's SSH channel exposes no resize hook, so the attached tmux session renders at a default size (no live SIGWINCH propagation yet).
+
+## Related
+
+- [core-concepts](/docs/core-concepts) — what a box, branch, and worktree are.
+- [teleport-a-project](/docs/teleport-a-project) — how `/workspace` is seeded.
+- [run-an-agent](/docs/run-an-agent) · [access-your-box](/docs/access-your-box) — work in a cloud box.
+- [web-apps-and-tunnels](/docs/web-apps-and-tunnels) — preview URLs, the 8080 WebProxy, `expose:` ports.
+- [checkpoints-and-pausing](/docs/checkpoints-and-pausing) — pause/resume and checkpoints.
+- [sync-and-git](/docs/sync-and-git) — relay-backed push/pull.
+- [cli](/docs/cli) · [agentbox-yaml](/docs/agentbox-yaml) · [configuration](/docs/configuration) · [environment](/docs/environment) — reference.

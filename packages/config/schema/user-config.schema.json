@@ -21,6 +21,7 @@
         "defaultCheckpointHetzner": { "type": "string", "minLength": 1 },
         "defaultCheckpointVercel": { "type": "string", "minLength": 1 },
         "defaultCheckpointE2b": { "type": "string", "minLength": 1 },
+        "defaultCheckpointTenki": { "type": "string", "minLength": 1 },
         "defaultCheckpointDigitalocean": { "type": "string", "minLength": 1 },
         "defaultCheckpointRemoteDocker": { "type": "string", "minLength": 1 },
         "size": { "type": "string", "minLength": 1 },
@@ -29,6 +30,7 @@
         "sizeHetzner": { "type": "string", "minLength": 1 },
         "sizeVercel": { "type": "string", "minLength": 1 },
         "sizeE2b": { "type": "string", "minLength": 1 },
+        "sizeTenki": { "type": "string", "minLength": 1 },
         "sizeDigitalocean": { "type": "string", "minLength": 1 },
         "sizeRemoteDocker": { "type": "string", "minLength": 1 },
         "withPlaywright": { "type": "boolean" },
@@ -47,6 +49,7 @@
         "imageHetzner": { "type": "string", "minLength": 1 },
         "imageVercel": { "type": "string", "minLength": 1 },
         "imageE2b": { "type": "string", "minLength": 1 },
+        "imageTenki": { "type": "string", "minLength": 1 },
         "imageDigitalocean": { "type": "string", "minLength": 1 },
         "imageRemoteDocker": { "type": "string", "minLength": 1 },
         "dockerCacheShared": { "type": "boolean" },
@@ -66,6 +69,7 @@
         "inbound": { "type": "string", "minLength": 1 },
         "vercelTimeoutMs": { "type": "integer", "minimum": 1 },
         "vercelNetworkPolicy": { "type": "string" },
+        "tenkiTimeoutMs": { "type": "integer", "minimum": 1 },
         "cpMaxBytes": { "type": "integer", "minimum": 1 }
       }
     },
