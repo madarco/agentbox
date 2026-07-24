@@ -9,7 +9,10 @@
 > deployed hub, incl. the earlier per-command remote-support audit in its appendix),
 > [`local-adoption-plan.md`](./local-adoption-plan.md) (PC as thin client), [`host-relay.md`](./host-relay.md)
 > (the relay core), and the public API reference [`apps/web/content/docs/api.mdx`](../apps/web/content/docs/api.mdx).
-> Status: **analysis + design (not yet implemented)**. Maintain status live per project convention.
+> Status: **P0 shipped** (headless `/api/v1` key, PR #245); **Phase 1 (reverse-adoption) + Phase 2
+> clean subset (CLI `HubApiClient`, `control-plane boxes`/`prompts` on `/api/v1`) shipped**; `ls -g`
+> + `create --via-hub` + main-command dispatch deferred (see the phased plan below). Maintain status
+> live per project convention.
 
 ## Context
 
@@ -183,18 +186,43 @@ intentional divergences above (git auth, gate, worker) branch on the profile.
   (`randomBytes(32).hex`), recorded in `~/.agentbox/control-plane/control-plane.env`, and injected into
   the container via `docker-compose.yml`. CLI seam `resolveHubApiTarget()` added (not yet wired).
   Unblocks CLI **and** tray remotely.
-- **Phase 1 — Remote-write path for `/api/v1`.** Make `POST /api/v1/boxes`, lifecycle, git, services,
-  approvals work on the control box for boxes the hub owns by routing writes through the resident
-  worker / `RemoteStore` instead of 503 (`api/v1/lib/backend.ts` + the boxes/git/approvals routes).
-  Add reverse-adoption so a remote hub can drive PC-registered boxes. Converge the two approval
-  mailboxes on one, surfaced at `/api/v1/approvals`.
-- **Phase 2 — CLI onto one client.** Add a shared `HubApiClient` (base URL = local `~/.agentbox/hub/token`
-  target **or** remote `relay.controlPlaneUrl` + key, via a `resolveCustodyTarget`-style resolver).
-  Move box list/create/job/lifecycle/destroy/approvals off `admin-client`/`hub-enqueue`/`hub-list`
-  onto `/api/v1`. Keep `custody-client`, `plane-register`, `ensure-repo-installed`, `/rpc` lease on
-  the admin wire (Internal). At the create/routing choke points, when a remote hub is configured,
-  **cloud boxes register + lease + report to the remote hub by default** (the remote relay), so the
-  laptop relay isn't needed and the laptop can be off — only local docker stays on the laptop hub.
+- **Phase 1 — Reverse-adoption (server). DONE.** Reframed after exploration: on the **Hetzner control
+  box** `/api/v1` writes never 503 (the custom server sets the in-process backend), and the daemon runs
+  block-mode so `/api/v1/approvals` and `/admin/prompts` are already one mailbox — the 503 + two-mailbox
+  gaps are **Vercel-serverless-only** (a frozen profile). The real residual was **reverse-adoption**:
+  a box the control box knew only from its Store registration (PC-created / independent) rendered as
+  `running` but 404'd on lifecycle/git and only *reaped* on destroy. Fixed by extracting the
+  registration→`BoxRecord` mapper into `@agentbox/relay` (`registrationToBoxRecord`, shared with the
+  PC's `hub adopt`) and adding `hydrateRegisteredBox` to the hub backend: on a local-state miss it
+  reconstructs + persists a drivable record from the registration + local custody SSH keys, so
+  `/api/v1` lifecycle, git, services, and **real destroy** (cloud teardown, then reap) work on
+  registered-only boxes. Lifecycle + destroy use cloud **API creds** (no SSH) → all providers; git/exec
+  over SSH needs the box's key in custody (hub-created VPS boxes have it; PC-created VPS boxes are the
+  documented local-adoption follow-up). The Vercel-serverless remote-write/poll path stays deferred
+  (frozen profile).
+- **Phase 2 — CLI onto one client. PARTIAL (shipped the clean subset).** Added the shared
+  `HubApiClient` (`apps/cli/src/control-plane/hub-api-client.ts`) — the URL-swappable `/api/v1` client,
+  the same surface the tray + web speak — resolved via `resolveHubApiClient` over the P0
+  `resolveHubApiTarget` (remote URL + `AGENTBOX_HUB_API_KEY`). Migrated the **`control-plane boxes`**
+  group onto it: `boxes list`, new `boxes start|stop|pause|resume`, and a real `boxes rm` (POST
+  `/api/v1/boxes/:id/destroy` → cloud teardown + reap, not the old reap-only `DELETE /remote/boxes`),
+  plus **`control-plane prompts` list/answer** onto `/api/v1/approvals`. Reverse-adoption (Phase 1)
+  makes these drive every box on the control box, including PC-registered ones.
+  - **Deferred (not like-for-like — real API work, own phase):**
+    - **`ls -g` (`fetchHubListing`)** stays on `/admin/store`: the `/api/v1/boxes` `Box` view drops the
+      raw `sandboxId`/`originUrl`/`publicHost`/`image` the local↔hub merge + adoption dedup need.
+      Migrating means enriching the `Box` shape first (additive on the hub) then reworking `mergeHubBoxes`.
+    - **`create --via-hub`** stays on `/remote/boxes`: it sends a **`repoUrl`** and the resident worker
+      leases + clones into the SQLite `create_jobs` queue, whereas `/api/v1/boxes` create takes a
+      **`projectId`** of a hub-known project and enqueues on the local file queue — different inputs and
+      different queues/workers. Unifying needs `/api/v1/boxes` to accept a repoUrl create routed to the
+      worker queue.
+    - **Main-command dispatch** (`agentbox start|stop|git <box>` routing to the remote hub) left on the
+      local path — it's load-bearing for local docker; the `control-plane boxes` subcommands provide the
+      remote-drive path in the meantime.
+    - The remote-relay default (cloud boxes register/lease/report to the remote hub so the laptop can be
+      off) is already the control-plane topology; making it the default at the create/routing choke
+      points is future work.
 - **Phase 3 — Tray remote.** Make `HubClient.baseURL` configurable + add a remote-key source
   (`../agentbox-tray/Sources/AgentBox/Source/HubClient.swift:6`, SSE cookie in `SSEClient.swift`). The
   `BoxSource`/`HubAPIBoxSource` seam already anticipates a hosted source — no UI change. Local

@@ -1134,6 +1134,18 @@ apps/cli/dist/index.js <cmd> --url http://127.0.0.1:8799`). The walk (all 8 gree
 
 Findings and follow-ups discovered while implementing, kept out of the phase they were found in.
 
+- **(2026-07-24) Reverse-adoption shipped — the control box now DRIVES + DESTROYS registered-only
+  boxes.** Previously a box the control box knew only from its Store registration (PC-created /
+  independent) rendered as `running` but couldn't be driven: lifecycle/git 404'd and `boxes rm` reaped
+  state only, leaving the cloud resource. Now the hub backend reconstructs a drivable `BoxRecord` from
+  the registration on demand (`hydrateRegisteredBox`, the shared `registrationToBoxRecord` mirror of
+  `hub adopt`) so `/api/v1` lifecycle, git, services, and **real destroy** (cloud teardown + reap) work
+  on them. The CLI's `control-plane boxes` group (list, new start/stop/pause/resume, real `rm`) and
+  `prompts` now speak `/api/v1` via the shared `HubApiClient`. Remaining consolidation (CLI `ls -g` +
+  `create --via-hub` onto `/api/v1`, main-command dispatch) tracked in
+  [`hub-api-consolidation-plan.md`](./hub-api-consolidation-plan.md). VPS git/exec on a PC-created box
+  still needs the box's SSH key pushed to custody (local-adoption follow-up).
+
 - **(phase 3) A hub-created box is control-plane topology but host-seeded (local clone).** The
   resident worker sets `controlPlaneUrl` (so the box registers on the control box) yet hands
   `provider.create` a locally-cloned workspace rather than `inBoxClone`. That mix is untested against

@@ -137,17 +137,23 @@ Re-pushes are hash-skipped: an unchanged working tree uploads nothing. When the 
 
 ## Manage control-box boxes from your laptop
 
-## Manage control-box boxes from your laptop
+These commands speak the control box's public REST API (`/api/v1`) — the same surface the web UI and
+the macOS tray use — over its hub API key (minted at `setup`/`deploy`). Local docker boxes are never
+here; they stay on your laptop.
 
 ```bash
-agentbox relay status                          # shows the configured control box + reachability
-agentbox control-plane boxes list              # boxes on the control box (from either side)
-agentbox control-plane prompts list            # pending host-action approvals
-agentbox control-plane prompts answer <id> y   # answer one (also answerable in the web UI)
-agentbox control-plane boxes rm <box>          # reap its control-box state (registration + status + SSH-key custody)
+agentbox relay status                              # shows the configured control box + reachability
+agentbox control-plane boxes list                  # boxes on the control box (from either side)
+agentbox control-plane boxes start|stop|pause|resume <box>   # drive one remotely (laptop can be off)
+agentbox control-plane boxes rm <box>              # destroy it (cloud resource + control-box state)
+agentbox control-plane prompts list                # pending host-action approvals
+agentbox control-plane prompts answer <id> y       # answer one (also answerable in the web UI)
 ```
 
-`boxes rm` reaps the control box's *state* only; the actual cloud sandbox is destroyed from the web UI or its provider.
+`boxes rm` now performs a **real destroy** — it tears down the cloud sandbox and reaps the control
+box's state (registration, status, SSH-key custody) — including for boxes you created on this PC and
+registered against the control box. The control box drives them by reconstructing their record from
+its registry on demand (reverse-adoption), so no local record on the control box is required.
 
 ## Credentials and secrets
 
