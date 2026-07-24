@@ -38,10 +38,15 @@ export interface CreateJobRequest {
   branch?: string;
   /** Desired box name (default: generated). */
   name?: string;
-  /** Agent to launch (e.g. 'claude'); informational for the worker. */
+  /** Agent to launch (e.g. 'claude'). The worker starts it detached when a
+   * `prompt` is set (a background `-i` run); otherwise it's a registration hint. */
   agent?: string;
-  /** Initial prompt to queue for the agent, if any. */
+  /** Initial prompt to seed the agent with. Its presence is what makes the
+   * worker start the agent in-box (vs. a "cold" create the PC attaches later). */
   prompt?: string;
+  /** Fully-processed agent args (post-`--`, incl. skip-permissions) the CLI
+   * computed from its config, so the worker needs no CLI/config to launch. */
+  agentArgs?: string[];
 }
 
 /** A durable box-creation job (the hosted plane's create queue). */

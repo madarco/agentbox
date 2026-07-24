@@ -83,3 +83,53 @@ export async function createCloudBoxViaHubAndAdopt(
   });
   return res.record;
 }
+
+export interface AgentJobViaHubArgs extends CloudAgentViaHubArgs {
+  /** The seed prompt — its presence tells the worker to START the agent in-box. */
+  prompt: string;
+  /** Fully-processed agent args (post-`--`, incl. skip-permissions). */
+  agentArgs?: string[];
+}
+
+export interface AgentJobViaHubResult {
+  /** The created box id, when the box was provisioned (even if the agent then failed). */
+  boxId?: string;
+  /** Set when the job failed — a create failure, or the agent failing to start. */
+  error?: string;
+}
+
+/**
+ * Enqueue a background `-i` run on the control box: the resident worker creates
+ * the box AND starts the agent detached with the seed prompt, so the whole run
+ * lives on the VPS (laptop off). Polls to a terminal state and returns the box
+ * id + any error — no adopt/attach (it runs on the hub). Returns `null` when the
+ * control box isn't fully configured (no admin token / no git origin), so the
+ * caller can fall back to the local queue.
+ */
+export async function enqueueAgentJobViaHub(
+  args: AgentJobViaHubArgs,
+): Promise<AgentJobViaHubResult | null> {
+  const { providerName, projectRoot, agent, name, fromBranch, prompt, agentArgs, urlFlag, onStatus } =
+    args;
+  const target = await resolveCustodyTarget(urlFlag, { quiet: true });
+  if (!target) return null;
+  const repoUrl = await readGitOriginUrl(projectRoot).catch(() => undefined);
+  if (!repoUrl) return null;
+
+  const jobId = await enqueueCreateViaHub(target, {
+    repoUrl,
+    provider: providerName,
+    branch: fromBranch?.trim() || undefined,
+    name: name?.trim() || undefined,
+    agent,
+    prompt,
+    agentArgs,
+  });
+  onStatus?.(`enqueued on the control plane (job ${jobId})`);
+  const job = await pollHubJob(target, jobId, {
+    onStatus: (j) => onStatus?.(`job ${jobId}: ${j.status}`),
+  });
+  // A failed job with a boxId means the box was created but the agent didn't
+  // start (e.g. creds rejected) — surface the error but keep the box id.
+  return { boxId: job.result?.boxId, error: job.status === 'done' ? undefined : job.result?.error };
+}

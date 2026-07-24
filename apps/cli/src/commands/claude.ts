@@ -59,7 +59,7 @@ import {
 } from './_attach-in.js';
 import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
-import { createCloudBoxViaHubAndAdopt } from './_cloud-agent-via-hub.js';
+import { createCloudBoxViaHubAndAdopt, enqueueAgentJobViaHub } from './_cloud-agent-via-hub.js';
 import { resolveCreateRouting } from '../control-plane/route-create.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
@@ -680,6 +680,48 @@ export const claudeCommand = new Command('claude')
         );
         cmdLog.close();
         process.exit(1);
+      }
+      // Route the background run to the control box when one is configured: the
+      // resident worker creates the box AND starts claude with the prompt, so it
+      // runs with the laptop off. Local agent creds aren't needed for the hub path
+      // (the control box seeds them from custody), so route before the local check.
+      const iRouting = await resolveCreateRouting({
+        providerName,
+        effective: cfg.effective,
+        projectRoot,
+        forceHub: opts.viaHub,
+        forceLocal: opts.local,
+        urlFlag: opts.url,
+      });
+      if (iRouting.where === 'hub') {
+        const res = await enqueueAgentJobViaHub({
+          providerName,
+          projectRoot,
+          agent: 'claude',
+          name: opts.name,
+          fromBranch: opts.fromBranch,
+          urlFlag: opts.url,
+          prompt: opts.initialPrompt,
+          agentArgs: applyClaudeSkipPermissions(claudeArgs, cfg.effective),
+          onStatus: (line) => log.step(line),
+        });
+        if (res) {
+          if (res.error) {
+            log.error(
+              `control plane run failed: ${res.error}` +
+                (res.boxId ? ` (box ${res.boxId} was created — attach with \`agentbox claude attach ${res.boxId}\`)` : ''),
+            );
+            cmdLog.close();
+            process.exit(1);
+          }
+          outro(`claude is running on the control plane: box ${res.boxId ?? '(id pending)'}`);
+          cmdLog.close();
+          return;
+        }
+        // res === null → control box not fully configured; fall through to local.
+      }
+      if (iRouting.where === 'local' && iRouting.fellBackReason) {
+        log.warn(`control box configured but ${iRouting.fellBackReason}; running this -i job locally.`);
       }
       try {
         await assertAgentCredsAvailable({
