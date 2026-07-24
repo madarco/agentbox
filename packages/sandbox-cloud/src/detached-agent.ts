@@ -191,6 +191,8 @@ export interface StartDetachedCloudAgentArgs {
    * background `-i` path never passes this — it always seeds a prompt.
    */
   resolveResumeArgs?: (box: BoxRecord) => Promise<string[] | null>;
+  /** Settle-window tuning for the post-start session verification (test hook). */
+  verify?: { windowMs?: number; pollMs?: number };
 }
 
 /**
@@ -223,6 +225,6 @@ export async function startDetachedCloudAgent(args: StartDetachedCloudAgentArgs)
         (detail ? `: ${detail}` : ''),
     );
   }
-  await verifyDetachedSession(provider, box, sessionName, binary);
+  await verifyDetachedSession(provider, box, sessionName, binary, args.verify);
   return box;
 }

@@ -9,7 +9,7 @@ import {
   startDetachedSession,
   verifyDetachedSession,
 } from '@agentbox/sandbox-cloud';
-import type { BoxRecord, Provider } from '@agentbox/core';
+import type { BoxRecord } from '@agentbox/core';
 import type { AttachOpenIn } from '@agentbox/config';
 import { agentResumeArgs } from '../agent-sessions.js';
 

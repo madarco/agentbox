@@ -85,6 +85,28 @@ describe('box-create flow', () => {
     expect(job?.result?.error).toMatch(/provider exploded/);
   });
 
+  it('an agent-start failure fails the job but keeps the box id', async () => {
+    // A background `-i` run: the box was created, but starting the agent in-box
+    // failed (e.g. creds rejected). The job must fail (so it isn't masked as done)
+    // while preserving the box id, so the box is adoptable/attachable to re-login.
+    const store = new MemoryStore();
+    await store.enqueueCreateJob({
+      id: 'j2',
+      status: 'queued',
+      request: { repoUrl: 'x', provider: 'e2b', agent: 'claude', prompt: 'do a thing' },
+      createdAt: new Date().toISOString(),
+    });
+    await drainOneCreateJob(
+      store,
+      () => Promise.resolve({ boxId: 'box-created', agentStartError: 'credentials were rejected' }),
+      'w1',
+    );
+    const job = await store.getCreateJob('j2');
+    expect(job?.status).toBe('failed');
+    expect(job?.result?.boxId).toBe('box-created');
+    expect(job?.result?.error).toMatch(/credentials were rejected/);
+  });
+
   it('drains nothing when the queue is empty', async () => {
     const store = new MemoryStore();
     expect(await drainOneCreateJob(store, () => Promise.resolve({ boxId: 'x' }), 'w1')).toBeNull();
