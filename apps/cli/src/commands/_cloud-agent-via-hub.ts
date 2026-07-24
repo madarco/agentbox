@@ -1,19 +1,19 @@
 /**
- * Foreground cloud-agent routing through the control box.
+ * Cloud-agent routing through the control box.
  *
  * `agentbox claude|codex|opencode` on a cloud provider, with a control box
  * configured (and `cloud.viaHub` on), builds the box ON the control box instead
  * of on this machine — so it lives in the same place as `agentbox create` boxes.
- * The resident hub worker clones the repo VPS-side and provisions the box, then
- * this PC ADOPTS it (writes local state + downloads its SSH keys) so the normal
- * attach path can launch the agent and drop you into the session.
+ * The resident hub worker clones the repo VPS-side and provisions the box.
  *
- * The worker creates the box "cold": it never starts the agent (it drops any
- * prompt and keeps `agent` only as a registration hint). That is fine for the
- * FOREGROUND path — the caller attaches right after, and `cloudAgentAttach`
- * starts the agent on a cold box. It is why background `-i` does NOT route here:
- * a queued run needs the agent started detached with a seed prompt, which the
- * worker can't do yet, so `-i` stays on the local queue.
+ * Two shapes:
+ *   - **Foreground** (`createCloudBoxViaHubAndAdopt`): the worker creates the box
+ *     "cold" (no agent), then this PC ADOPTS it (local state + SSH keys) so the
+ *     normal attach path launches the agent and drops you into the session.
+ *   - **Background `-i`** (`enqueueAgentJobViaHub`): the worker creates the box AND
+ *     starts the agent detached with the seed prompt (it seeds the agent login
+ *     from custody first), so the whole run lives on the VPS — laptop off from
+ *     submit on. No adopt/attach here; it's fire-and-forget.
  */
 import type { BoxRecord } from '@agentbox/sandbox-docker';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
