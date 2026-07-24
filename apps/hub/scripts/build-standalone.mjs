@@ -140,4 +140,14 @@ for (const f of await readdir(serverOut)) {
 }
 await rm(serverOut, { recursive: true, force: true });
 
+// The E2B provider's attach helper is a standalone .cjs the resident worker spawns
+// to start the agent detached (E2B has no SSH). `resolveAttachHelperPath` looks for
+// it next to the running bundle, so a hub-created e2b box would come up but its
+// `-i` agent-start fails ("e2b attach helper not found") without this copy.
+const e2bHelperSrc = path.join(hubDir, '..', '..', 'packages', 'sandbox-e2b', 'dist', 'attach-helper.cjs');
+if (existsSync(e2bHelperSrc)) {
+  await cp(e2bHelperSrc, path.join(outApp, 'attach-helper.cjs'));
+  console.log('[build-standalone] staged e2b attach-helper.cjs');
+}
+
 console.log(`[build-standalone] done → ${path.relative(process.cwd(), path.join(outApp, 'server.js'))}`);

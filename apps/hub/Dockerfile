@@ -24,9 +24,11 @@ RUN pnpm turbo run build --filter=@madarco/agentbox
 FROM node:22-slim AS runtime
 WORKDIR /repo
 RUN corepack enable
-# git + openssh-client: the resident create worker clones the repo VPS-side and
-# a hetzner box needs ssh/scp on PATH for its ControlMaster.
-RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates \
+# git + git-lfs + openssh-client: the resident create worker clones the repo
+# VPS-side (git-lfs so an LFS repo's objects fetch over HTTPS with the leased
+# token instead of hard-failing the checkout — `git lfs pull` needs the binary
+# on PATH), and a hetzner box needs ssh/scp on PATH for its ControlMaster.
+RUN apt-get update && apt-get install -y --no-install-recommends git git-lfs openssh-client ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 # Queue worker + host-app spawns re-exec the CLI from this entry.
