@@ -43,6 +43,7 @@ import { runPrepare } from './prepare.js';
 import { claudeCommand } from './claude.js';
 import { resolveCustodyTarget } from './control-plane.js';
 import { enqueueCreateViaHub, pollHubJob } from '../control-plane/hub-enqueue.js';
+import { resolveCreateRouting } from '../control-plane/route-create.js';
 
 interface CreateOptions {
   workspace: string;
@@ -91,8 +92,10 @@ interface CreateOptions {
   /** --dangerously-with-credentials: copy a git credential into the box (git.pushMode=direct); cloud only.
    *  The token-vs-SSH choice is made ONLY at the interactive prompt (TTY required). */
   dangerouslyWithCredentials?: boolean;
-  /** --via-hub: enqueue the create on the control box instead of building locally. */
+  /** --via-hub: force enqueue the create on the control box instead of building locally. */
   viaHub?: boolean;
+  /** --local: force a local build even when a control box would take a cloud create by default. */
+  local?: boolean;
   /** --url <url>: control-plane URL for --via-hub (else relay.controlPlaneUrl). */
   url?: string;
 }
@@ -342,7 +345,11 @@ export const createCommand = new Command('create')
   )
   .option(
     '--via-hub',
-    "enqueue the create on the control box (POST /remote/boxes) instead of building it on this machine; the resident hub worker provisions the box VPS-side. Cloud providers only. Needs a control plane configured (`control-plane set-url`) + admin token.",
+    "force enqueuing the create on the control box (POST /remote/boxes) instead of building it on this machine; the resident hub worker provisions the box VPS-side. Cloud providers only. Needs a control plane configured (`control-plane set-url`) + admin token. When a control box is configured this is already the default for cloud boxes (cloud.viaHub).",
+  )
+  .option(
+    '--local',
+    'force building the box on this machine even when a control box is configured (the opposite of --via-hub; cloud.viaHub=false makes this the default). Docker boxes are always local.',
   )
   .option('--url <url>', 'control-plane URL for --via-hub (default: relay.controlPlaneUrl)')
   .action(async (opts: CreateOptions) => {
@@ -370,13 +377,26 @@ export const createCommand = new Command('create')
     );
     const remoteHost = opts.remoteHost ?? specRemoteHost;
 
-    // --via-hub: hand the create to the control box's queue instead of building
-    // it here. The resident hub worker clones the repo VPS-side and provisions
-    // the box, so this returns once the job is enqueued/finished — no local
-    // provider work. Cloud providers only (a docker box runs on THIS machine).
-    if (opts.viaHub) {
+    // Route the create: when a control box is configured, cloud boxes default to
+    // being built ON it (the resident hub worker clones the repo VPS-side and
+    // provisions the box, so it keeps running with the laptop off). docker /
+    // remote-docker always build here; --local / cloud.viaHub=false force local;
+    // --via-hub forces the hub. A missing prerequisite on the DEFAULT path falls
+    // back to a local build with a notice (never a hard failure).
+    const routing = await resolveCreateRouting({
+      providerName,
+      effective: cfg.effective,
+      projectRoot,
+      forceHub: opts.viaHub,
+      forceLocal: opts.local,
+      urlFlag: opts.url,
+    });
+    if (routing.where === 'hub') {
       await runCreateViaHub(opts, providerName, projectRoot, cmdLog);
       return;
+    }
+    if (routing.fellBackReason) {
+      log.warn(`control box configured but ${routing.fellBackReason}; building ${providerName} box locally.`);
     }
 
     // `direct` push mode (box holds a copy of your git credentials) is only

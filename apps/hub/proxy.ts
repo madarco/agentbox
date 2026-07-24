@@ -14,6 +14,10 @@ function tokenEq(a: string, b: string): boolean {
 // /signin redirect, which a non-browser client can't follow) and accepts a Bearer
 // token, since an IDE/API client can't carry the browser cookie.
 const API_PREFIX = '/api/v1';
+// The live-updates SSE stream is gated the same way as /api/v1: a headless client
+// (the tray against a remote control box) reaches it with a Bearer key, not the
+// browser session cookie. Kept out of API_PREFIX because it lives at /api/events.
+const API_EVENTS = '/api/events';
 // Endpoints that never require auth: liveness + the spec + its docs page (no state).
 const API_PUBLIC = new Set(['/api/v1/health', '/api/v1/openapi.json', '/api/v1/docs']);
 
@@ -66,9 +70,11 @@ export function proxy(request: NextRequest): NextResponse {
   const mode = authMode();
   if (mode === 'off') return NextResponse.next();
 
-  // The public API is gated but answers JSON (not a signin redirect) and accepts
-  // a Bearer token — handle it before the browser flows below.
-  if (request.nextUrl.pathname.startsWith(API_PREFIX)) return gateApi(request, mode);
+  // The public API and the live-updates SSE stream are gated but answer JSON (not a
+  // signin redirect) and accept a Bearer token — handle them before the browser
+  // flows below, so a headless client (tray against a remote hub) can subscribe.
+  if (request.nextUrl.pathname.startsWith(API_PREFIX) || request.nextUrl.pathname === API_EVENTS)
+    return gateApi(request, mode);
 
   // localhost token gate: a shared-secret cookie, no login screen. `?token=`
   // sets the cookie once and redirects to the clean URL; thereafter the cookie

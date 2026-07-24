@@ -95,8 +95,9 @@ export async function fetchHubListing(): Promise<HubListing | null> {
     // but we have no admin token for it" — the latter would otherwise drop every
     // hub box from `list` with no hint at all.
     const { loadEffectiveConfig } = await import('@agentbox/config');
+    const { remoteHubConfigured } = await import('./remote-hub.js');
     const configured = await loadEffectiveConfig(process.cwd())
-      .then((c) => Boolean(c.effective.relay.controlPlaneUrl))
+      .then((c) => remoteHubConfigured(c.effective))
       .catch(() => false);
     return configured ? { registrations: [], stale: true, reason: 'no-token' } : null;
   }

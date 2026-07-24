@@ -57,8 +57,9 @@ export async function tryAutoAdopt(ref: string, cwd: string): Promise<AutoAdoptR
       // null there tells the shift path "definitely not a hub box", which is how
       // `agentbox claude <hub-box>` ends up running in the wrong local box.
       const { loadEffectiveConfig } = await import('@agentbox/config');
+      const { remoteHubConfigured } = await import('./remote-hub.js');
       const configured = await loadEffectiveConfig(cwd)
-        .then((c) => Boolean(c.effective.relay.controlPlaneUrl))
+        .then((c) => remoteHubConfigured(c.effective))
         .catch(() => false);
       return configured ? 'unreachable' : null;
     }

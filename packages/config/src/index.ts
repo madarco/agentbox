@@ -24,6 +24,8 @@ export {
   PROVIDERS,
   PROVIDER_NAMES,
   CLOUD_PROVIDER_NAMES,
+  HUB_ROUTABLE_PROVIDER_NAMES,
+  isHubRoutableProvider,
   isProviderKind,
   providerMeta,
   providerKeyCap,

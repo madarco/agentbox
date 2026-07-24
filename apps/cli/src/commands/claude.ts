@@ -59,6 +59,8 @@ import {
 } from './_attach-in.js';
 import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
+import { createCloudBoxViaHubAndAdopt } from './_cloud-agent-via-hub.js';
+import { resolveCreateRouting } from '../control-plane/route-create.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
@@ -209,6 +211,12 @@ interface ClaudeCreateOptions {
   fromBranch?: string;
   /** -b / --use-branch <name>: reuse an existing branch directly instead of forking agentbox/<name>. */
   useBranch?: string;
+  /** --via-hub: force building this cloud box on the control box (else the cloud.viaHub default). */
+  viaHub?: boolean;
+  /** --local: force building on this machine even when a control box is configured. */
+  local?: boolean;
+  /** --url <url>: control-box URL for the hub route (else relay.controlPlaneUrl). */
+  url?: string;
   /** -v / --verbose: bypass the spinner and stream raw provider output. */
   verbose?: boolean;
   /** Raw `--attach-in <mode>` value; validated by `parseAttachInOption`. */
@@ -511,6 +519,15 @@ export const claudeCommand = new Command('claude')
     '-b, --use-branch <name>',
     'reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.',
   )
+  .option(
+    '--via-hub',
+    'force building this cloud box on the control box (then adopt + attach here). When a control box is configured this is already the default for foreground cloud runs (cloud.viaHub). Ignored for docker.',
+  )
+  .option(
+    '--local',
+    'force building the box on this machine even when a control box is configured (the opposite of --via-hub).',
+  )
+  .option('--url <url>', 'control-box URL for the hub route (default: relay.controlPlaneUrl)')
   .option(
     '-v, --verbose',
     'bypass the spinner and stream raw provider output (docker build / Daytona snapshot create) to stderr. The same content always lands in ~/.agentbox/logs/claude.log.',
@@ -892,6 +909,56 @@ export const claudeCommand = new Command('claude')
 
     if (isCloud) {
       const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });
+
+      // Route the create to the control box when one is configured, then adopt +
+      // attach here so the agent starts. Foreground only (we already returned for
+      // -i above). resume / --plan / --dangerously-with-credentials teleport host
+      // state AT create time, which the worker path can't do, so they stay local.
+      const routing = await resolveCreateRouting({
+        providerName,
+        effective: cfg.effective,
+        projectRoot,
+        forceHub: opts.viaHub,
+        forceLocal: opts.local,
+        urlFlag: opts.url,
+      });
+      const hubIncompatible =
+        Boolean(resumePrepared) || Boolean(planPrepared) || cfg.effective.git.pushMode === 'direct';
+      if (routing.where === 'hub' && hubIncompatible) {
+        if (opts.viaHub)
+          log.warn(
+            '--via-hub is ignored for --resume / --plan / --dangerously-with-credentials runs (they teleport host state at create time); building this box locally.',
+          );
+      } else if (routing.where === 'hub') {
+        const adopted = await createCloudBoxViaHubAndAdopt({
+          providerName,
+          projectRoot,
+          agent: 'claude',
+          name: opts.name,
+          fromBranch,
+          urlFlag: opts.url,
+          onStatus: (line) => log.step(line),
+          onLog: (line) => cmdLog.write(line),
+        });
+        if (adopted) {
+          await cloudAgentAttach({
+            box: adopted,
+            binary: 'claude',
+            sessionName: cfg.effective.claude.sessionName,
+            mode: 'claude',
+            extraArgs: effectiveClaudeArgs,
+            openIn: hostAwareOpenIn(cfg),
+          });
+          cmdLog.close();
+          return;
+        }
+        // adopted === null → control box not fully configured for it; fall to local.
+      } else if (routing.fellBackReason) {
+        log.warn(
+          `control box configured but ${routing.fellBackReason}; building ${providerName} box locally.`,
+        );
+      }
+
       // browser.default = 'playwright' | 'both' implies installing playwright
       // even if box.withPlaywright wasn't explicitly set.
       const withPlaywright =

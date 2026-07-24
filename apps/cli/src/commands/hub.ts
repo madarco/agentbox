@@ -7,6 +7,7 @@ import { Command } from 'commander';
 import { handleLifecycleError } from './_errors.js';
 import { rehydrateFromState } from './relay.js';
 import { resolveCustodyTarget } from './control-plane.js';
+import { loadControlPlaneEnv } from '../control-plane/env-file.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
 import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
 import { pullBoxSshKeys } from '../control-plane/hub-pull.js';
@@ -34,6 +35,37 @@ function openInBrowser(url: string): void {
   } catch {
     /* the caller has already printed the URL */
   }
+}
+
+/**
+ * The client-facing hub the CLI + tray talk to. `mode` is `remote` when a control
+ * box is configured, else `local`. `token` is the single Bearer that authorizes
+ * both `/api/v1` and the `/api/events` SSE stream (the local hub token, or
+ * `AGENTBOX_HUB_API_KEY` for the remote control box).
+ */
+export interface HubTarget {
+  mode: 'local' | 'remote';
+  url: string;
+  token: string;
+}
+
+/**
+ * Resolve the hub the CLI should talk to: the remote control box when one is
+ * configured (`--url` > `relay.controlPlaneUrl`, with `AGENTBOX_HUB_API_KEY`),
+ * else the local hub (`127.0.0.1:<port>` + `~/.agentbox/hub/token`). Surfaced to
+ * the macOS tray via `agentbox hub target --json` so it follows the same config
+ * (it can't parse the layered config itself). One Bearer authorizes both surfaces
+ * in either mode (see `apps/hub/proxy.ts`).
+ */
+export async function resolveHubTarget(urlFlag?: string): Promise<HubTarget> {
+  const cfg = await loadEffectiveConfig(process.cwd());
+  const url = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
+  if (url) {
+    loadControlPlaneEnv();
+    return { mode: 'remote', url, token: process.env.AGENTBOX_HUB_API_KEY ?? '' };
+  }
+  const s = await getHubStatus();
+  return { mode: 'local', url: `http://127.0.0.1:${String(s.port)}`, token: s.token ?? '' };
 }
 
 interface StatusOpts {
@@ -67,6 +99,30 @@ const statusSub = new Command('status')
         return;
       }
       process.stdout.write(renderStatus(s) + '\n');
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const targetSub = new Command('target')
+  .description(
+    'Print the hub the CLI talks to — the remote control box when configured, else the local hub — with its API token. The seam the macOS tray follows to point at the same hub.',
+  )
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .option('--json', 'emit { mode, url, token } as JSON (consumed by the tray)')
+  .action(async (opts: { url?: string; json?: boolean }) => {
+    try {
+      const t = await resolveHubTarget(opts.url);
+      if (opts.json) {
+        process.stdout.write(JSON.stringify(t) + '\n');
+        return;
+      }
+      const tokenNote = t.token
+        ? 'present'
+        : t.mode === 'remote'
+          ? '(none — set AGENTBOX_HUB_API_KEY, or run `agentbox control-plane setup`)'
+          : '(none — start the hub with `agentbox hub`)';
+      process.stdout.write([`hub: ${t.mode}`, `  url:   ${t.url}`, `  token: ${tokenNote}`].join('\n') + '\n');
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -218,6 +274,7 @@ export const hubCommand = new Command('hub')
   )
   .addCommand(startSub, { isDefault: true })
   .addCommand(statusSub)
+  .addCommand(targetSub)
   .addCommand(stopSub)
   .addCommand(restartSub)
   .addCommand(pullSub)
