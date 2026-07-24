@@ -345,7 +345,7 @@ export const createCommand = new Command('create')
   )
   .option(
     '--via-hub',
-    "force enqueuing the create on the control box (POST /remote/boxes) instead of building it on this machine; the resident hub worker provisions the box VPS-side. Cloud providers only. Needs a control plane configured (`control-plane set-url`) + admin token. When a control box is configured this is already the default for cloud boxes (cloud.viaHub).",
+    "force enqueuing the create on the control box (POST /remote/boxes) instead of building it on this machine; the resident hub worker provisions the box VPS-side. Cloud providers only. Needs a control plane configured (`hub set-url`) + admin token. When a control box is configured this is already the default for cloud boxes (cloud.viaHub).",
   )
   .option(
     '--local',

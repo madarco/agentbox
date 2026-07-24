@@ -268,10 +268,11 @@ Kept the Vercel path (`app/[...path]/route.ts` + `lib/plane.ts`) byte-intact.
 - **Extra rename refs fixed** beyond vercel.json/Dockerfile/docker-compose (these
   break the hosted deploy if missed): `apps/cli/src/control-plane/deploy-vercel.ts`
   (`ROOT_DIRECTORY`), `packages/sandbox-hetzner/src/control-plane-deploy.ts`
-  (`REMOTE_APP_DIR`), `.dockerignore`, the `agentbox control-plane` self-host help
+  (`REMOTE_APP_DIR`), `.dockerignore`, the `agentbox hub` self-host help
   path, and the `apps/web/.../deployed-hub.mdx` deploy-path references. The
-  `agentbox control-plane` **command** name + the `agentbox-control-plane` Vercel
-  **project** name are unchanged (Phase 5 / deployed-resource concerns).
+  `control-plane` **command** name folded into `agentbox hub` (Phase 5, done);
+  only the `agentbox-control-plane` Vercel **project** name is unchanged
+  (a deployed-resource concern, not the CLI verb).
 - **Verified:** `next build` clean — route list shows `/` (page) coexisting with
   `/[...path]` (dispatch handler), no conflict; `typecheck` clean; regression on the
   built app: `GET /healthz` → 200 relay JSON, `GET /admin/registry` → 503 (hit the

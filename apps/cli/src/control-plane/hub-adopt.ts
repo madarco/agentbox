@@ -32,7 +32,7 @@ import { matchRegistration } from './match-ref.js';
 export interface HubAdoptArgs {
   admin: ControlPlaneAdminClient;
   custody: CustodyClient;
-  /** Box id, name, or sandbox id as shown by `control-plane boxes list`. */
+  /** Box id, name, or sandbox id as shown by `hub boxes list`. */
   ref: string;
   /** The control-plane base URL, persisted on the record's cloud fields. */
   controlPlaneUrl: string;

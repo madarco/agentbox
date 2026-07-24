@@ -164,7 +164,7 @@ ignored, and the normal re-bake proceeds.
    happens only where the alternative is a multi-minute bake, so no TTL/caching is needed.
 4. Hub side: the worker's prepare path uses the same helpers against its local custody store
    (covers control-box bakes → PC *and* PC bakes → control box). Fold in the existing deploy
-   backlog item: `control-plane deploy` seeds custody `prepared/` from the PC's local
+   backlog item: `hub deploy` seeds custody `prepared/` from the PC's local
    `*-prepared.json` files.
 5. Tests: match-adopt, mismatch-ignore, offline fall-through.
 
@@ -184,7 +184,7 @@ hetzner create uses it without baking.
   session-start live-resync correctly skips them.
 - Docs in the same change as each phase: this file's status lines, `control-box-plan.md`
   backlog pointers, and the public [`deployed-hub.mdx`](../apps/web/content/docs/deployed-hub.mdx)
-  (+ CLI reference) for `hub adopt`, `control-plane project push`, `relay.custodyMaxBodyBytes`,
+  (+ CLI reference) for `hub adopt`, `hub project push`, `relay.custodyMaxBodyBytes`,
   and the thin-client `ls` behavior. Tray app: the `/api/v1/boxes` payload gains nothing
   breaking, but check the `source` tag if it gets exposed there.
 - `pnpm typecheck` before pushing; the relay and hub are persistent daemons — rebuild + restart
@@ -200,7 +200,7 @@ Verified live during implementation (against the deployed control box at
   rejects a `fetch` promise but undici keeps the connecting socket until its own
   10s connectTimeout, so `ls` printed instantly and then held the shell ~9s.
   Fixed by probing reachability with a socket we own and destroy.
-- **Phase 3** — `control-plane project push` to the live control box: seed
+- **Phase 3** — `hub project push` to the live control box: seed
   landed under `projects/<slug>/seed/`, and a re-push of an unchanged tree
   uploaded only the manifest. This caught a second real bug: `tar -z` stamps the
   current time into the gzip header, so an unchanged tree hashed differently
@@ -216,7 +216,7 @@ Verified live during implementation (against the deployed control box at
 ### Full goal-scenario run (2026-07-17)
 
 A **fresh control box** was deployed from this branch onto a real Hetzner VPS
-(`control-plane deploy hetzner --ref feat/local-adoption`) and the scenario run
+(`hub deploy hetzner --ref feat/local-adoption`) and the scenario run
 end to end against it with an **e2b** box. All infrastructure was torn down after
 (server + firewall + sandbox + the proof branch), and the PC's
 `relay.controlPlaneUrl` / `deploy.json` restored to their previous control box.
@@ -288,6 +288,26 @@ Adoption doesn't change that; it just makes a same-named pair easier to create.
 
 ## Backlog (found by the live run)
 
+- **A freshly deployed control box can't self-bake a non-matching base.** The deploy shares the PC's
+  local bake records (`prepared/<provider>.json`) to custody and the worker adopts one via
+  `hydratePreparedFromCustody` — but *only* when its `contextSha256` matches the control box's freshly
+  computed `baseFingerprint` (correct: booting a mismatched base is worse than re-baking). So when the
+  control box runs a different AgentBox version than the one the PC baked with (e.g. an in-dev branch
+  whose ctl/runtime bundle shifted the fingerprint), every cloud create fails with "run `agentbox
+  prepare` first". Provider *credentials* migrate fine (the deploy allowlist works — see
+  `control-plane-deploy.ts` `PROVIDER_SECRET_KEYS`); the gap is the **base bake**. Fix: when no matching
+  shared bake exists, have the resident worker bake its own base (run the provider's `prepare`) before
+  the first create instead of failing. Larger (needs the provider build machinery + queue integration on
+  the control box). Workaround today: re-bake locally on the control box's version before deploying, or
+  scp the record up.
+  - **Most common trigger: `box.claudeInstall` isn't migrated.** The fingerprint folds `claudeInstall`
+    in (commit `459754b3`). A PC that sets `box.claudeInstall=npm` bakes an `npm`-fold record, but the
+    control box uses the built-in default `native` (the PC's global override doesn't travel), so its
+    `native`-fold fingerprint never matches and the shared bake is rejected even on the *same* version.
+    Live-confirmed 2026-07-24. Fix options: migrate the PC's effective `box.claudeInstall` to the control
+    box at deploy (same channel as the provider secrets), or have the worker honor the shared record's
+    baked mode instead of the local default. Workaround: bake with `box.claudeInstall=native` (matching
+    the control box) before deploying.
 - **Destroying a PC box doesn't reap its control-box registration.** `agentbox destroy`
   removes the local record and the cloud sandbox but leaves the box registered on the control
   box, so it lingers in the Store (and now, with the web-UI merge, in the dashboard) as a ghost.

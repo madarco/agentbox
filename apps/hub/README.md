@@ -128,7 +128,7 @@ over `PostgresStore` are a later item.)
 
 ## Deploy
 
-The turnkey path is `agentbox control-plane setup` (creates the GitHub App, then
+The turnkey path is `agentbox hub setup` (creates the GitHub App, then
 `--deploy vercel|hetzner`, then points the CLI at it). The recipes below are the
 manual equivalents / self-host path.
 
@@ -142,7 +142,7 @@ curl localhost:8787/healthz
 
 ### Vercel
 
-`agentbox control-plane setup --deploy vercel` builds the plane **from GitHub** via the
+`agentbox hub setup --deploy vercel` builds the plane **from GitHub** via the
 Vercel API — no local upload, so it works from a global npm install. If you don't own
 `--repo` (default `madarco/agentbox`) it **auto-forks via `gh`** and deploys the fork;
 auto-provisions Neon; sets the App env; builds `--ref` (default `main`). If Vercel's GitHub
@@ -152,7 +152,7 @@ secrets** (`/healthz` always 200; admin/leasing 503 until wired), so the bare→
 sequence is never broken. Manual equivalent: create the project with Root Directory
 `apps/hub`, attach Neon, set the three env vars, deploy.
 
-Then point boxes/CLI at it: `agentbox control-plane set-url https://<deployment>`.
+Then point boxes/CLI at it: `agentbox hub set-url https://<deployment>`.
 
 ## GitHub App setup (for leasing)
 

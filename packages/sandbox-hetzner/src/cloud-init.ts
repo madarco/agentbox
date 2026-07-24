@@ -79,7 +79,7 @@ export function controlPlaneCloudInit(opts: ControlPlaneCloudInitOptions): strin
   const pubkey = opts.sshPubkey.trim();
   return [
     '#cloud-config',
-    '# AgentBox control-plane VPS — provisioned by `agentbox control-plane setup --deploy hetzner`.',
+    '# AgentBox control-plane VPS — provisioned by `agentbox hub setup --deploy hetzner`.',
     'disable_root: false',
     'ssh_pwauth: false',
     'chpasswd:',

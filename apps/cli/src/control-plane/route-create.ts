@@ -54,7 +54,7 @@ export async function resolveCreateRouting(input: CreateRoutingInput): Promise<C
   if (!target)
     return {
       where: 'local',
-      fellBackReason: 'no control-box admin token (run `agentbox control-plane setup`)',
+      fellBackReason: 'no control-box admin token (run `agentbox hub setup`)',
     };
   return { where: 'hub' };
 }

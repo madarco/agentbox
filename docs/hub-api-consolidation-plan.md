@@ -10,19 +10,22 @@
 > [`local-adoption-plan.md`](./local-adoption-plan.md) (PC as thin client), [`host-relay.md`](./host-relay.md)
 > (the relay core), and the public API reference [`apps/web/content/docs/api.mdx`](../apps/web/content/docs/api.mdx).
 > Status: **P0 shipped** (headless `/api/v1` key, PR #245); **Phase 1 (reverse-adoption) + Phase 2
-> clean subset (CLI `HubApiClient`, `control-plane boxes`/`prompts` on `/api/v1`) shipped**;
+> clean subset (CLI `HubApiClient`, `hub boxes`/`prompts` on `/api/v1`) shipped**;
 > **Phase 3 shipped** (tray follows the CLI hub config via `agentbox hub target`; `/api/events`
 > accepts the headless Bearer key; cloud box creation — `create` + foreground `claude`/`codex`/
 > `opencode` — defaults to the control box when configured, via `cloud.viaHub`, docker stays local);
 > **background `-i` on the control box shipped** (the hub worker starts the agent detached with the
-> seed prompt, so `-i` cloud runs execute fully on the control box); `ls -g` + `create --via-hub`
-> onto `/api/v1` + the main-command dispatch remain deferred (see the phased plan below). Maintain
+> seed prompt, so `-i` cloud runs execute fully on the control box); **Phase 5 (rename) shipped** —
+> `control-plane *` folded into the one `hub *` group (setup/deploy/boxes/prompts/credentials/secrets/
+> custody/…), `hub status` unified by target, the "default when configured, except local docker" rule
+> documented. `ls -g` + `create --via-hub` onto `/api/v1`, the main-command dispatch, Phase 4 web-UI,
+> and destroy-reap + web-UI seed overlay remain deferred (see the phased plan + "next" below). Maintain
 > status live per project convention.
 
 ## Context
 
 Today there is a **"local hub"** (`agentbox hub` on `127.0.0.1:8787`) and a **"remote control box"**
-(the same hub deployed on a Hetzner VPS, driven by `agentbox control-plane *`). The product intent:
+(the same hub deployed on a Hetzner VPS, driven by `agentbox hub *`). The product intent:
 
 - **One conceptual hub.** Local = simple install; remote = complete install (scheduled events, PR
   reviews, Linear-ticket runs, always-on boxes with leased credentials). The local hub was only ever
@@ -140,14 +143,14 @@ Legend — **Verdict**: *Consolidate* = should become one `/api/v1` route all cl
 | 12 | Providers list / credentials / prepare | `GET/POST /api/v1/providers*` | — | tray/web | local | **Consolidate** (remote bake already fits the worker/queue) |
 | 13 | Remote-docker hosts | `GET/POST/DELETE /api/v1/hosts*` | — | tray/web | local | **Consolidate**; note remote-docker itself never routes via a remote hub |
 | 14 | Live updates | SSE `GET /api/events` (cookie) | `GET /admin/prompts/stream` (SSE, admin) | tray/web; (CLI polls) | both | **Consolidate** onto `/api/events` (add a headless-token accept) |
-| 15 | Health | `GET /api/v1/health` | `GET /healthz` | tray/web; CLI (`relay/control-plane status`) | both | Keep both (`/healthz` is the ops probe; `/api/v1/health` the client one) |
+| 15 | Health | `GET /api/v1/health` | `GET /healthz` | tray/web; CLI (`relay/hub status`) | both | Keep both (`/healthz` is the ops probe; `/api/v1/health` the client one) |
 | 16 | Open-in / open-targets (host GUI attach) | `POST /api/v1/boxes/:id/open`,`GET /open-targets` | — | tray (also **shells CLI**) | **local** (host GUI) | **Client-local** — inherently host-side |
 | 17 | Custody: agent creds / secrets / box SSH keys | — | `GET/PUT/DELETE /admin/custody/*` | **CLI** (`credentials`,`secrets`,`custody`,`hub pull/adopt`) | remote | **Internal** — credential plane, not a client API |
 | 18 | Box registration | — | `POST /admin/register-box`,`forget-box` | boxes / worker / `plane-register` | remote | **Internal** |
 | 19 | Box RPC wire (git-lease-token, cp, download, checkpoint, browser.open) | — | `POST /rpc`, `GET /rpc/status/:id` (per-box) | boxes | box↔hub | **Internal** |
 | 20 | Box events | — | `POST /events` (per-box) | boxes | box↔hub | **Internal** |
 | 21 | In-sandbox bridge relay | — | `GET/POST /bridge/*` | host poller ↔ Daytona box | box↔host | **Internal** |
-| 22 | GitHub-App repo-installed | — | `GET /admin/app/repo-installed` | CLI (`control-plane add`, ensure-repo) | remote | **Internal** (or fold under `/api/v1/projects`) |
+| 22 | GitHub-App repo-installed | — | `GET /admin/app/repo-installed` | CLI (`hub add`, ensure-repo) | remote | **Internal** (or fold under `/api/v1/projects`) |
 | 23 | Cross-machine Store RPC | — | `POST /admin/store` (`RemoteStore`) | CLI (list/adopt) | remote | Subsumed by #1 — retire once CLI uses `/api/v1/boxes` |
 | 24 | Attach / shell / cp / download / screen (CLI) | — | — (drives the box directly) | CLI | **local** | **Client-local** |
 
@@ -187,7 +190,7 @@ intentional divergences above (git auth, gate, worker) branch on the profile.
 
 - **Phase 0 — Headless key for `/api/v1` (linchpin). DONE.** `gateApi`'s password branch now accepts
   `Authorization: Bearer <AGENTBOX_HUB_API_KEY>` before the session-cookie fallback (`apps/hub/proxy.ts`);
-  gates `/api/v1` only, never the UI pages. The key is minted at `control-plane setup`/deploy
+  gates `/api/v1` only, never the UI pages. The key is minted at `hub setup`/deploy
   (`randomBytes(32).hex`), recorded in `~/.agentbox/control-plane/control-plane.env`, and injected into
   the container via `docker-compose.yml`. CLI seam `resolveHubApiTarget()` added (not yet wired).
   Unblocks CLI **and** tray remotely.
@@ -208,10 +211,10 @@ intentional divergences above (git auth, gate, worker) branch on the profile.
 - **Phase 2 — CLI onto one client. PARTIAL (shipped the clean subset).** Added the shared
   `HubApiClient` (`apps/cli/src/control-plane/hub-api-client.ts`) — the URL-swappable `/api/v1` client,
   the same surface the tray + web speak — resolved via `resolveHubApiClient` over the P0
-  `resolveHubApiTarget` (remote URL + `AGENTBOX_HUB_API_KEY`). Migrated the **`control-plane boxes`**
+  `resolveHubApiTarget` (remote URL + `AGENTBOX_HUB_API_KEY`). Migrated the **`hub boxes`**
   group onto it: `boxes list`, new `boxes start|stop|pause|resume`, and a real `boxes rm` (POST
   `/api/v1/boxes/:id/destroy` → cloud teardown + reap, not the old reap-only `DELETE /remote/boxes`),
-  plus **`control-plane prompts` list/answer** onto `/api/v1/approvals`. Reverse-adoption (Phase 1)
+  plus **`hub prompts` list/answer** onto `/api/v1/approvals`. Reverse-adoption (Phase 1)
   makes these drive every box on the control box, including PC-registered ones.
   - **Deferred (not like-for-like — real API work, own phase):**
     - **`ls -g` (`fetchHubListing`)** stays on `/admin/store`: the `/api/v1/boxes` `Box` view drops the
@@ -223,7 +226,7 @@ intentional divergences above (git auth, gate, worker) branch on the profile.
       different queues/workers. Unifying needs `/api/v1/boxes` to accept a repoUrl create routed to the
       worker queue.
     - **Main-command dispatch** (`agentbox start|stop|git <box>` routing to the remote hub) left on the
-      local path — it's load-bearing for local docker; the `control-plane boxes` subcommands provide the
+      local path — it's load-bearing for local docker; the `hub boxes` subcommands provide the
       remote-drive path in the meantime.
     - The remote-relay default (cloud boxes register/lease/report to the remote hub so the laptop can be
       off) is already the control-plane topology; making it the default at the create/routing choke
@@ -257,10 +260,28 @@ intentional divergences above (git auth, gate, worker) branch on the profile.
 - **Phase 4 — Web UI onto `/api/v1`.** Migrate `apps/hub/lib/boxes/actions.ts` server-action mutations
   to the same `/api/v1` fetches, so all three clients share one path and a remote deploy needs no
   in-process backend.
-- **Phase 5 — Rename + default.** `control-plane *` → `hub *` (setup/deploy/credentials/secrets/custody
-  become `hub` admin subcommands; `set-url` → hub config). Document the "remote hub is default when
-  configured, except local docker" rule. (This subsumes the M1 `control-plane` → `hub` rename deferred
-  in [`control-box-plan.md`](./control-box-plan.md).)
+- **Phase 5 — Rename + default. DONE (rename).** The `control-plane` command group was **folded into
+  the one `hub` group** — `hub setup`/`deploy`/`set-url`/`unset-url`/`add`/`worker`/`credentials`/
+  `secrets`/`project`/`custody`/`boxes`/`prompts` are now `agentbox hub` subcommands (all surfaced in
+  `agentbox hub --help`), and the hidden top-level `control-plane` command is gone. The one hard
+  collision, `status`, **unified by target**: `agentbox hub status` reports the remote control box
+  (reachability + box/event counts) when one is configured (`--url` forces remote), else the local hub
+  process. `start` stays the default (bare `agentbox hub`). AgentBox is unreleased, so this is a clean
+  rename — no aliases. The **on-disk `~/.agentbox/control-plane/` state dir + `control-plane.env`**, the
+  **`relay.controlPlaneUrl` config key**, the **`'control-plane'` `SyncTopology` enum**, and the
+  **`apps/cli/src/control-plane/` source folder** are deliberately untouched (none are the CLI verb).
+  The "remote hub is the default relay for cloud creates when configured, except local docker" rule is
+  the **already-shipped** Phase 3 behavior — this phase documents it (`deployed-hub.mdx`/`cli.mdx`).
+  - **Next (documented, not implemented):**
+    - **Destroy-reap.** `agentbox destroy` on a hub-owned box should also reap its control-box
+      registration — wire the existing (0-caller) `ControlPlaneAdminClient.reapBox`
+      (`DELETE /remote/boxes/:id`, `admin-client.ts:96`) into the cloud destroy branch, gated on a
+      configured control box / `box.cloud.controlPlaneUrl`.
+    - **Web-UI create seed overlay.** `POST /api/v1/boxes` → `enqueueQueueJob` → `_run-queued-job` does
+      not apply the project's custody seed (unlike `--via-hub`/the resident worker) — wire
+      `applyProjectSeed` into that path.
+    - **`ls -g` + `create --via-hub` onto `/api/v1`**, the main `start/stop/git <box>` remote dispatch,
+      and **Phase 4** (web-UI mutations onto `/api/v1`) — as described above.
 
 ## Critical files
 

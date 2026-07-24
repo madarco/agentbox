@@ -5,7 +5,7 @@ description: Deploy the hub to an always-on VPS so cloud boxes keep working — 
 
 The [hub](/docs/hub) normally runs on your laptop. Deploy that same hub to an always-on VPS and it becomes a **control box**: a small server that holds the shared state your boxes need (registry, approvals, git credentials, agent logins, SSH keys) and can **create and run cloud boxes itself**. Cloud boxes keep pushing and opening PRs with your laptop off, and you can spawn new ones from the web UI on your phone.
 
-<Callout type="warn" title="Experimental">The deployed hub / control box is under active development. The `agentbox control-plane` commands are hidden from `agentbox --help` but work; expect rough edges. Local docker boxes are unaffected — this is only for cloud boxes.</Callout>
+<Callout type="warn" title="Experimental">The deployed hub / control box is under active development. Its commands live under `agentbox hub` (setup/deploy/boxes/prompts/credentials/custody/…), self-documented via `agentbox hub --help`; expect rough edges. Local docker boxes are unaffected — this is only for cloud boxes.</Callout>
 
 It's the same `@agentbox/relay` core you already run locally — the relay daemon, the web UI, and a resident create worker — deployed to a **Hetzner VPS** on **SQLite** (no database to manage), reachable over HTTPS. The control box takes over the *centralized* concerns so a sleeping laptop no longer stops your cloud boxes; it is **not** a proxy for your boxes' traffic (more on that below).
 
@@ -16,13 +16,13 @@ It's the same `@agentbox/relay` core you already run locally — the relay daemo
 One-time setup creates a GitHub App (the control box leases short-lived push tokens with it) and provisions the VPS. You need [`agentbox hetzner login`](/docs/hetzner) first.
 
 ```bash
-agentbox control-plane setup                 # create the App, then deploy (pick Hetzner)
+agentbox hub setup                 # create the App, then deploy (pick Hetzner)
 ```
 
 Already have the App from a previous run? Deploy (or redeploy) the control box directly:
 
 ```bash
-agentbox control-plane deploy hetzner        # reuses ~/.agentbox/control-plane creds
+agentbox hub deploy hetzner        # reuses ~/.agentbox/control-plane creds
 ```
 
 This provisions a small VPS, installs the hub over Docker + Caddy, and serves it at **`https://<ip>.sslip.io`** with an automatic Let's Encrypt certificate — no DNS to configure. A persistent volume holds the hub's state (SQLite store, logins, custody, box SSH keys), so the hub and its create queue **survive a VPS reboot**. The deploy also records **your laptop's egress IP** (so a hetzner box the control box creates still allows direct SSH from you), points your CLI at it (`relay.controlPlaneUrl`), and prompts for a web-UI admin email + password.
@@ -37,13 +37,13 @@ The control box's resident worker provisions boxes with **your provider credenti
 
 **1. At deploy time (automatic).** Configure the provider on your laptop the normal way first (e.g. `agentbox daytona login`, which writes to `~/.agentbox/secrets.env`), then deploy — the deploy copies a **filtered** set of provider keys into the VPS (never the whole file):
 
-`HCLOUD_TOKEN` · `E2B_API_KEY` · `DAYTONA_API_KEY` / `DAYTONA_JWT_TOKEN` / `DAYTONA_ORG_ID` · `VERCEL_TOKEN` / `VERCEL_TEAM_ID` / `VERCEL_PROJECT_ID` · `DIGITALOCEAN_TOKEN` / `DIGITALOCEAN_API_URL`
+`HCLOUD_TOKEN` · `E2B_API_KEY` · `DAYTONA_API_KEY` / `DAYTONA_JWT_TOKEN` / `DAYTONA_ORGANIZATION_ID` · `VERCEL_TOKEN` / `VERCEL_TEAM_ID` / `VERCEL_PROJECT_ID` · `DIGITALOCEAN_TOKEN` (plus any endpoint/region overrides you set — `HCLOUD_ENDPOINT`, `E2B_DOMAIN`, `DAYTONA_API_URL` / `DAYTONA_TARGET`, `DIGITALOCEAN_API_URL`)
 
 **2. After deploy, in-place (web UI).** The dashboard → **Settings** → the provider's credential form (token/key fields). This writes to the VPS's own `~/.agentbox/secrets.env` and the worker picks it up live — so you can add or rotate a provider on a running control box without redeploying.
 
 <Callout type="warn" title="Vercel needs a real token">Vercel has two auth modes. A **CLI login** (`agentbox vercel login` interactively) keeps the access token in the Vercel CLI's own store, **not** in `secrets.env` — so it can't travel to a headless server. For the control box, give Vercel a real **access token**: either set a `VERCEL_TOKEN` (+ team/project) in your host `secrets.env` before deploying, or paste one into the control box's **Settings** form. Token-based providers (DigitalOcean, E2B, Hetzner, Daytona) travel automatically.</Callout>
 
-<Callout type="info" title="Daytona / E2B / Hetzner need a base snapshot">Providers that boot from a baked base (e2b template, hetzner snapshot, daytona snapshot) read a `~/.agentbox/<provider>-prepared.json` to know the base id. The deploy doesn't ship those yet — if a create fails on a missing base/template, copy the file up once: `scp -i ~/.agentbox/control-plane/ssh/<stamp>/id_ed25519 ~/.agentbox/daytona-prepared.json root@<vps-ip>:/opt/agentbox/hub-data/`.</Callout>
+<Callout type="info" title="Daytona / E2B / Hetzner need a base snapshot">Providers that boot from a baked base (e2b template, hetzner snapshot, daytona snapshot) read a `~/.agentbox/<provider>-prepared.json` to know the base id. The deploy **shares your local bake records** with the control box, and it adopts one automatically **when its build context matches** the control box's version — so a matching deploy needs no re-bake. If the control box runs a *different* AgentBox version than the one you baked with, the fingerprints differ and the shared record is (correctly) ignored; a create then fails with "run `agentbox prepare` first". Until the control box can self-bake, the workaround is to re-bake locally on the same version first, or copy the record up: `scp -i ~/.agentbox/control-plane/ssh/<stamp>/id_ed25519 ~/.agentbox/daytona-prepared.json root@<vps-ip>:/opt/agentbox/hub-data/`.</Callout>
 
 ## What runs where — and what the control box can drive
 
@@ -64,7 +64,7 @@ The web-UI create needs a **repo checkout on the VPS** for the worker to build f
 1. In the dashboard, **Add project** and point it at a repo path **on the control box** — clone it there first (`git clone <repo>` on the VPS, or into the projects volume).
 2. **Create box** → pick a provider (e.g. E2B) and agent → **Create box**. The resident worker provisions the sandbox, starts the agent detached, and it appears in the dashboard with live status. Nothing runs on your laptop.
 
-<Callout type="info" title="A PC-created box's project isn't enough to Create from the UI">A box you spawned from your PC registers on the control box as a project you can **see and manage**, but its "Create box" button has no VPS checkout behind it — so use **Add project** (clone on the VPS) to originate new boxes from the browser. Authorize the repo on the App too (`agentbox control-plane add`, or the dashboard's install link) so leases work.</Callout>
+<Callout type="info" title="A PC-created box's project isn't enough to Create from the UI">A box you spawned from your PC registers on the control box as a project you can **see and manage**, but its "Create box" button has no VPS checkout behind it — so use **Add project** (clone on the VPS) to originate new boxes from the browser. Authorize the repo on the App too (`agentbox hub add`, or the dashboard's install link) so leases work.</Callout>
 
 ## Create a box from your laptop — that runs with the laptop off
 
@@ -85,7 +85,7 @@ agentbox create --provider e2b --via-hub   # force the control box (even if clou
 agentbox create --provider e2b --local     # force a local build on this machine
 ```
 
-<Callout type="info" title="Which creates route to the control box">Only **cloud** creates default to the control box, and only when one is configured — this covers `create`, foreground `claude`/`codex`/`opencode`, and background `-i` runs alike. Set **`cloud.viaHub=false`** (or pass `--local`) to keep building cloud boxes on your PC. Docker / remote-docker always build locally. A missing prerequisite (no git `origin`, no admin token) falls back to a local build with a notice. A background `-i` run needs the agent's login in custody (`agentbox control-plane credentials push`) so the control box can start it — if it's missing or stale, the job **fails with a clear "credentials rejected" message and the box id preserved**, so you can attach and re-login.</Callout>
+<Callout type="info" title="Which creates route to the control box">Only **cloud** creates default to the control box, and only when one is configured — this covers `create`, foreground `claude`/`codex`/`opencode`, and background `-i` runs alike. Set **`cloud.viaHub=false`** (or pass `--local`) to keep building cloud boxes on your PC. Docker / remote-docker always build locally. A missing prerequisite (no git `origin`, no admin token) falls back to a local build with a notice. A background `-i` run needs the agent's login in custody (`agentbox hub credentials push`) so the control box can start it — if it's missing or stale, the job **fails with a clear "credentials rejected" message and the box id preserved**, so you can attach and re-login.</Callout>
 
 Now the payoff — the box pushes on its own, with your laptop fully off:
 
@@ -141,7 +141,7 @@ The control box's worker clones your repo with a leased GitHub-App token, so it 
 Creating a cloud box from your laptop pushes the seed automatically. To register a project before creating a box from it — so a web-UI create has the files it needs:
 
 ```bash
-agentbox control-plane project push
+agentbox hub project push
 ```
 
 Re-pushes are hash-skipped: an unchanged working tree uploads nothing. When the control box creates a box, it overlays the seed onto the fresh clone — the **clone wins** on any conflict, so a file that has since been committed keeps the repo's version, and the job log records how old the seed is.
@@ -154,11 +154,11 @@ here; they stay on your laptop.
 
 ```bash
 agentbox relay status                              # shows the configured control box + reachability
-agentbox control-plane boxes list                  # boxes on the control box (from either side)
-agentbox control-plane boxes start|stop|pause|resume <box>   # drive one remotely (laptop can be off)
-agentbox control-plane boxes rm <box>              # destroy it (cloud resource + control-box state)
-agentbox control-plane prompts list                # pending host-action approvals
-agentbox control-plane prompts answer <id> y       # answer one (also answerable in the web UI)
+agentbox hub boxes list                  # boxes on the control box (from either side)
+agentbox hub boxes start|stop|pause|resume <box>   # drive one remotely (laptop can be off)
+agentbox hub boxes rm <box>              # destroy it (cloud resource + control-box state)
+agentbox hub prompts list                # pending host-action approvals
+agentbox hub prompts answer <id> y       # answer one (also answerable in the web UI)
 ```
 
 `boxes rm` now performs a **real destroy** — it tears down the cloud sandbox and reaps the control
@@ -187,10 +187,10 @@ Custody is the control box's copy of what a box needs. Two kinds travel by diffe
 - **Agent logins** (Claude / Codex / OpenCode) — the *box's* logins, so hub-created boxes are signed in. This is what `credentials push` moves.
 
 ```bash
-agentbox control-plane credentials push        # host agent logins → custody (hub boxes log in)
-agentbox control-plane credentials pull         # custody → ~/.agentbox backups (e.g. a box refreshed a token)
-agentbox control-plane secrets push [--project]  # a project's .env → custody
-agentbox control-plane custody list [prefix]   # manifest (paths + hashes; values never leave the box)
+agentbox hub credentials push        # host agent logins → custody (hub boxes log in)
+agentbox hub credentials pull         # custody → ~/.agentbox backups (e.g. a box refreshed a token)
+agentbox hub secrets push [--project]  # a project's .env → custody
+agentbox hub custody list [prefix]   # manifest (paths + hashes; values never leave the box)
 ```
 
 Re-run `credentials push` after `agentbox claude login` refreshes a login — that's what a subsequently-created hub box signs in with. Uploads are content-hashed, so an unchanged push sends nothing.

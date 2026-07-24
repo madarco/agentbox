@@ -40,7 +40,7 @@ the logged-in browser session **or** a headless **API key** as the same
 call the remote hub without a cookie:
 
 ```bash
-# the key is minted + recorded by `agentbox control-plane setup`/deploy
+# the key is minted + recorded by `agentbox hub setup`/deploy
 KEY=$(grep '^AGENTBOX_HUB_API_KEY=' ~/.agentbox/control-plane/control-plane.env | cut -d= -f2)
 curl -H "Authorization: Bearer $KEY" https://<your-control-box>/api/v1/boxes
 ```

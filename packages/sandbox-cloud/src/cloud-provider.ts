@@ -1161,7 +1161,7 @@ export function createCloudProvider(
                   if (seed?.unreachable) {
                     log(
                       'WARN: control box unreachable — this project\'s seed material (untracked files + env) was NOT stored. ' +
-                        'Boxes created from the hub will miss them until you run `agentbox control-plane project push`.',
+                        'Boxes created from the hub will miss them until you run `agentbox hub project push`.',
                     );
                   }
                 }

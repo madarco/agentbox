@@ -406,7 +406,7 @@ export interface ApplyProjectSeedResult {
  * Overlay a project's seed material onto a fresh clone at `dest`.
  *
  * Shared by every create worker — the resident hub worker (which reads its own
- * custody store directly) and the laptop `control-plane worker` (which reads it
+ * custody store directly) and the laptop `hub worker` (which reads it
  * over HTTP) — so both apply the same rules. The blob source is injected
  * precisely so neither has to reimplement this.
  *

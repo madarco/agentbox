@@ -9,6 +9,22 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [Unreleased]
+
+### Changed
+
+- The hosted-hub commands moved from `agentbox control-plane *` into the one
+  `agentbox hub *` group (`hub setup`/`deploy`/`boxes`/`prompts`/`credentials`/
+  `custody`/…). `agentbox hub status` now reports the configured remote control
+  box when one is set, else the local hub process.
+
+### Fixed
+
+- `agentbox hub deploy hetzner` now migrates the Daytona JWT org id to the
+  control box under its correct key (`DAYTONA_ORGANIZATION_ID`, was
+  `DAYTONA_ORG_ID`), and also carries provider endpoint/region overrides — so a
+  JWT-mode Daytona (or custom-endpoint) provider works on the control box.
+
 ## [0.27.0] - 2026-07-16
 
 ### Added

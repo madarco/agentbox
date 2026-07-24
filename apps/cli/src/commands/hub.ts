@@ -6,7 +6,7 @@ import { hostOpenCommand } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { handleLifecycleError } from './_errors.js';
 import { rehydrateFromState } from './relay.js';
-import { resolveCustodyTarget } from './control-plane.js';
+import { resolveCustodyTarget, controlPlaneSubcommands, probeControlPlaneStatus } from './control-plane.js';
 import { loadControlPlaneEnv } from '../control-plane/env-file.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
 import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
@@ -69,6 +69,7 @@ export async function resolveHubTarget(urlFlag?: string): Promise<HubTarget> {
 }
 
 interface StatusOpts {
+  url?: string;
   json?: boolean;
 }
 
@@ -89,10 +90,31 @@ function renderStatus(s: HubStatus): string {
 }
 
 const statusSub = new Command('status')
-  .description('Show whether the hub (relay + Web UI) is running, with its URL')
-  .option('--json', 'emit HubStatus as JSON')
+  .description(
+    'Show hub status — the remote control box (reachability + box/event counts) when one is configured, else the local hub process',
+  )
+  .option('--url <url>', 'probe this control-plane URL as the remote hub (default: relay.controlPlaneUrl)')
+  .option('--json', 'emit status as JSON')
   .action(async (opts: StatusOpts) => {
     try {
+      const target = await resolveHubTarget(opts.url);
+      // Remote (a control box is configured, or --url given): probe its /healthz.
+      if (target.mode === 'remote') {
+        const st = await probeControlPlaneStatus(target.url);
+        if (opts.json) {
+          process.stdout.write(JSON.stringify(st) + '\n');
+          return;
+        }
+        process.stdout.write(
+          [
+            `hub: remote (${st.healthy ? 'reachable' : 'UNREACHABLE'})`,
+            `  url:    ${st.url}`,
+            `  health: ${st.detail}`,
+          ].join('\n') + '\n',
+        );
+        return;
+      }
+      // Local: introspect the hub daemon process on this machine.
       const s = await getHubStatus();
       if (opts.json) {
         process.stdout.write(JSON.stringify(s, null, 2) + '\n');
@@ -120,7 +142,7 @@ const targetSub = new Command('target')
       const tokenNote = t.token
         ? 'present'
         : t.mode === 'remote'
-          ? '(none — set AGENTBOX_HUB_API_KEY, or run `agentbox control-plane setup`)'
+          ? '(none — set AGENTBOX_HUB_API_KEY, or run `agentbox hub setup`)'
           : '(none — start the hub with `agentbox hub`)';
       process.stdout.write([`hub: ${t.mode}`, `  url:   ${t.url}`, `  token: ${tokenNote}`].join('\n') + '\n');
     } catch (err) {
@@ -197,7 +219,7 @@ const restartSub = new Command('restart')
 
 const pullSub = new Command('pull')
   .description("Download a control-box-created box's SSH keys so this PC can attach / port-forward / cp to it")
-  .argument('<box>', 'box id or name as shown by `agentbox control-plane boxes list`')
+  .argument('<box>', 'box id or name as shown by `agentbox hub boxes list`')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .action(async (box: string, opts: { url?: string }) => {
     try {
@@ -229,7 +251,7 @@ const adoptSub = new Command('adopt')
   .description(
     "Rebuild local state for a control-box-created box so it resolves by name here: writes its BoxRecord and downloads its SSH keys. After this it shows in `agentbox ls` and works with attach / cp / url / screen.",
   )
-  .argument('<box>', 'box id, name, or sandbox id as shown by `agentbox control-plane boxes list`')
+  .argument('<box>', 'box id, name, or sandbox id as shown by `agentbox hub boxes list`')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .action(async (box: string, opts: { url?: string }) => {
     try {
@@ -259,7 +281,7 @@ const adoptSub = new Command('adopt')
       }
     } catch (err) {
       if (err instanceof HubBoxNotFoundError) {
-        log.error(`${err.message}. Run \`agentbox control-plane boxes list\` to see what's there.`);
+        log.error(`${err.message}. Run \`agentbox hub boxes list\` to see what's there.`);
         process.exitCode = 1;
         return;
       }
@@ -269,8 +291,9 @@ const adoptSub = new Command('adopt')
 
 export const hubCommand = new Command('hub')
   .description(
-    'Run the AgentBox hub — the relay + Web UI on http://127.0.0.1:8787 ' +
-      '(also https://agentbox.localhost when Portless is installed)',
+    'Run + manage the AgentBox hub — the local relay + Web UI on http://127.0.0.1:8787 ' +
+      '(also https://agentbox.localhost when Portless is installed), and the remote control box ' +
+      '(setup, deploy, boxes, prompts, credentials, custody)',
   )
   .addCommand(startSub, { isDefault: true })
   .addCommand(statusSub)
@@ -279,3 +302,8 @@ export const hubCommand = new Command('hub')
   .addCommand(restartSub)
   .addCommand(pullSub)
   .addCommand(adoptSub);
+
+// Fold the remote-hub admin subcommands (setup/deploy/set-url/add/worker/
+// credentials/secrets/project/custody/boxes/prompts) into the one `hub` group —
+// there is no separate `control-plane` command. All surfaced (not hidden).
+for (const sub of controlPlaneSubcommands) hubCommand.addCommand(sub);

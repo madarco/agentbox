@@ -435,29 +435,44 @@ The **menu-bar app is versioned and released separately from the CLI**, so an ap
 
 `hub` runs the **AgentBox hub** — the host relay plus a local Web UI (dashboard, box detail, live approvals) at `https://agentbox.localhost` (registered by [Portless](https://portless.sh); it falls back to `http://127.0.0.1:8787` when Portless isn't in play), gated by a per-machine token. Start it with the command rather than by typing the URL: `agentbox hub` opens the page with the token, which the hub then remembers in a cookie. It's a superset of the relay on the same port: `agentbox hub` takes over from a bare relay, and normal box commands reuse it. Needs Node ≥ 22.5.
 
-## Control plane
+## Deployed hub (control box)
+
+The **same `agentbox hub` group** also sets up and drives a *remote* hub — a full hub deployed on a VPS as your always-on control box. When one is configured, `agentbox hub status` reports it (reachability + box/event counts) instead of the local process, and cloud creates route to it by default (see [Deployed hub](/docs/deployed-hub)).
 
 ```bash
-# Create the GitHub App, deploy the plane, and point the CLI at it
-agentbox control-plane setup
-agentbox control-plane setup --deploy hetzner   # or vercel | none (non-interactive)
-agentbox control-plane setup --deploy vercel --ref main   # auto-forks via gh if you don't own the repo
+# Create the GitHub App, deploy the hub, and point the CLI at it
+agentbox hub setup
+agentbox hub setup --deploy hetzner   # or vercel | none (non-interactive)
+agentbox hub setup --deploy vercel --ref main   # auto-forks via gh if you don't own the repo
+agentbox hub deploy hetzner           # deploy a full hub to a new VPS, reusing the setup creds
 
-# Authorize the current project's repo on the plane's GitHub App
-agentbox control-plane add
+# Authorize the current project's repo on the hub's GitHub App
+agentbox hub add
 
-# Point boxes + the CLI at an already-deployed plane (sets relay.controlPlaneUrl)
-agentbox control-plane set-url https://<your-plane-url>
+# Point boxes + the CLI at an already-deployed hub (sets relay.controlPlaneUrl)
+agentbox hub set-url https://<your-hub-url>
 
-# Check whether the configured plane is reachable
-agentbox control-plane status
+# Status of the configured remote hub (or the local hub when none is set)
+agentbox hub status
+
+# Drive the control box remotely (laptop can be off)
+agentbox hub boxes list
+agentbox hub boxes start|stop|pause|resume|rm <box>
+agentbox hub prompts list
+agentbox hub prompts answer <id> y
+
+# Seed material into the control box's custody store
+agentbox hub credentials push        # host agent logins → custody (hub boxes log in)
+agentbox hub secrets push [--project] # a project's .env → custody
+agentbox hub project push             # untracked files + env → custody
+agentbox hub custody list [prefix]    # manifest (paths + hashes)
 
 # Drain the box-creation queue and provision boxes (long-running worker)
-agentbox control-plane worker --store "$POSTGRES_URL"
-agentbox control-plane worker --store "$POSTGRES_URL" --once
+agentbox hub worker --store "$POSTGRES_URL"
+agentbox hub worker --store "$POSTGRES_URL" --once
 ```
 
-The optional control plane is a hosted service (Next.js + Postgres) that holds the centralized concerns — git-token leasing via a GitHub App, permission state, the box registry/events — so cloud boxes keep pushing and opening PRs with your laptop off. `setup` creates the GitHub App, deploys the plane **from GitHub** (Vercel or a Hetzner VPS at `https://<ip>.sslip.io`; `--repo`/`--ref` choose the source, default `madarco/agentbox`@`main`), and wires `relay.controlPlaneUrl`; `add` authorizes a repo on the App; `set-url` points boxes at an existing deployment; `worker` provisions boxes from the plane's queue. For Vercel, AgentBox auto-forks via `gh` (or the Deploy Button forks in-browser) so you don't need to own the repo; Hetzner clones it on the VPS so no ownership is needed either.
+The deployed hub is a full hub (Next.js + Postgres/SQLite) that holds the centralized concerns — git-token leasing via a GitHub App, permission state, the box registry/events — so cloud boxes keep pushing and opening PRs with your laptop off. `setup` creates the GitHub App, deploys the hub **from GitHub** (Vercel or a Hetzner VPS at `https://<ip>.sslip.io`; `--repo`/`--ref` choose the source, default `madarco/agentbox`@`main`), and wires `relay.controlPlaneUrl`; `add` authorizes a repo on the App; `set-url` points boxes at an existing deployment; `boxes`/`prompts` drive it from the PC; `credentials`/`secrets`/`project`/`custody` seed its custody store; `worker` provisions boxes from the hub's queue. For Vercel, AgentBox auto-forks via `gh` (or the Deploy Button forks in-browser) so you don't need to own the repo; Hetzner clones it on the VPS so no ownership is needed either.
 
 <Callout type="warn" title="HEADS UP">`agentbox queue cancel` only cancels *queued* jobs — a job that's already running is not killed; destroy its box (`agentbox destroy <box>`) to stop it. And `prune --all` removes docker containers, volumes, and snapshots — run `--dry-run` first.</Callout>
 
