@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { drainCreateJobs, drainOneCreateJob } from '../src/create-worker.js';
+import { cloneRepoWithLfs, drainCreateJobs, drainOneCreateJob } from '../src/create-worker.js';
 import { handleRelayRequest, type ControlPlaneDeps } from '../src/core/handler.js';
 import { MemoryStore } from '../src/store/memory-store.js';
 import type { CreateJobRequest } from '../src/store/store.js';
@@ -110,5 +110,58 @@ describe('box-create flow', () => {
   it('drains nothing when the queue is empty', async () => {
     const store = new MemoryStore();
     expect(await drainOneCreateJob(store, () => Promise.resolve({ boxId: 'x' }), 'w1')).toBeNull();
+  });
+});
+
+describe('cloneRepoWithLfs', () => {
+  interface Call {
+    args: string[];
+    env?: Record<string, string>;
+  }
+
+  it('clones with LFS smudge skipped, fetches LFS over forced HTTPS, then scrubs the token', async () => {
+    const calls: Call[] = [];
+    const runGit = (args: string[], env?: Record<string, string>): Promise<void> => {
+      calls.push({ args, env });
+      return Promise.resolve();
+    };
+    await cloneRepoWithLfs(runGit, 'https://x-access-token:tok@github.com/o/r.git', 'https://github.com/o/r.git', '/tmp/d', 'main');
+    // 1) clone --branch with GIT_LFS_SKIP_SMUDGE so an LFS repo never hard-fails.
+    expect(calls[0]!.args).toEqual([
+      'clone',
+      '--branch',
+      'main',
+      'https://x-access-token:tok@github.com/o/r.git',
+      '/tmp/d',
+    ]);
+    expect(calls[0]!.env?.GIT_LFS_SKIP_SMUDGE).toBe('1');
+    // 2) `lfs pull` with lfs.url FORCED to the authed HTTPS endpoint (the embedded
+    //    token authenticates + dodges any insteadOf SSH rewrite).
+    expect(calls[1]!.args).toEqual([
+      '-C',
+      '/tmp/d',
+      '-c',
+      'lfs.url=https://x-access-token:tok@github.com/o/r.git/info/lfs',
+      'lfs',
+      'pull',
+    ]);
+    // 3) scrub the leased token → bare origin.
+    expect(calls[2]!.args).toEqual(['-C', '/tmp/d', 'remote', 'set-url', 'origin', 'https://github.com/o/r.git']);
+  });
+
+  it('still scrubs the token when the LFS pull fails (pointers left in place)', async () => {
+    const calls: Call[] = [];
+    const logs: string[] = [];
+    const runGit = (args: string[]): Promise<void> => {
+      calls.push({ args });
+      // Fail only the LFS pull (e.g. the control box can't auth the LFS transport).
+      if (args.includes('lfs')) return Promise.reject(new Error('smudge error: ssh_askpass'));
+      return Promise.resolve();
+    };
+    await cloneRepoWithLfs(runGit, 'authed', 'bare', '/tmp/d', undefined, (l) => logs.push(l));
+    // clone (no --branch), lfs pull (failed), set-url still ran.
+    expect(calls[0]!.args).toEqual(['clone', 'authed', '/tmp/d']);
+    expect(calls[2]!.args).toEqual(['-C', '/tmp/d', 'remote', 'set-url', 'origin', 'bare']);
+    expect(logs.join('\n')).toMatch(/pointers/i);
   });
 });

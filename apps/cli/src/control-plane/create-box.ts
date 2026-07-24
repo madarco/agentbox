@@ -4,4 +4,4 @@
  * worker` command and the resident hub worker can build a `CreateBoxFn` from it
  * (an app can't import another app). Re-exported here for the CLI's callers.
  */
-export { makeControlPlaneCreateBox, type CreateBoxDeps } from '@agentbox/relay';
+export { makeControlPlaneCreateBox, cloneRepoWithLfs, type CreateBoxDeps } from '@agentbox/relay';

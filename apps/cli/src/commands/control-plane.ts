@@ -29,7 +29,7 @@ import {
 } from '@agentbox/relay';
 import { randomBytes } from 'node:crypto';
 import { providerForCreate } from '../provider/registry.js';
-import { makeControlPlaneCreateBox } from '../control-plane/create-box.js';
+import { makeControlPlaneCreateBox, cloneRepoWithLfs } from '../control-plane/create-box.js';
 import { runGitHubAppManifestFlow } from '../control-plane/github-app-manifest.js';
 import { deployControlPlaneToVercel } from '../control-plane/deploy-vercel.js';
 import { runHetznerDeploy } from '../control-plane/deploy-hetzner.js';
@@ -408,15 +408,24 @@ const addSub = new Command('add')
   });
 
 /** Run `git <args>`, rejecting on a non-zero exit. */
-function runGit(args: string[]): Promise<void> {
+function runGit(args: string[], env?: Record<string, string>, timeoutMs?: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn('git', args, {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: env ? { ...process.env, ...env } : process.env,
+    });
+    const timer = timeoutMs ? setTimeout(() => child.kill('SIGKILL'), timeoutMs) : undefined;
     let err = '';
     child.stderr.on('data', (c: Buffer) => (err += c.toString('utf8')));
-    child.on('error', reject);
-    child.on('close', (code) =>
-      code === 0 ? resolve() : reject(new Error(`git ${args[0]} failed (${String(code)}): ${err.trim()}`)),
-    );
+    child.on('error', (e) => {
+      if (timer) clearTimeout(timer);
+      reject(e);
+    });
+    child.on('close', (code) => {
+      if (timer) clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`git ${args[0]} failed (${String(code)}): ${err.trim()}`));
+    });
   });
 }
 
@@ -455,11 +464,8 @@ const workerSub = new Command('worker')
           const { token } = await leaser.leaseRepoToken(owner, repo);
           return toAuthedHttpsUrl(repoUrl, token);
         },
-        cloneRepo: async (authedUrl, repoUrl, dest, branch) => {
-          await runGit(branch ? ['clone', '--branch', branch, authedUrl, dest] : ['clone', authedUrl, dest]);
-          // Scrub the leased token: leave the box pointing at the bare origin.
-          await runGit(['-C', dest, 'remote', 'set-url', 'origin', repoUrl]);
-        },
+        cloneRepo: (authedUrl, repoUrl, dest, branch) =>
+          cloneRepoWithLfs(runGit, authedUrl, repoUrl, dest, branch, (line) => log.info(line)),
         createBox: async ({ workspacePath, name, provider, agent, onLog }) => {
           const p = await providerForCreate({ flag: provider, config: cfg.effective });
           const created = await p.create({

@@ -71,6 +71,66 @@ export interface CreateBoxDeps {
   log?: (line: string) => void;
 }
 
+/** Runs `git <args>` with optional extra env + timeout; rejects on non-zero. */
+export type CloneRepoRunGit = (
+  args: string[],
+  env?: Record<string, string>,
+  timeoutMs?: number,
+) => Promise<void>;
+
+/** The GitHub/GitLab-convention LFS API endpoint for a clone URL: `<repo>.git/info/lfs`. */
+function lfsEndpointFor(cloneUrl: string): string {
+  return `${cloneUrl.replace(/\.git$/, '')}.git/info/lfs`;
+}
+
+/**
+ * Clone `authedUrl` into `dest` robustly against **git-LFS**. A worker (control
+ * box / laptop) clones with a leased token, and LFS reuses that token over HTTPS
+ * (the standard CI path — verified). But the worker's git environment can resolve
+ * an *SSH* LFS batch endpoint — e.g. a `git@github.com: insteadOf` rewrite (the
+ * git-identity seeding configures such rewrites) makes git-lfs try SSH — and then
+ * it hard-fails the create at the smudge step (`ssh_askpass ... Host key
+ * verification failed`). To make the LFS fetch deterministic over HTTPS:
+ *  1. clone with `GIT_LFS_SKIP_SMUDGE=1` — the checkout comes down with LFS
+ *     **pointer files**, so the clone can't fail on LFS transport at all;
+ *  2. `git lfs pull` with `lfs.url` FORCED to the authed HTTPS endpoint — the
+ *     embedded `x-access-token:<token>@` userinfo both authenticates the fetch
+ *     AND dodges an `https://github.com/ → ssh` insteadOf rewrite (that prefix no
+ *     longer matches once the userinfo is present), so the real bytes come down
+ *     over HTTPS. Best-effort + non-interactive + timed: a token that genuinely
+ *     can't read LFS is left as pointers with a log line, not a failed create;
+ *  3. scrub the leased token from `origin` (leave the box on the bare repo URL).
+ *
+ * Shared by both worker impls (`apps/hub` resident worker, `apps/cli control-plane
+ * worker`) via an injected git-runner so it stays runtime-agnostic.
+ */
+export async function cloneRepoWithLfs(
+  runGit: CloneRepoRunGit,
+  authedUrl: string,
+  repoUrl: string,
+  dest: string,
+  branch?: string,
+  log: (line: string) => void = () => {},
+): Promise<void> {
+  await runGit(branch ? ['clone', '--branch', branch, authedUrl, dest] : ['clone', authedUrl, dest], {
+    GIT_LFS_SKIP_SMUDGE: '1',
+  });
+  // Fetch the real LFS bytes over the forced HTTPS endpoint (best-effort). A repo
+  // with no LFS makes this a fast no-op. `-c lfs.url` overrides remote/insteadOf
+  // resolution; the token is passed on the argv (ephemeral), never written to the
+  // box's config — origin is scrubbed to the bare URL below regardless.
+  try {
+    await runGit(
+      ['-C', dest, '-c', `lfs.url=${lfsEndpointFor(authedUrl)}`, 'lfs', 'pull'],
+      { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o StrictHostKeyChecking=no' },
+      120_000,
+    );
+  } catch (err) {
+    log(`git-lfs objects left as pointers (fetch failed): ${err instanceof Error ? err.message : String(err)}`);
+  }
+  await runGit(['-C', dest, 'remote', 'set-url', 'origin', repoUrl]);
+}
+
 /**
  * Build a {@link CreateBoxFn} from injected side-effecting steps: lease a push
  * token, clone the repo locally, provision the box from that checkout, clean up.
