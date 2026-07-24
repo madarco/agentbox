@@ -45,6 +45,7 @@ import { Command } from 'commander';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
 import { getRuntimeProviderNames } from '../provider/loaders.js';
 import { parseProviderSpec } from '../provider/spec.js';
+import { sharePreparedBase, tryAdoptPreparedBase } from '../control-plane/prepared-custody.js';
 
 interface PrepareOptions {
   provider?: string;
@@ -419,6 +420,30 @@ export async function runPrepare(
     providerName === 'remote-docker'
       ? remoteHost || cfg?.effective.box.remoteDockerHost || undefined
       : undefined;
+  // Before spending minutes on a bake, see whether the control box already
+  // baked this exact build context — a base is a provider-side snapshot any
+  // machine with the API key can boot, so there's no reason for both sides to
+  // build (and then disagree about) the same thing. `--force` means the user
+  // explicitly wants a fresh bake, so it skips the adoption.
+  if (!opts.force) {
+    const adopted = await tryAdoptPreparedBase({
+      provider,
+      providerName,
+      claudeInstall,
+      log: (line) => log.info(line),
+    });
+    if (adopted) {
+      log.success(
+        `${providerName}: adopted the control box's base — no bake needed (identical build context).`,
+      );
+      if (!opts.suppressStatus) {
+        process.stdout.write('\n');
+        await showStatus({ onlyProvider: providerName });
+      }
+      return;
+    }
+  }
+
   const sp = spinner();
   sp.start(`preparing ${providerName}…`);
   try {
@@ -489,6 +514,10 @@ export async function runPrepare(
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`could not migrate stale box.image (continuing): ${msg}`);
     }
+
+    // Share the fresh bake so the control box (and any other machine of yours)
+    // boots the same base instead of building its own.
+    await sharePreparedBase(providerName, (line) => log.info(line));
 
     if (!opts.suppressStatus) {
       process.stdout.write('\n');

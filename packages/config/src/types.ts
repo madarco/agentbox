@@ -190,6 +190,19 @@ export interface UserConfig {
      * (the default). Set via `agentbox control-plane set-url`.
      */
     controlPlaneUrl?: string;
+    /**
+     * Per-request body cap (bytes) for custody PUTs. Defaults to 32 MiB.
+     * Custody carries a project's untracked-files seed tarball, which the
+     * relay's 1 MiB control-plane body cap is far too small for; this is scoped
+     * to custody so every other route keeps that cap.
+     *
+     * Two sides enforce it independently: on a PC this governs how large a seed
+     * blob the client will try to upload, while a **control box** enforces its
+     * own cap from `AGENTBOX_CUSTODY_MAX_BODY_BYTES`. Raising only this one lets
+     * the client offer a blob the control box then refuses — the push drops that
+     * blob and continues, so raise both to actually admit a bigger seed.
+     */
+    custodyMaxBodyBytes?: number;
   };
   git?: {
     pushMode?: GitPushMode;
@@ -215,6 +228,7 @@ export interface UserConfig {
   };
   cloud?: {
     useCurrentBranch?: boolean;
+    viaHub?: boolean;
   };
   maintenance?: {
     pruneProjectConfigs?: boolean;
@@ -349,6 +363,7 @@ export interface EffectiveConfig {
   relay: {
     port: number;
     controlPlaneUrl: string | undefined;
+    custodyMaxBodyBytes: number;
   };
   git: {
     pushMode: GitPushMode;
@@ -374,6 +389,7 @@ export interface EffectiveConfig {
   };
   cloud: {
     useCurrentBranch: boolean;
+    viaHub: boolean;
   };
   maintenance: {
     pruneProjectConfigs: boolean;
@@ -538,6 +554,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   relay: {
     port: 8787,
     controlPlaneUrl: undefined,
+    custodyMaxBodyBytes: 32 * 1024 * 1024,
   },
   git: {
     pushMode: 'auto',
@@ -563,6 +580,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   cloud: {
     useCurrentBranch: false,
+    viaHub: true,
   },
   maintenance: {
     pruneProjectConfigs: true,
@@ -972,6 +990,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
       'Public HTTPS URL of a deployed control plane (hosted Next.js + Postgres app). When set, new cloud boxes point at it for git-token leasing, permission state, and the box registry/events, and push to GitHub directly with a leased token so they keep working with the laptop off. Set via `agentbox control-plane set-url`.',
   },
   {
+    key: 'relay.custodyMaxBodyBytes',
+    type: 'int',
+    description:
+      "Per-request body cap (bytes) for custody PUTs (default 33554432 = 32 MiB). Custody carries a project's untracked-files seed tar, which the relay's 1 MiB control-plane body cap is too small for; this cap applies only to custody, so every other relay route keeps the smaller one. On a PC it governs how large a seed blob the client will upload; a control box enforces its own cap via AGENTBOX_CUSTODY_MAX_BODY_BYTES, so raise both to admit a bigger seed (a blob the control box refuses is dropped and the rest of the seed still pushes).",
+    advanced: true,
+  },
+  {
     key: 'git.pushMode',
     type: 'enum',
     enumValues: ['auto', 'relay', 'lease', 'direct'] as const,
@@ -1051,6 +1076,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'bool',
     description:
       "On cloud providers (daytona/hetzner), start new boxes on the host's current branch instead of forking a new agentbox/<box-name> branch. Overridden by an explicit --use-branch / --from-branch.",
+  },
+  {
+    key: 'cloud.viaHub',
+    type: 'bool',
+    description:
+      'When a control box is configured (relay.controlPlaneUrl), create cloud boxes ON the control box by default instead of on this machine (so they keep running with the laptop off). On by default; set false to always build cloud boxes locally. Overridden per-command by --via-hub / --local. Docker and remote-docker always build locally regardless.',
   },
   {
     key: 'maintenance.pruneProjectConfigs',

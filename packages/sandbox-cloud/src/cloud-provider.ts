@@ -38,10 +38,12 @@ import type {
 } from '@agentbox/core';
 import {
   allocateProjectIndex,
+  DEFAULT_ENV_PATTERNS,
   describeInbound,
   detectGitRepos,
   makeSyncContext,
   parseInboundSpec,
+  projectSlugFromOriginUrl,
   readCliStamp,
   readState,
   recordBox,
@@ -80,6 +82,21 @@ import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './
 import { kickCloudBootstrap } from './bootstrap-launch.js';
 import { readGitOriginUrl, registerBoxWithPlane } from './plane-register.js';
 import { pushBoxSshToCustody } from './custody-ssh.js';
+import { pushProjectSeedToCustody } from './custody-seed.js';
+
+/**
+ * The env/secret patterns a box's custody seed should capture: exactly what
+ * THIS create seeded into the box — the wizard's explicit picks, plus
+ * `--with-env`'s defaults when that flag is on. Undefined when the box got no
+ * env files, so no env tar is pushed.
+ */
+function seedEnvPatterns(req: CreateBoxRequest): string[] | undefined {
+  const patterns = [
+    ...(req.envFilesToImport ?? []),
+    ...(req.withEnv ? DEFAULT_ENV_PATTERNS : []),
+  ];
+  return patterns.length > 0 ? patterns : undefined;
+}
 import { bashScript, quoteShellArgv } from './shell.js';
 import { seedGitCredentials } from './sync/git-identity.js';
 import { seedCloudWorkspace } from './sync/workspace-seed.js';
@@ -440,6 +457,9 @@ export function createCloudProvider(
         previewUrls: Object.keys(mergedPreviews).length > 0 ? mergedPreviews : undefined,
         relayPreviewUrl: relayPreview?.url ?? box.cloud?.relayPreviewUrl,
         relayPreviewToken: relayPreview?.token ?? box.cloud?.relayPreviewToken,
+        // A VPS IP can change across stop/start — take the live handle's value
+        // when the backend reports one, so the record + the plane stay accurate.
+        publicHost: h.publicHost ?? box.cloud?.publicHost,
         // reEnsureCloudBox only runs on a freshly-woken box (start/resume), so
         // the box is now running — persist it for the fast `agentbox list` path.
         lastState: 'running',
@@ -502,6 +522,14 @@ export function createCloudProvider(
             projectIndex: box.projectIndex,
             autoApproveHostActions: box.autoApproveHostActions,
             autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+            // Keep the adoption material fresh across resumes. The VM's public
+            // IP can change on a stop/start, so prefer the live handle's value
+            // over the persisted one.
+            publicHost: h.publicHost ?? box.cloud.publicHost,
+            image: box.cloud.image,
+            webPort: box.cloud.webPort,
+            agent: box.lastAgent,
+            projectSlug: projectSlugFromOriginUrl(originUrl) ?? undefined,
           });
         } catch {
           // best-effort
@@ -1019,9 +1047,10 @@ export function createCloudProvider(
           : undefined;
 
         // Per-box host-action auto-approve policy (workspace > project > global).
-        const effectiveBoxForApprove = (
+        const effectiveForCreate = (
           await loadEffectiveConfig(req.projectRoot ?? req.workspacePath)
-        ).effective.box;
+        ).effective;
+        const effectiveBoxForApprove = effectiveForCreate.box;
         const autoApproveHostActions = effectiveBoxForApprove.autoApproveHostActions;
         const autoApproveSafeHostActions = effectiveBoxForApprove.autoApproveSafeHostActions;
 
@@ -1077,6 +1106,13 @@ export function createCloudProvider(
                 projectIndex,
                 autoApproveHostActions,
                 autoApproveSafeHostActions,
+                // Adoption material: everything a PC needs to rebuild this
+                // box's BoxRecord from the registration alone (`hub adopt`).
+                publicHost: handle.publicHost,
+                image,
+                webPort: wp,
+                agent: req.agent,
+                projectSlug: projectSlugFromOriginUrl(originUrl) ?? undefined,
               });
               // Reverse custody: a PC-created box that just registered on the
               // control box pushes its per-box SSH key up too, so the hub /
@@ -1088,6 +1124,48 @@ export function createCloudProvider(
                 sandboxId: handle.sandboxId,
                 log,
               }).catch(() => 0);
+              // Store this project's seed material (untracked files + env
+              // /secrets) so a LATER box created from the control box's web UI
+              // gets them too — its worker clones the repo with a leased token,
+              // which by definition can't carry the user's local state. Skipped
+              // for an in-box clone (no host working tree to capture) and
+              // hash-skipped, so an unchanged tree re-uploads nothing.
+              if (!req.inBoxClone) {
+                const slug = projectSlugFromOriginUrl(originUrl);
+                if (slug) {
+                  const seed = await pushProjectSeedToCustody({
+                    controlPlaneUrl: req.controlPlaneUrl,
+                    adminToken,
+                    slug,
+                    projectRoot: req.workspacePath,
+                    // Capture exactly the env set THIS box received — the
+                    // wizard's picks plus `--with-env`'s defaults — so a
+                    // hub-created box gets what a PC-created one got. Not
+                    // DEFAULT_ENV_PATTERNS unconditionally: that would ship
+                    // secrets the user deliberately declined to import.
+                    envPatterns: seedEnvPatterns(req),
+                    // Honour the configured cap, so raising it actually admits a
+                    // bigger seed instead of silently dropping the tar.
+                    maxBodyBytes: effectiveForCreate.relay.custodyMaxBodyBytes,
+                    log,
+                  }).catch((err: unknown) => {
+                    log(
+                      `seed push to custody failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+                    );
+                    return null;
+                  });
+                  // `unreachable` resolves rather than throwing, so the catch
+                  // above never sees it — without this the box comes up fine and
+                  // the user has no idea their project was never registered, until
+                  // a later web-UI create silently lacks their untracked files.
+                  if (seed?.unreachable) {
+                    log(
+                      'WARN: control box unreachable — this project\'s seed material (untracked files + env) was NOT stored. ' +
+                        'Boxes created from the hub will miss them until you run `agentbox control-plane project push`.',
+                    );
+                  }
+                }
+              }
             } catch (err) {
               log(
                 `register with control plane failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
@@ -1172,6 +1250,9 @@ export function createCloudProvider(
             // Real resources the backend reported (Hetzner: the plan's actual
             // cores/memory/disk). Absent → readers fall back to defaultResources.
             resources: handle.resources,
+            // Public VM IP (direct-SSH backends), so the resume re-registration
+            // and a PC's `hub adopt` can rebuild the SSH target without an API call.
+            publicHost: handle.publicHost,
             // Inbound-access policy the backend applied to the per-box firewall
             // (VPS providers). Persisted so drift re-syncs preserve the whitelist.
             inbound: handle.inbound,

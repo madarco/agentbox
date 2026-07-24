@@ -131,6 +131,14 @@ export interface CloudBoxFields {
    */
   resources?: { cpu?: number; memory?: number; disk?: number };
   /**
+   * Public IP/host of the box's VM (direct-SSH backends: hetzner /
+   * digitalocean), read from the provision response. Persisted so the plane
+   * re-registration on resume — and a PC adopting a hub-created box — can
+   * rebuild the SSH target without a provider API call. Absent for SDK-reached
+   * backends and pre-feature records.
+   */
+  publicHost?: string;
+  /**
    * Inbound-access policy for VPS boxes (hetzner / digitalocean per-box
    * firewall). Persisted so a host-egress-IP drift re-sync (`repairReachability`
    * / `agentbox inbound`) recomputes `sources ∪ current-host-egress` without

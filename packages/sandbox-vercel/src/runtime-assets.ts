@@ -16,18 +16,12 @@
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveStagedRuntimeRoot } from '@agentbox/sandbox-core';
 
 const SELF = dirname(fileURLToPath(import.meta.url));
 
 export function findStagedCliRuntimeRoot(): string | undefined {
-  const candidates = [
-    resolve(SELF, '..', 'runtime'),
-    resolve(SELF, '..', '..', 'runtime'),
-  ];
-  for (const c of candidates) {
-    if (existsSync(resolve(c, 'vercel', 'scripts', 'provision.sh'))) return c;
-  }
-  return undefined;
+  return resolveStagedRuntimeRoot(SELF, 'vercel/scripts/provision.sh');
 }
 
 export interface RuntimeAsset {

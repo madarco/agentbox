@@ -30,8 +30,10 @@ export {
   drainOneCreateJob,
   drainCreateJobs,
   makeControlPlaneCreateBox,
+  cloneRepoWithLfs,
   type CreateBoxFn,
   type CreateBoxDeps,
+  type CloneRepoRunGit,
 } from './create-worker.js';
 export { type CreateJobRequest, type CreateJobRow } from './store/store.js';
 export { toAuthedHttpsUrl, parseGitRemote, repoSlugFromRemote } from './git-pat.js';

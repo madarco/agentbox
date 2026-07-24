@@ -22,7 +22,7 @@ const cloudProvider = createCloudProvider(digitaloceanBackend, {
 export const digitaloceanProvider: Provider = {
   ...cloudProvider,
   prepare: prepareDigitalOceanProvider,
-  baseFingerprint: () => currentDigitalOceanBaseFingerprintLive(),
+  baseFingerprint: (claudeInstall) => currentDigitalOceanBaseFingerprintLive(claudeInstall),
 };
 
 /** Uniform surface the CLI provider loader resolves this package through. */

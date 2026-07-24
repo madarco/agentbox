@@ -13,6 +13,7 @@ import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { boxSshDirForProvider, defaultBoxSshDir } from '@agentbox/sandbox-core';
 import type { CustodyClient } from './custody-client.js';
 import type { ControlPlaneAdminClient } from './admin-client.js';
+import { matchRegistration } from './match-ref.js';
 
 export interface HubPullResult {
   /** The id the keys are stored under (sandboxId, or the box id as a fallback). */
@@ -40,12 +41,40 @@ export interface HubPullArgs {
  */
 export async function pullBoxSshKeys(args: HubPullArgs): Promise<HubPullResult> {
   const boxes = await args.admin.listBoxes();
-  const reg = boxes.find((b) => b.boxId === args.box || b.name === args.box);
+  // The SAME matcher adoption uses. Resolving refs differently here is not a
+  // cosmetic inconsistency: a ref this missed but adoption matched lost
+  // `provider` and fell back to `args.box` as the key — writing one box's keys
+  // into another id's on-disk dir and custody subtree.
+  const reg = matchRegistration(boxes, args.box);
   const key = reg?.sandboxId ?? reg?.boxId ?? args.box;
-  const provider = reg?.backend;
-  const dest = (provider ? boxSshDirForProvider(provider, key) : null) ?? defaultBoxSshDir(key);
+  const files = await downloadBoxSshKeys({
+    custody: args.custody,
+    provider: reg?.backend,
+    key,
+  });
+  return { key, dest: sshDestFor(reg?.backend, key), files, registered: reg !== undefined };
+}
 
-  const entries = await args.custody.list(`boxes/${key}/ssh`);
+/** The on-disk ssh dir for a box, provider-namespaced when the provider has one. */
+function sshDestFor(provider: string | undefined, key: string): string {
+  return (provider ? boxSshDirForProvider(provider, key) : null) ?? defaultBoxSshDir(key);
+}
+
+/**
+ * Download every file under custody `boxes/<key>/ssh/` into the box's on-disk
+ * ssh dir. Takes the ALREADY-RESOLVED provider + key rather than a ref, so a
+ * caller that has the registration in hand (adoption) can't re-resolve it
+ * differently — and doesn't pay for a second registry fetch.
+ */
+export async function downloadBoxSshKeys(args: {
+  custody: CustodyClient;
+  /** Backend name from the registration; undefined → the un-namespaced default dir. */
+  provider: string | undefined;
+  /** Sandbox id (the id both the ssh dir and the custody subtree are keyed by). */
+  key: string;
+}): Promise<string[]> {
+  const dest = sshDestFor(args.provider, args.key);
+  const entries = await args.custody.list(`boxes/${args.key}/ssh`);
   const files: string[] = [];
   if (entries.length > 0) await mkdir(dest, { recursive: true, mode: 0o700 });
   for (const e of entries) {
@@ -57,5 +86,5 @@ export async function pullBoxSshKeys(args: HubPullArgs): Promise<HubPullResult> 
     await chmod(out, 0o600);
     files.push(name);
   }
-  return { key, dest, files, registered: reg !== undefined };
+  return files;
 }

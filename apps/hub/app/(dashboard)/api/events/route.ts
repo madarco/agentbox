@@ -4,10 +4,12 @@
 // doubles as a catch-all refresh for box changes made outside the hub.
 //
 // This is a same-origin Next route gated by proxy.ts (the matcher excludes only
-// `api/auth`, not `api/events`), so the token/session cookie rides along. It is
-// NOT a relay route (the relay owns `/events` POST, not `/api/events`), so it
-// falls through to Next on the embedded server. On vercel there is no notifier —
-// the stream degrades to heartbeats only.
+// `api/auth`, not `api/events`), which auths it exactly like /api/v1: the browser
+// token/session cookie rides along, and a headless client (the tray against a
+// remote control box) subscribes with an Authorization: Bearer key. It is NOT a
+// relay route (the relay owns `/events` POST, not `/api/events`), so it falls
+// through to Next on the embedded server. On vercel there is no notifier — the
+// stream degrades to heartbeats only.
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 

@@ -157,6 +157,13 @@ export interface CloudHandle {
    * existed — `pause()` falls back to trying both.
    */
   sandboxClass?: string;
+  /**
+   * Public IP/host of the provisioned VM, for direct-SSH backends (hetzner,
+   * digitalocean). Registered on the control plane so a PC adopting the box
+   * can rebuild its SSH target without a provider API call. Omitted by
+   * SDK-reached backends (e2b/vercel/daytona).
+   */
+  publicHost?: string;
 }
 
 export type CloudState = 'running' | 'paused' | 'stopped' | 'missing';

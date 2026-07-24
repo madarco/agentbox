@@ -139,5 +139,11 @@ export {
   type PreparedBaseSnapshot,
   type PreparedProviderKind,
 } from './prepared-state.js';
+export {
+  RUNTIME_ROOT_ENV,
+  resolveStagedRuntimeRoot,
+  stagedRuntimeRootCandidates,
+} from './runtime-root.js';
 
 export { BOX_IMAGE_REGISTRY, registryRefForSha } from './box-registry.js';
+export { ownerRepoFromOriginUrl, projectSlugFromOriginUrl } from './project-slug.js';

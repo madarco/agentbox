@@ -105,7 +105,7 @@ export const vercelProvider: Provider = {
   prepare: prepareVercelProvider,
   buildAttach: buildVercelAttach,
   checkpoint: vercelCheckpoint,
-  baseFingerprint: () => currentVercelBaseFingerprintLive(),
+  baseFingerprint: (claudeInstall) => currentVercelBaseFingerprintLive(claudeInstall),
 };
 
 /** Uniform surface the CLI provider loader resolves this package through. */

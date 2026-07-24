@@ -113,12 +113,18 @@ describe('FsCustodyStore', () => {
 });
 
 describe('normalizeCustodyPath', () => {
-  it('strips leading/trailing slashes and accepts the three scopes', () => {
+  it('strips leading/trailing slashes and accepts every scope', () => {
     expect(normalizeCustodyPath('/agents/claude/.credentials.json/')).toBe(
       'agents/claude/.credentials.json',
     );
     expect(normalizeCustodyPath('projects/p/.env')).toBe('projects/p/.env');
     expect(normalizeCustodyPath('boxes/b/ssh/id_ed25519')).toBe('boxes/b/ssh/id_ed25519');
+    // Shared bake records: one per provider (see prepared-sync.ts).
+    expect(normalizeCustodyPath('prepared/hetzner.json')).toBe('prepared/hetzner.json');
+    // Project seed material a hub-created box needs (untracked files + env).
+    expect(normalizeCustodyPath('projects/o__r/seed/untracked.tar.gz')).toBe(
+      'projects/o__r/seed/untracked.tar.gz',
+    );
   });
 
   it('rejects too-deep, empty-segment, and dotdot paths', () => {

@@ -19,6 +19,7 @@ import { readJob, writeJob, type QueueJob } from '@agentbox/relay';
 import { openCommandLog } from '../lib/log-file.js';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
 import { parseProviderSpec } from '../provider/spec.js';
+import { sharePreparedBase, tryAdoptPreparedBase } from '../control-plane/prepared-custody.js';
 
 export const runQueuedPrepareCommand = new Command('_run-queued-prepare')
   .description('internal: run a queued provider image-bake job (do not invoke directly)')
@@ -91,6 +92,23 @@ async function runPrepareJob(
   // A `docker:<alias>` spec bakes that specific remote-docker host (the hub's
   // per-host bake). parseProviderSpec pulls the host out; other providers ignore it.
   const remoteHost = parseProviderSpec(providerName).remoteHost;
+
+  // A base is a provider-side snapshot any machine with the API key can boot,
+  // so if the control box's custody already holds one baked from this exact
+  // build context, adopt it instead of spending minutes re-baking it here.
+  if (!job.prepare?.force) {
+    const adopted = await tryAdoptPreparedBase({
+      provider,
+      providerName,
+      claudeInstall,
+      log: (l) => log.write(l),
+    });
+    if (adopted) {
+      log.write(`prepared ${providerName}: adopted a shared base (identical build context, no bake)`);
+      return;
+    }
+  }
+
   log.write(`baking ${providerName} (force=${String(job.prepare?.force ?? false)})`);
   const result = await provider.prepare({
     hostWorkspace: cwd,
@@ -123,4 +141,8 @@ async function runPrepareJob(
       );
     }
   }
+
+  // Share the fresh bake so the other side (PC ⇄ control box) boots this same
+  // base rather than building its own.
+  await sharePreparedBase(providerName, (l) => log.write(l));
 }

@@ -8,6 +8,13 @@ export {
   renderInnerCommand,
   type CreateCloudProviderOptions,
 } from './cloud-provider.js';
+export {
+  buildCloudAttachInnerCommand,
+  startDetachedCloudAgent,
+  startDetachedSession,
+  verifyDetachedSession,
+  type StartDetachedCloudAgentArgs,
+} from './detached-agent.js';
 export { kickCloudBootstrap, type KickCloudBootstrapArgs } from './bootstrap-launch.js';
 export {
   registerBoxWithPlane,
@@ -15,6 +22,28 @@ export {
   type RegisterBoxWithPlaneArgs,
 } from './plane-register.js';
 export { pushBoxSshToCustody, type PushBoxSshArgs } from './custody-ssh.js';
+export { deadlineFetch, hostReachable, DEFAULT_REACHABLE_PROBE_MS } from './reachability.js';
+export {
+  preparedCustodyPath,
+  pullPreparedFromCustody,
+  pushPreparedToCustody,
+  type PreparedSyncTarget,
+  type PullPreparedResult,
+} from './prepared-sync.js';
+export {
+  applyProjectSeed,
+  buildProjectSeed,
+  pushProjectSeedToCustody,
+  type ApplyProjectSeedResult,
+  type SeedSource,
+  type BuildProjectSeedArgs,
+  type BuildProjectSeedResult,
+  type PushProjectSeedArgs,
+  type PushProjectSeedResult,
+  type SeedItem,
+  type SeedManifest,
+  type SeedManifestFile,
+} from './custody-seed.js';
 export {
   seedCloudWorkspace,
   type SeedCloudWorkspaceArgs,

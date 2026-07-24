@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
+import { chmod, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -25,16 +25,21 @@ import {
   deleteJob,
   enqueuePrepareJob,
   enqueueQueueJob,
+  FsCustodyStore,
   hashRpcParams,
   isValidBoxStatus,
   loadQueue,
   readJob,
+  registrationToBoxRecord,
   writeQueueLoginCode,
+  type BoxRegistration,
+  type CustodyStore,
   type PendingApproval,
   type QueueAgentKind,
   type QueueJob,
   type RelayServerHandle,
 } from '@agentbox/relay';
+import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 import type { BoxGitDeps, ProviderModule } from '@agentbox/sandbox-core';
 import {
   BOX_WORKSPACE,
@@ -47,8 +52,10 @@ import {
   boxRestartService,
   boxRestartServices,
   boxServicesStatusRaw,
+  boxSshDirForProvider,
   readPreparedStateRaw,
   readState,
+  recordBox,
   secretsEnvPath,
   setBoxDisplayName,
   syncAgentboxSshConfig,
@@ -61,6 +68,7 @@ import {
 } from '@agentbox/sandbox-cloud';
 import {
   ensureBoxBrowserShowingApp,
+  generateRelayToken,
   listBoxes,
   mintHostInitiatedToken,
   type ListedBox,
@@ -194,6 +202,77 @@ function mapBox(b: ListedBox): Box {
     claudeActivity: b.claudeActivity,
     codexActivity: b.codexActivity,
   };
+}
+
+/**
+ * A box the control box knows only from its Store registry — created from a PC
+ * (or another host) that registered it here but whose `state.json` this VPS
+ * doesn't have. Without this the hub's own web UI + `/api/v1/boxes` (and so the
+ * tray) list only boxes the control box created locally, hiding every
+ * PC-registered box the Store plainly holds. The mirror of the PC's
+ * `mergeHubBoxes`: surface it, from the registration alone.
+ *
+ * A live status the box pushed (via the plane's status store) is used when
+ * present; otherwise it shows `running`, since a registration means the box
+ * exists. Lifecycle actions on these rows are a follow-up — the control box has
+ * no local record to drive them yet.
+ */
+/**
+ * The synthetic project a registered box groups under. The box row and this
+ * project MUST share the id, or the dashboard counts the box but renders it
+ * under no project card (it groups strictly by `projectId`).
+ *
+ * Keyed by the box's HOST FOLDER (`worktrees[].hostMainRepo`, the PC path the
+ * box was created from) — the same key `agentbox ls` uses locally
+ * (`hashProjectPath(projectRoot)`). So a PC box groups by its folder, not its
+ * repo: two folders that share a git origin stay separate (matching the local
+ * model), and the id matches the box's own local project, so adopting it on the
+ * PC lands it in the same card rather than a duplicate.
+ *
+ * Falls back to the repo identity only when there's no host folder (e.g. a
+ * hub-worker box whose temp clone was deleted — those normally render from
+ * local state, not here).
+ */
+function registrationProjectKey(reg: BoxRegistration): { id: string; repo: string } {
+  const hostFolder = reg.worktrees?.[0]?.hostMainRepo;
+  if (hostFolder && hostFolder.startsWith('/')) {
+    return { id: hashProjectPath(hostFolder), repo: path.basename(hostFolder) };
+  }
+  const repo = reg.projectSlug ?? (reg.originUrl ? deriveRepoLabel(reg.originUrl) : reg.name);
+  return { id: hashProjectPath(repo), repo };
+}
+
+function mapRegistrationToBox(reg: BoxRegistration): Box {
+  const createdAt = Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now();
+  const { id: projectId, repo: repoKey } = registrationProjectKey(reg);
+  return {
+    id: reg.boxId,
+    projectId,
+    repo: repoKey,
+    branch: reg.worktrees?.[0]?.branch ?? '',
+    task: reg.name,
+    displayName: null,
+    agent: normalizeLastAgent(reg.agent as BoxRecord['lastAgent']) ?? 'claude',
+    status: 'running',
+    createdAt,
+    lastActivity: createdAt,
+    host: `${reg.backend ?? 'cloud'} · registered`,
+    provider: reg.backend ?? 'cloud',
+    commits: null,
+    filesTouched: null,
+    error: null,
+    webUrl: null,
+    vncUrl: null,
+    state: 'running',
+    name: reg.name,
+    projectIndex: reg.projectIndex,
+  };
+}
+
+/** A short repo label from an origin URL: `owner/repo`, else the last path segment. */
+function deriveRepoLabel(originUrl: string): string {
+  const m = /[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(originUrl);
+  return m?.[1] ?? originUrl;
 }
 
 /**
@@ -545,6 +624,17 @@ async function providerBaseFreshness(id: ProviderKind, claudeInstall?: 'native' 
       return { state: 'unknown' };
     }
   }
+  // On a control box the bake record lives in custody, not local prepared-state
+  // (which is empty until a create hydrates it). Adopt it here too — same
+  // fingerprint-match-wins policy as the create path — so `/settings` reflects
+  // shared bakes instead of showing every provider as "needs baking". No-op on a
+  // local hub (local prepared-state already set) or when custody has no match.
+  try {
+    const mod = (await IMPORTERS[id]()).providerModule;
+    await hydratePreparedFromCustody(new FsCustodyStore(), id, mod.provider, claudeInstall ?? 'native', () => {});
+  } catch {
+    // best-effort: fall through to whatever local prepared-state holds
+  }
   const stored = currentCloudBaseFingerprint(id);
   const cached = freshnessCache.get(id);
   // Reuse the memoized LIVE fingerprint only while both the stored fingerprint
@@ -763,10 +853,111 @@ async function verifyFromBranch(repo: string, ref: string): Promise<{ ok: true }
   return ok ? { ok: true } : { ok: false, error: `unknown base ref "${ref}" (not found in the project repo)` };
 }
 
-async function runLifecycle(id: string, op: (box: BoxRecord, provider: Provider) => Promise<void>): Promise<ActionResult> {
+/** Reverse-adoption seam: reconstruct + persist a local record from a Store registration. */
+type HydrateFn = (id: string) => Promise<BoxRecord | null>;
+
+/**
+ * Materialize a box's per-box SSH key from the control box's local custody into
+ * the on-disk ssh dir the provider exec/git path reads. Best-effort: SDK
+ * providers (e2b/vercel/daytona) mint no keypair (`boxSshDirForProvider` → null),
+ * and a PC-created VPS box whose PC never pushed its key simply has none in
+ * custody — lifecycle + destroy still work (cloud API), only git/exec over SSH
+ * needs it.
+ */
+async function materializeBoxSshFromCustody(
+  custody: CustodyStore | null | undefined,
+  provider: string,
+  sandboxId: string,
+): Promise<void> {
+  if (!custody) return;
+  const dir = boxSshDirForProvider(provider, sandboxId);
+  if (!dir) return;
+  const entries = await custody.list(`boxes/${sandboxId}/ssh`).catch(() => []);
+  if (entries.length === 0) return;
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  for (const e of entries) {
+    const found = await custody.get(e.path).catch(() => null);
+    if (!found) continue;
+    const out = path.join(dir, path.basename(e.path));
+    await writeFile(out, found.data, { mode: 0o600 });
+    await chmod(out, 0o600);
+  }
+}
+
+/**
+ * Reverse-adopt a box the control box holds only as a Store registration (created
+ * on a PC / another host, never locally): rebuild a drivable `BoxRecord` via the
+ * shared `registrationToBoxRecord` — the mirror of the PC's `hub adopt` — pull its
+ * SSH key from local custody, and persist it to `state.json`. Returns null when
+ * there is no registration or the provider can't be resolved (unknown kind /
+ * missing creds), so the caller reports "not found" or falls back to a state-only
+ * reap exactly as before. Idempotent: once recorded, a second call finds it in
+ * local state and never reaches here.
+ */
+async function hydrateRegisteredBox(handle: RelayServerHandle, id: string): Promise<BoxRecord | null> {
+  const reg = await handle.store.getBox(id).catch(() => undefined);
+  if (!reg) return null;
+  const record = registrationToBoxRecord(reg, {
+    // The control box IS the control plane; persist its own public URL so the
+    // record's topology matches a worker-created box's.
+    controlPlaneUrl: process.env.AGENTBOX_HUB_PUBLIC_URL ?? '',
+    freshToken: generateRelayToken,
+  });
+  // Only adopt a box we can actually drive: resolving the provider loads its
+  // module + credentials, so a missing-cred / unknown-provider box returns null
+  // rather than leaving behind a local record we can't act on.
   try {
-    const { boxes } = await readState();
-    const box = boxes.find((b) => b.id === id);
+    await providerForBox(record);
+  } catch {
+    return null;
+  }
+  await materializeBoxSshFromCustody(handle.custody, record.provider ?? 'docker', reg.sandboxId ?? id).catch(
+    () => {},
+  );
+  await recordBox(record);
+  return record;
+}
+
+/**
+ * Reap a box's control-box Store state — registration, status snapshot, and
+ * SSH-key custody subtree. Idempotent; returns whether a registration existed.
+ * Used both after a real destroy (clear the now-dead registration) and as the
+ * fallback when the cloud resource can't be driven (state cleanup only).
+ */
+async function reapStoreState(handle: RelayServerHandle, id: string): Promise<boolean> {
+  const reg = await handle.store.getBox(id).catch(() => undefined);
+  const existed = await handle.store.forgetBox(id).catch(() => false);
+  await handle.store.deleteStatus(id).catch(() => {});
+  if (handle.custody) {
+    const key = reg?.sandboxId ?? id;
+    const entries = await handle.custody.list(`boxes/${key}`).catch(() => []);
+    for (const e of entries) await handle.custody.delete(e.path).catch(() => false);
+  }
+  return existed || reg !== undefined;
+}
+
+/**
+ * Resolve a box id to its local `BoxRecord`, falling back to reverse-adoption:
+ * a box the control box knows only from its Store registration (created on a PC
+ * / another host) has no local `state.json` record, so `readState()` misses it.
+ * `hydrate` reconstructs + persists that record on demand (see
+ * `hydrateRegisteredBox`), after which every provider-driven path (lifecycle,
+ * git, real destroy) finds it in state and Just Works.
+ */
+async function findOrHydrateBox(id: string, hydrate?: HydrateFn): Promise<BoxRecord | null> {
+  const { boxes } = await readState();
+  const local = boxes.find((b) => b.id === id);
+  if (local) return local;
+  return hydrate ? await hydrate(id) : null;
+}
+
+async function runLifecycle(
+  id: string,
+  op: (box: BoxRecord, provider: Provider) => Promise<void>,
+  hydrate?: HydrateFn,
+): Promise<ActionResult> {
+  try {
+    const box = await findOrHydrateBox(id, hydrate);
     if (!box) return { ok: false, error: `box ${id} not found` };
     const provider = await providerForBox(box);
     await op(box, provider);
@@ -796,9 +987,11 @@ async function hubWriteSshConfig(box: BoxRecord, provider: Provider): Promise<vo
 }
 
 /** Resolve a box id to its record + provider, or null when the box is gone. */
-async function resolveBoxProvider(id: string): Promise<{ box: BoxRecord; provider: Provider } | null> {
-  const { boxes } = await readState();
-  const box = boxes.find((b) => b.id === id);
+async function resolveBoxProvider(
+  id: string,
+  hydrate?: HydrateFn,
+): Promise<{ box: BoxRecord; provider: Provider } | null> {
+  const box = await findOrHydrateBox(id, hydrate);
   if (!box) return null;
   return { box, provider: await providerForBox(box) };
 }
@@ -823,9 +1016,13 @@ function hubGitDeps(boxId: string): BoxGitDeps {
 }
 
 /** Run a box-git helper and map its exec result to a BoxOpResult. */
-async function gitOp(id: string, fn: (box: BoxRecord, provider: Provider) => Promise<ExecResult>): Promise<BoxOpResult> {
+async function gitOp(
+  id: string,
+  fn: (box: BoxRecord, provider: Provider) => Promise<ExecResult>,
+  hydrate?: HydrateFn,
+): Promise<BoxOpResult> {
   try {
-    const rp = await resolveBoxProvider(id);
+    const rp = await resolveBoxProvider(id, hydrate);
     if (!rp) return { ok: false, error: `box ${id} not found` };
     const r = await fn(rp.box, rp.provider);
     if (r.exitCode !== 0) {
@@ -962,6 +1159,10 @@ async function probeOpenTargets(): Promise<OpenTargetsReport | null> {
 }
 
 export function createHubBackend(handle: RelayServerHandle): HubBackend {
+  // Reverse-adoption: drive a box the control box knows only from its Store
+  // registration (PC-created / independent) by reconstructing its local record on
+  // demand. Threaded into every provider-driven path below.
+  const hydrate: HydrateFn = (bid) => hydrateRegisteredBox(handle, bid);
   return {
     // authMode is layered on by source.ts (an env-derived concern), so the host
     // backend produces everything else.
@@ -971,6 +1172,9 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       // failed ones as `error`) until the real box lands in listBoxes() and
       // takes over — matched by the boxId the worker writes back to the manifest.
       const liveIds = new Set(listed.map((b) => b.id));
+      const liveSandboxIds = new Set(
+        listed.map((b) => b.cloud?.sandboxId).filter((s): s is string => Boolean(s)),
+      );
       const jobBoxes: Box[] = [];
       for (const j of jobs) {
         // A prepare (image-bake) job produces an artifact, not a box — it never
@@ -980,11 +1184,36 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         if (j.status === 'queued' || j.status === 'running') jobBoxes.push(mapJobToBox(j, 'creating'));
         else if (j.status === 'failed') jobBoxes.push(mapJobToBox(j, 'error'));
       }
+      // Boxes the Store holds but this VPS's local state doesn't — i.e.
+      // registered from a PC. Deduped by box id AND sandbox id (a box the
+      // control box created locally is in both, under possibly different ids).
+      const registered = (await handle.store.listBoxes().catch(() => [])).filter(
+        (r) => !liveIds.has(r.boxId) && !(r.sandboxId && liveSandboxIds.has(r.sandboxId)),
+      );
+      const registeredBoxes = registered.map(mapRegistrationToBox);
+      // Each registered box needs a project to render under (the dashboard groups
+      // strictly by projectId). Add a synthetic one per new project key not
+      // already produced by listProjects — sharing the box row's id.
+      const projects = await listProjects(listed);
+      const projectIds = new Set(projects.map((p) => p.id));
+      for (const reg of registered) {
+        const { id, repo } = registrationProjectKey(reg);
+        if (projectIds.has(id)) continue;
+        projectIds.add(id);
+        projects.push({
+          id,
+          name: repo,
+          repo,
+          defaultBranch: reg.worktrees?.[0]?.branch ?? 'main',
+          provider: reg.backend ?? 'cloud',
+          createdAt: Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now(),
+        });
+      }
       return {
         user: currentUser(),
         github: LOCAL_GITHUB,
-        projects: await listProjects(listed),
-        boxes: [...jobBoxes, ...listed.map(mapBox)],
+        projects,
+        boxes: [...jobBoxes, ...listed.map(mapBox), ...registeredBoxes],
         // Block-mode approvals live in-process on the relay handle, not the Store.
         approvals: handle.prompts.all().map(mapApproval),
         providers: listProviders(jobs),
@@ -1007,15 +1236,15 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         else await provider.start(box);
         // Refresh the box's SSH-config alias now it's back online (IP may have changed).
         await hubWriteSshConfig(box, provider);
-      }),
-    pause: (id) => runLifecycle(id, (box, provider) => provider.pause(box)),
+      }, hydrate),
+    pause: (id) => runLifecycle(id, (box, provider) => provider.pause(box), hydrate),
     resume: (id) =>
       runLifecycle(id, async (box, provider) => {
         await provider.resume(box);
         // Refresh the box's SSH-config alias now it's back online (IP may have changed).
         await hubWriteSshConfig(box, provider);
-      }),
-    stop: (id) => runLifecycle(id, (box, provider) => provider.stop(box)),
+      }, hydrate),
+    stop: (id) => runLifecycle(id, (box, provider) => provider.stop(box), hydrate),
     screen: (id) =>
       runLifecycle(id, async (box, provider) => {
         // The open-VNC prep step: mirror `agentbox screen` so the viewer shows
@@ -1030,7 +1259,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             console.warn(`[hub] screen ${box.name}: in-box browser failed: ${br.reason}`);
           }
         }
-      }),
+      }, hydrate),
     async destroy(id): Promise<ActionResult> {
       // A synthetic `job:` box is a failed create with no real container — "destroy"
       // it by clearing its queue manifest (what the tray/UI Dismiss action hits).
@@ -1049,28 +1278,22 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           return { ok: false, error: errMsg(err) };
         }
       }
+      // `hydrate` reverse-adopts a registration-only box (PC-created / worker-
+      // created whose temp clone was cleaned) so `provider.destroy` tears down the
+      // REAL cloud resource — not just a state reap. Then reap the now-dead Store
+      // registration + custody regardless (idempotent; also cleans up a
+      // locally-created box's lingering registration).
       const local = await runLifecycle(id, async (box, provider) => {
         await provider.destroy(box);
         // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
         await syncAgentboxSshConfig().catch(() => {});
-      });
-      if (local.ok) return local;
-      // Not in host state — on the control box a worker-created box lives only in
-      // the Store (its temp seed clone was deleted after create), so there is no
-      // BoxRecord to drive `provider.destroy`. Reap its control-box state instead
-      // (registration + status + SSH-key custody). The cloud resource, if any,
-      // stays a backlog follow-up (needs the sandboxId + provider creds + a
-      // reconstructed record).
-      const reg = await handle.store.getBox(id);
-      if (!reg) return local;
-      await handle.store.forgetBox(id);
-      await handle.store.deleteStatus(id);
-      if (handle.custody) {
-        const key = reg.sandboxId ?? id;
-        const entries = await handle.custody.list(`boxes/${key}`).catch(() => []);
-        for (const e of entries) await handle.custody.delete(e.path).catch(() => false);
-      }
-      return { ok: true };
+      }, hydrate);
+      const reaped = await reapStoreState(handle, id);
+      if (local.ok) return { ok: true };
+      // Real destroy couldn't run (no creds / provider unresolvable). If a
+      // registration was reaped, the box is gone from the control box's view —
+      // report success; otherwise surface the original "not found"/error.
+      return reaped ? { ok: true } : local;
     },
     async rename(id, displayName): Promise<ActionResult> {
       // Pure state mutation — no provider round-trip. Empty/blank clears the label.
@@ -1296,17 +1519,17 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     },
 
     // ── box git operations (delegate to the shared, provider-agnostic helpers) ──
-    gitCheckout: (id, branch) => gitOp(id, (box, provider) => boxGitCheckout(provider, box, branch)),
+    gitCheckout: (id, branch) => gitOp(id, (box, provider) => boxGitCheckout(provider, box, branch), hydrate),
     gitNewBranch: (id, input) =>
-      gitOp(id, (box, provider) => boxGitNewBranch(provider, box, input.name, input.from)),
+      gitOp(id, (box, provider) => boxGitNewBranch(provider, box, input.name, input.from), hydrate),
     gitPush: (id, input = {}) =>
-      gitOp(id, (box, provider) => boxGitPush(provider, box, input, hubGitDeps(id))),
+      gitOp(id, (box, provider) => boxGitPush(provider, box, input, hubGitDeps(id)), hydrate),
     gitPull: (id, input = {}) =>
-      gitOp(id, (box, provider) => boxGitPull(provider, box, input, hubGitDeps(id))),
-    gitPushHost: (id, input = {}) => gitOp(id, (box, provider) => boxGitPushHost(provider, box, input)),
+      gitOp(id, (box, provider) => boxGitPull(provider, box, input, hubGitDeps(id)), hydrate),
+    gitPushHost: (id, input = {}) => gitOp(id, (box, provider) => boxGitPushHost(provider, box, input), hydrate),
     async getGit(id): Promise<GitInfo> {
       try {
-        const rp = await resolveBoxProvider(id);
+        const rp = await resolveBoxProvider(id, hydrate);
         if (!rp) return { ok: false, error: `box ${id} not found` };
         const r = await rp.provider.exec(rp.box, ['git', 'status', '--porcelain=v2', '--branch'], {
           cwd: BOX_WORKSPACE,
@@ -1320,7 +1543,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
 
     // ── box service control ──
     async getServices(id): Promise<ServicesResult> {
-      const rp = await resolveBoxProvider(id).catch(() => null);
+      const rp = await resolveBoxProvider(id, hydrate).catch(() => null);
       if (!rp) return { source: 'unavailable', services: [], tasks: [], ports: [], error: `box ${id} not found` };
       const live = await liveServices(rp.provider, rp.box);
       if (live) return mapLiveServices(live);
@@ -1330,7 +1553,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     },
     async restartService(id, name): Promise<BoxOpResult> {
       try {
-        const rp = await resolveBoxProvider(id);
+        const rp = await resolveBoxProvider(id, hydrate);
         if (!rp) return { ok: false, error: `box ${id} not found` };
         if (name) {
           const r = await boxRestartService(rp.provider, rp.box, name);

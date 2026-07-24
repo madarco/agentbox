@@ -15,8 +15,9 @@ import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { isProviderKind, type ProviderKind } from '@agentbox/config';
+import { isProviderKind, loadEffectiveConfig, type ProviderKind } from '@agentbox/config';
 import {
+  cloneRepoWithLfs,
   drainCreateJobs,
   FsCustodyStore,
   GitHubAppLeaser,
@@ -27,8 +28,15 @@ import {
   type CreateBoxFn,
   type Store,
 } from '@agentbox/relay/control-plane';
-import { AGENT_SYNC_SPECS, boxSshDirForProvider } from '@agentbox/sandbox-core';
+import {
+  AGENT_SYNC_SPECS,
+  boxSshDirForProvider,
+  projectSlugFromOriginUrl,
+} from '@agentbox/sandbox-core';
+import { applyProjectSeed, startDetachedCloudAgent } from '@agentbox/sandbox-cloud';
+import { resolveAgentLauncher, type AgentKind } from '@agentbox/core';
 import type { ProviderModule } from '@agentbox/sandbox-core';
+import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -44,8 +52,16 @@ const IMPORTERS: Record<ProviderKind, () => Promise<{ providerModule: ProviderMo
   'remote-docker': () => import('@agentbox/sandbox-remote-docker'),
 };
 
-async function runGit(args: string[]): Promise<void> {
-  await execFileAsync('git', args, { maxBuffer: 64 * 1024 * 1024 });
+async function runGit(
+  args: string[],
+  env?: Record<string, string>,
+  timeoutMs?: number,
+): Promise<void> {
+  await execFileAsync('git', args, {
+    maxBuffer: 64 * 1024 * 1024,
+    env: env ? { ...process.env, ...env } : process.env,
+    ...(timeoutMs ? { timeout: timeoutMs } : {}),
+  });
 }
 
 /**
@@ -119,6 +135,50 @@ export interface HubWorkerOptions {
   mockCreate?: boolean;
 }
 
+/**
+ * Overlay a project's custody seed material onto a fresh clone: the untracked
+ * files and env/secrets a PC pushed, which no clone can carry.
+ *
+ * Conflict rule: **the clone wins**. A file that was untracked when the seed was
+ * captured but has since been committed exists in both; the repo's version is
+ * the current truth, and restoring a months-old copy over it would silently
+ * revert work. Extraction uses `tar --keep-old-files` so existing paths are left
+ * alone, and env files are only written where nothing is already there.
+ *
+ * We read the custody store directly rather than over HTTP — the hub IS the
+ * custody host.
+ */
+async function applySeedFromCustody(
+  custody: FsCustodyStore,
+  repoUrl: string,
+  dest: string,
+  log: (l: string) => void,
+): Promise<{ files: number; capturedAt?: string; repoHeadSha?: string } | null> {
+  const slug = projectSlugFromOriginUrl(repoUrl);
+  if (!slug) return null;
+  // The hub IS the custody host, so it reads the store directly rather than
+  // over HTTP. The overlay itself is shared with the laptop worker.
+  return applyProjectSeed({
+    source: {
+      get: async (rel) => (await custody.get(`projects/${slug}/seed/${rel}`))?.data ?? null,
+    },
+    dest,
+    log,
+  });
+}
+
+// `hydratePreparedFromCustody` now lives in ./prepared-hydrate.js so the
+// settings/freshness path (hub-backend.ts) can reuse the exact adoption logic.
+
+/**
+ * Narrow a create job's free-form `agent` to the union `provider.create` takes.
+ * An unknown value is dropped rather than passed through — the box still gets
+ * created, it just registers without an agent hint.
+ */
+function normalizeCreateAgent(agent: string | undefined): 'claude' | 'codex' | 'opencode' | undefined {
+  return agent === 'claude' || agent === 'codex' || agent === 'opencode' ? agent : undefined;
+}
+
 export interface HubWorkerHandle {
   stop: () => Promise<void>;
 }
@@ -149,21 +209,28 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       const { token } = await leaser.leaseRepoToken(owner, repo);
       return toAuthedHttpsUrl(repoUrl, token);
     },
-    cloneRepo: async (authedUrl, repoUrl, dest, branch) => {
-      await runGit(branch ? ['clone', '--branch', branch, authedUrl, dest] : ['clone', authedUrl, dest]);
-      await runGit(['-C', dest, 'remote', 'set-url', 'origin', repoUrl]);
-    },
-    createBox: async ({ workspacePath, name, provider, onLog }) => {
+    cloneRepo: (authedUrl, repoUrl, dest, branch) =>
+      cloneRepoWithLfs(runGit, authedUrl, repoUrl, dest, branch, log),
+    createBox: async ({ workspacePath, name, provider, agent, prompt, agentArgs, onLog }) => {
       if (!isProviderKind(provider)) throw new Error(`unknown provider ${provider}`);
       const mod = (await IMPORTERS[provider]()).providerModule;
       if (mod.ensureCredentials) await mod.ensureCredentials();
       // Seed agent creds from custody just before create, so provider.create's
       // seed step reads a logged-in host backup.
       await seedHostBackupsFromCustody(custody, log);
+      // Likewise the base image: the deploy seeds `prepared/<provider>.json`
+      // into custody, but the provider's baked-or-not gate only reads local
+      // prepared-state — so without this a fresh control box refuses to create.
+      const claudeInstall =
+        (await loadEffectiveConfig(workspacePath).catch(() => null))?.effective.box.claudeInstall ??
+        'native';
+      await hydratePreparedFromCustody(custody, provider, mod.provider, claudeInstall, log);
       const created = await mod.provider.create({
         workspacePath,
         name,
         projectRoot: workspacePath,
+        // Registered on the plane so an adopting PC relaunches the right agent.
+        agent: normalizeCreateAgent(agent),
         // Register the box on THIS hub (control-plane topology) so the phone UI
         // sees it and approvals route back here.
         controlPlaneUrl: opts.publicUrl,
@@ -171,8 +238,37 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         onLog,
       });
       await mirrorBoxSshToCustody(custody, provider, created.record.cloud?.sandboxId, log);
+
+      // Background `-i`: a seed prompt means run the agent fully on the control
+      // box (create + start detached), so the laptop can be off from submit on.
+      // A cold create (create --via-hub / foreground) has no prompt — the PC
+      // attaches those. Creds were seeded above (seedHostBackupsFromCustody), so
+      // the box is logged in; a not-logged-in box surfaces as an actionable error
+      // from verifyDetachedSession, which we return so the job fails WITH the box
+      // id (box preserved for adopt/attach + re-login).
+      const boxAgent = normalizeCreateAgent(agent);
+      if (boxAgent && prompt && prompt.length > 0) {
+        const kind: AgentKind = boxAgent === 'claude' ? 'claude-code' : boxAgent;
+        const extraArgs = resolveAgentLauncher(kind).buildArgs(prompt, agentArgs ?? []);
+        log(`starting ${boxAgent} in ${created.record.name} with the seed prompt`);
+        try {
+          await startDetachedCloudAgent({
+            provider: mod.provider,
+            box: created.record,
+            binary: boxAgent,
+            sessionName: boxAgent,
+            extraArgs,
+          });
+          log(`${boxAgent} session is running in ${created.record.name}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log(`agent start failed (box was created): ${msg}`);
+          return { id: created.record.id, agentStartError: msg };
+        }
+      }
       return { id: created.record.id };
     },
+    fetchSeedMaterial: (repoUrl, dest) => applySeedFromCustody(custody, repoUrl, dest, log),
     tmpDir: (jobId) => join(tmpdir(), `agentbox-hub-worker-${jobId}`),
     cleanup: (dir) => rm(dir, { recursive: true, force: true }),
     log,

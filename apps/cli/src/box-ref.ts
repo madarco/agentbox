@@ -7,6 +7,7 @@ import {
 } from '@agentbox/core';
 import { readState, resolveBoxRef } from '@agentbox/sandbox-core';
 import { log } from '@clack/prompts';
+import { tryAutoAdopt } from './control-plane/auto-adopt.js';
 
 interface ResolveOptions {
   /**
@@ -16,6 +17,12 @@ interface ResolveOptions {
    * not whatever shell dir the user happened to be in.
    */
   cwd?: string;
+  /**
+   * Internal: the caller already ran `tryAutoAdopt` for this ref and it missed,
+   * so don't spend the adoption budget on it a second time. Set only by
+   * `resolveBoxOrShift`, which must adopt before deciding whether to shift.
+   */
+  adoptAttempted?: boolean;
 }
 
 /**
@@ -52,6 +59,31 @@ export async function resolveBoxOrShift(
   if (firstTry.kind === 'ok') return { box: firstTry.box, shifted: false };
 
   if (ref !== undefined) {
+    // An explicit ref that names a real control-box box is unambiguous — adopt
+    // it BEFORE considering the shift. Otherwise, in a project with exactly one
+    // local box, `agentbox claude <hub-box>` would silently launch the agent in
+    // that local box and treat the hub box's name as a stray argument.
+    //
+    // Only a genuine miss asks the control box. `ambiguous` means the ref DID
+    // match local boxes (an id prefix hitting several), so the user must
+    // disambiguate THOSE — adopting a same-named hub box would drive a box that
+    // isn't among the ones they were choosing between.
+    const adopted = firstTry.kind === 'none' ? await tryAutoAdopt(ref, cwd) : null;
+    if (adopted && adopted !== 'unreachable') {
+      log.info(`adopted ${adopted.name} from the control box`);
+      return { box: adopted, shifted: false };
+    }
+    if (adopted === 'unreachable') {
+      // We couldn't ask, so we can't rule out that `ref` names a control-box
+      // box. Shifting anyway is what AgentBox did before hub refs existed, and
+      // refusing would break the common `agentbox shell npm run dev` whenever
+      // the control box is down — but say so, because the fallback CAN pick a
+      // different box than the user meant.
+      log.warn(
+        `could not reach the control box — treating '${ref}' as an argument, not a box name. ` +
+          `If you meant a control-box box, retry once it's reachable (and authenticated).`,
+      );
+    }
     // Maybe commander bound a post-`--` token to [box]; try auto-pick.
     const pick = resolveBoxRef(undefined, state, project.root);
     if (pick.kind === 'ok') return { box: pick.box, shifted: true };
@@ -69,8 +101,12 @@ export async function resolveBoxOrShift(
     }
   }
 
-  // Same error path as resolveBoxOrExit.
-  const box = await resolveBoxOrExit(ref, opts);
+  // Same error path as resolveBoxOrExit — but when we already spent the adoption
+  // budget on this ref above, don't let it try again.
+  const box = await resolveBoxOrExit(ref, {
+    ...opts,
+    adoptAttempted: ref !== undefined && firstTry.kind === 'none',
+  });
   return { box, shifted: false };
 }
 
@@ -113,6 +149,27 @@ export async function resolveBoxOrExit(
     log.error(`no boxes in this project (${project.root})`);
     log.info('run `agentbox create` to make one, or pass a box ref explicitly');
     process.exit(2);
+  }
+  // Not local — it may be a control-box-created box (web-UI / `--via-hub`) that
+  // this PC has never adopted. Materialize it and carry on, so every by-name
+  // command works against a hub box without a manual `agentbox hub adopt`.
+  //
+  // Numeric refs get this too: a per-project index is numeric, but so is a
+  // hetzner server id / DigitalOcean droplet id, and those ARE valid hub refs.
+  // Bailing to the index error first made `attach <sandboxId>` unusable for
+  // exactly the providers whose ids are numbers.
+  //
+  // `adoptAttempted` means our caller already tried and missed; re-running it
+  // here would spend the adoption budget twice for one command.
+  const adopted = opts.adoptAttempted ? null : await tryAutoAdopt(ref, cwd);
+  if (adopted && adopted !== 'unreachable') {
+    log.info(`adopted ${adopted.name} from the control box`);
+    return adopted;
+  }
+  if (adopted === 'unreachable') {
+    // The box may well exist on the control box — don't let the error imply it
+    // definitely doesn't.
+    log.warn(`could not reach the control box — did not check whether '${ref}' is one of its boxes.`);
   }
   if (/^[1-9][0-9]*$/.test(ref.trim())) {
     log.error(`no box with index ${ref.trim()} in this project (${project.root})`);

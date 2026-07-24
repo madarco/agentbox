@@ -6,7 +6,19 @@ import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { hostname, homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox/config';
+import { findProjectRoot, loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox/config';
+import { DEFAULT_ENV_PATTERNS, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
+import {
+  applyProjectSeed,
+  deadlineFetch,
+  hostReachable,
+  pushPreparedToCustody,
+  pushProjectSeedToCustody,
+  readGitOriginUrl,
+} from '@agentbox/sandbox-cloud';
+
+/** Bound on the worker's seed download once the control box is known to be up. */
+const SEED_FETCH_MS = 120_000;
 import {
   drainCreateJobs,
   GitHubAppLeaser,
@@ -17,7 +29,7 @@ import {
 } from '@agentbox/relay';
 import { randomBytes } from 'node:crypto';
 import { providerForCreate } from '../provider/registry.js';
-import { makeControlPlaneCreateBox } from '../control-plane/create-box.js';
+import { makeControlPlaneCreateBox, cloneRepoWithLfs } from '../control-plane/create-box.js';
 import { runGitHubAppManifestFlow } from '../control-plane/github-app-manifest.js';
 import { deployControlPlaneToVercel } from '../control-plane/deploy-vercel.js';
 import { runHetznerDeploy } from '../control-plane/deploy-hetzner.js';
@@ -35,7 +47,8 @@ import {
   planPush,
   type UploadItem,
 } from '../control-plane/custody-client.js';
-import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
+import { HubApiClient, HubApiError, type HubLifecycleAction } from '../control-plane/hub-api-client.js';
+import { loadControlPlaneEnv } from '../control-plane/env-file.js';
 import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { handleLifecycleError } from './_errors.js';
 
@@ -151,6 +164,10 @@ const setupSub = new Command('setup')
 
       // Persist the App key + a generated admin token as the plane's deploy env.
       const adminToken = randomBytes(32).toString('hex');
+      // Headless bearer for the hub's public /api/v1 (CLI / tray against a remote
+      // control box, which can't carry the browser session cookie). Separate from
+      // the admin token, which gates the internal /admin/* wire.
+      const hubApiKey = randomBytes(32).toString('hex');
       await mkdir(CP_DIR, { recursive: true });
       await writeFile(PEM_PATH, app.pem, { mode: 0o600 });
       await chmod(PEM_PATH, 0o600);
@@ -160,7 +177,8 @@ const setupSub = new Command('setup')
         `# Feed to docker compose (--env-file) or 'vercel env add'. Keep secret.\n` +
         `GITHUB_APP_ID=${app.appId}\n` +
         `GITHUB_APP_PRIVATE_KEY=${pemB64}\n` +
-        `AGENTBOX_RELAY_ADMIN_TOKEN=${adminToken}\n`;
+        `AGENTBOX_RELAY_ADMIN_TOKEN=${adminToken}\n` +
+        `AGENTBOX_HUB_API_KEY=${hubApiKey}\n`;
       await writeFile(ENV_PATH, envBody, { mode: 0o600 });
       await chmod(ENV_PATH, 0o600);
       await writeFile(
@@ -197,6 +215,7 @@ const setupSub = new Command('setup')
               GITHUB_APP_ID: app.appId,
               GITHUB_APP_PRIVATE_KEY: pemB64,
               AGENTBOX_RELAY_ADMIN_TOKEN: adminToken,
+              AGENTBOX_HUB_API_KEY: hubApiKey,
               ...(hubAuth ?? {}),
             };
             deployedUrl = (await deployControlPlaneToVercel({ env, repo, ref, log: onLog })).url;
@@ -388,26 +407,25 @@ const addSub = new Command('add')
     }
   });
 
-/** Load the setup-written App creds into the env if not already set. */
-function loadControlPlaneEnv(): void {
-  if (process.env.GITHUB_APP_ID && process.env.GITHUB_APP_PRIVATE_KEY) return;
-  if (!existsSync(ENV_PATH)) return;
-  for (const line of readFileSync(ENV_PATH, 'utf8').split('\n')) {
-    const m = /^([A-Z_]+)=(.*)$/.exec(line.trim());
-    if (m && !process.env[m[1]!]) process.env[m[1]!] = m[2];
-  }
-}
-
 /** Run `git <args>`, rejecting on a non-zero exit. */
-function runGit(args: string[]): Promise<void> {
+function runGit(args: string[], env?: Record<string, string>, timeoutMs?: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn('git', args, {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: env ? { ...process.env, ...env } : process.env,
+    });
+    const timer = timeoutMs ? setTimeout(() => child.kill('SIGKILL'), timeoutMs) : undefined;
     let err = '';
     child.stderr.on('data', (c: Buffer) => (err += c.toString('utf8')));
-    child.on('error', reject);
-    child.on('close', (code) =>
-      code === 0 ? resolve() : reject(new Error(`git ${args[0]} failed (${String(code)}): ${err.trim()}`)),
-    );
+    child.on('error', (e) => {
+      if (timer) clearTimeout(timer);
+      reject(e);
+    });
+    child.on('close', (code) => {
+      if (timer) clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`git ${args[0]} failed (${String(code)}): ${err.trim()}`));
+    });
   });
 }
 
@@ -446,15 +464,47 @@ const workerSub = new Command('worker')
           const { token } = await leaser.leaseRepoToken(owner, repo);
           return toAuthedHttpsUrl(repoUrl, token);
         },
-        cloneRepo: async (authedUrl, repoUrl, dest, branch) => {
-          await runGit(branch ? ['clone', '--branch', branch, authedUrl, dest] : ['clone', authedUrl, dest]);
-          // Scrub the leased token: leave the box pointing at the bare origin.
-          await runGit(['-C', dest, 'remote', 'set-url', 'origin', repoUrl]);
-        },
-        createBox: async ({ workspacePath, name, provider, onLog }) => {
+        cloneRepo: (authedUrl, repoUrl, dest, branch) =>
+          cloneRepoWithLfs(runGit, authedUrl, repoUrl, dest, branch, (line) => log.info(line)),
+        createBox: async ({ workspacePath, name, provider, agent, onLog }) => {
           const p = await providerForCreate({ flag: provider, config: cfg.effective });
-          const created = await p.create({ workspacePath, name, projectRoot: workspacePath, onLog });
+          const created = await p.create({
+            workspacePath,
+            name,
+            projectRoot: workspacePath,
+            // Registered on the plane so an adopting PC relaunches the right agent.
+            agent:
+              agent === 'claude' || agent === 'codex' || agent === 'opencode' ? agent : undefined,
+            onLog,
+          });
           return { id: created.record.id };
+        },
+        // Overlay the project's custody seed onto the clone, exactly as the
+        // resident hub worker does — without this, boxes drained by THIS worker
+        // come up missing the untracked files + env material the seed exists to
+        // provide. Unlike the hub, this worker is not the custody host, so it
+        // reads the blobs over HTTP.
+        fetchSeedMaterial: async (repoUrl, dest) => {
+          const target = await resolveCustodyTarget(undefined, { quiet: true });
+          if (!target) return null;
+          const slug = projectSlugFromOriginUrl(repoUrl);
+          if (!slug) return null;
+          // Probe + bound like every other custody call: a down control box must
+          // not park each blob `get` on undici's ~10s connect timeout and stall
+          // a create the user is waiting on (see sandbox-cloud/reachability.ts).
+          if (!(await hostReachable(target.url))) {
+            process.stdout.write('agentbox-cp-worker: control box unreachable — bare clone, no seed\n');
+            return null;
+          }
+          const client = new CustodyClient({
+            ...target,
+            fetchImpl: deadlineFetch(AbortSignal.timeout(SEED_FETCH_MS)),
+          });
+          return applyProjectSeed({
+            source: { get: (rel) => client.get(`projects/${slug}/seed/${rel}`) },
+            dest,
+            log: (line) => process.stdout.write(`agentbox-cp-worker: ${line}\n`),
+          });
         },
         tmpDir: (jobId) => join(tmpdir(), `agentbox-cp-worker-${jobId}`),
         cleanup: (dir) => rm(dir, { recursive: true, force: true }),
@@ -486,33 +536,100 @@ const workerSub = new Command('worker')
  * Resolve the control-plane URL (`--url` > `relay.controlPlaneUrl`) and the
  * admin bearer (`AGENTBOX_RELAY_ADMIN_TOKEN` > the setup-written env file).
  * Returns null and prints an actionable error when either is missing.
+ *
+ * `quiet` suppresses those errors, for callers where a control box is optional
+ * and its absence is a normal outcome rather than a user mistake (the recover
+ * key fallback, the by-name auto-adopt hook).
  */
 export async function resolveCustodyTarget(
   urlFlag: string | undefined,
+  opts: { quiet?: boolean } = {},
 ): Promise<{ url: string; adminToken: string } | null> {
   const cfg = await loadEffectiveConfig(process.cwd());
   const url = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
   if (!url) {
-    log.error('No control plane configured. Run `agentbox control-plane set-url <url>` (or pass --url).');
+    if (!opts.quiet)
+      log.error('No control plane configured. Run `agentbox control-plane set-url <url>` (or pass --url).');
     return null;
   }
   loadControlPlaneEnv();
   const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '';
   if (!adminToken) {
-    log.error(
-      'No admin token available. Set AGENTBOX_RELAY_ADMIN_TOKEN, or run this from the machine that\n' +
-        'ran `agentbox control-plane setup` (it writes the token to ~/.agentbox/control-plane).',
-    );
+    if (!opts.quiet)
+      log.error(
+        'No admin token available. Set AGENTBOX_RELAY_ADMIN_TOKEN, or run this from the machine that\n' +
+          'ran `agentbox control-plane setup` (it writes the token to ~/.agentbox/control-plane).',
+      );
     return null;
   }
   return { url, adminToken };
 }
 
-/** Slug a project into a custody `projects/<slug>` key: `owner__repo`, else the dir name. */
+/**
+ * Resolve a control box's public REST API target: its URL + the headless
+ * `/api/v1` bearer (`AGENTBOX_HUB_API_KEY`). This is the client-facing hub API
+ * (boxes/lifecycle/approvals), distinct from {@link resolveCustodyTarget}'s admin
+ * token, which is the internal `/admin/*` wire. Seam for the shared hub-API client
+ * (URL-swappable local ⇄ remote); not yet wired into commands.
+ *
+ * Returns null (actionable error unless `quiet`) when no control box is configured
+ * or no API key is available — the key is minted + recorded by `control-plane
+ * setup`/deploy into `~/.agentbox/control-plane/control-plane.env`.
+ */
+export async function resolveHubApiTarget(
+  urlFlag: string | undefined,
+  opts: { quiet?: boolean } = {},
+): Promise<{ url: string; apiKey: string } | null> {
+  const cfg = await loadEffectiveConfig(process.cwd());
+  const url = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
+  if (!url) {
+    if (!opts.quiet)
+      log.error('No control plane configured. Run `agentbox control-plane set-url <url>` (or pass --url).');
+    return null;
+  }
+  loadControlPlaneEnv();
+  const apiKey = process.env.AGENTBOX_HUB_API_KEY ?? '';
+  if (!apiKey) {
+    if (!opts.quiet)
+      log.error(
+        'No hub API key available. Set AGENTBOX_HUB_API_KEY, or run this from the machine that\n' +
+          'ran `agentbox control-plane setup` (it writes the key to ~/.agentbox/control-plane).',
+      );
+    return null;
+  }
+  return { url, apiKey };
+}
+
+/**
+ * Build a {@link HubApiClient} for the configured hub from {@link resolveHubApiTarget}
+ * (URL + `/api/v1` key), or null (with an actionable error unless `quiet`) when
+ * unconfigured. The client-facing counterpart to `new ControlPlaneAdminClient`.
+ */
+export async function resolveHubApiClient(
+  urlFlag: string | undefined,
+  opts: { quiet?: boolean } = {},
+): Promise<HubApiClient | null> {
+  const target = await resolveHubApiTarget(urlFlag, opts);
+  return target ? new HubApiClient(target) : null;
+}
+
+/**
+ * Slug a project into a custody `projects/<slug>` key: `owner__repo`, else the
+ * dir name.
+ *
+ * Delegates to the shared `projectSlugFromOriginUrl` — every producer and
+ * consumer of the `projects/<slug>` scope MUST derive the same key from the same
+ * origin, and a second local implementation is exactly how they drift apart. (It
+ * did: this used to take the *first* two path segments unsanitized, while the
+ * create path and the hub worker take the last two and sanitize — so for a
+ * nested remote like `gitlab.com/group/subgroup/repo` a push landed under
+ * `group__subgroup` while the worker looked in `subgroup__repo`.)
+ */
 async function projectSlug(explicit: string | undefined, projectRoot: string): Promise<string> {
   if (explicit) return explicit.replace(/[^A-Za-z0-9._-]/g, '-');
-  const ownerRepo = await resolveOwnerRepo(projectRoot);
-  if (ownerRepo) return `${ownerRepo.owner}__${ownerRepo.repo}`;
+  const origin = await readGitOriginUrl(projectRoot).catch(() => undefined);
+  const slug = origin ? projectSlugFromOriginUrl(origin) : null;
+  if (slug) return slug;
   return basename(projectRoot).replace(/[^A-Za-z0-9._-]/g, '-') || 'project';
 }
 
@@ -646,6 +763,78 @@ const secretsCmd = new Command('secrets')
   .description('Manage per-project secrets/envs on the control box custody store')
   .addCommand(secretsPushSub);
 
+const projectPushSub = new Command('push')
+  .description(
+    "Push this project's seed material (untracked files + env/secrets) to the control box, so boxes created from its web UI get the files a fresh clone can't provide. A PC create does this automatically; run this to register a project before creating a box from it.",
+  )
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .option('--project <slug>', 'custody project slug (default: owner__repo, else the directory name)')
+  .option('--force', 'upload even when the stored hash matches')
+  .action(async (opts: { url?: string; project?: string; force?: boolean }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const root = (await findProjectRoot(process.cwd())).root;
+      const slug = await projectSlug(opts.project, root);
+      const cfg = await loadEffectiveConfig(root).catch(() => null);
+      const res = await pushProjectSeedToCustody({
+        controlPlaneUrl: target.url,
+        adminToken: target.adminToken,
+        slug,
+        projectRoot: root,
+        // The default env set (same one `--with-env` uses). Unlike a create —
+        // which mirrors that box's own wizard picks and must not widen them —
+        // this command has no box and no picks: the user is explicitly asking to
+        // register the project's seed, so the default set is the intent. What
+        // actually gets captured is reported below.
+        envPatterns: DEFAULT_ENV_PATTERNS,
+        // Honour the configured cap, so raising it actually admits a bigger seed.
+        maxBodyBytes: cfg?.effective.relay.custodyMaxBodyBytes,
+        force: opts.force,
+        log: (line) => log.info(line),
+      });
+      if (res.unreachable) {
+        log.error(
+          `Control box unreachable at ${target.url} — nothing was pushed. The project is NOT registered; re-run when it is up.`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const head = res.manifest.repoHeadSha?.slice(0, 8) ?? 'unknown';
+      log.success(
+        `Pushed ${String(res.uploaded)} item(s), skipped ${String(res.skipped)} unchanged → projects/${slug}/seed (at ${head}).`,
+      );
+      // Name the env files that went up. This command captures the default env
+      // set rather than a per-box selection, so the user should never have to
+      // guess which secrets now live on the control box.
+      if (res.envFiles.length > 0) {
+        log.info(`env/secret files captured: ${res.envFiles.join(', ')}`);
+      }
+      if (res.skippedTarBytes !== undefined) {
+        log.warn(
+          `The untracked-files tar (${String(Math.round(res.skippedTarBytes / 1024 / 1024))}MB) exceeded this machine's custody body cap and was NOT pushed — ` +
+            'hub-created boxes will miss those files. To include it, raise `relay.custodyMaxBodyBytes` here AND ' +
+            'AGENTBOX_CUSTODY_MAX_BODY_BYTES on the control box (it enforces its own cap).',
+        );
+      }
+      if (res.dropped.length > 0) {
+        log.warn(
+          `The control box refused ${res.dropped.join(', ')} — hub-created boxes will miss those files. ` +
+            'If it is a size limit, raise AGENTBOX_CUSTODY_MAX_BODY_BYTES on the control box.',
+        );
+      }
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const projectCmd = new Command('project')
+  .description('Manage a project on the control box (seed material for hub-created boxes)')
+  .addCommand(projectPushSub);
+
 const custodyListSub = new Command('list')
   .description('List custody entries (paths + hashes; values are never returned)')
   .argument('[prefix]', 'scope to a prefix, e.g. agents or projects/owner__repo')
@@ -741,33 +930,27 @@ const custodyCmd = new Command('custody')
 // --- control-plane box registry (the PC's admin view of the control box) ---
 
 const boxesListSub = new Command('list')
-  .description('List boxes registered on the control box')
+  .description('List boxes on the control box (via its /api/v1)')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .option('--json', 'print raw JSON')
   .action(async (opts: { url?: string; json?: boolean }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
-      if (!target) {
+      const client = await resolveHubApiClient(opts.url);
+      if (!client) {
         process.exitCode = 1;
         return;
       }
-      const client = new ControlPlaneAdminClient(target);
-      const [boxes, statuses] = await Promise.all([client.listBoxes(), client.store.listStatuses()]);
+      const boxes = await client.listBoxes();
       if (opts.json) {
-        process.stdout.write(`${JSON.stringify({ boxes, statuses }, null, 2)}\n`);
+        process.stdout.write(`${JSON.stringify({ boxes }, null, 2)}\n`);
         return;
       }
       if (boxes.length === 0) {
-        log.info('No boxes registered on the control box.');
+        log.info('No boxes on the control box.');
         return;
       }
-      const statusBy = new Map(statuses.map((s) => [s.boxId, s.status]));
       for (const b of boxes) {
-        const st = statusBy.get(b.boxId);
-        const state = st && typeof st === 'object' && 'state' in st ? String((st as { state?: unknown }).state) : '-';
-        process.stdout.write(
-          `${b.boxId}  ${b.name}  ${b.kind ?? 'docker'}${b.backend ? `/${b.backend}` : ''}  ${state}\n`,
-        );
+        process.stdout.write(`${b.id}  ${b.name ?? b.task}  ${b.provider}  ${b.state ?? b.status}\n`);
       }
     } catch (err) {
       handleLifecycleError(err);
@@ -775,38 +958,65 @@ const boxesListSub = new Command('list')
   });
 
 const boxesRmSub = new Command('rm')
-  .description('Reap a box from the control box (registration + status + SSH-key custody; NOT the cloud resource)')
+  .description('Destroy a box via the control box (tears down the cloud resource AND reaps its registration/custody)')
   .argument('<boxId>', 'the box id as shown by `control-plane boxes list`')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .action(async (boxId: string, opts: { url?: string }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
-      if (!target) {
+      const client = await resolveHubApiClient(opts.url);
+      if (!client) {
         process.exitCode = 1;
         return;
       }
-      const client = new ControlPlaneAdminClient(target);
-      const res = await client.reapBox(boxId);
-      if (!res.removed && res.custodyRemoved === 0) {
+      // Reverse-adoption on the control box means this drives a REAL destroy even
+      // for a box created on the PC (registration-only) — not just a state reap.
+      await client.destroy(boxId);
+      log.success(`Destroyed '${boxId}' (cloud resource + control-box state).`);
+    } catch (err) {
+      if (err instanceof HubApiError && err.code === 'not_found') {
         log.info(`No box '${boxId}' on the control box.`);
         return;
       }
-      log.success(
-        `Reaped '${boxId}': registration ${res.removed ? 'removed' : 'absent'}, ` +
-          `${String(res.custodyRemoved)} custody file(s) removed. ` +
-          `(The cloud resource, if any, is untouched — destroy it from the hub or its provider.)`,
-      );
-    } catch (err) {
       handleLifecycleError(err);
     }
   });
 
+/** A `control-plane boxes <action>` lifecycle subcommand over the hub `/api/v1`. */
+function boxesLifecycleSub(action: HubLifecycleAction, verb: string, past: string): Command {
+  return new Command(action)
+    .description(`${verb} a box on the control box (via its /api/v1)`)
+    .argument('<boxId>', 'the box id as shown by `control-plane boxes list`')
+    .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+    .action(async (boxId: string, opts: { url?: string }) => {
+      try {
+        const client = await resolveHubApiClient(opts.url);
+        if (!client) {
+          process.exitCode = 1;
+          return;
+        }
+        await client.lifecycle(boxId, action);
+        log.success(`${past} '${boxId}'.`);
+      } catch (err) {
+        if (err instanceof HubApiError && err.code === 'not_found') {
+          log.info(`No box '${boxId}' on the control box.`);
+          process.exitCode = 1;
+          return;
+        }
+        handleLifecycleError(err);
+      }
+    });
+}
+
 const boxesCmd = new Command('boxes')
-  .description('List + reap boxes registered on the control box')
+  .description('List + drive boxes on the control box over its public /api/v1')
   .addCommand(boxesListSub)
+  .addCommand(boxesLifecycleSub('start', 'Start', 'Started'))
+  .addCommand(boxesLifecycleSub('stop', 'Stop', 'Stopped'))
+  .addCommand(boxesLifecycleSub('pause', 'Pause', 'Paused'))
+  .addCommand(boxesLifecycleSub('resume', 'Resume', 'Resumed'))
   .addCommand(boxesRmSub);
 
-// --- control-plane approvals (answerable from the PC) ---
+// --- control-plane approvals (answerable from the PC over /api/v1) ---
 
 const promptsListSub = new Command('list')
   .description('List pending host-action approvals across control-box boxes')
@@ -814,23 +1024,25 @@ const promptsListSub = new Command('list')
   .option('--json', 'print raw JSON')
   .action(async (opts: { url?: string; json?: boolean }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
-      if (!target) {
+      const client = await resolveHubApiClient(opts.url);
+      if (!client) {
         process.exitCode = 1;
         return;
       }
-      const client = new ControlPlaneAdminClient(target);
-      const pending = await client.pendingPrompts();
+      // One call returns every pending approval (vs the admin wire's N per-box
+      // fetches); cross-ref the box list once for human-readable names.
+      const [approvals, boxes] = await Promise.all([client.listApprovals(), client.listBoxes().catch(() => [])]);
       if (opts.json) {
-        process.stdout.write(`${JSON.stringify(pending, null, 2)}\n`);
+        process.stdout.write(`${JSON.stringify(approvals, null, 2)}\n`);
         return;
       }
-      if (pending.length === 0) {
+      if (approvals.length === 0) {
         log.info('No pending approvals.');
         return;
       }
-      for (const p of pending) {
-        process.stdout.write(`${p.prompt.id}  [${p.boxName}]  ${p.prompt.message}\n`);
+      const nameBy = new Map(boxes.map((b) => [b.id, b.name ?? b.task]));
+      for (const a of approvals) {
+        process.stdout.write(`${a.id}  [${nameBy.get(a.boxId) ?? a.boxId}]  ${a.message}\n`);
       }
     } catch (err) {
       handleLifecycleError(err);
@@ -849,19 +1061,19 @@ const promptsAnswerSub = new Command('answer')
         process.exitCode = 1;
         return;
       }
-      const target = await resolveCustodyTarget(opts.url);
-      if (!target) {
+      const client = await resolveHubApiClient(opts.url);
+      if (!client) {
         process.exitCode = 1;
         return;
       }
-      const client = new ControlPlaneAdminClient(target);
-      const ok = await client.answerPrompt(id, answer);
-      if (ok) log.success(`Answered ${id} → ${answer}.`);
-      else {
+      await client.answerApproval(id, answer);
+      log.success(`Answered ${id} → ${answer}.`);
+    } catch (err) {
+      if (err instanceof HubApiError && err.code === 'not_found') {
         log.info(`No pending approval with id ${id} (already answered or expired?).`);
         process.exitCode = 1;
+        return;
       }
-    } catch (err) {
       handleLifecycleError(err);
     }
   });
@@ -874,6 +1086,24 @@ const promptsCmd = new Command('prompts')
 interface DeployOpts {
   ref?: string;
   repo?: string;
+}
+
+/**
+ * Ensure `control-plane.env` carries a non-empty `AGENTBOX_HUB_API_KEY` (the
+ * headless `/api/v1` bearer), minting + appending one if absent, and return it.
+ * `setup` writes the key into a fresh env; this covers **redeploys** of a control
+ * box whose env predates the key (or a hand-managed env), so every deploy — fresh
+ * or repeat — ships a hub that accepts the headless key. Idempotent.
+ */
+async function ensureHubApiKeyInEnv(): Promise<string> {
+  const body = await readFile(ENV_PATH, 'utf8');
+  const existing = /^AGENTBOX_HUB_API_KEY=(.+)$/m.exec(body)?.[1]?.trim();
+  if (existing) return existing;
+  const key = randomBytes(32).toString('hex');
+  const nl = body.length === 0 || body.endsWith('\n') ? '' : '\n';
+  await writeFile(ENV_PATH, `${body}${nl}AGENTBOX_HUB_API_KEY=${key}\n`, { mode: 0o600 });
+  await chmod(ENV_PATH, 0o600);
+  return key;
 }
 
 // Re-deploy the FULL hub to a fresh Hetzner VPS, REUSING the existing
@@ -893,6 +1123,10 @@ const deployHetznerSub = new Command('hetzner')
       if (!(await ensureHetznerHubAuth())) {
         log.warn('login prompt cancelled — deploying without web-UI auth.');
       }
+      // Mint the headless /api/v1 bearer into the env if it isn't there yet, so a
+      // redeploy of a pre-existing control box also gets it (setup writes it for
+      // fresh installs). It rides the same scp'd .env into the container.
+      await ensureHubApiKeyInEnv();
       // `--repo` accepts an owner/repo slug or a full git URL; the VPS clones a URL.
       const repoSpec = opts.repo ?? DEFAULT_DEPLOY_REPO;
       const repoUrl = repoSpec.includes('://') ? repoSpec : `https://github.com/${repoSpec}.git`;
@@ -921,10 +1155,40 @@ const deployHetznerSub = new Command('hetzner')
       log[ok ? 'success' : 'warn'](
         ok ? `Control box is healthy (${url}/healthz).` : `Could not confirm ${url}/healthz yet — check the deployment.`,
       );
+      if (ok) await seedPreparedToNewControlBox(url);
     } catch (err) {
       handleLifecycleError(err);
     }
   });
+
+/**
+ * Share this machine's cloud bake records with a freshly-deployed control box,
+ * so its first web-UI create boots the base you already baked instead of
+ * spending minutes re-baking an identical one. Best-effort: a fresh deploy is
+ * still perfectly usable without it (it just bakes on demand).
+ */
+async function seedPreparedToNewControlBox(url: string): Promise<void> {
+  const target = await resolveCustodyTarget(url, { quiet: true });
+  if (!target) return;
+  const shared: string[] = [];
+  for (const provider of SHAREABLE_PREPARED_PROVIDERS) {
+    const ok = await pushPreparedToCustody(provider, {
+      controlPlaneUrl: target.url,
+      adminToken: target.adminToken,
+    }).catch(() => false);
+    if (ok) shared.push(provider);
+  }
+  if (shared.length > 0) {
+    log.success(`Shared your ${shared.join(', ')} base bake(s) with the control box — it won't re-bake them.`);
+  }
+}
+
+/**
+ * Providers whose base is a provider-side snapshot another machine can boot, so
+ * the bake record is worth sharing. Docker is excluded: its base is a local
+ * image, rebuilt (or pulled) per machine.
+ */
+const SHAREABLE_PREPARED_PROVIDERS = ['hetzner', 'vercel', 'e2b', 'daytona', 'digitalocean'] as const;
 
 const deployCmd = new Command('deploy')
   .description('Deploy the full hub to a VPS, reusing the App creds from `control-plane setup`')
@@ -941,6 +1205,7 @@ export const controlPlaneCommand = new Command('control-plane')
   .addCommand(workerSub)
   .addCommand(credentialsCmd)
   .addCommand(secretsCmd)
+  .addCommand(projectCmd)
   .addCommand(custodyCmd)
   .addCommand(boxesCmd)
   .addCommand(promptsCmd);

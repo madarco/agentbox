@@ -72,6 +72,13 @@ export interface CreateBoxRequest {
   name?: string;
   /** Project root (nearest ancestor with agentbox.yaml, else workspacePath). */
   projectRoot: string;
+  /**
+   * Agent the box is being created for, when the create is agent-initiated
+   * (`agentbox claude|codex|opencode`, queue jobs, hub creates). Registered on
+   * the control plane so an adopting PC knows which agent to relaunch. Plain
+   * `agentbox create` leaves it unset.
+   */
+  agent?: 'claude' | 'codex' | 'opencode';
   /** Override the base image / snapshot. */
   image?: string;
   /**

@@ -1,4 +1,5 @@
 import { log } from '@clack/prompts';
+import { execa } from 'execa';
 import { findProjectRoot } from '@agentbox/config';
 import type { AgentActivityState } from '@agentbox/ctl';
 import { listBoxes, type ListedBox } from '@agentbox/sandbox-docker';
@@ -7,6 +8,9 @@ import { pathToFileURL } from 'node:url';
 import { boxLabel } from '../box-label.js';
 import { hyperlink } from '../hyperlink.js';
 import { applyLiveCloudStates } from '../lib/cloud-state.js';
+import { cacheAge, fetchHubListing, type HubListing } from '../control-plane/hub-list.js';
+import { mergeHubBoxes, type MergedBox } from '../control-plane/hub-merge.js';
+import { normalizeOriginUrl } from '../control-plane/hub-adopt.js';
 import { withWatchOptions, watchRender, type WatchableOptions } from '../watch.js';
 
 interface ListOptions extends WatchableOptions {
@@ -201,7 +205,20 @@ function activityView(a: AgentActivityState | undefined): {
 }
 
 /** The status line (line 2) for a box in the compact view. */
-export function cmuxStatusCell(b: ListedBox, color: boolean): string {
+export function cmuxStatusCell(
+  b: ListedBox & { needsAdopt?: boolean },
+  color: boolean,
+  live = false,
+): string {
+  // A box that only exists on the control box has no local agent state to show —
+  // its `running` is a placeholder, not a probe. Rendering the usual glyph here
+  // claimed a live agent for a box this machine has never even adopted. Under
+  // `--live` the state HAS been probed, so show it — same rule as the table's
+  // `stateCell`, or the dock and the table disagree on identical data.
+  if (b.needsAdopt === true && !live) {
+    const s = '[on hub]';
+    return color ? colorize(s, 'dim') : s;
+  }
   if (b.state !== 'running') {
     const s = `[${b.state}]`;
     return color ? colorize(s, 'dim') : s;
@@ -237,6 +254,7 @@ export function renderCmuxRows(
   color: boolean,
   width: number,
   linkNames = false,
+  live = false,
 ): string {
   const groups = new Map<string, ListedBox[]>();
   for (const b of boxes) {
@@ -260,7 +278,7 @@ export function renderCmuxRows(
       // can repeat across projects) so the click resolves to the right box.
       const name = linkNames ? hyperlink(disp, `agentbox://web/${b.id}`, undefined, true) : disp;
       lines.push(`${idx}${name}`);
-      lines.push('  ' + cmuxStatusCell(b, color));
+      lines.push('  ' + cmuxStatusCell(b, color, live));
     }
   }
   return lines.join('\n');
@@ -279,16 +297,29 @@ async function buildCmuxText(live: boolean, color: boolean, linkNames = false): 
   if (boxes.length === 0) return cmuxEmptyMessage();
   // Re-read width each tick so a resized panel re-truncates.
   const width = process.stdout.columns ?? 30;
-  return renderCmuxRows(boxes, color, width, linkNames);
+  return renderCmuxRows(boxes, color, width, linkNames, live);
 }
 
-function renderTable(boxes: ListedBox[], stream: NodeJS.WriteStream): string {
+/**
+ * STATE, qualified by where the row came from. An un-adopted hub box has no
+ * locally-known state — a registration doesn't carry one and `list` must stay
+ * instant — so say `on hub` rather than assert `running`. `--live` does probe
+ * it (the registration carries backend + sandboxId), so then show the truth.
+ * An orphan is a local record for a box the control box no longer has.
+ */
+function stateCell(b: MergedBox, live: boolean): string {
+  if (b.source === 'orphan') return `${b.state} (orphan)`;
+  if (b.needsAdopt && !live) return 'on hub';
+  return b.state;
+}
+
+function renderTable(boxes: MergedBox[], stream: NodeJS.WriteStream, live: boolean): string {
   const header = ['N', 'NAME', 'STATE', 'AGENT', 'SHELLS', 'PROVIDER', 'URL', 'WORKSPACE'];
   const wsCol = header.length - 1;
   const lead: Cell[][] = boxes.map((b) => [
     plain(typeof b.projectIndex === 'number' ? String(b.projectIndex) : ''),
     plain(boxLabel(b)),
-    plain(b.state),
+    plain(stateCell(b, live)),
     // One column for every agent (claude / codex / opencode) — see agentSummary.
     plain(agentSummary(b)),
     // Live shell-session count; `-` for none (or a non-running box). Detail
@@ -343,38 +374,72 @@ function renderTable(boxes: ListedBox[], stream: NodeJS.WriteStream): string {
  * `box-ref.ts`'s `findProjectRoot` + `resolveBoxRef`), or all boxes under
  * `--global`. Pre-feature boxes have no `projectRoot`, so they surface only
  * under `--global` — same as auto-pick, which never matches them implicitly.
+ *
+ * With a control box configured, cloud boxes come from IT (the source of truth),
+ * merged with the local docker boxes — so a box created from the web UI shows
+ * here without ever having been adopted. See `hub-merge.ts` for the rules.
  */
 async function scopedBoxes(
   all: boolean,
   live: boolean,
-): Promise<{ boxes: ListedBox[]; projectRoot: string; scoped: boolean }> {
-  const boxes = await listBoxes();
+): Promise<{ boxes: MergedBox[]; projectRoot: string; scoped: boolean; hub: HubListing | null }> {
+  const local = await listBoxes();
+  const hub = await fetchHubListing().catch(() => null);
+  const boxes = mergeHubBoxes(local, hub ? hub.registrations : null, { stale: hub?.stale });
   if (all) {
     // Default: cloud state is the fast persisted `cloud.lastState` from
     // listBoxes. `--live` overrides it with an authoritative SDK probe.
     if (live) await applyLiveCloudStates(boxes);
-    return { boxes, projectRoot: '', scoped: false };
+    return { boxes, projectRoot: '', scoped: false, hub };
   }
   const { root } = await findProjectRoot(process.cwd());
-  const scoped = boxes.filter((b) => b.projectRoot === root);
+  // An un-adopted hub box has no projectRoot yet — nothing has matched it to a
+  // local clone. Scope it by its registered origin URL instead, so the boxes of
+  // the repo you're standing in show up whether or not they were created here.
+  const origin = await readCwdOriginUrl(root);
+  const scoped = boxes.filter(
+    (b) =>
+      b.projectRoot === root ||
+      (b.needsAdopt === true &&
+        origin !== undefined &&
+        b.originUrl !== undefined &&
+        normalizeOriginUrl(b.originUrl) === normalizeOriginUrl(origin)),
+  );
   // Probe only the scoped boxes — don't round-trip every cloud box on the host.
   if (live) await applyLiveCloudStates(scoped);
-  return { boxes: scoped, projectRoot: root, scoped: true };
+  return { boxes: scoped, projectRoot: root, scoped: true, hub };
+}
+
+/** The cwd project's `origin` remote, for scoping un-adopted hub boxes. */
+async function readCwdOriginUrl(root: string): Promise<string | undefined> {
+  const r = await execa('git', ['-C', root, 'remote', 'get-url', 'origin'], { reject: false });
+  const url = (r.stdout ?? '').trim();
+  return r.exitCode === 0 && url.length > 0 ? url : undefined;
 }
 
 async function buildListText(all: boolean, live: boolean): Promise<string> {
-  const { boxes, projectRoot, scoped } = await scopedBoxes(all, live);
+  const { boxes, projectRoot, scoped, hub } = await scopedBoxes(all, live);
+  // A stale listing is only worth flagging when a control box is configured at
+  // all — otherwise there's nothing the user could act on.
+  const note =
+    hub?.stale === true
+      ? hub.reason === 'no-token'
+        ? '\ncontrol box configured but no admin token — hub boxes not shown. Run `agentbox control-plane setup`, or set AGENTBOX_RELAY_ADMIN_TOKEN.'
+        : hub.fetchedAt !== undefined
+          ? `\ncontrol box unreachable — hub boxes as of ${cacheAge(hub.fetchedAt)}`
+          : '\ncontrol box unreachable — hub boxes not shown'
+      : '';
   if (boxes.length === 0) {
     if (scoped) {
-      return `no boxes in this project (${projectRoot}) — run \`agentbox create\`, or \`agentbox list --global\` to see all`;
+      return `no boxes in this project (${projectRoot}) — run \`agentbox create\`, or \`agentbox list --global\` to see all${note}`;
     }
-    return 'no boxes — run `agentbox create` to make one';
+    return `no boxes — run \`agentbox create\` to make one${note}`;
   }
-  const table = renderTable(boxes, process.stdout);
-  if (!scoped) return table;
+  const table = renderTable(boxes, process.stdout, live);
+  if (!scoped) return table + note;
   // basename of projectRoot — matches dashboard sidebar's projectLabel().
   const name = projectRoot.split('/').filter(Boolean).pop() ?? projectRoot;
-  return `Project: ${name}\n${table}`;
+  return `Project: ${name}\n${table}${note}`;
 }
 
 export const listCommand = withWatchOptions(
