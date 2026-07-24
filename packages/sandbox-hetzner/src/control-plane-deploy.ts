@@ -56,15 +56,24 @@ const REMOTE_DATA_DIR = '/opt/agentbox/hub-data';
 
 // Provider credentials the resident worker needs to provision cloud boxes. Only
 // these keys are copied from the host `~/.agentbox/secrets.env` — never the whole
-// file (it may hold unrelated secrets). Keep this in sync with `PROVIDER_CRED_KEYS`
-// in apps/hub (the "configured" badge) + each provider module's managed keys — a
-// key here that isn't copied shows the provider "not configured" on the control box.
-const PROVIDER_SECRET_KEYS = [
+// file (it may hold unrelated secrets). This is the exact set each provider's
+// `env-loader.ts` reads (`E2B_KEYS`/`HETZNER_KEYS`/`DAYTONA_KEYS`/`VERCEL_KEYS`/
+// `DIGITALOCEAN_KEYS`) MINUS `VERCEL_AUTH_SOURCE` (see below) — that's the source
+// of truth; `test/provider-secret-keys.test.ts` fails if this drifts from it (it
+// once carried `DAYTONA_ORG_ID`, but the real key is `DAYTONA_ORGANIZATION_ID`, so
+// JWT-mode Daytona shipped with no org id and failed at create). The parallel
+// `PROVIDER_CRED_KEYS` in apps/hub (the "configured" badge) is a required-key
+// subset of this; a key missing here shows the provider "not configured" remotely.
+export const PROVIDER_SECRET_KEYS = [
   'HCLOUD_TOKEN',
+  'HCLOUD_ENDPOINT',
   'E2B_API_KEY',
+  'E2B_DOMAIN',
   'DAYTONA_API_KEY',
   'DAYTONA_JWT_TOKEN',
-  'DAYTONA_ORG_ID',
+  'DAYTONA_ORGANIZATION_ID',
+  'DAYTONA_API_URL',
+  'DAYTONA_TARGET',
   // Vercel: only the ACCESS-TOKEN keys travel. A CLI-login setup keeps the token
   // in the Vercel CLI store (not secrets.env) and marks it with
   // VERCEL_AUTH_SOURCE — deliberately NOT copied, since there's no vercel CLI on
@@ -77,7 +86,21 @@ const PROVIDER_SECRET_KEYS = [
   'VERCEL_PROJECT_ID',
   'DIGITALOCEAN_TOKEN',
   'DIGITALOCEAN_API_URL',
-];
+] as const;
+
+/** Filter a `secrets.env` body down to just the allowlisted provider-cred lines. Pure — unit-testable. */
+export function filterProviderSecrets(body: string): string {
+  const allow = new Set<string>(PROVIDER_SECRET_KEYS);
+  const out: string[] = [];
+  for (const line of body.split(/\r?\n/)) {
+    const stripped = line.startsWith('export ') ? line.slice('export '.length) : line;
+    const eq = stripped.indexOf('=');
+    if (eq <= 0) continue;
+    const key = stripped.slice(0, eq).trim();
+    if (allow.has(key)) out.push(`${key}=${stripped.slice(eq + 1)}`);
+  }
+  return out.length > 0 ? out.join('\n') + '\n' : '';
+}
 
 /** Extract just the provider-credential lines from the host `~/.agentbox/secrets.env`. */
 async function collectProviderSecrets(): Promise<string> {
@@ -87,15 +110,7 @@ async function collectProviderSecrets(): Promise<string> {
   } catch {
     return '';
   }
-  const out: string[] = [];
-  for (const line of body.split(/\r?\n/)) {
-    const stripped = line.startsWith('export ') ? line.slice('export '.length) : line;
-    const eq = stripped.indexOf('=');
-    if (eq <= 0) continue;
-    const key = stripped.slice(0, eq).trim();
-    if (PROVIDER_SECRET_KEYS.includes(key)) out.push(`${key}=${stripped.slice(eq + 1)}`);
-  }
-  return out.length > 0 ? out.join('\n') + '\n' : '';
+  return filterProviderSecrets(body);
 }
 
 function caddyfile(domain: string): string {

@@ -288,6 +288,18 @@ Adoption doesn't change that; it just makes a same-named pair easier to create.
 
 ## Backlog (found by the live run)
 
+- **A freshly deployed control box can't self-bake a non-matching base.** The deploy shares the PC's
+  local bake records (`prepared/<provider>.json`) to custody and the worker adopts one via
+  `hydratePreparedFromCustody` — but *only* when its `contextSha256` matches the control box's freshly
+  computed `baseFingerprint` (correct: booting a mismatched base is worse than re-baking). So when the
+  control box runs a different AgentBox version than the one the PC baked with (e.g. an in-dev branch
+  whose ctl/runtime bundle shifted the fingerprint), every cloud create fails with "run `agentbox
+  prepare` first". Provider *credentials* migrate fine (the deploy allowlist works — see
+  `control-plane-deploy.ts` `PROVIDER_SECRET_KEYS`); the gap is the **base bake**. Fix: when no matching
+  shared bake exists, have the resident worker bake its own base (run the provider's `prepare`) before
+  the first create instead of failing. Larger (needs the provider build machinery + queue integration on
+  the control box). Workaround today: re-bake locally on the control box's version before deploying, or
+  scp the record up.
 - **Destroying a PC box doesn't reap its control-box registration.** `agentbox destroy`
   removes the local record and the cloud sandbox but leaves the box registered on the control
   box, so it lingers in the Store (and now, with the web-UI merge, in the dashboard) as a ghost.
