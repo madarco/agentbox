@@ -1055,8 +1055,8 @@ interface DeployOpts {
  */
 async function ensureHubApiKeyInEnv(): Promise<string> {
   const body = await readFile(ENV_PATH, 'utf8');
-  const existing = /^AGENTBOX_HUB_API_KEY=(.+)$/m.exec(body);
-  if (existing && existing[1].trim()) return existing[1].trim();
+  const existing = /^AGENTBOX_HUB_API_KEY=(.+)$/m.exec(body)?.[1]?.trim();
+  if (existing) return existing;
   const key = randomBytes(32).toString('hex');
   const nl = body.length === 0 || body.endsWith('\n') ? '' : '\n';
   await writeFile(ENV_PATH, `${body}${nl}AGENTBOX_HUB_API_KEY=${key}\n`, { mode: 0o600 });
