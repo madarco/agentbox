@@ -228,6 +228,7 @@ export interface UserConfig {
   };
   cloud?: {
     useCurrentBranch?: boolean;
+    viaHub?: boolean;
   };
   maintenance?: {
     pruneProjectConfigs?: boolean;
@@ -388,6 +389,7 @@ export interface EffectiveConfig {
   };
   cloud: {
     useCurrentBranch: boolean;
+    viaHub: boolean;
   };
   maintenance: {
     pruneProjectConfigs: boolean;
@@ -578,6 +580,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   cloud: {
     useCurrentBranch: false,
+    viaHub: true,
   },
   maintenance: {
     pruneProjectConfigs: true,
@@ -1073,6 +1076,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'bool',
     description:
       "On cloud providers (daytona/hetzner), start new boxes on the host's current branch instead of forking a new agentbox/<box-name> branch. Overridden by an explicit --use-branch / --from-branch.",
+  },
+  {
+    key: 'cloud.viaHub',
+    type: 'bool',
+    description:
+      'When a control box is configured (relay.controlPlaneUrl), create cloud boxes ON the control box by default instead of on this machine (so they keep running with the laptop off). On by default; set false to always build cloud boxes locally. Overridden per-command by --via-hub / --local. Docker and remote-docker always build locally regardless.',
   },
   {
     key: 'maintenance.pruneProjectConfigs',

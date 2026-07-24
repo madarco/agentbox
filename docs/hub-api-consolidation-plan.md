@@ -10,9 +10,12 @@
 > [`local-adoption-plan.md`](./local-adoption-plan.md) (PC as thin client), [`host-relay.md`](./host-relay.md)
 > (the relay core), and the public API reference [`apps/web/content/docs/api.mdx`](../apps/web/content/docs/api.mdx).
 > Status: **P0 shipped** (headless `/api/v1` key, PR #245); **Phase 1 (reverse-adoption) + Phase 2
-> clean subset (CLI `HubApiClient`, `control-plane boxes`/`prompts` on `/api/v1`) shipped**; `ls -g`
-> + `create --via-hub` + main-command dispatch deferred (see the phased plan below). Maintain status
-> live per project convention.
+> clean subset (CLI `HubApiClient`, `control-plane boxes`/`prompts` on `/api/v1`) shipped**;
+> **Phase 3 shipped** (tray follows the CLI hub config via `agentbox hub target`; `/api/events`
+> accepts the headless Bearer key; cloud box creation — `create` + foreground `claude`/`codex`/
+> `opencode` — defaults to the control box when configured, via `cloud.viaHub`, docker stays local);
+> `ls -g` + `create --via-hub` main-command dispatch + hub-worker agent-launch for background `-i`
+> deferred (see the phased plan below). Maintain status live per project convention.
 
 ## Context
 
@@ -223,10 +226,27 @@ intentional divergences above (git auth, gate, worker) branch on the profile.
     - The remote-relay default (cloud boxes register/lease/report to the remote hub so the laptop can be
       off) is already the control-plane topology; making it the default at the create/routing choke
       points is future work.
-- **Phase 3 — Tray remote.** Make `HubClient.baseURL` configurable + add a remote-key source
-  (`../agentbox-tray/Sources/AgentBox/Source/HubClient.swift:6`, SSE cookie in `SSEClient.swift`). The
-  `BoxSource`/`HubAPIBoxSource` seam already anticipates a hosted source — no UI change. Local
-  shellouts (`open --in`, `open --targets`, `hub start`) stay local (the ~10%).
+- **Phase 3 — Tray remote + remote-hub default for cloud creates. DONE.**
+  - **Tray follows the CLI config.** New `agentbox hub target [--json]` (CLI seam `resolveHubTarget`)
+    resolves the client-facing hub — remote control box when `relay.controlPlaneUrl` is set, else the
+    loopback hub — as `{mode, url, token}`. `HubClient` (`../agentbox-tray/.../HubClient.swift`) now
+    resolves its base URL + Bearer from that (new `HubTarget.swift`) instead of hardcoding
+    `127.0.0.1:8787`; `SSEClient` switched from the `agentbox_hub_token` cookie to the same
+    `Authorization: Bearer` (unblocked by extending the `proxy.ts` gate so **`/api/events` accepts the
+    headless Bearer key**, table row #14). `openHub`/`ensureHubRunning` stay local-only (a remote
+    control box is always-on, never started by the tray). Settings shows the connected hub.
+  - **Remote hub is the default relay for cloud creates.** New `cloud.viaHub` config (bool, default
+    **true**): when a control box is configured, `agentbox create` and **foreground**
+    `claude`/`codex`/`opencode` on a cloud provider build the box ON the control box (reusing the
+    resident-worker `POST /remote/boxes` path), then — for the agent commands — adopt + attach here so
+    the agent starts. docker / remote-docker always stay local; `--local` / `cloud.viaHub=false` force
+    local; a missing prerequisite (no git origin / admin token) falls back to a local build with a
+    notice. Routing decision centralized in `route-create.ts` (`resolveCreateRouting`) +
+    `isHubRoutableProvider` (clouds minus remote-docker).
+  - **Deferred:** **background `-i`** stays on the local queue — the hub create worker builds boxes
+    "cold" (it never launches the agent or seeds the prompt), so routing `-i` there needs a new
+    worker feature (agent-launch + prompt-seed). `create --via-hub` onto `/api/v1`, `ls -g`, and the
+    main `start/stop/git <box>` dispatch remain as before.
 - **Phase 4 — Web UI onto `/api/v1`.** Migrate `apps/hub/lib/boxes/actions.ts` server-action mutations
   to the same `/api/v1` fetches, so all three clients share one path and a remote deploy needs no
   in-process backend.
