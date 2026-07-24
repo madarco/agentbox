@@ -1046,6 +1046,24 @@ interface DeployOpts {
   repo?: string;
 }
 
+/**
+ * Ensure `control-plane.env` carries a non-empty `AGENTBOX_HUB_API_KEY` (the
+ * headless `/api/v1` bearer), minting + appending one if absent, and return it.
+ * `setup` writes the key into a fresh env; this covers **redeploys** of a control
+ * box whose env predates the key (or a hand-managed env), so every deploy — fresh
+ * or repeat — ships a hub that accepts the headless key. Idempotent.
+ */
+async function ensureHubApiKeyInEnv(): Promise<string> {
+  const body = await readFile(ENV_PATH, 'utf8');
+  const existing = /^AGENTBOX_HUB_API_KEY=(.+)$/m.exec(body);
+  if (existing && existing[1].trim()) return existing[1].trim();
+  const key = randomBytes(32).toString('hex');
+  const nl = body.length === 0 || body.endsWith('\n') ? '' : '\n';
+  await writeFile(ENV_PATH, `${body}${nl}AGENTBOX_HUB_API_KEY=${key}\n`, { mode: 0o600 });
+  await chmod(ENV_PATH, 0o600);
+  return key;
+}
+
 // Re-deploy the FULL hub to a fresh Hetzner VPS, REUSING the existing
 // ~/.agentbox/control-plane App creds + env — no GitHub-App manifest flow. Pins
 // the VPS clone to --ref so a feature branch can be deployed for live verify.
@@ -1063,6 +1081,10 @@ const deployHetznerSub = new Command('hetzner')
       if (!(await ensureHetznerHubAuth())) {
         log.warn('login prompt cancelled — deploying without web-UI auth.');
       }
+      // Mint the headless /api/v1 bearer into the env if it isn't there yet, so a
+      // redeploy of a pre-existing control box also gets it (setup writes it for
+      // fresh installs). It rides the same scp'd .env into the container.
+      await ensureHubApiKeyInEnv();
       // `--repo` accepts an owner/repo slug or a full git URL; the VPS clones a URL.
       const repoSpec = opts.repo ?? DEFAULT_DEPLOY_REPO;
       const repoUrl = repoSpec.includes('://') ? repoSpec : `https://github.com/${repoSpec}.git`;
