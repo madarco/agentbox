@@ -164,6 +164,10 @@ const setupSub = new Command('setup')
 
       // Persist the App key + a generated admin token as the plane's deploy env.
       const adminToken = randomBytes(32).toString('hex');
+      // Headless bearer for the hub's public /api/v1 (CLI / tray against a remote
+      // control box, which can't carry the browser session cookie). Separate from
+      // the admin token, which gates the internal /admin/* wire.
+      const hubApiKey = randomBytes(32).toString('hex');
       await mkdir(CP_DIR, { recursive: true });
       await writeFile(PEM_PATH, app.pem, { mode: 0o600 });
       await chmod(PEM_PATH, 0o600);
@@ -173,7 +177,8 @@ const setupSub = new Command('setup')
         `# Feed to docker compose (--env-file) or 'vercel env add'. Keep secret.\n` +
         `GITHUB_APP_ID=${app.appId}\n` +
         `GITHUB_APP_PRIVATE_KEY=${pemB64}\n` +
-        `AGENTBOX_RELAY_ADMIN_TOKEN=${adminToken}\n`;
+        `AGENTBOX_RELAY_ADMIN_TOKEN=${adminToken}\n` +
+        `AGENTBOX_HUB_API_KEY=${hubApiKey}\n`;
       await writeFile(ENV_PATH, envBody, { mode: 0o600 });
       await chmod(ENV_PATH, 0o600);
       await writeFile(
@@ -210,6 +215,7 @@ const setupSub = new Command('setup')
               GITHUB_APP_ID: app.appId,
               GITHUB_APP_PRIVATE_KEY: pemB64,
               AGENTBOX_RELAY_ADMIN_TOKEN: adminToken,
+              AGENTBOX_HUB_API_KEY: hubApiKey,
               ...(hubAuth ?? {}),
             };
             deployedUrl = (await deployControlPlaneToVercel({ env, repo, ref, log: onLog })).url;
@@ -551,6 +557,41 @@ export async function resolveCustodyTarget(
     return null;
   }
   return { url, adminToken };
+}
+
+/**
+ * Resolve a control box's public REST API target: its URL + the headless
+ * `/api/v1` bearer (`AGENTBOX_HUB_API_KEY`). This is the client-facing hub API
+ * (boxes/lifecycle/approvals), distinct from {@link resolveCustodyTarget}'s admin
+ * token, which is the internal `/admin/*` wire. Seam for the shared hub-API client
+ * (URL-swappable local ⇄ remote); not yet wired into commands.
+ *
+ * Returns null (actionable error unless `quiet`) when no control box is configured
+ * or no API key is available — the key is minted + recorded by `control-plane
+ * setup`/deploy into `~/.agentbox/control-plane/control-plane.env`.
+ */
+export async function resolveHubApiTarget(
+  urlFlag: string | undefined,
+  opts: { quiet?: boolean } = {},
+): Promise<{ url: string; apiKey: string } | null> {
+  const cfg = await loadEffectiveConfig(process.cwd());
+  const url = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
+  if (!url) {
+    if (!opts.quiet)
+      log.error('No control plane configured. Run `agentbox control-plane set-url <url>` (or pass --url).');
+    return null;
+  }
+  loadControlPlaneEnv();
+  const apiKey = process.env.AGENTBOX_HUB_API_KEY ?? '';
+  if (!apiKey) {
+    if (!opts.quiet)
+      log.error(
+        'No hub API key available. Set AGENTBOX_HUB_API_KEY, or run this from the machine that\n' +
+          'ran `agentbox control-plane setup` (it writes the key to ~/.agentbox/control-plane).',
+      );
+    return null;
+  }
+  return { url, apiKey };
 }
 
 /**
@@ -1005,6 +1046,24 @@ interface DeployOpts {
   repo?: string;
 }
 
+/**
+ * Ensure `control-plane.env` carries a non-empty `AGENTBOX_HUB_API_KEY` (the
+ * headless `/api/v1` bearer), minting + appending one if absent, and return it.
+ * `setup` writes the key into a fresh env; this covers **redeploys** of a control
+ * box whose env predates the key (or a hand-managed env), so every deploy — fresh
+ * or repeat — ships a hub that accepts the headless key. Idempotent.
+ */
+async function ensureHubApiKeyInEnv(): Promise<string> {
+  const body = await readFile(ENV_PATH, 'utf8');
+  const existing = /^AGENTBOX_HUB_API_KEY=(.+)$/m.exec(body)?.[1]?.trim();
+  if (existing) return existing;
+  const key = randomBytes(32).toString('hex');
+  const nl = body.length === 0 || body.endsWith('\n') ? '' : '\n';
+  await writeFile(ENV_PATH, `${body}${nl}AGENTBOX_HUB_API_KEY=${key}\n`, { mode: 0o600 });
+  await chmod(ENV_PATH, 0o600);
+  return key;
+}
+
 // Re-deploy the FULL hub to a fresh Hetzner VPS, REUSING the existing
 // ~/.agentbox/control-plane App creds + env — no GitHub-App manifest flow. Pins
 // the VPS clone to --ref so a feature branch can be deployed for live verify.
@@ -1022,6 +1081,10 @@ const deployHetznerSub = new Command('hetzner')
       if (!(await ensureHetznerHubAuth())) {
         log.warn('login prompt cancelled — deploying without web-UI auth.');
       }
+      // Mint the headless /api/v1 bearer into the env if it isn't there yet, so a
+      // redeploy of a pre-existing control box also gets it (setup writes it for
+      // fresh installs). It rides the same scp'd .env into the container.
+      await ensureHubApiKeyInEnv();
       // `--repo` accepts an owner/repo slug or a full git URL; the VPS clones a URL.
       const repoSpec = opts.repo ?? DEFAULT_DEPLOY_REPO;
       const repoUrl = repoSpec.includes('://') ? repoSpec : `https://github.com/${repoSpec}.git`;

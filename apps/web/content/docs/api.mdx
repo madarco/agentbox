@@ -32,9 +32,21 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8787/api/v1/boxes
 
 The token is the same per-machine secret the hub prints on boot (and stores at
 `~/.agentbox/hub/token`, mode `0600`). Requests without a valid token get a JSON
-`401` — never a redirect, so non-browser clients work cleanly. On a shared
-(password-protected) hub, `/api/v1` accepts the logged-in session; dedicated API
-keys arrive with the hosted deployment.
+`401` — never a redirect, so non-browser clients work cleanly.
+
+On a **deployed control box** (password-protected hub), `/api/v1` accepts either
+the logged-in browser session **or** a headless **API key** as the same
+`Authorization: Bearer` credential — so the CLI, the menu-bar app, or a script can
+call the remote hub without a cookie:
+
+```bash
+# the key is minted + recorded by `agentbox control-plane setup`/deploy
+KEY=$(grep '^AGENTBOX_HUB_API_KEY=' ~/.agentbox/control-plane/control-plane.env | cut -d= -f2)
+curl -H "Authorization: Bearer $KEY" https://<your-control-box>/api/v1/boxes
+```
+
+The key (`AGENTBOX_HUB_API_KEY`) gates only `/api/v1`, never the UI pages (those
+still require a login). A wrong or missing key gets the same JSON `401`.
 
 ## Response shape
 

@@ -26,6 +26,9 @@ services:
       # no BETTER_AUTH_SECRET the UI stays open; the deploy sets these so a
       # network-reachable hub is gated.
       AGENTBOX_RELAY_ADMIN_TOKEN: ${AGENTBOX_RELAY_ADMIN_TOKEN:?set AGENTBOX_RELAY_ADMIN_TOKEN}
+      # Headless bearer for the public /api/v1 (CLI / tray against this remote hub).
+      # Unset → /api/v1 stays browser-session-cookie only (the deploy sets it).
+      AGENTBOX_HUB_API_KEY: ${AGENTBOX_HUB_API_KEY:-}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
       AGENTBOX_HUB_ADMIN_EMAIL: ${AGENTBOX_HUB_ADMIN_EMAIL:-}
       AGENTBOX_HUB_ADMIN_PASSWORD: ${AGENTBOX_HUB_ADMIN_PASSWORD:-}
