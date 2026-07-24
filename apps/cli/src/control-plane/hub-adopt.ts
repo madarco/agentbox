@@ -19,17 +19,15 @@
  * is unit-testable with fake clients + a temp HOME, mirroring `hub-pull.ts`.
  */
 import { execa } from 'execa';
-import type { BoxRecord, GitWorktreeRecord, SshTargetRecord } from '@agentbox/core';
-import { boxSshDirForProvider, readState } from '@agentbox/sandbox-core';
+import type { BoxRecord } from '@agentbox/core';
+import { readState } from '@agentbox/sandbox-core';
 import { generateRelayToken, recordBox } from '@agentbox/sandbox-docker';
 import { allocateProjectIndex } from '@agentbox/sandbox-core';
+import { registrationToBoxRecord } from '@agentbox/relay';
 import type { CustodyClient } from './custody-client.js';
 import type { ControlPlaneAdminClient } from './admin-client.js';
 import { downloadBoxSshKeys } from './hub-pull.js';
 import { matchRegistration } from './match-ref.js';
-
-/** Box user on every cloud provider's image (the agent never runs as root). */
-const BOX_SSH_USER = 'vscode';
 
 export interface HubAdoptArgs {
   admin: ControlPlaneAdminClient;
@@ -145,7 +143,6 @@ export async function adoptHubBox(args: HubAdoptArgs): Promise<HubAdoptResult> {
   const reg = matchRegistration(registrations, args.ref);
   if (!reg) throw new HubBoxNotFoundError(args.ref);
 
-  const provider = reg.backend ?? 'docker';
   const sandboxId = reg.sandboxId ?? reg.boxId;
 
   const state = await readState();
@@ -166,64 +163,17 @@ export async function adoptHubBox(args: HubAdoptArgs): Promise<HubAdoptResult> {
     existing?.projectIndex ??
     (projectRoot ? allocateProjectIndex(state, projectRoot) : undefined);
 
-  const branch = reg.worktrees?.[0]?.branch ?? `agentbox/${reg.name}`;
-  const sanctionedBranch = reg.worktrees?.[0]?.sanctionedBranch ?? branch;
-
-  // Point git worktree bookkeeping at the LOCAL clone. The registration's
-  // hostMainRepo is the control box's temp create-time checkout (deleted after
-  // create), so carrying it over would make host-side git RPCs run against a
-  // path that doesn't exist here.
-  const gitWorktrees: GitWorktreeRecord[] | undefined = projectRoot
-    ? [
-        {
-          kind: 'root',
-          branch,
-          sanctionedBranch,
-          containerPath: '/workspace',
-          hostMainRepo: projectRoot,
-          gitWorktreePath: '',
-          relPathFromWorkspace: '',
-        },
-      ]
-    : undefined;
-
-  const record: BoxRecord = {
-    id: existing?.id ?? reg.boxId,
-    name: reg.name,
-    displayName: existing?.displayName,
-    provider,
-    container: `cloud:${sandboxId}`,
-    image: reg.image ?? existing?.image ?? '',
-    workspacePath: projectRoot ?? existing?.workspacePath ?? '/workspace',
+  // One source of truth for registration → record reconstruction, shared with
+  // the control box's own `hydrateRegisteredBox` (@agentbox/relay). The PC-only
+  // concerns — which local project the box maps to, its per-project index, and
+  // the SSH-key download below — stay here.
+  const record: BoxRecord = registrationToBoxRecord(reg, {
+    controlPlaneUrl: args.controlPlaneUrl,
+    existing,
     projectRoot,
     projectIndex,
-    // Tokens are regenerated only for a fresh adoption; a re-adopt keeps the
-    // box's live tokens (they're already injected in the running box).
-    relayToken: existing?.relayToken ?? reg.token ?? generateRelayToken(),
-    lastAgent: normalizeAgent(reg.agent) ?? existing?.lastAgent,
-    gitWorktrees,
-    createdAt: reg.createdAt ?? existing?.createdAt ?? new Date().toISOString(),
-    ssh: buildSshTarget(provider, sandboxId, reg.publicHost) ?? existing?.ssh,
-    cloud: {
-      ...existing?.cloud,
-      backend: provider,
-      sandboxId,
-      image: reg.image ?? existing?.cloud?.image,
-      webPort: reg.webPort ?? existing?.cloud?.webPort,
-      publicHost: reg.publicHost ?? existing?.cloud?.publicHost,
-      bridgeToken: reg.bridgeToken ?? existing?.cloud?.bridgeToken ?? generateRelayToken(),
-      relayPreviewUrl: reg.previewUrl ?? existing?.cloud?.relayPreviewUrl,
-      relayPreviewToken: reg.previewToken ?? existing?.cloud?.relayPreviewToken,
-      workspaceBranch: branch,
-      sanctionedBranch,
-      lastState: existing?.cloud?.lastState ?? 'running',
-      topology: 'control-plane',
-      controlPlaneUrl: args.controlPlaneUrl,
-      // A hub-created box clones in-box from a leased URL — it shares no fork
-      // base with this PC, so the session-start live resync must skip it.
-      hostSeeded: undefined,
-    },
-  };
+    freshToken: generateRelayToken,
+  });
 
   // Key material: only providers that mint a keypair (hetzner/DO) have any.
   // Detected by what's actually in custody rather than by provider name, so a
@@ -254,33 +204,4 @@ export async function adoptHubBox(args: HubAdoptArgs): Promise<HubAdoptResult> {
 
   await recordBox(record);
   return { record, sshFiles, projectRoot, refreshed: existing !== undefined, sshKeysMissing };
-}
-
-/** Narrow a registration's free-form agent string to the record's union. */
-function normalizeAgent(agent: string | undefined): BoxRecord['lastAgent'] {
-  return agent === 'claude' || agent === 'codex' || agent === 'opencode' ? agent : undefined;
-}
-
-/**
- * The box's SSH target, or undefined when the registration carries no host.
- *
- * `identityFile` is set only when the provider actually has a per-box key dir:
- * a provider that reports a `publicHost` but mints no keypair would otherwise
- * get `"/id_ed25519"` — an absolute path at the filesystem root — written into
- * the record and into the generated `~/.agentbox/ssh/config`. Omitting it leaves
- * ssh to its normal key resolution (agent / default identities) instead of
- * pointing at a file that cannot exist.
- */
-function buildSshTarget(
-  provider: string,
-  sandboxId: string,
-  publicHost: string | undefined,
-): SshTargetRecord | undefined {
-  if (!publicHost) return undefined;
-  const dir = boxSshDirForProvider(provider, sandboxId);
-  return {
-    host: publicHost,
-    user: BOX_SSH_USER,
-    ...(dir ? { identityFile: `${dir}/id_ed25519` } : {}),
-  };
 }

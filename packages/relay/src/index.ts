@@ -34,6 +34,12 @@ export type {
   RelayEvent,
   SetNoticeBody,
 } from './types.js';
+export {
+  registrationToBoxRecord,
+  normalizeRegistrationAgent,
+  buildSshTarget,
+  type RegistrationToRecordOptions,
+} from './registration-to-record.js';
 export { HostActionQueue } from './host-action-queue.js';
 export { CloudBoxPoller, CloudBoxPollers, type CloudBoxPollerDeps } from './cloud-poller.js';
 export { BoxRegistry, EventBuffer } from './registry.js';
