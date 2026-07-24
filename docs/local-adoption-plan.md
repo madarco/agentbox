@@ -300,6 +300,14 @@ Adoption doesn't change that; it just makes a same-named pair easier to create.
   the first create instead of failing. Larger (needs the provider build machinery + queue integration on
   the control box). Workaround today: re-bake locally on the control box's version before deploying, or
   scp the record up.
+  - **Most common trigger: `box.claudeInstall` isn't migrated.** The fingerprint folds `claudeInstall`
+    in (commit `459754b3`). A PC that sets `box.claudeInstall=npm` bakes an `npm`-fold record, but the
+    control box uses the built-in default `native` (the PC's global override doesn't travel), so its
+    `native`-fold fingerprint never matches and the shared bake is rejected even on the *same* version.
+    Live-confirmed 2026-07-24. Fix options: migrate the PC's effective `box.claudeInstall` to the control
+    box at deploy (same channel as the provider secrets), or have the worker honor the shared record's
+    baked mode instead of the local default. Workaround: bake with `box.claudeInstall=native` (matching
+    the control box) before deploying.
 - **Destroying a PC box doesn't reap its control-box registration.** `agentbox destroy`
   removes the local record and the cloud sandbox but leaves the box registered on the control
   box, so it lingers in the Store (and now, with the web-UI merge, in the dashboard) as a ghost.
