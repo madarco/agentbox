@@ -174,6 +174,25 @@ carry:
     dest: ~/.agentbox/e2b-prepared.json
     mode: 0o600
     optional: true
+  # Control-box deploy creds — INTERNAL AGENTBOX DEV ONLY, so a box working on
+  # the control box can run `agentbox control-plane deploy hetzner` without
+  # re-running the GitHub-App manifest flow (its localhost callback can't cross
+  # the box boundary). `control-plane.env` (App id + base64 PEM + admin token +
+  # BETTER_AUTH_SECRET + admin login) is what `deploy` scp's to the VPS as `.env`;
+  # `control-plane.json` (App metadata) + `github-app.pem` back `control-plane
+  # add`/`status`. All optional: absent until the host runs `control-plane setup`.
+  - src: ~/.agentbox/control-plane/control-plane.env
+    dest: ~/.agentbox/control-plane/control-plane.env
+    mode: 0o600
+    optional: true
+  - src: ~/.agentbox/control-plane/control-plane.json
+    dest: ~/.agentbox/control-plane/control-plane.json
+    mode: 0o600
+    optional: true
+  - src: ~/.agentbox/control-plane/github-app.pem
+    dest: ~/.agentbox/control-plane/github-app.pem
+    mode: 0o600
+    optional: true
 
 tasks:
   # Idempotent dep install. Re-runs on every supervisor restart, so guard
