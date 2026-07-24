@@ -323,6 +323,7 @@ The remaining infrastructure knobs — mostly advanced.
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `cloud.useCurrentBranch` | bool | `false` | on daytona/hetzner, start boxes on the host's current branch instead of forking `agentbox/<box-name>`; overridden by `--use-branch` / `--from-branch` |
+| `cloud.viaHub` | bool | `true` | when a control box is configured (`relay.controlPlaneUrl`), build **cloud** boxes on it by default (so they keep running with the laptop off) instead of on this machine; overridden per-command by `--via-hub` / `--local`. Docker and remote-docker always build locally. See [deployed hub](/docs/deployed-hub) |
 | `engine.kind` | enum `orbstack`/`docker-desktop`/`other`/`auto` | `auto` | override docker-engine auto-detection; the one key applied at CLI startup |
 | `portless.enabled` | bool | prompt | map each box web app to `https://<box-name>.localhost` via the Portless proxy (Docker Desktop only) |
 | `portless.stateDir` | string (advanced) | empty | host Portless state dir to share into boxes |

@@ -52,10 +52,10 @@ A provider can be driven **by the control box** only if its credential is a **po
 | Command | Where the box runs | Control box role |
 |---|---|---|
 | `agentbox claude` (docker, default) | **Your PC's Docker** | none — never a control-box target |
-| `agentbox docker:<host> …` (remote-docker) | **Your** remote machine, over **your** SSH from your PC | git-push custodian only; **can't** create it `--via-hub` (your SSH isn't a portable secret) |
-| `agentbox <cloud> claude` (e2b/daytona/hetzner/vercel) | The cloud provider | full custody — registers automatically; can also create + run it `--via-hub` |
+| `agentbox docker:<host> …` (remote-docker) | **Your** remote machine, over **your** SSH from your PC | git-push custodian only; **can't** be built on the control box (your SSH isn't a portable secret) |
+| `agentbox <cloud> …` (e2b/daytona/hetzner/vercel) | The cloud provider | full custody — registers automatically; **built on the control box by default** when one is configured |
 
-So running `agentbox claude` in a folder always runs on **your PC's Docker** — a control box changes nothing. `remote-docker` connects to your own machine over your `~/.ssh/config`, which the control box has no access to, so `--via-hub` refuses it. Only cloud providers can be driven by the control box.
+So running `agentbox claude` in a folder always runs on **your PC's Docker** — a control box changes nothing. `remote-docker` connects to your own machine over your `~/.ssh/config`, which the control box has no access to, so it's always built from your PC. **Cloud** providers, by contrast, are built **on the control box by default** once one is configured (see below).
 
 ## Create a box from the web UI
 
@@ -68,13 +68,23 @@ The web-UI create needs a **repo checkout on the VPS** for the worker to build f
 
 ## Create a box from your laptop — that runs with the laptop off
 
-To spawn a box from the CLI and have it keep working after you close your laptop, enqueue it on the control box with `--via-hub` instead of building it locally:
+Once a control box is configured, spawning a **cloud** box from the CLI builds it **on the control box by default** — so it keeps working after you close your laptop. Just run a normal cloud create:
 
 ```bash
-agentbox create --provider e2b --via-hub
+agentbox create --provider e2b          # built on the control box (default)
+agentbox claude --provider e2b          # foreground: built on the control box, then attached here
 ```
 
-This POSTs the job to the control box and streams its progress; the box is provisioned **VPS-side**, so it works even if the provider's credentials aren't configured on your laptop — and it keeps running once the job is enqueued. It registers on the control box, so it shows in the web UI and its approvals are answerable from anywhere.
+The box is provisioned **VPS-side**, so it works even if the provider's credentials aren't configured on your laptop, and it keeps running once enqueued. It registers on the control box, so it shows in the web UI and its approvals are answerable from anywhere. (`agentbox create` streams the job to completion; a foreground `agentbox claude`/`codex`/`opencode` waits for the box, then **adopts + attaches** it here so the agent starts.)
+
+You can force either side explicitly:
+
+```bash
+agentbox create --provider e2b --via-hub   # force the control box (even if cloud.viaHub is off)
+agentbox create --provider e2b --local     # force a local build on this machine
+```
+
+<Callout type="info" title="Which creates route to the control box">Only **cloud** creates default to the control box, and only when one is configured. Set **`cloud.viaHub=false`** (or pass `--local`) to keep building cloud boxes on your PC. Docker / remote-docker always build locally. **Background `-i` runs** (`agentbox claude -i "…"`) still build on your PC for now — the control box's worker builds boxes "cold" and doesn't yet start the agent; a missing prerequisite (no git `origin`, no admin token) also falls back to a local build with a notice.</Callout>
 
 Now the payoff — the box pushes on its own, with your laptop fully off:
 
@@ -154,6 +164,19 @@ agentbox control-plane prompts answer <id> y       # answer one (also answerable
 box's state (registration, status, SSH-key custody) — including for boxes you created on this PC and
 registered against the control box. The control box drives them by reconstructing their record from
 its registry on demand (reverse-adoption), so no local record on the control box is required.
+
+## The menu-bar app follows your config
+
+The macOS menu-bar app talks to the **same hub your CLI is configured for** — automatically. It
+resolves the hub by shelling `agentbox hub target`, so with a control box configured it lists and
+drives the control box's boxes (over the hub API key) and streams its live updates; with none, it
+uses your local hub. Change the control box (or unset it) and restart the tray to re-point. You can
+see (or script) the resolved target yourself:
+
+```bash
+agentbox hub target            # e.g. "hub: remote — https://<ip>.sslip.io"
+agentbox hub target --json     # {mode, url, token} — the seam the tray reads
+```
 
 ## Credentials and secrets
 
