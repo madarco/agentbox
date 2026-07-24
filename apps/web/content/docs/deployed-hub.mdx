@@ -29,6 +29,8 @@ This provisions a small VPS, installs the hub over Docker + Caddy, and serves it
 
 When it finishes, open `https://<ip>.sslip.io`, sign in with those credentials, and you'll see the dashboard.
 
+The deploy also mints a headless **API key** (`AGENTBOX_HUB_API_KEY`) and records it alongside the other deploy secrets in `~/.agentbox/control-plane/control-plane.env` (mode `0600`). It's the `Authorization: Bearer` credential for the hub's public [REST API](/docs/api) on the control box — so scripts and the menu-bar app can call `/api/v1` on the deployed hub without a browser login. It gates only `/api/v1`, never the web UI (that still needs your admin password).
+
 ## Configure cloud providers on the control box
 
 The control box's resident worker provisions boxes with **your provider credentials**, so it needs them — and these are separate from agent logins (see [credentials and secrets](#credentials-and-secrets)). Two ways to get them there:

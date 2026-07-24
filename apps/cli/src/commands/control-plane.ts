@@ -164,6 +164,10 @@ const setupSub = new Command('setup')
 
       // Persist the App key + a generated admin token as the plane's deploy env.
       const adminToken = randomBytes(32).toString('hex');
+      // Headless bearer for the hub's public /api/v1 (CLI / tray against a remote
+      // control box, which can't carry the browser session cookie). Separate from
+      // the admin token, which gates the internal /admin/* wire.
+      const hubApiKey = randomBytes(32).toString('hex');
       await mkdir(CP_DIR, { recursive: true });
       await writeFile(PEM_PATH, app.pem, { mode: 0o600 });
       await chmod(PEM_PATH, 0o600);
@@ -173,7 +177,8 @@ const setupSub = new Command('setup')
         `# Feed to docker compose (--env-file) or 'vercel env add'. Keep secret.\n` +
         `GITHUB_APP_ID=${app.appId}\n` +
         `GITHUB_APP_PRIVATE_KEY=${pemB64}\n` +
-        `AGENTBOX_RELAY_ADMIN_TOKEN=${adminToken}\n`;
+        `AGENTBOX_RELAY_ADMIN_TOKEN=${adminToken}\n` +
+        `AGENTBOX_HUB_API_KEY=${hubApiKey}\n`;
       await writeFile(ENV_PATH, envBody, { mode: 0o600 });
       await chmod(ENV_PATH, 0o600);
       await writeFile(
@@ -210,6 +215,7 @@ const setupSub = new Command('setup')
               GITHUB_APP_ID: app.appId,
               GITHUB_APP_PRIVATE_KEY: pemB64,
               AGENTBOX_RELAY_ADMIN_TOKEN: adminToken,
+              AGENTBOX_HUB_API_KEY: hubApiKey,
               ...(hubAuth ?? {}),
             };
             deployedUrl = (await deployControlPlaneToVercel({ env, repo, ref, log: onLog })).url;
@@ -551,6 +557,41 @@ export async function resolveCustodyTarget(
     return null;
   }
   return { url, adminToken };
+}
+
+/**
+ * Resolve a control box's public REST API target: its URL + the headless
+ * `/api/v1` bearer (`AGENTBOX_HUB_API_KEY`). This is the client-facing hub API
+ * (boxes/lifecycle/approvals), distinct from {@link resolveCustodyTarget}'s admin
+ * token, which is the internal `/admin/*` wire. Seam for the shared hub-API client
+ * (URL-swappable local ⇄ remote); not yet wired into commands.
+ *
+ * Returns null (actionable error unless `quiet`) when no control box is configured
+ * or no API key is available — the key is minted + recorded by `control-plane
+ * setup`/deploy into `~/.agentbox/control-plane/control-plane.env`.
+ */
+export async function resolveHubApiTarget(
+  urlFlag: string | undefined,
+  opts: { quiet?: boolean } = {},
+): Promise<{ url: string; apiKey: string } | null> {
+  const cfg = await loadEffectiveConfig(process.cwd());
+  const url = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
+  if (!url) {
+    if (!opts.quiet)
+      log.error('No control plane configured. Run `agentbox control-plane set-url <url>` (or pass --url).');
+    return null;
+  }
+  loadControlPlaneEnv();
+  const apiKey = process.env.AGENTBOX_HUB_API_KEY ?? '';
+  if (!apiKey) {
+    if (!opts.quiet)
+      log.error(
+        'No hub API key available. Set AGENTBOX_HUB_API_KEY, or run this from the machine that\n' +
+          'ran `agentbox control-plane setup` (it writes the key to ~/.agentbox/control-plane).',
+      );
+    return null;
+  }
+  return { url, apiKey };
 }
 
 /**

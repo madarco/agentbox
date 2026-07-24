@@ -43,8 +43,16 @@ function gateApi(request: NextRequest, mode: 'token' | 'password'): NextResponse
     if (cookie && tokenEq(cookie, expected)) return NextResponse.next();
     return apiUnauthorized();
   }
-  // password (hetzner/vercel): accept the better-auth session cookie. A dedicated
-  // API-key scheme for headless clients lands with the hosted-remote phase.
+  // password (hetzner/vercel): a headless Bearer API key (CLI / tray / IDE against
+  // a remote control box, which can't carry the browser session cookie), else the
+  // better-auth session cookie for the hub's own UI. The key gates only /api/v1 —
+  // the page gate below still requires a real login, so a leaked key can't reach
+  // the UI. Unset key → the cookie-only path (unchanged from before this existed).
+  const apiKey = process.env.AGENTBOX_HUB_API_KEY ?? '';
+  if (apiKey) {
+    const bearer = bearerOf(request);
+    if (bearer && tokenEq(bearer, apiKey)) return NextResponse.next();
+  }
   if (getSessionCookie(request)) return NextResponse.next();
   return apiUnauthorized();
 }

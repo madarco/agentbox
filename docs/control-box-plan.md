@@ -1286,3 +1286,145 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
   scope, seeded by the deploy and re-synced by every `prepare`). Still open: offering to clone the
   current repo on the VPS — though a web-UI create no longer needs a pre-cloned project, since the
   worker clones with a leased token and overlays the project's custody seed material.
+
+---
+
+## Appendix — CLI remote-hub support audit (2026-07-24)
+
+Per-command audit of whether each `agentbox` command **currently** talks to the control box vs runs
+purely locally, and where it **should** run. Derived from `apps/cli/src/index.ts` (registration),
+`apps/cli/src/commands/*.ts`, `packages/sandbox-*/src/cli.ts`, the remote clients in
+`apps/cli/src/control-plane/*`, `box-ref.ts` + `auto-adopt.ts`, and `packages/config/src/types.ts`
+(`relay.controlPlaneUrl`, `git.pushMode`).
+
+**The one switch:** `relay.controlPlaneUrl` (set via `agentbox control-plane set-url`) + an admin
+bearer token (`AGENTBOX_RELAY_ADMIN_TOKEN` / `~/.agentbox/control-plane/control-plane.env`), both
+resolved through `resolveCustodyTarget()` (`apps/cli/src/commands/control-plane.ts:532`). With no URL
+configured, everything behaves exactly as today. The CLI's remote calls hit the relay-core admin API
+(`/admin/store`, `/admin/custody/*`, `/admin/prompts`, `/remote/boxes`, `/healthz`) — not the web-UI
+`/api/v1/*`. There is no PC→hub SSH; SSH is only PC→box, using per-box keys downloaded from custody.
+
+**Interaction patterns (legend):**
+
+- **Delegates** — hands the actual work to the control-box worker (runs remotely). Only `create
+  --via-hub` today.
+- **Syncs** — reads/writes control-box state (custody creds/secrets/SSH keys, registry, approvals,
+  git-lease) over the admin API.
+- **Auto-adopts** — on a by-name miss, `tryAutoAdopt` (`apps/cli/src/control-plane/auto-adopt.ts`)
+  materializes a hub-created box into local state, then the command proceeds locally. Wired once in
+  `resolveBoxOrExit`/`resolveBoxOrShift` (`apps/cli/src/box-ref.ts:71,164`), so it covers **every**
+  by-name box command.
+- **Local-only** — never contacts the control box.
+
+**Should run:** *Local* = inherently host-side (terminal attach, filesystem mount, local docker
+engine, host daemon); *Both* = must target hub-created / cloud boxes as well as local ones (and mostly
+already does, via adopt/sync); *Remote* = the work belongs on the control box.
+
+### Box creation / agent launch
+
+| Command | Remote support today | Should run | Notes / gap |
+|---|---|---|---|
+| `create` | Delegates (`--via-hub`) + Syncs (registers box + pushes SSH keys/seed on a cloud create) | Both | Docker create = always local. Cloud create = local by default; `--via-hub` delegates to the hub worker. |
+| `claude` / `codex` / `opencode` (create path) | Syncs (threads `controlPlaneUrl`, `ensureProjectRepoOnControlPlane`, seed/keys to custody) — **no `--via-hub`** | Both | Launch is a local terminal attach; the box can be cloud. Gap: no `--via-hub` equivalent, so you can't spawn+launch an agent purely on the hub from the CLI (only web UI / `create --via-hub` then attach). |
+| `claude\|codex\|opencode start` | Auto-adopts | Both | Starts a session in an existing box; adopts a hub box by name. |
+| `claude\|codex\|opencode attach` | Auto-adopts | Local | Terminal attach — host-side; adopts the remote box's record first. |
+| `claude\|codex\|opencode login` | Local-only | Local | Agent OAuth into host stores. Custody push happens separately via `credentials propagate`. |
+| `fork` | Local-only (creates locally) | Both | Gap: no `--via-hub`; same gap as `claude` create. |
+| `code` | Auto-adopts | Local | VS Code / Cursor via Dev Containers. |
+
+### Box lifecycle / power
+
+| Command | Remote support today | Should run | Notes / gap |
+|---|---|---|---|
+| `start` / `stop` / `pause` / `unpause` | Auto-adopts then acts locally (docker or provider SDK/SSH) | Both | PC drives the cloud box directly; works for adopted hub boxes. |
+| `destroy` (`rm`) | Auto-adopts | Both | **Gap:** does NOT reap the control-box registration — PC-destroyed boxes linger as ghosts. Should `DELETE /remote/boxes/:id` when `controlPlaneUrl` set. |
+| `recover` | Syncs (`--adopt`; custody fallback for a missing per-box SSH key) | Both | Rebuilds local state. |
+| `wait` | Auto-adopts | Both | Blocks until box units ready. |
+
+### Listing / inspection / monitoring
+
+| Command | Remote support today | Should run | Notes / gap |
+|---|---|---|---|
+| `list` (`ls`) | Syncs — merges the control-box registry (`fetchHubListing`, 1.5s timeout + on-disk cache) | Both | `-g` shows hub boxes tagged; orphans surfaced. |
+| `status` / `services` / `inspect` | Auto-adopts | Both | Drives / reads the box. |
+| `top` / `logs` / `dashboard` | Auto-adopts | Local | Reads the running box directly (host-side TUI/stream). |
+| `path` | Local-only | Local | Prints a host path. |
+
+### Access / connectivity / file transfer
+
+| Command | Remote support today | Should run | Notes / gap |
+|---|---|---|---|
+| `attach` / `shell` (+`attach`/`ls`/`kill`) | Auto-adopts | Local | Interactive terminal session. |
+| `open` / `url` / `screen` / `connect` / `inbound` | Auto-adopts | Local | sshfs mount, browser open, VNC, SSH details, per-box firewall. `open` needs the custody-pulled SSH key. |
+| `cp` / `download` (+`env`/`claude`/`codex`/`opencode`/`config`) | Auto-adopts | Local | Host↔box file transfer. |
+
+### Git / PR
+
+| Command | Remote support today | Should run | Notes / gap |
+|---|---|---|---|
+| `git push` | Syncs — leases a GitHub-App token from the control box when `git.pushMode:auto` + `controlPlaneUrl` (else host relay) | Both | The laptop-off push path. |
+| `git fetch` / `pull` / `checkout` / `branch` / `status` | Auto-adopts | Both | Via the host relay against the box. |
+| `git pr` (create/view/list/diff/checks/comment/review/merge/checkout/close/reopen) | Auto-adopts (host `gh`) | Local | PR ops use host `gh` creds. |
+
+### Checkpoints / images / cleanup
+
+| Command | Remote support today | Should run | Notes / gap |
+|---|---|---|---|
+| `checkpoint create` | Auto-adopts | Both | docker commit / cloud snapshot. |
+| `checkpoint ls` / `set-default` / `rm` | Local-only | Both | Not shared through custody (unlike bake state) — possible future gap. |
+| `prepare` | Syncs — shared bake state (pushes `prepared/<provider>.json`, pulls fingerprint-matched bakes before re-baking) | Both | Both directions (PC↔hub). |
+| `prune` | Local-only | Local | Cleans orphan local state / docker resources; does not prune the hub registry. |
+
+### Config / queue / automation
+
+| Command | Remote support today | Should run | Notes / gap |
+|---|---|---|---|
+| `config get`/`set`/`unset`/`list`/`path`/`edit`/`list-projects` | Local-only | Local | Layered config lives on the PC. |
+| `queue list`/`show`/`cancel`/`clear`/`wait-for` | Local-only | Local | PC's local `-i` job queue (`~/.agentbox/queue/`), distinct from the control-box create queue. |
+| `agent state`/`wait-for`/`get-plan-question` | Auto-adopts | Local | Reads box agent status. |
+| `agent approvals` / `approve` | Auto-adopts (local relay prompts) | Both | Hub-box approvals live on the control box — answered via `control-plane prompts`. |
+| `drive snapshot`/`keypress`/`send-text`/`prompt`/`wait`/`resize` | Auto-adopts | Local | Drives a box tmux session. |
+
+### Host services: relay / hub / control-plane / app
+
+| Command | Remote support today | Should run | Notes / gap |
+|---|---|---|---|
+| `relay status`/`stop`/`start`/`restart` | `status` probes control-box `/healthz`; rest local-only | Local | The PC's host relay daemon. |
+| `hub start`/`stop`/`restart`/`status` | Local-only | Local | The **localhost** hub (relay + web UI on :8787). |
+| `hub pull` | Syncs — downloads a control-box box's SSH keys from custody | Both | Explicit key-only fetch. |
+| `hub adopt` | Syncs — rebuilds full local `BoxRecord` from registry + custody | Both | Explicit form of auto-adopt. |
+| `control-plane status`/`add`/`worker`/`credentials`/`secrets`/`project`/`custody`/`boxes`/`prompts` | Syncs (custody / registry / approvals) | Remote | The dedicated remote surface. |
+| `control-plane setup` / `deploy hetzner` | Provisions / targets the VPS | Remote | Deploys + configures the control box. |
+| `control-plane set-url` / `unset-url` | Local-only (writes global config) | Local | Points the PC at a control box. |
+| `app status`/`start`/`stop`/`restart`/`log` | Local-only | Local | macOS menu-bar app lifecycle. |
+
+### Install / update / plugins / diagnostics / providers
+
+| Command | Remote support today | Should run | Notes / gap |
+|---|---|---|---|
+| `install …` / `self-update` / `plugin …` / `doctor` | Local-only | Local | Host setup + provider-plugin registry. |
+| `credentials propagate` (hidden) | Syncs — opportunistic custody push of the refreshed agent cred | Both | Fans a credential to all boxes + custody. |
+| `docker …` / `<provider> login` / `daytona resync` | Local-only | Local | Local docker boxes are never remote; provider creds written to `~/.agentbox/secrets.env`. |
+| `hetzner\|digitalocean firewall sync`/`show` | Auto-adopts (per-box) | Local | Per-box cloud firewall — host-driven. |
+| `remote-docker add`/`update`/`remove`/`list`/`doctor` | Local-only | Local | Manages the user's own SSH docker hosts; explicitly **cannot** go via-hub (the hub has no access to your `~/.ssh/config`). |
+| `herdr new`/`link`, `_run-queued-*`, `_claude-login-worker`, `_post-update-refresh` (hidden internal) | Mostly local-only (`herdr` open path auto-adopts) | Local | Integration entry points + internal workers. |
+
+### Gaps found (current vs intended thin-client surface)
+
+Both `control-box-plan.md` and [`local-adoption-plan.md`](./local-adoption-plan.md) are marked fully
+implemented + live-verified. Remaining gaps:
+
+1. **`destroy` doesn't reap the control-box registration** — ghost boxes linger in the hub registry.
+   Should `DELETE /remote/boxes/:id` when `controlPlaneUrl` is set. (local-adoption backlog)
+2. **No `--via-hub` for `claude`/`codex`/`opencode`/`fork`** — you can delegate a bare `create` to the
+   hub, but not a spawn-and-launch. From the CLI you must `create --via-hub` then attach.
+3. **Web-UI create queue** (`POST /api/v1/boxes` → `_run-queued-job`) has no seed overlay / git-lease
+   wiring — a second, thinner create path than `--via-hub`; web-created boxes lack untracked files/env
+   and can't push host-off. (backlog, also noted above)
+4. **hetzner-provider adoption** (custody SSH-key pull + `publicHost`) is unit-tested only, not
+   live-verified.
+5. **Web UI can display but not drive PC-registered boxes** (needs reverse adoption on the hub).
+6. **Checkpoint listing is not shared through custody** (unlike bake state) — hub-created checkpoints
+   aren't visible PC-side. Minor / possibly intended.
+7. **`control-plane` → `hub` CLI rename** deliberately deferred; today the surface is split across the
+   `control-plane` (remote ops) and `hub` (local lifecycle + `pull`/`adopt`) commands.
