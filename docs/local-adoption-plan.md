@@ -164,7 +164,7 @@ ignored, and the normal re-bake proceeds.
    happens only where the alternative is a multi-minute bake, so no TTL/caching is needed.
 4. Hub side: the worker's prepare path uses the same helpers against its local custody store
    (covers control-box bakes → PC *and* PC bakes → control box). Fold in the existing deploy
-   backlog item: `control-plane deploy` seeds custody `prepared/` from the PC's local
+   backlog item: `hub deploy` seeds custody `prepared/` from the PC's local
    `*-prepared.json` files.
 5. Tests: match-adopt, mismatch-ignore, offline fall-through.
 
@@ -184,7 +184,7 @@ hetzner create uses it without baking.
   session-start live-resync correctly skips them.
 - Docs in the same change as each phase: this file's status lines, `control-box-plan.md`
   backlog pointers, and the public [`deployed-hub.mdx`](../apps/web/content/docs/deployed-hub.mdx)
-  (+ CLI reference) for `hub adopt`, `control-plane project push`, `relay.custodyMaxBodyBytes`,
+  (+ CLI reference) for `hub adopt`, `hub project push`, `relay.custodyMaxBodyBytes`,
   and the thin-client `ls` behavior. Tray app: the `/api/v1/boxes` payload gains nothing
   breaking, but check the `source` tag if it gets exposed there.
 - `pnpm typecheck` before pushing; the relay and hub are persistent daemons — rebuild + restart
@@ -200,7 +200,7 @@ Verified live during implementation (against the deployed control box at
   rejects a `fetch` promise but undici keeps the connecting socket until its own
   10s connectTimeout, so `ls` printed instantly and then held the shell ~9s.
   Fixed by probing reachability with a socket we own and destroy.
-- **Phase 3** — `control-plane project push` to the live control box: seed
+- **Phase 3** — `hub project push` to the live control box: seed
   landed under `projects/<slug>/seed/`, and a re-push of an unchanged tree
   uploaded only the manifest. This caught a second real bug: `tar -z` stamps the
   current time into the gzip header, so an unchanged tree hashed differently
@@ -216,7 +216,7 @@ Verified live during implementation (against the deployed control box at
 ### Full goal-scenario run (2026-07-17)
 
 A **fresh control box** was deployed from this branch onto a real Hetzner VPS
-(`control-plane deploy hetzner --ref feat/local-adoption`) and the scenario run
+(`hub deploy hetzner --ref feat/local-adoption`) and the scenario run
 end to end against it with an **e2b** box. All infrastructure was torn down after
 (server + firewall + sandbox + the proof branch), and the PC's
 `relay.controlPlaneUrl` / `deploy.json` restored to their previous control box.

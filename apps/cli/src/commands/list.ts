@@ -424,7 +424,7 @@ async function buildListText(all: boolean, live: boolean): Promise<string> {
   const note =
     hub?.stale === true
       ? hub.reason === 'no-token'
-        ? '\ncontrol box configured but no admin token — hub boxes not shown. Run `agentbox control-plane setup`, or set AGENTBOX_RELAY_ADMIN_TOKEN.'
+        ? '\ncontrol box configured but no admin token — hub boxes not shown. Run `agentbox hub setup`, or set AGENTBOX_RELAY_ADMIN_TOKEN.'
         : hub.fetchedAt !== undefined
           ? `\ncontrol box unreachable — hub boxes as of ${cacheAge(hub.fetchedAt)}`
           : '\ncontrol box unreachable — hub boxes not shown'

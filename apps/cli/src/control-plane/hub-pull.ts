@@ -29,7 +29,7 @@ export interface HubPullResult {
 export interface HubPullArgs {
   admin: ControlPlaneAdminClient;
   custody: CustodyClient;
-  /** Box id or name as shown by `control-plane boxes list`. */
+  /** Box id or name as shown by `hub boxes list`. */
   box: string;
 }
 

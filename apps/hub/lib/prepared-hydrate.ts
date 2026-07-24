@@ -9,7 +9,7 @@ import { readPreparedStateRaw, writePreparedStateRaw } from '@agentbox/sandbox-c
  * synchronous and read only local prepared-state, so a control box whose custody
  * holds a perfectly good record still looks unbaked: every create failed with
  * "run `agentbox prepare` first", and `/settings` shows "needs baking".
- * `control-plane deploy` seeds those records precisely so a fresh control box
+ * `hub deploy` seeds those records precisely so a fresh control box
  * need not re-bake — hydrating here is what makes that seeding mean anything.
  *
  * Same fingerprint-match-wins policy as `pullPreparedFromCustody` (see

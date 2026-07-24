@@ -77,7 +77,6 @@ import { pruneCommand } from './commands/prune.js';
 import { queueCommand } from './commands/queue.js';
 import { relayCommand } from './commands/relay.js';
 import { hubCommand } from './commands/hub.js';
-import { controlPlaneCommand } from './commands/control-plane.js';
 import { runQueuedJobCommand } from './commands/_run-queued-job.js';
 import { runQueuedPrepareCommand } from './commands/_run-queued-prepare.js';
 import { claudeLoginWorkerCommand } from './commands/_claude-login-worker.js';
@@ -165,9 +164,6 @@ program.addCommand(configCommand);
 program.addCommand(queueCommand);
 program.addCommand(relayCommand);
 program.addCommand(hubCommand);
-// Experimental + WIP (hosted control plane / deployed hub). Hidden from the main
-// `agentbox --help` list; still runnable and self-documented via `control-plane --help`.
-program.addCommand(controlPlaneCommand, { hidden: true });
 // Internal worker spawned by the relay's queue scheduler. Hidden from
 // `--help` (it shows nothing user-facing — see _run-queued-job.ts).
 program.addCommand(runQueuedJobCommand, { hidden: true });

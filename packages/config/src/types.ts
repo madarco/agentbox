@@ -187,7 +187,7 @@ export interface UserConfig {
      * centralized concerns — git-token leasing, permission state, the box
      * registry/events — and push to GitHub directly with a leased token, so
      * they keep working with the laptop off. Empty/unset = laptop-local relay
-     * (the default). Set via `agentbox control-plane set-url`.
+     * (the default). Set via `agentbox hub set-url`.
      */
     controlPlaneUrl?: string;
     /**
@@ -987,7 +987,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'relay.controlPlaneUrl',
     type: 'string',
     description:
-      'Public HTTPS URL of a deployed control plane (hosted Next.js + Postgres app). When set, new cloud boxes point at it for git-token leasing, permission state, and the box registry/events, and push to GitHub directly with a leased token so they keep working with the laptop off. Set via `agentbox control-plane set-url`.',
+      'Public HTTPS URL of a deployed control plane (hosted Next.js + Postgres app). When set, new cloud boxes point at it for git-token leasing, permission state, and the box registry/events, and push to GitHub directly with a leased token so they keep working with the laptop off. Set via `agentbox hub set-url`.',
   },
   {
     key: 'relay.custodyMaxBodyBytes',

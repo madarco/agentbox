@@ -328,7 +328,7 @@ The remaining infrastructure knobs — mostly advanced.
 | `portless.enabled` | bool | prompt | map each box web app to `https://<box-name>.localhost` via the Portless proxy (Docker Desktop only) |
 | `portless.stateDir` | string (advanced) | empty | host Portless state dir to share into boxes |
 | `relay.port` | int (advanced) | `8787` | host relay TCP port |
-| `relay.controlPlaneUrl` | string | empty | URL of a deployed control plane; cloud boxes point at it for git-token leasing, permission state, and the registry/events so they keep working with the laptop off. Set via `agentbox control-plane set-url` |
+| `relay.controlPlaneUrl` | string | empty | URL of a deployed control plane; cloud boxes point at it for git-token leasing, permission state, and the registry/events so they keep working with the laptop off. Set via `agentbox hub set-url` |
 | `relay.custodyMaxBodyBytes` | int (advanced) | `33554432` (32 MiB) | per-request body cap for custody uploads. Custody carries a project's untracked-files seed tar, which the relay's 1 MiB body cap is too small for; this applies only to custody, so every other route keeps the smaller cap. On your machine it governs how large a seed blob the client uploads; a control box enforces its own cap via `AGENTBOX_CUSTODY_MAX_BODY_BYTES`, so raise **both** to admit a bigger seed (a blob the control box refuses is dropped, and the rest of the seed still pushes) |
 | `vnc.containerPort` | int (advanced) | `6080` | container-side noVNC port |
 | `maintenance.pruneProjectConfigs` | bool | `true` | periodically delete `~/.agentbox/projects/<hash>/` dirs whose source folder is gone |

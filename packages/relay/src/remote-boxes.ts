@@ -139,7 +139,7 @@ export async function handleRemoteBoxesRequest(
   // Reap a control-plane box's state from the control box: registration + status
   // + its SSH-key custody subtree. NOT the cloud resource — that teardown needs
   // provider creds + a reconstructed BoxRecord (the hub backend does it when it
-  // can). The PC drives this via `control-plane boxes rm`; the hub UI's Destroy
+  // can). The PC drives this via `hub boxes rm`; the hub UI's Destroy
   // button reaps a Store-registered box the same way.
   if (req.method === 'DELETE' && req.path.startsWith(`${REMOTE_BOXES_PREFIX}/`)) {
     const boxId = decodeURIComponent(req.path.slice(`${REMOTE_BOXES_PREFIX}/`.length));

@@ -419,7 +419,7 @@ be mistaken for an oversight. Each notes *why* and *where it lands*.
   `=== 'HEAD'` rejection on the `AGENTBOX_GIT_LEASE` control-plane push path — a behavior change,
   deliberately not made.
 - **[owed] Control-plane smoke matrix (Phase 10).** The whole feature is untested end-to-end by
-  units. Before push: deploy the plane, `control-plane set-url`, create a `{vercel,hetzner}` box on
+  units. Before push: deploy the plane, `hub set-url`, create a `{vercel,hetzner}` box on
   an App-installed repo, and verify `box.env` has `AGENTBOX_GIT_LEASE=1`, the daemon logs
   `forwarder → <plane>` (not `mode=box`), an `agentbox/*` push leases + lands direct on GitHub, a
   non-scratch push poll-gates, status/events render, and a stop/start resume preserves the flip +

@@ -21,6 +21,7 @@ import { shellCommand } from '../src/commands/shell.js';
 import { startCommand } from '../src/commands/start.js';
 import { stopCommand } from '../src/commands/stop.js';
 import { unpauseCommand } from '../src/commands/unpause.js';
+import { hubCommand } from '../src/commands/hub.js';
 
 describe('lifecycle CLI surface', () => {
   it('list is registered with -j/--json, -g/--global, and the ls alias', () => {
@@ -203,6 +204,46 @@ describe('lifecycle CLI surface', () => {
     expect(attach.options.map((o) => o.long)).toContain('--name');
     const kill = shellCommand.commands.find((c) => c.name() === 'kill')!;
     expect(kill.options.map((o) => o.long)).toEqual(expect.arrayContaining(['--name', '--all']));
+  });
+
+  it('hub folds the former control-plane group: local + remote-admin subcommands in one surface', () => {
+    expect(hubCommand.name()).toBe('hub');
+    const subs = hubCommand.commands.map((c) => c.name());
+    // Local hub process + client verbs (pre-existing).
+    expect(subs).toEqual(expect.arrayContaining(['start', 'status', 'target', 'stop', 'restart', 'pull', 'adopt']));
+    // Folded remote-hub admin verbs (formerly `agentbox control-plane *`).
+    expect(subs).toEqual(
+      expect.arrayContaining([
+        'setup',
+        'deploy',
+        'set-url',
+        'unset-url',
+        'add',
+        'worker',
+        'credentials',
+        'secrets',
+        'project',
+        'custody',
+        'boxes',
+        'prompts',
+      ]),
+    );
+    // No subcommand is dropped or duplicated by the fold.
+    expect(new Set(subs).size).toBe(subs.length);
+    // `start` stays the default (bare `agentbox hub` starts + opens the local hub).
+    expect((hubCommand as unknown as { _defaultCommandName?: string })._defaultCommandName).toBe('start');
+  });
+
+  it('hub status is unified by target: takes --url + --json', () => {
+    const status = hubCommand.commands.find((c) => c.name() === 'status')!;
+    const longs = status.options.map((o) => o.long);
+    expect(longs).toEqual(expect.arrayContaining(['--url', '--json']));
+  });
+
+  it('hub boxes carries the box registry lifecycle subcommands', () => {
+    const boxes = hubCommand.commands.find((c) => c.name() === 'boxes')!;
+    const subs = boxes.commands.map((c) => c.name());
+    expect(subs).toEqual(expect.arrayContaining(['list', 'start', 'stop', 'pause', 'resume', 'rm']));
   });
 
   it('all box-arg commands now accept [box] (optional) for auto-pick', () => {

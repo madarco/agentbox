@@ -110,7 +110,7 @@ describe('buildProjectSeed', () => {
   it('reports which env files it captured, so the scope is never a mystery', async () => {
     const repo = await makeRepo();
     const res = await buildProjectSeed({ projectRoot: repo, envPatterns: ['.env'] });
-    // `control-plane project push` prints these: it captures the default env set
+    // `hub project push` prints these: it captures the default env set
     // rather than a per-box selection, so the user must be able to see exactly
     // which secrets now live on the control box.
     expect(res.envFiles).toEqual(['.env']);

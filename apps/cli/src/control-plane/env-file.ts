@@ -1,6 +1,6 @@
 /**
  * The control-plane env file (`~/.agentbox/control-plane/control-plane.env`),
- * written by `agentbox control-plane setup`.
+ * written by `agentbox hub setup`.
  *
  * It holds the admin bearer the CLI authenticates to the control box with, plus
  * the GitHub App credentials. Several paths need those in `process.env` —

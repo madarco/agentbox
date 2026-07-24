@@ -15,7 +15,7 @@ export type CreateBoxFn = (
 /**
  * Side-effecting steps a {@link makeControlPlaneCreateBox} needs, all injected
  * so the orchestration is unit-testable without a cloud or GitHub. The worker
- * (laptop `control-plane worker`, or the resident hub worker) clones the repo
+ * (laptop `hub worker`, or the resident hub worker) clones the repo
  * LOCALLY with a leased GitHub-App token and hands the fresh checkout to the
  * normal, tested `provider.create()` as the workspace — origin-clone seeding
  * without touching the host-coupled create flow.

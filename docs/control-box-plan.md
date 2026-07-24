@@ -37,8 +37,8 @@ GitHub **with the PC relay hard-killed** (host-off), leasing from the control bo
 
 Remaining items — including the one real gap found in the final verify (the **web-UI/queue create
 path doesn't wire git leasing**, so a *web-created* box can't push host-off; the `--via-hub` path
-does) — are in the [Backlog](#backlog). The M1 `control-plane` → `hub` rename is deliberately left
-as its own follow-up.
+does) — are in the [Backlog](#backlog). The M1 `control-plane` → `hub` rename is **done**: the
+`control-plane` group folded into `agentbox hub` (see [`hub-api-consolidation-plan.md`](./hub-api-consolidation-plan.md) Phase 5).
 
 ## Goal
 
@@ -82,7 +82,7 @@ control box holds copies of what boxes need.
   (~450 lines of hand-written SQL: boxes / events / status / prompts / `create_jobs`),
   and `RemoteStore`. **No SQLite store.** A conformance suite runs against Memory and
   (opt-in, live) Postgres.
-- `agentbox control-plane setup --deploy hetzner` (`deployControlPlaneToHetzner`,
+- `agentbox hub setup --deploy hetzner` (`deployControlPlaneToHetzner`,
   `packages/sandbox-hetzner/src/control-plane-deploy.ts`) provisions a VPS, but what it runs is
   the **plane profile**: `apps/hub/Dockerfile` CMD is `next start` — the `[...path]` route
   handler over PostgresStore. No relay daemon, no `createHubBackend`, host-local RPCs
@@ -92,7 +92,7 @@ control box holds copies of what boxes need.
   SSE notifier via `globalThis`. It already supports a non-loopback bind (`hetzner` profile,
   better-auth) — it has just never been the thing the deploy ships.
 - The create queue + worker exist and are live-validated (`create_jobs`, `drainCreateJobs` in
-  `packages/relay/src/create-worker.ts`, `agentbox control-plane worker`,
+  `packages/relay/src/create-worker.ts`, `agentbox hub worker`,
   `makeControlPlaneCreateBox` in `apps/cli/src/control-plane/create-box.ts`) — but the worker is
   a **laptop command**, and a box it creates seeds agent credentials and mints SSH keys from
   *its* host, not yours.
@@ -280,7 +280,7 @@ is the approval/registry read path, not a second writer competing on the queue.
 - [x] Shared `handleCustodyRequest` dispatcher mounted in BOTH the hosted-plane handler
   (`core/handler.ts`) and the relay daemon (`server.ts`) — admin-bearer gated, fail-closed
   (503 unconfigured / 401 wrong token / 400 bad path), values never logged, no box-token path.
-- [x] CLI on `agentbox control-plane`: `credentials push`, `secrets push [--project]`,
+- [x] CLI on `agentbox hub`: `credentials push`, `secrets push [--project]`,
   `custody pull <scope>`, `custody list [prefix]`; opportunistic hash-skipped push wired into
   `credentials propagate` (the single host-side credential-refresh chokepoint).
 
@@ -309,7 +309,7 @@ downloads back to the PC, needs a place to live on the control box first.
    a manifest/list endpoint. Values never logged; no box-token access to custody in this phase
    (boxes keep receiving creds via the worker's seed step — the gate stays at the host/hub
    boundary).
-3. **CLI surface** (on the existing `agentbox control-plane` command; naming can settle in the
+3. **CLI surface** (on the existing `agentbox hub` command; naming can settle in the
    M1 rename later): `credentials push` (host agent-cred backup set → custody),
    `secrets push [--project]`, and a generic `custody pull <scope>` used by phase 4. Wire
    `push` to run opportunistically after `agentbox <agent> login` refreshes a credential
@@ -397,7 +397,7 @@ from overwriting a good one). `credentials push` iterates exactly that registry 
 — and stores each real backup at `agents/<id>/<credential.boxRelPath>` (the box-canonical name,
 so phase 3's seed step reads it back with the same registry).
 
-**CLI** (on the existing `agentbox control-plane` command; URL from `--url` /
+**CLI** (on the existing `agentbox hub` command; URL from `--url` /
 `relay.controlPlaneUrl`, admin token from `AGENTBOX_RELAY_ADMIN_TOKEN` or the setup-written
 `~/.agentbox/control-plane/control-plane.env`):
 
@@ -489,10 +489,10 @@ identical; an unchanged re-push returns `changed:false` (hash hit); on-disk mode
 - [x] Resident in-process worker (gated `AGENTBOX_HUB_WORKER=on`); seeds agent creds from custody `agents/`, mirrors box SSH keys to custody, registers boxes on the hub.
 - [x] Dual-IP firewall: control-plane-topology hetzner creates add the admin PC egress CIDR to the box firewall.
 - [x] Enqueue from the PC: `agentbox create --via-hub` + a shared `/remote/boxes` dispatcher mounted in `server.ts`.
-- [x] Deploy ergonomics: `agentbox control-plane deploy hetzner [--ref]` reusing the existing App creds.
+- [x] Deploy ergonomics: `agentbox hub deploy hetzner [--ref]` reusing the existing App creds.
 - [x] In-box docker smoke green (build + boot + auth + custody + enqueue→worker + restart persistence).
 - [x] **Live hetzner verify — DONE (host, 2026-07-15).** Real deploy on a fresh Hetzner VPS
-  (`agentbox control-plane deploy hetzner --ref feat/control-box-plan` →
+  (`agentbox hub deploy hetzner --ref feat/control-box-plan` →
   `https://<ip>.sslip.io/healthz` green, better-auth login 200); `credentials push` (3 items) →
   `create --provider e2b --via-hub` → the in-VPS resident worker claimed the job and created a
   real E2B box; inside it a **logged-in `claude -p` turn** succeeded (creds flowed
@@ -543,7 +543,7 @@ can finally ship the real thing.
    create-queue consumer on an interval: `drainCreateJobs(store, createBox, hostname)` — the
    SQLite single-writer constraint from phase 1 makes in-process the correct shape (no second
    container contending on the db file). Gate it on a `AGENTBOX_HUB_WORKER=on` env so the
-   localhost profile is unaffected. The existing `agentbox control-plane worker` command stays
+   localhost profile is unaffected. The existing `agentbox hub worker` command stays
    for dev/laptop use.
 3. **Worker inputs on the VPS:**
    - The image already builds from the repo root (workspace deps available); confirm `git` and
@@ -567,7 +567,7 @@ can finally ship the real thing.
    the phase) that enqueues instead of creating locally, and surface job progress from
    `GET /remote/boxes/:id` (the hub UI create modal points at the same queue).
 
-**Verify (end-to-end, live):** `agentbox control-plane setup --deploy hetzner` on a fresh VPS →
+**Verify (end-to-end, live):** `agentbox hub setup --deploy hetzner` on a fresh VPS →
 `https://<ip>.sslip.io/healthz` green and the **web UI login works from a phone**; push agent
 creds from the PC (phase 2); enqueue a create from the PC CLI *and* one from the hub UI; the
 in-VPS worker claims both, creates real cloud boxes (e2b + hetzner), each box completes a real
@@ -732,7 +732,7 @@ the hub by the `IMPORTERS` map it already uses elsewhere.
   polls `GET /remote/boxes/:id` and streams job status until `done`/`failed`. The hub UI create
   modal already enqueues via `enqueueQueueJob`/the backend — no new UI.
 
-#### 6. Deploy ergonomics — `agentbox control-plane deploy hetzner [--ref <ref>]`
+#### 6. Deploy ergonomics — `agentbox hub deploy hetzner [--ref <ref>]`
 
 - A new `deploy` subcommand that **reuses** the existing `~/.agentbox/control-plane/`
   (`control-plane.env` + `github-app.pem`) without re-running the GitHub-App manifest flow:
@@ -785,7 +785,7 @@ server.ts}`; `apps/cli/src/{commands/create,commands/control-plane,control-plane
 The end-to-end live checklist (real VPS, real e2b + hetzner boxes, phone-UI login/approvals,
 `claude -p` usable-box turn, `git ls-remote` push check, reboot persistence, destroy-no-orphans)
 runs on the host, since this box can't reach the real clouds from inside. The host runs:
-`agentbox control-plane deploy hetzner --ref agentbox/cbx-phase3` (App creds already set up).
+`agentbox hub deploy hetzner --ref agentbox/cbx-phase3` (App creds already set up).
 
 ### Phase 3 — what actually shipped
 
@@ -804,7 +804,7 @@ Everything above landed as planned. Notes + deviations:
   which 404s `/remote/*`. Same shape as phase 2's custody dispatcher; mounted in both, admin-bearer
   gated, fail-closed. `core/handler.ts`'s inline handler was replaced by a call to it.
 - **`makeControlPlaneCreateBox` moved into `@agentbox/relay`** (`create-worker.ts`) so the hub
-  (`apps/hub/lib/hub-worker.ts`) and the CLI `control-plane worker` command share one orchestration;
+  (`apps/hub/lib/hub-worker.ts`) and the CLI `hub worker` command share one orchestration;
   the CLI's `control-plane/create-box.ts` is now a thin re-export. The hub worker resolves providers
   via its own `IMPORTERS` map (an app can't import the CLI's provider registry).
 - **The worker sets `controlPlaneUrl` on its creates** (so a hub-made box registers on the control
@@ -861,7 +861,7 @@ prune methods (MemoryStore). The relay suite exercises the MemoryStore/host-mode
 - [x] Credential/secret flows both directions (`credentials push` / new `credentials pull`;
   `custody rm`).
 - [x] Backlog for this phase: `listStatuses()` promoted to `Store`; a reap verb
-  (`DELETE /remote/boxes/:id` + `control-plane boxes rm` + hub-UI Destroy fallback) with custody
+  (`DELETE /remote/boxes/:id` + `hub boxes rm` + hub-UI Destroy fallback) with custody
   `boxes/<id>` cleanup; `hostMainRepo` guard (reject) for worker-created boxes.
 - [x] Approvals raised by any control-plane box are answerable from the PC CLI (verified in the
   local smoke).
@@ -869,7 +869,7 @@ prune methods (MemoryStore). The relay suite exercises the MemoryStore/host-mode
   (`https://178.104.43.192.sslip.io`, full hub on SQLite): logged into the web UI over HTTPS,
   **created a box from the hub web interface** (added a project, Create box → E2B → the queue
   worker provisioned a real E2B sandbox that ran a logged-in `claude -p` turn), and it registered
-  in the hub's own store (`/healthz boxes:1`) and listed from the PC (`control-plane boxes list`).
+  in the hub's own store (`/healthz boxes:1`) and listed from the PC (`hub boxes list`).
   **Host-off push proven airtight**: with the PC relay hard-killed (nothing on `127.0.0.1:8787`,
   confirmed before and after), a control-box-created E2B box committed and `agentbox-ctl git
   push`ed twice — the `agentbox/hostoff-box` branch advanced on GitHub (`72647f3 → 2cf5a53`,
@@ -928,7 +928,7 @@ with the control box and defers shared state to it, while keeping its direct con
      host-local RPCs — unchanged).
 4. **Approvals + queue UX:** a prompt raised by any box is answerable from the PC CLI/tray *and*
    the hub UI (poll-mode rows on the control box; the tray keeps talking to the local hub, which
-   now proxies/links). Queued agent runs (`-i`) against control-plane boxes enqueue on the hub.
+   now proxies/links). Queued agent runs (`-i`) against hub boxes enqueue on the hub.
 
 **Verify (the goal scenario, live):** create box A from the PC and box B from the phone (hub
 UI); from the PC, `attach` to B over SSH after `hub pull` (key + firewall); from the phone,
@@ -952,10 +952,10 @@ retarget is **CLI-side and read-through the admin API**; the daemon stays on `Me
 A PC-created cloud box *with a control plane configured* is `control-plane` topology and registers
 directly on the control box (`plane-register.ts`), never on the laptop loopback relay. So the
 laptop's `startAutopauseLoop` (docker-only) and `startCloudKeepaliveLoop` (iterates the *local*
-registry) already never touch control-plane boxes — there is nothing to move off the laptop. The
+registry) already never touch hub boxes — there is nothing to move off the laptop. The
 control box runs the queue loop + cloud-keepalive **in-process** already (phase 3's resident
 daemon). The remaining laptop wiring that made sense was: (a) surfacing the control box in
-`relay status` + the local hub UI, (b) a PC admin path to list/reap/answer control-plane boxes,
+`relay status` + the local hub UI, (b) a PC admin path to list/reap/answer hub boxes,
 (c) the create queue is already retargeted (`create --via-hub`). Recorded, not re-plumbed.
 
 **1. `listStatuses()` promoted to `Store`** (backlog). Add
@@ -986,7 +986,7 @@ cloud resource. Full cloud teardown (`provider.destroy`) of a *worker-created* b
 sandboxId + provider creds VPS-side and a reconstructed `BoxRecord`; the hub backend does it when it
 can (sandboxId + importable provider), else reaps state only — the cloud-resource GC of orphaned
 worker boxes stays a backlog follow-up (the worker mints them, the control box doesn't persist a
-full `BoxRecord`). The PC drives the reap via `control-plane boxes rm`; the hub UI's existing
+full `BoxRecord`). The PC drives the reap via `hub boxes rm`; the hub UI's existing
 Destroy button reaps a Store-registered box the same way.
 
 **5. SSH-key custody, both directions.**
@@ -1000,7 +1000,7 @@ Destroy button reaps a Store-registered box the same way.
   configured, push `boxes/<sandboxId>/ssh/*` to custody (`pushBoxSshToCustody`, a small fetch client
   in `sandbox-cloud`), so the hub/mobile can also reach it.
 
-**6. `agentbox hub pull <box>`** (spelling chosen; `control-plane custody pull boxes/<id>` remains
+**6. `agentbox hub pull <box>`** (spelling chosen; `hub custody pull boxes/<id>` remains
 the low-level path). Resolve `{url, adminToken}`, fetch the registration (RemoteStore.getBox →
 `sandboxId`), download custody `boxes/<sandboxId|boxId>/ssh/*` into `~/.agentbox/boxes/
 <sandboxId|boxId>/ssh/` (0700 dir / 0600 files) so attach / cp / port-forward work. Full box
@@ -1011,10 +1011,10 @@ mandatory scope names and what the host verifies live. Deferred adoption noted i
 **7. Approvals from the PC CLI** (block-mode). The control box runs host + block-mode prompts, so a
 box's approval parks in the in-process `PendingPrompts`, surfaced over `GET /admin/prompts` and
 answered via `POST /admin/prompts/answer` — both now reachable non-loopback with the admin bearer
-(fix #220's gate). New `control-plane prompts list` / `prompts answer <id> [y|n]` post there. The
+(fix #220's gate). New `hub prompts list` / `prompts answer <id> [y|n]` post there. The
 existing `agent approve` stays laptop-loopback-only (docker/local boxes).
 
-**8. Credential pull-back** (phase 4 §3, control box → PC). `control-plane credentials pull` is the
+**8. Credential pull-back** (phase 4 §3, control box → PC). `hub credentials pull` is the
 reverse of phase 2's `credentials push`: download custody `agents/*` and write each into the host's
 `~/.agentbox/<id>-credentials.json` backup (0600), so `extractAgentCredentials` output that landed in
 custody flows back to the PC. `custody rm <path>` closes the phase-2 "no custody delete CLI" gap.
@@ -1025,7 +1025,7 @@ resolved worktree's `hostMainRepo` is empty or its directory is gone, with a cle
 worker-created-box case, instead of letting `git -C <deleted-tmp>` fail cryptically.
 
 **10. Surface the control box.** `agentbox relay status` gains a `control plane:` section (URL +
-`/healthz` reachability + box/event counts) reusing the `control-plane status` probe. The local hub
+`/healthz` reachability + box/event counts) reusing the remote-hub status probe (`probeControlPlaneStatus`). The local hub
 exposes the configured `relay.controlPlaneUrl` on its dashboard state (`controlPlane.url`) and the
 header links to it — a pure read of effective config, no new write surface (hub-web-pure-REST).
 
@@ -1049,11 +1049,11 @@ admin-client + `hub pull` planner (fake-fetch, temp HOME). Plus the local two-pr
 Everything above landed as planned. Notes + deviations:
 
 - **The retarget is CLI-side over the admin API, not a daemon store-swap.** The laptop relay
-  stays on `MemoryStore` (docker + loopback unchanged); the PC reaches control-plane boxes/status/
+  stays on `MemoryStore` (docker + loopback unchanged); the PC reaches hub boxes/status/
   prompts through the control box's admin API. To make that real, `/admin/store` is now a shared
   dispatcher (`store/store-rpc-routes.ts`) mounted in **both** `server.ts` and `core/handler.ts`,
   so `RemoteStore` works against the control box (it was dead against it before — the route lived
-  only on the Vercel plane). New CLI: `control-plane boxes list|rm`, `prompts list|answer`,
+  only on the Vercel plane). New CLI: `hub boxes list|rm`, `prompts list|answer`,
   `credentials pull`, `custody rm`, and `hub pull`. `agentbox relay status` gained a `control box:`
   section (URL + `/healthz` reachability); the local hub topbar links to the configured control box
   (`HubState.controlPlane`, read from `relay.controlPlaneUrl`; null on the control box itself).
@@ -1064,7 +1064,7 @@ Everything above landed as planned. Notes + deviations:
   create/resume, so `hub pull` writes keys to the on-disk `~/.agentbox/boxes/<sandboxId>/ssh/`
   attach reads, and a reap can find the box's custody subtree.
 - **The reap is a `DELETE /remote/boxes/:boxId`** shared-dispatcher branch (forget + deleteStatus +
-  custody `boxes/<sandboxId|boxId>/` cleanup). The PC drives it via `control-plane boxes rm`; the
+  custody `boxes/<sandboxId|boxId>/` cleanup). The PC drives it via `hub boxes rm`; the
   hub UI's Destroy button reaps a Store-only box the same way (`hub-backend.destroy` falls back to a
   reap when the box isn't in host `readState()`). **Deviation:** the reap tears down control-box
   *state*, not the cloud resource — a worker-created box has no full `BoxRecord` on the control box
@@ -1105,13 +1105,13 @@ apps/cli/dist/index.js <cmd> --url http://127.0.0.1:8799`). The walk (all 8 gree
 2. the mock worker (`drainCreateJobs` with a stub `CreateBoxFn`) drives the job to `done`.
 3. the created box registers on the control box (`POST /admin/register-box`, cloud/hetzner, with
    `sandboxId`).
-4. **PC** `control-plane boxes list` shows it (through `RemoteStore.listBoxes` + `listStatuses`).
+4. **PC** `hub boxes list` shows it (through `RemoteStore.listBoxes` + `listStatuses`).
 5. a `boxes/<sandboxId>/ssh/id_ed25519` is seeded into custody; **PC** `hub pull brave-otter`
    downloads it to `~/.agentbox/boxes/<sandboxId>/ssh/` (0600).
 6. the box raises an approval (`/rpc git.lease-token` on a non-scratch branch, block-mode);
-   **PC** `control-plane prompts list` shows it.
-7. **PC** `control-plane prompts answer <id> y` resolves it (the parked `/rpc` unwinds).
-8. **PC** `control-plane boxes rm brave-otter` reaps registration + status + custody
+   **PC** `hub prompts list` shows it.
+7. **PC** `hub prompts answer <id> y` resolves it (the parked `/rpc` unwinds).
+8. **PC** `hub boxes rm brave-otter` reaps registration + status + custody
    (`DELETE /remote/boxes/:id`); the store + custody are empty afterward.
 
 ---
@@ -1121,9 +1121,9 @@ apps/cli/dist/index.js <cmd> --url http://127.0.0.1:8799`). The walk (all 8 gree
 - **Docs in sync every phase** (project rule): the public guide
   `apps/web/content/docs/deployed-hub.mdx`, `docs/host-relay.md`, `docs/cloud-providers.md`, and
   this file's checkboxes/status.
-- The M1 **rename to `hub`** (CLI verbs, `relay.controlPlaneUrl` key) is *not* one of these
-  phases; do it after phase 3 when the surface is proven, as its own clean rename (unreleased —
-  no aliases).
+- The M1 **rename to `hub`** (CLI verbs) is **done** — the `control-plane` group folded into
+  `agentbox hub` as its own clean rename (unreleased — no aliases). The `relay.controlPlaneUrl`
+  config key was intentionally kept (it's the setting, not the verb).
 - `pnpm typecheck` before every push; relay conformance suites are the regression net for
   phases 1–2; live cloud verification (usable-box bar: a real `claude -p` turn + ls-remote-checked
   push) for phases 3–4.
@@ -1140,7 +1140,7 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
   state only, leaving the cloud resource. Now the hub backend reconstructs a drivable `BoxRecord` from
   the registration on demand (`hydrateRegisteredBox`, the shared `registrationToBoxRecord` mirror of
   `hub adopt`) so `/api/v1` lifecycle, git, services, and **real destroy** (cloud teardown + reap) work
-  on them. The CLI's `control-plane boxes` group (list, new start/stop/pause/resume, real `rm`) and
+  on them. The CLI's `hub boxes` group (list, new start/stop/pause/resume, real `rm`) and
   `prompts` now speak `/api/v1` via the shared `HubApiClient`. Remaining consolidation (CLI `ls -g` +
   `create --via-hub` onto `/api/v1`, main-command dispatch) tracked in
   [`hub-api-consolidation-plan.md`](./hub-api-consolidation-plan.md). VPS git/exec on a PC-created box
@@ -1212,12 +1212,12 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
   (S3/R2) the seam is shaped for is where envelope encryption would slot in.
 - **(phase 3, live) The deploy does not ship prepared-state records — DONE via
   [`local-adoption-plan.md`](./local-adoption-plan.md) phase 4.** Bake records now sync through a
-  `prepared/` custody scope: `control-plane deploy hetzner` seeds the new box with the PC's
+  `prepared/` custody scope: `hub deploy hetzner` seeds the new box with the PC's
   records, `agentbox prepare` pushes after a bake, and both sides pull-before-bake
   (fingerprint-match-wins). A control box deployed before the scope existed answers 400 and needs
   a redeploy to serve it.
 - **(phase 3, live) Dead-box registrations are never reaped on the hub. PARTIAL (phase 4).** A
-  reap verb now exists — `DELETE /remote/boxes/:id` (→ `control-plane boxes rm`, and the hub-UI
+  reap verb now exists — `DELETE /remote/boxes/:id` (→ `hub boxes rm`, and the hub-UI
   Destroy button for a Store-only box) removes the registration + status + custody
   `boxes/<sandboxId>/`. Still open: (a) **tearing down the cloud resource** of a worker-created box
   from the hub — the control box holds only a `BoxRegistration` (+ `sandboxId`), not a full
@@ -1230,7 +1230,7 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
   (`hostRepoUnavailableReason`), instead of a cryptic `git -C <deleted-tmp>` failure. The
   alternative ("rewrite `hostMainRepo` on PC adoption") is folded into the box-adoption backlog item
   below.
-- **(phase 3, live) `control-plane deploy` requires a TTY** (clack prompts for the hub admin
+- **(phase 3, live) `hub deploy` requires a TTY** (clack prompts for the hub admin
   email/password). Fine interactively; a `--admin-email/--admin-password(-file)` non-interactive
   path would let CI / scripts deploy.
 - **(phase 3, live) ctl fixes need re-bakes to reach boxes.** `leaseAndPush` (#222) is baked into
@@ -1249,7 +1249,7 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
   PC-added project are complete, and bake state is shared via a `prepared/` custody scope
   (fingerprint-match-wins). This also closed the deferred `hostMainRepo`-rewrite-on-PC-adoption
   half of the `hostMainRepo` guard item, and unblocks the teardown item below.
-- **(phase 4) Cloud-resource teardown of a worker-created box from the hub.** `control-plane boxes
+- **(phase 4) Cloud-resource teardown of a worker-created box from the hub.** `hub boxes
   rm` / the hub Destroy button reap control-box *state* only; the actual sandbox is left running
   because the control box has no full `BoxRecord` to drive `provider.destroy`. Persist enough on the
   registration (sandboxId is there now; add region/host as needed) and reconstruct a minimal record,
@@ -1259,7 +1259,7 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
 - **(phase 4) Autopause/queue for cloud boxes was already resident, not "moved".** The plan text
   framed phase 4 as moving autopause/queue for cloud boxes to the hub. In practice the control box's
   resident daemon (phase 3) already runs the queue + cloud-keepalive in-process, and the laptop's
-  loops never see control-plane boxes (they register on the control box, not the loopback relay), so
+  loops never see hub boxes (they register on the control box, not the loopback relay), so
   nothing needed relocating. If a laptop ever *does* hold a control-plane box locally (independent
   boxes), revisit whether its loops should defer to the hub.
 - **(phase 4) `secrets pull` (control box → PC) not implemented.** `credentials pull` brings agent
@@ -1290,7 +1290,7 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
   8787 port fix. With the port fix the registration lands in the hub's own store, but the UI box
   source still merges synthetic/creating entries that can outlive their jobs — reconcile the UI
   list against the store + a liveness check (ties to the dead-box-reap item).
-- **(final verify, live) `control-plane deploy` does not ship `*-prepared.json` or clone a
+- **(final verify, live) `hub deploy` does not ship `*-prepared.json` or clone a
   project.** Confirmed end to end: the live run had to scp `e2b-prepared.json` /
   `hetzner-prepared.json` into the hub data dir and `git clone` a project into the persistent
   `/root/projects` volume by hand before the web UI could create a box. The **prepared-state half
@@ -1309,7 +1309,7 @@ purely locally, and where it **should** run. Derived from `apps/cli/src/index.ts
 `apps/cli/src/control-plane/*`, `box-ref.ts` + `auto-adopt.ts`, and `packages/config/src/types.ts`
 (`relay.controlPlaneUrl`, `git.pushMode`).
 
-**The one switch:** `relay.controlPlaneUrl` (set via `agentbox control-plane set-url`) + an admin
+**The one switch:** `relay.controlPlaneUrl` (set via `agentbox hub set-url`) + an admin
 bearer token (`AGENTBOX_RELAY_ADMIN_TOKEN` / `~/.agentbox/control-plane/control-plane.env`), both
 resolved through `resolveCustodyTarget()` (`apps/cli/src/commands/control-plane.ts:532`). With no URL
 configured, everything behaves exactly as today. The CLI's remote calls hit the relay-core admin API
@@ -1394,7 +1394,7 @@ already does, via adopt/sync); *Remote* = the work belongs on the control box.
 | `config get`/`set`/`unset`/`list`/`path`/`edit`/`list-projects` | Local-only | Local | Layered config lives on the PC. |
 | `queue list`/`show`/`cancel`/`clear`/`wait-for` | Local-only | Local | PC's local `-i` job queue (`~/.agentbox/queue/`), distinct from the control-box create queue. |
 | `agent state`/`wait-for`/`get-plan-question` | Auto-adopts | Local | Reads box agent status. |
-| `agent approvals` / `approve` | Auto-adopts (local relay prompts) | Both | Hub-box approvals live on the control box — answered via `control-plane prompts`. |
+| `agent approvals` / `approve` | Auto-adopts (local relay prompts) | Both | Hub-box approvals live on the control box — answered via `hub prompts`. |
 | `drive snapshot`/`keypress`/`send-text`/`prompt`/`wait`/`resize` | Auto-adopts | Local | Drives a box tmux session. |
 
 ### Host services: relay / hub / control-plane / app
@@ -1402,12 +1402,13 @@ already does, via adopt/sync); *Remote* = the work belongs on the control box.
 | Command | Remote support today | Should run | Notes / gap |
 |---|---|---|---|
 | `relay status`/`stop`/`start`/`restart` | `status` probes control-box `/healthz`; rest local-only | Local | The PC's host relay daemon. |
-| `hub start`/`stop`/`restart`/`status` | Local-only | Local | The **localhost** hub (relay + web UI on :8787). |
+| `hub start`/`stop`/`restart` | Local-only | Local | The **localhost** hub (relay + web UI on :8787). |
+| `hub status` | Reports the configured remote control box (else the local hub process) | Both | Unified by target (`--url` forces remote). |
 | `hub pull` | Syncs — downloads a control-box box's SSH keys from custody | Both | Explicit key-only fetch. |
 | `hub adopt` | Syncs — rebuilds full local `BoxRecord` from registry + custody | Both | Explicit form of auto-adopt. |
-| `control-plane status`/`add`/`worker`/`credentials`/`secrets`/`project`/`custody`/`boxes`/`prompts` | Syncs (custody / registry / approvals) | Remote | The dedicated remote surface. |
-| `control-plane setup` / `deploy hetzner` | Provisions / targets the VPS | Remote | Deploys + configures the control box. |
-| `control-plane set-url` / `unset-url` | Local-only (writes global config) | Local | Points the PC at a control box. |
+| `hub add`/`worker`/`credentials`/`secrets`/`project`/`custody`/`boxes`/`prompts` | Syncs (custody / registry / approvals) | Remote | Remote-hub admin — folded into the one `hub` group. |
+| `hub setup` / `deploy hetzner` | Provisions / targets the VPS | Remote | Deploys + configures the control box. |
+| `hub set-url` / `unset-url` | Local-only (writes global config) | Local | Points the PC at a control box. |
 | `app status`/`start`/`stop`/`restart`/`log` | Local-only | Local | macOS menu-bar app lifecycle. |
 
 ### Install / update / plugins / diagnostics / providers
@@ -1438,5 +1439,6 @@ implemented + live-verified. Remaining gaps:
 5. **Web UI can display but not drive PC-registered boxes** (needs reverse adoption on the hub).
 6. **Checkpoint listing is not shared through custody** (unlike bake state) — hub-created checkpoints
    aren't visible PC-side. Minor / possibly intended.
-7. **`control-plane` → `hub` CLI rename** deliberately deferred; today the surface is split across the
-   `control-plane` (remote ops) and `hub` (local lifecycle + `pull`/`adopt`) commands.
+7. **`control-plane` → `hub` CLI rename — DONE.** The `control-plane` group folded into one `agentbox
+   hub` group (remote ops + local lifecycle + `pull`/`adopt` under a single surface); `hub status`
+   unified by target. See [`hub-api-consolidation-plan.md`](./hub-api-consolidation-plan.md) Phase 5.
