@@ -7,7 +7,10 @@ import type { CreateJobRequest, Store } from './store/store.js';
  * host bundle). Kept injectable so the worker loop is unit-testable without a
  * live cloud, and so the heavy provider wiring lives outside the relay core.
  */
-export type CreateBoxFn = (request: CreateJobRequest, jobId: string) => Promise<{ boxId: string }>;
+export type CreateBoxFn = (
+  request: CreateJobRequest,
+  jobId: string,
+) => Promise<{ boxId: string; agentStartError?: string }>;
 
 /**
  * Side-effecting steps a {@link makeControlPlaneCreateBox} needs, all injected
@@ -25,18 +28,28 @@ export interface CreateBoxDeps {
    * the remote back to the bare `repoUrl`.
    */
   cloneRepo(authedUrl: string, repoUrl: string, dest: string, branch?: string): Promise<void>;
-  /** Provision the cloud box from the local checkout. Returns the new box id. */
+  /**
+   * Provision the cloud box from the local checkout. Returns the new box id, and
+   * `agentStartError` when the box was created but starting the agent in-box
+   * failed (a background `-i` run) — the caller fails the job WITH the box id so
+   * the box is preserved for adopt/attach.
+   */
   createBox(opts: {
     workspacePath: string;
     name: string | undefined;
     provider: string;
     /**
      * Agent the box is being created for. Registered on the control plane so a
-     * PC adopting this box knows which agent to relaunch.
+     * PC adopting this box knows which agent to relaunch. When `prompt` is set
+     * the worker also STARTS this agent detached in the box.
      */
     agent?: string;
+    /** Seed prompt for a background `-i` run — present ⇒ start the agent in-box. */
+    prompt?: string;
+    /** Fully-processed agent args (post-`--`, incl. skip-permissions). */
+    agentArgs?: string[];
     onLog?: (line: string) => void;
-  }): Promise<{ id: string }>;
+  }): Promise<{ id: string; agentStartError?: string }>;
   /** Make a per-job temp dir path. */
   tmpDir(jobId: string): string;
   /** Remove the temp checkout (best-effort). */
@@ -103,10 +116,15 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
         // registration, so an adopting PC relaunches the right agent instead of
         // guessing. Without this a hub-created box adopts with no `lastAgent`.
         agent: request.agent,
+        // A background `-i` run seeds a prompt: the worker starts the agent
+        // in-box with these. Absent ⇒ a "cold" create (create --via-hub /
+        // foreground) that the PC attaches later.
+        prompt: request.prompt,
+        agentArgs: request.agentArgs,
         onLog: deps.log,
       });
       log(`created box ${box.id}`);
-      return { boxId: box.id };
+      return { boxId: box.id, agentStartError: box.agentStartError };
     } finally {
       await deps.cleanup(dir);
     }
@@ -127,8 +145,14 @@ export async function drainOneCreateJob(
   const job = await store.claimNextCreateJob(workerId);
   if (!job) return null;
   try {
-    const { boxId } = await createBox(job.request, job.id);
-    await store.completeCreateJob(job.id, 'done', { boxId });
+    const { boxId, agentStartError } = await createBox(job.request, job.id);
+    // The box was created; if starting the agent in-box failed, fail the job but
+    // keep the box id so it's adoptable/attachable (the user re-logins + retries).
+    if (agentStartError) {
+      await store.completeCreateJob(job.id, 'failed', { boxId, error: agentStartError });
+    } else {
+      await store.completeCreateJob(job.id, 'done', { boxId });
+    }
   } catch (err) {
     await store.completeCreateJob(job.id, 'failed', {
       error: err instanceof Error ? err.message : String(err),

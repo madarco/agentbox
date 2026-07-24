@@ -61,7 +61,7 @@ import {
 } from './_attach-in.js';
 import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
-import { createCloudBoxViaHubAndAdopt } from './_cloud-agent-via-hub.js';
+import { createCloudBoxViaHubAndAdopt, enqueueAgentJobViaHub } from './_cloud-agent-via-hub.js';
 import { resolveCreateRouting } from '../control-plane/route-create.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
@@ -566,6 +566,46 @@ export const opencodeCommand = new Command('opencode')
         );
         cmdLog.close();
         process.exit(1);
+      }
+      // Route the background run to the control box when configured — the worker
+      // creates the box AND starts opencode with the prompt (laptop off). Local
+      // creds aren't needed for the hub path (custody seeds them).
+      const iRouting = await resolveCreateRouting({
+        providerName,
+        effective: cfg.effective,
+        projectRoot,
+        forceHub: opts.viaHub,
+        forceLocal: opts.local,
+        urlFlag: opts.url,
+      });
+      if (iRouting.where === 'hub') {
+        const res = await enqueueAgentJobViaHub({
+          providerName,
+          projectRoot,
+          agent: 'opencode',
+          name: opts.name,
+          fromBranch: opts.fromBranch,
+          urlFlag: opts.url,
+          prompt: opts.initialPrompt,
+          agentArgs: opencodeArgs,
+          onStatus: (line) => log.step(line),
+        });
+        if (res) {
+          if (res.error) {
+            log.error(
+              `control plane run failed: ${res.error}` +
+                (res.boxId ? ` (box ${res.boxId} was created — attach with \`agentbox opencode attach ${res.boxId}\`)` : ''),
+            );
+            cmdLog.close();
+            process.exit(1);
+          }
+          outro(`opencode is running on the control plane: box ${res.boxId ?? '(id pending)'}`);
+          cmdLog.close();
+          return;
+        }
+      }
+      if (iRouting.where === 'local' && iRouting.fellBackReason) {
+        log.warn(`control box configured but ${iRouting.fellBackReason}; running this -i job locally.`);
       }
       try {
         await assertAgentCredsAvailable({

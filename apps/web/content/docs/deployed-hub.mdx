@@ -71,11 +71,12 @@ The web-UI create needs a **repo checkout on the VPS** for the worker to build f
 Once a control box is configured, spawning a **cloud** box from the CLI builds it **on the control box by default** — so it keeps working after you close your laptop. Just run a normal cloud create:
 
 ```bash
-agentbox create --provider e2b          # built on the control box (default)
-agentbox claude --provider e2b          # foreground: built on the control box, then attached here
+agentbox create --provider e2b               # built on the control box (default)
+agentbox claude --provider e2b               # foreground: built on the control box, then attached here
+agentbox claude --provider e2b -i "fix the …"  # background: created AND run on the control box
 ```
 
-The box is provisioned **VPS-side**, so it works even if the provider's credentials aren't configured on your laptop, and it keeps running once enqueued. It registers on the control box, so it shows in the web UI and its approvals are answerable from anywhere. (`agentbox create` streams the job to completion; a foreground `agentbox claude`/`codex`/`opencode` waits for the box, then **adopts + attaches** it here so the agent starts.)
+The box is provisioned **VPS-side**, so it works even if the provider's credentials aren't configured on your laptop, and it keeps running once enqueued. It registers on the control box, so it shows in the web UI and its approvals are answerable from anywhere. (`agentbox create` streams the job to completion; a foreground `agentbox claude`/`codex`/`opencode` waits for the box, then **adopts + attaches** it here so the agent starts; a **background `-i`** run has the control box start the agent in-box with your prompt — nothing runs on, or waits for, your laptop.)
 
 You can force either side explicitly:
 
@@ -84,7 +85,7 @@ agentbox create --provider e2b --via-hub   # force the control box (even if clou
 agentbox create --provider e2b --local     # force a local build on this machine
 ```
 
-<Callout type="info" title="Which creates route to the control box">Only **cloud** creates default to the control box, and only when one is configured. Set **`cloud.viaHub=false`** (or pass `--local`) to keep building cloud boxes on your PC. Docker / remote-docker always build locally. **Background `-i` runs** (`agentbox claude -i "…"`) still build on your PC for now — the control box's worker builds boxes "cold" and doesn't yet start the agent; a missing prerequisite (no git `origin`, no admin token) also falls back to a local build with a notice.</Callout>
+<Callout type="info" title="Which creates route to the control box">Only **cloud** creates default to the control box, and only when one is configured — this covers `create`, foreground `claude`/`codex`/`opencode`, and background `-i` runs alike. Set **`cloud.viaHub=false`** (or pass `--local`) to keep building cloud boxes on your PC. Docker / remote-docker always build locally. A missing prerequisite (no git `origin`, no admin token) falls back to a local build with a notice. A background `-i` run needs the agent's login in custody (`agentbox control-plane credentials push`) so the control box can start it — if it's missing or stale, the job **fails with a clear "credentials rejected" message and the box id preserved**, so you can attach and re-login.</Callout>
 
 Now the payoff — the box pushes on its own, with your laptop fully off:
 

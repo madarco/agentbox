@@ -32,7 +32,8 @@ import {
   boxSshDirForProvider,
   projectSlugFromOriginUrl,
 } from '@agentbox/sandbox-core';
-import { applyProjectSeed } from '@agentbox/sandbox-cloud';
+import { applyProjectSeed, startDetachedCloudAgent } from '@agentbox/sandbox-cloud';
+import { resolveAgentLauncher, type AgentKind } from '@agentbox/core';
 import type { ProviderModule } from '@agentbox/sandbox-core';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 
@@ -203,7 +204,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       await runGit(branch ? ['clone', '--branch', branch, authedUrl, dest] : ['clone', authedUrl, dest]);
       await runGit(['-C', dest, 'remote', 'set-url', 'origin', repoUrl]);
     },
-    createBox: async ({ workspacePath, name, provider, agent, onLog }) => {
+    createBox: async ({ workspacePath, name, provider, agent, prompt, agentArgs, onLog }) => {
       if (!isProviderKind(provider)) throw new Error(`unknown provider ${provider}`);
       const mod = (await IMPORTERS[provider]()).providerModule;
       if (mod.ensureCredentials) await mod.ensureCredentials();
@@ -230,6 +231,34 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         onLog,
       });
       await mirrorBoxSshToCustody(custody, provider, created.record.cloud?.sandboxId, log);
+
+      // Background `-i`: a seed prompt means run the agent fully on the control
+      // box (create + start detached), so the laptop can be off from submit on.
+      // A cold create (create --via-hub / foreground) has no prompt — the PC
+      // attaches those. Creds were seeded above (seedHostBackupsFromCustody), so
+      // the box is logged in; a not-logged-in box surfaces as an actionable error
+      // from verifyDetachedSession, which we return so the job fails WITH the box
+      // id (box preserved for adopt/attach + re-login).
+      const boxAgent = normalizeCreateAgent(agent);
+      if (boxAgent && prompt && prompt.length > 0) {
+        const kind: AgentKind = boxAgent === 'claude' ? 'claude-code' : boxAgent;
+        const extraArgs = resolveAgentLauncher(kind).buildArgs(prompt, agentArgs ?? []);
+        log(`starting ${boxAgent} in ${created.record.name} with the seed prompt`);
+        try {
+          await startDetachedCloudAgent({
+            provider: mod.provider,
+            box: created.record,
+            binary: boxAgent,
+            sessionName: boxAgent,
+            extraArgs,
+          });
+          log(`${boxAgent} session is running in ${created.record.name}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log(`agent start failed (box was created): ${msg}`);
+          return { id: created.record.id, agentStartError: msg };
+        }
+      }
       return { id: created.record.id };
     },
     fetchSeedMaterial: (repoUrl, dest) => applySeedFromCustody(custody, repoUrl, dest, log),

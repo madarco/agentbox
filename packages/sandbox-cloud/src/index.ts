@@ -8,6 +8,13 @@ export {
   renderInnerCommand,
   type CreateCloudProviderOptions,
 } from './cloud-provider.js';
+export {
+  buildCloudAttachInnerCommand,
+  startDetachedCloudAgent,
+  startDetachedSession,
+  verifyDetachedSession,
+  type StartDetachedCloudAgentArgs,
+} from './detached-agent.js';
 export { kickCloudBootstrap, type KickCloudBootstrapArgs } from './bootstrap-launch.js';
 export {
   registerBoxWithPlane,

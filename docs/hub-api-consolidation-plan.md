@@ -14,8 +14,10 @@
 > **Phase 3 shipped** (tray follows the CLI hub config via `agentbox hub target`; `/api/events`
 > accepts the headless Bearer key; cloud box creation — `create` + foreground `claude`/`codex`/
 > `opencode` — defaults to the control box when configured, via `cloud.viaHub`, docker stays local);
-> `ls -g` + `create --via-hub` main-command dispatch + hub-worker agent-launch for background `-i`
-> deferred (see the phased plan below). Maintain status live per project convention.
+> **background `-i` on the control box shipped** (the hub worker starts the agent detached with the
+> seed prompt, so `-i` cloud runs execute fully on the control box); `ls -g` + `create --via-hub`
+> onto `/api/v1` + the main-command dispatch remain deferred (see the phased plan below). Maintain
+> status live per project convention.
 
 ## Context
 
@@ -243,10 +245,15 @@ intentional divergences above (git auth, gate, worker) branch on the profile.
     local; a missing prerequisite (no git origin / admin token) falls back to a local build with a
     notice. Routing decision centralized in `route-create.ts` (`resolveCreateRouting`) +
     `isHubRoutableProvider` (clouds minus remote-docker).
-  - **Deferred:** **background `-i`** stays on the local queue — the hub create worker builds boxes
-    "cold" (it never launches the agent or seeds the prompt), so routing `-i` there needs a new
-    worker feature (agent-launch + prompt-seed). `create --via-hub` onto `/api/v1`, `ls -g`, and the
-    main `start/stop/git <box>` dispatch remain as before.
+  - **Background `-i` on the control box. DONE (follow-up).** The hub create worker now starts the
+    agent detached with the seed prompt after it creates the box, so `agentbox claude|codex|opencode
+    -i "…"` on a cloud provider runs entirely on the control box (laptop off). The detached-start
+    orchestration moved into `@agentbox/sandbox-cloud` (`startDetachedCloudAgent`, shared with the
+    CLI's local `-i` path); `CreateJobRequest`/`CreateBoxDeps` carry `prompt`/`agentArgs`; an
+    agent-start failure fails the job **with the box id preserved** (creds re-login path). The CLI
+    `-i` branch defaults to the hub via the same `resolveCreateRouting` (`--local` opts out).
+  - **Deferred:** `create --via-hub` onto `/api/v1`, `ls -g`, and the main `start/stop/git <box>`
+    dispatch remain as before.
 - **Phase 4 — Web UI onto `/api/v1`.** Migrate `apps/hub/lib/boxes/actions.ts` server-action mutations
   to the same `/api/v1` fetches, so all three clients share one path and a remote deploy needs no
   in-process backend.
