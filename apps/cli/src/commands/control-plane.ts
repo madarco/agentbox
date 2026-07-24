@@ -47,7 +47,7 @@ import {
   planPush,
   type UploadItem,
 } from '../control-plane/custody-client.js';
-import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
+import { HubApiClient, HubApiError, type HubLifecycleAction } from '../control-plane/hub-api-client.js';
 import { loadControlPlaneEnv } from '../control-plane/env-file.js';
 import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { handleLifecycleError } from './_errors.js';
@@ -595,6 +595,19 @@ export async function resolveHubApiTarget(
 }
 
 /**
+ * Build a {@link HubApiClient} for the configured hub from {@link resolveHubApiTarget}
+ * (URL + `/api/v1` key), or null (with an actionable error unless `quiet`) when
+ * unconfigured. The client-facing counterpart to `new ControlPlaneAdminClient`.
+ */
+export async function resolveHubApiClient(
+  urlFlag: string | undefined,
+  opts: { quiet?: boolean } = {},
+): Promise<HubApiClient | null> {
+  const target = await resolveHubApiTarget(urlFlag, opts);
+  return target ? new HubApiClient(target) : null;
+}
+
+/**
  * Slug a project into a custody `projects/<slug>` key: `owner__repo`, else the
  * dir name.
  *
@@ -911,33 +924,27 @@ const custodyCmd = new Command('custody')
 // --- control-plane box registry (the PC's admin view of the control box) ---
 
 const boxesListSub = new Command('list')
-  .description('List boxes registered on the control box')
+  .description('List boxes on the control box (via its /api/v1)')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .option('--json', 'print raw JSON')
   .action(async (opts: { url?: string; json?: boolean }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
-      if (!target) {
+      const client = await resolveHubApiClient(opts.url);
+      if (!client) {
         process.exitCode = 1;
         return;
       }
-      const client = new ControlPlaneAdminClient(target);
-      const [boxes, statuses] = await Promise.all([client.listBoxes(), client.store.listStatuses()]);
+      const boxes = await client.listBoxes();
       if (opts.json) {
-        process.stdout.write(`${JSON.stringify({ boxes, statuses }, null, 2)}\n`);
+        process.stdout.write(`${JSON.stringify({ boxes }, null, 2)}\n`);
         return;
       }
       if (boxes.length === 0) {
-        log.info('No boxes registered on the control box.');
+        log.info('No boxes on the control box.');
         return;
       }
-      const statusBy = new Map(statuses.map((s) => [s.boxId, s.status]));
       for (const b of boxes) {
-        const st = statusBy.get(b.boxId);
-        const state = st && typeof st === 'object' && 'state' in st ? String((st as { state?: unknown }).state) : '-';
-        process.stdout.write(
-          `${b.boxId}  ${b.name}  ${b.kind ?? 'docker'}${b.backend ? `/${b.backend}` : ''}  ${state}\n`,
-        );
+        process.stdout.write(`${b.id}  ${b.name ?? b.task}  ${b.provider}  ${b.state ?? b.status}\n`);
       }
     } catch (err) {
       handleLifecycleError(err);
@@ -945,38 +952,65 @@ const boxesListSub = new Command('list')
   });
 
 const boxesRmSub = new Command('rm')
-  .description('Reap a box from the control box (registration + status + SSH-key custody; NOT the cloud resource)')
+  .description('Destroy a box via the control box (tears down the cloud resource AND reaps its registration/custody)')
   .argument('<boxId>', 'the box id as shown by `control-plane boxes list`')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .action(async (boxId: string, opts: { url?: string }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
-      if (!target) {
+      const client = await resolveHubApiClient(opts.url);
+      if (!client) {
         process.exitCode = 1;
         return;
       }
-      const client = new ControlPlaneAdminClient(target);
-      const res = await client.reapBox(boxId);
-      if (!res.removed && res.custodyRemoved === 0) {
+      // Reverse-adoption on the control box means this drives a REAL destroy even
+      // for a box created on the PC (registration-only) — not just a state reap.
+      await client.destroy(boxId);
+      log.success(`Destroyed '${boxId}' (cloud resource + control-box state).`);
+    } catch (err) {
+      if (err instanceof HubApiError && err.code === 'not_found') {
         log.info(`No box '${boxId}' on the control box.`);
         return;
       }
-      log.success(
-        `Reaped '${boxId}': registration ${res.removed ? 'removed' : 'absent'}, ` +
-          `${String(res.custodyRemoved)} custody file(s) removed. ` +
-          `(The cloud resource, if any, is untouched — destroy it from the hub or its provider.)`,
-      );
-    } catch (err) {
       handleLifecycleError(err);
     }
   });
 
+/** A `control-plane boxes <action>` lifecycle subcommand over the hub `/api/v1`. */
+function boxesLifecycleSub(action: HubLifecycleAction, verb: string, past: string): Command {
+  return new Command(action)
+    .description(`${verb} a box on the control box (via its /api/v1)`)
+    .argument('<boxId>', 'the box id as shown by `control-plane boxes list`')
+    .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+    .action(async (boxId: string, opts: { url?: string }) => {
+      try {
+        const client = await resolveHubApiClient(opts.url);
+        if (!client) {
+          process.exitCode = 1;
+          return;
+        }
+        await client.lifecycle(boxId, action);
+        log.success(`${past} '${boxId}'.`);
+      } catch (err) {
+        if (err instanceof HubApiError && err.code === 'not_found') {
+          log.info(`No box '${boxId}' on the control box.`);
+          process.exitCode = 1;
+          return;
+        }
+        handleLifecycleError(err);
+      }
+    });
+}
+
 const boxesCmd = new Command('boxes')
-  .description('List + reap boxes registered on the control box')
+  .description('List + drive boxes on the control box over its public /api/v1')
   .addCommand(boxesListSub)
+  .addCommand(boxesLifecycleSub('start', 'Start', 'Started'))
+  .addCommand(boxesLifecycleSub('stop', 'Stop', 'Stopped'))
+  .addCommand(boxesLifecycleSub('pause', 'Pause', 'Paused'))
+  .addCommand(boxesLifecycleSub('resume', 'Resume', 'Resumed'))
   .addCommand(boxesRmSub);
 
-// --- control-plane approvals (answerable from the PC) ---
+// --- control-plane approvals (answerable from the PC over /api/v1) ---
 
 const promptsListSub = new Command('list')
   .description('List pending host-action approvals across control-box boxes')
@@ -984,23 +1018,25 @@ const promptsListSub = new Command('list')
   .option('--json', 'print raw JSON')
   .action(async (opts: { url?: string; json?: boolean }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
-      if (!target) {
+      const client = await resolveHubApiClient(opts.url);
+      if (!client) {
         process.exitCode = 1;
         return;
       }
-      const client = new ControlPlaneAdminClient(target);
-      const pending = await client.pendingPrompts();
+      // One call returns every pending approval (vs the admin wire's N per-box
+      // fetches); cross-ref the box list once for human-readable names.
+      const [approvals, boxes] = await Promise.all([client.listApprovals(), client.listBoxes().catch(() => [])]);
       if (opts.json) {
-        process.stdout.write(`${JSON.stringify(pending, null, 2)}\n`);
+        process.stdout.write(`${JSON.stringify(approvals, null, 2)}\n`);
         return;
       }
-      if (pending.length === 0) {
+      if (approvals.length === 0) {
         log.info('No pending approvals.');
         return;
       }
-      for (const p of pending) {
-        process.stdout.write(`${p.prompt.id}  [${p.boxName}]  ${p.prompt.message}\n`);
+      const nameBy = new Map(boxes.map((b) => [b.id, b.name ?? b.task]));
+      for (const a of approvals) {
+        process.stdout.write(`${a.id}  [${nameBy.get(a.boxId) ?? a.boxId}]  ${a.message}\n`);
       }
     } catch (err) {
       handleLifecycleError(err);
@@ -1019,19 +1055,19 @@ const promptsAnswerSub = new Command('answer')
         process.exitCode = 1;
         return;
       }
-      const target = await resolveCustodyTarget(opts.url);
-      if (!target) {
+      const client = await resolveHubApiClient(opts.url);
+      if (!client) {
         process.exitCode = 1;
         return;
       }
-      const client = new ControlPlaneAdminClient(target);
-      const ok = await client.answerPrompt(id, answer);
-      if (ok) log.success(`Answered ${id} → ${answer}.`);
-      else {
+      await client.answerApproval(id, answer);
+      log.success(`Answered ${id} → ${answer}.`);
+    } catch (err) {
+      if (err instanceof HubApiError && err.code === 'not_found') {
         log.info(`No pending approval with id ${id} (already answered or expired?).`);
         process.exitCode = 1;
+        return;
       }
-    } catch (err) {
       handleLifecycleError(err);
     }
   });
