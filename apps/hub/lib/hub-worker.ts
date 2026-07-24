@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { isProviderKind, loadEffectiveConfig, type ProviderKind } from '@agentbox/config';
 import {
+  cloneRepoWithLfs,
   drainCreateJobs,
   FsCustodyStore,
   GitHubAppLeaser,
@@ -51,8 +52,16 @@ const IMPORTERS: Record<ProviderKind, () => Promise<{ providerModule: ProviderMo
   'remote-docker': () => import('@agentbox/sandbox-remote-docker'),
 };
 
-async function runGit(args: string[]): Promise<void> {
-  await execFileAsync('git', args, { maxBuffer: 64 * 1024 * 1024 });
+async function runGit(
+  args: string[],
+  env?: Record<string, string>,
+  timeoutMs?: number,
+): Promise<void> {
+  await execFileAsync('git', args, {
+    maxBuffer: 64 * 1024 * 1024,
+    env: env ? { ...process.env, ...env } : process.env,
+    ...(timeoutMs ? { timeout: timeoutMs } : {}),
+  });
 }
 
 /**
@@ -200,10 +209,8 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       const { token } = await leaser.leaseRepoToken(owner, repo);
       return toAuthedHttpsUrl(repoUrl, token);
     },
-    cloneRepo: async (authedUrl, repoUrl, dest, branch) => {
-      await runGit(branch ? ['clone', '--branch', branch, authedUrl, dest] : ['clone', authedUrl, dest]);
-      await runGit(['-C', dest, 'remote', 'set-url', 'origin', repoUrl]);
-    },
+    cloneRepo: (authedUrl, repoUrl, dest, branch) =>
+      cloneRepoWithLfs(runGit, authedUrl, repoUrl, dest, branch, log),
     createBox: async ({ workspacePath, name, provider, agent, prompt, agentArgs, onLog }) => {
       if (!isProviderKind(provider)) throw new Error(`unknown provider ${provider}`);
       const mod = (await IMPORTERS[provider]()).providerModule;
