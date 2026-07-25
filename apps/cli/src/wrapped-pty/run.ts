@@ -866,6 +866,20 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
         applyBandChange();
       }
     },
+    // A dead prompt stream must never look like "no approvals". The client
+    // retries transient drops itself, but bails permanently on a non-200 — and
+    // for a hub box this URL is the control box with an admin bearer, so a
+    // stale token answers 401 and the footer would sit silent for the whole
+    // session while the box is actually blocked. Surface it in the band, and
+    // pass it to the caller's log so it's diagnosable after the fact.
+    onError: (err: Error) => {
+      opts.onError?.(`prompt stream: ${err.message}`);
+      activeNotice = {
+        id: 'prompt-stream-error',
+        message: `approvals unavailable (${err.message}) — answer them with \`agentbox hub prompts\``,
+      } as BoxNoticeEvent;
+      applyBandChange();
+    },
   });
 
   // cmux (workspace colour/description) + Herdr (pane agent state) reflect the
