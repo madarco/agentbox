@@ -41,6 +41,7 @@ import { resolveBoxPromptSource } from '../control-plane/box-plane.js';
 import { listBoxesMerged } from '../control-plane/list-merged.js';
 import type { MergedBox } from '../control-plane/hub-merge.js';
 import { tryAutoAdopt } from '../control-plane/auto-adopt.js';
+import { reapOnControlBox } from '../control-plane/reap.js';
 import type { BoxRecord } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { resolveClaudeAuth } from '../auth.js';
@@ -203,13 +204,17 @@ export const dashboardCommand = new Command('dashboard')
         if (!merged) return { kind: 'placeholder', lines: ['', '  box not found'] };
         const box = await ensureAdopted(merged);
         if (!box) {
+          // `tryAutoAdopt` returns null for several reasons — control box down,
+          // no admin token, or it genuinely doesn't know this box — and doesn't
+          // say which. Don't assert a cause we haven't established; name the
+          // command that reports the real one.
           return {
             kind: 'placeholder',
             lines: [
               '',
-              `  box ${merged.name} lives on the control box and isn't adopted here yet.`,
-              '  The control box is unreachable, so it can\'t be driven from this machine.',
-              `  Retry with: agentbox hub adopt ${merged.name}`,
+              `  box ${merged.name} lives on the control box and couldn't be adopted here.`,
+              '  Until it is, it can\'t be driven from this machine.',
+              `  Retry (and see why) with: agentbox hub adopt ${merged.name}`,
             ],
           };
         }
@@ -663,6 +668,9 @@ export const dashboardCommand = new Command('dashboard')
         if ((record.provider ?? 'docker') !== 'docker') {
           const provider = await providerForBox(record);
           await provider.destroy(record);
+          // Same reap `agentbox destroy` does — destroying from the TUI must not
+          // leave the registration behind that the CLI path cleans up.
+          await reapOnControlBox(record);
           return;
         }
         await destroyBox(boxId);

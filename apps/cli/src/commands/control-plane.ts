@@ -1121,7 +1121,7 @@ const jobsListSub = new Command('list')
 
 const jobsShowSub = new Command('show')
   .description('Dump one control-box create job')
-  .argument('<jobId>', 'job id as shown by `hub jobs list`')
+  .argument('<jobId>', 'job id (or the short prefix `hub jobs list` prints)')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .action(async (jobId: string, opts: { url?: string }) => {
     try {
@@ -1130,7 +1130,21 @@ const jobsShowSub = new Command('show')
         process.exitCode = 1;
         return;
       }
-      const job = await getHubJob(target, jobId);
+      // `jobs list` (and the `queue list` block) print an 8-char prefix, so the
+      // id you can actually copy is not the full UUID the by-id route wants.
+      // Try it verbatim first, then resolve it as a prefix.
+      let job = await getHubJob(target, jobId);
+      if (!job) {
+        const matches = (await listHubJobs(target)).filter((j) => j.id.startsWith(jobId));
+        if (matches.length > 1) {
+          log.error(
+            `'${jobId}' matches ${String(matches.length)} jobs (${matches.map((m) => m.id.slice(0, 12)).join(', ')}) — pass more of the id.`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+        job = matches[0] ?? null;
+      }
       if (!job) {
         log.info(`No job '${jobId}' on the control box.`);
         process.exitCode = 1;
