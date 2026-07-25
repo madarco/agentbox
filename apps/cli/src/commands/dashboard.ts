@@ -37,6 +37,7 @@ import {
   type ListedBox,
 } from '@agentbox/sandbox-docker';
 import { hostOpenCommand, readState } from '@agentbox/sandbox-core';
+import { resolveBoxPromptSource } from '../control-plane/box-plane.js';
 import type { BoxRecord } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { resolveClaudeAuth } from '../auth.js';
@@ -645,10 +646,17 @@ export const dashboardCommand = new Command('dashboard')
         {
           ptySpawn,
           termCtor,
-          // Host-side loopback URL the per-box SSE subscriptions connect to.
-          // The relay binds 0.0.0.0; loopback is the admin/* path's required
-          // source. Same constant the wrapped-pty wrappers use.
+          // Default relay for the per-box SSE subscriptions: this host's own
+          // loopback daemon, which the admin/* gate accepts on source alone.
           relayBaseUrl: `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`,
+          // ...but a box created against a control box keeps its approvals
+          // there, so resolve per box and fall back to the above.
+          relaySourceFor: async (boxId) => {
+            const box = (await listBoxes()).find((b) => b.id === boxId);
+            if (!box) return null;
+            const source = await resolveBoxPromptSource(box);
+            return { baseUrl: source.baseUrl, authToken: source.authToken };
+          },
           listCandidates,
           resolveTarget,
           startClaude,

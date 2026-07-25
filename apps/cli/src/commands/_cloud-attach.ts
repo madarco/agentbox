@@ -2,7 +2,6 @@ import { appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { log, spinner } from '@clack/prompts';
-import { DEFAULT_RELAY_PORT } from '@agentbox/sandbox-docker';
 import {
   buildCloudAttachInnerCommand,
   startDetachedCloudAgent,
@@ -22,8 +21,8 @@ import { providerForBox } from '../provider/registry.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { pasteHostClipboardImage, uploadImageFileToBox } from '../lib/paste-image.js';
 import { clipboardCaptureAvailable } from '../lib/host-clipboard.js';
+import { attachRelayOptions } from '../control-plane/box-plane.js';
 
-const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
 /** Give up reconnecting a dropped attach after this long (box likely gone). */
 const RECONNECT_TIMEOUT_MS = 5 * 60_000;
 
@@ -243,7 +242,7 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
       dockerArgv: spec.argv.slice(1),
       env: spec.env,
       initialInput: spec.initialInput,
-      relayBaseUrl: RELAY_HOST_URL,
+      ...(await attachRelayOptions(box)),
       boxId: box.id,
       boxName: box.name,
       projectIndex: box.projectIndex,

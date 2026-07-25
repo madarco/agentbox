@@ -12,8 +12,14 @@ import type { BoxNoticeEvent, PromptAnswerBody, PromptAskEvent } from '@agentbox
  *   - `event: ping`            data: { ts }
  *
  * We reconnect with exponential backoff on any error or close — the only
- * way to know the relay is back is to keep trying. Subscribers are
- * loopback-only so latency is sub-ms.
+ * way to know the relay is back is to keep trying.
+ *
+ * The relay is usually the laptop's own loopback daemon (sub-ms), but a box
+ * created against a control box streams from THAT plane instead — over the WAN,
+ * with an admin bearer, and possibly https. Hence `authToken`: without it the
+ * control box's admin gate rejects a non-loopback subscriber and the attach
+ * footer stays silent on exactly the boxes that need it most. The backoff loop
+ * already absorbs the flakier link; don't add tight timeouts here.
  */
 export interface PromptStream {
   /** Stop subscribing; aborts any in-flight reconnect attempt. */
@@ -22,6 +28,11 @@ export interface PromptStream {
 
 export interface SubscribeOptions {
   relayBaseUrl: string;
+  /**
+   * Admin bearer for a remote control box. Omitted for the local relay, whose
+   * admin gate passes on loopback alone.
+   */
+  authToken?: string;
   boxId: string;
   onPrompt: (ev: PromptAskEvent) => void;
   /** Server-driven: a sibling wrapper (or this one) answered; the run loop
@@ -128,7 +139,10 @@ export function subscribePrompts(opts: SubscribeOptions): PromptStream {
       port,
       method: 'GET',
       path: `${url.pathname.replace(/\/$/, '')}/admin/prompts/stream?boxId=${encodeURIComponent(opts.boxId)}`,
-      headers: { Accept: 'text/event-stream' },
+      headers: {
+        Accept: 'text/event-stream',
+        ...(opts.authToken ? { Authorization: `Bearer ${opts.authToken}` } : {}),
+      },
     });
     req.on('response', (r) => {
       res = r;
@@ -188,6 +202,8 @@ export function subscribePrompts(opts: SubscribeOptions): PromptStream {
  */
 export interface PostAnswerOptions {
   relayBaseUrl: string;
+  /** Admin bearer for a remote control box; omitted for the local relay. */
+  authToken?: string;
   body: PromptAnswerBody;
 }
 
@@ -218,8 +234,11 @@ export function postAnswer(opts: PostAnswerOptions): Promise<PostAnswerResult> {
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(json).toString(),
+          ...(opts.authToken ? { Authorization: `Bearer ${opts.authToken}` } : {}),
         },
-        timeout: 3000,
+        // Generous enough for a WAN round-trip to a control box, not just the
+        // loopback relay this once only spoke to.
+        timeout: 8000,
       },
       (res) => {
         res.resume();

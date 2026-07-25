@@ -11,6 +11,7 @@
  * warns and points at `agentbox hub boxes rm <id>` as the manual follow-up.
  */
 import type { BoxRecord } from '@agentbox/core';
+import { resolveBoxPlane } from './box-plane.js';
 
 /**
  * - `reaped`      — the control box removed the registration (and/or custody keys).
@@ -27,31 +28,18 @@ const REAP_TIMEOUT_MS = 4000;
 const REACHABLE_PROBE_MS = 1500;
 
 /**
- * Does this box live on a control box at all? Docker boxes register on the
- * laptop's loopback relay and are never in a plane's registry — the same rule
- * `mergeHubBoxes` applies when deciding what a missing registration means.
- */
-function isControlPlaneBox(box: BoxRecord): boolean {
-  return (box.provider ?? 'docker') !== 'docker';
-}
-
-/**
  * Remove `box`'s registration + status + SSH-key custody from the control box it
- * registered with. Never throws.
- *
- * The URL comes from the box's own record first (`cloud.controlPlaneUrl` — the
- * plane it actually registered with, which outlives a config change) and only
- * then from `relay.controlPlaneUrl`. The admin bearer always comes from the
- * usual resolution, since it isn't persisted per box.
+ * registered with. Never throws. See {@link resolveBoxPlane} for which plane
+ * that is (a docker box resolves to `none` and is skipped — it never registers
+ * on one).
  *
  * Imports lazily: this runs on every destroy, including on hosts with no control
  * box, and the control-plane clients pull in config + relay code that a plain
  * `agentbox destroy` shouldn't pay for.
  */
 export async function reapOnControlBox(box: BoxRecord): Promise<ReapOutcome> {
-  if (!isControlPlaneBox(box)) return 'skipped';
   try {
-    const target = await resolveReapTarget(box);
+    const target = await resolveBoxPlane(box);
     if (target === 'none') return 'skipped';
     if (target === 'no-token') return 'unreachable';
 
@@ -78,34 +66,6 @@ export async function reapOnControlBox(box: BoxRecord): Promise<ReapOutcome> {
   }
 }
 
-/**
- * Which control box holds this box's registration, and the bearer for it.
- *
- * The URL is resolved from the box's own record first: `cloud.controlPlaneUrl`
- * is the plane it actually registered with, which survives a later config
- * change (or removal) on this host — exactly the case where a stale
- * registration would otherwise be unreachable forever. Only then does it fall
- * back to `relay.controlPlaneUrl`.
- *
- * The token isn't persisted per box, so it always comes from the environment /
- * the setup-written env file. Distinguishing `no-token` from `none` matters:
- * with no plane at all there is genuinely nothing to reap, but a known plane we
- * can't authenticate to is an answer we never got.
- */
-async function resolveReapTarget(
-  box: BoxRecord,
-): Promise<{ url: string; adminToken: string } | 'none' | 'no-token'> {
-  const { loadEffectiveConfig } = await import('@agentbox/config');
-  const { loadControlPlaneEnv } = await import('./env-file.js');
-  const configured = await loadEffectiveConfig(process.cwd())
-    .then((c) => c.effective.relay.controlPlaneUrl)
-    .catch(() => undefined);
-  const url = (box.cloud?.controlPlaneUrl ?? configured ?? '').replace(/\/+$/, '');
-  if (!url) return 'none';
-  loadControlPlaneEnv();
-  const adminToken = process.env['AGENTBOX_RELAY_ADMIN_TOKEN'] ?? '';
-  return adminToken ? { url, adminToken } : 'no-token';
-}
 
 /**
  * Reap the registrations of orphan cloud sandboxes that `prune --provider <p>`

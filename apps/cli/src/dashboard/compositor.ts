@@ -86,6 +86,11 @@ export interface CompositorDeps {
    *  (legacy callers) the compositor skips prompt subscriptions entirely
    *  — the dashboard still works, just without relay-prompt overlay. */
   relayBaseUrl?: string;
+  /** Per-box override of {@link relayBaseUrl}. A box created against a control
+   *  box keeps its approvals THERE, so one global URL would subscribe every row
+   *  to this laptop's relay and silently miss them. Returns the box's own relay
+   *  + bearer; falling back to `relayBaseUrl` when it resolves nothing. */
+  relaySourceFor?: (boxId: string) => Promise<{ baseUrl: string; authToken?: string } | null>;
   /** Scoped + sorted candidate boxes (same order the sidebar renders). */
   listCandidates: () => Promise<SidebarBox[]>;
   /** What the right pane should show for a box (attach argv / menu / message). */
@@ -128,6 +133,13 @@ const RESIZE_DEBOUNCE_MS = 120;
 const LEADER_LINGER_MS = 1500;
 /** Spinner advance cadence while a box has an active relay notice. */
 const NOTICE_SPINNER_MS = 120;
+/**
+ * Placeholder held in `promptStreams` while a box's relay source is being
+ * resolved, so the every-second poll can't open a second stream for the same
+ * box. Closing it is a no-op; the resolver sees the slot is no longer its own
+ * sentinel and drops the stream it was about to open.
+ */
+const PENDING_STREAM: PromptStream = { close: () => {} };
 
 // Synchronized Output (DECSET 2026): the terminal buffers everything between
 // begin/end and presents it in one go — no partial-frame flicker/tearing.
@@ -377,43 +389,66 @@ export class Compositor {
     // Open subscriptions for boxes we don't already track.
     for (const boxId of wanted) {
       if (this.promptStreams.has(boxId)) continue;
-      const stream = subscribePrompts({
-        relayBaseUrl: url,
-        boxId,
-        onPrompt: (ev) => {
-          if (this.tornDown) return;
-          this.activePrompts.set(boxId, ev);
-          this.redrawForAlert();
-        },
-        onResolved: (id) => {
-          if (this.tornDown) return;
-          const current = this.activePrompts.get(boxId);
-          if (current && current.id === id) {
-            this.activePrompts.delete(boxId);
-            this.redrawForAlert();
-          }
-        },
-        onNotice: (ev) => {
-          if (this.tornDown) return;
-          this.activeNotices.set(boxId, ev);
-          this.startNoticeSpinner();
-          this.redrawForAlert();
-        },
-        onNoticeCleared: (id) => {
-          if (this.tornDown) return;
-          const current = this.activeNotices.get(boxId);
-          if (current && current.id === id) {
-            this.activeNotices.delete(boxId);
-            if (this.activeNotices.size === 0) this.stopNoticeSpinner();
-            this.redrawForAlert();
-          }
-        },
-        onError: () => {
-          /* subscribePrompts already reconnects with backoff; nothing to do */
-        },
-      });
-      this.promptStreams.set(boxId, stream);
+      // Claim the slot before the (async) source resolution so a second poll
+      // landing mid-resolve can't open a duplicate stream for the same box.
+      this.promptStreams.set(boxId, PENDING_STREAM);
+      void this.openPromptStream(boxId, url);
     }
+  }
+
+  /**
+   * Resolve `boxId`'s relay (its own control box, else the global one) and open
+   * the SSE subscription. Bails if the box vanished — or the compositor tore
+   * down — while the source was resolving.
+   */
+  private async openPromptStream(boxId: string, fallbackUrl: string): Promise<void> {
+    let source: { baseUrl: string; authToken?: string } | null = null;
+    try {
+      source = (await this.deps.relaySourceFor?.(boxId)) ?? null;
+    } catch {
+      /* fall back to the global relay */
+    }
+    if (this.tornDown || this.promptStreams.get(boxId) !== PENDING_STREAM) {
+      this.promptStreams.delete(boxId);
+      return;
+    }
+    const stream = subscribePrompts({
+      relayBaseUrl: source?.baseUrl ?? fallbackUrl,
+      authToken: source?.authToken,
+      boxId,
+      onPrompt: (ev) => {
+        if (this.tornDown) return;
+        this.activePrompts.set(boxId, ev);
+        this.redrawForAlert();
+      },
+      onResolved: (id) => {
+        if (this.tornDown) return;
+        const current = this.activePrompts.get(boxId);
+        if (current && current.id === id) {
+          this.activePrompts.delete(boxId);
+          this.redrawForAlert();
+        }
+      },
+      onNotice: (ev) => {
+        if (this.tornDown) return;
+        this.activeNotices.set(boxId, ev);
+        this.startNoticeSpinner();
+        this.redrawForAlert();
+      },
+      onNoticeCleared: (id) => {
+        if (this.tornDown) return;
+        const current = this.activeNotices.get(boxId);
+        if (current && current.id === id) {
+          this.activeNotices.delete(boxId);
+          if (this.activeNotices.size === 0) this.stopNoticeSpinner();
+          this.redrawForAlert();
+        }
+      },
+      onError: () => {
+        /* subscribePrompts already reconnects with backoff; nothing to do */
+      },
+    });
+    this.promptStreams.set(boxId, stream);
   }
 
   private startNoticeSpinner(): void {
@@ -905,10 +940,17 @@ export class Compositor {
     this.drawChrome();
     const url = this.deps.relayBaseUrl;
     if (url) {
-      void postAnswer({
-        relayBaseUrl: url,
-        body: { id: ev.id, answer, ...(cancelled ? { cancelled: true } : {}) },
-      });
+      // Answer on the relay this box actually registered with — the same one
+      // the prompt was streamed from, not necessarily this laptop's.
+      const boxId = this.selectedId;
+      void (async () => {
+        const source = await this.deps.relaySourceFor?.(boxId).catch(() => null);
+        await postAnswer({
+          relayBaseUrl: source?.baseUrl ?? url,
+          authToken: source?.authToken,
+          body: { id: ev.id, answer, ...(cancelled ? { cancelled: true } : {}) },
+        });
+      })();
     }
     return true;
   }

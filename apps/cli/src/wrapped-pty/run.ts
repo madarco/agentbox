@@ -62,8 +62,11 @@ export interface WrappedAttachOptions {
    * attach connects command-less and sends the tmux command this way.
    */
   initialInput?: string;
-  /** Relay base URL — http://127.0.0.1:8787 in normal use. */
+  /** Relay base URL — http://127.0.0.1:8787 in normal use, or the box's control
+   *  box when it registered with one (see `resolveBoxPromptSource`). */
   relayBaseUrl: string;
+  /** Admin bearer, set only when `relayBaseUrl` is a remote control box. */
+  relayAuthToken?: string;
   boxId: string;
   /** Friendly box name; rendered in the idle footer. */
   boxName: string;
@@ -742,7 +745,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       // synthetic local confirms (e.g. Ctrl+a k) the relay never issued — skip
       // the POST so we don't 404 the relay with an unknown prompt id.
       if (!body.id.startsWith('local:')) {
-        void postAnswer({ relayBaseUrl: opts.relayBaseUrl, body });
+        void postAnswer({ relayBaseUrl: opts.relayBaseUrl, authToken: opts.relayAuthToken, body });
       }
       capturingPrompt = null;
       applyBandChange();
@@ -812,6 +815,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // SSE: subscribe to the relay's prompt stream for this box.
   const stream: PromptStream = subscribePrompts({
     relayBaseUrl: opts.relayBaseUrl,
+    authToken: opts.relayAuthToken,
     boxId: opts.boxId,
     onPrompt: (ev: PromptAskEvent) => {
       capturingPrompt = ev;

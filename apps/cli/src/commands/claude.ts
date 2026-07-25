@@ -15,7 +15,6 @@ import {
   claudeSessionInfo,
   createBox,
   DEFAULT_BOX_IMAGE,
-  DEFAULT_RELAY_PORT,
   detectEngine,
   ensureClaudeVolume,
   ensureImage,
@@ -106,6 +105,7 @@ import {
   writeLoginState,
   type LoginState,
 } from '../lib/claude-login-session.js';
+import { attachRelayOptions } from '../control-plane/box-plane.js';
 
 /** Project an agent-create options struct down to what the queue worker needs. */
 function pickCreateOpts(opts: ClaudeCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
@@ -138,8 +138,6 @@ function logPrune(rebuild: { pruned: string[]; prunedBytes: number }): void {
   log.info(`pruned ${String(n)} stale plugin cache${n === 1 ? '' : 's'} (${String(mb)} MB freed)`);
 }
 
-/** Host-side URL for the relay (always loopback for the wrapper's SSE subscription). */
-const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
 
 /**
  * Replacement for the old `attachClaudeSession`: builds the docker tmux-
@@ -163,7 +161,7 @@ export async function attachClaudeWrapped(
   const code = await runWrappedAttach({
     container: box.container,
     dockerArgv: buildClaudeAttachArgv(box.container, sessionName),
-    relayBaseUrl: RELAY_HOST_URL,
+    ...(await attachRelayOptions(box)),
     boxId: box.id,
     boxName: box.name,
     projectIndex: box.projectIndex,

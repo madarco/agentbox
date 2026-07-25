@@ -16,7 +16,6 @@ import {
   buildOpencodeLoginRunArgv,
   createBox,
   DEFAULT_BOX_IMAGE,
-  DEFAULT_RELAY_PORT,
   detectEngine,
   ensureImage,
   ensureOpencodeInstalled,
@@ -77,6 +76,7 @@ import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
+import { attachRelayOptions } from '../control-plane/box-plane.js';
 
 function pickOpencodeCreateOpts(opts: OpencodeCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
   return {
@@ -100,7 +100,6 @@ function pickOpencodeCreateOpts(opts: OpencodeCreateOptions): import('@agentbox/
 }
 
 /** Host-side URL for the relay (loopback for the wrapper's SSE subscription). */
-const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
 
 /**
  * Attach to a box's OpenCode tmux session through the wrapped-pty footer (same
@@ -108,7 +107,7 @@ const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
  * with the inner pty's code.
  */
 export async function attachOpencodeWrapped(
-  box: { id: string; name: string; container: string; projectIndex?: number },
+  box: BoxRecord,
   sessionName: string | undefined,
   reattach: string,
   onError?: (msg: string) => void,
@@ -117,7 +116,7 @@ export async function attachOpencodeWrapped(
   const code = await runWrappedAttach({
     container: box.container,
     dockerArgv: buildOpencodeAttachArgv(box.container, sessionName),
-    relayBaseUrl: RELAY_HOST_URL,
+    ...(await attachRelayOptions(box)),
     boxId: box.id,
     boxName: box.name,
     projectIndex: box.projectIndex,

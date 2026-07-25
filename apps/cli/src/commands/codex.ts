@@ -19,7 +19,6 @@ import {
   codexSessionInfo,
   createBox,
   DEFAULT_BOX_IMAGE,
-  DEFAULT_RELAY_PORT,
   detectEngine,
   ensureCodexInstalled,
   ensureCodexVolume,
@@ -86,6 +85,7 @@ import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
+import { attachRelayOptions } from '../control-plane/box-plane.js';
 
 function pickCodexCreateOpts(
   opts: CodexCreateOptions,
@@ -112,7 +112,6 @@ function pickCodexCreateOpts(
 }
 
 /** Host-side URL for the relay (loopback for the wrapper's SSE subscription). */
-const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
 
 /**
  * Attach to a box's Codex tmux session through the wrapped-pty footer (same
@@ -121,7 +120,7 @@ const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
  * claude-specific, so codex reuses them with `mode: 'codex'`.
  */
 export async function attachCodexWrapped(
-  box: { id: string; name: string; container: string; projectIndex?: number },
+  box: BoxRecord,
   sessionName: string | undefined,
   reattach: string,
   onError?: (msg: string) => void,
@@ -130,7 +129,7 @@ export async function attachCodexWrapped(
   const code = await runWrappedAttach({
     container: box.container,
     dockerArgv: buildCodexAttachArgv(box.container, sessionName),
-    relayBaseUrl: RELAY_HOST_URL,
+    ...(await attachRelayOptions(box)),
     boxId: box.id,
     boxName: box.name,
     projectIndex: box.projectIndex,

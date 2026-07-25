@@ -5,7 +5,6 @@ import { loadEffectiveConfig, type UserConfig } from '@agentbox/config';
 import {
   allocateShellSessionName,
   buildShellSessionAttachArgv,
-  DEFAULT_RELAY_PORT,
   DEFAULT_SHELL_SESSION,
   formatDetachNotice,
   inspectBox,
@@ -35,8 +34,8 @@ import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
 import { codexAddUrl } from './_open-in.js';
 import { requireDockerProvider } from './_provider-guard.js';
+import { attachRelayOptions } from '../control-plane/box-plane.js';
 
-const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
 
 interface ShellOptions {
   user?: string;
@@ -206,7 +205,7 @@ async function startOrAttachShell(box: BoxRecord, cfg: ShellSessionCfg): Promise
   const code = await runWrappedAttach({
     container: box.container,
     dockerArgv: buildShellSessionAttachArgv(box.container, cfg.sessionName, cfg.user),
-    relayBaseUrl: RELAY_HOST_URL,
+    ...(await attachRelayOptions(box)),
     boxId: box.id,
     boxName: box.name,
     projectIndex: box.projectIndex,
@@ -403,7 +402,7 @@ export const shellCommand = new Command('shell')
             dockerArgv: spec.argv.slice(1),
             env: spec.env,
             initialInput: spec.initialInput,
-            relayBaseUrl: RELAY_HOST_URL,
+            ...(await attachRelayOptions(box)),
             boxId: box.id,
             boxName: box.name,
             projectIndex: box.projectIndex,
@@ -472,7 +471,7 @@ export const shellCommand = new Command('shell')
       const code = await runWrappedAttach({
         container: box.container,
         dockerArgv: plainArgv,
-        relayBaseUrl: RELAY_HOST_URL,
+        ...(await attachRelayOptions(box)),
         boxId: box.id,
         boxName: box.name,
         projectIndex: box.projectIndex,
