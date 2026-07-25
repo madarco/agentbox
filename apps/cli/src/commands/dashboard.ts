@@ -38,6 +38,9 @@ import {
 } from '@agentbox/sandbox-docker';
 import { hostOpenCommand, readState } from '@agentbox/sandbox-core';
 import { resolveBoxPromptSource } from '../control-plane/box-plane.js';
+import { listBoxesMerged } from '../control-plane/list-merged.js';
+import type { MergedBox } from '../control-plane/hub-merge.js';
+import { tryAutoAdopt } from '../control-plane/auto-adopt.js';
 import type { BoxRecord } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { resolveClaudeAuth } from '../auth.js';
@@ -159,15 +162,12 @@ export const dashboardCommand = new Command('dashboard')
 
       const project = await findProjectRoot(process.cwd());
       let showAll = !opts.project; // default: every box globally; -p scopes to cwd project
-      const full = await listBoxes();
+      const full = (await listBoxesMerged()).boxes;
       const scoped0 = scoped(showAll, project.root, full);
 
       let initialId: string;
       if (idOrName !== undefined) {
         const picked = await resolveBoxOrExit(idOrName);
-        // Cloud boxes are surfaced read-only in the sidebar — selecting one
-        // shows a "live panels are docker-only" placeholder via
-        // resolveTarget. Don't refuse the ref here.
         initialId = picked.id;
         if (!scoped0.some((b) => b.id === picked.id)) showAll = true; // widen so it shows
       } else if (scoped0.length === 0) {
@@ -180,13 +180,39 @@ export const dashboardCommand = new Command('dashboard')
       const newBoxEntry: SidebarBox = { id: NEW_BOX_ID, name: NEW_BOX_LABEL, state: 'new' };
       const listCandidates = async (): Promise<SidebarBox[]> => [
         newBoxEntry,
-        ...scoped(showAll, project.root, await listBoxes()).map(toSidebar),
+        ...scoped(showAll, project.root, (await listBoxesMerged()).boxes).map(toSidebar),
       ];
+
+      /**
+       * Adopt a box that exists only on the control box, so the panels + actions
+       * below have a local record to drive. Selecting the row is the natural
+       * trigger: everything downstream (`loadBoxRecord`, lifecycle, endpoints)
+       * needs `state.json`. Returns null when adoption isn't possible, and the
+       * caller shows a read-only placeholder instead.
+       */
+      const ensureAdopted = async (box: MergedBox): Promise<ListedBox | null> => {
+        if (box.needsAdopt !== true) return box;
+        const adopted = await tryAutoAdopt(box.name, process.cwd());
+        if (adopted === null || adopted === 'unreachable') return null;
+        return (await listBoxes()).find((b) => b.id === adopted.id) ?? null;
+      };
 
       const resolveTarget = async (boxId: string): Promise<RightTarget> => {
         if (boxId === NEW_BOX_ID) return { kind: 'create-menu', where: project.root };
-        const box = (await listBoxes()).find((b) => b.id === boxId);
-        if (!box) return { kind: 'placeholder', lines: ['', '  box not found'] };
+        const merged = (await listBoxesMerged()).boxes.find((b) => b.id === boxId);
+        if (!merged) return { kind: 'placeholder', lines: ['', '  box not found'] };
+        const box = await ensureAdopted(merged);
+        if (!box) {
+          return {
+            kind: 'placeholder',
+            lines: [
+              '',
+              `  box ${merged.name} lives on the control box and isn't adopted here yet.`,
+              '  The control box is unreachable, so it can\'t be driven from this machine.',
+              `  Retry with: agentbox hub adopt ${merged.name}`,
+            ],
+          };
+        }
         if (box.state === 'paused' || box.state === 'stopped') {
           return { kind: 'lifecycle-menu', state: box.state };
         }
