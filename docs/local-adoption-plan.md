@@ -288,26 +288,36 @@ Adoption doesn't change that; it just makes a same-named pair easier to create.
 
 ## Backlog (found by the live run)
 
-- **A freshly deployed control box can't self-bake a non-matching base.** The deploy shares the PC's
-  local bake records (`prepared/<provider>.json`) to custody and the worker adopts one via
-  `hydratePreparedFromCustody` — but *only* when its `contextSha256` matches the control box's freshly
-  computed `baseFingerprint` (correct: booting a mismatched base is worse than re-baking). So when the
-  control box runs a different AgentBox version than the one the PC baked with (e.g. an in-dev branch
-  whose ctl/runtime bundle shifted the fingerprint), every cloud create fails with "run `agentbox
-  prepare` first". Provider *credentials* migrate fine (the deploy allowlist works — see
-  `control-plane-deploy.ts` `PROVIDER_SECRET_KEYS`); the gap is the **base bake**. Fix: when no matching
-  shared bake exists, have the resident worker bake its own base (run the provider's `prepare`) before
-  the first create instead of failing. Larger (needs the provider build machinery + queue integration on
-  the control box). Workaround today: re-bake locally on the control box's version before deploying, or
-  scp the record up.
-  - **Most common trigger: `box.claudeInstall` isn't migrated.** The fingerprint folds `claudeInstall`
-    in (commit `459754b3`). A PC that sets `box.claudeInstall=npm` bakes an `npm`-fold record, but the
-    control box uses the built-in default `native` (the PC's global override doesn't travel), so its
-    `native`-fold fingerprint never matches and the shared bake is rejected even on the *same* version.
-    Live-confirmed 2026-07-24. Fix options: migrate the PC's effective `box.claudeInstall` to the control
-    box at deploy (same channel as the provider secrets), or have the worker honor the shared record's
-    baked mode instead of the local default. Workaround: bake with `box.claudeInstall=native` (matching
-    the control box) before deploying.
+- **The worker doesn't self-bake when no shared bake matches.** The deploy shares the PC's local bake
+  records (`prepared/<provider>.json`) to custody and the worker adopts one via
+  `hydratePreparedFromCustody` — but only when the record matches the control box's freshly computed
+  `baseFingerprint` (correct: booting a mismatched base is worse than re-baking). So when the control
+  box runs a different AgentBox version than the one the PC baked with (e.g. an in-dev branch whose
+  ctl/runtime bundle shifted the fingerprint), a `--via-hub` / background `-i` create fails with "run
+  `agentbox prepare` first". Provider *credentials* migrate fine (the deploy allowlist works — see
+  `control-plane-deploy.ts` `PROVIDER_SECRET_KEYS`); the gap is the **base bake**.
+
+  **Scope note (corrected 2026-07-25):** this was previously filed as needing "the provider build
+  machinery + queue integration on the control box". That machinery already ships — `prepareProvider`
+  (`hub-backend.ts`) enqueues a `kind: 'prepare'` job, `POST /api/v1/providers/:id/prepare` exposes it,
+  `_run-queued-prepare` runs it, Settings has a bake button, and the **web-UI create is already
+  two-phase** (it bakes, then creates). What's actually missing is only the *worker* path doing the
+  same: on a miss it goes straight to `provider.create` instead of enqueueing a prepare and waiting.
+  That's a much smaller change than the original note implied. Workaround today: bake from the hub's
+  own Settings page, or create the first box from the web UI (which bakes for you).
+  - **~~Most common trigger: `box.claudeInstall` isn't migrated.~~ FIXED 2026-07-25.** The fingerprint
+    folds `claudeInstall` in (commit `459754b3`), and that key lives in the PC's `config.yaml` — a
+    different file from `secrets.env`, so the deploy allowlist never carried it and the control box fell
+    back to the built-in `native`. A PC set to `npm` pushed an `npm`-fold record its `native`-fold
+    fingerprint never matched, so the shared bake was rejected even on the *same* version.
+    Live-confirmed 2026-07-24. Fixed on both sides: `matchClaudeInstallFingerprint`
+    (`packages/sandbox-core/src/prepared-state.ts`) recognises a record baked in **either** mode, since
+    the record stores only the folded fingerprint and the fold is one-way — applied in
+    `prepared-hydrate.ts` *and* `providerBaseFreshness` (hydrate alone fixes creates but leaves
+    `/settings` nagging for a re-bake of the base it just adopted). And the deploy now migrates the key
+    into the VPS's `config.yaml`, merging rather than overwriting, so a control box that bakes its own
+    base uses the operator's mode — which matters because `npm` exists for exactly the datacenter
+    egress IPs a control box has.
 - **Destroying a PC box doesn't reap its control-box registration.** `agentbox destroy`
   removes the local record and the cloud sandbox but leaves the box registered on the control
   box, so it lingers in the Store (and now, with the web-UI merge, in the dashboard) as a ghost.

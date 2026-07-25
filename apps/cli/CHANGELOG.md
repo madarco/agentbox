@@ -26,6 +26,12 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- A control box now uses a base image you baked with `box.claudeInstall: npm`.
+  That setting is folded into the bake fingerprint but lives in `config.yaml`, so
+  it never reached the control box — which defaulted to `native`, rejected the
+  shared bake, and failed every cloud create with "run `agentbox prepare` first".
+  A record baked in either mode is now accepted, and `hub deploy` carries the
+  setting across.
 - A box's host-action approvals are now visible wherever the box lives: the
   attach footer, `agentbox agent approvals`/`approve`, and the dashboard all ask
   the box's own relay instead of always this laptop's. Hub-box approvals
