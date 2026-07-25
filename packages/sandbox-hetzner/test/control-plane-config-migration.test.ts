@@ -31,6 +31,16 @@ describe('buildControlPlaneConfigYaml', () => {
     expect(out).toContain('claudeInstall: npm');
   });
 
+  it('handles a body with no trailing newline', () => {
+    // The deploy reads the remote file via `sshExec`, and execa strips the final
+    // newline — so the body handed to the merge legitimately lacks one.
+    const out = buildControlPlaneConfigYaml('box:\n  remoteDockerHost: srv\nschema: 1', {
+      'box.claudeInstall': 'npm',
+    });
+    expect(out).toContain('remoteDockerHost: srv');
+    expect(out).toContain('claudeInstall: npm');
+  });
+
   it('overwrites a previously migrated value instead of appending', () => {
     const remote = 'schema: 1\nbox:\n  claudeInstall: npm\n';
     const out = buildControlPlaneConfigYaml(remote, { 'box.claudeInstall': 'native' });
