@@ -31,6 +31,8 @@ import { providerForBox } from '../provider/registry.js';
 import { waitForEvent, WaitTimeoutError } from '../lib/wait/events.js';
 import { resolveBoxPromptSource, type BoxPromptSource } from '../control-plane/box-plane.js';
 import { resolveCustodyTarget } from './control-plane.js';
+import { loadEffectiveConfig } from '@agentbox/config';
+import { remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { handleLifecycleError } from './_errors.js';
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -300,6 +302,27 @@ async function approveRelay(id: string, opts: ApproveOpts): Promise<void> {
           `approval ${id}: ${answer === 'y' ? 'approved' : 'denied'} (on the control box)`,
         );
         return;
+      }
+      if (status !== 404) {
+        // `post` maps a transport failure to 0 — report that as unreachable
+        // rather than as a nonsensical "HTTP 0".
+        log.error(
+          status === 0
+            ? `could not reach the control box at ${target.url} to answer ${id}`
+            : `control box /admin/prompts/answer: HTTP ${String(status)}`,
+        );
+        process.exit(1);
+      }
+    } else {
+      // A control box we can't ask is not evidence the prompt is gone — saying
+      // "already resolved" here would send you looking for the wrong problem.
+      const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
+      if (cfg && remoteHubConfigured(cfg.effective)) {
+        log.error(
+          `not found on this host's relay, and the control box could not be asked (no admin token).\n` +
+            'Set AGENTBOX_RELAY_ADMIN_TOKEN (or run `agentbox hub setup`), or answer it with `agentbox hub prompts answer`.',
+        );
+        process.exit(1);
       }
     }
     log.info(`approval ${id} already resolved (or expired)`);

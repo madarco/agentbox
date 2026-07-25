@@ -22,6 +22,14 @@ export const LOCAL_RELAY_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
 export type BoxPlane = { url: string; adminToken: string } | 'none' | 'no-token';
 
 /**
+ * The bits of a box that decide which relay it uses. Deliberately narrower than
+ * `BoxRecord`: a box that exists only on the control box has no local record at
+ * all, and the dashboard must still resolve its plane from the merged listing
+ * row (`MergedBox`) to show its approval marker.
+ */
+export type PlaneAddressable = Pick<BoxRecord, 'provider' | 'cloud'>;
+
+/**
  * Resolve the control box holding this box's state, and the bearer for it.
  *
  * The URL comes from the box's own record first: `cloud.controlPlaneUrl` is the
@@ -42,7 +50,7 @@ export type BoxPlane = { url: string; adminToken: string } | 'none' | 'no-token'
  * at all (every attach, every destroy), which shouldn't pay to load config +
  * relay code.
  */
-export async function resolveBoxPlane(box: BoxRecord): Promise<BoxPlane> {
+export async function resolveBoxPlane(box: PlaneAddressable): Promise<BoxPlane> {
   if ((box.provider ?? 'docker') === 'docker') return 'none';
   const { loadEffectiveConfig } = await import('@agentbox/config');
   const { loadControlPlaneEnv } = await import('./env-file.js');
@@ -75,7 +83,7 @@ export interface BoxPromptSource {
  * Resolve the prompt mailbox for a box. Never throws — a resolution failure
  * degrades to the local relay, which is exactly today's behavior.
  */
-export async function resolveBoxPromptSource(box: BoxRecord): Promise<BoxPromptSource> {
+export async function resolveBoxPromptSource(box: PlaneAddressable): Promise<BoxPromptSource> {
   const plane = await resolveBoxPlane(box).catch(() => 'none' as const);
   if (plane === 'none') return { baseUrl: LOCAL_RELAY_URL, remote: false };
   if (plane === 'no-token') {
@@ -97,7 +105,7 @@ let warnedNoToken = false;
  * so once, since a silent footer on a blocked box is otherwise unexplainable.
  */
 export async function attachRelayOptions(
-  box: BoxRecord,
+  box: PlaneAddressable,
 ): Promise<{ relayBaseUrl: string; relayAuthToken?: string }> {
   const source = await resolveBoxPromptSource(box);
   if (source.unauthenticatedPlane !== undefined && !warnedNoToken) {

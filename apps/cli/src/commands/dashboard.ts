@@ -677,8 +677,14 @@ export const dashboardCommand = new Command('dashboard')
           relayBaseUrl: `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`,
           // ...but a box created against a control box keeps its approvals
           // there, so resolve per box and fall back to the above.
+          //
+          // Resolved from the MERGED listing, not local state: the sidebar now
+          // includes rows that exist only on the control box, and those are
+          // exactly the ones whose approvals are remote. Looking them up
+          // locally would miss them and silently subscribe to loopback, so
+          // their approval marker would never light until they were adopted.
           relaySourceFor: async (boxId) => {
-            const box = (await listBoxes()).find((b) => b.id === boxId);
+            const box = (await listBoxesMerged()).boxes.find((b) => b.id === boxId);
             if (!box) return null;
             const source = await resolveBoxPromptSource(box);
             return { baseUrl: source.baseUrl, authToken: source.authToken };

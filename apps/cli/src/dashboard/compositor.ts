@@ -136,10 +136,17 @@ const NOTICE_SPINNER_MS = 120;
 /**
  * Placeholder held in `promptStreams` while a box's relay source is being
  * resolved, so the every-second poll can't open a second stream for the same
- * box. Closing it is a no-op; the resolver sees the slot is no longer its own
- * sentinel and drops the stream it was about to open.
+ * box. Closing it is a no-op.
+ *
+ * A FRESH object per attempt, never a shared singleton: a box can leave and
+ * re-enter the list mid-resolve (the dispose loop drops the slot, the next poll
+ * re-claims it), leaving two resolvers in flight. With a shared sentinel both
+ * would match the slot, so the loser would delete the winner's live stream from
+ * the map — leaking an SSE connection nothing can close, and re-subscribing on
+ * every poll thereafter. Identity of *this* token is what makes the check mean
+ * "the slot is still mine".
  */
-const PENDING_STREAM: PromptStream = { close: () => {} };
+const pendingStream = (): PromptStream => ({ close: () => {} });
 
 // Synchronized Output (DECSET 2026): the terminal buffers everything between
 // begin/end and presents it in one go — no partial-frame flicker/tearing.
@@ -391,8 +398,9 @@ export class Compositor {
       if (this.promptStreams.has(boxId)) continue;
       // Claim the slot before the (async) source resolution so a second poll
       // landing mid-resolve can't open a duplicate stream for the same box.
-      this.promptStreams.set(boxId, PENDING_STREAM);
-      void this.openPromptStream(boxId, url);
+      const token = pendingStream();
+      this.promptStreams.set(boxId, token);
+      void this.openPromptStream(boxId, url, token);
     }
   }
 
@@ -401,15 +409,21 @@ export class Compositor {
    * the SSE subscription. Bails if the box vanished — or the compositor tore
    * down — while the source was resolving.
    */
-  private async openPromptStream(boxId: string, fallbackUrl: string): Promise<void> {
+  private async openPromptStream(
+    boxId: string,
+    fallbackUrl: string,
+    token: PromptStream,
+  ): Promise<void> {
     let source: { baseUrl: string; authToken?: string } | null = null;
     try {
       source = (await this.deps.relaySourceFor?.(boxId)) ?? null;
     } catch {
       /* fall back to the global relay */
     }
-    if (this.tornDown || this.promptStreams.get(boxId) !== PENDING_STREAM) {
-      this.promptStreams.delete(boxId);
+    // Only clear the slot when it is still ours — a newer attempt (or a live
+    // stream it already installed) must not be evicted by this one bailing.
+    if (this.tornDown || this.promptStreams.get(boxId) !== token) {
+      if (this.promptStreams.get(boxId) === token) this.promptStreams.delete(boxId);
       return;
     }
     const stream = subscribePrompts({

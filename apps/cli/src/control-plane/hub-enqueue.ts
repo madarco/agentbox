@@ -63,7 +63,10 @@ export async function listHubJobs(target: HubTarget): Promise<CreateJobRow[]> {
     headers: { Authorization: `Bearer ${target.adminToken}` },
   });
   if (!res.ok) throw new Error(`list jobs failed: ${res.status} ${await safeText(res)}`);
-  return ((await res.json()) as { jobs: CreateJobRow[] }).jobs;
+  // Tolerate a 200 that isn't the shape we expect (a proxy's interstitial, a
+  // hub mid-upgrade): render an empty queue rather than iterating `undefined`.
+  const body = (await res.json()) as { jobs?: unknown };
+  return Array.isArray(body.jobs) ? (body.jobs as CreateJobRow[]) : [];
 }
 
 export interface PollOptions {
