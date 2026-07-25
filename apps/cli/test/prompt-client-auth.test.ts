@@ -110,6 +110,41 @@ describe('prompt-client auth', () => {
     expect(relay.seen[0]?.auth).toBe('Bearer plane-token');
   });
 
+  it('reports a non-200 SSE response instead of retrying it away', async () => {
+    // The attach footer relies on this: the client gives up permanently on a
+    // non-200 (e.g. a control box rejecting a stale admin token with 401), so
+    // if `onError` were not raised the footer would sit silent all session
+    // while the box is blocked, looking exactly like "no approvals".
+    const server = createServer((_req, res) => {
+      res.writeHead(401).end();
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    const { port } = server.address() as AddressInfo;
+    servers.push(
+      () =>
+        new Promise<void>((done) => {
+          server.closeAllConnections?.();
+          server.close(() => done());
+        }),
+    );
+
+    const errors: string[] = [];
+    streams.push(
+      subscribePrompts({
+        relayBaseUrl: `http://127.0.0.1:${String(port)}`,
+        authToken: 'stale',
+        boxId: 'box-401',
+        onPrompt: () => {},
+        onResolved: () => {},
+        onError: (e) => errors.push(e.message),
+      }),
+    );
+    await settle();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('401');
+  });
+
   it('omits the header on the answer POST without a token', async () => {
     const relay = await relayStub();
     servers.push(relay.close);
