@@ -13,6 +13,7 @@ import {
 } from '@agentbox/relay';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
+import { fetchHubJobs } from '../control-plane/hub-jobs.js';
 
 interface QueueListOpts {
   all?: boolean;
@@ -33,6 +34,7 @@ const queueListCommand = new Command('list')
     if (visible.length === 0) {
       log.info(opts.all ? 'no queued jobs.' : 'no active queued jobs (--all to see terminal).');
       log.info(`queue.maxConcurrent = ${String(cfg.maxConcurrent)} (queue.enabled=${String(cfg.enabled)})`);
+      await reportHubJobs(opts.all === true);
       return;
     }
     // Build a compact ASCII table; one row per job. Keep columns predictable so
@@ -60,7 +62,47 @@ const queueListCommand = new Command('list')
       );
     }
     log.info(`queue.maxConcurrent = ${String(cfg.maxConcurrent)} (queue.enabled=${String(cfg.enabled)})`);
+    await reportHubJobs(opts.all === true);
   });
+
+/**
+ * Append the control box's create queue, when one is configured.
+ *
+ * Rendered as its own block rather than merged into the table above: these are a
+ * different queue with a different shape (no per-job concurrency, no local log),
+ * and the local table's fixed columns are relied on for grepping. `cancel` /
+ * `clear` are local-only, so say where hub jobs are managed instead of letting
+ * them look actionable here.
+ */
+async function reportHubJobs(all: boolean): Promise<void> {
+  const result = await fetchHubJobs();
+  if (result.kind === 'none') return;
+  if (result.kind === 'unavailable') {
+    log.warn(`control box configured but its queue is unavailable (${result.reason})`);
+    return;
+  }
+  const visible = all
+    ? result.jobs
+    : result.jobs.filter((j) => j.status === 'queued' || j.status === 'running');
+  if (visible.length === 0) {
+    log.info('control box: no active create jobs (--all to see finished).');
+    return;
+  }
+  process.stdout.write(`\ncontrol box (${String(visible.length)}):\n`);
+  for (const j of visible) {
+    const label = j.request.name ?? j.request.repoUrl;
+    const detail = j.result?.error
+      ? `  ${j.result.error.split('\n')[0]?.slice(0, 48) ?? ''}`
+      : j.result?.boxId
+        ? `  box ${j.result.boxId}`
+        : '';
+    process.stdout.write(
+      `  ${j.id.slice(0, 8)}  ${j.status.padEnd(7)}  ${(j.request.agent ?? '-').padEnd(8)}  ` +
+        `${j.request.provider.padEnd(9)}  ${formatAge(j.createdAt)}  ${label}${detail}\n`,
+    );
+  }
+  log.info('manage these with `agentbox hub jobs` (cancel/clear are local-queue only).');
+}
 
 const queueShowCommand = new Command('show')
   .description('Dump a job manifest and tail its log')

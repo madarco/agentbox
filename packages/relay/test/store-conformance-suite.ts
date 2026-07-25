@@ -209,6 +209,26 @@ export function runStoreConformance(name: string, setup: () => Promise<Store>): 
         await store.completeCreateJob('j2', 'failed', { error: 'boom' });
         expect((await store.getCreateJob('j2'))?.status).toBe('failed');
       });
+
+      it('lists jobs newest-first, filtered by status and capped by limit', async () => {
+        if (!store.enqueueCreateJob || !store.listCreateJobs || !store.completeCreateJob) return;
+        await store.enqueueCreateJob(job('j1'));
+        await store.enqueueCreateJob(job('j2'));
+        await store.enqueueCreateJob(job('j3'));
+
+        // `job(id)` stamps createdAt from the numeric suffix, so j3 is newest.
+        const all = await store.listCreateJobs();
+        expect(all.map((j) => j.id)).toEqual(['j3', 'j2', 'j1']);
+
+        expect((await store.listCreateJobs({ limit: 2 })).map((j) => j.id)).toEqual(['j3', 'j2']);
+
+        await store.completeCreateJob('j1', 'done', { boxId: 'box-1' });
+        const queued = await store.listCreateJobs({ status: ['queued'] });
+        expect(queued.map((j) => j.id)).toEqual(['j3', 'j2']);
+        const finished = await store.listCreateJobs({ status: ['done', 'failed'] });
+        expect(finished.map((j) => j.id)).toEqual(['j1']);
+        expect(finished[0]?.result?.boxId).toBe('box-1');
+      });
     });
   });
 }

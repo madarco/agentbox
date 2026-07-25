@@ -134,6 +134,18 @@ export class MemoryStore implements Store {
     return Promise.resolve(job ? { ...job } : null);
   }
 
+  listCreateJobs(opts?: {
+    limit?: number;
+    status?: Array<CreateJobRow['status']>;
+  }): Promise<CreateJobRow[]> {
+    const wanted = opts?.status;
+    const rows = [...this.createJobs.values()]
+      .filter((j) => !wanted || wanted.includes(j.status))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((j) => ({ ...j }));
+    return Promise.resolve(opts?.limit ? rows.slice(0, opts.limit) : rows);
+  }
+
   claimNextCreateJob(workerId: string): Promise<CreateJobRow | null> {
     // Oldest queued first; single-process so no real concurrency to guard.
     const queued = [...this.createJobs.values()]

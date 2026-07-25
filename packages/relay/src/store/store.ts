@@ -138,6 +138,15 @@ export interface Store {
   // the federated laptop's RemoteStore omits these, only the plane creates boxes) ---
   enqueueCreateJob?(job: CreateJobRow): Promise<void>;
   getCreateJob?(id: string): Promise<CreateJobRow | null>;
+  /**
+   * Recent jobs, newest first. The plane's queue is otherwise only addressable
+   * by id, so a PC that enqueued a background run has no way to see what else is
+   * in flight — `agentbox queue list` would show only its own local jobs.
+   */
+  listCreateJobs?(opts?: {
+    limit?: number;
+    status?: Array<CreateJobRow['status']>;
+  }): Promise<CreateJobRow[]>;
   /** Atomically claim the oldest queued job (→ running), or null when none. */
   claimNextCreateJob?(workerId: string): Promise<CreateJobRow | null>;
   completeCreateJob?(

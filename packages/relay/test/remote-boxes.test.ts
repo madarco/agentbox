@@ -147,4 +147,44 @@ describe('handleRemoteBoxesRequest', () => {
       expect(res?.status).toBe(404);
     });
   });
+
+  describe('GET /remote/boxes (queue listing)', () => {
+    it('lists the queue newest-first', async () => {
+      const s = store();
+      await s.enqueueCreateJob({
+        id: 'j1',
+        status: 'queued',
+        request: { repoUrl: 'https://github.com/acme/a.git', provider: 'e2b' },
+        createdAt: '2026-07-01T00:00:00.000Z',
+      });
+      await s.enqueueCreateJob({
+        id: 'j2',
+        status: 'queued',
+        request: { repoUrl: 'https://github.com/acme/b.git', provider: 'hetzner' },
+        createdAt: '2026-07-02T00:00:00.000Z',
+      });
+
+      const res = await handleRemoteBoxesRequest(req({}), { store: s, adminToken: ADMIN });
+      expect(res?.status).toBe(200);
+      expect((res?.body as { jobs: Array<{ id: string }> }).jobs.map((j) => j.id)).toEqual([
+        'j2',
+        'j1',
+      ]);
+    });
+
+    it('401s a wrong bearer (the listing exposes repo URLs)', async () => {
+      const res = await handleRemoteBoxesRequest(req({ bearer: 'nope' }), {
+        store: store(),
+        adminToken: ADMIN,
+      });
+      expect(res?.status).toBe(401);
+    });
+
+    it('501s when the store has no queue', async () => {
+      const s = store();
+      const noQueue = { ...s, listCreateJobs: undefined } as unknown as SqliteStore;
+      const res = await handleRemoteBoxesRequest(req({}), { store: noQueue, adminToken: ADMIN });
+      expect(res?.status).toBe(501);
+    });
+  });
 });

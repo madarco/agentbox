@@ -168,6 +168,13 @@ export class WriteThroughStore implements Store {
     return this.inner.getCreateJob?.(id) ?? Promise.resolve(null);
   }
 
+  listCreateJobs(opts?: {
+    limit?: number;
+    status?: Array<CreateJobRow['status']>;
+  }): Promise<CreateJobRow[]> {
+    return this.inner.listCreateJobs?.(opts) ?? Promise.resolve([]);
+  }
+
   claimNextCreateJob(workerId: string): Promise<CreateJobRow | null> {
     return this.inner.claimNextCreateJob?.(workerId) ?? Promise.resolve(null);
   }

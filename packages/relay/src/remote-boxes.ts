@@ -127,6 +127,17 @@ export async function handleRemoteBoxesRequest(
     return { status: 202, body: { jobId: id } };
   }
 
+  // The queue's own listing. Without it the create queue is addressable only by
+  // job id, so a PC that enqueued a background run can't see what else is in
+  // flight — `agentbox queue list` would show its local jobs and nothing else.
+  if (req.method === 'GET' && req.path === REMOTE_BOXES_PREFIX) {
+    if (!store.listCreateJobs) {
+      return { status: 501, body: { error: 'create-job queue not available on this store' } };
+    }
+    const jobs = await store.listCreateJobs({ limit: 100 });
+    return { status: 200, body: { jobs } };
+  }
+
   if (req.method === 'GET' && req.path.startsWith(`${REMOTE_BOXES_PREFIX}/`)) {
     if (!store.getCreateJob) {
       return { status: 501, body: { error: 'create-job queue not available on this store' } };

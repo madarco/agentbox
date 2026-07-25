@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { STATE_DIR } from '@agentbox/config';
-import { and, asc, eq, gt, inArray, isNotNull, lt, lte, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNotNull, lt, lte, or } from 'drizzle-orm';
 import type { SqliteRemoteDatabase } from 'drizzle-orm/sqlite-proxy';
 import type { BoxStatusSnapshot } from '../status-store.js';
 import type { BoxRegistration, GitRpcResult, RelayEvent } from '../types.js';
@@ -381,6 +381,21 @@ export class SqliteStore implements Store {
     const db = await this.db();
     const rows = await db.select().from(sqliteCreateJobs).where(eq(sqliteCreateJobs.id, id));
     return rows[0] ? rowToJob(rows[0]) : null;
+  }
+
+  async listCreateJobs(opts?: {
+    limit?: number;
+    status?: Array<CreateJobRow['status']>;
+  }): Promise<CreateJobRow[]> {
+    const db = await this.db();
+    const base = db.select().from(sqliteCreateJobs);
+    const filtered = opts?.status?.length
+      ? base.where(inArray(sqliteCreateJobs.status, opts.status))
+      : base;
+    const rows = await filtered
+      .orderBy(desc(sqliteCreateJobs.createdAt))
+      .limit(opts?.limit ?? 100);
+    return rows.map(rowToJob);
   }
 
   async claimNextCreateJob(workerId: string): Promise<CreateJobRow | null> {

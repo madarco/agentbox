@@ -49,6 +49,8 @@ import {
 } from '../control-plane/custody-client.js';
 import { HubApiClient, HubApiError, type HubLifecycleAction } from '../control-plane/hub-api-client.js';
 import { loadControlPlaneEnv } from '../control-plane/env-file.js';
+import { getHubJob, listHubJobs } from '../control-plane/hub-enqueue.js';
+import type { CreateJobRow } from '@agentbox/relay/control-plane';
 import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { handleLifecycleError } from './_errors.js';
 
@@ -1074,6 +1076,77 @@ const promptsCmd = new Command('prompts')
   .addCommand(promptsListSub)
   .addCommand(promptsAnswerSub);
 
+// --- control-plane create queue (distinct from the PC's local `-i` queue) ---
+
+/** `<age> <status> <provider> <name/repo>` — one job per line. */
+function jobLine(job: CreateJobRow): string {
+  const label = job.request.name ?? job.request.repoUrl;
+  const boxOrError =
+    job.result?.error !== undefined
+      ? `  ${job.result.error.split('\n')[0]?.slice(0, 80) ?? ''}`
+      : job.result?.boxId
+        ? `  box ${job.result.boxId}`
+        : '';
+  return `${job.id.slice(0, 8)}  ${job.status.padEnd(7)}  ${job.request.provider.padEnd(9)}  ${label}${boxOrError}`;
+}
+
+const jobsListSub = new Command('list')
+  .description(
+    'List create jobs on the control box. This is the queue that background `-i` cloud runs go to ' +
+      "when a control box is configured — distinct from this PC's local `agentbox queue`.",
+  )
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .option('--json', 'print raw JSON')
+  .action(async (opts: { url?: string; json?: boolean }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const jobs = await listHubJobs(target);
+      if (opts.json) {
+        process.stdout.write(`${JSON.stringify({ jobs }, null, 2)}\n`);
+        return;
+      }
+      if (jobs.length === 0) {
+        log.info('No create jobs on the control box.');
+        return;
+      }
+      for (const job of jobs) process.stdout.write(`${jobLine(job)}\n`);
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const jobsShowSub = new Command('show')
+  .description('Dump one control-box create job')
+  .argument('<jobId>', 'job id as shown by `hub jobs list`')
+  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
+  .action(async (jobId: string, opts: { url?: string }) => {
+    try {
+      const target = await resolveCustodyTarget(opts.url);
+      if (!target) {
+        process.exitCode = 1;
+        return;
+      }
+      const job = await getHubJob(target, jobId);
+      if (!job) {
+        log.info(`No job '${jobId}' on the control box.`);
+        process.exitCode = 1;
+        return;
+      }
+      process.stdout.write(`${JSON.stringify(job, null, 2)}\n`);
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+const jobsCmd = new Command('jobs')
+  .description("Inspect the control box's box-create queue")
+  .addCommand(jobsListSub)
+  .addCommand(jobsShowSub);
+
 interface DeployOpts {
   ref?: string;
   repo?: string;
@@ -1205,4 +1278,5 @@ export const controlPlaneSubcommands = [
   custodyCmd,
   boxesCmd,
   promptsCmd,
+  jobsCmd,
 ] as const;

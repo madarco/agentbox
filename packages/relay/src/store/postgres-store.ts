@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNotNull, lt, lte, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNotNull, lt, lte, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { Pool } from 'pg';
 import type { BoxStatusSnapshot } from '../status-store.js';
@@ -310,6 +310,19 @@ export class PostgresStore implements Store {
     const db = await this.db();
     const rows = await db.select().from(pgCreateJobs).where(eq(pgCreateJobs.id, id));
     return rows[0] ? rowToJob(rows[0]) : null;
+  }
+
+  async listCreateJobs(opts?: {
+    limit?: number;
+    status?: Array<CreateJobRow['status']>;
+  }): Promise<CreateJobRow[]> {
+    const db = await this.db();
+    const base = db.select().from(pgCreateJobs);
+    const filtered = opts?.status?.length
+      ? base.where(inArray(pgCreateJobs.status, opts.status))
+      : base;
+    const rows = await filtered.orderBy(desc(pgCreateJobs.createdAt)).limit(opts?.limit ?? 100);
+    return rows.map(rowToJob);
   }
 
   async claimNextCreateJob(workerId: string): Promise<CreateJobRow | null> {
