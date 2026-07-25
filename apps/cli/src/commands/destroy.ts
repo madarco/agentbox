@@ -6,6 +6,7 @@ import { destroyBox, portlessUnalias } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
+import { reapOnControlBox } from '../control-plane/reap.js';
 import { syncAgentboxSshConfig } from '@agentbox/sandbox-core';
 import { handleLifecycleError } from './_errors.js';
 
@@ -124,6 +125,17 @@ export const destroyCommand = new Command('destroy')
         process.stdout.write(
           `destroyed ${box.name} (${providerName} sandbox ${box.cloud?.sandboxId ?? '<unknown>'})\n`,
         );
+        // The cloud resource is gone, but a box created with a control box
+        // configured is also a row in its registry. Reap it, or it lingers as a
+        // ghost in `agentbox ls`, the hub UI and the tray. Never fails destroy —
+        // the teardown already happened and can't be undone.
+        const reaped = await reapOnControlBox(box);
+        if (reaped === 'reaped') process.stdout.write('  ✓ control-box registration reaped\n');
+        else if (reaped === 'unreachable') {
+          log.warn(
+            `could not reach the control box to reap this registration — run \`agentbox hub boxes rm ${box.id}\` once it is back`,
+          );
+        }
       }
     } catch (err) {
       handleLifecycleError(err);

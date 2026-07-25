@@ -106,6 +106,41 @@ describe('pruneBoxes', () => {
     expect(after.boxes.map((b) => b.id)).toEqual(['11111111']);
   });
 
+  it('never prunes a cloud box record (no host container to inspect)', async () => {
+    // A cloud box's `container` is the synthetic `cloud:<sandboxId>`, so
+    // `docker inspect` on it always fails. Judging it by that would delete the
+    // record — and with --all, the per-box dir holding its private SSH key —
+    // for a perfectly live sandbox.
+    vi.doMock('../src/docker.js', async () => {
+      const actual = await vi.importActual<typeof import('../src/docker.js')>('../src/docker.js');
+      return {
+        ...actual,
+        inspectContainerStatus: vi.fn(async () => 'missing'),
+        listAgentboxContainers: vi.fn(async () => []),
+        listAgentboxVolumes: vi.fn(async () => []),
+        removeContainer: vi.fn(async () => undefined),
+        removeVolume: vi.fn(async () => undefined),
+      };
+    });
+
+    const cloudBox: BoxRecord = {
+      ...mkBox('cccccccc', 'cloud:sbx_live'),
+      provider: 'e2b',
+      cloud: { backend: 'e2b', sandboxId: 'sbx_live', lastState: 'running' },
+    };
+    await seed({ version: 1, boxes: [cloudBox, mkBox('dddddddd', 'agentbox-gone')] });
+
+    const { pruneBoxes } = await import('../src/lifecycle.js');
+    const result = await pruneBoxes({ all: true });
+
+    expect(result.removedRecords).toEqual(['dddddddd']);
+    expect(result.removedBoxDirs.some((d) => d.includes('cccccccc'))).toBe(false);
+
+    const { readState, STATE_FILE } = await import('../src/state.js');
+    const after = await readState(STATE_FILE);
+    expect(after.boxes.map((b) => b.id)).toEqual(['cccccccc']);
+  });
+
   it('with --all, also flags orphan agentbox-* containers/volumes', async () => {
     vi.doMock('../src/docker.js', async () => {
       const actual = await vi.importActual<typeof import('../src/docker.js')>('../src/docker.js');

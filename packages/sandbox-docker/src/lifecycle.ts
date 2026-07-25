@@ -766,9 +766,15 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
 
   const { boxes } = await readState();
 
-  // Step 1: missing-state records.
+  // Step 1: missing-state records. Docker boxes only — a cloud box has no host
+  // container (`container` is the synthetic `cloud:<sandboxId>`), so inspecting
+  // it always fails and would class every live cloud box as an orphan record.
+  // Their liveness is a provider question; `prune --provider <cloud>` answers it
+  // by listing the remote sandboxes instead. Same guard `listBoxes` applies
+  // before any docker probe.
+  const dockerBoxes = boxes.filter((b) => (b.provider ?? 'docker') === 'docker');
   const stateChecks = await Promise.all(
-    boxes.map(async (b) => ({ box: b, status: await inspectContainerStatus(b.container) })),
+    dockerBoxes.map(async (b) => ({ box: b, status: await inspectContainerStatus(b.container) })),
   );
   const missingRecords = stateChecks.filter((c) => c.status === 'missing').map((c) => c.box);
 

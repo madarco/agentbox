@@ -6,6 +6,7 @@ import { listBoxes, pruneBoxes, type PruneResult } from '@agentbox/sandbox-docke
 import { Command } from 'commander';
 import { handleLifecycleError } from './_errors.js';
 import { cloudBackendForProvider } from '../provider/cloud-backend.js';
+import { reapSandboxesOnControlBox } from '../control-plane/reap.js';
 
 interface PruneOptions {
   dryRun?: boolean;
@@ -203,10 +204,12 @@ async function pruneCloud(provider: CloudPruneProvider, opts: PruneOptions): Pro
   }
   let deleted = 0;
   let failed = 0;
+  const deletedIds: string[] = [];
   for (const sb of orphans) {
     try {
       await backend.destroy({ sandboxId: sb.sandboxId });
       deleted++;
+      deletedIds.push(sb.sandboxId);
     } catch (err) {
       failed++;
       log.warn(
@@ -214,7 +217,13 @@ async function pruneCloud(provider: CloudPruneProvider, opts: PruneOptions): Pro
       );
     }
   }
+  // An orphan sandbox may still be registered on a control box (created there,
+  // never adopted here). Drop those rows too, or `agentbox ls` keeps showing a
+  // box whose sandbox we just deleted.
+  const reaped = await reapSandboxesOnControlBox(deletedIds);
   process.stdout.write(
-    `${provider} prune: deleted ${String(deleted)}, failed ${String(failed)}\n`,
+    `${provider} prune: deleted ${String(deleted)}, failed ${String(failed)}` +
+      (reaped > 0 ? `, control-box registrations reaped ${String(reaped)}` : '') +
+      '\n',
   );
 }
