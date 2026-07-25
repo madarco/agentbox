@@ -118,6 +118,8 @@ A row marked `on hub` exists on the control box but hasn't been **adopted** here
 agentbox attach from-web-ui      # adopts it, then attaches
 ```
 
+`agentbox dashboard` lists these rows too; selecting one adopts it, then behaves like any other box.
+
 Adoption writes the local box record from the control box's registration and downloads the box's per-box SSH key from custody, so `attach`, `cp`, `download`, `url`, and `screen` then work exactly as for a box you created here. If the box's repo is also cloned on your laptop, adoption links it to that clone, so it appears in the project-scoped `agentbox ls` too, and its `git push` targets your local repo.
 
 To adopt without attaching (or to refresh a record after the box's VPS IP changed):
@@ -159,12 +161,45 @@ agentbox hub boxes start|stop|pause|resume <box>   # drive one remotely (laptop 
 agentbox hub boxes rm <box>              # destroy it (cloud resource + control-box state)
 agentbox hub prompts list                # pending host-action approvals
 agentbox hub prompts answer <id> y       # answer one (also answerable in the web UI)
+agentbox hub jobs list                   # the control box's box-creation queue
+agentbox hub jobs show <jobId>
 ```
 
 `boxes rm` now performs a **real destroy** — it tears down the cloud sandbox and reaps the control
 box's state (registration, status, SSH-key custody) — including for boxes you created on this PC and
 registered against the control box. The control box drives them by reconstructing their record from
 its registry on demand (reverse-adoption), so no local record on the control box is required.
+
+A plain `agentbox destroy <box>` reaps too: after the cloud teardown it drops the box's registration
+and SSH-key custody from the control box, so a box you destroy here doesn't linger in the web UI or
+the tray. If the control box is unreachable at that moment the local destroy still succeeds and tells
+you to run `agentbox hub boxes rm <id>` once it's back.
+
+## Approvals reach you wherever you are
+
+A control-plane box parks its host-action approvals **on the control box**, and the box polls there
+until one is answered — so the whole loop runs with your laptop off, and you can answer from the web
+UI, the menu-bar app, or `agentbox hub prompts answer`.
+
+When your laptop *is* on, the ordinary per-box surfaces work against a hub box too — they resolve the
+box's own relay rather than assuming your laptop's:
+
+```bash
+agentbox agent approvals <box>           # includes approvals parked on the control box
+agentbox agent approve <id>
+```
+
+And while attached (`agentbox claude <box>`, `agentbox shell <box>`), a pending approval appears in
+the **attach footer** as usual — press `y`/`n` there instead of reaching for the web UI. This needs
+the control box's admin token on your machine (written by `agentbox hub setup`; otherwise set
+`AGENTBOX_RELAY_ADMIN_TOKEN`); without it the footer says so once and you answer from the web UI.
+
+<Callout title="Approval is not execution">
+Answering is one thing, running is another. An approved `git push` executes **on the control box**
+with a leased token, so it works with your laptop off. A host action that inherently targets your
+laptop's filesystem — `cp`/`download` between host and box — still needs your laptop up, whoever
+approves it.
+</Callout>
 
 ## The menu-bar app follows your config
 

@@ -395,7 +395,7 @@ agentbox prune --provider hetzner
 agentbox prune --provider remote-docker   # sweeps every engine it knows about
 
 # Background jobs (agentbox claude|codex|opencode -i)
-agentbox queue list
+agentbox queue list                   # local jobs; also lists the hub's queue when one is configured
 agentbox queue show <id>
 agentbox queue cancel <id>
 agentbox queue clear --all
@@ -461,6 +461,10 @@ agentbox hub boxes start|stop|pause|resume|rm <box>
 agentbox hub prompts list
 agentbox hub prompts answer <id> y
 
+# The hub's box-creation queue (where background `-i` cloud runs go)
+agentbox hub jobs list
+agentbox hub jobs show <jobId>
+
 # Seed material into the control box's custody store
 agentbox hub credentials push        # host agent logins → custody (hub boxes log in)
 agentbox hub secrets push [--project] # a project's .env → custody
@@ -472,8 +476,8 @@ agentbox hub worker --store "$POSTGRES_URL"
 agentbox hub worker --store "$POSTGRES_URL" --once
 ```
 
-The deployed hub is a full hub (Next.js + Postgres/SQLite) that holds the centralized concerns — git-token leasing via a GitHub App, permission state, the box registry/events — so cloud boxes keep pushing and opening PRs with your laptop off. `setup` creates the GitHub App, deploys the hub **from GitHub** (Vercel or a Hetzner VPS at `https://<ip>.sslip.io`; `--repo`/`--ref` choose the source, default `madarco/agentbox`@`main`), and wires `relay.controlPlaneUrl`; `add` authorizes a repo on the App; `set-url` points boxes at an existing deployment; `boxes`/`prompts` drive it from the PC; `credentials`/`secrets`/`project`/`custody` seed its custody store; `worker` provisions boxes from the hub's queue. For Vercel, AgentBox auto-forks via `gh` (or the Deploy Button forks in-browser) so you don't need to own the repo; Hetzner clones it on the VPS so no ownership is needed either.
+The deployed hub is a full hub (Next.js + Postgres/SQLite) that holds the centralized concerns — git-token leasing via a GitHub App, permission state, the box registry/events — so cloud boxes keep pushing and opening PRs with your laptop off. `setup` creates the GitHub App, deploys the hub **from GitHub** (Vercel or a Hetzner VPS at `https://<ip>.sslip.io`; `--repo`/`--ref` choose the source, default `madarco/agentbox`@`main`), and wires `relay.controlPlaneUrl`; `add` authorizes a repo on the App; `set-url` points boxes at an existing deployment; `boxes`/`prompts`/`jobs` drive + inspect it from the PC; `credentials`/`secrets`/`project`/`custody` seed its custody store; `worker` provisions boxes from the hub's queue. For Vercel, AgentBox auto-forks via `gh` (or the Deploy Button forks in-browser) so you don't need to own the repo; Hetzner clones it on the VPS so no ownership is needed either.
 
-<Callout type="warn" title="HEADS UP">`agentbox queue cancel` only cancels *queued* jobs — a job that's already running is not killed; destroy its box (`agentbox destroy <box>`) to stop it. And `prune --all` removes docker containers, volumes, and snapshots — run `--dry-run` first.</Callout>
+<Callout type="warn" title="HEADS UP">`agentbox queue cancel` only cancels *queued* jobs — a job that's already running is not killed; destroy its box (`agentbox destroy <box>`) to stop it. It also only covers the **local** queue: jobs on a configured hub are listed by `queue list` but managed from the hub. And `prune --all` removes docker containers, volumes, and snapshots — run `--dry-run` first.</Callout>
 
 See [Background & parallel](/docs/background-and-parallel), [Core concepts](/docs/core-concepts), and [Configuration](/docs/configuration).

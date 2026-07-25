@@ -11,6 +11,12 @@ CLI, not the raw commits.
 
 ## [Unreleased]
 
+### Added
+
+- `agentbox queue list` now also shows the control box's box-creation queue —
+  where background `-i` cloud runs actually go when a hub is configured. New
+  `agentbox hub jobs list` / `hub jobs show <id>` inspect it directly.
+
 ### Changed
 
 - The hosted-hub commands moved from `agentbox control-plane *` into the one
@@ -20,6 +26,18 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- A box's host-action approvals are now visible wherever the box lives: the
+  attach footer, `agentbox agent approvals`/`approve`, and the dashboard all ask
+  the box's own relay instead of always this laptop's. Hub-box approvals
+  previously showed up only in the web UI or tray.
+- `agentbox destroy` and `agentbox prune --provider <cloud>` now reap the
+  control box's registration + SSH-key custody, so destroyed boxes stop
+  lingering as ghosts in `agentbox ls`, the web UI, and the tray.
+- `agentbox prune` no longer deletes the state record of live **cloud** boxes
+  (it judged every box by `docker inspect`, which a cloud box can never pass);
+  with `--all` this also took the per-box dir holding its private SSH key.
+- `agentbox dashboard` lists boxes created on the control box, like
+  `agentbox ls` already did; selecting one adopts it.
 - `agentbox hub deploy hetzner` now migrates the Daytona JWT org id to the
   control box under its correct key (`DAYTONA_ORGANIZATION_ID`, was
   `DAYTONA_ORG_ID`), and also carries provider endpoint/region overrides — so a
