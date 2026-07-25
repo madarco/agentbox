@@ -663,14 +663,19 @@ export const dashboardCommand = new Command('dashboard')
         await stopBox(boxId);
       };
 
-      const destroyBoxAction = async (boxId: string): Promise<void> => {
+      const destroyBoxAction = async (boxId: string): Promise<string | void> => {
         const record = await loadBoxRecord(boxId);
         if ((record.provider ?? 'docker') !== 'docker') {
           const provider = await providerForBox(record);
           await provider.destroy(record);
           // Same reap `agentbox destroy` does — destroying from the TUI must not
-          // leave the registration behind that the CLI path cleans up.
-          await reapOnControlBox(record);
+          // leave the registration behind that the CLI path cleans up. Report a
+          // failed reap the way the CLI warns about it, or the box is gone
+          // locally while its hub registration silently survives.
+          const reaped = await reapOnControlBox(record);
+          if (reaped === 'unreachable') {
+            return `control box unreachable; run: agentbox hub boxes rm ${record.id}`;
+          }
           return;
         }
         await destroyBox(boxId);

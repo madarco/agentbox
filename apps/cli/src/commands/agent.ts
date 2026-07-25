@@ -193,18 +193,37 @@ const agentApprovalsCommand = new Command('approvals')
       const waitMs =
         opts.wait !== undefined ? parsePositiveInt(opts.wait, '--wait') : undefined;
 
-      let rows = await gatherApprovals(source, box);
-      if (waitMs !== undefined && rows.length === 0) {
+      let gathered = await gatherApprovals(source, box);
+      if (waitMs !== undefined && gathered.rows.length === 0) {
         const start = Date.now();
-        while (rows.length === 0 && Date.now() - start < waitMs) {
+        while (gathered.rows.length === 0 && Date.now() - start < waitMs) {
           await sleep(Math.min(500, waitMs - (Date.now() - start)));
-          rows = await gatherApprovals(source, box);
+          gathered = await gatherApprovals(source, box);
         }
       }
+      const rows = gathered.rows;
 
       if (opts.json === true) {
+        // Array shape is a contract (orchestration reads it) — keep stdout pure
+        // and put the degraded-mailbox warning on stderr.
+        if (gathered.relayError !== undefined) {
+          process.stderr.write(
+            `warning: could not read the ${source.remote ? 'control box' : 'relay'} approval mailbox (${gathered.relayError}); host-action rows may be missing\n`,
+          );
+        }
         process.stdout.write(JSON.stringify(rows) + '\n');
+        if (gathered.relayError !== undefined) process.exitCode = 1;
         return;
+      }
+      if (gathered.relayError !== undefined) {
+        // The in-TUI rows below are still trustworthy — they come from the box's
+        // own status — so show them, but never let a missing mailbox read as
+        // "nothing pending".
+        log.warn(
+          `could not read the ${source.remote ? 'control box' : 'relay'} approval mailbox (${gathered.relayError}) — ` +
+            'host-action approvals are not shown.',
+        );
+        process.exitCode = 1;
       }
       if (rows.length === 0) {
         // Don't claim "nothing pending" when we couldn't actually reach the
@@ -217,7 +236,9 @@ const agentApprovalsCommand = new Command('approvals')
           process.exitCode = 1;
           return;
         }
-        log.info('nothing pending for this box (no relay approvals, agent not parked on a prompt)');
+        if (gathered.relayError === undefined) {
+          log.info('nothing pending for this box (no relay approvals, agent not parked on a prompt)');
+        }
         return;
       }
       for (const row of rows) {
@@ -434,22 +455,44 @@ type ApprovalRow =
   | { id: string; kind: 'question'; message: string; options: string[] }
   | { id: string; kind: 'permission'; message: string; state: string };
 
-/** Merge relay host-action prompts with the box's current in-TUI block (if any). */
-async function gatherApprovals(source: BoxPromptSource, box: BoxRecord): Promise<ApprovalRow[]> {
-  const rows: ApprovalRow[] = [];
+interface GatheredApprovals {
+  rows: ApprovalRow[];
+  /** Set when the relay mailbox couldn't be read; its rows are missing, not absent. */
+  relayError?: string;
+}
 
-  const relay = await fetchRelayApprovals(source, box.id);
-  for (const ev of relay) {
-    rows.push({
-      id: ev.id,
-      kind: 'host-action',
-      command: ev.context?.command,
-      argv: ev.context?.argv,
-      cwd: ev.context?.cwd,
-      message: ev.message,
-      detail: ev.detail,
-      defaultAnswer: ev.defaultAnswer,
-    });
+/**
+ * Merge relay host-action prompts with the box's current in-TUI block (if any).
+ *
+ * The relay half is allowed to fail without taking the command down. It used to
+ * be a loopback call that only failed if the local daemon was broken; for a hub
+ * box it is a WAN request to the control box, and a blip there must not hide the
+ * in-TUI plan/question/permission rows, which come from the box's own status and
+ * are entirely independent.
+ */
+async function gatherApprovals(
+  source: BoxPromptSource,
+  box: BoxRecord,
+): Promise<GatheredApprovals> {
+  const rows: ApprovalRow[] = [];
+  let relayError: string | undefined;
+
+  try {
+    const relay = await fetchRelayApprovals(source, box.id);
+    for (const ev of relay) {
+      rows.push({
+        id: ev.id,
+        kind: 'host-action',
+        command: ev.context?.command,
+        argv: ev.context?.argv,
+        cwd: ev.context?.cwd,
+        message: ev.message,
+        detail: ev.detail,
+        defaultAnswer: ev.defaultAnswer,
+      });
+    }
+  } catch (err) {
+    relayError = err instanceof Error ? err.message : String(err);
   }
 
   const claude = (await readBoxStatus(box))?.claude;
@@ -474,7 +517,7 @@ async function gatherApprovals(source: BoxPromptSource, box: BoxRecord): Promise
       });
     }
   }
-  return rows;
+  return { rows, relayError };
 }
 
 async function fetchRelayApprovals(

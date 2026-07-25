@@ -115,7 +115,10 @@ export interface CompositorDeps {
   /** Stop a running box. */
   stopBox: (boxId: string) => Promise<void>;
   /** Destroy a box (container + volumes + record). Irreversible. */
-  destroyBox: (boxId: string) => Promise<void>;
+  /** Destroy the box. May return a short note (e.g. a control-box reap that
+   *  couldn't be completed) to append to the confirmation flash — the TUI owns
+   *  the screen, so an action's own `log.warn` would be invisible here. */
+  destroyBox: (boxId: string) => Promise<string | void>;
   /** Host-side actions for the selected box; return a short status message. */
   openScreen: (boxId: string) => Promise<string>;
   openCode: (boxId: string) => Promise<string>;
@@ -840,14 +843,14 @@ export class Compositor {
     this.drawChrome();
     this.scheduleRender();
     try {
-      await this.deps.destroyBox(id);
+      const note = await this.deps.destroyBox(id);
       if (this.tornDown) return;
       await this.refreshBoxes();
       // The box is gone from the list; fall back to the first entry (the
       // synthetic "+ New box", always boxes[0] via listCandidates).
       if (this.boxes[0]) this.selectedId = this.boxes[0].id;
       await this.spawnActive();
-      this.flash(`destroyed ${name}`);
+      this.flash(note ? `destroyed ${name} — ${note}` : `destroyed ${name}`);
     } catch (err) {
       if (this.tornDown) return;
       const msg = err instanceof Error ? err.message : String(err);
