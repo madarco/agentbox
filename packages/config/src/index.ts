@@ -86,6 +86,7 @@ export {
 export {
   bumpProjectGcCounter,
   listProjectsConfigured,
+  mergeConfigYaml,
   pruneOrphanProjectConfigs,
   registerProject,
   setConfigValue,

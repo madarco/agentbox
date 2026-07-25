@@ -154,6 +154,33 @@ export function claudeInstallFingerprint(baseSha: string, mode: 'native' | 'npm'
 }
 
 /**
+ * Which install mode `stored` was baked with, given the raw (native) fingerprint
+ * this machine computes for the same build context — or null when it matches
+ * neither, i.e. the bake really is from a different context.
+ *
+ * Needed because a prepared record stores only the FOLDED fingerprint, never the
+ * mode itself, and the fold is one-way: the mode can only be inferred by trying
+ * both. There are exactly two, and `native` is the identity fold, so one context
+ * hash yields both candidates — no second hashing pass.
+ *
+ * This is what lets a control box use a bake shared by a PC set to the other
+ * mode. The two bases differ only in how Claude Code was installed (Anthropic's
+ * installer vs npm) and are functionally equivalent, so adopting one is right;
+ * rejecting it means failing every create instead.
+ *
+ * Keep this next to {@link claudeInstallFingerprint} — it encodes the same
+ * native-is-identity invariant, and splitting them invites one to drift.
+ */
+export function matchClaudeInstallFingerprint(
+  stored: string,
+  nativeFingerprint: string,
+): 'native' | 'npm' | null {
+  if (stored === nativeFingerprint) return 'native';
+  if (stored === claudeInstallFingerprint(nativeFingerprint, 'npm')) return 'npm';
+  return null;
+}
+
+/**
  * CLI version stamps set by `apps/cli/src/index.ts` at startup via env vars
  * (the values themselves come from tsup's build-time `define`). Providers
  * record them onto prepared-state files and checkpoint manifests so a stale

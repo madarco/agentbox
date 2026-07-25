@@ -125,6 +125,7 @@ export {
 export * from './sync/index.js';
 export {
   claudeInstallFingerprint,
+  matchClaudeInstallFingerprint,
   computeContextSha256,
   DOCKER_CONTEXT_FILE_MAP,
   preparedStatePathFor,

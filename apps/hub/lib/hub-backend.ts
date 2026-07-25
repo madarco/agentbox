@@ -53,6 +53,7 @@ import {
   boxRestartServices,
   boxServicesStatusRaw,
   boxSshDirForProvider,
+  matchClaudeInstallFingerprint,
   readPreparedStateRaw,
   readState,
   recordBox,
@@ -639,19 +640,28 @@ async function providerBaseFreshness(id: ProviderKind, claudeInstall?: 'native' 
   const cached = freshnessCache.get(id);
   // Reuse the memoized LIVE fingerprint only while both the stored fingerprint
   // and the TTL still hold — a re-bake changes `stored` and invalidates it.
+  //
+  // The live probe is always taken in NATIVE mode: that is the raw context hash,
+  // from which the npm fold derives, so one probe covers both. Probing in the
+  // locally-configured mode instead would report a base baked in the other mode
+  // as stale — the adopted-then-nagged case, where a create succeeds off a shared
+  // bake while /settings still demands a re-bake of it.
   let live: string | undefined;
   if (cached && cached.stored === (stored ?? '') && Date.now() - cached.at < FRESHNESS_TTL_MS) {
     live = cached.live;
   } else {
     try {
       const mod = (await IMPORTERS[id]()).providerModule;
-      live = await mod.currentBaseFingerprintLive?.(claudeInstall);
+      live = await mod.currentBaseFingerprintLive?.('native');
     } catch {
       live = undefined;
     }
     freshnessCache.set(id, { at: Date.now(), stored: stored ?? '', live });
   }
-  return baseFreshnessFromFingerprints(stored, live);
+  // Fresh when the stored fingerprint corresponds to EITHER install mode of the
+  // current context; `baseFreshnessFromFingerprints` then sees matching values.
+  const bakedWith = stored && live ? matchClaudeInstallFingerprint(stored, live) : null;
+  return baseFreshnessFromFingerprints(stored, bakedWith ? stored : live);
 }
 
 /**

@@ -29,6 +29,32 @@ interface SetOptions {
 }
 
 /**
+ * Set one dotted key in a `config.yaml` **body**, preserving everything else,
+ * and return the new body. Pure — no filesystem — so a caller holding a config
+ * file that isn't on this machine can merge into it.
+ *
+ * That is the reason this exists separately from {@link setConfigValue}: the
+ * hetzner control-plane deploy has to write `box.claudeInstall` into the VPS's
+ * config, which the hub *also* writes itself (`box.remoteDockerHost`). Uploading
+ * a freshly-generated file would silently drop the hub's own keys on every
+ * redeploy, so the deploy reads the remote body, merges here, and uploads.
+ *
+ * Validates the merged document the same way `setConfigValue` does; an unknown
+ * key or a body whose top level isn't a mapping throws `UserConfigError`.
+ */
+export function mergeConfigYaml(body: string, key: string, value: unknown): string {
+  if (!lookupKey(key)) {
+    throw new UserConfigError(`unknown key "${key}"`);
+  }
+  const doc = parseDocBody(body, '<config.yaml>');
+  setLeaf(doc, key, value);
+  stampSchema(doc);
+  const merged = stringifyYaml(doc);
+  parseUserConfig(merged, '<config.yaml>');
+  return merged;
+}
+
+/**
  * Write a single key into the chosen scope's config file. Creates parent
  * dirs and (for project scope) the meta.json sidecar. Atomic via tmp-rename.
  */
@@ -256,6 +282,26 @@ async function fileExists(p: string): Promise<boolean> {
  * the next `config set`. Validation of the merged doc still happens in
  * `setConfigValue`; the key being set is validated by `lookupKey`.
  */
+/**
+ * Parse a config-file body into a mutable doc. An empty/blank body is an empty
+ * doc (that's how a first write starts), `label` only names the source in errors.
+ */
+function parseDocBody(text: string, label: string): Partial<UserConfig> {
+  let doc: unknown;
+  try {
+    doc = parseYaml(text);
+  } catch (err) {
+    throw new UserConfigError(
+      `${label}: yaml parse error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (doc === null || doc === undefined) return {};
+  if (typeof doc !== 'object' || Array.isArray(doc)) {
+    throw new UserConfigError(`${label}: top-level must be a mapping`);
+  }
+  return doc as Partial<UserConfig>;
+}
+
 async function readExistingDoc(path: string): Promise<Partial<UserConfig>> {
   let text: string;
   try {
@@ -264,19 +310,7 @@ async function readExistingDoc(path: string): Promise<Partial<UserConfig>> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
     throw err;
   }
-  let doc: unknown;
-  try {
-    doc = parseYaml(text);
-  } catch (err) {
-    throw new UserConfigError(
-      `${path}: yaml parse error: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-  if (doc === null || doc === undefined) return {};
-  if (typeof doc !== 'object' || Array.isArray(doc)) {
-    throw new UserConfigError(`${path}: top-level must be a mapping`);
-  }
-  return doc as Partial<UserConfig>;
+  return parseDocBody(text, path);
 }
 
 /**

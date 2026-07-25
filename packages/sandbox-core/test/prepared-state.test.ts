@@ -3,14 +3,52 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  claudeInstallFingerprint,
   computeContextSha256,
   DOCKER_CONTEXT_FILE_MAP,
+  matchClaudeInstallFingerprint,
   preparedStatePathFor,
   readPreparedStateRaw,
   resolveContextFilesFrom,
   sha256OfFile,
   writePreparedStateRaw,
 } from '../src/prepared-state.js';
+
+/**
+ * A prepared record stores only the FOLDED fingerprint, never the install mode
+ * that produced it, so the mode can only be recovered by trying both. This is
+ * what lets a control box (which defaults to `native`, because the PC's
+ * `box.claudeInstall` never travels to it) use a bake a PC made with `npm`
+ * instead of failing every create with "run `agentbox prepare` first".
+ */
+describe('matchClaudeInstallFingerprint', () => {
+  const NATIVE = 'a'.repeat(64); // stands in for a raw context sha
+
+  it('recognises a native bake (the identity fold)', () => {
+    expect(matchClaudeInstallFingerprint(NATIVE, NATIVE)).toBe('native');
+  });
+
+  it('recognises an npm bake against the native fingerprint', () => {
+    const npm = claudeInstallFingerprint(NATIVE, 'npm');
+    expect(npm).not.toBe(NATIVE); // the fold must actually distinguish them
+    expect(matchClaudeInstallFingerprint(npm, NATIVE)).toBe('npm');
+  });
+
+  it('refuses a fingerprint from a genuinely different build context', () => {
+    const otherContext = 'b'.repeat(64);
+    expect(matchClaudeInstallFingerprint(otherContext, NATIVE)).toBeNull();
+    // ...including that context's npm fold — a different base is still different.
+    expect(matchClaudeInstallFingerprint(claudeInstallFingerprint(otherContext, 'npm'), NATIVE)).toBeNull();
+  });
+
+  it('stays in step with claudeInstallFingerprint for both modes', () => {
+    // Pinning the pair together is the point: if the fold changes and the match
+    // doesn't, every shared bake silently stops being adoptable.
+    for (const mode of ['native', 'npm'] as const) {
+      expect(matchClaudeInstallFingerprint(claudeInstallFingerprint(NATIVE, mode), NATIVE)).toBe(mode);
+    }
+  });
+});
 
 describe('computeContextSha256', () => {
   let dir: string;

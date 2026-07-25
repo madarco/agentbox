@@ -16,6 +16,7 @@
 import { readFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { loadEffectiveConfig, mergeConfigYaml } from '@agentbox/config';
 import { makeHetznerClient, type HetznerServer } from './client.js';
 import { controlPlaneCloudInit } from './cloud-init.js';
 import { detectEgressIp } from './egress-ip.js';
@@ -100,6 +101,62 @@ export function filterProviderSecrets(body: string): string {
     if (allow.has(key)) out.push(`${key}=${stripped.slice(eq + 1)}`);
   }
   return out.length > 0 ? out.join('\n') + '\n' : '';
+}
+
+/**
+ * Config keys migrated to the control box's own `config.yaml`.
+ *
+ * Only `box.claudeInstall` so far, and it earns its place: it selects how
+ * `prepare` installs Claude Code, and `npm` exists specifically because the
+ * native installer intermittently Cloudflare-403s datacenter egress IPs — which
+ * is exactly what a control box has. Without migrating it, a control box that
+ * bakes its own base picks the mode most likely to fail there.
+ *
+ * Deliberately NOT the whole config: most keys are host-specific (paths,
+ * terminal integration) and would be wrong or meaningless on the VPS.
+ */
+const MIGRATED_CONFIG_KEYS = ['box.claudeInstall'] as const;
+
+/**
+ * The control box's config, with the migrated keys merged into whatever is
+ * already there. Returns null when there is nothing to change.
+ *
+ * Merges rather than overwrites because the hub writes this same file itself
+ * (`box.remoteDockerHost`, via the Settings UI) — regenerating it on a redeploy
+ * would silently drop that. `remoteBody` is the VPS's current file ('' if none).
+ */
+export function buildControlPlaneConfigYaml(
+  remoteBody: string,
+  values: Partial<Record<(typeof MIGRATED_CONFIG_KEYS)[number], unknown>>,
+): string | null {
+  let body = remoteBody;
+  let changed = false;
+  for (const key of MIGRATED_CONFIG_KEYS) {
+    const value = values[key];
+    if (value === undefined) continue;
+    body = mergeConfigYaml(body, key, value);
+    changed = true;
+  }
+  return changed ? body : null;
+}
+
+/**
+ * The PC's global effective values for the migrated keys. Global (not the cwd
+ * project's) because the control box is project-independent, and because the hub
+ * itself reads global when deciding what to bake — keeping the two symmetric.
+ *
+ * A key already at its default is omitted: nothing to migrate, and no reason to
+ * create a config file on the VPS that wasn't there.
+ */
+async function collectMigratedConfig(): Promise<Partial<Record<string, unknown>>> {
+  try {
+    const cfg = await loadEffectiveConfig(homedir());
+    const out: Record<string, unknown> = {};
+    if (cfg.effective.box.claudeInstall === 'npm') out['box.claudeInstall'] = 'npm';
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 /** Extract just the provider-credential lines from the host `~/.agentbox/secrets.env`. */
@@ -269,6 +326,28 @@ export async function deployControlPlaneToHetzner(
     // Provider creds live in the data volume (read as ~/.agentbox/secrets.env),
     // NOT in the compose env — so they're never in `docker inspect`/compose logs.
     await scpUpload(target, secretsLocal, `${REMOTE_DATA_DIR}/secrets.env`);
+
+    // Migrate the handful of config keys the control box needs (see
+    // MIGRATED_CONFIG_KEYS). Read-modify-write against the VPS's existing file:
+    // the hub writes this same config itself, so generating a fresh one would
+    // drop its keys on every redeploy.
+    const migrated = await collectMigratedConfig();
+    if (Object.keys(migrated).length > 0) {
+      const remoteCfg = await sshExec(
+        target,
+        `cat ${REMOTE_DATA_DIR}/config.yaml 2>/dev/null || true`,
+      );
+      const merged = buildControlPlaneConfigYaml(
+        remoteCfg.exitCode === 0 ? remoteCfg.stdout : '',
+        migrated,
+      );
+      if (merged) {
+        const cfgLocal = join(staging, 'config.yaml');
+        await writeFile(cfgLocal, merged, { mode: 0o600 });
+        log(`migrating config to the control box: ${Object.keys(migrated).join(', ')}`);
+        await scpUpload(target, cfgLocal, `${REMOTE_DATA_DIR}/config.yaml`);
+      }
+    }
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
