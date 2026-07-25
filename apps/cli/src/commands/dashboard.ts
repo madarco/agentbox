@@ -700,7 +700,16 @@ export const dashboardCommand = new Command('dashboard')
             const box = (await listBoxesMerged()).boxes.find((b) => b.id === boxId);
             if (!box) return null;
             const source = await resolveBoxPromptSource(box);
-            return { baseUrl: source.baseUrl, authToken: source.authToken };
+            return {
+              baseUrl: source.baseUrl,
+              authToken: source.authToken,
+              // The CLI paths warn on stderr here; a TUI owns the screen, so
+              // hand it to the compositor to show in the alert band instead.
+              warning:
+                source.unauthenticatedPlane !== undefined
+                  ? `approvals live on ${source.unauthenticatedPlane} but no admin token is available here`
+                  : undefined,
+            };
           },
           listCandidates,
           resolveTarget,

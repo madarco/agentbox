@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Compositor } from '../src/dashboard/compositor.js';
 import { NEW_BOX_ID, type SidebarBox } from '../src/dashboard/sidebar.js';
 
@@ -12,10 +12,19 @@ import { NEW_BOX_ID, type SidebarBox } from '../src/dashboard/sidebar.js';
 
 const closed: string[] = [];
 const opened: Array<{ boxId: string; baseUrl: string; authToken?: string }> = [];
+/** Boxes whose subscription should immediately fail permanently (a non-200). */
+const failWith = new Map<string, string>();
 
 vi.mock('../src/wrapped-pty/prompt-client.js', () => ({
-  subscribePrompts: (opts: { boxId: string; relayBaseUrl: string; authToken?: string }) => {
+  subscribePrompts: (opts: {
+    boxId: string;
+    relayBaseUrl: string;
+    authToken?: string;
+    onError?: (e: Error) => void;
+  }) => {
     opened.push({ boxId: opts.boxId, baseUrl: opts.relayBaseUrl, authToken: opts.authToken });
+    const msg = failWith.get(opts.boxId);
+    if (msg) queueMicrotask(() => opts.onError?.(new Error(msg)));
     return { close: () => closed.push(opts.boxId) };
   },
   postAnswer: () => Promise.resolve({ ok: true, status: 204 }),
@@ -56,8 +65,9 @@ function makeCompositor(over: Record<string, any> = {}): Compositor {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const sync = (c: Compositor): void => (c as any).syncPromptSubscriptions();
 const setBoxes = (c: Compositor, ids: string[]): void => {
+  // Shaped like a real SidebarBox — the alert-band redraw renders these rows.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (c as any).boxes = ids.map((id) => ({ id }));
+  (c as any).boxes = ids.map((id) => ({ id, name: id, state: 'running' }));
 };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const streams = (c: Compositor): Map<string, unknown> => (c as any).promptStreams;
@@ -65,6 +75,15 @@ const streams = (c: Compositor): Map<string, unknown> => (c as any).promptStream
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 describe('compositor prompt subscriptions', () => {
+  // The alert-band redraw writes escape sequences straight to process.stdout
+  // (`out` is not injectable); swallow them so the suite output stays readable.
+  beforeEach(() => {
+    vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('subscribes each box on the relay its own resolver returns', async () => {
     opened.length = 0;
     const c = makeCompositor({
@@ -128,6 +147,50 @@ describe('compositor prompt subscriptions', () => {
     const orphans = opened.filter((o) => !tracked.has(o.boxId) && !closed.includes(o.boxId));
     expect(orphans).toEqual([]);
     expect(tracked.size).toBeLessThanOrEqual(1);
+  });
+
+  it('surfaces a permanently-failed stream instead of looking like no approvals', async () => {
+    opened.length = 0;
+    failWith.clear();
+    failWith.set('bad-token', 'SSE stream returned 401');
+
+    const c = makeCompositor({ relaySourceFor: () => Promise.resolve(null) });
+    setBoxes(c, ['bad-token']);
+    sync(c);
+    await flush();
+    await flush();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const notices = (c as any).activeNotices as Map<string, { message: string }>;
+    expect(notices.get('bad-token')?.message).toContain('401');
+    // The dead slot is released so it can be retried later, rather than sitting
+    // in the map keeping the box permanently unsubscribed.
+    expect(streams(c).has('bad-token')).toBe(false);
+
+    // ...but not on the 1s poll cadence: a 401 would become a request/second.
+    sync(c);
+    await flush();
+    expect(opened.filter((o) => o.boxId === 'bad-token')).toHaveLength(1);
+    failWith.clear();
+  });
+
+  it('surfaces a plane it cannot authenticate to, rather than silently going local', async () => {
+    opened.length = 0;
+    failWith.clear();
+    const c = makeCompositor({
+      relaySourceFor: () =>
+        Promise.resolve({
+          baseUrl: 'http://127.0.0.1:8787',
+          warning: 'approvals live on https://plane.example but no admin token is available here',
+        }),
+    });
+    setBoxes(c, ['no-token']);
+    sync(c);
+    await flush();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const notices = (c as any).activeNotices as Map<string, { message: string }>;
+    expect(notices.get('no-token')?.message).toContain('no admin token');
   });
 
   it('drops the slot when the box is gone by the time the resolve lands', async () => {
