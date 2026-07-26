@@ -5,6 +5,8 @@
 > persistent Hetzner VPS, acting as an **intermediary between the PC and the boxes** — the PC
 > workflow stays exactly as today, but the control box holds enough state (registry, approvals,
 > credentials, SSH keys, secrets) that work can also continue from mobile with the laptop off.
+> To **exercise** any of this, see [`hub-testing.md`](./hub-testing.md) — one guide covering the
+> local `hub expose` flip, an in-box hub, a real VPS deploy, and the clean-PC test VM.
 > This is the single plan-of-record for the control box; the older `control-plane-*` design docs
 > were removed to avoid confusion. Related: [`host-relay.md`](./host-relay.md) (the relay core),
 > [`in-box-supervisor.md`](./in-box-supervisor.md), and the public guide at

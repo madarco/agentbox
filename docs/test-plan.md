@@ -1,6 +1,6 @@
 # AgentBox test plan
 
-> Part of the AgentBox docs. Start at [CLAUDE.md](../CLAUDE.md). For the feature surface this exercises, see [`features.md`](./features.md).
+> Part of the AgentBox docs. Start at [CLAUDE.md](../CLAUDE.md). For the feature surface this exercises, see [`features.md`](./features.md). Anything hub- or control-box-shaped is covered separately in [`hub-testing.md`](./hub-testing.md).
 
 A regression checklist that an AI (or human) can drive end-to-end to declare AgentBox healthy for a given provider. Each entry lists the **exact command** to run, a **machine-checkable signal** for success, and a one-sentence **note** on what the check is really proving.
 
