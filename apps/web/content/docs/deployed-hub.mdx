@@ -114,7 +114,41 @@ When the deploy fails the health check it now ssh's in and names the cause, dist
 
 <Callout type="warn" title="“too many certificates already issued”">An sslip.io hostname is derived from the IP, so it isn't really yours — and Hetzner reuses released addresses. Land on one that already had five certificates issued this week and Let's Encrypt refuses (rate limits are per exact hostname, and reset after 7 days), leaving a perfectly healthy hub with no working HTTPS. Destroy the VPS and deploy again to draw a different address, or pass `--domain <host>` with a name you control and point its DNS at the VPS first.</Callout>
 
-Retry with `agentbox hub deploy hetzner` — it reuses the GitHub App and env from the first run, so there's no need to run `hub setup` again. The failed VPS and its firewall are still billing; delete them from the [Hetzner console](https://console.hetzner.cloud) (they're labeled `agentbox.role=control-plane`).
+Retry with `agentbox hub deploy hetzner` — it reuses the GitHub App and env from the first run, so there's no need to run `hub setup` again. A failed VPS and its firewall keep billing; `agentbox hub destroy` clears them (or delete them from the [Hetzner console](https://console.hetzner.cloud) — they're labeled `agentbox.role=control-plane`).
+
+### Updating the control box
+
+`agentbox hub update` moves the **existing** VPS to a new build — no new machine, and the data volume (store, logins, custody, box SSH keys) is untouched:
+
+```bash
+agentbox hub update                     # match this CLI's version (the default)
+agentbox hub update --channel nightly   # newest published nightly
+agentbox hub update --channel stable    # newest published release
+agentbox hub update --package 0.28.0    # an exact version
+agentbox hub update --ref my-branch     # switch to building from source
+```
+
+The default matching *your CLI's* version is deliberate: that parity is what makes the shared bake records line up (see the snapshot note above), so `agentbox self-update` followed by `agentbox hub update` keeps both sides together.
+
+An update re-runs the whole configuration a deploy does — it re-ships the compose stack, regenerates `.env` and the Caddy config, and re-pushes provider secrets — because a newer hub can need new env keys or a different internal port. The hub migrates its own auth + store on boot, so there is no separate migration step.
+
+<Callout type="info" title="It also repairs a stale firewall">Only `:22` is locked to the IP that deployed the box (`:80`/`:443` stay open so boxes anywhere can reach the hub). Move to a different network and you can no longer SSH in. `hub update` re-locks the firewall to your current egress IP **over the Hetzner API before it connects**, so it can fix a box that has already locked you out — and it refreshes the admin CIDR the hub applies to hetzner boxes it creates, so direct PC→box SSH keeps working too.</Callout>
+
+### Destroying the control box
+
+```bash
+agentbox hub destroy
+```
+
+It prints exactly what it will delete — the VPS, its firewall, `~/.agentbox/control-plane` (credentials, SSH key, deploy record), the `agentbox-hub` SSH alias, and `relay.controlPlaneUrl` — and asks before doing any of it. Afterwards, cloud boxes build on your machine again.
+
+Two flags: `--keep-credentials` leaves `control-plane.env` in place so a later `hub deploy hetzner` needs no `hub setup`, and `--force` is required if the hub still has boxes registered.
+
+<Callout type="warn" title="Boxes outlive the hub">Cloud boxes the control box created keep running in their provider, and the hub's store is often the only record they exist. So `hub destroy` asks the hub what it owns first and refuses if the list isn't empty — destroy them with `agentbox hub boxes rm <id>` (or accept the orphans with `--force`). If the hub can't be reached it says so rather than blocking, since a broken deploy is exactly what you'd want to delete.</Callout>
+
+Teardown needs no SSH, so it works from a different network than the one that deployed the box. If a resource is already gone, it says so and still clears the local state — a half-deleted control box must never leave your config pointing at nothing.
+
+To stop *using* a hub without deleting it (e.g. one someone else runs), use `agentbox hub unset-url` instead.
 
 ## Configure cloud providers on the control box
 

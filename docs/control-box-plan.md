@@ -1148,6 +1148,24 @@ Findings and follow-ups discovered while implementing, kept out of the phase the
   **Still open:** no teardown command — a failed deploy's server + firewall keep billing and must be
   deleted from the Hetzner console (labeled `agentbox.role=control-plane`).
 
+- **(2026-07-26) `hub update` + `hub destroy` close the control-box lifecycle.** A control box used to
+  be a one-way trip: changing its version meant deploying a whole new VPS, and getting rid of one
+  meant deleting the server by hand and then remembering to clear `~/.agentbox/control-plane`, the
+  `agentbox-hub` ssh block, and `relay.controlPlaneUrl`. The enabling move was splitting
+  `deployControlPlaneToHetzner` into provision + `applyControlPlaneConfig`, so an update re-runs
+  *exactly* the deploy's configuration half (new `.env` keys, a moved container port, new compose
+  assets are all handled for free) instead of drifting into a second implementation.
+  Notes for later: (a) `hub update` re-syncs the firewall's SSH source **over the Hetzner API before
+  it ssh's**, which is what lets it repair a box whose `:22` rule still names an old egress IP —
+  only `:22` is IP-locked, `:80`/`:443` are open so boxes reach the hub from anywhere; (b) destroy
+  deliberately never throws for an already-gone resource, because the local purge must still run —
+  otherwise the user is left pointing at nothing with no command that clears it; (c) `hub status`
+  now reports the **live** version from `/healthz` (both images export `AGENTBOX_CLI_VERSION`, read
+  from the installed manifest rather than the requested spec, since a spec can be a dist-tag), and
+  only nudges about drift when it has a live reading — a stale record would nag forever.
+  Still open: no `hub update` for the Vercel deploy target, and no rollback beyond
+  `--package <old-version>`.
+
 - **(2026-07-26) The control box now installs the hub from npm; `--ref` is the source fallback.**
   The deploy used to clone the monorepo onto the VPS and build 14 workspace packages plus the CLI
   there (~2m40s of a ~4m45s deploy) to produce an artifact the **published package already ships**:
