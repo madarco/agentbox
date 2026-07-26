@@ -38,7 +38,16 @@ import { providerForCreate } from '../provider/registry.js';
 import { makeControlPlaneCreateBox, cloneRepoWithLfs } from '../control-plane/create-box.js';
 import { runGitHubAppManifestFlow } from '../control-plane/github-app-manifest.js';
 import { deployControlPlaneToVercel } from '../control-plane/deploy-vercel.js';
-import { recoveryHint, runHetznerDeploy } from '../control-plane/deploy-hetzner.js';
+import {
+  assertReachableRecord,
+  purgeLocalControlPlaneState,
+  readDeployRecord,
+  recoveryHint,
+  runHetznerDeploy,
+  runHetznerDestroy,
+  runHetznerUpdate,
+} from '../control-plane/deploy-hetzner.js';
+import { fetchNpmBest } from '../lib/update-check.js';
 import {
   defaultDeployRef,
   describeHubDeploySource,
@@ -482,10 +491,14 @@ const unsetUrlSub = new Command('unset-url')
       }
       if (existsSync(CP_DIR)) {
         if (opts.purge) {
-          await rm(CP_DIR, { recursive: true, force: true });
+          // Same teardown `hub destroy` performs locally — including refreshing
+          // the managed ssh config, which this used to skip and so left a
+          // `Host agentbox-hub` block pointing at a machine you no longer use.
+          await purgeLocalControlPlaneState({ dir: CP_DIR, keepCredentials: false });
           log.success(`Purged this machine's control-plane credentials (${CP_DIR}).`);
         } else {
           log.info(`This machine's App metadata + admin token remain in ${CP_DIR} (use --purge to delete).`);
+          log.info('To also delete the VPS itself, use `agentbox hub destroy`.');
         }
       }
     } catch (err) {
@@ -500,6 +513,12 @@ export interface ControlPlaneStatus {
   boxes: number;
   events: number;
   detail: string;
+  /**
+   * The AgentBox version the remote hub is actually running, when it reports one.
+   * Undefined for a control box deployed before the images exported
+   * `AGENTBOX_CLI_VERSION` — callers fall back to the deploy record.
+   */
+  version?: string;
 }
 
 /**
@@ -513,17 +532,23 @@ export async function probeControlPlaneStatus(url: string): Promise<ControlPlane
   let boxes = 0;
   let events = 0;
   let detail = '';
+  let version: string | undefined;
   try {
     const res = await fetch(`${url}/healthz`, { signal: AbortSignal.timeout(8000) });
     healthy = res.ok;
-    const body = (await res.json().catch(() => ({}))) as { boxes?: number; events?: number };
+    const body = (await res.json().catch(() => ({}))) as {
+      boxes?: number;
+      events?: number;
+      version?: string;
+    };
     boxes = body.boxes ?? 0;
     events = body.events ?? 0;
+    version = body.version;
     detail = `${String(boxes)} box(es), ${String(events)} event(s)`;
   } catch (e) {
     detail = e instanceof Error ? e.name : String(e);
   }
-  return { url, healthy, boxes, events, detail };
+  return { url, healthy, boxes, events, detail, ...(version ? { version } : {}) };
 }
 
 const addSub = new Command('add')
@@ -1438,6 +1463,230 @@ const deployHetznerSub = new Command('hetzner')
     }
   });
 
+interface UpdateOpts {
+  ref?: string;
+  repo?: string;
+  package?: string;
+  channel?: string;
+  yes?: boolean;
+}
+
+/**
+ * Resolve `--channel` to a concrete published version, so the control box is
+ * pinned to an exact build the way `hub deploy` pins it. Mirrors `self-update`:
+ * the newest build on a channel can live under either dist-tag, so install the
+ * resolved VERSION rather than the tag.
+ */
+async function specForChannel(channel: string): Promise<string> {
+  if (channel !== 'nightly' && channel !== 'stable') {
+    throw new Error(`unknown --channel "${channel}" (expected: nightly | stable)`);
+  }
+  const best = await fetchNpmBest(channel);
+  if (!best) {
+    throw new Error(`could not reach the npm registry to resolve the newest ${channel} build`);
+  }
+  return best;
+}
+
+const updateSub = new Command('update')
+  .description('Update the deployed control box in place to a new AgentBox build')
+  .option('--channel <nightly|stable>', 'install the newest published build on this channel')
+  .option('--package <spec>', `npm spec to install (default ${AGENTBOX_VERSION}, this CLI's own version)`)
+  .option('--ref <ref>', 'switch the control box to building from source at this git ref')
+  .option('--repo <url>', 'git repo the VPS clones when building from source')
+  .option('-y, --yes', 'skip the confirmation prompt')
+  .action(async (opts: UpdateOpts) => {
+    const cmdLog = openCommandLog('hub-update');
+    try {
+      if (!existsSync(ENV_PATH)) {
+        log.error('No control-plane env found. Run `agentbox hub setup` first.');
+        process.exitCode = 1;
+        return;
+      }
+      const record = await readDeployRecord();
+      assertReachableRecord(record);
+
+      const source = opts.channel
+        ? ({ kind: 'package', spec: await specForChannel(opts.channel) } as const)
+        : resolveHubDeploySource(AGENTBOX_VERSION, {
+            ...(opts.ref ? { ref: opts.ref } : {}),
+            ...(opts.repo ? { repoUrl: repoSlugToUrl(opts.repo) } : {}),
+            ...(opts.package ? { packageSpec: opts.package } : {}),
+          });
+
+      // What it runs NOW comes from the live hub when it can answer — the record
+      // only says what was last *deployed*, which is wrong if a previous update
+      // failed halfway.
+      const live = await probeControlPlaneStatus(record.url);
+      const from = live.version ?? describeRecordedSource(record) ?? 'unknown';
+      log.info(`control box: ${record.url} (server ${String(record.serverId ?? '?')})`);
+      log.info(`  ${from}  →  ${describeHubDeploySource(source)}`);
+      if (!live.healthy) {
+        log.warn('The hub is not answering right now — updating anyway will also restart it.');
+      }
+      if (!opts.yes) {
+        const ok = await confirm({ message: 'Update the control box?', initialValue: true });
+        if (isCancel(ok) || !ok) {
+          log.info('cancelled');
+          return;
+        }
+      }
+
+      // Pick up keys added by CLI versions newer than the one that deployed this
+      // box (the same gap `hub deploy hetzner` covers for a redeploy).
+      await ensureHubApiKeyInEnv();
+
+      const ds = spinner();
+      ds.start('updating the control box');
+      cmdLog.write(`hub update: ${from} -> ${describeHubDeploySource(source)}`);
+      try {
+        await runHetznerUpdate({
+          envPath: ENV_PATH,
+          source,
+          log: (line) => {
+            ds.message(line);
+            cmdLog.write(line);
+          },
+        });
+        ds.stop(`updated: ${record.url}`);
+      } catch (e) {
+        ds.stop('update failed');
+        const msg = e instanceof Error ? e.message : String(e);
+        cmdLog.write(`update failed: ${msg}`);
+        log.error(msg);
+        note(recoveryHint(record).join('\n'), 'Debug the VPS');
+        log.info(`Full update log: ${cmdLog.path}`);
+        process.exitCode = 1;
+        return;
+      }
+      const after = await probeControlPlaneStatus(record.url);
+      log.success(
+        after.version
+          ? `Control box is healthy, running ${after.version}.`
+          : `Control box is healthy (${record.url}/healthz).`,
+      );
+      // A version change is exactly when a shared bake record starts (or stops)
+      // matching the control box's fingerprint, so re-share.
+      await seedPreparedToNewControlBox(record.url);
+      log.info(`Update log: ${cmdLog.path}`);
+    } catch (err) {
+      cmdLog.write(`FAILED: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+      handleLifecycleError(err);
+    } finally {
+      cmdLog.close();
+    }
+  });
+
+/** The build `deploy.json` last recorded, as one line. */
+function describeRecordedSource(record: ControlPlaneDeployRecord): string | null {
+  if (!record.source) return null;
+  return record.source.kind === 'package'
+    ? `@madarco/agentbox@${record.source.spec}`
+    : `${record.source.repoUrl}@${record.source.repoRef}`;
+}
+
+interface DestroyOpts {
+  yes?: boolean;
+  force?: boolean;
+  keepCredentials?: boolean;
+}
+
+const destroySub = new Command('destroy')
+  .description('Tear down the deployed control box: the VPS, its firewall, and this machine\'s state')
+  .option('-y, --yes', 'skip the confirmation prompt')
+  .option('--force', 'destroy even while the hub still has boxes registered')
+  .option('--keep-credentials', 'keep control-plane.env so a redeploy needs no `hub setup`')
+  .action(async (opts: DestroyOpts) => {
+    try {
+      const record = await readDeployRecord();
+      if (!record) {
+        log.error(
+          'No control box was deployed from this machine (~/.agentbox/control-plane/deploy.json is missing).',
+        );
+        log.info('To stop using a hub configured with `hub set-url`, run `agentbox hub unset-url`.');
+        process.exitCode = 1;
+        return;
+      }
+
+      // Cloud boxes the hub created outlive it, and its store is often the only
+      // record they exist — so enumerate before destroying it, not after.
+      const boxes = await listHubBoxesForDestroy(record);
+      if (boxes.kind === 'boxes' && boxes.rows.length > 0 && !opts.force) {
+        log.error(
+          `The control box still has ${String(boxes.rows.length)} box(es) registered. Destroying it now would orphan them:`,
+        );
+        for (const b of boxes.rows) {
+          process.stdout.write(`  ${b.id}  ${b.name ?? ''}  ${b.provider ?? ''}  ${b.state ?? ''}\n`);
+        }
+        log.info('Destroy them first (`agentbox hub boxes rm <id>`), or re-run with --force.');
+        process.exitCode = 1;
+        return;
+      }
+
+      const lines = [
+        `Hetzner server ${String(record.serverId ?? '?')} (${record.ip ?? '?'})`,
+        ...(record.firewallId !== undefined ? [`Hetzner firewall ${String(record.firewallId)}`] : []),
+        opts.keepCredentials
+          ? `${CP_DIR}/deploy.json + ssh/ (control-plane.env kept)`
+          : `${CP_DIR} (credentials, ssh key, deploy record)`,
+        `the \`${AGENTBOX_HUB_SSH_ALIAS}\` SSH alias`,
+        'relay.controlPlaneUrl (global + project)',
+      ];
+      if (boxes.kind === 'unreachable') {
+        lines.push(`NOTE: the hub did not answer, so its boxes could not be listed (${boxes.reason})`);
+      }
+      if (boxes.kind === 'boxes' && boxes.rows.length > 0) {
+        lines.push(`NOTE: --force — ${String(boxes.rows.length)} registered box(es) will be orphaned`);
+      }
+      note(lines.join('\n'), 'This will delete');
+
+      if (!opts.yes) {
+        const ok = await confirm({ message: 'Destroy the control box?', initialValue: false });
+        if (isCancel(ok) || !ok) {
+          log.info('cancelled');
+          return;
+        }
+      }
+
+      const result = await runHetznerDestroy({ record, log: (l) => log.info(l) });
+      for (const w of result.warnings) log.warn(w);
+      // Purge regardless: a server that was already deleted by hand must not
+      // leave this machine pointing at it with no way to clear the state.
+      await purgeLocalControlPlaneState({
+        dir: CP_DIR,
+        keepCredentials: Boolean(opts.keepCredentials),
+      });
+      await unsetConfigValue('global', 'relay.controlPlaneUrl', process.cwd());
+      await unsetConfigValue('project', 'relay.controlPlaneUrl', process.cwd());
+
+      log.success('Control box destroyed. Cloud boxes now build on this machine again.');
+      if (opts.keepCredentials) {
+        log.info(`Credentials kept in ${CP_DIR} — \`agentbox hub deploy hetzner\` redeploys without \`hub setup\`.`);
+      }
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+/** Boxes the hub still owns, or why we couldn't ask. */
+type HubBoxesProbe =
+  | { kind: 'boxes'; rows: Array<{ id: string; name?: string; provider?: string; state?: string }> }
+  | { kind: 'unreachable'; reason: string };
+
+async function listHubBoxesForDestroy(record: ControlPlaneDeployRecord): Promise<HubBoxesProbe> {
+  if (!record.url) return { kind: 'unreachable', reason: 'no url in the deploy record' };
+  try {
+    // Pin to the record's URL rather than the configured one: destroy must ask
+    // the box it is about to delete, even if `relay.controlPlaneUrl` has since
+    // been pointed somewhere else.
+    const client = await resolveHubApiClient(record.url, { quiet: true });
+    if (!client) return { kind: 'unreachable', reason: 'no /api/v1 key configured for this hub' };
+    return { kind: 'boxes', rows: await client.listBoxes() };
+  } catch (e) {
+    return { kind: 'unreachable', reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /**
  * Share this machine's cloud bake records with a freshly-deployed control box,
  * so its first web-UI create boots the base you already baked instead of
@@ -1481,6 +1730,8 @@ const deployCmd = new Command('deploy')
 export const controlPlaneSubcommands = [
   setupSub,
   deployCmd,
+  updateSub,
+  destroySub,
   setUrlSub,
   unsetUrlSub,
   addSub,

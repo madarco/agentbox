@@ -18,6 +18,8 @@ import {
   probeControlPlaneStatus,
 } from './control-plane.js';
 import { loadControlPlaneEnv } from '../control-plane/env-file.js';
+import { channelOfVersion } from '../lib/channel.js';
+import { AGENTBOX_VERSION } from '../version.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
 import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
 import { pullBoxSshKeys } from '../control-plane/hub-pull.js';
@@ -108,17 +110,68 @@ function renderStatus(s: HubStatus): string {
  * `--url` probe of somebody else's hub doesn't get this machine's record.
  * Best-effort: an absent or unreadable record just omits the line.
  */
-async function readDeployedSource(url: string): Promise<string | null> {
+async function readDeployRecordFor(url: string): Promise<ControlPlaneDeployRecord | null> {
   try {
-    const raw = await readFile(controlPlaneDeployPath(), 'utf8');
-    const rec = JSON.parse(raw) as ControlPlaneDeployRecord;
-    if (rec.url !== url || !rec.source) return null;
-    return rec.source.kind === 'package'
-      ? `@madarco/agentbox@${rec.source.spec} (npm)`
-      : `${rec.source.repoUrl}@${rec.source.repoRef} (built from source)`;
+    const rec = JSON.parse(
+      await readFile(controlPlaneDeployPath(), 'utf8'),
+    ) as ControlPlaneDeployRecord;
+    return rec.url === url ? rec : null;
   } catch {
     return null;
   }
+}
+
+export interface RemoteHubBuild {
+  /** The version the hub reports, else the version that was deployed. */
+  version: string | null;
+  /** Where `version` came from — a live probe beats a local record. */
+  versionSource: 'live' | 'deployed' | null;
+  /** `nightly` / `stable`, or `source (<ref>)` for a build-from-source box. */
+  channel: string | null;
+  /** The deploy record's build line, e.g. `@madarco/agentbox@0.28.0 (npm)`. */
+  build: string | null;
+  /** Set when the control box runs a different version than this CLI. */
+  drift: string | null;
+}
+
+/**
+ * Reconcile what the hub reports with what this machine deployed.
+ *
+ * The live version wins: the record only says what was last *deployed*, which is
+ * wrong after a failed update, and is absent entirely for a hub someone else set
+ * up. A control box built before the images exported `AGENTBOX_CLI_VERSION`
+ * reports nothing, so the record is the fallback rather than the source.
+ *
+ * Pure so the precedence is unit-testable.
+ */
+export function describeRemoteHubBuild(input: {
+  liveVersion?: string | undefined;
+  record: ControlPlaneDeployRecord | null;
+  cliVersion: string;
+}): RemoteHubBuild {
+  const source = input.record?.source ?? null;
+  const build = source
+    ? source.kind === 'package'
+      ? `@madarco/agentbox@${source.spec} (npm)`
+      : `${source.repoUrl}@${source.repoRef} (built from source)`
+    : null;
+  const deployedVersion = source?.kind === 'package' ? source.spec : null;
+  const version = input.liveVersion ?? deployedVersion;
+  const versionSource = input.liveVersion ? 'live' : deployedVersion ? 'deployed' : null;
+  // A source build's "channel" is the ref itself — which is the branch the user
+  // actually cares about (`nightly`, `main`, a feature branch).
+  const channel =
+    source?.kind === 'source'
+      ? `source (${source.repoRef})`
+      : version
+        ? channelOfVersion(version)
+        : null;
+  // Only meaningful for a version we know is live; a stale record would nag forever.
+  const drift =
+    input.liveVersion && input.liveVersion !== input.cliVersion
+      ? `this CLI is ${input.cliVersion} — run \`agentbox hub update\` to match`
+      : null;
+  return { version, versionSource, channel, build, drift };
 }
 
 const statusSub = new Command('status')
@@ -136,17 +189,34 @@ const statusSub = new Command('status')
       // Remote (a control box is configured, or --url given): probe its /healthz.
       if (target.mode === 'remote') {
         const st = await probeControlPlaneStatus(target.url);
-        const deployed = await readDeployedSource(st.url);
+        const record = await readDeployRecordFor(st.url);
+        const b = describeRemoteHubBuild({
+          liveVersion: st.version,
+          record,
+          cliVersion: AGENTBOX_VERSION,
+        });
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ ...st, ...(deployed ? { deployed } : {}) }) + '\n');
+          process.stdout.write(
+            JSON.stringify({
+              ...st,
+              ...(b.version ? { version: b.version, versionSource: b.versionSource } : {}),
+              ...(b.channel ? { channel: b.channel } : {}),
+              ...(b.build ? { deployed: b.build } : {}),
+            }) + '\n',
+          );
           return;
         }
         process.stdout.write(
           [
             `hub: remote (${st.healthy ? 'reachable' : 'UNREACHABLE'})`,
-            `  url:    ${st.url}`,
-            `  health: ${st.detail}`,
-            ...(deployed ? [`  build:  ${deployed}`] : []),
+            `  url:     ${st.url}`,
+            `  health:  ${st.detail}`,
+            ...(b.version
+              ? [`  version: ${b.version}${b.versionSource === 'deployed' ? ' (as deployed)' : ''}`]
+              : []),
+            ...(b.channel ? [`  channel: ${b.channel}`] : []),
+            ...(b.build ? [`  build:   ${b.build}`] : []),
+            ...(b.drift ? [`  update:  ${b.drift}`] : []),
           ].join('\n') + '\n',
         );
         return;

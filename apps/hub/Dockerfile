@@ -60,4 +60,7 @@ COPY --from=build /repo .
 EXPOSE 8787
 # server.ts self-migrates auth (ensureAuthReady) + the store on boot, so there is
 # no separate migrate step. It anchors its own cwd from required-server-files.json.
-CMD ["node", "apps/hub/dist-standalone/apps/hub/server.js"]
+# AGENTBOX_CLI_VERSION is what the relay reports on /healthz, and so what
+# `agentbox hub status` shows. Same rule as Dockerfile.package: read the version
+# that is actually built here, not the ref that was asked for.
+CMD ["sh", "-c", "export AGENTBOX_CLI_VERSION=\"$(node -p \"require('/repo/apps/cli/package.json').version\")\"; exec node apps/hub/dist-standalone/apps/hub/server.js"]

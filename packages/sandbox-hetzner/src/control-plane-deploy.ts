@@ -23,10 +23,10 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadEffectiveConfig, mergeConfigYaml } from '@agentbox/config';
 import type { HubDeploySource } from '@agentbox/sandbox-core';
-import { makeHetznerClient, type HetznerServer } from './client.js';
+import { makeHetznerClient, type HetznerClient, type HetznerServer } from './client.js';
 import { controlPlaneCloudInit } from './cloud-init.js';
 import { detectEgressIp } from './egress-ip.js';
-import { controlPlaneInboundRules, normalizeSourceCidr } from './firewall.js';
+import { controlPlaneInboundRules, firewallNeedsSync, normalizeSourceCidr } from './firewall.js';
 import { resolveHubDeployAssets } from './hub-deploy-assets.js';
 import { mintSshKey } from './ssh-key.js';
 import { scpUpload, sshExec, waitForSsh, type SshTargetArgs } from './ssh-cli.js';
@@ -63,6 +63,15 @@ export interface ControlPlaneHetznerDeployResult {
 }
 
 const REMOTE_APP_DIR = '/opt/agentbox/apps/hub';
+// The monorepo checkout cloud-init makes in source mode — the parent of
+// REMOTE_APP_DIR, and what `hub update --ref` re-checks-out. Absent entirely in
+// package mode, where nothing on the VPS comes from git.
+const REMOTE_REPO_DIR = '/opt/agentbox';
+
+/** Single-quote a value for a remote `sh -c` command line. */
+function shQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
 // Host bind-mounted into the app container at /root/.agentbox: store.db, auth.db,
 // custody/, boxes/<id>/ssh, secrets.env (provider creds), logs. Persists the hub
 // across `compose up` / VPS reboots.
@@ -414,110 +423,61 @@ async function diagnoseUnhealthy(
   return `the hub is NOT answering on the VPS either.\n${ps.stdout.trim()}\n--- app logs (last 30) ---\n${logs.stdout.trim()}`;
 }
 
-export async function deployControlPlaneToHetzner(
-  opts: ControlPlaneHetznerDeployOptions,
-): Promise<ControlPlaneHetznerDeployResult> {
+export interface ApplyControlPlaneOptions {
+  /** An ssh target for a VPS that is already up and reachable. */
+  target: SshTargetArgs;
+  source: HubDeploySource;
+  /** Contents of `control-plane.env` (the App/auth/token secrets). */
+  envContent: string;
+  /** Public base URL the hub serves on, e.g. `https://<ip>.sslip.io`. */
+  url: string;
+  /** Hostname inside that URL — the Caddy site address. */
+  domain: string;
+  /** This machine's egress CIDR (admin SSH allowance the hub passes to its boxes). */
+  hostCidr: string;
+  /** Unique-ish suffix for the local staging dir. */
+  stamp: string;
+  /**
+   * Fail when source mode finds no repo at REMOTE_APP_DIR. True on a fresh
+   * deploy (a missing clone means cloud-init failed); false on an update, where
+   * the caller has already checked out the ref itself.
+   */
+  requireClonedRepo?: boolean;
+  onLog?: (line: string) => void;
+}
+
+/**
+ * Configure and (re)start the hub on a VPS that already exists: ship the compose
+ * stack, generate `.env` + the Caddyfile, push provider secrets and migrated
+ * config, `docker compose up -d --build`, and wait for public HTTPS.
+ *
+ * Split out of the deploy because an **update** has to redo every one of these:
+ * a new version can add `.env` keys, move the container port Caddy proxies to,
+ * and ship new compose/Dockerfile assets. Running the same code for both is what
+ * keeps `hub update` from drifting away from `hub deploy`.
+ */
+export async function applyControlPlaneConfig(opts: ApplyControlPlaneOptions): Promise<void> {
   const log = opts.onLog ?? (() => {});
-  const source = opts.source;
-  const client = makeHetznerClient();
-
-  // Package mode ships the compose stack from the host, so resolve it BEFORE
-  // spending money on a VPS — a partial dev build should fail here, not after.
+  const { target, source, url, domain, hostCidr, stamp } = opts;
   const deployAssets = source.kind === 'package' ? resolveHubDeployAssets() : null;
-
-  const stamp = Date.now().toString(36);
-  const name = `agentbox-control-plane-${stamp}`;
-
-  log('detecting host egress IP for the firewall…');
-  const hostCidr = normalizeSourceCidr(await detectEgressIp());
-
-  log('creating the control-plane firewall (:22 host-only, :80/:443 open)…');
-  // retryOnAmbiguous: true — a firewall is free and per-deploy-uniquely named,
-  // so a retry after a hidden success leaves at most a harmless orphan; unlike
-  // the server create below (billable), a transient 502/504/429 must not abort
-  // the deploy on its very first step.
-  const firewall = await withHetznerRetry(
-    { method: 'createFirewall', retryOnAmbiguous: true, attemptTimeoutMs: 60_000 },
-    () =>
-      client.createFirewall({
-        name,
-        rules: controlPlaneInboundRules(hostCidr),
-        labels: { 'agentbox.managed': 'true', 'agentbox.role': 'control-plane' },
-      }),
-  );
-
-  const keyDir = join(homedir(), '.agentbox', 'control-plane', 'ssh', stamp);
-  const key = await mintSshKey(keyDir, `agentbox-control-plane-${stamp}`);
-  const knownHosts = join(keyDir, 'known_hosts');
-
-  log(
-    source.kind === 'package'
-      ? `provisioning ${opts.serverType ?? 'cx23'} VPS (hub from npm: @madarco/agentbox@${source.spec})…`
-      : `provisioning ${opts.serverType ?? 'cx23'} VPS (hub from source: ${source.repoUrl}@${source.repoRef})…`,
-  );
-  const { server } = await withHetznerRetry(
-    { method: 'createServer', retryOnAmbiguous: false, attemptTimeoutMs: 120_000 },
-    () =>
-      client.createServer({
-        name,
-        server_type: opts.serverType ?? 'cx23',
-        image: opts.serverImage ?? 'ubuntu-24.04',
-        location: opts.location ?? 'nbg1',
-        user_data: controlPlaneCloudInit({
-          sshPubkey: key.publicKey,
-          // Package mode needs no repo on the VPS at all.
-          ...(source.kind === 'source' ? { repo: { url: source.repoUrl, ref: source.repoRef } } : {}),
-        }),
-        firewalls: [{ firewall: firewall.id }],
-        labels: { 'agentbox.managed': 'true', 'agentbox.role': 'control-plane' },
-        start_after_create: true,
-      }),
-  );
-
-  const ip = await serverIpv4(client, server, 60_000);
-  const domain = opts.domain ?? `${ip}.sslip.io`;
-  const url = `https://${domain}`;
-  const target: SshTargetArgs = { host: ip, user: 'root', identity: key.privatePath, knownHosts };
-
-  const provisioned: ControlPlaneHetznerDeployResult = {
-    url,
-    serverId: server.id,
-    ip,
-    domain,
-    firewallId: firewall.id,
-    sshKeyDir: keyDir,
-  };
-  // Best-effort: a caller's bookkeeping failure must not abort a deploy that is
-  // otherwise fine (the record is a debugging aid, not part of the contract).
-  try {
-    await opts.onProvisioned?.(provisioned);
-  } catch {
-    /* best-effort */
-  }
-
-  log(`VPS ${ip} up; waiting for ssh…`);
-  if (!(await waitForSsh(target, 5 * 60_000))) {
-    throw new Error(`ssh never came up on ${ip}`);
-  }
-  log(
-    source.kind === 'package'
-      ? 'waiting for cloud-init (Docker)…'
-      : 'waiting for cloud-init (Docker + repo clone)…',
-  );
-  await sshExec(target, 'cloud-init status --wait || true', { timeoutMs: 12 * 60_000, onLine: log });
 
   // The compose the `app` service is built from. In package mode the host owns
   // it (it travels with the deploy, below); in source mode it comes from the ref
-  // the VPS cloned, so anything version-dependent has to be read from THERE
-  // rather than assumed — the host only generates the Caddyfile and `.env`.
+  // checked out on the VPS, so anything version-dependent has to be read from
+  // THERE rather than assumed — the host only generates the Caddyfile and `.env`.
   let compose: string;
   if (deployAssets) {
     await sshExec(target, `mkdir -p ${REMOTE_APP_DIR}`);
     compose = await readFile(deployAssets['docker-compose.yml'], 'utf8');
   } else {
     const cloned = await sshExec(target, `test -d ${REMOTE_APP_DIR}`);
-    if (cloned.exitCode !== 0) {
+    if (cloned.exitCode !== 0 && opts.requireClonedRepo) {
       throw new Error('repo clone did not complete on the VPS (cloud-init failed)');
+    }
+    if (cloned.exitCode !== 0) {
+      throw new Error(
+        `no repo checkout at ${REMOTE_APP_DIR} on the VPS — this control box was not deployed from source, so it cannot be updated to a --ref. Deploy a new one, or update it to a published version instead.`,
+      );
     }
     const composeBody = await sshExec(target, `cat ${REMOTE_APP_DIR}/docker-compose.yml`);
     compose = composeBody.exitCode === 0 ? composeBody.stdout : '';
@@ -624,10 +584,265 @@ export async function deployControlPlaneToHetzner(
     throw new Error(`docker compose up failed (exit ${String(up.exitCode)}): ${up.stderr || up.stdout}`);
   }
 
-  log(`provisioned; waiting for HTTPS at ${url} …`);
-  await pollHealthz(url, 3 * 60_000, log, () =>
-    diagnoseUnhealthy(target, appPort, source, domain),
+  log(`waiting for HTTPS at ${url} …`);
+  await pollHealthz(url, 3 * 60_000, log, () => diagnoseUnhealthy(target, appPort, source, domain));
+}
+
+export async function deployControlPlaneToHetzner(
+  opts: ControlPlaneHetznerDeployOptions,
+): Promise<ControlPlaneHetznerDeployResult> {
+  const log = opts.onLog ?? (() => {});
+  const source = opts.source;
+  const client = makeHetznerClient();
+
+  // Package mode ships the compose stack from the host, so resolve it BEFORE
+  // spending money on a VPS — a partial dev build should fail here, not after.
+  // (applyControlPlaneConfig resolves it again for real; this is the early gate.)
+  if (source.kind === 'package') resolveHubDeployAssets();
+
+  const stamp = Date.now().toString(36);
+  const name = `agentbox-control-plane-${stamp}`;
+
+  log('detecting host egress IP for the firewall…');
+  const hostCidr = normalizeSourceCidr(await detectEgressIp());
+
+  log('creating the control-plane firewall (:22 host-only, :80/:443 open)…');
+  // retryOnAmbiguous: true — a firewall is free and per-deploy-uniquely named,
+  // so a retry after a hidden success leaves at most a harmless orphan; unlike
+  // the server create below (billable), a transient 502/504/429 must not abort
+  // the deploy on its very first step.
+  const firewall = await withHetznerRetry(
+    { method: 'createFirewall', retryOnAmbiguous: true, attemptTimeoutMs: 60_000 },
+    () =>
+      client.createFirewall({
+        name,
+        rules: controlPlaneInboundRules(hostCidr),
+        labels: { 'agentbox.managed': 'true', 'agentbox.role': 'control-plane' },
+      }),
   );
 
+  const keyDir = join(homedir(), '.agentbox', 'control-plane', 'ssh', stamp);
+  const key = await mintSshKey(keyDir, `agentbox-control-plane-${stamp}`);
+  const knownHosts = join(keyDir, 'known_hosts');
+
+  log(
+    source.kind === 'package'
+      ? `provisioning ${opts.serverType ?? 'cx23'} VPS (hub from npm: @madarco/agentbox@${source.spec})…`
+      : `provisioning ${opts.serverType ?? 'cx23'} VPS (hub from source: ${source.repoUrl}@${source.repoRef})…`,
+  );
+  const { server } = await withHetznerRetry(
+    { method: 'createServer', retryOnAmbiguous: false, attemptTimeoutMs: 120_000 },
+    () =>
+      client.createServer({
+        name,
+        server_type: opts.serverType ?? 'cx23',
+        image: opts.serverImage ?? 'ubuntu-24.04',
+        location: opts.location ?? 'nbg1',
+        user_data: controlPlaneCloudInit({
+          sshPubkey: key.publicKey,
+          // Package mode needs no repo on the VPS at all.
+          ...(source.kind === 'source' ? { repo: { url: source.repoUrl, ref: source.repoRef } } : {}),
+        }),
+        firewalls: [{ firewall: firewall.id }],
+        labels: { 'agentbox.managed': 'true', 'agentbox.role': 'control-plane' },
+        start_after_create: true,
+      }),
+  );
+
+  const ip = await serverIpv4(client, server, 60_000);
+  const domain = opts.domain ?? `${ip}.sslip.io`;
+  const url = `https://${domain}`;
+  const target: SshTargetArgs = { host: ip, user: 'root', identity: key.privatePath, knownHosts };
+
+  const provisioned: ControlPlaneHetznerDeployResult = {
+    url,
+    serverId: server.id,
+    ip,
+    domain,
+    firewallId: firewall.id,
+    sshKeyDir: keyDir,
+  };
+  // Best-effort: a caller's bookkeeping failure must not abort a deploy that is
+  // otherwise fine (the record is a debugging aid, not part of the contract).
+  try {
+    await opts.onProvisioned?.(provisioned);
+  } catch {
+    /* best-effort */
+  }
+
+  log(`VPS ${ip} up; waiting for ssh…`);
+  if (!(await waitForSsh(target, 5 * 60_000))) {
+    throw new Error(`ssh never came up on ${ip}`);
+  }
+  log(
+    source.kind === 'package'
+      ? 'waiting for cloud-init (Docker)…'
+      : 'waiting for cloud-init (Docker + repo clone)…',
+  );
+  await sshExec(target, 'cloud-init status --wait || true', { timeoutMs: 12 * 60_000, onLine: log });
+
+  await applyControlPlaneConfig({
+    target,
+    source,
+    envContent: opts.envContent,
+    url,
+    domain,
+    hostCidr,
+    stamp,
+    onLog: log,
+    requireClonedRepo: true,
+  });
+
   return provisioned;
+}
+
+export interface ControlPlaneUpdateOptions {
+  /** The existing control box, from `deploy.json`. */
+  record: { ip: string; sshKeyDir: string; url: string; domain?: string; firewallId?: number };
+  /** The version to move to. */
+  source: HubDeploySource;
+  /** Contents of `control-plane.env`. */
+  envContent: string;
+  onLog?: (line: string) => void;
+}
+
+/**
+ * Move an existing control box to a different build, in place.
+ *
+ * Everything after the ssh hop is the same code a fresh deploy runs
+ * (`applyControlPlaneConfig`), which is deliberate: a newer hub can want `.env`
+ * keys, a different container port, or new compose assets, and re-running the
+ * whole configuration is the only way an update stays equivalent to a redeploy.
+ * The hub self-migrates its auth + store on boot, so there is no migrate step.
+ *
+ * The data volume (`/opt/agentbox/hub-data`) is never touched, so the store,
+ * logins, custody and box SSH keys survive.
+ */
+export async function updateControlPlaneOnHetzner(
+  opts: ControlPlaneUpdateOptions,
+): Promise<void> {
+  const log = opts.onLog ?? (() => {});
+  const { record, source } = opts;
+  const stamp = Date.now().toString(36);
+  const domain = record.domain ?? new URL(record.url).hostname;
+
+  // Only :22 is locked to an IP (:80/:443 stay open so boxes can reach the hub),
+  // so a laptop that changed networks since the deploy cannot ssh in at all.
+  // Re-sync over the Hetzner API FIRST — that path still works when ssh doesn't,
+  // which is exactly the situation that needs fixing.
+  const hostCidr = normalizeSourceCidr(await detectEgressIp());
+  if (record.firewallId !== undefined) {
+    const client = makeHetznerClient();
+    const fw = await client.getFirewall(record.firewallId);
+    const sshRule = fw?.rules.find((r) => r.direction === 'in' && r.port === '22');
+    if (fw && firewallNeedsSync(sshRule?.source_ips, hostCidr)) {
+      log(`egress IP changed — re-locking SSH to ${hostCidr}…`);
+      await client.setFirewallRules(record.firewallId, controlPlaneInboundRules(hostCidr));
+    }
+  }
+
+  const target: SshTargetArgs = {
+    host: record.ip,
+    user: 'root',
+    identity: join(record.sshKeyDir, 'id_ed25519'),
+    knownHosts: join(record.sshKeyDir, 'known_hosts'),
+  };
+  log(`connecting to ${record.ip}…`);
+  if (!(await waitForSsh(target, 2 * 60_000))) {
+    throw new Error(
+      `ssh did not come up on ${record.ip} — the VPS may be off, or its firewall still allows a different IP than ${hostCidr}`,
+    );
+  }
+
+  if (source.kind === 'source') {
+    // Fetch by ref then check out FETCH_HEAD, so a branch, a tag and a bare sha
+    // all work through one path (the same reason cloud-init's clone is two-step).
+    log(`checking out ${source.repoRef} on the VPS…`);
+    const co = await sshExec(
+      target,
+      `cd ${REMOTE_REPO_DIR} && git remote set-url origin ${shQuote(source.repoUrl)} && git fetch --depth 1 origin ${shQuote(source.repoRef)} && git checkout --force FETCH_HEAD`,
+      { timeoutMs: 5 * 60_000, onLine: log },
+    );
+    if (co.exitCode !== 0) {
+      throw new Error(
+        `could not check out ${source.repoRef} on the VPS (exit ${String(co.exitCode)}): ${co.stderr || co.stdout}`,
+      );
+    }
+  }
+
+  await applyControlPlaneConfig({
+    target,
+    source,
+    envContent: opts.envContent,
+    url: record.url,
+    domain,
+    hostCidr,
+    stamp,
+    onLog: log,
+  });
+}
+
+export interface ControlPlaneDestroyResult {
+  serverDeleted: boolean;
+  firewallDeleted: boolean;
+  /** Non-fatal problems worth reporting (already-gone resources, API errors). */
+  warnings: string[];
+}
+
+/**
+ * Delete a control box's Hetzner resources. Needs no ssh — which matters,
+ * because `:22` is locked to whichever egress IP deployed the box, so a user on
+ * a different network can still tear it down.
+ *
+ * Never throws for a resource that is already gone: the local state must still
+ * be purged afterwards, or a half-deleted control box leaves the user with
+ * config pointing at nothing and no command that will clear it.
+ */
+export async function destroyControlPlaneOnHetzner(opts: {
+  serverId?: number;
+  firewallId?: number;
+  onLog?: (line: string) => void;
+  /** Seam for tests; defaults to the real Hetzner client. */
+  client?: Pick<HetznerClient, 'deleteServer' | 'deleteFirewall'>;
+  /** Seam for tests; the wait between firewall-delete attempts. */
+  retryDelayMs?: number;
+}): Promise<ControlPlaneDestroyResult> {
+  const log = opts.onLog ?? (() => {});
+  const client = opts.client ?? makeHetznerClient();
+  const retryDelayMs = opts.retryDelayMs ?? 5_000;
+  const warnings: string[] = [];
+  let serverDeleted = false;
+  let firewallDeleted = false;
+
+  if (opts.serverId !== undefined) {
+    try {
+      log(`deleting server ${String(opts.serverId)}…`);
+      await client.deleteServer(opts.serverId);
+      serverDeleted = true;
+    } catch (e) {
+      warnings.push(`server ${String(opts.serverId)}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  if (opts.firewallId !== undefined) {
+    // Hetzner refuses to delete a firewall still applied to a server, and the
+    // delete above is asynchronous, so give the detach a few seconds to land.
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try {
+        log(`deleting firewall ${String(opts.firewallId)}…`);
+        await client.deleteFirewall(opts.firewallId);
+        firewallDeleted = true;
+        break;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (attempt === 5) {
+          warnings.push(`firewall ${String(opts.firewallId)}: ${msg}`);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, retryDelayMs));
+      }
+    }
+  }
+
+  return { serverDeleted, firewallDeleted, warnings };
 }

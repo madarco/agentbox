@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { controlPlaneCloudInit } from '../src/cloud-init.js';
 import {
   describeCaddyHop,
+  destroyControlPlaneOnHetzner,
   hubContainerPort,
   isFullHubCompose,
 } from '../src/control-plane-deploy.js';
@@ -108,6 +109,21 @@ describe('the shipped docker-compose.yml still drives the deploy', () => {
     expect(body).toContain('ENV AGENTBOX_CLI_ENTRY=/opt/agentbox-cli/dist/index.js');
     expect(body).toContain('runtime/hub/apps/hub/server.js');
   });
+
+  it('exports the INSTALLED version for /healthz, not the requested spec', async () => {
+    const body = await readFile(resolve(REPO_ROOT, 'apps', 'hub', 'Dockerfile.package'), 'utf8');
+    // The relay reports AGENTBOX_CLI_VERSION on /healthz, which is what
+    // `hub status` shows and `hub update` compares against. A spec may be a
+    // dist-tag (`nightly`) or a range, so it must NOT be the source of this.
+    expect(body).toContain('AGENTBOX_CLI_VERSION=');
+    expect(body).toMatch(/AGENTBOX_CLI_VERSION=[^\n]*package\.json/);
+    expect(body).not.toMatch(/AGENTBOX_CLI_VERSION=.*AGENTBOX_SPEC/);
+  });
+
+  it('the source image reports its version the same way', async () => {
+    const body = await readFile(resolve(REPO_ROOT, 'apps', 'hub', 'Dockerfile'), 'utf8');
+    expect(body).toMatch(/AGENTBOX_CLI_VERSION=[^\n]*package\.json/);
+  });
 });
 
 describe('controlPlaneCloudInit', () => {
@@ -196,5 +212,78 @@ describe('describeCaddyHop', () => {
     expect(describeCaddyHop(' 200 \n', HAPPY_CADDY_LOG, 8787, 'h.example')).toContain(
       'returned 200',
     );
+  });
+});
+
+/**
+ * Teardown must never leave the caller unable to clean up. A server someone
+ * already deleted by hand (404) used to be indistinguishable from "destroy
+ * failed", which would abort before the LOCAL purge — leaving config pointing at
+ * a machine that no longer exists and no command that clears it.
+ */
+describe('destroyControlPlaneOnHetzner', () => {
+  it('reports an already-gone server as a warning, and still deletes the firewall', async () => {
+    const calls: string[] = [];
+    const result = await destroyControlPlaneOnHetzner({
+      serverId: 1,
+      firewallId: 2,
+      client: {
+        deleteServer: () => {
+          calls.push('server');
+          return Promise.reject(new Error('hetzner 404: server not found'));
+        },
+        deleteFirewall: () => {
+          calls.push('firewall');
+          return Promise.resolve();
+        },
+      },
+    });
+    expect(calls).toEqual(['server', 'firewall']);
+    expect(result.serverDeleted).toBe(false);
+    expect(result.firewallDeleted).toBe(true);
+    expect(result.warnings.join(' ')).toContain('404');
+  });
+
+  it('deletes the server before the firewall (Hetzner refuses an attached one)', async () => {
+    const calls: string[] = [];
+    const result = await destroyControlPlaneOnHetzner({
+      serverId: 1,
+      firewallId: 2,
+      client: {
+        deleteServer: () => {
+          calls.push('server');
+          return Promise.resolve(null);
+        },
+        deleteFirewall: () => {
+          calls.push('firewall');
+          return Promise.resolve();
+        },
+      },
+    });
+    expect(calls).toEqual(['server', 'firewall']);
+    expect(result).toEqual({ serverDeleted: true, firewallDeleted: true, warnings: [] });
+  });
+
+  it('never throws, so the local purge always gets to run', async () => {
+    const result = await destroyControlPlaneOnHetzner({
+      serverId: 1,
+      firewallId: 2,
+      retryDelayMs: 0,
+      client: {
+        deleteServer: () => Promise.reject(new Error('boom')),
+        deleteFirewall: () => Promise.reject(new Error('still attached')),
+      },
+    });
+    expect(result.serverDeleted).toBe(false);
+    expect(result.firewallDeleted).toBe(false);
+    expect(result.warnings).toHaveLength(2);
+  });
+
+  it('is a no-op for a record with neither id', async () => {
+    expect(await destroyControlPlaneOnHetzner({})).toEqual({
+      serverDeleted: false,
+      firewallDeleted: false,
+      warnings: [],
+    });
   });
 });

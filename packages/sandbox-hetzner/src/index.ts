@@ -61,9 +61,15 @@ export {
 } from './prepare.js';
 export { generateBoxCloudInit, generatePrepareCloudInit, controlPlaneCloudInit, type BoxCloudInitOptions, type PrepareCloudInitOptions, type ControlPlaneCloudInitOptions } from './cloud-init.js';
 export {
+  applyControlPlaneConfig,
   deployControlPlaneToHetzner,
+  destroyControlPlaneOnHetzner,
+  updateControlPlaneOnHetzner,
+  type ApplyControlPlaneOptions,
+  type ControlPlaneDestroyResult,
   type ControlPlaneHetznerDeployOptions,
   type ControlPlaneHetznerDeployResult,
+  type ControlPlaneUpdateOptions,
 } from './control-plane-deploy.js';
 export {
   HUB_DEPLOY_ASSETS,

@@ -63,4 +63,10 @@ ENV AGENTBOX_DOCKER_CONTEXT=/opt/agentbox-cli/runtime/docker
 EXPOSE 8787
 # server.ts self-migrates auth (ensureAuthReady) + the store on boot, and anchors
 # its own cwd from required-server-files.json — no separate migrate step, no WORKDIR.
-CMD ["node", "/opt/agentbox-cli/runtime/hub/apps/hub/server.js"]
+#
+# AGENTBOX_CLI_VERSION is what the relay reports on /healthz, and so what
+# `agentbox hub status` shows and `hub update` compares against. Read from the
+# installed package's own manifest rather than from AGENTBOX_SPEC: a spec may be
+# a dist-tag (`nightly`) or a range, and the useful answer is the version that
+# actually got installed.
+CMD ["sh", "-c", "export AGENTBOX_CLI_VERSION=\"$(node -p \"require('/opt/agentbox-cli/package.json').version\")\"; exec node /opt/agentbox-cli/runtime/hub/apps/hub/server.js"]
