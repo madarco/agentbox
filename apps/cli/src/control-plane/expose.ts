@@ -309,10 +309,13 @@ export async function restoreTunnelIfExposed(log: (l: string) => void = () => {}
     // leave NO tunnel while the record and the hub still advertise the old
     // hostname — boxes silently lose the hub. Say so plainly; a terse log line
     // scrolls past inside a spinner and reads like a warning about nothing.
+    // Careful with tense: this runs BEFORE ensureHub on `hub start`, so on a cold
+    // start (reboot, autostart) the hub is not up yet — claiming it is sends
+    // debugging after the wrong thing.
     const reason = e instanceof Error ? e.message : String(e);
     log(`WARNING: the ${record.tunnel} tunnel did not come back (${reason}).`);
     log(
-      `The hub is running but cloud boxes cannot reach it at ${record.publicUrl ?? 'its recorded URL'} — ` +
+      `Cloud boxes will not reach the hub at ${record.publicUrl ?? 'its recorded URL'} until it does — ` +
         're-run `agentbox hub start` to retry, or `agentbox hub expose --tunnel ' +
         `${record.tunnel}\` to re-establish it.`,
     );
