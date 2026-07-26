@@ -318,9 +318,15 @@ destroy_test_control_box() {
     echo ">> deleting the VM's control box (server $sid, ip $(printf '%s' "$rec" | jget ip))"
     api DELETE "/servers/$sid" >/dev/null 2>&1 || echo "   (server already gone)"
   fi
+  # The firewall can't be deleted while it is still applied to the dying server.
   if [[ -n "$fid" ]]; then
-    sleep 3
-    api DELETE "/firewalls/$fid" >/dev/null 2>&1 || echo "   (firewall $fid not deleted — retry later)"
+    local i code
+    for i in 1 2 3 4 5 6; do
+      code="$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: Bearer $HCLOUD_TOKEN" "$API/firewalls/$fid")"
+      if [[ "$code" == "204" || "$code" == "404" ]]; then echo "   firewall $fid gone"; return 0; fi
+      sleep 5
+    done
+    echo "   (firewall $fid still in use — delete it from the Hetzner console)"
   fi
 }
 
@@ -339,7 +345,9 @@ cmd_reset() {
   [[ "$keep_hub" == "1" ]] || destroy_test_control_box
 
   echo ">> wiping ~/.agentbox (and stopping the local hub/relay)"
-  ssh_dev 'agentbox hub stop >/dev/null 2>&1 || true; agentbox relay stop >/dev/null 2>&1 || true; pkill -f agentbox-relay >/dev/null 2>&1 || true; rm -rf ~/.agentbox'
+  # `[a]gentbox-relay`: a plain pattern also matches the ssh command line running
+  # it, so pkill kills its own session and the reset aborts half-done.
+  ssh_dev 'agentbox hub stop >/dev/null 2>&1 || true; agentbox relay stop >/dev/null 2>&1 || true; pkill -f "[a]gentbox-relay" >/dev/null 2>&1 || true; rm -rf ~/.agentbox'
 
   echo ">> re-applying the vault"
   apply_vault

@@ -81,7 +81,7 @@ Run everything from `~/projects/agentbox-hubtest` on the VM — `hub-test-vm.sh 
 
 | # | Run | Expect |
 |---|---|---|
-| B1 | `agentbox prepare --provider e2b` | builds the template from the Dockerfile, writes `~/.agentbox/e2b-prepared.json` (~10 min) |
+| B1 | `agentbox prepare --provider e2b` | builds the template from the Dockerfile, writes `~/.agentbox/e2b-prepared.json` (~10 min). `prepare` writes **no** log file — watch it with `hub-test-vm.sh ssh -- tmux capture-pane -p -t work` |
 | B2 | `agentbox create -y -n cloud --provider e2b --local` | box ready; `--local` forces the PC-side build (no hub yet, but be explicit) |
 | B3 | `agentbox claude cloud` | Claude starts **logged in** (the vault's `claude-credentials.json` travelled) |
 | B4 | `agentbox destroy cloud -y` | sandbox gone from `Sandbox.list()` |
@@ -104,11 +104,11 @@ run can't be scripted.
 |---|---|---|
 | D1 | `agentbox hub credentials push` then `agentbox hub custody list` | the agent logins are in custody |
 | D2 | `agentbox hub project push` | project seed uploaded (untracked + env) |
-| D3 | `agentbox create --provider e2b` (no `--local`) | routed to the control box (`cloud.viaHub` default): job enqueued, worker provisions it, `agentbox hub jobs list` shows it done |
+| D3 | `agentbox create --provider e2b` (no `--local`) | routed to the control box (`cloud.viaHub` default): job enqueued, worker provisions it, `agentbox hub jobs list` shows it done. **Needs a base template the control box can see** — with neither side baked it fails fast with `no E2B base template found` (do B1 first, or bake from the hub's Settings page) |
 | D4 | Web UI → **Add project** (clone the test repo on the VPS) → **Create box** | box appears in the dashboard with live status, nothing ran on the VM |
 | D5 | `agentbox ls -g` | the web-created box shows as `on hub`; `agentbox attach <box>` adopts it |
 | D6 | **stop the VM's relay** (`agentbox relay stop`), then in the box: `agentbox-ctl git push` | push succeeds via the control box's `gh` token; approval (non-`agentbox/*` branch) shows in the web UI and `agentbox hub prompts list` |
-| D7 | `agentbox hub boxes list` / `… boxes stop <box>` / `… boxes rm <box>` | drive + destroy from the CLI over `/api/v1` |
+| D7 | `agentbox hub boxes list` / `… boxes stop <id>` / `… boxes rm <id>` | drive + destroy from the CLI over `/api/v1`. These take the box **id** from `boxes list` — a name gets `No box '<name>' on the control box` |
 
 D6 is the whole reason the control box exists: with the laptop (here: the VM's
 relay) down, the box still pushes.
@@ -122,6 +122,20 @@ scripts/hub-test-vm.sh reset       # boxes + control box + ~/.agentbox
 Then check the [Hetzner console](https://console.hetzner.cloud) for leftovers —
 servers labeled `agentbox.role=control-plane` (a failed deploy is *not* torn
 down) and their firewalls keep billing.
+
+## First pass — 2026-07-26
+
+Run on `0.28.0-nightly.202607260716` (npm `nightly`), from a virgin `~/.agentbox`.
+
+- **Passed:** A0–A6 (docker box on a clean Linux host, GHCR image pull, web
+  service, in-box push as @madawaldos, destroy) · B1 (e2b bake, 10 min) ·
+  C1–C3 (hub setup + Hetzner deploy, healthz 200, CLI repointed) ·
+  D1–D3, D5–D6 (custody push, hub-routed e2b create, adopt, and **push with the
+  VM's own relay stopped** — the payoff) · `reset` back to virgin.
+- **Not run:** B2–B4, C4 (browser sign-in), D4 (web-UI create), D7 `boxes rm`.
+- **Found:** a hub create fails fast when neither side has a base bake (D3) —
+  bake first; `agentbox url` can't open a browser on Linux (known gap);
+  `hub boxes <action>` needs the id, not the name.
 
 ## Gotchas
 
