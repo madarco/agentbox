@@ -69,23 +69,45 @@ export function detectLanIp(ifaces: ReturnType<typeof networkInterfaces> = netwo
   return '127.0.0.1';
 }
 
-/** Resolve the box-facing URL for the requested exposure. Impure only for the tunnel. */
-async function resolvePublicUrl(
+/**
+ * Resolve the box-facing URL for the requested exposure. Impure only for the
+ * tunnel, which is injectable so the ordering is testable.
+ *
+ * `--tunnel` decides whether a tunnel RUNS; `--public-url` only decides what URL
+ * is advertised. Those were conflated: an explicit URL returned before the
+ * tunnel was started, so the documented named-Cloudflare flow
+ * (`--tunnel cloudflare --tunnel-token X --public-url Y`) wrote the record and
+ * reported success with **no tunnel process running** — boxes could not reach
+ * the hub until the next `hub start` happened to bring it up.
+ */
+export async function resolvePublicUrl(
   opts: ExposeOptions,
   port: number,
   log: (l: string) => void,
+  deps: { startTunnel: typeof startTunnel } = { startTunnel },
 ): Promise<{ publicUrl: string; cloudReachable: boolean }> {
-  if (opts.publicUrl) return { publicUrl: opts.publicUrl.replace(/\/$/, ''), cloudReachable: true };
+  const explicit = opts.publicUrl?.replace(/\/$/, '');
   if (opts.tunnel) {
-    if (opts.tunnel === 'cloudflare' && opts.tunnelToken) {
+    // A named tunnel's hostname is configured on Cloudflare's side, so nothing
+    // here can discover it — it has to be supplied.
+    if (opts.tunnel === 'cloudflare' && opts.tunnelToken && !explicit) {
       throw new Error(
         'a named Cloudflare tunnel (--tunnel-token) has a hostname only you know — pass it with --public-url.',
       );
     }
-    const handle = await startTunnel({ kind: opts.tunnel, port, onLog: log });
-    return { publicUrl: handle.publicUrl.replace(/\/$/, ''), cloudReachable: true };
+    const handle = await deps.startTunnel({
+      kind: opts.tunnel,
+      port,
+      ...(opts.tunnelToken ? { token: opts.tunnelToken } : {}),
+      onLog: log,
+    });
+    // An explicit URL wins: for a named tunnel it IS the hostname, and there is
+    // nothing useful to scrape.
+    return { publicUrl: explicit ?? handle.publicUrl.replace(/\/$/, ''), cloudReachable: true };
   }
-  // No tunnel: the LAN address (or loopback when bound to 127.0.0.1). A cloud box
+  // No tunnel, but a URL you terminate yourself — reachable, nothing to start.
+  if (explicit) return { publicUrl: explicit, cloudReachable: true };
+  // Neither: the LAN address (or loopback when bound to 127.0.0.1). A cloud box
   // can't reach either, so cloudReachable is false — the caller warns loudly.
   const bind = opts.bind ?? '0.0.0.0';
   const host = bind === '127.0.0.1' ? '127.0.0.1' : detectLanIp();

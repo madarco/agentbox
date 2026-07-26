@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ControlPlaneDeployRecord } from '@agentbox/sandbox-core';
 import { buildExposedHubEnv, parseEnvFileBody } from '@agentbox/sandbox-core';
-import { detectLanIp } from '../src/control-plane/expose.js';
+import { detectLanIp, resolvePublicUrl } from '../src/control-plane/expose.js';
 import { parseTrycloudflareUrl, cloudflaredAsset } from '../src/control-plane/tunnel.js';
 import { launchdPlist, systemdUnit } from '../src/lib/autostart.js';
 
@@ -16,7 +16,11 @@ const CREDS = {
 
 describe('buildExposedHubEnv', () => {
   it('flips the hub to the exposed hetzner profile with the worker on', () => {
-    const rec: ControlPlaneDeployRecord = { provider: 'local', publicUrl: 'https://x.trycloudflare.com', port: 8787 };
+    const rec: ControlPlaneDeployRecord = {
+      provider: 'local',
+      publicUrl: 'https://x.trycloudflare.com',
+      port: 8787,
+    };
     const env = buildExposedHubEnv(rec, CREDS);
     expect(env.AGENTBOX_HUB_PROFILE).toBe('hetzner');
     expect(env.AGENTBOX_HUB_AUTH).toBe('on');
@@ -44,9 +48,12 @@ describe('buildExposedHubEnv', () => {
   });
 
   it('adds the admin CIDR only when recorded', () => {
-    expect(buildExposedHubEnv({ provider: 'local' }, CREDS).AGENTBOX_HUB_ADMIN_CIDR).toBeUndefined();
     expect(
-      buildExposedHubEnv({ provider: 'local', adminCidr: '1.2.3.4/32' }, CREDS).AGENTBOX_HUB_ADMIN_CIDR,
+      buildExposedHubEnv({ provider: 'local' }, CREDS).AGENTBOX_HUB_ADMIN_CIDR,
+    ).toBeUndefined();
+    expect(
+      buildExposedHubEnv({ provider: 'local', adminCidr: '1.2.3.4/32' }, CREDS)
+        .AGENTBOX_HUB_ADMIN_CIDR,
     ).toBe('1.2.3.4/32');
   });
 });
@@ -67,7 +74,9 @@ describe('detectLanIp', () => {
     expect(ip).toBe('192.168.1.42');
   });
   it('falls back to loopback when there is no external interface', () => {
-    expect(detectLanIp({ lo: [{ family: 'IPv4', internal: true, address: '127.0.0.1' } as never] })).toBe('127.0.0.1');
+    expect(
+      detectLanIp({ lo: [{ family: 'IPv4', internal: true, address: '127.0.0.1' } as never] }),
+    ).toBe('127.0.0.1');
   });
 });
 
@@ -83,8 +92,14 @@ describe('parseTrycloudflareUrl', () => {
 
 describe('cloudflaredAsset', () => {
   it('maps darwin to a .tgz and linux to a raw binary', () => {
-    expect(cloudflaredAsset('darwin', 'arm64')).toEqual({ file: 'cloudflared-darwin-arm64.tgz', isTgz: true });
-    expect(cloudflaredAsset('linux', 'x64')).toEqual({ file: 'cloudflared-linux-amd64', isTgz: false });
+    expect(cloudflaredAsset('darwin', 'arm64')).toEqual({
+      file: 'cloudflared-darwin-arm64.tgz',
+      isTgz: true,
+    });
+    expect(cloudflaredAsset('linux', 'x64')).toEqual({
+      file: 'cloudflared-linux-amd64',
+      isTgz: false,
+    });
   });
 });
 
@@ -104,5 +119,77 @@ describe('autostart unit bodies', () => {
     const unit = systemdUnit(inv);
     expect(unit).toContain('ExecStart=/usr/bin/node /opt/agentbox/index.js hub start --no-open');
     expect(unit).toContain('WantedBy=default.target');
+  });
+});
+
+/**
+ * `--tunnel` decides whether a tunnel RUNS; `--public-url` only decides what URL
+ * is advertised. Conflating them meant the documented named-Cloudflare flow
+ * (`--tunnel cloudflare --tunnel-token X --public-url Y`) wrote the record and
+ * reported success with no tunnel process running, so boxes could not reach the
+ * hub until some later `hub start` happened to bring it up.
+ */
+describe('resolvePublicUrl', () => {
+  const log = (): void => {};
+  function fakeTunnel(publicUrl = 'https://scraped.trycloudflare.com') {
+    const calls: Array<{ kind: string; port: number; token?: string }> = [];
+    const startTunnel = (a: { kind: string; port: number; token?: string }) => {
+      calls.push(a);
+      return Promise.resolve({ publicUrl, stop: () => Promise.resolve() });
+    };
+    return { calls, startTunnel: startTunnel as never };
+  }
+
+  it('starts the tunnel even when --public-url supplies the hostname', async () => {
+    const t = fakeTunnel();
+    const r = await resolvePublicUrl(
+      { tunnel: 'cloudflare', tunnelToken: 'tok', publicUrl: 'https://hub.example.com/' },
+      8787,
+      log,
+      { startTunnel: t.startTunnel },
+    );
+    expect(t.calls).toHaveLength(1);
+    expect(t.calls[0]?.token).toBe('tok');
+    // The explicit hostname wins — there is nothing useful to scrape for a named tunnel.
+    expect(r.publicUrl).toBe('https://hub.example.com');
+    expect(r.cloudReachable).toBe(true);
+  });
+
+  it('advertises the scraped URL for a quick tunnel', async () => {
+    const t = fakeTunnel('https://abc.trycloudflare.com/');
+    const r = await resolvePublicUrl({ tunnel: 'cloudflare' }, 8787, log, {
+      startTunnel: t.startTunnel,
+    });
+    expect(t.calls).toHaveLength(1);
+    expect(t.calls[0]?.token).toBeUndefined();
+    expect(r.publicUrl).toBe('https://abc.trycloudflare.com');
+  });
+
+  it('refuses a named tunnel with no hostname to advertise', async () => {
+    const t = fakeTunnel();
+    await expect(
+      resolvePublicUrl({ tunnel: 'cloudflare', tunnelToken: 'tok' }, 8787, log, {
+        startTunnel: t.startTunnel,
+      }),
+    ).rejects.toThrow(/--public-url/);
+    expect(t.calls).toHaveLength(0);
+  });
+
+  it('starts nothing for a bare --public-url, but counts as reachable', async () => {
+    const t = fakeTunnel();
+    const r = await resolvePublicUrl({ publicUrl: 'https://hub.example.com' }, 8787, log, {
+      startTunnel: t.startTunnel,
+    });
+    expect(t.calls).toHaveLength(0);
+    expect(r).toEqual({ publicUrl: 'https://hub.example.com', cloudReachable: true });
+  });
+
+  it('falls back to the LAN address and flags cloud boxes as unreachable', async () => {
+    const t = fakeTunnel();
+    const r = await resolvePublicUrl({ bind: '127.0.0.1' }, 9000, log, {
+      startTunnel: t.startTunnel,
+    });
+    expect(t.calls).toHaveLength(0);
+    expect(r).toEqual({ publicUrl: 'http://127.0.0.1:9000', cloudReachable: false });
   });
 });
