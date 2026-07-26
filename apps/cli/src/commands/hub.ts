@@ -91,32 +91,47 @@ interface StatusOpts {
 }
 
 function renderStatus(s: HubStatus, exposed?: ControlPlaneDeployRecord | null): string {
+  // The exposed CONFIG is a property of the machine, not of the running process,
+  // so it is reported whether or not the hub is up. Reporting it only while
+  // running made a stopped control box look like a plain local hub — with
+  // autostart still installed and boxes still pointed at it.
+  const exposedLines = exposed
+    ? [
+        ...(exposed.publicUrl ? [`  box-facing url: ${exposed.publicUrl}`] : []),
+        ...(exposed.tunnel ? [`  tunnel: ${exposed.tunnel}`] : []),
+        ...(exposed.autostart ? ['  autostart: on'] : []),
+      ]
+    : [];
   if (s.running) {
-    const exposedLines =
+    // `mode` describes the PROCESS, so it stays keyed on the live profile: a hub
+    // running plain on a machine that is configured exposed is exactly the
+    // mismatch worth seeing.
+    const mode =
       s.profile === 'hetzner'
-        ? [
-            `  mode: exposed (control box${s.worker ? ', worker on' : ''})`,
-            ...(exposed?.publicUrl ? [`  box-facing url: ${exposed.publicUrl}`] : []),
-            ...(exposed?.tunnel ? [`  tunnel: ${exposed.tunnel}`] : []),
-            ...(exposed?.autostart ? ['  autostart: on'] : []),
-          ]
-        : [];
+        ? [`  mode: exposed (control box${s.worker ? ', worker on' : ''})`]
+        : exposed
+          ? ['  mode: NOT exposed yet (configured, but this process is the plain hub)']
+          : [];
     return [
       `hub: running${s.ui ? '' : ' (bare relay on the port — no UI; run `agentbox hub start`)'}`,
       `  pid:  ${s.pid === null ? '?' : String(s.pid)}`,
       `  port: ${String(s.port)}`,
       `  url:  ${s.openUrl}`,
+      ...mode,
       ...exposedLines,
       `  log:  ${s.logFile}`,
     ].join('\n');
   }
+  const stoppedExposed = exposed ? ['  mode: exposed (configured; the hub is not running)'] : [];
   if (s.pidAlive) {
     return [
       `hub: not responding (pid ${String(s.pid)} alive but /healthz silent)`,
+      ...stoppedExposed,
+      ...exposedLines,
       `  log:  ${s.logFile}`,
     ].join('\n');
   }
-  return ['hub: not running', `  log:  ${s.logFile}`].join('\n');
+  return ['hub: not running', ...stoppedExposed, ...exposedLines, `  log:  ${s.logFile}`].join('\n');
 }
 
 /**

@@ -10,7 +10,7 @@
  * Kept out of the command modules so low-level code (the provider registry) can
  * load it without importing a command.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -48,4 +48,30 @@ export function readControlPlaneEnvMap(path: string = CONTROL_PLANE_ENV_PATH): R
     if (m) out[m[1]!] = m[2]!;
   }
   return out;
+}
+
+/**
+ * Set or remove a single key in `control-plane.env`, in place.
+ *
+ * An append-only write is wrong for anything that can be turned OFF again:
+ * `AGENTBOX_TUNNEL_TOKEN` used to be appended when `--tunnel-token` was passed
+ * and never cleared, so after `unexpose --keep-credentials` a re-expose as a
+ * *quick* tunnel still found the old token on the next `hub start` and brought
+ * up a NAMED tunnel on a hostname the record knows nothing about. Repeated
+ * exposes also stacked duplicate lines.
+ *
+ * `value === null` removes the key. Rewrites the file 0600.
+ */
+export function setControlPlaneEnvKey(
+  key: string,
+  value: string | null,
+  path: string = CONTROL_PLANE_ENV_PATH,
+): void {
+  const body = existsSync(path) ? readFileSync(path, 'utf8') : '';
+  const kept = body.split('\n').filter((line) => !new RegExp(`^${key}=`).test(line.trim()));
+  if (value !== null) kept.push(`${key}=${value}`);
+  // Collapse the blank lines a filtered-out key leaves behind, keeping one
+  // trailing newline.
+  const next = kept.filter((l, i, a) => l.trim() !== '' || i === a.length - 1).join('\n');
+  writeFileSync(path, next.endsWith('\n') ? next : `${next}\n`, { mode: 0o600 });
 }

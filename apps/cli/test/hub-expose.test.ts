@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ControlPlaneDeployRecord } from '@agentbox/sandbox-core';
 import { buildExposedHubEnv, parseEnvFileBody } from '@agentbox/sandbox-core';
 import { detectLanIp, resolvePublicUrl } from '../src/control-plane/expose.js';
+import { setControlPlaneEnvKey } from '../src/control-plane/env-file.js';
 import { parseTrycloudflareUrl, cloudflaredAsset } from '../src/control-plane/tunnel.js';
 import { launchdPlist, systemdUnit } from '../src/lib/autostart.js';
 
@@ -191,5 +195,51 @@ describe('resolvePublicUrl', () => {
     });
     expect(t.calls).toHaveLength(0);
     expect(r).toEqual({ publicUrl: 'http://127.0.0.1:9000', cloudReachable: false });
+  });
+});
+
+/**
+ * The token has to describe the expose that is happening NOW. Appended and never
+ * cleared, it survived `unexpose --keep-credentials`, so a later quick-tunnel
+ * expose found it on the next `hub start` and brought up a NAMED tunnel on a
+ * hostname the record knew nothing about.
+ */
+describe('setControlPlaneEnvKey', () => {
+  let dir = '';
+  let file = '';
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'agentbox-env-'));
+    file = join(dir, 'control-plane.env');
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('adds a key that was not there', () => {
+    writeFileSync(file, 'A=1\n');
+    setControlPlaneEnvKey('AGENTBOX_TUNNEL_TOKEN', 'tok', file);
+    expect(parseEnvFileBody(readFileSync(file, 'utf8'))).toEqual({
+      A: '1',
+      AGENTBOX_TUNNEL_TOKEN: 'tok',
+    });
+  });
+
+  it('replaces rather than stacking duplicates on repeated exposes', () => {
+    writeFileSync(file, 'AGENTBOX_TUNNEL_TOKEN=old\n');
+    setControlPlaneEnvKey('AGENTBOX_TUNNEL_TOKEN', 'new', file);
+    const body = readFileSync(file, 'utf8');
+    expect(body.match(/AGENTBOX_TUNNEL_TOKEN=/g)).toHaveLength(1);
+    expect(parseEnvFileBody(body).AGENTBOX_TUNNEL_TOKEN).toBe('new');
+  });
+
+  it('REMOVES the key on null, leaving the other secrets intact', () => {
+    writeFileSync(file, 'A=1\nAGENTBOX_TUNNEL_TOKEN=old\nB=2\n');
+    setControlPlaneEnvKey('AGENTBOX_TUNNEL_TOKEN', null, file);
+    const map = parseEnvFileBody(readFileSync(file, 'utf8'));
+    expect(map.AGENTBOX_TUNNEL_TOKEN).toBeUndefined();
+    expect(map).toEqual({ A: '1', B: '2' });
+  });
+
+  it('handles a file that does not exist yet', () => {
+    setControlPlaneEnvKey('AGENTBOX_TUNNEL_TOKEN', 'tok', file);
+    expect(parseEnvFileBody(readFileSync(file, 'utf8')).AGENTBOX_TUNNEL_TOKEN).toBe('tok');
   });
 });

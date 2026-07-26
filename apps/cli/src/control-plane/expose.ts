@@ -24,7 +24,7 @@ import {
 import { detectEgressIp } from '@agentbox/sandbox-hetzner';
 import { ensureHub, getHubStatus, stopHub, type HubEndpoint } from '@agentbox/sandbox-docker';
 import { AGENTBOX_VERSION } from '../version.js';
-import { CONTROL_PLANE_ENV_PATH, readControlPlaneEnvMap } from './env-file.js';
+import { readControlPlaneEnvMap, setControlPlaneEnvKey } from './env-file.js';
 import { persistDeployRecord, purgeLocalControlPlaneState } from './deploy-hetzner.js';
 import { startTunnel, stopTunnel, type TunnelKind } from './tunnel.js';
 import { installAutostart, removeAutostart, type AutostartResult } from '../lib/autostart.js';
@@ -125,10 +125,13 @@ export async function runExpose(opts: ExposeOptions): Promise<ExposeResult> {
 
   // A named-tunnel token is a secret, so it rides control-plane.env (not the
   // record) — that's also how a restart re-runs the named tunnel unattended.
-  if (opts.tunnelToken) {
-    const { appendFile } = await import('node:fs/promises');
-    await appendFile(CONTROL_PLANE_ENV_PATH, `AGENTBOX_TUNNEL_TOKEN=${opts.tunnelToken}\n`, { mode: 0o600 });
-  }
+  //
+  // Written as an upsert-or-REMOVE, not an append: the token has to describe the
+  // expose that is happening now. Left behind, it survives
+  // `unexpose --keep-credentials`, and a later quick-tunnel expose would then
+  // find it on the next `hub start` and bring up a NAMED tunnel on a hostname
+  // the record knows nothing about.
+  setControlPlaneEnvKey('AGENTBOX_TUNNEL_TOKEN', opts.tunnelToken ?? null);
 
   const { publicUrl, cloudReachable } = await resolvePublicUrl(opts, port, log);
 
