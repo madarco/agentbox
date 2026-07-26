@@ -557,6 +557,10 @@ export interface HealthzBody {
   version?: string;
   /** The agentbox short commit that spawned the relay (observability only). Absent on old relays. */
   commit?: string;
+  /** The hub's profile (`localhost` | `hetzner` | `vercel`). Absent on a lean relay / old hubs. */
+  profile?: string;
+  /** True when the resident create worker is running (`hub expose`). Absent otherwise. */
+  worker?: boolean;
 }
 
 export function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
@@ -595,6 +599,11 @@ export function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
                   typeof parsed.commit === 'string' && parsed.commit.length > 0
                     ? parsed.commit
                     : undefined,
+                profile:
+                  typeof parsed.profile === 'string' && parsed.profile.length > 0
+                    ? parsed.profile
+                    : undefined,
+                worker: parsed.worker === true ? true : undefined,
               });
             } else {
               resolveP(null);

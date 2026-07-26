@@ -16,7 +16,9 @@ import {
   resolveCustodyTarget,
   controlPlaneSubcommands,
   probeControlPlaneStatus,
+  localExposedLoopbackUrl,
 } from './control-plane.js';
+import { restoreTunnelIfExposed } from '../control-plane/expose.js';
 import { loadControlPlaneEnv } from '../control-plane/env-file.js';
 import { channelOfVersion } from '../lib/channel.js';
 import { AGENTBOX_VERSION } from '../version.js';
@@ -73,7 +75,11 @@ export async function resolveHubTarget(urlFlag?: string): Promise<HubTarget> {
   const url = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
   if (url) {
     loadControlPlaneEnv();
-    return { mode: 'remote', url, token: process.env.AGENTBOX_HUB_API_KEY ?? '' };
+    // A control box that IS this machine (`hub expose`) is reached over loopback,
+    // not the box-facing LAN/tunnel URL — but it's still the `remote`-shaped API
+    // (password profile, /api/v1 keyed by AGENTBOX_HUB_API_KEY).
+    const loopback = urlFlag ? null : await localExposedLoopbackUrl();
+    return { mode: 'remote', url: loopback ?? url, token: process.env.AGENTBOX_HUB_API_KEY ?? '' };
   }
   const s = await getHubStatus();
   return { mode: 'local', url: `http://127.0.0.1:${String(s.port)}`, token: s.token ?? '' };
@@ -84,13 +90,23 @@ interface StatusOpts {
   json?: boolean;
 }
 
-function renderStatus(s: HubStatus): string {
+function renderStatus(s: HubStatus, exposed?: ControlPlaneDeployRecord | null): string {
   if (s.running) {
+    const exposedLines =
+      s.profile === 'hetzner'
+        ? [
+            `  mode: exposed (control box${s.worker ? ', worker on' : ''})`,
+            ...(exposed?.publicUrl ? [`  box-facing url: ${exposed.publicUrl}`] : []),
+            ...(exposed?.tunnel ? [`  tunnel: ${exposed.tunnel}`] : []),
+            ...(exposed?.autostart ? ['  autostart: on'] : []),
+          ]
+        : [];
     return [
       `hub: running${s.ui ? '' : ' (bare relay on the port — no UI; run `agentbox hub start`)'}`,
       `  pid:  ${s.pid === null ? '?' : String(s.pid)}`,
       `  port: ${String(s.port)}`,
       `  url:  ${s.openUrl}`,
+      ...exposedLines,
       `  log:  ${s.logFile}`,
     ].join('\n');
   }
@@ -116,6 +132,18 @@ async function readDeployRecordFor(url: string): Promise<ControlPlaneDeployRecor
       await readFile(controlPlaneDeployPath(), 'utf8'),
     ) as ControlPlaneDeployRecord;
     return rec.url === url ? rec : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The deploy record for a control box that IS this machine (`hub expose`), or null. */
+async function readLocalDeployRecord(): Promise<ControlPlaneDeployRecord | null> {
+  try {
+    const rec = JSON.parse(
+      await readFile(controlPlaneDeployPath(), 'utf8'),
+    ) as ControlPlaneDeployRecord;
+    return rec.provider === 'local' ? rec : null;
   } catch {
     return null;
   }
@@ -190,6 +218,19 @@ const statusSub = new Command('status')
   .option('--json', 'emit status as JSON')
   .action(async (opts: StatusOpts) => {
     try {
+      // A control box that IS this machine (`hub expose`): show the exposed
+      // detail (profile, worker, box-facing URL, tunnel) that a plain remote
+      // probe of its loopback can't. Skipped when `--url` targets another hub.
+      const localExposed = opts.url ? null : await readLocalDeployRecord();
+      if (localExposed) {
+        const s = await getHubStatus();
+        if (opts.json) {
+          process.stdout.write(JSON.stringify({ ...s, exposed: localExposed }, null, 2) + '\n');
+          return;
+        }
+        process.stdout.write(renderStatus(s, localExposed) + '\n');
+        return;
+      }
       const target = await resolveHubTarget(opts.url);
       // Remote (a control box is configured, or --url given): probe its /healthz.
       if (target.mode === 'remote') {
@@ -228,11 +269,14 @@ const statusSub = new Command('status')
       }
       // Local: introspect the hub daemon process on this machine.
       const s = await getHubStatus();
+      // When exposed, the deploy record carries the box-facing URL / tunnel /
+      // autostart that /healthz doesn't.
+      const exposed = s.profile === 'hetzner' ? await readLocalDeployRecord() : null;
       if (opts.json) {
-        process.stdout.write(JSON.stringify(s, null, 2) + '\n');
+        process.stdout.write(JSON.stringify({ ...s, ...(exposed ? { exposed } : {}) }, null, 2) + '\n');
         return;
       }
-      process.stdout.write(renderStatus(s) + '\n');
+      process.stdout.write(renderStatus(s, exposed) + '\n');
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -275,6 +319,9 @@ const startSub = new Command('start')
     try {
       const s = spinner();
       s.start('starting hub');
+      // If this machine is an exposed control box with a tunnel, (re)establish it
+      // first so the hub boots knowing its public URL (autostart path).
+      await restoreTunnelIfExposed((line) => s.message(line));
       const ep = await ensureHub({
         onLog: (line) => s.message(line),
         portlessEnabled: await resolvePortlessForHub(),
@@ -313,6 +360,7 @@ const restartSub = new Command('restart')
       const s2 = spinner();
       s2.start('starting hub');
       try {
+        await restoreTunnelIfExposed((line) => s2.message(line));
         const ep = await ensureHub({
           onLog: (line) => s2.message(line),
           portlessEnabled: await resolvePortlessForHub(),

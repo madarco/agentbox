@@ -49,6 +49,13 @@ import {
 } from '../control-plane/deploy-hetzner.js';
 import { fetchNpmBest } from '../lib/update-check.js';
 import {
+  runExpose,
+  runLocalUpdate,
+  runLocalDestroy,
+  type ExposeResult,
+} from '../control-plane/expose.js';
+import type { TunnelKind } from '../control-plane/tunnel.js';
+import {
   defaultDeployRef,
   describeHubDeploySource,
   resolveHubDeploySource,
@@ -155,7 +162,37 @@ async function ensureHetznerHubAuth(): Promise<boolean> {
   return true;
 }
 
-type DeployTarget = 'vercel' | 'hetzner' | 'none';
+/**
+ * The auth block for a LOCAL exposed hub: just the login secret + admin creds.
+ * Unlike {@link hetznerAuthBody} it omits `AGENTBOX_HUB_PROFILE`/`AGENTBOX_HUB_AUTH`
+ * — those are set on the spawn env by `buildExposedHubEnv`, not read from the
+ * file (and leaving the profile out of the file keeps it from bleeding into the
+ * CLI's own `process.env` via `loadControlPlaneEnv`).
+ */
+function localHubAuthBody(hubAuth: {
+  BETTER_AUTH_SECRET: string;
+  AGENTBOX_HUB_ADMIN_EMAIL: string;
+  AGENTBOX_HUB_ADMIN_PASSWORD: string;
+}): string {
+  return (
+    `BETTER_AUTH_SECRET=${hubAuth.BETTER_AUTH_SECRET}\n` +
+    `AGENTBOX_HUB_ADMIN_EMAIL=${hubAuth.AGENTBOX_HUB_ADMIN_EMAIL}\n` +
+    `AGENTBOX_HUB_ADMIN_PASSWORD=${hubAuth.AGENTBOX_HUB_ADMIN_PASSWORD}\n`
+  );
+}
+
+/** Ensure the local exposed hub's login secret + admin creds are in the env file. */
+async function ensureLocalHubAuth(): Promise<boolean> {
+  const body = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, 'utf8') : '';
+  if (/^BETTER_AUTH_SECRET=/m.test(body)) return true;
+  const hubAuth = await resolveHubAuthEnv();
+  if (!hubAuth) return false;
+  await writeFile(ENV_PATH, body + localHubAuthBody(hubAuth), { mode: 0o600 });
+  await chmod(ENV_PATH, 0o600);
+  return true;
+}
+
+type DeployTarget = 'vercel' | 'hetzner' | 'local' | 'none';
 
 interface SetupOpts {
   gitAuth?: string;
@@ -165,6 +202,12 @@ interface SetupOpts {
   ref?: string;
   repo?: string;
   package?: string;
+  // --deploy local passthrough (see `hub expose`).
+  bind?: string;
+  tunnel?: string;
+  tunnelToken?: string;
+  publicUrl?: string;
+  autostart?: boolean;
 }
 
 /** The flag, else the config default (`gh`). An unknown value is a hard error. */
@@ -241,6 +284,11 @@ const setupSub = new Command('setup')
   .option('--repo <owner/name>', 'GitHub repo to deploy the plane from (default madarco/agentbox; fork + pass this if you don\'t own it). Implies building from source')
   .option('--ref <ref>', `build the hub from source at this git ref instead of installing the published package (branch/tag/sha; ${DEFAULT_DEPLOY_REF} matches this CLI)`)
   .option('--package <spec>', `npm spec of @madarco/agentbox to install on the control box (default ${AGENTBOX_VERSION}, this CLI's own version)`)
+  .option('--bind <addr>', '--deploy local: hub bind address (default 0.0.0.0 for LAN; 127.0.0.1 = loopback + tunnel only)')
+  .option('--tunnel <kind>', '--deploy local: make cloud boxes able to reach the hub: cloudflare | tailscale')
+  .option('--tunnel-token <token>', '--deploy local: named Cloudflare tunnel token (stable hostname)')
+  .option('--public-url <url>', '--deploy local: the box-facing URL (your own proxy/DNS); skips tunnel URL scraping')
+  .option('--no-autostart', '--deploy local: do not install a launchd/systemd autostart unit')
   .action(async (opts: SetupOpts) => {
     // Every progress line here goes to a @clack spinner, which overwrites
     // itself — a failed deploy left nothing to read afterwards. Tee to
@@ -329,6 +377,18 @@ const setupSub = new Command('setup')
 
       // --- Deploy step (after the App exists) ---
       const target = await resolveDeployTarget(opts.deploy);
+
+      // Local: flip THIS machine's hub into the control box — no VPS. Own path
+      // (no remote deploy spinner / healthz-over-the-internet), then return.
+      if (target === 'local') {
+        if (!(await ensureLocalHubAuth())) {
+          log.warn('cancelled — no admin login set; the exposed hub would be open. Not exposing.');
+          return;
+        }
+        await runLocalExpose(opts, cmdLog.write.bind(cmdLog));
+        return;
+      }
+
       let deployedUrl: string | null = null;
       if (target !== 'none') {
         // Prompt for the hub login admin BEFORE the deploy spinner starts (a
@@ -429,18 +489,19 @@ const setupSub = new Command('setup')
 
 /** Resolve the deploy target from the flag, or ask interactively. */
 async function resolveDeployTarget(flag: string | undefined): Promise<DeployTarget> {
-  if (flag === 'vercel' || flag === 'hetzner' || flag === 'none') return flag;
+  if (flag === 'vercel' || flag === 'hetzner' || flag === 'local' || flag === 'none') return flag;
   if (flag) {
     log.warn(`unknown --deploy "${flag}"; choose interactively`);
   }
   const choice = await select({
     message: 'Deploy the control plane now?',
     options: [
+      { value: 'local', label: 'This machine — turn the local hub into the control box (no VPS)' },
       { value: 'vercel', label: 'Vercel — managed (auto-provisions Neon Postgres)' },
       { value: 'hetzner', label: 'Hetzner VPS — HTTPS via <ip>.sslip.io + Caddy/Let’s Encrypt' },
       { value: 'none', label: 'Skip — I’ll deploy later (print manual steps)' },
     ],
-    initialValue: 'vercel',
+    initialValue: 'local',
   });
   if (isCancel(choice)) return 'none';
   return choice as DeployTarget;
@@ -450,11 +511,119 @@ function printManualDeploy(): void {
   log.info(
     [
       'Deploy later with the written env:',
-      `  Self-host:  cd apps/hub && docker compose --env-file ${ENV_PATH} up --build`,
-      `  Vercel:     agentbox hub setup --deploy vercel  (or 'vercel env add' the vars + 'vercel deploy --prod')`,
-      `  Then:       agentbox hub set-url https://<your-plane-url>`,
+      `  This machine: agentbox hub expose            (no VPS — the local hub becomes the control box)`,
+      `  Self-host:    cd apps/hub && docker compose --env-file ${ENV_PATH} up --build`,
+      `  Vercel:       agentbox hub setup --deploy vercel  (or 'vercel env add' the vars + 'vercel deploy --prod')`,
+      `  Then:         agentbox hub set-url https://<your-plane-url>`,
     ].join('\n'),
   );
+}
+
+interface ExposeCliOpts {
+  bind?: string;
+  tunnel?: string;
+  tunnelToken?: string;
+  publicUrl?: string;
+  autostart?: boolean;
+}
+
+/** Run the expose flow with a spinner, then report reachability + autostart. */
+async function runLocalExpose(opts: ExposeCliOpts, logWrite: (l: string) => void): Promise<void> {
+  const tunnel = opts.tunnel;
+  if (tunnel && tunnel !== 'cloudflare' && tunnel !== 'tailscale') {
+    log.error(`unknown --tunnel "${tunnel}" (expected: cloudflare | tailscale)`);
+    process.exitCode = 1;
+    return;
+  }
+  const s = spinner();
+  s.start('exposing the local hub as the control box');
+  let result: ExposeResult;
+  try {
+    result = await runExpose({
+      ...(opts.bind ? { bind: opts.bind } : {}),
+      ...(tunnel ? { tunnel: tunnel as TunnelKind } : {}),
+      ...(opts.tunnelToken ? { tunnelToken: opts.tunnelToken } : {}),
+      ...(opts.publicUrl ? { publicUrl: opts.publicUrl } : {}),
+      autostart: opts.autostart !== false,
+      onLog: (l) => {
+        s.message(l);
+        logWrite(l);
+      },
+    });
+    s.stop(`hub exposed on ${result.publicUrl}`);
+  } catch (e) {
+    s.stop('expose failed', 1);
+    const msg = e instanceof Error ? e.message : String(e);
+    logWrite(`expose failed: ${msg}`);
+    log.error(msg);
+    process.exitCode = 1;
+    return;
+  }
+  note(
+    [
+      `Box-facing URL:  ${result.publicUrl}`,
+      `CLI / UI (local): ${result.localUrl}`,
+      result.record.tunnel ? `Tunnel:          ${result.record.tunnel}` : null,
+      result.autostart?.path ? `Autostart:       ${result.autostart.path}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    'Control box',
+  );
+  if (!result.cloudReachable) {
+    log.warn(
+      'LAN/loopback only: cloud boxes (e2b/daytona/hetzner/vercel) cannot reach this hub, so they will ' +
+        'not register or push with your machine off. Re-run with `--tunnel cloudflare` (or `--tunnel tailscale`) to enable that.',
+    );
+  }
+  if (result.autostart?.note) log.info(result.autostart.note);
+  log.success(`This machine is now the control box — sign in at ${result.localUrl}; cloud creates route here.`);
+}
+
+const exposeSub = new Command('expose')
+  .description('Turn this machine\'s local hub into the control box (deployed profile, no VPS)')
+  .option('--bind <addr>', 'bind address (default 0.0.0.0 for LAN; 127.0.0.1 = loopback + tunnel only)')
+  .option('--tunnel <kind>', 'let cloud boxes reach the hub: cloudflare | tailscale')
+  .option('--tunnel-token <token>', 'named Cloudflare tunnel token (stable hostname)')
+  .option('--public-url <url>', 'the box-facing URL (your own proxy/DNS); skips tunnel URL scraping')
+  .option('--no-autostart', 'do not install a launchd/systemd autostart unit')
+  .action(async (opts: ExposeCliOpts) => {
+    try {
+      if (!existsSync(ENV_PATH)) {
+        log.error(
+          'No control-box credentials yet. Run `agentbox hub setup --deploy local` first — it mints the ' +
+            'admin token + API key and the git credential, then exposes.',
+        );
+        process.exitCode = 1;
+        return;
+      }
+      if (!(await ensureLocalHubAuth())) {
+        log.warn('cancelled — an admin login is required so the exposed hub is not left open.');
+        return;
+      }
+      await runLocalExpose(opts, () => {});
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
+/**
+ * The loopback URL of a control box that IS this machine (`hub expose`), or null.
+ * The CLI-facing local shortcut: when a hub is exposed here, `hub boxes`,
+ * custody, and `hub target` talk to `127.0.0.1:<port>` rather than the
+ * box-facing `relay.controlPlaneUrl` (which is the LAN/tunnel URL boxes use).
+ */
+export async function localExposedLoopbackUrl(): Promise<string | null> {
+  const rec = await readDeployRecord();
+  if (rec?.provider === 'local') return `http://127.0.0.1:${String(rec.port ?? 8787)}`;
+  return null;
+}
+
+/** Prefer the loopback shortcut for a locally-exposed hub, unless `--url` is explicit. */
+async function applyLocalShortcut(url: string, urlFlag: string | undefined): Promise<string> {
+  if (urlFlag) return url;
+  const loop = await localExposedLoopbackUrl();
+  return loop ?? url;
 }
 
 const setUrlSub = new Command('set-url')
@@ -727,7 +896,9 @@ export async function resolveCustodyTarget(
   opts: { quiet?: boolean } = {},
 ): Promise<{ url: string; adminToken: string } | null> {
   const cfg = await loadEffectiveConfig(process.cwd());
-  const url = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
+  const configured = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
+  // A hub exposed on THIS machine is reached over loopback, not its box-facing URL.
+  const url = (await applyLocalShortcut(configured, urlFlag)).replace(/\/$/, '');
   if (!url) {
     if (!opts.quiet)
       log.error('No control plane configured. Run `agentbox hub set-url <url>` (or pass --url).');
@@ -762,7 +933,9 @@ export async function resolveHubApiTarget(
   opts: { quiet?: boolean } = {},
 ): Promise<{ url: string; apiKey: string } | null> {
   const cfg = await loadEffectiveConfig(process.cwd());
-  const url = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
+  const configured = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
+  // A hub exposed on THIS machine is reached over loopback, not its box-facing URL.
+  const url = (await applyLocalShortcut(configured, urlFlag)).replace(/\/$/, '');
   if (!url) {
     if (!opts.quiet)
       log.error('No control plane configured. Run `agentbox hub set-url <url>` (or pass --url).');
@@ -1488,6 +1661,101 @@ async function specForChannel(channel: string): Promise<string> {
   return best;
 }
 
+/**
+ * `hub update` for a LOCAL control box. Its "build" is this CLI's own hub
+ * bundle, so an update restarts the exposed hub in place. Changing the machine's
+ * AgentBox build is `agentbox self-update` — a whole-machine action, not this
+ * command's job — so a spec flag here just points there.
+ */
+async function runLocalUpdateFlow(opts: UpdateOpts, logWrite: (l: string) => void): Promise<void> {
+  if (opts.channel || opts.package || opts.ref || opts.repo) {
+    log.warn(
+      'This control box IS this machine\'s hub, so its build is this CLI. To change the build, run ' +
+        '`agentbox self-update` (it reloads the hub too); `hub update` just restarts the exposed hub.',
+    );
+  }
+  const loopback = (await localExposedLoopbackUrl()) ?? 'http://127.0.0.1:8787';
+  const before = await probeControlPlaneStatus(loopback);
+  log.info(`control box: this machine (${loopback}) — ${before.version ?? 'running'}`);
+  if (!opts.yes) {
+    const ok = await confirm({ message: 'Restart the exposed hub?', initialValue: true });
+    if (isCancel(ok) || !ok) {
+      log.info('cancelled');
+      return;
+    }
+  }
+  await ensureHubApiKeyInEnv();
+  const s = spinner();
+  s.start('restarting the exposed hub');
+  try {
+    await runLocalUpdate((l) => {
+      s.message(l);
+      logWrite(l);
+    });
+    s.stop('exposed hub restarted');
+  } catch (e) {
+    s.stop('restart failed', 1);
+    log.error(e instanceof Error ? e.message : String(e));
+    process.exitCode = 1;
+    return;
+  }
+  const after = await probeControlPlaneStatus(loopback);
+  log[after.healthy ? 'success' : 'warn'](
+    after.healthy
+      ? `Control box is healthy${after.version ? `, running ${after.version}` : ''}.`
+      : `Hub did not answer just now (${after.detail}) — check with \`agentbox hub status\`.`,
+  );
+  await seedPreparedToNewControlBox(loopback);
+}
+
+/** `hub destroy` for a LOCAL control box: stop exposing, revert to the plain hub. */
+async function runLocalDestroyFlow(
+  record: ControlPlaneDeployRecord,
+  opts: DestroyOpts,
+): Promise<void> {
+  const loopback = `http://127.0.0.1:${String(record.port ?? 8787)}`;
+  // Registered cloud boxes outlive the hub and its store may be their only
+  // record — the same hard gate as the VPS path, probed over loopback.
+  const boxes = await listHubBoxesForDestroy({ ...record, url: loopback });
+  const gate = destroyGate(boxes, Boolean(opts.force));
+  if (!gate.allowed) {
+    log.error(
+      `The control box still has ${String(gate.orphanCount)} box(es) registered. Stopping it now would orphan them:`,
+    );
+    if (boxes.kind === 'boxes') {
+      for (const b of boxes.rows) {
+        process.stdout.write(`  ${b.id}  ${b.name ?? ''}  ${b.provider ?? ''}  ${b.state ?? ''}\n`);
+      }
+    }
+    log.info('Destroy them first (`agentbox hub boxes rm <id>`), or re-run with --force.');
+    process.exitCode = 1;
+    return;
+  }
+  const lines = [
+    'stop exposing (the plain localhost hub returns on the next `agentbox hub start`)',
+    'the tunnel + autostart unit, if any',
+    opts.keepCredentials
+      ? `${CP_DIR}/deploy.json (control-plane.env kept — 'hub expose' again needs no setup)`
+      : `${CP_DIR} (credentials + deploy record)`,
+    'relay.controlPlaneUrl (global + project)',
+    'The shared ~/.agentbox (store.db / custody / boxes) is kept.',
+  ];
+  if (gate.note) lines.push(`NOTE: ${gate.note}`);
+  note(lines.join('\n'), 'This will');
+  if (!opts.yes) {
+    const ok = await confirm({ message: 'Stop being the control box?', initialValue: false });
+    if (isCancel(ok) || !ok) {
+      log.info('cancelled');
+      return;
+    }
+  }
+  await runLocalDestroy({ keepCredentials: Boolean(opts.keepCredentials), log: (l) => log.info(l) });
+  log.success('This machine is no longer the control box — the plain localhost hub is back on the next `agentbox hub start`.');
+  if (opts.keepCredentials) {
+    log.info(`Credentials kept in ${CP_DIR} — \`agentbox hub expose\` re-exposes without \`hub setup\`.`);
+  }
+}
+
 const updateSub = new Command('update')
   .description('Update the deployed control box in place to a new AgentBox build')
   .option('--channel <nightly|stable>', 'install the newest published build on this channel')
@@ -1504,6 +1772,15 @@ const updateSub = new Command('update')
         return;
       }
       const record = await readDeployRecord();
+
+      // A local control box IS this machine's hub — its "build" is this CLI, so
+      // an update restarts the exposed hub in place. Changing the CLI build is a
+      // separate whole-machine action (`agentbox self-update`).
+      if (record?.provider === 'local') {
+        await runLocalUpdateFlow(opts, cmdLog.write.bind(cmdLog));
+        return;
+      }
+
       assertReachableRecord(record);
 
       const source = opts.channel
@@ -1615,6 +1892,11 @@ const destroySub = new Command('destroy')
         );
         log.info('To stop using a hub configured with `hub set-url`, run `agentbox hub unset-url`.');
         process.exitCode = 1;
+        return;
+      }
+
+      if (record.provider === 'local') {
+        await runLocalDestroyFlow(record, opts);
         return;
       }
 
@@ -1771,6 +2053,7 @@ const deployCmd = new Command('deploy')
  */
 export const controlPlaneSubcommands = [
   setupSub,
+  exposeSub,
   deployCmd,
   updateSub,
   destroySub,

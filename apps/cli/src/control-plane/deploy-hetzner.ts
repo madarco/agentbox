@@ -51,7 +51,7 @@ export interface HetznerDeployOptions {
  * dies at `docker compose up` or on a 502 is exactly the case where the user
  * needs to get into the VPS, and it used to leave no trace of how.
  */
-async function persistDeployRecord(record: ControlPlaneDeployRecord): Promise<void> {
+export async function persistDeployRecord(record: ControlPlaneDeployRecord): Promise<void> {
   const deployPath = controlPlaneDeployPath();
   await mkdir(dirname(deployPath), { recursive: true });
   await writeFile(deployPath, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });

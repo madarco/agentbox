@@ -6,6 +6,13 @@ import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_RELAY_PORT } from '@agentbox/relay';
+import {
+  buildExposedHubEnv,
+  controlPlaneDeployPath,
+  EXPOSED_HUB_PROFILE,
+  parseEnvFileBody,
+  type ControlPlaneDeployRecord,
+} from '@agentbox/sandbox-core';
 import { detectPortless, portlessAlias, portlessGetUrl, portlessUnalias } from './portless.js';
 import {
   fetchHealthz,
@@ -72,6 +79,33 @@ export interface EnsureHubOptions {
    * `false` to force teardown. Undefined → register best-effort.
    */
   portlessEnabled?: boolean | undefined;
+}
+
+/** CP dir on this machine, holding deploy.json + control-plane.env. */
+const CP_DIR = join(STATE_DIR, 'control-plane');
+
+/**
+ * Resolve the exposed-hub spawn env from `~/.agentbox/control-plane`, or null
+ * when this machine isn't exposed. This is the seam that makes EVERY `ensureHub`
+ * caller — `hub start`, `restart`, autostart, the post-update refresh — bring
+ * the hub up in the SAME mode without any of them knowing about it: the flip
+ * lives entirely in the on-disk record `agentbox hub expose` writes.
+ *
+ * Best-effort: a missing/partial record or env file → null (the plain localhost
+ * hub). The hub itself fails closed on a genuinely missing secret.
+ */
+async function resolveExposedSpawn(): Promise<{ env: Record<string, string>; profile: string } | null> {
+  try {
+    const record = JSON.parse(
+      await readFile(controlPlaneDeployPath(), 'utf8'),
+    ) as ControlPlaneDeployRecord;
+    if (record.provider !== 'local') return null;
+    const envBody = await readFile(join(CP_DIR, 'control-plane.env'), 'utf8').catch(() => '');
+    const env = buildExposedHubEnv(record, parseEnvFileBody(envBody));
+    return { env, profile: EXPOSED_HUB_PROFILE };
+  } catch {
+    return null;
+  }
 }
 
 function nodeVersion(): { major: number; minor: number } {
@@ -262,16 +296,28 @@ export async function ensureHub(opts: EnsureHubOptions = {}): Promise<HubEndpoin
   assertNodeSupported();
   await mkdir(STATE_DIR, { recursive: true });
 
+  // Exposed? Resolve the flip from disk so this call (whoever made it) brings the
+  // hub up in the machine's configured mode. `desiredProfile` defaults to
+  // `localhost` — a plain hub.
+  const exposed = await resolveExposedSpawn();
+  const desiredProfile = exposed?.profile ?? 'localhost';
+
   const currentVersion = process.env.AGENTBOX_CLI_VERSION;
   const health = await fetchHealthz(500);
   if (health !== null) {
-    if (health.ui === true && !shouldReclaimForVersion(health, currentVersion)) {
+    // A hub running in the wrong profile (a plain localhost hub while this
+    // machine is exposed, or the reverse) must be reclaimed, not reused: the two
+    // differ in bind, auth and the resident worker.
+    const profileMismatch = (health.profile ?? 'localhost') !== desiredProfile;
+    if (health.ui === true && !shouldReclaimForVersion(health, currentVersion) && !profileMismatch) {
       return endpointFor(await syncHubPortless(opts.portlessEnabled)); // a hub already runs here
     }
     log(
-      health.ui === true
-        ? 'a hub from a different agentbox version holds :8787 — reclaiming'
-        : 'a lean relay holds :8787 — reclaiming to start the hub',
+      profileMismatch
+        ? `a hub in the ${health.profile ?? 'localhost'} profile holds :${String(PORT)} — reclaiming to run ${desiredProfile}`
+        : health.ui === true
+          ? 'a hub from a different agentbox version holds :8787 — reclaiming'
+          : 'a lean relay holds :8787 — reclaiming to start the hub',
     );
     await reclaimPort(health.pid, log);
     // fall through to spawn
@@ -302,7 +348,8 @@ export async function ensureHub(opts: EnsureHubOptions = {}): Promise<HubEndpoin
         'Set AGENTBOX_CLI_ENTRY to override.',
     );
   }
-  return spawnHub(hubServer, cliEntry, log, opts.portlessEnabled);
+  if (exposed) log(`bringing the hub up exposed (${desiredProfile} profile, worker on)`);
+  return spawnHub(hubServer, cliEntry, log, opts.portlessEnabled, exposed?.env);
 }
 
 async function spawnHub(
@@ -310,6 +357,7 @@ async function spawnHub(
   cliEntry: string,
   log: (line: string) => void,
   portlessEnabled: boolean | undefined,
+  exposedEnv?: Record<string, string>,
 ): Promise<HubEndpoint> {
   const logFd = openSync(HUB_LOG_FILE, 'a');
   const child = spawn(process.execPath, [...nodeFlags(), hubServer], {
@@ -329,6 +377,9 @@ async function spawnHub(
       // to 'unknown'). Hand it the CLI's resolved context so hub-side
       // fingerprints match what the create/prepare workers compute.
       AGENTBOX_DOCKER_CONTEXT: BUILD_CONTEXT_DIR,
+      // `hub expose` overrides the above (bind 0.0.0.0, profile hetzner, auth,
+      // worker, public URL, tokens). Empty/absent → the plain localhost hub.
+      ...(exposedEnv ?? {}),
     },
   });
   child.unref();
@@ -435,6 +486,10 @@ export interface HubStatus {
   token: string | null;
   pidFile: string;
   logFile: string;
+  /** The running hub's profile (`localhost` | `hetzner`). Absent on old hubs / a lean relay. */
+  profile?: string;
+  /** True when the resident create worker is running (exposed hub). */
+  worker?: boolean;
 }
 
 /** Read-only snapshot of the hub's liveness (mirrors getRelayStatus). */
@@ -454,5 +509,7 @@ export async function getHubStatus(): Promise<HubStatus> {
     token: ep.token,
     pidFile: HUB_PID_FILE,
     logFile: HUB_LOG_FILE,
+    ...(health?.profile ? { profile: health.profile } : {}),
+    ...(health?.worker ? { worker: true } : {}),
   };
 }

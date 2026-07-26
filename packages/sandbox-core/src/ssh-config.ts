@@ -223,6 +223,32 @@ export interface ControlPlaneDeployRecord {
    * `rev-parse` — so without this a control box is unattributable after the fact.
    */
   source?: HubDeploySource;
+
+  // --- `provider: 'local'` only (agentbox hub expose) -----------------------
+  // A control box that IS this machine's own hub, flipped to the deployed
+  // profile rather than a separate VPS. These fields describe how it was
+  // exposed so `hub start` / autostart / update / destroy reconstruct the mode
+  // from disk. `sshKeyDir` is intentionally absent (no ssh alias block).
+  /**
+   * The box-facing URL: what a cloud box is told to call home on
+   * (`AGENTBOX_HUB_PUBLIC_URL`). The LAN address, or the tunnel URL. Distinct
+   * from the CLI-facing loopback the local shortcut uses.
+   */
+  publicUrl?: string;
+  /** Port the hub binds (default 8787). */
+  port?: number;
+  /** Bind address (`0.0.0.0` LAN, `127.0.0.1` loopback-only). */
+  bind?: string;
+  /** The tunnel kind in front of the hub, if any: `cloudflare` | `tailscale`. */
+  tunnel?: string;
+  /** Whether an autostart unit (launchd/systemd) was installed. */
+  autostart?: boolean;
+  /**
+   * The admin PC's egress CIDR at expose time — added to a hetzner box's
+   * firewall so this machine can still SSH boxes the hub creates. Stored (not
+   * recomputed) so the exposed-env assembly stays a pure function of the record.
+   */
+  adminCidr?: string;
 }
 
 /**

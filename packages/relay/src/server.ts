@@ -451,6 +451,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // different agentbox version; `commit` is observability-only.
         version: process.env.AGENTBOX_CLI_VERSION || undefined,
         commit: process.env.AGENTBOX_CLI_COMMIT || undefined,
+        // The running hub's profile + whether the resident create worker is on.
+        // `agentbox hub expose` flips a localhost hub to the `hetzner` profile;
+        // reporting it here lets host-side `ensureHub` reclaim a hub running in
+        // the wrong mode (a plain localhost hub while deploy.json says exposed),
+        // and `hub status` show what is actually running.
+        profile: process.env.AGENTBOX_HUB_PROFILE || undefined,
+        worker: process.env.AGENTBOX_HUB_WORKER === 'on' ? true : undefined,
       });
       return;
     }

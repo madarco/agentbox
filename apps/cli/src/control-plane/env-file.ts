@@ -33,3 +33,19 @@ export function loadControlPlaneEnv(path: string = CONTROL_PLANE_ENV_PATH): void
     if (m && !process.env[m[1]!]) process.env[m[1]!] = m[2];
   }
 }
+
+/**
+ * The env file parsed into a map, WITHOUT touching `process.env`. Used by the
+ * `hub expose` flow, which assembles the exposed hub's spawn env from these
+ * values regardless of what happens to be exported in the current shell.
+ * Returns {} when the file is absent.
+ */
+export function readControlPlaneEnvMap(path: string = CONTROL_PLANE_ENV_PATH): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!existsSync(path)) return out;
+  for (const line of readFileSync(path, 'utf8').split('\n')) {
+    const m = /^([A-Z_]+)=(.*)$/.exec(line.trim());
+    if (m) out[m[1]!] = m[2]!;
+  }
+  return out;
+}
