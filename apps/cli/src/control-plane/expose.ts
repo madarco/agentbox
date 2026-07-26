@@ -156,17 +156,21 @@ export async function runExpose(opts: ExposeOptions): Promise<ExposeResult> {
     source: { kind: 'package', spec: AGENTBOX_VERSION },
   };
   await persistDeployRecord(record);
+  // Wire the config alongside the record, BEFORE the restart. Both describe the
+  // intent, and `hub start` can finish the job from them — so a restart that
+  // fails leaves a machine that is merely stopped, not one that is half-exposed
+  // with a record and a tunnel but no config pointing at either.
+  //
+  // The box-facing URL is what a locally-created cloud box is told to call home
+  // on (relay.controlPlaneUrl keeps its box-facing meaning); the CLI reaches the
+  // hub via the loopback local shortcut.
+  await setConfigValue('global', 'relay.controlPlaneUrl', publicUrl, homedir());
   log('wrote exposed control-box record');
 
   // Restart cleanly into exposed mode: stop any localhost hub, then ensureHub
   // (which self-resolves the exposed env from the record just written).
   await stopHub();
   const endpoint = await ensureHub({ onLog: log });
-
-  // The box-facing URL is what a locally-created cloud box is told to call home
-  // on (relay.controlPlaneUrl keeps its box-facing meaning); the CLI reaches the
-  // hub via the loopback local shortcut.
-  await setConfigValue('global', 'relay.controlPlaneUrl', publicUrl, homedir());
 
   let autostart: AutostartResult | null = null;
   if (opts.autostart !== false) {
@@ -282,10 +286,21 @@ export async function stopTunnelIfExposed(log: (l: string) => void = () => {}): 
  */
 export async function restoreTunnelIfExposed(log: (l: string) => void = () => {}): Promise<void> {
   const record = await readLocalRecord();
-  if (record?.tunnel) {
-    await ensureTunnelForRecord(record, log).catch((e: unknown) => {
-      log(`tunnel restore failed: ${e instanceof Error ? e.message : String(e)}`);
-    });
+  if (!record?.tunnel) return;
+  try {
+    const updated = await ensureTunnelForRecord(record, log);
+    // A quick tunnel's hostname is ephemeral, so a restart can rotate it. The
+    // record and config now carry the new URL, but the hub advertises
+    // AGENTBOX_HUB_PUBLIC_URL from the env it was SPAWNED with — and ensureHub
+    // returns early when a healthy hub of the right profile already holds the
+    // port. Without this the running hub keeps telling boxes to call home on a
+    // hostname that no longer resolves, while the CLI uses the new one.
+    if (updated.publicUrl !== record.publicUrl) {
+      log('tunnel URL rotated — restarting the hub so boxes get the new one');
+      await stopHub();
+    }
+  } catch (e: unknown) {
+    log(`tunnel restore failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
