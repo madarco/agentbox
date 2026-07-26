@@ -18,7 +18,7 @@ import {
   probeControlPlaneStatus,
   localExposedLoopbackUrl,
 } from './control-plane.js';
-import { restoreTunnelIfExposed } from '../control-plane/expose.js';
+import { restoreTunnelIfExposed, stopTunnelIfExposed } from '../control-plane/expose.js';
 import { loadControlPlaneEnv } from '../control-plane/env-file.js';
 import { channelOfVersion } from '../lib/channel.js';
 import { AGENTBOX_VERSION } from '../version.js';
@@ -342,6 +342,10 @@ const stopSub = new Command('stop')
       const s = spinner();
       s.start('stopping hub');
       const result = await stopHub();
+      // A tunnel outliving the hub serves nothing and, worse, the next
+      // `hub start` would spawn a second one over it. Idempotent + no-op when
+      // this machine isn't exposed.
+      await stopTunnelIfExposed((line) => s.message(line));
       s.stop(result.stopped ? `stopped hub (pid ${String(result.pid)})` : 'hub was not running');
     } catch (err) {
       handleLifecycleError(err);

@@ -198,6 +198,12 @@ export async function ensureTunnelForRecord(
   if (!record.tunnel) return record;
   const kind = record.tunnel as TunnelKind;
   const env = readControlPlaneEnvMap();
+  // Stop whatever is recorded first. This runs on every `hub start` / `restart`
+  // / local update, and `hub stop` used to leave the tunnel up — so starting
+  // unconditionally spawned a second `cloudflared`, overwrote tunnel.pid with
+  // the new one, and orphaned the old process where no teardown could reach it.
+  // stopTunnel is idempotent and a no-op when nothing is recorded.
+  await stopTunnel().catch(() => {});
   const handle = await startTunnel({
     kind,
     port: record.port ?? DEFAULT_HUB_PORT,
@@ -255,6 +261,18 @@ export async function runLocalDestroy(
   await purgeLocalControlPlaneState({ dir: CP_DIR, keepCredentials: Boolean(opts.keepCredentials) });
   await unsetConfigValue('global', 'relay.controlPlaneUrl', process.cwd()).catch(() => {});
   await unsetConfigValue('project', 'relay.controlPlaneUrl', process.cwd()).catch(() => {});
+}
+
+/**
+ * On `hub stop`: take the tunnel down with the hub it fronts. No-op when this
+ * machine isn't exposed or has no tunnel. Best-effort — failing to stop a tunnel
+ * must not make `hub stop` fail.
+ */
+export async function stopTunnelIfExposed(log: (l: string) => void = () => {}): Promise<void> {
+  const record = await readLocalRecord();
+  if (!record?.tunnel) return;
+  log('stopping the tunnel');
+  await stopTunnel().catch(() => {});
 }
 
 /**
