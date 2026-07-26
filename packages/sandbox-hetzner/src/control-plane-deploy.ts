@@ -67,15 +67,15 @@ const REMOTE_APP_DIR = '/opt/agentbox/apps/hub';
 // REMOTE_APP_DIR, and what `hub update --ref` re-checks-out. Absent entirely in
 // package mode, where nothing on the VPS comes from git.
 const REMOTE_REPO_DIR = '/opt/agentbox';
+// Host bind-mounted into the app container at /root/.agentbox: store.db, auth.db,
+// custody/, boxes/<id>/ssh, secrets.env (provider creds), logs. Persists the hub
+// across `compose up` / VPS reboots.
+const REMOTE_DATA_DIR = '/opt/agentbox/hub-data';
 
 /** Single-quote a value for a remote `sh -c` command line. */
 function shQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
-// Host bind-mounted into the app container at /root/.agentbox: store.db, auth.db,
-// custody/, boxes/<id>/ssh, secrets.env (provider creds), logs. Persists the hub
-// across `compose up` / VPS reboots.
-const REMOTE_DATA_DIR = '/opt/agentbox/hub-data';
 
 // Provider credentials the resident worker needs to provision cloud boxes. Only
 // these keys are copied from the host `~/.agentbox/secrets.env` — never the whole
@@ -866,16 +866,20 @@ export async function destroyControlPlaneOnHetzner(opts: {
   retryDelayMs?: number;
 }): Promise<ControlPlaneDestroyResult> {
   const log = opts.onLog ?? (() => {});
-  const client = opts.client ?? makeHetznerClient();
   const retryDelayMs = opts.retryDelayMs ?? 5_000;
   const warnings: string[] = [];
+  // Built lazily: a record with nothing to delete must not demand an HCLOUD_TOKEN
+  // it will never use (makeHetznerClient throws when the token is empty).
+  let lazyClient: Pick<HetznerClient, 'deleteServer' | 'deleteFirewall'> | undefined = opts.client;
+  const client = (): Pick<HetznerClient, 'deleteServer' | 'deleteFirewall'> =>
+    (lazyClient ??= makeHetznerClient());
   let serverDeleted = false;
   let firewallDeleted = false;
 
   if (opts.serverId !== undefined) {
     try {
       log(`deleting server ${String(opts.serverId)}…`);
-      await client.deleteServer(opts.serverId);
+      await client().deleteServer(opts.serverId);
       serverDeleted = true;
     } catch (e) {
       warnings.push(`server ${String(opts.serverId)}: ${e instanceof Error ? e.message : String(e)}`);
@@ -888,7 +892,7 @@ export async function destroyControlPlaneOnHetzner(opts: {
     for (let attempt = 0; attempt < 6; attempt++) {
       try {
         log(`deleting firewall ${String(opts.firewallId)}…`);
-        await client.deleteFirewall(opts.firewallId);
+        await client().deleteFirewall(opts.firewallId);
         firewallDeleted = true;
         break;
       } catch (e) {

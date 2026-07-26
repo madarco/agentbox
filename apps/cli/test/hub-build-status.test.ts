@@ -103,3 +103,41 @@ describe('describeRemoteHubBuild', () => {
     });
   });
 });
+
+/**
+ * `--package nightly` records the literal dist-tag, not a version. Reading it as
+ * one printed `version: nightly` and — worse — classified it `stable`, since
+ * `channelOfVersion` only looks for a `-nightly.` suffix.
+ */
+describe('describeRemoteHubBuild with a dist-tag spec', () => {
+  it('does not present a dist-tag as the running version', () => {
+    const b = describeRemoteHubBuild({
+      liveVersion: undefined,
+      record: record({ kind: 'package', spec: 'nightly' }),
+      cliVersion: CLI,
+    });
+    expect(b.version).toBeNull();
+    expect(b.channel).toBeNull();
+    // The build line still shows what was asked for.
+    expect(b.build).toContain('@madarco/agentbox@nightly');
+  });
+
+  it('still classifies correctly once the hub reports a real version', () => {
+    const b = describeRemoteHubBuild({
+      liveVersion: CLI,
+      record: record({ kind: 'package', spec: 'nightly' }),
+      cliVersion: CLI,
+    });
+    expect(b.version).toBe(CLI);
+    expect(b.channel).toBe('nightly');
+  });
+
+  it('treats `latest` the same way — unknown, not stable-by-accident', () => {
+    const b = describeRemoteHubBuild({
+      liveVersion: undefined,
+      record: record({ kind: 'package', spec: 'latest' }),
+      cliVersion: CLI,
+    });
+    expect(b.channel).toBeNull();
+  });
+});

@@ -155,7 +155,12 @@ export function describeRemoteHubBuild(input: {
       ? `@madarco/agentbox@${source.spec} (npm)`
       : `${source.repoUrl}@${source.repoRef} (built from source)`
     : null;
-  const deployedVersion = source?.kind === 'package' ? source.spec : null;
+  // A spec may be a dist-tag or a range (`--package nightly`), not a version.
+  // Treating one as a version would print `version: nightly` and, worse, classify
+  // it `stable` — `channelOfVersion` only looks for a `-nightly.` suffix. Until
+  // the hub reports what it actually installed, we simply don't know.
+  const deployedVersion =
+    source?.kind === 'package' && /^\d+\.\d+\.\d+/.test(source.spec) ? source.spec : null;
   const version = input.liveVersion ?? deployedVersion;
   const versionSource = input.liveVersion ? 'live' : deployedVersion ? 'deployed' : null;
   // A source build's "channel" is the ref itself — which is the branch the user

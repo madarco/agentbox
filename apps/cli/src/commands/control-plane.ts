@@ -1559,12 +1559,22 @@ const updateSub = new Command('update')
         process.exitCode = 1;
         return;
       }
+      // Report what the probe actually found. The update already waited for a
+      // healthy hub, so a failing probe here is usually transient — but claiming
+      // health from a probe that failed is exactly the false success this whole
+      // command was just taught to avoid.
       const after = await probeControlPlaneStatus(record.url);
-      log.success(
-        after.version
-          ? `Control box is healthy, running ${after.version}.`
-          : `Control box is healthy (${record.url}/healthz).`,
-      );
+      if (!after.healthy) {
+        log.warn(
+          `Update applied, but ${record.url}/healthz did not answer just now (${after.detail}). Re-check with \`agentbox hub status\`.`,
+        );
+      } else {
+        log.success(
+          after.version
+            ? `Control box is healthy, running ${after.version}.`
+            : `Control box is healthy (${record.url}/healthz).`,
+        );
+      }
       // A version change is exactly when a shared bake record starts (or stops)
       // matching the control box's fingerprint, so re-share.
       await seedPreparedToNewControlBox(record.url);
