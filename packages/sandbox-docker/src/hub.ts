@@ -21,6 +21,7 @@ import {
   processAlive,
   resolveCliEntry,
   shouldReclaimForVersion,
+  type HealthzBody,
 } from './relay.js';
 import { detectEngine } from './sync/host-export.js';
 import { BUILD_CONTEXT_DIR } from './image.js';
@@ -303,13 +304,18 @@ export async function ensureHub(opts: EnsureHubOptions = {}): Promise<HubEndpoin
   const desiredProfile = exposed?.profile ?? 'localhost';
 
   const currentVersion = process.env.AGENTBOX_CLI_VERSION;
+  // A hub running in the wrong profile (a plain localhost hub while this machine
+  // is exposed, or the reverse) must be reclaimed, not reused: the two differ in
+  // bind, auth and the resident worker.
+  const reusable = (h: HealthzBody): boolean =>
+    h.ui === true &&
+    !shouldReclaimForVersion(h, currentVersion) &&
+    (h.profile ?? 'localhost') === desiredProfile;
+
   const health = await fetchHealthz(500);
   if (health !== null) {
-    // A hub running in the wrong profile (a plain localhost hub while this
-    // machine is exposed, or the reverse) must be reclaimed, not reused: the two
-    // differ in bind, auth and the resident worker.
     const profileMismatch = (health.profile ?? 'localhost') !== desiredProfile;
-    if (health.ui === true && !shouldReclaimForVersion(health, currentVersion) && !profileMismatch) {
+    if (reusable(health)) {
       return endpointFor(await syncHubPortless(opts.portlessEnabled)); // a hub already runs here
     }
     log(
@@ -325,10 +331,23 @@ export async function ensureHub(opts: EnsureHubOptions = {}): Promise<HubEndpoin
     const pid = await readPid(HUB_PID_FILE);
     if (pid !== null && (await processAlive(pid))) {
       // A hub process exists but isn't answering /healthz yet — give startup a
-      // beat before deciding it's wedged.
+      // beat before deciding it's wedged. It has to clear the SAME bar as an
+      // already-answering hub above: a bare "it responds" accepted a plain
+      // localhost hub (or a lean relay) on a machine whose record asks for the
+      // exposed control-box profile, so the flip silently didn't happen.
+      let late: HealthzBody | null = null;
       for (let i = 0; i < 10; i++) {
-        if (await pingHealthz(300)) return endpointFor(await syncHubPortless(opts.portlessEnabled));
+        late = await fetchHealthz(300);
+        if (late !== null) break;
         await delay(200);
+      }
+      if (late !== null && reusable(late)) {
+        return endpointFor(await syncHubPortless(opts.portlessEnabled));
+      }
+      if (late !== null) {
+        log(
+          `a hub in the ${late.profile ?? 'localhost'} profile holds :${String(PORT)} — reclaiming to run ${desiredProfile}`,
+        );
       }
       // Still unresponsive after ~2s: replace it rather than report a false
       // "running" for a hub that never came up.
