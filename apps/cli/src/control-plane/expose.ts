@@ -133,6 +133,13 @@ export async function runExpose(opts: ExposeOptions): Promise<ExposeResult> {
   // the record knows nothing about.
   setControlPlaneEnvKey('AGENTBOX_TUNNEL_TOKEN', opts.tunnelToken ?? null);
 
+  // Tear down whatever tunnel a previous expose left, before starting the new
+  // one. Re-running with `--tunnel` otherwise spawns a second cloudflared over
+  // the first; re-running WITHOUT it is worse, because dropping `tunnel` from
+  // the record means `stopTunnelIfExposed` never looks again and the old process
+  // outlives every command that could have cleaned it up. Idempotent.
+  await stopTunnel().catch(() => {});
+
   const { publicUrl, cloudReachable } = await resolvePublicUrl(opts, port, log);
 
   // The admin PC's egress CIDR, so a hetzner box this hub creates still admits
