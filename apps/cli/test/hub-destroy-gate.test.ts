@@ -15,6 +15,7 @@ describe('destroyGate', () => {
     expect(destroyGate({ kind: 'boxes', rows: [] }, false)).toEqual({
       allowed: true,
       orphanCount: 0,
+      orphans: [],
       note: null,
     });
   });
@@ -43,5 +44,39 @@ describe('destroyGate', () => {
   it('carries the reason through so the prompt can show why the list is unknown', () => {
     const g = destroyGate({ kind: 'unreachable', reason: 'no /api/v1 key configured' }, true);
     expect(g.note).toContain('no /api/v1 key configured');
+  });
+});
+
+/**
+ * A local `docker` box runs on this machine against the host's own `.git` and is
+ * never handed to the control box, so losing the hub cannot orphan it. Gating on
+ * one made an exposed hub refuse to stand down because of a container sitting
+ * right next to it — hit live on the first `hub unexpose`.
+ */
+describe('destroyGate ignores boxes that cannot be orphaned', () => {
+  const docker = { id: 'd1', name: 'local', provider: 'docker', state: 'running' };
+  const cloud = { id: 'c1', name: 'remote', provider: 'e2b', state: 'running' };
+
+  it('allows teardown when only local docker boxes are registered', () => {
+    const g = destroyGate({ kind: 'boxes', rows: [docker, { ...docker, id: 'd2' }] }, false);
+    expect(g.allowed).toBe(true);
+    expect(g.orphanCount).toBe(0);
+    expect(g.orphans).toEqual([]);
+  });
+
+  it('still refuses for a cloud box, and reports only the real orphans', () => {
+    const g = destroyGate({ kind: 'boxes', rows: [docker, cloud] }, false);
+    expect(g.allowed).toBe(false);
+    expect(g.orphanCount).toBe(1);
+    expect(g.orphans).toEqual([cloud]);
+  });
+
+  it('does NOT exempt remote-docker — that box lives on another machine', () => {
+    const g = destroyGate(
+      { kind: 'boxes', rows: [{ id: 'r1', provider: 'remote-docker', state: 'running' }] },
+      false,
+    );
+    expect(g.allowed).toBe(false);
+    expect(g.orphanCount).toBe(1);
   });
 });

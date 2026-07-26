@@ -1722,10 +1722,8 @@ async function runLocalDestroyFlow(
     log.error(
       `The control box still has ${String(gate.orphanCount)} box(es) registered. Stopping it now would orphan them:`,
     );
-    if (boxes.kind === 'boxes') {
-      for (const b of boxes.rows) {
-        process.stdout.write(`  ${b.id}  ${b.name ?? ''}  ${b.provider ?? ''}  ${b.state ?? ''}\n`);
-      }
+    for (const b of gate.orphans) {
+      process.stdout.write(`  ${b.id}  ${b.name ?? ''}  ${b.provider ?? ''}  ${b.state ?? ''}\n`);
     }
     log.info('Destroy them first (`agentbox hub boxes rm <id>`), or re-run with --force.');
     process.exitCode = 1;
@@ -1878,8 +1876,41 @@ interface DestroyOpts {
   keepCredentials?: boolean;
 }
 
+/**
+ * `hub unexpose` — the friendly name for tearing down a LOCAL control box.
+ *
+ * It is the same flow as `hub destroy`, which is deliberate: there is one
+ * teardown, not two. But "destroy" reads as data loss when the control box is
+ * your own laptop, where the honest description is "stop exposing" — nothing is
+ * deleted except the exposed mode itself (the shared `~/.agentbox` stays).
+ */
+const unexposeSub = new Command('unexpose')
+  .description('Stop this machine being the control box (the plain localhost hub returns)')
+  .option('-y, --yes', 'skip the confirmation prompt')
+  .option('--force', 'stop even while the hub still has boxes registered')
+  .option('--keep-credentials', 'keep control-plane.env so `hub expose` needs no setup again')
+  .action(async (opts: DestroyOpts) => {
+    try {
+      const record = await readDeployRecord();
+      if (record?.provider !== 'local') {
+        log.error(
+          record
+            ? 'This machine is not the control box — the configured one is a deployed VPS. Use `agentbox hub destroy` to tear that down.'
+            : 'This machine is not exposed as a control box (nothing to undo).',
+        );
+        process.exitCode = 1;
+        return;
+      }
+      await runLocalDestroyFlow(record, opts);
+    } catch (err) {
+      handleLifecycleError(err);
+    }
+  });
+
 const destroySub = new Command('destroy')
-  .description('Tear down the deployed control box: the VPS, its firewall, and this machine\'s state')
+  .description(
+    "Tear down the control box: a deployed VPS + its firewall, or this machine's exposed hub, plus the local state",
+  )
   .option('-y, --yes', 'skip the confirmation prompt')
   .option('--force', 'destroy even while the hub still has boxes registered')
   .option('--keep-credentials', 'keep control-plane.env so a redeploy needs no `hub setup`')
@@ -1908,12 +1939,8 @@ const destroySub = new Command('destroy')
         log.error(
           `The control box still has ${String(gate.orphanCount)} box(es) registered. Destroying it now would orphan them:`,
         );
-        if (boxes.kind === 'boxes') {
-          for (const b of boxes.rows) {
-            process.stdout.write(
-              `  ${b.id}  ${b.name ?? ''}  ${b.provider ?? ''}  ${b.state ?? ''}\n`,
-            );
-          }
+        for (const b of gate.orphans) {
+          process.stdout.write(`  ${b.id}  ${b.name ?? ''}  ${b.provider ?? ''}  ${b.state ?? ''}\n`);
         }
         log.info('Destroy them first (`agentbox hub boxes rm <id>`), or re-run with --force.');
         process.exitCode = 1;
@@ -1979,20 +2006,33 @@ export type HubBoxesProbe =
 export function destroyGate(
   probe: HubBoxesProbe,
   force: boolean,
-): { allowed: boolean; orphanCount: number; note: string | null } {
+): {
+  allowed: boolean;
+  orphanCount: number;
+  note: string | null;
+  orphans: Array<{ id: string; name?: string; provider?: string; state?: string }>;
+} {
   if (probe.kind === 'unreachable') {
     return {
       allowed: true,
       orphanCount: 0,
+      orphans: [],
       note: `the hub did not answer, so its boxes could not be listed (${probe.reason})`,
     };
   }
-  const orphanCount = probe.rows.length;
-  if (orphanCount === 0) return { allowed: true, orphanCount: 0, note: null };
-  if (!force) return { allowed: false, orphanCount, note: null };
+  // Only boxes that would actually be stranded count. A local `docker` box runs
+  // on this machine against the host's own `.git` and is never handed to the
+  // control box, so losing the hub does not orphan it — gating on it made an
+  // exposed hub refuse to stand down because of a container sitting next to it.
+  // `remote-docker` is NOT exempt: that one lives on another machine.
+  const orphans = probe.rows.filter((b) => b.provider !== 'docker');
+  const orphanCount = orphans.length;
+  if (orphanCount === 0) return { allowed: true, orphanCount: 0, orphans: [], note: null };
+  if (!force) return { allowed: false, orphanCount, orphans, note: null };
   return {
     allowed: true,
     orphanCount,
+    orphans,
     note: `--force — ${String(orphanCount)} registered box(es) will be orphaned`,
   };
 }
@@ -2057,6 +2097,7 @@ export const controlPlaneSubcommands = [
   deployCmd,
   updateSub,
   destroySub,
+  unexposeSub,
   setUrlSub,
   unsetUrlSub,
   addSub,
