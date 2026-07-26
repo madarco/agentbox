@@ -300,7 +300,19 @@ export async function restoreTunnelIfExposed(log: (l: string) => void = () => {}
       await stopHub();
     }
   } catch (e: unknown) {
-    log(`tunnel restore failed: ${e instanceof Error ? e.message : String(e)}`);
+    // The restart is stop-then-start and cannot be made atomic: a tailscale
+    // funnel is a daemon toggle rather than a second process, so there is no
+    // "bring the new one up first" for both kinds. That makes a failure here
+    // leave NO tunnel while the record and the hub still advertise the old
+    // hostname — boxes silently lose the hub. Say so plainly; a terse log line
+    // scrolls past inside a spinner and reads like a warning about nothing.
+    const reason = e instanceof Error ? e.message : String(e);
+    log(`WARNING: the ${record.tunnel} tunnel did not come back (${reason}).`);
+    log(
+      `The hub is running but cloud boxes cannot reach it at ${record.publicUrl ?? 'its recorded URL'} — ` +
+        're-run `agentbox hub start` to retry, or `agentbox hub expose --tunnel ' +
+        `${record.tunnel}\` to re-establish it.`,
+    );
   }
 }
 
