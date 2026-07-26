@@ -73,13 +73,23 @@ export interface HubTarget {
 export async function resolveHubTarget(urlFlag?: string): Promise<HubTarget> {
   const cfg = await loadEffectiveConfig(process.cwd());
   const url = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
+  // A control box that IS this machine (`hub expose`) is reached over loopback,
+  // not the box-facing LAN/tunnel URL — but it's still the `remote`-shaped API
+  // (password profile, /api/v1 keyed by AGENTBOX_HUB_API_KEY).
+  //
+  // Checked BEFORE the configured URL is required, because the two can disagree:
+  // `hub unset-url` clears the config but leaves the exposed record, and the hub
+  // keeps running the password profile. Falling through to local mode then
+  // handed out the localhost token — which that hub does not accept — so
+  // `hub target`, and the tray that follows it, pointed at the wrong credential.
+  const loopback = urlFlag ? null : await localExposedLoopbackUrl();
+  if (loopback) {
+    loadControlPlaneEnv();
+    return { mode: 'remote', url: loopback, token: process.env.AGENTBOX_HUB_API_KEY ?? '' };
+  }
   if (url) {
     loadControlPlaneEnv();
-    // A control box that IS this machine (`hub expose`) is reached over loopback,
-    // not the box-facing LAN/tunnel URL — but it's still the `remote`-shaped API
-    // (password profile, /api/v1 keyed by AGENTBOX_HUB_API_KEY).
-    const loopback = urlFlag ? null : await localExposedLoopbackUrl();
-    return { mode: 'remote', url: loopback ?? url, token: process.env.AGENTBOX_HUB_API_KEY ?? '' };
+    return { mode: 'remote', url, token: process.env.AGENTBOX_HUB_API_KEY ?? '' };
   }
   const s = await getHubStatus();
   return { mode: 'local', url: `http://127.0.0.1:${String(s.port)}`, token: s.token ?? '' };
