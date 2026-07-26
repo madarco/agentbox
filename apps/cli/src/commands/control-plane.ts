@@ -1611,12 +1611,17 @@ const destroySub = new Command('destroy')
       // Cloud boxes the hub created outlive it, and its store is often the only
       // record they exist — so enumerate before destroying it, not after.
       const boxes = await listHubBoxesForDestroy(record);
-      if (boxes.kind === 'boxes' && boxes.rows.length > 0 && !opts.force) {
+      const gate = destroyGate(boxes, Boolean(opts.force));
+      if (!gate.allowed) {
         log.error(
-          `The control box still has ${String(boxes.rows.length)} box(es) registered. Destroying it now would orphan them:`,
+          `The control box still has ${String(gate.orphanCount)} box(es) registered. Destroying it now would orphan them:`,
         );
-        for (const b of boxes.rows) {
-          process.stdout.write(`  ${b.id}  ${b.name ?? ''}  ${b.provider ?? ''}  ${b.state ?? ''}\n`);
+        if (boxes.kind === 'boxes') {
+          for (const b of boxes.rows) {
+            process.stdout.write(
+              `  ${b.id}  ${b.name ?? ''}  ${b.provider ?? ''}  ${b.state ?? ''}\n`,
+            );
+          }
         }
         log.info('Destroy them first (`agentbox hub boxes rm <id>`), or re-run with --force.');
         process.exitCode = 1;
@@ -1632,12 +1637,7 @@ const destroySub = new Command('destroy')
         `the \`${AGENTBOX_HUB_SSH_ALIAS}\` SSH alias`,
         'relay.controlPlaneUrl (global + project)',
       ];
-      if (boxes.kind === 'unreachable') {
-        lines.push(`NOTE: the hub did not answer, so its boxes could not be listed (${boxes.reason})`);
-      }
-      if (boxes.kind === 'boxes' && boxes.rows.length > 0) {
-        lines.push(`NOTE: --force — ${String(boxes.rows.length)} registered box(es) will be orphaned`);
-      }
+      if (gate.note) lines.push(`NOTE: ${gate.note}`);
       note(lines.join('\n'), 'This will delete');
 
       if (!opts.yes) {
@@ -1669,9 +1669,41 @@ const destroySub = new Command('destroy')
   });
 
 /** Boxes the hub still owns, or why we couldn't ask. */
-type HubBoxesProbe =
+export type HubBoxesProbe =
   | { kind: 'boxes'; rows: Array<{ id: string; name?: string; provider?: string; state?: string }> }
   | { kind: 'unreachable'; reason: string };
+
+/**
+ * Whether `hub destroy` may proceed.
+ *
+ * Cloud boxes the control box created keep running in their provider, and the
+ * hub's store is often the only record they exist — so a non-empty list is a
+ * hard stop rather than a warning. An **unreachable** hub is not: a deploy that
+ * never came up is the single most common thing people want to delete, and
+ * refusing there would leave no way to clean up at all.
+ *
+ * Pure so the gate is testable without a live hub.
+ */
+export function destroyGate(
+  probe: HubBoxesProbe,
+  force: boolean,
+): { allowed: boolean; orphanCount: number; note: string | null } {
+  if (probe.kind === 'unreachable') {
+    return {
+      allowed: true,
+      orphanCount: 0,
+      note: `the hub did not answer, so its boxes could not be listed (${probe.reason})`,
+    };
+  }
+  const orphanCount = probe.rows.length;
+  if (orphanCount === 0) return { allowed: true, orphanCount: 0, note: null };
+  if (!force) return { allowed: false, orphanCount, note: null };
+  return {
+    allowed: true,
+    orphanCount,
+    note: `--force — ${String(orphanCount)} registered box(es) will be orphaned`,
+  };
+}
 
 async function listHubBoxesForDestroy(record: ControlPlaneDeployRecord): Promise<HubBoxesProbe> {
   if (!record.url) return { kind: 'unreachable', reason: 'no url in the deploy record' };

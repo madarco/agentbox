@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { controlPlaneCloudInit } from '../src/cloud-init.js';
 import {
+  appServiceState,
   describeCaddyHop,
   destroyControlPlaneOnHetzner,
   hubContainerPort,
@@ -285,5 +286,34 @@ describe('destroyControlPlaneOnHetzner', () => {
       firewallDeleted: false,
       warnings: [],
     });
+  });
+});
+
+/**
+ * A single healthz 200 is not proof the hub stayed up: it starts listening
+ * BEFORE its create worker, so a build that boots and then throws serves healthz
+ * for a moment and dies. Caught live — an update reported "healthy" while the
+ * container restarted every 60s. `docker compose ps` is the ground truth.
+ */
+describe('appServiceState', () => {
+  it('reads a healthy app as running', () => {
+    expect(appServiceState('app=running\ncaddy=running')).toBe('running');
+  });
+
+  it('reads a crash-looping app as restarting (the case that slipped through)', () => {
+    expect(appServiceState('app=restarting\ncaddy=running')).toBe('restarting');
+  });
+
+  it('is not confused by another service whose name ends in app', () => {
+    expect(appServiceState('myapp=exited\napp=running')).toBe('running');
+  });
+
+  it('tolerates leading whitespace and CRLF', () => {
+    expect(appServiceState('  app=running\r\ncaddy=running')).toBe('running');
+  });
+
+  it('returns undefined for output with no app line, so a healthy hub is not failed', () => {
+    expect(appServiceState('caddy=running')).toBeUndefined();
+    expect(appServiceState('')).toBeUndefined();
   });
 });

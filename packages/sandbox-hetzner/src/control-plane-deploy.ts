@@ -586,6 +586,53 @@ export async function applyControlPlaneConfig(opts: ApplyControlPlaneOptions): P
 
   log(`waiting for HTTPS at ${url} …`);
   await pollHealthz(url, 3 * 60_000, log, () => diagnoseUnhealthy(target, appPort, source, domain));
+  await assertAppStable(target, source, log);
+}
+
+/**
+ * A single healthz 200 is not proof the hub stayed up.
+ *
+ * The hub starts listening BEFORE it starts its create worker, so a build that
+ * boots and then throws (an older hub against a `gh`-mode env, say) serves
+ * healthz for a moment and then dies — `restart: unless-stopped` retries, and the
+ * poll can land in one of those windows. Seen live: an update reported "healthy"
+ * while the container was crash-looping every 60s.
+ *
+ * `docker compose ps` is the ground truth: a crash-looping container reports
+ * `restarting`, never `running`.
+ */
+/**
+ * The `app` service's state out of `docker compose ps --format '{{.Service}}={{.State}}'`.
+ * Undefined when the line isn't there at all — an unparseable `ps` must not fail
+ * a hub that is answering, so the caller treats undefined as "assume fine".
+ * Pure — unit-testable.
+ */
+export function appServiceState(psOutput: string): string | undefined {
+  return /(?:^|\n)\s*app=(\S+)/.exec(psOutput)?.[1];
+}
+
+async function assertAppStable(
+  target: SshTargetArgs,
+  source: HubDeploySource,
+  log: (line: string) => void,
+): Promise<void> {
+  const files = composeFileArgs(source);
+  const ps = await sshExec(
+    target,
+    `cd ${REMOTE_APP_DIR} && docker compose ${files} ps --format '{{.Service}}={{.State}}'`,
+  );
+  const state = appServiceState(ps.stdout);
+  if (state === undefined || state === 'running') return;
+  log(`app container is "${state}" — collecting its logs…`);
+  const logs = await sshExec(
+    target,
+    `cd ${REMOTE_APP_DIR} && docker compose ${files} logs --tail=25 app 2>&1`,
+  );
+  throw new Error(
+    `the hub answered once but its container is "${state}", not running — it is crash-looping, ` +
+      `so the version you deployed cannot stay up with this configuration.\n` +
+      `--- app logs (last 25) ---\n${logs.stdout.trim()}`,
+  );
 }
 
 export async function deployControlPlaneToHetzner(
@@ -755,6 +802,17 @@ export async function updateControlPlaneOnHetzner(
   }
 
   if (source.kind === 'source') {
+    // A package-mode box has no repo at all — cloud-init skipped the clone — so
+    // `git fetch` there would fail with a bare "not a git repository". Say what
+    // is actually wrong instead.
+    const isRepo = await sshExec(target, `test -d ${REMOTE_REPO_DIR}/.git`);
+    if (isRepo.exitCode !== 0) {
+      throw new Error(
+        `this control box was installed from npm, so there is no git checkout on it to update. ` +
+          `\`hub update --ref\` only works on a box deployed with --ref; to switch, deploy a new one ` +
+          `(\`agentbox hub deploy hetzner --ref ${source.repoRef}\`) and destroy this one.`,
+      );
+    }
     // Fetch by ref then check out FETCH_HEAD, so a branch, a tag and a bare sha
     // all work through one path (the same reason cloud-init's clone is two-step).
     log(`checking out ${source.repoRef} on the VPS…`);
