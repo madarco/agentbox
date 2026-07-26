@@ -190,10 +190,16 @@ export async function runExpose(opts: ExposeOptions): Promise<ExposeResult> {
     );
   }
 
+  // Re-read before reporting. Registering the autostart unit runs it (launchd
+  // `RunAtLoad`), and that `hub start` re-establishes the tunnel — which for a
+  // quick tunnel means a NEW random hostname written to the record and config.
+  // Reporting the URL chosen a moment earlier would print one that no longer
+  // resolves, which is the first thing a user copies.
+  const settled = (await readLocalRecord()) ?? record;
   return {
     endpoint,
-    record,
-    publicUrl,
+    record: settled,
+    publicUrl: settled.publicUrl ?? publicUrl,
     localUrl: `http://127.0.0.1:${String(port)}`,
     cloudReachable,
     autostart,
