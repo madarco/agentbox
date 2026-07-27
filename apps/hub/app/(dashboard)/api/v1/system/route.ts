@@ -4,19 +4,13 @@
 // fingerprint and freshness, and the box-image build-context manifest (what skills
 // / agents / config are baked in). Read-only.
 //
-// Reuses the same freshness the settings page reads (backend.providersWithFreshness)
-// rather than recomputing it, and reads prepared-state + the deploy record directly
-// — the hub IS the host that holds them. @agentbox/sandbox-core is externalized
-// (next.config serverExternalPackages), so importing it in a nodejs route is safe.
-import { readFile } from 'node:fs/promises';
-import {
-  DOCKER_CONTEXT_FILE_MAP,
-  controlPlaneDeployPath,
-  readPreparedStateRaw,
-  shortFingerprint,
-  type ControlPlaneDeployRecord,
-  type PreparedBaseSnapshot,
-} from '@agentbox/sandbox-core';
+// Freshness comes from the in-process host backend (backend.providersWithFreshness).
+// The prepared-state reads, deploy record, and build-context manifest come from
+// `globalThis.__AGENTBOX_HUB_SYSTEM` — set by server.ts, which reads them from
+// @agentbox/sandbox-core in its OWN scope. This route must NOT import
+// @agentbox/sandbox-core directly: it depends on execa (serverExternalPackages),
+// and a route-level runtime import ERR_MODULE_NOT_FOUNDs in the standalone build
+// (turbopack emits a mangled execa external). The seam mirrors __AGENTBOX_HUB_CUSTODY.
 import { hubProfile } from '@/lib/auth-config';
 import type { ProviderOption } from '@/lib/boxes/types';
 import { describeHubBuild, isBaked, type ProviderBake } from '@/lib/system-info';
@@ -39,38 +33,19 @@ const PROVIDER_LABELS: Record<string, string> = {
   digitalocean: 'DigitalOcean',
 };
 
-interface PreparedBaseFields {
-  fingerprint?: string;
-  cliVersion?: string;
-  bakedAt?: string;
-  imageRef?: string;
-}
-
-function preparedBaseOf(provider: string): PreparedBaseFields | null {
-  const raw = readPreparedStateRaw(provider) as PreparedBaseSnapshot | null;
-  const base = raw?.base;
-  if (!base) return null;
-  return {
-    fingerprint: base.contextSha256 ? shortFingerprint(base.contextSha256) : undefined,
-    cliVersion: base.cliVersion,
-    bakedAt: base.createdAt,
-    imageRef: base.imageRef != null ? String(base.imageRef) : undefined,
-  };
-}
-
-async function readDeployRecord(): Promise<ControlPlaneDeployRecord | null> {
-  try {
-    return JSON.parse(await readFile(controlPlaneDeployPath(), 'utf8')) as ControlPlaneDeployRecord;
-  } catch {
-    return null; // no deploy record on this machine (a plain hub / a VPS the record lives off)
-  }
-}
+type DeployRecordView = NonNullable<
+  ReturnType<NonNullable<typeof globalThis.__AGENTBOX_HUB_SYSTEM>['deployRecord']>
+>;
 
 export async function GET(): Promise<Response> {
   const version = process.env.AGENTBOX_CLI_VERSION ?? null;
   const commit = process.env.AGENTBOX_CLI_COMMIT ?? null;
 
-  const record = await readDeployRecord();
+  // The system seam (@agentbox/sandbox-core reads, in server.ts scope). Absent on
+  // the plane / Postgres path — the route then degrades: no deploy record, nothing
+  // baked, an empty image manifest, exactly like custody's not-enabled path.
+  const sys = globalThis.__AGENTBOX_HUB_SYSTEM;
+  const record = sys?.deployRecord() ?? null;
   const build = describeHubBuild({ version, source: record?.source ?? null });
 
   // Freshness (baseStatus/baseStaleReason) is only available on the in-process
@@ -89,7 +64,7 @@ export async function GET(): Promise<Response> {
   }
 
   const providers: ProviderBake[] = BASE_PROVIDERS.map((id) => {
-    const prepared = preparedBaseOf(id);
+    const prepared = sys?.preparedBase(id) ?? null;
     const f = freshness.get(id);
     // Freshness (when the in-process backend computed it) is authoritative about
     // whether the base exists: only `unprepared` means no stored base. `unknown`
@@ -116,14 +91,13 @@ export async function GET(): Promise<Response> {
     build,
     deploy: deployView(record),
     providers,
-    imageContextKeys: Object.keys(DOCKER_CONTEXT_FILE_MAP),
+    imageContextKeys: sys?.imageContextKeys() ?? [],
   });
 }
 
-// Whitelist the non-sensitive deploy fields for the page. Excludes the SSH key
-// dir, server/firewall ids, and the admin CIDR — operational detail the CLI owns,
-// not something the build page needs.
-function deployView(record: ControlPlaneDeployRecord | null): {
+// The page's deploy panel: the non-sensitive fields only (the seam already
+// whitelisted them; here we just drop the build `source`, which feeds `build`).
+function deployView(record: DeployRecordView | null): {
   provider?: string;
   url?: string;
   publicUrl?: string;

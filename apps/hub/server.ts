@@ -13,8 +13,21 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import next from 'next';
-import { makeStore, FsCustodyStore, type Store, type CustodyStore } from '@agentbox/relay/control-plane';
+import {
+  makeStore,
+  FsCustodyStore,
+  type Store,
+  type CustodyStore,
+} from '@agentbox/relay/control-plane';
 import { startRelayDaemon } from '@agentbox/relay/daemon';
+import {
+  DOCKER_CONTEXT_FILE_MAP,
+  controlPlaneDeployPath,
+  readPreparedStateRaw,
+  shortFingerprint,
+  type ControlPlaneDeployRecord,
+  type PreparedBaseSnapshot,
+} from '@agentbox/sandbox-core';
 import { createHubBackend } from './lib/hub-backend';
 import { configureHubGitCredentials } from './lib/git-auth';
 
@@ -98,7 +111,8 @@ async function main(): Promise<void> {
   // 503 without the token, so wiring the fs store unconditionally is safe: a
   // loginless localhost hub simply never serves the routes.
   const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '';
-  const custody: CustodyStore | undefined = adminToken.length > 0 ? new FsCustodyStore() : undefined;
+  const custody: CustodyStore | undefined =
+    adminToken.length > 0 ? new FsCustodyStore() : undefined;
 
   // `hub.gitAuth=gh`: make the stored GitHub token visible to git and `gh`
   // before anything can need it — the create worker clones with it, and the
@@ -141,10 +155,52 @@ async function main(): Promise<void> {
   globalThis.__AGENTBOX_HUB_BACKEND = createHubBackend(daemon.handle);
   globalThis.__AGENTBOX_HUB_NOTIFIER = daemon.handle.hubNotifier;
   // The custody store (agent creds / project seeds / bake records / box SSH keys),
-  // for the Custody page's read-only /api/v1/custody route. Null on a hub with no
-  // admin token (localhost) — the route then reports custody-not-enabled. Shared
-  // via globalThis (like the backend) so @agentbox/relay stays out of Next's bundle.
+  // for the Custody + project-Seed read-only routes. Null on a hub with no admin
+  // token (localhost) — the routes then report custody-not-enabled. Shared via
+  // globalThis (like the backend) so @agentbox/relay stays out of Next's bundle:
+  // a route that constructed `new FsCustodyStore()` itself would ERR_MODULE_NOT_FOUND
+  // on execa in the standalone build.
   globalThis.__AGENTBOX_HUB_CUSTODY = custody ?? null;
+
+  // System / Build facts for the /api/v1/system route, read from @agentbox/sandbox-core
+  // HERE (the custom server's scope, outside Next's bundle) and handed across as plain
+  // data. The route must not import @agentbox/sandbox-core itself — it depends on execa
+  // (serverExternalPackages), and a route-level runtime import fails in the standalone
+  // build the same way a bundled FsCustodyStore does.
+  globalThis.__AGENTBOX_HUB_SYSTEM = {
+    preparedBase(provider) {
+      const base = (readPreparedStateRaw(provider) as PreparedBaseSnapshot | null)?.base;
+      if (!base) return null;
+      return {
+        fingerprint: base.contextSha256 ? shortFingerprint(base.contextSha256) : undefined,
+        cliVersion: base.cliVersion,
+        bakedAt: base.createdAt,
+        imageRef: base.imageRef != null ? String(base.imageRef) : undefined,
+      };
+    },
+    deployRecord() {
+      try {
+        const rec = JSON.parse(
+          readFileSync(controlPlaneDeployPath(), 'utf8'),
+        ) as ControlPlaneDeployRecord;
+        // Whitelist the non-sensitive fields (+ the build `source`); the SSH key dir,
+        // server/firewall ids and admin CIDR are operational detail the route omits.
+        return {
+          source: rec.source ?? null,
+          provider: rec.provider,
+          url: rec.url,
+          publicUrl: rec.publicUrl,
+          tunnel: rec.tunnel,
+          autostart: rec.autostart,
+          port: rec.port,
+          bind: rec.bind,
+        };
+      } catch {
+        return null; // no deploy record on this machine (a plain hub)
+      }
+    },
+    imageContextKeys: () => Object.keys(DOCKER_CONTEXT_FILE_MAP),
+  };
 
   // Password profiles (hetzner/vercel): create/upgrade the auth tables and
   // env-seed the admin. Dynamic import so localhost never loads node:sqlite /
@@ -174,18 +230,24 @@ async function main(): Promise<void> {
 
   process.stdout.write(`agentbox-hub: listening on ${host}:${String(port)} (dev=${String(dev)})\n`);
   if (mode === 'token') {
-    process.stdout.write(`agentbox-hub: open http://${host}:${String(port)}/?token=${process.env.AGENTBOX_HUB_TOKEN ?? ''}\n`);
+    process.stdout.write(
+      `agentbox-hub: open http://${host}:${String(port)}/?token=${process.env.AGENTBOX_HUB_TOKEN ?? ''}\n`,
+    );
   }
 
   const shutdown = (signal: string): void => {
     process.stdout.write(`agentbox-hub: ${signal} — shutting down\n`);
-    void (worker?.stop() ?? Promise.resolve()).finally(() => daemon.stop().finally(() => process.exit(0)));
+    void (worker?.stop() ?? Promise.resolve()).finally(() =>
+      daemon.stop().finally(() => process.exit(0)),
+    );
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 main().catch((err: unknown) => {
-  process.stderr.write(`agentbox-hub: fatal ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
+  process.stderr.write(
+    `agentbox-hub: fatal ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`,
+  );
   process.exit(1);
 });

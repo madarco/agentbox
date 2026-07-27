@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+// The canonical derivation. Safe to import here (tests aren't bundled by Next),
+// unlike seed-slug.ts itself, which inlines a copy to avoid pulling this
+// execa-carrying package into the seed route's standalone bundle.
+import { projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
 import { custodyIdentityFromRegistration, seedSlugFor } from './seed-slug';
 
 /*
@@ -16,7 +20,9 @@ describe('a project built from a registration resolves its seed slug', () => {
   it('via origin-URL derivation when no slug was registered', () => {
     const proj = custodyIdentityFromRegistration({ originUrl: 'git@github.com:acme/widgets.git' });
     expect(seedSlugFor(proj)).toBe('acme__widgets');
-    const https = custodyIdentityFromRegistration({ originUrl: 'https://github.com/acme/widgets.git' });
+    const https = custodyIdentityFromRegistration({
+      originUrl: 'https://github.com/acme/widgets.git',
+    });
     expect(seedSlugFor(https)).toBe('acme__widgets');
   });
 
@@ -38,9 +44,30 @@ describe('a project built from a registration resolves its seed slug', () => {
   it('carries both fields through undefineds as explicit nulls', () => {
     // The synthetic project omitting these fields was the original bug; the
     // mapping must always produce them, never leave them undefined.
-    expect(custodyIdentityFromRegistration({ originUrl: undefined, projectSlug: undefined })).toEqual({
+    expect(
+      custodyIdentityFromRegistration({ originUrl: undefined, projectSlug: undefined }),
+    ).toEqual({
       originUrl: null,
       projectSlug: null,
     });
+  });
+
+  // seed-slug.ts inlines the slug derivation (it can't import the execa-carrying
+  // @agentbox/sandbox-core barrel in the seed route's bundle). This pins the copy
+  // to the canonical projectSlugFromOriginUrl so the two can never drift.
+  it('derives origin slugs identically to the canonical sandbox-core impl', () => {
+    for (const url of [
+      'git@github.com:acme/widgets.git',
+      'https://github.com/acme/widgets',
+      'ssh://git@github.com/acme/widgets.git',
+      'https://gitlab.com/team/sub/repo.git',
+      'git@github.com:Acme/Wid gets.git',
+      'not a url',
+      '',
+    ]) {
+      expect(seedSlugFor(custodyIdentityFromRegistration({ originUrl: url }))).toBe(
+        projectSlugFromOriginUrl(url),
+      );
+    }
   });
 });

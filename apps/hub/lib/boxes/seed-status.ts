@@ -1,7 +1,11 @@
 import 'server-only';
 
-import { FsCustodyStore } from '@agentbox/relay/control-plane';
 import { seedSlugFor } from './seed-slug';
+// Type-only — importing the CustodyStore VALUE (FsCustodyStore) here would bundle
+// @agentbox/relay (→ execa) into the /api/v1/projects/{id}/seed route and
+// ERR_MODULE_NOT_FOUND in the standalone build. We reach the live store through
+// `globalThis.__AGENTBOX_HUB_CUSTODY` instead (set by server.ts, out of Next's
+// bundle), exactly like the /api/v1/custody route.
 import type { CustodyEntry } from '@agentbox/relay/control-plane';
 
 export { seedSlugFor };
@@ -62,9 +66,14 @@ interface SeedManifestShape {
   createdAt?: string;
 }
 
-/** Custody is served only on a control box, which is the only hub with an admin token. */
-function custodyOrNull(): FsCustodyStore | null {
-  return (process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '').length > 0 ? new FsCustodyStore() : null;
+/**
+ * The live custody store, or null when this hub holds none (no admin token — a
+ * localhost hub, or the plane/Postgres path). Set by server.ts outside Next's
+ * bundle; a structural `list`/`get` handle, never `new FsCustodyStore()` (which
+ * would drag @agentbox/relay → execa into this route's bundle).
+ */
+function custodyOrNull(): NonNullable<typeof globalThis.__AGENTBOX_HUB_CUSTODY> | null {
+  return globalThis.__AGENTBOX_HUB_CUSTODY ?? null;
 }
 
 function toEntry(e: CustodyEntry, prefix: string): SeedEntry {
