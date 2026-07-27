@@ -33,6 +33,7 @@ export function buildOpenApi(): Record<string, unknown> {
       { name: 'Hosts', description: 'Remote-docker host aliases (name -> SSH connection).' },
       { name: 'Approvals', description: 'Pending host-action approvals.' },
       { name: 'Jobs', description: 'Async create/bake job status and log streams.' },
+      { name: 'Custody', description: 'What the control box holds in custody (metadata only — never values).' },
     ],
     paths: {
       '/health': {
@@ -465,6 +466,46 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/custody': {
+        get: {
+          tags: ['Custody'],
+          summary: 'List the custody manifest (metadata only)',
+          description:
+            "What the control box holds so a box created from either side is usable from both: agent credentials, project seeds, provider bake records, and per-box SSH keys. Returns paths, hashes, sizes and mtimes ONLY — value bytes never leave the box (same contract as `agentbox hub custody list`). `enabled` is false on a hub with no custody (e.g. a localhost hub). Optional `?prefix=` scopes the listing to a custody scope (`agents` | `projects` | `prepared` | `boxes`) or a `scope/subject`.",
+          parameters: [
+            {
+              name: 'prefix',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'A custody scope or scope/subject, e.g. `agents` or `boxes/box-abc`.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Custody manifest',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/Custody' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+          },
+        },
+      },
+      '/system': {
+        get: {
+          tags: ['System'],
+          summary: 'Get hub build + provider bake status',
+          description:
+            'Answers "what is running here, and do I need to re-bake?": hub version + channel + build source, the deploy record (when this machine is an exposed/deployed control box), each base provider’s baked fingerprint and freshness (`baseStatus` `stale` = re-bake), and the box-image build-context manifest. Freshness is populated only on the in-process host topology (like GET /providers?freshness=1).',
+          responses: {
+            '200': {
+              description: 'System info',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/System' } } },
+            },
+            '401': errorResponse,
+          },
+        },
+      },
     },
     components: {
       securitySchemes: {
@@ -475,6 +516,75 @@ export function buildOpenApi(): Record<string, unknown> {
           type: 'object',
           properties: { ok: { const: true }, apiVersion: { type: 'string' }, profile: { type: 'string' } },
           required: ['ok', 'apiVersion'],
+        },
+        CustodyEntry: {
+          type: 'object',
+          description: 'One stored item — metadata only; the value bytes are never returned.',
+          properties: {
+            path: { type: 'string', description: 'Custody-relative path, e.g. agents/claude/.credentials.json' },
+            size: { type: 'number' },
+            sha256: { type: 'string', description: 'Hex sha256 of the stored bytes' },
+            mode: { type: 'number', description: 'POSIX mode of the stored value' },
+            updatedAt: { type: 'string', description: 'ISO timestamp of the last write' },
+          },
+          required: ['path', 'size', 'sha256', 'mode', 'updatedAt'],
+        },
+        Custody: {
+          type: 'object',
+          properties: {
+            enabled: { type: 'boolean', description: 'false when this hub holds no custody (no admin token)' },
+            entries: { type: 'array', items: { $ref: '#/components/schemas/CustodyEntry' } },
+          },
+          required: ['enabled', 'entries'],
+        },
+        ProviderBake: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            label: { type: 'string' },
+            baked: { type: 'boolean' },
+            fingerprint: { type: 'string', description: 'Short (12-char) build-context fingerprint of the baked base' },
+            cliVersion: { type: 'string' },
+            bakedAt: { type: 'string' },
+            imageRef: { type: 'string' },
+            baseStatus: { type: 'string', enum: ['fresh', 'stale', 'unprepared', 'unknown'] },
+            baseStaleReason: { type: 'string' },
+          },
+          required: ['id', 'label', 'baked'],
+        },
+        System: {
+          type: 'object',
+          properties: {
+            hub: {
+              type: 'object',
+              properties: {
+                version: { type: ['string', 'null'] },
+                commit: { type: ['string', 'null'] },
+                profile: { type: 'string' },
+                apiVersion: { type: 'string' },
+              },
+              required: ['profile', 'apiVersion'],
+            },
+            build: {
+              type: 'object',
+              properties: {
+                version: { type: ['string', 'null'] },
+                channel: { type: ['string', 'null'], description: 'stable | nightly | source (<ref>)' },
+                build: { type: ['string', 'null'], description: 'Human build line, e.g. @madarco/agentbox@0.28.0 (npm)' },
+              },
+            },
+            deploy: {
+              type: ['object', 'null'],
+              description: 'Present only when this machine is an exposed/deployed control box.',
+            },
+            providers: { type: 'array', items: { $ref: '#/components/schemas/ProviderBake' } },
+            imageContextKeys: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Box-image build-context files (skills / agents / config baked in).',
+            },
+          },
+          required: ['hub', 'build', 'providers', 'imageContextKeys'],
         },
         Error: {
           type: 'object',

@@ -19,6 +19,21 @@ declare global {
   // set changes. Structural type keeps Next loosely coupled to the relay.
   // eslint-disable-next-line no-var
   var __AGENTBOX_HUB_NOTIFIER: { subscribe(fn: () => void): () => void } | undefined;
+
+  // The control box's custody store (agent creds / project seeds / bake records /
+  // box SSH keys). Set by the custom server; the Custody page's /api/v1/custody
+  // route reads metadata from it (never values). `null` when custody is not
+  // enabled here (no admin token — the localhost profile). Structural `list` only,
+  // so @agentbox/relay's CustodyStore type never enters Next's bundle.
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_CUSTODY:
+    | {
+        list(prefix?: string): Promise<
+          { path: string; size: number; sha256: string; mode: number; updatedAt: string }[]
+        >;
+      }
+    | null
+    | undefined;
 }
 
 export {};
