@@ -140,6 +140,11 @@ async function main(): Promise<void> {
   globalThis.__AGENTBOX_BOX_SOURCE = daemon.handle.store;
   globalThis.__AGENTBOX_HUB_BACKEND = createHubBackend(daemon.handle);
   globalThis.__AGENTBOX_HUB_NOTIFIER = daemon.handle.hubNotifier;
+  // The custody store (agent creds / project seeds / bake records / box SSH keys),
+  // for the Custody page's read-only /api/v1/custody route. Null on a hub with no
+  // admin token (localhost) — the route then reports custody-not-enabled. Shared
+  // via globalThis (like the backend) so @agentbox/relay stays out of Next's bundle.
+  globalThis.__AGENTBOX_HUB_CUSTODY = custody ?? null;
 
   // Password profiles (hetzner/vercel): create/upgrade the auth tables and
   // env-seed the admin. Dynamic import so localhost never loads node:sqlite /
