@@ -235,6 +235,15 @@ A provider can be driven **by the control box** only if its credential is a **po
 
 So running `agentbox claude` in a folder always runs on **your PC's Docker** — a control box changes nothing. `remote-docker` connects to your own machine over your `~/.ssh/config`, which the control box has no access to, so it's always built from your PC. **Cloud** providers, by contrast, are built **on the control box by default** once one is configured (see below).
 
+## Inspect custody and build state
+
+Two read-only pages in the dashboard answer "what does this control box hold?" and "is it up to date?":
+
+- **Custody** lists what the control box holds so a box created from either side is usable from both — agent credentials, project seeds, provider bake records, and per-box SSH keys — grouped by scope with each entry's path, short hash, size, and last-write time. It shows **metadata only**: the value bytes (credentials, `.env` files, keys) never leave the box, the same contract as `agentbox hub custody list`. A localhost hub with no custody shows an explanatory empty state.
+- **System & Build** shows the running hub version + channel, the deploy record, and — the actionable part — each provider's baked base with its fingerprint and a **freshness** verdict, so a `stale` row is exactly when to re-run `agentbox prepare --provider <id>` (or bake from **Settings**). It also lists the skills / agents / scripts baked into the box image, so you can see what a re-bake would pick up.
+
+Both are pure REST clients over the hub's [`GET /custody` and `GET /system`](/docs/api) endpoints.
+
 ## Create a box from the web UI
 
 The web-UI create needs a **repo checkout on the VPS** for the worker to build from. So:

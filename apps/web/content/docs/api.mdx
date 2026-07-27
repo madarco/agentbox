@@ -132,6 +132,18 @@ the interactive reference at `GET /docs`.
 | `GET /jobs/{id}`      | Create-job status (`queued`/`running`/`done`/`failed`). |
 | `GET /jobs/{id}/logs` | Stream the build log (SSE).                             |
 
+### Custody
+
+| Method + path    | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /custody`  | Metadata of what the control box holds so a box created from either side is usable from both — agent credentials, project seeds, provider bake records, and per-box SSH keys: `{ enabled, entries: [{ path, size, sha256, mode, updatedAt }] }`. **Value bytes are never returned** (same contract as `agentbox hub custody list`). `enabled: false` on a hub with no custody (a localhost hub). Optional `?prefix=` scopes to a custody scope (`agents` \| `projects` \| `prepared` \| `boxes`) or a `scope/subject` (e.g. `boxes/box-abc`); a malformed prefix is `400`. Drives the web UI's **Custody** page. |
+
+### System
+
+| Method + path  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /system` | "What is running here, and do I need to re-bake?": `{ hub, build, deploy, providers, imageContextKeys }` — the hub version/channel/build source, the deploy record (when this machine is an exposed/deployed control box), each base provider's baked fingerprint + freshness (`baseStatus` `stale` = re-bake, with `baseStaleReason`), and the box-image build-context manifest (skills / agents / scripts baked in). Freshness is populated only on the in-process host topology (like `GET /providers?freshness=1`). Drives the web UI's **System & Build** page. |
+
 The box view is provider-agnostic: `{ id, projectId, repo, branch, task, agent,
 status, createdAt, lastActivity, host, commits, filesTouched, error, displayName,
 webUrl, vncUrl }`, where `status` is one of

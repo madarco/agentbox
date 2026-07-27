@@ -87,7 +87,7 @@ const AGENT_CONFIG_KEYS = new Set([
 const BASE_KEYS = new Set(['Dockerfile.box', 'ctl/bin.cjs']);
 
 function labelFor(key: string): string {
-  return FILE_LABELS[key] ?? (key.split('/').pop() ?? key);
+  return FILE_LABELS[key] ?? key.split('/').pop() ?? key;
 }
 
 /**
@@ -122,7 +122,8 @@ export function groupImageContents(keys: string[]): ImageContentGroup[] {
 export interface ProviderBake {
   id: string;
   label: string;
-  /** A base bake record exists on disk. */
+  /** The base is baked and present — freshness-authoritative when the host
+   * backend computed it, else a bake record exists on disk. */
   baked: boolean;
   /** Short (12-char) fingerprint of the build context the base was baked from. */
   fingerprint?: string;
@@ -141,11 +142,18 @@ export interface ProviderBake {
 /** A short, plain-English verdict for a provider's bake state. */
 export function bakeVerdict(p: ProviderBake): { tone: 'ok' | 'warn' | 'muted'; text: string } {
   if (p.baseStatus === 'stale') {
-    return { tone: 'warn', text: 'Re-bake needed — build context changed since this base was baked.' };
+    return {
+      tone: 'warn',
+      text: 'Re-bake needed — build context changed since this base was baked.',
+    };
   }
   if (!p.baked || p.baseStatus === 'unprepared') {
-    return { tone: 'muted', text: 'Not baked yet — the next create (or a manual bake) will build it.' };
+    return {
+      tone: 'muted',
+      text: 'Not baked yet — the next create (or a manual bake) will build it.',
+    };
   }
-  if (p.baseStatus === 'fresh') return { tone: 'ok', text: 'Baked and up to date with the current build context.' };
+  if (p.baseStatus === 'fresh')
+    return { tone: 'ok', text: 'Baked and up to date with the current build context.' };
   return { tone: 'ok', text: 'Baked.' };
 }

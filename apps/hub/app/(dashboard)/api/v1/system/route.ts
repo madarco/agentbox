@@ -91,14 +91,23 @@ export async function GET(): Promise<Response> {
   const providers: ProviderBake[] = BASE_PROVIDERS.map((id) => {
     const prepared = preparedBaseOf(id);
     const f = freshness.get(id);
+    // Freshness (when the in-process backend computed it) is authoritative about
+    // whether the base is actually present: `unprepared` means the image/snapshot
+    // is gone even if a stale prepared record still lingers on disk. Trust it over
+    // the record so we never render "baked with X" for a base that isn't there.
+    // Absent freshness (the plane read path) → fall back to the record alone.
+    const baked = f?.baseStatus
+      ? f.baseStatus === 'fresh' || f.baseStatus === 'stale'
+      : prepared !== null;
+    const rec = baked ? prepared : null;
     return {
       id,
       label: PROVIDER_LABELS[id] ?? id,
-      baked: prepared !== null || f?.baseStatus === 'fresh' || f?.baseStatus === 'stale',
-      fingerprint: prepared?.fingerprint,
-      cliVersion: prepared?.cliVersion,
-      bakedAt: prepared?.bakedAt,
-      imageRef: prepared?.imageRef,
+      baked,
+      fingerprint: rec?.fingerprint,
+      cliVersion: rec?.cliVersion,
+      bakedAt: rec?.bakedAt,
+      imageRef: rec?.imageRef,
       baseStatus: f?.baseStatus,
       baseStaleReason: f?.baseStaleReason,
     };

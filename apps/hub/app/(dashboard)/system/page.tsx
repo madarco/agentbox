@@ -12,7 +12,12 @@ import { Icons } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-import { bakeVerdict, groupImageContents, type HubBuild, type ProviderBake } from '@/lib/system-info';
+import {
+  bakeVerdict,
+  groupImageContents,
+  type HubBuild,
+  type ProviderBake,
+} from '@/lib/system-info';
 import { EmptyBox } from '../boxes/components/empty-box';
 import { SectionLabel } from '../boxes/components/section-label';
 import { Stat, StatGrid } from '../boxes/components/stat-grid';
@@ -59,7 +64,9 @@ export default function SystemPage() {
 
   return (
     <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8 max-sm:px-4">
-      <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">System &amp; Build</h1>
+      <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">
+        System &amp; Build
+      </h1>
       <div className="mt-1.5 text-sm text-muted-foreground">
         What this hub is running, and whether any provider base needs re-baking.
       </div>
@@ -100,9 +107,22 @@ export default function SystemPage() {
                   <DeployField k="Tunnel" v={data.deploy.tunnel ?? 'none'} />
                   <DeployField
                     k="Bind"
-                    v={data.deploy.bind ? `${data.deploy.bind}:${String(data.deploy.port ?? 8787)}` : undefined}
+                    v={
+                      data.deploy.bind
+                        ? `${data.deploy.bind}:${String(data.deploy.port ?? 8787)}`
+                        : undefined
+                    }
                   />
-                  <DeployField k="Autostart" v={data.deploy.autostart === undefined ? undefined : data.deploy.autostart ? 'on' : 'off'} />
+                  <DeployField
+                    k="Autostart"
+                    v={
+                      data.deploy.autostart === undefined
+                        ? undefined
+                        : data.deploy.autostart
+                          ? 'on'
+                          : 'off'
+                    }
+                  />
                 </div>
               </Card>
             </>
@@ -111,9 +131,13 @@ export default function SystemPage() {
           <SectionLabel
             right={
               staleCount > 0 ? (
-                <Badge className="badge-warn gap-1.5 normal-case tracking-normal">{staleCount} need re-bake</Badge>
+                <Badge className="badge-warn gap-1.5 normal-case tracking-normal">
+                  {staleCount} need re-bake
+                </Badge>
               ) : (
-                <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">base images</span>
+                <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
+                  base images
+                </span>
               )
             }
           >
@@ -125,18 +149,29 @@ export default function SystemPage() {
             ))}
           </Card>
 
-          <SectionLabel right={<span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">what a re-bake picks up</span>}>
+          <SectionLabel
+            right={
+              <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
+                what a re-bake picks up
+              </span>
+            }
+          >
             Box image contents
           </SectionLabel>
           {groupImageContents(data.imageContextKeys).map((group) => (
             <div key={group.category} className="mb-4">
-              <div className="mb-2 font-mono text-[11px] uppercase tracking-[.08em] text-[#a4a9b0]">{group.category}</div>
+              <div className="mb-2 font-mono text-[11px] uppercase tracking-[.08em] text-[#a4a9b0]">
+                {group.category}
+              </div>
               <Card className="divide-y divide-border/60 overflow-hidden">
                 {group.files.map((f) => (
                   <div key={f.path} className="flex items-center gap-3 px-5 py-2.5">
                     <Icons.file className="size-3.5 flex-none text-[#a4a9b0]" />
                     <span className="text-[13px]">{f.label}</span>
-                    <span className="ml-auto truncate font-mono text-[11px] text-[#a4a9b0]" title={f.path}>
+                    <span
+                      className="ml-auto truncate font-mono text-[11px] text-[#a4a9b0]"
+                      title={f.path}
+                    >
                       {f.path}
                     </span>
                   </div>
@@ -153,7 +188,9 @@ export default function SystemPage() {
 function DeployField({ k, v }: { k: string; v?: string }) {
   return (
     <div className="px-4.5 p-4">
-      <div className="mb-1.5 font-mono text-[10.5px] uppercase tracking-[.06em] text-[#a4a9b0]">{k}</div>
+      <div className="mb-1.5 font-mono text-[10.5px] uppercase tracking-[.06em] text-[#a4a9b0]">
+        {k}
+      </div>
       <div className="truncate font-mono text-sm font-medium" title={v ?? undefined}>
         {v ?? '—'}
       </div>
@@ -169,7 +206,10 @@ function ProviderBakeRow({ p }: { p: ProviderBake }) {
         <span className="text-[14px] font-semibold">{p.label}</span>
         <StatusBadge p={p} />
         {p.fingerprint ? (
-          <span className="ml-auto font-mono text-[11px] text-[#a4a9b0]" title="build-context fingerprint">
+          <span
+            className="ml-auto font-mono text-[11px] text-[#a4a9b0]"
+            title="build-context fingerprint"
+          >
             {p.fingerprint}
           </span>
         ) : null}
@@ -191,7 +231,11 @@ function ProviderBakeRow({ p }: { p: ProviderBake }) {
               baked <Ago ms={Date.parse(p.bakedAt)} />
             </span>
           ) : null}
-          {p.imageRef ? <span className="truncate" title={p.imageRef}>{p.imageRef}</span> : null}
+          {p.imageRef ? (
+            <span className="truncate" title={p.imageRef}>
+              {p.imageRef}
+            </span>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -199,8 +243,10 @@ function ProviderBakeRow({ p }: { p: ProviderBake }) {
 }
 
 function StatusBadge({ p }: { p: ProviderBake }) {
-  if (p.baseStatus === 'stale') return <Badge className="badge-warn gap-1.5 normal-case">stale — re-bake</Badge>;
-  if (!p.baked || p.baseStatus === 'unprepared') return <Badge className="gap-1.5 normal-case">not baked</Badge>;
+  if (p.baseStatus === 'stale')
+    return <Badge className="badge-warn gap-1.5 normal-case">stale — re-bake</Badge>;
+  if (!p.baked || p.baseStatus === 'unprepared')
+    return <Badge className="gap-1.5 normal-case">not baked</Badge>;
   return (
     <Badge className="badge-run gap-1.5 normal-case">
       <span className="badge-dot" />
