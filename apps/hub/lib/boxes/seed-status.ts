@@ -1,8 +1,10 @@
 import 'server-only';
 
 import { FsCustodyStore } from '@agentbox/relay/control-plane';
-import { projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
+import { seedSlugFor } from './seed-slug';
 import type { CustodyEntry } from '@agentbox/relay/control-plane';
+
+export { seedSlugFor };
 
 /*
  * Seed / custody status for one project, read from the control box's custody
@@ -63,16 +65,6 @@ interface SeedManifestShape {
 /** Custody is served only on a control box, which is the only hub with an admin token. */
 function custodyOrNull(): FsCustodyStore | null {
   return (process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '').length > 0 ? new FsCustodyStore() : null;
-}
-
-/**
- * Resolve a project's custody slug: the one it registered with, else derived
- * from its origin URL (the same `owner__repo` derivation every producer uses).
- */
-export function seedSlugFor(project: { projectSlug?: string | null; originUrl?: string | null }): string | null {
-  if (project.projectSlug) return project.projectSlug;
-  if (project.originUrl) return projectSlugFromOriginUrl(project.originUrl);
-  return null;
 }
 
 function toEntry(e: CustodyEntry, prefix: string): SeedEntry {

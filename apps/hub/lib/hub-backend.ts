@@ -91,6 +91,7 @@ import type {
   ServicesResult,
 } from './boxes/backend-types';
 import { hubProfile } from './auth-config';
+import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import type { Approval, Box, BoxStatus, GithubState, HubState, Project, ProviderOption, User } from './boxes/types';
 
 /*
@@ -292,6 +293,20 @@ async function hostBranchOf(repo: string): Promise<string | null> {
 }
 
 /**
+ * The repo's `origin` remote URL, or null. Lets a locally-registered project
+ * resolve its custody slug (`seedSlugFor`) the same way a remote registration
+ * does — so the seed/custody panel works uniformly regardless of source.
+ */
+async function hostOriginOf(repo: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('git', ['-C', repo, 'remote', 'get-url', 'origin']);
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Whether a new box in this project would want the setup wizard: the host repo
  * has no `agentbox.yaml` AND no default snapshot (per-provider or global). A
  * snapshot carries the yaml, so a project with one doesn't need setup even
@@ -380,10 +395,13 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
     [...byId.entries()].map(async ([id, proj]) => {
       const repo = pathById.get(id);
       if (!repo) return;
-      [proj.currentBranch, proj.needsSetup] = await Promise.all([
+      let origin: string | null;
+      [proj.currentBranch, proj.needsSetup, origin] = await Promise.all([
         hostBranchOf(repo),
         computeNeedsSetup(repo, proj.provider),
+        hostOriginOf(repo),
       ]);
+      if (origin) proj.originUrl = origin;
     }),
   );
   return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt);
@@ -1217,6 +1235,12 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           defaultBranch: reg.worktrees?.[0]?.branch ?? 'main',
           provider: reg.backend ?? 'cloud',
           createdAt: Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now(),
+          // The registration carries the box's git identity — thread it onto the
+          // synthetic project so the seed/custody panel can resolve its custody
+          // slug (`seedSlugFor`). Without this, the primary self-hosted control
+          // box (SQLite store, no Postgres source) shows an empty panel even when
+          // custody genuinely holds the seed.
+          ...custodyIdentityFromRegistration(reg),
         });
       }
       return {
