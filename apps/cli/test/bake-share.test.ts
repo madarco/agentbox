@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { claudeInstallFingerprint } from '@agentbox/sandbox-core';
 import {
   buildRebakeNote,
+  buildShareFailedNote,
   classifyBakeShare,
   hasCredentialChanges,
   isShareablePreparedProvider,
@@ -64,63 +65,50 @@ describe('classifyBakeShare', () => {
   const CLI_VERSION = '0.27.1';
   const nativeFp = 'a'.repeat(64);
   const npmFp = claudeInstallFingerprint(nativeFp, 'npm');
+  // A shared base: matches this CLI, same-version hub, upload succeeded.
+  const shared = {
+    provider: 'hetzner',
+    storedFingerprint: nativeFp,
+    cliNativeFingerprint: nativeFp,
+    hubVersion: CLI_VERSION,
+    cliVersion: CLI_VERSION,
+    pushSucceeded: true,
+  };
 
   it('reports not-baked when nothing is baked locally', () => {
     expect(
-      classifyBakeShare({
-        provider: 'hetzner',
-        storedFingerprint: undefined,
-        cliNativeFingerprint: nativeFp,
-        hubVersion: CLI_VERSION,
-        cliVersion: CLI_VERSION,
-      }),
+      classifyBakeShare({ ...shared, provider: 'hetzner', storedFingerprint: undefined }),
     ).toEqual({ provider: 'hetzner', status: 'not-baked' });
   });
 
+  it('reports share-failed when the upload did not succeed (no false match)', () => {
+    const res = classifyBakeShare({ ...shared, provider: 'vercel', pushSucceeded: false });
+    expect(res.status).toBe('share-failed');
+    expect(res.reason).toContain('could not upload the vercel bake record');
+  });
+
   it('matches a native-baked record against a same-version hub', () => {
-    expect(
-      classifyBakeShare({
-        provider: 'hetzner',
-        storedFingerprint: nativeFp,
-        cliNativeFingerprint: nativeFp,
-        hubVersion: CLI_VERSION,
-        cliVersion: CLI_VERSION,
-      }),
-    ).toEqual({ provider: 'hetzner', status: 'match' });
+    expect(classifyBakeShare(shared)).toEqual({ provider: 'hetzner', status: 'match' });
   });
 
   it('matches an npm-baked record (either install mode is accepted)', () => {
-    expect(
-      classifyBakeShare({
-        provider: 'e2b',
-        storedFingerprint: npmFp,
-        cliNativeFingerprint: nativeFp,
-        hubVersion: CLI_VERSION,
-        cliVersion: CLI_VERSION,
-      }).status,
-    ).toBe('match');
+    expect(classifyBakeShare({ ...shared, provider: 'e2b', storedFingerprint: npmFp }).status).toBe(
+      'match',
+    );
   });
 
   it('flags a record stale vs this CLI build context (different fingerprint)', () => {
     const res = classifyBakeShare({
+      ...shared,
       provider: 'vercel',
       storedFingerprint: 'b'.repeat(64),
-      cliNativeFingerprint: nativeFp,
-      hubVersion: CLI_VERSION,
-      cliVersion: CLI_VERSION,
     });
     expect(res.status).toBe('mismatch');
     expect(res.reason).toContain('agentbox prepare --provider vercel');
   });
 
   it('flags a version skew even when the local record is current', () => {
-    const res = classifyBakeShare({
-      provider: 'hetzner',
-      storedFingerprint: nativeFp,
-      cliNativeFingerprint: nativeFp,
-      hubVersion: '0.26.0',
-      cliVersion: CLI_VERSION,
-    });
+    const res = classifyBakeShare({ ...shared, hubVersion: '0.26.0' });
     expect(res.status).toBe('mismatch');
     expect(res.reason).toContain('0.26.0');
     expect(res.reason).toContain(CLI_VERSION);
@@ -128,31 +116,25 @@ describe('classifyBakeShare', () => {
 
   it('assumes match when the CLI fingerprint cannot be computed and versions agree', () => {
     expect(
-      classifyBakeShare({
-        provider: 'daytona',
-        storedFingerprint: nativeFp,
-        cliNativeFingerprint: undefined,
-        hubVersion: CLI_VERSION,
-        cliVersion: CLI_VERSION,
-      }).status,
+      classifyBakeShare({ ...shared, provider: 'daytona', cliNativeFingerprint: undefined }).status,
     ).toBe('match');
   });
 
   it('does not flag a skew when the hub version is unknown', () => {
     expect(
-      classifyBakeShare({
-        provider: 'daytona',
-        storedFingerprint: nativeFp,
-        cliNativeFingerprint: nativeFp,
-        hubVersion: undefined,
-        cliVersion: CLI_VERSION,
-      }).status,
+      classifyBakeShare({ ...shared, provider: 'daytona', hubVersion: undefined }).status,
     ).toBe('match');
+  });
+
+  it('a failed push is share-failed even when the fingerprint would have matched', () => {
+    // The record never reached the hub, so no fingerprint verdict applies — it
+    // must not be reported as either a match or a fingerprint mismatch.
+    expect(classifyBakeShare({ ...shared, pushSucceeded: false }).status).toBe('share-failed');
   });
 });
 
-describe('summarizeBakeShare + buildRebakeNote', () => {
-  it('splits matched from mismatched and builds a per-provider note', () => {
+describe('summarizeBakeShare + note builders', () => {
+  it('splits matched / mismatched / share-failed and builds per-provider notes', () => {
     const results = [
       { provider: 'hetzner', status: 'match' as const },
       {
@@ -160,19 +142,33 @@ describe('summarizeBakeShare + buildRebakeNote', () => {
         status: 'mismatch' as const,
         reason: 'the hub runs 0.26.0 but this CLI is 0.27.1',
       },
-      { provider: 'e2b', status: 'not-baked' as const },
+      {
+        provider: 'e2b',
+        status: 'share-failed' as const,
+        reason: 'could not upload the e2b bake record to the control box',
+      },
+      { provider: 'daytona', status: 'not-baked' as const },
     ];
     const summary = summarizeBakeShare(results);
     expect(summary.matched).toEqual(['hetzner']);
     expect(summary.mismatched.map((m) => m.provider)).toEqual(['vercel']);
+    expect(summary.shareFailed.map((m) => m.provider)).toEqual(['e2b']);
 
-    const note = buildRebakeNote(summary.mismatched);
-    expect(note).toContain('bake them again');
-    expect(note).toContain('  - vercel: the hub runs 0.26.0');
-    expect(note).not.toContain('hetzner');
+    const rebake = buildRebakeNote(summary.mismatched);
+    expect(rebake).toContain('bake them again');
+    expect(rebake).toContain('  - vercel: the hub runs 0.26.0');
+    expect(rebake).not.toContain('hetzner');
+
+    const failed = buildShareFailedNote(summary.shareFailed);
+    expect(failed).toContain('Could not share');
+    expect(failed).toContain('e2b');
+    expect(failed).toContain('agentbox hub setup');
+    // A mismatch is a distinct outcome — it must not leak into the failed note.
+    expect(failed).not.toContain('vercel');
   });
 
-  it('returns null when nothing mismatched', () => {
+  it('note builders return null when their bucket is empty', () => {
     expect(buildRebakeNote([])).toBeNull();
+    expect(buildShareFailedNote([])).toBeNull();
   });
 });

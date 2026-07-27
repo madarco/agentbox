@@ -43,6 +43,7 @@ import { providerForCreate } from '../provider/registry.js';
 import { getRuntimeProviderNames, loadProviderModule } from '../provider/loaders.js';
 import {
   buildRebakeNote,
+  buildShareFailedNote,
   classifyBakeShare,
   hasCredentialChanges,
   isShareablePreparedProvider,
@@ -2413,7 +2414,9 @@ async function shareBakesWithControlBox(url: string | undefined): Promise<void> 
     const local = readPreparedStateRaw(provider) as { base?: { contextSha256?: string } } | null;
     const storedFingerprint = local?.base?.contextSha256;
     if (!storedFingerprint) continue; // not baked here → nothing to share
-    await pushPreparedToCustody(provider, {
+    // Capture the real upload outcome — a swallowed failure must not be reported
+    // as a share (the record never left this machine, so the hub will re-bake).
+    const pushSucceeded = await pushPreparedToCustody(provider, {
       controlPlaneUrl: target.url,
       adminToken: target.adminToken,
     }).catch(() => false);
@@ -2424,17 +2427,20 @@ async function shareBakesWithControlBox(url: string | undefined): Promise<void> 
         cliNativeFingerprint: await cliNativeFingerprint(provider),
         hubVersion,
         cliVersion: AGENTBOX_VERSION,
+        pushSucceeded,
       }),
     );
   }
-  const { matched, mismatched } = summarizeBakeShare(results);
+  const { matched, mismatched, shareFailed } = summarizeBakeShare(results);
   if (matched.length > 0) {
     log.success(
       `Shared your ${matched.join(', ')} base bake(s) with the control box — it won't re-bake them.`,
     );
   }
-  const note = buildRebakeNote(mismatched);
-  if (note) log.warn(note);
+  const rebakeNote = buildRebakeNote(mismatched);
+  if (rebakeNote) log.warn(rebakeNote);
+  const failedNote = buildShareFailedNote(shareFailed);
+  if (failedNote) log.warn(failedNote);
 }
 
 /** Bound on a credential-sync round-trip once the control box is known to be up. */

@@ -60,11 +60,19 @@ export interface BakeShareInput {
   hubVersion: string | undefined;
   /** This CLI's own version. */
   cliVersion: string;
+  /**
+   * Whether the record's upload to custody actually succeeded. When false the
+   * record never left this machine, so no verdict about the hub's fingerprint
+   * applies — the outcome is `share-failed`, never a false `match`.
+   */
+  pushSucceeded: boolean;
 }
 
 export type BakeShareStatus =
   /** Nothing baked locally — nothing to share. */
   | 'not-baked'
+  /** The upload to custody failed, so nothing was shared (the hub will re-bake). */
+  | 'share-failed'
   /** Shared; the hub's fingerprint will match, so its first create boots the base. */
   | 'match'
   /** Shared; the hub computes a different fingerprint, so it will re-bake. */
@@ -73,14 +81,16 @@ export type BakeShareStatus =
 export interface BakeShareResult {
   provider: string;
   status: BakeShareStatus;
-  /** Present only for `mismatch`: why the hub won't accept the shared record. */
+  /** Present for `mismatch` / `share-failed`: why the hub won't boot the record. */
   reason?: string;
 }
 
 /**
- * Predict whether the control box will accept this machine's bake record for
- * `provider`, applying the hub's own rule without a round-trip.
+ * Predict whether the control box will boot this machine's bake record for
+ * `provider`.
  *
+ * - The upload has to have actually succeeded; a swallowed push failure must
+ *   never be reported as a share (that is the false "Shared it" bug).
  * - A local record whose fingerprint matches neither install-mode fold of THIS
  *   CLI's build context is stale here too: no same-version hub would take it.
  * - A hub on a different version has a different build context, so the record —
@@ -89,6 +99,13 @@ export interface BakeShareResult {
 export function classifyBakeShare(input: BakeShareInput): BakeShareResult {
   const { provider, storedFingerprint, cliNativeFingerprint, hubVersion, cliVersion } = input;
   if (!storedFingerprint) return { provider, status: 'not-baked' };
+  if (!input.pushSucceeded) {
+    return {
+      provider,
+      status: 'share-failed',
+      reason: `could not upload the ${provider} bake record to the control box`,
+    };
+  }
   if (
     cliNativeFingerprint &&
     !matchClaudeInstallFingerprint(storedFingerprint, cliNativeFingerprint)
@@ -114,12 +131,15 @@ export interface BakeShareSummary {
   matched: string[];
   /** Providers shared but that the hub will re-bake (status `mismatch`). */
   mismatched: BakeShareResult[];
+  /** Providers whose upload failed, so nothing was shared (status `share-failed`). */
+  shareFailed: BakeShareResult[];
 }
 
 export function summarizeBakeShare(results: BakeShareResult[]): BakeShareSummary {
   return {
     matched: results.filter((r) => r.status === 'match').map((r) => r.provider),
     mismatched: results.filter((r) => r.status === 'mismatch'),
+    shareFailed: results.filter((r) => r.status === 'share-failed'),
   };
 }
 
@@ -136,5 +156,21 @@ export function buildRebakeNote(mismatched: BakeShareResult[]): string | null {
   return (
     'These providers are configured, but the hub will need to bake them again before its first box:\n' +
     lines.join('\n')
+  );
+}
+
+/**
+ * The message for bakes whose upload failed (e.g. the box was unreachable) — a
+ * distinct outcome from `mismatch`: there the record reached the hub and was
+ * rejected on its fingerprint; here it never arrived. Returns null when nothing
+ * failed. Sharing stays best-effort, so this warns rather than failing setup.
+ */
+export function buildShareFailedNote(shareFailed: BakeShareResult[]): string | null {
+  if (shareFailed.length === 0) return null;
+  const names = shareFailed.map((r) => r.provider);
+  return (
+    'Could not share these base bake records with the control box, so the hub will re-bake them on ' +
+    `first use: ${names.join(', ')}.\n` +
+    'Re-run `agentbox hub setup` (or `agentbox prepare --provider <name>`) once it is reachable to share them.'
   );
 }
