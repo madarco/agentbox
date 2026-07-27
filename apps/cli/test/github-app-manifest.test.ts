@@ -43,20 +43,27 @@ describe('runGitHubAppManifestFlow (e2e against a fake GitHub)', () => {
   });
 
   it('serves the manifest form, exchanges the code, and returns the App creds', async () => {
+    // openBrowser is fire-and-forgotten by the flow, which resolves as soon as the
+    // server writes the callback response — so capture the browser's work in a
+    // promise and await it separately, or the body read races the flow's resolve.
+    let redirectHtml = '';
+    let callbackHtml = '';
+    let browserWork: Promise<void> | null = null;
     const result = await runGitHubAppManifestFlow({
       appName: 'agentbox-cp-test',
       apiBaseUrl: fakeApiUrl,
       githubUrl: 'https://github.example', // not actually hit; the browser drives the callback
-      openBrowser: async (startUrl) => {
-        // 1. The "browser" loads the local form page.
-        const html = await (await fetch(startUrl)).text();
-        // The form embeds the manifest + a CSRF state in its action URL.
-        expect(html).toContain('name="manifest"');
-        expect(html).toContain('contents'); // the requested permission
-        const state = /state=([0-9a-f]+)/.exec(html)?.[1];
-        expect(state).toBeTruthy();
-        // 2. Simulate GitHub creating the App and redirecting back with a code.
-        await fetch(`${startUrl}callback?code=tmp-code-123&state=${state!}`);
+      openBrowser: (startUrl) => {
+        browserWork = (async () => {
+          // 1. The "browser" loads the local form page.
+          redirectHtml = await (await fetch(startUrl)).text();
+          const state = /state=([0-9a-f]+)/.exec(redirectHtml)?.[1];
+          // 2. Simulate GitHub creating the App and redirecting back with a code.
+          callbackHtml = await (
+            await fetch(`${startUrl}callback?code=tmp-code-123&state=${state!}`)
+          ).text();
+        })();
+        return browserWork;
       },
     });
 
@@ -65,6 +72,20 @@ describe('runGitHubAppManifestFlow (e2e against a fake GitHub)', () => {
     expect(result.pem).toContain('BEGIN RSA PRIVATE KEY');
     expect(result.installUrl).toBe('https://github.example/apps/agentbox-cp-test/installations/new');
     expect(conversions).toEqual(['tmp-code-123']); // the code was exchanged exactly once
+
+    await browserWork!;
+    // The redirect page embeds the manifest + a CSRF state, is styled, and keeps
+    // the auto-submit behaviour.
+    expect(redirectHtml).toContain('name="manifest"');
+    expect(redirectHtml).toContain('contents'); // the requested permission
+    expect(redirectHtml).toContain('<style>');
+    expect(redirectHtml).toContain('prefers-color-scheme');
+    expect(redirectHtml).toContain("document.getElementById('f').submit()");
+    // The success page renders the styled card with the App name.
+    expect(callbackHtml).toContain('<style>');
+    expect(callbackHtml).toContain('prefers-color-scheme');
+    expect(callbackHtml).toContain('GitHub App created');
+    expect(callbackHtml).toContain('agentbox-cp-test');
   });
 
   it('a stray request after success (favicon/reload) does not crash', async () => {
