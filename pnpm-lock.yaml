@@ -589,6 +589,9 @@ importers:
       '@agentbox/sandbox-core':
         specifier: workspace:*
         version: link:../sandbox-core
+      '@agentbox/sandbox-hetzner':
+        specifier: workspace:*
+        version: link:../sandbox-hetzner
       '@clack/prompts':
         specifier: ^0.9.0
         version: 0.9.1

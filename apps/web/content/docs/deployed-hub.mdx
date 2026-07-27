@@ -5,7 +5,7 @@ description: Deploy the hub to an always-on VPS so cloud boxes keep working — 
 
 The [hub](/docs/hub) normally runs on your laptop. Deploy that same hub to an always-on VPS and it becomes a **control box**: a small server that holds the shared state your boxes need (registry, approvals, git credentials, agent logins, SSH keys) and can **create and run cloud boxes itself**. Cloud boxes keep pushing and opening PRs with your laptop off, and you can spawn new ones from the web UI on your phone.
 
-<Callout type="warn" title="Experimental">The deployed hub / control box is under active development. Its commands live under `agentbox hub` (setup/deploy/boxes/prompts/credentials/custody/…), self-documented via `agentbox hub --help`; expect rough edges. Local docker boxes are unaffected — this is only for cloud boxes.</Callout>
+<Callout type="warn" title="Experimental">The deployed hub / control box is under active development. Its commands live under `agentbox hub` (setup/deploy/boxes/approvals/credentials/custody/…), self-documented via `agentbox hub --help`; expect rough edges. Local docker boxes are unaffected — this is only for cloud boxes.</Callout>
 
 It's the same `@agentbox/relay` core you already run locally — the relay daemon, the web UI, and a resident create worker — deployed to a **Hetzner VPS** on **SQLite** (no database to manage), reachable over HTTPS. The control box takes over the *centralized* concerns so a sleeping laptop no longer stops your cloud boxes; it is **not** a proxy for your boxes' traffic (more on that below).
 
@@ -43,6 +43,8 @@ agentbox hub deploy hetzner        # reuses ~/.agentbox/control-plane creds
 
 This provisions a small VPS, installs the hub over Docker + Caddy, and serves it at **`https://<ip>.sslip.io`** with an automatic Let's Encrypt certificate — no DNS to configure. A persistent volume holds the hub's state (SQLite store, logins, custody, box SSH keys), so the hub and its create queue **survive a VPS reboot**. The deploy also records **your laptop's egress IP** (so a hetzner box the control box creates still allows direct SSH from you), points your CLI at it (`relay.controlPlaneUrl`), and prompts for a web-UI admin email + password.
 
+<Callout type="info" title="Prefer DigitalOcean? Same deploy, different cloud">`agentbox hub deploy digitalocean` provisions a **DigitalOcean Droplet** instead of a Hetzner VPS — the hub, Docker + Caddy stack, `<ip>.sslip.io` HTTPS, firewall (`:22` locked to your egress, `:80`/`:443` open), persistent state, and every `hub status`/`update`/`destroy` command are identical. Run [`agentbox digitalocean login`](/docs/digitalocean) first, then pick **DigitalOcean** in the `hub setup` deploy prompt or deploy directly. Override the placement with `--region <slug>` (default `nyc3`) and `--size <slug>` (default `s-2vcpu-4gb`); `--ref`/`--repo`/`--package`/`--domain` work the same as Hetzner. A failed Droplet and its firewall keep billing — `agentbox hub destroy` clears them.</Callout>
+
 When it finishes, open `https://<ip>.sslip.io`, sign in with those credentials, and you'll see the dashboard.
 
 The deploy also mints a headless **API key** (`AGENTBOX_HUB_API_KEY`) and records it alongside the other deploy secrets in `~/.agentbox/control-plane/control-plane.env` (mode `0600`). It's the `Authorization: Bearer` credential for the hub's public [REST API](/docs/api) on the control box — so scripts and the menu-bar app can call `/api/v1` on the deployed hub without a browser login. It gates only `/api/v1`, never the web UI (that still needs your admin password).
@@ -76,25 +78,11 @@ A CLI you built yourself from the monorepo has no published version to install, 
 
 ### How the control box reaches GitHub
 
-Two modes, set by [`hub.gitAuth`](/docs/configuration) or `agentbox hub setup --git-auth`:
+`gh` is required for the remote hub: the control box leases the push tokens its boxes use through it, so `agentbox hub setup` stops with an install hint if `gh` isn't on your PATH. It holds **your own GitHub token** (found via `gh auth login`, or your git credential helper) and does the git work itself.
 
-| | `gh` (default) | `app` |
-|---|---|---|
-| Credential | your own GitHub token, held by the hub | a GitHub App private key, held by the hub |
-| Boxes get | **nothing** — they ask the hub to push | a 1-hour, single-repo token, per push |
-| Setup needs | `gh auth login` (you) | the repo **owner** to install the App |
-| Works on | any repo you can push to | only repos the App is installed on |
+The box runs `git push`, the hub pulls the branch out of it as a git bundle, and the hub does the real push with its own token — the same path your laptop already uses for cloud boxes. A credential never enters the box or any snapshot of it.
 
-In `gh` mode the box runs `git push`, the hub pulls the branch out of it as a git bundle, and the hub does the real push with its own token — the same path your laptop already uses for cloud boxes. A credential never enters the box or any snapshot of it.
-
-`app` mode is tighter when you can get it: the token it hands out is scoped to one repo and expires in an hour. Choose it when you own the repos (or your org will install the App):
-
-```bash
-agentbox hub setup --git-auth app     # create a GitHub App instead
-agentbox hub add                      # authorize a repo on it (app mode only)
-```
-
-<Callout type="info" title="Which token the hub holds">In `gh` mode the hub holds a normal user token, so it can reach every repo you can — broader than an App's per-repo token, though it never leaves the server. Prefer a **fine-grained** token limited to the repos you'll actually use; `hub setup` warns if the one it finds carries scopes like `admin:org` or `delete_repo`. Revoke it any time at [github.com/settings/tokens](https://github.com/settings/tokens) (or `gh auth logout`), then re-run `hub setup`.</Callout>
+<Callout type="info" title="Which token the hub holds">The hub holds a normal user token, so it can reach every repo you can, though it never leaves the server. Prefer a **fine-grained** token limited to the repos you'll actually use; `hub setup` warns if the one it finds carries scopes like `admin:org` or `delete_repo`. Revoke it any time at [github.com/settings/tokens](https://github.com/settings/tokens) (or `gh auth logout`), then re-run `hub setup`.</Callout>
 
 ### Getting a shell on the control box
 
@@ -128,7 +116,7 @@ When the deploy fails the health check it now ssh's in and names the cause, dist
 
 <Callout type="warn" title="“too many certificates already issued”">An sslip.io hostname is derived from the IP, so it isn't really yours — and Hetzner reuses released addresses. Land on one that already had five certificates issued this week and Let's Encrypt refuses (rate limits are per exact hostname, and reset after 7 days), leaving a perfectly healthy hub with no working HTTPS. Destroy the VPS and deploy again to draw a different address, or pass `--domain <host>` with a name you control and point its DNS at the VPS first.</Callout>
 
-Retry with `agentbox hub deploy hetzner` — it reuses the GitHub App and env from the first run, so there's no need to run `hub setup` again. A failed VPS and its firewall keep billing; `agentbox hub destroy` clears them (or delete them from the [Hetzner console](https://console.hetzner.cloud) — they're labeled `agentbox.role=control-plane`).
+Retry with `agentbox hub deploy hetzner` — it reuses the git credential and env from the first run, so there's no need to run `hub setup` again. A failed VPS and its firewall keep billing; `agentbox hub destroy` clears them (or delete them from the [Hetzner console](https://console.hetzner.cloud) — they're labeled `agentbox.role=control-plane`).
 
 ### Updating the control box
 
@@ -242,7 +230,7 @@ The web-UI create needs a **repo checkout on the VPS** for the worker to build f
 1. In the dashboard, **Add project** and point it at a repo path **on the control box** — clone it there first (`git clone <repo>` on the VPS, or into the projects volume).
 2. **Create box** → pick a provider (e.g. E2B) and agent → **Create box**. The resident worker provisions the sandbox, starts the agent detached, and it appears in the dashboard with live status. Nothing runs on your laptop.
 
-<Callout type="info" title="A PC-created box's project isn't enough to Create from the UI">A box you spawned from your PC registers on the control box as a project you can **see and manage**, but its "Create box" button has no VPS checkout behind it — so use **Add project** (clone on the VPS) to originate new boxes from the browser. Authorize the repo on the App too (`agentbox hub add`, or the dashboard's install link) so leases work.</Callout>
+<Callout type="info" title="A PC-created box's project isn't enough to Create from the UI">A box you spawned from your PC registers on the control box as a project you can **see and manage**, but its "Create box" button has no VPS checkout behind it — so use **Add project** (clone on the VPS) to originate new boxes from the browser.</Callout>
 
 ## Create a box from your laptop — that runs with the laptop off
 
@@ -337,8 +325,8 @@ agentbox relay status                              # shows the configured contro
 agentbox hub boxes list                  # boxes on the control box (from either side)
 agentbox hub boxes start|stop|pause|resume <box>   # drive one remotely (laptop can be off)
 agentbox hub boxes rm <box>              # destroy it (cloud resource + control-box state)
-agentbox hub prompts list                # pending host-action approvals
-agentbox hub prompts answer <id> y       # answer one (also answerable in the web UI)
+agentbox hub approvals list              # pending host-action approvals
+agentbox hub approvals answer <id> y     # answer one (also answerable in the web UI)
 agentbox hub jobs list                   # the control box's box-creation queue
 agentbox hub jobs show <jobId>
 ```
@@ -357,7 +345,7 @@ you to run `agentbox hub boxes rm <id>` once it's back.
 
 A control-plane box parks its host-action approvals **on the control box**, and the box polls there
 until one is answered — so the whole loop runs with your laptop off, and you can answer from the web
-UI, the menu-bar app, or `agentbox hub prompts answer`.
+UI, the menu-bar app, or `agentbox hub approvals answer`.
 
 When your laptop *is* on, the ordinary per-box surfaces work against a hub box too — they resolve the
 box's own relay rather than assuming your laptop's:
@@ -410,8 +398,8 @@ Re-run `credentials push` after `agentbox claude login` refreshes a login — th
 
 ## How it stays safe
 
-- **Leased tokens** are per-repo, minimal permissions (contents + pull requests), 1-hour, and never persisted — the control box holds only the GitHub App's private key. A compromised box yields at most a 1-hour, single-repo token.
-- A GitHub installation token is repo-scoped, not branch-scoped, so the lease gate **auto-approves only `agentbox/*` branches**; any other branch needs your approval.
+- **Boxes never receive a git credential** — a box runs `git push`, the hub pulls the branch out as a git bundle and does the real push with its own token, which stays on the control box. A compromised box can't exfiltrate a token that was never there.
+- The token is repo-scoped, not branch-scoped, so the push gate **auto-approves only `agentbox/*` branches**; any other branch needs your approval.
 - The hub gates its admin and box-creation endpoints on a constant-time admin bearer, fail-closed, and the web UI on an email/password login — set at deploy time.
 
 <Callout type="warn" title="SSH keys leave your PC when a control box is configured">For an SSH provider (hetzner / DigitalOcean), a box you create from your PC mints its private key **on your PC** — but if a control box is configured, a **copy is auto-pushed to the control box's custody** so the hub/mobile can also reach the box. Custody stores it `0600` but **not encrypted at rest**, so the key's safety equals the control box's safety. If you'd rather keep PC-created box keys only on your PC, there's no opt-out flag yet.</Callout>

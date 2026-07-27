@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { generateBoxCloudInit, generatePrepareCloudInit } from '../src/cloud-init.js';
+import {
+  controlPlaneCloudInit,
+  generateBoxCloudInit,
+  generatePrepareCloudInit,
+} from '../src/cloud-init.js';
 import { cloudInitBoxEnv } from '../src/backend.js';
 
 const FAKE_PUBKEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILongTextForKey agentbox/test';
@@ -97,5 +101,36 @@ describe('generateBoxCloudInit', () => {
   it('omits the box.env block when boxEnv is empty / undefined', () => {
     const yaml = generateBoxCloudInit({ sshPubkey: FAKE_PUBKEY, boxName: 'mybox' });
     expect(yaml).not.toContain('path: /etc/agentbox/box.env');
+  });
+});
+
+describe('controlPlaneCloudInit', () => {
+  it('logs in as root, installs Docker + git, and injects the pubkey (top-level form)', () => {
+    const yaml = controlPlaneCloudInit({ sshPubkey: FAKE_PUBKEY });
+    expect(yaml.startsWith('#cloud-config')).toBe(true);
+    expect(yaml).toContain('disable_root: false');
+    expect(yaml).toContain('ssh_authorized_keys:');
+    expect(yaml).toContain(`- "${FAKE_PUBKEY}"`);
+    expect(yaml).toContain('get.docker.com');
+    expect(yaml).toContain('install -y git');
+    // Same DO expiry-disable guard as the prepare/box cloud-inits.
+    expect(yaml).toContain('[ passwd, -d, root ]');
+  });
+
+  it('omits the repo clone in package mode', () => {
+    const yaml = controlPlaneCloudInit({ sshPubkey: FAKE_PUBKEY });
+    expect(yaml).not.toContain('/opt/agentbox');
+    expect(yaml).not.toContain('git clone');
+  });
+
+  it('clones the repo at the given ref in source mode', () => {
+    const yaml = controlPlaneCloudInit({
+      sshPubkey: FAKE_PUBKEY,
+      repo: { url: 'https://github.com/madarco/agentbox', ref: 'feat/remote-hub-improvements' },
+    });
+    expect(yaml).toContain('git clone');
+    expect(yaml).toContain('/opt/agentbox');
+    expect(yaml).toContain("'feat/remote-hub-improvements'");
+    expect(yaml).toContain("'https://github.com/madarco/agentbox'");
   });
 });

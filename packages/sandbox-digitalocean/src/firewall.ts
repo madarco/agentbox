@@ -48,6 +48,38 @@ export function sshInboundRules(sources: string | string[]): DigitalOceanInbound
 }
 
 /**
+ * Inbound rules for a control-plane Droplet: SSH locked to the host's egress IP,
+ * but HTTP(S) open to the world (cloud boxes from arbitrary IPs reach the plane,
+ * and Caddy needs :80/:443 for the Let's Encrypt ACME challenge + serving). The
+ * Next app's own port is never exposed — Caddy fronts it on the compose network.
+ * Mirrors the Hetzner `controlPlaneInboundRules`.
+ */
+export function controlPlaneInboundRules(hostCidr: string): DigitalOceanInboundRule[] {
+  const everywhere = { addresses: ['0.0.0.0/0', '::/0'] };
+  return [
+    { protocol: 'tcp', ports: '22', sources: { addresses: [hostCidr] } },
+    { protocol: 'tcp', ports: '80', sources: everywhere },
+    { protocol: 'tcp', ports: '443', sources: everywhere },
+  ];
+}
+
+/**
+ * Whether the firewall's allowed SSH sources need re-syncing to include the
+ * current egress: true when the current egress isn't already allowed AND the
+ * firewall isn't wide-open (`0.0.0.0/0`). Pure so the auto-sync decision on
+ * `hub update` is unit-testable without the DigitalOcean API. Empty sources (no
+ * SSH rule) counts as a mismatch worth syncing.
+ */
+export function firewallNeedsSync(
+  allowedSources: readonly string[] | undefined,
+  currentEgress: string,
+): boolean {
+  const list = allowedSources ?? [];
+  if (list.includes('0.0.0.0/0')) return false;
+  return !list.includes(currentEgress);
+}
+
+/**
  * Allow-all outbound rules. A DigitalOcean firewall with inbound rules but no
  * outbound rules blocks ALL egress — so we explicitly permit everything
  * outbound (the box needs to reach github / npm / pypi / the agentbox relay).
