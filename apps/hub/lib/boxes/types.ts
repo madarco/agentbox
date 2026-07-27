@@ -71,6 +71,19 @@ export interface Project {
   needsSetup?: boolean;
   provider: string;
   createdAt: number;
+  /**
+   * The project repo's origin remote URL, when known. Populated by the hosted
+   * (control-box) source from the box registration so the remote hub's project
+   * page can show where the repo lives; undefined on the localhost path (the
+   * page falls back to `repo`).
+   */
+  originUrl?: string | null;
+  /**
+   * Custody `projects/<slug>` key (`owner__repo`) for the project's seed
+   * material, when a box registered one. The project page joins on this to read
+   * the seed/custody status. Hosted source only.
+   */
+  projectSlug?: string | null;
 }
 
 export interface Repo {

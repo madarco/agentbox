@@ -1,6 +1,7 @@
 import 'server-only';
 
 import type { PostgresStore } from '@agentbox/relay/control-plane';
+import { repoNameFromRegistration } from './project-name';
 import type { Approval, Box, BoxStatus, HubState, Project } from './types';
 
 /*
@@ -22,6 +23,8 @@ interface Registration {
   projectIndex?: number;
   worktrees?: { branch?: string }[];
   originUrl?: string;
+  /** Custody `projects/<slug>` key (`owner__repo`) the box registered with. */
+  projectSlug?: string;
 }
 type Snapshot = Record<string, unknown>;
 interface AgentState {
@@ -38,12 +41,17 @@ function b64url(s: string): string {
   return Buffer.from(s).toString('base64url');
 }
 
+/**
+ * A readable project label — the repo's last path segment, matching the local
+ * hub's `path.basename(projectRoot)`. Prefers the origin URL, then the custody
+ * slug, then the box name. See `project-name.ts` for the shared derivation.
+ */
 function repoName(r: Registration): string {
-  if (r.originUrl) {
-    const tail = r.originUrl.replace(/\.git$/, '').split(/[/:]/).pop();
-    if (tail) return tail;
-  }
-  return r.name;
+  return repoNameFromRegistration({
+    originUrl: r.originUrl,
+    projectSlug: r.projectSlug,
+    name: r.name,
+  });
 }
 
 /** Project identity for grouping — the repo (origin) when known, else the box name. */
@@ -93,16 +101,34 @@ function mapBox(r: Registration, s: Snapshot | undefined): Box {
 }
 
 function deriveProjects(regs: Registration[]): Project[] {
-  const byKey = new Map<string, { key: string; name: string; createdAt: number }>();
+  const byKey = new Map<
+    string,
+    { key: string; name: string; createdAt: number; originUrl?: string; projectSlug?: string }
+  >();
   for (const r of regs) {
     const key = projectKey(r);
     const createdAt = Date.parse(r.createdAt ?? r.registeredAt) || Date.now();
     const existing = byKey.get(key);
-    if (!existing) byKey.set(key, { key, name: repoName(r), createdAt });
-    else if (createdAt < existing.createdAt) existing.createdAt = createdAt;
+    if (!existing) {
+      byKey.set(key, { key, name: repoName(r), createdAt, originUrl: r.originUrl, projectSlug: r.projectSlug });
+    } else {
+      if (createdAt < existing.createdAt) existing.createdAt = createdAt;
+      // A later registration may carry the git identity an earlier one lacked.
+      existing.originUrl ??= r.originUrl;
+      existing.projectSlug ??= r.projectSlug;
+    }
   }
   return [...byKey.values()]
-    .map((p) => ({ id: p.key, name: p.name, repo: p.name, defaultBranch: 'main', provider: 'cloud', createdAt: p.createdAt }))
+    .map((p) => ({
+      id: p.key,
+      name: p.name,
+      repo: p.name,
+      defaultBranch: 'main',
+      provider: 'cloud',
+      createdAt: p.createdAt,
+      originUrl: p.originUrl ?? null,
+      projectSlug: p.projectSlug ?? null,
+    }))
     .sort((a, b) => b.createdAt - a.createdAt);
 }
 

@@ -12,20 +12,32 @@ afterAll(async () => {
 });
 
 /**
+ * Hermetic git: ignore the host's global/system config so the test never
+ * depends on a developer's machine. In particular this drops any commit-signing
+ * config (`commit.gpgsign` + `gpg.format=ssh`), which would otherwise make
+ * `git commit` reach for a real signing key that doesn't exist in CI/sandboxes.
+ * Identity comes from the per-repo `user.name`/`user.email` set in `makeRepo`.
+ */
+const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+function git(args: string[]) {
+  return execa('git', args, { env: GIT_ENV });
+}
+
+/**
  * A repo with one committed file, one untracked file, one gitignored build
  * artifact, and a `.env` — i.e. the four cases the seed has to tell apart.
  */
 async function makeRepo(): Promise<string> {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agentbox-seed-repo-')));
   scratch.push(dir);
-  await execa('git', ['-C', dir, 'init', '-q']);
-  await execa('git', ['-C', dir, 'config', 'user.email', 't@t.test']);
-  await execa('git', ['-C', dir, 'config', 'user.name', 'T']);
-  await execa('git', ['-C', dir, 'remote', 'add', 'origin', 'https://github.com/o/r.git']);
+  await git(['-C', dir, 'init', '-q']);
+  await git(['-C', dir, 'config', 'user.email', 't@t.test']);
+  await git(['-C', dir, 'config', 'user.name', 'T']);
+  await git(['-C', dir, 'remote', 'add', 'origin', 'https://github.com/o/r.git']);
   await writeFile(join(dir, 'committed.txt'), 'tracked');
   await writeFile(join(dir, '.gitignore'), 'ignored-build/\n.env\n');
-  await execa('git', ['-C', dir, 'add', '.']);
-  await execa('git', ['-C', dir, 'commit', '-qm', 'init']);
+  await git(['-C', dir, 'add', '.']);
+  await git(['-C', dir, 'commit', '-qm', 'init']);
   // Untracked, not ignored -> must be captured.
   await writeFile(join(dir, 'scratch-notes.md'), 'local notes');
   await mkdir(join(dir, 'src'), { recursive: true });
@@ -132,7 +144,7 @@ describe('buildProjectSeed', () => {
   it('captures nothing but a manifest for a clean tree', async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agentbox-seed-clean-')));
     scratch.push(dir);
-    await execa('git', ['-C', dir, 'init', '-q']);
+    await git(['-C', dir, 'init', '-q']);
     const res = await buildProjectSeed({ projectRoot: dir });
     expect(res.items).toEqual([]);
     expect(res.manifest.files).toEqual([]);

@@ -112,7 +112,11 @@ export function proxy(request: NextRequest): NextResponse {
 // Proxy always runs on the Node.js runtime in Next 16, so `getSessionCookie`
 // and the auth-config env read work here directly.
 export const config = {
+  // `logo.svg` (the mark on the sign-in page + the favicon) must be excluded, or
+  // a password-profile hub redirects the unauthenticated asset request to
+  // /signin and the sign-in page renders a broken image. Same reasoning as
+  // favicon.ico — public static assets are not gated.
   matcher: [
-    '/((?!api/auth|signin|healthz|admin|rpc|events|bridge|remote|_next/static|_next/image|favicon.ico).*)',
+    '/((?!api/auth|signin|healthz|admin|rpc|events|bridge|remote|_next/static|_next/image|favicon.ico|logo.svg).*)',
   ],
 };
