@@ -9,6 +9,21 @@ sandboxes with minimal file overlap. Each workstream is one branch + one PR agai
 Wave 1 (parallel): WS1, WS3, WS4 — disjoint file sets (CLI setup / hub UI pages / hub UI polish).
 Wave 2 (after wave 1 merges): WS2, WS5 — both re-touch `apps/cli/src/commands/control-plane.ts`.
 
+> **Concurrency cap: two boxes.** The first attempt ran all four at once and the Docker VM
+> (7.7 GB, shared by every box regardless of the host's RAM) OOM-killed all four tmux servers
+> mid-build. Build filtered and serial in a box: `pnpm turbo run build --concurrency=1 --filter=…`.
+
+## Status
+
+| WS | Backlog items | PR | State |
+|---|---|---|---|
+| WS1 | 7, 8, 9, 10, 12, 13, 15 | #263 | merged `f0ee2b78` |
+| WS2 | 11 | #264 | merged `d40736a7` |
+| WS3 | 3, 4 | #265 | merged `a5b60c24` |
+| WS4 | 5, 6, 14, 16 | #266 | merged `3310f96e` |
+| WS5 | 1, 2 | #267 | merged `29809453` |
+| follow-up | 4, 5 standalone 500 fix | #268 | merged `52055b00` |
+
 ---
 
 ## WS1 — `hub setup` CLI UX (backlog 7, 8, 9, 10, 12, 15)
@@ -89,3 +104,30 @@ Primary files: `apps/cli/src/commands/control-plane.ts`,
 
 Folded into WS1 — it is the same file, and "approvals" is the terminology the tray and the local hub
 already use.
+
+## Outcome
+
+All 16 backlog items shipped and verified on the host against a real exposed control box.
+
+Three defects were caught by review rather than by CI — all three were logic errors in the
+remote-hub path that typecheck and unit tests could not see:
+
+- **WS3** treated `baseStatus: 'unknown'` as not-baked. `unknown` means a stored fingerprint exists
+  and only the *live* one could not be computed, so the System page reported "not baked" for a
+  provider that was actually prepared — the wrong answer to the one question the page exists for.
+- **WS4** synthesized projects for remote registrations without `originUrl`/`projectSlug`, so the
+  seed panel was dead on the embedded (SQLite, no-Postgres) control box — the primary self-hosted
+  shape.
+- **WS5** swallowed a failed `pushPreparedToCustody` and still printed "Shared your … base bake(s)".
+
+And one regression escaped every green CI run, found only by the final host smoke test:
+
+- `/api/v1/system` and `/api/v1/projects/{id}/seed` both **500**ed in the standalone build, because
+  they were the only new routes doing a *runtime* import of an `@agentbox` package inside Next
+  bundle scope (pulling `execa`, which `next.config` externalizes; turbopack's synthetic external id
+  does not resolve in the standalone output). Fixed by routing both through the `globalThis` seam
+  `server.ts` sets, the pattern the custody route already used.
+
+**Lesson for future hub work:** `next dev` / `hub:dev` resolves those imports fine, so it gives a
+false pass. Anything touching a hub route MUST be verified against `build:standalone` — that is what
+a control box runs. See [`hub-testing.md`](./hub-testing.md).

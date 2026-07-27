@@ -1,16 +1,16 @@
-- [ ] check that when providers are baked, and then the user setup a remote hub, the providers should be marked as baked? Or if the bake is different (maybe we change envs probably because now the hub is remote?) in that case we should show a message at the end of the setup telling that providers are configured but will need baking again.
-- [ ] when started cloud box with hub no claude login passed -> agentbox hub credentials push -> make sure to do it at the end of the setup and every time it is needed (check in case of refresh for eg) 
-- [ ] in web hub: UI for custody to see what is there
-- [ ] in web hub: UI page in webhub to see the version, hash, and skills that are contained (all details to understand the status, and if need bake why)
-- [ ] in web hub: in the project detail page should show url, custody/seeds and other details.
-- [ ] project name when adding a project on remote hub should be readable (last part of the path for eg like for local hub) 
-- [ ] hub setup: remove messagge " Control plane is healthy (https://116.203.120.179.sslip.io/healthz)." is only confusing. replace with a check character like ✔ Healthy for eg. 
-- [ ] hub setup: look for missing gh command at start (do a hub doctor), in that case tell to install because is mandatory for remote hub
-- [ ] hub setup: remove mention to github app for now (we want users to just inject gh token for now)  
-- [ ] hub setup: hide Vercel option
-- [ ] hub setup:add digital ocean option for setup. similar the hetzner option
-- [ ] change help text agentbox hub:   setup [options]        Create the GitHub App the control plane leases push tokens with, and write its deploy config (env + admin token)  -> Set up a persistent remote Hub for your AgentBoxes
-- [ ] remote hub prompts: List + answer control-box host-action approvals from the PC -> rename to approvals (we use this terminology in the app and for local hub) 
-- [ ] no logo on login page of remote hub  
-- [ ] http://127.0.0.1:51472/callback?code=10dc87a1a305a8a5b7697a36670e54bee5933f29&state=40c861517f0cdb0edb1c3a157cb0a709 improve design of this page (and of redirect to github page, even if it is visible for a moment) 
-- [ ] add a banner on top of local hub that remote hub is now available with a link to the remote hub. Like this AgentBox instance is linked to this remote hub.
+- [x] check that when providers are baked, and then the user setup a remote hub, the providers should be marked as baked? Or if the bake is different (maybe we change envs probably because now the hub is remote?) in that case we should show a message at the end of the setup telling that providers are configured but will need baking again.
+- [x] when started cloud box with hub no claude login passed -> agentbox hub credentials push -> make sure to do it at the end of the setup and every time it is needed (check in case of refresh for eg) 
+- [x] in web hub: UI for custody to see what is there
+- [x] in web hub: UI page in webhub to see the version, hash, and skills that are contained (all details to understand the status, and if need bake why)
+- [x] in web hub: in the project detail page should show url, custody/seeds and other details.
+- [x] project name when adding a project on remote hub should be readable (last part of the path for eg like for local hub) 
+- [x] hub setup: remove messagge " Control plane is healthy (https://116.203.120.179.sslip.io/healthz)." is only confusing. replace with a check character like ✔ Healthy for eg. 
+- [x] hub setup: look for missing gh command at start (do a hub doctor), in that case tell to install because is mandatory for remote hub
+- [x] hub setup: remove mention to github app for now (we want users to just inject gh token for now)  
+- [x] hub setup: hide Vercel option
+- [x] hub setup:add digital ocean option for setup. similar the hetzner option
+- [x] change help text agentbox hub:   setup [options]        Create the GitHub App the control plane leases push tokens with, and write its deploy config (env + admin token)  -> Set up a persistent remote Hub for your AgentBoxes
+- [x] remote hub prompts: List + answer control-box host-action approvals from the PC -> rename to approvals (we use this terminology in the app and for local hub) 
+- [x] no logo on login page of remote hub  
+- [x] http://127.0.0.1:51472/callback?code=10dc87a1a305a8a5b7697a36670e54bee5933f29&state=40c861517f0cdb0edb1c3a157cb0a709 improve design of this page (and of redirect to github page, even if it is visible for a moment) 
+- [x] add a banner on top of local hub that remote hub is now available with a link to the remote hub. Like this AgentBox instance is linked to this remote hub.
