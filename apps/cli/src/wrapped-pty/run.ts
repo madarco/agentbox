@@ -876,7 +876,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       opts.onError?.(`prompt stream: ${err.message}`);
       activeNotice = {
         id: 'prompt-stream-error',
-        message: `approvals unavailable (${err.message}) — answer them with \`agentbox hub prompts\``,
+        message: `approvals unavailable (${err.message}) — answer them with \`agentbox hub approvals\``,
       } as BoxNoticeEvent;
       applyBandChange();
     },

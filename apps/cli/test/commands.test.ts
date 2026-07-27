@@ -231,7 +231,7 @@ describe('lifecycle CLI surface', () => {
         'project',
         'custody',
         'boxes',
-        'prompts',
+        'approvals',
       ]),
     );
     // No subcommand is dropped or duplicated by the fold.

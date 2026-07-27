@@ -275,7 +275,7 @@ Set the admin env vars inline — otherwise the deploy prompts and the run can't
 | D3 | `agentbox create --provider e2b` (no `--local`) | routed to the control box (`cloud.viaHub` default): job enqueued, worker provisions it, `agentbox hub jobs list` shows it done. **Needs a base template the control box can see** — with neither side baked it fails fast with `no E2B base template found` (do B1 first, or bake from the hub's Settings page) |
 | D4 | Web UI → **Add project** (clone the test repo on the VPS) → **Create box** | box appears in the dashboard with live status, nothing ran on the VM |
 | D5 | `agentbox ls -g` | the web-created box shows as `on hub`; `agentbox attach <box>` adopts it |
-| D6 | **stop the VM's relay** (`agentbox relay stop`), then in the box: `agentbox-ctl git push` | push succeeds via the control box's `gh` token; approval (non-`agentbox/*` branch) shows in the web UI and `agentbox hub prompts list` |
+| D6 | **stop the VM's relay** (`agentbox relay stop`), then in the box: `agentbox-ctl git push` | push succeeds via the control box's `gh` token; approval (non-`agentbox/*` branch) shows in the web UI and `agentbox hub approvals list` |
 | D7 | `agentbox hub boxes list` / `… boxes stop <id>` / `… boxes rm <id>` | drive + destroy from the CLI over `/api/v1`. These take the box **id** from `boxes list` — a name gets `No box '<name>' on the control box` |
 
 D6 is the whole reason the control box exists: with the laptop (here: the VM's relay) down, the

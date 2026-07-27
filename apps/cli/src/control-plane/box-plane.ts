@@ -113,7 +113,7 @@ export async function attachRelayOptions(
     process.stderr.write(
       `note: this box's approvals live on ${source.unauthenticatedPlane}, but no admin token is available here,\n` +
         '      so the attach footer can\'t show them. Set AGENTBOX_RELAY_ADMIN_TOKEN, or answer them with\n' +
-        '      `agentbox hub prompts list` / `agentbox hub prompts answer`.\n',
+        '      `agentbox hub approvals list` / `agentbox hub approvals answer`.\n',
     );
   }
   return { relayBaseUrl: source.baseUrl, relayAuthToken: source.authToken };
