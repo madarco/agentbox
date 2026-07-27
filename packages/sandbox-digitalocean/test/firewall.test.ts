@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { allowAllOutboundRules, normalizeSourceCidr, sshInboundRules } from '../src/firewall.js';
+import {
+  allowAllOutboundRules,
+  controlPlaneInboundRules,
+  firewallNeedsSync,
+  normalizeSourceCidr,
+  sshInboundRules,
+} from '../src/firewall.js';
 
 describe('normalizeSourceCidr', () => {
   it('appends /32 to a bare IPv4', () => {
@@ -51,5 +57,38 @@ describe('allowAllOutboundRules', () => {
     expect(tcp?.ports).toBe('1-65535');
     const icmp = rules.find((r) => r.protocol === 'icmp');
     expect(icmp?.ports).toBeUndefined();
+  });
+});
+
+describe('controlPlaneInboundRules', () => {
+  it('locks :22 to the host CIDR but opens :80/:443 to the world (ACME + boxes)', () => {
+    const rules = controlPlaneInboundRules('1.2.3.4/32');
+    const ssh = rules.find((r) => r.ports === '22');
+    expect(ssh?.sources.addresses).toEqual(['1.2.3.4/32']);
+    for (const port of ['80', '443']) {
+      const rule = rules.find((r) => r.ports === port);
+      expect(rule?.sources.addresses).toEqual(['0.0.0.0/0', '::/0']);
+    }
+    // Never exposes the Next app's own port — Caddy fronts it on the compose net.
+    expect(rules.map((r) => r.ports).sort()).toEqual(['22', '443', '80']);
+  });
+});
+
+describe('firewallNeedsSync', () => {
+  it('syncs when the current egress is not in the allowed sources', () => {
+    expect(firewallNeedsSync(['1.2.3.4/32'], '5.6.7.8/32')).toBe(true);
+  });
+
+  it('does not sync when the current egress is already allowed', () => {
+    expect(firewallNeedsSync(['1.2.3.4/32', '5.6.7.8/32'], '5.6.7.8/32')).toBe(false);
+  });
+
+  it('never syncs a wide-open firewall (0.0.0.0/0 already allows everyone)', () => {
+    expect(firewallNeedsSync(['0.0.0.0/0'], '5.6.7.8/32')).toBe(false);
+  });
+
+  it('treats missing / empty sources as a mismatch worth syncing', () => {
+    expect(firewallNeedsSync(undefined, '5.6.7.8/32')).toBe(true);
+    expect(firewallNeedsSync([], '5.6.7.8/32')).toBe(true);
   });
 });

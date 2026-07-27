@@ -26,7 +26,8 @@ describe('interactive deploy picker (Vercel hidden)', () => {
   it('does not offer Vercel in the picker', () => {
     const values = INTERACTIVE_DEPLOY_OPTIONS.map((o) => o.value);
     expect(values).not.toContain('vercel');
-    expect(values).toEqual(['local', 'hetzner', 'none']);
+    // digitalocean joins local/hetzner as a surfaced VPS target; vercel stays hidden.
+    expect(values).toEqual(['local', 'hetzner', 'digitalocean', 'none']);
   });
 
   it('still resolves --deploy vercel when passed explicitly', async () => {
@@ -35,6 +36,7 @@ describe('interactive deploy picker (Vercel hidden)', () => {
 
   it('resolves the other explicit flags without prompting', async () => {
     expect(await resolveDeployTarget('hetzner')).toBe('hetzner');
+    expect(await resolveDeployTarget('digitalocean')).toBe('digitalocean');
     expect(await resolveDeployTarget('local')).toBe('local');
     expect(await resolveDeployTarget('none')).toBe('none');
   });

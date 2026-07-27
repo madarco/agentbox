@@ -48,6 +48,12 @@ import {
   runHetznerDestroy,
   runHetznerUpdate,
 } from '../control-plane/deploy-hetzner.js';
+import {
+  recoveryHint as recoveryHintDigitalOcean,
+  runDigitalOceanDeploy,
+  runDigitalOceanDestroy,
+  runDigitalOceanUpdate,
+} from '../control-plane/deploy-digitalocean.js';
 import { fetchNpmBest } from '../lib/update-check.js';
 import {
   runExpose,
@@ -193,7 +199,7 @@ async function ensureLocalHubAuth(): Promise<boolean> {
   return true;
 }
 
-type DeployTarget = 'vercel' | 'hetzner' | 'local' | 'none';
+type DeployTarget = 'vercel' | 'hetzner' | 'digitalocean' | 'local' | 'none';
 
 interface SetupOpts {
   gitAuth?: string;
@@ -307,7 +313,7 @@ const setupSub = new Command('setup')
   .addOption(new Option('--org <org>', 'create the App under an organization').hideHelp())
   .option(
     '--deploy <target>',
-    'what to do after writing the config: hetzner | vercel | local (expose this machine) | none',
+    'what to do after writing the config: hetzner | digitalocean | vercel | local (expose this machine) | none',
   )
   .option('--repo <owner/name>', 'GitHub repo to deploy the plane from (default madarco/agentbox; fork + pass this if you don\'t own it). Implies building from source')
   .option('--ref <ref>', `build the hub from source at this git ref instead of installing the published package (branch/tag/sha; ${DEFAULT_DEPLOY_REF} matches this CLI)`)
@@ -432,9 +438,10 @@ const setupSub = new Command('setup')
         // turns login on in the deployed hub so it is never left loginless — both
         // vercel and hetzner (the Caddy-HTTPS docker-compose deploy).
         const hubAuth = await resolveHubAuthEnv();
-        // hetzner reads ENV_PATH (written to the VPS .env); append the auth env +
-        // the Postgres auth profile so docker-compose enforces login there too.
-        if (target === 'hetzner' && hubAuth) {
+        // hetzner + digitalocean read ENV_PATH (written to the VPS .env) — the
+        // same docker-compose deploy — so append the auth env + the profile so
+        // docker-compose enforces login there too.
+        if ((target === 'hetzner' || target === 'digitalocean') && hubAuth) {
           await writeFile(ENV_PATH, envBody + hetznerAuthBody(hubAuth), { mode: 0o600 });
           await chmod(ENV_PATH, 0o600);
         }
@@ -474,8 +481,11 @@ const setupSub = new Command('setup')
               ...(opts.package ? { packageSpec: opts.package } : {}),
             });
             onLog(`hub source: ${describeHubDeploySource(source)}`);
+            // hetzner + digitalocean share the same docker-compose VPS deploy,
+            // signature-compatible; only the provisioned cloud differs.
+            const runVpsDeploy = target === 'digitalocean' ? runDigitalOceanDeploy : runHetznerDeploy;
             deployedUrl = (
-              await runHetznerDeploy({
+              await runVpsDeploy({
                 envPath: ENV_PATH,
                 source,
                 log: onLog,
@@ -493,7 +503,8 @@ const setupSub = new Command('setup')
           const msg = e instanceof Error ? e.message : String(e);
           cmdLog.write(`deploy to ${target} failed: ${msg}`);
           log.warn(`deploy to ${target} failed: ${msg}`);
-          if (provisioned) note(recoveryHint(provisioned).join('\n'), 'Debug the VPS');
+          const hint = target === 'digitalocean' ? recoveryHintDigitalOcean : recoveryHint;
+          if (provisioned) note(hint(provisioned).join('\n'), 'Debug the VPS');
           log.info(`Full deploy log: ${cmdLog.path}`);
           printManualDeploy();
         }
@@ -531,12 +542,20 @@ const setupSub = new Command('setup')
 export const INTERACTIVE_DEPLOY_OPTIONS: ReadonlyArray<{ value: DeployTarget; label: string }> = [
   { value: 'local', label: 'This machine — turn the local hub into the control box (no VPS)' },
   { value: 'hetzner', label: 'Hetzner VPS — HTTPS via <ip>.sslip.io + Caddy/Let’s Encrypt' },
+  { value: 'digitalocean', label: 'DigitalOcean Droplet — HTTPS via <ip>.sslip.io + Caddy/Let’s Encrypt' },
   { value: 'none', label: 'Skip — I’ll deploy later (print manual steps)' },
 ];
 
 /** Resolve the deploy target from the flag, or ask interactively. */
 export async function resolveDeployTarget(flag: string | undefined): Promise<DeployTarget> {
-  if (flag === 'vercel' || flag === 'hetzner' || flag === 'local' || flag === 'none') return flag;
+  if (
+    flag === 'vercel' ||
+    flag === 'hetzner' ||
+    flag === 'digitalocean' ||
+    flag === 'local' ||
+    flag === 'none'
+  )
+    return flag;
   if (flag) {
     log.warn(`unknown --deploy "${flag}"; choose interactively`);
   }
@@ -1678,6 +1697,94 @@ const deployHetznerSub = new Command('hetzner')
     }
   });
 
+interface DeployDigitalOceanOpts extends DeployOpts {
+  region?: string;
+  size?: string;
+}
+
+// The same full-hub docker-compose deploy as `hub deploy hetzner`, on a
+// DigitalOcean Droplet. Reuses the ~/.agentbox/control-plane env + auth from
+// `hub setup` — no GitHub-App manifest flow.
+const deployDigitalOceanSub = new Command('digitalocean')
+  .description('Deploy the full hub to a new DigitalOcean Droplet, reusing the creds from `hub setup`')
+  .option('--ref <ref>', `build from source at this branch / tag / sha instead of installing the published package (${DEFAULT_DEPLOY_REF} matches this CLI)`)
+  .option('--repo <url>', `git repo the Droplet clones when building from source (default ${DEFAULT_DEPLOY_REPO})`)
+  .option('--package <spec>', `npm spec of @madarco/agentbox to install (default ${AGENTBOX_VERSION}, this CLI's own version)`)
+  .option('--domain <host>', 'serve on a hostname you control (point its DNS at the Droplet first) instead of the default <ip>.sslip.io')
+  .option('--region <slug>', 'DigitalOcean region slug (default nyc3)')
+  .option('--size <slug>', 'Droplet size slug (default s-2vcpu-4gb)')
+  .action(async (opts: DeployDigitalOceanOpts) => {
+    const cmdLog = openCommandLog('hub-deploy');
+    try {
+      if (!existsSync(ENV_PATH)) {
+        log.error('No control-plane env found. Run `agentbox hub setup` first (it writes the git credential + admin token).');
+        process.exitCode = 1;
+        return;
+      }
+      if (!(await ensureHetznerHubAuth())) {
+        log.warn('login prompt cancelled — deploying without web-UI auth.');
+      }
+      await ensureHubApiKeyInEnv();
+      const source = resolveHubDeploySource(AGENTBOX_VERSION, {
+        ...(opts.ref ? { ref: opts.ref } : {}),
+        ...(opts.repo ? { repoUrl: repoSlugToUrl(opts.repo) } : {}),
+        ...(opts.package ? { packageSpec: opts.package } : {}),
+      });
+      if (source.kind === 'package' && source.spec !== AGENTBOX_VERSION) {
+        log.warn(
+          `deploying @madarco/agentbox@${source.spec}, which differs from this CLI (${AGENTBOX_VERSION}) — ` +
+            'the host and the control box will run different builds.',
+        );
+      }
+      const ds = spinner();
+      ds.start('deploying the control box to digitalocean');
+      cmdLog.write(`hub source: ${describeHubDeploySource(source)}`);
+      let deployedUrl: string;
+      let provisioned: ControlPlaneDeployRecord | null = null;
+      try {
+        deployedUrl = (
+          await runDigitalOceanDeploy({
+            envPath: ENV_PATH,
+            source,
+            ...(opts.domain ? { domain: opts.domain } : {}),
+            ...(opts.region ? { region: opts.region } : {}),
+            ...(opts.size ? { size: opts.size } : {}),
+            log: (line) => {
+              ds.message(line);
+              cmdLog.write(line);
+            },
+            onProvisioned: (info) => {
+              provisioned = info;
+            },
+          })
+        ).url;
+        ds.stop(`deployed: ${deployedUrl}`);
+      } catch (e) {
+        ds.stop('deploy failed');
+        const msg = e instanceof Error ? e.message : String(e);
+        cmdLog.write(`deploy failed: ${msg}`);
+        log.error(msg);
+        if (provisioned) note(recoveryHintDigitalOcean(provisioned).join('\n'), 'Debug the VPS');
+        log.info(`Full deploy log: ${cmdLog.path}`);
+        process.exitCode = 1;
+        return;
+      }
+      const url = await applyControlPlaneUrl(deployedUrl);
+      log.success(`Pointed the CLI at ${url} (relay.controlPlaneUrl).`);
+      const ok = await waitForHealthz(url, 60_000);
+      log[ok ? 'success' : 'warn'](
+        ok ? `Control box is healthy (${url}/healthz).` : `Could not confirm ${url}/healthz yet — check the deployment.`,
+      );
+      if (ok) await seedPreparedToNewControlBox(url);
+      log.info(`Reach the Droplet with \`ssh ${AGENTBOX_HUB_SSH_ALIAS}\`. Deploy log: ${cmdLog.path}`);
+    } catch (err) {
+      cmdLog.write(`FAILED: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+      handleLifecycleError(err);
+    } finally {
+      cmdLog.close();
+    }
+  });
+
 interface UpdateOpts {
   ref?: string;
   repo?: string;
@@ -1853,11 +1960,14 @@ const updateSub = new Command('update')
       // box (the same gap `hub deploy hetzner` covers for a redeploy).
       await ensureHubApiKeyInEnv();
 
+      const isDigitalOcean = record.provider === 'digitalocean';
+      const runVpsUpdate = isDigitalOcean ? runDigitalOceanUpdate : runHetznerUpdate;
+      const updateHint = isDigitalOcean ? recoveryHintDigitalOcean : recoveryHint;
       const ds = spinner();
-      ds.start('updating the control box');
+      ds.start(`updating the control box${isDigitalOcean ? ' (digitalocean)' : ''}`);
       cmdLog.write(`hub update: ${from} -> ${describeHubDeploySource(source)}`);
       try {
-        await runHetznerUpdate({
+        await runVpsUpdate({
           envPath: ENV_PATH,
           source,
           log: (line) => {
@@ -1871,7 +1981,7 @@ const updateSub = new Command('update')
         const msg = e instanceof Error ? e.message : String(e);
         cmdLog.write(`update failed: ${msg}`);
         log.error(msg);
-        note(recoveryHint(record).join('\n'), 'Debug the VPS');
+        note(updateHint(record).join('\n'), 'Debug the VPS');
         log.info(`Full update log: ${cmdLog.path}`);
         process.exitCode = 1;
         return;
@@ -1989,9 +2099,12 @@ const destroySub = new Command('destroy')
         return;
       }
 
+      const isDigitalOcean = record.provider === 'digitalocean';
+      const cloudLabel = isDigitalOcean ? 'DigitalOcean' : 'Hetzner';
+      const serverKind = isDigitalOcean ? 'droplet' : 'server';
       const lines = [
-        `Hetzner server ${String(record.serverId ?? '?')} (${record.ip ?? '?'})`,
-        ...(record.firewallId !== undefined ? [`Hetzner firewall ${String(record.firewallId)}`] : []),
+        `${cloudLabel} ${serverKind} ${String(record.serverId ?? '?')} (${record.ip ?? '?'})`,
+        ...(record.firewallId !== undefined ? [`${cloudLabel} firewall ${String(record.firewallId)}`] : []),
         opts.keepCredentials
           ? `${CP_DIR}/deploy.json + ssh/ (control-plane.env kept)`
           : `${CP_DIR} (credentials, ssh key, deploy record)`,
@@ -2009,7 +2122,9 @@ const destroySub = new Command('destroy')
         }
       }
 
-      const result = await runHetznerDestroy({ record, log: (l) => log.info(l) });
+      const result = isDigitalOcean
+        ? await runDigitalOceanDestroy({ record, log: (l) => log.info(l) })
+        : await runHetznerDestroy({ record, log: (l) => log.info(l) });
       for (const w of result.warnings) log.warn(w);
       // Purge regardless: a server that was already deleted by hand must not
       // leave this machine pointing at it with no way to clear the state.
@@ -2022,7 +2137,9 @@ const destroySub = new Command('destroy')
 
       log.success('Control box destroyed. Cloud boxes now build on this machine again.');
       if (opts.keepCredentials) {
-        log.info(`Credentials kept in ${CP_DIR} — \`agentbox hub deploy hetzner\` redeploys without \`hub setup\`.`);
+        log.info(
+          `Credentials kept in ${CP_DIR} — \`agentbox hub deploy ${isDigitalOcean ? 'digitalocean' : 'hetzner'}\` redeploys without \`hub setup\`.`,
+        );
       }
     } catch (err) {
       handleLifecycleError(err);
@@ -2124,7 +2241,8 @@ const SHAREABLE_PREPARED_PROVIDERS = ['hetzner', 'vercel', 'e2b', 'daytona', 'di
 
 const deployCmd = new Command('deploy')
   .description('Deploy the full hub to a VPS, reusing the App creds from `hub setup`')
-  .addCommand(deployHetznerSub);
+  .addCommand(deployHetznerSub)
+  .addCommand(deployDigitalOceanSub);
 
 /**
  * The remote-hub admin subcommands, folded into the one `hub` command group
