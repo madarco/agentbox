@@ -108,6 +108,7 @@ the interactive reference at `GET /docs`.
 | `GET /projects`               | Registered projects (create targets). Each carries `currentBranch` (the default base) and `needsSetup` (no `agentbox.yaml` + no default snapshot). |
 | `POST /projects`              | Register a folder as a project. Body: `{ path }` (absolute).                                                                                       |
 | `GET /projects/{id}/branches` | The project's branches (local + remote) and current HEAD, for the create base-branch picker: `{ current, branches }`.                              |
+| `GET /projects/{id}/seed`     | The project's seed / custody status on a control box — what `agentbox hub project push` stored (untracked + env/secret tarballs + manifest): `{ custodyAvailable, seed }` as paths, hashes and timestamps only, never seed contents. `custodyAvailable: false` on a hub that is not a control box. |
 | `DELETE /projects/{id}`       | Unregister an **empty** project (0 boxes). Folder/files on disk are untouched; `409` if it still has boxes.                                        |
 
 ### Providers
