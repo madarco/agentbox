@@ -39,7 +39,7 @@ export function hostAwareOpenIn(
  * iTerm2 path is macOS-only (it drives AppleScript). On Linux we deliberately
  * don't recognize native emulators (gnome-terminal / alacritty / konsole) yet:
  * outside these the caller falls back to attaching in the current terminal. See
- * docs/linux-host-backlog.md.
+ * docs/development.md.
  *
  * Herdr (https://herdr.dev) is a multiplexer that runs *inside* a host terminal,
  * so `TERM_PROGRAM` reflects the outer emulator (e.g. iTerm2). It must therefore

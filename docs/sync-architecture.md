@@ -4,9 +4,8 @@ How AgentBox moves state between the host and a box — across Docker and the cl
 backends (Daytona, E2B, Vercel, Hetzner) — and how provider-specific behaviour is
 expressed **without** a per-provider copy of the logic.
 
-This is the steady-state reference. For *execution state* (which piece has been
-migrated onto which seam, what smoke is owed), see
-[`sync-layer-refactor.md`](./sync-layer-refactor.md).
+This is the steady-state reference: the shape the sync layer has, not the
+sequence it was built in.
 
 ---
 
@@ -222,9 +221,8 @@ side, rather than it hiding as an un-named step inside `create()`.
 > **Status: target shape, not yet built.** Today only `resyncWorkspace` and
 > `extractAgentCredentials` are surfaced as (scattered) `Provider` methods; the rest
 > run imperatively inside `create()`. Consolidating them into `ProviderSync` is the
-> spine of **Phase 7** — it replaces the earlier "bare data pipeline" framing (a
-> pipeline can still iterate over the facade). See the
-> [refactor tracker](./sync-layer-refactor.md).
+> spine of the facade — it replaces the earlier "bare data pipeline" framing (a
+> pipeline can still iterate over the facade).
 
 ---
 
@@ -403,5 +401,4 @@ consolidates the sync ops now scattered across `create.ts` + a dozen files into 
 pending on the same phase: the cloud live-box resync (`makeCloudResyncPorts`, closes
 the "Phase 2" gap) and the cloud static/credential seed collapse.
 
-Per-phase execution state and the deferred backlog live in
-[`sync-layer-refactor.md`](./sync-layer-refactor.md).
+

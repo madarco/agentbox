@@ -64,7 +64,7 @@ Routed through `daytonaProvider` → `createCloudProvider(daytonaBackend)`
    (best-effort), each only if not already live, and (on the plane / cloud-IDE
    path) clones `/workspace` from a leased token first. This replaced the three
    separate host-driven launches and is re-run verbatim on resume — see
-   [`in-box-supervisor.md`](./in-box-supervisor.md).
+   [`in-box-supervisor.md`](./architecture.md#in-box-supervisor-agentboxctl).
 8. **Mint preview URLs** — webproxy (8080), per-`expose.port` service URLs
    from `agentbox.yaml`, and the **bridge URL on 8788** so the host's
    `CloudBoxPoller` can reach the in-box relay.

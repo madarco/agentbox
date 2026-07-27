@@ -2,7 +2,7 @@
  * Per-agent knowledge for the guided login flow: given the output an agent's
  * `login` command has printed so far, say what it is waiting for. Pure — no pty,
  * no docker — so the detectors are unit-tested against real captured transcripts
- * (see `docs/agent-login-guided-plan.md` for the captures these encode).
+ * (each entry encodes a real capture of that agent's login flow).
  *
  * The guided flow exists because handing the user's terminal to an agent's own
  * in-container TUI breaks on terminals we haven't validated (kitty's CSI-u

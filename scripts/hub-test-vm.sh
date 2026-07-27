@@ -45,7 +45,7 @@ API="https://api.hetzner.cloud/v1"
 STATE_DIR="$HOME/.agentbox/hub-test-vm"
 STATE_FILE="$STATE_DIR/state.json"
 KEY="$STATE_DIR/id_ed25519"
-# The test account's GitHub PAT (NOT your own token) — see docs/hub-test-vm.md.
+# The test account's GitHub PAT (NOT your own token) — see docs/hub-testing.md.
 GH_TOKEN_FILE="${AGENTBOX_TEST_GH_TOKEN_FILE:-$STATE_DIR/gh-token}"
 GIT_EMAIL="${AGENTBOX_TEST_GIT_EMAIL:-madawaldos@gmail.com}"
 GIT_NAME="${AGENTBOX_TEST_GIT_NAME:-AgentBox Test}"

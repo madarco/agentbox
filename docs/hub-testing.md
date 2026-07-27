@@ -1,7 +1,6 @@
 # Testing the hub and the control box
 
-> Part of the AgentBox docs. Start at [CLAUDE.md](../CLAUDE.md). The design lives in
-> [`control-box-plan.md`](./control-box-plan.md); the user-facing guide is
+> Part of the AgentBox docs. Start at [CLAUDE.md](../CLAUDE.md). The user-facing guide is
 > [`deployed-hub.mdx`](../apps/web/content/docs/deployed-hub.mdx); provider-wide regression
 > checklists are in [`test-plan.md`](./test-plan.md).
 

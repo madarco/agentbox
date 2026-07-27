@@ -63,7 +63,7 @@ node apps/cli/dist/index.js destroy smoke -y
 node apps/cli/dist/index.js destroy cc -y
 ```
 
-For the full lifecycle command list see [`docs/features.md`](./features.md).
+For the full lifecycle command list see [`docs/features.md`](./architecture.md#what-works-today).
 
 ### Notion integration — nested-box dev only
 

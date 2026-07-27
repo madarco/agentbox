@@ -124,7 +124,7 @@ The relay/bridge **tokens** are deliberately kept out of the world-readable
 reads on demand (`resolveRelayEnv`); the bridge token stays in the daemon's
 process env only. This is what lets the in-box agent and the host-driven
 `agentbox git push` reach the relay on cloud boxes, which (unlike docker) have no
-global env to inherit the token from. See [`host-relay.md`](./host-relay.md).
+global env to inherit the token from. See [`host-relay.md`](./architecture.md#host-relay-agentboxrelay).
 
 ### 1.1 Per-provider base-image pins
 
@@ -657,8 +657,8 @@ the docker provider ships, TigerVNC + noVNC + websockify + autocutsel,
 Playwright Chromium + agent-browser + portless, Claude Code (native
 installer) + Codex + OpenCode, sshd hardening drop-in, vscode user (UID
 1000) with passwordless sudo. Order matters: all small file-install
-steps run BEFORE the long Chromium download (see follow-ups in
-`docs/hertzner_backlog.md` for the diagnostic on why).
+steps run BEFORE the long Chromium download — a failure late in that
+download otherwise loses every install step that came after it.
 
 ### 3.3 SSH tunnel manager — the load-bearing comms primitive
 
@@ -746,9 +746,7 @@ hetzner-specific code (verified live in Phase-7 smoke).
 ## 3b. The Vercel shape
 
 Vercel Sandbox is a Firecracker microVM on Amazon Linux 2023 with first-class
-snapshots and `sandbox.domain(port)` public preview URLs. Full build-out status
-and the live-verify checklist live in [`vercel-backlog.md`](./vercel-backlog.md);
-the shape in brief:
+snapshots and `sandbox.domain(port)` public preview URLs. The shape in brief:
 
 - **Base via snapshot, not Dockerfile.** Vercel can't build an image, so
   `agentbox prepare --provider vercel` boots a fresh `node24` sandbox, runs
@@ -1116,8 +1114,4 @@ failure flags either a backend bug or an abstraction gap.
 | SSH alias management | `apps/cli/src/ssh-config.ts` |
 | Cloud E2E test | `apps/cli/test/cloud-e2e.test.ts` (gated on `DAYTONA_API_KEY`) |
 
-Track outstanding work in
-[`daytona-backlog.md`](./daytona-backlog.md),
-[`hertzner_backlog.md`](./hertzner_backlog.md),
-[`vercel-backlog.md`](./vercel-backlog.md), and
-[`e2b_backlog.md`](./e2b_backlog.md).
+Each provider's known caveats are documented in its own section above.

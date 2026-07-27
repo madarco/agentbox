@@ -276,7 +276,7 @@ export interface BoxRecord {
    * Cosmetic user-chosen label, set via `agentbox status <box> --set-name`.
    * Purely for display and lookup — unlike `name` it does NOT drive the
    * container, git branch, or Portless URL. Absent means "fall back to name".
-   * See docs/state.md.
+   * See docs/architecture.md ("Where state lives").
    */
   displayName?: string;
   /**

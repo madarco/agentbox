@@ -166,7 +166,7 @@ RUN chmod +x /usr/local/bin/agentbox-ctl
 # creds stay on the host — the in-box agent never sees a token. The shims
 # also light up Claude Code's branch-linked-to-PR badge (Claude Code calls
 # `gh pr view --json …` on refresh). See packages/sandbox-docker/scripts/
-# {gh,git}-shim and docs/plans/gh-and-git-shims-host-only.md. PATH ordering
+# {gh,git}-shim. PATH ordering
 # (line 50 above) puts /usr/local/bin ahead of /usr/bin, so the shim wins;
 # the git shim execs /usr/bin/git directly for everything outside its tiny
 # network-op whitelist (push/pull/fetch/clone).

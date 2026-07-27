@@ -6,7 +6,7 @@
  *
  * Single tier for now — the shared base snapshot (AL2023 + deps + agentbox-ctl
  * + agents). A per-project snapshot tier (matching the hetzner/daytona shape)
- * is a future optimization tracked in docs/vercel-backlog.md.
+ * is a future optimization, not built yet.
  *
  * Schema versioned so future shape changes can migrate; only `schema: 1` is
  * accepted today.

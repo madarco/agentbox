@@ -4,7 +4,7 @@
  *
  * Design rationale + the safety/tunneling model live in the plan at
  * `~/.claude/plans/how-to-safely-create-parallel-pebble.md` and the live
- * status doc at `docs/hertzner_backlog.md`. The short version:
+ * provider notes in `docs/cloud-providers.md`. The short version:
  *
  *   - 1:1 VPS-per-box. Each box gets a per-box ed25519 keypair (private key
  *     never leaves the host) and a per-box Hetzner Cloud Firewall locked to

@@ -307,7 +307,7 @@ export async function executeCloudAction(
     return {
       exitCode: 64,
       stdout: '',
-      stderr: `${action.method}: not yet implemented (deferred; see docs/plans/gh-and-git-shims-host-only.md). Run \`gh\` / \`git\` on the host directly for now.\n`,
+      stderr: `${action.method}: not yet implemented for this box. Run \`gh\` / \`git\` on the host directly for now.\n`,
     };
   }
   return {
