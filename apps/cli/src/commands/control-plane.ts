@@ -14,7 +14,11 @@ import {
   unsetConfigValue,
   type HubGitAuthMode,
 } from '@agentbox/config';
-import { DEFAULT_ENV_PATTERNS, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
+import {
+  DEFAULT_ENV_PATTERNS,
+  projectSlugFromOriginUrl,
+  readPreparedStateRaw,
+} from '@agentbox/sandbox-core';
 import {
   applyProjectSeed,
   deadlineFetch,
@@ -36,6 +40,16 @@ import {
 } from '@agentbox/relay';
 import { randomBytes } from 'node:crypto';
 import { providerForCreate } from '../provider/registry.js';
+import { getRuntimeProviderNames, loadProviderModule } from '../provider/loaders.js';
+import {
+  buildRebakeNote,
+  buildShareFailedNote,
+  classifyBakeShare,
+  hasCredentialChanges,
+  isShareablePreparedProvider,
+  summarizeBakeShare,
+  type BakeShareResult,
+} from '../control-plane/bake-share.js';
 import { makeControlPlaneCreateBox, cloneRepoWithLfs } from '../control-plane/create-box.js';
 import { runGitHubAppManifestFlow } from '../control-plane/github-app-manifest.js';
 import { deployControlPlaneToVercel } from '../control-plane/deploy-vercel.js';
@@ -90,7 +104,11 @@ import {
   planPush,
   type UploadItem,
 } from '../control-plane/custody-client.js';
-import { HubApiClient, HubApiError, type HubLifecycleAction } from '../control-plane/hub-api-client.js';
+import {
+  HubApiClient,
+  HubApiError,
+  type HubLifecycleAction,
+} from '../control-plane/hub-api-client.js';
 import { loadControlPlaneEnv } from '../control-plane/env-file.js';
 import { getHubJob, listHubJobs } from '../control-plane/hub-enqueue.js';
 import type { CreateJobRow } from '@agentbox/relay/control-plane';
@@ -274,7 +292,9 @@ async function resolveHubGitToken(logLine: (line: string) => void): Promise<stri
     `found a GitHub token via ${found.source === 'gh' ? '`gh auth token`' : "git's credential helper"}` +
       (login ? ` (@${login})` : ''),
   );
-  logLine(`git token source=${found.source} login=${login ?? '?'} scopes=${scopes.join(',') || '(none reported)'}`);
+  logLine(
+    `git token source=${found.source} login=${login ?? '?'} scopes=${scopes.join(',') || '(none reported)'}`,
+  );
 
   const wide = overbroadScopes(scopes);
   const detail = [
@@ -315,13 +335,34 @@ const setupSub = new Command('setup')
     '--deploy <target>',
     'what to do after writing the config: hetzner | digitalocean | vercel | local (expose this machine) | none',
   )
-  .option('--repo <owner/name>', 'GitHub repo to deploy the plane from (default madarco/agentbox; fork + pass this if you don\'t own it). Implies building from source')
-  .option('--ref <ref>', `build the hub from source at this git ref instead of installing the published package (branch/tag/sha; ${DEFAULT_DEPLOY_REF} matches this CLI)`)
-  .option('--package <spec>', `npm spec of @madarco/agentbox to install on the control box (default ${AGENTBOX_VERSION}, this CLI's own version)`)
-  .option('--bind <addr>', '--deploy local: hub bind address (default 0.0.0.0 for LAN; 127.0.0.1 = loopback + tunnel only)')
-  .option('--tunnel <kind>', '--deploy local: make cloud boxes able to reach the hub: cloudflare | tailscale')
-  .option('--tunnel-token <token>', '--deploy local: named Cloudflare tunnel token (stable hostname)')
-  .option('--public-url <url>', '--deploy local: the box-facing URL (your own proxy/DNS); skips tunnel URL scraping')
+  .option(
+    '--repo <owner/name>',
+    "GitHub repo to deploy the plane from (default madarco/agentbox; fork + pass this if you don't own it). Implies building from source",
+  )
+  .option(
+    '--ref <ref>',
+    `build the hub from source at this git ref instead of installing the published package (branch/tag/sha; ${DEFAULT_DEPLOY_REF} matches this CLI)`,
+  )
+  .option(
+    '--package <spec>',
+    `npm spec of @madarco/agentbox to install on the control box (default ${AGENTBOX_VERSION}, this CLI's own version)`,
+  )
+  .option(
+    '--bind <addr>',
+    '--deploy local: hub bind address (default 0.0.0.0 for LAN; 127.0.0.1 = loopback + tunnel only)',
+  )
+  .option(
+    '--tunnel <kind>',
+    '--deploy local: make cloud boxes able to reach the hub: cloudflare | tailscale',
+  )
+  .option(
+    '--tunnel-token <token>',
+    '--deploy local: named Cloudflare tunnel token (stable hostname)',
+  )
+  .option(
+    '--public-url <url>',
+    '--deploy local: the box-facing URL (your own proxy/DNS); skips tunnel URL scraping',
+  )
   .option('--no-autostart', '--deploy local: do not install a launchd/systemd autostart unit')
   .action(async (opts: SetupOpts) => {
     // Every progress line here goes to a @clack spinner, which overwrites
@@ -406,7 +447,11 @@ const setupSub = new Command('setup')
       if (app) {
         await writeFile(
           META_PATH,
-          JSON.stringify({ appId: app.appId, slug: app.slug, htmlUrl: app.htmlUrl, installUrl: app.installUrl }, null, 2) + '\n',
+          JSON.stringify(
+            { appId: app.appId, slug: app.slug, htmlUrl: app.htmlUrl, installUrl: app.installUrl },
+            null,
+            2,
+          ) + '\n',
           { mode: 0o600 },
         );
       }
@@ -427,7 +472,10 @@ const setupSub = new Command('setup')
           log.warn('cancelled — no admin login set; the exposed hub would be open. Not exposing.');
           return;
         }
-        await runLocalExpose(opts, cmdLog.write.bind(cmdLog));
+        const exposed = await runLocalExpose(opts, cmdLog.write.bind(cmdLog));
+        // This machine is now the control box (reached over loopback) — get its
+        // agent logins + bake records in place before the first hub-created box.
+        if (exposed) await finalizeControlBoxState(undefined);
         return;
       }
 
@@ -483,7 +531,8 @@ const setupSub = new Command('setup')
             onLog(`hub source: ${describeHubDeploySource(source)}`);
             // hetzner + digitalocean share the same docker-compose VPS deploy,
             // signature-compatible; only the provisioned cloud differs.
-            const runVpsDeploy = target === 'digitalocean' ? runDigitalOceanDeploy : runHetznerDeploy;
+            const runVpsDeploy =
+              target === 'digitalocean' ? runDigitalOceanDeploy : runHetznerDeploy;
             deployedUrl = (
               await runVpsDeploy({
                 envPath: ENV_PATH,
@@ -519,6 +568,8 @@ const setupSub = new Command('setup')
         // Terse on success; the failure branch stays informative (names the URL).
         if (ok) log.success('Healthy');
         else log.warn(`Could not confirm ${url}/healthz yet — check the deployment.`);
+        // Only once the box answers is there anything to push to.
+        if (ok) await finalizeControlBoxState(url);
       }
 
       if (app) {
@@ -527,7 +578,7 @@ const setupSub = new Command('setup')
         openInBrowser(app.installUrl);
       }
     } catch (err) {
-      cmdLog.write(`FAILED: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+      cmdLog.write(`FAILED: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
       handleLifecycleError(err);
     } finally {
       cmdLog.close();
@@ -542,7 +593,10 @@ const setupSub = new Command('setup')
 export const INTERACTIVE_DEPLOY_OPTIONS: ReadonlyArray<{ value: DeployTarget; label: string }> = [
   { value: 'local', label: 'This machine — turn the local hub into the control box (no VPS)' },
   { value: 'hetzner', label: 'Hetzner VPS — HTTPS via <ip>.sslip.io + Caddy/Let’s Encrypt' },
-  { value: 'digitalocean', label: 'DigitalOcean Droplet — HTTPS via <ip>.sslip.io + Caddy/Let’s Encrypt' },
+  {
+    value: 'digitalocean',
+    label: 'DigitalOcean Droplet — HTTPS via <ip>.sslip.io + Caddy/Let’s Encrypt',
+  },
   { value: 'none', label: 'Skip — I’ll deploy later (print manual steps)' },
 ];
 
@@ -588,13 +642,20 @@ interface ExposeCliOpts {
   autostart?: boolean;
 }
 
-/** Run the expose flow with a spinner, then report reachability + autostart. */
-async function runLocalExpose(opts: ExposeCliOpts, logWrite: (l: string) => void): Promise<void> {
+/**
+ * Run the expose flow with a spinner, then report reachability + autostart.
+ * Returns the {@link ExposeResult} on success, or null when the flow bailed (bad
+ * flag / expose error) so the caller knows not to run the post-expose steps.
+ */
+async function runLocalExpose(
+  opts: ExposeCliOpts,
+  logWrite: (l: string) => void,
+): Promise<ExposeResult | null> {
   const tunnel = opts.tunnel;
   if (tunnel && tunnel !== 'cloudflare' && tunnel !== 'tailscale') {
     log.error(`unknown --tunnel "${tunnel}" (expected: cloudflare | tailscale)`);
     process.exitCode = 1;
-    return;
+    return null;
   }
   const s = spinner();
   s.start('exposing the local hub as the control box');
@@ -618,7 +679,7 @@ async function runLocalExpose(opts: ExposeCliOpts, logWrite: (l: string) => void
     logWrite(`expose failed: ${msg}`);
     log.error(msg);
     process.exitCode = 1;
-    return;
+    return null;
   }
   note(
     [
@@ -638,15 +699,24 @@ async function runLocalExpose(opts: ExposeCliOpts, logWrite: (l: string) => void
     );
   }
   if (result.autostart?.note) log.info(result.autostart.note);
-  log.success(`This machine is now the control box — sign in at ${result.localUrl}; cloud creates route here.`);
+  log.success(
+    `This machine is now the control box — sign in at ${result.localUrl}; cloud creates route here.`,
+  );
+  return result;
 }
 
 const exposeSub = new Command('expose')
-  .description('Turn this machine\'s local hub into the control box (deployed profile, no VPS)')
-  .option('--bind <addr>', 'bind address (default 0.0.0.0 for LAN; 127.0.0.1 = loopback + tunnel only)')
+  .description("Turn this machine's local hub into the control box (deployed profile, no VPS)")
+  .option(
+    '--bind <addr>',
+    'bind address (default 0.0.0.0 for LAN; 127.0.0.1 = loopback + tunnel only)',
+  )
   .option('--tunnel <kind>', 'let cloud boxes reach the hub: cloudflare | tailscale')
   .option('--tunnel-token <token>', 'named Cloudflare tunnel token (stable hostname)')
-  .option('--public-url <url>', 'the box-facing URL (your own proxy/DNS); skips tunnel URL scraping')
+  .option(
+    '--public-url <url>',
+    'the box-facing URL (your own proxy/DNS); skips tunnel URL scraping',
+  )
   .option('--no-autostart', 'do not install a launchd/systemd autostart unit')
   .action(async (opts: ExposeCliOpts) => {
     try {
@@ -662,7 +732,10 @@ const exposeSub = new Command('expose')
         log.warn('cancelled — an admin login is required so the exposed hub is not left open.');
         return;
       }
-      await runLocalExpose(opts, () => {});
+      const exposed = await runLocalExpose(opts, () => {});
+      // Re-exposing is still "a control box just came up" — get its logins +
+      // bake records in place, exactly as `hub setup --deploy local` does.
+      if (exposed) await finalizeControlBoxState(undefined);
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -701,7 +774,10 @@ const setUrlSub = new Command('set-url')
 
 const unsetUrlSub = new Command('unset-url')
   .description('Stop using a control plane on this machine (removes relay.controlPlaneUrl)')
-  .option('--purge', "also delete this machine's local App metadata + admin token (~/.agentbox/control-plane)")
+  .option(
+    '--purge',
+    "also delete this machine's local App metadata + admin token (~/.agentbox/control-plane)",
+  )
   .action(async (opts: { purge?: boolean }) => {
     try {
       // set-url writes the global scope; also clear a per-project override if one
@@ -713,7 +789,9 @@ const unsetUrlSub = new Command('unset-url')
       if (!g.existed && !p.existed) {
         log.info('No control plane was configured (relay.controlPlaneUrl not set).');
       } else {
-        const where = [g.existed ? 'global' : null, p.existed ? 'project' : null].filter(Boolean).join(' + ');
+        const where = [g.existed ? 'global' : null, p.existed ? 'project' : null]
+          .filter(Boolean)
+          .join(' + ');
         log.success(
           `Removed relay.controlPlaneUrl (${where}). New cloud boxes now push through the host relay ` +
             '(your laptop must be on), and the GitHub-App repo-authorization prompt no longer fires.',
@@ -727,7 +805,9 @@ const unsetUrlSub = new Command('unset-url')
           await purgeLocalControlPlaneState({ dir: CP_DIR, keepCredentials: false });
           log.success(`Purged this machine's control-plane credentials (${CP_DIR}).`);
         } else {
-          log.info(`This machine's App metadata + admin token remain in ${CP_DIR} (use --purge to delete).`);
+          log.info(
+            `This machine's App metadata + admin token remain in ${CP_DIR} (use --purge to delete).`,
+          );
           log.info('To also delete the VPS itself, use `agentbox hub destroy`.');
         }
       }
@@ -904,7 +984,9 @@ const workerSub = new Command('worker')
           // not park each blob `get` on undici's ~10s connect timeout and stall
           // a create the user is waiting on (see sandbox-cloud/reachability.ts).
           if (!(await hostReachable(target.url))) {
-            process.stdout.write('agentbox-cp-worker: control box unreachable — bare clone, no seed\n');
+            process.stdout.write(
+              'agentbox-cp-worker: control box unreachable — bare clone, no seed\n',
+            );
             return null;
           }
           const client = new CustodyClient({
@@ -1077,7 +1159,9 @@ async function pushItems(
 }
 
 const credentialsPushSub = new Command('push')
-  .description('Push host agent-credential backups (claude/codex/opencode) to the control box custody store')
+  .description(
+    'Push host agent-credential backups (claude/codex/opencode) to the control box custody store',
+  )
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .option('--agent <id>', 'push only one agent: claude | codex | opencode')
   .option('--force', 'upload even when the stored hash matches')
@@ -1146,7 +1230,10 @@ const secretsPushSub = new Command('push')
   .description('Push project secret/env files to the control box custody store')
   .argument('[files...]', 'files to push (default: ./.env if present)')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
-  .option('--project <slug>', 'custody project slug (default: owner__repo, else the directory name)')
+  .option(
+    '--project <slug>',
+    'custody project slug (default: owner__repo, else the directory name)',
+  )
   .option('--force', 'upload even when the stored hash matches')
   .action(async (files: string[], opts: { url?: string; project?: string; force?: boolean }) => {
     try {
@@ -1157,7 +1244,8 @@ const secretsPushSub = new Command('push')
       }
       const root = process.cwd();
       const slug = await projectSlug(opts.project, root);
-      const chosen = files.length > 0 ? files : existsSync(join(root, '.env')) ? [join(root, '.env')] : [];
+      const chosen =
+        files.length > 0 ? files : existsSync(join(root, '.env')) ? [join(root, '.env')] : [];
       if (chosen.length === 0) {
         log.error('No files to push (no ./.env found; pass files explicitly).');
         process.exitCode = 1;
@@ -1183,7 +1271,10 @@ const projectPushSub = new Command('push')
     "Push this project's seed material (untracked files + env/secrets) to the control box, so boxes created from its web UI get the files a fresh clone can't provide. A PC create does this automatically; run this to register a project before creating a box from it.",
   )
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
-  .option('--project <slug>', 'custody project slug (default: owner__repo, else the directory name)')
+  .option(
+    '--project <slug>',
+    'custody project slug (default: owner__repo, else the directory name)',
+  )
   .option('--force', 'upload even when the stored hash matches')
   .action(async (opts: { url?: string; project?: string; force?: boolean }) => {
     try {
@@ -1304,7 +1395,9 @@ const custodyPullSub = new Command('pull')
         await chmod(out, 0o600);
         pulled++;
       }
-      log.success(`Pulled ${String(pulled)} entr${pulled === 1 ? 'y' : 'ies'} under '${scope}' to ${dest}.`);
+      log.success(
+        `Pulled ${String(pulled)} entr${pulled === 1 ? 'y' : 'ies'} under '${scope}' to ${dest}.`,
+      );
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -1312,7 +1405,10 @@ const custodyPullSub = new Command('pull')
 
 const custodyRmSub = new Command('rm')
   .description('Delete a custody entry (one path) from the control box')
-  .argument('<path>', 'custody path, e.g. boxes/<sandboxId>/ssh/id_ed25519 or agents/claude/.credentials.json')
+  .argument(
+    '<path>',
+    'custody path, e.g. boxes/<sandboxId>/ssh/id_ed25519 or agents/claude/.credentials.json',
+  )
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .action(async (path: string, opts: { url?: string }) => {
     try {
@@ -1321,14 +1417,19 @@ const custodyRmSub = new Command('rm')
         process.exitCode = 1;
         return;
       }
-      const res = await fetch(`${target.url}/admin/custody/${path.split('/').map(encodeURIComponent).join('/')}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${target.adminToken}` },
-      });
+      const res = await fetch(
+        `${target.url}/admin/custody/${path.split('/').map(encodeURIComponent).join('/')}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${target.adminToken}` },
+        },
+      );
       if (res.status === 204) log.success(`Deleted custody entry '${path}'.`);
       else if (res.status === 404) log.info(`No custody entry at '${path}'.`);
       else {
-        log.error(`custody rm failed: ${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`);
+        log.error(
+          `custody rm failed: ${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`,
+        );
         process.exitCode = 1;
       }
     } catch (err) {
@@ -1365,7 +1466,9 @@ const boxesListSub = new Command('list')
         return;
       }
       for (const b of boxes) {
-        process.stdout.write(`${b.id}  ${b.name ?? b.task}  ${b.provider}  ${b.state ?? b.status}\n`);
+        process.stdout.write(
+          `${b.id}  ${b.name ?? b.task}  ${b.provider}  ${b.state ?? b.status}\n`,
+        );
       }
     } catch (err) {
       handleLifecycleError(err);
@@ -1373,7 +1476,9 @@ const boxesListSub = new Command('list')
   });
 
 const boxesRmSub = new Command('rm')
-  .description('Destroy a box via the control box (tears down the cloud resource AND reaps its registration/custody)')
+  .description(
+    'Destroy a box via the control box (tears down the cloud resource AND reaps its registration/custody)',
+  )
   .argument('<boxId>', 'the box id as shown by `hub boxes list`')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .action(async (boxId: string, opts: { url?: string }) => {
@@ -1446,7 +1551,10 @@ const approvalsListSub = new Command('list')
       }
       // One call returns every pending approval (vs the admin wire's N per-box
       // fetches); cross-ref the box list once for human-readable names.
-      const [approvals, boxes] = await Promise.all([client.listApprovals(), client.listBoxes().catch(() => [])]);
+      const [approvals, boxes] = await Promise.all([
+        client.listApprovals(),
+        client.listBoxes().catch(() => []),
+      ]);
       if (opts.json) {
         process.stdout.write(`${JSON.stringify(approvals, null, 2)}\n`);
         return;
@@ -1618,17 +1726,31 @@ async function ensureHubApiKeyInEnv(): Promise<string> {
 // is meant to avoid.
 const deployHetznerSub = new Command('hetzner')
   .description('Deploy the full hub to a new Hetzner VPS, reusing the App creds from `hub setup`')
-  .option('--ref <ref>', `build from source at this branch / tag / sha instead of installing the published package (${DEFAULT_DEPLOY_REF} matches this CLI)`)
-  .option('--repo <url>', `git repo the VPS clones when building from source (default ${DEFAULT_DEPLOY_REPO})`)
-  .option('--package <spec>', `npm spec of @madarco/agentbox to install (default ${AGENTBOX_VERSION}, this CLI's own version)`)
-  .option('--domain <host>', 'serve on a hostname you control (point its DNS at the VPS first) instead of the default <ip>.sslip.io')
+  .option(
+    '--ref <ref>',
+    `build from source at this branch / tag / sha instead of installing the published package (${DEFAULT_DEPLOY_REF} matches this CLI)`,
+  )
+  .option(
+    '--repo <url>',
+    `git repo the VPS clones when building from source (default ${DEFAULT_DEPLOY_REPO})`,
+  )
+  .option(
+    '--package <spec>',
+    `npm spec of @madarco/agentbox to install (default ${AGENTBOX_VERSION}, this CLI's own version)`,
+  )
+  .option(
+    '--domain <host>',
+    'serve on a hostname you control (point its DNS at the VPS first) instead of the default <ip>.sslip.io',
+  )
   .action(async (opts: DeployOpts) => {
     // Tee the spinner's progress to ~/.agentbox/logs/hub-deploy.log — a deploy
     // that dies at `compose up` or on a 502 otherwise leaves nothing to read.
     const cmdLog = openCommandLog('hub-deploy');
     try {
       if (!existsSync(ENV_PATH)) {
-        log.error('No control-plane env found. Run `agentbox hub setup` first (it creates the GitHub App + admin token).');
+        log.error(
+          'No control-plane env found. Run `agentbox hub setup` first (it creates the GitHub App + admin token).',
+        );
         process.exitCode = 1;
         return;
       }
@@ -1685,12 +1807,14 @@ const deployHetznerSub = new Command('hetzner')
       log.success(`Pointed the CLI at ${url} (relay.controlPlaneUrl).`);
       const ok = await waitForHealthz(url, 60_000);
       log[ok ? 'success' : 'warn'](
-        ok ? `Control box is healthy (${url}/healthz).` : `Could not confirm ${url}/healthz yet — check the deployment.`,
+        ok
+          ? `Control box is healthy (${url}/healthz).`
+          : `Could not confirm ${url}/healthz yet — check the deployment.`,
       );
-      if (ok) await seedPreparedToNewControlBox(url);
+      if (ok) await finalizeControlBoxState(url);
       log.info(`Reach the VPS with \`ssh ${AGENTBOX_HUB_SSH_ALIAS}\`. Deploy log: ${cmdLog.path}`);
     } catch (err) {
-      cmdLog.write(`FAILED: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+      cmdLog.write(`FAILED: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
       handleLifecycleError(err);
     } finally {
       cmdLog.close();
@@ -1706,18 +1830,34 @@ interface DeployDigitalOceanOpts extends DeployOpts {
 // DigitalOcean Droplet. Reuses the ~/.agentbox/control-plane env + auth from
 // `hub setup` — no GitHub-App manifest flow.
 const deployDigitalOceanSub = new Command('digitalocean')
-  .description('Deploy the full hub to a new DigitalOcean Droplet, reusing the creds from `hub setup`')
-  .option('--ref <ref>', `build from source at this branch / tag / sha instead of installing the published package (${DEFAULT_DEPLOY_REF} matches this CLI)`)
-  .option('--repo <url>', `git repo the Droplet clones when building from source (default ${DEFAULT_DEPLOY_REPO})`)
-  .option('--package <spec>', `npm spec of @madarco/agentbox to install (default ${AGENTBOX_VERSION}, this CLI's own version)`)
-  .option('--domain <host>', 'serve on a hostname you control (point its DNS at the Droplet first) instead of the default <ip>.sslip.io')
+  .description(
+    'Deploy the full hub to a new DigitalOcean Droplet, reusing the creds from `hub setup`',
+  )
+  .option(
+    '--ref <ref>',
+    `build from source at this branch / tag / sha instead of installing the published package (${DEFAULT_DEPLOY_REF} matches this CLI)`,
+  )
+  .option(
+    '--repo <url>',
+    `git repo the Droplet clones when building from source (default ${DEFAULT_DEPLOY_REPO})`,
+  )
+  .option(
+    '--package <spec>',
+    `npm spec of @madarco/agentbox to install (default ${AGENTBOX_VERSION}, this CLI's own version)`,
+  )
+  .option(
+    '--domain <host>',
+    'serve on a hostname you control (point its DNS at the Droplet first) instead of the default <ip>.sslip.io',
+  )
   .option('--region <slug>', 'DigitalOcean region slug (default nyc3)')
   .option('--size <slug>', 'Droplet size slug (default s-2vcpu-4gb)')
   .action(async (opts: DeployDigitalOceanOpts) => {
     const cmdLog = openCommandLog('hub-deploy');
     try {
       if (!existsSync(ENV_PATH)) {
-        log.error('No control-plane env found. Run `agentbox hub setup` first (it writes the git credential + admin token).');
+        log.error(
+          'No control-plane env found. Run `agentbox hub setup` first (it writes the git credential + admin token).',
+        );
         process.exitCode = 1;
         return;
       }
@@ -1773,12 +1913,16 @@ const deployDigitalOceanSub = new Command('digitalocean')
       log.success(`Pointed the CLI at ${url} (relay.controlPlaneUrl).`);
       const ok = await waitForHealthz(url, 60_000);
       log[ok ? 'success' : 'warn'](
-        ok ? `Control box is healthy (${url}/healthz).` : `Could not confirm ${url}/healthz yet — check the deployment.`,
+        ok
+          ? `Control box is healthy (${url}/healthz).`
+          : `Could not confirm ${url}/healthz yet — check the deployment.`,
       );
-      if (ok) await seedPreparedToNewControlBox(url);
-      log.info(`Reach the Droplet with \`ssh ${AGENTBOX_HUB_SSH_ALIAS}\`. Deploy log: ${cmdLog.path}`);
+      if (ok) await finalizeControlBoxState(url);
+      log.info(
+        `Reach the Droplet with \`ssh ${AGENTBOX_HUB_SSH_ALIAS}\`. Deploy log: ${cmdLog.path}`,
+      );
     } catch (err) {
-      cmdLog.write(`FAILED: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+      cmdLog.write(`FAILED: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
       handleLifecycleError(err);
     } finally {
       cmdLog.close();
@@ -1819,7 +1963,7 @@ async function specForChannel(channel: string): Promise<string> {
 async function runLocalUpdateFlow(opts: UpdateOpts, logWrite: (l: string) => void): Promise<void> {
   if (opts.channel || opts.package || opts.ref || opts.repo) {
     log.warn(
-      'This control box IS this machine\'s hub, so its build is this CLI. To change the build, run ' +
+      "This control box IS this machine's hub, so its build is this CLI. To change the build, run " +
         '`agentbox self-update` (it reloads the hub too); `hub update` just restarts the exposed hub.',
     );
   }
@@ -1854,7 +1998,7 @@ async function runLocalUpdateFlow(opts: UpdateOpts, logWrite: (l: string) => voi
       ? `Control box is healthy${after.version ? `, running ${after.version}` : ''}.`
       : `Hub did not answer just now (${after.detail}) — check with \`agentbox hub status\`.`,
   );
-  await seedPreparedToNewControlBox(loopback);
+  await shareBakesWithControlBox(loopback);
 }
 
 /** `hub destroy` for a LOCAL control box: stop exposing, revert to the plain hub. */
@@ -1896,17 +2040,27 @@ async function runLocalDestroyFlow(
       return;
     }
   }
-  await runLocalDestroy({ keepCredentials: Boolean(opts.keepCredentials), log: (l) => log.info(l) });
-  log.success('This machine is no longer the control box — the plain localhost hub is back on the next `agentbox hub start`.');
+  await runLocalDestroy({
+    keepCredentials: Boolean(opts.keepCredentials),
+    log: (l) => log.info(l),
+  });
+  log.success(
+    'This machine is no longer the control box — the plain localhost hub is back on the next `agentbox hub start`.',
+  );
   if (opts.keepCredentials) {
-    log.info(`Credentials kept in ${CP_DIR} — \`agentbox hub expose\` re-exposes without \`hub setup\`.`);
+    log.info(
+      `Credentials kept in ${CP_DIR} — \`agentbox hub expose\` re-exposes without \`hub setup\`.`,
+    );
   }
 }
 
 const updateSub = new Command('update')
   .description('Update the deployed control box in place to a new AgentBox build')
   .option('--channel <nightly|stable>', 'install the newest published build on this channel')
-  .option('--package <spec>', `npm spec to install (default ${AGENTBOX_VERSION}, this CLI's own version)`)
+  .option(
+    '--package <spec>',
+    `npm spec to install (default ${AGENTBOX_VERSION}, this CLI's own version)`,
+  )
   .option('--ref <ref>', 'switch the control box to building from source at this git ref')
   .option('--repo <url>', 'git repo the VPS clones when building from source')
   .option('-y, --yes', 'skip the confirmation prompt')
@@ -2004,7 +2158,7 @@ const updateSub = new Command('update')
       }
       // A version change is exactly when a shared bake record starts (or stops)
       // matching the control box's fingerprint, so re-share.
-      await seedPreparedToNewControlBox(record.url);
+      await shareBakesWithControlBox(record.url);
       log.info(`Update log: ${cmdLog.path}`);
     } catch (err) {
       cmdLog.write(`FAILED: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
@@ -2073,7 +2227,9 @@ const destroySub = new Command('destroy')
         log.error(
           'No control box was deployed from this machine (~/.agentbox/control-plane/deploy.json is missing).',
         );
-        log.info('To stop using a hub configured with `hub set-url`, run `agentbox hub unset-url`.');
+        log.info(
+          'To stop using a hub configured with `hub set-url`, run `agentbox hub unset-url`.',
+        );
         process.exitCode = 1;
         return;
       }
@@ -2092,7 +2248,9 @@ const destroySub = new Command('destroy')
           `The control box still has ${String(gate.orphanCount)} box(es) registered. Destroying it now would orphan them:`,
         );
         for (const b of gate.orphans) {
-          process.stdout.write(`  ${b.id}  ${b.name ?? ''}  ${b.provider ?? ''}  ${b.state ?? ''}\n`);
+          process.stdout.write(
+            `  ${b.id}  ${b.name ?? ''}  ${b.provider ?? ''}  ${b.state ?? ''}\n`,
+          );
         }
         log.info('Destroy them first (`agentbox hub boxes rm <id>`), or re-run with --force.');
         process.exitCode = 1;
@@ -2104,7 +2262,9 @@ const destroySub = new Command('destroy')
       const serverKind = isDigitalOcean ? 'droplet' : 'server';
       const lines = [
         `${cloudLabel} ${serverKind} ${String(record.serverId ?? '?')} (${record.ip ?? '?'})`,
-        ...(record.firewallId !== undefined ? [`${cloudLabel} firewall ${String(record.firewallId)}`] : []),
+        ...(record.firewallId !== undefined
+          ? [`${cloudLabel} firewall ${String(record.firewallId)}`]
+          : []),
         opts.keepCredentials
           ? `${CP_DIR}/deploy.json + ssh/ (control-plane.env kept)`
           : `${CP_DIR} (credentials, ssh key, deploy record)`,
@@ -2211,33 +2371,181 @@ async function listHubBoxesForDestroy(record: ControlPlaneDeployRecord): Promise
 }
 
 /**
- * Share this machine's cloud bake records with a freshly-deployed control box,
- * so its first web-UI create boots the base you already baked instead of
- * spending minutes re-baking an identical one. Best-effort: a fresh deploy is
- * still perfectly usable without it (it just bakes on demand).
+ * This CLI's live native fingerprint for a provider's base build context, or
+ * undefined when it can't be computed (a dev tree with no staged runtime, or a
+ * provider that doesn't fingerprint). Loads the module WITHOUT its credential
+ * gate — `baseFingerprint` only hashes the staged runtime files, no SDK/network.
  */
-async function seedPreparedToNewControlBox(url: string): Promise<void> {
-  const target = await resolveCustodyTarget(url, { quiet: true });
-  if (!target) return;
-  const shared: string[] = [];
-  for (const provider of SHAREABLE_PREPARED_PROVIDERS) {
-    const ok = await pushPreparedToCustody(provider, {
-      controlPlaneUrl: target.url,
-      adminToken: target.adminToken,
-    }).catch(() => false);
-    if (ok) shared.push(provider);
-  }
-  if (shared.length > 0) {
-    log.success(`Shared your ${shared.join(', ')} base bake(s) with the control box — it won't re-bake them.`);
+async function cliNativeFingerprint(provider: string): Promise<string | undefined> {
+  try {
+    return await (await loadProviderModule(provider)).provider.baseFingerprint?.('native');
+  } catch {
+    return undefined;
   }
 }
 
 /**
- * Providers whose base is a provider-side snapshot another machine can boot, so
- * the bake record is worth sharing. Docker is excluded: its base is a local
- * image, rebuilt (or pulled) per machine.
+ * Share this machine's cloud bake records with a control box, so its first
+ * web-UI create boots the base you already baked instead of spending minutes
+ * re-baking an identical one.
+ *
+ * The push always succeeds if the box is reachable, but the box only ADOPTS a
+ * record whose build-context fingerprint matches its own — so a record from a
+ * different build context (an older local bake, or a hub on a different version)
+ * is uploaded and then ignored, and the hub re-bakes. `classifyBakeShare`
+ * predicts that here so setup ends with an explicit per-provider message rather
+ * than a silent "shared it" that isn't the whole truth.
+ *
+ * Best-effort: a fresh deploy is still perfectly usable without any of this (it
+ * just bakes on demand).
  */
-const SHAREABLE_PREPARED_PROVIDERS = ['hetzner', 'vercel', 'e2b', 'daytona', 'digitalocean'] as const;
+async function shareBakesWithControlBox(url: string | undefined): Promise<void> {
+  const target = await resolveCustodyTarget(url, { quiet: true });
+  if (!target) return;
+  // The version the box actually runs decides whether its fingerprint matches
+  // ours; a box that doesn't report one leaves the version-skew check inert.
+  const hubVersion = (await probeControlPlaneStatus(target.url)).version;
+  const results: BakeShareResult[] = [];
+  // Derive the provider set from the live runtime registry (built-ins AND
+  // registered plugins) filtered by the single shareable rule — never a
+  // hardcoded list, or a new provider is silently skipped from bake sharing.
+  const providers = getRuntimeProviderNames().filter(isShareablePreparedProvider);
+  for (const provider of providers) {
+    const local = readPreparedStateRaw(provider) as { base?: { contextSha256?: string } } | null;
+    const storedFingerprint = local?.base?.contextSha256;
+    if (!storedFingerprint) continue; // not baked here → nothing to share
+    // Capture the real upload outcome — a swallowed failure must not be reported
+    // as a share (the record never left this machine, so the hub will re-bake).
+    const pushSucceeded = await pushPreparedToCustody(provider, {
+      controlPlaneUrl: target.url,
+      adminToken: target.adminToken,
+    }).catch(() => false);
+    results.push(
+      classifyBakeShare({
+        provider,
+        storedFingerprint,
+        cliNativeFingerprint: await cliNativeFingerprint(provider),
+        hubVersion,
+        cliVersion: AGENTBOX_VERSION,
+        pushSucceeded,
+      }),
+    );
+  }
+  const { matched, mismatched, shareFailed } = summarizeBakeShare(results);
+  if (matched.length > 0) {
+    log.success(
+      `Shared your ${matched.join(', ')} base bake(s) with the control box — it won't re-bake them.`,
+    );
+  }
+  const rebakeNote = buildRebakeNote(mismatched);
+  if (rebakeNote) log.warn(rebakeNote);
+  const failedNote = buildShareFailedNote(shareFailed);
+  if (failedNote) log.warn(failedNote);
+}
+
+/** Bound on a credential-sync round-trip once the control box is known to be up. */
+const CREDENTIAL_SYNC_FETCH_MS = 15_000;
+
+/**
+ * Push host agent-credential backups (claude/codex/opencode) to the control box,
+ * hash-skipping unchanged blobs — the same work `hub credentials push` does, so
+ * a hub-created box is never launched loginless.
+ *
+ * `announce` picks the failure policy:
+ *   - `true` (end of `hub setup`/`deploy`): report what went up; on failure WARN
+ *     and name the manual command — never throw, so it can't fail the setup.
+ *   - `false` (change-detected re-push): silent when nothing changed, and every
+ *     error is swallowed — a stale-cred refresh must never break the command
+ *     that triggered it.
+ *
+ * Returns the number of credential sets uploaded (0 when unchanged / no box).
+ */
+async function syncAgentCredentials(
+  url: string | undefined,
+  opts: { announce: boolean },
+): Promise<number> {
+  try {
+    const target = await resolveCustodyTarget(url, { quiet: true });
+    if (!target) {
+      if (opts.announce) {
+        log.warn(
+          'No control box reachable, so agent credentials were not pushed. Run `agentbox hub credentials push` once it is up.',
+        );
+      }
+      return 0;
+    }
+    // A down box must not park the sync on undici's ~10s connect timeout: probe
+    // first, then bound every custody call.
+    if (!(await hostReachable(target.url))) {
+      if (opts.announce) {
+        log.warn(
+          `Control box unreachable at ${target.url}, so agent credentials were not pushed. Run \`agentbox hub credentials push\` once it is up.`,
+        );
+      }
+      return 0;
+    }
+    const items = await collectAgentCredentialUploads();
+    if (items.length === 0) {
+      if (opts.announce) {
+        log.info(
+          'No host agent logins to push yet — sign in with `agentbox claude login`, then `agentbox hub credentials push`.',
+        );
+      }
+      return 0;
+    }
+    const client = new CustodyClient({
+      ...target,
+      fetchImpl: deadlineFetch(AbortSignal.timeout(CREDENTIAL_SYNC_FETCH_MS)),
+    });
+    const plan = planPush(items, await client.list('agents'), {});
+    if (!hasCredentialChanges(plan)) {
+      if (opts.announce) log.info('Agent logins already up to date on the control box.');
+      return 0;
+    }
+    const uploaded = new Set<string>();
+    for (const item of items) {
+      if (plan.find((d) => d.path === item.path)?.action !== 'upload') continue;
+      await client.put(item.path, item.data);
+      // `agents/<id>/<file>` → the agent id.
+      uploaded.add(item.path.split('/')[1] ?? item.path);
+    }
+    if (opts.announce && uploaded.size > 0) {
+      log.success(`Pushed ${[...uploaded].join(', ')} login(s) to the control box.`);
+    }
+    return uploaded.size;
+  } catch (err) {
+    if (opts.announce) {
+      log.warn(
+        `Could not push agent credentials to the control box (${err instanceof Error ? err.message : String(err)}). ` +
+          'Run `agentbox hub credentials push` manually.',
+      );
+    }
+    return 0;
+  }
+}
+
+/**
+ * Best-effort, silent-when-unchanged credential re-push, for the points where a
+ * stale login on the control box actually bites: a cloud create routed to the
+ * hub, and a fresh `agentbox claude login`. Cheap (hash compare, skips when the
+ * host backup hasn't changed) and never throws — a no-op when no control box is
+ * configured. Reuses the existing custody client + relay, no new channel.
+ */
+export async function syncAgentCredentialsIfChanged(url?: string): Promise<void> {
+  await syncAgentCredentials(url, { announce: false });
+}
+
+/**
+ * The end-of-setup/deploy step for a control box that just came up: get its
+ * agent logins and bake records in place so its first hub-created box is signed
+ * in and boots a baked base rather than re-baking. Both steps are best-effort
+ * and self-reporting; neither fails the setup. `url` is undefined for a local
+ * exposed hub (resolved to loopback by the custody target).
+ */
+async function finalizeControlBoxState(url: string | undefined): Promise<void> {
+  await syncAgentCredentials(url, { announce: true });
+  await shareBakesWithControlBox(url);
+}
 
 const deployCmd = new Command('deploy')
   .description('Deploy the full hub to a VPS, reusing the App creds from `hub setup`')

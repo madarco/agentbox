@@ -15,14 +15,7 @@ import type { Provider } from '@agentbox/core';
 import { readPreparedStateRaw } from '@agentbox/sandbox-core';
 import { pullPreparedFromCustody, pushPreparedToCustody } from '@agentbox/sandbox-cloud';
 import { resolveCustodyTarget } from '../commands/control-plane.js';
-
-/**
- * Docker's base is a local image built or pulled per machine — not a
- * provider-side snapshot another host could boot — so there is nothing to share.
- */
-function isShareable(providerName: string): boolean {
-  return providerName !== 'docker';
-}
+import { isShareablePreparedProvider } from './bake-share.js';
 
 /**
  * Adopt the control box's bake for `providerName` when it was built from the
@@ -38,7 +31,7 @@ export async function tryAdoptPreparedBase(args: {
   claudeInstall: 'native' | 'npm';
   log: (line: string) => void;
 }): Promise<boolean> {
-  if (!isShareable(args.providerName)) return false;
+  if (!isShareablePreparedProvider(args.providerName)) return false;
   try {
     const target = await resolveCustodyTarget(undefined, { quiet: true });
     if (!target) return false;
@@ -64,7 +57,7 @@ export async function sharePreparedBase(
   providerName: string,
   log: (line: string) => void,
 ): Promise<void> {
-  if (!isShareable(providerName)) return;
+  if (!isShareablePreparedProvider(providerName)) return;
   try {
     const target = await resolveCustodyTarget(undefined, { quiet: true });
     if (!target) return;
