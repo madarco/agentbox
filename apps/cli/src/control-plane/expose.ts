@@ -80,6 +80,23 @@ export function detectLanIp(ifaces: ReturnType<typeof networkInterfaces> = netwo
  * reported success with **no tunnel process running** — boxes could not reach
  * the hub until the next `hub start` happened to bring it up.
  */
+/**
+ * Reject a tunnel request that cannot possibly work, WITHOUT touching anything.
+ *
+ * Split out of `resolvePublicUrl` so `runExpose` can check it before it stops the
+ * previous tunnel: a typo'd flag combination used to tear down a working tunnel
+ * on its way to failing. Pure.
+ */
+export function assertTunnelOptions(opts: ExposeOptions): void {
+  // A named tunnel's hostname is configured on Cloudflare's side, so nothing
+  // here can discover it — it has to be supplied.
+  if (opts.tunnel === 'cloudflare' && opts.tunnelToken && !opts.publicUrl) {
+    throw new Error(
+      'a named Cloudflare tunnel (--tunnel-token) has a hostname only you know — pass it with --public-url.',
+    );
+  }
+}
+
 export async function resolvePublicUrl(
   opts: ExposeOptions,
   port: number,
@@ -88,13 +105,7 @@ export async function resolvePublicUrl(
 ): Promise<{ publicUrl: string; cloudReachable: boolean }> {
   const explicit = opts.publicUrl?.replace(/\/$/, '');
   if (opts.tunnel) {
-    // A named tunnel's hostname is configured on Cloudflare's side, so nothing
-    // here can discover it — it has to be supplied.
-    if (opts.tunnel === 'cloudflare' && opts.tunnelToken && !explicit) {
-      throw new Error(
-        'a named Cloudflare tunnel (--tunnel-token) has a hostname only you know — pass it with --public-url.',
-      );
-    }
+    assertTunnelOptions(opts);
     const handle = await deps.startTunnel({
       kind: opts.tunnel,
       port,
@@ -132,6 +143,9 @@ export async function runExpose(opts: ExposeOptions): Promise<ExposeResult> {
   // find it on the next `hub start` and bring up a NAMED tunnel on a hostname
   // the record knows nothing about.
   setControlPlaneEnvKey('AGENTBOX_TUNNEL_TOKEN', opts.tunnelToken ?? null);
+
+  // Validate first: a bad flag combination must not cost you a working tunnel.
+  if (opts.tunnel) assertTunnelOptions(opts);
 
   // Tear down whatever tunnel a previous expose left, before starting the new
   // one. Re-running with `--tunnel` otherwise spawns a second cloudflared over

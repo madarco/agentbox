@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ControlPlaneDeployRecord } from '@agentbox/sandbox-core';
 import { buildExposedHubEnv, parseEnvFileBody } from '@agentbox/sandbox-core';
-import { detectLanIp, resolvePublicUrl } from '../src/control-plane/expose.js';
+import { assertTunnelOptions, detectLanIp, resolvePublicUrl } from '../src/control-plane/expose.js';
 import { setControlPlaneEnvKey } from '../src/control-plane/env-file.js';
 import { parseTrycloudflareUrl, cloudflaredAsset } from '../src/control-plane/tunnel.js';
 import { launchdPlist, systemdUnit } from '../src/lib/autostart.js';
@@ -241,5 +241,34 @@ describe('setControlPlaneEnvKey', () => {
   it('handles a file that does not exist yet', () => {
     setControlPlaneEnvKey('AGENTBOX_TUNNEL_TOKEN', 'tok', file);
     expect(parseEnvFileBody(readFileSync(file, 'utf8')).AGENTBOX_TUNNEL_TOKEN).toBe('tok');
+  });
+});
+
+/**
+ * A typo'd flag combination must not cost you a working tunnel. runExpose stops
+ * the previous tunnel before starting the replacement (otherwise it orphans the
+ * old process), so anything that can be rejected up front has to be rejected
+ * BEFORE that teardown.
+ */
+describe('assertTunnelOptions', () => {
+  it('rejects a named Cloudflare tunnel with no hostname to advertise', () => {
+    expect(() => assertTunnelOptions({ tunnel: 'cloudflare', tunnelToken: 'tok' })).toThrow(
+      /--public-url/,
+    );
+  });
+
+  it('accepts the named flow once a hostname is supplied', () => {
+    expect(() =>
+      assertTunnelOptions({
+        tunnel: 'cloudflare',
+        tunnelToken: 'tok',
+        publicUrl: 'https://hub.example.com',
+      }),
+    ).not.toThrow();
+  });
+
+  it('accepts a quick tunnel and a tailscale funnel', () => {
+    expect(() => assertTunnelOptions({ tunnel: 'cloudflare' })).not.toThrow();
+    expect(() => assertTunnelOptions({ tunnel: 'tailscale', tunnelToken: 'tok' })).not.toThrow();
   });
 });
