@@ -19,7 +19,7 @@ import {
 } from '@agentbox/sandbox-core';
 import { hubProfile } from '@/lib/auth-config';
 import type { ProviderOption } from '@/lib/boxes/types';
-import { describeHubBuild, type ProviderBake } from '@/lib/system-info';
+import { describeHubBuild, isBaked, type ProviderBake } from '@/lib/system-info';
 import { backendOrNull } from '../lib/backend';
 import { ok } from '../lib/envelope';
 
@@ -92,13 +92,11 @@ export async function GET(): Promise<Response> {
     const prepared = preparedBaseOf(id);
     const f = freshness.get(id);
     // Freshness (when the in-process backend computed it) is authoritative about
-    // whether the base is actually present: `unprepared` means the image/snapshot
-    // is gone even if a stale prepared record still lingers on disk. Trust it over
-    // the record so we never render "baked with X" for a base that isn't there.
-    // Absent freshness (the plane read path) → fall back to the record alone.
-    const baked = f?.baseStatus
-      ? f.baseStatus === 'fresh' || f.baseStatus === 'stale'
-      : prepared !== null;
+    // whether the base exists: only `unprepared` means no stored base. `unknown`
+    // still has a stored fingerprint — baked, just not freshness-verifiable — so
+    // it stays baked and keeps its metadata. Absent freshness (the plane read
+    // path) → fall back to whether a bake record exists. See isBaked().
+    const baked = isBaked(f?.baseStatus, prepared !== null);
     const rec = baked ? prepared : null;
     return {
       id,

@@ -247,6 +247,10 @@ function StatusBadge({ p }: { p: ProviderBake }) {
     return <Badge className="badge-warn gap-1.5 normal-case">stale — re-bake</Badge>;
   if (!p.baked || p.baseStatus === 'unprepared')
     return <Badge className="gap-1.5 normal-case">not baked</Badge>;
+  // Baked, but the live fingerprint couldn't be computed to verify freshness —
+  // don't imply it's confirmed-fresh with the green run pill.
+  if (p.baseStatus === 'unknown')
+    return <Badge className="gap-1.5 normal-case">baked · unverified</Badge>;
   return (
     <Badge className="badge-run gap-1.5 normal-case">
       <span className="badge-dot" />

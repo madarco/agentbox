@@ -119,6 +119,12 @@ export function groupImageContents(keys: string[]): ImageContentGroup[] {
 // which CLI baked it, when) and freshness (does it still match the current build
 // context, and if not why). This is the "do I need to re-bake?" row.
 
+// Freshness vs the current build context, as the host backend computes it
+// (mirrors BaseStatus in @agentbox/sandbox-cloud). Only `unprepared` means "no
+// base": `unknown` = a stored fingerprint EXISTS but the live one couldn't be
+// computed, so the base IS baked — just not freshness-verifiable here.
+export type BaseFreshness = 'fresh' | 'stale' | 'unprepared' | 'unknown';
+
 export interface ProviderBake {
   id: string;
   label: string;
@@ -134,9 +140,22 @@ export interface ProviderBake {
   /** Provider-opaque image identifier (docker tag / snapshot id / image id). */
   imageRef?: string;
   /** Freshness vs the current build context (when the host backend computed it). */
-  baseStatus?: 'fresh' | 'stale' | 'unprepared' | 'unknown';
+  baseStatus?: BaseFreshness;
   /** Why it is stale — the actionable part. */
   baseStaleReason?: string;
+}
+
+/**
+ * Whether a provider's base counts as baked. Freshness (when the in-process
+ * host backend computed it) is authoritative: only `unprepared` means there is
+ * no stored base. `unknown` still has a stored fingerprint — the base is baked,
+ * the live fingerprint just couldn't be computed to verify freshness — so it
+ * must NOT read as not-baked. When freshness is absent (the plane read path,
+ * which has no provider code), fall back to whether a bake record exists.
+ */
+export function isBaked(baseStatus: BaseFreshness | undefined, hasRecord: boolean): boolean {
+  if (baseStatus) return baseStatus !== 'unprepared';
+  return hasRecord;
 }
 
 /** A short, plain-English verdict for a provider's bake state. */
@@ -153,6 +172,8 @@ export function bakeVerdict(p: ProviderBake): { tone: 'ok' | 'warn' | 'muted'; t
       text: 'Not baked yet — the next create (or a manual bake) will build it.',
     };
   }
+  if (p.baseStatus === 'unknown')
+    return { tone: 'ok', text: 'Baked — freshness could not be verified here.' };
   if (p.baseStatus === 'fresh')
     return { tone: 'ok', text: 'Baked and up to date with the current build context.' };
   return { tone: 'ok', text: 'Baked.' };
