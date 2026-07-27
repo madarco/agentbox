@@ -40,12 +40,12 @@ import {
 } from '@agentbox/relay';
 import { randomBytes } from 'node:crypto';
 import { providerForCreate } from '../provider/registry.js';
-import { loadProviderModule } from '../provider/loaders.js';
+import { getRuntimeProviderNames, loadProviderModule } from '../provider/loaders.js';
 import {
-  SHAREABLE_PREPARED_PROVIDERS,
   buildRebakeNote,
   classifyBakeShare,
   hasCredentialChanges,
+  isShareablePreparedProvider,
   summarizeBakeShare,
   type BakeShareResult,
 } from '../control-plane/bake-share.js';
@@ -2405,7 +2405,11 @@ async function shareBakesWithControlBox(url: string | undefined): Promise<void> 
   // ours; a box that doesn't report one leaves the version-skew check inert.
   const hubVersion = (await probeControlPlaneStatus(target.url)).version;
   const results: BakeShareResult[] = [];
-  for (const provider of SHAREABLE_PREPARED_PROVIDERS) {
+  // Derive the provider set from the live runtime registry (built-ins AND
+  // registered plugins) filtered by the single shareable rule — never a
+  // hardcoded list, or a new provider is silently skipped from bake sharing.
+  const providers = getRuntimeProviderNames().filter(isShareablePreparedProvider);
+  for (const provider of providers) {
     const local = readPreparedStateRaw(provider) as { base?: { contextSha256?: string } } | null;
     const storedFingerprint = local?.base?.contextSha256;
     if (!storedFingerprint) continue; // not baked here → nothing to share

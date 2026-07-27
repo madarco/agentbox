@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { claudeInstallFingerprint } from '@agentbox/sandbox-core';
 import {
-  SHAREABLE_PREPARED_PROVIDERS,
   buildRebakeNote,
   classifyBakeShare,
   hasCredentialChanges,
@@ -17,13 +16,27 @@ describe('isShareablePreparedProvider', () => {
     expect(isShareablePreparedProvider('docker')).toBe(false);
   });
 
-  it('includes every cloud provider in the enumerated list', () => {
-    for (const p of SHAREABLE_PREPARED_PROVIDERS) {
+  it('excludes remote-docker (docker-shaped: its base is a local image on the remote host)', () => {
+    expect(isShareablePreparedProvider('remote-docker')).toBe(false);
+  });
+
+  it('includes every cloud provider', () => {
+    for (const p of ['hetzner', 'digitalocean', 'vercel', 'e2b', 'daytona']) {
       expect(isShareablePreparedProvider(p)).toBe(true);
     }
-    expect(SHAREABLE_PREPARED_PROVIDERS).not.toContain('docker' as never);
-    expect(SHAREABLE_PREPARED_PROVIDERS).toContain('hetzner');
-    expect(SHAREABLE_PREPARED_PROVIDERS).toContain('digitalocean');
+  });
+
+  it('derives the shareable set from an enumerated provider list, including a plugin provider', () => {
+    // The production path enumerates the runtime registry (built-ins AND
+    // registered plugins) and filters with this predicate; a fake plugin name
+    // like `islo` must survive the filter, not be dropped by a hardcoded list.
+    const enumerated = ['docker', 'remote-docker', 'hetzner', 'e2b', 'daytona', 'islo'];
+    expect(enumerated.filter(isShareablePreparedProvider)).toEqual([
+      'hetzner',
+      'e2b',
+      'daytona',
+      'islo',
+    ]);
   });
 });
 

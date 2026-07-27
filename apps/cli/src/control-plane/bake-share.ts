@@ -21,27 +21,20 @@ import { matchClaudeInstallFingerprint } from '@agentbox/sandbox-core';
 import type { PushDecision } from './custody-client.js';
 
 /**
- * Providers whose base is a provider-side snapshot another machine can boot, so
- * the bake record is worth sharing. Docker is excluded: its base is a local
- * image, rebuilt (or pulled) per machine — see {@link isShareablePreparedProvider}.
- */
-export const SHAREABLE_PREPARED_PROVIDERS = [
-  'hetzner',
-  'digitalocean',
-  'vercel',
-  'e2b',
-  'daytona',
-] as const;
-
-export type ShareablePreparedProvider = (typeof SHAREABLE_PREPARED_PROVIDERS)[number];
-
-/**
- * Whether a provider bakes a shareable base at all. Docker's base is a local
- * image rebuilt per machine, so there is nothing another host could boot; every
- * cloud base is a provider-side snapshot addressed by id.
+ * The ONE rule for "does this provider bake a base worth sharing?" — derive the
+ * provider set from it (enumerate the runtime providers and filter), never a
+ * hardcoded list, or a new built-in / community-plugin provider is silently
+ * skipped from bake sharing.
+ *
+ * A cloud provider's base is an id-addressed snapshot any machine with the API
+ * key can boot, so it is worth sharing. `docker` is not: its base is a local
+ * image rebuilt (or pulled) per machine. `remote-docker` is the non-obvious
+ * case — despite living on another host, its base is still a local docker image
+ * built on that host, not a portable snapshot, so it is docker-shaped and
+ * excluded the same way.
  */
 export function isShareablePreparedProvider(provider: string): boolean {
-  return provider !== 'docker';
+  return provider !== 'docker' && provider !== 'remote-docker';
 }
 
 /**
