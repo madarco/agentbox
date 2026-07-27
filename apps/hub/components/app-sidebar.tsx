@@ -84,6 +84,8 @@ export function AppSidebar() {
           label="Approvals"
           count={state.approvals.length}
         />
+        <SideItem active={pathname.startsWith('/custody')} to="/custody" icon={Icons.key} label="Custody" />
+        <SideItem active={pathname.startsWith('/system')} to="/system" icon={Icons.server} label="System" />
         <SideItem active={pathname.startsWith('/settings')} to="/settings" icon={Icons.settings} label="Settings" />
         <SideItem href="https://agent-box.sh/docs" icon={Icons.book} label="Docs" ext />
         <SideItem href="/api/v1/docs" icon={Icons.terminal} label="API" ext />
