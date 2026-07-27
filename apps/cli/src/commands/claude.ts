@@ -87,6 +87,7 @@ import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { pasteHostClipboardImage, uploadImageFileToBox } from '../lib/paste-image.js';
 import { clipboardCaptureAvailable } from '../lib/host-clipboard.js';
 import { handleLifecycleError } from './_errors.js';
+import { syncAgentCredentialsIfChanged } from './control-plane.js';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -137,7 +138,6 @@ function logPrune(rebuild: { pruned: string[]; prunedBytes: number }): void {
   const n = rebuild.pruned.length;
   log.info(`pruned ${String(n)} stale plugin cache${n === 1 ? '' : 's'} (${String(mb)} MB freed)`);
 }
-
 
 /**
  * Replacement for the old `attachClaudeSession`: builds the docker tmux-
@@ -708,7 +708,9 @@ export const claudeCommand = new Command('claude')
           if (res.error) {
             log.error(
               `control plane run failed: ${res.error}` +
-                (res.boxId ? ` (box ${res.boxId} was created — attach with \`agentbox claude attach ${res.boxId}\`)` : ''),
+                (res.boxId
+                  ? ` (box ${res.boxId} was created — attach with \`agentbox claude attach ${res.boxId}\`)`
+                  : ''),
             );
             cmdLog.close();
             process.exit(1);
@@ -720,7 +722,9 @@ export const claudeCommand = new Command('claude')
         // res === null → control box not fully configured; fall through to local.
       }
       if (iRouting.where === 'local' && iRouting.fellBackReason) {
-        log.warn(`control box configured but ${iRouting.fellBackReason}; running this -i job locally.`);
+        log.warn(
+          `control box configured but ${iRouting.fellBackReason}; running this -i job locally.`,
+        );
       }
       try {
         await assertAgentCredsAvailable({
@@ -876,10 +880,7 @@ export const claudeCommand = new Command('claude')
     // runtime; if the local install no longer matches, the wizard offers to
     // rebuild before creating. Docker self-heals via `ensureImage`, so its
     // baseStatus is always `fresh` and the wizard is a no-op here.
-    const baseStatus = await evaluateBaseFreshness(
-      providerName,
-      cfg.effective.box.claudeInstall,
-    );
+    const baseStatus = await evaluateBaseFreshness(providerName, cfg.effective.box.claudeInstall);
     const wiz = await maybeRunSetupWizard({
       workspace: opts.workspace,
       yes: !!opts.yes,
@@ -1658,7 +1659,9 @@ const claudeStartCommand = new Command('start')
             sessionName,
             extraArgs: effectiveClaudeArgs,
           });
-          outro(`--no-attach: claude started in background. Attach: agentbox claude attach ${reattachRef(box)}`);
+          outro(
+            `--no-attach: claude started in background. Attach: agentbox claude attach ${reattachRef(box)}`,
+          );
           return;
         }
         await cloudAgentAttach({
@@ -1772,7 +1775,9 @@ async function startHeadlessLogin(args: string[]): Promise<void> {
       process.exit(1);
     }
     if (Date.now() > deadline) {
-      log.error(`timed out waiting for the login URL — see ~/.agentbox/logs/claude-login-${id}.log`);
+      log.error(
+        `timed out waiting for the login URL — see ~/.agentbox/logs/claude-login-${id}.log`,
+      );
       process.exit(1);
     }
     await sleep(400);
@@ -1812,7 +1817,9 @@ async function deliverLoginCode(code: string): Promise<void> {
     // the session stays valid so a corrected `--code` can retry it.
     if (st?.phase === 'awaiting-code' && st.lastError && Date.parse(st.updatedAt) >= submittedAt) {
       s.stop('code rejected');
-      log.error(`${st.lastError}. Run \`agentbox claude login --code <CODE>\` again with a fresh code.`);
+      log.error(
+        `${st.lastError}. Run \`agentbox claude login --code <CODE>\` again with a fresh code.`,
+      );
       process.exit(1);
     }
     if (Date.now() > deadline) {
@@ -1841,54 +1848,60 @@ const claudeLoginCommand = new Command('login')
     '--interactive',
     "attach your terminal to claude's own login TUI (legacy passthrough; try this if the guided prompt can't drive your login method)",
   )
-  .action(async (args: string[], opts: { headless?: boolean; code?: string; interactive?: boolean }) => {
-    const mode = selectLoginMode({
-      isTTY: !!process.stdin.isTTY,
-      headless: !!opts.headless,
-      code: typeof opts.code === 'string',
-      interactive: !!opts.interactive,
-      ptyAvailable: !!(await loadPtyBackend()),
-    });
-    try {
-      if (mode === 'code') {
-        await deliverLoginCode(opts.code as string);
-        return;
-      }
-      if (mode === 'headless') {
-        await startHeadlessLogin(args);
-        return;
-      }
-      intro('Signing in to Claude...');
-      const cfg = await loadEffectiveConfig(process.cwd());
-      const image = cfg.effective.box.image;
-
-      const s = spinner();
-      s.start('preparing sandbox image');
-      await ensureImage(image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
-      s.stop('image ready');
-
-      // Throwaway `docker run` against the shared volume — the written
-      // credentials persist there and `syncClaudeCredentials` mirrors them to
-      // the host backup, so every later box (shared or isolate) is seeded.
-      const res = await signInToClaude(image, args, { passthrough: mode === 'interactive' });
-      if (res.cancelled) {
-        outro('sign-in cancelled');
-        process.exit(1);
-      }
-      if (!res.ok) {
-        log.error(res.error ?? 'login failed');
-        // A login method whose output we can't recognize (an exotic `-- --sso`
-        // shape) never reaches a prompt; the passthrough still drives it.
-        if (res.error?.includes('never printed an auth URL')) {
-          log.info('Try `agentbox claude login --interactive` to use claude\'s own login TUI.');
+  .action(
+    async (args: string[], opts: { headless?: boolean; code?: string; interactive?: boolean }) => {
+      const mode = selectLoginMode({
+        isTTY: !!process.stdin.isTTY,
+        headless: !!opts.headless,
+        code: typeof opts.code === 'string',
+        interactive: !!opts.interactive,
+        ptyAvailable: !!(await loadPtyBackend()),
+      });
+      try {
+        if (mode === 'code') {
+          await deliverLoginCode(opts.code as string);
+          return;
         }
-        process.exit(1);
+        if (mode === 'headless') {
+          await startHeadlessLogin(args);
+          return;
+        }
+        intro('Signing in to Claude...');
+        const cfg = await loadEffectiveConfig(process.cwd());
+        const image = cfg.effective.box.image;
+
+        const s = spinner();
+        s.start('preparing sandbox image');
+        await ensureImage(image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+        s.stop('image ready');
+
+        // Throwaway `docker run` against the shared volume — the written
+        // credentials persist there and `syncClaudeCredentials` mirrors them to
+        // the host backup, so every later box (shared or isolate) is seeded.
+        const res = await signInToClaude(image, args, { passthrough: mode === 'interactive' });
+        if (res.cancelled) {
+          outro('sign-in cancelled');
+          process.exit(1);
+        }
+        if (!res.ok) {
+          log.error(res.error ?? 'login failed');
+          // A login method whose output we can't recognize (an exotic `-- --sso`
+          // shape) never reaches a prompt; the passthrough still drives it.
+          if (res.error?.includes('never printed an auth URL')) {
+            log.info("Try `agentbox claude login --interactive` to use claude's own login TUI.");
+          }
+          process.exit(1);
+        }
+        outro('signed in — credentials saved for future boxes');
+        // A fresh login is exactly when the control box's copy goes stale — push
+        // the refreshed backup to custody (best-effort, silent, no-op without a
+        // control box or when the hash is unchanged).
+        await syncAgentCredentialsIfChanged();
+      } catch (err) {
+        handleLifecycleError(err);
       }
-      outro('signed in — credentials saved for future boxes');
-    } catch (err) {
-      handleLifecycleError(err);
-    }
-  });
+    },
+  );
 
 claudeCommand.addCommand(claudeAttachCommand);
 claudeCommand.addCommand(claudeStartCommand);

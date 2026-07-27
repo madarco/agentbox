@@ -5,23 +5,31 @@ description: Deploy the hub to an always-on VPS so cloud boxes keep working — 
 
 The [hub](/docs/hub) normally runs on your laptop. Deploy that same hub to an always-on VPS and it becomes a **control box**: a small server that holds the shared state your boxes need (registry, approvals, git credentials, agent logins, SSH keys) and can **create and run cloud boxes itself**. Cloud boxes keep pushing and opening PRs with your laptop off, and you can spawn new ones from the web UI on your phone.
 
-<Callout type="warn" title="Experimental">The deployed hub / control box is under active development. Its commands live under `agentbox hub` (setup/deploy/boxes/approvals/credentials/custody/…), self-documented via `agentbox hub --help`; expect rough edges. Local docker boxes are unaffected — this is only for cloud boxes.</Callout>
+<Callout type="warn" title="Experimental">
+  The deployed hub / control box is under active development. Its commands live under `agentbox hub`
+  (setup/deploy/boxes/approvals/credentials/custody/…), self-documented via `agentbox hub --help`;
+  expect rough edges. Local docker boxes are unaffected — this is only for cloud boxes.
+</Callout>
 
-It's the same `@agentbox/relay` core you already run locally — the relay daemon, the web UI, and a resident create worker — deployed to a **Hetzner VPS** on **SQLite** (no database to manage), reachable over HTTPS. The control box takes over the *centralized* concerns so a sleeping laptop no longer stops your cloud boxes; it is **not** a proxy for your boxes' traffic (more on that below).
+It's the same `@agentbox/relay` core you already run locally — the relay daemon, the web UI, and a resident create worker — deployed to a **Hetzner VPS** on **SQLite** (no database to manage), reachable over HTTPS. The control box takes over the _centralized_ concerns so a sleeping laptop no longer stops your cloud boxes; it is **not** a proxy for your boxes' traffic (more on that below).
 
-<Callout type="info" title="Cloud boxes only">Only **cloud** boxes (e2b, daytona, hetzner, vercel) get the laptop-off guarantee. A local **docker** box bind-mounts your host `.git`, so it's simply offline when the laptop is — it stays on your laptop relay and is never sent to the control box.</Callout>
+<Callout type="info" title="Cloud boxes only">
+  Only **cloud** boxes (e2b, daytona, hetzner, vercel) get the laptop-off guarantee. A local
+  **docker** box bind-mounts your host `.git`, so it's simply offline when the laptop is — it stays
+  on your laptop relay and is never sent to the control box.
+</Callout>
 
 ## Two ways to get one
 
-A control box is a *role*, not necessarily a separate machine:
+A control box is a _role_, not necessarily a separate machine:
 
-| | **Deploy a VPS** (`hub deploy hetzner`) | **Expose a machine you own** (`hub expose`) |
-|---|---|---|
-| Runs on | a Hetzner VPS AgentBox provisions | your Mac mini / NAS / desktop / spare box |
-| Costs | ~€4/mo | nothing |
-| HTTPS | automatic (Let's Encrypt + sslip.io) | via a tunnel, or your own proxy |
-| Reachable by cloud boxes | always | needs a tunnel unless they're on your LAN |
-| Best when | you have no always-on machine | you already have one that's always on |
+|                          | **Deploy a VPS** (`hub deploy hetzner`) | **Expose a machine you own** (`hub expose`) |
+| ------------------------ | --------------------------------------- | ------------------------------------------- |
+| Runs on                  | a Hetzner VPS AgentBox provisions       | your Mac mini / NAS / desktop / spare box   |
+| Costs                    | ~€4/mo                                  | nothing                                     |
+| HTTPS                    | automatic (Let's Encrypt + sslip.io)    | via a tunnel, or your own proxy             |
+| Reachable by cloud boxes | always                                  | needs a tunnel unless they're on your LAN   |
+| Best when                | you have no always-on machine           | you already have one that's always on       |
 
 Both end up as the same hub with the same commands — `hub status`, `hub update`, `hub destroy` work either way. Deploying a VPS is covered next; [exposing your own machine](#use-a-machine-you-already-own) is further down.
 
@@ -74,7 +82,12 @@ agentbox hub deploy hetzner --package nightly           # a different npm spec
 
 A CLI you built yourself from the monorepo has no published version to install, so it falls back to building `nightly` automatically.
 
-<Callout type="warn" title="Building from source pins you to that ref">The deploy is a two-sided contract: with `--ref`, the VPS builds `apps/hub` from the cloned ref while your CLI generates the Caddy config and `.env` that wrap it, and they only line up when both come from the same code. Pin an **older** ref and the deploy stops before building, with an error naming `--ref`. The default (npm) has no such failure mode — the version is the contract.</Callout>
+<Callout type="warn" title="Building from source pins you to that ref">
+  The deploy is a two-sided contract: with `--ref`, the VPS builds `apps/hub` from the cloned ref
+  while your CLI generates the Caddy config and `.env` that wrap it, and they only line up when both
+  come from the same code. Pin an **older** ref and the deploy stops before building, with an error
+  naming `--ref`. The default (npm) has no such failure mode — the version is the contract.
+</Callout>
 
 ### How the control box reaches GitHub
 
@@ -82,7 +95,13 @@ A CLI you built yourself from the monorepo has no published version to install, 
 
 The box runs `git push`, the hub pulls the branch out of it as a git bundle, and the hub does the real push with its own token — the same path your laptop already uses for cloud boxes. A credential never enters the box or any snapshot of it.
 
-<Callout type="info" title="Which token the hub holds">The hub holds a normal user token, so it can reach every repo you can, though it never leaves the server. Prefer a **fine-grained** token limited to the repos you'll actually use; `hub setup` warns if the one it finds carries scopes like `admin:org` or `delete_repo`. Revoke it any time at [github.com/settings/tokens](https://github.com/settings/tokens) (or `gh auth logout`), then re-run `hub setup`.</Callout>
+<Callout type="info" title="Which token the hub holds">
+  The hub holds a normal user token, so it can reach every repo you can, though it never leaves the
+  server. Prefer a **fine-grained** token limited to the repos you'll actually use; `hub setup`
+  warns if the one it finds carries scopes like `admin:org` or `delete_repo`. Revoke it any time at
+  [github.com/settings/tokens](https://github.com/settings/tokens) (or `gh auth logout`), then
+  re-run `hub setup`.
+</Callout>
 
 ### Getting a shell on the control box
 
@@ -130,11 +149,17 @@ agentbox hub update --package 0.28.0    # an exact version
 agentbox hub update --ref my-branch     # switch to building from source
 ```
 
-The default matching *your CLI's* version is deliberate: that parity is what makes the shared bake records line up (see the snapshot note above), so `agentbox self-update` followed by `agentbox hub update` keeps both sides together.
+The default matching _your CLI's_ version is deliberate: that parity is what makes the shared bake records line up (see the snapshot note above), so `agentbox self-update` followed by `agentbox hub update` keeps both sides together.
 
 An update re-runs the whole configuration a deploy does — it re-ships the compose stack, regenerates `.env` and the Caddy config, and re-pushes provider secrets — because a newer hub can need new env keys or a different internal port. The hub migrates its own auth + store on boot, so there is no separate migration step.
 
-<Callout type="info" title="It also repairs a stale firewall">Only `:22` is locked to the IP that deployed the box (`:80`/`:443` stay open so boxes anywhere can reach the hub). Move to a different network and you can no longer SSH in. `hub update` re-locks the firewall to your current egress IP **over the Hetzner API before it connects**, so it can fix a box that has already locked you out — and it refreshes the admin CIDR the hub applies to hetzner boxes it creates, so direct PC→box SSH keeps working too.</Callout>
+<Callout type="info" title="It also repairs a stale firewall">
+  Only `:22` is locked to the IP that deployed the box (`:80`/`:443` stay open so boxes anywhere can
+  reach the hub). Move to a different network and you can no longer SSH in. `hub update` re-locks
+  the firewall to your current egress IP **over the Hetzner API before it connects**, so it can fix
+  a box that has already locked you out — and it refreshes the admin CIDR the hub applies to hetzner
+  boxes it creates, so direct PC→box SSH keeps working too.
+</Callout>
 
 ### Destroying the control box
 
@@ -150,7 +175,7 @@ Two flags: `--keep-credentials` leaves `control-plane.env` in place so a later `
 
 Teardown needs no SSH, so it works from a different network than the one that deployed the box. If a resource is already gone, it says so and still clears the local state — a half-deleted control box must never leave your config pointing at nothing.
 
-To stop *using* a hub without deleting it (e.g. one someone else runs), use `agentbox hub unset-url` instead.
+To stop _using_ a hub without deleting it (e.g. one someone else runs), use `agentbox hub unset-url` instead.
 
 ## Use a machine you already own
 
@@ -177,7 +202,12 @@ agentbox hub expose --public-url https://hub.example.com   # your own proxy/DNS
 - **tailscale** uses `tailscale funnel` for a stable `https://<node>.<tailnet>.ts.net`. Needs an authenticated tailscale daemon and HTTPS enabled on the tailnet.
 - **`--public-url`** skips tunnelling entirely when you already terminate TLS yourself.
 
-<Callout type="warn" title="Without a tunnel, only LAN boxes can reach it">With no tunnel the hub is advertised at its **LAN** address, which cloud boxes cannot route to — `hub expose` says so explicitly rather than leaving you to discover it at the first create. That's fine if you only run docker boxes, or if your boxes are on the same network; otherwise pick a tunnel.</Callout>
+<Callout type="warn" title="Without a tunnel, only LAN boxes can reach it">
+  With no tunnel the hub is advertised at its **LAN** address, which cloud boxes cannot route to —
+  `hub expose` says so explicitly rather than leaving you to discover it at the first create. That's
+  fine if you only run docker boxes, or if your boxes are on the same network; otherwise pick a
+  tunnel.
+</Callout>
 
 By default the hub binds `0.0.0.0` so your LAN can reach it. `--bind 127.0.0.1` keeps it loopback-only, which only makes sense together with a tunnel.
 
@@ -207,19 +237,26 @@ The control box's resident worker provisions boxes with **your provider credenti
 
 **2. After deploy, in-place (web UI).** The dashboard → **Settings** → the provider's credential form (token/key fields). This writes to the VPS's own `~/.agentbox/secrets.env` and the worker picks it up live — so you can add or rotate a provider on a running control box without redeploying.
 
-<Callout type="warn" title="Vercel needs a real token">Vercel has two auth modes. A **CLI login** (`agentbox vercel login` interactively) keeps the access token in the Vercel CLI's own store, **not** in `secrets.env` — so it can't travel to a headless server. For the control box, give Vercel a real **access token**: either set a `VERCEL_TOKEN` (+ team/project) in your host `secrets.env` before deploying, or paste one into the control box's **Settings** form. Token-based providers (DigitalOcean, E2B, Hetzner, Daytona) travel automatically.</Callout>
+<Callout type="warn" title="Vercel needs a real token">
+  Vercel has two auth modes. A **CLI login** (`agentbox vercel login` interactively) keeps the
+  access token in the Vercel CLI's own store, **not** in `secrets.env` — so it can't travel to a
+  headless server. For the control box, give Vercel a real **access token**: either set a
+  `VERCEL_TOKEN` (+ team/project) in your host `secrets.env` before deploying, or paste one into the
+  control box's **Settings** form. Token-based providers (DigitalOcean, E2B, Hetzner, Daytona)
+  travel automatically.
+</Callout>
 
-<Callout type="info" title="Daytona / E2B / Hetzner need a base snapshot">Providers that boot from a baked base (e2b template, hetzner snapshot, daytona snapshot) read a `~/.agentbox/<provider>-prepared.json` to know the base id. The deploy **shares your local bake records** with the control box, and it adopts one automatically **when its build context matches** the control box's version — so a matching deploy needs no re-bake. A record baked with either [`box.claudeInstall`](/docs/configuration#box) mode is accepted, and the deploy carries your `box.claudeInstall` setting over so a bake the control box runs itself uses the same mode (`npm` matters there: the native installer's CDN sometimes 403s datacenter IPs). Because the control box installs the **same npm version** your CLI runs, a matching fingerprint is now the normal case. It can still differ if you deployed with `--ref`/`--package`, or baked with an older CLI and haven't redeployed since; the shared record is then (correctly) ignored and a create from the CLI fails with "run `agentbox prepare` first". Bake from the control box's own **Settings** page to fix that — or create the first box from the web UI, which bakes for you. You can also copy a record up: `scp ~/.agentbox/daytona-prepared.json agentbox-hub:/opt/agentbox/hub-data/`.</Callout>
+<Callout type="info" title="Daytona / E2B / Hetzner need a base snapshot">Providers that boot from a baked base (e2b template, hetzner snapshot, daytona snapshot) read a `~/.agentbox/<provider>-prepared.json` to know the base id. **`agentbox hub setup` (and `hub deploy`) share your local bake records** with the control box, which adopts one automatically **when its build context matches** the control box's version — so a matching setup needs no re-bake. A record baked with either [`box.claudeInstall`](/docs/configuration#box) mode is accepted, and the deploy carries your `box.claudeInstall` setting over so a bake the control box runs itself uses the same mode (`npm` matters there: the native installer's CDN sometimes 403s datacenter IPs). Because the control box installs the **same npm version** your CLI runs, a matching fingerprint is now the normal case. It can still differ if you deployed with `--ref`/`--package`, or baked with an older CLI and haven't redeployed since — and **when it can't match, setup says so, naming each provider** ("configured, but the hub will need to bake them again") rather than leaving you to discover it on the first failed create. Fix a mismatch by baking from the control box's own **Settings** page — or create the first box from the web UI, which bakes for you. You can also copy a record up: `scp ~/.agentbox/daytona-prepared.json agentbox-hub:/opt/agentbox/hub-data/`.</Callout>
 
 ## What runs where — and what the control box can drive
 
 A provider can be driven **by the control box** only if its credential is a **portable secret** the box can hold. Cloud API tokens qualify; a host bind-mount (local docker) and your SSH identity (remote-docker) don't.
 
-| Command | Where the box runs | Control box role |
-|---|---|---|
-| `agentbox claude` (docker, default) | **Your PC's Docker** | none — never a control-box target |
-| `agentbox docker:<host> …` (remote-docker) | **Your** remote machine, over **your** SSH from your PC | git-push custodian only; **can't** be built on the control box (your SSH isn't a portable secret) |
-| `agentbox <cloud> …` (e2b/daytona/hetzner/vercel) | The cloud provider | full custody — registers automatically; **built on the control box by default** when one is configured |
+| Command                                           | Where the box runs                                      | Control box role                                                                                       |
+| ------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `agentbox claude` (docker, default)               | **Your PC's Docker**                                    | none — never a control-box target                                                                      |
+| `agentbox docker:<host> …` (remote-docker)        | **Your** remote machine, over **your** SSH from your PC | git-push custodian only; **can't** be built on the control box (your SSH isn't a portable secret)      |
+| `agentbox <cloud> …` (e2b/daytona/hetzner/vercel) | The cloud provider                                      | full custody — registers automatically; **built on the control box by default** when one is configured |
 
 So running `agentbox claude` in a folder always runs on **your PC's Docker** — a control box changes nothing. `remote-docker` connects to your own machine over your `~/.ssh/config`, which the control box has no access to, so it's always built from your PC. **Cloud** providers, by contrast, are built **on the control box by default** once one is configured (see below).
 
@@ -230,7 +267,11 @@ The web-UI create needs a **repo checkout on the VPS** for the worker to build f
 1. In the dashboard, **Add project** and point it at a repo path **on the control box** — clone it there first (`git clone <repo>` on the VPS, or into the projects volume).
 2. **Create box** → pick a provider (e.g. E2B) and agent → **Create box**. The resident worker provisions the sandbox, starts the agent detached, and it appears in the dashboard with live status. Nothing runs on your laptop.
 
-<Callout type="info" title="A PC-created box's project isn't enough to Create from the UI">A box you spawned from your PC registers on the control box as a project you can **see and manage**, but its "Create box" button has no VPS checkout behind it — so use **Add project** (clone on the VPS) to originate new boxes from the browser.</Callout>
+<Callout type="info" title="A PC-created box's project isn't enough to Create from the UI">
+  A box you spawned from your PC registers on the control box as a project you can **see and
+  manage**, but its "Create box" button has no VPS checkout behind it — so use **Add project**
+  (clone on the VPS) to originate new boxes from the browser.
+</Callout>
 
 ## Create a box from your laptop — that runs with the laptop off
 
@@ -251,7 +292,16 @@ agentbox create --provider e2b --via-hub   # force the control box (even if clou
 agentbox create --provider e2b --local     # force a local build on this machine
 ```
 
-<Callout type="info" title="Which creates route to the control box">Only **cloud** creates default to the control box, and only when one is configured — this covers `create`, foreground `claude`/`codex`/`opencode`, and background `-i` runs alike. Set **`cloud.viaHub=false`** (or pass `--local`) to keep building cloud boxes on your PC. Docker / remote-docker always build locally. A missing prerequisite (no git `origin`, no admin token) falls back to a local build with a notice. A background `-i` run needs the agent's login in custody (`agentbox hub credentials push`) so the control box can start it — if it's missing or stale, the job **fails with a clear "credentials rejected" message and the box id preserved**, so you can attach and re-login.</Callout>
+<Callout type="info" title="Which creates route to the control box">
+  Only **cloud** creates default to the control box, and only when one is configured — this covers
+  `create`, foreground `claude`/`codex`/`opencode`, and background `-i` runs alike. Set
+  **`cloud.viaHub=false`** (or pass `--local`) to keep building cloud boxes on your PC. Docker /
+  remote-docker always build locally. A missing prerequisite (no git `origin`, no admin token) falls
+  back to a local build with a notice. A background `-i` run needs the agent's login in custody
+  (`agentbox hub credentials push`) so the control box can start it — if it's missing or stale, the
+  job **fails with a clear "credentials rejected" message and the box id preserved**, so you can
+  attach and re-login.
+</Callout>
 
 Now the payoff — the box pushes on its own, with your laptop fully off:
 
@@ -295,7 +345,10 @@ agentbox hub adopt <box>
 ```
 
 <Callout title="What you need per provider">
-For **hetzner/DigitalOcean**, adoption pulls the per-box SSH key from custody — the box's firewall already admits your egress IP. For **e2b/vercel/daytona**, there is no per-box key: the box is reached with the provider SDK, so that provider's API key must be configured on your laptop. Their [`url`](/docs/web-apps-and-tunnels) is a public HTTPS domain that works from anywhere regardless.
+  For **hetzner/DigitalOcean**, adoption pulls the per-box SSH key from custody — the box's firewall
+  already admits your egress IP. For **e2b/vercel/daytona**, there is no per-box key: the box is
+  reached with the provider SDK, so that provider's API key must be configured on your laptop. Their
+  [`url`](/docs/web-apps-and-tunnels) is a public HTTPS domain that works from anywhere regardless.
 </Callout>
 
 If a cloud box is in your local state but the control box has never heard of it, `ls` marks it `orphan` — usually it was destroyed from the web UI, and the leftover record is shown rather than silently dropped.
@@ -347,7 +400,7 @@ A control-plane box parks its host-action approvals **on the control box**, and 
 until one is answered — so the whole loop runs with your laptop off, and you can answer from the web
 UI, the menu-bar app, or `agentbox hub approvals answer`.
 
-When your laptop *is* on, the ordinary per-box surfaces work against a hub box too — they resolve the
+When your laptop _is_ on, the ordinary per-box surfaces work against a hub box too — they resolve the
 box's own relay rather than assuming your laptop's:
 
 ```bash
@@ -361,10 +414,10 @@ the control box's admin token on your machine (written by `agentbox hub setup`; 
 `AGENTBOX_RELAY_ADMIN_TOKEN`); without it the footer says so once and you answer from the web UI.
 
 <Callout title="Approval is not execution">
-Answering is one thing, running is another. An approved `git push` executes **on the control box**
-with a leased token, so it works with your laptop off. A host action that inherently targets your
-laptop's filesystem — `cp`/`download` between host and box — still needs your laptop up, whoever
-approves it.
+  Answering is one thing, running is another. An approved `git push` executes **on the control box**
+  with a leased token, so it works with your laptop off. A host action that inherently targets your
+  laptop's filesystem — `cp`/`download` between host and box — still needs your laptop up, whoever
+  approves it.
 </Callout>
 
 ## The menu-bar app follows your config
@@ -384,8 +437,8 @@ agentbox hub target --json     # {mode, url, token} — the seam the tray reads
 
 Custody is the control box's copy of what a box needs. Two kinds travel by different paths:
 
-- **Provider credentials** (Daytona/E2B/Hetzner/Vercel/DO API keys) — the *worker's* keys, carried by the **deploy** or the **Settings** form (see [Configure cloud providers](#configure-cloud-providers-on-the-control-box)). **Not** moved by `credentials push`.
-- **Agent logins** (Claude / Codex / OpenCode) — the *box's* logins, so hub-created boxes are signed in. This is what `credentials push` moves.
+- **Provider credentials** (Daytona/E2B/Hetzner/Vercel/DO API keys) — the _worker's_ keys, carried by the **deploy** or the **Settings** form (see [Configure cloud providers](#configure-cloud-providers-on-the-control-box)). **Not** moved by `credentials push`.
+- **Agent logins** (Claude / Codex / OpenCode) — the _box's_ logins, so hub-created boxes are signed in. This is what `credentials push` moves.
 
 ```bash
 agentbox hub credentials push        # host agent logins → custody (hub boxes log in)
@@ -394,7 +447,7 @@ agentbox hub secrets push [--project]  # a project's .env → custody
 agentbox hub custody list [prefix]   # manifest (paths + hashes; values never leave the box)
 ```
 
-Re-run `credentials push` after `agentbox claude login` refreshes a login — that's what a subsequently-created hub box signs in with. Uploads are content-hashed, so an unchanged push sends nothing.
+You rarely run `credentials push` by hand: **`agentbox hub setup` pushes your agent logins to the control box on its own** once the deploy is healthy (and reports what went up), so the first hub-created box is never launched signed-out. After that, the push repeats itself **only when a login actually changes** — after `agentbox claude login` refreshes a token, and before a cloud create is routed to the hub. Every push is content-hashed, so an unchanged one sends nothing and stays silent. `credentials push` is still there for the manual case (and its `--force`).
 
 ## How it stays safe
 
@@ -402,6 +455,12 @@ Re-run `credentials push` after `agentbox claude login` refreshes a login — th
 - The token is repo-scoped, not branch-scoped, so the push gate **auto-approves only `agentbox/*` branches**; any other branch needs your approval.
 - The hub gates its admin and box-creation endpoints on a constant-time admin bearer, fail-closed, and the web UI on an email/password login — set at deploy time.
 
-<Callout type="warn" title="SSH keys leave your PC when a control box is configured">For an SSH provider (hetzner / DigitalOcean), a box you create from your PC mints its private key **on your PC** — but if a control box is configured, a **copy is auto-pushed to the control box's custody** so the hub/mobile can also reach the box. Custody stores it `0600` but **not encrypted at rest**, so the key's safety equals the control box's safety. If you'd rather keep PC-created box keys only on your PC, there's no opt-out flag yet.</Callout>
+<Callout type="warn" title="SSH keys leave your PC when a control box is configured">
+  For an SSH provider (hetzner / DigitalOcean), a box you create from your PC mints its private key
+  **on your PC** — but if a control box is configured, a **copy is auto-pushed to the control box's
+  custody** so the hub/mobile can also reach the box. Custody stores it `0600` but **not encrypted
+  at rest**, so the key's safety equals the control box's safety. If you'd rather keep PC-created
+  box keys only on your PC, there's no opt-out flag yet.
+</Callout>
 
 See [sync and git](/docs/sync-and-git) for the laptop-relay credential model, the [hub](/docs/hub) page for the local Web UI, and the cloud providers ([e2b](/docs/e2b), [daytona](/docs/daytona), [hetzner](/docs/hetzner), [vercel](/docs/vercel)) for how each box is provisioned.

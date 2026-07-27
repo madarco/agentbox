@@ -1,0 +1,147 @@
+/**
+ * Pure logic for sharing this machine's bake records with the control box and
+ * predicting whether the control box will actually ACCEPT them.
+ *
+ * The control box adopts a shared `prepared/<provider>.json` only when its
+ * `base.contextSha256` equals the fingerprint the hub computes for the same
+ * provider (`hydratePreparedFromCustody` → `matchClaudeInstallFingerprint`). A
+ * push always succeeds if the box is reachable, so a plain "shared it" is not
+ * the whole truth: a record from a different build context is uploaded and then
+ * silently ignored, and the hub re-bakes. Callers need to say so.
+ *
+ * Two things break the match, both knowable here without a hub round-trip — a
+ * local record stale vs THIS CLI's build context, and a deployed hub running a
+ * different AgentBox version. This module classifies each, so setup/deploy can
+ * end with an explicit per-provider "will need baking again" message.
+ *
+ * Everything here is pure (fingerprints/versions in, verdict out) so it is unit
+ * testable without a hub or the filesystem.
+ */
+import { matchClaudeInstallFingerprint } from '@agentbox/sandbox-core';
+import type { PushDecision } from './custody-client.js';
+
+/**
+ * Providers whose base is a provider-side snapshot another machine can boot, so
+ * the bake record is worth sharing. Docker is excluded: its base is a local
+ * image, rebuilt (or pulled) per machine — see {@link isShareablePreparedProvider}.
+ */
+export const SHAREABLE_PREPARED_PROVIDERS = [
+  'hetzner',
+  'digitalocean',
+  'vercel',
+  'e2b',
+  'daytona',
+] as const;
+
+export type ShareablePreparedProvider = (typeof SHAREABLE_PREPARED_PROVIDERS)[number];
+
+/**
+ * Whether a provider bakes a shareable base at all. Docker's base is a local
+ * image rebuilt per machine, so there is nothing another host could boot; every
+ * cloud base is a provider-side snapshot addressed by id.
+ */
+export function isShareablePreparedProvider(provider: string): boolean {
+  return provider !== 'docker';
+}
+
+/**
+ * The change-detection predicate for the credential re-push: true when at least
+ * one item is due for upload (its hash differs from custody), false when every
+ * item is a hash-skip. Callers use it to stay silent when nothing changed.
+ */
+export function hasCredentialChanges(plan: PushDecision[]): boolean {
+  return plan.some((d) => d.action === 'upload');
+}
+
+export interface BakeShareInput {
+  provider: string;
+  /** The local record's `base.contextSha256`, or undefined when nothing is baked here. */
+  storedFingerprint: string | undefined;
+  /**
+   * This CLI's live native fingerprint for the same provider, or undefined when
+   * it can't be computed (a dev tree with no staged runtime). Undefined disables
+   * the local-staleness check — an unverifiable base must not be flagged.
+   */
+  cliNativeFingerprint: string | undefined;
+  /** The version the deployed hub reports (`/healthz`), or undefined when it doesn't. */
+  hubVersion: string | undefined;
+  /** This CLI's own version. */
+  cliVersion: string;
+}
+
+export type BakeShareStatus =
+  /** Nothing baked locally — nothing to share. */
+  | 'not-baked'
+  /** Shared; the hub's fingerprint will match, so its first create boots the base. */
+  | 'match'
+  /** Shared; the hub computes a different fingerprint, so it will re-bake. */
+  | 'mismatch';
+
+export interface BakeShareResult {
+  provider: string;
+  status: BakeShareStatus;
+  /** Present only for `mismatch`: why the hub won't accept the shared record. */
+  reason?: string;
+}
+
+/**
+ * Predict whether the control box will accept this machine's bake record for
+ * `provider`, applying the hub's own rule without a round-trip.
+ *
+ * - A local record whose fingerprint matches neither install-mode fold of THIS
+ *   CLI's build context is stale here too: no same-version hub would take it.
+ * - A hub on a different version has a different build context, so the record —
+ *   even one perfectly current for this CLI — won't match on the far side.
+ */
+export function classifyBakeShare(input: BakeShareInput): BakeShareResult {
+  const { provider, storedFingerprint, cliNativeFingerprint, hubVersion, cliVersion } = input;
+  if (!storedFingerprint) return { provider, status: 'not-baked' };
+  if (
+    cliNativeFingerprint &&
+    !matchClaudeInstallFingerprint(storedFingerprint, cliNativeFingerprint)
+  ) {
+    return {
+      provider,
+      status: 'mismatch',
+      reason: `the local ${provider} bake predates this CLI's build context — re-run \`agentbox prepare --provider ${provider}\``,
+    };
+  }
+  if (hubVersion && hubVersion !== cliVersion) {
+    return {
+      provider,
+      status: 'mismatch',
+      reason: `the hub runs ${hubVersion} but this CLI is ${cliVersion}, so its build context differs`,
+    };
+  }
+  return { provider, status: 'match' };
+}
+
+export interface BakeShareSummary {
+  /** Providers whose record the hub will boot from (status `match`). */
+  matched: string[];
+  /** Providers shared but that the hub will re-bake (status `mismatch`). */
+  mismatched: BakeShareResult[];
+}
+
+export function summarizeBakeShare(results: BakeShareResult[]): BakeShareSummary {
+  return {
+    matched: results.filter((r) => r.status === 'match').map((r) => r.provider),
+    mismatched: results.filter((r) => r.status === 'mismatch'),
+  };
+}
+
+/**
+ * The end-of-setup message for providers the hub will have to bake again, or
+ * null when there is nothing to warn about. Per-provider and explicit: staying
+ * silent here is the bug this reports against.
+ */
+export function buildRebakeNote(mismatched: BakeShareResult[]): string | null {
+  if (mismatched.length === 0) return null;
+  const lines = mismatched.map(
+    (m) => `  - ${m.provider}: ${m.reason ?? 'the build context differs'}`,
+  );
+  return (
+    'These providers are configured, but the hub will need to bake them again before its first box:\n' +
+    lines.join('\n')
+  );
+}

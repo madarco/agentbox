@@ -9,11 +9,7 @@ import {
   resolveDefaultCheckpoint,
   type UserConfig,
 } from '@agentbox/config';
-import {
-  detectEngine,
-  listBoxes,
-  type BoxRecord,
-} from '@agentbox/sandbox-docker';
+import { detectEngine, listBoxes, type BoxRecord } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
 import { runCarryGate } from '../lib/carry-gate.js';
@@ -40,7 +36,7 @@ import {
 import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
 import { runPrepare } from './prepare.js';
 import { claudeCommand } from './claude.js';
-import { resolveCustodyTarget } from './control-plane.js';
+import { resolveCustodyTarget, syncAgentCredentialsIfChanged } from './control-plane.js';
 import { enqueueCreateViaHub, pollHubJob } from '../control-plane/hub-enqueue.js';
 import { resolveCreateRouting } from '../control-plane/route-create.js';
 import { attachRelayOptions } from '../control-plane/box-plane.js';
@@ -141,7 +137,6 @@ function resolveCheckpointRef(opts: CreateOptions, configDefault: string): strin
   return configDefault.length > 0 ? configDefault : undefined;
 }
 
-
 async function attachShell(record: BoxRecord): Promise<never> {
   const dockerArgv = ['exec', '-it', record.container, 'bash'];
   if (!process.stdout.isTTY || !process.stdin.isTTY) {
@@ -166,7 +161,9 @@ async function attachShell(record: BoxRecord): Promise<never> {
 /** The project's `origin` remote URL — the repo the hub worker clones VPS-side. */
 function originUrl(projectRoot: string): string | null {
   try {
-    return execSync('git config --get remote.origin.url', { cwd: projectRoot }).toString().trim() || null;
+    return (
+      execSync('git config --get remote.origin.url', { cwd: projectRoot }).toString().trim() || null
+    );
   } catch {
     return null;
   }
@@ -184,7 +181,9 @@ async function runCreateViaHub(
   cmdLog: ReturnType<typeof openCommandLog>,
 ): Promise<void> {
   if (providerName === 'docker') {
-    log.error('--via-hub needs a cloud provider (a docker box runs on this machine). Try --provider hetzner|e2b|vercel|daytona.');
+    log.error(
+      '--via-hub needs a cloud provider (a docker box runs on this machine). Try --provider hetzner|e2b|vercel|daytona.',
+    );
     cmdLog.close();
     process.exit(1);
   }
@@ -193,13 +192,17 @@ async function runCreateViaHub(
     // (no stored credential the control box could custody), and the SSH
     // ControlMaster runs from the creating machine. The VPS has no access to your
     // SSH identity, so it can't reach your remote host — run it from this machine.
-    log.error('--via-hub cannot run a remote-docker box: it connects to your remote host over your own ~/.ssh/config, which the control box has no access to. Run `agentbox docker:<host> …` from this machine instead.');
+    log.error(
+      '--via-hub cannot run a remote-docker box: it connects to your remote host over your own ~/.ssh/config, which the control box has no access to. Run `agentbox docker:<host> …` from this machine instead.',
+    );
     cmdLog.close();
     process.exit(1);
   }
   const repoUrl = originUrl(projectRoot);
   if (!repoUrl) {
-    log.error('--via-hub needs a git `origin` remote (the hub worker clones it VPS-side). None found in this project.');
+    log.error(
+      '--via-hub needs a git `origin` remote (the hub worker clones it VPS-side). None found in this project.',
+    );
     cmdLog.close();
     process.exit(1);
   }
@@ -208,6 +211,10 @@ async function runCreateViaHub(
     cmdLog.close();
     process.exit(1);
   }
+  // A stale login on the control box means the box it is about to build comes up
+  // signed out — so refresh custody from the host backup first, only when the
+  // credential actually changed (hash compare, silent + best-effort otherwise).
+  await syncAgentCredentialsIfChanged(opts.url);
   const request = {
     repoUrl,
     provider: providerName,
@@ -344,7 +351,7 @@ export const createCommand = new Command('create')
   )
   .option(
     '--via-hub',
-    "force enqueuing the create on the control box (POST /remote/boxes) instead of building it on this machine; the resident hub worker provisions the box VPS-side. Cloud providers only. Needs a control plane configured (`hub set-url`) + admin token. When a control box is configured this is already the default for cloud boxes (cloud.viaHub).",
+    'force enqueuing the create on the control box (POST /remote/boxes) instead of building it on this machine; the resident hub worker provisions the box VPS-side. Cloud providers only. Needs a control plane configured (`hub set-url`) + admin token. When a control box is configured this is already the default for cloud boxes (cloud.viaHub).',
   )
   .option(
     '--local',
@@ -395,7 +402,9 @@ export const createCommand = new Command('create')
       return;
     }
     if (routing.fellBackReason) {
-      log.warn(`control box configured but ${routing.fellBackReason}; building ${providerName} box locally.`);
+      log.warn(
+        `control box configured but ${routing.fellBackReason}; building ${providerName} box locally.`,
+      );
     }
 
     // `direct` push mode (box holds a copy of your git credentials) is only
