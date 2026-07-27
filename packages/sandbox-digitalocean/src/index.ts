@@ -54,7 +54,23 @@ export {
   type PrepareDigitalOceanOptions,
   type PrepareDigitalOceanResult,
 } from './prepare.js';
-export { generateBoxCloudInit, generatePrepareCloudInit, type BoxCloudInitOptions, type PrepareCloudInitOptions } from './cloud-init.js';
+export {
+  generateBoxCloudInit,
+  generatePrepareCloudInit,
+  controlPlaneCloudInit,
+  type BoxCloudInitOptions,
+  type PrepareCloudInitOptions,
+  type ControlPlaneCloudInitOptions,
+} from './cloud-init.js';
+export {
+  deployControlPlaneToDigitalOcean,
+  updateControlPlaneOnDigitalOcean,
+  destroyControlPlaneOnDigitalOcean,
+  type ControlPlaneDigitalOceanDeployOptions,
+  type ControlPlaneDigitalOceanDeployResult,
+  type ControlPlaneDigitalOceanUpdateOptions,
+  type ControlPlaneDestroyResult,
+} from './control-plane-deploy.js';
 export {
   RUNTIME_ASSETS,
   candidatesFor,
@@ -110,9 +126,11 @@ export {
 export { detectEgressIp, type DetectEgressIpOptions } from './egress-ip.js';
 export {
   allowAllOutboundRules,
+  controlPlaneInboundRules,
   createPerBoxFirewall,
   deletePerBoxFirewall,
   findFirewallForDroplet,
+  firewallNeedsSync,
   normalizeSourceCidr,
   sshInboundRules,
   syncFirewallSource,

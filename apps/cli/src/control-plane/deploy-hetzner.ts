@@ -166,7 +166,9 @@ export async function runHetznerUpdate(opts: HetznerUpdateOptions): Promise<{ ur
       sshKeyDir: record.sshKeyDir,
       url: record.url,
       ...(record.domain ? { domain: record.domain } : {}),
-      ...(record.firewallId !== undefined ? { firewallId: record.firewallId } : {}),
+      // Hetzner firewall ids are numeric; the shared record widened to number|string
+      // for DigitalOcean, so narrow here (a hetzner record never carries a string).
+      ...(typeof record.firewallId === 'number' ? { firewallId: record.firewallId } : {}),
     },
     source: opts.source,
     envContent,
@@ -190,7 +192,7 @@ export async function runHetznerDestroy(opts: {
   }
   return destroyControlPlaneOnHetzner({
     ...(opts.record.serverId !== undefined ? { serverId: opts.record.serverId } : {}),
-    ...(opts.record.firewallId !== undefined ? { firewallId: opts.record.firewallId } : {}),
+    ...(typeof opts.record.firewallId === 'number' ? { firewallId: opts.record.firewallId } : {}),
     onLog: opts.log,
   });
 }

@@ -214,7 +214,17 @@ export interface ControlPlaneDeployRecord {
   serverId?: number;
   ip?: string;
   domain?: string;
-  firewallId?: number;
+  /**
+   * Hetzner firewall ids are numeric; DigitalOcean's are UUID strings — one field
+   * carries either, so the destroy/update paths tolerate both providers.
+   */
+  firewallId?: number | string;
+  /**
+   * DigitalOcean only: the unique per-deploy tag the control-plane firewall is
+   * bound to (created before the droplet so the firewall auto-applies at boot).
+   * Destroy deletes it once the firewall is gone, or it leaks as an empty tag.
+   */
+  firewallTag?: string;
   /** Holds `id_ed25519` (+ `.pub`, `known_hosts`) — the only key that VPS trusts. */
   sshKeyDir?: string;
   /**
