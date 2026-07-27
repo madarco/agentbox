@@ -448,8 +448,9 @@ The **same `agentbox hub` group** also sets up and drives a *remote* hub — a f
 # Set up the hub's git credential, deploy it, and point the CLI at it
 agentbox hub setup                    # reuse your own gh token (default)
 agentbox hub setup --git-auth app     # create a GitHub App instead (needs the repo owner to install it)
-agentbox hub setup --deploy hetzner   # or vercel | none (non-interactive)
+agentbox hub setup --deploy hetzner   # or digitalocean | vercel | none (non-interactive)
 agentbox hub deploy hetzner           # deploy a full hub to a new VPS, reusing the setup creds
+agentbox hub deploy digitalocean      # same deploy on a DigitalOcean Droplet (--region / --size)
 
 # Which build the control box runs (default: this CLI's own published version)
 agentbox hub deploy hetzner --package nightly   # a different npm spec (version or dist-tag)
