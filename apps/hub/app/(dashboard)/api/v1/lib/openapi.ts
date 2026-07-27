@@ -319,6 +319,20 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/projects/{id}/seed': {
+        get: {
+          tags: ['Projects'],
+          summary: "Get a project's seed / custody status",
+          description:
+            "What `agentbox hub project push` stored on the control box (untracked + env/secret tarballs + manifest), as paths, hashes and timestamps only — never seed contents. `custodyAvailable` is false on a hub that is not a control box.",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': { description: 'Seed status', content: { 'application/json': { schema: { $ref: '#/components/schemas/ProjectSeed' } } } },
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+      },
       '/providers': {
         get: {
           tags: ['Providers'],
@@ -540,8 +554,46 @@ export function buildOpenApi(): Record<string, unknown> {
             needsSetup: { type: 'boolean', description: 'No agentbox.yaml + no default snapshot — the create form offers the setup wizard' },
             provider: { type: 'string' },
             createdAt: { type: 'number' },
+            originUrl: { type: 'string', nullable: true, description: 'Repo origin remote URL (hosted source only)' },
+            projectSlug: { type: 'string', nullable: true, description: 'Custody projects/<slug> key (hosted source only)' },
           },
           required: ['id', 'name'],
+        },
+        ProjectSeed: {
+          type: 'object',
+          properties: {
+            custodyAvailable: { type: 'boolean', description: 'False when this hub is not a control box (no custody store)' },
+            seed: {
+              type: 'object',
+              nullable: true,
+              description: 'Null when nothing has been pushed for this project.',
+              properties: {
+                slug: { type: 'string' },
+                originUrl: { type: 'string' },
+                baseBranch: { type: 'string' },
+                repoHeadSha: { type: 'string', description: 'Full commit the working tree sat on' },
+                capturedAt: { type: 'string', description: 'ISO timestamp of the last seed push' },
+                hasEnv: { type: 'boolean', description: 'env/secret tarball present' },
+                hasUntracked: { type: 'boolean', description: 'untracked-files tarball present' },
+                totalBytes: { type: 'number' },
+                entries: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      name: { type: 'string' },
+                      size: { type: 'number' },
+                      sha256: { type: 'string' },
+                      updatedAt: { type: 'string' },
+                    },
+                    required: ['name', 'size', 'sha256', 'updatedAt'],
+                  },
+                },
+              },
+              required: ['slug', 'hasEnv', 'hasUntracked', 'totalBytes', 'entries'],
+            },
+          },
+          required: ['custodyAvailable', 'seed'],
         },
         BranchList: {
           type: 'object',

@@ -11,6 +11,12 @@ import { DeleteProjectButton } from '../../boxes/components/delete-project-butto
 import { EmptyBox } from '../../boxes/components/empty-box';
 import { SectionLabel } from '../../boxes/components/section-label';
 import { Stat, StatGrid } from '../../boxes/components/stat-grid';
+import { ProjectSeed } from './components/project-seed';
+
+/** An https(s) origin is clickable; an scp/ssh remote is shown as plain text. */
+function originHref(url: string): string | null {
+  return /^https?:\/\//i.test(url) ? url.replace(/\.git$/i, '') : null;
+}
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -28,6 +34,9 @@ export default function ProjectDetailPage() {
 
   const boxes = boxesFor(id);
   const running = boxes.filter((b) => b.status === 'running').length;
+  const branch = proj.currentBranch || proj.defaultBranch;
+  const origin = proj.originUrl?.trim() || null;
+  const href = origin ? originHref(origin) : null;
 
   return (
     <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8 max-sm:px-4">
@@ -42,7 +51,23 @@ export default function ProjectDetailPage() {
             {proj.name}
           </h1>
           <div className="mt-1.5 text-sm text-muted-foreground">
-            <span className="font-mono text-secondary-foreground">{proj.repo}</span> · {proj.provider}
+            {origin ? (
+              href ? (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener"
+                  className="font-mono text-secondary-foreground hover:text-primary"
+                >
+                  {origin}
+                </a>
+              ) : (
+                <span className="font-mono text-secondary-foreground">{origin}</span>
+              )
+            ) : (
+              <span className="font-mono text-secondary-foreground">{proj.repo}</span>
+            )}{' '}
+            · {proj.provider}
           </div>
         </div>
         <div className="ml-auto flex flex-none gap-2 max-md:ml-0">
@@ -56,9 +81,12 @@ export default function ProjectDetailPage() {
           <Stat k="Boxes" v={boxes.length} icon={Icons.box} />
           <Stat k="Running" v={running} icon={Icons.activity} />
           <Stat k="Provider" v={proj.provider} mono />
+          <Stat k="Branch" v={branch || '—'} mono icon={Icons.branch} />
           <Stat k="Created" v={<Ago ms={proj.createdAt} />} mono />
         </StatGrid>
       </div>
+
+      <ProjectSeed projectId={id} />
 
       <SectionLabel>Boxes</SectionLabel>
       {boxes.length ? (
