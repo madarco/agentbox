@@ -341,7 +341,7 @@ async function approveRelay(id: string, opts: ApproveOpts): Promise<void> {
       if (cfg && remoteHubConfigured(cfg.effective)) {
         log.error(
           `not found on this host's relay, and the control box could not be asked (no admin token).\n` +
-            'Set AGENTBOX_RELAY_ADMIN_TOKEN (or run `agentbox hub setup`), or answer it with `agentbox hub prompts answer`.',
+            'Set AGENTBOX_RELAY_ADMIN_TOKEN (or run `agentbox hub setup`), or answer it with `agentbox hub approvals answer`.',
         );
         process.exit(1);
       }

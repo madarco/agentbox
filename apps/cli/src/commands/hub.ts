@@ -490,7 +490,7 @@ export const hubCommand = new Command('hub')
   .description(
     'Run + manage the AgentBox hub — the local relay + Web UI on http://127.0.0.1:8787 ' +
       '(also https://agentbox.localhost when Portless is installed), and the remote control box ' +
-      '(setup, deploy, boxes, prompts, credentials, custody)',
+      '(setup, deploy, boxes, approvals, credentials, custody)',
   )
   .addCommand(startSub, { isDefault: true })
   .addCommand(statusSub)
@@ -501,6 +501,6 @@ export const hubCommand = new Command('hub')
   .addCommand(adoptSub);
 
 // Fold the remote-hub admin subcommands (setup/deploy/set-url/add/worker/
-// credentials/secrets/project/custody/boxes/prompts) into the one `hub` group —
+// credentials/secrets/project/custody/boxes/approvals) into the one `hub` group —
 // there is no separate `control-plane` command. All surfaced (not hidden).
 for (const sub of controlPlaneSubcommands) hubCommand.addCommand(sub);
