@@ -99,6 +99,10 @@ CLI, not the raw commits.
 
 ### Changed
 
+- **A create routed to the control box now shows its real progress.** The hub's
+  own steps — clone, seed, the provider's create output — stream back to your
+  terminal instead of a static "remote hub: running", with `-v` for the full log
+  and the whole transcript kept in `~/.agentbox/logs/<command>.log`.
 - `agentbox self-update` now offers to update a deployed control box as its last
   step, so your machine and the hub don't drift onto different builds. Skipped
   when the control box is already current; `--skip-hub` declines it.
