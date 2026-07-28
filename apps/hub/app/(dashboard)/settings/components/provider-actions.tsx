@@ -150,7 +150,10 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
   );
   const [savingCreds, setSavingCreds] = useState(false);
   const [credError, setCredError] = useState<string | null>(null);
-  const [showForm, setShowForm] = useState(!p.hasCredentials && fields.length > 0);
+  // Always collapsed. Auto-expanding every unconfigured provider meant a fresh
+  // hub opened with a wall of credential forms — the badge already says which
+  // ones need attention, so let the user open the one they came for.
+  const [showForm, setShowForm] = useState(false);
   // A bake in flight: from a live job (p.jobId, survives navigation) or one we
   // just started here.
   const [jobId, setJobId] = useState<string | null>(p.jobId ?? null);
