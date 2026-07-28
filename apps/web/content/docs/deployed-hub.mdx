@@ -316,6 +316,38 @@ agentbox create --provider e2b --local     # force a local build on this machine
   attach and re-login.
 </Callout>
 
+### Base images are baked on the control box too
+
+Because a cloud box is built on the control box from **its** baked base, baking that base on your
+laptop would spend minutes on a snapshot nothing boots. So `agentbox prepare` follows the same
+routing as `create`:
+
+```bash
+agentbox prepare --provider e2b            # bakes on the control box, then adopts the record here
+agentbox prepare --provider e2b --local    # bake on this machine instead
+agentbox prepare --provider e2b --via-hub  # fail rather than fall back to a local bake
+```
+
+The bake's log streams to your terminal, and when it finishes the resulting bake record is pulled
+back into `~/.agentbox/<provider>-prepared.json`, so one bake leaves both machines current. Docker
+and remote-docker always bake locally — their bases are local images, not portable snapshots. Passing
+`--name`, `--location`, or `--size` keeps the bake local, since the control box's bake API doesn't
+carry those.
+
+The sync runs the other way too: `agentbox self-update` (and `agentbox hub setup` / `update`) now
+**adopts** any base the control box has already baked for your new build context, instead of telling
+you to re-bake. Whichever machine bakes first, the other one takes the result.
+
+<Callout type="info" title="What agentbox.localhost shows">
+  With a control box configured, your laptop's hub UI **mirrors it** for cloud providers: Settings
+  and System report the control box's credentials and bake state, tagged `control box`, with links
+  out to manage them there. Docker and remote-docker keep showing this machine's own state. Cloud
+  creates are disabled in the local create dialog — use the control box's UI, or the CLI, which
+  routes there. If the control box can't be reached, those rows read `unknown` rather than falling
+  back to your laptop's state. Setting `cloud.viaHub=false` turns the mirror off along with the
+  routing.
+</Callout>
+
 Now the payoff — the box pushes on its own, with your laptop fully off:
 
 ```bash

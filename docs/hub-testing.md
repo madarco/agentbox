@@ -323,6 +323,14 @@ Run on `0.28.0-nightly.202607260716` (npm `nightly`), from a virgin `~/.agentbox
   falling back to the monorepo sources; an npm install has no such fallback.
 - **Use a non-LFS repo** for anything the hub clones; the `agentbox-test-repo*` repos have git-LFS
   objects that break the control box's clone.
+- **You can fake the control box for the PC-side paths.** The mirror and hub-routed bakes only
+  need something that speaks `GET /api/v1/providers`, `POST /api/v1/providers/:id/prepare`,
+  `GET /api/v1/jobs/:id(/logs)` and `GET|PUT /admin/custody/prepared/<p>.json`. A ~60-line stub on
+  a spare port plus `relay.controlPlaneUrl` + a `~/.agentbox/control-plane/control-plane.env`
+  holding `AGENTBOX_HUB_API_KEY` / `AGENTBOX_RELAY_ADMIN_TOKEN` exercises routing, the job SSE
+  stream, custody adoption and the whole `agentbox.localhost` mirror without a VPS. Note the PC
+  hub reads that env **file** (it is spawned without those vars), and remember to
+  `config unset relay.controlPlaneUrl --global` afterwards.
 - **`hub setup` needs a TTY** for the "copy this token?" confirm.
 - **A nightly CLI pairs with a nightly deploy.** The default (npm, pinned to your CLI's version)
   gets this right; only `--ref`/`--package` can put the two sides out of step.
