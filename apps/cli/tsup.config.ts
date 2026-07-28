@@ -9,7 +9,10 @@ const pkg = JSON.parse(readFileSync(resolve(here, 'package.json'), 'utf8')) as {
 
 function gitShortSha(): string {
   try {
-    return execSync('git rev-parse --short HEAD', { cwd: here, stdio: ['ignore', 'pipe', 'ignore'] })
+    return execSync('git rev-parse --short HEAD', {
+      cwd: here,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
       .toString()
       .trim();
   } catch {
@@ -18,7 +21,12 @@ function gitShortSha(): string {
 }
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  // Object form (not an array) on purpose: it pins the output basenames, so the
+  // second entry lands at `dist/cloud-backends.js` — the path `spawnRelay`
+  // hands the relay bin as AGENTBOX_CLOUD_BACKENDS — instead of mirroring its
+  // `src/relay/` directory. Keeping both entries in ONE config also lets them
+  // share chunks; a second `defineConfig` entry would duplicate every provider.
+  entry: { index: 'src/index.ts', 'cloud-backends': 'src/relay/cloud-backends.ts' },
   format: ['esm'],
   target: 'node20',
   clean: true,

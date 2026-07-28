@@ -4,6 +4,16 @@ import { startCloudKeepaliveLoop } from './cloud-keepalive.js';
 import { startQueueLoop } from './queue.js';
 import { startRetentionLoop } from './retention.js';
 
+// Re-exported here (not just from index.ts) so the two processes that own a
+// relay — the CLI's `agentbox-relay serve` bin and the hub server — can register
+// their built-in cloud backends from the same module they already import
+// `startRelayDaemon` from, without pulling the full package barrel.
+export {
+  setCloudBackendLoader,
+  type CloudBackendLoader,
+  type CloudCpModule,
+} from './host-actions.js';
+
 export interface RelayDaemonHandle {
   /** The underlying relay server (url, store, close, …). */
   handle: RelayServerHandle;

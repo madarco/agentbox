@@ -15,7 +15,7 @@ import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { isProviderKind, loadEffectiveConfig, type ProviderKind } from '@agentbox/config';
+import { isProviderKind, loadEffectiveConfig } from '@agentbox/config';
 import {
   cloneRepoWithLfs,
   drainCreateJobs,
@@ -35,22 +35,10 @@ import {
 } from '@agentbox/sandbox-core';
 import { applyProjectSeed, startDetachedCloudAgent } from '@agentbox/sandbox-cloud';
 import { resolveAgentLauncher, type AgentKind } from '@agentbox/core';
-import type { ProviderModule } from '@agentbox/sandbox-core';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
+import { IMPORTERS } from './provider-importers.js';
 
 const execFileAsync = promisify(execFile);
-
-// Same provider importer map the hub backend uses (an app can't reach
-// apps/cli's provider registry). Only cloud providers make sense for the worker.
-const IMPORTERS: Record<ProviderKind, () => Promise<{ providerModule: ProviderModule }>> = {
-  docker: () => import('@agentbox/sandbox-docker'),
-  daytona: () => import('@agentbox/sandbox-daytona'),
-  hetzner: () => import('@agentbox/sandbox-hetzner'),
-  vercel: () => import('@agentbox/sandbox-vercel'),
-  e2b: () => import('@agentbox/sandbox-e2b'),
-  digitalocean: () => import('@agentbox/sandbox-digitalocean'),
-  'remote-docker': () => import('@agentbox/sandbox-remote-docker'),
-};
 
 async function runGit(
   args: string[],
@@ -70,7 +58,10 @@ async function runGit(
  * PC `credentials push` (phase 2) is what logs hub-created boxes in — one code
  * path, no second credential list.
  */
-async function seedHostBackupsFromCustody(custody: FsCustodyStore, log: (l: string) => void): Promise<void> {
+async function seedHostBackupsFromCustody(
+  custody: FsCustodyStore,
+  log: (l: string) => void,
+): Promise<void> {
   for (const spec of AGENT_SYNC_SPECS) {
     const custodyPath = `agents/${spec.id}/${spec.credential.boxRelPath}`;
     try {
@@ -80,7 +71,9 @@ async function seedHostBackupsFromCustody(custody: FsCustodyStore, log: (l: stri
       await writeFile(spec.credential.hostBackup, found.data, { mode: 0o600 });
       log(`seeded ${spec.id} credentials from custody`);
     } catch (err) {
-      log(`seed ${spec.id} from custody failed: ${err instanceof Error ? err.message : String(err)}`);
+      log(
+        `seed ${spec.id} from custody failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 }
@@ -175,7 +168,9 @@ async function applySeedFromCustody(
  * An unknown value is dropped rather than passed through — the box still gets
  * created, it just registers without an agent hint.
  */
-function normalizeCreateAgent(agent: string | undefined): 'claude' | 'codex' | 'opencode' | undefined {
+function normalizeCreateAgent(
+  agent: string | undefined,
+): 'claude' | 'codex' | 'opencode' | undefined {
   return agent === 'claude' || agent === 'codex' || agent === 'opencode' ? agent : undefined;
 }
 

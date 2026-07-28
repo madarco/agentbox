@@ -124,63 +124,116 @@ export interface CloudActionExecutorDeps {
 }
 
 /**
- * Lazy backend resolver. Hardcoded for the providers we ship; future cloud
- * backends slot in here. Dynamic import keeps the relay process from loading
- * cloud SDKs (heavy CJS trees) until a cloud box is actually registered.
+ * Host-side loader for the built-in cloud backends, injected by whichever
+ * bundle owns this relay process.
  *
- * ## Runtime contract (the relay→sandbox-* dependency story)
+ * ## Why this is injected rather than imported
  *
- * The import path is a computed string on purpose — a literal would make
- * esbuild eager-resolve the package at bundle time, and the relay tsup
- * configs intentionally don't depend on the per-backend packages (to avoid
- * a `sandbox-daytona → sandbox-cloud → sandbox-docker → relay` cycle in
- * package.json deps).
+ * The relay can't depend on the `@agentbox/sandbox-*` packages: that would
+ * close a `sandbox-daytona → sandbox-cloud → sandbox-docker → relay` cycle in
+ * the package.json deps. It used to reach them with a computed dynamic import
+ * (`'@agentbox/sandbox-' + 'daytona'`) on the theory that esbuild would
+ * constant-fold and inline the package. It does not — esbuild never bundles
+ * `import(pkg)`, so the specifier stayed a runtime `node_modules` lookup. That
+ * works in the pnpm dev tree (workspace symlinks) and fails on every npm
+ * install, where the `@agentbox/*` packages are devDependencies bundled into
+ * the CLI and therefore absent from `node_modules` entirely.
  *
- * **At runtime the parent process is responsible for making
- * `@agentbox/sandbox-daytona` (and `@agentbox/sandbox-cloud` for the cp /
- * download / browser-open executors) resolvable from `node_modules` next
- * to the relay bin.** The `@madarco/agentbox` CLI satisfies this by
- * carrying both packages in its build, bundled via `tsup` with
- * `noExternal: [/^@agentbox\//]`. The published `agent-box` npm package
- * ships them inlined; the workspace setup hits the same path via
- * pnpm-symlinked `node_modules`.
+ * So each bundle that hosts a relay registers a loader built from ITS OWN
+ * literal-specifier provider map (the maps are already inlined there):
+ *   - the CLI's spawned relay bin — `AGENTBOX_CLOUD_BACKENDS` points at
+ *     `apps/cli/dist/cloud-backends.js`, side-loaded lazily in `bin.ts`.
+ *   - the hub / control box — `apps/hub/server.ts` registers in-process
+ *     before starting the daemon.
  *
- * If you embed `@agentbox/relay` standalone in a different host (no
- * agentbox CLI around), you MUST install `@agentbox/sandbox-daytona`
- * yourself for cloud executors to work — otherwise this throws a clear
- * `MODULE_NOT_FOUND` error and the in-box `/rpc` will see exit 1 with the
- * "no host executor" message above.
+ * `resolveBackend` returns `null` for anything it doesn't own (plugins,
+ * `docker`), so the plugin registry stays the single gated path for external
+ * providers.
+ */
+export interface CloudBackendLoader {
+  /** Stable marker for logs + the build-time wiring check. */
+  id?: string;
+  /** Resolve a BUILT-IN backend; `null` means "not mine — keep looking". */
+  resolveBackend(name: string): Promise<CloudBackend | null>;
+  /** The `@agentbox/sandbox-cloud` cp helpers used by the download executor. */
+  loadCloudCp(): Promise<CloudCpModule>;
+}
+
+let cloudBackendLoader: CloudBackendLoader | undefined;
+
+/**
+ * Register (or clear, with `undefined`) the host's built-in backend loader.
+ * Must run before the relay starts serving — `startCloudKeepaliveLoop` caches a
+ * failed resolve per backend name for the process lifetime.
+ */
+export function setCloudBackendLoader(loader: CloudBackendLoader | undefined): void {
+  cloudBackendLoader = loader;
+  cloudCpModule = undefined;
+}
+
+/**
+ * Lazy backend resolver, in precedence order:
+ *   1. the injected loader (built-ins, from the host bundle),
+ *   2. the legacy bare-specifier import — only resolves in the pnpm dev tree or
+ *      for a standalone embedder that installed the packages itself,
+ *   3. the plugin registry (external providers, imported by absolute path),
+ *   4. throw.
+ *
+ * Built-ins are tried before plugins in both 1 and 2 so a plugin can never
+ * shadow a shipped provider name.
  */
 export async function resolveCloudBackend(name: string): Promise<CloudBackend> {
-  // NB: the `'@agentbox/sandbox-' + '<name>'` specifiers are written as literal
-  // concatenations (not `+ name`) on purpose — esbuild constant-folds them so
-  // the bundler can statically resolve + inline each provider package
-  // (`noExternal: [/^@agentbox\//]`, see above). A runtime variable specifier
-  // would defeat that and MODULE_NOT_FOUND in the published CLI. Only the
-  // error-handling is shared (via `loadCloudBackend`).
+  if (cloudBackendLoader) {
+    const injected = await cloudBackendLoader.resolveBackend(name);
+    if (injected) return injected;
+  }
+  // Legacy fallback. The `'@agentbox/sandbox-' + '<name>'` specifiers stay
+  // computed so esbuild leaves them alone instead of trying (and failing) to
+  // inline a package the relay doesn't depend on. Reached only when no loader
+  // was injected — i.e. the dev tree or a standalone embedder.
   if (name === 'daytona') {
     const pkg = '@agentbox/sandbox-' + 'daytona';
-    return loadCloudBackend(pkg, async () => ((await import(pkg)) as { daytonaBackend: CloudBackend }).daytonaBackend);
+    return loadCloudBackend(
+      pkg,
+      async () => ((await import(pkg)) as { daytonaBackend: CloudBackend }).daytonaBackend,
+    );
   }
   if (name === 'hetzner') {
     const pkg = '@agentbox/sandbox-' + 'hetzner';
-    return loadCloudBackend(pkg, async () => ((await import(pkg)) as { hetznerBackend: CloudBackend }).hetznerBackend);
+    return loadCloudBackend(
+      pkg,
+      async () => ((await import(pkg)) as { hetznerBackend: CloudBackend }).hetznerBackend,
+    );
   }
   if (name === 'vercel') {
     const pkg = '@agentbox/sandbox-' + 'vercel';
-    return loadCloudBackend(pkg, async () => ((await import(pkg)) as { vercelBackend: CloudBackend }).vercelBackend);
+    return loadCloudBackend(
+      pkg,
+      async () => ((await import(pkg)) as { vercelBackend: CloudBackend }).vercelBackend,
+    );
   }
   if (name === 'e2b') {
     const pkg = '@agentbox/sandbox-' + 'e2b';
-    return loadCloudBackend(pkg, async () => ((await import(pkg)) as { e2bBackend: CloudBackend }).e2bBackend);
+    return loadCloudBackend(
+      pkg,
+      async () => ((await import(pkg)) as { e2bBackend: CloudBackend }).e2bBackend,
+    );
   }
   if (name === 'digitalocean') {
     const pkg = '@agentbox/sandbox-' + 'digitalocean';
-    return loadCloudBackend(pkg, async () => ((await import(pkg)) as { digitaloceanBackend: CloudBackend }).digitaloceanBackend);
+    return loadCloudBackend(
+      pkg,
+      async () =>
+        ((await import(pkg)) as { digitaloceanBackend: CloudBackend }).digitaloceanBackend,
+    );
   }
   if (name === 'remote-docker') {
     const pkg = '@agentbox/sandbox-' + 'remote-docker';
-    return loadCloudBackend(pkg, async () => ((await import(pkg)) as { remoteDockerBackend: CloudBackend }).remoteDockerBackend);
+    return loadCloudBackend(
+      pkg,
+      async () =>
+        ((await import(pkg)) as { remoteDockerBackend: CloudBackend }).remoteDockerBackend,
+    );
   }
   // External provider plugins: not bundle-inlined, so resolve from the same
   // `~/.agentbox/plugins.json` registry the CLI writes and `import()` the
@@ -211,9 +264,22 @@ export async function resolveCloudBackend(name: string): Promise<CloudBackend> {
 }
 
 /**
+ * True for "the module isn't installed" failures. The `code` check is the
+ * durable one: Node's ESM resolver says `Cannot find package 'x' imported from
+ * y` (ERR_MODULE_NOT_FOUND) while CJS says `Cannot find module` — matching only
+ * the CJS wording let the raw ESM error through untranslated.
+ */
+export function isModuleNotFound(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /cannot find (module|package)|MODULE_NOT_FOUND/i.test(msg);
+}
+
+/**
  * Run a provider's dynamic import, turning a missing-module failure into the
- * actionable "install it alongside @agentbox/relay" error (other errors
- * propagate unchanged). Shared by every branch of `resolveCloudBackend`.
+ * actionable "no loader was injected" error (other errors propagate unchanged).
+ * Shared by every branch of `resolveCloudBackend`'s legacy fallback.
  */
 async function loadCloudBackend(
   pkg: string,
@@ -222,10 +288,10 @@ async function loadCloudBackend(
   try {
     return await load();
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (/cannot find module|MODULE_NOT_FOUND/i.test(msg)) {
+    if (isModuleNotFound(err)) {
+      const msg = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `relay: cannot load '${pkg}' at runtime — install it alongside @agentbox/relay (the @madarco/agentbox CLI normally provides this dependency). Original: ${msg}`,
+        `relay: cannot load '${pkg}' at runtime — no cloud-backend loader was injected and the package is not installed next to @agentbox/relay (the @madarco/agentbox CLI injects one via AGENTBOX_CLOUD_BACKENDS; the hub registers one in-process). Original: ${msg}`,
       );
     }
     throw err;
@@ -381,13 +447,13 @@ async function runGhPrRpc(
       deps.boxId,
       `gh.pr.${op}`,
       incomingHashGhCloud,
-    ) ?? false);
+    ) ??
+      false);
   if (!GH_PR_READ_ONLY_OPS.has(op) && tokenClaimedGhCloud && !hostInitiatedGhOk) {
     return {
       exitCode: 10,
       stdout: '',
-      stderr:
-        'host-initiated token rejected: invalid, expired, or bound to different params\n',
+      stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
     };
   }
   // Safe subset: opening a PR (relay forces `--head <box-branch>`) and PR
@@ -645,10 +711,7 @@ async function runIntegrationRpc(
   // before `assertIntegrationReady`, the prompt, and the host spawn so a
   // disabled integration is never user-visible as a permission prompt.
   const lookup = await lookupCloudBox(deps.boxId);
-  const enableRefusal = await refuseIfIntegrationDisabled(
-    parsed.service,
-    lookup.workspacePath,
-  );
+  const enableRefusal = await refuseIfIntegrationDisabled(parsed.service, lookup.workspacePath);
   if (enableRefusal) return enableRefusal;
 
   const ready = await assertIntegrationReady(connector);
@@ -664,7 +727,11 @@ async function runIntegrationRpc(
           kind: 'confirm',
           message: `integration ${parsed.service} ${parsed.op} from cloud box ${deps.boxName ?? deps.boxId}`,
           detail: args.join(' ').slice(0, 200),
-          context: { command: `integration ${parsed.service} ${parsed.op}`, cwd: params.path, argv: args },
+          context: {
+            command: `integration ${parsed.service} ${parsed.op}`,
+            cwd: params.path,
+            argv: args,
+          },
         },
         `safe: integration ${parsed.service} ${parsed.op}`,
       );
@@ -678,13 +745,13 @@ async function runIntegrationRpc(
           deps.boxId,
           action.method,
           incomingHash,
-        ) ?? false);
+        ) ??
+          false);
       if (tokenClaimed && !tokenOk) {
         return {
           exitCode: 10,
           stdout: '',
-          stderr:
-            'host-initiated token rejected: invalid, expired, or bound to different params\n',
+          stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
         };
       }
       if (!tokenOk) {
@@ -701,7 +768,6 @@ async function runIntegrationRpc(
 
   return runHostIntegration(connector, opDesc, args, lookup.workspacePath);
 }
-
 
 /**
  * Mirror an in-box `browser.open` notification on the host. The action runs
@@ -826,17 +892,12 @@ export async function boxCarriedHostPaths(boxId: string): Promise<Set<string>> {
 export { resolveHostPath };
 
 /**
- * Cloud cp helpers live in `@agentbox/sandbox-cloud` — same dynamic-import
- * trick as `resolveCloudBackend` keeps the relay bundle from eagerly pulling
- * the cloud package (and its sandbox-docker transitive). Imports the helpers
- * once and caches; only loaded the first time a cloud box queues `cp.*`.
- *
- * Same runtime contract as `resolveCloudBackend`: the parent process is
- * responsible for making `@agentbox/sandbox-cloud` resolvable next to the
- * relay bin. The @madarco/agentbox CLI bundles it; standalone embedders
- * must install it themselves. See the longer note on `resolveCloudBackend`.
+ * The `@agentbox/sandbox-cloud` cp helpers the download executor needs. Kept
+ * out of the relay bundle for the same dependency-cycle reason as the provider
+ * backends — the injected `CloudBackendLoader` supplies them; the computed
+ * specifier below is the same dev-tree-only fallback.
  */
-interface CloudCpModule {
+export interface CloudCpModule {
   pullCloudDirContents(
     backend: CloudBackend,
     handle: CloudHandle,
@@ -848,17 +909,21 @@ interface CloudCpModule {
 let cloudCpModule: CloudCpModule | undefined;
 async function loadCloudCp(): Promise<CloudCpModule> {
   if (cloudCpModule) return cloudCpModule;
-  // Computed string defeats esbuild's static resolution — see resolveCloudBackend.
+  if (cloudBackendLoader) {
+    cloudCpModule = await cloudBackendLoader.loadCloudCp();
+    return cloudCpModule;
+  }
+  // Legacy fallback — see resolveCloudBackend.
   const pkg = '@agentbox/sandbox-' + 'cloud';
   try {
     const mod = (await import(pkg)) as CloudCpModule;
     cloudCpModule = mod;
     return mod;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (/cannot find module|MODULE_NOT_FOUND/i.test(msg)) {
+    if (isModuleNotFound(err)) {
+      const msg = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `relay: cannot load '${pkg}' at runtime — install it alongside @agentbox/relay (the @madarco/agentbox CLI normally provides this dependency). Original: ${msg}`,
+        `relay: cannot load '${pkg}' at runtime — no cloud-backend loader was injected and the package is not installed next to @agentbox/relay (the @madarco/agentbox CLI injects one via AGENTBOX_CLOUD_BACKENDS; the hub registers one in-process). Original: ${msg}`,
       );
     }
     throw err;
@@ -875,7 +940,11 @@ async function runCpRpc(
   try {
     norm = normalizeCpParams(method, params);
   } catch (err) {
-    return { exitCode: 64, stdout: '', stderr: `${err instanceof Error ? err.message : String(err)}\n` };
+    return {
+      exitCode: 64,
+      stdout: '',
+      stderr: `${err instanceof Error ? err.message : String(err)}\n`,
+    };
   }
   const entry = process.env['AGENTBOX_CLI_ENTRY'];
   if (!entry) {
@@ -891,7 +960,11 @@ async function runCpRpc(
   // started the relay), and so the consent prompt shows the real destination.
   const lookup = await lookupCloudBox(deps.boxId);
   const boxName = deps.boxName ?? deps.boxId;
-  const { argv: cpArgs, detail, contextArgv } = buildCpArgv({
+  const {
+    argv: cpArgs,
+    detail,
+    contextArgv,
+  } = buildCpArgv({
     method,
     boxName,
     sources: norm.sources,
@@ -917,7 +990,12 @@ async function runCpRpc(
   if (cpAuto) {
     deps.prompts?.noteAutoApprove(
       deps.boxId,
-      { kind: 'confirm', message: `cp (${direction}) on ${boxName}`, detail, context: { command: method, argv: contextArgv } },
+      {
+        kind: 'confirm',
+        message: `cp (${direction}) on ${boxName}`,
+        detail,
+        context: { command: method, argv: contextArgv },
+      },
       method === 'cp.toHost' ? 'safe: contained copy to host' : 'safe: contained copy from host',
     );
   } else if (deps.prompts && deps.subscribers) {
@@ -1048,9 +1126,10 @@ async function runDownloadRpc(
   // params.hostPath is reserved in the wire shape; v1 lands /workspace under
   // box.workspacePath (the host project root), matching docker's default. A
   // relative override resolves against the box workspace, not the relay's CWD.
-  const hostDst = typeof params.hostPath === 'string' && params.hostPath.length > 0
-    ? resolveHostPath(lookup.workspacePath, params.hostPath)
-    : lookup.workspacePath;
+  const hostDst =
+    typeof params.hostPath === 'string' && params.hostPath.length > 0
+      ? resolveHostPath(lookup.workspacePath, params.hostPath)
+      : lookup.workspacePath;
   // Auto-approve when the destination stays inside the box project folder
   // (the default does); an escaping override still prompts.
   const dlAuto = await canAutoApproveTransfer({
@@ -1140,7 +1219,12 @@ export async function resolveHostGitRepo(
   remoteName: string,
 ): Promise<HostGitRepo> {
   if (workspacePath.length > 0 && existsSync(workspacePath)) {
-    return { dir: workspacePath, remote: remoteName, scratch: false, cleanup: () => Promise.resolve() };
+    return {
+      dir: workspacePath,
+      remote: remoteName,
+      scratch: false,
+      cleanup: () => Promise.resolve(),
+    };
   }
   // No host checkout. Only the REGISTERED origin can be trusted as a push
   // target — see the `originUrl` doc on CloudActionExecutorDeps.
@@ -1165,7 +1249,10 @@ export async function resolveHostGitRepo(
   };
 }
 
-async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Promise<HostActionResult> {
+async function runGitRpc(
+  action: HostAction,
+  deps: CloudActionExecutorDeps,
+): Promise<HostActionResult> {
   const params = (action.params ?? {}) as GitRpcParams;
   const lookup = await lookupCloudBox(deps.boxId);
   const backend = await resolveCloudBackend(deps.backendName);
@@ -1227,7 +1314,11 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
         `git -C ${shellQuote(containerPath)} bundle create ${shellQuote(remoteBundleSave)} ${shellQuote(branch)}`,
       );
       if (make.exitCode !== 0) {
-        return { exitCode: make.exitCode, stdout: '', stderr: `bundle create failed: ${make.stderr || make.stdout}` };
+        return {
+          exitCode: make.exitCode,
+          stdout: '',
+          stderr: `bundle create failed: ${make.stderr || make.stdout}`,
+        };
       }
       await backend.downloadFile(handle, remoteBundleSave, hostBundleSave);
       const refspec = landRefspec(branch, dest, params.force);
@@ -1297,13 +1388,13 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
       deps.boxId,
       'git.push',
       incomingHashGit,
-    ) ?? false);
+    ) ??
+      false);
   if (action.method === 'git.push' && !bypassPushGate && tokenClaimedGit && !hostInitiatedOk) {
     return {
       exitCode: 10,
       stdout: '',
-      stderr:
-        'host-initiated token rejected: invalid, expired, or bound to different params\n',
+      stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
     };
   }
   if (
@@ -1343,7 +1434,8 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
           {
             kind: 'confirm',
             message: `Allow git push from cloud box ${deps.boxName ?? deps.boxId}?`,
-            detail: `${resolveRemote(params.remote)} ${branch} ${(params.args ?? []).join(' ')}`.trim(),
+            detail:
+              `${resolveRemote(params.remote)} ${branch} ${(params.args ?? []).join(' ')}`.trim(),
             defaultAnswer: 'n',
             context: { command: 'git push', cwd: containerPath, argv: params.args },
           },
@@ -1372,10 +1464,16 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
   try {
     repo = await resolveHostGitRepo(lookup.workspacePath, deps, remoteName);
   } catch (err) {
-    return { exitCode: 64, stdout: '', stderr: `${err instanceof Error ? err.message : String(err)}\n` };
+    return {
+      exitCode: 64,
+      stdout: '',
+      stderr: `${err instanceof Error ? err.message : String(err)}\n`,
+    };
   }
   if (repo.scratch) {
-    deps.log?.(`git.${action.method === 'git.push' ? 'push' : 'fetch'}: no host checkout for box ${deps.boxId}; using a scratch repo against ${repo.remote}`);
+    deps.log?.(
+      `git.${action.method === 'git.push' ? 'push' : 'fetch'}: no host checkout for box ${deps.boxId}; using a scratch repo against ${repo.remote}`,
+    );
   }
 
   const stage = await mkdtemp(join(tmpdir(), 'agentbox-git-rpc-'));
@@ -1389,7 +1487,11 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
         `git -C ${shellQuote(containerPath)} bundle create ${shellQuote(remoteBundle)} ${shellQuote(branch)}`,
       );
       if (make.exitCode !== 0) {
-        return { exitCode: make.exitCode, stdout: '', stderr: `bundle create failed: ${make.stderr || make.stdout}` };
+        return {
+          exitCode: make.exitCode,
+          stdout: '',
+          stderr: `bundle create failed: ${make.stderr || make.stdout}`,
+        };
       }
       // 2b. Download to host tmp.
       await backend.downloadFile(handle, remoteBundle, hostBundle);
@@ -1497,11 +1599,9 @@ async function runGitRpc(action: HostAction, deps: CloudActionExecutorDeps): Pro
     await repo.cleanup().catch(() => {
       /* best-effort */
     });
-    await backend
-      .exec(handle, `rm -f ${shellQuote(remoteBundle)}`)
-      .catch(() => {
-        /* best-effort */
-      });
+    await backend.exec(handle, `rm -f ${shellQuote(remoteBundle)}`).catch(() => {
+      /* best-effort */
+    });
   }
 }
 

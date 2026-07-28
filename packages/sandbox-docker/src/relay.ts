@@ -116,7 +116,9 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
       return ENDPOINT;
     }
     if (health.cliEntry === false) {
-      log('relay is alive but lacks AGENTBOX_CLI_ENTRY (cp/download/checkpoint would fail) — reclaiming');
+      log(
+        'relay is alive but lacks AGENTBOX_CLI_ENTRY (cp/download/checkpoint would fail) — reclaiming',
+      );
     } else {
       log(
         `relay was spawned by agentbox ${health.version ?? '?'} but this CLI is ` +
@@ -172,7 +174,10 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
  * port is still held afterward — a silent "couldn't reclaim" would just resurrect
  * the original broken-relay bug.
  */
-async function reclaimRelay(reportedPid: number | undefined, log: (line: string) => void): Promise<void> {
+async function reclaimRelay(
+  reportedPid: number | undefined,
+  log: (line: string) => void,
+): Promise<void> {
   const pidFromFile = await readPidFile();
   const seen = new Set<number>();
   for (const pid of [reportedPid, pidFromFile]) {
@@ -211,13 +216,24 @@ export async function killPid(pid: number): Promise<void> {
   }
 }
 
-/** Spawn the detached relay process wired with AGENTBOX_CLI_ENTRY, then wait for it to come up. */
+/**
+ * Spawn the detached relay process wired with AGENTBOX_CLI_ENTRY (cp / download
+ * / checkpoint shell back into it) and AGENTBOX_CLOUD_BACKENDS (the CLI bundle's
+ * built-in cloud backends, which the relay's own bundle can't carry), then wait
+ * for it to come up.
+ *
+ * The `existsSync` gate keeps a layout without that second entry — a stale
+ * relay home, or an `AGENTBOX_CLI_ENTRY` override pointing somewhere else —
+ * degrading to the relay's legacy resolution instead of a hard failure.
+ */
 async function spawnRelay(
   relayBin: string,
   cliEntry: string,
   log: (line: string) => void,
 ): Promise<RelayEndpoint> {
   const logFd = openSync(LOG_FILE, 'a');
+  const cloudBackends =
+    process.env.AGENTBOX_CLOUD_BACKENDS ?? join(dirname(cliEntry), 'cloud-backends.js');
   const child = spawn(
     process.execPath,
     [relayBin, 'serve', '--port', String(PORT), '--host', '0.0.0.0'],
@@ -227,6 +243,7 @@ async function spawnRelay(
       env: {
         ...process.env,
         AGENTBOX_CLI_ENTRY: cliEntry,
+        ...(existsSync(cloudBackends) ? { AGENTBOX_CLOUD_BACKENDS: cloudBackends } : {}),
       },
     },
   );
@@ -270,9 +287,7 @@ export function resolveRelayBin(): string {
   for (const c of candidates) {
     if (existsSync(c)) return c;
   }
-  throw new Error(
-    `could not locate @agentbox/relay bin; tried:\n  ${candidates.join('\n  ')}`,
-  );
+  throw new Error(`could not locate @agentbox/relay bin; tried:\n  ${candidates.join('\n  ')}`);
 }
 
 /**
@@ -323,7 +338,10 @@ interface StagedRelay {
  * when the version is dev/empty, an `AGENTBOX_RELAY_BIN`/`AGENTBOX_CLI_ENTRY`
  * override is set, the layout/dep root can't be resolved, or any copy fails.
  */
-async function stageRelayHome(version: string, log: (line: string) => void): Promise<StagedRelay | null> {
+async function stageRelayHome(
+  version: string,
+  log: (line: string) => void,
+): Promise<StagedRelay | null> {
   // Dev is a moving target ('0.0.0-dev' regardless of code) — pinning it would
   // serve a stale bundle. Overrides must flow through untouched.
   if (!version || version === '0.0.0-dev') return null;
@@ -366,7 +384,9 @@ async function stageRelayHome(version: string, log: (line: string) => void): Pro
     if (existsSync(stagedEntry) && existsSync(stagedBin)) {
       return { relayBin: stagedBin, cliEntry: stagedEntry };
     }
-    log(`relay home staging failed (${err instanceof Error ? err.message : String(err)}); using bundle paths`);
+    log(
+      `relay home staging failed (${err instanceof Error ? err.message : String(err)}); using bundle paths`,
+    );
     return null;
   }
 
@@ -382,7 +402,10 @@ async function stageRelayHome(version: string, log: (line: string) => void): Pro
  */
 function findCliRoot(moduleDir: string): string | null {
   for (const root of [resolve(moduleDir, '..'), resolve(moduleDir, '..', '..')]) {
-    if (existsSync(join(root, 'dist', 'index.js')) && existsSync(join(root, 'runtime', 'relay', 'bin.cjs'))) {
+    if (
+      existsSync(join(root, 'dist', 'index.js')) &&
+      existsSync(join(root, 'runtime', 'relay', 'bin.cjs'))
+    ) {
       return root;
     }
   }
@@ -518,7 +541,12 @@ export async function getRelayStatus(): Promise<RelayStatus> {
     health:
       health === null
         ? null
-        : { boxes: health.boxes, events: health.events, version: health.version, commit: health.commit },
+        : {
+            boxes: health.boxes,
+            events: health.events,
+            version: health.version,
+            commit: health.commit,
+          },
     pidFile: PID_FILE,
     logFile: LOG_FILE,
   };
@@ -578,7 +606,9 @@ export function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
         res.on('data', (c: Buffer) => chunks.push(c));
         res.on('end', () => {
           try {
-            const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Partial<HealthzBody>;
+            const parsed = JSON.parse(
+              Buffer.concat(chunks).toString('utf8'),
+            ) as Partial<HealthzBody>;
             if (
               typeof parsed.ok === 'boolean' &&
               typeof parsed.boxes === 'number' &&

@@ -19,7 +19,7 @@ import {
   type Store,
   type CustodyStore,
 } from '@agentbox/relay/control-plane';
-import { startRelayDaemon } from '@agentbox/relay/daemon';
+import { setCloudBackendLoader, startRelayDaemon } from '@agentbox/relay/daemon';
 import {
   DOCKER_CONTEXT_FILE_MAP,
   controlPlaneDeployPath,
@@ -30,6 +30,7 @@ import {
 } from '@agentbox/sandbox-core';
 import { createHubBackend } from './lib/hub-backend';
 import { configureHubGitCredentials } from './lib/git-auth';
+import { cloudBackendLoader } from './lib/provider-importers';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number.parseInt(process.env.AGENTBOX_HUB_PORT ?? '8787', 10);
@@ -126,6 +127,13 @@ async function main(): Promise<void> {
       'agentbox-hub: no GitHub token stored — git push/clone will only work if a GitHub App is configured (hub.gitAuth=app)\n',
     );
   }
+
+  // The relay resolves cloud backends (git push / download / gh pr head probe)
+  // through an injected loader — its own bundle carries no provider packages and
+  // the published hub ships no node_modules to resolve them from. Register before
+  // startRelayDaemon: the keepalive loop memoizes a failed resolve per backend
+  // name for the life of the process.
+  setCloudBackendLoader(cloudBackendLoader);
 
   const daemon = await startRelayDaemon({
     port,

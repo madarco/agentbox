@@ -40,7 +40,8 @@ import {
   type RelayServerHandle,
 } from '@agentbox/relay';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
-import type { BoxGitDeps, ProviderModule } from '@agentbox/sandbox-core';
+import { IMPORTERS } from './provider-importers.js';
+import type { BoxGitDeps } from '@agentbox/sandbox-core';
 import {
   BOX_WORKSPACE,
   autoWriteSshConfig,
@@ -92,7 +93,16 @@ import type {
 } from './boxes/backend-types';
 import { hubProfile } from './auth-config';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
-import type { Approval, Box, BoxStatus, GithubState, HubState, Project, ProviderOption, User } from './boxes/types';
+import type {
+  Approval,
+  Box,
+  BoxStatus,
+  GithubState,
+  HubState,
+  Project,
+  ProviderOption,
+  User,
+} from './boxes/types';
 
 /*
  * Node-only host backend. This module imports the sandbox/relay toolchain and is
@@ -106,16 +116,8 @@ const execFileAsync = promisify(execFile);
 // Cosmetic rename-label cap — mirrors the CLI's --set-name cap and parseRenameBox.
 const DISPLAY_NAME_MAX = 60;
 
-// ── provider resolution (mirrors apps/cli/src/provider/loaders.ts) ──
-const IMPORTERS: Record<ProviderKind, () => Promise<{ providerModule: ProviderModule }>> = {
-  docker: () => import('@agentbox/sandbox-docker'),
-  daytona: () => import('@agentbox/sandbox-daytona'),
-  hetzner: () => import('@agentbox/sandbox-hetzner'),
-  vercel: () => import('@agentbox/sandbox-vercel'),
-  e2b: () => import('@agentbox/sandbox-e2b'),
-  digitalocean: () => import('@agentbox/sandbox-digitalocean'),
-  'remote-docker': () => import('@agentbox/sandbox-remote-docker'),
-};
+// Provider resolution lives in ./provider-importers (shared with hub-worker and
+// the relay's injected cloud-backend loader).
 
 // Per-provider serialization of prepare-enqueue: `prepareProvider` reads the
 // queue then enqueues, which isn't atomic across two concurrent POSTs (both could
@@ -284,7 +286,13 @@ function deriveRepoLabel(originUrl: string): string {
  */
 async function hostBranchOf(repo: string): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync('git', ['-C', repo, 'rev-parse', '--abbrev-ref', 'HEAD']);
+    const { stdout } = await execFileAsync('git', [
+      '-C',
+      repo,
+      'rev-parse',
+      '--abbrev-ref',
+      'HEAD',
+    ]);
     const branch = stdout.trim();
     return !branch || branch === 'HEAD' ? null : branch;
   } catch {
@@ -370,7 +378,8 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
       repo: path.basename(e.originalPath),
       defaultBranch: 'main',
       provider: box?.provider ?? 'docker',
-      createdAt: box?.createdAt ?? (e.createdAt ? Date.parse(e.createdAt) || Date.now() : Date.now()),
+      createdAt:
+        box?.createdAt ?? (e.createdAt ? Date.parse(e.createdAt) || Date.now() : Date.now()),
     });
     pathById.set(e.hash, e.originalPath);
   }
@@ -549,7 +558,9 @@ async function dockerDaemonReachable(): Promise<boolean> {
 /** Whether an executable is on PATH (used to precheck hetzner's ssh/scp). */
 async function binOnPath(name: string): Promise<boolean> {
   try {
-    await execFileAsync(process.platform === 'win32' ? 'where' : 'which', [name], { timeout: 4000 });
+    await execFileAsync(process.platform === 'win32' ? 'where' : 'which', [name], {
+      timeout: 4000,
+    });
     return true;
   } catch {
     return false;
@@ -585,7 +596,8 @@ function listProviders(jobs: QueueJob[]): ProviderOption[] {
   return PROVIDER_NAMES.map((id) => {
     // Keep "Docker (local)" but drop the "(cloud …)" qualifier from cloud labels
     // — the picker just wants the provider name.
-    const label = id === 'docker' ? providerMeta(id).label : providerMeta(id).label.replace(/\s*\(.*\)$/, '');
+    const label =
+      id === 'docker' ? providerMeta(id).label : providerMeta(id).label.replace(/\s*\(.*\)$/, '');
     const configured = isProviderConfigured(id);
     const hasCredentials = hasProviderCredentials(id, keys);
     // An in-flight bake for this provider (queued or running) — lets the UI show
@@ -620,7 +632,10 @@ function listProviders(jobs: QueueJob[]): ProviderOption[] {
 // entry misses and recomputes, so a fresh bake is reflected immediately (no
 // stale window from a TTL that outlives the bake — Bugbot #151).
 const FRESHNESS_TTL_MS = 60_000;
-const freshnessCache = new Map<ProviderKind, { at: number; stored: string; live: string | undefined }>();
+const freshnessCache = new Map<
+  ProviderKind,
+  { at: number; stored: string; live: string | undefined }
+>();
 
 /**
  * Live base-image/snapshot freshness for one provider, mirroring the CLI's
@@ -631,7 +646,10 @@ const freshnessCache = new Map<ProviderKind, { at: number; stored: string; live:
  * hiding a multi-minute build inside the create job. Any failure to compute
  * the live fingerprint degrades to 'unknown' (never a false 'stale').
  */
-async function providerBaseFreshness(id: ProviderKind, claudeInstall?: 'native' | 'npm'): Promise<BaseStatus> {
+async function providerBaseFreshness(
+  id: ProviderKind,
+  claudeInstall?: 'native' | 'npm',
+): Promise<BaseStatus> {
   if (id === 'docker') {
     // Bypasses the cloud-fingerprint freshnessCache: the check is one
     // `docker image inspect` plus hashing the staged context files, and
@@ -650,7 +668,13 @@ async function providerBaseFreshness(id: ProviderKind, claudeInstall?: 'native' 
   // local hub (local prepared-state already set) or when custody has no match.
   try {
     const mod = (await IMPORTERS[id]()).providerModule;
-    await hydratePreparedFromCustody(new FsCustodyStore(), id, mod.provider, claudeInstall ?? 'native', () => {});
+    await hydratePreparedFromCustody(
+      new FsCustodyStore(),
+      id,
+      mod.provider,
+      claudeInstall ?? 'native',
+      () => {},
+    );
   } catch {
     // best-effort: fall through to whatever local prepared-state holds
   }
@@ -789,8 +813,12 @@ function mapApproval(p: PendingApproval): Approval {
 // agentbox.yaml — the same signals `findProjectRoot` walks up to.
 async function looksLikeProject(dir: string): Promise<boolean> {
   const [git, yaml] = await Promise.all([
-    stat(path.join(dir, '.git')).then(() => true).catch(() => false),
-    stat(path.join(dir, 'agentbox.yaml')).then(() => true).catch(() => false),
+    stat(path.join(dir, '.git'))
+      .then(() => true)
+      .catch(() => false),
+    stat(path.join(dir, 'agentbox.yaml'))
+      .then(() => true)
+      .catch(() => false),
   ]);
   return git || yaml;
 }
@@ -869,7 +897,10 @@ async function branchListHost(repo: string): Promise<BranchList> {
  * (apps/cli): fetch branch/tag names first (SHAs skip the fetch), then
  * `rev-parse --verify <ref>^{commit}`. Node execFile, not execa.
  */
-async function verifyFromBranch(repo: string, ref: string): Promise<{ ok: true } | { ok: false; error: string }> {
+async function verifyFromBranch(
+  repo: string,
+  ref: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!SHA_RE.test(ref)) {
     await execFileAsync('git', ['-C', repo, 'fetch', '--quiet', 'origin', ref], {
       timeout: GIT_NET_TIMEOUT_MS,
@@ -878,7 +909,9 @@ async function verifyFromBranch(repo: string, ref: string): Promise<{ ok: true }
   const ok = await execFileAsync('git', ['-C', repo, 'rev-parse', '--verify', `${ref}^{commit}`])
     .then(() => true)
     .catch(() => false);
-  return ok ? { ok: true } : { ok: false, error: `unknown base ref "${ref}" (not found in the project repo)` };
+  return ok
+    ? { ok: true }
+    : { ok: false, error: `unknown base ref "${ref}" (not found in the project repo)` };
 }
 
 /** Reverse-adoption seam: reconstruct + persist a local record from a Store registration. */
@@ -922,7 +955,10 @@ async function materializeBoxSshFromCustody(
  * reap exactly as before. Idempotent: once recorded, a second call finds it in
  * local state and never reaches here.
  */
-async function hydrateRegisteredBox(handle: RelayServerHandle, id: string): Promise<BoxRecord | null> {
+async function hydrateRegisteredBox(
+  handle: RelayServerHandle,
+  id: string,
+): Promise<BoxRecord | null> {
   const reg = await handle.store.getBox(id).catch(() => undefined);
   if (!reg) return null;
   const record = registrationToBoxRecord(reg, {
@@ -939,9 +975,11 @@ async function hydrateRegisteredBox(handle: RelayServerHandle, id: string): Prom
   } catch {
     return null;
   }
-  await materializeBoxSshFromCustody(handle.custody, record.provider ?? 'docker', reg.sandboxId ?? id).catch(
-    () => {},
-  );
+  await materializeBoxSshFromCustody(
+    handle.custody,
+    record.provider ?? 'docker',
+    reg.sandboxId ?? id,
+  ).catch(() => {});
   await recordBox(record);
   return record;
 }
@@ -1037,7 +1075,12 @@ const GIT_TOKEN_TTL_MS = 120_000;
 function hubGitDeps(boxId: string): BoxGitDeps {
   return {
     hostInitiatedArgs: async (method, params) => {
-      const token = await mintHostInitiatedToken(boxId, method, hashRpcParams(params), GIT_TOKEN_TTL_MS);
+      const token = await mintHostInitiatedToken(
+        boxId,
+        method,
+        hashRpcParams(params),
+        GIT_TOKEN_TTL_MS,
+      );
       return token ? ['--host-initiated-token', token] : [];
     },
   };
@@ -1054,7 +1097,10 @@ async function gitOp(
     if (!rp) return { ok: false, error: `box ${id} not found` };
     const r = await fn(rp.box, rp.provider);
     if (r.exitCode !== 0) {
-      return { ok: false, error: (r.stderr || r.stdout || `command exited ${String(r.exitCode)}`).trim() };
+      return {
+        ok: false,
+        error: (r.stderr || r.stdout || `command exited ${String(r.exitCode)}`).trim(),
+      };
     }
     return { ok: true, stdout: r.stdout, stderr: r.stderr };
   } catch (err) {
@@ -1175,9 +1221,13 @@ async function probeOpenTargets(): Promise<OpenTargetsReport | null> {
   const entry = process.env['AGENTBOX_CLI_ENTRY'];
   if (!entry) return null;
   try {
-    const { stdout } = await execFileAsync(process.execPath, [entry, 'open', '--targets', '--json'], {
-      timeout: 10_000,
-    });
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [entry, 'open', '--targets', '--json'],
+      {
+        timeout: 10_000,
+      },
+    );
     const value = JSON.parse(stdout) as OpenTargetsReport;
     openTargetsCache = { at: now, value };
     return value;
@@ -1209,7 +1259,8 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // surfaces in the box list (its progress is provider status instead).
         if (j.kind === 'prepare') continue;
         if (j.boxId && liveIds.has(j.boxId)) continue;
-        if (j.status === 'queued' || j.status === 'running') jobBoxes.push(mapJobToBox(j, 'creating'));
+        if (j.status === 'queued' || j.status === 'running')
+          jobBoxes.push(mapJobToBox(j, 'creating'));
         else if (j.status === 'failed') jobBoxes.push(mapJobToBox(j, 'error'));
       }
       // Boxes the Store holds but this VPS's local state doesn't — i.e.
@@ -1259,41 +1310,56 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       return opts?.expandRemoteDockerHosts ? expandRemoteDockerHosts(fresh) : fresh;
     },
     start: (id) =>
-      runLifecycle(id, async (box, provider) => {
-        // Mirrors the CLI dashboard's resumeBox: docker `start` rejects a paused
-        // container, so probe first. No-op when already running (idempotent).
-        // Unlike CLI `agentbox start` this does not restore agent tmux sessions
-        // (restoreAgentSessions is CLI-only) — the agent restarts on next attach.
-        const state = await provider.probeState(box);
-        if (state === 'running') return;
-        if (state === 'paused') await provider.resume(box);
-        else await provider.start(box);
-        // Refresh the box's SSH-config alias now it's back online (IP may have changed).
-        await hubWriteSshConfig(box, provider);
-      }, hydrate),
+      runLifecycle(
+        id,
+        async (box, provider) => {
+          // Mirrors the CLI dashboard's resumeBox: docker `start` rejects a paused
+          // container, so probe first. No-op when already running (idempotent).
+          // Unlike CLI `agentbox start` this does not restore agent tmux sessions
+          // (restoreAgentSessions is CLI-only) — the agent restarts on next attach.
+          const state = await provider.probeState(box);
+          if (state === 'running') return;
+          if (state === 'paused') await provider.resume(box);
+          else await provider.start(box);
+          // Refresh the box's SSH-config alias now it's back online (IP may have changed).
+          await hubWriteSshConfig(box, provider);
+        },
+        hydrate,
+      ),
     pause: (id) => runLifecycle(id, (box, provider) => provider.pause(box), hydrate),
     resume: (id) =>
-      runLifecycle(id, async (box, provider) => {
-        await provider.resume(box);
-        // Refresh the box's SSH-config alias now it's back online (IP may have changed).
-        await hubWriteSshConfig(box, provider);
-      }, hydrate),
+      runLifecycle(
+        id,
+        async (box, provider) => {
+          await provider.resume(box);
+          // Refresh the box's SSH-config alias now it's back online (IP may have changed).
+          await hubWriteSshConfig(box, provider);
+        },
+        hydrate,
+      ),
     stop: (id) => runLifecycle(id, (box, provider) => provider.stop(box), hydrate),
     screen: (id) =>
-      runLifecycle(id, async (box, provider) => {
-        // The open-VNC prep step: mirror `agentbox screen` so the viewer shows
-        // the box's web app, not a blank X desktop. Browser-launch failures are
-        // logged, not thrown — the viewer URL still works without it.
-        if ((box.provider ?? 'docker') === 'docker') {
-          const br = await ensureBoxBrowserShowingApp(box);
-          if (!br.up) console.warn(`[hub] screen ${box.name}: in-box browser failed: ${br.reason ?? 'unknown'}`);
-        } else {
-          const br = await openWebAppOnVncScreen(box, provider);
-          if (!br.opened && br.reason && br.reason !== 'no web service') {
-            console.warn(`[hub] screen ${box.name}: in-box browser failed: ${br.reason}`);
+      runLifecycle(
+        id,
+        async (box, provider) => {
+          // The open-VNC prep step: mirror `agentbox screen` so the viewer shows
+          // the box's web app, not a blank X desktop. Browser-launch failures are
+          // logged, not thrown — the viewer URL still works without it.
+          if ((box.provider ?? 'docker') === 'docker') {
+            const br = await ensureBoxBrowserShowingApp(box);
+            if (!br.up)
+              console.warn(
+                `[hub] screen ${box.name}: in-box browser failed: ${br.reason ?? 'unknown'}`,
+              );
+          } else {
+            const br = await openWebAppOnVncScreen(box, provider);
+            if (!br.opened && br.reason && br.reason !== 'no web service') {
+              console.warn(`[hub] screen ${box.name}: in-box browser failed: ${br.reason}`);
+            }
           }
-        }
-      }, hydrate),
+        },
+        hydrate,
+      ),
     async destroy(id): Promise<ActionResult> {
       // A synthetic `job:` box is a failed create with no real container — "destroy"
       // it by clearing its queue manifest (what the tray/UI Dismiss action hits).
@@ -1317,11 +1383,15 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       // REAL cloud resource — not just a state reap. Then reap the now-dead Store
       // registration + custody regardless (idempotent; also cleans up a
       // locally-created box's lingering registration).
-      const local = await runLifecycle(id, async (box, provider) => {
-        await provider.destroy(box);
-        // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
-        await syncAgentboxSshConfig().catch(() => {});
-      }, hydrate);
+      const local = await runLifecycle(
+        id,
+        async (box, provider) => {
+          await provider.destroy(box);
+          // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
+          await syncAgentboxSshConfig().catch(() => {});
+        },
+        hydrate,
+      );
       const reaped = await reapStoreState(handle, id);
       if (local.ok) return { ok: true };
       // Real destroy couldn't run (no creds / provider unresolvable). If a
@@ -1376,10 +1446,14 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           const alias = hostSpec[1];
           const rd = await import('@agentbox/sandbox-remote-docker');
           if (!rd.getHostAlias(alias)) {
-            return { ok: false, error: `unknown remote-docker host '${alias}' — add it in Settings` };
+            return {
+              ok: false,
+              error: `unknown remote-docker host '${alias}' — add it in Settings`,
+            };
           }
         } else {
-          if (!isProviderKind(provider)) return { ok: false, error: `unknown provider ${provider}` };
+          if (!isProviderKind(provider))
+            return { ok: false, error: `unknown provider ${provider}` };
           if (!isProviderConfigured(provider)) {
             return { ok: false, error: `provider ${provider} is not set up on this host` };
           }
@@ -1447,7 +1521,8 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       }
     },
     prepareProvider(id, opts): Promise<CreateBoxResult> {
-      if (!isProviderKind(id)) return Promise.resolve({ ok: false, error: `unknown provider ${id}` });
+      if (!isProviderKind(id))
+        return Promise.resolve({ ok: false, error: `unknown provider ${id}` });
       // Serialize per provider so concurrent POSTs can't both miss the in-flight
       // job and enqueue duplicates (the check+enqueue below isn't atomic on its own).
       const prev = prepareEnqueueChain.get(id) ?? Promise.resolve();
@@ -1475,7 +1550,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         }
       });
       // Keep the chain alive for the next call without letting a rejection break it.
-      prepareEnqueueChain.set(id, run.catch(() => {}));
+      prepareEnqueueChain.set(
+        id,
+        run.catch(() => {}),
+      );
       return run;
     },
     async listBranches(projectId: string): Promise<BranchList> {
@@ -1553,14 +1631,16 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     },
 
     // ── box git operations (delegate to the shared, provider-agnostic helpers) ──
-    gitCheckout: (id, branch) => gitOp(id, (box, provider) => boxGitCheckout(provider, box, branch), hydrate),
+    gitCheckout: (id, branch) =>
+      gitOp(id, (box, provider) => boxGitCheckout(provider, box, branch), hydrate),
     gitNewBranch: (id, input) =>
       gitOp(id, (box, provider) => boxGitNewBranch(provider, box, input.name, input.from), hydrate),
     gitPush: (id, input = {}) =>
       gitOp(id, (box, provider) => boxGitPush(provider, box, input, hubGitDeps(id)), hydrate),
     gitPull: (id, input = {}) =>
       gitOp(id, (box, provider) => boxGitPull(provider, box, input, hubGitDeps(id)), hydrate),
-    gitPushHost: (id, input = {}) => gitOp(id, (box, provider) => boxGitPushHost(provider, box, input), hydrate),
+    gitPushHost: (id, input = {}) =>
+      gitOp(id, (box, provider) => boxGitPushHost(provider, box, input), hydrate),
     async getGit(id): Promise<GitInfo> {
       try {
         const rp = await resolveBoxProvider(id, hydrate);
@@ -1568,7 +1648,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         const r = await rp.provider.exec(rp.box, ['git', 'status', '--porcelain=v2', '--branch'], {
           cwd: BOX_WORKSPACE,
         });
-        if (r.exitCode !== 0) return { ok: false, error: (r.stderr || `git status exited ${String(r.exitCode)}`).trim() };
+        if (r.exitCode !== 0)
+          return {
+            ok: false,
+            error: (r.stderr || `git status exited ${String(r.exitCode)}`).trim(),
+          };
         return parseGitStatus(r.stdout);
       } catch (err) {
         return { ok: false, error: errMsg(err) };
@@ -1578,11 +1662,19 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     // ── box service control ──
     async getServices(id): Promise<ServicesResult> {
       const rp = await resolveBoxProvider(id, hydrate).catch(() => null);
-      if (!rp) return { source: 'unavailable', services: [], tasks: [], ports: [], error: `box ${id} not found` };
+      if (!rp)
+        return {
+          source: 'unavailable',
+          services: [],
+          tasks: [],
+          ports: [],
+          error: `box ${id} not found`,
+        };
       const live = await liveServices(rp.provider, rp.box);
       if (live) return mapLiveServices(live);
       const snap = handle.statusStore.get(id);
-      if (snap && isValidBoxStatus(snap)) return mapPersistedServices(snap as unknown as CtlBoxStatus);
+      if (snap && isValidBoxStatus(snap))
+        return mapPersistedServices(snap as unknown as CtlBoxStatus);
       return { source: 'unavailable', services: [], tasks: [], ports: [] };
     },
     async restartService(id, name): Promise<BoxOpResult> {
@@ -1593,16 +1685,22 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           const r = await boxRestartService(rp.provider, rp.box, name);
           return r.exitCode === 0
             ? { ok: true, stdout: r.stdout, stderr: r.stderr }
-            : { ok: false, error: (r.stderr || `restart ${name} exited ${String(r.exitCode)}`).trim() };
+            : {
+                ok: false,
+                error: (r.stderr || `restart ${name} exited ${String(r.exitCode)}`).trim(),
+              };
         }
         // Restart all: read the live service list, then restart each in sequence.
         const live = await liveServices(rp.provider, rp.box);
-        if (!live) return { ok: false, error: 'could not reach the box supervisor (is the box running?)' };
+        if (!live)
+          return { ok: false, error: 'could not reach the box supervisor (is the box running?)' };
         const names = live.services.map((s) => s.name);
         if (names.length === 0) return { ok: true };
         const results = await boxRestartServices(rp.provider, rp.box, names);
         const failed = results.filter((r) => r.result.exitCode !== 0).map((r) => r.name);
-        return failed.length > 0 ? { ok: false, error: `failed to restart: ${failed.join(', ')}` } : { ok: true };
+        return failed.length > 0
+          ? { ok: false, error: `failed to restart: ${failed.join(', ')}` }
+          : { ok: true };
       } catch (err) {
         return { ok: false, error: errMsg(err) };
       }
@@ -1618,12 +1716,15 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         return { ok: false, error: 'open-in actions require a local hub running on macOS' };
       }
       const entry = process.env['AGENTBOX_CLI_ENTRY'];
-      if (!entry) return { ok: false, error: 'hub is missing AGENTBOX_CLI_ENTRY; cannot launch host apps' };
+      if (!entry)
+        return { ok: false, error: 'hub is missing AGENTBOX_CLI_ENTRY; cannot launch host apps' };
       try {
         // Re-shell `agentbox open <id> --in <app>` (routes vscode -> code, the
         // rest to their host-app launchers). It launches and returns; the timeout
         // guards against a hung launcher, not the app staying open.
-        await execFileAsync(process.execPath, [entry, 'open', id, '--in', app], { timeout: 20_000 });
+        await execFileAsync(process.execPath, [entry, 'open', id, '--in', app], {
+          timeout: 20_000,
+        });
         return { ok: true };
       } catch (err) {
         // execFile rejects on non-zero exit. The CLI prints its real error via
@@ -1655,10 +1756,13 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         }
         // Probe before saving so an unreachable host / missing docker is rejected.
         const probe = await rd.probeRemoteEngine(trimmedSsh);
-        if (!probe.ok) return { ok: false, error: probe.error ?? `${trimmedSsh}: remote engine unusable` };
+        if (!probe.ok)
+          return { ok: false, error: probe.error ?? `${trimmedSsh}: remote engine unusable` };
         rd.upsertHostAlias(alias, trimmedSsh);
         if (opts?.default) {
-          await setConfigValue('global', 'box.remoteDockerHost', alias, os.homedir(), { raw: true });
+          await setConfigValue('global', 'box.remoteDockerHost', alias, os.homedir(), {
+            raw: true,
+          });
         }
         return { ok: true };
       } catch (err) {

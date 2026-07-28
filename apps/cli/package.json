@@ -48,7 +48,7 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist runtime .turbo",
     "stage": "node scripts/stage-runtime.mjs",
-    "prepublishOnly": "cd ../.. && pnpm -w build && pnpm --filter @agentbox/hub build:standalone && pnpm --filter @madarco/agentbox stage",
+    "prepublishOnly": "cd ../.. && pnpm -w build && pnpm --filter @agentbox/hub build:standalone && pnpm --filter @madarco/agentbox stage && pnpm check:cloud-backends",
     "version": "git add CHANGELOG.md",
     "publish:patch": "npm version patch && git push --follow-tags",
     "publish:minor": "npm version minor && git push --follow-tags"

@@ -462,6 +462,20 @@ supported" error so the in-box RPC unblocks):
 - `browser.open.mirror` — fire-and-forget; host opens the URL in the
   user's browser after an SSE prompt (90s TTL).
 
+**How the host executor finds the backend.** The relay bundle carries no
+`@agentbox/sandbox-*` packages (that would close a
+`sandbox-daytona → sandbox-cloud → sandbox-docker → relay` dependency cycle), so
+the host process injects them with `setCloudBackendLoader`. `resolveCloudBackend`
+then tries, in order: the **injected loader** (built-ins only) → the legacy
+computed-specifier `import()` (resolves only in the pnpm dev tree) → the
+**plugin registry** (external providers, imported by absolute path, behind the
+SDK-version gate) → error. The two injection sites are the CLI's spawned relay
+bin, which side-loads `apps/cli/dist/cloud-backends.js` through the
+`AGENTBOX_CLOUD_BACKENDS` env var set by `spawnRelay`, and the hub/control box,
+which registers `apps/hub/lib/provider-importers.ts` in-process before starting
+the daemon. `scripts/check-cloud-backend-wiring.mjs` guards both in CI — the
+failure mode only appears in built bundles.
+
 ### 2.4 Preview URLs
 
 Three flavors, one per use case:
@@ -1052,10 +1066,11 @@ Compose the full `Provider` with `createCloudProvider(backend)` and export a
 Two ways to ship it:
 
 - **Built-in** (first-party): add one row to the `PROVIDERS` table in
-  `packages/config/src/providers.ts` and one entry to the `IMPORTERS` map in
-  `apps/cli/src/provider/loaders.ts` (both bundle-inlined), plus the relay's
-  literal-import block in `resolveCloudBackend`
-  (`packages/relay/src/host-actions.ts`).
+  `packages/config/src/providers.ts`, then one entry to each literal-import map
+  — `apps/cli/src/provider/loaders.ts` and `apps/hub/lib/provider-importers.ts`.
+  Both are `Record<ProviderKind, …>`, so a missing entry is a type error. The
+  relay itself needs no edit: it resolves backends through whichever of those
+  maps the host process injected (see §2.3).
 - **External / community plugin**: publish `agentbox-provider-<name>` built on
   `@madarco/agentbox-provider-sdk` and `agentbox plugin add` it — **no edits to AgentBox**.
   This is the recommended path for third-party clouds. See

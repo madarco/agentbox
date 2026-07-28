@@ -51,12 +51,7 @@ export {
 } from './credentials-fanout.js';
 export { type Store, type PromptRow } from './store/store.js';
 export { MemoryStore, type MemoryStoreParts } from './store/memory-store.js';
-export {
-  gateApproval,
-  type ApprovalGate,
-  type GateDeps,
-  type PromptMode,
-} from './permission.js';
+export { gateApproval, type ApprovalGate, type GateDeps, type PromptMode } from './permission.js';
 export { resolveWorktree } from './worktree.js';
 export { leaseTokenResult } from './lease.js';
 export {
@@ -194,6 +189,11 @@ export {
   type RelayServerOptions,
 } from './server.js';
 export { startRelayDaemon, type RelayDaemonHandle } from './daemon.js';
+export {
+  setCloudBackendLoader,
+  type CloudBackendLoader,
+  type CloudCpModule,
+} from './host-actions.js';
 export {
   loadAutopauseConfig,
   selectBoxesToPause,

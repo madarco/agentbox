@@ -103,6 +103,12 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **`git push` from a cloud box failed on an npm-installed AgentBox** with
+  `Cannot find package '@agentbox/sandbox-<provider>'`. The relay resolved
+  provider backends from `node_modules`, which the published package doesn't
+  ship; the CLI and the hub now hand it their own bundled providers. Downloads
+  and `gh pr create` from a cloud box were hit too. Restart the relay (any
+  `agentbox` command does it) after upgrading.
 - **A rate-limited image pull rebuilt the box image from scratch instead.** GHCR
   throttles anonymous pulls per IP, so a machine that had just baked a few times got
   a 429 — and because the pull only reported a bare pass/fail, that was
