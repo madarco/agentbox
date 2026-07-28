@@ -90,6 +90,16 @@ export interface ProviderBake {
     added?: string[];
     removed?: string[];
   };
+  /**
+   * WHICH MACHINE this row describes. `hub` means the state came from the
+   * configured control box, because boxes on this provider are created and baked
+   * there — so this host's own bake record is not the answer, and the per-bake
+   * metadata (fingerprint / bakedAt / imageRef) is deliberately absent rather
+   * than filled in from the wrong machine.
+   */
+  origin?: 'local' | 'hub';
+  /** The control box's URL, for an out-link on an `origin: 'hub'` row. */
+  hubUrl?: string;
 }
 
 /**

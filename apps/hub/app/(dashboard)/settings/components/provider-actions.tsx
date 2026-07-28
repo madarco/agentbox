@@ -225,9 +225,15 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
     }
   };
 
+  // This row describes the CONTROL BOX, because that is where boxes on this
+  // provider are created and baked. Credentials and bakes there are its own
+  // hub's to manage, so the row is a read-only mirror with a link out — the
+  // alternative (proxying every action through this hub) would make two UIs
+  // responsible for one machine's state.
+  const onHub = p.origin === 'hub';
   const canBake = p.id === 'docker' || p.hasCredentials;
   const hasFields = fields.length > 0;
-  const expandable = hasFields || isRD;
+  const expandable = !onHub && (hasFields || isRD);
 
   return (
     <div className="flex flex-col gap-3 p-4 px-5">
@@ -241,6 +247,14 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
           <div className="flex items-center gap-2 text-[14px] font-semibold">
             {p.label}
             {isRD ? hostCountBadge(hostCount) : statusBadge(p)}
+            {onHub ? (
+              <Badge
+                className="gap-1.5 normal-case"
+                title="Boxes on this provider are created and baked on the control box, so this is its state — not this machine's."
+              >
+                control box
+              </Badge>
+            ) : null}
           </div>
           {isRD ? (
             <div className="mt-0.5 text-[12.5px] text-muted-foreground">
@@ -250,7 +264,17 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
             <div className="mt-0.5 text-[12.5px] text-muted-foreground">{p.reason}</div>
           ) : null}
         </div>
-        {isRD ? null : (
+        {onHub ? (
+          <a
+            href={p.hubUrl ? `${p.hubUrl}/settings` : undefined}
+            target="_blank"
+            rel="noreferrer"
+            className="flex-none text-[12.5px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            onClick={(e) => e.stopPropagation()}
+          >
+            Manage on the control box ↗
+          </a>
+        ) : isRD ? null : (
           <div className="flex flex-none items-center gap-2" onClick={(e) => e.stopPropagation()}>
             <Button
               type="button"
@@ -286,7 +310,7 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
         </div>
       ) : null}
 
-      {showForm && fields.length > 0 ? (
+      {!onHub && showForm && fields.length > 0 ? (
         <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-card/50 p-3">
           {fields.map((f) => (
             <div key={f.key} className="flex flex-col gap-1">

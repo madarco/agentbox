@@ -54,7 +54,7 @@ export async function GET(): Promise<Response> {
   const backend = backendOrNull();
   const freshness = new Map<
     string,
-    Pick<ProviderOption, 'baseStatus' | 'baseStaleReason' | 'bakeDiff'>
+    Pick<ProviderOption, 'baseStatus' | 'baseStaleReason' | 'bakeDiff' | 'origin' | 'hubUrl'>
   >();
   if (backend) {
     try {
@@ -63,6 +63,8 @@ export async function GET(): Promise<Response> {
           baseStatus: p.baseStatus,
           baseStaleReason: p.baseStaleReason,
           bakeDiff: p.bakeDiff,
+          origin: p.origin,
+          hubUrl: p.hubUrl,
         });
       }
     } catch {
@@ -78,8 +80,14 @@ export async function GET(): Promise<Response> {
     // still has a stored fingerprint — baked, just not freshness-verifiable — so
     // it stays baked and keeps its metadata. Absent freshness (the plane read
     // path) → fall back to whether a bake record exists. See isBaked().
-    const baked = isBaked(f?.baseStatus, prepared !== null);
-    const rec = baked ? prepared : null;
+    // A control-box row's readiness came from THAT machine. Its per-bake
+    // metadata lives there too, so the local prepared record is dropped rather
+    // than shown beside a status it does not belong to.
+    const onHub = f?.origin === 'hub';
+    const baked = onHub
+      ? isBaked(f?.baseStatus, false)
+      : isBaked(f?.baseStatus, prepared !== null);
+    const rec = !onHub && baked ? prepared : null;
     return {
       id,
       label: PROVIDER_LABELS[id] ?? id,
@@ -91,6 +99,8 @@ export async function GET(): Promise<Response> {
       baseStatus: f?.baseStatus,
       baseStaleReason: f?.baseStaleReason,
       bakeDiff: f?.bakeDiff,
+      origin: f?.origin,
+      hubUrl: f?.hubUrl,
     };
   });
 

@@ -234,6 +234,14 @@ function ProviderBakeRow({ p }: { p: ProviderBake }) {
       <div className="flex items-center gap-2.5">
         <span className="text-[14px] font-semibold">{p.label}</span>
         <StatusBadge p={p} />
+        {p.origin === 'hub' ? (
+          <Badge
+            className="gap-1.5 normal-case"
+            title="Boxes on this provider are built on the control box, so this is its bake state — not this machine's."
+          >
+            control box
+          </Badge>
+        ) : null}
         {p.fingerprint ? (
           <span
             className="ml-auto font-mono text-[11px] text-[#a4a9b0]"
@@ -253,6 +261,16 @@ function ProviderBakeRow({ p }: { p: ProviderBake }) {
         <span>{p.baseStaleReason ?? verdict.text}</span>
       </div>
       {p.baseStatus === 'stale' ? <StaleDiff p={p} /> : null}
+      {p.origin === 'hub' && p.hubUrl ? (
+        <a
+          href={`${p.hubUrl}/system`}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[12.5px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+        >
+          Bake details on the control box ↗
+        </a>
+      ) : null}
       {p.baked ? (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-[#a4a9b0]">
           {p.cliVersion ? <span>baked with {p.cliVersion}</span> : null}

@@ -151,6 +151,16 @@ export interface ProviderOption {
   // Which files actually differ, when baseStatus === 'stale'. Only computed for
   // stale rows (it re-hashes the build context).
   bakeDiff?: BakeDiff;
+  // WHICH MACHINE this row describes. 'hub' means the state was read from the
+  // configured control box, because that is where boxes on this provider are
+  // actually created and baked (`cloud.viaHub`) — so this host's own bake is
+  // irrelevant to it. Docker and remote-docker are always 'local': their bases
+  // are local images, not portable snapshots. Absent = local (the plain,
+  // no-control-box case).
+  origin?: 'local' | 'hub';
+  // The control box's URL, for the out-links on an `origin: 'hub'` row. Actions
+  // on a remote provider belong to the remote hub's own UI.
+  hubUrl?: string;
 }
 
 /**

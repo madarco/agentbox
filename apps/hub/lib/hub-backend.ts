@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import {
   findProjectRoot,
   hashProjectPath,
+  isHubRoutableProvider,
   isProviderKind,
   listProjectsConfigured,
   loadEffectiveConfig,
@@ -41,7 +42,9 @@ import {
   type QueueJob,
   type RelayServerHandle,
 } from '@agentbox/relay';
+import { mergeRemoteProviders } from './boxes/provider-origin.js';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
+import { fetchRemoteProviders, resolveRemoteHub } from './remote-hub.js';
 import { IMPORTERS } from './provider-importers.js';
 import type { BoxGitDeps } from '@agentbox/sandbox-core';
 import {
@@ -652,6 +655,17 @@ function listProviders(jobs: QueueJob[]): ProviderOption[] {
   });
 }
 
+/**
+ * Swap in the CONTROL BOX's cloud rows when one is configured. The rule itself
+ * is pure and lives in `boxes/provider-origin`; this is the IO half.
+ */
+async function withRemoteProviders(local: ProviderOption[]): Promise<ProviderOption[]> {
+  const remote = await fetchRemoteProviders();
+  if (remote === undefined) return local; // no control box — everything is local
+  const target = await resolveRemoteHub();
+  return mergeRemoteProviders({ local, remote, hubUrl: target?.url });
+}
+
 // ── base-image freshness (opt-in; kept OFF the getData() hot path) ──
 // Computing a provider's live fingerprint loads its module and hashes the
 // runtime build context (~15 small files) — cheap but not free, and pointless
@@ -754,6 +768,10 @@ async function listProvidersWithFreshness(base: ProviderOption[]): Promise<Provi
   return Promise.all(
     base.map(async (p) => {
       if (!isProviderKind(p.id)) return p;
+      // A control-box row already carries THAT machine's freshness, computed
+      // against ITS build context. Recomputing it here would answer a question
+      // about the wrong host — the "adopted-then-nagged" bug, one level up.
+      if (p.origin === 'hub') return p;
       const fresh = await providerBaseFreshness(p.id, claudeInstall);
       return {
         ...p,
@@ -1455,12 +1473,14 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         ],
         // Block-mode approvals live in-process on the relay handle, not the Store.
         approvals: handle.prompts.all().map(mapApproval),
-        providers: listProviders(jobs),
+        providers: await withRemoteProviders(listProviders(jobs)),
         controlPlane: await readControlPlane(),
       };
     },
     async providersWithFreshness(opts): Promise<ProviderOption[]> {
-      const fresh = await listProvidersWithFreshness(listProviders(await loadQueue()));
+      const fresh = await listProvidersWithFreshness(
+        await withRemoteProviders(listProviders(await loadQueue())),
+      );
       return opts?.expandRemoteDockerHosts ? expandRemoteDockerHosts(fresh) : fresh;
     },
     start: (id) =>
@@ -1616,6 +1636,16 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           if (!isProviderKind(provider))
             return { ok: false, error: `unknown provider ${provider}` };
           if (!isProviderConfigured(provider)) {
+            // With a control box configured, cloud boxes are ITS job — this UI
+            // is a mirror, not a second create path — so say where to go rather
+            // than tell the user to set up a provider this host won't use.
+            const hub = isHubRoutableProvider(provider) ? await resolveRemoteHub() : null;
+            if (hub) {
+              return {
+                ok: false,
+                error: `create ${provider} boxes on the control box (${hub.url}) — this host mirrors its state`,
+              };
+            }
             return { ok: false, error: `provider ${provider} is not set up on this host` };
           }
         }
