@@ -105,6 +105,23 @@ describe('handleRemoteBoxesRequest', () => {
       expect(res?.status).toBe(501);
     });
 
+    it('400s a job id that could escape the log directory, without reading', async () => {
+      let called = false;
+      const res = await handleRemoteBoxesRequest(
+        req({ path: `/remote/boxes/${encodeURIComponent('../../etc/passwd')}/logs` }),
+        {
+          store: store(),
+          adminToken: ADMIN,
+          readJobLog: () => {
+            called = true;
+            return Promise.resolve({ lines: [], offset: 0 });
+          },
+        },
+      );
+      expect(res?.status).toBe(400);
+      expect(called).toBe(false);
+    });
+
     it('401s before reading anything', async () => {
       let called = false;
       const res = await handleRemoteBoxesRequest(

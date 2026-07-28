@@ -62,6 +62,17 @@ export interface RemoteBoxesDeps {
 
 export const REMOTE_BOXES_PREFIX = '/remote/boxes';
 
+/**
+ * A job id we are willing to hand to a path-building reader.
+ *
+ * Enforced HERE, at the trust boundary, not only inside the one reader that
+ * builds a path today: `readJobLog` is injectable, and a future implementation
+ * that forgot the check would inherit a path traversal straight off the URL.
+ */
+export function isSafeJobId(id: string): boolean {
+  return id.length > 0 && id.length <= 128 && /^[A-Za-z0-9._-]+$/.test(id);
+}
+
 /** True when `path` addresses the create-queue surface. */
 export function isRemoteBoxesPath(path: string): boolean {
   return path === REMOTE_BOXES_PREFIX || path.startsWith(`${REMOTE_BOXES_PREFIX}/`);
@@ -159,6 +170,7 @@ export async function handleRemoteBoxesRequest(
       req.path.slice(`${REMOTE_BOXES_PREFIX}/`.length, -'/logs'.length),
     );
     if (id.length === 0) return { status: 404, body: { error: 'no such job' } };
+    if (!isSafeJobId(id)) return { status: 400, body: { error: 'invalid job id' } };
     if (!deps.readJobLog) {
       return { status: 501, body: { error: 'job logs not available on this plane' } };
     }

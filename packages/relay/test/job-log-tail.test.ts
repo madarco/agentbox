@@ -11,10 +11,9 @@ process.env.HOME = HOME;
 const LOGS = join(HOME, '.agentbox', 'logs');
 
 let readCreateJobLog: (typeof import('../src/job-log-tail.js'))['readCreateJobLog'];
-let isSafeJobId: (typeof import('../src/job-log-tail.js'))['isSafeJobId'];
 
 beforeAll(async () => {
-  ({ readCreateJobLog, isSafeJobId } = await import('../src/job-log-tail.js'));
+  ({ readCreateJobLog } = await import('../src/job-log-tail.js'));
   await mkdir(LOGS, { recursive: true });
 });
 
@@ -57,10 +56,9 @@ describe('readCreateJobLog', () => {
     expect(tail.lines).toEqual(['fresh line']);
   });
 
+  // Belt and braces: the route gates on isSafeJobId too, but this reader is
+  // injectable and must not depend on its caller having checked.
   it('refuses a job id that is not a bare token (path traversal)', async () => {
-    expect(isSafeJobId('7f3c-42')).toBe(true);
-    expect(isSafeJobId('../../etc/passwd')).toBe(false);
-    expect(isSafeJobId('')).toBe(false);
     expect(await readCreateJobLog('../../etc/passwd', 0)).toEqual({ lines: [], offset: 0 });
   });
 });

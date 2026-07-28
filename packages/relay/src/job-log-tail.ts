@@ -11,6 +11,7 @@
 
 import { open, stat } from 'node:fs/promises';
 import { queueLogPath } from './queue.js';
+import { isSafeJobId } from './remote-boxes.js';
 
 /** Per-response ceiling. A busy job just gets drained over several polls. */
 const MAX_BYTES_PER_READ = 64 * 1024;
@@ -22,16 +23,13 @@ export interface JobLogTail {
   offset: number;
 }
 
-/** A job id we are willing to build a path from (the route takes it off the URL). */
-export function isSafeJobId(id: string): boolean {
-  return id.length > 0 && id.length <= 128 && /^[A-Za-z0-9._-]+$/.test(id);
-}
-
 /**
  * Read whole lines appended to job `id`'s log after `offset`.
  *
  * A missing file is normal, not an error: the job can be claimed a tick before
  * the worker writes its first line, and a job that never ran has no log at all.
+ * The id is re-checked here so this is safe to call from anywhere, not only
+ * from behind the route's own {@link isSafeJobId} gate.
  * The returned offset only ever advances past complete lines, so a read that
  * lands mid-line re-reads that line's bytes next time rather than emitting a
  * truncated line or dropping it.
