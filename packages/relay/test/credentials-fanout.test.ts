@@ -86,3 +86,68 @@ describe('CredentialsFanout', () => {
     await fanout.flush();
   });
 });
+
+describe('CredentialsFanout — custody write-back', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'fanout-custody-'));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function makeWithCustody(put: (path: string, data: Buffer) => Promise<unknown>) {
+    return new CredentialsFanout({
+      log: () => {},
+      debounceMs: 100,
+      runPropagate: async () => {},
+      backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
+      custody: { put },
+    });
+  }
+
+  // Without this the freshest token lives only in the host backup, and the next
+  // hub create re-seeds that backup from custody's older copy — the box then
+  // starts with a rotated-away (dead) credential.
+  it('mirrors an accepted credential into custody', async () => {
+    const puts: { path: string; text: string }[] = [];
+    const fanout = makeWithCustody(async (path, data) => {
+      puts.push({ path, text: data.toString('utf8') });
+    });
+    const blob = claudeBlob(3_000);
+
+    expect((await fanout.handle('box-1', payload('claude', blob))).accepted).toBe(true);
+    expect(puts).toEqual([{ path: 'agents/claude/.credentials.json', text: blob }]);
+  });
+
+  it('does not write custody for a rejected (stale) update', async () => {
+    const puts: string[] = [];
+    const fanout = makeWithCustody(async (path) => {
+      puts.push(path);
+    });
+    await fanout.handle('box-1', payload('claude', claudeBlob(5_000)));
+    puts.length = 0;
+
+    const stale = await fanout.handle('box-2', payload('claude', claudeBlob(1_000)));
+    expect(stale.accepted).toBe(false);
+    expect(puts).toEqual([]);
+  });
+
+  it('still accepts and fans out when custody rejects the write', async () => {
+    const fanout = makeWithCustody(() => Promise.reject(new Error('custody offline')));
+    const res = await fanout.handle('box-1', payload('claude', claudeBlob(3_000)));
+    // The fan-out is what repairs boxes already running — a custody hiccup
+    // must not cost us that.
+    expect(res.accepted).toBe(true);
+  });
+
+  it('uses each agent’s own custody path', async () => {
+    const paths: string[] = [];
+    const fanout = makeWithCustody(async (path) => {
+      paths.push(path);
+    });
+    await fanout.handle('box-1', payload('codex', JSON.stringify({ tokens: { access: 'x' } })));
+    expect(paths).toEqual(['agents/codex/auth.json']);
+  });
+});

@@ -21,6 +21,7 @@ import { execa } from 'execa';
 import {
   parseCredentialsUpdate,
   readCredentialBackup,
+  resolveAgentSpec,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
   type CredentialAgentKind,
@@ -37,6 +38,17 @@ export interface CredentialsFanoutDeps {
   runPropagate?: (agent: CredentialAgentKind, sourceBoxId: string) => Promise<void>;
   /** Override the per-agent backup path (tests; default: the registry's). */
   backupPathFor?: (agent: CredentialAgentKind) => string;
+  /**
+   * The control box's custody store, when this relay owns one. Present ⇒ an
+   * accepted credential is mirrored into `agents/<id>/…` so the next hub create
+   * seeds from a current copy rather than the last one a PC pushed.
+   */
+  custody?: CredentialCustodyWriter | null;
+}
+
+/** The single write this needs from a custody store (structural: no import cycle). */
+export interface CredentialCustodyWriter {
+  put(path: string, data: Buffer): Promise<unknown>;
 }
 
 export interface CredentialsHandleResult {
@@ -49,6 +61,7 @@ export class CredentialsFanout {
   private readonly debounceMs: number;
   private readonly runPropagate: (agent: CredentialAgentKind, sourceBoxId: string) => Promise<void>;
   private readonly backupPathFor?: (agent: CredentialAgentKind) => string;
+  private readonly custody: CredentialCustodyWriter | null;
   private readonly pending = new Map<CredentialAgentKind, NodeJS.Timeout>();
   private readonly chains = new Map<CredentialAgentKind, Promise<void>>();
 
@@ -57,6 +70,7 @@ export class CredentialsFanout {
     this.debounceMs = deps.debounceMs ?? 3_000;
     this.runPropagate = deps.runPropagate ?? defaultRunPropagate;
     this.backupPathFor = deps.backupPathFor;
+    this.custody = deps.custody ?? null;
   }
 
   /**
@@ -73,11 +87,40 @@ export class CredentialsFanout {
       return { accepted: false, reason: verdict.reason };
     }
     await writeCredentialBackup(update.agent, update.content, { backupPath });
+    await this.recordInCustody(update.agent, update.content);
     this.log(
       `credentials: accepted ${update.agent} update from box ${sourceBoxId} (${verdict.reason}); fan-out in ${String(this.debounceMs)}ms`,
     );
     this.schedule(update.agent, sourceBoxId);
     return { accepted: true, reason: verdict.reason };
+  }
+
+  /**
+   * Mirror the accepted blob into custody, on a control box.
+   *
+   * Without this the freshest token lives ONLY in the host backup, and the next
+   * hub create re-seeds that backup from custody — a copy that is only as new as
+   * the last PC push. Since a refresh rotates the token, every box built after
+   * that came up with a dead credential. Writing here is what makes custody
+   * self-healing: the boxes refreshing their own tokens keep it current with no
+   * PC involvement.
+   *
+   * Best-effort by design — a custody failure must not cost us the fan-out,
+   * which is the part that fixes the boxes that are already running.
+   */
+  private async recordInCustody(agent: CredentialAgentKind, content: string): Promise<void> {
+    if (!this.custody) return;
+    try {
+      const spec = resolveAgentSpec(agent);
+      await this.custody.put(
+        `agents/${agent}/${spec.credential.boxRelPath}`,
+        Buffer.from(content, 'utf8'),
+      );
+    } catch (err) {
+      this.log(
+        `credentials: could not record ${agent} in custody: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   private schedule(agent: CredentialAgentKind, sourceBoxId: string): void {

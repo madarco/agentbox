@@ -12,9 +12,9 @@
  */
 import { execFile } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { readdir, rm } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { isProviderKind, loadEffectiveConfig } from '@agentbox/config';
 import {
@@ -35,6 +35,9 @@ import {
   AGENT_SYNC_SPECS,
   boxSshDirForProvider,
   projectSlugFromOriginUrl,
+  readCredentialBackup,
+  shouldAcceptCredentialUpdate,
+  writeCredentialBackup,
 } from '@agentbox/sandbox-core';
 import { applyProjectSeed, startDetachedCloudAgent } from '@agentbox/sandbox-cloud';
 import { resolveAgentLauncher, type AgentKind } from '@agentbox/core';
@@ -62,8 +65,8 @@ async function runGit(
  * PC `credentials push` (phase 2) is what logs hub-created boxes in — one code
  * path, no second credential list.
  */
-async function seedHostBackupsFromCustody(
-  custody: FsCustodyStore,
+export async function seedHostBackupsFromCustody(
+  custody: Pick<FsCustodyStore, 'get'>,
   log: (l: string) => void,
 ): Promise<void> {
   for (const spec of AGENT_SYNC_SPECS) {
@@ -71,9 +74,21 @@ async function seedHostBackupsFromCustody(
     try {
       const found = await custody.get(custodyPath);
       if (!found) continue;
-      await mkdir(dirname(spec.credential.hostBackup), { recursive: true });
-      await writeFile(spec.credential.hostBackup, found.data, { mode: 0o600 });
-      log(`seeded ${spec.id} credentials from custody`);
+      const incoming = found.data.toString('utf8');
+      // NEVER downgrade. This used to overwrite unconditionally, which is how a
+      // box came up logged out: a box's refreshed token had just landed in the
+      // host backup (via CredentialsFanout), and the next create replaced it with
+      // custody's hours-old copy. Claude's OAuth refresh ROTATES the refresh
+      // token, so an older blob isn't merely expired — it is dead, and the box
+      // cannot recover from it. Same newest-wins rule the fanout applies.
+      const existing = await readCredentialBackup(spec.id);
+      const verdict = shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+      if (!verdict.accept) {
+        log(`kept the local ${spec.id} credentials (custody copy ${verdict.reason})`);
+        continue;
+      }
+      await writeCredentialBackup(spec.id, incoming);
+      log(`seeded ${spec.id} credentials from custody (${verdict.reason})`);
     } catch (err) {
       log(
         `seed ${spec.id} from custody failed: ${err instanceof Error ? err.message : String(err)}`,

@@ -382,7 +382,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   // write + debounced `agentbox credentials propagate` spawn). In box mode the
   // event rides the local ring buffer to the bridge instead — the host's
   // poller hands it to this handler on the other side.
-  const credentialsFanout = mode === 'box' ? null : new CredentialsFanout({ log });
+  // `custody` is the control box's store — passing it is what lets an accepted
+  // token reach custody, so the next hub create seeds a current credential
+  // instead of the last one a PC pushed. Absent on a localhost relay (no store).
+  const credentialsFanout =
+    mode === 'box' ? null : new CredentialsFanout({ log, custody: opts.custody ?? null });
   if (mode === 'box' && (!opts.bridgeToken || opts.bridgeToken.length === 0)) {
     throw new Error("relay mode='box' requires a non-empty bridgeToken");
   }

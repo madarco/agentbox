@@ -50,3 +50,31 @@ describe('hetznerResourceName', () => {
     expect(hetznerResourceName('agentbox', '///', 'm1a2b3')).toBe('agentbox-m1a2b3');
   });
 });
+
+describe('hetznerResourceName — prefix dedupe', () => {
+  // A control box names boxes after its worker clone dir, which already starts
+  // with `agentbox-`; the doubled prefix pushed the live name to exactly 63 chars.
+  it('does not repeat a prefix the name already carries', () => {
+    const n = hetznerResourceName(
+      'agentbox',
+      'agentbox-hub-worker-afa6513d-3-bdcccf2',
+      'ms51z3oo-6eu6if',
+    );
+    expect(n).toBe('agentbox-hub-worker-afa6513d-3-bdcccf2-ms51z3oo-6eu6if');
+    expect(n.startsWith('agentbox-agentbox-')).toBe(false);
+    expect(n.length).toBeLessThanOrEqual(HETZNER_MAX_NAME);
+  });
+
+  it('still prefixes a name that does not carry it', () => {
+    expect(hetznerResourceName('agentbox', 'wispy-fox', 'm1a2b3')).toBe(
+      'agentbox-wispy-fox-m1a2b3',
+    );
+  });
+
+  // `agentboxy` is not the prefix followed by a separator — only `agentbox-` is.
+  it('only strips a whole prefix segment', () => {
+    expect(hetznerResourceName('agentbox', 'agentboxy-thing', 'm1')).toBe(
+      'agentbox-agentboxy-thing-m1',
+    );
+  });
+});
