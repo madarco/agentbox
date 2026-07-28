@@ -27,6 +27,8 @@ export {
   preparedCustodyPath,
   pullPreparedFromCustody,
   pushPreparedToCustody,
+  writePreparedToCustodyStore,
+  type PreparedCustodyWriter,
   type PreparedSyncTarget,
   type PullPreparedResult,
 } from './prepared-sync.js';

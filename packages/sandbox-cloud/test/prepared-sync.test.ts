@@ -9,9 +9,12 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest';
 const TEST_HOME = mkdtempSync(join(tmpdir(), 'agentbox-prepared-sync-home-'));
 process.env['HOME'] = TEST_HOME;
 
-const { preparedCustodyPath, pullPreparedFromCustody, pushPreparedToCustody } = await import(
-  '../src/prepared-sync.js'
-);
+const {
+  preparedCustodyPath,
+  pullPreparedFromCustody,
+  pushPreparedToCustody,
+  writePreparedToCustodyStore,
+} = await import('../src/prepared-sync.js');
 const { readPreparedStateRaw, writePreparedStateRaw } = await import('@agentbox/sandbox-core');
 
 afterEach(async () => {
@@ -153,5 +156,57 @@ describe('pullPreparedFromCustody', () => {
 
     expect(res.adopted).toBe(true);
     expect(readPreparedStateRaw('e2b')).toMatchObject({ base: { imageRef: 'tpl-abc' } });
+  });
+});
+
+describe('writePreparedToCustodyStore', () => {
+  /** The one method the writer needs, matching relay's FsCustodyStore.put. */
+  function fakeStore() {
+    const puts: { path: string; data: Buffer }[] = [];
+    return {
+      puts,
+      store: {
+        put: (path: string, data: Buffer) => {
+          puts.push({ path, data });
+          return Promise.resolve({});
+        },
+      },
+    };
+  }
+
+  // A control box has no control box of its own, so the HTTP push has no target
+  // and its bakes never became shareable. It owns the store — write to it.
+  it('writes the local bake record straight into the store', async () => {
+    writePreparedStateRaw('daytona', record(FINGERPRINT, 'snap-vm-1'));
+    const { store, puts } = fakeStore();
+    const said: string[] = [];
+
+    expect(await writePreparedToCustodyStore('daytona', store, (l) => said.push(l))).toBe(true);
+    expect(puts).toHaveLength(1);
+    expect(puts[0]!.path).toBe(preparedCustodyPath('daytona'));
+    expect(JSON.parse(puts[0]!.data.toString('utf8'))).toMatchObject({
+      base: { contextSha256: FINGERPRINT, imageRef: 'snap-vm-1' },
+    });
+    expect(said.join(' ')).toContain('custody');
+  });
+
+  // The same record the HTTP push uploads, or a bake written by a control box
+  // would read back differently from one pushed by a PC — and `pull` compares
+  // the stored fingerprint exactly.
+  it('writes the same record the HTTP push sends', async () => {
+    writePreparedStateRaw('hetzner', record(FINGERPRINT, 413599249));
+    const { fetchImpl, puts: httpPuts } = fakeCustody();
+    await pushPreparedToCustody('hetzner', target(fetchImpl));
+    const { store, puts } = fakeStore();
+    await writePreparedToCustodyStore('hetzner', store);
+
+    expect(puts[0]!.path).toBe(httpPuts[0]!.path);
+    expect(JSON.parse(puts[0]!.data.toString('utf8'))).toEqual(httpPuts[0]!.body);
+  });
+
+  it('writes nothing when this machine has no bake', async () => {
+    const { store, puts } = fakeStore();
+    expect(await writePreparedToCustodyStore('e2b', store)).toBe(false);
+    expect(puts).toEqual([]);
   });
 });

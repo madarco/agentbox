@@ -6,6 +6,7 @@ import {
   classifyBakeShare,
   hasCredentialChanges,
   isShareablePreparedProvider,
+  localBakeBlocksAdoption,
   summarizeBakeShare,
 } from '../src/control-plane/bake-share.js';
 import type { PushDecision } from '../src/control-plane/custody-client.js';
@@ -170,5 +171,29 @@ describe('summarizeBakeShare + note builders', () => {
   it('note builders return null when their bucket is empty', () => {
     expect(buildRebakeNote([])).toBeNull();
     expect(buildShareFailedNote([])).toBeNull();
+  });
+});
+
+describe('localBakeBlocksAdoption', () => {
+  const LIVE = 'a'.repeat(64);
+  const OLD = 'b'.repeat(64);
+  const rec = (sha?: string) => ({ base: sha === undefined ? {} : { contextSha256: sha } });
+
+  it('blocks when the local bake already matches this build context', () => {
+    expect(localBakeBlocksAdoption(rec(LIVE), LIVE)).toBe(true);
+  });
+
+  // The bug this replaced: an outdated record used to block adoption outright,
+  // so the machine that most needed the shared base could never take it.
+  it('does NOT block when the local bake is from an older build context', () => {
+    expect(localBakeBlocksAdoption(rec(OLD), LIVE)).toBe(false);
+  });
+
+  it('does not block when nothing is baked here', () => {
+    expect(localBakeBlocksAdoption(null, LIVE)).toBe(false);
+  });
+
+  it('does not block on a record with no fingerprint to compare', () => {
+    expect(localBakeBlocksAdoption(rec(undefined), LIVE)).toBe(false);
   });
 });
