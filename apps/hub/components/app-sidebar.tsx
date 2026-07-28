@@ -28,14 +28,23 @@ function SideItem({
 }) {
   const className = cn(
     'flex w-full cursor-pointer items-center gap-2.5 rounded-lg border-0 bg-transparent px-2 py-[7px] text-left text-[13.5px] transition-colors',
-    active ? 'bg-accent font-medium text-accent-foreground' : 'text-secondary-foreground hover:bg-secondary hover:text-foreground',
+    active
+      ? 'bg-accent font-medium text-accent-foreground'
+      : 'text-secondary-foreground hover:bg-secondary hover:text-foreground',
   );
   const inner = (
     <>
-      <IconComp className={cn('size-4 flex-none', active ? 'text-primary' : 'text-muted-foreground')} />
+      <IconComp
+        className={cn('size-4 flex-none', active ? 'text-primary' : 'text-muted-foreground')}
+      />
       {label}
       {count !== undefined ? (
-        <Badge className={cn('ml-auto border-transparent px-2 py-0 text-[11px]', active ? 'bg-card text-primary' : 'bg-secondary text-[#a4a9b0]')}>
+        <Badge
+          className={cn(
+            'ml-auto border-transparent px-2 py-0 text-[11px]',
+            active ? 'bg-card text-primary' : 'bg-secondary text-[#a4a9b0]',
+          )}
+        >
           {count}
         </Badge>
       ) : null}
@@ -58,7 +67,11 @@ function SideItem({
 }
 
 function SideLabel({ children }: { children: ReactNode }) {
-  return <div className="px-2 pb-1.5 pt-4 font-mono text-[10.5px] uppercase tracking-[.1em] text-[#a4a9b0]">{children}</div>;
+  return (
+    <div className="px-2 pb-1.5 pt-4 font-mono text-[10.5px] uppercase tracking-[.1em] text-[#a4a9b0]">
+      {children}
+    </div>
+  );
 }
 
 export function AppSidebar() {
@@ -76,7 +89,13 @@ export function AppSidebar() {
 
       <SideLabel>Workspace</SideLabel>
       <nav className="flex flex-col gap-px">
-        <SideItem active={dashActive} to="/" icon={Icons.grid} label="Dashboard" count={state.boxes.length} />
+        <SideItem
+          active={dashActive}
+          to="/"
+          icon={Icons.grid}
+          label="Dashboard"
+          count={state.boxes.length}
+        />
         <SideItem
           active={pathname.startsWith('/approvals')}
           to="/approvals"
@@ -84,9 +103,24 @@ export function AppSidebar() {
           label="Approvals"
           count={state.approvals.length}
         />
-        <SideItem active={pathname.startsWith('/custody')} to="/custody" icon={Icons.key} label="Custody" />
-        <SideItem active={pathname.startsWith('/system')} to="/system" icon={Icons.server} label="System" />
-        <SideItem active={pathname.startsWith('/settings')} to="/settings" icon={Icons.settings} label="Settings" />
+        <SideItem
+          active={pathname.startsWith('/custody')}
+          to="/custody"
+          icon={Icons.key}
+          label="Custody"
+        />
+        <SideItem
+          active={pathname.startsWith('/settings')}
+          to="/settings"
+          icon={Icons.settings}
+          label="Settings"
+        />
+        <SideItem
+          active={pathname.startsWith('/system')}
+          to="/system"
+          icon={Icons.server}
+          label="System"
+        />
         <SideItem href="https://agent-box.sh/docs" icon={Icons.book} label="Docs" ext />
         <SideItem href="/api/v1/docs" icon={Icons.terminal} label="API" ext />
       </nav>
@@ -110,7 +144,9 @@ export function AppSidebar() {
           <Avatar fallback="M" />
           <div className="text-[12.5px] leading-tight">
             {state.user.name}
-            <span className="block font-mono text-[11px] text-muted-foreground">@{state.user.login}</span>
+            <span className="block font-mono text-[11px] text-muted-foreground">
+              @{state.user.login}
+            </span>
           </div>
         </div>
       </div>

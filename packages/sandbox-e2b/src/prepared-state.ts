@@ -13,7 +13,10 @@
  * accepted today.
  */
 
-import { claudeInstallFingerprint, computeContextSha256, readPreparedStateRaw, writePreparedStateRaw, preparedStatePathFor } from '@agentbox/sandbox-core';
+import { claudeInstallFingerprint, computeContextManifest,
+  computeContextSha256, readPreparedStateRaw, writePreparedStateRaw, preparedStatePathFor,
+  type FileManifest,
+} from '@agentbox/sandbox-core';
 import { UserFacingError } from '@agentbox/core';
 import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets.js';
 
@@ -26,6 +29,12 @@ export interface PreparedE2bBase {
   templateName?: string;
   /** Deterministic SHA-256 of the build context (build script + assets). */
   contextSha256?: string;
+  /**
+   * Per-file digests of that context (relpath → sha256), so a later `stale`
+   * verdict can name the files that changed. Optional: bases baked before
+   * manifests existed simply lack it.
+   */
+  files?: FileManifest;
   /** Normalized `cpu-memory` GB size the template was baked with (absent = default resources). */
   size?: string;
   /** CLI version that produced this template (informational). */
@@ -111,4 +120,24 @@ export function ensureE2bBaseTemplate(): void {
       'with the agentbox runtime (agentbox-ctl, vscode user, claude/codex/opencode, tmux) ' +
       'so per-box `create` boots ready in seconds.',
   );
+}
+
+/**
+ * Per-file digests of the CURRENT runtime assets, for diffing against the
+ * manifest stored at bake time so a `stale` verdict can name the changed files.
+ * Same asset list the fingerprint uses — each provider resolves its own, so this
+ * must live beside it rather than in a shared helper.
+ *
+ * `undefined` when the assets can't be resolved (dev tree without a build): the
+ * caller then has nothing to compare and must not claim a diff.
+ */
+export async function currentE2bBaseFileHashes(): Promise<FileManifest | undefined> {
+  try {
+    const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
+    return (
+      await computeContextManifest(assets.map((a) => ({ rel: a.name, abs: a.localPath })))
+    ).files;
+  } catch {
+    return undefined;
+  }
 }

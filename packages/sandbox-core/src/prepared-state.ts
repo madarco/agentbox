@@ -54,6 +54,16 @@ export interface PreparedBaseSnapshot<TImage = string, TExtra = unknown> {
     cliCommit?: string;
     /** ISO timestamp of bake completion. */
     createdAt: string;
+    /**
+     * Per-file digests of the context this base was baked from (relpath →
+     * sha256), so a later `stale` verdict can name the files that changed
+     * rather than only reporting that the aggregate hash moved.
+     *
+     * Optional: records stamped before manifests existed simply lack it, and
+     * consumers must degrade to "no manifest recorded, re-bake to enable the
+     * diff" rather than inventing one.
+     */
+    files?: FileManifest;
   };
   /** Provider-specific extras (e.g. hetzner's per-project snapshot tier). */
   extras?: TExtra;
@@ -128,13 +138,69 @@ export interface ContextFile {
  * stamp a hash that doesn't represent what's actually in the image.
  */
 export async function computeContextSha256(files: ContextFile[]): Promise<string> {
+  return (await computeContextManifest(files)).contextSha256;
+}
+
+/** Per-file digests keyed by the canonical `rel` path. */
+export type FileManifest = Record<string, string>;
+
+export interface ContextManifest {
+  /** The same aggregate hash `computeContextSha256` returns. */
+  contextSha256: string;
+  /** Every file that fed it, so a later mismatch can name the culprit. */
+  files: FileManifest;
+}
+
+/**
+ * {@link computeContextSha256}, but keeping the per-file digests it folds.
+ *
+ * The aggregate hash alone can only ever say "the build context changed" — it
+ * cannot say *which* file changed, which is the one thing anyone actually wants
+ * when a provider reports `stale`. Recording the per-file map at bake time is
+ * what makes that diff possible later (see {@link diffFileManifests}); the
+ * digests were already being computed here and thrown away.
+ *
+ * Same shape as `DynamicSyncSet.files` in sync/concerns/dynamic.ts — one
+ * relpath→sha256 convention across the codebase.
+ */
+export async function computeContextManifest(files: ContextFile[]): Promise<ContextManifest> {
   const sorted = [...files].sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
   const outer = createHash('sha256');
+  const manifest: FileManifest = {};
   for (const f of sorted) {
     const inner = await sha256OfFile(f.abs);
+    manifest[f.rel] = inner;
     outer.update(`${f.rel}\0${inner}\n`);
   }
-  return outer.digest('hex');
+  return { contextSha256: outer.digest('hex'), files: manifest };
+}
+
+export interface FileManifestDiff {
+  /** Present in both, different contents — the usual cause of a stale base. */
+  changed: { rel: string; from: string; to: string }[];
+  /** Only in the current context (a file added since the bake). */
+  added: string[];
+  /** Only in the baked manifest (a file removed since). */
+  removed: string[];
+}
+
+/** Pure compare of a baked manifest against the current one. */
+export function diffFileManifests(stored: FileManifest, current: FileManifest): FileManifestDiff {
+  const changed: FileManifestDiff['changed'] = [];
+  const added: string[] = [];
+  const removed: string[] = [];
+  for (const [rel, to] of Object.entries(current)) {
+    const from = stored[rel];
+    if (from === undefined) added.push(rel);
+    else if (from !== to) changed.push({ rel, from, to });
+  }
+  for (const rel of Object.keys(stored)) {
+    if (current[rel] === undefined) removed.push(rel);
+  }
+  changed.sort((a, b) => (a.rel < b.rel ? -1 : 1));
+  added.sort();
+  removed.sort();
+  return { changed, added, removed };
 }
 
 /** Short form for log lines — first 12 hex chars of a sha256. */
@@ -255,6 +321,43 @@ export const DOCKER_CONTEXT_FILE_MAP: Record<string, { staged: string; dev: stri
   'scripts/agentbox-codex-hooks.json': {
     staged: 'packages/sandbox-docker/scripts/agentbox-codex-hooks.json',
     dev: 'scripts/agentbox-codex-hooks.json',
+  },
+  // These eight were COPY'd by Dockerfile.box and staged by stage-runtime.mjs
+  // but missing here, so editing any of them did NOT change the fingerprint and
+  // the stale image was reused (or a stale published tag pulled) indefinitely.
+  // The guard test now derives the expected set from Dockerfile.box's COPY
+  // lines so this cannot drift again.
+  'scripts/gh-shim': {
+    staged: 'packages/sandbox-docker/scripts/gh-shim',
+    dev: 'scripts/gh-shim',
+  },
+  'scripts/git-shim': {
+    staged: 'packages/sandbox-docker/scripts/git-shim',
+    dev: 'scripts/git-shim',
+  },
+  'scripts/ntn-shim': {
+    staged: 'packages/sandbox-docker/scripts/ntn-shim',
+    dev: 'scripts/ntn-shim',
+  },
+  'scripts/linear-shim': {
+    staged: 'packages/sandbox-docker/scripts/linear-shim',
+    dev: 'scripts/linear-shim',
+  },
+  'scripts/chromium-resolver': {
+    staged: 'packages/sandbox-docker/scripts/chromium-resolver',
+    dev: 'scripts/chromium-resolver',
+  },
+  'scripts/agentbox-sshd-start': {
+    staged: 'packages/sandbox-docker/scripts/agentbox-sshd-start',
+    dev: 'scripts/agentbox-sshd-start',
+  },
+  'scripts/agentbox-portless-trust': {
+    staged: 'packages/sandbox-docker/scripts/agentbox-portless-trust',
+    dev: 'scripts/agentbox-portless-trust',
+  },
+  'scripts/opencode-agentbox-plugin.js': {
+    staged: 'packages/sandbox-docker/scripts/opencode-agentbox-plugin.js',
+    dev: 'scripts/opencode-agentbox-plugin.js',
   },
 };
 

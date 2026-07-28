@@ -10,7 +10,9 @@ import type { ProviderModule } from '@agentbox/sandbox-core';
 import { createCloudProvider } from '@agentbox/sandbox-cloud';
 import { digitaloceanBackend, DIGITALOCEAN_DEFAULT_BOX_IMAGE_REF } from './backend.js';
 import { prepareDigitalOceanProvider } from './prepare.js';
-import { currentDigitalOceanBaseFingerprintLive } from './prepared-state.js';
+import { currentDigitalOceanBaseFingerprintLive,
+  currentDigitalOceanBaseFileHashes,
+} from './prepared-state.js';
 import { ensureDigitalOceanCredentials, setDigitalOceanCredentials } from './credentials.js';
 import { doctorChecks, readCredStatusSummary } from './provider-module.js';
 
@@ -33,6 +35,7 @@ export const providerModule: ProviderModule = {
   readCredStatus: readCredStatusSummary,
   setCredentials: setDigitalOceanCredentials,
   currentBaseFingerprintLive: (claudeInstall) => currentDigitalOceanBaseFingerprintLive(claudeInstall),
+  currentBaseFileHashes: () => currentDigitalOceanBaseFileHashes(),
   doctorChecks,
 };
 

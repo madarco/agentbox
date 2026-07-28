@@ -55,6 +55,16 @@ CLI, not the raw commits.
 - The control box installs the published npm package by default, pinned to your CLI's
   version so shared bake fingerprints line up; `--package <spec>` picks another, and
   `--ref` still builds from source.
+- **The System page now says WHY a provider base is stale.** A stale row opens to show
+  the files that actually changed (`~ path  old → new`), diffed against a per-file
+  manifest now recorded at bake time. A base baked before manifests existed says so and
+  points at a re-bake rather than guessing.
+- **The System page shows what your machine hands to a box** — agent configs, your
+  skills (by name), and `~/.gitconfig` — replacing the old list of AgentBox's own baked
+  files, which said nothing about your setup. Present-only, so a path missing from that
+  list is one no box will receive. A new **Box image** card gives the registry, the exact
+  `sha-…` tag this host pulls, and the fingerprint it last stamped — the facts a "why
+  didn't it use the prebuilt image?" question otherwise needs a terminal to answer.
 - **Web UI: a Custody page and a System page.** Custody lists what the control box
   holds — agent logins, project seeds, bake records, box SSH keys — with sizes and
   hashes, never values. System answers "what is running here, and do I need to
@@ -109,6 +119,14 @@ CLI, not the raw commits.
   ship; the CLI and the hub now hand it their own bundled providers. Downloads
   and `gh pr create` from a cloud box were hit too. Restart the relay (any
   `agentbox` command does it) after upgrading.
+- **Editing eight of the files baked into the box image never rebuilt it.** `gh-shim`,
+  `git-shim`, `ntn-shim`, `linear-shim`, `chromium-resolver`, `agentbox-sshd-start`,
+  `agentbox-portless-trust` and `opencode-agentbox-plugin.js` are all COPY'd by the
+  Dockerfile but were missing from the fingerprint's file list, so a change to any of
+  them left every machine on the old image indefinitely. The guard test now derives
+  the expected list from the Dockerfile's own COPY lines rather than spot-checking a
+  few names, which is why it never caught this. **Every provider's stored fingerprint
+  changes once as a result** — expect a single re-bake (or re-pull) per machine.
 - **A rate-limited image pull rebuilt the box image from scratch instead.** GHCR
   throttles anonymous pulls per IP, so a machine that had just baked a few times got
   a 429 — and because the pull only reported a bare pass/fail, that was

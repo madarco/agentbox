@@ -13,6 +13,7 @@ import {
   BOX_IMAGE_REGISTRY,
   claudeInstallFingerprint,
   registryRefForSha,
+  type FileManifest,
 } from '@agentbox/sandbox-core';
 
 export const DEFAULT_BOX_IMAGE = 'agentbox/box:dev';
@@ -248,7 +249,7 @@ export interface PullOrBuildOptions {
  */
 export async function pullOrBuild(
   ref: string,
-  fingerprint: { contextSha256: string } | null,
+  fingerprint: { contextSha256: string; manifest?: FileManifest } | null,
   opts: PullOrBuildOptions = {},
 ): Promise<{ source: 'pulled' | 'built' }> {
   const { writePreparedDockerState } = await import('./prepared-state.js');
@@ -259,7 +260,11 @@ export async function pullOrBuild(
     const target = registryRefForSha(fingerprint.contextSha256, registry);
     const succeed = async (): Promise<{ source: 'pulled' }> => {
       await tagImage(target, ref);
-      writePreparedDockerState({ imageRef: ref, contextSha256: fingerprint.contextSha256 });
+      writePreparedDockerState({
+        imageRef: ref,
+        contextSha256: fingerprint.contextSha256,
+        ...(fingerprint.manifest ? { files: fingerprint.manifest } : {}),
+      });
       opts.onProgress?.(`[image] pulled ${target} -> ${ref}`);
       return { source: 'pulled' };
     };
@@ -302,7 +307,11 @@ export async function pullOrBuild(
     onProgress: opts.onProgress,
   });
   if (fingerprint) {
-    writePreparedDockerState({ imageRef: ref, contextSha256: fingerprint.contextSha256 });
+    writePreparedDockerState({
+      imageRef: ref,
+      contextSha256: fingerprint.contextSha256,
+      ...(fingerprint.manifest ? { files: fingerprint.manifest } : {}),
+    });
   }
   return { source: 'built' };
 }

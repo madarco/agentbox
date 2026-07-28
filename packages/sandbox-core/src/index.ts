@@ -37,11 +37,7 @@ export {
   type SshAliasOptions,
   type SshTarget,
 } from './ssh-config.js';
-export {
-  EXPOSED_HUB_PROFILE,
-  buildExposedHubEnv,
-  parseEnvFileBody,
-} from './hub-expose.js';
+export { EXPOSED_HUB_PROFILE, buildExposedHubEnv, parseEnvFileBody } from './hub-expose.js';
 export {
   resolveCloudSshTarget,
   ensureCloudSshAlias,
@@ -135,7 +131,9 @@ export * from './sync/index.js';
 export {
   claudeInstallFingerprint,
   matchClaudeInstallFingerprint,
+  computeContextManifest,
   computeContextSha256,
+  diffFileManifests,
   DOCKER_CONTEXT_FILE_MAP,
   preparedStatePathFor,
   readCliStamp,
@@ -146,6 +144,9 @@ export {
   writePreparedStateRaw,
   type CliStamp,
   type ContextFile,
+  type ContextManifest,
+  type FileManifest,
+  type FileManifestDiff,
   type PreparedBaseSnapshot,
   type PreparedProviderKind,
 } from './prepared-state.js';

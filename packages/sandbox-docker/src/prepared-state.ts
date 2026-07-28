@@ -12,13 +12,14 @@
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  computeContextSha256,
+  computeContextManifest,
   DOCKER_CONTEXT_FILE_MAP,
   readCliStamp,
   readPreparedStateRaw,
   resolveContextFilesFrom,
   writePreparedStateRaw,
   type ContextFile,
+  type FileManifest,
   type PreparedBaseSnapshot,
 } from '@agentbox/sandbox-core';
 import { BUILD_CONTEXT_DIR, DEFAULT_BOX_IMAGE, DOCKERFILE_PATH } from './image.js';
@@ -54,14 +55,35 @@ export interface ResolvedFingerprint {
   contextSha256: string;
   /** Files that fed the hash (in canonical sorted order). */
   files: ContextFile[];
+  /** Per-file digests, recorded at bake time so a later `stale` can be explained. */
+  manifest: FileManifest;
 }
 
-export async function computeDockerContextFingerprint(opts: {
-  contextDir?: string;
-} = {}): Promise<ResolvedFingerprint | null> {
+export async function computeDockerContextFingerprint(
+  opts: {
+    contextDir?: string;
+  } = {},
+): Promise<ResolvedFingerprint | null> {
   const files = resolveContextFiles(opts);
   if (!files) return null;
-  return { contextSha256: await computeContextSha256(files), files };
+  const m = await computeContextManifest(files);
+  return { contextSha256: m.contextSha256, files, manifest: m.files };
+}
+
+/**
+ * The per-file digests of the CURRENT docker build context, for diffing against
+ * a baked manifest. Returns undefined when the context can't be resolved (a dev
+ * tree with no staged runtime) — the caller then has nothing to compare and must
+ * not claim a diff.
+ */
+export async function currentDockerBaseFileHashes(): Promise<FileManifest | undefined> {
+  try {
+    const files = resolveContextFiles();
+    if (!files) return undefined;
+    return (await computeContextManifest(files)).files;
+  } catch {
+    return undefined;
+  }
 }
 
 export function readPreparedDockerState(): PreparedDockerState | null {
@@ -75,6 +97,8 @@ export function readPreparedDockerState(): PreparedDockerState | null {
 export function writePreparedDockerState(opts: {
   imageRef?: string;
   contextSha256: string;
+  /** Per-file digests of the context this image was built from, when known. */
+  files?: FileManifest;
 }): void {
   const stamp = readCliStamp();
   const state: PreparedDockerState = {
@@ -85,6 +109,7 @@ export function writePreparedDockerState(opts: {
       cliVersion: stamp.cliVersion,
       cliCommit: stamp.cliCommit,
       createdAt: new Date().toISOString(),
+      ...(opts.files ? { files: opts.files } : {}),
     },
   };
   writePreparedStateRaw('docker', state);

@@ -2,22 +2,19 @@
 
 // System / Build page — "what is running here, and do I need to re-bake?". PURE
 // REST CLIENT over /api/v1/system: hub version + build/channel/source, the deploy
-// record, each provider's baked base (fingerprint + freshness), and the box-image
-// build-context manifest. The actionable part is the provider table: a `stale` row
-// is exactly when `agentbox prepare --provider <id>` should be re-run.
+// record, each provider's baked base (fingerprint + freshness) and — when one is
+// stale — WHICH files changed, plus what this machine carries into a box. The
+// actionable part is the provider table: a `stale` row is exactly when
+// `agentbox prepare --provider <id>` should be re-run.
 
 import { useEffect, useState } from 'react';
 import { Ago } from '@/components/ago';
 import { Icons } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-import {
-  bakeVerdict,
-  groupImageContents,
-  type HubBuild,
-  type ProviderBake,
-} from '@/lib/system-info';
+import { bakeVerdict, type HubBuild, type ProviderBake } from '@/lib/system-info';
 import { EmptyBox } from '../boxes/components/empty-box';
 import { SectionLabel } from '../boxes/components/section-label';
 import { Stat, StatGrid } from '../boxes/components/stat-grid';
@@ -35,7 +32,22 @@ interface SystemResponse {
     bind?: string;
   } | null;
   providers: ProviderBake[];
-  imageContextKeys: string[];
+  hostCarried: CarriedEntry[];
+  boxImage: {
+    registry: string;
+    pullTag?: string;
+    stampedFingerprint?: string;
+    imageRef?: string;
+    bakedAt?: string;
+  } | null;
+}
+
+interface CarriedEntry {
+  agent: string;
+  label: string;
+  hostPath: string;
+  kind: 'skills' | 'config' | 'identity';
+  skills?: string[];
 }
 
 export default function SystemPage() {
@@ -130,15 +142,22 @@ export default function SystemPage() {
 
           <SectionLabel
             right={
-              staleCount > 0 ? (
-                <Badge className="badge-warn gap-1.5 normal-case tracking-normal">
-                  {staleCount} need re-bake
-                </Badge>
-              ) : (
-                <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
-                  base images
-                </span>
-              )
+              <div className="flex items-center gap-2.5">
+                {staleCount > 0 ? (
+                  <Badge className="badge-warn gap-1.5 normal-case tracking-normal">
+                    {staleCount} need re-bake
+                  </Badge>
+                ) : (
+                  <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
+                    base images
+                  </span>
+                )}
+                {/* This page diagnoses; Settings is where the bake button lives. */}
+                <Button href="/settings#providers" variant="outline" size="sm">
+                  <Icons.settings />
+                  Settings
+                </Button>
+              </div>
             }
           >
             Providers
@@ -149,36 +168,46 @@ export default function SystemPage() {
             ))}
           </Card>
 
+          {data.boxImage ? (
+            <>
+              <SectionLabel
+                right={
+                  <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
+                    what this host pulls
+                  </span>
+                }
+              >
+                Box image
+              </SectionLabel>
+              <Card className="grid grid-cols-2 divide-x divide-y divide-border/60 max-sm:grid-cols-1">
+                <DeployField k="Registry" v={data.boxImage.registry} />
+                <DeployField k="Pull tag" v={data.boxImage.pullTag} />
+                <DeployField k="Stamped fingerprint" v={data.boxImage.stampedFingerprint} />
+                <DeployField k="Local image" v={data.boxImage.imageRef} />
+              </Card>
+            </>
+          ) : null}
+
           <SectionLabel
             right={
               <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
-                what a re-bake picks up
+                {data.hostCarried.length} path(s) present
               </span>
             }
           >
-            Box image contents
+            Carried from this machine
           </SectionLabel>
-          {groupImageContents(data.imageContextKeys).map((group) => (
-            <div key={group.category} className="mb-4">
-              <div className="mb-2 font-mono text-[11px] uppercase tracking-[.08em] text-[#a4a9b0]">
-                {group.category}
-              </div>
-              <Card className="divide-y divide-border/60 overflow-hidden">
-                {group.files.map((f) => (
-                  <div key={f.path} className="flex items-center gap-3 px-5 py-2.5">
-                    <Icons.file className="size-3.5 flex-none text-[#a4a9b0]" />
-                    <span className="text-[13px]">{f.label}</span>
-                    <span
-                      className="ml-auto truncate font-mono text-[11px] text-[#a4a9b0]"
-                      title={f.path}
-                    >
-                      {f.path}
-                    </span>
-                  </div>
-                ))}
-              </Card>
-            </div>
-          ))}
+          {data.hostCarried.length === 0 ? (
+            <EmptyBox>
+              <div>Nothing to carry — no agent config found in this home directory.</div>
+            </EmptyBox>
+          ) : (
+            <Card className="divide-y divide-border/60 overflow-hidden">
+              {data.hostCarried.map((c) => (
+                <CarriedRow key={`${c.agent}:${c.hostPath}`} c={c} />
+              ))}
+            </Card>
+          )}
         </>
       )}
     </div>
@@ -223,6 +252,7 @@ function ProviderBakeRow({ p }: { p: ProviderBake }) {
         {verdict.tone === 'warn' ? <Icons.warn className="mt-0.5 size-3.5 flex-none" /> : null}
         <span>{p.baseStaleReason ?? verdict.text}</span>
       </div>
+      {p.baseStatus === 'stale' ? <StaleDiff p={p} /> : null}
       {p.baked ? (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-[#a4a9b0]">
           {p.cliVersion ? <span>baked with {p.cliVersion}</span> : null}
@@ -256,5 +286,105 @@ function StatusBadge({ p }: { p: ProviderBake }) {
       <span className="badge-dot" />
       baked
     </Badge>
+  );
+}
+
+/**
+ * One path this machine hands to a box. Only present paths reach here, so the
+ * absence of a row is itself the answer to "why doesn't my box have X?".
+ */
+function CarriedRow({ c }: { c: CarriedEntry }) {
+  const icon =
+    c.kind === 'skills' ? <Icons.book /> : c.kind === 'identity' ? <Icons.key /> : <Icons.file />;
+  return (
+    <div className="px-5 py-3">
+      <div className="flex items-center gap-3">
+        <span className="flex size-3.5 flex-none items-center justify-center text-[#a4a9b0]">
+          {icon}
+        </span>
+        <span className="text-[13px] font-medium">{c.label}</span>
+        {c.skills ? (
+          <Badge>
+            {c.skills.length} skill{c.skills.length === 1 ? '' : 's'}
+          </Badge>
+        ) : null}
+        <span className="ml-auto truncate font-mono text-[11px] text-[#a4a9b0]" title={c.hostPath}>
+          {c.hostPath}
+        </span>
+      </div>
+      {c.skills && c.skills.length > 0 ? (
+        <div className="mt-1.5 pl-6.5 font-mono text-[11px] leading-relaxed text-[#a4a9b0]">
+          {c.skills.join(', ')}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The "why is this stale?" disclosure.
+ *
+ * A base baked before per-file manifests were recorded has nothing to diff
+ * against; saying so beats inventing a cause from mtimes or from the aggregate
+ * hash, neither of which knows which file actually moved.
+ */
+function StaleDiff({ p }: { p: ProviderBake }) {
+  const d = p.bakeDiff;
+  if (!d) return null;
+  const changed = d.changed ?? [];
+  const added = d.added ?? [];
+  const removed = d.removed ?? [];
+  const total = changed.length + added.length + removed.length;
+  return (
+    <details className="mt-2">
+      <summary className="cursor-pointer font-mono text-[11px] text-[#a4a9b0] hover:text-secondary-foreground">
+        why is this stale?
+      </summary>
+      <div className="mt-2 rounded-lg border border-border/60 bg-background px-3.5 py-2.5">
+        {!d.hasManifest ? (
+          <div className="text-[12.5px] text-muted-foreground">
+            No file manifest was recorded for this bake, so the changed files can&apos;t be
+            identified. Re-bake to enable the diff.
+          </div>
+        ) : d.liveUnavailable ? (
+          <div className="text-[12.5px] text-muted-foreground">
+            A manifest was recorded, but the current build context can&apos;t be read here (no
+            staged runtime), so there is nothing to compare it against. A re-bake won&apos;t help —
+            this is a runtime-resolution problem.
+          </div>
+        ) : total === 0 ? (
+          <div className="text-[12.5px] text-muted-foreground">
+            Every file matches — the difference is in how the fingerprint was folded (e.g. a
+            different <span className="font-mono">box.claudeInstall</span>).
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1 font-mono text-[11px]">
+            {changed.map((f) => (
+              <div key={f.rel} className="flex items-center gap-2">
+                <span className="flex-none text-[var(--amber-fg,#b45309)]">~</span>
+                <span className="truncate">{f.rel}</span>
+                <span className="ml-auto flex-none text-[#a4a9b0]">
+                  {f.from.slice(0, 7)} → {f.to.slice(0, 7)}
+                </span>
+              </div>
+            ))}
+            {added.map((rel) => (
+              <div key={rel} className="flex items-center gap-2">
+                <span className="flex-none text-primary">+</span>
+                <span className="truncate">{rel}</span>
+                <span className="ml-auto flex-none text-[#a4a9b0]">added</span>
+              </div>
+            ))}
+            {removed.map((rel) => (
+              <div key={rel} className="flex items-center gap-2">
+                <span className="flex-none text-destructive">-</span>
+                <span className="truncate">{rel}</span>
+                <span className="ml-auto flex-none text-[#a4a9b0]">removed</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </details>
   );
 }

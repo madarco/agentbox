@@ -21,14 +21,17 @@ import {
 } from '@agentbox/relay/control-plane';
 import { setCloudBackendLoader, startRelayDaemon } from '@agentbox/relay/daemon';
 import {
-  DOCKER_CONTEXT_FILE_MAP,
   controlPlaneDeployPath,
   readPreparedStateRaw,
   shortFingerprint,
   type ControlPlaneDeployRecord,
   type PreparedBaseSnapshot,
+  AGENT_SYNC_SPECS,
+  BOX_IMAGE_REGISTRY,
+  registryRefForSha,
 } from '@agentbox/sandbox-core';
 import { createHubBackend } from './lib/hub-backend';
+import { collectHostCarried } from './lib/host-carried';
 import { configureHubGitCredentials } from './lib/git-auth';
 import { cloudBackendLoader } from './lib/provider-importers';
 
@@ -207,7 +210,26 @@ async function main(): Promise<void> {
         return null; // no deploy record on this machine (a plain hub)
       }
     },
-    imageContextKeys: () => Object.keys(DOCKER_CONTEXT_FILE_MAP),
+    hostCarried: () => collectHostCarried(AGENT_SYNC_SPECS),
+    boxImage() {
+      // The facts an "why didn't it pull the prebuilt image?" investigation
+      // needs, and which otherwise have to be reconstructed by hand from
+      // docker-prepared.json + config + the registry: which of the two published
+      // variants this host asks for, and the exact tag it resolves to.
+      try {
+        const base = (readPreparedStateRaw('docker') as PreparedBaseSnapshot | null)?.base;
+        const sha = base?.contextSha256;
+        return {
+          registry: BOX_IMAGE_REGISTRY,
+          pullTag: sha ? registryRefForSha(sha) : undefined,
+          stampedFingerprint: sha ? shortFingerprint(sha) : undefined,
+          imageRef: base?.imageRef != null ? String(base.imageRef) : undefined,
+          bakedAt: base?.createdAt,
+        };
+      } catch {
+        return null;
+      }
+    },
   };
 
   // Password profiles (hetzner/vercel): create/upgrade the auth tables and

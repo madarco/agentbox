@@ -17,7 +17,10 @@
  * Schema versioned so future shape changes can migrate.
  */
 
-import { claudeInstallFingerprint, computeContextSha256, preparedStatePathFor, readPreparedStateRaw, writePreparedStateRaw } from '@agentbox/sandbox-core';
+import { claudeInstallFingerprint, computeContextManifest,
+  computeContextSha256, preparedStatePathFor, readPreparedStateRaw, writePreparedStateRaw,
+  type FileManifest,
+} from '@agentbox/sandbox-core';
 import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets.js';
 
 /**
@@ -51,6 +54,12 @@ export interface PreparedBaseSnapshot {
    * prepare VPS). Rebuild when it changes.
    */
   contextSha256?: string;
+  /**
+   * Per-file digests of that context (relpath → sha256), so a later `stale`
+   * verdict can name the files that changed. Optional: snapshots baked before
+   * manifests existed simply lack it.
+   */
+  files?: FileManifest;
   /** CLI version that produced this snapshot (informational). */
   cliVersion?: string;
   /** Git short SHA of the CLI build (informational). */
@@ -155,6 +164,26 @@ export async function currentHetznerBaseFingerprintLive(
       await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
       claudeInstall,
     );
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Per-file digests of the CURRENT runtime assets, for diffing against the
+ * manifest stored at bake time so a `stale` verdict can name the changed files.
+ * Same asset list the fingerprint uses — each provider resolves its own, so this
+ * must live beside it rather than in a shared helper.
+ *
+ * `undefined` when the assets can't be resolved (dev tree without a build): the
+ * caller then has nothing to compare and must not claim a diff.
+ */
+export async function currentHetznerBaseFileHashes(): Promise<FileManifest | undefined> {
+  try {
+    const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
+    return (
+      await computeContextManifest(assets.map((a) => ({ rel: a.name, abs: a.localPath })))
+    ).files;
   } catch {
     return undefined;
   }

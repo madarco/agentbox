@@ -59,70 +59,6 @@ export function describeHubBuild(input: {
 // context file feeds the invalidation fingerprint, so listing them explains what a
 // re-bake would pick up.
 
-export interface ImageContentGroup {
-  category: string;
-  files: { path: string; label: string }[];
-}
-
-// Human labels for the well-known context-file keys (DOCKER_CONTEXT_FILE_MAP).
-const FILE_LABELS: Record<string, string> = {
-  'Dockerfile.box': 'Box image Dockerfile',
-  'ctl/bin.cjs': 'In-box supervisor (agentbox-ctl)',
-  'share/agentbox-setup/SKILL.md': 'agentbox-setup skill',
-  'scripts/custom-system-CLAUDE.md': 'Custom system prompt (Claude)',
-  'scripts/claude-managed-settings.json': 'Claude managed settings',
-  'scripts/agentbox-codex-hooks.json': 'Codex hooks',
-  'scripts/agentbox-vnc-start': 'VNC start script',
-  'scripts/agentbox-dockerd-start': 'dockerd start script',
-  'scripts/agentbox-checkpoint-cleanup': 'Checkpoint cleanup script',
-  'scripts/agentbox-open': 'agentbox-open helper',
-};
-
-const AGENT_CONFIG_KEYS = new Set([
-  'share/agentbox-setup/SKILL.md',
-  'scripts/custom-system-CLAUDE.md',
-  'scripts/claude-managed-settings.json',
-  'scripts/agentbox-codex-hooks.json',
-]);
-const BASE_KEYS = new Set(['Dockerfile.box', 'ctl/bin.cjs']);
-
-function labelFor(key: string): string {
-  return FILE_LABELS[key] ?? key.split('/').pop() ?? key;
-}
-
-/**
- * Bucket the context-file keys into display categories, preserving a fixed
- * category order and dropping empty categories. A key that matches neither the
- * agent-config nor base set is a runtime script.
- */
-export function groupImageContents(keys: string[]): ImageContentGroup[] {
-  const agent: ImageContentGroup['files'] = [];
-  const scripts: ImageContentGroup['files'] = [];
-  const base: ImageContentGroup['files'] = [];
-  for (const key of [...keys].sort()) {
-    const file = { path: key, label: labelFor(key) };
-    if (AGENT_CONFIG_KEYS.has(key)) agent.push(file);
-    else if (BASE_KEYS.has(key)) base.push(file);
-    else scripts.push(file);
-  }
-  return (
-    [
-      { category: 'Agent config & skills', files: agent },
-      { category: 'Runtime scripts', files: scripts },
-      { category: 'Base image', files: base },
-    ] satisfies ImageContentGroup[]
-  ).filter((g) => g.files.length > 0);
-}
-
-// ── provider bake status ────────────────────────────────────────────────────
-// One provider's baked-base record, merged from prepared-state (fingerprint,
-// which CLI baked it, when) and freshness (does it still match the current build
-// context, and if not why). This is the "do I need to re-bake?" row.
-
-// Freshness vs the current build context, as the host backend computes it
-// (mirrors BaseStatus in @agentbox/sandbox-cloud). Only `unprepared` means "no
-// base": `unknown` = a stored fingerprint EXISTS but the live one couldn't be
-// computed, so the base IS baked — just not freshness-verifiable here.
 export type BaseFreshness = 'fresh' | 'stale' | 'unprepared' | 'unknown';
 
 export interface ProviderBake {
@@ -143,6 +79,17 @@ export interface ProviderBake {
   baseStatus?: BaseFreshness;
   /** Why it is stale — the actionable part. */
   baseStaleReason?: string;
+  /**
+   * Which files differ, when `baseStatus === 'stale'`. `hasManifest: false`
+   * means the base predates per-file manifests — say so rather than guess.
+   */
+  bakeDiff?: {
+    hasManifest: boolean;
+    liveUnavailable?: boolean;
+    changed?: { rel: string; from: string; to: string }[];
+    added?: string[];
+    removed?: string[];
+  };
 }
 
 /**
