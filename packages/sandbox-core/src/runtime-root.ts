@@ -13,9 +13,15 @@
  * a different fingerprint than the CLI baked with. The hub then rejects every
  * PC-baked custody record as "a different build context" and never adopts it.
  *
- * `AGENTBOX_RUNTIME_ROOT` closes that gap: point it at the staged `runtime/`
+ * The same miss hits a PACKAGE-installed hub, for a different reason: its bundle
+ * sits at `<cli>/runtime/hub/apps/hub`, three levels below the staged root, so
+ * neither candidate reaches `<cli>/runtime` — and with no monorepo to fall back
+ * to, every cloud provider's live fingerprint comes back undefined.
+ *
+ * `AGENTBOX_RUNTIME_ROOT` closes both gaps: point it at the staged `runtime/`
  * dir and any consumer (hub included) computes the same fingerprint the CLI
- * does. The deploy sets it for the hub container.
+ * does. Two places set it: `spawnHub` (@agentbox/sandbox-docker) for every
+ * CLI-spawned hub, and the VPS deploy Dockerfile for the hub container.
  */
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
