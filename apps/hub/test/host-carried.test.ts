@@ -19,9 +19,12 @@ const SPECS: AgentSpecLike[] = [
   { id: 'codex', staticPaths: [{ hostHomeRel: ['.codex'] }] },
   {
     id: 'opencode',
+    // Mirrors AGENT_SYNC_SPECS: opencode has THREE static paths, the third
+    // being the state dir that never enables the volume on its own.
     staticPaths: [
       { hostHomeRel: ['.local', 'share', 'opencode'] },
       { hostHomeRel: ['.config', 'opencode'] },
+      { hostHomeRel: ['.local', 'state', 'opencode'] },
     ],
   },
 ];
@@ -90,5 +93,20 @@ describe('skill enumeration hygiene', () => {
       'dataviz',
       'unslop',
     ]);
+  });
+});
+
+describe('opencode enabling gate', () => {
+  // create.ts's `wantOpencode` keys on the CONFIG or DATA dir; the state dir
+  // rides along but never enables the volume. Listing it alone would promise the
+  // box a path create never mounts — breaking the "present means carried" contract.
+  it('omits opencode entirely when only the state dir exists', () => {
+    const out = collectHostCarried(SPECS, fs(['.local/state/opencode']));
+    expect(out).toEqual([]);
+  });
+
+  it('includes the state dir once config or data enables opencode', () => {
+    const out = collectHostCarried(SPECS, fs(['.config/opencode', '.local/state/opencode']));
+    expect(out.map((e) => e.hostPath)).toEqual(['~/.config/opencode', '~/.local/state/opencode']);
   });
 });

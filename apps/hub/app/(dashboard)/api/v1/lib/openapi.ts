@@ -933,6 +933,11 @@ export function buildOpenApi(): Record<string, unknown> {
                 'Which files differ, when baseStatus is stale. hasManifest:false means the base was baked before per-file manifests were recorded, so no diff is possible without a re-bake.',
               properties: {
                 hasManifest: { type: 'boolean' },
+                liveUnavailable: {
+                  type: 'boolean',
+                  description:
+                    'A manifest exists but the current hashes could not be computed, so no diff is possible. Distinct from hasManifest:false, where a re-bake would help.',
+                },
                 changed: {
                   type: 'array',
                   items: {

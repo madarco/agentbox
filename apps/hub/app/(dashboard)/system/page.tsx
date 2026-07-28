@@ -346,6 +346,12 @@ function StaleDiff({ p }: { p: ProviderBake }) {
             No file manifest was recorded for this bake, so the changed files can&apos;t be
             identified. Re-bake to enable the diff.
           </div>
+        ) : d.liveUnavailable ? (
+          <div className="text-[12.5px] text-muted-foreground">
+            A manifest was recorded, but the current build context can&apos;t be read here (no
+            staged runtime), so there is nothing to compare it against. A re-bake won&apos;t help —
+            this is a runtime-resolution problem.
+          </div>
         ) : total === 0 ? (
           <div className="text-[12.5px] text-muted-foreground">
             Every file matches — the difference is in how the fingerprint was folded (e.g. a

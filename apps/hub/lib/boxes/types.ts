@@ -162,6 +162,12 @@ export interface ProviderOption {
  */
 export interface BakeDiff {
   hasManifest: boolean;
+  /**
+   * A manifest exists but the CURRENT hashes couldn't be computed (e.g. a dev
+   * tree with no staged runtime), so there is nothing to diff against. Distinct
+   * from `hasManifest: false`, which means a re-bake would actually help.
+   */
+  liveUnavailable?: boolean;
   changed?: { rel: string; from: string; to: string }[];
   added?: string[];
   removed?: string[];

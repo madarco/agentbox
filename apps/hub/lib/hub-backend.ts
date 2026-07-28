@@ -754,7 +754,11 @@ async function providerBakeDiff(id: ProviderKind): Promise<BakeDiff | undefined>
     if (!stored || Object.keys(stored).length === 0) return { hasManifest: false };
     const mod = (await IMPORTERS[id]()).providerModule;
     const current = await mod.currentBaseFileHashes?.();
-    if (!current) return { hasManifest: false };
+    // A manifest IS recorded here — the live side just couldn't be hashed (a dev
+    // tree with no staged runtime). Reporting `hasManifest: false` would tell the
+    // user to re-bake to enable a diff they already have, when the real problem
+    // is resolving the current assets.
+    if (!current) return { hasManifest: true, liveUnavailable: true };
     return { hasManifest: true, ...diffFileManifests(stored, current) };
   } catch {
     // Best-effort: the row still renders its stale verdict without the detail.

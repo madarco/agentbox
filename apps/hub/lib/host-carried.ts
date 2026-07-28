@@ -121,7 +121,15 @@ export function collectHostCarried(
     });
   }
 
+  // OpenCode is enabled by its CONFIG or DATA dir only (create.ts's `wantOpencode`);
+  // `~/.local/state/opencode` rides along but never enables the volume on its own.
+  // Listing it from a host that has only the state dir would promise a box
+  // something create never mounts.
+  const opencodeEnabled =
+    exists(join(home, '.config', 'opencode')) || exists(join(home, '.local', 'share', 'opencode'));
+
   for (const spec of specs) {
+    if (spec.id === 'opencode' && !opencodeEnabled) continue;
     for (const sp of spec.staticPaths) {
       const abs = join(home, ...sp.hostHomeRel);
       if (!exists(abs)) continue;

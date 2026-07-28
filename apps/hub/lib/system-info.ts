@@ -85,6 +85,7 @@ export interface ProviderBake {
    */
   bakeDiff?: {
     hasManifest: boolean;
+    liveUnavailable?: boolean;
     changed?: { rel: string; from: string; to: string }[];
     added?: string[];
     removed?: string[];
