@@ -69,7 +69,7 @@ import { providerForCreate } from '../provider/registry.js';
 import { parseProviderSpec } from '../provider/spec.js';
 import { prepareTeleport, TeleportError } from '../session-teleport/index.js';
 import { clampSpinnerLine } from '../spinner-line.js';
-import { makeProgressReporter } from '../lib/progress.js';
+import { imageProgress, makeProgressReporter } from '../lib/progress.js';
 import { printLaunchRecap } from '../lib/launch-recap.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { resolveLimits } from '../limits.js';
@@ -313,7 +313,7 @@ async function maybeRunOpencodeLogin(args: { image: string; yes: boolean }): Pro
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  await ensureImage(args.image, { onProgress: imageProgress(s) });
   // Ensure the shared volume exists (and is vscode-writable) before the login
   // container writes auth.json into it.
   s.message('preparing opencode config');
@@ -370,7 +370,7 @@ async function maybeRunCloudOpencodeLogin(args: { image: string; yes: boolean })
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  await ensureImage(args.image, { onProgress: imageProgress(s) });
   s.message('preparing opencode config');
   await ensureOpencodeVolume(
     { volume: SHARED_OPENCODE_VOLUME },
@@ -1187,7 +1187,7 @@ const opencodeLoginCommand = new Command('login')
 
       const s = spinner();
       s.start('preparing sandbox image');
-      await ensureImage(image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+      await ensureImage(image, { onProgress: imageProgress(s) });
       // Ensure the shared volume exists + is vscode-writable before the login
       // container writes auth.json into it.
       s.message('preparing opencode config');

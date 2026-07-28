@@ -20,6 +20,7 @@
  */
 import { spinner } from '@clack/prompts';
 import { clampSpinnerLine } from '../spinner-line.js';
+import { logToActiveCommand } from './log-file.js';
 
 export interface ProgressReporter {
   start(label: string): void;
@@ -42,3 +43,56 @@ export function makeProgressReporter(verbose: boolean): ProgressReporter {
     stop: (label) => process.stderr.write(`${label}\n`),
   };
 }
+
+/**
+ * An `onProgress` for `ensureImage` that shows the line on `s` AND records it in
+ * the active command log.
+ *
+ * The image layer decides whether to pull a published base or rebuild it
+ * locally (~10 minutes). That decision, and the reason a pull was skipped, used
+ * to go only to the spinner — which overwrites itself, so nothing survived to be
+ * read afterwards and a rate-limited pull looked exactly like an unpublished
+ * tag. Every create-style command routes `ensureImage` through this.
+ */
+export function imageProgress(s: { message(line: string): void }): (line: string) => void {
+  return (line) => {
+    s.message(clampSpinnerLine(line));
+    if (isImageDecisionLine(line)) logToActiveCommand(line);
+  };
+}
+
+/**
+ * True for `ensureImage`'s own decision lines, false for docker's per-layer
+ * output (`<hex>: Pulling fs layer`, `Download complete`, `Extracting`, …).
+ *
+ * The `[image]` tag alone is not a usable discriminator: some callers prefix
+ * *every* forwarded line with it, so matching on the tag would tee a hundred
+ * layer lines into the log and bury the one line anyone needs. Match the
+ * decision vocabulary instead.
+ */
+export function isImageDecisionLine(line: string): boolean {
+  // Reject docker's per-layer output first — `<id>: Pulling fs layer` also
+  // contains "pulling", so the allowlist alone would admit all of it.
+  if (
+    /:\s*(pulling fs layer|waiting|downloading|download complete|extracting|pull complete|already exists|verifying checksum)/i.test(
+      line,
+    )
+  ) {
+    return false;
+  }
+  return DECISION_PATTERNS.some((re) => re.test(line));
+}
+
+/** The vocabulary `ensureImage` / `pullOrBuild` use for the pull-vs-build call. */
+const DECISION_PATTERNS: RegExp[] = [
+  /\bpulling\b/i,
+  /\bpulled\b/i,
+  /\bpull failed\b/i,
+  /\bbuilding\b/i,
+  /\bnot present\b/i,
+  /\bup to date\b/i,
+  /\bbuild context changed\b/i,
+  /no docker-prepared/i,
+  /authenticat/i, // "retrying authenticated", "could not authenticate"
+  /\bcould not\b/i,
+];

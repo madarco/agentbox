@@ -103,6 +103,22 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **A rate-limited image pull rebuilt the box image from scratch instead.** GHCR
+  throttles anonymous pulls per IP, so a machine that had just baked a few times got
+  a 429 — and because the pull only reported a bare pass/fail, that was
+  indistinguishable from an unpublished tag and fell straight through to a
+  ~10-minute local build of an image already sitting in the registry. AgentBox now
+  tells the failures apart (rate limit / rejected credentials / genuinely missing /
+  network) and, on a throttle, retries once authenticated with your own `gh` token.
+  That retry needs the `read:packages` scope, which `gh auth login` does not grant by
+  default; without it AgentBox stays anonymous rather than making things worse (a
+  token that cannot read packages turns a working anonymous pull into a 403) and
+  tells you the one command that fixes it:
+  `gh auth refresh -h github.com -s read:packages`.
+- The pull-vs-rebuild decision is now in `~/.agentbox/logs/<command>.log`. It went
+  only to a self-overwriting spinner for `claude` / `codex` / `opencode`, so the most
+  expensive branch of a create left no trace and there was no way to tell afterwards
+  why a prebuilt image had not been used.
 - The sign-in page of a deployed hub rendered no logo — the auth redirect swallowed
   the asset request.
 - A deploy that landed on a recycled IP already at its Let's Encrypt certificate limit

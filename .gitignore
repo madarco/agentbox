@@ -33,3 +33,4 @@ TODO.md
 # Claude Code conversation exports (/export writes YYYY-MM-DD-HHMMSS-<slug>.txt
 # at the repo root). Never commit — a transcript can hold secrets shown in output.
 /20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt
+*.swp

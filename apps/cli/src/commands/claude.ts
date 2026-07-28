@@ -74,7 +74,7 @@ import {
 } from '../session-teleport/index.js';
 import { resolvePlanTeleport } from '../session-teleport/plan.js';
 import { clampSpinnerLine } from '../spinner-line.js';
-import { makeProgressReporter } from '../lib/progress.js';
+import { imageProgress, makeProgressReporter } from '../lib/progress.js';
 import { printLaunchRecap } from '../lib/launch-recap.js';
 import { maybeShowInstallHint } from '../lib/install-hint.js';
 import { openCommandLog } from '../lib/log-file.js';
@@ -374,7 +374,7 @@ async function maybeRunClaudeLogin(args: {
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  await ensureImage(args.image, { onProgress: imageProgress(s) });
   // Seed the shared claude-config volume from the host's ~/.claude *before*
   // the login container runs, so `claude auth login` writes its oauthAccount
   // on top of the host config (trust, installMethod, project alias) rather
@@ -427,7 +427,7 @@ async function maybeRunCloudClaudeLogin(args: {
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  await ensureImage(args.image, { onProgress: imageProgress(s) });
   s.message('preparing claude config');
   await ensureClaudeVolume(
     { volume: SHARED_CLAUDE_VOLUME },
@@ -1729,7 +1729,7 @@ async function startHeadlessLogin(args: string[]): Promise<void> {
   const image = cfg.effective.box.image;
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  await ensureImage(image, { onProgress: imageProgress(s) });
   s.stop('image ready');
 
   const id = randomUUID().slice(0, 8);
@@ -1872,7 +1872,7 @@ const claudeLoginCommand = new Command('login')
 
         const s = spinner();
         s.start('preparing sandbox image');
-        await ensureImage(image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+        await ensureImage(image, { onProgress: imageProgress(s) });
         s.stop('image ready');
 
         // Throwaway `docker run` against the shared volume — the written

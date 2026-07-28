@@ -435,7 +435,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // and must already exist (they were created by `agentbox checkpoint`).
   const ensureRef = checkpointImage ? (opts.image ?? DEFAULT_BOX_IMAGE) : imageRef;
   const { built } = await ensureImage(ensureRef, {
-    onProgress: (line) => log(`[image] ${line}`),
+    // `ensureImage`'s own decision lines already carry the `[image]` tag; only
+    // docker's raw per-layer output needs it added, or they read `[image] [image] …`.
+    onProgress: (line) => log(line.startsWith('[image]') ? line : `[image] ${line}`),
     allowPull: opts.allowPull,
     registry: opts.imageRegistry,
   });

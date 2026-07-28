@@ -447,3 +447,16 @@ export {
 // The new `dockerProvider` (implementing the provider-neutral `Provider`
 // interface from @agentbox/core) is exported from ./docker-provider.js at the
 // top of this file. The CLI resolves it via apps/cli/src/provider/registry.ts.
+
+// Pull-failure classification + the gh-token GHCR login used to retry a
+// throttled pull instead of silently rebuilding the base locally.
+export {
+  classifyPullFailure,
+  isAuthRetryable,
+  isGhcrTarget,
+  loginToGhcrWithGh,
+  GHCR_HOST,
+  type PullFailure,
+  type PullFailureKind,
+  type GhcrLoginResult,
+} from './registry-auth.js';

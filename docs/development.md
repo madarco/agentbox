@@ -99,6 +99,33 @@ published build pulls cleanly; one that doesn't (a locally edited baked file)
 404s and the CLI builds locally. `ensureImage()` / `DockerProvider.prepare()`
 go through `pullOrBuild()`.
 
+### When a pull is skipped, and why it says so
+
+A failed pull is **not** automatically "the tag isn't published". `pullImage()`
+classifies docker's stderr (`registry-auth.ts`) into `rate-limit` /
+`unauthorized` / `not-found` / `network`, and only `not-found` genuinely means
+"build locally".
+
+GHCR rate-limits **anonymous** pulls per IP, and a machine that has just baked a
+few times trips it. So on a `rate-limit` or `unauthorized` failure against
+`ghcr.io`, AgentBox borrows the host's `gh` token, `docker login`s, and retries
+once — the difference between a retag and a ~10-minute rebuild of an image that
+was already published.
+
+That retry needs the **`read:packages`** scope, which `gh auth login` does *not*
+grant by default. Without it, authenticating is worse than staying anonymous
+(GHCR then evaluates an identity that cannot read packages and answers 403), so
+the login is skipped and the reason is reported. To enable it:
+
+```sh
+gh auth refresh -h github.com -s read:packages
+```
+
+Every one of these decisions is logged with an `[image]` prefix and now lands in
+`~/.agentbox/logs/<command>.log` as well as the spinner — previously the pull
+progress was wired *only* to the self-overwriting spinner, so a throttled pull
+was indistinguishable from an unpublished tag when reading the logs afterwards.
+
 Force a local build (skip the pull):
 
 ```sh

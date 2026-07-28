@@ -78,7 +78,7 @@ import {
   type ResumeMode,
 } from '../session-teleport/index.js';
 import { clampSpinnerLine } from '../spinner-line.js';
-import { makeProgressReporter } from '../lib/progress.js';
+import { imageProgress, makeProgressReporter } from '../lib/progress.js';
 import { printLaunchRecap } from '../lib/launch-recap.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { resolveLimits } from '../limits.js';
@@ -299,7 +299,7 @@ async function maybeRunCodexLogin(args: { image: string; yes: boolean }): Promis
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  await ensureImage(args.image, { onProgress: imageProgress(s) });
   // Ensure the shared volume exists (and is vscode-writable) before the login
   // container writes auth.json into it.
   s.message('preparing codex config');
@@ -354,7 +354,7 @@ async function maybeRunCloudCodexLogin(args: { image: string; yes: boolean }): P
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  await ensureImage(args.image, { onProgress: imageProgress(s) });
   s.message('preparing codex config');
   await ensureCodexVolume(
     { volume: SHARED_CODEX_VOLUME },
@@ -1335,7 +1335,7 @@ const codexLoginCommand = new Command('login')
 
       const s = spinner();
       s.start('preparing sandbox image');
-      await ensureImage(image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+      await ensureImage(image, { onProgress: imageProgress(s) });
       // Ensure the shared volume exists + is vscode-writable before the login
       // container writes auth.json into it.
       s.message('preparing codex config');
