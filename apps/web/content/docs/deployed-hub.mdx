@@ -344,6 +344,17 @@ the control box doesn't know the alias, the bake stays here with a notice.
 agentbox prepare --provider docker:buildbox   # baked from the control box if it knows `buildbox`
 ```
 
+<Callout type="warn" title="Host aliases do not propagate — register them on both sides">
+  `agentbox docker add` writes the alias to `~/.agentbox/remote-docker-hosts.json` on **that machine
+  only**; nothing syncs it to a control box. So a host you added on your laptop keeps baking there
+  until you also register it on the control box (its Settings → Remote Docker, or `POST
+  /api/v1/hosts`) **and** authorize the control box's SSH key on the host — it connects _as itself_,
+  not as you. This is deliberate: an alias is just a name for an SSH destination, so copying it
+  across without the key would route a bake that then fails, in place of a local one that worked.
+  The fallback is safe — the bake stays on your machine with a notice — and the local hub's Remote
+  Docker settings list only ever shows **this** machine's hosts, since that is what its creates use.
+</Callout>
+
 The sync runs the other way too: `agentbox self-update` (and `agentbox hub setup` / `update`) now
 **adopts** any base the control box has already baked for your new build context, instead of telling
 you to re-bake. Whichever machine bakes first, the other one takes the result.

@@ -208,6 +208,17 @@ Two mechanisms do that, and both key off the same `base.contextSha256`:
   registry (`GET /api/v1/hosts`); it SSHes there as itself, so your local
   alias list says nothing about whether it can. Only plain `docker` is
   never hub-bakeable.
+
+  **Known gap:** the alias registry is per machine and nothing propagates
+  it — every writer (`upsertHostAlias`, from `docker add` / `host-setup`
+  / the hub's `addRemoteDockerHost`) is local. So a host added on the PC
+  keeps baking on the PC until it is registered on the control box too.
+  Left manual on purpose: copying the alias across would flip
+  `hubKnowsHost` to true without the control box's key being authorized
+  on that host, routing a bake that then fails in place of a local one
+  that worked. The hub's `POST /api/v1/hosts` already `probeRemoteEngine`s
+  before saving, so a *probe-gated* propagation is the shape to build if
+  this is ever automated — never a file copy.
 - **Sync** (`control-plane/prepared-custody.ts` + `sandbox-cloud/prepared-sync.ts`).
   `syncBakesWithControlBox` (hub setup / deploy / update) and the
   `self-update` post-update refresh reconcile **both** directions: push

@@ -118,6 +118,7 @@ agentbox checkpoint create my-box --name setup --set-default
 - **macOS remotes work.** Docker Desktop, OrbStack and Colima are all found, because AgentBox runs `docker` in a login shell on the remote (which is why OrbStack's `~/.orbstack/bin` is on the PATH).
 - **The remote engine is trusted.** Anyone with root on that machine can read the box. This is a "your own machine" provider, not an isolation boundary against the machine's owner.
 - **Concurrent boxes share the machine.** Nothing arbitrates between them beyond the limits you set.
+- **Host aliases are per machine — they do not propagate to a [control box](/docs/deployed-hub).** `agentbox docker add` writes `~/.agentbox/remote-docker-hosts.json` on the machine you ran it on, and nothing syncs it. That matters for **bakes**: with a control box configured, `agentbox prepare --provider docker:<alias>` runs there — the image lands on your remote host, which both machines reach — but only if the control box has that alias registered itself. Register it separately (its Settings → Remote Docker, or `POST /api/v1/hosts`), and authorize the control box's SSH key on the host, since it connects **as itself**, not as you. Until then the bake simply stays on your machine with a notice. Creates are unaffected either way: they always run from your machine over your own `~/.ssh/config`.
 
 ## Configuration
 
