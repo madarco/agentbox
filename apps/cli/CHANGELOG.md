@@ -119,6 +119,11 @@ CLI, not the raw commits.
   ship; the CLI and the hub now hand it their own bundled providers. Downloads
   and `gh pr create` from a cloud box were hit too. Restart the relay (any
   `agentbox` command does it) after upgrading.
+- **On an npm install, every cloud provider showed as "baked · unverified"** and shared
+  bake records were silently ignored — which on a control box failed creates with "run
+  `agentbox prepare` first". The hub bundle sits three levels below the staged runtime
+  root, so the self-relative lookup never found it and no provider could compute a live
+  fingerprint. The hub child is now told where that root is.
 - **Editing eight of the files baked into the box image never rebuilt it.** `gh-shim`,
   `git-shim`, `ntn-shim`, `linear-shim`, `chromium-resolver`, `agentbox-sshd-start`,
   `agentbox-portless-trust` and `opencode-agentbox-plugin.js` are all COPY'd by the
