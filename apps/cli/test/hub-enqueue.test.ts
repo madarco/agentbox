@@ -129,6 +129,38 @@ describe('pollHubJob', () => {
     expect(logCalls).toBe(1); // asked once, then gave up
   });
 
+  it('keeps tailing through a transient log failure', async () => {
+    const states: CreateJobRow['status'][] = ['running', 'running', 'done'];
+    // A proxy blip, then the tail resumes from the same offset.
+    const logs: (() => Response)[] = [
+      () => jsonRes(200, { lines: ['cloning repo'], offset: 13 }),
+      () => jsonRes(502, { error: 'bad gateway' }),
+      () => jsonRes(200, { lines: ['created box b-1'], offset: 30 }),
+      () => jsonRes(200, { lines: [], offset: 30 }),
+    ];
+    let statusCall = 0;
+    let logCall = 0;
+    const offsets: string[] = [];
+    const fetchImpl = ((url: string) => {
+      if (url.includes('/logs')) {
+        offsets.push(new URL(url).searchParams.get('offset') ?? '');
+        return Promise.resolve(logs[Math.min(logCall++, logs.length - 1)]!());
+      }
+      const status = states[Math.min(statusCall++, states.length - 1)]!;
+      return Promise.resolve(
+        jsonRes(200, { id: 'j', status, request: { repoUrl: 'x', provider: 'e2b' }, createdAt: 'x' }),
+      );
+    }) as unknown as typeof fetch;
+    const lines: string[] = [];
+    await pollHubJob({ ...target, fetchImpl }, 'j', {
+      sleep: () => Promise.resolve(),
+      onLog: (l) => lines.push(l),
+    });
+    expect(lines).toEqual(['cloning repo', 'created box b-1']);
+    // The failed tick neither advanced nor reset the offset.
+    expect(offsets).toEqual(['0', '13', '13', '30']);
+  });
+
   it('times out if the job never finishes', async () => {
     const fetchImpl = (() =>
       Promise.resolve(

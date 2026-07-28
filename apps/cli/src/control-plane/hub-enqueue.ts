@@ -74,28 +74,51 @@ export interface JobLogTail {
   offset: number;
 }
 
-/**
- * Read a job's progress log from `offset` (bytes). `null` means this control box
- * has no log route — an older hub, or the serverless plane, where the worker's
- * per-step lines don't exist as a file. Callers stop tailing and fall back to
- * status-only progress; a genuinely missing job already surfaces from the status
- * poll, so this stays silent.
- */
+export type HubJobLogResult =
+  /** Lines (possibly none) read from the job's log. */
+  | { kind: 'ok'; tail: JobLogTail }
+  /**
+   * This control box has no log route: an older hub, or the serverless plane,
+   * where the worker's per-step lines don't exist as a file. Permanent —
+   * callers stop asking and fall back to status-only progress. (A genuinely
+   * missing job already surfaces from the status poll, so a 404 here is silent.)
+   */
+  | { kind: 'unsupported' }
+  /**
+   * A blip: connection reset, a proxy's 502/503, a body that isn't the shape we
+   * expect. NOT a reason to stop tailing — a hub create is minutes long, and one
+   * bad tick used to drop the rest of the run back to a static status line.
+   */
+  | { kind: 'unavailable' };
+
+/** Read a job's progress log from `offset` (bytes). Never throws. */
 export async function fetchHubJobLog(
   target: HubTarget,
   jobId: string,
   offset: number,
-): Promise<JobLogTail | null> {
+): Promise<HubJobLogResult> {
   const base = target.url.replace(/\/+$/, '');
   const f = target.fetchImpl ?? fetch;
-  const res = await f(
-    `${base}/remote/boxes/${encodeURIComponent(jobId)}/logs?offset=${String(offset)}`,
-    { headers: { Authorization: `Bearer ${target.adminToken}` } },
-  );
-  if (!res.ok) return null;
+  let res: Response;
+  try {
+    res = await f(
+      `${base}/remote/boxes/${encodeURIComponent(jobId)}/logs?offset=${String(offset)}`,
+      { headers: { Authorization: `Bearer ${target.adminToken}` } },
+    );
+  } catch {
+    return { kind: 'unavailable' };
+  }
+  // 404 (an old hub routes `<id>/logs` into its by-id lookup), 405, 501 (a plane
+  // with no reader wired) all mean "this hub will never serve logs".
+  if (res.status === 404 || res.status === 405 || res.status === 501) {
+    return { kind: 'unsupported' };
+  }
+  if (!res.ok) return { kind: 'unavailable' };
   const body = (await res.json().catch(() => null)) as JobLogTail | null;
-  if (!body || !Array.isArray(body.lines) || typeof body.offset !== 'number') return null;
-  return body;
+  if (!body || !Array.isArray(body.lines) || typeof body.offset !== 'number') {
+    return { kind: 'unavailable' };
+  }
+  return { kind: 'ok', tail: body };
 }
 
 export interface PollOptions {
@@ -138,13 +161,18 @@ export async function pollHubJob(
   const drainLog = async (): Promise<void> => {
     if (!tailing) return;
     // Never fail a create because its progress log couldn't be read.
-    const tail = await fetchHubJobLog(target, jobId, offset).catch(() => null);
-    if (!tail) {
+    const res = await fetchHubJobLog(target, jobId, offset).catch(
+      () => ({ kind: 'unavailable' }) as const,
+    );
+    // Only a hub that CAN'T serve logs ends the tail; a transient failure just
+    // skips this tick and retries from the same offset.
+    if (res.kind === 'unsupported') {
       tailing = false;
       return;
     }
-    offset = tail.offset;
-    for (const line of tail.lines) opts.onLog?.(line);
+    if (res.kind !== 'ok') return;
+    offset = res.tail.offset;
+    for (const line of res.tail.lines) opts.onLog?.(line);
   };
 
   for (;;) {
