@@ -48,14 +48,22 @@ export async function bakeOnControlBox(args: {
   force?: boolean;
   claudeInstall: 'native' | 'npm';
   custody: { url: string; adminToken: string } | null;
+  /**
+   * remote-docker only: the host alias to bake. It goes to a different endpoint
+   * (`/hosts/:alias/bake`), because the unit of a remote-docker base is a host,
+   * not the provider — there is no single `remote-docker` base to prepare.
+   */
+  remoteHost?: string;
   onLog: (line: string) => void;
 }): Promise<HubBakeOutcome> {
   let jobId: string;
   try {
-    jobId = await args.client.prepareProvider(args.providerName, {
-      force: args.force,
-      claudeInstall: args.claudeInstall,
-    });
+    jobId = args.remoteHost
+      ? await args.client.bakeHost(args.remoteHost)
+      : await args.client.prepareProvider(args.providerName, {
+          force: args.force,
+          claudeInstall: args.claudeInstall,
+        });
   } catch (err) {
     // A precheck failure on the hub (no credentials there, docker down) is a
     // 409 with a real message — surface it verbatim rather than as "failed".
@@ -99,6 +107,14 @@ export async function bakeOnControlBox(args: {
   if (status !== 'done') {
     return { status: 'failed', detail: `the control box's bake job ${jobId} ended ${status}` };
   }
+
+  // A remote-docker bake put the image on the REMOTE HOST, which this machine
+  // reaches too, and "is that host baked?" is answered by asking its engine —
+  // never by a local file. So there is nothing to adopt, and nothing to pin.
+  // (The local `remote-docker-prepared.json` history stays silent about a bake
+  // this machine didn't run; that file is explicitly a log for `prepare
+  // --status` / `doctor`, not the readiness check.)
+  if (args.remoteHost) return { status: 'adopted' };
 
   // The hub's bake wrote its record into custody (`sharePreparedBase` →
   // `writePreparedToCustodyStore`), so adopting is a plain custody read.

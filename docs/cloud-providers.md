@@ -194,9 +194,20 @@ Two mechanisms do that, and both key off the same `base.contextSha256`:
   over the job SSE), then pulls the record back from custody. That is the
   same machine `create` builds on, so a local bake would produce a
   snapshot nothing boots. `--local` / `--via-hub` force either side;
-  docker and remote-docker always bake locally (local images, not
-  portable snapshots); `--name` / `--location` / `--size` keep it local,
-  since the hub's `parseProviderPrepare` doesn't carry them.
+  `--name` / `--location` / `--size` keep it local, since the hub's
+  `parseProviderPrepare` doesn't carry them.
+
+  The bake-side predicate is `isHubBakeableProvider`, **not**
+  `isHubRoutableProvider` — they answer different questions and differ on
+  **remote-docker**. Its creates can't go to the hub (they run over your
+  own `~/.ssh/config`), but its base is an image on a *third* machine
+  both sides reach, and readiness is read off that engine rather than a
+  local file — so the control box can bake it via
+  `POST /api/v1/hosts/:alias/bake` and there is nothing to sync back.
+  Gated at runtime on the control box having that alias in its own
+  registry (`GET /api/v1/hosts`); it SSHes there as itself, so your local
+  alias list says nothing about whether it can. Only plain `docker` is
+  never hub-bakeable.
 - **Sync** (`control-plane/prepared-custody.ts` + `sandbox-cloud/prepared-sync.ts`).
   `syncBakesWithControlBox` (hub setup / deploy / update) and the
   `self-update` post-update refresh reconcile **both** directions: push

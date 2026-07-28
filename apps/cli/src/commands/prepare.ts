@@ -379,6 +379,29 @@ export interface RunPrepareOptions {
 }
 
 /**
+ * Whether the control box has `alias` in its OWN remote-docker registry.
+ *
+ * It bakes such a host by SSHing to it as itself, so your local alias list says
+ * nothing about whether it can. False (bake here) on any doubt — an unreachable
+ * or unconfigured control box must not turn a working local bake into an error.
+ */
+async function controlBoxKnowsHost(
+  alias: string | undefined,
+  effective: EffectiveConfig,
+): Promise<boolean> {
+  if (!alias || !effective.relay.controlPlaneUrl) return false;
+  const target = await resolveHubApiTarget(undefined, { quiet: true }).catch(() => null);
+  if (!target) return false;
+  if (!(await hostReachable(target.url, CONTROL_BOX_STATUS_MS))) return false;
+  const client = new HubApiClient({
+    ...target,
+    fetchImpl: deadlineFetch(AbortSignal.timeout(CONTROL_BOX_STATUS_MS)),
+  });
+  const hosts = await client.listHosts().catch(() => null);
+  return !!hosts?.some((h) => h.alias === alias);
+}
+
+/**
  * Drive the control box's bake and adopt the record it produces.
  *
  * The failure path deliberately does NOT fall back to a local bake: a hub bake
@@ -391,13 +414,15 @@ async function runPrepareOnControlBox(args: {
   provider: Provider;
   force?: boolean;
   claudeInstall: 'native' | 'npm';
+  remoteHost?: string;
   suppressStatus?: boolean;
 }): Promise<void> {
   const client = await resolveHubApiClient(undefined);
   if (!client) process.exit(1);
   const custody = await resolveCustodyTarget(undefined, { quiet: true });
+  const what = args.remoteHost ? `${args.providerName} host ${args.remoteHost}` : args.providerName;
   const sp = spinner();
-  sp.start(`preparing ${args.providerName} on the control box…`);
+  sp.start(`preparing ${what} on the control box…`);
   const outcome = await bakeOnControlBox({
     client,
     providerName: args.providerName,
@@ -405,19 +430,24 @@ async function runPrepareOnControlBox(args: {
     force: args.force,
     claudeInstall: args.claudeInstall,
     custody,
+    remoteHost: args.remoteHost,
     onLog: (line) => sp.message(line.slice(0, 80)),
   });
   if (outcome.status === 'failed') {
     sp.stop(`prepare failed on the control box: ${outcome.detail}`);
     process.exit(1);
   }
-  sp.stop(`prepared ${args.providerName} on the control box`);
+  sp.stop(`prepared ${what} on the control box`);
   if (outcome.status === 'baked-not-adopted') {
     // The hub can now create with it; this machine just can't verify it locally.
     log.warn(`${outcome.detail} — cloud creates route to the control box, so this is not fatal`);
     return;
   }
-  log.success(`adopted the control box's ${args.providerName} base — this machine is current too`);
+  log.success(
+    args.remoteHost
+      ? `baked ${args.remoteHost} from the control box — the image is on that host, so this machine sees it too`
+      : `adopted the control box's ${args.providerName} base — this machine is current too`,
+  );
   if (!args.suppressStatus) {
     process.stdout.write('\n');
     await showStatus({ onlyProvider: args.providerName });
@@ -526,9 +556,10 @@ export async function runPrepare(
   // cloud boxes are built on it from ITS prepared state, so a base baked here is
   // minutes spent on a snapshot nothing will boot. We drive its bake and adopt
   // the record back, so one bake leaves both machines current.
+  const effective = cfg?.effective ?? (await loadEffectiveConfig(cwd)).effective;
   const prepareRouting = resolvePrepareRouting({
     providerName,
-    effective: cfg?.effective ?? (await loadEffectiveConfig(cwd)).effective,
+    effective,
     forceHub: opts.viaHub,
     forceLocal: opts.local,
     localOnlyFlags: [
@@ -537,6 +568,13 @@ export async function runPrepare(
       ...(opts.size ? ['--size'] : []),
     ],
     hubApiAvailable: !!(await resolveHubApiTarget(undefined, { quiet: true })),
+    // The control box bakes a remote-docker host over ITS own SSH config, so ask
+    // whether it has that alias before routing there. Only asked for the one
+    // provider it applies to — a round-trip per bake is fine, a round-trip on
+    // every prepare is not.
+    ...(providerName === 'remote-docker'
+      ? { hubKnowsHost: await controlBoxKnowsHost(host, effective) }
+      : {}),
   });
   if (prepareRouting.where === 'local' && prepareRouting.fellBackReason) {
     log.warn(`baking on this machine: ${prepareRouting.fellBackReason}`);
@@ -547,6 +585,7 @@ export async function runPrepare(
       provider,
       force: opts.force,
       claudeInstall,
+      remoteHost: host,
       suppressStatus: opts.suppressStatus,
     });
     return;

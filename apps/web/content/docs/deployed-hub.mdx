@@ -329,10 +329,20 @@ agentbox prepare --provider e2b --via-hub  # fail rather than fall back to a loc
 ```
 
 The bake's log streams to your terminal, and when it finishes the resulting bake record is pulled
-back into `~/.agentbox/<provider>-prepared.json`, so one bake leaves both machines current. Docker
-and remote-docker always bake locally — their bases are local images, not portable snapshots. Passing
+back into `~/.agentbox/<provider>-prepared.json`, so one bake leaves both machines current. Passing
 `--name`, `--location`, or `--size` keeps the bake local, since the control box's bake API doesn't
 carry those.
+
+**`docker` always bakes locally** — its base is an image on _this_ machine, so building it anywhere
+else would leave this one untouched. **`remote-docker` does route to the control box**, when that box
+has the same host alias registered: the image lands on your remote host, which both machines reach,
+and "is this host baked?" is answered by asking that engine rather than by a local file — so there is
+nothing to sync back. (Its _creates_ still run from your machine, over your own `~/.ssh/config`.) If
+the control box doesn't know the alias, the bake stays here with a notice.
+
+```bash
+agentbox prepare --provider docker:buildbox   # baked from the control box if it knows `buildbox`
+```
 
 The sync runs the other way too: `agentbox self-update` (and `agentbox hub setup` / `update`) now
 **adopts** any base the control box has already baked for your new build context, instead of telling

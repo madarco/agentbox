@@ -57,6 +57,14 @@ export interface HubApiProvider {
   baseStaleReason?: string;
 }
 
+/** A remote-docker host alias as `/api/v1/hosts` returns it. */
+export interface HubApiHost {
+  alias: string;
+  ssh?: string;
+  baked?: boolean;
+  default?: boolean;
+}
+
 /** A pending host-action approval as `/api/v1/approvals` returns it. */
 export interface HubApiApproval {
   id: string;
@@ -180,6 +188,23 @@ export class HubApiClient {
   async listProviders(opts: { freshness?: boolean } = {}): Promise<HubApiProvider[]> {
     const q = opts.freshness ? '?freshness=1' : '';
     return (await this.request<{ providers: HubApiProvider[] }>('GET', `/providers${q}`)).providers;
+  }
+
+  /** The remote-docker host aliases the hub itself has registered. */
+  async listHosts(): Promise<HubApiHost[]> {
+    return (await this.request<{ hosts: HubApiHost[] }>('GET', '/hosts')).hosts;
+  }
+
+  /**
+   * Bake the box image on one of the HUB's remote-docker hosts. Returns a job id
+   * that streams over {@link streamJobLog}, exactly like a provider bake.
+   */
+  async bakeHost(alias: string): Promise<string> {
+    const res = await this.request<{ jobId: string }>(
+      'POST',
+      `/hosts/${encodeURIComponent(alias)}/bake`,
+    );
+    return res.jobId;
   }
 
   /**

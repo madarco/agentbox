@@ -22,9 +22,11 @@ CLI, not the raw commits.
   own. Cloud boxes are then built and run **there**, so they keep going with your
   laptop closed, including background `-i` agent runs. Create them from the web
   UI, or `agentbox create --via-hub`. See https://agent-box.sh/docs/deployed-hub.
-- **Cloud base images are baked on the control box.** `agentbox prepare --provider
+- **Base images are baked on the control box.** `agentbox prepare --provider
   <cloud>` now runs the bake there — the machine that actually builds your cloud
-  boxes — streams its log, and adopts the record back. `--local` bakes here instead.
+  boxes — streams its log, and adopts the record back. `docker:<host>` routes
+  there too when the control box knows that host, since the image lands on the
+  shared remote machine. `--local` bakes here instead.
 - **Bake records sync both ways.** `self-update` (and `hub setup` / `update`) adopt
   a base the control box already baked for your build context instead of telling
   you to re-bake it.

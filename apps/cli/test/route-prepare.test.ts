@@ -60,14 +60,42 @@ describe('resolvePrepareRouting', () => {
     ).toEqual({ where: 'local' });
   });
 
-  it('remote-docker bakes locally too (docker-shaped base on your own host)', () => {
+  // remote-docker's base lands on a THIRD machine both sides reach, and
+  // freshness is read off that engine — so unlike plain docker it is worth
+  // baking on the control box, even though its *creates* can't route there.
+  it('remote-docker bakes on the control box when it knows the host alias', () => {
     expect(
       resolvePrepareRouting({
         providerName: 'remote-docker',
         effective: HUB,
         hubApiAvailable: true,
+        hubKnowsHost: true,
       }),
-    ).toEqual({ where: 'local' });
+    ).toEqual({ where: 'hub' });
+  });
+
+  it('remote-docker stays local when the control box has no such host', () => {
+    const r = resolvePrepareRouting({
+      providerName: 'remote-docker',
+      effective: HUB,
+      hubApiAvailable: true,
+      hubKnowsHost: false,
+    });
+    expect(r.where).toBe('local');
+    expect(r).toHaveProperty('fellBackReason', expect.stringContaining('no such remote-docker host'));
+  });
+
+  it('--via-hub cannot conjure a host the control box does not have', () => {
+    // It would SSH to that host as itself; there is nothing to force.
+    expect(
+      resolvePrepareRouting({
+        providerName: 'remote-docker',
+        effective: HUB,
+        hubApiAvailable: true,
+        hubKnowsHost: false,
+        forceHub: true,
+      }).where,
+    ).toBe('local');
   });
 
   it('stays local when no control box is configured', () => {
