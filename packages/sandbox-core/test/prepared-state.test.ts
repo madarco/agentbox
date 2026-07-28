@@ -1,10 +1,12 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   claudeInstallFingerprint,
+  computeContextManifest,
   computeContextSha256,
+  diffFileManifests,
   DOCKER_CONTEXT_FILE_MAP,
   matchClaudeInstallFingerprint,
   preparedStatePathFor,
@@ -38,14 +40,18 @@ describe('matchClaudeInstallFingerprint', () => {
     const otherContext = 'b'.repeat(64);
     expect(matchClaudeInstallFingerprint(otherContext, NATIVE)).toBeNull();
     // ...including that context's npm fold — a different base is still different.
-    expect(matchClaudeInstallFingerprint(claudeInstallFingerprint(otherContext, 'npm'), NATIVE)).toBeNull();
+    expect(
+      matchClaudeInstallFingerprint(claudeInstallFingerprint(otherContext, 'npm'), NATIVE),
+    ).toBeNull();
   });
 
   it('stays in step with claudeInstallFingerprint for both modes', () => {
     // Pinning the pair together is the point: if the fold changes and the match
     // doesn't, every shared bake silently stops being adoptable.
     for (const mode of ['native', 'npm'] as const) {
-      expect(matchClaudeInstallFingerprint(claudeInstallFingerprint(NATIVE, mode), NATIVE)).toBe(mode);
+      expect(matchClaudeInstallFingerprint(claudeInstallFingerprint(NATIVE, mode), NATIVE)).toBe(
+        mode,
+      );
     }
   });
 });
@@ -226,10 +232,94 @@ describe('resolveContextFilesFrom', () => {
     expect(resolveContextFilesFrom(map, { contextDir: stagedDir, devRoot: devDir })).toBeNull();
   });
 
-  it('DOCKER_CONTEXT_FILE_MAP includes Dockerfile.box and the COPYed scripts', () => {
+  // Derived from Dockerfile.box rather than spot-checked: the previous version
+  // asserted four known keys and so happily passed while EIGHT COPY'd files were
+  // missing from the map — meaning edits to gh-shim, git-shim, ntn-shim,
+  // linear-shim, chromium-resolver, agentbox-sshd-start, agentbox-portless-trust
+  // and opencode-agentbox-plugin.js never invalidated the image.
+  it('DOCKER_CONTEXT_FILE_MAP covers every file Dockerfile.box COPYs', async () => {
+    const dockerfile = join(__dirname, '..', '..', 'sandbox-docker', 'Dockerfile.box');
+    const body = await readFile(dockerfile, 'utf8');
+    const copied = [...body.matchAll(/^COPY\s+(?:--\S+\s+)*(\S+)\s+\S+\s*$/gm)]
+      .map((m) => m[1]!)
+      .filter((src) => !src.startsWith('--'));
+    expect(copied.length).toBeGreaterThan(10); // sanity: the regex still matches
+
+    const staged = new Set(Object.values(DOCKER_CONTEXT_FILE_MAP).map((v) => v.staged));
+    const missing = copied.filter((src) => !staged.has(src));
+    expect(
+      missing,
+      `COPY'd but absent from DOCKER_CONTEXT_FILE_MAP: ${missing.join(', ')}`,
+    ).toEqual([]);
+
+    // The Dockerfile itself is part of the context even though nothing COPYs it.
     expect(DOCKER_CONTEXT_FILE_MAP['Dockerfile.box']).toBeDefined();
-    expect(DOCKER_CONTEXT_FILE_MAP['scripts/agentbox-vnc-start']).toBeDefined();
-    expect(DOCKER_CONTEXT_FILE_MAP['scripts/custom-system-CLAUDE.md']).toBeDefined();
-    expect(DOCKER_CONTEXT_FILE_MAP['ctl/bin.cjs']).toBeDefined();
+  });
+});
+
+describe('computeContextManifest', () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'agentbox-man-'));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+  async function write(name: string, body: string): Promise<{ rel: string; abs: string }> {
+    const abs = join(dir, name);
+    await writeFile(abs, body, 'utf8');
+    return { rel: name, abs };
+  }
+
+  // The invariant that makes the refactor safe: computeContextSha256 now
+  // delegates here, so the aggregate must be bit-identical to what it produced
+  // before — otherwise every stored fingerprint would spuriously go stale.
+  it('agrees with computeContextSha256 on the aggregate', async () => {
+    const files = [await write('a.txt', 'alpha\n'), await write('b.txt', 'beta\n')];
+    const m = await computeContextManifest(files);
+    expect(m.contextSha256).toEqual(await computeContextSha256(files));
+  });
+
+  it('records a digest per file, keyed by rel', async () => {
+    const a = await write('a.txt', 'alpha\n');
+    const b = await write('b.txt', 'beta\n');
+    const m = await computeContextManifest([a, b]);
+    expect(Object.keys(m.files).sort()).toEqual(['a.txt', 'b.txt']);
+    expect(m.files['a.txt']).toEqual(await sha256OfFile(a.abs));
+    expect(m.files['b.txt']).toEqual(await sha256OfFile(b.abs));
+  });
+
+  it('is order-invariant like the aggregate', async () => {
+    const files = [await write('a.txt', 'a'), await write('b.txt', 'b')];
+    const fwd = await computeContextManifest(files);
+    const rev = await computeContextManifest([...files].reverse());
+    expect(rev).toEqual(fwd);
+  });
+});
+
+describe('diffFileManifests', () => {
+  it('names the changed file — the whole point of storing the manifest', () => {
+    const d = diffFileManifests({ a: '1', b: '2' }, { a: '1', b: '9' });
+    expect(d.changed).toEqual([{ rel: 'b', from: '2', to: '9' }]);
+    expect(d.added).toEqual([]);
+    expect(d.removed).toEqual([]);
+  });
+
+  it('reports additions and removals', () => {
+    const d = diffFileManifests({ a: '1', gone: '3' }, { a: '1', fresh: '4' });
+    expect(d.added).toEqual(['fresh']);
+    expect(d.removed).toEqual(['gone']);
+    expect(d.changed).toEqual([]);
+  });
+
+  it('is empty for identical manifests', () => {
+    const d = diffFileManifests({ a: '1' }, { a: '1' });
+    expect(d).toEqual({ changed: [], added: [], removed: [] });
+  });
+
+  it('treats an empty stored manifest as all-added (never a false "changed")', () => {
+    const d = diffFileManifests({}, { a: '1', b: '2' });
+    expect(d.added).toEqual(['a', 'b']);
+    expect(d.changed).toEqual([]);
   });
 });

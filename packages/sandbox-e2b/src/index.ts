@@ -33,7 +33,9 @@ import { Sandbox, resolveApiKey } from './sdk.js';
 import { withE2bRetry } from './retry.js';
 import { prepareE2bProvider } from './prepare.js';
 import { buildE2bAttach } from './build-attach.js';
-import { currentE2bBaseFingerprintLive } from './prepared-state.js';
+import { currentE2bBaseFingerprintLive,
+  currentE2bBaseFileHashes,
+} from './prepared-state.js';
 import { ensureE2bCredentials, setE2bCredentials } from './credentials.js';
 import { doctorChecks, readCredStatusSummary } from './provider-module.js';
 
@@ -165,6 +167,7 @@ export const providerModule: ProviderModule = {
   readCredStatus: readCredStatusSummary,
   setCredentials: (fields) => Promise.resolve(setE2bCredentials(fields)),
   currentBaseFingerprintLive: (claudeInstall) => currentE2bBaseFingerprintLive(claudeInstall),
+  currentBaseFileHashes: () => currentE2bBaseFileHashes(),
   doctorChecks,
 };
 

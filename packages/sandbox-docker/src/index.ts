@@ -184,6 +184,7 @@ export {
 } from './image.js';
 export {
   computeDockerContextFingerprint,
+  currentDockerBaseFileHashes,
   preparedMatches,
   readPreparedDockerState,
   resolveContextFiles,

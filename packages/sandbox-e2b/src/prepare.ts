@@ -36,7 +36,7 @@ import { dirname, join, resolve } from 'node:path';
 import type { Provider } from '@agentbox/core';
 import {
   claudeInstallFingerprint,
-  computeContextSha256,
+  computeContextManifest,
   readCliStamp,
   stageAllAgentStatic,
   type AgentStaticStage,
@@ -141,10 +141,12 @@ export async function prepareE2b(
     repoRoot: opts.repoRoot,
   });
   const claudeInstall = opts.claudeInstall ?? 'native';
-  const contextSha = claudeInstallFingerprint(
-    await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
-    claudeInstall,
+  // Keep the per-file digests, not just the fold: a later `stale` verdict can
+  // then name the files that changed instead of only reporting a moved hash.
+  const contextManifest = await computeContextManifest(
+    assets.map((a) => ({ rel: a.name, abs: a.localPath })),
   );
+  const contextSha = claudeInstallFingerprint(contextManifest.contextSha256, claudeInstall);
 
   // Bake-time size. A `--size` / `box.sizeE2b` like `4-8` overrides the default
   // cpu/memory (E2B rejects per-create resources, so it MUST be baked). The
@@ -278,6 +280,7 @@ export async function prepareE2b(
         // and produced `agentbox-base:latest:latest` in the status display.
         templateName: info.name,
         contextSha256: contextSha,
+        files: contextManifest.files,
         ...(sizeKey ? { size: sizeKey } : {}),
         cliVersion: cliStamp.cliVersion,
         cliCommit: cliStamp.cliCommit,

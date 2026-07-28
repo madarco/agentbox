@@ -12,7 +12,10 @@
  * accepted today.
  */
 
-import { claudeInstallFingerprint, computeContextSha256, readPreparedStateRaw, writePreparedStateRaw, preparedStatePathFor } from '@agentbox/sandbox-core';
+import { claudeInstallFingerprint, computeContextManifest,
+  computeContextSha256, readPreparedStateRaw, writePreparedStateRaw, preparedStatePathFor,
+  type FileManifest,
+} from '@agentbox/sandbox-core';
 import { UserFacingError } from '@agentbox/core';
 import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets.js';
 
@@ -23,6 +26,12 @@ export interface PreparedVercelBase {
   snapshotId: string;
   /** Deterministic SHA-256 of the prepare build context (provision.sh + assets). */
   contextSha256?: string;
+  /**
+   * Per-file digests of that context (relpath → sha256), so a later `stale`
+   * verdict can name the files that changed. Optional: bases baked before
+   * manifests existed simply lack it.
+   */
+  files?: FileManifest;
   /** CLI version that produced this snapshot (informational). */
   cliVersion?: string;
   /** Git short SHA of the CLI build (informational). */
@@ -104,4 +113,24 @@ export function ensureVercelBaseSnapshot(): void {
       'Run `agentbox prepare --provider vercel` first — Vercel cannot build images ' +
       'from a Dockerfile, so the base snapshot is a one-time prerequisite for cloud boxes.',
   );
+}
+
+/**
+ * Per-file digests of the CURRENT runtime assets, for diffing against the
+ * manifest stored at bake time so a `stale` verdict can name the changed files.
+ * Same asset list the fingerprint uses — each provider resolves its own, so this
+ * must live beside it rather than in a shared helper.
+ *
+ * `undefined` when the assets can't be resolved (dev tree without a build): the
+ * caller then has nothing to compare and must not claim a diff.
+ */
+export async function currentVercelBaseFileHashes(): Promise<FileManifest | undefined> {
+  try {
+    const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
+    return (
+      await computeContextManifest(assets.map((a) => ({ rel: a.name, abs: a.localPath })))
+    ).files;
+  } catch {
+    return undefined;
+  }
 }

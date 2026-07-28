@@ -26,7 +26,7 @@
 import { readFile } from 'node:fs/promises';
 import { Writable } from 'node:stream';
 import type { Provider } from '@agentbox/core';
-import { claudeInstallFingerprint, computeContextSha256, readCliStamp } from '@agentbox/sandbox-core';
+import { claudeInstallFingerprint, computeContextManifest, readCliStamp } from '@agentbox/sandbox-core';
 import {
   stageClaudeStaticForUpload,
   stageCodexStaticForUpload,
@@ -89,10 +89,12 @@ export async function prepareVercel(
     repoRoot: opts.repoRoot,
   });
   const claudeInstall = opts.claudeInstall ?? 'native';
-  const contextSha = claudeInstallFingerprint(
-    await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
-    claudeInstall,
+  // Keep the per-file digests, not just the fold: a later `stale` verdict can
+  // then name the files that changed instead of only reporting a moved hash.
+  const contextManifest = await computeContextManifest(
+    assets.map((a) => ({ rel: a.name, abs: a.localPath })),
   );
+  const contextSha = claudeInstallFingerprint(contextManifest.contextSha256, claudeInstall);
 
   // Skip-fast: existing base snapshot still on Vercel + matching fingerprint.
   const existing = readPreparedState();
@@ -165,6 +167,7 @@ export async function prepareVercel(
     base: {
       snapshotId: snap.snapshotId,
       contextSha256: contextSha,
+      files: contextManifest.files,
       cliVersion: cliStamp.cliVersion,
       cliCommit: cliStamp.cliCommit,
       createdAt: new Date().toISOString(),
