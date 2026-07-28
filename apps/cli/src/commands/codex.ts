@@ -607,8 +607,10 @@ export const codexCommand = new Command('codex')
               prompt: seedPrompt,
               agentArgs: applyCodexSkipPermissions(codexArgs, cfg.effective),
               onStatus,
+              onLog: (line) => cmdLog.write(line),
             }),
           (r) => (r ? 'run started on the remote hub' : 'remote hub unavailable'),
+          { verbose: opts.verbose === true },
         );
         if (res) {
           if (res.error) {
@@ -757,6 +759,7 @@ export const codexCommand = new Command('codex')
               onLog: (line) => cmdLog.write(line),
             }),
           (r) => (r ? 'box ready on the remote hub' : 'remote hub unavailable — building locally'),
+          { verbose: opts.verbose === true },
         );
         if (adopted) {
           await cloudAgentAttach({

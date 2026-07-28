@@ -610,8 +610,10 @@ export const opencodeCommand = new Command('opencode')
               prompt: seedPrompt,
               agentArgs: opencodeArgs,
               onStatus,
+              onLog: (line) => cmdLog.write(line),
             }),
           (r) => (r ? 'run started on the remote hub' : 'remote hub unavailable'),
+          { verbose: opts.verbose === true },
         );
         if (res) {
           if (res.error) {
@@ -760,6 +762,7 @@ export const opencodeCommand = new Command('opencode')
               onLog: (line) => cmdLog.write(line),
             }),
           (r) => (r ? 'box ready on the remote hub' : 'remote hub unavailable — building locally'),
+          { verbose: opts.verbose === true },
         );
         if (adopted) {
           await cloudAgentAttach({

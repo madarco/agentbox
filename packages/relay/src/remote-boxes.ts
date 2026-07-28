@@ -31,6 +31,8 @@ export interface RemoteBoxesRequest {
   bearer: string;
   /** Raw request body ('' for GET). */
   bodyText: string;
+  /** Query params, for the log tail's `?offset=`. Absent → treated as empty. */
+  query?: URLSearchParams;
 }
 
 export interface RemoteBoxesDeps {
@@ -48,10 +50,28 @@ export interface RemoteBoxesDeps {
    * key material behind. Absent → the reap only clears the registration/status.
    */
   custody?: CustodyStore | null;
+  /**
+   * Tail of a job's progress log, by byte offset. Wired by the relay daemon
+   * (which runs on the same host as the worker writing the file) and omitted by
+   * the serverless plane, where there is no such file — absent → 501, and a
+   * polling client falls back to status-only progress.
+   */
+  readJobLog?: (jobId: string, offset: number) => Promise<{ lines: string[]; offset: number }>;
   log?: (line: string) => void;
 }
 
 export const REMOTE_BOXES_PREFIX = '/remote/boxes';
+
+/**
+ * A job id we are willing to hand to a path-building reader.
+ *
+ * Enforced HERE, at the trust boundary, not only inside the one reader that
+ * builds a path today: `readJobLog` is injectable, and a future implementation
+ * that forgot the check would inherit a path traversal straight off the URL.
+ */
+export function isSafeJobId(id: string): boolean {
+  return id.length > 0 && id.length <= 128 && /^[A-Za-z0-9._-]+$/.test(id);
+}
 
 /** True when `path` addresses the create-queue surface. */
 export function isRemoteBoxesPath(path: string): boolean {
@@ -138,6 +158,25 @@ export async function handleRemoteBoxesRequest(
     }
     const jobs = await store.listCreateJobs({ limit: 100 });
     return { status: 200, body: { jobs } };
+  }
+
+  // A job's progress log, by byte offset. The worker's per-step lines (clone,
+  // seed, the provider's own create output) exist only as a file on the plane
+  // that ran the job — without this the PC's `create --via-hub` / `<provider>
+  // claude` sits on one static "running" line for the minutes a cloud create
+  // takes, because the job row carries a status and nothing else.
+  if (req.method === 'GET' && req.path.endsWith('/logs')) {
+    const id = decodeURIComponent(
+      req.path.slice(`${REMOTE_BOXES_PREFIX}/`.length, -'/logs'.length),
+    );
+    if (id.length === 0) return { status: 404, body: { error: 'no such job' } };
+    if (!isSafeJobId(id)) return { status: 400, body: { error: 'invalid job id' } };
+    if (!deps.readJobLog) {
+      return { status: 501, body: { error: 'job logs not available on this plane' } };
+    }
+    const offset = Number.parseInt(req.query?.get('offset') ?? '0', 10);
+    const tail = await deps.readJobLog(id, Number.isFinite(offset) ? offset : 0);
+    return { status: 200, body: tail };
   }
 
   if (req.method === 'GET' && req.path.startsWith(`${REMOTE_BOXES_PREFIX}/`)) {

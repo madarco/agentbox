@@ -62,6 +62,84 @@ describe('handleRemoteBoxesRequest', () => {
     expect(res?.status).toBe(404);
   });
 
+  describe('GET /remote/boxes/:id/logs', () => {
+    it('hands back the tail from the injected reader, with the query offset', async () => {
+      const seen: { id: string; offset: number }[] = [];
+      const res = await handleRemoteBoxesRequest(
+        req({
+          path: '/remote/boxes/job-1/logs',
+          query: new URLSearchParams({ offset: '42' }),
+        }),
+        {
+          store: store(),
+          adminToken: ADMIN,
+          readJobLog: (id, offset) => {
+            seen.push({ id, offset });
+            return Promise.resolve({ lines: ['cloning'], offset: 60 });
+          },
+        },
+      );
+      expect(res?.status).toBe(200);
+      expect(res?.body).toEqual({ lines: ['cloning'], offset: 60 });
+      expect(seen).toEqual([{ id: 'job-1', offset: 42 }]);
+    });
+
+    it('defaults a missing/junk offset to 0', async () => {
+      let seenOffset = -1;
+      await handleRemoteBoxesRequest(req({ path: '/remote/boxes/job-1/logs' }), {
+        store: store(),
+        adminToken: ADMIN,
+        readJobLog: (_id, offset) => {
+          seenOffset = offset;
+          return Promise.resolve({ lines: [], offset });
+        },
+      });
+      expect(seenOffset).toBe(0);
+    });
+
+    it('501s on a plane with no log reader wired (client falls back to status-only)', async () => {
+      const res = await handleRemoteBoxesRequest(req({ path: '/remote/boxes/job-1/logs' }), {
+        store: store(),
+        adminToken: ADMIN,
+      });
+      expect(res?.status).toBe(501);
+    });
+
+    it('400s a job id that could escape the log directory, without reading', async () => {
+      let called = false;
+      const res = await handleRemoteBoxesRequest(
+        req({ path: `/remote/boxes/${encodeURIComponent('../../etc/passwd')}/logs` }),
+        {
+          store: store(),
+          adminToken: ADMIN,
+          readJobLog: () => {
+            called = true;
+            return Promise.resolve({ lines: [], offset: 0 });
+          },
+        },
+      );
+      expect(res?.status).toBe(400);
+      expect(called).toBe(false);
+    });
+
+    it('401s before reading anything', async () => {
+      let called = false;
+      const res = await handleRemoteBoxesRequest(
+        req({ path: '/remote/boxes/job-1/logs', bearer: 'nope' }),
+        {
+          store: store(),
+          adminToken: ADMIN,
+          readJobLog: () => {
+            called = true;
+            return Promise.resolve({ lines: [], offset: 0 });
+          },
+        },
+      );
+      expect(res?.status).toBe(401);
+      expect(called).toBe(false);
+    });
+  });
+
   it('rejects a provider outside the allowlist', async () => {
     const res = await handleRemoteBoxesRequest(
       req({ method: 'POST', bodyText: JSON.stringify({ repoUrl: 'https://x/r.git', provider: 'hetzner' }) }),

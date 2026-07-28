@@ -64,6 +64,7 @@ import { resolveWorktree, hostRepoUnavailableReason } from './worktree.js';
 import { adminGateAllows } from './admin-gate.js';
 import { handleCustodyRequest } from './custody/routes.js';
 import { handleRemoteBoxesRequest, isRemoteBoxesPath } from './remote-boxes.js';
+import { readCreateJobLog } from './job-log-tail.js';
 import { handleStoreRpcRequest, isStoreRpcPath } from './store/store-rpc-routes.js';
 import type { CustodyStore } from './custody/store.js';
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
@@ -567,8 +568,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           path: url.pathname,
           bearer: bearerToken(req),
           bodyText,
+          query: url.searchParams,
         },
-        { store, adminToken: custodyAdminToken, custody, log },
+        { store, adminToken: custodyAdminToken, custody, readJobLog: readCreateJobLog, log },
       );
       if (remoteRes) {
         send(res, remoteRes.status, remoteRes.body ?? null);

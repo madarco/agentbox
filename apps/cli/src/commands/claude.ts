@@ -712,8 +712,10 @@ export const claudeCommand = new Command('claude')
               prompt: seedPrompt,
               agentArgs: applyClaudeSkipPermissions(claudeArgs, cfg.effective),
               onStatus,
+              onLog: (line) => cmdLog.write(line),
             }),
           (r) => (r ? 'run started on the remote hub' : 'remote hub unavailable'),
+          { verbose: opts.verbose === true },
         );
         if (res) {
           if (res.error) {
@@ -1008,6 +1010,7 @@ export const claudeCommand = new Command('claude')
               onLog: (line) => cmdLog.write(line),
             }),
           (r) => (r ? 'box ready on the remote hub' : 'remote hub unavailable — building locally'),
+          { verbose: opts.verbose === true },
         );
         if (adopted) {
           await cloudAgentAttach({
