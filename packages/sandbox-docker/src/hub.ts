@@ -11,6 +11,8 @@ import {
   controlPlaneDeployPath,
   EXPOSED_HUB_PROFILE,
   parseEnvFileBody,
+  resolveStagedRuntimeRoot,
+  RUNTIME_ROOT_ENV,
   type ControlPlaneDeployRecord,
 } from '@agentbox/sandbox-core';
 import { detectPortless, portlessAlias, portlessGetUrl, portlessUnalias } from './portless.js';
@@ -264,6 +266,39 @@ export function resolveHubServer(): string {
   );
 }
 
+/**
+ * The env the hub child needs beyond `process.env` to find files its own bundle
+ * doesn't carry.
+ *
+ * The hub bundle lives at `<cli>/runtime/hub/apps/hub`, three levels BELOW the
+ * staged runtime root — and every provider is inlined into it. So each
+ * self-relative lookup those providers do (`<self>/../runtime`,
+ * `<self>/../../runtime`) misses the real `<cli>/runtime`, and the hub silently
+ * degrades: cloud base fingerprints come back undefined (`baseStatus: unknown`
+ * → "baked, unverified"), and custody bake adoption — which gates creates on a
+ * control box — skips every shared record. A dev tree hides it by falling back
+ * to the monorepo sources; an npm install has no such fallback. Handing over the
+ * roots the CLI already resolved is the fix, same as the docker context below.
+ *
+ * The runtime root is marker-verified, and `resolveStagedRuntimeRoot` checks
+ * `AGENTBOX_RUNTIME_ROOT` first, so an operator override propagates. When no
+ * staged root exists (a workspace-only build) the key is OMITTED rather than set
+ * to a path that doesn't resolve — it would otherwise sit ahead of the child's
+ * own correct lookup.
+ */
+export function hubRuntimeEnv(
+  opts: { dockerContext?: string; runtimeRoot?: string } = {},
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  const dockerContext = opts.dockerContext ?? BUILD_CONTEXT_DIR;
+  if (dockerContext) env.AGENTBOX_DOCKER_CONTEXT = dockerContext;
+  const runtimeRoot =
+    opts.runtimeRoot ??
+    resolveStagedRuntimeRoot(dirname(fileURLToPath(import.meta.url)), 'docker/Dockerfile.box');
+  if (runtimeRoot) env[RUNTIME_ROOT_ENV] = runtimeRoot;
+  return env;
+}
+
 /** Kill whatever holds the port (a lean relay or a stale hub) and confirm it freed. */
 async function reclaimPort(
   reportedPid: number | undefined,
@@ -391,11 +426,11 @@ async function spawnHub(
       AGENTBOX_CLI_ENTRY: cliEntry,
       // The hub is the localhost profile (token gate); bind loopback.
       AGENTBOX_HUB_HOST: HOST,
-      // The hub bundle ships no staged docker build context of its own, so its
-      // in-process docker base-freshness check couldn't fingerprint (degrading
-      // to 'unknown'). Hand it the CLI's resolved context so hub-side
-      // fingerprints match what the create/prepare workers compute.
-      AGENTBOX_DOCKER_CONTEXT: BUILD_CONTEXT_DIR,
+      // The hub bundle ships no staged build context of its own, so its
+      // in-process freshness checks couldn't fingerprint (degrading to
+      // 'unknown'). Hand it the CLI's resolved roots so hub-side fingerprints
+      // match what the create/prepare workers compute. See hubRuntimeEnv.
+      ...hubRuntimeEnv(),
       // `hub expose` overrides the above (bind 0.0.0.0, profile hetzner, auth,
       // worker, public URL, tokens). Empty/absent → the plain localhost hub.
       ...(exposedEnv ?? {}),

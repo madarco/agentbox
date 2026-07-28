@@ -314,6 +314,13 @@ Run on `0.28.0-nightly.202607260716` (npm `nightly`), from a virgin `~/.agentbox
   ```
   Symptom when you forget: a change that is definitely in the source doesn't show up — e.g.
   `hub status` missing a field the running hub never learned to report.
+- **Every provider "unverified"? Check the hub child's env, not the bakes.** Hub-side base
+  freshness (`/system`, `/settings`) and custody bake adoption both hash the staged `runtime/`
+  tree, which the hub bundle can't find on its own — `spawnHub` passes `AGENTBOX_RUNTIME_ROOT`
+  (and `AGENTBOX_DOCKER_CONTEXT`) for it. If every cloud provider reads "baked · unverified"
+  (`baseStatus: unknown`), or a control box re-bakes something custody already holds, confirm
+  with `ps eww <hub pid> | tr ' ' '\n' | grep AGENTBOX_RUNTIME_ROOT`. A dev tree masks this by
+  falling back to the monorepo sources; an npm install has no such fallback.
 - **Use a non-LFS repo** for anything the hub clones; the `agentbox-test-repo*` repos have git-LFS
   objects that break the control box's clone.
 - **`hub setup` needs a TTY** for the "copy this token?" confirm.
