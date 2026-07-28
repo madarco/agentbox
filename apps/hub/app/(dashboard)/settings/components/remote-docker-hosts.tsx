@@ -37,8 +37,9 @@ export function RemoteDockerHosts({ onCount }: { onCount?: (n: number) => void }
   const [addOpen, setAddOpen] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [warn, setWarn] = useState<string | null>(null);
-  // One bake at a time — the hub serializes prepare jobs.
-  const [bake, setBake] = useState<{ alias: string; jobId: string } | null>(null);
+  // Bakes are serialized per host (each is its own `docker:<alias>` lane), so
+  // several hosts can bake at once — one in-flight job id per alias.
+  const [bakes, setBakes] = useState<Record<string, string>>({});
   const [bakeError, setBakeError] = useState<string | null>(null);
   const [busyAlias, setBusyAlias] = useState<string | null>(null);
 
@@ -76,7 +77,8 @@ export function RemoteDockerHosts({ onCount }: { onCount?: (n: number) => void }
         setBakeError(`${alias}: ${errMessage(j, res.status)}`);
         return;
       }
-      setBake({ alias, jobId: j.jobId });
+      const jobId = j.jobId;
+      setBakes((prev) => ({ ...prev, [alias]: jobId }));
     } catch (err) {
       setBakeError(`${alias}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -137,30 +139,34 @@ export function RemoteDockerHosts({ onCount }: { onCount?: (n: number) => void }
               type="button"
               size="sm"
               variant="outline"
-              disabled={busyAlias === h.alias || !!bake}
+              disabled={busyAlias === h.alias || !!bakes[h.alias]}
               onClick={() => void startBake(h.alias)}
               title="Bake the box image on this host"
             >
               <Icons.refresh className="size-3.5" />
-              {bake?.alias === h.alias ? 'Baking…' : h.baked ? 'Re-bake' : 'Bake'}
+              {bakes[h.alias] ? 'Baking…' : h.baked ? 'Re-bake' : 'Bake'}
             </Button>
             <Button
               type="button"
               size="sm"
               variant="destructive"
-              disabled={busyAlias === h.alias || bake?.alias === h.alias}
+              disabled={busyAlias === h.alias || !!bakes[h.alias]}
               onClick={() => void remove(h.alias)}
             >
               <Icons.trash className="size-3.5" />
               Remove
             </Button>
           </div>
-          {bake?.alias === h.alias ? (
+          {bakes[h.alias] ? (
             <JobLogStream
-              jobId={bake.jobId}
-              endpoint={`/api/v1/jobs/${encodeURIComponent(bake.jobId)}/logs`}
+              jobId={bakes[h.alias]!}
+              endpoint={`/api/v1/jobs/${encodeURIComponent(bakes[h.alias]!)}/logs`}
               onDone={() => {
-                setBake(null);
+                setBakes((prev) => {
+                  const rest = { ...prev };
+                  delete rest[h.alias];
+                  return rest;
+                });
                 void load();
               }}
             />

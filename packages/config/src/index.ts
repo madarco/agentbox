@@ -84,6 +84,8 @@ export {
   resolveBoxImage,
 } from './image.js';
 
+export { withFileLock } from './file-lock.js';
+
 export {
   bumpProjectGcCounter,
   listProjectsConfigured,

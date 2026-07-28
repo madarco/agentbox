@@ -10,6 +10,7 @@ import {
   projectMetaFile,
 } from './paths.js';
 import { coerceFromString, parseUserConfig } from './parse.js';
+import { withFileLock } from './file-lock.js';
 import { type ConfigScope, lookupKey, type UserConfig, UserConfigError } from './types.js';
 import { readdir } from 'node:fs/promises';
 
@@ -57,6 +58,12 @@ export function mergeConfigYaml(body: string, key: string, value: unknown): stri
 /**
  * Write a single key into the chosen scope's config file. Creates parent
  * dirs and (for project scope) the meta.json sidecar. Atomic via tmp-rename.
+ *
+ * The read-modify-write runs under a cross-process file lock: unrelated
+ * agentbox processes write the same global `config.yaml` concurrently (two
+ * parallel image bakes each pin their own `box.image<Provider>` from a separate
+ * detached worker), and without the lock the later writer's read would predate
+ * the earlier one's write and silently drop its key.
  */
 export async function setConfigValue(
   scope: ConfigScope,
@@ -74,13 +81,15 @@ export async function setConfigValue(
     : value;
 
   const path = await configPathFor(scope, cwd);
-  const current = await readExistingDoc(path);
-  setLeaf(current, key, coerced);
-  stampSchema(current);
-  // Re-parse to validate the merged document; any change that produces an
-  // invalid file (shouldn't be possible here, but defence-in-depth) throws.
-  parseUserConfig(stringifyYaml(current), path);
-  await atomicWriteYaml(path, current);
+  await withFileLock(path, async () => {
+    const current = await readExistingDoc(path);
+    setLeaf(current, key, coerced);
+    stampSchema(current);
+    // Re-parse to validate the merged document; any change that produces an
+    // invalid file (shouldn't be possible here, but defence-in-depth) throws.
+    parseUserConfig(stringifyYaml(current), path);
+    await atomicWriteYaml(path, current);
+  });
 
   if (scope === 'project') {
     const root = (await findProjectRoot(cwd)).root;
@@ -92,7 +101,8 @@ export async function setConfigValue(
 
 /**
  * Remove a key from the chosen scope's config file. Empty parent objects are
- * pruned so the file stays tidy. ENOENT is treated as success.
+ * pruned so the file stays tidy. ENOENT is treated as success. Locked like
+ * {@link setConfigValue} — same read-modify-write, same lost-update hazard.
  */
 export async function unsetConfigValue(
   scope: ConfigScope,
@@ -103,11 +113,14 @@ export async function unsetConfigValue(
     throw new UserConfigError(`unknown key "${key}"`);
   }
   const path = await configPathFor(scope, cwd);
-  const current = await readExistingDoc(path);
-  const existed = unsetLeaf(current, key);
+  const existed = await withFileLock(path, async () => {
+    const current = await readExistingDoc(path);
+    if (!unsetLeaf(current, key)) return false;
+    stampSchema(current);
+    await atomicWriteYaml(path, current);
+    return true;
+  });
   if (!existed) return { path, existed: false };
-  stampSchema(current);
-  await atomicWriteYaml(path, current);
   if (scope === 'project') {
     const root = (await findProjectRoot(cwd)).root;
     await touchProjectMeta(root);

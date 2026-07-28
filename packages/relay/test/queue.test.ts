@@ -3,12 +3,11 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   countInFlightCreateJobs,
-  countRunningPrepareJobs,
+  countRunningPrepareJobsByProvider,
   countWorkingSlots,
   defaultCountWorkingBoxes,
   loadQueue,
   occupiesWorkingSlot,
-  PREPARE_MAX_CONCURRENT,
   selectNextRunnable,
   selectNextRunnableByWorking,
   selectNextRunnablePrepare,
@@ -334,25 +333,67 @@ describe('prepare (image-bake) lane', () => {
     expect(selectNextRunnable([job({ id: 'p', kind: 'prepare' })], 0)).toBeNull();
   });
 
-  it('selectNextRunnablePrepare picks the oldest queued prepare under the ceiling', () => {
+  it('selectNextRunnablePrepare picks the oldest queued prepare on a free lane', () => {
     const jobs = [
       job({ id: 'a', kind: 'prepare', createdAt: '2024-01-01T00:00:00.000Z' }),
       job({ id: 'b', kind: 'prepare', createdAt: '2024-01-01T00:00:01.000Z' }),
       job({ id: 'c', kind: 'create' }),
     ];
-    expect(selectNextRunnablePrepare(jobs, 0)?.id).toBe('a');
-    // At the ceiling → nothing starts.
-    expect(selectNextRunnablePrepare(jobs, PREPARE_MAX_CONCURRENT)).toBeNull();
+    expect(selectNextRunnablePrepare(jobs, new Map())?.id).toBe('a');
+    // Docker's lane is busy and both queued bakes are docker → nothing starts.
+    expect(selectNextRunnablePrepare(jobs, new Map([['docker', 1]]))).toBeNull();
   });
 
-  it('countRunningPrepareJobs counts live prepare workers only', () => {
+  it('selectNextRunnablePrepare skips a busy lane and starts another provider', () => {
+    const jobs = [
+      job({
+        id: 'dockerQueued',
+        kind: 'prepare',
+        providerName: 'docker',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      }),
+      job({
+        id: 'e2bQueued',
+        kind: 'prepare',
+        providerName: 'e2b',
+        createdAt: '2024-01-01T00:00:01.000Z',
+      }),
+    ];
+    // A running docker bake holds only docker's lane; the younger e2b job overtakes.
+    expect(selectNextRunnablePrepare(jobs, new Map([['docker', 1]]))?.id).toBe('e2bQueued');
+  });
+
+  it('selectNextRunnablePrepare treats each remote-docker host as its own lane', () => {
+    const jobs = [
+      job({
+        id: 'hostA',
+        kind: 'prepare',
+        providerName: 'docker:hostA',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      }),
+      job({
+        id: 'hostB',
+        kind: 'prepare',
+        providerName: 'docker:hostB',
+        createdAt: '2024-01-01T00:00:01.000Z',
+      }),
+    ];
+    // Different machines entirely — a bake on hostA never blocks hostB.
+    expect(selectNextRunnablePrepare(jobs, new Map([['docker:hostA', 1]]))?.id).toBe('hostB');
+  });
+
+  it('countRunningPrepareJobsByProvider counts live prepare workers per lane', () => {
     const jobs = [
       job({ id: 'run', kind: 'prepare', status: 'running' }),
+      job({ id: 'e2bRun', kind: 'prepare', status: 'running', providerName: 'e2b' }),
       job({ id: 'dead', kind: 'prepare', status: 'running', pid: DEAD_PID }),
       job({ id: 'queued', kind: 'prepare', status: 'queued' }),
       job({ id: 'createRun', kind: 'create', status: 'running' }),
     ];
-    expect(countRunningPrepareJobs(jobs)).toBe(1);
+    const byProvider = countRunningPrepareJobsByProvider(jobs);
+    expect(byProvider.get('docker')).toBe(1);
+    expect(byProvider.get('e2b')).toBe(1);
+    expect(byProvider.size).toBe(2);
   });
 
   it('countInFlightCreateJobs ignores prepare jobs (a bake is not a box)', () => {
@@ -361,6 +402,69 @@ describe('prepare (image-bake) lane', () => {
       job({ id: 'create', kind: 'create', status: 'running' }),
     ];
     expect(countInFlightCreateJobs(jobs, new Set())).toBe(1);
+  });
+
+  // The loop runs against the real QUEUE_DIR, so `countRunning: 9999` pins the
+  // create lane shut — only the prepare lane can spawn here.
+  it('startQueueLoop bakes two providers in parallel but one per provider', async () => {
+    const prefix = `qvitest-prepare-lanes-${String(process.pid)}-`;
+    const ids = [`${prefix}docker`, `${prefix}e2b1`, `${prefix}e2b2`];
+    const spawned: string[] = [];
+    const { QUEUE_DIR } = await import('../src/queue.js');
+    try {
+      await writeJob(
+        job({
+          id: ids[0]!,
+          kind: 'prepare',
+          providerName: `${prefix}docker`,
+          createdAt: '2000-01-01T00:00:00.000Z',
+        }),
+      );
+      await writeJob(
+        job({
+          id: ids[1]!,
+          kind: 'prepare',
+          providerName: `${prefix}e2b`,
+          createdAt: '2000-01-01T00:00:01.000Z',
+        }),
+      );
+      await writeJob(
+        job({
+          id: ids[2]!,
+          kind: 'prepare',
+          providerName: `${prefix}e2b`,
+          createdAt: '2000-01-01T00:00:02.000Z',
+        }),
+      );
+      const handle = startQueueLoop({
+        log: () => {},
+        loadConfig: async () => ({
+          enabled: true,
+          maxConcurrent: 1,
+          maxWorking: 0,
+          idleGraceMs: 15_000,
+        }),
+        countRunning: async () => 9999,
+        // A live pid keeps the started job counted in its lane on the next tick.
+        spawnWorker: async (j) => {
+          spawned.push(j.id);
+          return process.pid;
+        },
+        intervalMs: 10,
+      });
+      const start = Date.now();
+      while (spawned.length < 2 && Date.now() - start < 2000) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      // Give the loop a few more ticks to (not) start the second e2b bake.
+      await new Promise((r) => setTimeout(r, 60));
+      await handle.stop();
+      expect(spawned).toContain(ids[0]);
+      expect(spawned).toContain(ids[1]);
+      expect(spawned).not.toContain(ids[2]);
+    } finally {
+      for (const id of ids) await rm(join(QUEUE_DIR, `${id}.json`), { force: true });
+    }
   });
 });
 

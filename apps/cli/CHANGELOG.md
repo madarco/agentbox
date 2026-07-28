@@ -89,6 +89,9 @@ CLI, not the raw commits.
 
 ### Changed
 
+- Image bakes started from the hub UI or the tray now run one **per provider**
+  instead of one at a time, so several providers set themselves up in parallel
+  (each remote-docker host counts as its own provider).
 - **`agentbox hub setup` is quieter and checks its prerequisites.** It fails
   immediately with an install hint when `gh` is missing (it is mandatory for the
   remote hub) rather than partway through a deploy, no longer offers the GitHub App

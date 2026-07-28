@@ -25,12 +25,16 @@ import type { BoxStatusStore } from './status-store.js';
 export const QUEUE_DIR = join(STATE_DIR, 'queue');
 
 /**
- * Concurrency ceiling for `kind: 'prepare'` (image-bake) jobs — a separate lane
- * from box creation. Serialized to 1: bakes are resource-heavy (a docker build,
- * a booted VPS) and each pins project config on success, so running one at a
- * time avoids contention and write races. A second bake queues behind the first.
+ * Concurrency ceiling for `kind: 'prepare'` (image-bake) jobs, applied **per
+ * provider lane** — a separate gate from box creation. Two bakes of the same
+ * provider would race on that provider's prepared-state marker and its
+ * `box.image<Provider>` pin, so a provider bakes one at a time and a second
+ * request for it queues. Different providers share nothing and bake in parallel.
+ *
+ * The lane key is `job.providerName` verbatim, so a remote-docker `docker:<alias>`
+ * bake gets its own lane per host — those run on different machines entirely.
  */
-export const PREPARE_MAX_CONCURRENT = 1;
+export const PREPARE_MAX_CONCURRENT_PER_PROVIDER = 1;
 
 export type QueueJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 export type QueueAgentKind = 'claude-code' | 'codex' | 'opencode';
@@ -356,8 +360,9 @@ export interface EnqueuePrepareJobInput {
  * Build a `kind: 'prepare'` manifest and write it to the queue. Like
  * {@link enqueueQueueJob} this is transport-free — the caller pokes the
  * scheduler. The agent/create fields carry inert placeholders (the prepare
- * worker only reads `providerName` + `prepare`); the job is scheduled in its own
- * lane (see {@link PREPARE_MAX_CONCURRENT}) and never surfaces as a box.
+ * worker only reads `providerName` + `prepare`); the job is scheduled in its
+ * provider's own lane (see {@link PREPARE_MAX_CONCURRENT_PER_PROVIDER}) and never
+ * surfaces as a box.
  */
 export async function enqueuePrepareJob(
   input: EnqueuePrepareJobInput,
@@ -378,7 +383,7 @@ export async function enqueuePrepareJob(
     agentArgs: [],
     createOpts: { workspace: input.workspace ?? process.cwd() },
     prepare,
-    maxConcurrent: PREPARE_MAX_CONCURRENT,
+    maxConcurrent: PREPARE_MAX_CONCURRENT_PER_PROVIDER,
     createdAt: new Date().toISOString(),
     logPath: queueLogPath(id),
   };
@@ -449,30 +454,36 @@ export function selectNextRunnable(jobs: QueueJob[], runningCount: number): Queu
   return null;
 }
 
-/** Count running prepare jobs (its own concurrency lane). Dead workers skipped. */
-export function countRunningPrepareJobs(jobs: QueueJob[]): number {
-  let n = 0;
+/**
+ * Count running prepare jobs per provider lane (keyed by `providerName`). Dead
+ * workers are skipped so a crashed bake doesn't wedge its provider's lane.
+ */
+export function countRunningPrepareJobsByProvider(jobs: QueueJob[]): Map<string, number> {
+  const byProvider = new Map<string, number>();
   for (const j of jobs) {
     if (j.kind !== 'prepare') continue;
     if (j.status !== 'running') continue;
     if (typeof j.pid === 'number' && !processAlive(j.pid)) continue;
-    n += 1;
+    byProvider.set(j.providerName, (byProvider.get(j.providerName) ?? 0) + 1);
   }
-  return n;
+  return byProvider;
 }
 
 /**
  * Pure selector for the prepare (image-bake) lane: the oldest queued prepare job
- * while under {@link PREPARE_MAX_CONCURRENT}. Independent of the box gates.
+ * whose provider lane is under {@link PREPARE_MAX_CONCURRENT_PER_PROVIDER}. A job
+ * whose lane is busy is skipped, not blocking — so a queued e2b bake starts while
+ * a docker bake runs. Independent of the box gates.
  */
 export function selectNextRunnablePrepare(
   jobs: QueueJob[],
-  runningPrepare: number,
+  runningByProvider: Map<string, number>,
 ): QueueJob | null {
-  if (runningPrepare >= PREPARE_MAX_CONCURRENT) return null;
   for (const j of jobs) {
     if (j.kind !== 'prepare') continue;
     if (j.status !== 'queued') continue;
+    const running = runningByProvider.get(j.providerName) ?? 0;
+    if (running >= PREPARE_MAX_CONCURRENT_PER_PROVIDER) continue;
     return j;
   }
   return null;
@@ -790,13 +801,15 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
         }
       }
 
-      // Prepare (image-bake) lane — independent of the box/working gates. A bake
+      // Prepare (image-bake) lanes — independent of the box/working gates. A bake
       // produces an artifact, not a box, so it neither counts against nor is
-      // blocked by running boxes. Serialized to PREPARE_MAX_CONCURRENT.
+      // blocked by running boxes. One lane per provider: the recount below sees
+      // the job just claimed, so a single tick starts at most one bake per
+      // provider and as many providers as have queued work.
       while (!stopped) {
         const fresh = await loadQueue();
-        const runningPrepare = countRunningPrepareJobs(fresh);
-        const next = selectNextRunnablePrepare(fresh, runningPrepare);
+        const runningByProvider = countRunningPrepareJobsByProvider(fresh);
+        const next = selectNextRunnablePrepare(fresh, runningByProvider);
         if (!next) break;
         const current = await readJob(next.id);
         if (!current || current.status !== 'queued') continue;
@@ -814,7 +827,7 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
             await writeJob(withPid);
             onStatusChange?.(withPid);
             log(
-              `queue: started prepare job ${updated.id} (${updated.providerName}) as pid ${String(pid)}; prepare ${String(runningPrepare + 1)}/${String(PREPARE_MAX_CONCURRENT)}`,
+              `queue: started prepare job ${updated.id} (${updated.providerName}) as pid ${String(pid)}; ${updated.providerName} lane ${String((runningByProvider.get(updated.providerName) ?? 0) + 1)}/${String(PREPARE_MAX_CONCURRENT_PER_PROVIDER)}`,
             );
           } else {
             log(`queue: started prepare job ${updated.id} (${updated.providerName}); pid unknown`);
