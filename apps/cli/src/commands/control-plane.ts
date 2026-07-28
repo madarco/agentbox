@@ -2159,7 +2159,6 @@ const updateSub = new Command('update')
       // A version change is exactly when a shared bake record starts (or stops)
       // matching the control box's fingerprint, so re-share.
       await shareBakesWithControlBox(record.url);
-      log.info(`Update log: ${cmdLog.path}`);
     } catch (err) {
       cmdLog.write(`FAILED: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
       handleLifecycleError(err);
