@@ -13,9 +13,13 @@
  */
 import type { Provider } from '@agentbox/core';
 import { readPreparedStateRaw } from '@agentbox/sandbox-core';
-import { pullPreparedFromCustody, pushPreparedToCustody } from '@agentbox/sandbox-cloud';
+import {
+  pullPreparedFromCustody,
+  pushPreparedToCustody,
+  writePreparedToCustodyStore,
+} from '@agentbox/sandbox-cloud';
 import { resolveCustodyTarget } from '../commands/control-plane.js';
-import { isShareablePreparedProvider } from './bake-share.js';
+import { isShareablePreparedProvider, localBakeBlocksAdoption } from './bake-share.js';
 
 /**
  * Adopt the control box's bake for `providerName` when it was built from the
@@ -35,12 +39,14 @@ export async function tryAdoptPreparedBase(args: {
   try {
     const target = await resolveCustodyTarget(undefined, { quiet: true });
     if (!target) return false;
-    // Already baked here → nothing to adopt; the normal prepare path decides
-    // whether the local record is stale.
-    const local = readPreparedStateRaw(args.providerName) as { base?: unknown } | null;
-    if (local?.base) return false;
     const fingerprint = await args.provider.baseFingerprint?.(args.claudeInstall);
     if (!fingerprint) return false;
+    // A local record only rules adoption out when it is CURRENT (see
+    // `localBakeBlocksAdoption` for why "any record at all" was wrong).
+    const local = readPreparedStateRaw(args.providerName) as {
+      base?: { contextSha256?: string };
+    } | null;
+    if (localBakeBlocksAdoption(local, fingerprint)) return false;
     const res = await pullPreparedFromCustody(args.providerName, fingerprint, {
       controlPlaneUrl: target.url,
       adminToken: target.adminToken,
@@ -52,13 +58,38 @@ export async function tryAdoptPreparedBase(args: {
   }
 }
 
-/** Share this machine's fresh bake with the control box. Never fails a good bake. */
+/**
+ * True when this process belongs to a control box — a deployed hub or one this
+ * machine exposed. Both run the resident create worker, and only they do, so the
+ * worker gate is also the "I am the custody store" signal. The bake worker is
+ * spawned by that hub's relay, so it inherits the variable.
+ */
+function isControlBox(): boolean {
+  return process.env.AGENTBOX_HUB_WORKER === 'on';
+}
+
+/**
+ * Record this machine's fresh bake so the other side can boot it. Never fails a
+ * good bake.
+ *
+ * A PC pushes to its control box over HTTP. A control box has no control box of
+ * its own — `relay.controlPlaneUrl` is unset there *because* it is the control
+ * plane — so the push resolved to nothing and its bakes never entered custody,
+ * silently: the hub showed "baked" while every PC kept re-baking, and the shared
+ * record stayed frozen at whatever a PC last uploaded. It owns the custody store
+ * on its own disk, so write straight to it.
+ */
 export async function sharePreparedBase(
   providerName: string,
   log: (line: string) => void,
 ): Promise<void> {
   if (!isShareablePreparedProvider(providerName)) return;
   try {
+    if (isControlBox()) {
+      const { FsCustodyStore } = await import('@agentbox/relay');
+      await writePreparedToCustodyStore(providerName, new FsCustodyStore(), log);
+      return;
+    }
     const target = await resolveCustodyTarget(undefined, { quiet: true });
     if (!target) return;
     await pushPreparedToCustody(providerName, {

@@ -94,6 +94,35 @@ export async function pushPreparedToCustody(
   }
 }
 
+/**
+ * The one write this needs from a custody store, structurally typed so this
+ * package doesn't take a dependency on `@agentbox/relay` to name it.
+ */
+export interface PreparedCustodyWriter {
+  put(path: string, data: Buffer): Promise<unknown>;
+}
+
+/**
+ * Record this machine's bake in a custody store it can write to DIRECTLY.
+ *
+ * The HTTP push above is for a PC talking to its control box. A control box has
+ * no control box of its own — `relay.controlPlaneUrl` is unset there precisely
+ * because it *is* the control plane — so that path resolves to nothing and its
+ * bakes never become shareable, silently. It owns the custody store on its own
+ * disk; write to it.
+ */
+export async function writePreparedToCustodyStore(
+  provider: PreparedProviderKind,
+  store: PreparedCustodyWriter,
+  log: (line: string) => void = () => {},
+): Promise<boolean> {
+  const local = readPreparedStateRaw(provider) as PreparedRecord | null;
+  if (!local?.base) return false;
+  await store.put(preparedCustodyPath(provider), Buffer.from(JSON.stringify(local), 'utf8'));
+  log(`prepared: recorded the ${provider} bake in custody`);
+  return true;
+}
+
 export interface PullPreparedResult {
   /** True when a matching record was fetched and written to local prepared-state. */
   adopted: boolean;

@@ -880,7 +880,26 @@ export const claudeCommand = new Command('claude')
     // runtime; if the local install no longer matches, the wizard offers to
     // rebuild before creating. Docker self-heals via `ensureImage`, so its
     // baseStatus is always `fresh` and the wizard is a no-op here.
-    const baseStatus = await evaluateBaseFreshness(providerName, cfg.effective.box.claudeInstall);
+    //
+    // Resolved BEFORE the wizard, not just at the create below: a hub-routed
+    // create is built on the control box, from ITS base, so this machine's base
+    // is irrelevant to it. Asking to spend minutes re-baking locally — for a box
+    // that never touches the result — is pure waste, and it is exactly what a PC
+    // sees whenever the control box has re-baked and the PC hasn't.
+    const hubIncompatible =
+      Boolean(resumePrepared) || Boolean(planPrepared) || cfg.effective.git.pushMode === 'direct';
+    const createRouting = await resolveCreateRouting({
+      providerName,
+      effective: cfg.effective,
+      projectRoot,
+      forceHub: opts.viaHub,
+      forceLocal: opts.local,
+      urlFlag: opts.url,
+    });
+    const buildsOnHub = createRouting.where === 'hub' && !hubIncompatible;
+    const baseStatus = buildsOnHub
+      ? undefined
+      : await evaluateBaseFreshness(providerName, cfg.effective.box.claudeInstall);
     const wiz = await maybeRunSetupWizard({
       workspace: opts.workspace,
       yes: !!opts.yes,
@@ -956,16 +975,9 @@ export const claudeCommand = new Command('claude')
       // attach here so the agent starts. Foreground only (we already returned for
       // -i above). resume / --plan / --dangerously-with-credentials teleport host
       // state AT create time, which the worker path can't do, so they stay local.
-      const routing = await resolveCreateRouting({
-        providerName,
-        effective: cfg.effective,
-        projectRoot,
-        forceHub: opts.viaHub,
-        forceLocal: opts.local,
-        urlFlag: opts.url,
-      });
-      const hubIncompatible =
-        Boolean(resumePrepared) || Boolean(planPrepared) || cfg.effective.git.pushMode === 'direct';
+      // Resolved above the wizard (see `createRouting`) so the stale-base prompt
+      // knows whether this machine's base is even going to be used.
+      const routing = createRouting;
       if (routing.where === 'hub' && hubIncompatible) {
         if (opts.viaHub)
           log.warn(

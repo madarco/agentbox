@@ -119,6 +119,14 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **A base baked on the control box stayed invisible to your machine**, which
+  kept reporting it as stale and offering a multi-minute re-bake. The control box
+  now records its bakes in its own custody (it was trying to upload them to a
+  control plane it doesn't have), and a PC can adopt a shared base over an
+  outdated local record instead of only over a missing one.
+- **A cloud create routed to the control box no longer prompts to re-bake the
+  local base** — it builds on the hub, from the hub's base, so this machine's was
+  never going to be used.
 - **The menu-bar app kept offering the update you just installed.** `self-update`
   now restarts a running app, which is what makes it re-read the installed CLI
   version; before, the row could sit stale for up to a day.

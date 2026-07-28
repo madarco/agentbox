@@ -38,6 +38,24 @@ export function isShareablePreparedProvider(provider: string): boolean {
 }
 
 /**
+ * Whether what this machine already has rules out adopting the control box's
+ * bake: only a record that matches OUR live build context does.
+ *
+ * The rule used to be "any local record at all", which inverted the intent — the
+ * machine that most needs the shared base, one holding an outdated record, was
+ * the only one that could never take it, and re-baked for minutes instead. A
+ * record from a different context is precisely what adoption is for. (Adopting
+ * something *worse* isn't a risk: the pull only writes when custody's
+ * fingerprint equals ours.)
+ */
+export function localBakeBlocksAdoption(
+  local: { base?: { contextSha256?: string } } | null,
+  liveFingerprint: string,
+): boolean {
+  return local?.base?.contextSha256 === liveFingerprint;
+}
+
+/**
  * The change-detection predicate for the credential re-push: true when at least
  * one item is due for upload (its hash differs from custody), false when every
  * item is a hash-skip. Callers use it to stay silent when nothing changed.
