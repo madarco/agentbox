@@ -117,6 +117,11 @@ function statusBadge(p: ProviderOption) {
     );
   }
   if (p.hasCredentials) return <Badge className="gap-1.5 normal-case">needs bake</Badge>;
+  // A control-box row whose credential state we could not read. "needs
+  // credentials" would be a specific claim about a machine we did not reach.
+  if (p.hasCredentials === undefined && p.origin === 'hub') {
+    return <Badge className="gap-1.5 normal-case">unknown</Badge>;
+  }
   return <Badge className="gap-1.5 normal-case">needs credentials</Badge>;
 }
 

@@ -173,7 +173,7 @@ export async function runPostUpdateRefresh(opts: PostUpdateRefreshOptions = {}):
   // update` runs once the box is on the new build.
   try {
     const { adoptPreparedBases } = await import('../control-plane/prepared-custody.js');
-    const res = await adoptPreparedBases((line) => say(line));
+    const res = await adoptPreparedBases();
     if (res.adopted.length > 0) {
       say(`adopted the control box's ${res.adopted.join(', ')} base bake(s) — no re-bake needed`);
     }

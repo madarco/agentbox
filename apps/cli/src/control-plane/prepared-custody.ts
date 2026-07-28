@@ -129,9 +129,7 @@ export interface AdoptPreparedBasesResult {
  * Best-effort and offline-safe: a provider we can't adopt is simply reported as
  * pending, never an error.
  */
-export async function adoptPreparedBases(
-  log: (line: string) => void = () => {},
-): Promise<AdoptPreparedBasesResult> {
+export async function adoptPreparedBases(): Promise<AdoptPreparedBasesResult> {
   const out: AdoptPreparedBasesResult = { adopted: [], pending: [] };
   const target = await resolveCustodyTarget(undefined, { quiet: true }).catch(() => null);
   if (!target) return out;
@@ -142,7 +140,12 @@ export async function adoptPreparedBases(
     } catch {
       continue; // a plugin provider that can't load here is not our problem
     }
-    const adopted = await adoptPreparedBase({ provider, providerName, log });
+    // Silent per provider: a sweep across every provider would otherwise emit a
+    // "different build context" line for each one it couldn't take, which is
+    // several lines to say nothing happened. The caller reports the outcome once
+    // from the lists below. (The single-provider `prepare` path keeps its log —
+    // there the user asked about that provider and wants the reason.)
+    const adopted = await adoptPreparedBase({ provider, providerName, log: () => {} });
     if (adopted) out.adopted.push(providerName);
     else out.pending.push(providerName);
   }

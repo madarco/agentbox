@@ -41,20 +41,23 @@ export function mergeRemoteProviders(input: MergeRemoteProvidersInput): Provider
     if (!isHubRoutableProvider(p.id)) return { ...p, origin: 'local' as const };
     const hub = byId.get(p.id);
     if (!hub) {
+      const unreachable = remote === null;
       return {
         ...p,
         origin: 'hub' as const,
         hubUrl,
         configured: false,
-        hasCredentials: false,
+        // Undefined, NOT false, when we couldn't reach the box: "no credentials"
+        // is a specific claim, and the honest answer is that we don't know. The
+        // badge renders undefined as "unknown".
+        hasCredentials: unreachable ? undefined : false,
         jobId: undefined,
         baseStatus: undefined,
         baseStaleReason: undefined,
         bakeDiff: undefined,
-        reason:
-          remote === null
-            ? 'Control box unreachable — its setup state is unknown.'
-            : 'Not set up on the control box.',
+        reason: unreachable
+          ? 'Control box unreachable — its setup state is unknown.'
+          : 'Not set up on the control box.',
       };
     }
     // Keep OUR label (the local catalog is the display source) and take

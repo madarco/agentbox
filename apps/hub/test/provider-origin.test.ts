@@ -61,6 +61,8 @@ describe('mergeRemoteProviders', () => {
     expect(hetzner.origin).toBe('hub');
     expect(hetzner.reason).toContain('unreachable');
     expect(hetzner.baseStatus).toBeUndefined();
+    // Not `false` — "no credentials there" is a claim we have no basis for.
+    expect(hetzner.hasCredentials).toBeUndefined();
     // Docker is unaffected by a control box being down.
     expect(byId(rows, 'docker')).toMatchObject({ origin: 'local', configured: true });
   });

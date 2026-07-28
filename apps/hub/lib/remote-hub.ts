@@ -58,6 +58,10 @@ export async function resolveRemoteHub(): Promise<RemoteHubTarget | null> {
     const cfg = await loadEffectiveConfig(os.homedir());
     const url = (cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/+$/, '');
     if (!url) return null;
+    // `cloud.viaHub=false` opts out of hub-routed creates, so cloud boxes are
+    // built HERE again and this machine's own bakes are the answer. Mirroring
+    // then would describe a machine that does no work for this user.
+    if (!cfg.effective.cloud.viaHub) return null;
     // The key never reaches this process's env (the hub is spawned before, or
     // without, `hub setup`), so read the file the CLI writes it to.
     const env = parseEnvFileBody(await readFile(CONTROL_PLANE_ENV, 'utf8').catch(() => ''));

@@ -2422,7 +2422,7 @@ async function syncBakesWithControlBox(url: string | undefined): Promise<void> {
   // help with anyway. Imported lazily — `prepared-custody` reaches back here for
   // `resolveCustodyTarget`, and a static edge both ways is a module cycle.
   const { adoptPreparedBases } = await import('../control-plane/prepared-custody.js');
-  const pulled = await adoptPreparedBases((line) => log.info(line)).catch(() => ({
+  const pulled = await adoptPreparedBases().catch(() => ({
     adopted: [] as string[],
     pending: [] as string[],
   }));
