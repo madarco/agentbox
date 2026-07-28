@@ -39,6 +39,7 @@ import {
 import { applyProjectSeed, startDetachedCloudAgent } from '@agentbox/sandbox-cloud';
 import { resolveAgentLauncher, type AgentKind } from '@agentbox/core';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
+import { HUB_WORKER_CLONE_PREFIX } from './boxes/project-key.js';
 import { IMPORTERS } from './provider-importers.js';
 
 const execFileAsync = promisify(execFile);
@@ -313,7 +314,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       return { id: created.record.id };
     },
     fetchSeedMaterial: (repoUrl, dest) => applySeedFromCustody(custody, repoUrl, dest, log),
-    tmpDir: (jobId) => join(tmpdir(), `agentbox-hub-worker-${jobId}`),
+    tmpDir: (jobId) => join(tmpdir(), `${HUB_WORKER_CLONE_PREFIX}${jobId}`),
     cleanup: (dir) => rm(dir, { recursive: true, force: true }),
     log,
     logFor: makeJobLogger(log),

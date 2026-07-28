@@ -98,6 +98,7 @@ import type {
 import { hubProfile } from './auth-config';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
+import { isHubWorkerClone, registrationProjectKey } from './boxes/project-key';
 import type {
   BakeDiff,
   Approval,
@@ -255,14 +256,6 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping): Box {
  * hub-worker box whose temp clone was deleted — those normally render from
  * local state, not here).
  */
-function registrationProjectKey(reg: BoxRegistration): { id: string; repo: string } {
-  const hostFolder = reg.worktrees?.[0]?.hostMainRepo;
-  if (hostFolder && hostFolder.startsWith('/')) {
-    return { id: hashProjectPath(hostFolder), repo: path.basename(hostFolder) };
-  }
-  const repo = reg.projectSlug ?? (reg.originUrl ? deriveRepoLabel(reg.originUrl) : reg.name);
-  return { id: hashProjectPath(repo), repo };
-}
 
 function mapRegistrationToBox(reg: BoxRegistration): Box {
   const createdAt = Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now();
@@ -292,10 +285,6 @@ function mapRegistrationToBox(reg: BoxRegistration): Box {
 }
 
 /** A short repo label from an origin URL: `owner/repo`, else the last path segment. */
-function deriveRepoLabel(originUrl: string): string {
-  const m = /[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(originUrl);
-  return m?.[1] ?? originUrl;
-}
 
 /**
  * A host repo's current branch (`git rev-parse --abbrev-ref HEAD`). Returns null when
@@ -381,7 +370,9 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
     // that path would mint a project card named after the clone dir, pointing at
     // nothing: no origin, no agentbox.yaml, no seed, and a create that resolves
     // to a dead path. Such boxes group by repo identity instead (see getData).
-    if (!existsSync(root)) continue;
+    // A per-job worker clone is never a project folder, even during the minute
+    // it still exists mid-create — see `isHubWorkerClone`.
+    if (isHubWorkerClone(root) || !existsSync(root)) continue;
     const createdAt = Date.parse(b.createdAt) || Date.now();
     const existing = boxByRoot.get(root);
     if (!existing) boxByRoot.set(root, { root, provider: b.provider ?? 'docker', createdAt });
@@ -399,7 +390,9 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
   // Registry entries (incl. zero-box projects). A registered path that has since
   // vanished is skipped for the same reason — including the ghosts an older build
   // wrote before the check above existed.
-  for (const e of (await listProjectsConfigured()).filter((e) => existsSync(e.originalPath))) {
+  for (const e of (await listProjectsConfigured()).filter(
+    (e) => !isHubWorkerClone(e.originalPath) && existsSync(e.originalPath),
+  )) {
     const box = boxByRoot.get(e.originalPath);
     byId.set(e.hash, {
       id: e.hash,
@@ -468,7 +461,7 @@ async function resolveProjectPath(projectId: string): Promise<string | null> {
     if (hashProjectPath(root) !== projectId) continue;
     // Only heal a root that is actually there: registering a deleted per-job
     // clone is what minted the ghost project cards in the first place.
-    if (!existsSync(root)) return root;
+    if (isHubWorkerClone(root) || !existsSync(root)) return root;
     await registerProject(root).catch(() => {});
     return root;
   }
@@ -1405,7 +1398,8 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       const regByBoxId = new Map(allRegistrations.map((r) => [r.boxId, r]));
       const repoGrouped = new Map<string, ProjectRegrouping>();
       for (const b of listed) {
-        if (existsSync(projectRootOf(b))) continue;
+        const root = projectRootOf(b);
+        if (!isHubWorkerClone(root) && existsSync(root)) continue;
         const reg = regByBoxId.get(b.id);
         if (!reg) continue;
         const { id, repo } = registrationProjectKey(reg);
