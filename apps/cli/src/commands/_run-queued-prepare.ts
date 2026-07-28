@@ -100,7 +100,6 @@ async function runPrepareJob(
     const adopted = await tryAdoptPreparedBase({
       provider,
       providerName,
-      claudeInstall,
       log: (l) => log.write(l),
     });
     if (adopted) {

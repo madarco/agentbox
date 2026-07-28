@@ -19,7 +19,11 @@
  * alternative is a multi-minute bake, so it needs no TTL or caching; a control
  * box that predates the `prepared` scope answers 400, which is treated like 404.
  */
-import { readPreparedStateRaw, writePreparedStateRaw } from '@agentbox/sandbox-core';
+import {
+  matchClaudeInstallFingerprint,
+  readPreparedStateRaw,
+  writePreparedStateRaw,
+} from '@agentbox/sandbox-core';
 import type { PreparedProviderKind } from '@agentbox/sandbox-core';
 import { deadlineFetch, hostReachable } from './reachability.js';
 
@@ -27,7 +31,7 @@ import { deadlineFetch, hostReachable } from './reachability.js';
 const PREPARED_FETCH_MS = 10_000;
 
 /** The subset of `PreparedBaseSnapshot` this module reasons about. */
-interface PreparedRecord {
+export interface PreparedRecord {
   schema?: number;
   base?: { contextSha256?: string; imageRef?: unknown; createdAt?: string };
 }
@@ -126,24 +130,32 @@ export async function writePreparedToCustodyStore(
 export interface PullPreparedResult {
   /** True when a matching record was fetched and written to local prepared-state. */
   adopted: boolean;
+  /**
+   * The adopted record, so the caller can mirror the config pin a real bake
+   * writes (`box.image<Provider>`) — some providers resolve their base from that
+   * key, not from prepared-state, and would ignore an adopted record otherwise.
+   */
+  record?: PreparedRecord;
   /** Set when a record was found but its build context differs from ours. */
   mismatch?: { stored: string; current: string };
 }
 
 /**
- * Adopt the control box's bake record for `provider` when it matches
- * `currentFingerprint` (this CLI's computed build-context hash).
+ * Adopt the control box's bake record for `provider` when it was built from the
+ * build context `nativeFingerprint` describes.
  *
- * `currentFingerprint` undefined → we can't compare, so nothing is adopted:
- * booting from an unverifiable base is worse than re-baking.
+ * `nativeFingerprint` MUST be the raw (native-mode) context hash — the npm fold
+ * derives from it, so one probe covers both install modes; passing an already
+ * folded hash would make the npm case unmatchable. Undefined → we can't compare,
+ * so nothing is adopted: booting from an unverifiable base is worse than re-baking.
  */
 export async function pullPreparedFromCustody(
   provider: PreparedProviderKind,
-  currentFingerprint: string | undefined,
+  nativeFingerprint: string | undefined,
   target: PreparedSyncTarget,
 ): Promise<PullPreparedResult> {
   const log = target.log ?? (() => {});
-  if (!currentFingerprint) return { adopted: false };
+  if (!nativeFingerprint) return { adopted: false };
   const fetchImpl = await reachableFetch(target);
   if (!fetchImpl) return { adopted: false };
   const url = `${target.controlPlaneUrl.replace(/\/+$/, '')}/admin/custody/${preparedCustodyPath(provider)}`;
@@ -160,17 +172,21 @@ export async function pullPreparedFromCustody(
     const record = JSON.parse(Buffer.from(body.data, 'base64').toString('utf8')) as PreparedRecord;
     const stored = record.base?.contextSha256;
     if (!stored) return { adopted: false };
-    if (stored !== currentFingerprint) {
+    // Fold-tolerant, like the hub's own adoption (`hydratePreparedFromCustody`):
+    // a base baked in the other `box.claudeInstall` mode derives from the same
+    // raw context hash, so a strict `!==` refused records the hub would accept —
+    // the two sides have to apply one rule or they disagree about what is baked.
+    if (!matchClaudeInstallFingerprint(stored, nativeFingerprint)) {
       // The other side baked from a different build context — its snapshot is
       // not the base we would bake. Ignore it rather than boot a stale base.
       log(
         `prepared: the control box's ${provider} bake is from a different build context — ignoring it and baking locally`,
       );
-      return { adopted: false, mismatch: { stored, current: currentFingerprint } };
+      return { adopted: false, mismatch: { stored, current: nativeFingerprint } };
     }
     writePreparedStateRaw(provider, record);
     log(`prepared: adopted the control box's ${provider} base (build context matches — no re-bake needed)`);
-    return { adopted: true };
+    return { adopted: true, record };
   } catch {
     // Offline / unparseable / unreachable: fall through to a normal bake.
     return { adopted: false };

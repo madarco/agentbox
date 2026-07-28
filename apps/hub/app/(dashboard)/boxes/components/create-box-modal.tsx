@@ -139,6 +139,9 @@ function CreateBoxModal({
   // `provider` state always holds a concrete id (init 'docker'), but its TYPE is optional.
   const providerId = provider ?? 'docker';
   const providerOption = providers.find((p) => p.id === providerId);
+  // Set when any provider row came from a control box — the note below the picker
+  // points there rather than leaving the disabled options unexplained.
+  const controlBoxUrl = providers.find((p) => p.origin === 'hub' && p.hubUrl)?.hubUrl;
   const providerFreshness = freshness?.[providerId];
   // An in-flight bake job counts as "bake needed" too — the create must wait on it.
   const bakeNeeded =
@@ -314,13 +317,39 @@ function CreateBoxModal({
             <Field label="Provider">
               <Select value={provider} onChange={(e) => setProvider(e.target.value)}>
                 {providers.map((p) => (
-                  <option key={p.id} value={p.id} disabled={!p.configured} title={p.reason}>
+                  <option
+                    key={p.id}
+                    // A control-box provider is disabled even when it IS set up
+                    // there: this hub is a mirror of that machine, not a second
+                    // way to drive it. The CLI routes such creates to the
+                    // control box; from here, its own UI is the place.
+                    disabled={!p.configured || p.origin === 'hub'}
+                    title={p.origin === 'hub' ? `Create these on the control box${p.hubUrl ? ` (${p.hubUrl})` : ''}` : p.reason}
+                    value={p.id}
+                  >
                     {p.label}
-                    {p.configured ? '' : ' — not configured'}
+                    {p.origin === 'hub'
+                      ? ' — create on the control box'
+                      : p.configured
+                        ? ''
+                        : ' — not configured'}
                   </option>
                 ))}
               </Select>
             </Field>
+            {controlBoxUrl ? (
+              <p className="-mt-2 text-xs text-muted-foreground">
+                Cloud boxes are created on your control box.{' '}
+                <a
+                  href={`${controlBoxUrl}/boxes`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2 hover:text-foreground"
+                >
+                  Open it ↗
+                </a>
+              </p>
+            ) : null}
             {bakeNeeded ? (
               <p
                 className="-mt-2 font-mono text-xs text-amber-600 dark:text-amber-400"

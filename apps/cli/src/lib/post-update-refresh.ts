@@ -161,6 +161,26 @@ export async function runPostUpdateRefresh(opts: PostUpdateRefreshOptions = {}):
     warn('box image check', err);
   }
 
+  // An update moves the build context, which stales every CLOUD base at once.
+  // Those bases are provider-side snapshots any machine with the API key can
+  // boot, and the control box may already hold one for the new context — so
+  // adopt rather than report the staleness and leave the user to spend minutes
+  // re-baking. No control box configured → a no-op.
+  //
+  // In `self-update` this runs BEFORE step 3's `hub update`, so it only lands
+  // when the control box was updated ahead of this machine (the multi-PC case).
+  // The other ordering is covered by `syncBakesWithControlBox`, which `hub
+  // update` runs once the box is on the new build.
+  try {
+    const { adoptPreparedBases } = await import('../control-plane/prepared-custody.js');
+    const res = await adoptPreparedBases();
+    if (res.adopted.length > 0) {
+      say(`adopted the control box's ${res.adopted.join(', ')} base bake(s) — no re-bake needed`);
+    }
+  } catch (err) {
+    warn('cloud base adoption', err);
+  }
+
   // The hub and the relay are separate long-lived processes with separate pid
   // files, and BOTH must be restarted here. An update replaces the installed
   // package directory underneath whichever one is still running, which leaves it

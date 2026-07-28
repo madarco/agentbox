@@ -8,38 +8,76 @@
  *
  * The transport-level rules (fingerprint-match-wins, 400-as-404) live in
  * `@agentbox/sandbox-cloud`'s `prepared-sync`; this adds the CLI's concerns:
- * resolving the control-plane target, skipping docker, and never letting a
- * sharing failure affect the bake.
+ * resolving the control-plane target, skipping docker, pinning the adopted base
+ * into config, and never letting a sharing failure affect the bake.
  */
+import { boxImageConfigKey, isProviderKind, setConfigValue } from '@agentbox/config';
 import type { Provider } from '@agentbox/core';
 import { readPreparedStateRaw } from '@agentbox/sandbox-core';
 import {
   pullPreparedFromCustody,
   pushPreparedToCustody,
   writePreparedToCustodyStore,
+  type PreparedRecord,
 } from '@agentbox/sandbox-cloud';
 import { resolveCustodyTarget } from '../commands/control-plane.js';
+import { getRuntimeProviderNames } from '../provider/loaders.js';
+import { getProvider } from '../provider/registry.js';
 import { isShareablePreparedProvider, localBakeBlocksAdoption } from './bake-share.js';
 
 /**
- * Adopt the control box's bake for `providerName` when it was built from the
- * same build context as ours, so a base baked there needs no re-bake here.
- * Returns true when adopted — the caller then skips the bake entirely.
+ * Mirror the config pin a real bake writes for the adopted record.
+ *
+ * Adopting only the prepared-state file is not enough for every provider:
+ * daytona resolves its base from `box.imageDaytona`, not from
+ * `<provider>-prepared.json`, so an adopted record would sit there while create
+ * kept building from the Dockerfile path. `_run-queued-prepare` performs the
+ * same write after its own bake; this keeps the adopted path equivalent.
+ *
+ * Global scope, like the hub's bake: an adopted base is host-wide, not tied to
+ * the project directory the command happened to run in.
+ */
+export async function pinAdoptedBase(
+  providerName: string,
+  record: PreparedRecord | undefined,
+  log: (line: string) => void,
+): Promise<void> {
+  const imageRef = record?.base?.imageRef;
+  if (typeof imageRef !== 'string' || imageRef.length === 0) return;
+  if (!isProviderKind(providerName)) return;
+  const key = boxImageConfigKey(providerName);
+  try {
+    await setConfigValue('global', key, imageRef, process.cwd());
+    log(`prepared: pinned ${key}=${imageRef} (global)`);
+  } catch (err) {
+    log(
+      `prepared: adopted the ${providerName} base but could not pin ${key}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
+ * Adopt the control box's bake for one provider when it was built from the same
+ * build context as ours. Returns true when adopted — the caller then skips the
+ * bake entirely.
+ *
+ * The fingerprint is always probed in NATIVE mode: that is the raw context hash
+ * the npm fold derives from, so one probe matches a record baked in either
+ * `box.claudeInstall` mode (`matchClaudeInstallFingerprint`).
  *
  * Best-effort: any failure (no control box, offline, no fingerprint) simply
  * means we bake normally.
  */
-export async function tryAdoptPreparedBase(args: {
+async function adoptPreparedBase(args: {
   provider: Provider;
   providerName: string;
-  claudeInstall: 'native' | 'npm';
   log: (line: string) => void;
 }): Promise<boolean> {
   if (!isShareablePreparedProvider(args.providerName)) return false;
   try {
     const target = await resolveCustodyTarget(undefined, { quiet: true });
     if (!target) return false;
-    const fingerprint = await args.provider.baseFingerprint?.(args.claudeInstall);
+    const fingerprint = await args.provider.baseFingerprint?.('native');
     if (!fingerprint) return false;
     // A local record only rules adoption out when it is CURRENT (see
     // `localBakeBlocksAdoption` for why "any record at all" was wrong).
@@ -52,10 +90,66 @@ export async function tryAdoptPreparedBase(args: {
       adminToken: target.adminToken,
       log: args.log,
     });
+    if (res.adopted) await pinAdoptedBase(args.providerName, res.record, args.log);
     return res.adopted;
   } catch {
     return false;
   }
+}
+
+/**
+ * Adopt the control box's bake for `providerName` when it was built from the
+ * same build context as ours, so a base baked there needs no re-bake here.
+ * Returns true when adopted — the caller then skips the bake entirely.
+ */
+export async function tryAdoptPreparedBase(args: {
+  provider: Provider;
+  providerName: string;
+  log: (line: string) => void;
+}): Promise<boolean> {
+  return adoptPreparedBase(args);
+}
+
+/** Per-provider outcome of a bulk adoption sweep. */
+export interface AdoptPreparedBasesResult {
+  /** Providers whose base now matches the control box's — nothing to re-bake. */
+  adopted: string[];
+  /** Providers still without a current base here (nothing shared, or a different context). */
+  pending: string[];
+}
+
+/**
+ * Pull down every cloud bake the control box holds for THIS build context.
+ *
+ * The counterpart to `syncBakesWithControlBox`'s push. Sharing used to be
+ * one-way, so a CLI update that moved the build context left every local cloud
+ * base stale and the user was told to spend minutes re-baking — even when the
+ * control box already held a base for the exact context we'd bake.
+ *
+ * Best-effort and offline-safe: a provider we can't adopt is simply reported as
+ * pending, never an error.
+ */
+export async function adoptPreparedBases(): Promise<AdoptPreparedBasesResult> {
+  const out: AdoptPreparedBasesResult = { adopted: [], pending: [] };
+  const target = await resolveCustodyTarget(undefined, { quiet: true }).catch(() => null);
+  if (!target) return out;
+  for (const providerName of getRuntimeProviderNames().filter(isShareablePreparedProvider)) {
+    let provider: Provider;
+    try {
+      provider = await getProvider(providerName);
+    } catch {
+      continue; // a plugin provider that can't load here is not our problem
+    }
+    // Silent per provider: a sweep across every provider would otherwise emit a
+    // "different build context" line for each one it couldn't take, which is
+    // several lines to say nothing happened. The caller reports the outcome once
+    // from the lists below. (The single-provider `prepare` path keeps its log —
+    // there the user asked about that provider and wants the reason.)
+    const adopted = await adoptPreparedBase({ provider, providerName, log: () => {} });
+    if (adopted) out.adopted.push(providerName);
+    else out.pending.push(providerName);
+  }
+  return out;
 }
 
 /**

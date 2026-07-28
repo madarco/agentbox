@@ -127,6 +127,20 @@ describe('classifyBakeShare', () => {
     ).toBe('match');
   });
 
+  it('reports adopted when the pull already took the hub record, and warns about nothing', () => {
+    // Our own record is stale by definition in that case — the "re-bake this"
+    // warning is exactly what adoption exists to silence.
+    const res = classifyBakeShare({
+      ...shared,
+      provider: 'e2b',
+      storedFingerprint: 'b'.repeat(64),
+      pushSucceeded: false,
+      adopted: true,
+    });
+    expect(res).toEqual({ provider: 'e2b', status: 'adopted' });
+    expect(summarizeBakeShare([res])).toMatchObject({ adopted: ['e2b'], mismatched: [] });
+  });
+
   it('a failed push is share-failed even when the fingerprint would have matched', () => {
     // The record never reached the hub, so no fingerprint verdict applies — it
     // must not be reported as either a match or a fingerprint mismatch.
@@ -181,6 +195,13 @@ describe('localBakeBlocksAdoption', () => {
 
   it('blocks when the local bake already matches this build context', () => {
     expect(localBakeBlocksAdoption(rec(LIVE), LIVE)).toBe(true);
+  });
+
+  it('blocks an npm-fold local bake too — the probe is always the native hash', () => {
+    // A `box.claudeInstall=npm` machine stores the FOLDED fingerprint. A strict
+    // compare called its perfectly current base a miss, so a prepare that found
+    // nothing in custody re-baked a base it already had, every time.
+    expect(localBakeBlocksAdoption(rec(claudeInstallFingerprint(LIVE, 'npm')), LIVE)).toBe(true);
   });
 
   // The bug this replaced: an outdated record used to block adoption outright,

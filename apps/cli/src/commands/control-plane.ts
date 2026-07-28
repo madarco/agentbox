@@ -1998,7 +1998,7 @@ async function runLocalUpdateFlow(opts: UpdateOpts, logWrite: (l: string) => voi
       ? `Control box is healthy${after.version ? `, running ${after.version}` : ''}.`
       : `Hub did not answer just now (${after.detail}) — check with \`agentbox hub status\`.`,
   );
-  await shareBakesWithControlBox(loopback);
+  await syncBakesWithControlBox(loopback);
 }
 
 /** `hub destroy` for a LOCAL control box: stop exposing, revert to the plain hub. */
@@ -2158,7 +2158,7 @@ const updateSub = new Command('update')
       }
       // A version change is exactly when a shared bake record starts (or stops)
       // matching the control box's fingerprint, so re-share.
-      await shareBakesWithControlBox(record.url);
+      await syncBakesWithControlBox(record.url);
     } catch (err) {
       cmdLog.write(`FAILED: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
       handleLifecycleError(err);
@@ -2384,9 +2384,17 @@ async function cliNativeFingerprint(provider: string): Promise<string | undefine
 }
 
 /**
- * Share this machine's cloud bake records with a control box, so its first
- * web-UI create boots the base you already baked instead of spending minutes
- * re-baking an identical one.
+ * Reconcile this machine's cloud bake records with a control box's, in BOTH
+ * directions, so whichever side already baked this build context settles it.
+ *
+ * Per provider:
+ *   - our record matches this CLI's build context → **push** it, so the box's
+ *     first web-UI create boots it instead of spending minutes re-baking.
+ *   - it doesn't → **pull** first. A CLI update moves the build context, which
+ *     staled every local cloud base at once; when the box already holds one for
+ *     the new context, adopting it costs a GET instead of a multi-minute bake.
+ *     Sharing used to be push-only, so this case only ever produced a nag.
+ *   - neither side has one → say so, once, per provider.
  *
  * The push always succeeds if the box is reachable, but the box only ADOPTS a
  * record whose build-context fingerprint matches its own — so a record from a
@@ -2398,7 +2406,7 @@ async function cliNativeFingerprint(provider: string): Promise<string | undefine
  * Best-effort: a fresh deploy is still perfectly usable without any of this (it
  * just bakes on demand).
  */
-async function shareBakesWithControlBox(url: string | undefined): Promise<void> {
+async function syncBakesWithControlBox(url: string | undefined): Promise<void> {
   const target = await resolveCustodyTarget(url, { quiet: true });
   if (!target) return;
   // The version the box actually runs decides whether its fingerprint matches
@@ -2409,31 +2417,52 @@ async function shareBakesWithControlBox(url: string | undefined): Promise<void> 
   // registered plugins) filtered by the single shareable rule — never a
   // hardcoded list, or a new provider is silently skipped from bake sharing.
   const providers = getRuntimeProviderNames().filter(isShareablePreparedProvider);
+  // The pull direction first, in one sweep: it skips any provider whose local
+  // record is already current, so it only ever touches the ones a push couldn't
+  // help with anyway. Imported lazily — `prepared-custody` reaches back here for
+  // `resolveCustodyTarget`, and a static edge both ways is a module cycle.
+  const { adoptPreparedBases } = await import('../control-plane/prepared-custody.js');
+  const pulled = await adoptPreparedBases().catch(() => ({
+    adopted: [] as string[],
+    pending: [] as string[],
+  }));
   for (const provider of providers) {
+    const adopted = pulled.adopted.includes(provider);
+    // Read AFTER the sweep — an adopted record is the current local one.
     const local = readPreparedStateRaw(provider) as { base?: { contextSha256?: string } } | null;
     const storedFingerprint = local?.base?.contextSha256;
-    if (!storedFingerprint) continue; // not baked here → nothing to share
+    const liveFingerprint = await cliNativeFingerprint(provider);
+    if (!adopted && !storedFingerprint) continue; // nothing here, nothing there
     // Capture the real upload outcome — a swallowed failure must not be reported
     // as a share (the record never left this machine, so the hub will re-bake).
-    const pushSucceeded = await pushPreparedToCustody(provider, {
-      controlPlaneUrl: target.url,
-      adminToken: target.adminToken,
-    }).catch(() => false);
+    const pushSucceeded =
+      !adopted && storedFingerprint
+        ? await pushPreparedToCustody(provider, {
+            controlPlaneUrl: target.url,
+            adminToken: target.adminToken,
+          }).catch(() => false)
+        : false;
     results.push(
       classifyBakeShare({
         provider,
         storedFingerprint,
-        cliNativeFingerprint: await cliNativeFingerprint(provider),
+        cliNativeFingerprint: liveFingerprint,
         hubVersion,
         cliVersion: AGENTBOX_VERSION,
         pushSucceeded,
+        adopted,
       }),
     );
   }
-  const { matched, mismatched, shareFailed } = summarizeBakeShare(results);
+  const { matched, adopted, mismatched, shareFailed } = summarizeBakeShare(results);
   if (matched.length > 0) {
     log.success(
       `Shared your ${matched.join(', ')} base bake(s) with the control box — it won't re-bake them.`,
+    );
+  }
+  if (adopted.length > 0) {
+    log.success(
+      `Adopted the control box's ${adopted.join(', ')} base bake(s) — no re-bake needed here.`,
     );
   }
   const rebakeNote = buildRebakeNote(mismatched);
@@ -2543,7 +2572,7 @@ export async function syncAgentCredentialsIfChanged(url?: string): Promise<void>
  */
 async function finalizeControlBoxState(url: string | undefined): Promise<void> {
   await syncAgentCredentials(url, { announce: true });
-  await shareBakesWithControlBox(url);
+  await syncBakesWithControlBox(url);
 }
 
 const deployCmd = new Command('deploy')

@@ -182,6 +182,60 @@ docker passes a Dockerfile `--build-arg` (and folds the mode into
 clobber an npm image); daytona — whose SDK has no build-arg — builds from
 a sibling temp Dockerfile with the ARG default flipped.
 
+### 1.2.2 Where a cloud base is baked, and who ends up holding it
+
+A cloud base is a provider-side snapshot **any** machine with the API key
+can boot, so it should be baked once and shared — not baked per machine.
+Two mechanisms do that, and both key off the same `base.contextSha256`:
+
+- **Routing** (`control-plane/route-prepare.ts`). With a control box
+  configured and `cloud.viaHub` on, `agentbox prepare --provider <cloud>`
+  drives **its** bake (`POST /api/v1/providers/:id/prepare`, log streamed
+  over the job SSE), then pulls the record back from custody. That is the
+  same machine `create` builds on, so a local bake would produce a
+  snapshot nothing boots. `--local` / `--via-hub` force either side;
+  `--name` / `--location` / `--size` keep it local, since the hub's
+  `parseProviderPrepare` doesn't carry them.
+
+  The bake-side predicate is `isHubBakeableProvider`, **not**
+  `isHubRoutableProvider` — they answer different questions and differ on
+  **remote-docker**. Its creates can't go to the hub (they run over your
+  own `~/.ssh/config`), but its base is an image on a *third* machine
+  both sides reach, and readiness is read off that engine rather than a
+  local file — so the control box can bake it via
+  `POST /api/v1/hosts/:alias/bake` and there is nothing to sync back.
+  Gated at runtime on the control box having that alias in its own
+  registry (`GET /api/v1/hosts`); it SSHes there as itself, so your local
+  alias list says nothing about whether it can. Only plain `docker` is
+  never hub-bakeable.
+
+  **Known gap:** the alias registry is per machine and nothing propagates
+  it — every writer (`upsertHostAlias`, from `docker add` / `host-setup`
+  / the hub's `addRemoteDockerHost`) is local. So a host added on the PC
+  keeps baking on the PC until it is registered on the control box too.
+  Left manual on purpose: copying the alias across would flip
+  `hubKnowsHost` to true without the control box's key being authorized
+  on that host, routing a bake that then fails in place of a local one
+  that worked. The hub's `POST /api/v1/hosts` already `probeRemoteEngine`s
+  before saving, so a *probe-gated* propagation is the shape to build if
+  this is ever automated — never a file copy.
+- **Sync** (`control-plane/prepared-custody.ts` + `sandbox-cloud/prepared-sync.ts`).
+  `syncBakesWithControlBox` (hub setup / deploy / update) and the
+  `self-update` post-update refresh reconcile **both** directions: push
+  the local record when it matches this CLI's build context, otherwise
+  pull the box's. Adoption is fingerprint-match-wins and fold-tolerant
+  (`matchClaudeInstallFingerprint`), so a base baked in the other
+  `box.claudeInstall` mode is taken rather than re-baked, exactly as the
+  hub's own `hydratePreparedFromCustody` does. Adopting also mirrors the
+  `box.image<Provider>` pin — daytona resolves its base from that key,
+  not from prepared-state, so a record-only adoption would be inert.
+
+The PC's hub UI follows the same principle: with a control box configured
+it **mirrors** that box's provider rows (`lib/remote-hub.ts` +
+`lib/boxes/provider-origin.ts`) instead of reporting local bakes nothing
+will boot. An unreachable box renders as `unknown`, never as local state
+under a control-box label.
+
 ### 1.3 Login → prepare nudge
 
 Each cloud's `agentbox <provider> login` only persists credentials.

@@ -47,12 +47,19 @@ export function isShareablePreparedProvider(provider: string): boolean {
  * record from a different context is precisely what adoption is for. (Adopting
  * something *worse* isn't a risk: the pull only writes when custody's
  * fingerprint equals ours.)
+ *
+ * `nativeFingerprint` is the raw context hash, and the match is fold-tolerant —
+ * the SAME rule the pull and the hub's hydration apply. A strict compare here
+ * would call an `box.claudeInstall=npm` machine's perfectly current base a
+ * miss (it stores the folded hash), so a `prepare` that found nothing in
+ * custody would re-bake a base it already had, every time.
  */
 export function localBakeBlocksAdoption(
   local: { base?: { contextSha256?: string } } | null,
-  liveFingerprint: string,
+  nativeFingerprint: string,
 ): boolean {
-  return local?.base?.contextSha256 === liveFingerprint;
+  const stored = local?.base?.contextSha256;
+  return !!stored && matchClaudeInstallFingerprint(stored, nativeFingerprint) !== null;
 }
 
 /**
@@ -84,6 +91,13 @@ export interface BakeShareInput {
    * applies — the outcome is `share-failed`, never a false `match`.
    */
   pushSucceeded: boolean;
+  /**
+   * Whether the OTHER direction already settled this provider: the control box
+   * held a record for our build context and we took it. Nothing about our own
+   * (by definition stale) record matters then, so it wins over every verdict
+   * below — including the "re-bake this" warning it exists to silence.
+   */
+  adopted?: boolean;
 }
 
 export type BakeShareStatus =
@@ -94,7 +108,9 @@ export type BakeShareStatus =
   /** Shared; the hub's fingerprint will match, so its first create boots the base. */
   | 'match'
   /** Shared; the hub computes a different fingerprint, so it will re-bake. */
-  | 'mismatch';
+  | 'mismatch'
+  /** The other direction: the hub's record matched OUR context, so we took it. */
+  | 'adopted';
 
 export interface BakeShareResult {
   provider: string;
@@ -107,6 +123,9 @@ export interface BakeShareResult {
  * Predict whether the control box will boot this machine's bake record for
  * `provider`.
  *
+ * - Adoption settles it: when the pull already took the hub's record for our
+ *   build context, our own record is stale by definition and there is nothing
+ *   to warn about.
  * - The upload has to have actually succeeded; a swallowed push failure must
  *   never be reported as a share (that is the false "Shared it" bug).
  * - A local record whose fingerprint matches neither install-mode fold of THIS
@@ -116,6 +135,7 @@ export interface BakeShareResult {
  */
 export function classifyBakeShare(input: BakeShareInput): BakeShareResult {
   const { provider, storedFingerprint, cliNativeFingerprint, hubVersion, cliVersion } = input;
+  if (input.adopted) return { provider, status: 'adopted' };
   if (!storedFingerprint) return { provider, status: 'not-baked' };
   if (!input.pushSucceeded) {
     return {
@@ -131,7 +151,7 @@ export function classifyBakeShare(input: BakeShareInput): BakeShareResult {
     return {
       provider,
       status: 'mismatch',
-      reason: `the local ${provider} bake predates this CLI's build context — re-run \`agentbox prepare --provider ${provider}\``,
+      reason: `neither side has a ${provider} base for this build context — \`agentbox prepare --provider ${provider}\` bakes one on the control box`,
     };
   }
   if (hubVersion && hubVersion !== cliVersion) {
@@ -147,6 +167,8 @@ export function classifyBakeShare(input: BakeShareInput): BakeShareResult {
 export interface BakeShareSummary {
   /** Providers whose record the hub will boot from (status `match`). */
   matched: string[];
+  /** Providers we took the hub's record for instead (status `adopted`). */
+  adopted: string[];
   /** Providers shared but that the hub will re-bake (status `mismatch`). */
   mismatched: BakeShareResult[];
   /** Providers whose upload failed, so nothing was shared (status `share-failed`). */
@@ -156,6 +178,7 @@ export interface BakeShareSummary {
 export function summarizeBakeShare(results: BakeShareResult[]): BakeShareSummary {
   return {
     matched: results.filter((r) => r.status === 'match').map((r) => r.provider),
+    adopted: results.filter((r) => r.status === 'adopted').map((r) => r.provider),
     mismatched: results.filter((r) => r.status === 'mismatch'),
     shareFailed: results.filter((r) => r.status === 'share-failed'),
   };
