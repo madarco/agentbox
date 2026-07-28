@@ -149,7 +149,7 @@ agentbox hub update --package 0.28.0    # an exact version
 agentbox hub update --ref my-branch     # switch to building from source
 ```
 
-The default matching _your CLI's_ version is deliberate: that parity is what makes the shared bake records line up (see the snapshot note above), so `agentbox self-update` followed by `agentbox hub update` keeps both sides together.
+The default matching _your CLI's_ version is deliberate: that parity is what makes the shared bake records line up (see the snapshot note above). You rarely have to remember it — **`agentbox self-update` offers this update as its last step** whenever a control box is configured and behind, so both sides move together. Decline it with `--skip-hub`, or run `hub update` on its own whenever you like.
 
 An update re-runs the whole configuration a deploy does — it re-ships the compose stack, regenerates `.env` and the Caddy config, and re-pushes provider secrets — because a newer hub can need new env keys or a different internal port. The hub migrates its own auth + store on boot, so there is no separate migration step.
 

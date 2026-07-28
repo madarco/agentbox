@@ -89,6 +89,9 @@ CLI, not the raw commits.
 
 ### Changed
 
+- `agentbox self-update` now offers to update a deployed control box as its last
+  step, so your machine and the hub don't drift onto different builds. Skipped
+  when the control box is already current; `--skip-hub` declines it.
 - Image bakes started from the hub UI or the tray now run one **per provider**
   instead of one at a time, so several providers set themselves up in parallel
   (each remote-docker host counts as its own provider).

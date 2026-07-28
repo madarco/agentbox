@@ -14,6 +14,11 @@ import {
   type UpdateChannel,
 } from '../lib/channel.js';
 import { runPostUpdateRefresh } from '../lib/post-update-refresh.js';
+import {
+  decideHubUpdate,
+  describeHubUpdate,
+  type HubUpdateDecision,
+} from '../lib/hub-update-decision.js';
 import { fetchNpmBest } from '../lib/update-check.js';
 import { isNewer } from '../lib/semver-lite.js';
 import { maybePromptStar } from '../lib/star-prompt.js';
@@ -24,6 +29,7 @@ interface UpdateOptions {
   dryRun?: boolean;
   skipSelf?: boolean;
   skipSkills?: boolean;
+  skipHub?: boolean;
   channel?: string;
 }
 
@@ -105,6 +111,37 @@ export function decideSelfUpdate(input: {
     : { install: false, reason: 'already-newest' };
 }
 
+/**
+ * Read the deploy record + ask the control box what it runs, then decide.
+ *
+ * Both reads are best-effort: no control box (the common case) and an
+ * unreachable one must never derail a local update, so a failure to *probe*
+ * still yields an update decision (unreachable is a reason to redeploy) while a
+ * failure to read the record yields "nothing to do". The modules are imported
+ * lazily — the control-plane graph is heavy and irrelevant to a machine that has
+ * no control box.
+ */
+async function resolveHubUpdate(args: {
+  skipHubFlag: boolean;
+  targetVersion: string;
+}): Promise<HubUpdateDecision> {
+  if (args.skipHubFlag) {
+    return decideHubUpdate({ record: null, liveVersion: undefined, ...args });
+  }
+  try {
+    const { readDeployRecord } = await import('../control-plane/deploy-hetzner.js');
+    const record = await readDeployRecord();
+    if (!record?.url || record.provider === 'local') {
+      return decideHubUpdate({ record, liveVersion: undefined, ...args });
+    }
+    const { probeControlPlaneStatus } = await import('./control-plane.js');
+    const live = await probeControlPlaneStatus(record.url).catch(() => null);
+    return decideHubUpdate({ record, liveVersion: live?.version, ...args });
+  } catch {
+    return decideHubUpdate({ record: null, liveVersion: undefined, ...args });
+  }
+}
+
 function runInherit(cmd: string, args: string[]): Promise<number> {
   return new Promise<number>((resolveP, rejectP) => {
     const child = spawn(cmd, args, { stdio: 'inherit' });
@@ -154,6 +191,7 @@ export const updateCommand = new Command('self-update')
     '--skip-skills',
     'skip refreshing the host skill files in ~/.claude, ~/.codex, ~/.config/opencode',
   )
+  .option('--skip-hub', 'skip updating the deployed control box, if one is configured')
   .option(
     '--channel <channel>',
     'switch release channel: `nightly` opts into pre-release builds, `stable` opts back out (persisted as update.channel)',
@@ -192,6 +230,16 @@ export const updateCommand = new Command('self-update')
       const skillsStep = opts.skipSkills
         ? 'skills: skipped (--skip-skills)'
         : 'skills: refresh agentbox-managed host skill files in ~/.claude (and Codex/OpenCode)';
+      // A deployed control box runs its own AgentBox; updating only this machine
+      // leaves the two on different builds. Resolved before the confirm so the
+      // plan says what will happen to the remote machine.
+      const hubDecision = await resolveHubUpdate({
+        skipHubFlag: opts.skipHub === true,
+        // Post-update this machine is on `spec` — unless nothing is being
+        // installed, in which case it stays where it is.
+        targetVersion: decision.install ? (newest ?? spec) : AGENTBOX_VERSION,
+      });
+      const hubStep = describeHubUpdate(hubDecision);
       log.info(
         [
           'plan:',
@@ -200,6 +248,7 @@ export const updateCommand = new Command('self-update')
           `  image: docker image rm -f ${DEFAULT_BOX_IMAGE} (rebuilds on next create/claude)`,
           '  relay: stop, then respawn',
           '  app: update the menu-bar app if the published build changed (macOS, when installed)',
+          ...(hubStep ? [`  ${hubStep}`] : []),
         ].join('\n'),
       );
 
@@ -273,6 +322,29 @@ export const updateCommand = new Command('self-update')
         }
       } else {
         await runPostUpdateRefresh({ skipSkills: opts.skipSkills });
+      }
+
+      // Step 3: the deployed control box. Shelled out (not called in-process)
+      // for the same reason as the refresh: after a real self-update this
+      // process is the old build, and `hub update` installs *its own* version on
+      // the VPS — so the old binary would deploy the version we just left.
+      if (hubDecision.update) {
+        const go =
+          opts.yes ||
+          (await confirm({
+            message: `Also update the control box at ${hubDecision.url} to ${hubDecision.to}?`,
+            initialValue: true,
+          }));
+        if (go) {
+          const code = await runInherit('agentbox', ['hub', 'update', '-y']);
+          if (code !== 0) {
+            log.warn(
+              `hub update exited ${String(code)} — the control box is still on its old build; retry with \`agentbox hub update\``,
+            );
+          }
+        } else {
+          log.info('skipped the control box — run `agentbox hub update` when you want it');
+        }
       }
 
       await maybePromptStar({ trigger: 'self-update' });
