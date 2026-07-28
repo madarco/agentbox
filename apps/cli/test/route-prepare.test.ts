@@ -40,6 +40,20 @@ describe('resolvePrepareRouting', () => {
     ).toEqual({ where: 'hub' });
   });
 
+  it('--via-hub cannot send a docker bake to the control box', () => {
+    // It would bake THAT machine's image and leave this one untouched. Unlike
+    // create, nothing downstream re-checks the provider, so the flag must not
+    // be able to reach the hub here.
+    const r = resolvePrepareRouting({
+      providerName: 'docker',
+      effective: HUB,
+      hubApiAvailable: true,
+      forceHub: true,
+    });
+    expect(r.where).toBe('local');
+    expect(r).toHaveProperty('fellBackReason', expect.stringContaining('nothing to bake'));
+  });
+
   it('docker bakes locally — its base is a local image, not a portable snapshot', () => {
     expect(
       resolvePrepareRouting({ providerName: 'docker', effective: HUB, hubApiAvailable: true }),

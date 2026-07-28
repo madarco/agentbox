@@ -44,15 +44,28 @@ export type PrepareRouting =
  *   - a flag the hub's prepare API can't carry;
  *   - no control box, or no API key for it.
  *
- * `--via-hub` returns `hub` unconditionally so the caller can hard-fail on the
- * missing prerequisite instead of quietly baking here, matching `--via-hub` on
- * create.
+ * `--via-hub` returns `hub` for any provider that COULD route there, so the
+ * caller can hard-fail on a missing prerequisite instead of quietly baking here,
+ * matching `--via-hub` on create. It cannot override the provider check above.
  */
 export function resolvePrepareRouting(input: PrepareRoutingInput): PrepareRouting {
   const { providerName, effective, forceHub, forceLocal, hubApiAvailable } = input;
   if (forceLocal) return { where: 'local' };
+  // BEFORE `--via-hub`, not after: a docker base is an image on a specific
+  // machine, so "bake it on the control box" is not a thing the user can ask
+  // for — it would bake that box's own image and leave this one untouched. The
+  // create path gets away with checking after the flag only because
+  // `runCreateViaHub` rejects docker downstream; there is no such second gate
+  // here, so the flag must not be able to reach the hub with a local provider.
+  if (!isHubRoutableProvider(providerName)) {
+    return forceHub
+      ? {
+          where: 'local',
+          fellBackReason: `${providerName} bases are images on a specific machine, so there is nothing to bake on the control box`,
+        }
+      : { where: 'local' };
+  }
   if (forceHub) return { where: 'hub' };
-  if (!isHubRoutableProvider(providerName)) return { where: 'local' };
   if (!effective.relay.controlPlaneUrl) return { where: 'local' };
   if (!effective.cloud.viaHub) return { where: 'local' };
   const localOnly = input.localOnlyFlags ?? [];

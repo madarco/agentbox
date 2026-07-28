@@ -47,12 +47,19 @@ export function isShareablePreparedProvider(provider: string): boolean {
  * record from a different context is precisely what adoption is for. (Adopting
  * something *worse* isn't a risk: the pull only writes when custody's
  * fingerprint equals ours.)
+ *
+ * `nativeFingerprint` is the raw context hash, and the match is fold-tolerant —
+ * the SAME rule the pull and the hub's hydration apply. A strict compare here
+ * would call an `box.claudeInstall=npm` machine's perfectly current base a
+ * miss (it stores the folded hash), so a `prepare` that found nothing in
+ * custody would re-bake a base it already had, every time.
  */
 export function localBakeBlocksAdoption(
   local: { base?: { contextSha256?: string } } | null,
-  liveFingerprint: string,
+  nativeFingerprint: string,
 ): boolean {
-  return local?.base?.contextSha256 === liveFingerprint;
+  const stored = local?.base?.contextSha256;
+  return !!stored && matchClaudeInstallFingerprint(stored, nativeFingerprint) !== null;
 }
 
 /**

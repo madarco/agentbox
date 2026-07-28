@@ -197,6 +197,13 @@ describe('localBakeBlocksAdoption', () => {
     expect(localBakeBlocksAdoption(rec(LIVE), LIVE)).toBe(true);
   });
 
+  it('blocks an npm-fold local bake too — the probe is always the native hash', () => {
+    // A `box.claudeInstall=npm` machine stores the FOLDED fingerprint. A strict
+    // compare called its perfectly current base a miss, so a prepare that found
+    // nothing in custody re-baked a base it already had, every time.
+    expect(localBakeBlocksAdoption(rec(claudeInstallFingerprint(LIVE, 'npm')), LIVE)).toBe(true);
+  });
+
   // The bug this replaced: an outdated record used to block adoption outright,
   // so the machine that most needed the shared base could never take it.
   it('does NOT block when the local bake is from an older build context', () => {
