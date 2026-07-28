@@ -42,10 +42,16 @@ import {
   type ImageInfo,
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
+import type { Provider } from '@agentbox/core';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
 import { getRuntimeProviderNames } from '../provider/loaders.js';
 import { parseProviderSpec } from '../provider/spec.js';
 import { sharePreparedBase, tryAdoptPreparedBase } from '../control-plane/prepared-custody.js';
+import { deadlineFetch, hostReachable } from '@agentbox/sandbox-cloud';
+import { bakeOnControlBox } from '../control-plane/hub-prepare.js';
+import { HubApiClient } from '../control-plane/hub-api-client.js';
+import { resolvePrepareRouting } from '../control-plane/route-prepare.js';
+import { resolveCustodyTarget, resolveHubApiClient, resolveHubApiTarget } from './control-plane.js';
 
 interface PrepareOptions {
   provider?: string;
@@ -57,6 +63,8 @@ interface PrepareOptions {
   claudeInstall?: string;
   location?: string;
   size?: string;
+  local?: boolean;
+  viaHub?: boolean;
 }
 
 interface DockerStatus {
@@ -250,6 +258,45 @@ function renderDaytona(status: DaytonaStatusResult, pinnedImage?: string): strin
   return out;
 }
 
+/**
+ * Bound on the control-box status read. `?freshness=1` makes the hub hash its
+ * own build context, so it is not instant — but this is an interactive status
+ * command, and an unreachable box must cost a fixed, small amount of time.
+ */
+const CONTROL_BOX_STATUS_MS = 5000;
+
+/**
+ * The control box's own provider inventory, or nothing when none is configured
+ * (or it can't be reached — a status command must never hang or fail on it).
+ */
+async function renderControlBoxProviders(): Promise<string[]> {
+  const target = await resolveHubApiTarget(undefined, { quiet: true }).catch(() => null);
+  if (!target) return [];
+  // Probe with a socket we own before spending the budget: a fetch to an
+  // unreachable host can't be cancelled, and this is a status command.
+  if (!(await hostReachable(target.url, CONTROL_BOX_STATUS_MS))) {
+    return ['', 'control box: unreachable — could not read its baked providers'];
+  }
+  const client = new HubApiClient({
+    ...target,
+    fetchImpl: deadlineFetch(AbortSignal.timeout(CONTROL_BOX_STATUS_MS)),
+  });
+  const providers = await client.listProviders({ freshness: true }).catch(() => null);
+  if (!providers) return ['', 'control box: unreachable — could not read its baked providers'];
+  const cloud = providers.filter((p) => p.id !== 'docker' && p.id !== 'remote-docker');
+  if (cloud.length === 0) return [];
+  const out = ['', 'control box (where cloud boxes are built):'];
+  for (const p of cloud) {
+    const state = !p.hasCredentials
+      ? 'no credentials'
+      : !p.configured
+        ? 'not baked'
+        : (p.baseStatus ?? 'baked');
+    out.push(`  ${pad(p.id, 16)} ${state}`);
+  }
+  return out;
+}
+
 async function showStatus(opts: { onlyProvider?: string }): Promise<void> {
   const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
   const pinnedRaw = cfg?.effective.box.image;
@@ -288,6 +335,11 @@ async function showStatus(opts: { onlyProvider?: string }): Promise<void> {
     lines.push('');
     lines.push(`project pin:  box.image = ${pinned}`);
   }
+  // With a control box configured, ITS bakes are the ones a cloud create boots —
+  // so an inventory that only ever showed this machine's was describing the
+  // wrong host. Appended, never substituted: the local rows still matter for
+  // docker and for `--local`.
+  if (!opts.onlyProvider) lines.push(...(await renderControlBoxProviders()));
   process.stdout.write(lines.join('\n') + '\n');
 }
 
@@ -320,6 +372,56 @@ export interface RunPrepareOptions {
    * `box.size<Provider>` / `box.size`; docker/hetzner/vercel ignore it.
    */
   size?: string;
+  /** `--local`: bake here even when a control box is configured. */
+  local?: boolean;
+  /** `--via-hub`: bake on the control box, failing rather than falling back. */
+  viaHub?: boolean;
+}
+
+/**
+ * Drive the control box's bake and adopt the record it produces.
+ *
+ * The failure path deliberately does NOT fall back to a local bake: a hub bake
+ * that failed for a real reason (no credentials there, a broken build context)
+ * would fail here too, and silently spending ten more minutes proving it is the
+ * opposite of useful.
+ */
+async function runPrepareOnControlBox(args: {
+  providerName: string;
+  provider: Provider;
+  force?: boolean;
+  claudeInstall: 'native' | 'npm';
+  suppressStatus?: boolean;
+}): Promise<void> {
+  const client = await resolveHubApiClient(undefined);
+  if (!client) process.exit(1);
+  const custody = await resolveCustodyTarget(undefined, { quiet: true });
+  const sp = spinner();
+  sp.start(`preparing ${args.providerName} on the control box…`);
+  const outcome = await bakeOnControlBox({
+    client,
+    providerName: args.providerName,
+    provider: args.provider,
+    force: args.force,
+    claudeInstall: args.claudeInstall,
+    custody,
+    onLog: (line) => sp.message(line.slice(0, 80)),
+  });
+  if (outcome.status === 'failed') {
+    sp.stop(`prepare failed on the control box: ${outcome.detail}`);
+    process.exit(1);
+  }
+  sp.stop(`prepared ${args.providerName} on the control box`);
+  if (outcome.status === 'baked-not-adopted') {
+    // The hub can now create with it; this machine just can't verify it locally.
+    log.warn(`${outcome.detail} — cloud creates route to the control box, so this is not fatal`);
+    return;
+  }
+  log.success(`adopted the control box's ${args.providerName} base — this machine is current too`);
+  if (!args.suppressStatus) {
+    process.stdout.write('\n');
+    await showStatus({ onlyProvider: args.providerName });
+  }
 }
 
 /**
@@ -420,6 +522,36 @@ export async function runPrepare(
     providerName === 'remote-docker'
       ? remoteHost || cfg?.effective.box.remoteDockerHost || undefined
       : undefined;
+  // With a control box configured, the bake belongs THERE: `cloud.viaHub` means
+  // cloud boxes are built on it from ITS prepared state, so a base baked here is
+  // minutes spent on a snapshot nothing will boot. We drive its bake and adopt
+  // the record back, so one bake leaves both machines current.
+  const prepareRouting = resolvePrepareRouting({
+    providerName,
+    effective: cfg?.effective ?? (await loadEffectiveConfig(cwd)).effective,
+    forceHub: opts.viaHub,
+    forceLocal: opts.local,
+    localOnlyFlags: [
+      ...(opts.name ? ['--name'] : []),
+      ...(opts.location ? ['--location'] : []),
+      ...(opts.size ? ['--size'] : []),
+    ],
+    hubApiAvailable: !!(await resolveHubApiTarget(undefined, { quiet: true })),
+  });
+  if (prepareRouting.where === 'local' && prepareRouting.fellBackReason) {
+    log.warn(`baking on this machine: ${prepareRouting.fellBackReason}`);
+  }
+  if (prepareRouting.where === 'hub') {
+    await runPrepareOnControlBox({
+      providerName,
+      provider,
+      force: opts.force,
+      claudeInstall,
+      suppressStatus: opts.suppressStatus,
+    });
+    return;
+  }
+
   // Before spending minutes on a bake, see whether the control box already
   // baked this exact build context — a base is a provider-side snapshot any
   // machine with the API key can boot, so there's no reason for both sides to
@@ -530,7 +662,8 @@ export async function runPrepare(
 
 export const prepareCommand = new Command('prepare')
   .description(
-    'Build base sandbox images / snapshots, or show what is already prepared across providers.',
+    'Build base sandbox images / snapshots, or show what is already prepared across providers. ' +
+      'With a control box configured, cloud bakes run there and the record is adopted back (--local to bake here).',
   )
   .option(
     '-p, --provider <name>',
@@ -556,6 +689,11 @@ export const prepareCommand = new Command('prepare')
     '--size <spec>',
     'bake-time VM size. daytona: cpu-memory-disk GB (e.g. 4-8-20). e2b: cpu-memory GB (e.g. 4-8). Overrides box.size / box.size<Provider>. Ignored by docker/hetzner/vercel.',
   )
+  .option(
+    '--local',
+    'bake on this machine even when a control box is configured (cloud bakes otherwise run there)',
+  )
+  .option('--via-hub', 'bake on the control box, failing instead of falling back to a local bake')
   .action(async (opts: PrepareOptions) => {
     // Status-only path: no provider, or explicit --status.
     if (!opts.provider || opts.status) {
@@ -586,6 +724,8 @@ export const prepareCommand = new Command('prepare')
       claudeInstall,
       location: opts.location,
       size: opts.size,
+      local: opts.local,
+      viaHub: opts.viaHub,
     });
   });
 

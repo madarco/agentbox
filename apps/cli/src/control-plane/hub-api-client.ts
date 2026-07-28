@@ -39,6 +39,24 @@ export interface HubApiJob {
   };
 }
 
+/**
+ * A sandbox provider as `/api/v1/providers` returns it. Mirrors the hub's own
+ * `ProviderOption`; only the fields a CLI/tray client reads are named here.
+ */
+export interface HubApiProvider {
+  id: string;
+  label: string;
+  /** Base baked (or, for remote-docker, at least one host registered). */
+  configured: boolean;
+  hasCredentials?: boolean;
+  /** Id of a bake already in flight for this provider, if any. */
+  jobId?: string;
+  reason?: string;
+  /** Only present when the caller asked for `?freshness=1`. */
+  baseStatus?: 'fresh' | 'stale' | 'unprepared' | 'unknown';
+  baseStaleReason?: string;
+}
+
 /** A pending host-action approval as `/api/v1/approvals` returns it. */
 export interface HubApiApproval {
   id: string;
@@ -152,6 +170,79 @@ export class HubApiClient {
   /** Create-job status (poll until done/failed). */
   getJob(id: string): Promise<HubApiJob> {
     return this.request<HubApiJob>('GET', `/jobs/${encodeURIComponent(id)}`);
+  }
+
+  /**
+   * The hub's sandbox providers. `freshness` additionally reports base staleness
+   * (`baseStatus`/`baseStaleReason`), which the hub computes by hashing its own
+   * build context — the expensive path, so it stays opt-in there too.
+   */
+  async listProviders(opts: { freshness?: boolean } = {}): Promise<HubApiProvider[]> {
+    const q = opts.freshness ? '?freshness=1' : '';
+    return (await this.request<{ providers: HubApiProvider[] }>('GET', `/providers${q}`)).providers;
+  }
+
+  /**
+   * Bake a provider's base ON the hub. Async: returns the id of a background job
+   * whose progress streams over {@link streamJobLog}.
+   */
+  async prepareProvider(
+    id: string,
+    body: { force?: boolean; claudeInstall?: 'native' | 'npm' } = {},
+  ): Promise<string> {
+    const res = await this.request<{ jobId: string }>(
+      'POST',
+      `/providers/${encodeURIComponent(id)}/prepare`,
+      body,
+    );
+    return res.jobId;
+  }
+
+  /**
+   * Stream a job's log lines until the server closes the SSE stream.
+   *
+   * Deliberately NOT routed through `request`: the response is an event stream,
+   * not JSON, and consuming it as text would buffer the whole bake (minutes of
+   * silence) before printing anything. Resolves when the stream ends; the caller
+   * still polls {@link getJob} for the terminal verdict, since a dropped
+   * connection must not read as a successful bake.
+   */
+  async streamJobLog(
+    id: string,
+    onLine: (line: string) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const res = await this.fetchImpl(
+      `${this.base}/api/v1/jobs/${encodeURIComponent(id)}/logs`,
+      { headers: { Authorization: `Bearer ${this.token}`, Accept: 'text/event-stream' }, signal },
+    );
+    if (!res.ok || !res.body) return;
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      buffer += decoder.decode(chunk, { stream: true });
+      // SSE frames are blank-line separated; a partial trailing frame stays in
+      // the buffer until the rest of it arrives.
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop() ?? '';
+      for (const frame of frames) {
+        let event = '';
+        let data = '';
+        for (const raw of frame.split('\n')) {
+          if (raw.startsWith('event:')) event = raw.slice(6).trim();
+          else if (raw.startsWith('data:')) data = raw.slice(5).trim();
+        }
+        // `open`/`end`/`login` carry structured state the caller gets from
+        // getJob instead; only the log lines belong on screen.
+        if (event !== 'log' || data.length === 0) continue;
+        try {
+          const line = JSON.parse(data) as unknown;
+          if (typeof line === 'string' && line.length > 0) onLine(line);
+        } catch {
+          /* a frame we can't parse is not worth failing a bake over */
+        }
+      }
+    }
   }
 
   /** Pending host-action approvals across every box. */

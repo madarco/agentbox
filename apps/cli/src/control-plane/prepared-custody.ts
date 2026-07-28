@@ -37,7 +37,7 @@ import { isShareablePreparedProvider, localBakeBlocksAdoption } from './bake-sha
  * Global scope, like the hub's bake: an adopted base is host-wide, not tied to
  * the project directory the command happened to run in.
  */
-async function pinAdoptedBase(
+export async function pinAdoptedBase(
   providerName: string,
   record: PreparedRecord | undefined,
   log: (line: string) => void,
