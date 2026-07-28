@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  bakeVerdict,
-  describeHubBuild,
-  groupImageContents,
-  isBaked,
-  type ProviderBake,
-} from '../lib/system-info';
+import { bakeVerdict, describeHubBuild, isBaked, type ProviderBake } from '../lib/system-info';
 
 describe('describeHubBuild', () => {
   it('classifies a plain version as stable', () => {
@@ -41,46 +35,6 @@ describe('describeHubBuild', () => {
 
   it('reports null channel when nothing is known', () => {
     expect(describeHubBuild({ version: null }).channel).toBeNull();
-  });
-});
-
-describe('groupImageContents', () => {
-  const keys = [
-    'Dockerfile.box',
-    'ctl/bin.cjs',
-    'share/agentbox-setup/SKILL.md',
-    'scripts/agentbox-vnc-start',
-    'scripts/custom-system-CLAUDE.md',
-    'scripts/claude-managed-settings.json',
-    'scripts/agentbox-codex-hooks.json',
-    'scripts/agentbox-open',
-  ];
-
-  it('buckets keys into fixed categories in order', () => {
-    const groups = groupImageContents(keys);
-    expect(groups.map((g) => g.category)).toEqual([
-      'Agent config & skills',
-      'Runtime scripts',
-      'Base image',
-    ]);
-    const agent = groups.find((g) => g.category === 'Agent config & skills')!;
-    expect(agent.files.map((f) => f.path)).toContain('share/agentbox-setup/SKILL.md');
-    expect(agent.files.map((f) => f.path)).toContain('scripts/custom-system-CLAUDE.md');
-    const base = groups.find((g) => g.category === 'Base image')!;
-    expect(base.files.map((f) => f.path).sort()).toEqual(['Dockerfile.box', 'ctl/bin.cjs']);
-  });
-
-  it('labels well-known files and falls back to the basename', () => {
-    const groups = groupImageContents(['scripts/agentbox-vnc-start', 'scripts/unknown-thing']);
-    const scripts = groups.find((g) => g.category === 'Runtime scripts')!;
-    const byPath = Object.fromEntries(scripts.files.map((f) => [f.path, f.label]));
-    expect(byPath['scripts/agentbox-vnc-start']).toBe('VNC start script');
-    expect(byPath['scripts/unknown-thing']).toBe('unknown-thing');
-  });
-
-  it('drops empty categories', () => {
-    const groups = groupImageContents(['Dockerfile.box']);
-    expect(groups.map((g) => g.category)).toEqual(['Base image']);
   });
 });
 

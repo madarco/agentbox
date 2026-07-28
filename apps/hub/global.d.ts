@@ -77,8 +77,26 @@ declare global {
           port?: number;
           bind?: string;
         } | null;
-        // The box-image build-context file keys (skills / agents / scripts baked in).
-        imageContextKeys(): string[];
+        // What THIS machine hands to a box — present-only agent configs, skills
+        // and identity files. Replaces the old `imageContextKeys`, which listed
+        // agentbox's own baked assets and told a user nothing about their setup.
+        hostCarried(): {
+          agent: string;
+          label: string;
+          hostPath: string;
+          kind: 'skills' | 'config' | 'identity';
+          skills?: string[];
+        }[];
+        // Box-image resolution facts: which published tag this host asks for and
+        // what it last stamped. The things a "why didn't it pull the prebuilt
+        // image?" investigation otherwise reconstructs by hand.
+        boxImage(): {
+          registry: string;
+          pullTag?: string;
+          stampedFingerprint?: string;
+          imageRef?: string;
+          bakedAt?: string;
+        } | null;
       }
     | undefined;
 }

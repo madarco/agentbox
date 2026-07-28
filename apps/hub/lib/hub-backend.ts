@@ -61,6 +61,8 @@ import {
   secretsEnvPath,
   setBoxDisplayName,
   syncAgentboxSshConfig,
+  diffFileManifests,
+  type FileManifest,
 } from '@agentbox/sandbox-core';
 import {
   baseFreshnessFromFingerprints,
@@ -94,6 +96,7 @@ import type {
 import { hubProfile } from './auth-config';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import type {
+  BakeDiff,
   Approval,
   Box,
   BoxStatus,
@@ -728,9 +731,35 @@ async function listProvidersWithFreshness(base: ProviderOption[]): Promise<Provi
         ...p,
         baseStatus: fresh.state,
         baseStaleReason: fresh.state === 'stale' ? fresh.reason : undefined,
+        // Only stale rows pay for the diff: it re-hashes the whole build context,
+        // and for every other state there is nothing to explain.
+        bakeDiff: fresh.state === 'stale' ? await providerBakeDiff(p.id) : undefined,
       };
     }),
   );
+}
+
+/**
+ * Why a provider's base is stale, file by file.
+ *
+ * Compares the per-file manifest recorded at bake time against the current one.
+ * A base baked before manifests existed has no stored manifest, and the honest
+ * answer is to say so — inventing a diff from mtimes or from the aggregate hash
+ * would be a guess dressed as a fact.
+ */
+async function providerBakeDiff(id: ProviderKind): Promise<BakeDiff | undefined> {
+  try {
+    const raw = readPreparedStateRaw(id) as { base?: { files?: FileManifest } } | null;
+    const stored = raw?.base?.files;
+    if (!stored || Object.keys(stored).length === 0) return { hasManifest: false };
+    const mod = (await IMPORTERS[id]()).providerModule;
+    const current = await mod.currentBaseFileHashes?.();
+    if (!current) return { hasManifest: false };
+    return { hasManifest: true, ...diffFileManifests(stored, current) };
+  } catch {
+    // Best-effort: the row still renders its stale verdict without the detail.
+    return undefined;
+  }
 }
 
 /** The registered remote-docker host aliases as create/settings-facing views. */

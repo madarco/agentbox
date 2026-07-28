@@ -148,6 +148,23 @@ export interface ProviderOption {
   baseStatus?: 'fresh' | 'stale' | 'unprepared' | 'unknown';
   // Human-readable reason when baseStatus === 'stale' (the fingerprint delta).
   baseStaleReason?: string;
+  // Which files actually differ, when baseStatus === 'stale'. Only computed for
+  // stale rows (it re-hashes the build context).
+  bakeDiff?: BakeDiff;
+}
+
+/**
+ * The per-file explanation behind a `stale` verdict.
+ *
+ * `hasManifest: false` means the base was baked before per-file manifests were
+ * recorded, so there is nothing to diff against — the UI says so and points at a
+ * re-bake rather than guessing which file moved.
+ */
+export interface BakeDiff {
+  hasManifest: boolean;
+  changed?: { rel: string; from: string; to: string }[];
+  added?: string[];
+  removed?: string[];
 }
 
 export interface HubState {

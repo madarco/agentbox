@@ -29,11 +29,17 @@ export function buildOpenApi(): Record<string, unknown> {
       { name: 'Box git', description: "Git state and operations on a box's branch." },
       { name: 'Box services', description: "A box's agentbox.yaml service/task/port status." },
       { name: 'Projects', description: 'Register folders as projects and list their branches.' },
-      { name: 'Providers', description: 'Sandbox providers: status, credentials, base-image bake.' },
+      {
+        name: 'Providers',
+        description: 'Sandbox providers: status, credentials, base-image bake.',
+      },
       { name: 'Hosts', description: 'Remote-docker host aliases (name -> SSH connection).' },
       { name: 'Approvals', description: 'Pending host-action approvals.' },
       { name: 'Jobs', description: 'Async create/bake job status and log streams.' },
-      { name: 'Custody', description: 'What the control box holds in custody (metadata only — never values).' },
+      {
+        name: 'Custody',
+        description: 'What the control box holds in custody (metadata only — never values).',
+      },
     ],
     paths: {
       '/health': {
@@ -58,7 +64,13 @@ export function buildOpenApi(): Record<string, unknown> {
               description: 'Boxes',
               content: {
                 'application/json': {
-                  schema: { type: 'object', properties: { boxes: { type: 'array', items: { $ref: '#/components/schemas/Box' } } }, required: ['boxes'] },
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      boxes: { type: 'array', items: { $ref: '#/components/schemas/Box' } },
+                    },
+                    required: ['boxes'],
+                  },
                 },
               },
             },
@@ -77,7 +89,15 @@ export function buildOpenApi(): Record<string, unknown> {
           responses: {
             '202': {
               description: 'Accepted — build job enqueued',
-              content: { 'application/json': { schema: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } },
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { jobId: { type: 'string' } },
+                    required: ['jobId'],
+                  },
+                },
+              },
             },
             '400': errorResponse,
             '401': errorResponse,
@@ -92,7 +112,10 @@ export function buildOpenApi(): Record<string, unknown> {
           summary: 'Get one box',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
-            '200': { description: 'Box', content: { 'application/json': { schema: { $ref: '#/components/schemas/Box' } } } },
+            '200': {
+              description: 'Box',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/Box' } } },
+            },
             '401': errorResponse,
             '404': errorResponse,
           },
@@ -106,10 +129,25 @@ export function buildOpenApi(): Record<string, unknown> {
             'One of start | pause | resume | stop | destroy | screen. start brings a stopped box back up (resumes if paused, no-op if already running); it does not restart the agent session — that happens on the next attach. screen is the open-VNC prep step: it points the in-box browser at the box’s web app so the VNC desktop shows the app instead of a blank X screen — call it right before opening the box’s vncUrl.',
           parameters: [
             { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
-            { name: 'action', in: 'path', required: true, schema: { type: 'string', enum: ['start', 'pause', 'resume', 'stop', 'destroy', 'screen'] } },
+            {
+              name: 'action',
+              in: 'path',
+              required: true,
+              schema: {
+                type: 'string',
+                enum: ['start', 'pause', 'resume', 'stop', 'destroy', 'screen'],
+              },
+            },
           ],
           responses: {
-            '200': { description: 'Done', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
+            '200': {
+              description: 'Done',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] },
+                },
+              },
+            },
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
@@ -125,7 +163,10 @@ export function buildOpenApi(): Record<string, unknown> {
           description: "The worktree's current branch, dirty, ahead/behind.",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
-            '200': { description: 'Git info', content: { 'application/json': { schema: { $ref: '#/components/schemas/GitInfo' } } } },
+            '200': {
+              description: 'Git info',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/GitInfo' } } },
+            },
             '401': errorResponse,
             '404': errorResponse,
             '503': errorResponse,
@@ -140,14 +181,24 @@ export function buildOpenApi(): Record<string, unknown> {
             'checkout {branch}; branch {name, from?} (create+switch a new agentbox/* branch); pull {remote?, ffOnly?}; push {remote?, force?}; push-host {as?, force?} (land in the host repo only, publishes nothing).',
           parameters: [
             { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
-            { name: 'op', in: 'path', required: true, schema: { type: 'string', enum: ['checkout', 'branch', 'pull', 'push', 'push-host'] } },
+            {
+              name: 'op',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', enum: ['checkout', 'branch', 'pull', 'push', 'push-host'] },
+            },
           ],
           requestBody: {
             required: false,
             content: { 'application/json': { schema: { $ref: '#/components/schemas/GitOpBody' } } },
           },
           responses: {
-            '200': { description: 'Done (git stdout/stderr)', content: { 'application/json': { schema: { $ref: '#/components/schemas/GitOpResult' } } } },
+            '200': {
+              description: 'Done (git stdout/stderr)',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/GitOpResult' } },
+              },
+            },
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
@@ -160,10 +211,16 @@ export function buildOpenApi(): Record<string, unknown> {
         get: {
           tags: ['Box git'],
           summary: "List the box project's branches",
-          description: 'Local + remote branches and the current HEAD, for the box git-panel branch picker.',
+          description:
+            'Local + remote branches and the current HEAD, for the box git-panel branch picker.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
-            '200': { description: 'Branches', content: { 'application/json': { schema: { $ref: '#/components/schemas/BranchList' } } } },
+            '200': {
+              description: 'Branches',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/BranchList' } },
+              },
+            },
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
@@ -175,10 +232,16 @@ export function buildOpenApi(): Record<string, unknown> {
         get: {
           tags: ['Box services'],
           summary: "Get the box's service/task/port status",
-          description: "From the box's agentbox.yaml — live, or the persisted snapshot when the box isn't running.",
+          description:
+            "From the box's agentbox.yaml — live, or the persisted snapshot when the box isn't running.",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
-            '200': { description: 'Services', content: { 'application/json': { schema: { $ref: '#/components/schemas/Services' } } } },
+            '200': {
+              description: 'Services',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/Services' } },
+              },
+            },
             '401': errorResponse,
             '503': errorResponse,
           },
@@ -192,10 +255,21 @@ export function buildOpenApi(): Record<string, unknown> {
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           requestBody: {
             required: false,
-            content: { 'application/json': { schema: { type: 'object', properties: { name: { type: 'string' } } } } },
+            content: {
+              'application/json': {
+                schema: { type: 'object', properties: { name: { type: 'string' } } },
+              },
+            },
           },
           responses: {
-            '200': { description: 'Restarted', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
+            '200': {
+              description: 'Restarted',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] },
+                },
+              },
+            },
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
@@ -217,14 +291,23 @@ export function buildOpenApi(): Record<string, unknown> {
               'application/json': {
                 schema: {
                   type: 'object',
-                  properties: { app: { type: 'string', enum: ['codex', 'herdr', 'cmux', 'vscode', 'iterm2'] } },
+                  properties: {
+                    app: { type: 'string', enum: ['codex', 'herdr', 'cmux', 'vscode', 'iterm2'] },
+                  },
                   required: ['app'],
                 },
               },
             },
           },
           responses: {
-            '200': { description: 'Launched', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
+            '200': {
+              description: 'Launched',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] },
+                },
+              },
+            },
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
@@ -274,16 +357,49 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Projects'],
           summary: 'List registered projects',
           responses: {
-            '200': { description: 'Projects', content: { 'application/json': { schema: { type: 'object', properties: { projects: { type: 'array', items: { $ref: '#/components/schemas/Project' } } }, required: ['projects'] } } } },
+            '200': {
+              description: 'Projects',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      projects: { type: 'array', items: { $ref: '#/components/schemas/Project' } },
+                    },
+                    required: ['projects'],
+                  },
+                },
+              },
+            },
             '401': errorResponse,
           },
         },
         post: {
           tags: ['Projects'],
           summary: 'Register a folder as a project',
-          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the folder.' } }, required: ['path'] } } } },
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    path: { type: 'string', description: 'Absolute path to the folder.' },
+                  },
+                  required: ['path'],
+                },
+              },
+            },
+          },
           responses: {
-            '200': { description: 'Registered', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
+            '200': {
+              description: 'Registered',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] },
+                },
+              },
+            },
             '400': errorResponse,
             '401': errorResponse,
             '503': errorResponse,
@@ -297,7 +413,14 @@ export function buildOpenApi(): Record<string, unknown> {
           description: 'Folder/files on disk are untouched.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
-            '200': { description: 'Removed', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
+            '200': {
+              description: 'Removed',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] },
+                },
+              },
+            },
             '401': errorResponse,
             '404': errorResponse,
             '409': errorResponse, // project still has boxes
@@ -309,10 +432,16 @@ export function buildOpenApi(): Record<string, unknown> {
         get: {
           tags: ['Projects'],
           summary: "List a project's branches",
-          description: 'Local + remote branches and the current HEAD, for the create-box base-branch picker.',
+          description:
+            'Local + remote branches and the current HEAD, for the create-box base-branch picker.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
-            '200': { description: 'Branches', content: { 'application/json': { schema: { $ref: '#/components/schemas/BranchList' } } } },
+            '200': {
+              description: 'Branches',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/BranchList' } },
+              },
+            },
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
@@ -325,10 +454,15 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Projects'],
           summary: "Get a project's seed / custody status",
           description:
-            "What `agentbox hub project push` stored on the control box (untracked + env/secret tarballs + manifest), as paths, hashes and timestamps only — never seed contents. `custodyAvailable` is false on a hub that is not a control box.",
+            'What `agentbox hub project push` stored on the control box (untracked + env/secret tarballs + manifest), as paths, hashes and timestamps only — never seed contents. `custodyAvailable` is false on a hub that is not a control box.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
-            '200': { description: 'Seed status', content: { 'application/json': { schema: { $ref: '#/components/schemas/ProjectSeed' } } } },
+            '200': {
+              description: 'Seed status',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/ProjectSeed' } },
+              },
+            },
             '401': errorResponse,
             '404': errorResponse,
           },
@@ -340,7 +474,23 @@ export function buildOpenApi(): Record<string, unknown> {
           summary: 'List sandbox providers',
           description: 'With credential + baked status on this host.',
           responses: {
-            '200': { description: 'Providers', content: { 'application/json': { schema: { type: 'object', properties: { providers: { type: 'array', items: { $ref: '#/components/schemas/Provider' } } }, required: ['providers'] } } } },
+            '200': {
+              description: 'Providers',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      providers: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/Provider' },
+                      },
+                    },
+                    required: ['providers'],
+                  },
+                },
+              },
+            },
             '401': errorResponse,
           },
         },
@@ -349,11 +499,49 @@ export function buildOpenApi(): Record<string, unknown> {
         post: {
           tags: ['Providers'],
           summary: "Set a provider's credentials",
-          description: 'API keys/tokens, validated then saved to secrets.env. Never echoes secret values.',
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'digitalocean', 'remote-docker'] } }],
-          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: { type: 'string' }, description: 'Provider-specific fields, e.g. { apiKey } (e2b), { token } (hetzner), { apiKey } or { jwtToken, organizationId } (daytona), { token, teamId?, projectId? } (vercel).' } } } },
+          description:
+            'API keys/tokens, validated then saved to secrets.env. Never echoes secret values.',
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: {
+                type: 'string',
+                enum: [
+                  'docker',
+                  'daytona',
+                  'hetzner',
+                  'vercel',
+                  'e2b',
+                  'digitalocean',
+                  'remote-docker',
+                ],
+              },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  additionalProperties: { type: 'string' },
+                  description:
+                    'Provider-specific fields, e.g. { apiKey } (e2b), { token } (hetzner), { apiKey } or { jwtToken, organizationId } (daytona), { token, teamId?, projectId? } (vercel).',
+                },
+              },
+            },
+          },
           responses: {
-            '200': { description: 'Saved', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
+            '200': {
+              description: 'Saved',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] },
+                },
+              },
+            },
             '400': errorResponse,
             '401': errorResponse,
             '503': errorResponse,
@@ -365,10 +553,52 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Providers'],
           summary: "Bake a provider's base image",
           description: 'Async — returns a job id. Progress streams over GET /jobs/{id}/logs.',
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'digitalocean', 'remote-docker'] } }],
-          requestBody: { required: false, content: { 'application/json': { schema: { type: 'object', properties: { force: { type: 'boolean' }, claudeInstall: { type: 'string', enum: ['native', 'npm'] } } } } } },
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: {
+                type: 'string',
+                enum: [
+                  'docker',
+                  'daytona',
+                  'hetzner',
+                  'vercel',
+                  'e2b',
+                  'digitalocean',
+                  'remote-docker',
+                ],
+              },
+            },
+          ],
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    force: { type: 'boolean' },
+                    claudeInstall: { type: 'string', enum: ['native', 'npm'] },
+                  },
+                },
+              },
+            },
+          },
           responses: {
-            '202': { description: 'Bake enqueued', content: { 'application/json': { schema: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } } },
+            '202': {
+              description: 'Bake enqueued',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { jobId: { type: 'string' } },
+                    required: ['jobId'],
+                  },
+                },
+              },
+            },
             '400': errorResponse,
             '401': errorResponse,
             '409': errorResponse,
@@ -382,7 +612,33 @@ export function buildOpenApi(): Record<string, unknown> {
           summary: 'List remote-docker host aliases',
           description: 'Each with its SSH connection and baked/default state.',
           responses: {
-            '200': { description: 'Hosts', content: { 'application/json': { schema: { type: 'object', properties: { hosts: { type: 'array', items: { type: 'object', properties: { alias: { type: 'string' }, ssh: { type: 'string' }, baked: { type: 'boolean' }, bakedImageRef: { type: 'string' }, default: { type: 'boolean' } }, required: ['alias', 'ssh', 'baked', 'default'] } } }, required: ['hosts'] } } } },
+            '200': {
+              description: 'Hosts',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      hosts: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            alias: { type: 'string' },
+                            ssh: { type: 'string' },
+                            baked: { type: 'boolean' },
+                            bakedImageRef: { type: 'string' },
+                            default: { type: 'boolean' },
+                          },
+                          required: ['alias', 'ssh', 'baked', 'default'],
+                        },
+                      },
+                    },
+                    required: ['hosts'],
+                  },
+                },
+              },
+            },
             '401': errorResponse,
             '503': errorResponse,
           },
@@ -390,10 +646,36 @@ export function buildOpenApi(): Record<string, unknown> {
         post: {
           tags: ['Hosts'],
           summary: 'Register a remote-docker host alias',
-          description: 'Probes the host (ssh + docker) before saving. Does not bake the image (builds on first create). `default` also pins box.remoteDockerHost.',
-          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { alias: { type: 'string' }, ssh: { type: 'string', description: 'an ~/.ssh/config alias or [user@]host[:port]' }, default: { type: 'boolean' } }, required: ['alias', 'ssh'] } } } },
+          description:
+            'Probes the host (ssh + docker) before saving. Does not bake the image (builds on first create). `default` also pins box.remoteDockerHost.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    alias: { type: 'string' },
+                    ssh: {
+                      type: 'string',
+                      description: 'an ~/.ssh/config alias or [user@]host[:port]',
+                    },
+                    default: { type: 'boolean' },
+                  },
+                  required: ['alias', 'ssh'],
+                },
+              },
+            },
+          },
           responses: {
-            '201': { description: 'Registered', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
+            '201': {
+              description: 'Registered',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] },
+                },
+              },
+            },
             '400': errorResponse,
             '401': errorResponse,
             '409': errorResponse,
@@ -405,10 +687,25 @@ export function buildOpenApi(): Record<string, unknown> {
         delete: {
           tags: ['Hosts'],
           summary: 'Forget a remote-docker host alias',
-          description: 'Drops the alias + baked-image record + default. Local record only. Returns boxes created against it (now unreachable).',
+          description:
+            'Drops the alias + baked-image record + default. Local record only. Returns boxes created against it (now unreachable).',
           parameters: [{ name: 'alias', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
-            '200': { description: 'Removed', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true }, boxesAffected: { type: 'array', items: { type: 'string' } } }, required: ['ok', 'boxesAffected'] } } } },
+            '200': {
+              description: 'Removed',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      ok: { const: true },
+                      boxesAffected: { type: 'array', items: { type: 'string' } },
+                    },
+                    required: ['ok', 'boxesAffected'],
+                  },
+                },
+              },
+            },
             '401': errorResponse,
             '404': errorResponse,
             '503': errorResponse,
@@ -419,10 +716,22 @@ export function buildOpenApi(): Record<string, unknown> {
         post: {
           tags: ['Hosts'],
           summary: 'Bake the box image on a host',
-          description: 'Async — returns a job id. Progress streams over GET /jobs/{id}/logs (pull from GHCR is fast; a registry-miss build is slow).',
+          description:
+            'Async — returns a job id. Progress streams over GET /jobs/{id}/logs (pull from GHCR is fast; a registry-miss build is slow).',
           parameters: [{ name: 'alias', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
-            '202': { description: 'Bake enqueued', content: { 'application/json': { schema: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } } },
+            '202': {
+              description: 'Bake enqueued',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { jobId: { type: 'string' } },
+                    required: ['jobId'],
+                  },
+                },
+              },
+            },
             '401': errorResponse,
             '404': errorResponse,
             '503': errorResponse,
@@ -434,7 +743,23 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Approvals'],
           summary: 'List pending host-action approvals',
           responses: {
-            '200': { description: 'Approvals', content: { 'application/json': { schema: { type: 'object', properties: { approvals: { type: 'array', items: { $ref: '#/components/schemas/Approval' } } }, required: ['approvals'] } } } },
+            '200': {
+              description: 'Approvals',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      approvals: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/Approval' },
+                      },
+                    },
+                    required: ['approvals'],
+                  },
+                },
+              },
+            },
             '401': errorResponse,
           },
         },
@@ -444,9 +769,27 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Approvals'],
           summary: 'Answer a pending approval',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { answer: { type: 'string', enum: ['y', 'n'] } }, required: ['answer'] } } } },
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { answer: { type: 'string', enum: ['y', 'n'] } },
+                  required: ['answer'],
+                },
+              },
+            },
+          },
           responses: {
-            '200': { description: 'Resolved', content: { 'application/json': { schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] } } } },
+            '200': {
+              description: 'Resolved',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] },
+                },
+              },
+            },
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
@@ -460,7 +803,10 @@ export function buildOpenApi(): Record<string, unknown> {
           summary: 'Get a create job status',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
-            '200': { description: 'Job', content: { 'application/json': { schema: { $ref: '#/components/schemas/Job' } } } },
+            '200': {
+              description: 'Job',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/Job' } } },
+            },
             '401': errorResponse,
             '404': errorResponse,
           },
@@ -470,7 +816,8 @@ export function buildOpenApi(): Record<string, unknown> {
         get: {
           tags: ['Jobs'],
           summary: 'Stream a create job log (SSE)',
-          description: 'text/event-stream. Emits `open`, then `log` events per line, then a terminal `end` event with the final status.',
+          description:
+            'text/event-stream. Emits `open`, then `log` events per line, then a terminal `end` event with the final status.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': { description: 'SSE stream', content: { 'text/event-stream': {} } },
@@ -485,7 +832,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Custody'],
           summary: 'List the custody manifest (metadata only)',
           description:
-            "What the control box holds so a box created from either side is usable from both: agent credentials, project seeds, provider bake records, and per-box SSH keys. Returns paths, hashes, sizes and mtimes ONLY — value bytes never leave the box (same contract as `agentbox hub custody list`). `enabled` is false on a hub with no custody (e.g. a localhost hub). Optional `?prefix=` scopes the listing to a custody scope (`agents` | `projects` | `prepared` | `boxes`) or a `scope/subject`.",
+            'What the control box holds so a box created from either side is usable from both: agent credentials, project seeds, provider bake records, and per-box SSH keys. Returns paths, hashes, sizes and mtimes ONLY — value bytes never leave the box (same contract as `agentbox hub custody list`). `enabled` is false on a hub with no custody (e.g. a localhost hub). Optional `?prefix=` scopes the listing to a custody scope (`agents` | `projects` | `prepared` | `boxes`) or a `scope/subject`.',
           parameters: [
             {
               name: 'prefix',
@@ -523,19 +870,30 @@ export function buildOpenApi(): Record<string, unknown> {
     },
     components: {
       securitySchemes: {
-        bearerAuth: { type: 'http', scheme: 'bearer', description: 'The hub token (Authorization: Bearer <token>).' },
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          description: 'The hub token (Authorization: Bearer <token>).',
+        },
       },
       schemas: {
         Health: {
           type: 'object',
-          properties: { ok: { const: true }, apiVersion: { type: 'string' }, profile: { type: 'string' } },
+          properties: {
+            ok: { const: true },
+            apiVersion: { type: 'string' },
+            profile: { type: 'string' },
+          },
           required: ['ok', 'apiVersion'],
         },
         CustodyEntry: {
           type: 'object',
           description: 'One stored item — metadata only; the value bytes are never returned.',
           properties: {
-            path: { type: 'string', description: 'Custody-relative path, e.g. agents/claude/.credentials.json' },
+            path: {
+              type: 'string',
+              description: 'Custody-relative path, e.g. agents/claude/.credentials.json',
+            },
             size: { type: 'number' },
             sha256: { type: 'string', description: 'Hex sha256 of the stored bytes' },
             mode: { type: 'number', description: 'POSIX mode of the stored value' },
@@ -546,7 +904,10 @@ export function buildOpenApi(): Record<string, unknown> {
         Custody: {
           type: 'object',
           properties: {
-            enabled: { type: 'boolean', description: 'false when this hub holds no custody (no admin token)' },
+            enabled: {
+              type: 'boolean',
+              description: 'false when this hub holds no custody (no admin token)',
+            },
             entries: { type: 'array', items: { $ref: '#/components/schemas/CustodyEntry' } },
           },
           required: ['enabled', 'entries'],
@@ -557,12 +918,37 @@ export function buildOpenApi(): Record<string, unknown> {
             id: { type: 'string' },
             label: { type: 'string' },
             baked: { type: 'boolean' },
-            fingerprint: { type: 'string', description: 'Short (12-char) build-context fingerprint of the baked base' },
+            fingerprint: {
+              type: 'string',
+              description: 'Short (12-char) build-context fingerprint of the baked base',
+            },
             cliVersion: { type: 'string' },
             bakedAt: { type: 'string' },
             imageRef: { type: 'string' },
             baseStatus: { type: 'string', enum: ['fresh', 'stale', 'unprepared', 'unknown'] },
             baseStaleReason: { type: 'string' },
+            bakeDiff: {
+              type: 'object',
+              description:
+                'Which files differ, when baseStatus is stale. hasManifest:false means the base was baked before per-file manifests were recorded, so no diff is possible without a re-bake.',
+              properties: {
+                hasManifest: { type: 'boolean' },
+                changed: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      rel: { type: 'string' },
+                      from: { type: 'string' },
+                      to: { type: 'string' },
+                    },
+                  },
+                },
+                added: { type: 'array', items: { type: 'string' } },
+                removed: { type: 'array', items: { type: 'string' } },
+              },
+              required: ['hasManifest'],
+            },
           },
           required: ['id', 'label', 'baked'],
         },
@@ -583,8 +969,14 @@ export function buildOpenApi(): Record<string, unknown> {
               type: 'object',
               properties: {
                 version: { type: ['string', 'null'] },
-                channel: { type: ['string', 'null'], description: 'stable | nightly | source (<ref>)' },
-                build: { type: ['string', 'null'], description: 'Human build line, e.g. @madarco/agentbox@0.28.0 (npm)' },
+                channel: {
+                  type: ['string', 'null'],
+                  description: 'stable | nightly | source (<ref>)',
+                },
+                build: {
+                  type: ['string', 'null'],
+                  description: 'Human build line, e.g. @madarco/agentbox@0.28.0 (npm)',
+                },
               },
             },
             deploy: {
@@ -592,13 +984,36 @@ export function buildOpenApi(): Record<string, unknown> {
               description: 'Present only when this machine is an exposed/deployed control box.',
             },
             providers: { type: 'array', items: { $ref: '#/components/schemas/ProviderBake' } },
-            imageContextKeys: {
+            hostCarried: {
               type: 'array',
-              items: { type: 'string' },
-              description: 'Box-image build-context files (skills / agents / config baked in).',
+              description:
+                'Agent configs, skills and identity files THIS machine hands to a box. Present-only: a path absent here is one a box will not receive.',
+              items: {
+                type: 'object',
+                properties: {
+                  agent: { type: 'string' },
+                  label: { type: 'string' },
+                  hostPath: { type: 'string' },
+                  kind: { type: 'string', enum: ['skills', 'config', 'identity'] },
+                  skills: { type: 'array', items: { type: 'string' } },
+                },
+                required: ['agent', 'label', 'hostPath', 'kind'],
+              },
+            },
+            boxImage: {
+              type: ['object', 'null'],
+              description:
+                'Box-image resolution: the registry, the exact fingerprint-tag this host pulls, and what it last stamped.',
+              properties: {
+                registry: { type: 'string' },
+                pullTag: { type: 'string' },
+                stampedFingerprint: { type: 'string' },
+                imageRef: { type: 'string' },
+                bakedAt: { type: 'string' },
+              },
             },
           },
-          required: ['hub', 'build', 'providers', 'imageContextKeys'],
+          required: ['hub', 'build', 'providers', 'hostCarried'],
         },
         Error: {
           type: 'object',
@@ -627,9 +1042,19 @@ export function buildOpenApi(): Record<string, unknown> {
             commits: { type: ['number', 'null'] },
             filesTouched: { type: ['number', 'null'] },
             error: { type: ['string', 'null'] },
-            displayName: { type: ['string', 'null'], description: 'Cosmetic user-set label (rename); null when unset' },
-            webUrl: { type: ['string', 'null'], description: 'Host-openable web-service URL; null when absent/unreachable (e.g. paused)' },
-            vncUrl: { type: ['string', 'null'], description: 'Host-openable VNC desktop URL; null when absent/unreachable' },
+            displayName: {
+              type: ['string', 'null'],
+              description: 'Cosmetic user-set label (rename); null when unset',
+            },
+            webUrl: {
+              type: ['string', 'null'],
+              description:
+                'Host-openable web-service URL; null when absent/unreachable (e.g. paused)',
+            },
+            vncUrl: {
+              type: ['string', 'null'],
+              description: 'Host-openable VNC desktop URL; null when absent/unreachable',
+            },
             state: {
               type: 'string',
               enum: ['running', 'paused', 'stopped', 'missing'],
@@ -637,18 +1062,32 @@ export function buildOpenApi(): Record<string, unknown> {
                 'Raw provider runtime state (host topology only). Absent on synthetic creating/error rows — presence distinguishes a real box whose agent errored from a failed create job.',
             },
             name: { type: 'string' },
-            provider: { type: 'string', description: "Raw provider id ('docker', 'daytona', …; plugin ids possible)" },
-            projectRoot: { type: 'string', description: 'Absolute host path of the project. Host topology only — never emitted by the hosted plane' },
+            provider: {
+              type: 'string',
+              description: "Raw provider id ('docker', 'daytona', …; plugin ids possible)",
+            },
+            projectRoot: {
+              type: 'string',
+              description:
+                'Absolute host path of the project. Host topology only — never emitted by the hosted plane',
+            },
             projectIndex: { type: 'number' },
             vncEnabled: { type: 'boolean' },
             gitWorktrees: {
               type: 'array',
-              items: { type: 'object', properties: { kind: { type: 'string' }, branch: { type: 'string' } } },
+              items: {
+                type: 'object',
+                properties: { kind: { type: 'string' }, branch: { type: 'string' } },
+              },
             },
             claudeSessionTitle: { type: 'string' },
             codexSessionTitle: { type: 'string' },
             opencodeSessionTitle: { type: 'string' },
-            claudeActivity: { type: 'string', description: 'working | idle | waiting | end-plan | question | compacting | error | unknown' },
+            claudeActivity: {
+              type: 'string',
+              description:
+                'working | idle | waiting | end-plan | question | compacting | error | unknown',
+            },
             codexActivity: { type: 'string' },
           },
           required: ['id', 'projectId', 'status', 'agent'],
@@ -661,18 +1100,33 @@ export function buildOpenApi(): Record<string, unknown> {
             repo: { type: 'string' },
             defaultBranch: { type: 'string' },
             currentBranch: { type: 'string', nullable: true },
-            needsSetup: { type: 'boolean', description: 'No agentbox.yaml + no default snapshot — the create form offers the setup wizard' },
+            needsSetup: {
+              type: 'boolean',
+              description:
+                'No agentbox.yaml + no default snapshot — the create form offers the setup wizard',
+            },
             provider: { type: 'string' },
             createdAt: { type: 'number' },
-            originUrl: { type: 'string', nullable: true, description: 'Repo origin remote URL (hosted source only)' },
-            projectSlug: { type: 'string', nullable: true, description: 'Custody projects/<slug> key (hosted source only)' },
+            originUrl: {
+              type: 'string',
+              nullable: true,
+              description: 'Repo origin remote URL (hosted source only)',
+            },
+            projectSlug: {
+              type: 'string',
+              nullable: true,
+              description: 'Custody projects/<slug> key (hosted source only)',
+            },
           },
           required: ['id', 'name'],
         },
         ProjectSeed: {
           type: 'object',
           properties: {
-            custodyAvailable: { type: 'boolean', description: 'False when this hub is not a control box (no custody store)' },
+            custodyAvailable: {
+              type: 'boolean',
+              description: 'False when this hub is not a control box (no custody store)',
+            },
             seed: {
               type: 'object',
               nullable: true,
@@ -708,8 +1162,16 @@ export function buildOpenApi(): Record<string, unknown> {
         BranchList: {
           type: 'object',
           properties: {
-            current: { type: 'string', nullable: true, description: 'The repo\'s current HEAD (the default base ref)' },
-            branches: { type: 'array', items: { type: 'string' }, description: 'Local + remote-tracking branch names' },
+            current: {
+              type: 'string',
+              nullable: true,
+              description: "The repo's current HEAD (the default base ref)",
+            },
+            branches: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Local + remote-tracking branch names',
+            },
           },
           required: ['branches'],
         },
@@ -742,42 +1204,102 @@ export function buildOpenApi(): Record<string, unknown> {
           properties: {
             projectId: { type: 'string' },
             agent: { type: 'string', enum: ['claude', 'codex', 'opencode', 'none'] },
-            provider: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'digitalocean', 'remote-docker'], default: 'docker' },
+            provider: {
+              type: 'string',
+              enum: [
+                'docker',
+                'daytona',
+                'hetzner',
+                'vercel',
+                'e2b',
+                'digitalocean',
+                'remote-docker',
+              ],
+              default: 'docker',
+            },
             name: { type: 'string' },
             prompt: { type: 'string' },
-            fromBranch: { type: 'string', description: "Base ref the box's per-box branch forks from (branch / tag / SHA); default the project's HEAD" },
-            setupWizard: { type: 'boolean', description: 'Seed the agent\'s first turn to generate agentbox.yaml (for projects with none). Inert for agent "none".' },
+            fromBranch: {
+              type: 'string',
+              description:
+                "Base ref the box's per-box branch forks from (branch / tag / SHA); default the project's HEAD",
+            },
+            setupWizard: {
+              type: 'boolean',
+              description:
+                'Seed the agent\'s first turn to generate agentbox.yaml (for projects with none). Inert for agent "none".',
+            },
           },
           required: ['projectId', 'agent'],
         },
         Provider: {
           type: 'object',
           properties: {
-            id: { type: 'string', enum: ['docker', 'daytona', 'hetzner', 'vercel', 'e2b', 'digitalocean', 'remote-docker'] },
+            id: {
+              type: 'string',
+              enum: [
+                'docker',
+                'daytona',
+                'hetzner',
+                'vercel',
+                'e2b',
+                'digitalocean',
+                'remote-docker',
+              ],
+            },
             label: { type: 'string' },
-            configured: { type: 'boolean', description: 'Base image baked (usable for create) on this host.' },
-            hasCredentials: { type: 'boolean', description: 'Credentials present (docker: always true). Can be true while not yet configured (baked).' },
-            jobId: { type: 'string', description: 'Id of an in-flight bake (prepare) job for this provider, if any.' },
+            configured: {
+              type: 'boolean',
+              description: 'Base image baked (usable for create) on this host.',
+            },
+            hasCredentials: {
+              type: 'boolean',
+              description:
+                'Credentials present (docker: always true). Can be true while not yet configured (baked).',
+            },
+            jobId: {
+              type: 'string',
+              description: 'Id of an in-flight bake (prepare) job for this provider, if any.',
+            },
             reason: { type: 'string' },
           },
           required: ['id', 'label', 'configured'],
         },
         GitOpBody: {
           type: 'object',
-          description: 'Union of git-op fields; only those for the chosen {op} are read (extras are ignored).',
+          description:
+            'Union of git-op fields; only those for the chosen {op} are read (extras are ignored).',
           properties: {
             branch: { type: 'string', description: 'checkout: branch to switch to' },
-            name: { type: 'string', description: 'branch: new branch name (agentbox/ prefix added when missing)' },
-            from: { type: 'string', description: "branch: base ref to fork from (default: box's HEAD)" },
+            name: {
+              type: 'string',
+              description: 'branch: new branch name (agentbox/ prefix added when missing)',
+            },
+            from: {
+              type: 'string',
+              description: "branch: base ref to fork from (default: box's HEAD)",
+            },
             remote: { type: 'string', description: 'push/pull: remote name (default: origin)' },
-            force: { type: 'boolean', description: 'push: force the remote push; push-host: overwrite the destination branch' },
+            force: {
+              type: 'boolean',
+              description:
+                'push: force the remote push; push-host: overwrite the destination branch',
+            },
             ffOnly: { type: 'boolean', description: 'pull: pass --ff-only to the merge' },
-            as: { type: 'string', description: "push-host: destination branch name in the host repo (default: the box's branch)" },
+            as: {
+              type: 'string',
+              description:
+                "push-host: destination branch name in the host repo (default: the box's branch)",
+            },
           },
         },
         GitOpResult: {
           type: 'object',
-          properties: { ok: { const: true }, stdout: { type: 'string' }, stderr: { type: 'string' } },
+          properties: {
+            ok: { const: true },
+            stdout: { type: 'string' },
+            stderr: { type: 'string' },
+          },
           required: ['ok'],
         },
         GitInfo: {
@@ -814,11 +1336,19 @@ export function buildOpenApi(): Record<string, unknown> {
             },
             tasks: {
               type: 'array',
-              items: { type: 'object', properties: { name: { type: 'string' }, state: { type: 'string' } }, required: ['name', 'state'] },
+              items: {
+                type: 'object',
+                properties: { name: { type: 'string' }, state: { type: 'string' } },
+                required: ['name', 'state'],
+              },
             },
             ports: {
               type: 'array',
-              items: { type: 'object', properties: { port: { type: 'number' }, service: { type: ['string', 'null'] } }, required: ['port'] },
+              items: {
+                type: 'object',
+                properties: { port: { type: 'number' }, service: { type: ['string', 'null'] } },
+                required: ['port'],
+              },
             },
             error: { type: 'string' },
           },

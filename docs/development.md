@@ -99,6 +99,19 @@ published build pulls cleanly; one that doesn't (a locally edited baked file)
 404s and the CLI builds locally. `ensureImage()` / `DockerProvider.prepare()`
 go through `pullOrBuild()`.
 
+### Diagnosing this from the hub
+
+The hub's **System** page (`https://agentbox.localhost/system`) surfaces the facts
+this section describes, so the usual investigation needs no terminal:
+
+- **Box image** — the registry, the *exact* `sha-<16>` tag this host will pull, and
+  the fingerprint it last stamped.
+- **Providers** — each base's freshness. A `stale` row opens to show **which files
+  changed** (`~ rel  from → to`), diffed against the per-file manifest recorded at
+  bake time. A base baked before manifests existed says so instead of guessing.
+- **Carried from this machine** — the agent configs and skills a box actually gets.
+  Present-only: a path missing from that list is one no box will receive.
+
 ### When a pull is skipped, and why it says so
 
 A failed pull is **not** automatically "the tag isn't published". `pullImage()`

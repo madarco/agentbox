@@ -52,11 +52,18 @@ export async function GET(): Promise<Response> {
   // host backend — same limitation as GET /providers?freshness=1. Absent → the
   // prepared record alone tells us baked-or-not, just not fresh-or-stale.
   const backend = backendOrNull();
-  const freshness = new Map<string, Pick<ProviderOption, 'baseStatus' | 'baseStaleReason'>>();
+  const freshness = new Map<
+    string,
+    Pick<ProviderOption, 'baseStatus' | 'baseStaleReason' | 'bakeDiff'>
+  >();
   if (backend) {
     try {
       for (const p of await backend.providersWithFreshness()) {
-        freshness.set(p.id, { baseStatus: p.baseStatus, baseStaleReason: p.baseStaleReason });
+        freshness.set(p.id, {
+          baseStatus: p.baseStatus,
+          baseStaleReason: p.baseStaleReason,
+          bakeDiff: p.bakeDiff,
+        });
       }
     } catch {
       // Best-effort — leave freshness empty; the bake records still render.
@@ -83,6 +90,7 @@ export async function GET(): Promise<Response> {
       imageRef: rec?.imageRef,
       baseStatus: f?.baseStatus,
       baseStaleReason: f?.baseStaleReason,
+      bakeDiff: f?.bakeDiff,
     };
   });
 
@@ -91,7 +99,8 @@ export async function GET(): Promise<Response> {
     build,
     deploy: deployView(record),
     providers,
-    imageContextKeys: sys?.imageContextKeys() ?? [],
+    hostCarried: sys?.hostCarried() ?? [],
+    boxImage: sys?.boxImage() ?? null,
   });
 }
 
