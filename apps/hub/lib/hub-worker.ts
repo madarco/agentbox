@@ -11,6 +11,7 @@
  * by Next.
  */
 import { execFile } from 'node:child_process';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -24,6 +25,8 @@ import {
   loadGitHubAppConfig,
   makeControlPlaneCreateBox,
   parseGitRemote,
+  queueLogPath,
+  QUEUE_LOGS_DIR,
   toAuthedHttpsUrl,
   type CreateBoxFn,
   type Store,
@@ -178,6 +181,25 @@ export interface HubWorkerHandle {
   stop: () => Promise<void>;
 }
 
+/**
+ * Per-job logger: the worker-wide log (so the container log still shows progress)
+ * plus an append to `~/.agentbox/logs/queue-<jobId>.log`. The web UI's create modal
+ * streams that file — it is the only progress a hub-driven create surfaces, and
+ * without it the modal sits blank for the minutes a cloud create takes.
+ * Synchronous writes: `log` is a fire-and-forget callback with no way to await.
+ */
+function makeJobLogger(log: (line: string) => void): (jobId: string) => (line: string) => void {
+  return (jobId) => (line) => {
+    log(`[${jobId.slice(0, 8)}] ${line}`);
+    try {
+      mkdirSync(QUEUE_LOGS_DIR, { recursive: true });
+      appendFileSync(queueLogPath(jobId), `${new Date().toISOString()} ${line}\n`);
+    } catch {
+      /* the log file is a convenience; never fail a create over it */
+    }
+  };
+}
+
 /** Build the worker's `CreateBoxFn` (exported for the offline smoke/tests). */
 export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
   const { log } = opts;
@@ -219,7 +241,16 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
     },
     cloneRepo: (authedUrl, repoUrl, dest, branch) =>
       cloneRepoWithLfs(runGit, authedUrl, repoUrl, dest, branch, log),
-    createBox: async ({ workspacePath, name, provider, agent, prompt, agentArgs, onLog }) => {
+    createBox: async ({
+      workspacePath,
+      name,
+      provider,
+      agent,
+      prompt,
+      agentArgs,
+      startAgent,
+      onLog,
+    }) => {
       if (!isProviderKind(provider)) throw new Error(`unknown provider ${provider}`);
       const mod = (await IMPORTERS[provider]()).providerModule;
       if (mod.ensureCredentials) await mod.ensureCredentials();
@@ -250,15 +281,20 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       // Background `-i`: a seed prompt means run the agent fully on the control
       // box (create + start detached), so the laptop can be off from submit on.
       // A cold create (create --via-hub / foreground) has no prompt — the PC
-      // attaches those. Creds were seeded above (seedHostBackupsFromCustody), so
-      // the box is logged in; a not-logged-in box surfaces as an actionable error
-      // from verifyDetachedSession, which we return so the job fails WITH the box
-      // id (box preserved for adopt/attach + re-login).
+      // attaches those. `startAgent` is the third case: a hub web-UI create, which
+      // wants a live session but has no prompt to imply one. Creds were seeded
+      // above (seedHostBackupsFromCustody), so the box is logged in; a
+      // not-logged-in box surfaces as an actionable error from
+      // verifyDetachedSession, which we return so the job fails WITH the box id
+      // (box preserved for adopt/attach + re-login).
       const boxAgent = normalizeCreateAgent(agent);
-      if (boxAgent && prompt && prompt.length > 0) {
+      const seedPrompt = prompt && prompt.length > 0 ? prompt : undefined;
+      if (boxAgent && (seedPrompt || startAgent)) {
         const kind: AgentKind = boxAgent === 'claude' ? 'claude-code' : boxAgent;
-        const extraArgs = resolveAgentLauncher(kind).buildArgs(prompt, agentArgs ?? []);
-        log(`starting ${boxAgent} in ${created.record.name} with the seed prompt`);
+        const extraArgs = resolveAgentLauncher(kind).buildArgs(seedPrompt ?? '', agentArgs ?? []);
+        log(
+          `starting ${boxAgent} in ${created.record.name}${seedPrompt ? ' with the seed prompt' : ''}`,
+        );
         try {
           await startDetachedCloudAgent({
             provider: mod.provider,
@@ -280,6 +316,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
     tmpDir: (jobId) => join(tmpdir(), `agentbox-hub-worker-${jobId}`),
     cleanup: (dir) => rm(dir, { recursive: true, force: true }),
     log,
+    logFor: makeJobLogger(log),
   });
 }
 

@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { chmod, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,6 +30,7 @@ import {
   hashRpcParams,
   isValidBoxStatus,
   loadQueue,
+  queueLogPath,
   readJob,
   registrationToBoxRecord,
   writeQueueLoginCode,
@@ -95,6 +97,7 @@ import type {
 } from './boxes/backend-types';
 import { hubProfile } from './auth-config';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
+import { controlPlaneCreateRequest } from './boxes/control-plane-create';
 import type {
   BakeDiff,
   Approval,
@@ -165,15 +168,27 @@ function hostLabel(b: ListedBox): string {
   return b.cloud?.backend ? `${provider} · ${b.cloud.backend}` : provider;
 }
 
-function mapBox(b: ListedBox): Box {
+/**
+ * Where a box whose project FOLDER no longer exists should render instead: under
+ * its repo, taken from the box's own control-plane registration. A control box
+ * builds every box from a per-job clone it then deletes, so this is the normal
+ * case there, not an edge case.
+ */
+interface ProjectRegrouping {
+  projectId: string;
+  repo: string;
+  reg: BoxRegistration;
+}
+
+function mapBox(b: ListedBox, regroup?: ProjectRegrouping): Box {
   const root = projectRootOf(b);
   const createdAt = Date.parse(b.createdAt) || Date.now();
   const status = mapStatus(b);
   const eps = b.endpoints?.endpoints ?? [];
   return {
     id: b.id,
-    projectId: hashProjectPath(root),
-    repo: path.basename(root),
+    projectId: regroup?.projectId ?? hashProjectPath(root),
+    repo: regroup?.repo ?? path.basename(root),
     branch: b.gitWorktrees?.[0]?.branch ?? b.cloud?.workspaceBranch ?? '',
     // A user-set display label (via rename) wins over the live agent session
     // title as the box's primary label; else fall back to the session title, then name.
@@ -361,6 +376,12 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
   const boxByRoot = new Map<string, { root: string; provider: string; createdAt: number }>();
   for (const b of boxes) {
     const root = projectRootOf(b);
+    // A box whose recorded root is gone has no project FOLDER — a control box
+    // builds every box from a per-job clone it deletes on the way out. Adopting
+    // that path would mint a project card named after the clone dir, pointing at
+    // nothing: no origin, no agentbox.yaml, no seed, and a create that resolves
+    // to a dead path. Such boxes group by repo identity instead (see getData).
+    if (!existsSync(root)) continue;
     const createdAt = Date.parse(b.createdAt) || Date.now();
     const existing = boxByRoot.get(root);
     if (!existing) boxByRoot.set(root, { root, provider: b.provider ?? 'docker', createdAt });
@@ -372,8 +393,10 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
   const byId = new Map<string, Project>();
   // The host path per project id, so we can read each repo's current branch below.
   const pathById = new Map<string, string>();
-  // Registry entries (incl. zero-box projects).
-  for (const e of await listProjectsConfigured()) {
+  // Registry entries (incl. zero-box projects). A registered path that has since
+  // vanished is skipped for the same reason — including the ghosts an older build
+  // wrote before the check above existed.
+  for (const e of (await listProjectsConfigured()).filter((e) => existsSync(e.originalPath))) {
     const box = boxByRoot.get(e.originalPath);
     byId.set(e.hash, {
       id: e.hash,
@@ -432,10 +455,12 @@ async function resolveProjectPath(projectId: string): Promise<string | null> {
   if (entry) return entry.originalPath;
   for (const b of await listBoxes()) {
     const root = projectRootOf(b);
-    if (hashProjectPath(root) === projectId) {
-      await registerProject(root).catch(() => {});
-      return root;
-    }
+    if (hashProjectPath(root) !== projectId) continue;
+    // Only heal a root that is actually there: registering a deleted per-job
+    // clone is what minted the ghost project cards in the first place.
+    if (!existsSync(root)) return root;
+    await registerProject(root).catch(() => {});
+    return root;
   }
   return null;
 }
@@ -1274,6 +1299,60 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   // registration (PC-created / independent) by reconstructing its local record on
   // demand. Threaded into every provider-driven path below.
   const hydrate: HydrateFn = (bid) => hydrateRegisteredBox(handle, bid);
+
+  /**
+   * The repo a project's boxes are cloned from. A control box's projects ARE
+   * repos — it holds no working copy — so the origin comes from a box
+   * registration rather than from `git remote` in a folder that isn't there.
+   */
+  async function projectRepoUrl(projectId: string): Promise<string | null> {
+    const path = await resolveProjectPath(projectId);
+    if (path && existsSync(path)) {
+      const origin = await hostOriginOf(path);
+      if (origin) return origin;
+    }
+    const regs = await handle.store.listBoxes().catch(() => []);
+    for (const reg of regs) {
+      if (!reg.originUrl) continue;
+      if (registrationProjectKey(reg).id === projectId) return reg.originUrl;
+    }
+    return null;
+  }
+
+  /**
+   * Enqueue a create on the control-plane queue — the path that leases a push
+   * token, clones the repo and overlays the custody seed. Used when there is no
+   * host checkout to build from, which on a control box is always.
+   *
+   * Returns the create-job id; `getJob` resolves it from the Store and the worker
+   * writes `~/.agentbox/logs/queue-<id>.log`, so the UI follows it exactly like a
+   * local queue job.
+   */
+  async function createViaControlPlane(input: CreateBoxInput): Promise<CreateBoxResult> {
+    if (process.env.AGENTBOX_HUB_WORKER !== 'on' || !handle.store.enqueueCreateJob) {
+      return {
+        ok: false,
+        error: `project ${input.projectId} has no folder on this machine, and this hub has no create worker to clone it with`,
+      };
+    }
+    const repoUrl = await projectRepoUrl(input.projectId);
+    if (!repoUrl) {
+      return {
+        ok: false,
+        error: `project ${input.projectId} has no repo URL — a hub create clones from the origin, so the project must have one`,
+      };
+    }
+    const mapped = controlPlaneCreateRequest(input, repoUrl);
+    if (!mapped.ok) return { ok: false, error: mapped.error };
+    const id = randomUUID();
+    await handle.store.enqueueCreateJob({
+      id,
+      status: 'queued',
+      request: mapped.request,
+      createdAt: new Date().toISOString(),
+    });
+    return { ok: true, jobId: id };
+  }
   return {
     // authMode is layered on by source.ts (an env-derived concern), so the host
     // backend produces everything else.
@@ -1296,18 +1375,48 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           jobBoxes.push(mapJobToBox(j, 'creating'));
         else if (j.status === 'failed') jobBoxes.push(mapJobToBox(j, 'error'));
       }
+      const allRegistrations = await handle.store.listBoxes().catch(() => []);
       // Boxes the Store holds but this VPS's local state doesn't — i.e.
       // registered from a PC. Deduped by box id AND sandbox id (a box the
       // control box created locally is in both, under possibly different ids).
-      const registered = (await handle.store.listBoxes().catch(() => [])).filter(
+      const registered = allRegistrations.filter(
         (r) => !liveIds.has(r.boxId) && !(r.sandboxId && liveSandboxIds.has(r.sandboxId)),
       );
       const registeredBoxes = registered.map(mapRegistrationToBox);
+      // A local box whose project folder is gone (every control-box create: it
+      // builds from a per-job clone and deletes it) has no project card to group
+      // under. Its own registration carries the durable identity — the repo — so
+      // regroup it there, which is also what gives the card the repo's name
+      // instead of the clone dir's.
+      const regByBoxId = new Map(allRegistrations.map((r) => [r.boxId, r]));
+      const repoGrouped = new Map<string, ProjectRegrouping>();
+      for (const b of listed) {
+        if (existsSync(projectRootOf(b))) continue;
+        const reg = regByBoxId.get(b.id);
+        if (!reg) continue;
+        const { id, repo } = registrationProjectKey(reg);
+        repoGrouped.set(b.id, { projectId: id, repo, reg });
+      }
       // Each registered box needs a project to render under (the dashboard groups
       // strictly by projectId). Add a synthetic one per new project key not
       // already produced by listProjects — sharing the box row's id.
       const projects = await listProjects(listed);
       const projectIds = new Set(projects.map((p) => p.id));
+      // Repo-identity cards for the regrouped local boxes, before the registered
+      // ones (same shape, same dedupe by project id).
+      for (const { projectId, repo, reg } of repoGrouped.values()) {
+        if (projectIds.has(projectId)) continue;
+        projectIds.add(projectId);
+        projects.push({
+          id: projectId,
+          name: repo,
+          repo,
+          defaultBranch: reg.worktrees?.[0]?.branch ?? 'main',
+          provider: reg.backend ?? 'cloud',
+          createdAt: Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now(),
+          ...custodyIdentityFromRegistration(reg),
+        });
+      }
       for (const reg of registered) {
         const { id, repo } = registrationProjectKey(reg);
         if (projectIds.has(id)) continue;
@@ -1331,7 +1440,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         user: currentUser(),
         github: LOCAL_GITHUB,
         projects,
-        boxes: [...jobBoxes, ...listed.map(mapBox), ...registeredBoxes],
+        boxes: [
+          ...jobBoxes,
+          ...listed.map((b) => mapBox(b, repoGrouped.get(b.id))),
+          ...registeredBoxes,
+        ],
         // Block-mode approvals live in-process on the relay handle, not the Store.
         approvals: handle.prompts.all().map(mapApproval),
         providers: listProviders(jobs),
@@ -1467,7 +1580,14 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // Resolve the project by id server-side — never trust a client path.
         // Accepts any project the dashboard shows (registry or live box root).
         const workspace = await resolveProjectPath(input.projectId);
-        if (!workspace) return { ok: false, error: `unknown project ${input.projectId}` };
+        // No host checkout: the normal queue path builds a box FROM a local
+        // working copy, which a control box simply doesn't have (its projects are
+        // repos, not folders). Hand those to the control-plane create queue — the
+        // one path that leases a token, clones the repo and applies the custody
+        // seed. Same job-id contract, so the modal's log stream is unchanged.
+        if (!workspace || !existsSync(workspace)) {
+          return await createViaControlPlane(input);
+        }
         // Provider gate (defense-in-depth: a client could bypass the disabled UI
         // option). Default docker; reject unknown kinds and unconfigured providers.
         const provider = (input.provider ?? 'docker').trim();
@@ -1640,7 +1760,18 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     browseDir: (dir) => browseDirHost(dir),
     async getJob(id) {
       const job = await readJob(id);
-      if (!job) return null;
+      if (!job) {
+        // Not a local queue manifest — it may be a control-plane create job (the
+        // path a control box takes, where there is no host checkout to build
+        // from). Same shape, so the UI's poll + log stream work unchanged.
+        const cp = await handle.store.getCreateJob?.(id).catch(() => null);
+        if (!cp) return null;
+        return {
+          status: cp.status,
+          logPath: queueLogPath(cp.id),
+          boxId: cp.result?.boxId,
+        };
+      }
       // Surface the worker-written login sub-state (the inbound code rides a
       // separate file, never the manifest).
       const login = job.login

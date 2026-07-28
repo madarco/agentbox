@@ -48,6 +48,8 @@ export interface CreateBoxDeps {
     prompt?: string;
     /** Fully-processed agent args (post-`--`, incl. skip-permissions). */
     agentArgs?: string[];
+    /** Start the agent in-box even with no `prompt` (a hub web-UI create). */
+    startAgent?: boolean;
     onLog?: (line: string) => void;
   }): Promise<{ id: string; agentStartError?: string }>;
   /** Make a per-job temp dir path. */
@@ -69,6 +71,13 @@ export interface CreateBoxDeps {
     dest: string,
   ): Promise<{ files: number; capturedAt?: string; repoHeadSha?: string } | null>;
   log?: (line: string) => void;
+  /**
+   * Per-job logger, preferred over {@link log} when present. The hub web UI
+   * streams a create's progress from a per-job log file, so a job driven from
+   * there needs its lines addressable by job id rather than interleaved into one
+   * worker-wide log.
+   */
+  logFor?(jobId: string): (line: string) => void;
 }
 
 /** Runs `git <args>` with optional extra env + timeout; rejects on non-zero. */
@@ -137,7 +146,7 @@ export async function cloneRepoWithLfs(
  */
 export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
   return async (request, jobId) => {
-    const log = deps.log ?? (() => {});
+    const log = deps.logFor?.(jobId) ?? deps.log ?? (() => {});
     const dir = deps.tmpDir(jobId);
     try {
       log(`leasing a push token for ${request.repoUrl}`);
@@ -181,7 +190,8 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
         // foreground) that the PC attaches later.
         prompt: request.prompt,
         agentArgs: request.agentArgs,
-        onLog: deps.log,
+        startAgent: request.startAgent,
+        onLog: log,
       });
       log(`created box ${box.id}`);
       return { boxId: box.id, agentStartError: box.agentStartError };

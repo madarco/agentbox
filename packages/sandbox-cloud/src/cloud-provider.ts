@@ -11,6 +11,7 @@
  * "no relay configured" error.
  */
 
+import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { generateBoxId, resolveSyncTopology, UserFacingError } from '@agentbox/core';
 import type {
@@ -149,6 +150,13 @@ export interface CreateCloudProviderOptions {
 }
 
 const FALLBACK_IMAGE = 'agentbox/box:dev';
+
+/**
+ * Cap on the workspace-basename part of an auto-derived box name. With the 9-char
+ * box id that keeps a derived name at 40 chars — comfortably inside Hetzner's
+ * 63-char resource/label ceiling once a provider prefixes and stamps it.
+ */
+const DERIVED_NAME_MAX = 30;
 
 /** Default Portless no-TLS proxy port — matches the host wizard's choice. */
 const DEFAULT_PORTLESS_PROXY_PORT = 1355;
@@ -307,7 +315,13 @@ export function createCloudProvider(
     branch: string;
   } {
     const id = generateBoxId();
-    const name = req.name ?? `${basename(req.workspacePath)}-${id}`;
+    // The workspace basename can be long (a control box builds from a per-job
+    // clone dir named `agentbox-hub-worker-<uuid>`), and the derived name flows
+    // into branch names, per-box directories and provider resource names — where
+    // Hetzner, for one, hard-caps at 63 chars. Bound the derived part; an
+    // explicit `--name` is the caller's business and passes through untouched.
+    const derived = `${basename(req.workspacePath).slice(0, DERIVED_NAME_MAX)}-${id}`;
+    const name = req.name ?? derived;
     return {
       id,
       name,
@@ -589,6 +603,16 @@ export function createCloudProvider(
       const req: CreateBoxRequest = reqRaw.workspacePath
         ? { ...reqRaw, workspacePath: resolve(reqRaw.workspacePath) }
         : reqRaw;
+      // Refuse a workspace that isn't there BEFORE provisioning. Every downstream
+      // check treats a missing directory as "not a git repo" (detectGitRepos
+      // swallows ENOENT), so the create would boot a real sandbox and only then
+      // die in `tar -C <missing dir>` — billing a box to say "no such file".
+      // A control box hit this whenever a project pointed at a deleted worker clone.
+      if (req.workspacePath && !existsSync(req.workspacePath)) {
+        throw new UserFacingError(
+          `workspace ${req.workspacePath} does not exist — the project it belongs to points at a path that is gone. Re-add the project (or re-run from the repo) and try again.`,
+        );
+      }
       const log = req.onLog ?? (() => {});
       const { id, name, branch } = mintBox(req);
       const image = opts.provisionImage

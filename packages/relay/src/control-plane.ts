@@ -36,6 +36,10 @@ export {
   type CloneRepoRunGit,
 } from './create-worker.js';
 export { type CreateJobRequest, type CreateJobRow } from './store/store.js';
+// The hub web UI streams a create's progress from the per-job log file the local
+// queue writes; a control-plane create job reuses the same path so one job-log
+// contract covers both create paths.
+export { QUEUE_LOGS_DIR, queueLogPath } from './queue.js';
 export { toAuthedHttpsUrl, parseGitRemote, repoSlugFromRemote } from './git-pat.js';
 export {
   type CustodyStore,

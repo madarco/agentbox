@@ -271,15 +271,19 @@ Both are pure REST clients over the hub's [`GET /custody` and `GET /system`](/do
 
 ## Create a box from the web UI
 
-The web-UI create needs a **repo checkout on the VPS** for the worker to build from. So:
+Pick a project, **Create box** → choose a provider (e.g. E2B) and agent → **Create box**. The
+resident worker provisions the sandbox, starts the agent detached, and it appears in the dashboard
+with live status. Nothing runs on your laptop.
 
-1. In the dashboard, **Add project** and point it at a repo path **on the control box** — clone it there first (`git clone <repo>` on the VPS, or into the projects volume).
-2. **Create box** → pick a provider (e.g. E2B) and agent → **Create box**. The resident worker provisions the sandbox, starts the agent detached, and it appears in the dashboard with live status. Nothing runs on your laptop.
+A project with **no folder on the VPS** — the normal case, including every project that came from a
+PC-created box — is built the same way the CLI's `--via-hub` create is: the worker leases a push
+token, clones the repo, overlays the project's [seed material](#adding-a-project-so-the-control-box-can-build-it),
+and provisions from that checkout. You do not need to clone anything on the VPS first.
 
-<Callout type="info" title="A PC-created box's project isn't enough to Create from the UI">
-  A box you spawned from your PC registers on the control box as a project you can **see and
-  manage**, but its "Create box" button has no VPS checkout behind it — so use **Add project**
-  (clone on the VPS) to originate new boxes from the browser.
+<Callout type="info" title="What a hub create needs">
+  A **repo origin** (that is what gets cloned) and a **cloud provider** — docker boxes bind-mount a
+  host folder, so they can only be created where that folder is. Optionally **Add project** with a
+  path on the control box if you do want a long-lived checkout there.
 </Callout>
 
 ## Create a box from your laptop — that runs with the laptop off

@@ -52,6 +52,7 @@ import {
   normalizeSourceCidr,
   syncFirewallSource,
 } from './firewall.js';
+import { hetznerLabelValue, hetznerResourceName } from './naming.js';
 import { pollUntil } from './poll.js';
 import { mapHetznerProvisionError, validateServerChoice } from './preflight.js';
 import { readPreparedState } from './prepared-state.js';
@@ -271,7 +272,8 @@ async function firewallEgressStatus(sandboxId: string): Promise<FirewallEgressSt
     firewallId,
     allowedSources,
     currentEgress,
-    boxRef: server.labels['agentbox.box'] ?? sandboxId,
+    // `||`, not `??`: a name with nothing label-legal in it sanitizes to ''.
+    boxRef: server.labels['agentbox.box'] || sandboxId,
   };
 }
 
@@ -396,15 +398,20 @@ export const hetznerBackend: CloudBackend = {
     );
     const key = await mintSshKey(tempDir, `agentbox-box-${req.name}-${stamp}`);
 
+    // Hetzner rejects a label value or resource name over 63 chars (or one not
+    // starting/ending alphanumeric), and a box name can exceed that — see naming.ts.
+    const boxLabel = hetznerLabelValue(req.name);
+    const resourceName = hetznerResourceName('agentbox', req.name, stamp);
+
     let firewallId: number | null = null;
     let serverId: number | null = null;
     try {
       // 4. Firewall.
       const firewall = await createPerBoxFirewall(c, {
-        name: `agentbox-${req.name}-${stamp}`,
+        name: resourceName,
         sources,
         labels: {
-          'agentbox.box': req.name,
+          'agentbox.box': boxLabel,
           'agentbox.role': 'box',
         },
       });
@@ -433,7 +440,7 @@ export const hetznerBackend: CloudBackend = {
           { method: 'createServer', retryOnAmbiguous: false, attemptTimeoutMs: 120_000 },
           () =>
             c.createServer({
-              name: `agentbox-${req.name}-${stamp}`,
+              name: resourceName,
               server_type: serverType,
               image: imageRef,
               location,
@@ -442,7 +449,7 @@ export const hetznerBackend: CloudBackend = {
               labels: {
                 'agentbox.managed': 'true',
                 'agentbox.role': 'box',
-                'agentbox.box': req.name,
+                'agentbox.box': boxLabel,
                 'agentbox.firewall': String(firewall.id),
               },
               start_after_create: true,
@@ -555,7 +562,7 @@ export const hetznerBackend: CloudBackend = {
     const servers = await client().listServers({ label_selector: 'agentbox.managed=true' });
     return servers.map((s) => ({
       sandboxId: String(s.id),
-      name: s.labels['agentbox.box'] ?? s.name,
+      name: s.labels['agentbox.box'] || s.name,
       createdAt: s.created,
       state: mapState(s.status),
     }));

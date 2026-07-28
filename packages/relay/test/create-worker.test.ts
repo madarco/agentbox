@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { cloneRepoWithLfs, drainCreateJobs, drainOneCreateJob } from '../src/create-worker.js';
+import {
+  cloneRepoWithLfs,
+  drainCreateJobs,
+  drainOneCreateJob,
+  makeControlPlaneCreateBox,
+  type CreateBoxDeps,
+} from '../src/create-worker.js';
 import { handleRelayRequest, type ControlPlaneDeps } from '../src/core/handler.js';
 import { MemoryStore } from '../src/store/memory-store.js';
 import type { CreateJobRequest } from '../src/store/store.js';
@@ -36,7 +42,10 @@ describe('box-create flow', () => {
     const jobId = (enq.body as { jobId: string }).jobId;
 
     // Queued until a worker runs.
-    const queued = await handleRelayRequest(r('GET', `/remote/boxes/${jobId}`, { bearer: ADMIN }), d);
+    const queued = await handleRelayRequest(
+      r('GET', `/remote/boxes/${jobId}`, { bearer: ADMIN }),
+      d,
+    );
     expect((queued.body as { status: string }).status).toBe('queued');
 
     // Worker drains it with a fake create fn.
@@ -113,6 +122,71 @@ describe('box-create flow', () => {
   });
 });
 
+describe('makeControlPlaneCreateBox', () => {
+  const request: CreateJobRequest = {
+    repoUrl: 'https://github.com/acme/widgets.git',
+    provider: 'e2b',
+  };
+
+  function harness(over: Partial<CreateBoxDeps> = {}) {
+    const created: Array<Parameters<CreateBoxDeps['createBox']>[0]> = [];
+    const cleaned: string[] = [];
+    const deps: CreateBoxDeps = {
+      leaseRemoteUrl: (u) => Promise.resolve(`${u}?token`),
+      cloneRepo: () => Promise.resolve(),
+      createBox: (opts) => {
+        created.push(opts);
+        return Promise.resolve({ id: 'box-1' });
+      },
+      tmpDir: (jobId) => `/tmp/clone-${jobId}`,
+      cleanup: (dir) => {
+        cleaned.push(dir);
+        return Promise.resolve();
+      },
+      ...over,
+    };
+    return { deps, created, cleaned };
+  }
+
+  it('routes every line to the per-job logger when one is supplied', async () => {
+    const lines: string[] = [];
+    const shared: string[] = [];
+    const { deps } = harness({
+      log: (l) => shared.push(l),
+      logFor: (jobId) => (l) => lines.push(`${jobId}:${l}`),
+    });
+    await makeControlPlaneCreateBox(deps)(request, 'job-7');
+    // The hub UI streams the per-job file; nothing may fall through to the
+    // worker-wide log instead (the modal would sit blank).
+    expect(shared).toEqual([]);
+    expect(lines.every((l) => l.startsWith('job-7:'))).toBe(true);
+    expect(lines.some((l) => l.includes('cloning'))).toBe(true);
+  });
+
+  it('falls back to the worker-wide log when no per-job logger exists', async () => {
+    const shared: string[] = [];
+    const { deps } = harness({ log: (l) => shared.push(l) });
+    await makeControlPlaneCreateBox(deps)(request, 'job-8');
+    expect(shared.some((l) => l.includes('cloning'))).toBe(true);
+  });
+
+  it('passes startAgent through so a hub UI create gets a live session', async () => {
+    const { deps, created } = harness();
+    await makeControlPlaneCreateBox(deps)({ ...request, startAgent: true }, 'job-9');
+    expect(created[0]?.startAgent).toBe(true);
+  });
+
+  it('cleans up the per-job clone even when the create throws', async () => {
+    const { deps, cleaned } = harness({
+      createBox: () => Promise.reject(new Error('provider exploded')),
+    });
+    await expect(makeControlPlaneCreateBox(deps)(request, 'job-10')).rejects.toThrow(
+      'provider exploded',
+    );
+    expect(cleaned).toEqual(['/tmp/clone-job-10']);
+  });
+});
+
 describe('cloneRepoWithLfs', () => {
   interface Call {
     args: string[];
@@ -125,7 +199,13 @@ describe('cloneRepoWithLfs', () => {
       calls.push({ args, env });
       return Promise.resolve();
     };
-    await cloneRepoWithLfs(runGit, 'https://x-access-token:tok@github.com/o/r.git', 'https://github.com/o/r.git', '/tmp/d', 'main');
+    await cloneRepoWithLfs(
+      runGit,
+      'https://x-access-token:tok@github.com/o/r.git',
+      'https://github.com/o/r.git',
+      '/tmp/d',
+      'main',
+    );
     // 1) clone --branch with GIT_LFS_SKIP_SMUDGE so an LFS repo never hard-fails.
     expect(calls[0]!.args).toEqual([
       'clone',
@@ -146,7 +226,14 @@ describe('cloneRepoWithLfs', () => {
       'pull',
     ]);
     // 3) scrub the leased token → bare origin.
-    expect(calls[2]!.args).toEqual(['-C', '/tmp/d', 'remote', 'set-url', 'origin', 'https://github.com/o/r.git']);
+    expect(calls[2]!.args).toEqual([
+      '-C',
+      '/tmp/d',
+      'remote',
+      'set-url',
+      'origin',
+      'https://github.com/o/r.git',
+    ]);
   });
 
   it('still scrubs the token when the LFS pull fails (pointers left in place)', async () => {

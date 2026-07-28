@@ -116,6 +116,20 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **Creating a box from a control box's web UI failed** with a `tar: Cannot open`
+  error. The control box has no working copy to build from, so those creates now
+  go through the same clone-and-seed path as `create --via-hub`. A create no
+  longer needs a repo cloned on the VPS first.
+- **A control box listed a project named after a deleted temp directory**
+  (`agentbox-hub-worker-<uuid>`) with no seed and no `agentbox.yaml`. Its boxes
+  now group under their repo, named after it. A cloud create also fails up front,
+  rather than after provisioning, when its workspace is missing.
+- **Creating a hetzner box through a control box failed** with
+  `invalid input in field 'labels[agentbox.box]'` — the derived box name exceeded
+  Hetzner's 63-character limit. Names and labels are now bounded.
+- **Creating a daytona box on a deployed hub failed** with
+  `Module "ObjectStorage" is not available` — the hub bundle inlined the Daytona
+  SDK instead of leaving it external.
 - **`git push` from a cloud box failed on an npm-installed AgentBox** with
   `Cannot find package '@agentbox/sandbox-<provider>'`. The relay resolved
   provider backends from `node_modules`, which the published package doesn't

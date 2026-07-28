@@ -47,6 +47,13 @@ export interface CreateJobRequest {
   /** Fully-processed agent args (post-`--`, incl. skip-permissions) the CLI
    * computed from its config, so the worker needs no CLI/config to launch. */
   agentArgs?: string[];
+  /**
+   * Start the agent in-box even without a `prompt`. A hub web-UI create wants a
+   * box with its agent already running (that is what the local queue path does),
+   * but has no seed prompt to imply it — the prompt-presence rule alone would
+   * hand back a box with a dead session.
+   */
+  startAgent?: boolean;
 }
 
 /** A durable box-creation job (the hosted plane's create queue). */

@@ -138,3 +138,26 @@ describe('createCloudProvider composition', () => {
     expect(url).toBe('https://signed-8080-1234.example');
   });
 });
+
+describe('create workspace guard', () => {
+  it('refuses a workspace that does not exist, before provisioning anything', async () => {
+    let provisioned = 0;
+    const p = createCloudProvider(
+      makeBackend({
+        provision: async () => {
+          provisioned += 1;
+          return { sandboxId: 'sb-1' };
+        },
+      }),
+    );
+    // A control box's project can point at a per-job clone that was cleaned up.
+    // Without the guard this booted a real sandbox and then died in `tar -C`.
+    await expect(
+      p.create({
+        workspacePath: '/tmp/agentbox-hub-worker-does-not-exist-9f8e7d',
+        projectRoot: '/tmp/agentbox-hub-worker-does-not-exist-9f8e7d',
+      }),
+    ).rejects.toThrow(/does not exist/);
+    expect(provisioned).toBe(0);
+  });
+});
