@@ -393,6 +393,9 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
   const byId = new Map<string, Project>();
   // The host path per project id, so we can read each repo's current branch below.
   const pathById = new Map<string, string>();
+  // What the registry already has recorded, so the origin is only rewritten when
+  // it actually changed.
+  const recordedOrigin = new Map<string, string>();
   // Registry entries (incl. zero-box projects). A registered path that has since
   // vanished is skipped for the same reason — including the ghosts an older build
   // wrote before the check above existed.
@@ -408,6 +411,7 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
         box?.createdAt ?? (e.createdAt ? Date.parse(e.createdAt) || Date.now() : Date.now()),
     });
     pathById.set(e.hash, e.originalPath);
+    if (e.originUrl) recordedOrigin.set(e.hash, e.originUrl);
   }
   // Belt-and-suspenders: any box root that failed to register still shows up.
   for (const p of boxByRoot.values()) {
@@ -437,6 +441,12 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
         hostOriginOf(repo),
       ]);
       if (origin) proj.originUrl = origin;
+      // Persist the origin the first time we can read it. It is the only thing
+      // that still identifies the project once its folder goes away, and a hub
+      // create needs it to clone. Written only on change — this runs per poll.
+      if (origin && origin !== recordedOrigin.get(id)) {
+        await registerProject(repo, { originUrl: origin }).catch(() => {});
+      }
     }),
   );
   return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt);
@@ -1311,6 +1321,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       const origin = await hostOriginOf(path);
       if (origin) return origin;
     }
+    // The folder is gone (or has no origin): fall back to what the registry
+    // recorded while it was there, then to a box registration's git identity.
+    const entry = (await listProjectsConfigured()).find((e) => e.hash === projectId);
+    if (entry?.originUrl) return entry.originUrl;
     const regs = await handle.store.listBoxes().catch(() => []);
     for (const reg of regs) {
       if (!reg.originUrl) continue;

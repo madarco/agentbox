@@ -143,6 +143,13 @@ export interface ProjectEntry {
   lastSeenAt: string | null;
   configPath: string;
   hasConfigFile: boolean;
+  /**
+   * The repo this project's folder pointed at, recorded when it was last seen.
+   * Outlives the folder on purpose: a control box builds boxes from throwaway
+   * clones, so by the time it needs the origin to clone again, the directory it
+   * would have read `git remote` from is gone.
+   */
+  originUrl?: string;
 }
 
 /**
@@ -176,6 +183,7 @@ export async function listProjectsConfigured(): Promise<ProjectEntry[]> {
       lastSeenAt: meta.lastSeenAt,
       configPath: cfgPath,
       hasConfigFile: hasConfig,
+      ...(meta.originUrl ? { originUrl: meta.originUrl } : {}),
     });
   }
   out.sort((a, b) => a.originalPath.localeCompare(b.originalPath));
@@ -260,9 +268,12 @@ export async function bumpProjectGcCounter(): Promise<number> {
   return next;
 }
 
-async function readMeta(
-  dirName: string,
-): Promise<{ originalPath: string; createdAt: string | null; lastSeenAt: string | null } | null> {
+async function readMeta(dirName: string): Promise<{
+  originalPath: string;
+  createdAt: string | null;
+  lastSeenAt: string | null;
+  originUrl: string | null;
+} | null> {
   const metaPath = `${PROJECTS_DIR}/${dirName}/meta.json`;
   try {
     const text = await readFile(metaPath, 'utf8');
@@ -272,6 +283,7 @@ async function readMeta(
       originalPath: parsed['originalPath'],
       createdAt: typeof parsed['createdAt'] === 'string' ? parsed['createdAt'] : null,
       lastSeenAt: typeof parsed['lastSeenAt'] === 'string' ? parsed['lastSeenAt'] : null,
+      originUrl: typeof parsed['originUrl'] === 'string' ? parsed['originUrl'] : null,
     };
   } catch {
     return null;
@@ -394,8 +406,11 @@ async function atomicWriteYaml(path: string, doc: Partial<UserConfig>): Promise<
  * `absPath` should be a canonical project root (e.g. `findProjectRoot(cwd).root`).
  * Callers that start from an arbitrary user path should canonicalize first.
  */
-export async function registerProject(absPath: string): Promise<void> {
-  await touchProjectMeta(absPath);
+export async function registerProject(
+  absPath: string,
+  opts: { originUrl?: string } = {},
+): Promise<void> {
+  await touchProjectMeta(absPath, opts.originUrl);
 }
 
 /**
@@ -414,22 +429,26 @@ export async function unregisterProject(hash: string): Promise<boolean> {
   return true;
 }
 
-async function touchProjectMeta(absPath: string): Promise<void> {
+async function touchProjectMeta(absPath: string, originUrl?: string): Promise<void> {
   const dir = dirname(projectMetaFile(absPath));
   await mkdir(dir, { recursive: true });
   const metaPath = projectMetaFile(absPath);
-  let prior: { originalPath?: string; createdAt?: string } = {};
+  let prior: { originalPath?: string; createdAt?: string; originUrl?: string } = {};
   try {
     prior = JSON.parse(await readFile(metaPath, 'utf8')) as typeof prior;
   } catch {
     /* fresh file */
   }
   const now = new Date().toISOString();
+  // A caller that didn't read an origin (the folder may be gone) must not erase
+  // the one recorded when it was there.
+  const origin = originUrl ?? prior.originUrl;
   const next = {
     originalPath: absPath,
     hash: hashProjectPath(absPath),
     createdAt: prior.createdAt ?? now,
     lastSeenAt: now,
+    ...(origin ? { originUrl: origin } : {}),
   };
   const tmp = `${metaPath}.tmp-${process.pid.toString()}-${Date.now().toString(36)}`;
   await writeFile(tmp, JSON.stringify(next, null, 2) + '\n', { encoding: 'utf8', mode: 0o644 });
