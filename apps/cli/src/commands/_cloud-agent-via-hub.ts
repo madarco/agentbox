@@ -22,7 +22,7 @@ import { enqueueCreateViaHub, pollHubJob } from '../control-plane/hub-enqueue.js
 import { adoptHubBox } from '../control-plane/hub-adopt.js';
 import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
-import { spinner } from '../lib/prompt.js';
+import { makeProgressReporter } from '../lib/progress.js';
 
 /**
  * Run a hub create under ONE self-updating status line.
@@ -30,7 +30,12 @@ import { spinner } from '../lib/prompt.js';
  * The job goes enqueued → queued → running, which used to print a line per
  * transition, each repeating the same job uuid — three lines of noise for one
  * thing changing state. A spinner rewrites the single line instead, and the id
- * (which the user can't act on) is gone.
+ * (which the user can't act on) is gone. The worker's own progress lines land on
+ * the same line, so the wait reads like a local create rather than a static
+ * `running` for the minutes a cloud create takes.
+ *
+ * `verbose` swaps the spinner for the streamed-lines reporter the local create
+ * path uses under `-v` — a clamped single line hides most of a remote log.
  *
  * Owns the try/catch so the line is always closed: an un-stopped clack spinner
  * leaves the terminal spinning after the command has already failed.
@@ -38,8 +43,9 @@ import { spinner } from '../lib/prompt.js';
 export async function withHubJobLine<T>(
   work: (onStatus: (line: string) => void) => Promise<T>,
   finish: (result: T) => string,
+  opts: { verbose?: boolean } = {},
 ): Promise<T> {
-  const s = spinner();
+  const s = makeProgressReporter(opts.verbose === true);
   let started = false;
   const onStatus = (line: string): void => {
     if (started) {
@@ -72,10 +78,34 @@ export interface CloudAgentViaHubArgs {
   fromBranch?: string;
   /** `--url` control-box override (else `relay.controlPlaneUrl`). */
   urlFlag?: string;
-  /** Progress lines (enqueue + poll transitions). */
+  /** Progress lines (enqueue + poll transitions + the hub worker's own log). */
   onStatus?: (line: string) => void;
-  /** Verbose adopt log. */
+  /** Full transcript: the hub worker's log lines, then the adopt log. */
   onLog?: (line: string) => void;
+}
+
+/**
+ * The hub's job log is timestamped per line (`<iso> <text>`) because it is also
+ * read as a file after the fact. On a live status line the timestamp is just
+ * width — the full line still goes to the command log.
+ */
+function withoutTimestamp(line: string): string {
+  return line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+/, '');
+}
+
+/**
+ * Wire the worker's log into both sinks: the live status line (timestamp
+ * stripped) and the command-log transcript (verbatim).
+ */
+export function hubLogSink(
+  onStatus: ((line: string) => void) | undefined,
+  onLog: ((line: string) => void) | undefined,
+): ((line: string) => void) | undefined {
+  if (!onStatus && !onLog) return undefined;
+  return (line) => {
+    onStatus?.(withoutTimestamp(line));
+    onLog?.(line);
+  };
 }
 
 /**
@@ -109,6 +139,7 @@ export async function createCloudBoxViaHubAndAdopt(
   onStatus?.('enqueued on the remote hub');
   const job = await pollHubJob(target, jobId, {
     onStatus: (j) => onStatus?.(`remote hub: ${j.status}`),
+    onLog: hubLogSink(onStatus, onLog),
   });
   if (job.status !== 'done') {
     throw new Error(`create job failed: ${job.result?.error ?? 'unknown error'}`);
@@ -161,6 +192,7 @@ export async function enqueueAgentJobViaHub(
     agentArgs,
     urlFlag,
     onStatus,
+    onLog,
   } = args;
   const target = await resolveCustodyTarget(urlFlag, { quiet: true });
   if (!target) return null;
@@ -185,6 +217,7 @@ export async function enqueueAgentJobViaHub(
   onStatus?.('enqueued on the remote hub');
   const job = await pollHubJob(target, jobId, {
     onStatus: (j) => onStatus?.(`remote hub: ${j.status}`),
+    onLog: hubLogSink(onStatus, onLog),
   });
   // A failed job with a boxId means the box was created but the agent didn't
   // start (e.g. creds rejected) — surface the error but keep the box id.

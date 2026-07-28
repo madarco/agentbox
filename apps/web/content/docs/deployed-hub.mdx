@@ -298,6 +298,11 @@ agentbox claude --provider e2b -i "fix the …"  # background: created AND run o
 
 The box is provisioned **VPS-side**, so it works even if the provider's credentials aren't configured on your laptop, and it keeps running once enqueued. It registers on the control box, so it shows in the web UI and its approvals are answerable from anywhere. (`agentbox create` streams the job to completion; a foreground `agentbox claude`/`codex`/`opencode` waits for the box, then **adopts + attaches** it here so the agent starts; a **background `-i`** run has the control box start the agent in-box with your prompt — nothing runs on, or waits for, your laptop.)
 
+While you wait, the control box's own progress streams back to your terminal — the clone, the seed
+overlay, the provider's create output — on the same self-updating line a local create uses. Add
+`-v` to stream the full log instead of the collapsed line; either way the whole transcript is kept
+in `~/.agentbox/logs/<command>.log` on your machine.
+
 You can force either side explicitly:
 
 ```bash

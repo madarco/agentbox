@@ -25,7 +25,8 @@ import { logToActiveCommand } from './log-file.js';
 export interface ProgressReporter {
   start(label: string): void;
   message(line: string): void;
-  stop(label: string): void;
+  /** `code` is clack's stop code — non-zero renders the line as a failure. */
+  stop(label: string, code?: number): void;
 }
 
 export function makeProgressReporter(verbose: boolean): ProgressReporter {
@@ -34,7 +35,7 @@ export function makeProgressReporter(verbose: boolean): ProgressReporter {
     return {
       start: (label) => s.start(label),
       message: (line) => s.message(clampSpinnerLine(line)),
-      stop: (label) => s.stop(label),
+      stop: (label, code) => s.stop(label, code),
     };
   }
   return {

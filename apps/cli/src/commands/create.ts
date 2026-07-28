@@ -38,7 +38,7 @@ import { runPrepare } from './prepare.js';
 import { claudeCommand } from './claude.js';
 import { resolveCustodyTarget, syncAgentCredentialsIfChanged } from './control-plane.js';
 import { enqueueCreateViaHub, pollHubJob } from '../control-plane/hub-enqueue.js';
-import { withHubJobLine } from './_cloud-agent-via-hub.js';
+import { hubLogSink, withHubJobLine } from './_cloud-agent-via-hub.js';
 import { resolveCreateRouting } from '../control-plane/route-create.js';
 import { attachRelayOptions } from '../control-plane/box-plane.js';
 
@@ -229,10 +229,14 @@ async function runCreateViaHub(
         onStatus('enqueued on the remote hub');
         return await pollHubJob(target, jobId, {
           onStatus: (j) => onStatus(`remote hub: ${j.status}`),
+          // The worker's own per-step lines, so a hub create shows the same
+          // progress a local one does (and lands in the command log).
+          onLog: hubLogSink(onStatus, (line) => cmdLog.write(line)),
         });
       },
       (j) =>
         j.status === 'done' ? 'box created on the remote hub' : 'the remote hub create failed',
+      { verbose: opts.verbose === true },
     );
     if (job.status === 'done') {
       outro(`box ready: ${job.result?.boxId ?? '(id pending)'}`);

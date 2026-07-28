@@ -69,11 +69,46 @@ export async function listHubJobs(target: HubTarget): Promise<CreateJobRow[]> {
   return Array.isArray(body.jobs) ? (body.jobs as CreateJobRow[]) : [];
 }
 
+export interface JobLogTail {
+  lines: string[];
+  offset: number;
+}
+
+/**
+ * Read a job's progress log from `offset` (bytes). `null` means this control box
+ * has no log route — an older hub, or the serverless plane, where the worker's
+ * per-step lines don't exist as a file. Callers stop tailing and fall back to
+ * status-only progress; a genuinely missing job already surfaces from the status
+ * poll, so this stays silent.
+ */
+export async function fetchHubJobLog(
+  target: HubTarget,
+  jobId: string,
+  offset: number,
+): Promise<JobLogTail | null> {
+  const base = target.url.replace(/\/+$/, '');
+  const f = target.fetchImpl ?? fetch;
+  const res = await f(
+    `${base}/remote/boxes/${encodeURIComponent(jobId)}/logs?offset=${String(offset)}`,
+    { headers: { Authorization: `Bearer ${target.adminToken}` } },
+  );
+  if (!res.ok) return null;
+  const body = (await res.json().catch(() => null)) as JobLogTail | null;
+  if (!body || !Array.isArray(body.lines) || typeof body.offset !== 'number') return null;
+  return body;
+}
+
 export interface PollOptions {
   intervalMs?: number;
   /** Give up after this long. Default 30 min (a real cloud create can be slow). */
   timeoutMs?: number;
   onStatus?: (job: CreateJobRow) => void;
+  /**
+   * The worker's own progress lines, drained from the job's log between status
+   * checks. Set it and the wait shows what the remote hub is actually doing
+   * (clone, seed, the provider's create output) instead of a static `running`.
+   */
+  onLog?: (line: string) => void;
   /** Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -81,19 +116,37 @@ export interface PollOptions {
 
 /**
  * Poll a job until it reaches `done`/`failed` (or the timeout). Reports each
- * observed status transition via `onStatus`.
+ * observed status transition via `onStatus`, and (when `onLog` is set) every
+ * line the hub worker appended to the job's log since the last tick.
  */
 export async function pollHubJob(
   target: HubTarget,
   jobId: string,
   opts: PollOptions = {},
 ): Promise<CreateJobRow> {
-  const intervalMs = opts.intervalMs ?? 3000;
+  // The log tail makes a tick worth taking more often: a status-only poll can
+  // only ever report two transitions, a log poll usually has something to show.
+  const intervalMs = opts.intervalMs ?? (opts.onLog ? 2000 : 3000);
   const timeoutMs = opts.timeoutMs ?? 30 * 60_000;
   const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const now = opts.now ?? Date.now;
   const deadline = now() + timeoutMs;
   let lastStatus = '';
+  let offset = 0;
+  let tailing = opts.onLog !== undefined;
+
+  const drainLog = async (): Promise<void> => {
+    if (!tailing) return;
+    // Never fail a create because its progress log couldn't be read.
+    const tail = await fetchHubJobLog(target, jobId, offset).catch(() => null);
+    if (!tail) {
+      tailing = false;
+      return;
+    }
+    offset = tail.offset;
+    for (const line of tail.lines) opts.onLog?.(line);
+  };
+
   for (;;) {
     const job = await getHubJob(target, jobId);
     if (!job) throw new Error(`job ${jobId} disappeared from the control plane`);
@@ -101,7 +154,13 @@ export async function pollHubJob(
       lastStatus = job.status;
       opts.onStatus?.(job);
     }
-    if (job.status === 'done' || job.status === 'failed') return job;
+    await drainLog();
+    // The worker writes its last lines (the failure, the box id) around the same
+    // moment it flips the status, so drain once more after the terminal read.
+    if (job.status === 'done' || job.status === 'failed') {
+      await drainLog();
+      return job;
+    }
     if (now() >= deadline) {
       throw new Error(`timed out waiting for job ${jobId} (last status: ${job.status})`);
     }
