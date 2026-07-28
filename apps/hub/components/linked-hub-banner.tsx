@@ -16,7 +16,9 @@ export function LinkedHubBanner() {
   if (!cp) return null;
 
   return (
-    <div className="flex items-center gap-2.5 border-b border-[var(--green-line)] bg-accent px-6 py-2 text-[12.5px] text-secondary-foreground max-md:px-4">
+    // h-[var(--banner-h)] keeps the strip's height in lockstep with the offset
+    // the sticky topbar/sidebar are pushed down by (set in HubShell).
+    <div className="sticky top-0 z-50 flex h-[var(--banner-h)] items-center justify-center gap-2.5 border-b border-[var(--green-line)] bg-accent px-6 text-[12.5px] text-secondary-foreground max-md:px-4">
       <Icons.server className="size-[14px] flex-none text-[var(--green-ink)]" />
       <span className="min-w-0 truncate">
         This AgentBox instance is linked to a remote hub at{' '}
@@ -33,7 +35,7 @@ export function LinkedHubBanner() {
         href={cp.url}
         target="_blank"
         rel="noopener"
-        className="ml-auto flex flex-none items-center gap-1 font-medium text-primary hover:opacity-80"
+        className="flex flex-none items-center gap-1 font-medium text-primary hover:opacity-80"
       >
         Open <Icons.ext className="size-[13px]" />
       </a>

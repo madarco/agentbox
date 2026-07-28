@@ -80,7 +80,7 @@ export function AppSidebar() {
   const dashActive = pathname === '/' || pathname.startsWith('/boxes');
 
   return (
-    <aside className="shad-side sticky top-0 z-50 flex h-screen flex-col self-start overflow-y-auto border-r border-border bg-background px-3.5 pb-4 pt-4 max-md:w-64">
+    <aside className="shad-side sticky top-[var(--banner-h,0px)] z-50 flex h-[calc(100vh-var(--banner-h,0px))] flex-col self-start overflow-y-auto border-r border-border bg-background px-3.5 pb-4 pt-4 max-md:w-64">
       <div className="flex items-center gap-2.5 px-2 pb-4 font-mono text-sm font-semibold">
         <img src="/logo.svg" alt="" width={20} height={20} className="h-5 w-5" />
         agentbox

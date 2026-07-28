@@ -321,7 +321,8 @@ button {
 @media (max-width: 760px) {
   .shad-side {
     position: fixed !important;
-    top: 0;
+    /* clears the pinned linked-hub banner when one is shown */
+    top: var(--banner-h, 0px);
     left: 0;
     transform: translateX(-100%);
     transition: transform 0.24s ease;

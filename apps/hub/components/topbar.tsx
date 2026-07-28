@@ -54,7 +54,7 @@ export function Topbar() {
   const router = useRouter();
   const { state } = useStore();
   return (
-    <div className="sticky top-0 z-30 flex h-[54px] items-center gap-3 border-b border-border bg-[rgba(246,246,243,.86)] px-6 backdrop-blur-md">
+    <div className="sticky top-[var(--banner-h,0px)] z-30 flex h-[54px] items-center gap-3 border-b border-border bg-[rgba(246,246,243,.86)] px-6 backdrop-blur-md">
       <Button
         variant="outline"
         size="icon-sm"
