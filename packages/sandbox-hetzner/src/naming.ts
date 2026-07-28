@@ -45,6 +45,12 @@ export function hetznerLabelValue(name: string): string {
 export function hetznerResourceName(prefix: string, name: string, suffix: string): string {
   const fixed = `${prefix}-`.length + `-${suffix}`.length;
   const budget = Math.max(0, HETZNER_MAX_NAME - fixed);
-  const middle = clampEnds(hetznerLabelValue(name), budget);
+  const cleaned = hetznerLabelValue(name);
+  // Don't say `agentbox` twice. A box built on a control box is named after the
+  // worker's clone dir, which already starts with the prefix — the result was
+  // `agentbox-agentbox-hub-worker-<uuid>-…`, exactly 63 chars, flush against the
+  // ceiling. Dropping the repeat gives those 9 characters back to the name.
+  const deduped = cleaned.startsWith(`${prefix}-`) ? cleaned.slice(prefix.length + 1) : cleaned;
+  const middle = clampEnds(deduped, budget);
   return middle.length > 0 ? `${prefix}-${middle}-${suffix}` : `${prefix}-${suffix}`;
 }

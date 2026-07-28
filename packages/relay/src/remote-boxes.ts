@@ -11,6 +11,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { rm } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import type { CustodyStore } from './custody/store.js';
 import type { CreateJobRequest, Store } from './store/store.js';
@@ -168,12 +170,60 @@ export async function handleRemoteBoxesRequest(
         if (await deps.custody.delete(e.path).catch(() => false)) custodyRemoved += 1;
       }
     }
-    if (!existed && !reg && custodyRemoved === 0) {
+    // The control box also holds its OWN copy of a box it built: a `state.json`
+    // record and the per-box SSH key dir the provider minted. Reaping only the
+    // Store left those behind, so a box destroyed from the PC kept showing as
+    // `running` in `hub boxes list`, the dashboard and the tray (both read local
+    // state first, and a cloud row renders from `cloud.lastState` with no live
+    // probe), with its private key still on disk.
+    const localRemoved = await reapLocalBoxState(boxId, reg?.sandboxId, log);
+    if (!existed && !reg && custodyRemoved === 0 && !localRemoved) {
       return { status: 404, body: { error: 'no such box' } };
     }
-    log(`reaped box ${boxId} (registration=${String(existed)}, custody=${String(custodyRemoved)})`);
-    return { status: 200, body: { boxId, removed: existed, custodyRemoved } };
+    log(
+      `reaped box ${boxId} (registration=${String(existed)}, custody=${String(custodyRemoved)}, local=${String(localRemoved)})`,
+    );
+    return { status: 200, body: { boxId, removed: existed, custodyRemoved, localRemoved } };
   }
 
   return { status: 405, body: { error: 'method not allowed' } };
+}
+
+/**
+ * Drop the control box's own record of a box whose cloud resource is already
+ * gone: the `state.json` entry and the per-box SSH key dir the provider minted.
+ *
+ * Scoped to exactly this box's sandbox id — never a sweep. `prune --all`
+ * enumerates box dirs by the docker-shaped `<id>-<n>-<mnemonic>` run-dir name,
+ * which a VPS provider's sandboxId-keyed dir never matches, so a broad cleanup
+ * there would delete a LIVE box's private key.
+ *
+ * Best-effort and idempotent: this runs on a plain relay too, where there is no
+ * local record to remove.
+ */
+async function reapLocalBoxState(
+  boxId: string,
+  sandboxId: string | undefined,
+  log: (line: string) => void,
+): Promise<boolean> {
+  let removed = false;
+  try {
+    const { mutateState, readState, boxSshDirForProvider } = await import('@agentbox/sandbox-core');
+    const state = await readState();
+    const record = state.boxes.find((b) => b.id === boxId);
+    if (record) {
+      await mutateState((s) => ({ ...s, boxes: s.boxes.filter((b) => b.id !== boxId) }));
+      removed = true;
+      const key = record.cloud?.sandboxId ?? sandboxId;
+      const provider = record.provider;
+      if (key && provider) {
+        const sshDir = boxSshDirForProvider(provider, key);
+        // `<...>/boxes/<sandboxId>/ssh` — take the box dir, not just the keys.
+        if (sshDir) await rm(dirname(sshDir), { recursive: true, force: true }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    log(`local reap for ${boxId} failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return removed;
 }

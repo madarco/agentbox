@@ -402,10 +402,12 @@ box's state (registration, status, SSH-key custody) — including for boxes you 
 registered against the control box. The control box drives them by reconstructing their record from
 its registry on demand (reverse-adoption), so no local record on the control box is required.
 
-A plain `agentbox destroy <box>` reaps too: after the cloud teardown it drops the box's registration
-and SSH-key custody from the control box, so a box you destroy here doesn't linger in the web UI or
-the tray. If the control box is unreachable at that moment the local destroy still succeeds and tells
-you to run `agentbox hub boxes rm <id>` once it's back.
+A plain `agentbox destroy <box>` reaps too: after the cloud teardown it drops the box's registration,
+its SSH-key custody, **and the control box's own record of it plus the per-box key dir on its disk**,
+so a box you destroy here doesn't linger in the web UI or the tray. (Before, only the registration
+went — the control box's local record survived and kept rendering the box as `running`, since a cloud
+row shows its last known state rather than probing.) If the control box is unreachable at that moment
+the local destroy still succeeds and tells you to run `agentbox hub boxes rm <id>` once it's back.
 
 ## Approvals reach you wherever you are
 
@@ -460,7 +462,9 @@ agentbox hub secrets push [--project]  # a project's .env → custody
 agentbox hub custody list [prefix]   # manifest (paths + hashes; values never leave the box)
 ```
 
-You rarely run `credentials push` by hand: **`agentbox hub setup` pushes your agent logins to the control box on its own** once the deploy is healthy (and reports what went up), so the first hub-created box is never launched signed-out. After that, the push repeats itself **only when a login actually changes** — after `agentbox claude login` refreshes a token, and before a cloud create is routed to the hub. Every push is content-hashed, so an unchanged one sends nothing and stays silent. `credentials push` is still there for the manual case (and its `--force`).
+You rarely run `credentials push` by hand: **`agentbox hub setup` pushes your agent logins to the control box on its own** once the deploy is healthy (and reports what went up), so the first hub-created box is never launched signed-out. After that, the push repeats itself **only when a login actually changes** — after `agentbox claude login` refreshes a token, and before *any* cloud create routed to the hub (`agentbox create`, and `agentbox claude|codex|opencode`). Every push is content-hashed, so an unchanged one sends nothing and stays silent. `credentials push` is still there for the manual case (and its `--force`).
+
+Custody also keeps itself current from the other direction: a Claude refresh **rotates the refresh token**, so the moment a box refreshes, every older copy is dead rather than merely expired. When a hub-created box refreshes its own token, the control box records the new one in custody, and a create never replaces a credential with an older one. That combination is what keeps a box you create hours later from coming up signed-out.
 
 ## How it stays safe
 

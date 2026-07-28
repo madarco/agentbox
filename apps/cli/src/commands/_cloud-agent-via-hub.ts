@@ -17,7 +17,7 @@
  */
 import type { BoxRecord } from '@agentbox/sandbox-docker';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
-import { resolveCustodyTarget } from './control-plane.js';
+import { resolveCustodyTarget, syncAgentCredentialsIfChanged } from './control-plane.js';
 import { enqueueCreateViaHub, pollHubJob } from '../control-plane/hub-enqueue.js';
 import { adoptHubBox } from '../control-plane/hub-adopt.js';
 import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
@@ -92,6 +92,12 @@ export async function createCloudBoxViaHubAndAdopt(
   if (!target) return null;
   const repoUrl = await readGitOriginUrl(projectRoot).catch(() => undefined);
   if (!repoUrl) return null;
+  // Refresh custody's agent credentials FIRST. The worker seeds the box from
+  // custody, and this machine holds the freshest token — without this the box
+  // comes up logged out with whatever a previous `create --via-hub` last pushed
+  // (a Claude refresh rotates the token, so a stale copy is dead, not merely
+  // expired). `create.ts` has always done this; the agent commands did not.
+  await syncAgentCredentialsIfChanged(urlFlag);
 
   const jobId = await enqueueCreateViaHub(target, {
     repoUrl,
@@ -160,6 +166,12 @@ export async function enqueueAgentJobViaHub(
   if (!target) return null;
   const repoUrl = await readGitOriginUrl(projectRoot).catch(() => undefined);
   if (!repoUrl) return null;
+  // Refresh custody's agent credentials FIRST. The worker seeds the box from
+  // custody, and this machine holds the freshest token — without this the box
+  // comes up logged out with whatever a previous `create --via-hub` last pushed
+  // (a Claude refresh rotates the token, so a stale copy is dead, not merely
+  // expired). `create.ts` has always done this; the agent commands did not.
+  await syncAgentCredentialsIfChanged(urlFlag);
 
   const jobId = await enqueueCreateViaHub(target, {
     repoUrl,

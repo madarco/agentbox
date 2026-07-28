@@ -119,6 +119,18 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **Boxes created through a remote hub came up signed out of Claude.** A create
+  re-seeded the control box's credential from custody without checking which copy
+  was newer, overwriting a freshly refreshed token with an hours-old one — and a
+  Claude refresh rotates the token, so the older copy is dead rather than merely
+  expired. Custody is now kept current (a box that refreshes its own token
+  records it there, and every hub create path pushes yours before enqueuing) and
+  a create never replaces a credential with an older one.
+- **A box destroyed from your PC no longer lingers on the control box.** The reap
+  now also drops the control box's own record and per-box SSH key dir, so the box
+  stops showing as `running` in `hub boxes list`, the dashboard and the tray.
+- Hetzner servers are no longer named `agentbox-agentbox-…` when the box name
+  already starts with the prefix.
 - **A base baked on the control box stayed invisible to your machine**, which
   kept reporting it as stale and offering a multi-minute re-bake. The control box
   now records its bakes in its own custody (it was trying to upload them to a
