@@ -50,11 +50,16 @@ export interface TrayUpdateOutcome {
   installAttempted: boolean;
   /** `installTray` succeeded, which means it also relaunched the app. */
   reinstalled: boolean;
+  /**
+   * What happened to the bundle. Returned rather than printed so the caller can
+   * fold it and the restart into ONE line — they are one step to the reader.
+   */
+  note: string | null;
 }
 
 /** Update the tray app iff the published zip sha differs from the installed one. */
-export async function maybeUpdateTray(say: (msg: string) => void): Promise<TrayUpdateOutcome> {
-  const idle: TrayUpdateOutcome = { installAttempted: false, reinstalled: false };
+export async function maybeUpdateTray(): Promise<TrayUpdateOutcome> {
+  const idle: TrayUpdateOutcome = { installAttempted: false, reinstalled: false, note: null };
   if (!trayInstalled()) return idle;
   const state = readUpdateState();
   // Reuse today's cached sidecar sha when we have one; otherwise fetch the
@@ -81,20 +86,22 @@ export async function maybeUpdateTray(say: (msg: string) => void): Promise<TrayU
     latestVersion: winner?.version ?? state.remoteCheck?.trayLatestVersion,
   });
   if (!decision.update) {
-    say(
-      decision.reason === 'no-latest-sha'
-        ? 'menu-bar app: release sha unavailable — skipped'
-        : 'menu-bar app already current',
-    );
-    return idle;
+    return {
+      ...idle,
+      note:
+        decision.reason === 'no-latest-sha'
+          ? 'menu-bar app: release sha unavailable — skipped'
+          : 'menu-bar app already current',
+    };
   }
   const res = await installTray({ quiet: true });
-  say(
-    res.ran
+  return {
+    installAttempted: true,
+    reinstalled: res.ran,
+    note: res.ran
       ? 'menu-bar app updated'
       : `menu-bar app not updated (${res.reason ?? 'unknown'}) — run \`agentbox install app\` manually`,
-  );
-  return { installAttempted: true, reinstalled: res.ran };
+  };
 }
 
 /**
@@ -198,9 +205,9 @@ export async function runPostUpdateRefresh(opts: PostUpdateRefreshOptions = {}):
   // Read this BEFORE the tray step: `installTray` pkills the app up front, so
   // afterwards "no pid" can't be told apart from "we just killed it".
   const trayWasRunning = await trayRunning().catch(() => false);
-  let trayOutcome: TrayUpdateOutcome = { installAttempted: false, reinstalled: false };
+  let trayOutcome: TrayUpdateOutcome = { installAttempted: false, reinstalled: false, note: null };
   try {
-    trayOutcome = await maybeUpdateTray(say);
+    trayOutcome = await maybeUpdateTray();
   } catch (err) {
     warn('menu-bar app update', err);
   }
@@ -210,6 +217,7 @@ export async function runPostUpdateRefresh(opts: PostUpdateRefreshOptions = {}):
   // available — agentbox X" row behind a 24h throttle, so a CLI update leaves it
   // advertising the version you just installed, for up to a day. It has no
   // reload signal, so a restart is the only way to clear that from here.
+  let trayRestarted = false;
   try {
     const bounce = decideTrayBounce({
       installed: trayInstalled(),
@@ -219,15 +227,17 @@ export async function runPostUpdateRefresh(opts: PostUpdateRefreshOptions = {}):
     });
     if (bounce.bounce) {
       await restartTray((m) => log.warn(m));
-      say(
-        bounce.reason === 'install-failed'
-          ? 'menu-bar app restarted (its update did not complete)'
-          : 'menu-bar app restarted (so it re-reads the installed version)',
-      );
+      trayRestarted = true;
     }
   } catch (err) {
     warn('menu-bar app restart', err);
   }
+  // One line for the whole tray step: what happened to the bundle, and whether
+  // the app was bounced. Two lines read as two things happening.
+  const trayLine = [trayOutcome.note, trayRestarted ? 'restarted' : null]
+    .filter(Boolean)
+    .join(' — ');
+  if (trayLine) say(trayLine);
 
   writeUpdateState({ lastRunVersion: AGENTBOX_VERSION });
 }
