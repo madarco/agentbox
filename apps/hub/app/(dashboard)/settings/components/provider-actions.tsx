@@ -58,9 +58,9 @@ export function ProvidersSection() {
   // once here via the opt-in endpoint and merge onto the store providers, so a
   // baked-but-stale provider can nag "needs re-bake". A refresh (after a bake)
   // re-runs this effect since `state.providers` changes identity.
-  const [freshness, setFreshness] = useState<Record<string, Pick<ProviderOption, 'baseStatus' | 'baseStaleReason'>>>(
-    {},
-  );
+  const [freshness, setFreshness] = useState<
+    Record<string, Pick<ProviderOption, 'baseStatus' | 'baseStaleReason'>>
+  >({});
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -84,7 +84,9 @@ export function ProvidersSection() {
     };
   }, [state.providers]);
   return (
-    <Card className="divide-y divide-border/60 overflow-hidden">
+    // Anchor target: the System page links here ("Bake in Settings") so a stale
+    // row leads to the control that fixes it.
+    <Card id="providers" className="scroll-mt-6 divide-y divide-border/60 overflow-hidden">
       {state.providers.map((p) => (
         <ProviderRow key={p.id} provider={{ ...p, ...freshness[p.id] }} />
       ))}
@@ -204,9 +206,10 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
         // Re-bake an already-configured provider with force; first bake is plain.
         body: JSON.stringify(p.configured ? { force: true } : {}),
       });
-      const j = (await res.json().catch(() => null)) as
-        | { jobId?: string; error?: { message?: string } }
-        | null;
+      const j = (await res.json().catch(() => null)) as {
+        jobId?: string;
+        error?: { message?: string };
+      } | null;
       if (!res.ok || !j?.jobId) {
         setBakeError(j?.error?.message ?? `request failed (${res.status})`);
         return;

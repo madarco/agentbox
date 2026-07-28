@@ -7,6 +7,7 @@
 // actionable part is the provider table: a `stale` row is exactly when
 // `agentbox prepare --provider <id>` should be re-run.
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Ago } from '@/components/ago';
 import { Icons } from '@/components/icons';
@@ -141,15 +142,19 @@ export default function SystemPage() {
 
           <SectionLabel
             right={
-              staleCount > 0 ? (
-                <Badge className="badge-warn gap-1.5 normal-case tracking-normal">
-                  {staleCount} need re-bake
-                </Badge>
-              ) : (
-                <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
-                  base images
-                </span>
-              )
+              <div className="flex items-center gap-2.5">
+                {staleCount > 0 ? (
+                  <Badge className="badge-warn gap-1.5 normal-case tracking-normal">
+                    {staleCount} need re-bake
+                  </Badge>
+                ) : (
+                  <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
+                    base images
+                  </span>
+                )}
+                {/* This page diagnoses; Settings is where the bake button lives. */}
+                <BakeLink stale={staleCount > 0} />
+              </div>
             }
           >
             Providers
@@ -372,5 +377,28 @@ function StaleDiff({ p }: { p: ProviderBake }) {
         )}
       </div>
     </details>
+  );
+}
+
+/**
+ * Route to the control that actually fixes a stale base.
+ *
+ * This page only diagnoses — bake/install buttons live on Settings — so a user
+ * who lands here on a re-bake nag would otherwise have to guess where to go.
+ */
+function BakeLink({ stale }: { stale: boolean }) {
+  return (
+    <Link
+      href="/settings#providers"
+      className={cn(
+        'flex items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-[11px] tracking-normal transition-colors',
+        stale
+          ? 'border-[var(--green-line)] bg-accent text-primary hover:bg-secondary'
+          : 'border-border/60 text-[#a4a9b0] hover:text-secondary-foreground',
+      )}
+    >
+      <Icons.settings className="size-3" />
+      {stale ? 'Bake in Settings' : 'Manage in Settings'}
+    </Link>
   );
 }
