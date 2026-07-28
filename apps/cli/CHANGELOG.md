@@ -18,7 +18,7 @@ CLI, not the raw commits.
   `https://<box>.localhost` is back after a reboot instead of staying down until
   you start it by hand. `--uninstall` removes the service again.
 - **Deployed hub (control box).** `agentbox hub setup` (or `hub deploy hetzner |
-  vercel`) puts a full hub — relay, web UI, and a create worker — on a VPS you
+  digitalocean`) puts a full hub — relay, web UI, and a create worker — on a VPS you
   own. Cloud boxes are then built and run **there**, so they keep going with your
   laptop closed, including background `-i` agent runs. Create them from the web
   UI, or `agentbox create --via-hub`. See https://agent-box.sh/docs/deployed-hub.
@@ -37,6 +37,39 @@ CLI, not the raw commits.
   `agentbox hub jobs list` / `hub jobs show <id>` inspect it directly.
 - `ssh agentbox-hub` opens a shell on a deployed control box — the deploy adds a
   `Host` entry for its VPS to AgentBox's managed SSH config, alongside your boxes.
+- **`agentbox hub expose` turns this machine into the control box — no VPS.** Same
+  deployed profile, login and create worker as a real deploy, so it is the cheapest
+  way to run (or try) the remote hub. Add `--tunnel cloudflare` (or `tailscale`) and
+  cloud boxes reach it from anywhere, so they register, push and run background `-i`
+  jobs against your laptop. `agentbox hub unexpose` restores the plain local hub.
+- **`agentbox hub deploy digitalocean`** deploys the control box to a DigitalOcean
+  Droplet, alongside the Hetzner target: same docker-compose hub, HTTPS on
+  `<ip>.sslip.io` via Caddy, and a firewall locked to your egress IP from the moment
+  the Droplet boots.
+- `agentbox hub update` moves a deployed control box to a new build in place (keeping
+  its data volume) and `agentbox hub destroy` tears down the VPS, its firewall and
+  this machine's control-plane state. `hub status` reports the build actually running,
+  and nudges you when the CLI has drifted from it.
+- `agentbox hub deploy --domain hub.example.com` serves the control box on a hostname
+  you control instead of the IP-derived `sslip.io` one.
+- The control box installs the published npm package by default, pinned to your CLI's
+  version so shared bake fingerprints line up; `--package <spec>` picks another, and
+  `--ref` still builds from source.
+- **Web UI: a Custody page and a System page.** Custody lists what the control box
+  holds — agent logins, project seeds, bake records, box SSH keys — with sizes and
+  hashes, never values. System answers "what is running here, and do I need to
+  re-bake?": version, channel, build source, the deploy record, and each provider's
+  bake with its fingerprint and freshness.
+- A project's detail page now shows its origin URL, branch and provider plus its
+  seed/custody status — whether a seed is registered, at which commit, and which
+  env files it captured (names and hashes only).
+- The local hub shows a banner when it is linked to a remote control box, with a link
+  to it.
+- **`agentbox hub setup` now finishes the job.** It pushes your agent logins to the
+  control box (so a hub-created cloud box is never launched without a Claude login,
+  re-pushing only when a token actually changes) and shares your local bake records.
+  When a bake cannot transfer — a different build context, or a version-skewed hub —
+  setup says so per provider instead of leaving you to discover it on the first create.
 - **A control box no longer needs a GitHub App.** `agentbox hub setup` now reuses
   the token from your own `gh auth login`, so nothing has to be installed or
   approved on GitHub — it works on repos you only collaborate on, and in orgs
@@ -46,6 +79,16 @@ CLI, not the raw commits.
 
 ### Changed
 
+- **`agentbox hub setup` is quieter and checks its prerequisites.** It fails
+  immediately with an install hint when `gh` is missing (it is mandatory for the
+  remote hub) rather than partway through a deploy, no longer offers the GitHub App
+  or Vercel paths in its prompts (`--git-auth app` / `--deploy vercel` still work if
+  you ask for them), and reports a healthy deploy as one line instead of echoing a
+  `/healthz` URL.
+- Projects registered on a remote hub are listed by their repo name, matching the
+  local hub, instead of a derived key.
+- The browser pages of the GitHub App flow (the redirect and the callback) are
+  styled and light/dark aware instead of bare HTML.
 - The startup "agentbox was updated" prompt says what the refresh actually does
   (skills, box-image check, relay reload, menu-bar app) instead of offering to
   "download new version now?" — nothing is downloaded.
@@ -54,12 +97,17 @@ CLI, not the raw commits.
   provider. `--local` or `cloud.viaHub=false` keeps them on this machine; docker
   and remote-docker are unaffected.
 - The hosted-hub commands moved from `agentbox control-plane *` into the one
-  `agentbox hub *` group (`hub setup`/`deploy`/`boxes`/`prompts`/`credentials`/
+  `agentbox hub *` group (`hub setup`/`deploy`/`boxes`/`approvals`/`credentials`/
   `custody`/…). `agentbox hub status` now reports the configured remote control
   box when one is set, else the local hub process.
 
 ### Fixed
 
+- The sign-in page of a deployed hub rendered no logo — the auth redirect swallowed
+  the asset request.
+- A deploy that landed on a recycled IP already at its Let's Encrypt certificate limit
+  was reported as a wrong upstream port. The two are now told apart by probing, so the
+  advice matches the actual cause.
 - **Box and hub `.localhost` URLs stopped working after a reboot.** A Portless
   proxy dies with the machine while the routes it serves persist on disk, and
   nothing restarted it — so `agentbox hub` kept printing
@@ -81,10 +129,6 @@ CLI, not the raw commits.
   re-registering `agentbox.localhost` for users who had opted out.
 - On the nightly channel, the menu-bar app was re-downloaded on every refresh:
   the installed build was compared against the **stable** release's checksum.
-- **A fresh `npm i -g @madarco/agentbox` crashed on every command** with
-  `Cannot find module 'ws'`. `ws` is an undeclared transitive peer of
-  `@daytona/sdk`'s `isomorphic-ws`, so npm never installed it; only pnpm-based
-  dev checkouts, which hoist it, worked. Affected 0.27.0.
 - `agentbox self-update` no longer reinstalls an older published version when the
   running build is already newer than anything on the registry.
 - A control box now uses a base image you baked with `box.claudeInstall: npm`.
@@ -130,6 +174,16 @@ CLI, not the raw commits.
   keys were missing from the published JSON schema, including `git.pushMode`,
   `cloud.viaHub`, `update.channel`, and the whole `ssh`/`git`/`cloud`/
   `integrations` branches. `box.provider` also rejected `remote-docker`.
+
+## [0.27.1] - 2026-07-25
+
+### Fixed
+
+- **A fresh `npm i -g @madarco/agentbox` crashed on every command** with
+  `Cannot find module 'ws'`. `ws` is an undeclared transitive peer of
+  `@daytona/sdk`'s `isomorphic-ws`, so npm never installed it — only
+  pnpm-based dev checkouts, which hoist it, worked. Affects 0.27.0; upgrade
+  or `npm i -g ws` alongside it.
 
 ## [0.27.0] - 2026-07-16
 
