@@ -63,7 +63,11 @@ import {
 } from './_attach-in.js';
 import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
-import { createCloudBoxViaHubAndAdopt, enqueueAgentJobViaHub } from './_cloud-agent-via-hub.js';
+import {
+  createCloudBoxViaHubAndAdopt,
+  enqueueAgentJobViaHub,
+  withHubJobLine,
+} from './_cloud-agent-via-hub.js';
 import { resolveCreateRouting } from '../control-plane/route-create.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
@@ -271,7 +275,9 @@ async function signInToCodex(
 
   const res = await runGuidedLogin('codex', () => codexLoginBinding({ image, extraArgs }));
   if (res.unsupported) {
-    log.info(`Guided sign-in can't drive this login method (${res.unsupported}); using codex's own prompts.`);
+    log.info(
+      `Guided sign-in can't drive this login method (${res.unsupported}); using codex's own prompts.`,
+    );
     return passthrough();
   }
   return { ok: res.ok, error: res.error, cancelled: res.cancelled };
@@ -565,6 +571,9 @@ export const codexCommand = new Command('codex')
           : undefined;
 
     if (opts.initialPrompt && opts.initialPrompt.length > 0) {
+      // Captured as a const so the narrowing survives into the status-line
+      // callback below (TS drops property narrowing inside a closure).
+      const seedPrompt = opts.initialPrompt;
       // --dangerously-with-credentials is foreground-only (the queue worker doesn't thread
       // git.pushMode=direct, and copying a credential needs a human at the prompt).
       if (cfg.effective.git.pushMode === 'direct') {
@@ -586,22 +595,28 @@ export const codexCommand = new Command('codex')
         urlFlag: opts.url,
       });
       if (iRouting.where === 'hub') {
-        const res = await enqueueAgentJobViaHub({
-          providerName,
-          projectRoot,
-          agent: 'codex',
-          name: opts.name,
-          fromBranch: opts.fromBranch,
-          urlFlag: opts.url,
-          prompt: opts.initialPrompt,
-          agentArgs: applyCodexSkipPermissions(codexArgs, cfg.effective),
-          onStatus: (line) => log.step(line),
-        });
+        const res = await withHubJobLine(
+          (onStatus) =>
+            enqueueAgentJobViaHub({
+              providerName,
+              projectRoot,
+              agent: 'codex',
+              name: opts.name,
+              fromBranch: opts.fromBranch,
+              urlFlag: opts.url,
+              prompt: seedPrompt,
+              agentArgs: applyCodexSkipPermissions(codexArgs, cfg.effective),
+              onStatus,
+            }),
+          (r) => (r ? 'run started on the remote hub' : 'remote hub unavailable'),
+        );
         if (res) {
           if (res.error) {
             log.error(
               `control plane run failed: ${res.error}` +
-                (res.boxId ? ` (box ${res.boxId} was created — attach with \`agentbox codex attach ${res.boxId}\`)` : ''),
+                (res.boxId
+                  ? ` (box ${res.boxId} was created — attach with \`agentbox codex attach ${res.boxId}\`)`
+                  : ''),
             );
             cmdLog.close();
             process.exit(1);
@@ -612,7 +627,9 @@ export const codexCommand = new Command('codex')
         }
       }
       if (iRouting.where === 'local' && iRouting.fellBackReason) {
-        log.warn(`control box configured but ${iRouting.fellBackReason}; running this -i job locally.`);
+        log.warn(
+          `control box configured but ${iRouting.fellBackReason}; running this -i job locally.`,
+        );
       }
       try {
         await assertAgentCredsAvailable({
@@ -720,24 +737,27 @@ export const codexCommand = new Command('codex')
         forceLocal: opts.local,
         urlFlag: opts.url,
       });
-      const hubIncompatible =
-        Boolean(resumePrepared) || cfg.effective.git.pushMode === 'direct';
+      const hubIncompatible = Boolean(resumePrepared) || cfg.effective.git.pushMode === 'direct';
       if (routing.where === 'hub' && hubIncompatible) {
         if (opts.viaHub)
           log.warn(
             '--via-hub is ignored for --resume / --dangerously-with-credentials runs (they teleport host state at create time); building this box locally.',
           );
       } else if (routing.where === 'hub') {
-        const adopted = await createCloudBoxViaHubAndAdopt({
-          providerName,
-          projectRoot,
-          agent: 'codex',
-          name: opts.name,
-          fromBranch,
-          urlFlag: opts.url,
-          onStatus: (line) => log.step(line),
-          onLog: (line) => cmdLog.write(line),
-        });
+        const adopted = await withHubJobLine(
+          (onStatus) =>
+            createCloudBoxViaHubAndAdopt({
+              providerName,
+              projectRoot,
+              agent: 'codex',
+              name: opts.name,
+              fromBranch,
+              urlFlag: opts.url,
+              onStatus,
+              onLog: (line) => cmdLog.write(line),
+            }),
+          (r) => (r ? 'box ready on the remote hub' : 'remote hub unavailable — building locally'),
+        );
         if (adopted) {
           await cloudAgentAttach({
             box: adopted,
@@ -1286,7 +1306,9 @@ const codexStartCommand = new Command('start')
             sessionName,
             extraArgs: effectiveCodexArgs,
           });
-          outro(`--no-attach: codex started in background. Attach: agentbox codex attach ${reattachRef(box)}`);
+          outro(
+            `--no-attach: codex started in background. Attach: agentbox codex attach ${reattachRef(box)}`,
+          );
           return;
         }
         await cloudAgentAttach({

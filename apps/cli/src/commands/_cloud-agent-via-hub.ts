@@ -22,6 +22,42 @@ import { enqueueCreateViaHub, pollHubJob } from '../control-plane/hub-enqueue.js
 import { adoptHubBox } from '../control-plane/hub-adopt.js';
 import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
+import { spinner } from '../lib/prompt.js';
+
+/**
+ * Run a hub create under ONE self-updating status line.
+ *
+ * The job goes enqueued → queued → running, which used to print a line per
+ * transition, each repeating the same job uuid — three lines of noise for one
+ * thing changing state. A spinner rewrites the single line instead, and the id
+ * (which the user can't act on) is gone.
+ *
+ * Owns the try/catch so the line is always closed: an un-stopped clack spinner
+ * leaves the terminal spinning after the command has already failed.
+ */
+export async function withHubJobLine<T>(
+  work: (onStatus: (line: string) => void) => Promise<T>,
+  finish: (result: T) => string,
+): Promise<T> {
+  const s = spinner();
+  let started = false;
+  const onStatus = (line: string): void => {
+    if (started) {
+      s.message(line);
+      return;
+    }
+    started = true;
+    s.start(line);
+  };
+  try {
+    const result = await work(onStatus);
+    if (started) s.stop(finish(result));
+    return result;
+  } catch (err) {
+    if (started) s.stop('the remote hub create failed', 1);
+    throw err;
+  }
+}
 
 export interface CloudAgentViaHubArgs {
   /** Bare provider name (post `parseProviderSpec`). */
@@ -64,9 +100,9 @@ export async function createCloudBoxViaHubAndAdopt(
     name: name?.trim() || undefined,
     agent,
   });
-  onStatus?.(`enqueued on the control plane (job ${jobId})`);
+  onStatus?.('enqueued on the remote hub');
   const job = await pollHubJob(target, jobId, {
-    onStatus: (j) => onStatus?.(`job ${jobId}: ${j.status}`),
+    onStatus: (j) => onStatus?.(`remote hub: ${j.status}`),
   });
   if (job.status !== 'done') {
     throw new Error(`create job failed: ${job.result?.error ?? 'unknown error'}`);
@@ -109,8 +145,17 @@ export interface AgentJobViaHubResult {
 export async function enqueueAgentJobViaHub(
   args: AgentJobViaHubArgs,
 ): Promise<AgentJobViaHubResult | null> {
-  const { providerName, projectRoot, agent, name, fromBranch, prompt, agentArgs, urlFlag, onStatus } =
-    args;
+  const {
+    providerName,
+    projectRoot,
+    agent,
+    name,
+    fromBranch,
+    prompt,
+    agentArgs,
+    urlFlag,
+    onStatus,
+  } = args;
   const target = await resolveCustodyTarget(urlFlag, { quiet: true });
   if (!target) return null;
   const repoUrl = await readGitOriginUrl(projectRoot).catch(() => undefined);
@@ -125,9 +170,9 @@ export async function enqueueAgentJobViaHub(
     prompt,
     agentArgs,
   });
-  onStatus?.(`enqueued on the control plane (job ${jobId})`);
+  onStatus?.('enqueued on the remote hub');
   const job = await pollHubJob(target, jobId, {
-    onStatus: (j) => onStatus?.(`job ${jobId}: ${j.status}`),
+    onStatus: (j) => onStatus?.(`remote hub: ${j.status}`),
   });
   // A failed job with a boxId means the box was created but the agent didn't
   // start (e.g. creds rejected) — surface the error but keep the box id.

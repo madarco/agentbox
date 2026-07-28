@@ -58,7 +58,11 @@ import {
 } from './_attach-in.js';
 import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
-import { createCloudBoxViaHubAndAdopt, enqueueAgentJobViaHub } from './_cloud-agent-via-hub.js';
+import {
+  createCloudBoxViaHubAndAdopt,
+  enqueueAgentJobViaHub,
+  withHubJobLine,
+} from './_cloud-agent-via-hub.js';
 import { resolveCreateRouting } from '../control-plane/route-create.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
@@ -669,6 +673,9 @@ export const claudeCommand = new Command('claude')
     // (docker bakes the prompt into `tmux new-session`; cloud pre-starts a
     // detached tmux session via `buildAttach({ detached: true })`).
     if (opts.initialPrompt && opts.initialPrompt.length > 0) {
+      // Captured as a const so the narrowing survives into the status-line
+      // callback below (TS drops property narrowing inside a closure).
+      const seedPrompt = opts.initialPrompt;
       // --dangerously-with-credentials is foreground-only: the queue worker (a separate
       // process) doesn't thread git.pushMode=direct into provider.create, so a
       // queued box would carry the secret but never use it. And copying a
@@ -693,17 +700,21 @@ export const claudeCommand = new Command('claude')
         urlFlag: opts.url,
       });
       if (iRouting.where === 'hub') {
-        const res = await enqueueAgentJobViaHub({
-          providerName,
-          projectRoot,
-          agent: 'claude',
-          name: opts.name,
-          fromBranch: opts.fromBranch,
-          urlFlag: opts.url,
-          prompt: opts.initialPrompt,
-          agentArgs: applyClaudeSkipPermissions(claudeArgs, cfg.effective),
-          onStatus: (line) => log.step(line),
-        });
+        const res = await withHubJobLine(
+          (onStatus) =>
+            enqueueAgentJobViaHub({
+              providerName,
+              projectRoot,
+              agent: 'claude',
+              name: opts.name,
+              fromBranch: opts.fromBranch,
+              urlFlag: opts.url,
+              prompt: seedPrompt,
+              agentArgs: applyClaudeSkipPermissions(claudeArgs, cfg.effective),
+              onStatus,
+            }),
+          (r) => (r ? 'run started on the remote hub' : 'remote hub unavailable'),
+        );
         if (res) {
           if (res.error) {
             log.error(
@@ -984,16 +995,20 @@ export const claudeCommand = new Command('claude')
             '--via-hub is ignored for --resume / --plan / --dangerously-with-credentials runs (they teleport host state at create time); building this box locally.',
           );
       } else if (routing.where === 'hub') {
-        const adopted = await createCloudBoxViaHubAndAdopt({
-          providerName,
-          projectRoot,
-          agent: 'claude',
-          name: opts.name,
-          fromBranch,
-          urlFlag: opts.url,
-          onStatus: (line) => log.step(line),
-          onLog: (line) => cmdLog.write(line),
-        });
+        const adopted = await withHubJobLine(
+          (onStatus) =>
+            createCloudBoxViaHubAndAdopt({
+              providerName,
+              projectRoot,
+              agent: 'claude',
+              name: opts.name,
+              fromBranch,
+              urlFlag: opts.url,
+              onStatus,
+              onLog: (line) => cmdLog.write(line),
+            }),
+          (r) => (r ? 'box ready on the remote hub' : 'remote hub unavailable — building locally'),
+        );
         if (adopted) {
           await cloudAgentAttach({
             box: adopted,

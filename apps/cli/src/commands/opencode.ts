@@ -60,7 +60,11 @@ import {
 } from './_attach-in.js';
 import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
-import { createCloudBoxViaHubAndAdopt, enqueueAgentJobViaHub } from './_cloud-agent-via-hub.js';
+import {
+  createCloudBoxViaHubAndAdopt,
+  enqueueAgentJobViaHub,
+  withHubJobLine,
+} from './_cloud-agent-via-hub.js';
 import { resolveCreateRouting } from '../control-plane/route-create.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
@@ -78,7 +82,9 @@ import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
 import { attachRelayOptions } from '../control-plane/box-plane.js';
 
-function pickOpencodeCreateOpts(opts: OpencodeCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
+function pickOpencodeCreateOpts(
+  opts: OpencodeCreateOptions,
+): import('@agentbox/relay').QueueJobCreateOpts {
   return {
     workspace: opts.workspace,
     name: opts.name,
@@ -267,7 +273,7 @@ async function signInToOpencode(
     const provider = (
       await text({
         message: 'Which provider? (id or name, e.g. anthropic, openai, github-copilot)',
-        placeholder: 'leave blank to use OpenCode\'s own picker',
+        placeholder: "leave blank to use OpenCode's own picker",
       })
     ).trim();
     // No id → we can't skip the picker, so opencode must drive its own terminal.
@@ -285,7 +291,9 @@ async function signInToOpencode(
     return { ok: false, error: `opencode: ${res.unsupported}` };
   }
   if (res.unsupported) {
-    log.info(`Guided sign-in can't drive this provider (${res.unsupported}); using OpenCode's own prompts.`);
+    log.info(
+      `Guided sign-in can't drive this provider (${res.unsupported}); using OpenCode's own prompts.`,
+    );
     return passthrough(args);
   }
   return { ok: res.ok, error: res.error, cancelled: res.cancelled };
@@ -325,7 +333,9 @@ async function maybeRunOpencodeLogin(args: { image: string; yes: boolean }): Pro
 
   const res = await signInToOpencode(args.image, []);
   if (!res.ok) {
-    log.warn('OpenCode login did not complete; continuing — run `agentbox opencode login` to retry.');
+    log.warn(
+      'OpenCode login did not complete; continuing — run `agentbox opencode login` to retry.',
+    );
     return;
   }
   log.success('Signed in to OpenCode — saved for future boxes.');
@@ -336,7 +346,10 @@ async function cloudOpencodeCredAvailable(env: NodeJS.ProcessEnv = process.env):
   for (const k of OPENCODE_FORWARDED_ENV_KEYS) {
     if ((env[k] ?? '').length > 0) return true;
   }
-  for (const p of [OPENCODE_CREDENTIALS_BACKUP_FILE, join(homedir(), '.local', 'share', 'opencode', 'auth.json')]) {
+  for (const p of [
+    OPENCODE_CREDENTIALS_BACKUP_FILE,
+    join(homedir(), '.local', 'share', 'opencode', 'auth.json'),
+  ]) {
     try {
       await access(p);
       return true;
@@ -380,12 +393,17 @@ async function maybeRunCloudOpencodeLogin(args: { image: string; yes: boolean })
 
   const res = await signInToOpencode(args.image, []);
   if (!res.ok) {
-    log.warn('OpenCode login did not complete; continuing — run `agentbox opencode login` to retry.');
+    log.warn(
+      'OpenCode login did not complete; continuing — run `agentbox opencode login` to retry.',
+    );
     return;
   }
   const { copied } = await extractOpencodeCredentials(SHARED_OPENCODE_VOLUME, args.image);
   if (copied) log.success('Signed in to OpenCode — saved for future boxes.');
-  else log.warn('OpenCode login finished but no auth.json was captured — sign in inside the box if needed.');
+  else
+    log.warn(
+      'OpenCode login finished but no auth.json was captured — sign in inside the box if needed.',
+    );
 }
 
 export const opencodeCommand = new Command('opencode')
@@ -393,7 +411,10 @@ export const opencodeCommand = new Command('opencode')
   // Mirror create's surface so users can swap the verb without re-learning flags.
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
   .option('-n, --name <name>', 'friendly box name (default: <workspace-basename>-<id>)')
-  .option('--host-snapshot', 'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)')
+  .option(
+    '--host-snapshot',
+    'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)',
+  )
   .option('--no-host-snapshot', 'tar-pipe directly from the live host workspace at create time')
   .option(
     '--snapshot <ref>',
@@ -442,17 +463,14 @@ export const opencodeCommand = new Command('opencode')
   .option('--cpus <n>', 'CPU count cap (fractional ok, e.g. 1.5); unset = unlimited')
   .option('--pids-limit <n>', 'max process count (PIDs cgroup); unset = unlimited')
   .option('--disk <size>', 'best-effort writable-layer size (e.g. 10g); no-op on overlay2/macOS')
-  .option(
-    '--provider <name>',
-    "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
-  )
+  .option('--provider <name>', "sandbox backend: 'docker' (default) or 'daytona' for a cloud box")
   .option(
     '--from-branch <ref>',
     "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
   )
   .option(
     '-b, --use-branch <name>',
-    "reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.",
+    'reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.',
   )
   .option(
     '--via-hub',
@@ -492,7 +510,7 @@ export const opencodeCommand = new Command('opencode')
   )
   .argument(
     '[opencode-args...]',
-    "extra args passed to opencode inside the box; place after `--`, e.g. `agentbox opencode -- -m anthropic/claude-sonnet-4-5`",
+    'extra args passed to opencode inside the box; place after `--`, e.g. `agentbox opencode -- -m anthropic/claude-sonnet-4-5`',
   )
   .action(async (opencodeArgs: string[], opts: OpencodeCreateOptions) => {
     const cmdLog = openCommandLog('opencode');
@@ -506,9 +524,7 @@ export const opencodeCommand = new Command('opencode')
           agent: 'opencode',
           hostCwd: opts.workspace,
           mode:
-            opts.continue === true
-              ? { kind: 'continue' }
-              : { kind: 'resume', id: opts.resume! },
+            opts.continue === true ? { kind: 'continue' } : { kind: 'resume', id: opts.resume! },
         });
       } catch (err) {
         if (err instanceof TeleportError) {
@@ -558,6 +574,9 @@ export const opencodeCommand = new Command('opencode')
           : undefined;
 
     if (opts.initialPrompt && opts.initialPrompt.length > 0) {
+      // Captured as a const so the narrowing survives into the status-line
+      // callback below (TS drops property narrowing inside a closure).
+      const seedPrompt = opts.initialPrompt;
       // --dangerously-with-credentials is foreground-only (the queue worker doesn't thread
       // git.pushMode=direct, and copying a credential needs a human at the prompt).
       if (cfg.effective.git.pushMode === 'direct') {
@@ -579,22 +598,28 @@ export const opencodeCommand = new Command('opencode')
         urlFlag: opts.url,
       });
       if (iRouting.where === 'hub') {
-        const res = await enqueueAgentJobViaHub({
-          providerName,
-          projectRoot,
-          agent: 'opencode',
-          name: opts.name,
-          fromBranch: opts.fromBranch,
-          urlFlag: opts.url,
-          prompt: opts.initialPrompt,
-          agentArgs: opencodeArgs,
-          onStatus: (line) => log.step(line),
-        });
+        const res = await withHubJobLine(
+          (onStatus) =>
+            enqueueAgentJobViaHub({
+              providerName,
+              projectRoot,
+              agent: 'opencode',
+              name: opts.name,
+              fromBranch: opts.fromBranch,
+              urlFlag: opts.url,
+              prompt: seedPrompt,
+              agentArgs: opencodeArgs,
+              onStatus,
+            }),
+          (r) => (r ? 'run started on the remote hub' : 'remote hub unavailable'),
+        );
         if (res) {
           if (res.error) {
             log.error(
               `control plane run failed: ${res.error}` +
-                (res.boxId ? ` (box ${res.boxId} was created — attach with \`agentbox opencode attach ${res.boxId}\`)` : ''),
+                (res.boxId
+                  ? ` (box ${res.boxId} was created — attach with \`agentbox opencode attach ${res.boxId}\`)`
+                  : ''),
             );
             cmdLog.close();
             process.exit(1);
@@ -605,7 +630,9 @@ export const opencodeCommand = new Command('opencode')
         }
       }
       if (iRouting.where === 'local' && iRouting.fellBackReason) {
-        log.warn(`control box configured but ${iRouting.fellBackReason}; running this -i job locally.`);
+        log.warn(
+          `control box configured but ${iRouting.fellBackReason}; running this -i job locally.`,
+        );
       }
       try {
         await assertAgentCredsAvailable({
@@ -720,16 +747,20 @@ export const opencodeCommand = new Command('opencode')
             '--via-hub is ignored for --dangerously-with-credentials runs (they copy host state at create time); building this box locally.',
           );
       } else if (routing.where === 'hub') {
-        const adopted = await createCloudBoxViaHubAndAdopt({
-          providerName,
-          projectRoot,
-          agent: 'opencode',
-          name: opts.name,
-          fromBranch,
-          urlFlag: opts.url,
-          onStatus: (line) => log.step(line),
-          onLog: (line) => cmdLog.write(line),
-        });
+        const adopted = await withHubJobLine(
+          (onStatus) =>
+            createCloudBoxViaHubAndAdopt({
+              providerName,
+              projectRoot,
+              agent: 'opencode',
+              name: opts.name,
+              fromBranch,
+              urlFlag: opts.url,
+              onStatus,
+              onLog: (line) => cmdLog.write(line),
+            }),
+          (r) => (r ? 'box ready on the remote hub' : 'remote hub unavailable — building locally'),
+        );
         if (adopted) {
           await cloudAgentAttach({
             box: adopted,
@@ -1095,7 +1126,7 @@ const opencodeStartCommand = new Command('start')
   )
   .argument(
     '[opencode-args...]',
-    "extra args passed to opencode when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox opencode start 1 -- -m anthropic/claude-sonnet-4-5`",
+    'extra args passed to opencode when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox opencode start 1 -- -m anthropic/claude-sonnet-4-5`',
   )
   .action(async function (this: Command, idOrName: string | undefined, opencodeArgs: string[]) {
     const opts = this.optsWithGlobals() as OpencodeStartOptions;
@@ -1105,16 +1136,15 @@ const opencodeStartCommand = new Command('start')
       // Two positionals make commander bind the first post-`--` token to
       // `[box]`; resolveBoxOrShift detects that and auto-picks the box.
       const { box, shifted } = await resolveBoxOrShift(idOrName);
-      const effectiveOpencodeArgs = shifted && idOrName ? [idOrName, ...opencodeArgs] : opencodeArgs;
+      const effectiveOpencodeArgs =
+        shifted && idOrName ? [idOrName, ...opencodeArgs] : opencodeArgs;
       if (opts.continue === true || opts.resume) {
         try {
           await prepareTeleport({
             agent: 'opencode',
             hostCwd: box.workspacePath,
             mode:
-              opts.continue === true
-                ? { kind: 'continue' }
-                : { kind: 'resume', id: opts.resume! },
+              opts.continue === true ? { kind: 'continue' } : { kind: 'resume', id: opts.resume! },
           });
         } catch (err) {
           if (err instanceof TeleportError) {
@@ -1171,10 +1201,7 @@ const opencodeLoginCommand = new Command('login')
     '[args...]',
     'extra args forwarded to `opencode auth login`; place after `--`, e.g. `agentbox opencode login -- --provider anthropic`',
   )
-  .option(
-    '--interactive',
-    "attach your terminal to OpenCode's own login TUI (legacy passthrough)",
-  )
+  .option('--interactive', "attach your terminal to OpenCode's own login TUI (legacy passthrough)")
   .action(async (args: string[], opts: { interactive?: boolean }) => {
     intro('Signing in to OpenCode...');
     if (!process.stdin.isTTY) {

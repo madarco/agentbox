@@ -38,6 +38,7 @@ import { runPrepare } from './prepare.js';
 import { claudeCommand } from './claude.js';
 import { resolveCustodyTarget, syncAgentCredentialsIfChanged } from './control-plane.js';
 import { enqueueCreateViaHub, pollHubJob } from '../control-plane/hub-enqueue.js';
+import { withHubJobLine } from './_cloud-agent-via-hub.js';
 import { resolveCreateRouting } from '../control-plane/route-create.js';
 import { attachRelayOptions } from '../control-plane/box-plane.js';
 
@@ -222,13 +223,19 @@ async function runCreateViaHub(
     name: opts.name?.trim() || undefined,
   };
   try {
-    const jobId = await enqueueCreateViaHub(target, request);
-    log.info(`enqueued on the control plane (job ${jobId})`);
-    const job = await pollHubJob(target, jobId, {
-      onStatus: (j) => log.step(`job ${jobId}: ${j.status}`),
-    });
+    const job = await withHubJobLine(
+      async (onStatus) => {
+        const jobId = await enqueueCreateViaHub(target, request);
+        onStatus('enqueued on the remote hub');
+        return await pollHubJob(target, jobId, {
+          onStatus: (j) => onStatus(`remote hub: ${j.status}`),
+        });
+      },
+      (j) =>
+        j.status === 'done' ? 'box created on the remote hub' : 'the remote hub create failed',
+    );
     if (job.status === 'done') {
-      outro(`box created on the control plane: ${job.result?.boxId ?? '(id pending)'}`);
+      outro(`box ready: ${job.result?.boxId ?? '(id pending)'}`);
       cmdLog.close();
       process.exit(0);
     }
