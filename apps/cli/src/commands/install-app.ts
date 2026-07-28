@@ -264,6 +264,41 @@ export function decideTrayUpdate(input: {
   return { update: false, reason: 'up-to-date' };
 }
 
+export interface TrayBounceDecision {
+  bounce: boolean;
+  reason: 'not-installed' | 'just-reinstalled' | 'not-running' | 'install-failed' | 'stale-row';
+}
+
+/**
+ * Pure decision: should the post-update refresh restart the menu-bar app?
+ *
+ * It must, because the app reads the installed CLI version **once, at launch** and only
+ * re-derives its "Update available — agentbox X" row on a 24h-throttled check. After a CLI
+ * self-update the running app therefore keeps advertising the version the user just installed,
+ * for up to a day. Restarting it is the only way to clear that from this side — the app has no
+ * reload signal (no notification, no file watch, no URL scheme).
+ */
+export function decideTrayBounce(input: {
+  /** The bundle is on disk. */
+  installed: boolean;
+  /** The app had a live pid BEFORE the tray-update step — which kills it. */
+  running: boolean;
+  /** `installTray` was called (it pkills unconditionally, before deciding anything). */
+  installAttempted: boolean;
+  /** `installTray` succeeded — it relaunches the app itself. */
+  reinstalled: boolean;
+}): TrayBounceDecision {
+  if (!input.installed) return { bounce: false, reason: 'not-installed' };
+  if (input.reinstalled) return { bounce: false, reason: 'just-reinstalled' };
+  // `installTray` pkills the app before it knows whether it can install; its
+  // zip-missing / download-failed paths then return without relaunching. Bring
+  // the app back rather than leaving the user with no menu bar.
+  if (input.installAttempted) return { bounce: true, reason: 'install-failed' };
+  // Never launch an app the user deliberately quit.
+  if (!input.running) return { bounce: false, reason: 'not-running' };
+  return { bounce: true, reason: 'stale-row' };
+}
+
 /** A real published version we can compare — excludes `0.0.0`/unparseable. */
 function isReleaseVersion(v: string): boolean {
   const core = v.split('-', 1)[0] ?? v;
@@ -294,18 +329,48 @@ export async function readInstalledTrayVersion(): Promise<string | undefined> {
   }
 }
 
-/** True while the tray process is running. `pgrep -x` exits 1 (rejects) when nothing matches. */
-async function trayRunning(): Promise<boolean> {
-  return (await execa('pgrep', ['-x', APP_NAME]).catch(() => null)) !== null;
+/** PIDs of a process by exact executable name, or [] if none. `pgrep` exits 1 when nothing matches. */
+async function pidsForName(name: string): Promise<number[]> {
+  const res = await execa('pgrep', ['-x', name]).catch(() => null);
+  if (!res) return [];
+  return res.stdout
+    .split('\n')
+    .map((l) => Number(l.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
 }
 
 /**
- * Launch the freshly-installed app and confirm it actually came up. `open` returns before an
+ * PIDs of the running app, or [] if none. Covers both the current (`AgentBox`) and the legacy
+ * pre-rename (`AgentBoxTray`) executable names, so status/stop/restart still see a stray old process
+ * during migration.
+ */
+export async function trayPids(): Promise<number[]> {
+  const [current, legacy] = await Promise.all([
+    pidsForName(APP_NAME),
+    pidsForName(LEGACY_APP_NAME),
+  ]);
+  return [...current, ...legacy];
+}
+
+/** True while the tray process is running. */
+export async function trayRunning(): Promise<boolean> {
+  return (await trayPids()).length > 0;
+}
+
+export async function stopTray(): Promise<void> {
+  // `pkill` exits 1 when there was nothing to kill — not an error for us. Cover the legacy
+  // pre-rename name too so `stop`/`restart` don't leave a stray old process alive.
+  await execa('pkill', ['-x', APP_NAME]).catch(() => undefined);
+  await execa('pkill', ['-x', LEGACY_APP_NAME]).catch(() => undefined);
+}
+
+/**
+ * Launch the app and confirm it actually came up. `open` returns before an
  * `LSUIElement` menu-bar app finishes registering, and right after a `ditto` extract Launch Services
  * can briefly not resolve the new bundle — so poll, then retry `open` once before giving up.
  * (Launch-at-login stays opt-in via the app's Settings; this only covers the post-install start.)
  */
-async function launchTray(say: (m: string) => void): Promise<void> {
+export async function launchTray(say: (m: string) => void): Promise<void> {
   await execa('open', [APP_PATH]).catch(() => undefined);
   for (let i = 0; i < 6; i++) {
     if (await trayRunning()) return;
@@ -315,6 +380,16 @@ async function launchTray(say: (m: string) => void): Promise<void> {
   if (!(await trayRunning())) {
     say(`The menu-bar app did not start automatically — launch it from ${APP_PATH}.`);
   }
+}
+
+/**
+ * Quit the app and bring it back. The wait matters: `open` on a still-quitting instance just
+ * foregrounds the dying process, so the "restart" silently becomes a no-op.
+ */
+export async function restartTray(say: (m: string) => void): Promise<void> {
+  await stopTray();
+  for (let i = 0; i < 20 && (await trayPids()).length > 0; i++) await delay(100);
+  await launchTray(say);
 }
 
 /** Download `<tag>/AgentBox.zip` + its `.sha256`, verify, and return the local zip path + sha. */

@@ -119,6 +119,9 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **The menu-bar app kept offering the update you just installed.** `self-update`
+  now restarts a running app, which is what makes it re-read the installed CLI
+  version; before, the row could sit stale for up to a day.
 - **Creating a box from a control box's web UI failed** with a `tar: Cannot open`
   error. The control box has no working copy to build from, so those creates now
   go through the same clone-and-seed path as `create --via-hub`. A create no
