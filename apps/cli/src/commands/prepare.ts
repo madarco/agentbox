@@ -429,7 +429,6 @@ export async function runPrepare(
     const adopted = await tryAdoptPreparedBase({
       provider,
       providerName,
-      claudeInstall,
       log: (line) => log.info(line),
     });
     if (adopted) {

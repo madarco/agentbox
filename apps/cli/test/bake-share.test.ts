@@ -127,6 +127,20 @@ describe('classifyBakeShare', () => {
     ).toBe('match');
   });
 
+  it('reports adopted when the pull already took the hub record, and warns about nothing', () => {
+    // Our own record is stale by definition in that case — the "re-bake this"
+    // warning is exactly what adoption exists to silence.
+    const res = classifyBakeShare({
+      ...shared,
+      provider: 'e2b',
+      storedFingerprint: 'b'.repeat(64),
+      pushSucceeded: false,
+      adopted: true,
+    });
+    expect(res).toEqual({ provider: 'e2b', status: 'adopted' });
+    expect(summarizeBakeShare([res])).toMatchObject({ adopted: ['e2b'], mismatched: [] });
+  });
+
   it('a failed push is share-failed even when the fingerprint would have matched', () => {
     // The record never reached the hub, so no fingerprint verdict applies — it
     // must not be reported as either a match or a fingerprint mismatch.

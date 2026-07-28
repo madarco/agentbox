@@ -29,6 +29,7 @@ export {
   pushPreparedToCustody,
   writePreparedToCustodyStore,
   type PreparedCustodyWriter,
+  type PreparedRecord,
   type PreparedSyncTarget,
   type PullPreparedResult,
 } from './prepared-sync.js';
