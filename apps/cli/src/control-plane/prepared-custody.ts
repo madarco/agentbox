@@ -21,8 +21,7 @@ import {
   type PreparedRecord,
 } from '@agentbox/sandbox-cloud';
 import { resolveCustodyTarget } from '../commands/control-plane.js';
-import { getRuntimeProviderNames } from '../provider/loaders.js';
-import { getProvider } from '../provider/registry.js';
+import { getRuntimeProviderNames, loadProviderModule } from '../provider/loaders.js';
 import { isShareablePreparedProvider, localBakeBlocksAdoption } from './bake-share.js';
 
 /**
@@ -136,7 +135,13 @@ export async function adoptPreparedBases(): Promise<AdoptPreparedBasesResult> {
   for (const providerName of getRuntimeProviderNames().filter(isShareablePreparedProvider)) {
     let provider: Provider;
     try {
-      provider = await getProvider(providerName);
+      // `loadProviderModule`, NOT `getProvider`: the latter runs the provider's
+      // first-run `ensureCredentials` gate, and this sweep touches EVERY cloud
+      // provider — so a background step (the post-update refresh) would open an
+      // interactive "Vercel setup" / "E2B setup" wizard for a provider the user
+      // never asked for. Adoption needs only `baseFingerprint`, which is a local
+      // build-context hash and needs no credential.
+      provider = (await loadProviderModule(providerName)).provider;
     } catch {
       continue; // a plugin provider that can't load here is not our problem
     }
