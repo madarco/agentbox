@@ -1108,15 +1108,23 @@ export async function resolveHubApiTarget(
   // so a static edge back the other way would read it before it's initialized.
   const { resolveHubTarget } = await import('./hub.js');
   let target = await resolveHubTarget(urlFlag);
-  let resolved = hubApiTargetFrom(target);
 
-  // A local hub with no token isn't running yet — bring it up, then re-read.
-  if (!resolved.ok && resolved.mode === 'local' && !opts.quiet) {
-    if (!(await autostartLocalHub())) return null;
-    target = await resolveHubTarget(urlFlag);
-    resolved = hubApiTargetFrom(target);
+  // Bring a local hub up before its token is used. The token at
+  // `~/.agentbox/hub/token` PERSISTS across `hub stop`, so token presence is NOT a
+  // liveness signal — a stopped hub still resolves with one. Gate the autostart on
+  // the hub actually running, or a stopped hub would skip autostart and only fail
+  // later at the health probe. Skipped under `quiet` (a probe must not spawn a
+  // daemon). `getHubStatus` reflects only the local hub, so it is irrelevant in
+  // remote mode.
+  if (target.mode === 'local' && !opts.quiet) {
+    const { getHubStatus } = await import('@agentbox/sandbox-docker');
+    if (!(await getHubStatus()).running) {
+      if (!(await autostartLocalHub())) return null;
+      target = await resolveHubTarget(urlFlag);
+    }
   }
 
+  const resolved = hubApiTargetFrom(target);
   if (!resolved.ok) {
     if (!opts.quiet)
       log.error(
