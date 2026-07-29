@@ -146,17 +146,19 @@ agentbox prepare --provider docker --build   # or: agentbox create --build
 agentbox config set --global box.imageRegistry ""   # disable pulling everywhere
 ```
 
-After **any** change that bakes into the image, wipe the cached copy so the next
-create rebuilds:
+After **any** change that bakes into the image, the next create rebuilds on its
+own: the image is content-addressed by a fingerprint of its build context, so a
+changed context is detected and rebuilt automatically — no manual wipe needed
+(`agentbox self-update` no longer deletes the image either; it just reports the
+freshness comparison). To force the rebuild up front, drop the cached copy:
 
 ```sh
 docker rmi agentbox/box:dev
 ```
 
-`agentbox self-update` does this for you. Anything `COPY`'d in
-`packages/sandbox-docker/Dockerfile.box`, or listed as a context file in
-`apps/cli/scripts/stage-runtime.mjs`, needs a rebuild — the Dockerfile and the
-stage script are the authoritative list.
+Anything `COPY`'d in `packages/sandbox-docker/Dockerfile.box`, or listed as a
+context file in `apps/cli/scripts/stage-runtime.mjs`, is part of that context —
+the Dockerfile and the stage script are the authoritative list.
 
 Wipe everything if state drifts: `agentbox prune --all -y`.
 

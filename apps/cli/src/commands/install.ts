@@ -702,7 +702,7 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
   // 6) First-run marker (so the auto-trigger doesn't fire again) + version
   // baseline (so a fresh install never sees the "agentbox was updated" prompt).
   // Baseline only — a mismatched stamp is left alone so the post-update
-  // refresh (image wipe, relay reload) is still offered on the next eligible
+  // refresh (image re-check, relay reload) is still offered on the next eligible
   // command; the wizard covers skills + tray but not the rest.
   markSetupComplete(providerName);
   if (AGENTBOX_VERSION !== '0.0.0-dev' && readUpdateState().lastRunVersion === undefined) {
