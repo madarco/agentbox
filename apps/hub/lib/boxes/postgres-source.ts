@@ -103,6 +103,12 @@ function mapBox(r: Registration, s: Snapshot | undefined): Box {
     // Hosted source has no endpoint data yet — cloud preview URLs are a follow-up.
     webUrl: null,
     vncUrl: null,
+    // The registration's box name — populated on this topology too (the
+    // in-process host source always sets it) so server-side ref resolution
+    // (`GET /api/v1/boxes?ref=<name>`) matches by name here, not just by id.
+    // `task` above is the display label (a session title when present), so it
+    // is not a reliable name key.
+    name: r.name,
     // Adoption / reconstruction fields from the registration (non-secret), so a
     // thin CLI can rebuild a drivable record from this payload.
     sandboxId: r.sandboxId,
