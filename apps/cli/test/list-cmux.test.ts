@@ -49,6 +49,19 @@ describe('cmuxStatusCell', () => {
     expect(cmuxStatusCell(box({ state: undefined, status: 'error' }), false)).toBe('[error]');
   });
 
+  it('shows the agent for a running box with no host-only state (plane view)', () => {
+    // The read-only Postgres/plane topology carries `status: 'running'` but no
+    // raw provider `state`. The effective state is still running, so it renders
+    // the agent glyph — not `[running]` in the agent slot.
+    expect(
+      cmuxStatusCell(
+        box({ state: undefined, status: 'running', claudeActivity: 'working' }),
+        false,
+      ),
+    ).toBe('● claude working');
+    expect(cmuxStatusCell(box({ state: undefined, status: 'running' }), false)).toBe('○ claude');
+  });
+
   it('emits no ANSI when color is false, and wraps in SGR when true', () => {
     expect(cmuxStatusCell(box({ claudeActivity: 'working' }), false)).not.toContain(ESC);
     const colored = cmuxStatusCell(box({ claudeActivity: 'working' }), true);

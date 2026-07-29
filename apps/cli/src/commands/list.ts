@@ -111,7 +111,7 @@ function agentSummary(b: HubApiBox): string {
   // A non-running box can't have a live agent; its persisted status (the source
   // of these fields) is the last snapshot before it stopped, so showing
   // `claude:idle` next to `paused`/`stopped` would be contradictory.
-  if (b.state !== 'running') return '-';
+  if (effectiveState(b) !== 'running') return '-';
   const agents: string[] = [];
   if (b.claudeActivity && b.claudeActivity !== 'unknown') {
     agents.push(`claude:${b.claudeActivity}`);
@@ -203,14 +203,14 @@ function activityView(a: string | undefined): {
 
 /** The status line (line 2) for a box in the compact view. */
 export function cmuxStatusCell(b: HubApiBox, color: boolean): string {
-  // A non-running box (or a synthetic `job:` box, which carries no `state` — only
-  // a `creating`/`error` status) shows its bracketed state instead of an agent.
-  if (!b.state) {
-    const s = `[${b.status}]`;
-    return color ? colorize(s, 'dim') : s;
-  }
-  if (b.state !== 'running') {
-    const s = `[${b.state}]`;
+  // A non-running box (a paused/stopped container, or a synthetic `job:` box that
+  // carries no `state` — only a `creating`/`error` status) shows its bracketed
+  // effective state instead of an agent. `state` wins when present (so a paused
+  // box reads `[paused]`, not `[running]`); the `status` fallback covers the
+  // plane view and job rows.
+  const eff = effectiveState(b);
+  if (eff !== 'running') {
+    const s = `[${eff}]`;
     return color ? colorize(s, 'dim') : s;
   }
   const { agent, activity } = primaryAgent(b);
@@ -296,6 +296,18 @@ async function buildCmuxText(live: boolean, color: boolean, linkNames = false): 
  * merge and so no `on hub` / `orphan` qualifier anymore.
  */
 function stateCell(b: HubApiBox): string {
+  return effectiveState(b);
+}
+
+/**
+ * A box's effective runtime state, used by every renderer that gates on
+ * "is it running". Prefers the host-only raw provider `state`, falling back to
+ * the topology-agnostic lifecycle `status` — the read-only Postgres/plane view
+ * carries `status` but no `state`, and a synthetic `job:` box only ever has
+ * `status`. Keeping STATE, AGENT and the cmux glyph on this one notion stops a
+ * plane box reading `running` in STATE yet `-`/`[running]` in the agent slot.
+ */
+function effectiveState(b: HubApiBox): string {
   return b.state ?? b.status;
 }
 
