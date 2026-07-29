@@ -6,6 +6,7 @@
 // (path, size, sha256, mtime) — never a credential value. Grouped by scope with a
 // scope filter to drill in.
 
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { Ago } from '@/components/ago';
 import { Icons } from '@/components/icons';
@@ -77,7 +78,11 @@ export default function CustodyPage() {
             <div>Custody isn’t enabled on this hub.</div>
             <div className="mt-1.5 font-mono text-xs text-muted-foreground">
               Custody runs on a deployed control box (a hub with an admin token). A localhost hub keeps credentials on
-              your machine directly.
+              your machine directly — see{' '}
+              <Link href="/system" className="underline underline-offset-2 hover:text-foreground">
+                Carried from this machine
+              </Link>
+              .
             </div>
           </EmptyBox>
         </div>

@@ -102,6 +102,41 @@ export function groupCustody(entries: CustodyEntry[]): CustodyScopeGroup[] {
   });
 }
 
+// Agent-id → display label, for the per-agent credential rollup the System page
+// shows on a control box (mirrors the labels the sync layer uses).
+export const CUSTODY_AGENT_LABELS: Record<string, string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  opencode: 'OpenCode',
+};
+
+export interface AgentCredSummary {
+  /** Agent id (second path segment under `agents/`). */
+  agent: string;
+  label: string;
+  count: number;
+  size: number;
+  /** Epoch ms of the most recent write across this agent's entries, or 0. */
+  lastUpdate: number;
+}
+
+/**
+ * Per-agent rollup of the `agents` custody scope — the honest answer to "what
+ * logins will a box created on this control box receive?". Pure; reuses
+ * `groupCustody`'s scope/subject grouping so it can't drift from the Custody page.
+ */
+export function summarizeAgentCredentials(entries: CustodyEntry[]): AgentCredSummary[] {
+  const agents = groupCustody(entries).find((g) => g.scope === 'agents');
+  if (!agents) return [];
+  return agents.subgroups.map((sub) => ({
+    agent: sub.key,
+    label: CUSTODY_AGENT_LABELS[sub.key] ?? sub.key,
+    count: sub.entries.length,
+    size: sub.size,
+    lastUpdate: sub.entries.reduce((max, e) => Math.max(max, Date.parse(e.updatedAt) || 0), 0),
+  }));
+}
+
 /** First 12 hex chars — the short fingerprint form used across the CLI. */
 export function shortSha(sha: string): string {
   return sha.slice(0, 12);

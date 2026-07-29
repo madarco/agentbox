@@ -5,11 +5,12 @@ import {
   fmtBytes,
   groupCustody,
   shortSha,
+  summarizeAgentCredentials,
   type CustodyEntry,
 } from '../lib/custody-view';
 
-function entry(path: string, size = 100): CustodyEntry {
-  return { path, size, sha256: 'a'.repeat(64), mode: 0o600, updatedAt: '2026-07-27T00:00:00.000Z' };
+function entry(path: string, size = 100, updatedAt = '2026-07-27T00:00:00.000Z'): CustodyEntry {
+  return { path, size, sha256: 'a'.repeat(64), mode: 0o600, updatedAt };
 }
 
 describe('custodySubject', () => {
@@ -70,6 +71,29 @@ describe('groupCustody', () => {
     ]);
     const projects = groups.find((g) => g.scope === 'projects')!;
     expect(projects.subgroups.map((s) => s.key)).toEqual(['alpha', 'zeta']);
+  });
+});
+
+describe('summarizeAgentCredentials', () => {
+  it('rolls up the agents scope per agent with count, size and latest mtime', () => {
+    const summary = summarizeAgentCredentials([
+      entry('agents/claude/.credentials.json', 200, '2026-07-27T00:00:00.000Z'),
+      entry('agents/claude/.claude.json', 50, '2026-07-28T12:00:00.000Z'),
+      entry('agents/codex/auth.json', 30, '2026-07-25T00:00:00.000Z'),
+      entry('boxes/box-1/ssh/id_ed25519', 400), // other scope — ignored
+    ]);
+    expect(summary.map((a) => a.agent)).toEqual(['claude', 'codex']);
+    const claude = summary.find((a) => a.agent === 'claude')!;
+    expect(claude.label).toBe('Claude');
+    expect(claude.count).toBe(2);
+    expect(claude.size).toBe(250);
+    expect(claude.lastUpdate).toBe(Date.parse('2026-07-28T12:00:00.000Z'));
+  });
+
+  it('falls back to the raw id for an unknown agent and returns [] when empty', () => {
+    expect(summarizeAgentCredentials([])).toEqual([]);
+    const summary = summarizeAgentCredentials([entry('agents/gemini/creds.json')]);
+    expect(summary[0]!.label).toBe('gemini');
   });
 });
 

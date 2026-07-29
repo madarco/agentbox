@@ -7,6 +7,7 @@
 // actionable part is the provider table: a `stale` row is exactly when
 // `agentbox prepare --provider <id>` should be re-run.
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Ago } from '@/components/ago';
 import { Icons } from '@/components/icons';
@@ -14,6 +15,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import {
+  fmtBytes,
+  summarizeAgentCredentials,
+  type AgentCredSummary,
+  type CustodyEntry,
+} from '@/lib/custody-view';
 import { bakeVerdict, type HubBuild, type ProviderBake } from '@/lib/system-info';
 import { EmptyBox } from '../boxes/components/empty-box';
 import { SectionLabel } from '../boxes/components/section-label';
@@ -50,8 +57,17 @@ interface CarriedEntry {
   skills?: string[];
 }
 
+// Custody is fetched separately (pure REST client, no server plumbing) purely to
+// decide the "Carried" section's mode: on a deployed/exposed control box the
+// honest answer to "what does a box get?" is custody, not this VPS's homedir.
+interface CustodyResponse {
+  enabled: boolean;
+  entries: CustodyEntry[];
+}
+
 export default function SystemPage() {
   const [data, setData] = useState<SystemResponse | null>(null);
+  const [custody, setCustody] = useState<CustodyResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -66,6 +82,17 @@ export default function SystemPage() {
       })
       .catch((err: unknown) => {
         if (alive) setError(err instanceof Error ? err.message : String(err));
+      });
+    // Failure here isn't fatal: the section falls back to plain host-carried mode.
+    fetch('/api/v1/custody', { credentials: 'same-origin' })
+      .then(async (r) =>
+        r.ok ? ((await r.json()) as CustodyResponse) : { enabled: false, entries: [] },
+      )
+      .then((j) => {
+        if (alive) setCustody(j);
+      })
+      .catch(() => {
+        if (alive) setCustody({ enabled: false, entries: [] });
       });
     return () => {
       alive = false;
@@ -164,50 +191,17 @@ export default function SystemPage() {
           </SectionLabel>
           <Card className="divide-y divide-border/60 overflow-hidden">
             {data.providers.map((p) => (
-              <ProviderBakeRow key={p.id} p={p} />
+              // Box-image resolution facts (registry / pull tag / fingerprint /
+              // local ref) are docker-only, so they fold into the docker row.
+              <ProviderBakeRow
+                key={p.id}
+                p={p}
+                boxImage={p.id === 'docker' ? data.boxImage : null}
+              />
             ))}
           </Card>
 
-          {data.boxImage ? (
-            <>
-              <SectionLabel
-                right={
-                  <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
-                    what this host pulls
-                  </span>
-                }
-              >
-                Box image
-              </SectionLabel>
-              <Card className="grid grid-cols-2 divide-x divide-y divide-border/60 max-sm:grid-cols-1">
-                <DeployField k="Registry" v={data.boxImage.registry} />
-                <DeployField k="Pull tag" v={data.boxImage.pullTag} />
-                <DeployField k="Stamped fingerprint" v={data.boxImage.stampedFingerprint} />
-                <DeployField k="Local image" v={data.boxImage.imageRef} />
-              </Card>
-            </>
-          ) : null}
-
-          <SectionLabel
-            right={
-              <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
-                {data.hostCarried.length} path(s) present
-              </span>
-            }
-          >
-            Carried from this machine
-          </SectionLabel>
-          {data.hostCarried.length === 0 ? (
-            <EmptyBox>
-              <div>Nothing to carry — no agent config found in this home directory.</div>
-            </EmptyBox>
-          ) : (
-            <Card className="divide-y divide-border/60 overflow-hidden">
-              {data.hostCarried.map((c) => (
-                <CarriedRow key={`${c.agent}:${c.hostPath}`} c={c} />
-              ))}
-            </Card>
-          )}
+          <CarriedSection hostCarried={data.hostCarried} custody={custody} />
         </>
       )}
     </div>
@@ -227,7 +221,13 @@ function DeployField({ k, v }: { k: string; v?: string }) {
   );
 }
 
-function ProviderBakeRow({ p }: { p: ProviderBake }) {
+function ProviderBakeRow({
+  p,
+  boxImage,
+}: {
+  p: ProviderBake;
+  boxImage?: SystemResponse['boxImage'];
+}) {
   const verdict = bakeVerdict(p);
   return (
     <div className="flex flex-col gap-2 p-4 px-5">
@@ -286,6 +286,37 @@ function ProviderBakeRow({ p }: { p: ProviderBake }) {
           ) : null}
         </div>
       ) : null}
+      {boxImage ? <BoxImageDetail boxImage={boxImage} /> : null}
+    </div>
+  );
+}
+
+/**
+ * The box-image resolution facts, folded into the docker provider row (docker is
+ * the only provider that pulls a prebuilt image by tag). These are what a "why
+ * didn't it pull the prebuilt image?" investigation otherwise reconstructs by
+ * hand from docker-prepared.json + config + the registry.
+ */
+function BoxImageDetail({ boxImage }: { boxImage: NonNullable<SystemResponse['boxImage']> }) {
+  return (
+    <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-2.5 rounded-lg border border-border/60 bg-background px-3.5 py-3 max-sm:grid-cols-1">
+      <BoxImageField k="Registry" v={boxImage.registry} />
+      <BoxImageField k="Pull tag" v={boxImage.pullTag} />
+      <BoxImageField k="Stamped fingerprint" v={boxImage.stampedFingerprint} />
+      <BoxImageField k="Local image" v={boxImage.imageRef} />
+    </div>
+  );
+}
+
+function BoxImageField({ k, v }: { k: string; v?: string }) {
+  return (
+    <div>
+      <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[.06em] text-[#a4a9b0]">
+        {k}
+      </div>
+      <div className="truncate font-mono text-[12.5px] font-medium" title={v ?? undefined}>
+        {v ?? '—'}
+      </div>
     </div>
   );
 }
@@ -304,6 +335,151 @@ function StatusBadge({ p }: { p: ProviderBake }) {
       <span className="badge-dot" />
       baked
     </Badge>
+  );
+}
+
+/**
+ * "What does a box created here actually receive?"
+ *
+ * On a plain localhost hub the answer is this machine's homedir — the
+ * host-carried agent config / skills / identity, titled "Carried from this
+ * machine" (unchanged). On a deployed/exposed control box that answer is a lie:
+ * `homedir()` is the VPS's, so it lists ~1 path. There the real answer is
+ * custody — the agent logins pushed with `agentbox hub credentials push` — plus
+ * whatever skills the control box itself carries, so the section retitles to
+ * "Carried into boxes", leads with the custody credential rollup, and links to
+ * /custody for the full manifest.
+ */
+function CarriedSection({
+  hostCarried,
+  custody,
+}: {
+  hostCarried: CarriedEntry[];
+  custody: CustodyResponse | null;
+}) {
+  // Wait for the custody probe before committing to a mode, so a localhost hub
+  // never flashes the control-box framing (or vice versa).
+  if (!custody) {
+    return (
+      <>
+        <SectionLabel>Carried</SectionLabel>
+        <div className="mt-2 text-sm text-muted-foreground">Loading…</div>
+      </>
+    );
+  }
+
+  if (!custody.enabled) {
+    return (
+      <>
+        <SectionLabel
+          right={
+            <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
+              {hostCarried.length} path(s) present
+            </span>
+          }
+        >
+          Carried from this machine
+        </SectionLabel>
+        {hostCarried.length === 0 ? (
+          <EmptyBox>
+            <div>Nothing to carry — no agent config found in this home directory.</div>
+          </EmptyBox>
+        ) : (
+          <Card className="divide-y divide-border/60 overflow-hidden">
+            {hostCarried.map((c) => (
+              <CarriedRow key={`${c.agent}:${c.hostPath}`} c={c} />
+            ))}
+          </Card>
+        )}
+      </>
+    );
+  }
+
+  const agents = summarizeAgentCredentials(custody.entries);
+  // On a control box, only skills entries are meaningful — the box gets its
+  // logins from custody, not from this VPS's config/identity files.
+  const skills = hostCarried.filter((c) => c.kind === 'skills');
+  return (
+    <>
+      <SectionLabel
+        right={
+          <Link
+            href="/custody"
+            className="flex items-center gap-1 font-mono text-[11px] normal-case tracking-normal text-[#a4a9b0] hover:text-foreground"
+          >
+            Custody
+            <Icons.ext className="size-3" />
+          </Link>
+        }
+      >
+        Carried into boxes
+      </SectionLabel>
+      <div className="mb-3 text-[12.5px] text-muted-foreground">
+        What a box created on this control box receives: agent logins held in{' '}
+        <Link href="/custody" className="underline underline-offset-2 hover:text-foreground">
+          custody
+        </Link>
+        , plus the skills this control box carries.
+      </div>
+
+      <div className="mb-2 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[.08em] text-[#a4a9b0]">
+        <Icons.shield className="size-3.5" />
+        Agent credentials · custody
+      </div>
+      {agents.length === 0 ? (
+        <EmptyBox>
+          <div>No agent credentials in custody yet.</div>
+          <div className="mt-1.5 font-mono text-xs text-muted-foreground">
+            Push them with{' '}
+            <span className="text-secondary-foreground">agentbox hub credentials push</span> so a
+            hub-created box is never launched signed-out.
+          </div>
+        </EmptyBox>
+      ) : (
+        <Card className="divide-y divide-border/60 overflow-hidden">
+          {agents.map((a) => (
+            <AgentCredRow key={a.agent} a={a} />
+          ))}
+        </Card>
+      )}
+
+      <div className="mb-2 mt-6 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[.08em] text-[#a4a9b0]">
+        <Icons.book className="size-3.5" />
+        Skills · this control box
+      </div>
+      {skills.length === 0 ? (
+        <EmptyBox>
+          <div>This control box carries no skills of its own.</div>
+        </EmptyBox>
+      ) : (
+        <Card className="divide-y divide-border/60 overflow-hidden">
+          {skills.map((c) => (
+            <CarriedRow key={`${c.agent}:${c.hostPath}`} c={c} />
+          ))}
+        </Card>
+      )}
+    </>
+  );
+}
+
+/** One agent's credential rollup from custody (metadata only — no values). */
+function AgentCredRow({ a }: { a: AgentCredSummary }) {
+  return (
+    <div className="flex items-center gap-3 px-5 py-3">
+      <span className="flex size-3.5 flex-none items-center justify-center text-[#a4a9b0]">
+        <Icons.key />
+      </span>
+      <span className="text-[13px] font-medium">{a.label}</span>
+      <Badge>
+        {a.count} file{a.count === 1 ? '' : 's'}
+      </Badge>
+      <span className="font-mono text-[11px] text-[#a4a9b0]">{fmtBytes(a.size)}</span>
+      {a.lastUpdate > 0 ? (
+        <span className="ml-auto font-mono text-[11px] text-[#a4a9b0]">
+          updated <Ago ms={a.lastUpdate} />
+        </span>
+      ) : null}
+    </div>
   );
 }
 
