@@ -133,6 +133,11 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **`agentbox self-update` no longer stops to ask for cloud credentials.** Its
+  bake-adoption step walked every cloud provider through the first-run credential
+  gate, so an update popped a "Vercel setup" (or Daytona, E2B, …) wizard for a
+  provider you never asked about — and cancelling it skipped the rest of the
+  refresh. Adoption needs no credential.
 - **Boxes created through a remote hub came up signed out of Claude.** A create
   re-seeded the control box's credential from custody without checking which copy
   was newer, overwriting a freshly refreshed token with an hours-old one — and a
