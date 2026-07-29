@@ -223,11 +223,14 @@ cache (`~/.agentbox/hub-boxes-cache.json`) is re-keyed onto the API `{ boxes }` 
 - **Thin-client project scope needs `originUrl` at registration (Bugbot #281, High).** Project-scoped
   `ls` (no `-g`) matches a box to the cwd's repo by two keys: `projectRoot === root` (same-machine
   folder match) and, cross-machine, repo identity (`originUrl`). The client predicate `boxInProject`
-  (`list.ts`) now scopes by `originUrl` for a box with no local `projectRoot` **or** any box when the
-  hub is `remote` — a remote box's `projectRoot` is the control box's path and can never equal the
-  laptop's, so the old `projectRoot === undefined`-gated origin branch silently dropped every
-  control-box-created box from a thin client's scoped view. `mapBox` now threads each box's
-  registration `originUrl` onto the payload (previously cloud-only). **Residual, genuinely cross-step:**
+  (`list.ts`) scopes by `originUrl` when a box's `projectRoot` names **no local directory** (an
+  `existsSync` probe) — that path is a remote hub's own, so folder matching would drop it. The old
+  `projectRoot === undefined`-gated origin branch silently dropped every control-box-created box from
+  a thin client's scoped view. The filesystem probe (not the hub URL/mode) is deliberate: it is the
+  only signal that disambiguates the two loopback cases — our own `hub expose` (same machine, boxes
+  have real local projectRoots → folder scope) vs a genuinely remote hub reached over an SSH tunnel to
+  `127.0.0.1` (foreign projectRoots → origin scope). `mapBox` now threads each box's registration
+  `originUrl` onto the payload (previously cloud-only). **Residual, genuinely cross-step:**
   `registerBoxWithRelay` (`packages/sandbox-docker/src/create.ts`, and the cloud create paths) does
   **not** send `originUrl` today, so only `--via-hub` creates (which pass `repoUrl`) carry it; a plain
   docker/direct-cloud box still has no origin to scope by. Capturing `originUrl` at registration for

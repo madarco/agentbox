@@ -53,8 +53,8 @@ export interface HubApiBox {
   // ── Adoption / reconstruction fields (non-secret; cloud boxes only, EXCEPT
   //    originUrl which is populated for any registered box, docker included). ──
   sandboxId?: string;
-  // Repo origin URL — the cross-machine project key `list` scopes by when the
-  // hub is remote (a remote box's projectRoot is the control box's path).
+  // Repo origin URL — the cross-machine project key `list` scopes by when a box's
+  // projectRoot names no local directory (it's a remote hub's own path).
   originUrl?: string | null;
   publicHost?: string;
   image?: string;

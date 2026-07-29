@@ -2,6 +2,7 @@ import { log } from '@clack/prompts';
 import { execa } from 'execa';
 import { findProjectRoot } from '@agentbox/config';
 import { Command } from 'commander';
+import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { boxLabel } from '../box-label.js';
 import { hyperlink } from '../hyperlink.js';
@@ -379,45 +380,28 @@ function renderTable(boxes: HubApiBox[], stream: NodeJS.WriteStream): string {
  * is scoped by its registered origin URL instead.
  */
 /**
- * Is this hub on a DIFFERENT machine than the client — i.e. are its boxes'
- * `projectRoot` paths foreign to this filesystem? A configured remote control
- * box is; `agentbox hub expose` is NOT, even though it resolves as `mode:
- * 'remote'`: it is this machine's own hub reached over loopback, so its boxes'
- * projectRoots are still local paths and must scope by folder, not just origin.
- * The loopback URL (`http://127.0.0.1:<port>`, from `localExposedLoopbackUrl`) is
- * how we tell the exposed hub apart from a real remote one.
- */
-export function isCrossMachineHub(target: { mode: 'local' | 'remote'; url: string }): boolean {
-  if (target.mode !== 'remote') return false;
-  try {
-    const host = new URL(target.url).hostname;
-    return host !== '127.0.0.1' && host !== '::1' && host !== 'localhost';
-  } catch {
-    return true; // an unparseable URL is not our loopback shortcut — treat as remote
-  }
-}
-
-/**
- * Does a box belong to the cwd's project? Two keys, by hub topology:
- *  - `projectRoot === root`: a same-machine folder match — a local hub, or a box
- *    already adopted onto this laptop. This is the ONLY key used locally, so two
- *    clones of one repo in different folders keep their boxes apart (the hub's
- *    folder-based project model).
- *  - repo identity (`originUrl`): the cross-machine key. Used for a registered
- *    box that has no local `projectRoot` (any mode), and for ANY box when the hub
- *    is `remote` — a remote box's `projectRoot` is the control box's path, which
- *    can never equal this laptop's `root`, so folder matching would drop it.
+ * Does a box belong to the cwd's project? Two keys:
+ *  - `projectRoot === root`: an exact same-machine folder match (a local hub, an
+ *    exposed loopback hub, or a box adopted onto this laptop).
+ *  - repo identity (`originUrl`): the cross-machine key, used ONLY when the box's
+ *    `projectRoot` can't be interpreted here — it's absent (a registered box), or
+ *    it's `projectRootForeign` (a path that does not exist on this filesystem, so
+ *    it must be a remote hub's own path). Gating origin matching on that is what
+ *    keeps two local clones of one repo apart (their folders both exist locally,
+ *    so neither is `foreign`) while still surfacing a genuinely remote hub's
+ *    boxes — whose `projectRoot` never resolves locally regardless of how the hub
+ *    is reached (a real hostname, or an SSH tunnel to loopback).
  */
 export function boxInProject(
   b: HubApiBox,
-  ctx: { root: string; origin: string | undefined; remote: boolean },
+  ctx: { root: string; origin: string | undefined; projectRootForeign: boolean },
 ): boolean {
   if (b.projectRoot === ctx.root) return true;
   const originMatches =
     ctx.origin !== undefined &&
     b.originUrl != null &&
     normalizeOriginUrl(b.originUrl) === normalizeOriginUrl(ctx.origin);
-  return originMatches && (b.projectRoot === undefined || ctx.remote);
+  return originMatches && (b.projectRoot == null || ctx.projectRootForeign);
 }
 
 async function scopedBoxes(
@@ -429,17 +413,19 @@ async function scopedBoxes(
   if (all) return { boxes, projectRoot: '', scoped: false, listing };
   const { root } = await findProjectRoot(process.cwd());
   const origin = await readCwdOriginUrl(root);
-  // Talking to a hub on ANOTHER machine, every box's `projectRoot` is the control
-  // box's path — meaningless on this laptop — so the only stable key to scope by
-  // is the repo identity (origin URL). On this machine (a local hub, or our own
-  // `hub expose` reached over loopback) we scope by folder (`projectRoot`) so two
-  // clones of the same repo in different folders keep their boxes apart, matching
-  // the folder-based project model the hub groups by.
-  const { resolveHubTarget } = await import('./hub.js');
-  const remote = await resolveHubTarget()
-    .then(isCrossMachineHub)
-    .catch(() => false);
-  const scoped = boxes.filter((b) => boxInProject(b, { root, origin, remote }));
+  const scoped = boxes.filter((b) =>
+    boxInProject(b, {
+      root,
+      origin,
+      // A projectRoot that names no directory on THIS machine is the control
+      // box's own path — the box came from a hub on another machine, so scope it
+      // by repo identity. A local folder (local hub / loopback-exposed hub) does
+      // exist, so it scopes by folder. This one filesystem probe disambiguates
+      // both loopback cases the URL host alone cannot (exposed-here vs tunneled).
+      projectRootForeign:
+        b.projectRoot != null && b.projectRoot !== root && !existsSync(b.projectRoot),
+    }),
+  );
   return { boxes: scoped, projectRoot: root, scoped: true, listing };
 }
 
