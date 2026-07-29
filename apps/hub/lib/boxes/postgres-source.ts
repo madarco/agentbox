@@ -25,6 +25,12 @@ interface Registration {
   originUrl?: string;
   /** Custody `projects/<slug>` key (`owner__repo`) the box registered with. */
   projectSlug?: string;
+  // Adoption / reconstruction fields (non-secret) carried on the registration.
+  sandboxId?: string;
+  publicHost?: string;
+  image?: string;
+  webPort?: number;
+  agent?: string;
 }
 type Snapshot = Record<string, unknown>;
 interface AgentState {
@@ -97,6 +103,16 @@ function mapBox(r: Registration, s: Snapshot | undefined): Box {
     // Hosted source has no endpoint data yet — cloud preview URLs are a follow-up.
     webUrl: null,
     vncUrl: null,
+    // Adoption / reconstruction fields from the registration (non-secret), so a
+    // thin CLI can rebuild a drivable record from this payload.
+    sandboxId: r.sandboxId,
+    originUrl: r.originUrl,
+    publicHost: r.publicHost,
+    image: r.image,
+    webPort: r.webPort,
+    lastAgent:
+      r.agent === 'claude' || r.agent === 'codex' || r.agent === 'opencode' ? r.agent : undefined,
+    topology: 'control-plane',
   };
 }
 

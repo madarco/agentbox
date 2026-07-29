@@ -158,8 +158,10 @@ export interface JobView {
 // imports) so both the implementation and the ambient global can share it.
 export interface HubBackend {
   // authMode is an env-derived concern layered on by source.ts, not the host
-  // backend — so the backend produces everything else.
-  getData(): Promise<Omit<HubState, 'authMode'>>;
+  // backend — so the backend produces everything else. `live` (opt-in, expensive
+  // — mirrors providers' `?freshness=1`) refreshes each cloud box's `state` with
+  // an SDK probe; omitted/false serves the fast persisted state.
+  getData(opts?: { live?: boolean }): Promise<Omit<HubState, 'authMode'>>;
   // Start a fully-stopped box (resumes when paused, no-op when running). Does
   // not restore agent tmux sessions — that's a CLI-only concern.
   start(id: string): Promise<ActionResult>;

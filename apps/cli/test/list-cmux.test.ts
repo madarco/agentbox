@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ListedBox } from '@agentbox/sandbox-docker';
+import type { HubApiBox } from '../src/control-plane/hub-api-client.js';
 import {
   cmuxEmptyMessage,
   cmuxStatusCell,
@@ -7,9 +7,18 @@ import {
   renderCmuxRows,
 } from '../src/commands/list.js';
 
-/** Minimal ListedBox fixture — the compact renderer only reads a few fields. */
-function box(p: Partial<ListedBox>): ListedBox {
-  return { name: 'b', state: 'running', ...p } as unknown as ListedBox;
+/** Minimal HubApiBox fixture — the compact renderer only reads a few fields. */
+function box(p: Partial<HubApiBox>): HubApiBox {
+  return {
+    id: 'b',
+    name: 'b',
+    task: 'b',
+    provider: 'docker',
+    status: 'running',
+    branch: '',
+    state: 'running',
+    ...p,
+  };
 }
 
 const ESC = '\x1b[';
@@ -19,9 +28,7 @@ describe('cmuxStatusCell', () => {
     expect(cmuxStatusCell(box({ claudeActivity: 'working' }), false)).toBe('● claude working');
     expect(cmuxStatusCell(box({ claudeActivity: 'idle' }), false)).toBe('○ claude idle');
     expect(cmuxStatusCell(box({ claudeActivity: 'waiting' }), false)).toBe('◐ claude needs input');
-    expect(cmuxStatusCell(box({ claudeActivity: 'question' }), false)).toBe(
-      '◐ claude needs input',
-    );
+    expect(cmuxStatusCell(box({ claudeActivity: 'question' }), false)).toBe('◐ claude needs input');
     expect(cmuxStatusCell(box({ claudeActivity: 'end-plan' }), false)).toBe('◐ claude plan ready');
     expect(cmuxStatusCell(box({ claudeActivity: 'error' }), false)).toBe('✖ claude error');
   });
@@ -32,14 +39,27 @@ describe('cmuxStatusCell', () => {
 
   it('renders the container state for a non-running box', () => {
     expect(cmuxStatusCell(box({ state: 'paused' }), false)).toBe('[paused]');
+    expect(cmuxStatusCell(box({ state: 'stopped' }), false)).toBe('[stopped]');
   });
 
-  it('shows an un-adopted control-box box as [on hub], not a live agent', () => {
-    // Regression: synthesized hub rows carry `state: 'running'` as a placeholder
-    // (we deliberately don't probe), so the dock rendered a live-agent glyph for
-    // a box this machine has never adopted — while the table said `on hub`.
-    expect(cmuxStatusCell({ ...box({}), needsAdopt: true }, false)).toBe('[on hub]');
-    expect(cmuxStatusCell(box({ state: 'stopped' }), false)).toBe('[stopped]');
+  it('renders the lifecycle status for a synthetic job box (no provider state)', () => {
+    // A `job:` box carries no `state` — only a `creating`/`error` status. Show
+    // the bracketed status rather than a live-agent glyph it doesn't have.
+    expect(cmuxStatusCell(box({ state: undefined, status: 'creating' }), false)).toBe('[creating]');
+    expect(cmuxStatusCell(box({ state: undefined, status: 'error' }), false)).toBe('[error]');
+  });
+
+  it('shows the agent for a running box with no host-only state (plane view)', () => {
+    // The read-only Postgres/plane topology carries `status: 'running'` but no
+    // raw provider `state`. The effective state is still running, so it renders
+    // the agent glyph — not `[running]` in the agent slot.
+    expect(
+      cmuxStatusCell(
+        box({ state: undefined, status: 'running', claudeActivity: 'working' }),
+        false,
+      ),
+    ).toBe('● claude working');
+    expect(cmuxStatusCell(box({ state: undefined, status: 'running' }), false)).toBe('○ claude');
   });
 
   it('emits no ANSI when color is false, and wraps in SGR when true', () => {
@@ -55,19 +75,13 @@ describe('primaryAgent', () => {
     expect(primaryAgent(box({ claudeActivity: 'working' })).agent).toBe('claude');
   });
 
-  it('falls through to a running codex when claude is unknown', () => {
-    const b = box({
-      claudeActivity: 'unknown',
-      codexSession: { running: true } as ListedBox['codexSession'],
-    });
+  it('falls through to codex when claude is unknown and codex has a session title', () => {
+    const b = box({ claudeActivity: 'unknown', codexSessionTitle: 'fixing tests' });
     expect(primaryAgent(b).agent).toBe('codex');
   });
 
-  it('falls through to a running opencode when neither claude nor codex is active', () => {
-    const b = box({
-      claudeActivity: 'unknown',
-      opencodeSession: { running: true } as ListedBox['opencodeSession'],
-    });
+  it('falls through to opencode when neither claude nor codex is active', () => {
+    const b = box({ claudeActivity: 'unknown', opencodeSessionTitle: 'refactor' });
     expect(primaryAgent(b).agent).toBe('opencode');
   });
 });
@@ -75,7 +89,14 @@ describe('primaryAgent', () => {
 describe('renderCmuxRows', () => {
   it('emits a project header then two lines per box (name with index, status)', () => {
     const rows = renderCmuxRows(
-      [box({ name: 'api', projectIndex: 1, projectRoot: '/Users/me/api', claudeActivity: 'working' })],
+      [
+        box({
+          name: 'api',
+          projectIndex: 1,
+          projectRoot: '/Users/me/api',
+          claudeActivity: 'working',
+        }),
+      ],
       false,
       40,
     );
@@ -85,8 +106,18 @@ describe('renderCmuxRows', () => {
   it('groups boxes by project with a blank line between groups', () => {
     const rows = renderCmuxRows(
       [
-        box({ name: 'a1', projectIndex: 1, projectRoot: '/Users/me/alpha', claudeActivity: 'idle' }),
-        box({ name: 'a2', projectIndex: 2, projectRoot: '/Users/me/alpha', claudeActivity: 'idle' }),
+        box({
+          name: 'a1',
+          projectIndex: 1,
+          projectRoot: '/Users/me/alpha',
+          claudeActivity: 'idle',
+        }),
+        box({
+          name: 'a2',
+          projectIndex: 2,
+          projectRoot: '/Users/me/alpha',
+          claudeActivity: 'idle',
+        }),
         box({ name: 'b1', projectIndex: 1, projectRoot: '/Users/me/beta', state: 'paused' }),
       ],
       false,

@@ -16,6 +16,8 @@ export function backendOrNull(): HubBackend | null {
 }
 
 // Topology-agnostic read of the full hub state (boxes/projects/approvals).
-export async function readState(): Promise<HubState> {
-  return getDashboardData();
+// `live` (opt-in, expensive) refreshes cloud box state with an SDK probe on the
+// in-process host backend; ignored on the read-only Postgres/plane path.
+export async function readState(opts?: { live?: boolean }): Promise<HubState> {
+  return getDashboardData(opts);
 }
