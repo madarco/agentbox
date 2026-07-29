@@ -1880,6 +1880,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             providerName: id,
             force: opts?.force,
             claudeInstall: opts?.claudeInstall,
+            build: opts?.build,
+            size: opts?.size,
+            location: opts?.location,
+            name: opts?.name,
           });
           handle.pokeQueue();
           return { ok: true, jobId: job.id };

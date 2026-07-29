@@ -83,7 +83,7 @@ Daytona resources are fixed **at snapshot-bake time** — the SDK rejects custom
 agentbox prepare --provider daytona --size 4-8-20 --force
 ```
 
-The snapshot name carries a size suffix (`agentbox-base-<sha>-4-8-20`), so re-sized bakes don't collide. If you later `create --provider daytona --size 2-4-8` against a snapshot baked at a different size, the box still boots — AgentBox warns loudly that the size is fixed at bake time and points you at `prepare --provider daytona --size 2-4-8 --force`. Re-running `prepare` with the same size skips the rebuild.
+The snapshot name carries a size suffix (`agentbox-base-<sha>-4-8-20`), so re-sized bakes don't collide. If you later `create --provider daytona --size 2-4-8` against a snapshot baked at a different size, the box still boots — AgentBox warns loudly that the size is fixed at bake time and points you at `prepare --provider daytona --size 2-4-8 --force`. Re-running `prepare` with the same size skips the rebuild. `--size` (and `box.sizeDaytona` / `box.daytonaClass`) travel with the bake request, so a bake through a [control box](/docs/deployed-hub) uses the size you ask for, falling back to the control box's own pins when you omit the flag.
 
 See [CLI commands](/docs/cli) for all flags.
 

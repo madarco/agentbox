@@ -10,7 +10,12 @@
 
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { hostOpenCommand, writeManagedSecrets, type CredSetResult } from '@agentbox/sandbox-core';
+import {
+  hostOpenCommand,
+  publishManagedCredentials,
+  writeManagedSecrets,
+  type CredSetResult,
+} from '@agentbox/sandbox-core';
 import {
   cancel,
   confirm,
@@ -81,6 +86,10 @@ export async function ensureE2bCredentials(
   persistCredentials({ apiKey: key.trim() });
   reloadE2bEnv();
   log.success(`E2B credentials saved to ${secretsPath()}`);
+  // Also push to the hub (validates against the cloud + persists on the hub's
+  // machine). The local write above stays because the direct IO plane still
+  // needs it — see publishManagedCredentials. Intentional + temporary dual write.
+  await publishManagedCredentials('e2b', { apiKey: key.trim() });
   outro('Setup complete.');
 }
 

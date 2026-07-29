@@ -1,5 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { hostOpenCommand, type CredSetResult } from '@agentbox/sandbox-core';
+import {
+  hostOpenCommand,
+  publishManagedCredentials,
+  type CredSetResult,
+} from '@agentbox/sandbox-core';
 import {
   chmodSync,
   existsSync,
@@ -98,6 +102,7 @@ export async function ensureDigitalOceanCredentials(
     if (result.ok) {
       persistCredentials(creds);
       log.success(`DigitalOcean credentials saved to ${secretsPath()}`);
+      await publishDigitalOceanToHub(creds);
       await promptForProject(creds);
       outro('Setup complete.');
       return;
@@ -111,6 +116,7 @@ export async function ensureDigitalOceanCredentials(
       log.warn(`Could not reach DigitalOcean to validate (${result.message}) — saving anyway.`);
       persistCredentials(creds);
       log.success(`DigitalOcean credentials saved to ${secretsPath()}`);
+      await publishDigitalOceanToHub(creds);
       outro('Setup complete (unvalidated).');
       return;
     }
@@ -227,6 +233,17 @@ async function validateCredentials(creds: Credentials): Promise<ValidationResult
     }
     return { ok: false, kind: 'network', message };
   }
+}
+
+/**
+ * Mirror the just-saved token to the hub. Best-effort; the local secrets.env
+ * write stays for the direct IO plane — see publishManagedCredentials.
+ */
+async function publishDigitalOceanToHub(creds: Credentials): Promise<void> {
+  await publishManagedCredentials('digitalocean', {
+    token: creds.token,
+    ...(creds.endpoint ? { endpoint: creds.endpoint } : {}),
+  });
 }
 
 function persistCredentials(creds: Credentials): void {

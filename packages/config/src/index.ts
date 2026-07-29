@@ -72,6 +72,8 @@ export {
 
 export { resolveBoxSize } from './size.js';
 
+export { resolvePrepareLocation } from './location.js';
+
 export {
   DAYTONA_VM_REGION,
   resolveDaytonaClass,

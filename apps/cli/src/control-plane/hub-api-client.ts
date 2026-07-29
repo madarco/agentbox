@@ -287,12 +287,33 @@ export class HubApiClient {
   }
 
   /**
+   * Persist a provider's credentials ON the hub: the hub validates the given
+   * canonical fields (e.g. `{ apiKey }`, `{ token, teamId?, projectId? }`) against
+   * the cloud, then writes them to its own `~/.agentbox/secrets.env`. Never echoes
+   * secret values. A rejected token surfaces as `HubApiError('invalid_request')`.
+   */
+  async setProviderCredentials(id: string, fields: Record<string, string>): Promise<void> {
+    await this.request<{ ok: true }>(
+      'POST',
+      `/providers/${encodeURIComponent(id)}/credentials`,
+      fields,
+    );
+  }
+
+  /**
    * Bake a provider's base ON the hub. Async: returns the id of a background job
    * whose progress streams over {@link streamJobLog}.
    */
   async prepareProvider(
     id: string,
-    body: { force?: boolean; claudeInstall?: 'native' | 'npm' } = {},
+    body: {
+      force?: boolean;
+      claudeInstall?: 'native' | 'npm';
+      build?: boolean;
+      size?: string;
+      location?: string;
+      name?: string;
+    } = {},
   ): Promise<string> {
     const res = await this.request<{ jobId: string }>(
       'POST',

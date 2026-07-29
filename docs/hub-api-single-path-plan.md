@@ -124,7 +124,7 @@ works against a local hub with no control box configured (today it errors).
 
 ---
 
-## Step 1 — Providers: `login` + `prepare`
+## Step 1 — Providers: `login` + `prepare` ✅ done
 
 - `agentbox <provider> login` → `POST /api/v1/providers/:id/credentials` (the route exists and
   validates against the cloud before persisting). **Also keep writing the local `secrets.env`**
@@ -140,6 +140,103 @@ works against a local hub with no control box configured (today it errors).
 `control-plane/hub-prepare.ts`, the per-provider `credentials.ts` call sites, `commands/doctor.ts`.
 **Verify:** `agentbox e2b login` then `agentbox prepare --provider e2b` against a **local** hub;
 confirm the bake runs hub-side and `~/.agentbox/e2b-prepared.json` lands on the hub's machine.
+
+**Landed.** `prepare` always bakes through the hub now: `runPrepare` → `runPrepareViaHub` →
+`bakeViaHub` (`control-plane/hub-prepare.ts`) does `POST /api/v1/providers/:id/prepare` +
+`streamJobLog` + polls `getJob` for the terminal verdict (a dropped SSE stream never reads as a
+successful bake — the poll is the source of truth). `control-plane/route-prepare.ts` (the old
+remote-only router) and its two tests (`route-prepare.test.ts`, `prepare-location.test.ts`) are
+deleted. Login publishes the credential to the hub via a one-slot hook in `@agentbox/sandbox-core`
+(`credential-publish.ts`, unit-tested) that the CLI installs at startup (`index.ts` →
+`publish-credentials.ts` → `HubApiClient.setProviderCredentials`) — **while still writing the local
+`secrets.env`**, the deliberate + temporary dual write (the IO plane is direct, so the PC needs the
+credential for `cp`/`attach` on SDK providers). `doctor` and `prepare --status` read the control
+box's inventory from `GET /api/v1/providers?freshness=1` (`renderControlBoxProviders`), gated to a
+genuinely-remote hub. **Verified end-to-end** against a local hub: `prepare --provider docker` ran
+the bake in the hub's queue worker (`docker lane 1/1`), pulled + tagged `agentbox/box:dev`, and wrote
+`~/.agentbox/docker-prepared.json` on the hub's machine; the co-located path reported `prepared
+docker` with no custody round-trip. `POST /api/v1/providers/e2b/credentials` validated (`{ok:true}`)
+and rejected an empty key (`invalid_request`).
+
+**Notes for later steps:**
+
+- **Routing flags vs bake inputs — only the two routing flags were removed; the bake inputs travel
+  through the widened route contract.** `--local` / `--via-hub` chose *where* to bake and are
+  meaningless under "prepare always goes through `/api/v1`", so they are gone. `--build` / `--size` /
+  `--location` / `--name` are *inputs to the bake itself*, so per the plan's design rule (same path,
+  same interface, behavior difference inside the route) the contract was **widened** to carry them
+  rather than dropping user-facing capability. The full path now threads them end-to-end:
+  `prepare` flags → `HubApiClient.prepareProvider` body → `parseProviderPrepare`
+  (`api/v1/.../prepare/route.ts` validation) → `prepareProvider` (hub-backend) → `enqueuePrepareJob`
+  → `QueueJobPrepare` (`packages/relay/src/queue.ts`) → the worker
+  `apps/cli/src/commands/_run-queued-prepare.ts`, which passes them into `provider.prepare`. When a
+  flag is **absent**, the worker fills it from the hub's own effective config —
+  `resolveBoxSize` (`box.size<Provider>`), `resolveDaytonaClass` (`box.daytonaClass`),
+  `resolvePrepareLocation` (`box.hetznerLocation` / `box.digitaloceanRegion` / `box.daytonaRegion`, a
+  new peer helper in `@agentbox/config`), `box.daytonaVmBaseImage`, and `box.imageRegistry` (now for
+  docker **and** daytona; the worker previously resolved it for docker only, which would have starved
+  a daytona `linux-vm` bake). `--build` maps to `allowPull: false`. **The queue files
+  (`queue.ts`, `_run-queued-prepare.ts`) are nominally Step 8's, but the maintainer authorized editing
+  them here** to fix this rather than ship a capability regression, since nothing was running in
+  parallel. Config-fallback semantics: a remote control-box bake uses the *control box's* config pins
+  for anything you don't pass explicitly (it owns its snapshots), consistent with how the worker
+  already treats `box.claudeInstall` / `box.imageRegistry`. Public docs (`cli.mdx`, `daytona.mdx`,
+  `e2b.mdx`, `hetzner.mdx`, `deployed-hub.mdx`) document the flags as working in both modes.
+- **The choice is WHICH HUB, not hub-vs-inline — Steps 5 and 8 will hit this same fork.** When
+  "always go through `/api/v1`" deletes an inline path, the cases the inline path used to handle
+  (`cloud.viaHub=false`, a local-only provider, a control box that can't reach a resource) do **not**
+  come back as an inline escape hatch — that would reintroduce the second implementation the whole
+  effort exists to delete. They come back as **target selection**: the same one client + one route,
+  pointed at the **local hub** instead of the remote control box. `resolveHubTarget` /
+  `resolveHubApiTarget` / `resolveHubApiClient` now take **`preferLocal`** — that is the reusable
+  "which hub" knob. `prepare`'s selector is the pure, unit-tested
+  `resolvePrepareTargetKind` (`commands/prepare.ts`, `test/prepare-target.test.ts`): local wins when
+  the hub is co-located, `cloud.viaHub=false` (the config **key** survives the flag removal — my
+  earlier "`--local`/`--via-hub` are safe to delete" was about the FLAGS only), the provider is
+  `docker` (its base is a local image), or a `remote-docker` alias the control box doesn't know but
+  the local hub does (was a Bugbot **High** — a control-box `POST /hosts/:alias/bake` would 404;
+  it now falls back to the local hub, same route, different base URL). Choosing local **is** the
+  `coLocated` signal (its artifact lands here → no custody round-trip). **Step 5 (lifecycle) and
+  Step 8 (create) must reuse `preferLocal` for the equivalent forks (`cloud.viaHub`, docker/
+  remote-docker, an unreachable resource) rather than resurrecting a direct-provider path.**
+- **`preferLocal` means "prefer the LOOPBACK target", NOT "jump to the plain local hub token"
+  (Bugbot **Medium**, and the identical trap for any future "use the local hub" shortcut).** A
+  `hub expose`-d machine's hub is on THIS machine yet runs the **password profile** — its `/api/v1`
+  authenticates with `AGENTBOX_HUB_API_KEY` over loopback, not the plain `~/.agentbox/hub/token`. So
+  `preferLocal` must reuse the Step-0 ladder verbatim: `localExposedLoopbackUrl()` **first** (mode
+  `remote` + API key over loopback), and only when the machine is **not** exposed fall through to the
+  plain local hub + hub token. It skips **only** the configured *remote* control-plane URL. A first
+  cut that short-circuited straight to `getHubStatus()` + the local token 401'd on an exposed machine
+  — exactly the trap Step 0's own notes warn about ("token presence is not liveness; the exposed case
+  is remote-shaped-but-local"). `hubIsCoLocated()` already got this right (it checks
+  `localExposedLoopbackUrl()`); `preferLocal` needed the same. Guarded by
+  `test/hub-target-prefer-local.test.ts`. **Any later step adding a local-hub shortcut must keep the
+  exposed/loopback branch ahead of the plain-token branch.**
+- **The login → hub credential push is best-effort, quiet, and non-spawning.**
+  `publish-credentials.ts` resolves the hub target with `{ quiet: true }` (no print, and — crucially
+  — no local-hub auto-start: a login must not start a daemon as a side effect), `hostReachable`-probes
+  before the POST, and never throws (the local `secrets.env` write is the guaranteed outcome). Only
+  the **interactive** `ensureXCredentials` publishes — never the headless `setCredentials` the hub
+  itself drives, or the POST would loop back into the hub. When a control box is configured but the
+  push fails, it warns (the push isn't cosmetic there — the control box needs the credential to build
+  cloud boxes); a pure-local user with a stopped hub gets no noise. The dual write is temporary; it
+  goes away when the IO plane moves behind the hub (see "Explicitly out of scope").
+- **Co-location is decided by `hubIsCoLocated()`** (`commands/prepare.ts`): `resolveHubTarget().mode
+  === 'local'` OR `localExposedLoopbackUrl()` is non-null (a `hub expose`d machine is `mode: 'remote'`
+  yet co-located). Co-located → `bakeViaHub({ coLocated: true })` skips the custody round-trip (the
+  worker already wrote the prepared-state to this machine); genuinely remote → adopt the record back
+  from custody. `doctor` / `prepare --status` reuse the same gate so a co-located hub never mislabels
+  its own local rows as a "control box".
+- **Docker prepare under a remote hub still routes to the control box** (the general hub-routing).
+  Making `docker` / `remote-docker` bake locally even when a control box is configured — because their
+  base is a local image, not a control-box snapshot — is **Step 12** (docker off under a remote hub),
+  not this step. `bakeViaHub` already special-cases `remoteHost` (a `docker:<alias>` host bake goes to
+  `/hosts/:alias/bake` and needs no adoption), but plain `docker` follows the standard route.
+- **`bakeViaHub` surfaces failures as a thrown `Error`, not via the exit-code carry.** A hub-side
+  precheck failure (no credentials there, docker down) comes back as an `HubApiError` whose `.message`
+  is surfaced verbatim; a failed job throws so the command's top-level handler prints it. It does not
+  need Step 6's `error.details.exitCode` carry (that is for faithful box-command exit codes on git
+  ops). If a later step wants `prepare` to exit with a provider-specific code, wire the carry in then.
 
 ---
 

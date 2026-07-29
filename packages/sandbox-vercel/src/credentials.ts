@@ -1,6 +1,11 @@
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { hostOpenCommand, writeManagedSecrets, type CredSetResult } from '@agentbox/sandbox-core';
+import {
+  hostOpenCommand,
+  publishManagedCredentials,
+  writeManagedSecrets,
+  type CredSetResult,
+} from '@agentbox/sandbox-core';
 import {
   cancel,
   confirm,
@@ -119,6 +124,15 @@ export async function ensureVercelCredentials(
   const creds = await promptForTokenTrio();
   persistCredentials(creds);
   log.success(`Vercel credentials saved to ${secretsPath()}`);
+  // Push to the hub (validates the token against the Vercel API + persists on the
+  // hub's machine); the local write above stays for the direct IO plane. Only the
+  // token trio is pushable — the CLI-login/OIDC modes have no static token a remote
+  // hub could use (they refresh live from the local Vercel CLI / shell env).
+  await publishManagedCredentials('vercel', {
+    token: creds.token,
+    teamId: creds.teamId,
+    projectId: creds.projectId,
+  });
   await ensureSbxInstalled();
   outro('Setup complete.');
 }

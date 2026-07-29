@@ -324,19 +324,19 @@ agentbox create --provider e2b --local     # force a local build on this machine
 ### Base images are baked on the control box too
 
 Because a cloud box is built on the control box from **its** baked base, baking that base on your
-laptop would spend minutes on a snapshot nothing boots. So `agentbox prepare` follows the same
-routing as `create`:
+laptop would spend minutes on a snapshot nothing boots. So `agentbox prepare` **always bakes on the
+hub** — the control box when one is configured, this machine's local hub otherwise:
 
 ```bash
 agentbox prepare --provider e2b            # bakes on the control box, then adopts the record here
-agentbox prepare --provider e2b --local    # bake on this machine instead
-agentbox prepare --provider e2b --via-hub  # fail rather than fall back to a local bake
 ```
 
 The bake's log streams to your terminal, and when it finishes the resulting bake record is pulled
-back into `~/.agentbox/<provider>-prepared.json`, so one bake leaves both machines current. Passing
-`--name`, `--location`, or `--size` keeps the bake local, since the control box's bake API doesn't
-carry those.
+back into `~/.agentbox/<provider>-prepared.json`, so one bake leaves both machines current. The bake
+inputs travel with the request, so `--force`, `--claude-install`, `--build`, `--size`, `--location`,
+and `--name` all work against the control box just as they do locally — a remote bake fills any you
+omit from the control box's own config pins (`box.sizeDaytona`, `box.daytonaClass`,
+`box.hetznerLocation`, `box.digitaloceanRegion`).
 
 **`docker` always bakes locally** — its base is an image on _this_ machine, so building it anywhere
 else would leave this one untouched. **`remote-docker` does route to the control box**, when that box

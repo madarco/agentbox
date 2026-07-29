@@ -107,10 +107,22 @@ import { urlCommand } from './commands/url.js';
 import { waitCommand } from './commands/wait.js';
 import { rewriteProviderPrefix } from './provider/argv-prefix.js';
 import { installConfigWarningSink } from './lib/config-warnings.js';
+import { setCredentialPublisher } from '@agentbox/sandbox-core';
 
 // Unknown config keys are non-fatal (a plugin's bundled parser may be older than
 // the CLI that wrote them) — the host CLI is the one that tells the user.
 installConfigWarningSink();
+
+// A provider login writes the local `secrets.env` AND mirrors the credential to
+// the hub (validate + persist on the hub's machine). Only the interactive setters
+// publish — the headless `setCredentials` the hub itself drives does not, so this
+// never loops back. Registered here (not in the provider packages) because the
+// hub client + target resolution live in the CLI; the inner import stays lazy to
+// avoid the hub.ts <-> control-plane.ts module cycle at load.
+setCredentialPublisher(async (providerId, fields) => {
+  const { publishProviderCredentials } = await import('./control-plane/publish-credentials.js');
+  await publishProviderCredentials(providerId, fields);
+});
 
 const program = new Command();
 
@@ -204,9 +216,7 @@ program.addCommand(
     .argument('[command]', 'command to show help for')
     .action((name: string | undefined) => {
       if (name) {
-        const sub = program.commands.find(
-          (c) => c.name() === name || c.aliases().includes(name),
-        );
+        const sub = program.commands.find((c) => c.name() === name || c.aliases().includes(name));
         if (!sub) program.error(`unknown command '${name}'`);
         sub!.help();
       }

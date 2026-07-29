@@ -149,21 +149,44 @@ export function parseProviderCredentials(body: unknown): Parsed<Record<string, s
   return { ok: true, value: out };
 }
 
-export function parseProviderPrepare(
-  body: unknown,
-): Parsed<{ force?: boolean; claudeInstall?: 'native' | 'npm' }> {
+export function parseProviderPrepare(body: unknown): Parsed<{
+  force?: boolean;
+  claudeInstall?: 'native' | 'npm';
+  build?: boolean;
+  size?: string;
+  location?: string;
+  name?: string;
+}> {
   // An empty/absent body is valid (bake with defaults).
   if (body === undefined || body === null) return { ok: true, value: {} };
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { force, claudeInstall } = body;
+  const { force, claudeInstall, build, size, location, name } = body;
   const fb = optionalBool(force, 'force');
   if (!fb.ok) return fb;
   if (claudeInstall !== undefined && claudeInstall !== 'native' && claudeInstall !== 'npm') {
     return { ok: false, message: "claudeInstall must be 'native' or 'npm'" };
   }
+  // Bake inputs (not routing): `--build` forces a local docker build; size /
+  // location / name are the fixed-at-bake-time knobs threaded from the CLI. Each
+  // falls back to the hub's effective config in the worker when absent here.
+  const bb = optionalBool(build, 'build');
+  if (!bb.ok) return bb;
+  const sz = optionalString(size, 'size');
+  if (!sz.ok) return sz;
+  const loc = optionalString(location, 'location');
+  if (!loc.ok) return loc;
+  const nm = optionalString(name, 'name');
+  if (!nm.ok) return nm;
   return {
     ok: true,
-    value: { force: fb.value, claudeInstall: claudeInstall as 'native' | 'npm' | undefined },
+    value: {
+      force: fb.value,
+      claudeInstall: claudeInstall as 'native' | 'npm' | undefined,
+      build: bb.value,
+      size: sz.value,
+      location: loc.value,
+      name: nm.value,
+    },
   };
 }
 

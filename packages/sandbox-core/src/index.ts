@@ -110,6 +110,11 @@ export {
 } from './doctor.js';
 export { maskSecret, secretsEnvPath, writeManagedSecrets } from './secrets.js';
 export {
+  publishManagedCredentials,
+  setCredentialPublisher,
+  type CredentialPublisher,
+} from './credential-publish.js';
+export {
   PLUGINS_FILE,
   SUPPORTED_SDK_API_VERSIONS,
   isSupportedApiVersion,
