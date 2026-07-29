@@ -72,7 +72,9 @@ CLI, not the raw commits.
 - **The System page shows what your machine hands to a box** — agent configs, your
   skills (by name), and `~/.gitconfig` — replacing the old list of AgentBox's own baked
   files, which said nothing about your setup. Present-only, so a path missing from that
-  list is one no box will receive. A new **Box image** card gives the registry, the exact
+  list is one no box will receive. On a control box, where that home directory is the
+  VPS's, it instead reports what a hub-created box really gets — the agent logins held in
+  custody, with a link across to Custody. The **Docker** row carries the registry, the exact
   `sha-…` tag this host pulls, and the fingerprint it last stamped — the facts a "why
   didn't it use the prebuilt image?" question otherwise needs a terminal to answer.
 - **Web UI: a Custody page and a System page.** Custody lists what the control box
@@ -119,9 +121,9 @@ CLI, not the raw commits.
   local hub, instead of a derived key.
 - The browser pages of the GitHub App flow (the redirect and the callback) are
   styled and light/dark aware instead of bare HTML.
-- The startup "agentbox was updated" prompt says what the refresh actually does
-  (skills, box-image check, relay reload, menu-bar app) instead of offering to
-  "download new version now?" — nothing is downloaded.
+- The startup "agentbox was updated" prompt and `self-update`'s plan say what the
+  refresh actually does (the box image is re-checked, not deleted) instead of
+  offering to "download new version now?" — nothing is downloaded.
 - **With a control box configured, cloud creates now go to it by default** —
   `agentbox create` and foreground `claude`/`codex`/`opencode` on a cloud
   provider. `--local` or `cloud.viaHub=false` keeps them on this machine; docker
