@@ -60,9 +60,11 @@ import {
   boxServicesStatusRaw,
   boxSshDirForProvider,
   matchClaudeInstallFingerprint,
+  mutateState,
   readPreparedStateRaw,
   readState,
   recordBox,
+  scratchBranchName,
   secretsEnvPath,
   setBoxDisplayName,
   syncAgentboxSshConfig,
@@ -80,6 +82,7 @@ import {
   generateRelayToken,
   listBoxes,
   mintHostInitiatedToken,
+  registerBoxWithRelay,
   type ListedBox,
 } from '@agentbox/sandbox-docker';
 import type {
@@ -1248,14 +1251,82 @@ async function gitOp(
     if (!rp) return { ok: false, error: `box ${id} not found` };
     const r = await fn(rp.box, rp.provider);
     if (r.exitCode !== 0) {
+      // Carry the box command's own exit code so a client can surface a faithful
+      // exit — e.g. 64 from `git push --host-only` when the box's host has no
+      // working copy — instead of the /api/v1 code→exit table's coarse mapping.
       return {
         ok: false,
         error: (r.stderr || r.stdout || `command exited ${String(r.exitCode)}`).trim(),
+        exitCode: r.exitCode,
       };
     }
     return { ok: true, stdout: r.stdout, stderr: r.stderr };
   } catch (err) {
     return { ok: false, error: errMsg(err) };
+  }
+}
+
+/**
+ * Record `branch` as the box's host-sanctioned branch after a host-driven
+ * checkout/branch. The relay auto-approves an in-box push only to a scratch
+ * branch or this value, so a host branch switch must update it — otherwise the
+ * agent would be prompted to push the branch the host just put it on. Persists
+ * to state.json (docker root worktree + cloud field) and re-registers docker
+ * boxes so the running relay's in-memory registry picks up the new value. This
+ * hub server IS the relay process, so `registerBoxWithRelay`'s loopback
+ * admin-post reaches it in-process (same path as `mintHostInitiatedToken`).
+ *
+ * Best-effort: a failure here only means the next push to that branch prompts —
+ * it never blocks the branch switch. Moved here from the CLI's `git.ts` so both
+ * frontends sanction identically, in both local and remote-hub modes.
+ */
+async function sanctionBranch(box: BoxRecord, branch: string): Promise<void> {
+  try {
+    await mutateState((state) => {
+      const b = state.boxes.find((x) => x.id === box.id);
+      if (!b) return state;
+      if (b.gitWorktrees) {
+        for (const w of b.gitWorktrees) {
+          if (w.kind === 'root') w.sanctionedBranch = branch;
+        }
+      }
+      if (b.cloud) b.cloud.sanctionedBranch = branch;
+      return state;
+    });
+  } catch {
+    return; // couldn't persist → leave the gate as-is
+  }
+  // Docker's push gate reads the in-memory registry, so re-register to refresh
+  // the root worktree's sanctionedBranch. Cloud's gate reads state.json per RPC,
+  // so the persist above is enough — no cloud re-register needed.
+  const isDocker = box.provider === 'docker' || box.provider === undefined;
+  if (isDocker && box.relayToken) {
+    const worktrees = (box.gitWorktrees ?? []).map((w) =>
+      w.kind === 'root' ? { ...w, sanctionedBranch: branch } : w,
+    );
+    try {
+      await registerBoxWithRelay({
+        boxId: box.id,
+        token: box.relayToken,
+        name: box.name,
+        containerName: box.container,
+        createdAt: box.createdAt,
+        projectIndex: box.projectIndex,
+        worktrees,
+        autoApproveHostActions: box.autoApproveHostActions,
+        autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+      });
+    } catch (err) {
+      // Persisted to state.json, but the running relay still holds the old
+      // sanctioned branch until it re-registers (next restart/rehydrate reads
+      // state.json). Best-effort — the branch switch itself already succeeded —
+      // but log it: silent staleness would leave the push gate following the
+      // wrong branch with no signal (the CLI used to warn on stderr here).
+      console.warn(
+        `[hub] sanction ${branch} for ${box.name}: persisted, but the relay did not pick it up ` +
+          `(${errMsg(err)}); pushes to ${branch} stay gated until \`agentbox relay restart\`.`,
+      );
+    }
   }
 }
 
@@ -1909,10 +1980,28 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     },
 
     // ── box git operations (delegate to the shared, provider-agnostic helpers) ──
-    gitCheckout: (id, branch) =>
-      gitOp(id, (box, provider) => boxGitCheckout(provider, box, branch), hydrate),
+    // checkout/branch additionally sanction the resulting branch so a later
+    // in-box push to it isn't prompted (best-effort; see sanctionBranch).
+    gitCheckout: (id, branch, args) =>
+      gitOp(
+        id,
+        async (box, provider) => {
+          const r = await boxGitCheckout(provider, box, branch, args);
+          if (r.exitCode === 0) await sanctionBranch(box, branch);
+          return r;
+        },
+        hydrate,
+      ),
     gitNewBranch: (id, input) =>
-      gitOp(id, (box, provider) => boxGitNewBranch(provider, box, input.name, input.from), hydrate),
+      gitOp(
+        id,
+        async (box, provider) => {
+          const r = await boxGitNewBranch(provider, box, input.name, input.from);
+          if (r.exitCode === 0) await sanctionBranch(box, scratchBranchName(input.name));
+          return r;
+        },
+        hydrate,
+      ),
     gitPush: (id, input = {}) =>
       gitOp(id, (box, provider) => boxGitPush(provider, box, input, hubGitDeps(id)), hydrate),
     gitPull: (id, input = {}) =>

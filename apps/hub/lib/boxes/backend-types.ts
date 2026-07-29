@@ -6,7 +6,13 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 // Result of a box git/service operation that runs a command in the box. On
 // success it carries the command's stdout/stderr so the UI can surface git's
 // output; on failure `error` is the trimmed stderr (or a resolve error).
-export type BoxOpResult = { ok: true; stdout?: string; stderr?: string } | { ok: false; error: string };
+// `exitCode` is the failing box command's own exit code when the failure came
+// from a non-zero exec (not a resolve error) — carried so a client can surface a
+// faithful exit (e.g. 64 for `git push --host-only` with no host checkout), which
+// the /api/v1 code→exit table can't otherwise express.
+export type BoxOpResult =
+  | { ok: true; stdout?: string; stderr?: string }
+  | { ok: false; error: string; exitCode?: number };
 
 // Host apps a box can be opened in (`agentbox open --in <app>`). Mirrors the
 // CLI's OPEN_IN_APPS (apps/cli/src/commands/_open-in.ts); duplicated here to keep
@@ -219,15 +225,26 @@ export interface HubBackend {
 
   // ── box git operations ──
   // Change the box's working branch (git checkout, local to the worktree).
-  gitCheckout(id: string, branch: string): Promise<BoxOpResult>;
+  // `args` are extra flags forwarded to `git checkout` (e.g. a pathspec).
+  gitCheckout(id: string, branch: string, args?: string[]): Promise<BoxOpResult>;
   // Create a fresh agentbox/* branch from HEAD (or `from`) and switch onto it.
   gitNewBranch(id: string, input: { name: string; from?: string }): Promise<BoxOpResult>;
-  // Push the box's branch to the remote via the host relay.
-  gitPush(id: string, input?: { remote?: string; force?: boolean }): Promise<BoxOpResult>;
-  // Fetch via the relay then merge locally in the box.
-  gitPull(id: string, input?: { remote?: string; ffOnly?: boolean }): Promise<BoxOpResult>;
+  // Push the box's branch to the remote via the host relay. `args` are extra
+  // flags forwarded to the host-built `git push` (e.g. --tags, --force-with-lease).
+  gitPush(
+    id: string,
+    input?: { remote?: string; force?: boolean; args?: string[] },
+  ): Promise<BoxOpResult>;
+  // Fetch via the relay then merge locally in the box. `args` forward to the op.
+  gitPull(
+    id: string,
+    input?: { remote?: string; ffOnly?: boolean; args?: string[] },
+  ): Promise<BoxOpResult>;
   // Land the box's branch in the host's local repo only (publishes nothing).
-  gitPushHost(id: string, input?: { as?: string; force?: boolean }): Promise<BoxOpResult>;
+  gitPushHost(
+    id: string,
+    input?: { as?: string; force?: boolean; args?: string[] },
+  ): Promise<BoxOpResult>;
   // Live git summary (current branch + dirty/ahead/behind) for the detail panel.
   getGit(id: string): Promise<GitInfo>;
 

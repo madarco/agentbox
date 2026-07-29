@@ -49,6 +49,18 @@ export function exitCodeForApiError(code: string): number {
   return EXIT_BY_CODE[code] ?? 1;
 }
 
+/**
+ * The exit code to report for a hub error. A carried `details.exitCode` (a box
+ * command's own exit — e.g. 64 for `git push --host-only` with no host checkout)
+ * wins, so the CLI surfaces the box's faithful exit rather than the coarse
+ * code→exit mapping. Falls back to the per-code table otherwise.
+ */
+function exitCodeForHubError(err: HubApiError): number {
+  const carried = (err.details as { exitCode?: unknown } | undefined)?.exitCode;
+  if (typeof carried === 'number' && Number.isInteger(carried) && carried > 0) return carried;
+  return exitCodeForApiError(err.code);
+}
+
 /** An extra actionable line for the error classes where the raw message isn't enough. */
 function hintForApiError(err: HubApiError): string | null {
   switch (err.code) {
@@ -83,7 +95,7 @@ function reportHubError(err: unknown, url: string): void {
     log.error(err.message);
     const hint = hintForApiError(err);
     if (hint) log.info(hint);
-    process.exitCode = exitCodeForApiError(err.code);
+    process.exitCode = exitCodeForHubError(err);
     return;
   }
   // A fetch/network failure (hub down, wrong URL) surfaces as a plain Error.

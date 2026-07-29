@@ -151,12 +151,19 @@ export interface HubApiTarget {
   fetchImpl?: typeof fetch;
 }
 
-/** An error carrying the `/api/v1` envelope's code + HTTP status. */
+/** An error carrying the `/api/v1` envelope's code + HTTP status (+ optional details). */
 export class HubApiError extends Error {
   constructor(
     message: string,
     readonly code: string,
     readonly status: number,
+    /**
+     * The envelope's `error.details`, when present. Git ops carry the box
+     * command's own `exitCode` here so a caller can surface a faithful exit
+     * (e.g. 64 for `push --host-only` with no host checkout) that the coarse
+     * code→exit mapping can't express.
+     */
+    readonly details?: unknown,
   ) {
     super(message);
     this.name = 'HubApiError';
@@ -201,6 +208,7 @@ export class HubApiClient {
         err?.message ?? `request failed: ${res.status}`,
         err?.code ?? 'internal',
         res.status,
+        err?.details,
       );
     }
     return parsed as T;

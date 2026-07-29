@@ -409,6 +409,16 @@ agentbox attach from-web-ui      # adopts it, then attaches
 
 Adoption writes the local box record from the control box's registration and downloads the box's per-box SSH key from custody, so `attach`, `cp`, `download`, `url`, and `screen` then work exactly as for a box you created here. If the box's repo is also cloned on your laptop, adoption links it to that clone, so it appears in the project-scoped `agentbox ls` too, and its `git push` targets your local repo.
 
+<Callout type="warn" title="`git push --host-only` needs a host working copy">
+  `agentbox git push <box> --host-only` lands the box's branch in the **host repo of the machine
+  that runs the box** — for a control-box-created cloud box, that's the control box, which has no
+  working copy (it clones each box as a bundle, not a checkout). So it fails with a clear
+  `--host-only is unavailable … no working copy` message (exit 64); push to the remote instead
+  (`agentbox git push <box>`). Host-only still works normally for a box whose host does have the
+  checkout — a docker box, or a box on a machine you've `hub expose`d — regardless of whether you
+  reach that hub locally or as a remote.
+</Callout>
+
 To adopt without attaching (or to refresh a record after the box's VPS IP changed):
 
 ```bash

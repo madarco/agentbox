@@ -290,19 +290,63 @@ adopt, for one SSH provider (hetzner) and one SDK provider (e2b).
 
 ---
 
-## Step 6 — Git
+## Step 6 — Git ✅ done
 
 - `agentbox git push|pull|checkout|branch|push --host-only` → `POST /api/v1/boxes/:id/git/:op`
-  (routes exist, unused by the CLI).
+  (routes existed, unused by the CLI; now the CLI's path via `withHubClient` + `client.git`).
 - `packages/sandbox-core/src/box-git.ts` stays the shared implementation — only the *caller*
-  moves. The CLI stops minting host-initiated tokens; the hub does it via `hubGitDeps`
-  (`hub-backend.ts:1154`).
-- `push --host-only` is definitionally host-checkout-bound: on a remote hub it must fail with the
-  existing clear error (exit 64), not a cryptic `git -C` failure.
+  moved. The CLI stopped minting host-initiated tokens for these ops; the hub mints them via
+  `hubGitDeps` (`hub-backend.ts`).
+- `push --host-only` is definitionally host-checkout-bound: on a hub whose box has no host
+  working copy it fails with the existing clear error (exit 64), not a cryptic `git -C` failure.
 
-**Files:** `commands/git.ts`, `hub-api-client.ts` (`git()` already exists).
-**Verify:** push from a box through a local hub and through a control box; check ground truth
-with `git ls-remote`, not the exit code.
+**Files:** `commands/git.ts`, `hub-api-client.ts` (`HubApiError.details` added), `with-hub.ts`
+(exit-code carry), plus server-side parity: `hub-backend.ts` (`sanctionBranch` +
+`gitOp` exit-code), `backend-types.ts`, `validate.ts` (`args`), `envelope.ts`,
+`api/v1/boxes/[id]/git/[op]/route.ts`.
+**Verified end-to-end (docker box, ground truth via `git ls-remote` on a local bare remote):**
+- **Local mode:** `git push`, `git branch <box> foo` + push, and `git checkout` all land the
+  branch on the remote. Sanctioning moved server-side is proven directly: `git checkout <box>
+  <branch>` triggers a hub-backend re-register (`sanctionBranch`), after which an *in-box* push
+  (no host token) to that branch auto-approves (no pending approval) and lands — the CLI never
+  touches the relay registry.
+- **Remote mode** (CLI pointed at the same hub as a `mode: 'remote'` target — `controlPlaneUrl`
+  + `AGENTBOX_HUB_API_KEY`): `git push` lands on the remote, and — the case the correction is
+  about — `git push <box> --host-only` **SUCCEEDS** even in remote mode, because the machine IS
+  the host with the checkout. A `resolveHubTarget().mode` pre-check would have wrongly refused it;
+  the code has none.
+- **Exit-code carry:** a git failure surfaced the box command's real exit code faithfully
+  (observed **128** for a host-only run whose host workspace was removed) rather than the coarse
+  code→exit table's `conflict`=5 — proving `error.details.exitCode` round-trips through the
+  `withHubClient` mapper for any value, including >6.
+
+**Not reproducible in the dev sandbox (documented gap, not a code gap):** the *clean* exit-**64**
+`--host-only is unavailable … no working copy` message comes from the cloud `runGitRpc` path,
+which needs a **control-box-created cloud box** (empty registered `workspacePath`). That requires
+`gh auth` for the control-plane git credential (absent here) and a machine where the fallback
+`/workspace` doesn't exist. Exit 64 is unchanged existing code sitting behind the carry proven
+above (128); a docker box's artificially-absent workspace takes the docker `git -C` path (exit
+128), not the cloud 64 guard. Worth a follow-up check against a real Hetzner control box.
+
+### Notes for later steps
+
+- **Sanctioning moved server-side.** The host-sanctioned-branch record (so a later in-box agent
+  push isn't prompted) now lives in the hub backend (`sanctionBranch` in `hub-backend.ts`),
+  driven by `gitCheckout`/`gitNewBranch`. The CLI no longer touches `registerBoxWithRelay` /
+  `mutateState` for git — steps converting other mutating ops should keep that pattern (mutate
+  host/relay state in the hub backend, not the CLI).
+- **Exit-code carry.** Git error envelopes now carry the box command's own exit code in
+  `error.details.exitCode`; `HubApiError` exposes it as `details`, and `with-hub.ts`'s
+  `exitCodeForHubError` honors it (falling back to the Step-0 code→exit table). Any later step
+  that must surface a faithful box exit code — or an exit outside the 1–6 table (e.g. 64) —
+  should reuse this carry rather than the code→exit table alone.
+- **Host-only keys on the real condition, not transport mode.** `push --host-only` must NOT
+  pre-check `resolveHubTarget().mode`: a `hub expose`d machine is `mode: 'remote'` yet IS the
+  host with the checkout. The server's `runGitRpc` host-only branch already returns exit 64 on a
+  genuinely-absent `workspacePath`; let the request through in all modes and surface that verdict.
+- **`fetch`, `status`, and the `pr` group stay INLINE** and still mint their own host-initiated
+  tokens — no `/api/v1` route exists for them yet. Converging them needs new routes in a later
+  step (a `git/fetch` op, and a `gh pr` surface).
 
 ---
 

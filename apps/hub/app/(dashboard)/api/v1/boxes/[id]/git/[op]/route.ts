@@ -18,7 +18,10 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(req: Request, ctx: { params: Promise<{ id: string; op: string }> }): Promise<Response> {
+export async function POST(
+  req: Request,
+  ctx: { params: Promise<{ id: string; op: string }> },
+): Promise<Response> {
   const { id, op } = await ctx.params;
   if (!isGitOp(op)) {
     return fail('invalid_request', `unknown git op: ${op}`, { allowed: [...GIT_OPS] });
@@ -42,7 +45,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string; op
     case 'checkout': {
       const p = parseGitCheckout(body);
       if (!p.ok) return fail('invalid_request', p.message, p.details);
-      res = await backend.gitCheckout(id, p.value.branch);
+      res = await backend.gitCheckout(id, p.value.branch, p.value.args);
       break;
     }
     case 'branch': {
@@ -71,6 +74,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string; op
     }
   }
 
-  if (!res.ok) return failFromAction(res.error);
+  if (!res.ok) {
+    // Carry the box command's exit code so the client can surface a faithful
+    // exit (e.g. 64 for `push-host` with no host checkout) the code→exit table
+    // can't express. The classified error code (409/404) is unchanged.
+    return failFromAction(
+      res.error,
+      res.exitCode !== undefined ? { exitCode: res.exitCode } : undefined,
+    );
+  }
   return ok({ ok: true, stdout: res.stdout ?? '', stderr: res.stderr ?? '' });
 }
