@@ -9,9 +9,10 @@ interface Call {
 }
 
 /** A fetch stub that records calls and replies from a per-path table. */
-function stub(
-  replies: Record<string, { status: number; body?: unknown }>,
-): { fetchImpl: typeof fetch; calls: Call[] } {
+function stub(replies: Record<string, { status: number; body?: unknown }>): {
+  fetchImpl: typeof fetch;
+  calls: Call[];
+} {
   const calls: Call[] = [];
   const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
     const u = String(url);
@@ -23,7 +24,10 @@ function stub(
       body: init?.body ? JSON.parse(init.body as string) : undefined,
     });
     const key = `${method} ${new URL(u).pathname}`;
-    const reply = replies[key] ?? { status: 404, body: { error: { code: 'not_found', message: 'no route' } } };
+    const reply = replies[key] ?? {
+      status: 404,
+      body: { error: { code: 'not_found', message: 'no route' } },
+    };
     return new Response(reply.body === undefined ? null : JSON.stringify(reply.body), {
       status: reply.status,
     });
@@ -31,12 +35,19 @@ function stub(
   return { fetchImpl, calls };
 }
 
-const target = (fetchImpl: typeof fetch) => ({ url: 'https://hub.example/', apiKey: 'KEY', fetchImpl });
+const target = (fetchImpl: typeof fetch) => ({
+  url: 'https://hub.example/',
+  apiKey: 'KEY',
+  fetchImpl,
+});
 
 describe('HubApiClient', () => {
   it('lists boxes and unwraps the envelope', async () => {
     const { fetchImpl, calls } = stub({
-      'GET /api/v1/boxes': { status: 200, body: { boxes: [{ id: 'b1', provider: 'e2b', status: 'running', branch: 'x', task: 't' }] } },
+      'GET /api/v1/boxes': {
+        status: 200,
+        body: { boxes: [{ id: 'b1', provider: 'e2b', status: 'running', branch: 'x', task: 't' }] },
+      },
     });
     const boxes = await new HubApiClient(target(fetchImpl)).listBoxes();
     expect(boxes).toHaveLength(1);
@@ -47,27 +58,36 @@ describe('HubApiClient', () => {
   });
 
   it('posts a lifecycle action to the right path', async () => {
-    const { fetchImpl, calls } = stub({ 'POST /api/v1/boxes/b1/pause': { status: 200, body: { ok: true } } });
+    const { fetchImpl, calls } = stub({
+      'POST /api/v1/boxes/b1/pause': { status: 200, body: { ok: true } },
+    });
     await new HubApiClient(target(fetchImpl)).lifecycle('b1', 'pause');
     expect(calls[0]!.method).toBe('POST');
     expect(calls[0]!.url).toBe('https://hub.example/api/v1/boxes/b1/pause');
   });
 
   it('destroy maps to the destroy lifecycle action', async () => {
-    const { fetchImpl, calls } = stub({ 'POST /api/v1/boxes/b1/destroy': { status: 200, body: { ok: true } } });
+    const { fetchImpl, calls } = stub({
+      'POST /api/v1/boxes/b1/destroy': { status: 200, body: { ok: true } },
+    });
     await new HubApiClient(target(fetchImpl)).destroy('b1');
     expect(calls[0]!.url).toBe('https://hub.example/api/v1/boxes/b1/destroy');
   });
 
   it('answers an approval with the answer body', async () => {
-    const { fetchImpl, calls } = stub({ 'POST /api/v1/approvals/p1/answer': { status: 200, body: { ok: true } } });
+    const { fetchImpl, calls } = stub({
+      'POST /api/v1/approvals/p1/answer': { status: 200, body: { ok: true } },
+    });
     await new HubApiClient(target(fetchImpl)).answerApproval('p1', 'y');
     expect(calls[0]!.body).toEqual({ answer: 'y' });
   });
 
   it('throws a typed HubApiError carrying the envelope code + status', async () => {
     const { fetchImpl } = stub({
-      'POST /api/v1/boxes/gone/pause': { status: 404, body: { error: { code: 'not_found', message: 'box not found: gone' } } },
+      'POST /api/v1/boxes/gone/pause': {
+        status: 404,
+        body: { error: { code: 'not_found', message: 'box not found: gone' } },
+      },
     });
     const client = new HubApiClient(target(fetchImpl));
     await expect(client.lifecycle('gone', 'pause')).rejects.toMatchObject({
@@ -80,6 +100,21 @@ describe('HubApiClient', () => {
 
   it('treats 204 as a successful empty response', async () => {
     const { fetchImpl } = stub({ 'POST /api/v1/boxes/b1/stop': { status: 204 } });
-    await expect(new HubApiClient(target(fetchImpl)).lifecycle('b1', 'stop')).resolves.toBeUndefined();
+    await expect(
+      new HubApiClient(target(fetchImpl)).lifecycle('b1', 'stop'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('reads the health probe (apiVersion + version)', async () => {
+    const { fetchImpl, calls } = stub({
+      'GET /api/v1/health': {
+        status: 200,
+        body: { ok: true, apiVersion: 'v1', version: '0.28.0', profile: 'localhost' },
+      },
+    });
+    const h = await new HubApiClient(target(fetchImpl)).health();
+    expect(h.apiVersion).toBe('v1');
+    expect(h.version).toBe('0.28.0');
+    expect(calls[0]!.url).toBe('https://hub.example/api/v1/health');
   });
 });

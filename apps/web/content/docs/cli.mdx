@@ -479,7 +479,8 @@ agentbox hub set-url https://<your-hub-url>
 # Status of the configured remote hub (or the local hub when none is set)
 agentbox hub status
 
-# Drive the control box remotely (laptop can be off)
+# Drive boxes through the hub's /api/v1 — a remote control box (laptop can be off),
+# or the local hub, which is started automatically if it isn't already running
 agentbox hub boxes list
 agentbox hub boxes start|stop|pause|resume|rm <box>
 agentbox hub approvals list
