@@ -314,7 +314,7 @@ if (AGENTBOX_VERSION !== '0.0.0-dev') {
         // is another version waiting" — confusing right after the user installed
         // this one on purpose, and wrong: nothing downloads here except the
         // menu-bar app, and only when its published build differs.
-        message: `agentbox was updated (${state.lastRunVersion} → ${AGENTBOX_VERSION}) — refresh skills, box image, relay and the menu-bar app?`,
+        message: `agentbox was updated (${state.lastRunVersion} → ${AGENTBOX_VERSION}) — refresh skills, re-check the box image, reload the relay and the menu-bar app?`,
         initialValue: true,
       });
       if (yes) {

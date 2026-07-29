@@ -185,7 +185,7 @@ export const updateCommand = new Command('self-update')
   .option('--dry-run', "show what would happen, don't change anything")
   .option(
     '--skip-self',
-    'skip the package self-update; only refresh the skills + image + relay + app',
+    'skip the package self-update; only refresh the skills, re-check the image, and reload the relay + app',
   )
   .option(
     '--skip-skills',
@@ -245,7 +245,8 @@ export const updateCommand = new Command('self-update')
           'plan:',
           `  ${selfStep}`,
           `  ${skillsStep}`,
-          `  image: docker image rm -f ${DEFAULT_BOX_IMAGE} (rebuilds on next create/claude)`,
+          `  image: re-check ${DEFAULT_BOX_IMAGE} (left in place; its build-context fingerprint rebuilds it on the next create only if it changed)`,
+          '  bases: adopt any matching cloud base bake from the control box, if one is configured',
           '  relay: stop, then respawn',
           '  app: update the menu-bar app if the published build changed (macOS, when installed)',
           ...(hubStep ? [`  ${hubStep}`] : []),

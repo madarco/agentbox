@@ -743,12 +743,12 @@ EOF`
 - [ ] **UPDATE-001** `self-update --dry-run` shows plan.
   - **Providers:** [all]
   - **Run:** `node apps/cli/dist/index.js self-update --dry-run`.
-  - **Signal:** lists steps: npm self-upgrade, image wipe, relay restart; nothing executed.
+  - **Signal:** lists steps: npm self-upgrade, image re-check (left in place, not deleted), relay restart; nothing executed.
 
-- [ ] **UPDATE-002** `self-update --skip-self -y` refreshes image + relay only.
+- [ ] **UPDATE-002** `self-update --skip-self -y` re-checks the image + reloads the relay only.
   - **Providers:** [docker]
   - **Run:** `self-update --skip-self -y`.
-  - **Signal:** local `agentbox/box:dev` rebuilt; relay restarted; npm step skipped.
+  - **Signal:** `agentbox/box:dev` reported as current or stale (never deleted); relay restarted; npm step skipped.
 
 ---
 
