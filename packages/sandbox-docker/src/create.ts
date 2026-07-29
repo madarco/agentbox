@@ -762,6 +762,16 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // box's supervisor can post on boot. Skip if the relay isn't reachable —
   // the box still works, it just won't deliver events to the host.
   const relayToken = generateRelayToken();
+  // Repo identity, so a thin client can map this box to a local project by
+  // origin URL (cross-machine), not just by folder path — the registration-side
+  // half of Step 4's box resolution. Best-effort: a box without a git origin
+  // simply registers none.
+  const originRepo = gitWorktreeRecords[0]?.hostMainRepo ?? opts.projectRoot ?? workspace;
+  const originUrl = await execa('git', ['-C', originRepo, 'remote', 'get-url', 'origin'], {
+    reject: false,
+  })
+    .then((r) => (r.exitCode === 0 ? r.stdout.trim() || undefined : undefined))
+    .catch(() => undefined);
   if (relayUp) {
     try {
       await registerBoxWithRelay({
@@ -774,6 +784,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         worktrees: gitWorktreeRecords,
         autoApproveHostActions,
         autoApproveSafeHostActions,
+        originUrl,
       });
       log(`registered box token with relay`);
     } catch (err) {

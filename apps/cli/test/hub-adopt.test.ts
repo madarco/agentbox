@@ -11,12 +11,11 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest';
 const TEST_HOME = mkdtempSync(join(tmpdir(), 'agentbox-hub-adopt-home-'));
 process.env['HOME'] = TEST_HOME;
 
-const { adoptHubBox, normalizeOriginUrl, HubBoxNotFoundError } = await import(
-  '../src/control-plane/hub-adopt.js'
-);
-const { ControlPlaneAdminClient } = await import('../src/control-plane/admin-client.js');
+const { adoptHubBox, normalizeOriginUrl } = await import('../src/control-plane/hub-adopt.js');
 const { CustodyClient } = await import('../src/control-plane/custody-client.js');
 const { readState } = await import('@agentbox/sandbox-core');
+
+type HubApiBox = import('../src/control-plane/hub-api-client.js').HubApiBox;
 
 const scratch: string[] = [];
 
@@ -28,39 +27,32 @@ afterAll(async () => {
   for (const dir of scratch) await rm(dir, { recursive: true, force: true });
 });
 
-interface FakeReg {
-  boxId: string;
-  name: string;
-  backend?: string;
-  sandboxId?: string;
-  originUrl?: string;
-  publicHost?: string;
-  image?: string;
-  webPort?: number;
-  agent?: string;
-  token?: string;
-  worktrees?: Array<{ containerPath: string; hostMainRepo: string; branch: string; sanctionedBranch?: string }>;
+/** A resolved hub box as `GET /api/v1/boxes?ref=` would return it. */
+function hubBox(p: Partial<HubApiBox> & { id: string }): HubApiBox {
+  return {
+    task: p.name ?? p.id,
+    provider: 'e2b',
+    status: 'running',
+    branch: `agentbox/${p.name ?? p.id}`,
+    ...p,
+  };
 }
 
-/** A fake control box serving the store RPC + custody surfaces adoption uses. */
-function fakeControlBox(opts: { boxes: FakeReg[]; custody?: Record<string, string> }): typeof fetch {
-  const custody = opts.custody ?? {};
-  return (async (url: unknown, init?: { method?: string; body?: string }) => {
+/** A fake control box serving only the custody surface adoption uses for SSH keys. */
+function fakeCustody(custody: Record<string, string> = {}): typeof fetch {
+  return (async (url: unknown) => {
     const u = new URL(String(url));
-    if (u.pathname === '/admin/store') {
-      const body = JSON.parse(init?.body ?? '{}') as { method: string };
-      if (body.method === 'listBoxes') {
-        return json({
-          result: opts.boxes.map((b) => ({ registeredAt: new Date().toISOString(), ...b })),
-        });
-      }
-      return json({ result: null });
-    }
     if (u.pathname === '/admin/custody') {
       const prefix = u.searchParams.get('prefix') ?? '';
       const entries = Object.keys(custody)
         .filter((p) => !prefix || p === prefix || p.startsWith(`${prefix}/`))
-        .map((p) => ({ path: p, size: custody[p]!.length, sha256: 'x', mode: 0o600, updatedAt: '' }));
+        .map((p) => ({
+          path: p,
+          size: custody[p]!.length,
+          sha256: 'x',
+          mode: 0o600,
+          updatedAt: '',
+        }));
       return json({ entries });
     }
     if (u.pathname.startsWith('/admin/custody/')) {
@@ -80,13 +72,8 @@ function json(body: unknown): Response {
   });
 }
 
-function clients(fetchImpl: typeof fetch) {
-  const target = { url: 'http://cb.test', adminToken: 'admin', fetchImpl };
-  return {
-    admin: new ControlPlaneAdminClient(target),
-    custody: new CustodyClient(target),
-    controlPlaneUrl: target.url,
-  };
+function custodyClient(fetchImpl: typeof fetch) {
+  return new CustodyClient({ url: 'http://cb.test', adminToken: 'admin', fetchImpl });
 }
 
 /**
@@ -125,27 +112,25 @@ describe('normalizeOriginUrl', () => {
 });
 
 describe('adoptHubBox', () => {
-  it('rebuilds a hetzner box record from the registration and pulls its ssh keys', async () => {
-    const fetchImpl = fakeControlBox({
-      boxes: [
-        {
-          boxId: 'brave-otter',
-          name: 'brave-otter',
-          backend: 'hetzner',
-          sandboxId: 'sb-42',
-          publicHost: '5.6.7.8',
-          image: 'snap-1',
-          webPort: 8080,
-          agent: 'claude',
-          originUrl: 'https://github.com/o/r.git',
-          worktrees: [
-            { containerPath: '/workspace', hostMainRepo: '/tmp/hub-clone', branch: 'agentbox/brave-otter' },
-          ],
-        },
-      ],
-      custody: { 'boxes/sb-42/ssh/id_ed25519': 'PRIVATE-KEY' },
+  it('rebuilds a hetzner box record from the payload and pulls its ssh keys', async () => {
+    const custody = custodyClient(fakeCustody({ 'boxes/sb-42/ssh/id_ed25519': 'PRIVATE-KEY' }));
+    const res = await adoptHubBox({
+      box: hubBox({
+        id: 'brave-otter',
+        name: 'brave-otter',
+        provider: 'hetzner',
+        sandboxId: 'sb-42',
+        publicHost: '5.6.7.8',
+        image: 'snap-1',
+        webPort: 8080,
+        lastAgent: 'claude',
+        originUrl: 'https://github.com/o/r.git',
+        branch: 'agentbox/brave-otter',
+      }),
+      custody,
+      controlPlaneUrl: 'http://cb.test',
+      cwd: TEST_HOME,
     });
-    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'brave-otter', cwd: TEST_HOME });
 
     expect(res.refreshed).toBe(false);
     expect(res.sshFiles).toEqual(['id_ed25519']);
@@ -174,10 +159,18 @@ describe('adoptHubBox', () => {
     // Regression: `identityFile` was built as `${dir ?? ''}/id_ed25519`, so a
     // provider reporting a publicHost without a keypair (e.g. a plugin) wrote
     // the absolute path `/id_ed25519` into the record and the ssh config.
-    const fetchImpl = fakeControlBox({
-      boxes: [{ boxId: 'p1', name: 'plugin-box', backend: 'someplugin', sandboxId: 'sb-p', publicHost: '9.9.9.9' }],
+    const res = await adoptHubBox({
+      box: hubBox({
+        id: 'p1',
+        name: 'plugin-box',
+        provider: 'someplugin',
+        sandboxId: 'sb-p',
+        publicHost: '9.9.9.9',
+      }),
+      custody: custodyClient(fakeCustody()),
+      controlPlaneUrl: 'http://cb.test',
+      cwd: TEST_HOME,
     });
-    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'plugin-box', cwd: TEST_HOME });
     expect(res.record.ssh?.host).toBe('9.9.9.9');
     expect(res.record.ssh?.identityFile).toBeUndefined();
   });
@@ -186,11 +179,18 @@ describe('adoptHubBox', () => {
     // Regression: the key download is best-effort, so a hetzner box could adopt
     // "successfully" with an identityFile pointing at a key that isn't on disk —
     // surfacing much later as an opaque ssh failure from attach/cp.
-    const fetchImpl = fakeControlBox({
-      boxes: [{ boxId: 'h1', name: 'keyless', backend: 'hetzner', sandboxId: 'sb-nk', publicHost: '7.7.7.7' }],
-      custody: {}, // no boxes/sb-nk/ssh/* at all
+    const res = await adoptHubBox({
+      box: hubBox({
+        id: 'h1',
+        name: 'keyless',
+        provider: 'hetzner',
+        sandboxId: 'sb-nk',
+        publicHost: '7.7.7.7',
+      }),
+      custody: custodyClient(fakeCustody()), // no boxes/sb-nk/ssh/* at all
+      controlPlaneUrl: 'http://cb.test',
+      cwd: TEST_HOME,
     });
-    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'keyless', cwd: TEST_HOME });
     expect(res.sshFiles).toEqual([]);
     expect(res.sshKeysMissing).toBe(true);
     // Still adopted — `url` works and the key can arrive later.
@@ -198,19 +198,28 @@ describe('adoptHubBox', () => {
   });
 
   it('does not flag missing keys for a provider that mints none', async () => {
-    const fetchImpl = fakeControlBox({
-      boxes: [{ boxId: 'e1', name: 'sdk-box', backend: 'e2b', sandboxId: 'sb-e' }],
+    const res = await adoptHubBox({
+      box: hubBox({ id: 'e1', name: 'sdk-box', provider: 'e2b', sandboxId: 'sb-e' }),
+      custody: custodyClient(fakeCustody()),
+      controlPlaneUrl: 'http://cb.test',
+      cwd: TEST_HOME,
     });
-    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'sdk-box', cwd: TEST_HOME });
     expect(res.sshKeysMissing).toBe(false);
   });
 
   it('adopts an e2b box with no key material (SDK-reached, no keypair)', async () => {
-    const fetchImpl = fakeControlBox({
-      boxes: [{ boxId: 'b1', name: 'calm-fox', backend: 'e2b', sandboxId: 'e2b-9', webPort: 8080 }],
-      custody: {},
+    const res = await adoptHubBox({
+      box: hubBox({
+        id: 'b1',
+        name: 'calm-fox',
+        provider: 'e2b',
+        sandboxId: 'e2b-9',
+        webPort: 8080,
+      }),
+      custody: custodyClient(fakeCustody()),
+      controlPlaneUrl: 'http://cb.test',
+      cwd: TEST_HOME,
     });
-    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'calm-fox', cwd: TEST_HOME });
     expect(res.sshFiles).toEqual([]);
     expect(res.record.provider).toBe('e2b');
     expect(res.record.cloud?.sandboxId).toBe('e2b-9');
@@ -218,29 +227,41 @@ describe('adoptHubBox', () => {
     expect(res.record.ssh).toBeUndefined();
   });
 
+  it('adopts the record without keys when no custody client is available', async () => {
+    // A thin client with an API key but no admin token: adopt + `url` still work;
+    // an SSH provider is flagged so attach/cp fail loudly, not opaquely.
+    const res = await adoptHubBox({
+      box: hubBox({
+        id: 'h2',
+        name: 'no-custody',
+        provider: 'hetzner',
+        sandboxId: 'sb-nc',
+        publicHost: '3.3.3.3',
+      }),
+      controlPlaneUrl: 'http://cb.test',
+      cwd: TEST_HOME,
+    });
+    expect(res.sshFiles).toEqual([]);
+    expect(res.sshKeysMissing).toBe(true);
+    expect(res.record.ssh?.host).toBe('3.3.3.3');
+  });
+
   it('links the box to a local clone of its repo and rewrites hostMainRepo', async () => {
     const repo = await makeRepo('git@github.com:o/r.git');
-    const fetchImpl = fakeControlBox({
-      boxes: [
-        {
-          boxId: 'b2',
-          name: 'linked',
-          backend: 'e2b',
-          sandboxId: 'sb-7',
-          // A different URL shape than the local remote: matching must normalize.
-          originUrl: 'https://github.com/o/r',
-          worktrees: [
-            {
-              containerPath: '/workspace',
-              // The control box's temp create-time checkout — must NOT survive.
-              hostMainRepo: '/tmp/hub-worker-clone-deleted',
-              branch: 'agentbox/linked',
-            },
-          ],
-        },
-      ],
+    const res = await adoptHubBox({
+      // A different URL shape than the local remote: matching must normalize.
+      box: hubBox({
+        id: 'b2',
+        name: 'linked',
+        provider: 'e2b',
+        sandboxId: 'sb-7',
+        originUrl: 'https://github.com/o/r',
+        branch: 'agentbox/linked',
+      }),
+      custody: custodyClient(fakeCustody()),
+      controlPlaneUrl: 'http://cb.test',
+      cwd: repo,
     });
-    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'linked', cwd: repo });
 
     expect(res.projectRoot).toBe(repo);
     expect(res.record.projectRoot).toBe(repo);
@@ -250,30 +271,50 @@ describe('adoptHubBox', () => {
   });
 
   it('adopts without project linkage when the PC has no clone of the repo', async () => {
-    const fetchImpl = fakeControlBox({
-      boxes: [
-        { boxId: 'b3', name: 'orphan', backend: 'e2b', sandboxId: 'sb-8', originUrl: 'git@github.com:o/unknown.git' },
-      ],
+    const res = await adoptHubBox({
+      box: hubBox({
+        id: 'b3',
+        name: 'orphan',
+        provider: 'e2b',
+        sandboxId: 'sb-8',
+        originUrl: 'git@github.com:o/unknown.git',
+      }),
+      custody: custodyClient(fakeCustody()),
+      controlPlaneUrl: 'http://cb.test',
+      cwd: TEST_HOME,
     });
-    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'orphan', cwd: TEST_HOME });
     expect(res.projectRoot).toBeUndefined();
     expect(res.record.projectRoot).toBeUndefined();
     expect(res.record.gitWorktrees).toBeUndefined();
   });
 
   it('is idempotent: re-adopting refreshes in place and keeps the box id + tokens', async () => {
-    const fetchImpl = fakeControlBox({
-      boxes: [{ boxId: 'b4', name: 'twice', backend: 'hetzner', sandboxId: 'sb-1', publicHost: '1.1.1.1' }],
-      custody: { 'boxes/sb-1/ssh/id_ed25519': 'K' },
+    const first = await adoptHubBox({
+      box: hubBox({
+        id: 'b4',
+        name: 'twice',
+        provider: 'hetzner',
+        sandboxId: 'sb-1',
+        publicHost: '1.1.1.1',
+      }),
+      custody: custodyClient(fakeCustody({ 'boxes/sb-1/ssh/id_ed25519': 'K' })),
+      controlPlaneUrl: 'http://cb.test',
+      cwd: TEST_HOME,
     });
-    const first = await adoptHubBox({ ...clients(fetchImpl), ref: 'twice', cwd: TEST_HOME });
 
     // The VM's IP changed (a stop/start reassigns it) — a refresh must pick it up.
-    const moved = fakeControlBox({
-      boxes: [{ boxId: 'b4', name: 'twice', backend: 'hetzner', sandboxId: 'sb-1', publicHost: '2.2.2.2' }],
-      custody: { 'boxes/sb-1/ssh/id_ed25519': 'K' },
+    const second = await adoptHubBox({
+      box: hubBox({
+        id: 'b4',
+        name: 'twice',
+        provider: 'hetzner',
+        sandboxId: 'sb-1',
+        publicHost: '2.2.2.2',
+      }),
+      custody: custodyClient(fakeCustody({ 'boxes/sb-1/ssh/id_ed25519': 'K' })),
+      controlPlaneUrl: 'http://cb.test',
+      cwd: TEST_HOME,
     });
-    const second = await adoptHubBox({ ...clients(moved), ref: 'twice', cwd: TEST_HOME });
 
     expect(second.refreshed).toBe(true);
     expect(second.record.id).toBe(first.record.id);
@@ -285,33 +326,29 @@ describe('adoptHubBox', () => {
     expect(state.boxes).toHaveLength(1);
   });
 
-  it('lands keys at the path identityFile points to, even for a sandbox-id ref', async () => {
-    // Regression: the key download used to re-resolve the raw ref, matching only
+  it('lands keys at the path identityFile points to (provider-namespaced dir)', async () => {
+    // Regression: the key download used to re-resolve a raw ref, matching only
     // id/name — so a sandbox-id ref lost `provider` and wrote to the default
     // (un-namespaced) dir while identityFile used the provider-namespaced one.
-    // DigitalOcean is namespaced, so it broke; hetzner passed only by luck.
-    const fetchImpl = fakeControlBox({
-      boxes: [
-        { boxId: 'do1', name: 'do-box', backend: 'digitalocean', sandboxId: 'drop-77', publicHost: '4.4.4.4' },
-      ],
-      custody: { 'boxes/drop-77/ssh/id_ed25519': 'DOKEY' },
+    // DigitalOcean is namespaced; keys must land where the record says.
+    const res = await adoptHubBox({
+      box: hubBox({
+        id: 'do1',
+        name: 'do-box',
+        provider: 'digitalocean',
+        sandboxId: 'drop-77',
+        publicHost: '4.4.4.4',
+      }),
+      custody: custodyClient(fakeCustody({ 'boxes/drop-77/ssh/id_ed25519': 'DOKEY' })),
+      controlPlaneUrl: 'http://cb.test',
+      cwd: TEST_HOME,
     });
-    // Adopt BY SANDBOX ID — the case that used to diverge.
-    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'drop-77', cwd: TEST_HOME });
 
     expect(res.sshFiles).toEqual(['id_ed25519']);
     const identity = res.record.ssh?.identityFile;
     expect(identity).toBeDefined();
     // The key must actually exist where the record says it is.
     expect(await readFile(identity!, 'utf8')).toBe('DOKEY');
-  });
-
-  it('resolves a box by sandbox id as well as by name/id', async () => {
-    const fetchImpl = fakeControlBox({
-      boxes: [{ boxId: 'b5', name: 'named', backend: 'e2b', sandboxId: 'sb-xyz' }],
-    });
-    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'sb-xyz', cwd: TEST_HOME });
-    expect(res.record.name).toBe('named');
   });
 
   it('never clobbers an unrelated local box that happens to share the name', async () => {
@@ -330,10 +367,12 @@ describe('adoptHubBox', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
     } as never);
 
-    const fetchImpl = fakeControlBox({
-      boxes: [{ boxId: 'hub-id', name: 'dupe', backend: 'e2b', sandboxId: 'sb-hub' }],
+    const res = await adoptHubBox({
+      box: hubBox({ id: 'hub-id', name: 'dupe', provider: 'e2b', sandboxId: 'sb-hub' }),
+      custody: custodyClient(fakeCustody()),
+      controlPlaneUrl: 'http://cb.test',
+      cwd: TEST_HOME,
     });
-    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'dupe', cwd: TEST_HOME });
 
     expect(res.refreshed).toBe(false); // a NEW record, not a takeover
     const state = await readState();
@@ -343,36 +382,5 @@ describe('adoptHubBox', () => {
     expect(docker?.cloud).toBeUndefined();
     // Both records coexist.
     expect(state.boxes).toHaveLength(2);
-  });
-
-  it('resolves a unique id prefix, like the local resolver does', async () => {
-    // Regression: local `findBox` accepts a unique id prefix, so a shortened ref
-    // that works for a local box must not mysteriously fail for a hub-only one.
-    const fetchImpl = fakeControlBox({
-      boxes: [{ boxId: 'a1b2c3d4', name: 'prefixed', backend: 'e2b', sandboxId: 'sb-1' }],
-    });
-    const res = await adoptHubBox({ ...clients(fetchImpl), ref: 'a1b2', cwd: TEST_HOME });
-    expect(res.record.name).toBe('prefixed');
-  });
-
-  it('refuses an ambiguous prefix rather than adopting the wrong box', async () => {
-    // Adoption writes state and the caller then runs a command against the box,
-    // so guessing between two matches is worse than not matching.
-    const fetchImpl = fakeControlBox({
-      boxes: [
-        { boxId: 'a1b000', name: 'one', backend: 'e2b', sandboxId: 'sb-1' },
-        { boxId: 'a1b999', name: 'two', backend: 'e2b', sandboxId: 'sb-2' },
-      ],
-    });
-    await expect(
-      adoptHubBox({ ...clients(fetchImpl), ref: 'a1b', cwd: TEST_HOME }),
-    ).rejects.toBeInstanceOf(HubBoxNotFoundError);
-  });
-
-  it('throws HubBoxNotFoundError for a ref the control box does not know', async () => {
-    const fetchImpl = fakeControlBox({ boxes: [] });
-    await expect(
-      adoptHubBox({ ...clients(fetchImpl), ref: 'ghost', cwd: TEST_HOME }),
-    ).rejects.toBeInstanceOf(HubBoxNotFoundError);
   });
 });

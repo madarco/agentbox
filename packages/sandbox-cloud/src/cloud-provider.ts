@@ -565,6 +565,9 @@ export function createCloudProvider(
           projectIndex: box.projectIndex,
           autoApproveHostActions: box.autoApproveHostActions,
           autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+          // Repo identity so a thin client can map this box to a local project
+          // by origin (Step 4 adoption); best-effort.
+          originUrl: await readGitOriginUrl(box.workspacePath).catch(() => undefined),
         });
       } catch {
         // best-effort
@@ -1213,6 +1216,11 @@ export function createCloudProvider(
               createdAt: new Date().toISOString(),
               autoApproveHostActions,
               autoApproveSafeHostActions,
+              // Repo identity so a thin client can map this box to a local
+              // project by origin (Step 4 adoption); best-effort.
+              originUrl: req.inBoxClone
+                ? req.inBoxClone.originUrl
+                : await readGitOriginUrl(req.workspacePath).catch(() => undefined),
             });
           } catch (err) {
             log(

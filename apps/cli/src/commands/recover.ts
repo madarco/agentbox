@@ -45,9 +45,8 @@ import { attachToRunningAgent } from './attach.js';
 import { rehydrateFromState } from './relay.js';
 import { handleLifecycleError } from './_errors.js';
 import { resolveCustodyTarget } from './control-plane.js';
-import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
-import { pullBoxSshKeys } from '../control-plane/hub-pull.js';
+import { downloadBoxSshKeys } from '../control-plane/hub-pull.js';
 import { hostReachable } from '../control-plane/hub-list.js';
 
 /** Is the control box up? A live host answers in milliseconds. */
@@ -112,10 +111,12 @@ async function tryPullKeyFromCustody(box: BoxRecord): Promise<boolean> {
       fetchImpl: ((url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
         fetch(url, { ...init, signal })) as typeof fetch,
     };
-    await pullBoxSshKeys({
-      admin: new ControlPlaneAdminClient(clientTarget),
+    // The local record already carries provider + sandbox id, so download the
+    // keys directly — no need to re-resolve the box through the hub here.
+    await downloadBoxSshKeys({
       custody: new CustodyClient(clientTarget),
-      box: box.cloud?.sandboxId ?? box.name,
+      provider: box.provider,
+      key: box.cloud?.sandboxId ?? box.name,
     });
     return !(await hetznerKeyMissing(box));
   } catch {

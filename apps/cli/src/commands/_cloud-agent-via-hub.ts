@@ -17,9 +17,11 @@
  */
 import type { BoxRecord } from '@agentbox/sandbox-docker';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
+import { normalizeRegistrationAgent, type BoxRegistration } from '@agentbox/relay';
 import { resolveCustodyTarget, syncAgentCredentialsIfChanged } from './control-plane.js';
 import { enqueueCreateViaHub, pollHubJob } from '../control-plane/hub-enqueue.js';
 import { adoptHubBox } from '../control-plane/hub-adopt.js';
+import type { HubApiBox } from '../control-plane/hub-api-client.js';
 import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
 import { makeProgressReporter } from '../lib/progress.js';
@@ -147,14 +149,51 @@ export async function createCloudBoxViaHubAndAdopt(
   const boxId = job.result?.boxId;
   if (!boxId) throw new Error('the control box created the box but returned no id to adopt');
 
+  // Materialize the just-created box locally. This flow runs on the ADMIN plane
+  // (it enqueued + polled + seeds custody with the admin token this machine
+  // holds — an API key may be absent), and the box is freshly registered, so
+  // resolve it from the control box's store by exact id rather than through
+  // /api/v1. Step 8 moves this whole create path onto /api/v1; the general
+  // resolve path and `hub adopt` already go through GET /api/v1/boxes?ref=.
+  const regs = await new ControlPlaneAdminClient(target).listBoxes();
+  const reg = regs.find((r) => r.boxId === boxId);
+  if (!reg) {
+    throw new Error(`the control box created box ${boxId} but it is not registered to adopt`);
+  }
   const res = await adoptHubBox({
-    admin: new ControlPlaneAdminClient(target),
+    box: createdRegistrationToBox(reg),
     custody: new CustodyClient(target),
-    ref: boxId,
     controlPlaneUrl: target.url,
     log: onLog ?? ((): void => {}),
   });
   return res.record;
+}
+
+/**
+ * Adapt a freshly-created box's control-box registration to the resolved
+ * `HubApiBox` shape `adoptHubBox` consumes. Transitional: this create path still
+ * lives on the admin plane (the general resolve path goes through
+ * `GET /api/v1/boxes?ref=`); Step 8 removes it when create moves onto /api/v1.
+ * The relay/bridge tokens are deliberately not carried — `adoptHubBox` re-mints
+ * them, which is inert for a control-plane-topology box.
+ */
+function createdRegistrationToBox(reg: BoxRegistration): HubApiBox {
+  return {
+    id: reg.boxId,
+    name: reg.name,
+    task: reg.name,
+    provider: reg.backend ?? 'docker',
+    status: 'running',
+    branch: reg.worktrees?.[0]?.branch ?? '',
+    sandboxId: reg.sandboxId,
+    createdAt: Date.parse(reg.createdAt ?? reg.registeredAt) || undefined,
+    projectIndex: reg.projectIndex,
+    originUrl: reg.originUrl,
+    publicHost: reg.publicHost,
+    image: reg.image,
+    webPort: reg.webPort,
+    lastAgent: normalizeRegistrationAgent(reg.agent),
+  };
 }
 
 export interface AgentJobViaHubArgs extends CloudAgentViaHubArgs {

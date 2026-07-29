@@ -9,14 +9,16 @@
  * command (`attach`, `cp`, `download`, `url`, `screen`, `destroy`) goes
  * `resolveBoxOrExit` → `readState` → provider.
  *
- * Everything needed to rebuild the record rides on the registration (the
- * adoption material added by the plane-register enrichment): provider, sandbox
- * id, public VM IP, image, web port, agent, branch, origin URL. The per-box SSH
- * key material comes from custody (`boxes/<sandboxId>/ssh/`) via the existing
- * `pullBoxSshKeys`.
+ * The ref is resolved server-side (the hub's `GET /api/v1/boxes?ref=`), so this
+ * takes an already-resolved {@link HubApiBox}. Everything needed to rebuild the
+ * record rides on that NON-SECRET payload (provider, sandbox id, public VM host,
+ * image, web port, agent, branch, origin URL); secrets (relay/bridge/preview
+ * tokens) are re-minted host-side by `registrationToBoxRecord`'s `freshToken`.
+ * The per-box SSH key material comes from custody (`boxes/<sandboxId>/ssh/`) via
+ * `downloadBoxSshKeys`.
  *
  * Kept free of command-layer concerns (logging, exit codes, config reads) so it
- * is unit-testable with fake clients + a temp HOME, mirroring `hub-pull.ts`.
+ * is unit-testable with a plain box object + a fake custody client + a temp HOME.
  */
 import { execa } from 'execa';
 import type { BoxRecord } from '@agentbox/core';
@@ -24,16 +26,20 @@ import { readState } from '@agentbox/sandbox-core';
 import { generateRelayToken, recordBox } from '@agentbox/sandbox-docker';
 import { allocateProjectIndex } from '@agentbox/sandbox-core';
 import { registrationToBoxRecord } from '@agentbox/relay';
+import type { BoxRegistration } from '@agentbox/relay';
 import type { CustodyClient } from './custody-client.js';
-import type { ControlPlaneAdminClient } from './admin-client.js';
+import type { HubApiBox } from './hub-api-client.js';
 import { downloadBoxSshKeys } from './hub-pull.js';
-import { matchRegistration } from './match-ref.js';
 
 export interface HubAdoptArgs {
-  admin: ControlPlaneAdminClient;
-  custody: CustodyClient;
-  /** Box id, name, or sandbox id as shown by `hub boxes list`. */
-  ref: string;
+  /** The box as `GET /api/v1/boxes?ref=` resolved it (a single, unique match). */
+  box: HubApiBox;
+  /**
+   * Custody client for the per-box SSH keys. Optional: a thin client without an
+   * admin token can still adopt the record (and drive `url`), it just can't pull
+   * SSH keys — the box is then flagged `sshKeysMissing` for SSH providers.
+   */
+  custody?: CustodyClient;
   /** The control-plane base URL, persisted on the record's cloud fields. */
   controlPlaneUrl: string;
   /** cwd for origin-URL project matching. Defaults to `process.cwd()`. */
@@ -126,23 +132,52 @@ async function matchLocalProject(
   return undefined;
 }
 
+/**
+ * Build a {@link BoxRegistration} from the hub's NON-SECRET box payload so the
+ * shared `registrationToBoxRecord` can rebuild the record. `token` is a freshly
+ * minted relay token — `registrationToBoxRecord` uses it only for a first
+ * adoption (an existing local record's token wins on refresh), so it never
+ * disturbs a running box's live token. The box's `branch` becomes the worktree
+ * branch (`registrationToBoxRecord` reads only `worktrees[0].branch`, then falls
+ * back to `agentbox/<name>`); the container path/host repo are placeholders it
+ * ignores (it derives its own from `projectRoot`).
+ */
+export function hubBoxToRegistration(box: HubApiBox, freshToken: () => string): BoxRegistration {
+  return {
+    boxId: box.id,
+    token: freshToken(),
+    name: box.name ?? box.id,
+    registeredAt: '',
+    kind: box.provider === 'docker' ? 'docker' : 'cloud',
+    backend: box.provider,
+    sandboxId: box.sandboxId,
+    createdAt: box.createdAt !== undefined ? new Date(box.createdAt).toISOString() : undefined,
+    projectIndex: box.projectIndex,
+    worktrees: box.branch
+      ? [{ containerPath: '/workspace', hostMainRepo: '', branch: box.branch }]
+      : undefined,
+    originUrl: box.originUrl ?? undefined,
+    publicHost: box.publicHost,
+    image: box.image,
+    webPort: box.webPort,
+    agent: box.lastAgent,
+  };
+}
 
 /**
- * Rebuild a local `BoxRecord` from a control-box registration, download the
- * box's SSH key material from custody, and persist it to `state.json`.
+ * Rebuild a local `BoxRecord` from a resolved hub box, download its SSH key
+ * material from custody, and persist it to `state.json`.
  *
  * Idempotent: re-adopting an already-local box refreshes the cached record from
- * the registration while preserving the fields only the PC knows (its id, so
- * status paths stay stable, and any project linkage already resolved).
+ * the payload while preserving the fields only the PC knows (its id, so status
+ * paths stay stable, its live tokens, and any project linkage already resolved).
  */
 export async function adoptHubBox(args: HubAdoptArgs): Promise<HubAdoptResult> {
   const log = args.log ?? (() => {});
   const cwd = args.cwd ?? process.cwd();
 
-  const registrations = await args.admin.listBoxes();
-  const reg = matchRegistration(registrations, args.ref);
-  if (!reg) throw new HubBoxNotFoundError(args.ref);
-
+  const box = args.box;
+  const reg = hubBoxToRegistration(box, generateRelayToken);
   const sandboxId = reg.sandboxId ?? reg.boxId;
 
   const state = await readState();
@@ -154,14 +189,13 @@ export async function adoptHubBox(args: HubAdoptArgs): Promise<HubAdoptResult> {
   // have overwritten an unrelated local (e.g. docker) box called `foo` with
   // cloud fields, corrupting the record for a different box entirely.
   const existing = state.boxes.find(
-    (b) => (b.cloud?.sandboxId !== undefined && b.cloud.sandboxId === sandboxId) || b.id === reg.boxId,
+    (b) =>
+      (b.cloud?.sandboxId !== undefined && b.cloud.sandboxId === sandboxId) || b.id === reg.boxId,
   );
 
-  const projectRoot =
-    existing?.projectRoot ?? (await matchLocalProject(reg.originUrl, cwd, state));
+  const projectRoot = existing?.projectRoot ?? (await matchLocalProject(reg.originUrl, cwd, state));
   const projectIndex =
-    existing?.projectIndex ??
-    (projectRoot ? allocateProjectIndex(state, projectRoot) : undefined);
+    existing?.projectIndex ?? (projectRoot ? allocateProjectIndex(state, projectRoot) : undefined);
 
   // One source of truth for registration → record reconstruction, shared with
   // the control box's own `hydrateRegisteredBox` (@agentbox/relay). The PC-only
@@ -182,11 +216,15 @@ export async function adoptHubBox(args: HubAdoptArgs): Promise<HubAdoptResult> {
   // Pass the provider + key we already resolved rather than the raw ref: letting
   // the download re-resolve it meant a sandbox-id ref landed the keys in a
   // different dir than the `identityFile` we just recorded.
-  const sshFiles = await downloadBoxSshKeys({
-    custody: args.custody,
-    provider: reg.backend,
-    key: sandboxId,
-  }).catch(() => []);
+  // No custody client (a thin client without an admin token) → adopt the record
+  // without keys; SSH providers are then flagged `sshKeysMissing` below.
+  const sshFiles = args.custody
+    ? await downloadBoxSshKeys({
+        custody: args.custody,
+        provider: reg.backend,
+        key: sandboxId,
+      }).catch(() => [])
+    : [];
   if (sshFiles.length > 0) {
     log(`pulled ${String(sshFiles.length)} SSH key file(s) for ${reg.name}`);
   }

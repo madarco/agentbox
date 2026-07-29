@@ -14,6 +14,7 @@ import { rehydrateFromState } from './relay.js';
 import { ensurePortlessProxyQuietly, resolvePortlessEnabled } from '../portless-prompt.js';
 import {
   resolveCustodyTarget,
+  resolveHubApiTarget,
   controlPlaneSubcommands,
   probeControlPlaneStatus,
   localExposedLoopbackUrl,
@@ -23,7 +24,8 @@ import { loadControlPlaneEnv } from '../control-plane/env-file.js';
 import { channelOfVersion } from '../lib/channel.js';
 import { AGENTBOX_VERSION } from '../version.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
-import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
+import { HubApiClient } from '../control-plane/hub-api-client.js';
+import type { HubApiBox } from '../control-plane/hub-api-client.js';
 import { pullBoxSshKeys } from '../control-plane/hub-pull.js';
 import { adoptHubBox, HubBoxNotFoundError } from '../control-plane/hub-adopt.js';
 
@@ -157,7 +159,9 @@ function renderStatus(s: HubStatus, exposed?: ControlPlaneDeployRecord | null): 
       `  log:  ${s.logFile}`,
     ].join('\n');
   }
-  return ['hub: not running', ...stoppedExposed, ...exposedLines, `  log:  ${s.logFile}`].join('\n');
+  return ['hub: not running', ...stoppedExposed, ...exposedLines, `  log:  ${s.logFile}`].join(
+    '\n',
+  );
 }
 
 /**
@@ -314,7 +318,9 @@ const statusSub = new Command('status')
       // autostart that /healthz doesn't.
       const exposed = s.profile === 'hetzner' ? await readLocalDeployRecord() : null;
       if (opts.json) {
-        process.stdout.write(JSON.stringify({ ...s, ...(exposed ? { exposed } : {}) }, null, 2) + '\n');
+        process.stdout.write(
+          JSON.stringify({ ...s, ...(exposed ? { exposed } : {}) }, null, 2) + '\n',
+        );
         return;
       }
       process.stdout.write(renderStatus(s, exposed) + '\n');
@@ -424,6 +430,34 @@ const restartSub = new Command('restart')
     }
   });
 
+/**
+ * Resolve a box ref through the hub's `/api/v1` (server-side `findBox`) for the
+ * `hub pull` / `hub adopt` commands. Returns the unique match + the hub API URL
+ * (persisted on the adopted record), or null after printing an actionable error
+ * — an ambiguous prefix lists the candidates, a total miss throws
+ * {@link HubBoxNotFoundError} for the caller's catch to render.
+ */
+async function resolveHubBox(
+  ref: string,
+  urlFlag: string | undefined,
+): Promise<{ box: HubApiBox; url: string } | null> {
+  const target = await resolveHubApiTarget(urlFlag);
+  if (!target) {
+    process.exitCode = 1;
+    return null;
+  }
+  const matches = await new HubApiClient(target).resolveBox(ref);
+  if (matches.length === 0) throw new HubBoxNotFoundError(ref);
+  if (matches.length > 1) {
+    log.error(`'${ref}' matches multiple boxes on the control box — pick one:`);
+    for (const b of matches) process.stderr.write(`  ${b.name ?? b.id}   (id ${b.id})\n`);
+    log.info('retry with a longer id prefix, the full name, or the sandbox id');
+    process.exitCode = 1;
+    return null;
+  }
+  return { box: matches[0]!, url: target.url };
+}
+
 const pullSub = new Command('pull')
   .description(
     "Download a control-box-created box's SSH keys so this PC can attach / port-forward / cp to it",
@@ -432,22 +466,23 @@ const pullSub = new Command('pull')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .action(async (box: string, opts: { url?: string }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
-      if (!target) {
+      const resolved = await resolveHubBox(box, opts.url);
+      if (!resolved) return;
+      // SSH keys live in custody (an admin-token surface); a hub API target is
+      // not enough on its own to pull them.
+      const custodyTarget = await resolveCustodyTarget(opts.url);
+      if (!custodyTarget) {
         process.exitCode = 1;
         return;
       }
       const res = await pullBoxSshKeys({
-        admin: new ControlPlaneAdminClient(target),
-        custody: new CustodyClient(target),
-        box,
+        custody: new CustodyClient(custodyTarget),
+        box: resolved.box,
       });
       if (res.files.length === 0) {
         log.warn(
           `No SSH key material in custody for '${box}' (boxes/${res.key}/ssh). ` +
-            (res.registered
-              ? 'The box may mint no keypair (e2b/vercel).'
-              : 'The box is not registered on the control box.'),
+            'The box may mint no keypair (e2b/vercel).',
         );
         process.exitCode = 1;
         return;
@@ -456,6 +491,11 @@ const pullSub = new Command('pull')
         `Pulled ${String(res.files.length)} key file(s) to ${res.dest} — attach / cp / port-forward now work.`,
       );
     } catch (err) {
+      if (err instanceof HubBoxNotFoundError) {
+        log.error(`${err.message}. Run \`agentbox hub boxes list\` to see what's there.`);
+        process.exitCode = 1;
+        return;
+      }
       handleLifecycleError(err);
     }
   });
@@ -468,16 +508,16 @@ const adoptSub = new Command('adopt')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .action(async (box: string, opts: { url?: string }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
-      if (!target) {
-        process.exitCode = 1;
-        return;
-      }
+      const resolved = await resolveHubBox(box, opts.url);
+      if (!resolved) return;
+      // SSH keys still come from custody (admin-token surface, best-effort): a
+      // thin client without one adopts the record and warns for SSH providers.
+      const custodyTarget = await resolveCustodyTarget(opts.url, { quiet: true });
+      const custody = custodyTarget ? new CustodyClient(custodyTarget) : undefined;
       const res = await adoptHubBox({
-        admin: new ControlPlaneAdminClient(target),
-        custody: new CustodyClient(target),
-        ref: box,
-        controlPlaneUrl: target.url,
+        box: resolved.box,
+        custody,
+        controlPlaneUrl: resolved.url,
         log: (line) => log.info(line),
       });
       const where = res.projectRoot
