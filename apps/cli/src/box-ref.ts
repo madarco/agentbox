@@ -68,7 +68,7 @@ export async function resolveBoxOrShift(
     // match local boxes (an id prefix hitting several), so the user must
     // disambiguate THOSE — adopting a same-named hub box would drive a box that
     // isn't among the ones they were choosing between.
-    const adopted = firstTry.kind === 'none' ? await tryAutoAdopt(ref, cwd) : null;
+    const adopted = firstTry.kind === 'none' ? await tryAutoAdopt(ref, cwd, project.root) : null;
     if (adopted && adopted !== 'unreachable') {
       log.info(`adopted ${adopted.name} from the control box`);
       return { box: adopted, shifted: false };
@@ -161,7 +161,7 @@ export async function resolveBoxOrExit(
   //
   // `adoptAttempted` means our caller already tried and missed; re-running it
   // here would spend the adoption budget twice for one command.
-  const adopted = opts.adoptAttempted ? null : await tryAutoAdopt(ref, cwd);
+  const adopted = opts.adoptAttempted ? null : await tryAutoAdopt(ref, cwd, project.root);
   if (adopted && adopted !== 'unreachable') {
     log.info(`adopted ${adopted.name} from the control box`);
     return adopted;

@@ -54,7 +54,11 @@ const REACHABLE_PROBE_MS = 1500;
  * on hosts with no control box at all, and the control-plane clients pull in
  * config + relay code that a plain `agentbox shell typo` shouldn't pay for.
  */
-export async function tryAutoAdopt(ref: string, cwd: string): Promise<AutoAdoptResult> {
+export async function tryAutoAdopt(
+  ref: string,
+  cwd: string,
+  projectRoot?: string,
+): Promise<AutoAdoptResult> {
   try {
     // Which hub owns cloud boxes? A genuinely remote hub only — never the plain
     // local hub (see the module header). `resolveHubTarget` reports `remote` for
@@ -95,7 +99,10 @@ export async function tryAutoAdopt(ref: string, cwd: string): Promise<AutoAdoptR
       fetchImpl: deadlineFetch(signal),
     });
 
-    const matches = await client.resolveBox(ref);
+    // Pass the cwd project root so a numeric ref keeps project-index semantics
+    // server-side (mirroring the local `resolveBoxRef`) rather than being
+    // id-prefix matched — see `resolveBoxRefView`.
+    const matches = await client.resolveBox(ref, projectRoot);
     // The control box answered and doesn't know the ref — a definitive miss.
     if (matches.length === 0) return null;
     if (matches.length > 1) {

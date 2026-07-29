@@ -64,12 +64,33 @@ describe('resolveBoxRefView', () => {
     expect(resolveBoxRefView(boxes, '2', '/home/u/proj').map((b) => b.name)).toEqual(['second']);
   });
 
-  it('a numeric ref never falls through to id matching (index is reserved)', () => {
-    // `2` with a project that has no index 2 → none, not a stray id/name hit.
-    expect(resolveBoxRefView(boxes, '2', '/home/u/other')).toEqual([]);
+  it('a numeric ref never id-prefix matches (index-first, then exact only)', () => {
+    // `2` must not grab a box whose id merely starts with `2`.
+    const all: Box[] = [box({ id: '2abcdef', name: 'starts-with-2' })];
+    expect(resolveBoxRefView(all, '2')).toEqual([]);
+    expect(resolveBoxRefView(all, '2', '/home/u/proj')).toEqual([]);
   });
 
-  it('ignores index when no project is supplied (a bare numeric ref matches nothing here)', () => {
+  it('a numeric ref resolves an exact sandbox id (the hetzner/DO case)', () => {
+    const all: Box[] = [box({ id: 'srv', name: 'vps', sandboxId: '12345', provider: 'hetzner' })];
+    // Full numeric sandbox id → exact match, even with a project in play.
+    expect(resolveBoxRefView(all, '12345', '/home/u/proj').map((b) => b.name)).toEqual(['vps']);
+    // A prefix of it must NOT match.
+    expect(resolveBoxRefView(all, '123')).toEqual([]);
+  });
+
+  it('a numeric index takes precedence over an exact numeric sandbox-id match', () => {
+    // In the same project, `1` is the index of `first`; a box whose sandbox id is
+    // literally `1` must not shadow it.
+    const all: Box[] = [
+      box({ id: 'idx', name: 'first', projectRoot: '/p', projectIndex: 1 }),
+      box({ id: 'sb', name: 'other', sandboxId: '1' }),
+    ];
+    expect(resolveBoxRefView(all, '1', '/p').map((b) => b.name)).toEqual(['first']);
+  });
+
+  it('a numeric ref matches nothing when there is no index and no exact hit', () => {
+    expect(resolveBoxRefView(boxes, '2', '/home/u/other')).toEqual([]);
     expect(resolveBoxRefView(boxes, '2')).toEqual([]);
   });
 

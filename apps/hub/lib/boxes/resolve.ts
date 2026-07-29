@@ -30,12 +30,30 @@ export function resolveBoxRefView(boxes: Box[], ref: string, project?: string): 
   const q = ref.trim();
   if (q.length === 0) return [];
 
-  // Numeric + known project → project index. Reserved for the index (no
-  // fall-through to findBox), matching `resolveBoxRef`.
-  if (project !== undefined && /^[1-9][0-9]*$/.test(q)) {
-    const idx = Number.parseInt(q, 10);
-    const hit = boxes.find((b) => b.projectRoot === project && b.projectIndex === idx);
-    return hit ? [hit] : [];
+  // A pure-numeric ref is a project index first (mirrors `resolveBoxRef`): resolve
+  // it as one when a project is given. On an index miss — and when no project is
+  // given — match a numeric ref ONLY exactly (id / name / displayName / sandbox
+  // id), never by id prefix. A bare number is far too collision-prone to
+  // prefix-match (`2` would grab `2abc…`, or surface an ambiguous chooser); the
+  // one non-index case that matters is a numeric SANDBOX id (hetzner /
+  // digitalocean), which the caller types in full. `resolveBoxOrExit` only hits
+  // the hub for a numeric ref after its LOCAL project-index lookup already missed,
+  // so this never shadows a real local index.
+  if (/^[1-9][0-9]*$/.test(q)) {
+    if (project !== undefined) {
+      const idx = Number.parseInt(q, 10);
+      const hit = boxes.find((b) => b.projectRoot === project && b.projectIndex === idx);
+      if (hit) return [hit];
+    }
+    const exact = boxes.find(
+      (b) =>
+        b.id === q ||
+        b.name === q ||
+        b.displayName === q ||
+        b.sandboxId === q ||
+        (b.sandboxId !== undefined && `cloud:${b.sandboxId}` === q),
+    );
+    return exact ? [exact] : [];
   }
 
   return findBoxView(boxes, q);
