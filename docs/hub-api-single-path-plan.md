@@ -188,9 +188,8 @@ and rejected an empty key (`invalid_request`).
   come back as an inline escape hatch — that would reintroduce the second implementation the whole
   effort exists to delete. They come back as **target selection**: the same one client + one route,
   pointed at the **local hub** instead of the remote control box. `resolveHubTarget` /
-  `resolveHubApiTarget` / `resolveHubApiClient` now take **`preferLocal`** (skip the loopback/URL
-  remote branches, return `127.0.0.1:<port>` + the local token, autostart included) — that is the
-  reusable "which hub" knob. `prepare`'s selector is the pure, unit-tested
+  `resolveHubApiTarget` / `resolveHubApiClient` now take **`preferLocal`** — that is the reusable
+  "which hub" knob. `prepare`'s selector is the pure, unit-tested
   `resolvePrepareTargetKind` (`commands/prepare.ts`, `test/prepare-target.test.ts`): local wins when
   the hub is co-located, `cloud.viaHub=false` (the config **key** survives the flag removal — my
   earlier "`--local`/`--via-hub` are safe to delete" was about the FLAGS only), the provider is
@@ -200,6 +199,19 @@ and rejected an empty key (`invalid_request`).
   `coLocated` signal (its artifact lands here → no custody round-trip). **Step 5 (lifecycle) and
   Step 8 (create) must reuse `preferLocal` for the equivalent forks (`cloud.viaHub`, docker/
   remote-docker, an unreachable resource) rather than resurrecting a direct-provider path.**
+- **`preferLocal` means "prefer the LOOPBACK target", NOT "jump to the plain local hub token"
+  (Bugbot **Medium**, and the identical trap for any future "use the local hub" shortcut).** A
+  `hub expose`-d machine's hub is on THIS machine yet runs the **password profile** — its `/api/v1`
+  authenticates with `AGENTBOX_HUB_API_KEY` over loopback, not the plain `~/.agentbox/hub/token`. So
+  `preferLocal` must reuse the Step-0 ladder verbatim: `localExposedLoopbackUrl()` **first** (mode
+  `remote` + API key over loopback), and only when the machine is **not** exposed fall through to the
+  plain local hub + hub token. It skips **only** the configured *remote* control-plane URL. A first
+  cut that short-circuited straight to `getHubStatus()` + the local token 401'd on an exposed machine
+  — exactly the trap Step 0's own notes warn about ("token presence is not liveness; the exposed case
+  is remote-shaped-but-local"). `hubIsCoLocated()` already got this right (it checks
+  `localExposedLoopbackUrl()`); `preferLocal` needed the same. Guarded by
+  `test/hub-target-prefer-local.test.ts`. **Any later step adding a local-hub shortcut must keep the
+  exposed/loopback branch ahead of the plain-token branch.**
 - **The login → hub credential push is best-effort, quiet, and non-spawning.**
   `publish-credentials.ts` resolves the hub target with `{ quiet: true }` (no print, and — crucially
   — no local-hub auto-start: a login must not start a daemon as a side effect), `hostReachable`-probes

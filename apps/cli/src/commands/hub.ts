@@ -70,10 +70,14 @@ export interface HubTarget {
  * (it can't parse the layered config itself). One Bearer authorizes both surfaces
  * in either mode (see `apps/hub/proxy.ts`).
  *
- * `preferLocal` forces the local hub even when a control box is configured — the
- * "which hub" knob for callers that have decided an operation belongs on THIS
- * machine's hub (e.g. a `cloud.viaHub=false` bake, or a base whose artifact lands
- * here). It stays one client + one route; only the base URL differs.
+ * `preferLocal` prefers the hub on THIS machine even when a remote control box is
+ * configured — the "which hub" knob for callers that have decided an operation
+ * belongs here (e.g. a `cloud.viaHub=false` bake, or a base whose artifact lands
+ * here). It skips only the configured REMOTE control-plane URL; it does NOT skip
+ * the loopback branch, because a `hub expose`-d machine's hub IS on this machine
+ * yet runs the password profile (its `/api/v1` wants `AGENTBOX_HUB_API_KEY` over
+ * loopback, not the plain `~/.agentbox/hub/token`). Same precedence ladder as the
+ * default, minus the remote URL — never a second resolver that could disagree.
  */
 export async function resolveHubTarget(
   urlFlag?: string,
@@ -81,15 +85,11 @@ export async function resolveHubTarget(
 ): Promise<HubTarget> {
   const cfg = await loadEffectiveConfig(process.cwd());
   const url = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
-  // preferLocal short-circuits the remote branches: the caller wants the hub on
-  // this machine regardless of a configured (or exposed) control box.
-  if (opts.preferLocal && !urlFlag) {
-    const s = await getHubStatus();
-    return { mode: 'local', url: `http://127.0.0.1:${String(s.port)}`, token: s.token ?? '' };
-  }
   // A control box that IS this machine (`hub expose`) is reached over loopback,
   // not the box-facing LAN/tunnel URL — but it's still the `remote`-shaped API
-  // (password profile, /api/v1 keyed by AGENTBOX_HUB_API_KEY).
+  // (password profile, /api/v1 keyed by AGENTBOX_HUB_API_KEY). This is ALSO the
+  // `preferLocal` answer for an exposed machine: the hub is right here, so the
+  // plain local-hub token below would 401 against its password profile.
   //
   // Checked BEFORE the configured URL is required, because the two can disagree:
   // `hub unset-url` clears the config but leaves the exposed record, and the hub
@@ -101,7 +101,9 @@ export async function resolveHubTarget(
     loadControlPlaneEnv();
     return { mode: 'remote', url: loopback, token: process.env.AGENTBOX_HUB_API_KEY ?? '' };
   }
-  if (url) {
+  // The configured REMOTE control box — skipped under preferLocal so the caller
+  // gets this machine's plain local hub instead (the not-exposed local case).
+  if (url && !opts.preferLocal) {
     loadControlPlaneEnv();
     return { mode: 'remote', url, token: process.env.AGENTBOX_HUB_API_KEY ?? '' };
   }
