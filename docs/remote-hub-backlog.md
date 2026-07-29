@@ -14,7 +14,7 @@
 - [x] no logo on login page of remote hub  
 - [x] http://127.0.0.1:51472/callback?code=10dc87a1a305a8a5b7697a36670e54bee5933f29&state=40c861517f0cdb0edb1c3a157cb0a709 improve design of this page (and of redirect to github page, even if it is visible for a moment) 
 - [x] add a banner on top of local hub that remote hub is now available with a link to the remote hub. Like this AgentBox instance is linked to this remote hub.
-- [ ] remote hub web: "Carried from this machine" section on remote hub should show the custody files that are inside the bake. doesn't makes sense like it is today (shows only 1 file in remote hub). should probably show the skills in custody etc? and link to it when in remote hub (and in custody we should link to system page when in local hub)
-- [ ] remote hub web: in system: box image section is basically just related to docker provider, just move the info inside the row in providers section
-- [ ] self-update shouldn't remove the docker image anymore, since the hash will do that only when needed (in the past self-update was to do a clean install but now we don't need it anymore)
+- [x] remote hub web: "Carried from this machine" section on remote hub should show the custody files that are inside the bake. doesn't makes sense like it is today (shows only 1 file in remote hub). should probably show the skills in custody etc? and link to it when in remote hub (and in custody we should link to system page when in local hub)
+- [x] remote hub web: in system: box image section is basically just related to docker provider, just move the info inside the row in providers section
+- [x] self-update shouldn't remove the docker image anymore, since the hash will do that only when needed (in the past self-update was to do a clean install but now we don't need it anymore)
 
