@@ -89,6 +89,23 @@ export interface HubApiOpResult {
 export type HubLifecycleAction = 'start' | 'pause' | 'resume' | 'stop' | 'destroy';
 export type HubGitOp = 'checkout' | 'branch' | 'pull' | 'push' | 'push-host';
 
+/** The unauthenticated liveness probe (`GET /api/v1/health`). */
+export interface HubApiHealth {
+  ok: boolean;
+  /** The API contract the hub serves, e.g. `v1`. Gated against {@link SUPPORTED_HUB_API_VERSIONS}. */
+  apiVersion: string;
+  /** The AgentBox version the hub runs (a control box may differ from this CLI). */
+  version?: string;
+  profile?: string;
+}
+
+/**
+ * The `/api/v1` contract versions this CLI knows how to speak. The hub reports its
+ * own on `GET /api/v1/health` (`apiVersion`); a hub outside this set is refused up
+ * front with an upgrade hint rather than failing on a missing/changed field later.
+ */
+export const SUPPORTED_HUB_API_VERSIONS = ['v1'] as const;
+
 export interface HubApiTarget {
   url: string;
   apiKey: string;
@@ -148,6 +165,15 @@ export class HubApiClient {
       );
     }
     return parsed as T;
+  }
+
+  /**
+   * Liveness + API-version probe. Unauthenticated on the hub (the Bearer we send
+   * is harmless), so it also confirms the hub is reachable before an authed call.
+   * Throws `HubApiError` on a non-2xx (e.g. a hub too old to expose `/api/v1`).
+   */
+  health(): Promise<HubApiHealth> {
+    return this.request<HubApiHealth>('GET', '/health');
   }
 
   /** All boxes the hub knows (its own + registered). Topology-agnostic read. */
@@ -237,10 +263,10 @@ export class HubApiClient {
     onLine: (line: string) => void,
     signal?: AbortSignal,
   ): Promise<void> {
-    const res = await this.fetchImpl(
-      `${this.base}/api/v1/jobs/${encodeURIComponent(id)}/logs`,
-      { headers: { Authorization: `Bearer ${this.token}`, Accept: 'text/event-stream' }, signal },
-    );
+    const res = await this.fetchImpl(`${this.base}/api/v1/jobs/${encodeURIComponent(id)}/logs`, {
+      headers: { Authorization: `Bearer ${this.token}`, Accept: 'text/event-stream' },
+      signal,
+    });
     if (!res.ok || !res.body) return;
     const decoder = new TextDecoder();
     let buffer = '';
@@ -277,6 +303,8 @@ export class HubApiClient {
 
   /** Answer a pending approval by id. */
   async answerApproval(id: string, answer: 'y' | 'n'): Promise<void> {
-    await this.request<{ ok: true }>('POST', `/approvals/${encodeURIComponent(id)}/answer`, { answer });
+    await this.request<{ ok: true }>('POST', `/approvals/${encodeURIComponent(id)}/answer`, {
+      answer,
+    });
   }
 }

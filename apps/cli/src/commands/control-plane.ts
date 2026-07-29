@@ -109,6 +109,7 @@ import {
   HubApiError,
   type HubLifecycleAction,
 } from '../control-plane/hub-api-client.js';
+import { hubApiTargetFrom, withHubClient } from '../control-plane/with-hub.js';
 import { loadControlPlaneEnv } from '../control-plane/env-file.js';
 import { getHubJob, listHubJobs } from '../control-plane/hub-enqueue.js';
 import type { CreateJobRow } from '@agentbox/relay/control-plane';
@@ -1061,40 +1062,72 @@ export async function resolveCustodyTarget(
 }
 
 /**
- * Resolve a control box's public REST API target: its URL + the headless
- * `/api/v1` bearer (`AGENTBOX_HUB_API_KEY`). This is the client-facing hub API
- * (boxes/lifecycle/approvals), distinct from {@link resolveCustodyTarget}'s admin
- * token, which is the internal `/admin/*` wire. Seam for the shared hub-API client
- * (URL-swappable local ⇄ remote); not yet wired into commands.
+ * Bring the local hub up so it can answer `/api/v1`, returning true on success.
+ * One spinner, one clear failure line — the autostart step behind
+ * {@link resolveHubApiTarget} when the target resolves to a local hub that isn't
+ * running yet.
+ */
+async function autostartLocalHub(): Promise<boolean> {
+  // Dynamic import keeps control-plane.ts off a static edge to sandbox-docker
+  // (the eventual Step 12 moves `ensureHub` to sandbox-core so a docker-free host
+  // never pulls in docker machinery to start a hub).
+  const { ensureHub } = await import('@agentbox/sandbox-docker');
+  const s = spinner();
+  s.start('starting local hub');
+  try {
+    const ep = await ensureHub({ onLog: (line) => s.message(line) });
+    s.stop(`local hub running on ${ep.hostUrl}`);
+    return true;
+  } catch (err) {
+    s.stop('local hub failed to start');
+    log.error(err instanceof Error ? err.message : String(err));
+    return false;
+  }
+}
+
+/**
+ * Resolve the hub's public REST API target — its URL + the Bearer that authorizes
+ * `/api/v1` — for BOTH modes. Delegates the local⇄remote decision to
+ * {@link resolveHubTarget} (the same seam `agentbox hub target` and the tray
+ * follow): a configured/exposed control box yields its `AGENTBOX_HUB_API_KEY`; a
+ * local hub yields `~/.agentbox/hub/token`. The local hub's `proxy.ts` accepts
+ * that token as `Authorization: Bearer`, so the returned target is URL-swappable
+ * with a control box's with no client change.
  *
- * Returns null (actionable error unless `quiet`) when no control box is configured
- * or no API key is available — the key is minted + recorded by `control-plane
- * setup`/deploy into `~/.agentbox/control-plane/control-plane.env`.
+ * When the target is a local hub that isn't running, it is auto-started (unless
+ * `quiet`, where a best-effort probe must not spawn a daemon). Returns null (with
+ * an actionable error unless `quiet`) when a remote hub has no API key, or a local
+ * hub can't be started / still reports no token.
  */
 export async function resolveHubApiTarget(
   urlFlag: string | undefined,
   opts: { quiet?: boolean } = {},
 ): Promise<{ url: string; apiKey: string } | null> {
-  const cfg = await loadEffectiveConfig(process.cwd());
-  const configured = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
-  // A hub exposed on THIS machine is reached over loopback, not its box-facing URL.
-  const url = (await applyLocalShortcut(configured, urlFlag)).replace(/\/$/, '');
-  if (!url) {
-    if (!opts.quiet)
-      log.error('No control plane configured. Run `agentbox hub set-url <url>` (or pass --url).');
-    return null;
+  // Lazy import breaks the hub.ts <-> control-plane.ts cycle: hub.ts consumes
+  // `controlPlaneSubcommands` (defined at the bottom of this file) at load time,
+  // so a static edge back the other way would read it before it's initialized.
+  const { resolveHubTarget } = await import('./hub.js');
+  let target = await resolveHubTarget(urlFlag);
+  let resolved = hubApiTargetFrom(target);
+
+  // A local hub with no token isn't running yet — bring it up, then re-read.
+  if (!resolved.ok && resolved.mode === 'local' && !opts.quiet) {
+    if (!(await autostartLocalHub())) return null;
+    target = await resolveHubTarget(urlFlag);
+    resolved = hubApiTargetFrom(target);
   }
-  loadControlPlaneEnv();
-  const apiKey = process.env.AGENTBOX_HUB_API_KEY ?? '';
-  if (!apiKey) {
+
+  if (!resolved.ok) {
     if (!opts.quiet)
       log.error(
-        'No hub API key available. Set AGENTBOX_HUB_API_KEY, or run this from the machine that\n' +
-          'ran `agentbox hub setup` (it writes the key to ~/.agentbox/control-plane).',
+        resolved.mode === 'remote'
+          ? 'No hub API key available. Set AGENTBOX_HUB_API_KEY, or run this from the machine that\n' +
+              'ran `agentbox hub setup` (it writes the key to ~/.agentbox/control-plane).'
+          : 'The local hub reports no API token. Start it with `agentbox hub` and retry.',
       );
     return null;
   }
-  return { url, apiKey };
+  return { url: resolved.url, apiKey: resolved.apiKey };
 }
 
 /**
@@ -1446,23 +1479,18 @@ const custodyCmd = new Command('custody')
 // --- control-plane box registry (the PC's admin view of the control box) ---
 
 const boxesListSub = new Command('list')
-  .description('List boxes on the control box (via its /api/v1)')
+  .description('List boxes on the hub (via its /api/v1) — a control box, or the local hub')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .option('--json', 'print raw JSON')
   .action(async (opts: { url?: string; json?: boolean }) => {
-    try {
-      const client = await resolveHubApiClient(opts.url);
-      if (!client) {
-        process.exitCode = 1;
-        return;
-      }
+    await withHubClient(opts, async (client) => {
       const boxes = await client.listBoxes();
       if (opts.json) {
         process.stdout.write(`${JSON.stringify({ boxes }, null, 2)}\n`);
         return;
       }
       if (boxes.length === 0) {
-        log.info('No boxes on the control box.');
+        log.info('No boxes on the hub.');
         return;
       }
       for (const b of boxes) {
@@ -1470,65 +1498,59 @@ const boxesListSub = new Command('list')
           `${b.id}  ${b.name ?? b.task}  ${b.provider}  ${b.state ?? b.status}\n`,
         );
       }
-    } catch (err) {
-      handleLifecycleError(err);
-    }
+    });
   });
 
 const boxesRmSub = new Command('rm')
   .description(
-    'Destroy a box via the control box (tears down the cloud resource AND reaps its registration/custody)',
+    'Destroy a box via the hub (tears down the cloud resource AND reaps its registration/custody)',
   )
   .argument('<boxId>', 'the box id as shown by `hub boxes list`')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .action(async (boxId: string, opts: { url?: string }) => {
-    try {
-      const client = await resolveHubApiClient(opts.url);
-      if (!client) {
-        process.exitCode = 1;
-        return;
+    await withHubClient(opts, async (client) => {
+      try {
+        // Reverse-adoption on the control box means this drives a REAL destroy even
+        // for a box created on the PC (registration-only) — not just a state reap.
+        await client.destroy(boxId);
+        log.success(`Destroyed '${boxId}' (cloud resource + hub state).`);
+      } catch (err) {
+        if (err instanceof HubApiError && err.code === 'not_found') {
+          log.info(`No box '${boxId}' on the hub.`);
+          return;
+        }
+        throw err;
       }
-      // Reverse-adoption on the control box means this drives a REAL destroy even
-      // for a box created on the PC (registration-only) — not just a state reap.
-      await client.destroy(boxId);
-      log.success(`Destroyed '${boxId}' (cloud resource + control-box state).`);
-    } catch (err) {
-      if (err instanceof HubApiError && err.code === 'not_found') {
-        log.info(`No box '${boxId}' on the control box.`);
-        return;
-      }
-      handleLifecycleError(err);
-    }
+    });
   });
 
 /** A `hub boxes <action>` lifecycle subcommand over the hub `/api/v1`. */
 function boxesLifecycleSub(action: HubLifecycleAction, verb: string, past: string): Command {
   return new Command(action)
-    .description(`${verb} a box on the control box (via its /api/v1)`)
+    .description(`${verb} a box on the hub (via its /api/v1)`)
     .argument('<boxId>', 'the box id as shown by `hub boxes list`')
     .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
     .action(async (boxId: string, opts: { url?: string }) => {
-      try {
-        const client = await resolveHubApiClient(opts.url);
-        if (!client) {
-          process.exitCode = 1;
-          return;
+      await withHubClient(opts, async (client) => {
+        try {
+          await client.lifecycle(boxId, action);
+          log.success(`${past} '${boxId}'.`);
+        } catch (err) {
+          if (err instanceof HubApiError && err.code === 'not_found') {
+            log.info(`No box '${boxId}' on the hub.`);
+            process.exitCode = 1;
+            return;
+          }
+          throw err;
         }
-        await client.lifecycle(boxId, action);
-        log.success(`${past} '${boxId}'.`);
-      } catch (err) {
-        if (err instanceof HubApiError && err.code === 'not_found') {
-          log.info(`No box '${boxId}' on the control box.`);
-          process.exitCode = 1;
-          return;
-        }
-        handleLifecycleError(err);
-      }
+      });
     });
 }
 
 const boxesCmd = new Command('boxes')
-  .description('List + drive boxes on the control box over its public /api/v1')
+  .description(
+    'List + drive boxes on the hub over its public /api/v1 (a control box, or the local hub)',
+  )
   .addCommand(boxesListSub)
   .addCommand(boxesLifecycleSub('start', 'Start', 'Started'))
   .addCommand(boxesLifecycleSub('stop', 'Stop', 'Stopped'))

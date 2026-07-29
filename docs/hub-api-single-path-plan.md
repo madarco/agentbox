@@ -78,9 +78,31 @@ and adoption from the PC.
 
 ---
 
-## Step 0 — Foundation: make the local hub an API target
+## Step 0 — Foundation: make the local hub an API target ✅ done
 
 The blocking prerequisite. Nothing else can be converted until `HubApiClient` works in both modes.
+
+**Landed.** `resolveHubApiTarget` now delegates to `resolveHubTarget` (it was as predicted:
+`resolveHubTarget` already resolved remote / exposed-loopback / local, and the local hub's
+`proxy.ts` accepts `~/.agentbox/hub/token` as `Authorization: Bearer`). A local target that isn't
+running is auto-started via `ensureHub` (one spinner). `withHubClient()`
+(`apps/cli/src/control-plane/with-hub.ts`) is the single entry point later steps wrap an op in — it
+resolves the client, runs the `GET /api/v1/health` version gate (`apiVersion` ∈
+`SUPPORTED_HUB_API_VERSIONS = ['v1']`), and maps `HubApiError` codes to stable exit codes +
+actionable messages. The `hub boxes` group is the first converted caller (the canonical example).
+Verified end-to-end: `agentbox hub boxes list` against a local hub with no control box (empty and
+non-empty), and the remote-shaped path via `hub expose` (200 with the API key, 401 without).
+
+**Notes for later steps:**
+- **Module cycle.** `hub.ts` and `control-plane.ts` sit in a cycle (`hub.ts` consumes
+  `controlPlaneSubcommands` at load). So `resolveHubApiTarget` imports `resolveHubTarget` **lazily**
+  (`await import('./hub.js')`), and `withHubClient` imports `resolveHubApiTarget` lazily too. Keep
+  those edges lazy when converting commands, or `controlPlaneSubcommands` reads undefined at eval.
+- **Conversion shape.** A converted command is `await withHubClient(opts, async (client) => { … })`.
+  A command that special-cases an error code (e.g. `not_found` → info, not error) catches it
+  **inside** the callback before it reaches the mapper.
+- **Exit codes** (for scripts / later steps): `not_found`=2, `unauthorized`=3, `invalid_request`=4,
+  `conflict`=5, `backend_unavailable`=6, everything else (incl. `internal`) =1.
 
 - `resolveHubApiTarget` delegates to `resolveHubTarget` (`apps/cli/src/commands/hub.ts:73`),
   which already resolves remote (`relay.controlPlaneUrl` + `AGENTBOX_HUB_API_KEY`), the
