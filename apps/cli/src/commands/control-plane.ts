@@ -1068,14 +1068,20 @@ export async function resolveCustodyTarget(
  * running yet.
  */
 async function autostartLocalHub(): Promise<boolean> {
-  // Dynamic import keeps control-plane.ts off a static edge to sandbox-docker
+  // Dynamic imports keep control-plane.ts off a static edge to sandbox-docker
   // (the eventual Step 12 moves `ensureHub` to sandbox-core so a docker-free host
-  // never pulls in docker machinery to start a hub).
+  // never pulls in docker machinery to start a hub) and mirror how `hub start`
+  // itself is wired.
   const { ensureHub } = await import('@agentbox/sandbox-docker');
+  const { rehydrateFromState } = await import('./relay.js');
   const s = spinner();
   s.start('starting local hub');
   try {
     const ep = await ensureHub({ onLog: (line) => s.message(line) });
+    // Same as `hub start`/`restart`: a cold-started relay has an empty in-memory
+    // box registry (and no cloud pollers) until the persisted state is re-pushed,
+    // so a listing right after autostart would otherwise miss registered boxes.
+    await rehydrateFromState();
     s.stop(`local hub running on ${ep.hostUrl}`);
     return true;
   } catch (err) {
@@ -1109,16 +1115,19 @@ export async function resolveHubApiTarget(
   const { resolveHubTarget } = await import('./hub.js');
   let target = await resolveHubTarget(urlFlag);
 
-  // Bring a local hub up before its token is used. The token at
-  // `~/.agentbox/hub/token` PERSISTS across `hub stop`, so token presence is NOT a
-  // liveness signal — a stopped hub still resolves with one. Gate the autostart on
-  // the hub actually running, or a stopped hub would skip autostart and only fail
-  // later at the health probe. Skipped under `quiet` (a probe must not spawn a
-  // daemon). `getHubStatus` reflects only the local hub, so it is irrelevant in
-  // remote mode.
+  // Bring the full local hub up before its token is used. Two traps this gate
+  // avoids: (1) the token at `~/.agentbox/hub/token` PERSISTS across `hub stop`,
+  // so token presence is NOT a liveness signal — a stopped hub still resolves with
+  // one; (2) a bare `agentbox relay` (e.g. spawned by `create`) answers `/healthz`
+  // (`running:true`) but serves no `/api/v1` — so requiring the delegated Next UI
+  // (`ui`) is what distinguishes the full hub from a lean relay holding the port.
+  // `ensureHub` idempotently reclaims a lean relay / version-mismatched hub, so
+  // autostart is safe to trigger in both cases. Skipped under `quiet` (a probe
+  // must not spawn a daemon); `getHubStatus` is local-only, so irrelevant remote.
   if (target.mode === 'local' && !opts.quiet) {
     const { getHubStatus } = await import('@agentbox/sandbox-docker');
-    if (!(await getHubStatus()).running) {
+    const st = await getHubStatus();
+    if (!(st.running && st.ui)) {
       if (!(await autostartLocalHub())) return null;
       target = await resolveHubTarget(urlFlag);
     }
