@@ -58,7 +58,14 @@ export function buildOpenApi(): Record<string, unknown> {
       '/boxes': {
         get: {
           tags: ['Boxes'],
-          summary: 'List boxes',
+          summary: 'List or resolve boxes',
+          description:
+            'Lists every box (normalized view). ?live=1 refreshes each cloud box state with an SDK probe (opt-in, slower; host topology only). ?ref=<id|name|index> instead resolves a single box server-side (findBox semantics: exact id, unique id prefix, name, displayName, sandbox id); pass ?project=<host-path> for numeric project-index refs. The ref response is the match set in { boxes }: 0 (none), 1 (unique), or >1 (ambiguous prefix).',
+          parameters: [
+            { name: 'live', in: 'query', required: false, schema: { type: 'string', enum: ['1'] } },
+            { name: 'ref', in: 'query', required: false, schema: { type: 'string' } },
+            { name: 'project', in: 'query', required: false, schema: { type: 'string' } },
+          ],
           responses: {
             '200': {
               description: 'Boxes',

@@ -12,8 +12,7 @@ import { basename } from 'node:path';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { boxSshDirForProvider, defaultBoxSshDir } from '@agentbox/sandbox-core';
 import type { CustodyClient } from './custody-client.js';
-import type { ControlPlaneAdminClient } from './admin-client.js';
-import { matchRegistration } from './match-ref.js';
+import type { HubApiBox } from './hub-api-client.js';
 
 export interface HubPullResult {
   /** The id the keys are stored under (sandboxId, or the box id as a fallback). */
@@ -22,37 +21,27 @@ export interface HubPullResult {
   dest: string;
   /** Basenames of the files written. */
   files: string[];
-  /** True when the box was found in the control box's registry. */
-  registered: boolean;
 }
 
 export interface HubPullArgs {
-  admin: ControlPlaneAdminClient;
   custody: CustodyClient;
-  /** Box id or name as shown by `hub boxes list`. */
-  box: string;
+  /** The box as `GET /api/v1/boxes?ref=` resolved it (the ref is matched server-side). */
+  box: HubApiBox;
 }
 
 /**
- * Resolve the box → its sandbox id + provider, then download every file under
- * custody `boxes/<key>/ssh/` into the matching on-disk ssh dir. Pure of any
+ * Download every file under custody `boxes/<key>/ssh/` for a resolved hub box
+ * into the matching on-disk ssh dir. Keyed by the box's sandbox id + provider,
+ * from the SAME resolved payload adoption uses — so a ref that resolves to a box
+ * can't land its keys under a different id's dir/custody subtree. Pure of any
  * command-layer concern (logging/exit codes) so it is unit-testable with a fake
- * fetch + a temp HOME.
+ * custody client + a temp HOME.
  */
 export async function pullBoxSshKeys(args: HubPullArgs): Promise<HubPullResult> {
-  const boxes = await args.admin.listBoxes();
-  // The SAME matcher adoption uses. Resolving refs differently here is not a
-  // cosmetic inconsistency: a ref this missed but adoption matched lost
-  // `provider` and fell back to `args.box` as the key — writing one box's keys
-  // into another id's on-disk dir and custody subtree.
-  const reg = matchRegistration(boxes, args.box);
-  const key = reg?.sandboxId ?? reg?.boxId ?? args.box;
-  const files = await downloadBoxSshKeys({
-    custody: args.custody,
-    provider: reg?.backend,
-    key,
-  });
-  return { key, dest: sshDestFor(reg?.backend, key), files, registered: reg !== undefined };
+  const provider = args.box.provider;
+  const key = args.box.sandboxId ?? args.box.id;
+  const files = await downloadBoxSshKeys({ custody: args.custody, provider, key });
+  return { key, dest: sshDestFor(provider, key), files };
 }
 
 /** The on-disk ssh dir for a box, provider-namespaced when the provider has one. */

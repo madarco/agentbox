@@ -239,6 +239,18 @@ export class HubApiClient {
     return this.request<HubApiBox>('GET', `/boxes/${encodeURIComponent(id)}`);
   }
 
+  /**
+   * Resolve a box ref (`id | name | sandbox id | index`) server-side, mirroring
+   * the CLI's local `findBox`. Returns the match SET: `[]`=none, `[box]`=unique,
+   * `[…]`=an ambiguous id prefix (the caller disambiguates). `project` (an
+   * absolute host project root) enables numeric project-index resolution.
+   */
+  async resolveBox(ref: string, project?: string): Promise<HubApiBox[]> {
+    const q = new URLSearchParams({ ref });
+    if (project !== undefined) q.set('project', project);
+    return (await this.request<{ boxes: HubApiBox[] }>('GET', `/boxes?${q.toString()}`)).boxes;
+  }
+
   /** Lifecycle action on a box. Reverse-adoption lets the hub drive registered-only boxes. */
   async lifecycle(id: string, action: HubLifecycleAction): Promise<void> {
     await this.request<{ ok: true }>('POST', `/boxes/${encodeURIComponent(id)}/${action}`);

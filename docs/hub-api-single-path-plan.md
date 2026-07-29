@@ -344,7 +344,7 @@ cache (`~/.agentbox/hub-boxes-cache.json`) is re-keyed onto the API `{ boxes }` 
 
 ---
 
-## Step 4 — Box resolution (adoption kept, re-sourced)
+## Step 4 — Box resolution (adoption kept, re-sourced) ✅ done
 
 - Add `GET /api/v1/boxes?ref=<id|name|index>` — server-side resolution mirroring `findBox`
   (`packages/sandbox-core/src/state.ts:310`), including project-index refs and the
@@ -361,11 +361,70 @@ cache (`~/.agentbox/hub-boxes-cache.json`) is re-keyed onto the API `{ boxes }` 
   send it, so Step 3's thin-client project scoping is inert for plain docker/direct-cloud boxes (see
   Step 3 note). This is the registration-side half of cross-machine box identity, so it belongs here.
 
-**Files:** `apps/hub/app/(dashboard)/api/v1/boxes/route.ts`, `apps/cli/src/box-ref.ts`,
-`control-plane/{auto-adopt,hub-adopt,hub-pull}.ts`, `packages/sandbox-docker/src/create.ts` (+ cloud
-create paths) for `originUrl` capture.
+**Files:** `apps/hub/app/(dashboard)/api/v1/boxes/route.ts`, `apps/hub/lib/boxes/resolve.ts` (new),
+`apps/cli/src/control-plane/{auto-adopt,hub-adopt,hub-pull,hub-api-client}.ts`, `commands/hub.ts`,
+`packages/sandbox-docker/src/create.ts` + `packages/sandbox-cloud/src/cloud-provider.ts` for
+`originUrl` capture. Deleted `control-plane/match-ref.ts`.
 **Verify:** on a control box, `agentbox shell <hub-created-box>` works first try with no explicit
 adopt, for one SSH provider (hetzner) and one SDK provider (e2b).
+
+**Landed.** `GET /api/v1/boxes?ref=<id|name|index>` resolves server-side via the pure
+`resolveBoxRefView` (`apps/hub/lib/boxes/resolve.ts`) — `findBox` precedence on the topology-agnostic
+`Box` view (exact id → unique id prefix → name → displayName → sandbox id / `cloud:<id>`), plus the
+numeric project-index arm when `?project=` is given. It returns the **match set** as `{ boxes }` (0 =
+none, 1 = unique, >1 = ambiguous prefix), so ambiguity is expressed rather than arbitrarily narrowed.
+`HubApiClient.resolveBox(ref, project?)` is the client. **Resolution stays local-first**:
+`resolveBoxOrExit` (`box-ref.ts`) is unchanged — it still runs the local `resolveBoxRef` and only on a
+local miss calls `tryAutoAdopt`, which is what got re-sourced (from the `/admin/store` +
+`matchRegistration` wire onto `resolveBox`). `adoptHubBox`/`pullBoxSshKeys` now take an
+already-resolved `HubApiBox` and materialize it via the shared `registrationToBoxRecord`
+(`hubBoxToRegistration` bridges the payload → `BoxRegistration`); the per-box SSH-key pull stays on
+custody. `hub adopt`/`hub pull` resolve through `/api/v1` too. `originUrl` is now captured at
+registration for docker (`create.ts`) and the classic-cloud create/resume paths (`cloud-provider.ts`),
+the registration-side half of Step 3's cross-machine project scoping. **Verified end-to-end** against
+a remote-shaped loopback hub (`relay.controlPlaneUrl` → `127.0.0.1`, `AGENTBOX_HUB_API_KEY`): a
+registered-only e2b box resolved through the route and `agentbox url <name>` adopted it with no
+explicit `hub adopt` — the materialized `BoxRecord` landed in `state.json` (topology `control-plane`)
+and was **project-linked via its `originUrl`** to a local clone. Unit tests cover the resolver
+(all match kinds incl. ambiguous + index), `adoptHubBox` (every provider shape, project linkage,
+idempotency, no-custody), and `pullBoxSshKeys`.
+
+### Notes for later steps
+
+- **Local-first was kept; the plan's "resolveBoxOrExit resolves through that route" is realized as
+  a fallback.** `box-ref.ts`'s logic is unchanged: the local `resolveBoxRef` still handles autopick /
+  index / ambiguous offline (that is how the direct IO plane resolves a *materialized* record), and
+  only a local **miss** hits the route via `tryAutoAdopt`. Routing every resolve through the hub would
+  add a network dependency + latency to every box-arg command even for local boxes. Steps 5/7 (which
+  also take a `[box]` arg) should keep resolving locally and reuse `resolveBoxOrExit` — the box is
+  already materialized by the time a lifecycle/services op runs.
+- **The fallback gate is `resolveHubTarget().mode === 'remote'`** (a configured control box, or a
+  `hub expose`-d loopback), reusing Step 1's exposed-loopback-first ladder — never a second resolver.
+  A plain local hub (`mode: 'local'`) is deliberately **skipped**, so a typo on a laptop with no
+  control box never round-trips or auto-starts a daemon (matches the old `resolveCustodyTarget`
+  gating). **Edge, believed unreachable in practice but stated so a later reader need not re-derive
+  it:** a registered-only box that exists in a *plain local hub's* store but not in `state.json` would
+  not be found by name, because the fallback is skipped in local mode. This does not happen in
+  practice — a hub-UI create on a local hub writes the same machine's `state.json`, and a *foreign*
+  machine registering a box requires `hub expose` (which is `mode: 'remote'`). If a future feature can
+  produce a registered-only box on a plain local hub, this gate must widen to "a live local hub with
+  registered boxes" without reintroducing typo-time auto-start.
+- **SSH keys still ride the custody (`/admin`) surface** (`downloadBoxSshKeys` via `CustodyClient`).
+  Step 4 re-sourced only the *resolution*; moving the SSH-key pull onto `/api/v1/custody` is **Step
+  10**. `adoptHubBox`'s `custody` arg is optional — a thin client with an API key but no admin token
+  adopts the record (and `url` works), and an SSH provider is flagged `sshKeysMissing` rather than
+  failing opaquely later.
+- **`originUrl` capture touched Step 8's create files (`create.ts`, `cloud-provider.ts`).** Kept to
+  the `originUrl:` argument alone (a best-effort `git remote get-url origin` read) so Step 8 rebases
+  cleanly. The control-plane cloud path (`registerBoxWithPlane`) already sent it; only docker + the two
+  classic-cloud `registerBoxWithRelay` calls were missing it.
+- **`matchRegistration` (`control-plane/match-ref.ts`) is deleted** — ref matching is server-side now.
+  `_cloud-agent-via-hub.ts` (Step 8's file) and `recover.ts` were updated to the new signatures:
+  the former resolves the just-created box via `resolveBox` before adopting; the latter calls
+  `downloadBoxSshKeys` directly (it already holds the local record's provider + sandbox id).
+- **Env caveat for e2e (not a code gap):** the memory-heavy Next standalone hub intermittently stalls
+  its `/api/v1/boxes` route (which calls `docker ps` through `getData`) under this dev VM's memory
+  pressure, while `/health` stays green. Retry once warm; it is unrelated to the resolution code.
 
 ---
 

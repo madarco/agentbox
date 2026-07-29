@@ -17,10 +17,14 @@
  */
 import type { BoxRecord } from '@agentbox/sandbox-docker';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
-import { resolveCustodyTarget, syncAgentCredentialsIfChanged } from './control-plane.js';
+import {
+  resolveCustodyTarget,
+  resolveHubApiTarget,
+  syncAgentCredentialsIfChanged,
+} from './control-plane.js';
 import { enqueueCreateViaHub, pollHubJob } from '../control-plane/hub-enqueue.js';
 import { adoptHubBox } from '../control-plane/hub-adopt.js';
-import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
+import { HubApiClient } from '../control-plane/hub-api-client.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
 import { makeProgressReporter } from '../lib/progress.js';
 
@@ -147,10 +151,16 @@ export async function createCloudBoxViaHubAndAdopt(
   const boxId = job.result?.boxId;
   if (!boxId) throw new Error('the control box created the box but returned no id to adopt');
 
+  // Resolve the just-created box server-side (`/api/v1`), then materialize it.
+  // The box is freshly registered, so an exact-id resolve returns it.
+  const apiTarget = await resolveHubApiTarget(urlFlag, { quiet: true });
+  const matches = apiTarget ? await new HubApiClient(apiTarget).resolveBox(boxId) : [];
+  if (matches.length !== 1) {
+    throw new Error(`the control box created box ${boxId} but it could not be resolved to adopt`);
+  }
   const res = await adoptHubBox({
-    admin: new ControlPlaneAdminClient(target),
+    box: matches[0]!,
     custody: new CustodyClient(target),
-    ref: boxId,
     controlPlaneUrl: target.url,
     log: onLog ?? ((): void => {}),
   });
