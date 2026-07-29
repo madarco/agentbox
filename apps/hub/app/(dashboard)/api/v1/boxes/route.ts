@@ -7,8 +7,13 @@ import { parseCreateBox, readJson } from '../lib/validate';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(): Promise<Response> {
-  const { boxes } = await readState();
+export async function GET(req: Request): Promise<Response> {
+  // `?live=1` (opt-in, expensive — mirrors GET /api/v1/providers?freshness=1):
+  // refresh each cloud box's `state` with an authoritative provider SDK probe
+  // instead of the fast persisted `cloud.lastState`. Only the in-process host
+  // backend can probe; the read-only Postgres/plane path silently ignores it.
+  const live = new URL(req.url).searchParams.get('live') === '1';
+  const { boxes } = await readState({ live });
   return ok({ boxes });
 }
 

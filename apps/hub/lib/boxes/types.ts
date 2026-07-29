@@ -49,6 +49,34 @@ export interface Box {
   opencodeSessionTitle?: string;
   claudeActivity?: string;
   codexActivity?: string;
+  // Live shell-session count (docker only; the persisted status has none for
+  // cloud/registered boxes). Drives `agentbox list`'s SHELLS column. Absent →
+  // the CLI renders `-`.
+  shellCount?: number;
+  // ── Adoption / reconstruction fields. A thin CLI (`agentbox ls`, and Step 4's
+  // box resolution) rebuilds a drivable local record from THIS payload instead
+  // of the internal `/admin/store` registration wire, so the API carries every
+  // NON-SECRET field `registrationToBoxRecord` needs. Tokens (relay/bridge/
+  // preview) are deliberately omitted — a fresh adoption re-mints them. Populated
+  // for cloud boxes; absent (undefined) for docker and synthetic `job:` rows. ──
+  // Provider-native sandbox id (the handle the backend SDK resolves).
+  sandboxId?: string;
+  // The box repo's origin remote URL, from its registration. Lets project-scoped
+  // `ls` match a registered box with no local `projectRoot` to the cwd's repo.
+  originUrl?: string | null;
+  // Public IP/host of the box's VM (direct-SSH providers: hetzner/digitalocean).
+  publicHost?: string;
+  // Resolved base image / snapshot ref the sandbox booted from.
+  image?: string;
+  // In-box WebProxy port (cloud boxes bind a non-privileged port).
+  webPort?: number;
+  // Token-authed preview URLs keyed by in-box port (mirrors CloudBoxFields).
+  previewUrls?: Record<number, string>;
+  // The agent the box was created for → BoxRecord.lastAgent.
+  lastAgent?: 'claude' | 'codex' | 'opencode';
+  // Sync federation shape ('cloud' | 'control-plane'); a hub-created box is
+  // 'control-plane'. Absent for docker.
+  topology?: string;
 }
 
 export interface Project {

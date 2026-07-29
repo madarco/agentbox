@@ -168,7 +168,7 @@ confirm the bake runs hub-side and `~/.agentbox/e2b-prepared.json` lands on the 
 
 ---
 
-## Step 3 — Listing (`ls` / `list`)
+## Step 3 — Listing (`ls` / `list`) ✅ done
 
 - Enrich `HubApiBox` (`apps/hub/lib/boxes/types.ts` + `hub-api-client.ts`) with the fields the
   merge and adoption paths need today: `sandboxId`, `originUrl`, `publicHost`, `image`,
@@ -187,6 +187,46 @@ confirm the bake runs hub-side and `~/.agentbox/e2b-prepared.json` lands on the 
 **Verify:** `agentbox ls` and `ls -g` produce identical output before/after on a control box with
 a mix of docker + cloud + in-flight `job:` boxes; stop the hub and confirm the offline cache
 still prints.
+
+**Landed.** `agentbox list` now reads `GET /api/v1/boxes` only (via `fetchBoxListing`), renders
+straight off `HubApiBox`, and has no merge path. `hub-merge.ts` / `list-merged.ts` were **kept**
+(not deleted) because `dashboard.ts` still consumes `listBoxesMerged`/`MergedBox` at runtime — see
+the deferred-deletion note below. The `/admin/store` branch is gone from `list`'s path; the offline
+cache (`~/.agentbox/hub-boxes-cache.json`) is re-keyed onto the API `{ boxes }` payload.
+
+**Notes for later steps:**
+
+- **Enriched Box payload — the field map Steps 4 & 7 build on.** `HubApiBox` (client:
+  `hub-api-client.ts`; server view model: `apps/hub/lib/boxes/types.ts` `Box`) now carries, in
+  addition to the pre-existing display fields, an **adoption/reconstruction block** populated on
+  cloud rows only (all `undefined` for docker + synthetic `job:` rows): `sandboxId`, `originUrl`,
+  `publicHost`, `image`, `webPort`, `previewUrls: Record<number,string>`, `lastAgent`, `topology`,
+  plus `branch` and `shellCount`. These are the non-secret inputs `registrationToBoxRecord`
+  (`packages/relay/src/registration-to-record.ts`) needs when Step 4 rebuilds a `BoxRecord` from
+  the payload alone.
+- **What is deliberately NOT on the payload (Step 4 must re-mint / fall back):**
+  - **Secrets are never serialized** — the relay/bridge/preview **tokens** and the concrete
+    `previewUrl` (as opposed to the `previewUrls` port map) are re-minted host-side via `freshToken`
+    in `registrationToBoxRecord`. Do not try to carry them on the Box; adoption already re-mints.
+  - **`sanctionedBranch`** is not a distinct payload field; `registrationToBoxRecord` falls back to
+    `branch` (`workspaceBranch`) when it is absent, which is correct for every box we create.
+- **`--live` is now server-side (`GET /api/v1/boxes?live=1`).** Mirrors the `GET /api/v1/providers?freshness=1`
+  opt-in-expensive pattern: on the in-process host topology it runs an authoritative
+  `provider.probeState(box)` per **cloud** box (docker skipped) with a 4s per-box timeout, best-effort,
+  before mapping. The Postgres/plane topology ignores `live` (no credentials there). Rationale: a
+  cloud box's persisted `lastState` can lie (a platform-side stop is invisible), and the hub is now
+  the only place holding provider credentials — so the flag had to move server-side rather than be
+  dropped. **Follow-up (hub-side, not blocking a step):** `applyLiveCloudStates` only probes boxes
+  that come through `mapBox(ListedBox)` (the in-process host backend). Registered-only boxes mapped
+  by `mapRegistrationToBox` are not live-probed today; wiring a probe there is a hub follow-up once
+  Step 4's resolution route exists.
+- **Deferred deletion (was in this step's brief, punted with sign-off).** `hub-merge.ts`,
+  `list-merged.ts`, and `hub-list.ts`'s `fetchHubListing` (the `/admin/store` **admin** listing, not
+  the `ls` path) survive because `dashboard.ts` (the IO-plane TUI, out of Step 3's file set) still
+  imports them at runtime. Converting `dashboard.ts` onto `/api/v1` and then deleting these three is
+  **Step 7/11 cleanup**. To avoid a cache-schema collision in the meantime, `fetchHubListing`'s cache
+  was repointed to `~/.agentbox/hub-registrations-cache.json` (the `{ registrations }` schema),
+  leaving `hub-boxes-cache.json` exclusively the new `{ boxes }` API cache.
 
 ---
 

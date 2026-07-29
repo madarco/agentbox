@@ -9,11 +9,13 @@ import type { HubState } from './types';
 //    localhost/hetzner `agentbox hub`) — Next never imports the sandbox toolchain;
 //  - a Postgres source (the `next start` deploy path, vercel/hetzner-compose),
 //    dynamically imported so `pg` stays out of the localhost bundle.
-export async function getDashboardData(): Promise<HubState> {
+export async function getDashboardData(opts?: { live?: boolean }): Promise<HubState> {
   const backend = globalThis.__AGENTBOX_HUB_BACKEND;
   if (backend) {
-    return { ...(await backend.getData()), authMode: authMode() };
+    return { ...(await backend.getData(opts)), authMode: authMode() };
   }
+  // The Postgres/plane path is a read-only DB view with no provider SDK to
+  // probe, so `live` is silently a no-op there (same as `?freshness=1`).
   if (hasPostgresSource()) {
     return { ...(await getPostgresDashboardData()), authMode: authMode() };
   }

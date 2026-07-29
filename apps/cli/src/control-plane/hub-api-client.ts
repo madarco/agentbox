@@ -10,19 +10,55 @@
  * belong here; custody / registration / RPC-lease stay on the admin client.
  */
 
-/** A hub box as the `/api/v1` list/get returns it (the UI view + raw host fields). */
+/**
+ * A hub box as the `/api/v1` list/get returns it (the UI view + raw host fields).
+ * Mirrors the hub's own `Box` for the fields a CLI/tray client reads. The
+ * "adoption / reconstruction" block is what lets a thin CLI (`agentbox ls`, and
+ * Step 4's box resolution) rebuild a drivable local record from THIS payload
+ * instead of the internal `/admin/store` registration wire — it carries every
+ * NON-SECRET field `registrationToBoxRecord` needs. Tokens (relay/bridge/preview)
+ * are deliberately absent: a fresh adoption re-mints them.
+ */
 export interface HubApiBox {
   id: string;
   name?: string;
+  /** Cosmetic user label (set via rename); the CLI prefers it over `name`. */
+  displayName?: string | null;
+  /** The hub's computed primary label (displayName || session title || name). */
+  task: string;
   provider: string;
   /** Raw provider runtime state; absent on synthetic in-flight `job:` boxes. */
   state?: 'running' | 'paused' | 'stopped' | 'missing' | 'destroyed';
   /** Normalized lifecycle status (running | paused | stopped | creating | error). */
   status: string;
   branch: string;
-  task: string;
+  /** Absolute host path of the box's project — host topology only. */
   projectRoot?: string;
   projectIndex?: number;
+  createdAt?: number;
+  /** Normalized primary agent for display ('claude' | 'codex' | 'opencode' | 'shell'). */
+  agent?: string;
+  // ── Agent activity / session titles (the AGENT column + cmux dock). ──
+  claudeActivity?: string;
+  codexActivity?: string;
+  claudeSessionTitle?: string;
+  codexSessionTitle?: string;
+  opencodeSessionTitle?: string;
+  /** Live shell-session count (docker only); absent → the CLI renders `-`. */
+  shellCount?: number;
+  // ── Endpoints (the URL column; Step 7's `url`/`screen`). ──
+  webUrl?: string | null;
+  vncUrl?: string | null;
+  vncEnabled?: boolean;
+  // ── Adoption / reconstruction fields (non-secret; cloud boxes only). ──
+  sandboxId?: string;
+  originUrl?: string | null;
+  publicHost?: string;
+  image?: string;
+  webPort?: number;
+  previewUrls?: Record<number, string>;
+  lastAgent?: 'claude' | 'codex' | 'opencode';
+  topology?: string;
 }
 
 /** A create-job's status as `/api/v1/jobs/:id` returns it. */
@@ -176,9 +212,15 @@ export class HubApiClient {
     return this.request<HubApiHealth>('GET', '/health');
   }
 
-  /** All boxes the hub knows (its own + registered). Topology-agnostic read. */
-  async listBoxes(): Promise<HubApiBox[]> {
-    return (await this.request<{ boxes: HubApiBox[] }>('GET', '/boxes')).boxes;
+  /**
+   * All boxes the hub knows (its own + registered). Topology-agnostic read.
+   * `live` (opt-in, expensive — mirrors `listProviders({ freshness })`) asks the
+   * hub to refresh each cloud box's `state` with an authoritative SDK probe; the
+   * default serves the fast persisted state.
+   */
+  async listBoxes(opts: { live?: boolean } = {}): Promise<HubApiBox[]> {
+    const q = opts.live ? '?live=1' : '';
+    return (await this.request<{ boxes: HubApiBox[] }>('GET', `/boxes${q}`)).boxes;
   }
 
   /** One box by id (throws HubApiError 'not_found' when absent). */

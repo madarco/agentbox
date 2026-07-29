@@ -146,6 +146,52 @@ async function providerForBox(box: BoxRecord): Promise<Provider> {
   return mod.provider;
 }
 
+/** Per-box probe budget. A hung cloud SDK call must not stall the whole listing. */
+const LIVE_PROBE_TIMEOUT_MS = 4000;
+
+/** Resolve to the promise's value, or null if it doesn't settle within `ms`. */
+function withProbeTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise<T | null>((resolve) => {
+    const t = setTimeout(() => resolve(null), ms);
+    if (typeof t.unref === 'function') t.unref();
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      () => {
+        clearTimeout(t);
+        resolve(null);
+      },
+    );
+  });
+}
+
+/**
+ * Overwrite the optimistic `state` that `listBoxes()` hardcodes to `running` for
+ * cloud boxes (it skips the SDK round-trip) with a real `provider.probeState()`.
+ * The hub-side half of the CLI's old client `applyLiveCloudStates`: now that the
+ * hub holds the provider credentials, `agentbox ls --live` asks the hub to probe
+ * rather than doing it from the laptop. Docker boxes already carry a live
+ * `docker inspect` state and are skipped. Mutates `listed` in place; a probe that
+ * throws or times out leaves the persisted state as-is so the listing stays
+ * responsive (expired creds, a wedged SDK call).
+ */
+async function applyLiveCloudStates(listed: ListedBox[]): Promise<void> {
+  await Promise.all(
+    listed.map(async (b) => {
+      if (!b.provider || b.provider === 'docker') return;
+      try {
+        const provider = await providerForBox(b);
+        const state = await withProbeTimeout(provider.probeState(b), LIVE_PROBE_TIMEOUT_MS);
+        if (state !== null) b.state = state;
+      } catch {
+        // Leave b.state at the listBoxes literal — best-effort freshness.
+      }
+    }),
+  );
+}
+
 // ── ListedBox → UI view model ──
 // Project id = the config registry's canonical key (SHA-1/16 of the path), so
 // registry-derived and box-derived projects share one id and `create` can
@@ -227,6 +273,18 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping): Box {
     opencodeSessionTitle: b.opencodeSessionTitle,
     claudeActivity: b.claudeActivity,
     codexActivity: b.codexActivity,
+    shellCount: b.shellSessions.length,
+    // Adoption / reconstruction fields (see Box) — cloud only; a docker box has
+    // no cloud block, so these stay undefined. A locally-listed box already
+    // carries a `projectRoot`, so `originUrl` (the registered-box scoping key)
+    // is not needed here.
+    sandboxId: b.cloud?.sandboxId,
+    publicHost: b.cloud?.publicHost,
+    image: b.cloud?.image ?? (b.provider && b.provider !== 'docker' ? b.image : undefined),
+    webPort: b.cloud?.webPort,
+    previewUrls: b.cloud?.previewUrls,
+    lastAgent: b.lastAgent,
+    topology: b.cloud?.topology,
   };
 }
 
@@ -284,6 +342,17 @@ function mapRegistrationToBox(reg: BoxRegistration): Box {
     state: 'running',
     name: reg.name,
     projectIndex: reg.projectIndex,
+    // Adoption / reconstruction fields — everything a PC needs to rebuild a
+    // drivable record for this box from the API alone (Step 4), minus secrets.
+    sandboxId: reg.sandboxId,
+    originUrl: reg.originUrl,
+    publicHost: reg.publicHost,
+    image: reg.image,
+    webPort: reg.webPort,
+    lastAgent: normalizeLastAgent(reg.agent as BoxRecord['lastAgent']),
+    // A control box only knows a registered box through the plane, so it is by
+    // definition a control-plane-topology box.
+    topology: 'control-plane',
   };
 }
 
@@ -1381,8 +1450,12 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   return {
     // authMode is layered on by source.ts (an env-derived concern), so the host
     // backend produces everything else.
-    async getData(): Promise<Omit<HubState, 'authMode'>> {
+    async getData(opts): Promise<Omit<HubState, 'authMode'>> {
       const [listed, jobs] = await Promise.all([listBoxes(), loadQueue()]);
+      // `?live=1` (opt-in, expensive — mirrors providers' `?freshness=1`): refresh
+      // each cloud box's `state` with an authoritative SDK probe before mapping.
+      // Off the default path — a plain listing shows the fast persisted state.
+      if (opts?.live) await applyLiveCloudStates(listed);
       // Surface in-flight create jobs as synthetic `creating` boxes (and just-
       // failed ones as `error`) until the real box lands in listBoxes() and
       // takes over — matched by the boxId the worker writes back to the manifest.
