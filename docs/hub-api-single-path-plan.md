@@ -160,24 +160,28 @@ and rejected an empty key (`invalid_request`).
 
 **Notes for later steps:**
 
-- **The hub bake API carries only `{ force, claudeInstall }` — the per-bake `--size` / `--location` /
-  `--name` / `--build` / `--local` / `--via-hub` flags were removed from `prepare`.** The hub prepare
-  path is route (`api/v1/providers/[id]/prepare`) → `QueueJobPrepare` (`packages/relay/src/queue.ts`)
-  → the worker `apps/cli/src/commands/_run-queued-prepare.ts`, which calls `provider.prepare({
-  hostWorkspace, force, registry, claudeInstall, host?, onLog })` and resolves only
-  `box.imageRegistry` + `box.claudeInstall` from config. It passes **no** `size` / `location` /
-  `sandboxClass` / `name` / `vmBaseImage`, so the bake uses provider defaults. **This is a regression
-  for the fixed-resource providers baked from the pure-local path**: the old `prepare.ts` resolved
-  `box.sizeDaytona` / `box.daytonaClass` (and the hetzner bake VPS `box.hetznerLocation`) from config
-  and passed them to a local `provider.prepare`; routing all bakes through the worker drops them, so a
-  daytona `container`-class or sized bake, and a hetzner bake-VPS region pin, are currently ignored.
-  Restoring this belongs to the queue/create step (Step 8) or a dedicated hub-side follow-up: have the
-  worker resolve `size` / `sandboxClass` / `location` from effective config (fixes the co-located
-  case) **and** extend the route + `QueueJobPrepare` to carry them (fixes the remote control-box
-  case). `_run-queued-prepare.ts` + the route + `QueueJobPrepare` are all outside Step 1's file set
-  (queue is Step 8's domain), so this was left as a note rather than fixed. Public docs
-  (`cli.mdx`, `daytona.mdx`, `e2b.mdx`, `hetzner.mdx`, `deployed-hub.mdx`) now say the bake reads the
-  `box.size<Provider>` pins and flag the gap.
+- **Routing flags vs bake inputs — only the two routing flags were removed; the bake inputs travel
+  through the widened route contract.** `--local` / `--via-hub` chose *where* to bake and are
+  meaningless under "prepare always goes through `/api/v1`", so they are gone. `--build` / `--size` /
+  `--location` / `--name` are *inputs to the bake itself*, so per the plan's design rule (same path,
+  same interface, behavior difference inside the route) the contract was **widened** to carry them
+  rather than dropping user-facing capability. The full path now threads them end-to-end:
+  `prepare` flags → `HubApiClient.prepareProvider` body → `parseProviderPrepare`
+  (`api/v1/.../prepare/route.ts` validation) → `prepareProvider` (hub-backend) → `enqueuePrepareJob`
+  → `QueueJobPrepare` (`packages/relay/src/queue.ts`) → the worker
+  `apps/cli/src/commands/_run-queued-prepare.ts`, which passes them into `provider.prepare`. When a
+  flag is **absent**, the worker fills it from the hub's own effective config —
+  `resolveBoxSize` (`box.size<Provider>`), `resolveDaytonaClass` (`box.daytonaClass`),
+  `resolvePrepareLocation` (`box.hetznerLocation` / `box.digitaloceanRegion` / `box.daytonaRegion`, a
+  new peer helper in `@agentbox/config`), `box.daytonaVmBaseImage`, and `box.imageRegistry` (now for
+  docker **and** daytona; the worker previously resolved it for docker only, which would have starved
+  a daytona `linux-vm` bake). `--build` maps to `allowPull: false`. **The queue files
+  (`queue.ts`, `_run-queued-prepare.ts`) are nominally Step 8's, but the maintainer authorized editing
+  them here** to fix this rather than ship a capability regression, since nothing was running in
+  parallel. Config-fallback semantics: a remote control-box bake uses the *control box's* config pins
+  for anything you don't pass explicitly (it owns its snapshots), consistent with how the worker
+  already treats `box.claudeInstall` / `box.imageRegistry`. Public docs (`cli.mdx`, `daytona.mdx`,
+  `e2b.mdx`, `hetzner.mdx`, `deployed-hub.mdx`) document the flags as working in both modes.
 - **The login → hub credential push is best-effort, quiet, and non-spawning.**
   `publish-credentials.ts` resolves the hub target with `{ quiet: true }` (no print, and — crucially
   — no local-hub auto-start: a login must not start a daemon as a side effect), `hostReachable`-probes

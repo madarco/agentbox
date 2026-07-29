@@ -57,6 +57,15 @@ export async function bakeViaHub(args: {
   provider: Provider;
   force?: boolean;
   claudeInstall: 'native' | 'npm';
+  /**
+   * Bake INPUTS threaded from the CLI's flags (`--build` / `--size` / `--location`
+   * / `--name`). They ride the same route body; the hub worker fills any that are
+   * absent from its own effective config. Not routing — see the plan's Step 1.
+   */
+  build?: boolean;
+  size?: string;
+  location?: string;
+  name?: string;
   custody: { url: string; adminToken: string } | null;
   /**
    * Whether the hub runs on THIS machine (a local hub, or `hub expose`). When
@@ -79,6 +88,10 @@ export async function bakeViaHub(args: {
       : await args.client.prepareProvider(args.providerName, {
           force: args.force,
           claudeInstall: args.claudeInstall,
+          build: args.build,
+          size: args.size,
+          location: args.location,
+          name: args.name,
         });
   } catch (err) {
     // A precheck failure on the hub (no credentials there, docker down) is a

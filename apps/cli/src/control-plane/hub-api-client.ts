@@ -306,7 +306,14 @@ export class HubApiClient {
    */
   async prepareProvider(
     id: string,
-    body: { force?: boolean; claudeInstall?: 'native' | 'npm' } = {},
+    body: {
+      force?: boolean;
+      claudeInstall?: 'native' | 'npm';
+      build?: boolean;
+      size?: string;
+      location?: string;
+      name?: string;
+    } = {},
   ): Promise<string> {
     const res = await this.request<{ jobId: string }>(
       'POST',

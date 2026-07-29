@@ -332,10 +332,11 @@ agentbox prepare --provider e2b            # bakes on the control box, then adop
 ```
 
 The bake's log streams to your terminal, and when it finishes the resulting bake record is pulled
-back into `~/.agentbox/<provider>-prepared.json`, so one bake leaves both machines current. The
-control box's bake API carries only `--force` and `--claude-install`; the per-bake `--name`,
-`--location`, and `--size` flags were removed while `prepare` moved behind the hub (a tracked
-follow-up will thread the `box.size<Provider>` pins through the bake).
+back into `~/.agentbox/<provider>-prepared.json`, so one bake leaves both machines current. The bake
+inputs travel with the request, so `--force`, `--claude-install`, `--build`, `--size`, `--location`,
+and `--name` all work against the control box just as they do locally — a remote bake fills any you
+omit from the control box's own config pins (`box.sizeDaytona`, `box.daytonaClass`,
+`box.hetznerLocation`, `box.digitaloceanRegion`).
 
 **`docker` always bakes locally** — its base is an image on _this_ machine, so building it anywhere
 else would leave this one untouched. **`remote-docker` does route to the control box**, when that box

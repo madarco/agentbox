@@ -171,14 +171,25 @@ export interface QueueJobLogin {
 
 /**
  * Options for a `kind: 'prepare'` job: bake a provider's base image. The worker
- * (`_run-queued-prepare`) calls `provider.prepare({ force, claudeInstall, onLog })`
- * directly and streams progress to the job log.
+ * (`_run-queued-prepare`) passes these into `provider.prepare`, filling any that
+ * are absent from the hub's own effective config, and streams progress to the
+ * job log. These are the bake INPUTS (not routing) — the CLI's `--build` /
+ * `--size` / `--location` / `--name` flags ride here so one route serves every
+ * bake shape.
  */
 export interface QueueJobPrepare {
   /** Rebuild even if the base image/snapshot already exists. */
   force?: boolean;
   /** Bake-time Claude install method (falls back to the effective config). */
   claudeInstall?: 'native' | 'npm';
+  /** Force a local docker build instead of pulling the registry base (`--build`). */
+  build?: boolean;
+  /** Bake-time VM size for the fixed-resource providers (daytona `cpu-mem-disk`, e2b `cpu-mem`). */
+  size?: string;
+  /** Bake datacenter / region (hetzner / digitalocean / daytona). */
+  location?: string;
+  /** Snapshot name (daytona; defaults to `agentbox-base-<timestamp>` when absent). */
+  name?: string;
 }
 
 /**
@@ -352,6 +363,14 @@ export interface EnqueuePrepareJobInput {
   force?: boolean;
   /** Bake-time Claude install method (else the effective config decides). */
   claudeInstall?: 'native' | 'npm';
+  /** Force a local docker build instead of pulling the registry base (`--build`). */
+  build?: boolean;
+  /** Bake-time VM size (else the effective config's `box.size<Provider>` decides). */
+  size?: string;
+  /** Bake datacenter / region (else the provider's `box.<...>Location/Region` decides). */
+  location?: string;
+  /** Snapshot name (daytona; the provider defaults it when absent). */
+  name?: string;
   /** Host dir used for config resolution; the worker defaults it if absent. */
   workspace?: string;
 }
@@ -371,6 +390,10 @@ export async function enqueuePrepareJob(
   const prepare: QueueJobPrepare = {
     ...(input.force ? { force: true } : {}),
     ...(input.claudeInstall ? { claudeInstall: input.claudeInstall } : {}),
+    ...(input.build ? { build: true } : {}),
+    ...(input.size ? { size: input.size } : {}),
+    ...(input.location ? { location: input.location } : {}),
+    ...(input.name ? { name: input.name } : {}),
   };
   const job: QueueJob = {
     id,

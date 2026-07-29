@@ -77,14 +77,13 @@ When you upgrade AgentBox, `create --provider daytona` notices if the new instal
 
 ### Sizing (bake-time)
 
-Daytona resources are fixed **at snapshot-bake time** — the SDK rejects custom resources on the snapshot-resume path, so `--size` on `create` doesn't resize a snapshot-booted box. The size you bake at is pinned with `box.sizeDaytona` / `box.size` (`cpu-memory-disk` GB, e.g. `4-8-20`). The snapshot name carries a size suffix (`agentbox-base-<sha>-4-8-20`), so re-sized bakes don't collide; if you later `create --provider daytona --size 2-4-8` against a snapshot baked at a different size, the box still boots — AgentBox warns loudly that the size is fixed at bake time.
+Daytona resources are fixed **at snapshot-bake time** — the SDK rejects custom resources on the snapshot-resume path, so `--size` on `create` doesn't resize a snapshot-booted box. Bake the size you want with `agentbox prepare --provider daytona --size <cpu-memory-disk>` (GB, e.g. `4-8-20`), or pin it with `box.sizeDaytona` / `box.size`:
 
 ```bash
-agentbox config set box.sizeDaytona 4-8-20
-agentbox prepare --provider daytona --force
+agentbox prepare --provider daytona --size 4-8-20 --force
 ```
 
-<Callout title="NOTE">`prepare` now bakes **on the hub**, and the hub bake does not yet read the `box.sizeDaytona` / `box.daytonaClass` pins — it bakes at the daytona defaults (`linux-vm`, default resources). Threading these bake knobs through the hub prepare path is a tracked follow-up in the [`/api/v1`](/docs/deployed-hub) consolidation; the per-invocation `prepare --size` flag was removed with it.</Callout>
+The snapshot name carries a size suffix (`agentbox-base-<sha>-4-8-20`), so re-sized bakes don't collide. If you later `create --provider daytona --size 2-4-8` against a snapshot baked at a different size, the box still boots — AgentBox warns loudly that the size is fixed at bake time and points you at `prepare --provider daytona --size 2-4-8 --force`. Re-running `prepare` with the same size skips the rebuild. `--size` (and `box.sizeDaytona` / `box.daytonaClass`) travel with the bake request, so a bake through a [control box](/docs/deployed-hub) uses the size you ask for, falling back to the control box's own pins when you omit the flag.
 
 See [CLI commands](/docs/cli) for all flags.
 
@@ -177,7 +176,7 @@ Two differences from Docker: there is no `--merged` (Daytona snapshots are flatt
 
 ## Caveats
 
-- **Size is fixed at bake time** — snapshot-based creates inherit the snapshot's baked resources; pin `box.sizeDaytona` (a `create --size` that differs just prints a warning). The hub-routed bake does not yet honor that pin — see the sizing note above.
+- **Size is fixed at bake time** — snapshot-based creates inherit the snapshot's baked resources; use `agentbox prepare --provider daytona --size 4-8-20` to change them (a `create --size` that differs just prints a warning).
 - **No base image auto-build** — `prepare --provider daytona` is required, unlike Docker.
 - **No live stats** — `agentbox top` and `dashboard` render `—` for cloud CPU/mem and no live attach pane.
 - **Destroy lag in the dashboard** — the resource is gone immediately, but the Daytona web UI lags ~30s (cosmetic).

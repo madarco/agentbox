@@ -53,6 +53,10 @@ interface PrepareOptions {
   yes?: boolean;
   status?: boolean;
   claudeInstall?: string;
+  build?: boolean;
+  name?: string;
+  location?: string;
+  size?: string;
 }
 
 interface DockerStatus {
@@ -351,6 +355,18 @@ export interface RunPrepareOptions {
    * `box.claudeInstall` config key; falls back to the effective config.
    */
   claudeInstall?: 'native' | 'npm';
+  /**
+   * Bake INPUTS (not routing) threaded to the hub bake. Each is a per-invocation
+   * override; when absent the hub worker fills it from its effective config.
+   *   - `build`: force a local docker build instead of pulling the registry base.
+   *   - `size`: bake-time VM size (daytona `cpu-mem-disk`, e2b `cpu-mem`).
+   *   - `location`: bake datacenter / region (hetzner / digitalocean / daytona).
+   *   - `name`: snapshot name (daytona).
+   */
+  build?: boolean;
+  size?: string;
+  location?: string;
+  name?: string;
 }
 
 /**
@@ -382,6 +398,10 @@ async function runPrepareViaHub(args: {
   provider: Provider;
   force?: boolean;
   claudeInstall: 'native' | 'npm';
+  build?: boolean;
+  size?: string;
+  location?: string;
+  name?: string;
   remoteHost?: string;
   suppressStatus?: boolean;
 }): Promise<void> {
@@ -403,6 +423,10 @@ async function runPrepareViaHub(args: {
     provider: args.provider,
     force: args.force,
     claudeInstall: args.claudeInstall,
+    build: args.build,
+    size: args.size,
+    location: args.location,
+    name: args.name,
     custody,
     coLocated,
     remoteHost: args.remoteHost,
@@ -495,9 +519,11 @@ export async function runPrepare(
 
   const cwd = opts.cwd ?? process.cwd();
   const cfg = await loadEffectiveConfig(cwd).catch(() => null);
-  // Bake-time Claude install method: CLI flag wins over the config key. The other
-  // bake knobs (registry, size, region, sandbox class) are resolved by the hub's
-  // worker from ITS config — the prepare API carries only { force, claudeInstall }.
+  // Bake-time Claude install method: CLI flag wins over the config key. The
+  // remaining bake INPUTS (`build` / `size` / `location` / `name`) are passed
+  // through only when the user set the corresponding flag; the hub worker fills
+  // any that are absent from ITS effective config (size/region/sandbox class),
+  // so one route body serves every bake shape (plan Step 1).
   const claudeInstall = opts.claudeInstall ?? cfg?.effective.box.claudeInstall ?? 'native';
   // remote-docker: the `docker:<host>` spec first, else the configured default.
   const host =
@@ -510,6 +536,10 @@ export async function runPrepare(
     provider,
     force: opts.force,
     claudeInstall,
+    build: opts.build,
+    size: opts.size,
+    location: opts.location,
+    name: opts.name,
     remoteHost: host,
     suppressStatus: opts.suppressStatus,
   });
@@ -525,12 +555,25 @@ export const prepareCommand = new Command('prepare')
     '-p, --provider <name>',
     'provider to prepare (docker | daytona | hetzner | vercel | e2b | digitalocean). Omit for status-only.',
   )
+  .option('-n, --name <name>', 'snapshot name (Daytona only; default: agentbox-base-<timestamp>)')
   .option('-f, --force', 'rebuild even if the image / snapshot already exists')
+  .option(
+    '--build',
+    'docker: build the base image locally instead of pulling the prebuilt one from the registry',
+  )
   .option('-y, --yes', 'skip confirmation prompts (cost / time warnings)')
   .option('--status', 'show status without preparing anything')
   .option(
     '--claude-install <mode>',
     'install Claude Code into the base image via the native installer (default) or npm (native | npm)',
+  )
+  .option(
+    '--location <name>',
+    'Datacenter/region the bake VPS runs in. Hetzner: nbg1, fsn1, hel1, ash (overrides box.hetznerLocation). DigitalOcean: nyc3, sfo3, ams3, fra1 (overrides box.digitaloceanRegion). Hetzner/DigitalOcean-only.',
+  )
+  .option(
+    '--size <spec>',
+    'bake-time VM size. daytona: cpu-memory-disk GB (e.g. 4-8-20). e2b: cpu-memory GB (e.g. 4-8). Overrides box.size / box.size<Provider>. Ignored by docker/hetzner/vercel.',
   )
   .action(async (opts: PrepareOptions) => {
     // Status-only path: no provider, or explicit --status.
@@ -558,5 +601,9 @@ export const prepareCommand = new Command('prepare')
       force: opts.force,
       yes: opts.yes,
       claudeInstall,
+      build: opts.build,
+      size: opts.size,
+      location: opts.location,
+      name: opts.name,
     });
   });

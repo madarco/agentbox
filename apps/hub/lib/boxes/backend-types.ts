@@ -203,7 +203,14 @@ export interface HubBackend {
   // in-flight bake for the same provider if one exists.
   prepareProvider(
     id: string,
-    opts?: { force?: boolean; claudeInstall?: 'native' | 'npm' },
+    opts?: {
+      force?: boolean;
+      claudeInstall?: 'native' | 'npm';
+      build?: boolean;
+      size?: string;
+      location?: string;
+      name?: string;
+    },
   ): Promise<CreateBoxResult>;
   // List a project's branches (local + remote) + its current HEAD, for the
   // create-box base-branch picker. Resolves the project by id server-side.
