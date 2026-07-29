@@ -230,7 +230,7 @@ interface ProjectRegrouping {
   reg: BoxRegistration;
 }
 
-function mapBox(b: ListedBox, regroup?: ProjectRegrouping): Box {
+function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): Box {
   const root = projectRootOf(b);
   const createdAt = Date.parse(b.createdAt) || Date.now();
   const status = mapStatus(b);
@@ -274,11 +274,14 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping): Box {
     claudeActivity: b.claudeActivity,
     codexActivity: b.codexActivity,
     shellCount: b.shellSessions.length,
-    // Adoption / reconstruction fields (see Box) — cloud only; a docker box has
-    // no cloud block, so these stay undefined. A locally-listed box already
-    // carries a `projectRoot`, so `originUrl` (the registered-box scoping key)
-    // is not needed here.
+    // Adoption / reconstruction fields (see Box) — cloud fields are cloud only
+    // (a docker box has no cloud block, so they stay undefined). `originUrl` is
+    // the box's repo identity, threaded from its Store registration: a thin
+    // client talking to a REMOTE hub sees this box's `projectRoot` as the control
+    // box's path, meaningless locally, so repo identity is the only stable key it
+    // can scope `ls <project>` by. Undefined when the box has no registration.
     sandboxId: b.cloud?.sandboxId,
+    originUrl,
     publicHost: b.cloud?.publicHost,
     image: b.cloud?.image ?? (b.provider && b.provider !== 'docker' ? b.image : undefined),
     webPort: b.cloud?.webPort,
@@ -1541,7 +1544,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         projects,
         boxes: [
           ...jobBoxes,
-          ...listed.map((b) => mapBox(b, repoGrouped.get(b.id))),
+          ...listed.map((b) => mapBox(b, repoGrouped.get(b.id), regByBoxId.get(b.id)?.originUrl)),
           ...registeredBoxes,
         ],
         // Block-mode approvals live in-process on the relay handle, not the Store.

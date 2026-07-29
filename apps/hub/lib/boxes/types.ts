@@ -62,7 +62,9 @@ export interface Box {
   // Provider-native sandbox id (the handle the backend SDK resolves).
   sandboxId?: string;
   // The box repo's origin remote URL, from its registration. Lets project-scoped
-  // `ls` match a registered box with no local `projectRoot` to the cwd's repo.
+  // `ls` match a box to the cwd's repo by identity — needed for a registered box
+  // with no local `projectRoot`, and for ANY box seen through a REMOTE hub, whose
+  // `projectRoot` is the control box's path and so can't match this laptop's.
   originUrl?: string | null;
   // Public IP/host of the box's VM (direct-SSH providers: hetzner/digitalocean).
   publicHost?: string;

@@ -378,6 +378,29 @@ function renderTable(boxes: HubApiBox[], stream: NodeJS.WriteStream): string {
  * the hub knows but this laptop never adopted has no local `projectRoot`, so it
  * is scoped by its registered origin URL instead.
  */
+/**
+ * Does a box belong to the cwd's project? Two keys, by hub topology:
+ *  - `projectRoot === root`: a same-machine folder match — a local hub, or a box
+ *    already adopted onto this laptop. This is the ONLY key used locally, so two
+ *    clones of one repo in different folders keep their boxes apart (the hub's
+ *    folder-based project model).
+ *  - repo identity (`originUrl`): the cross-machine key. Used for a registered
+ *    box that has no local `projectRoot` (any mode), and for ANY box when the hub
+ *    is `remote` — a remote box's `projectRoot` is the control box's path, which
+ *    can never equal this laptop's `root`, so folder matching would drop it.
+ */
+export function boxInProject(
+  b: HubApiBox,
+  ctx: { root: string; origin: string | undefined; remote: boolean },
+): boolean {
+  if (b.projectRoot === ctx.root) return true;
+  const originMatches =
+    ctx.origin !== undefined &&
+    b.originUrl != null &&
+    normalizeOriginUrl(b.originUrl) === normalizeOriginUrl(ctx.origin);
+  return originMatches && (b.projectRoot === undefined || ctx.remote);
+}
+
 async function scopedBoxes(
   all: boolean,
   live: boolean,
@@ -386,18 +409,17 @@ async function scopedBoxes(
   const boxes = listing.boxes;
   if (all) return { boxes, projectRoot: '', scoped: false, listing };
   const { root } = await findProjectRoot(process.cwd());
-  // A registered hub box has no projectRoot (nothing matched it to a local
-  // clone). Scope it by its registered origin URL, so the boxes of the repo you
-  // are standing in show up whether or not they were created here.
   const origin = await readCwdOriginUrl(root);
-  const scoped = boxes.filter(
-    (b) =>
-      b.projectRoot === root ||
-      (b.projectRoot === undefined &&
-        origin !== undefined &&
-        b.originUrl != null &&
-        normalizeOriginUrl(b.originUrl) === normalizeOriginUrl(origin)),
-  );
+  // Talking to a REMOTE hub, every box's `projectRoot` is the control box's path
+  // — meaningless on this laptop — so the only stable key to scope by is the
+  // repo identity (origin URL). Locally we scope by folder (`projectRoot`) so two
+  // clones of the same repo in different folders keep their boxes apart, matching
+  // the folder-based project model the hub groups by.
+  const { resolveHubTarget } = await import('./hub.js');
+  const remote = await resolveHubTarget()
+    .then((t) => t.mode === 'remote')
+    .catch(() => false);
+  const scoped = boxes.filter((b) => boxInProject(b, { root, origin, remote }));
   return { boxes: scoped, projectRoot: root, scoped: true, listing };
 }
 

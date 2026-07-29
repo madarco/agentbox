@@ -50,8 +50,11 @@ export interface HubApiBox {
   webUrl?: string | null;
   vncUrl?: string | null;
   vncEnabled?: boolean;
-  // ── Adoption / reconstruction fields (non-secret; cloud boxes only). ──
+  // ── Adoption / reconstruction fields (non-secret; cloud boxes only, EXCEPT
+  //    originUrl which is populated for any registered box, docker included). ──
   sandboxId?: string;
+  // Repo origin URL — the cross-machine project key `list` scopes by when the
+  // hub is remote (a remote box's projectRoot is the control box's path).
   originUrl?: string | null;
   publicHost?: string;
   image?: string;

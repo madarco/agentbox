@@ -220,6 +220,20 @@ cache (`~/.agentbox/hub-boxes-cache.json`) is re-keyed onto the API `{ boxes }` 
   that come through `mapBox(ListedBox)` (the in-process host backend). Registered-only boxes mapped
   by `mapRegistrationToBox` are not live-probed today; wiring a probe there is a hub follow-up once
   Step 4's resolution route exists.
+- **Thin-client project scope needs `originUrl` at registration (Bugbot #281, High).** Project-scoped
+  `ls` (no `-g`) matches a box to the cwd's repo by two keys: `projectRoot === root` (same-machine
+  folder match) and, cross-machine, repo identity (`originUrl`). The client predicate `boxInProject`
+  (`list.ts`) now scopes by `originUrl` for a box with no local `projectRoot` **or** any box when the
+  hub is `remote` — a remote box's `projectRoot` is the control box's path and can never equal the
+  laptop's, so the old `projectRoot === undefined`-gated origin branch silently dropped every
+  control-box-created box from a thin client's scoped view. `mapBox` now threads each box's
+  registration `originUrl` onto the payload (previously cloud-only). **Residual, genuinely cross-step:**
+  `registerBoxWithRelay` (`packages/sandbox-docker/src/create.ts`, and the cloud create paths) does
+  **not** send `originUrl` today, so only `--via-hub` creates (which pass `repoUrl`) carry it; a plain
+  docker/direct-cloud box still has no origin to scope by. Capturing `originUrl` at registration for
+  **every** provider is a provider-create-flow change outside Step 3's file set — fold it into
+  **Step 4** (thin-client box resolution/adoption), where cross-machine box identity is the core
+  concern. The `list.ts` + `mapBox` pieces here are correct and inert until then.
 - **Deferred deletion (was in this step's brief, punted with sign-off).** `hub-merge.ts`,
   `list-merged.ts`, and `hub-list.ts`'s `fetchHubListing` (the `/admin/store` **admin** listing, not
   the `ls` path) survive because `dashboard.ts` (the IO-plane TUI, out of Step 3's file set) still
@@ -242,9 +256,14 @@ cache (`~/.agentbox/hub-boxes-cache.json`) is re-keyed onto the API `{ boxes }` 
 - `auto-adopt.ts` collapses from a 4s-budgeted `/admin` round-trip with an `unreachable`
   tri-state into a plain cache refresh off the resolution call. `hub adopt` / `hub pull` stay but
   become API-based.
+- **Capture `originUrl` at box registration for every provider** (`registerBoxWithRelay` in
+  `packages/sandbox-docker/src/create.ts` + the cloud create paths). Today only `--via-hub` creates
+  send it, so Step 3's thin-client project scoping is inert for plain docker/direct-cloud boxes (see
+  Step 3 note). This is the registration-side half of cross-machine box identity, so it belongs here.
 
 **Files:** `apps/hub/app/(dashboard)/api/v1/boxes/route.ts`, `apps/cli/src/box-ref.ts`,
-`control-plane/{auto-adopt,hub-adopt,hub-pull}.ts`.
+`control-plane/{auto-adopt,hub-adopt,hub-pull}.ts`, `packages/sandbox-docker/src/create.ts` (+ cloud
+create paths) for `originUrl` capture.
 **Verify:** on a control box, `agentbox shell <hub-created-box>` works first try with no explicit
 adopt, for one SSH provider (hetzner) and one SDK provider (e2b).
 
