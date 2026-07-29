@@ -1107,13 +1107,13 @@ async function autostartLocalHub(): Promise<boolean> {
  */
 export async function resolveHubApiTarget(
   urlFlag: string | undefined,
-  opts: { quiet?: boolean } = {},
+  opts: { quiet?: boolean; preferLocal?: boolean } = {},
 ): Promise<{ url: string; apiKey: string } | null> {
   // Lazy import breaks the hub.ts <-> control-plane.ts cycle: hub.ts consumes
   // `controlPlaneSubcommands` (defined at the bottom of this file) at load time,
   // so a static edge back the other way would read it before it's initialized.
   const { resolveHubTarget } = await import('./hub.js');
-  let target = await resolveHubTarget(urlFlag);
+  let target = await resolveHubTarget(urlFlag, { preferLocal: opts.preferLocal });
 
   // Bring the full local hub up before its token is used. Two traps this gate
   // avoids: (1) the token at `~/.agentbox/hub/token` PERSISTS across `hub stop`,
@@ -1129,7 +1129,7 @@ export async function resolveHubApiTarget(
     const st = await getHubStatus();
     if (!(st.running && st.ui)) {
       if (!(await autostartLocalHub())) return null;
-      target = await resolveHubTarget(urlFlag);
+      target = await resolveHubTarget(urlFlag, { preferLocal: opts.preferLocal });
     }
   }
 
@@ -1154,7 +1154,7 @@ export async function resolveHubApiTarget(
  */
 export async function resolveHubApiClient(
   urlFlag: string | undefined,
-  opts: { quiet?: boolean } = {},
+  opts: { quiet?: boolean; preferLocal?: boolean } = {},
 ): Promise<HubApiClient | null> {
   const target = await resolveHubApiTarget(urlFlag, opts);
   return target ? new HubApiClient(target) : null;

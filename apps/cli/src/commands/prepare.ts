@@ -22,7 +22,7 @@
  */
 
 import { intro, log, spinner } from '@clack/prompts';
-import { loadEffectiveConfig, unsetConfigValue } from '@agentbox/config';
+import { loadEffectiveConfig, unsetConfigValue, type EffectiveConfig } from '@agentbox/config';
 import {
   DEFAULT_BOX_IMAGE,
   SHARED_CLAUDE_VOLUME,
@@ -386,6 +386,108 @@ async function hubIsCoLocated(): Promise<boolean> {
 }
 
 /**
+ * Whether a configured control box has a remote-docker host alias registered (so
+ * it can SSH to it as itself). The bake would otherwise 404 on
+ * `POST /api/v1/hosts/:alias/bake` — but the LOCAL hub, running on this machine,
+ * DOES know the alias, so the caller routes there instead. Read from the control
+ * box's `GET /api/v1/hosts`, best-effort (unreachable → treat as unknown).
+ */
+async function controlBoxKnowsHost(
+  alias: string | undefined,
+  effective: EffectiveConfig,
+): Promise<boolean> {
+  if (!alias || !effective.relay.controlPlaneUrl) return false;
+  const target = await resolveHubApiTarget(undefined, { quiet: true }).catch(() => null);
+  if (!target) return false;
+  if (!(await hostReachable(target.url, CONTROL_BOX_STATUS_MS))) return false;
+  const client = new HubApiClient({
+    ...target,
+    fetchImpl: deadlineFetch(AbortSignal.timeout(CONTROL_BOX_STATUS_MS)),
+  });
+  const hosts = await client.listHosts().catch(() => null);
+  return !!hosts?.some((h) => h.alias === alias);
+}
+
+/**
+ * Pure decision: does a bake target the LOCAL hub (`local: true`) or the remote
+ * control box (`false`)? This is target selection only — the bake always runs
+ * through the same `POST /api/v1/providers/:id/prepare` (or `/hosts/:alias/bake`)
+ * route; there is NO inline `provider.prepare` path, which is exactly the second
+ * implementation this consolidation exists to delete. The choice is only ever
+ * WHICH base URL the one client points at.
+ *
+ * Extracted pure (IO done by {@link shouldPreferLocalHub}) so the routing is
+ * unit-testable — the deleted `resolvePrepareRouting` had this same shape, and
+ * dropping it is what regressed the `cloud.viaHub` and remote-docker fallbacks.
+ *
+ * Local wins when:
+ *   - the hub is already co-located (no control box, or `hub expose` here);
+ *   - `cloud.viaHub=false` — the user keeps builds on their own machine even with
+ *     a control plane configured (the config KEY survives; only the `--local` /
+ *     `--via-hub` flags were dropped);
+ *   - `docker`, whose base is an image on THIS machine — baking it on the control
+ *     box would produce an image on the wrong host;
+ *   - `remote-docker` whose host alias the control box doesn't know, but the local
+ *     hub (this machine's `~/.ssh`) does.
+ * Otherwise the control box is the target (the default for cloud bakes).
+ */
+export function resolvePrepareTargetKind(input: {
+  /** The default hub is already on this machine (local, or `hub expose` here). */
+  coLocated: boolean;
+  /** `relay.controlPlaneUrl` — a genuine remote control box is configured. */
+  controlPlaneUrl: string | undefined;
+  /** `cloud.viaHub` — build cloud boxes / bases on the control box by default. */
+  viaHub: boolean;
+  providerName: string;
+  remoteHost?: string;
+  /** remote-docker only: whether the control box has the host alias registered. */
+  controlBoxKnowsHost?: boolean;
+}): { local: boolean; reason?: string } {
+  if (input.coLocated) return { local: true };
+  if (!input.controlPlaneUrl) return { local: true };
+  if (!input.viaHub) return { local: true, reason: 'cloud.viaHub is off — baking on this machine' };
+  if (input.providerName === 'docker') return { local: true };
+  if (input.providerName === 'remote-docker' && input.remoteHost && !input.controlBoxKnowsHost) {
+    return {
+      local: true,
+      reason: `the control box has no \`${input.remoteHost}\` host registered — baking on this machine's hub`,
+    };
+  }
+  return { local: false };
+}
+
+/**
+ * IO wrapper around {@link resolvePrepareTargetKind}: resolves co-location, the
+ * effective config, and — only for a remote-docker host that could actually
+ * target the control box — the alias check.
+ */
+async function shouldPreferLocalHub(
+  providerName: string,
+  remoteHost: string | undefined,
+): Promise<{ local: boolean; reason?: string }> {
+  const coLocated = await hubIsCoLocated();
+  const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
+  const eff = cfg?.effective;
+  const controlPlaneUrl = eff?.relay.controlPlaneUrl;
+  const viaHub = eff?.cloud.viaHub ?? true;
+  // The alias check is the only networked input, and only remote-docker needs it.
+  // Skip it whenever an earlier rule already forces local (no control box,
+  // co-located, or cloud.viaHub off) so a normal bake makes no extra round-trip.
+  const knowsHost =
+    providerName === 'remote-docker' && remoteHost && controlPlaneUrl && viaHub && !coLocated && eff
+      ? await controlBoxKnowsHost(remoteHost, eff)
+      : undefined;
+  return resolvePrepareTargetKind({
+    coLocated,
+    controlPlaneUrl,
+    viaHub,
+    providerName,
+    remoteHost,
+    controlBoxKnowsHost: knowsHost,
+  });
+}
+
+/**
  * Bake `providerName` THROUGH the hub — the one prepare path (local hub or remote
  * control box). Throws on failure so internal callers (`install`, the create
  * wizard's stale-base rebuild) can catch it; the top-level command surfaces it.
@@ -405,11 +507,17 @@ async function runPrepareViaHub(args: {
   remoteHost?: string;
   suppressStatus?: boolean;
 }): Promise<void> {
+  // WHICH hub: the local hub on this machine, or the remote control box. Same
+  // route either way — target selection, never an inline bake.
+  const target = await shouldPreferLocalHub(args.providerName, args.remoteHost);
+  if (target.reason) log.info(target.reason);
   // Auto-starts a local hub when that is the target (Step 0). A remote control
   // box with no API key returns null after printing why.
-  const client = await resolveHubApiClient(undefined);
+  const client = await resolveHubApiClient(undefined, { preferLocal: target.local });
   if (!client) process.exit(1);
-  const coLocated = await hubIsCoLocated();
+  // The local hub's worker writes the prepared-state straight to this machine, so
+  // choosing local IS the co-located signal — no custody round-trip to adopt.
+  const coLocated = target.local;
   // Custody is only the remote-adopt channel; a co-located hub wrote the record
   // straight to this machine, so skip resolving it (and its error path) there.
   const custody = coLocated ? null : await resolveCustodyTarget(undefined, { quiet: true });

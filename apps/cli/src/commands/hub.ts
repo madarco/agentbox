@@ -69,10 +69,24 @@ export interface HubTarget {
  * the macOS tray via `agentbox hub target --json` so it follows the same config
  * (it can't parse the layered config itself). One Bearer authorizes both surfaces
  * in either mode (see `apps/hub/proxy.ts`).
+ *
+ * `preferLocal` forces the local hub even when a control box is configured — the
+ * "which hub" knob for callers that have decided an operation belongs on THIS
+ * machine's hub (e.g. a `cloud.viaHub=false` bake, or a base whose artifact lands
+ * here). It stays one client + one route; only the base URL differs.
  */
-export async function resolveHubTarget(urlFlag?: string): Promise<HubTarget> {
+export async function resolveHubTarget(
+  urlFlag?: string,
+  opts: { preferLocal?: boolean } = {},
+): Promise<HubTarget> {
   const cfg = await loadEffectiveConfig(process.cwd());
   const url = (urlFlag ?? cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
+  // preferLocal short-circuits the remote branches: the caller wants the hub on
+  // this machine regardless of a configured (or exposed) control box.
+  if (opts.preferLocal && !urlFlag) {
+    const s = await getHubStatus();
+    return { mode: 'local', url: `http://127.0.0.1:${String(s.port)}`, token: s.token ?? '' };
+  }
   // A control box that IS this machine (`hub expose`) is reached over loopback,
   // not the box-facing LAN/tunnel URL — but it's still the `remote`-shaped API
   // (password profile, /api/v1 keyed by AGENTBOX_HUB_API_KEY).

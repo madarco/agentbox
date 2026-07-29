@@ -182,6 +182,24 @@ and rejected an empty key (`invalid_request`).
   for anything you don't pass explicitly (it owns its snapshots), consistent with how the worker
   already treats `box.claudeInstall` / `box.imageRegistry`. Public docs (`cli.mdx`, `daytona.mdx`,
   `e2b.mdx`, `hetzner.mdx`, `deployed-hub.mdx`) document the flags as working in both modes.
+- **The choice is WHICH HUB, not hub-vs-inline — Steps 5 and 8 will hit this same fork.** When
+  "always go through `/api/v1`" deletes an inline path, the cases the inline path used to handle
+  (`cloud.viaHub=false`, a local-only provider, a control box that can't reach a resource) do **not**
+  come back as an inline escape hatch — that would reintroduce the second implementation the whole
+  effort exists to delete. They come back as **target selection**: the same one client + one route,
+  pointed at the **local hub** instead of the remote control box. `resolveHubTarget` /
+  `resolveHubApiTarget` / `resolveHubApiClient` now take **`preferLocal`** (skip the loopback/URL
+  remote branches, return `127.0.0.1:<port>` + the local token, autostart included) — that is the
+  reusable "which hub" knob. `prepare`'s selector is the pure, unit-tested
+  `resolvePrepareTargetKind` (`commands/prepare.ts`, `test/prepare-target.test.ts`): local wins when
+  the hub is co-located, `cloud.viaHub=false` (the config **key** survives the flag removal — my
+  earlier "`--local`/`--via-hub` are safe to delete" was about the FLAGS only), the provider is
+  `docker` (its base is a local image), or a `remote-docker` alias the control box doesn't know but
+  the local hub does (was a Bugbot **High** — a control-box `POST /hosts/:alias/bake` would 404;
+  it now falls back to the local hub, same route, different base URL). Choosing local **is** the
+  `coLocated` signal (its artifact lands here → no custody round-trip). **Step 5 (lifecycle) and
+  Step 8 (create) must reuse `preferLocal` for the equivalent forks (`cloud.viaHub`, docker/
+  remote-docker, an unreachable resource) rather than resurrecting a direct-provider path.**
 - **The login → hub credential push is best-effort, quiet, and non-spawning.**
   `publish-credentials.ts` resolves the hub target with `{ quiet: true }` (no print, and — crucially
   — no local-hub auto-start: a login must not start a daemon as a side effect), `hostReachable`-probes
