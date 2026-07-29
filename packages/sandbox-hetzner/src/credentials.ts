@@ -1,5 +1,10 @@
 import { spawnSync } from 'node:child_process';
-import { hostOpenCommand, writeManagedSecrets, type CredSetResult } from '@agentbox/sandbox-core';
+import {
+  hostOpenCommand,
+  publishManagedCredentials,
+  writeManagedSecrets,
+  type CredSetResult,
+} from '@agentbox/sandbox-core';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import {
@@ -87,6 +92,7 @@ export async function ensureHetznerCredentials(
     if (result.ok) {
       persistCredentials(creds);
       log.success(`Hetzner credentials saved to ${secretsPath()}`);
+      await publishHetznerToHub(creds);
       outro('Setup complete.');
       return;
     }
@@ -99,6 +105,7 @@ export async function ensureHetznerCredentials(
       log.warn(`Could not reach Hetzner to validate (${result.message}) — saving anyway.`);
       persistCredentials(creds);
       log.success(`Hetzner credentials saved to ${secretsPath()}`);
+      await publishHetznerToHub(creds);
       outro('Setup complete (unvalidated).');
       return;
     }
@@ -158,6 +165,17 @@ function persistCredentials(creds: Credentials): void {
   const record: Record<string, string> = { HCLOUD_TOKEN: creds.token };
   if (creds.endpoint) record.HCLOUD_ENDPOINT = creds.endpoint;
   writeManagedSecrets(MANAGED_KEYS, record);
+}
+
+/**
+ * Mirror the just-saved token to the hub. Best-effort; the local secrets.env
+ * write stays for the direct IO plane — see publishManagedCredentials.
+ */
+async function publishHetznerToHub(creds: Credentials): Promise<void> {
+  await publishManagedCredentials('hetzner', {
+    token: creds.token,
+    ...(creds.endpoint ? { endpoint: creds.endpoint } : {}),
+  });
 }
 
 /**

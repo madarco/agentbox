@@ -1,11 +1,17 @@
 /**
- * Bake a provider's base ON the control box, from this machine.
+ * Bake a provider's base THROUGH the hub, from this machine — the one prepare
+ * path, local hub or remote control box alike (`docs/hub-api-single-path-plan.md`
+ * Step 1). The hub runs the bake in its own queue worker; this drives it and
+ * reports the verdict.
  *
- * With `cloud.viaHub` on, a cloud box is created on the control box and built
- * from ITS prepared state — so a bake run here is minutes spent producing a
- * snapshot nothing will boot, and the two sides then disagree about what the
- * base is. Baking there and adopting the record back gives one bake, one
- * snapshot, and both machines current.
+ * Two shapes, decided by whether the hub is co-located with this CLI:
+ *   - **Co-located** (a local hub, or `hub expose` on this machine): the worker
+ *     writes the prepared-state to THIS machine's `~/.agentbox` directly, so
+ *     there is nothing to adopt — a `done` job is the whole story.
+ *   - **Remote control box**: the worker wrote the record to ITS disk + custody;
+ *     we pull it back so both machines end up current from one bake. (With
+ *     `cloud.viaHub`, a cloud box is also built there, so baking there is where
+ *     the snapshot needs to live anyway.)
  *
  * The hub already exposes everything this needs (`POST /api/v1/providers/:id/prepare`,
  * `GET /api/v1/jobs/:id`, `GET /api/v1/jobs/:id/logs`); nothing new on that side.
@@ -25,7 +31,11 @@ const JOB_POLL_MS = 3000;
 const BAKE_TIMEOUT_MS = 45 * 60_000;
 
 export type HubBakeOutcome =
-  /** The hub baked it and we adopted the record — nothing left to do here. */
+  /**
+   * The hub baked it and the result is current on THIS machine — either a
+   * co-located hub wrote the prepared-state here directly, or we adopted a remote
+   * control box's record. Nothing left to do.
+   */
   | { status: 'adopted' }
   /** The hub baked it, but its record didn't reach our prepared-state. */
   | { status: 'baked-not-adopted'; detail: string }
@@ -41,13 +51,19 @@ function delay(ms: number): Promise<void> {
  * The log stream is advisory — a dropped connection must never read as a
  * successful bake — so the verdict always comes from polling the job itself.
  */
-export async function bakeOnControlBox(args: {
+export async function bakeViaHub(args: {
   client: HubApiClient;
   providerName: string;
   provider: Provider;
   force?: boolean;
   claudeInstall: 'native' | 'npm';
   custody: { url: string; adminToken: string } | null;
+  /**
+   * Whether the hub runs on THIS machine (a local hub, or `hub expose`). When
+   * true, the worker's prepared-state write already lands in this machine's
+   * `~/.agentbox`, so there is no custody round-trip to adopt.
+   */
+  coLocated: boolean;
   /**
    * remote-docker only: the host alias to bake. It goes to a different endpoint
    * (`/hosts/:alias/bake`), because the unit of a remote-docker base is a host,
@@ -115,6 +131,11 @@ export async function bakeOnControlBox(args: {
   // this machine didn't run; that file is explicitly a log for `prepare
   // --status` / `doctor`, not the readiness check.)
   if (args.remoteHost) return { status: 'adopted' };
+
+  // Co-located hub (local, or `hub expose`): the worker wrote the prepared-state
+  // straight into this machine's `~/.agentbox` and pinned the config, so a `done`
+  // job means the base is already current here. No custody round-trip.
+  if (args.coLocated) return { status: 'adopted' };
 
   // The hub's bake wrote its record into custody (`sharePreparedBase` →
   // `writePreparedToCustodyStore`), so adopting is a plain custody read.

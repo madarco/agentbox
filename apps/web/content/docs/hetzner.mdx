@@ -99,7 +99,7 @@ The default VM is `cx23` (2 vCPU / 4 GB / 40 GB, ~€4/mo while running) in loca
 agentbox create -y --provider hetzner --size cx33 --location fsn1
 ```
 
-Locations are `nbg1` (Nuremberg), `fsn1` (Falkenstein), `hel1` (Helsinki), and `ash` (Ashburn, US). `--location` on a non-hetzner provider is ignored with a warning. The bake VPS location can be set the same way: `agentbox prepare --provider hetzner --location fsn1`.
+Locations are `nbg1` (Nuremberg), `fsn1` (Falkenstein), `hel1` (Helsinki), and `ash` (Ashburn, US). `--location` on a non-hetzner provider is ignored with a warning. The bake VPS location follows the `box.hetznerLocation` pin (the per-invocation `prepare --location` flag was removed when `prepare` moved behind the hub; honoring that pin through the hub bake is a tracked follow-up).
 
 After the box comes up, AgentBox reports the **real** provisioned resources read back from Hetzner — e.g. `provisioned 4 vCPU / 16 GB RAM / 160 GB disk` — rather than a static guess, and stores them on the box record.
 

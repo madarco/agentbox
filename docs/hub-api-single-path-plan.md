@@ -124,7 +124,7 @@ works against a local hub with no control box configured (today it errors).
 
 ---
 
-## Step 1 — Providers: `login` + `prepare`
+## Step 1 — Providers: `login` + `prepare` ✅ done
 
 - `agentbox <provider> login` → `POST /api/v1/providers/:id/credentials` (the route exists and
   validates against the cloud before persisting). **Also keep writing the local `secrets.env`**
@@ -140,6 +140,69 @@ works against a local hub with no control box configured (today it errors).
 `control-plane/hub-prepare.ts`, the per-provider `credentials.ts` call sites, `commands/doctor.ts`.
 **Verify:** `agentbox e2b login` then `agentbox prepare --provider e2b` against a **local** hub;
 confirm the bake runs hub-side and `~/.agentbox/e2b-prepared.json` lands on the hub's machine.
+
+**Landed.** `prepare` always bakes through the hub now: `runPrepare` → `runPrepareViaHub` →
+`bakeViaHub` (`control-plane/hub-prepare.ts`) does `POST /api/v1/providers/:id/prepare` +
+`streamJobLog` + polls `getJob` for the terminal verdict (a dropped SSE stream never reads as a
+successful bake — the poll is the source of truth). `control-plane/route-prepare.ts` (the old
+remote-only router) and its two tests (`route-prepare.test.ts`, `prepare-location.test.ts`) are
+deleted. Login publishes the credential to the hub via a one-slot hook in `@agentbox/sandbox-core`
+(`credential-publish.ts`, unit-tested) that the CLI installs at startup (`index.ts` →
+`publish-credentials.ts` → `HubApiClient.setProviderCredentials`) — **while still writing the local
+`secrets.env`**, the deliberate + temporary dual write (the IO plane is direct, so the PC needs the
+credential for `cp`/`attach` on SDK providers). `doctor` and `prepare --status` read the control
+box's inventory from `GET /api/v1/providers?freshness=1` (`renderControlBoxProviders`), gated to a
+genuinely-remote hub. **Verified end-to-end** against a local hub: `prepare --provider docker` ran
+the bake in the hub's queue worker (`docker lane 1/1`), pulled + tagged `agentbox/box:dev`, and wrote
+`~/.agentbox/docker-prepared.json` on the hub's machine; the co-located path reported `prepared
+docker` with no custody round-trip. `POST /api/v1/providers/e2b/credentials` validated (`{ok:true}`)
+and rejected an empty key (`invalid_request`).
+
+**Notes for later steps:**
+
+- **The hub bake API carries only `{ force, claudeInstall }` — the per-bake `--size` / `--location` /
+  `--name` / `--build` / `--local` / `--via-hub` flags were removed from `prepare`.** The hub prepare
+  path is route (`api/v1/providers/[id]/prepare`) → `QueueJobPrepare` (`packages/relay/src/queue.ts`)
+  → the worker `apps/cli/src/commands/_run-queued-prepare.ts`, which calls `provider.prepare({
+  hostWorkspace, force, registry, claudeInstall, host?, onLog })` and resolves only
+  `box.imageRegistry` + `box.claudeInstall` from config. It passes **no** `size` / `location` /
+  `sandboxClass` / `name` / `vmBaseImage`, so the bake uses provider defaults. **This is a regression
+  for the fixed-resource providers baked from the pure-local path**: the old `prepare.ts` resolved
+  `box.sizeDaytona` / `box.daytonaClass` (and the hetzner bake VPS `box.hetznerLocation`) from config
+  and passed them to a local `provider.prepare`; routing all bakes through the worker drops them, so a
+  daytona `container`-class or sized bake, and a hetzner bake-VPS region pin, are currently ignored.
+  Restoring this belongs to the queue/create step (Step 8) or a dedicated hub-side follow-up: have the
+  worker resolve `size` / `sandboxClass` / `location` from effective config (fixes the co-located
+  case) **and** extend the route + `QueueJobPrepare` to carry them (fixes the remote control-box
+  case). `_run-queued-prepare.ts` + the route + `QueueJobPrepare` are all outside Step 1's file set
+  (queue is Step 8's domain), so this was left as a note rather than fixed. Public docs
+  (`cli.mdx`, `daytona.mdx`, `e2b.mdx`, `hetzner.mdx`, `deployed-hub.mdx`) now say the bake reads the
+  `box.size<Provider>` pins and flag the gap.
+- **The login → hub credential push is best-effort, quiet, and non-spawning.**
+  `publish-credentials.ts` resolves the hub target with `{ quiet: true }` (no print, and — crucially
+  — no local-hub auto-start: a login must not start a daemon as a side effect), `hostReachable`-probes
+  before the POST, and never throws (the local `secrets.env` write is the guaranteed outcome). Only
+  the **interactive** `ensureXCredentials` publishes — never the headless `setCredentials` the hub
+  itself drives, or the POST would loop back into the hub. When a control box is configured but the
+  push fails, it warns (the push isn't cosmetic there — the control box needs the credential to build
+  cloud boxes); a pure-local user with a stopped hub gets no noise. The dual write is temporary; it
+  goes away when the IO plane moves behind the hub (see "Explicitly out of scope").
+- **Co-location is decided by `hubIsCoLocated()`** (`commands/prepare.ts`): `resolveHubTarget().mode
+  === 'local'` OR `localExposedLoopbackUrl()` is non-null (a `hub expose`d machine is `mode: 'remote'`
+  yet co-located). Co-located → `bakeViaHub({ coLocated: true })` skips the custody round-trip (the
+  worker already wrote the prepared-state to this machine); genuinely remote → adopt the record back
+  from custody. `doctor` / `prepare --status` reuse the same gate so a co-located hub never mislabels
+  its own local rows as a "control box".
+- **Docker prepare under a remote hub still routes to the control box** (the general hub-routing).
+  Making `docker` / `remote-docker` bake locally even when a control box is configured — because their
+  base is a local image, not a control-box snapshot — is **Step 12** (docker off under a remote hub),
+  not this step. `bakeViaHub` already special-cases `remoteHost` (a `docker:<alias>` host bake goes to
+  `/hosts/:alias/bake` and needs no adoption), but plain `docker` follows the standard route.
+- **`bakeViaHub` surfaces failures as a thrown `Error`, not via the exit-code carry.** A hub-side
+  precheck failure (no credentials there, docker down) comes back as an `HubApiError` whose `.message`
+  is surfaced verbatim; a failed job throws so the command's top-level handler prints it. It does not
+  need Step 6's `error.details.exitCode` carry (that is for faithful box-command exit codes on git
+  ops). If a later step wants `prepare` to exit with a provider-specific code, wire the carry in then.
 
 ---
 
