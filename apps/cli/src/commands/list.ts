@@ -379,6 +379,25 @@ function renderTable(boxes: HubApiBox[], stream: NodeJS.WriteStream): string {
  * is scoped by its registered origin URL instead.
  */
 /**
+ * Is this hub on a DIFFERENT machine than the client — i.e. are its boxes'
+ * `projectRoot` paths foreign to this filesystem? A configured remote control
+ * box is; `agentbox hub expose` is NOT, even though it resolves as `mode:
+ * 'remote'`: it is this machine's own hub reached over loopback, so its boxes'
+ * projectRoots are still local paths and must scope by folder, not just origin.
+ * The loopback URL (`http://127.0.0.1:<port>`, from `localExposedLoopbackUrl`) is
+ * how we tell the exposed hub apart from a real remote one.
+ */
+export function isCrossMachineHub(target: { mode: 'local' | 'remote'; url: string }): boolean {
+  if (target.mode !== 'remote') return false;
+  try {
+    const host = new URL(target.url).hostname;
+    return host !== '127.0.0.1' && host !== '::1' && host !== 'localhost';
+  } catch {
+    return true; // an unparseable URL is not our loopback shortcut — treat as remote
+  }
+}
+
+/**
  * Does a box belong to the cwd's project? Two keys, by hub topology:
  *  - `projectRoot === root`: a same-machine folder match — a local hub, or a box
  *    already adopted onto this laptop. This is the ONLY key used locally, so two
@@ -410,14 +429,15 @@ async function scopedBoxes(
   if (all) return { boxes, projectRoot: '', scoped: false, listing };
   const { root } = await findProjectRoot(process.cwd());
   const origin = await readCwdOriginUrl(root);
-  // Talking to a REMOTE hub, every box's `projectRoot` is the control box's path
-  // — meaningless on this laptop — so the only stable key to scope by is the
-  // repo identity (origin URL). Locally we scope by folder (`projectRoot`) so two
+  // Talking to a hub on ANOTHER machine, every box's `projectRoot` is the control
+  // box's path — meaningless on this laptop — so the only stable key to scope by
+  // is the repo identity (origin URL). On this machine (a local hub, or our own
+  // `hub expose` reached over loopback) we scope by folder (`projectRoot`) so two
   // clones of the same repo in different folders keep their boxes apart, matching
   // the folder-based project model the hub groups by.
   const { resolveHubTarget } = await import('./hub.js');
   const remote = await resolveHubTarget()
-    .then((t) => t.mode === 'remote')
+    .then(isCrossMachineHub)
     .catch(() => false);
   const scoped = boxes.filter((b) => boxInProject(b, { root, origin, remote }));
   return { boxes: scoped, projectRoot: root, scoped: true, listing };

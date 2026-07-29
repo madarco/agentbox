@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { HubApiBox } from '../src/control-plane/hub-api-client.js';
-import { boxInProject } from '../src/commands/list.js';
+import { boxInProject, isCrossMachineHub } from '../src/commands/list.js';
 
 /** Minimal HubApiBox fixture — boxInProject only reads projectRoot + originUrl. */
 function box(p: Partial<HubApiBox>): HubApiBox {
@@ -57,5 +57,22 @@ describe('boxInProject', () => {
   it('does not match when the box carries no origin and a foreign projectRoot', () => {
     const b = box({ projectRoot: '/home/ci/agentbox' });
     expect(boxInProject(b, rmt)).toBe(false);
+  });
+});
+
+describe('isCrossMachineHub', () => {
+  it('is false for a local hub', () => {
+    expect(isCrossMachineHub({ mode: 'local', url: 'http://127.0.0.1:8787' })).toBe(false);
+  });
+
+  it('is false for our own `hub expose` (remote-mode over loopback)', () => {
+    // Same machine → its boxes keep local projectRoots, so scope by folder.
+    expect(isCrossMachineHub({ mode: 'remote', url: 'http://127.0.0.1:8787' })).toBe(false);
+    expect(isCrossMachineHub({ mode: 'remote', url: 'http://localhost:8787' })).toBe(false);
+  });
+
+  it('is true for a configured remote control box', () => {
+    expect(isCrossMachineHub({ mode: 'remote', url: 'https://hub.example.com' })).toBe(true);
+    expect(isCrossMachineHub({ mode: 'remote', url: 'https://10.0.0.5:8787' })).toBe(true);
   });
 });
