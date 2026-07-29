@@ -36,13 +36,18 @@ export function parseCreateBox(body: unknown): Parsed<CreateBoxInput> {
     return { ok: false, message: 'projectId is required (string)' };
   }
   if (typeof agent !== 'string' || !(AGENTS as readonly string[]).includes(agent)) {
-    return { ok: false, message: `agent must be one of ${AGENTS.join(', ')}`, details: { got: agent } };
+    return {
+      ok: false,
+      message: `agent must be one of ${AGENTS.join(', ')}`,
+      details: { got: agent },
+    };
   }
   // A host-qualified `docker:<alias>` / `remote-docker:<alias>` spec picks a
   // registered remote-docker host (alias rule mirrors the hosts registry). The
   // backend validates the alias exists; here we only gate the shape.
   const isHostSpec =
-    typeof provider === 'string' && /^(?:docker|remote-docker):[A-Za-z0-9][A-Za-z0-9._-]*$/.test(provider);
+    typeof provider === 'string' &&
+    /^(?:docker|remote-docker):[A-Za-z0-9][A-Za-z0-9._-]*$/.test(provider);
   if (
     provider !== undefined &&
     !isHostSpec &&
@@ -54,8 +59,10 @@ export function parseCreateBox(body: unknown): Parsed<CreateBoxInput> {
       details: { got: provider },
     };
   }
-  if (name !== undefined && typeof name !== 'string') return { ok: false, message: 'name must be a string' };
-  if (prompt !== undefined && typeof prompt !== 'string') return { ok: false, message: 'prompt must be a string' };
+  if (name !== undefined && typeof name !== 'string')
+    return { ok: false, message: 'name must be a string' };
+  if (prompt !== undefined && typeof prompt !== 'string')
+    return { ok: false, message: 'prompt must be a string' };
   const fb = optionalString(fromBranch, 'fromBranch');
   if (!fb.ok) return fb;
   const sw = optionalBool(setupWizard, 'setupWizard');
@@ -198,7 +205,15 @@ export function isGitOp(v: string): v is GitOp {
 
 // Host apps a box can be launched in (mirrors OPEN_IN_APPS in the CLI's
 // _open-in.ts; hardcoded to keep @agentbox/* out of the Next bundle).
-export const OPEN_IN_APPS = ['claude', 'codex', 'herdr', 'cmux', 'vscode', 'iterm2', 'finder'] as const;
+export const OPEN_IN_APPS = [
+  'claude',
+  'codex',
+  'herdr',
+  'cmux',
+  'vscode',
+  'iterm2',
+  'finder',
+] as const;
 export type OpenInApp = (typeof OPEN_IN_APPS)[number];
 
 export function isOpenInApp(v: string): v is OpenInApp {
@@ -209,7 +224,11 @@ export function parseOpenIn(body: unknown): Parsed<{ app: OpenInApp }> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
   const { app } = body;
   if (typeof app !== 'string' || !isOpenInApp(app)) {
-    return { ok: false, message: `app must be one of ${OPEN_IN_APPS.join(', ')}`, details: { got: app } };
+    return {
+      ok: false,
+      message: `app must be one of ${OPEN_IN_APPS.join(', ')}`,
+      details: { got: app },
+    };
   }
   return { ok: true, value: { app } };
 }
@@ -226,13 +245,28 @@ function optionalBool(v: unknown, field: string): Parsed<boolean | undefined> {
   return { ok: true, value: v };
 }
 
-export function parseGitCheckout(body: unknown): Parsed<{ branch: string }> {
+// Extra passthrough flags for a git op (e.g. --tags, --force-with-lease). Every
+// element must be a string; an absent/empty list is normalized to undefined so
+// it stays out of the RPC params hash the relay's host-initiated token binds to.
+function optionalStringArray(v: unknown, field: string): Parsed<string[] | undefined> {
+  if (v === undefined) return { ok: true, value: undefined };
+  if (!Array.isArray(v)) return { ok: false, message: `${field} must be an array of strings` };
+  for (const el of v) {
+    if (typeof el !== 'string')
+      return { ok: false, message: `${field} must be an array of strings` };
+  }
+  return { ok: true, value: v.length > 0 ? (v as string[]) : undefined };
+}
+
+export function parseGitCheckout(body: unknown): Parsed<{ branch: string; args?: string[] }> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
   const { branch } = body;
   if (typeof branch !== 'string' || branch.trim().length === 0) {
     return { ok: false, message: 'branch is required (non-empty string)' };
   }
-  return { ok: true, value: { branch } };
+  const args = optionalStringArray(body.args, 'args');
+  if (!args.ok) return args;
+  return { ok: true, value: { branch, args: args.value } };
 }
 
 export function parseGitBranch(body: unknown): Parsed<{ name: string; from?: string }> {
@@ -246,31 +280,43 @@ export function parseGitBranch(body: unknown): Parsed<{ name: string; from?: str
   return { ok: true, value: { name, from: f.value } };
 }
 
-export function parseGitPush(body: unknown): Parsed<{ remote?: string; force?: boolean }> {
+export function parseGitPush(
+  body: unknown,
+): Parsed<{ remote?: string; force?: boolean; args?: string[] }> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
   const remote = optionalString(body.remote, 'remote');
   if (!remote.ok) return remote;
   const force = optionalBool(body.force, 'force');
   if (!force.ok) return force;
-  return { ok: true, value: { remote: remote.value, force: force.value } };
+  const args = optionalStringArray(body.args, 'args');
+  if (!args.ok) return args;
+  return { ok: true, value: { remote: remote.value, force: force.value, args: args.value } };
 }
 
-export function parseGitPull(body: unknown): Parsed<{ remote?: string; ffOnly?: boolean }> {
+export function parseGitPull(
+  body: unknown,
+): Parsed<{ remote?: string; ffOnly?: boolean; args?: string[] }> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
   const remote = optionalString(body.remote, 'remote');
   if (!remote.ok) return remote;
   const ffOnly = optionalBool(body.ffOnly, 'ffOnly');
   if (!ffOnly.ok) return ffOnly;
-  return { ok: true, value: { remote: remote.value, ffOnly: ffOnly.value } };
+  const args = optionalStringArray(body.args, 'args');
+  if (!args.ok) return args;
+  return { ok: true, value: { remote: remote.value, ffOnly: ffOnly.value, args: args.value } };
 }
 
-export function parseGitPushHost(body: unknown): Parsed<{ as?: string; force?: boolean }> {
+export function parseGitPushHost(
+  body: unknown,
+): Parsed<{ as?: string; force?: boolean; args?: string[] }> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
   const as = optionalString(body.as, 'as');
   if (!as.ok) return as;
   const force = optionalBool(body.force, 'force');
   if (!force.ok) return force;
-  return { ok: true, value: { as: as.value, force: force.value } };
+  const args = optionalStringArray(body.args, 'args');
+  if (!args.ok) return args;
+  return { ok: true, value: { as: as.value, force: force.value, args: args.value } };
 }
 
 export function parseServiceRestart(body: unknown): Parsed<{ name?: string }> {

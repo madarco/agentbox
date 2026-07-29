@@ -26,7 +26,10 @@ export function ok(data: unknown, status = 200): Response {
 
 export function fail(code: ApiErrorCode, message: string, details?: unknown): Response {
   const status = STATUS_HINT[code];
-  return Response.json({ error: { code, message, ...(details === undefined ? {} : { details }) } }, { status });
+  return Response.json(
+    { error: { code, message, ...(details === undefined ? {} : { details }) } },
+    { status },
+  );
 }
 
 // Map a backend ActionResult error into an envelope. Genuine missing-resource
@@ -36,10 +39,10 @@ export function fail(code: ApiErrorCode, message: string, details?: unknown): Re
 // "unknown project …", and "no pending approval". A bare "unknown" (e.g. a Docker
 // "unknown flag" / "unknown: not found" daemon message) must NOT be mistaken for
 // a 404, or an operational failure would masquerade as a missing resource.
-export function failFromAction(error: string): Response {
+export function failFromAction(error: string, details?: unknown): Response {
   const notFound =
     /\b(not found|no such|does not exist)\b/i.test(error) ||
     /\bunknown (project|box)\b/i.test(error) ||
     /no pending approval/i.test(error);
-  return fail(notFound ? 'not_found' : 'conflict', error);
+  return fail(notFound ? 'not_found' : 'conflict', error, details);
 }
