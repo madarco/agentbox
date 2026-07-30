@@ -203,7 +203,7 @@ agentbox inbound 1 open             # open the firewall (0.0.0.0/0, key-only)
 agentbox connect 1 --add-key @phone.pub   # authorize a device's key; print the ssh line
 ```
 
-`pause`/`unpause` is the cheap context switch (docker freezes the cgroup, sub-second resume; cloud archives and rehydrates, slower). `stop`/`start` is a full stop that preserves the upper volume, including `node_modules`. `destroy` (alias `rm`) wipes the box and its writable layer; `--keep-snapshot` leaves the snapshot dir under `~/.agentbox/snapshots/` in place. If the name/id matches no tracked box but a leftover `agentbox-<name>` container exists, `destroy` removes that orphan container directly (then suggests `prune -y` for any leftover volumes).
+`pause`/`unpause` is the cheap context switch (docker freezes the cgroup, sub-second resume; cloud archives and rehydrates, slower). `stop`/`start` is a full stop that preserves the upper volume, including `node_modules`. These all run through the hub's `/api/v1` (a local hub, or a configured control box), so they behave the same in both modes. `destroy` (alias `rm`) wipes the box and its writable layer; `--keep-snapshot` leaves the snapshot dir under `~/.agentbox/snapshots/` in place. `destroy` only drops a box's local record once a hub has actually torn the box down — if no hub AgentBox knows about owns the box (so it may still be running), it refuses rather than silently deleting the record, and `--force` drops the stale record deliberately. If the name/id matches no tracked box but a leftover `agentbox-<name>` container exists, `destroy` removes that orphan container directly (then suggests `prune -y` for any leftover volumes).
 
 `recover` re-establishes a box's **host-side** connectivity without power-cycling it — for after a host reboot, a relay restart, or a fresh CLI process on another machine. It ensures the host relay is up and re-registers every box with it, re-opens the host transport (the Hetzner SSH tunnel + port forwards), re-registers the Portless aliases, relaunches the in-box daemons, and brings back the agent the box was last running (`claude`/`codex`/`opencode` — resuming its session, or starting fresh), then attaches. With no argument it recovers the current project's box; `--all` recovers every box in state (and skips the attach); `--no-attach` restores without attaching. `agentbox recover --provider <cloud> --adopt [id|name]` first rebuilds local state for a running sandbox that this host has no record of (e.g. one created on another machine), minting fresh relay tokens from what the box exposes. For Hetzner, adoption needs the box's per-host SSH key — a box created on a different host can't be controlled and `recover` says so.
 
@@ -480,10 +480,11 @@ agentbox hub set-url https://<your-hub-url>
 # Status of the configured remote hub (or the local hub when none is set)
 agentbox hub status
 
-# Drive boxes through the hub's /api/v1 — a remote control box (laptop can be off),
-# or the local hub, which is started automatically if it isn't already running
-agentbox hub boxes list
-agentbox hub boxes start|stop|pause|resume|rm <box>
+# Lifecycle runs through the hub's /api/v1 in both modes (a remote control box —
+# laptop can be off — or the local hub, started automatically if not running), so
+# the top-level commands ARE the hub commands: `agentbox start|stop|pause|unpause`
+# and `agentbox destroy <box>` drive a hub box directly, no `hub boxes` subcommand.
+agentbox hub boxes list                 # the PC's admin view of the hub's registry
 agentbox hub approvals list
 agentbox hub approvals answer <id> y
 

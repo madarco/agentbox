@@ -66,12 +66,16 @@ describe('HubApiClient', () => {
     expect(calls[0]!.url).toBe('https://hub.example/api/v1/boxes/b1/pause');
   });
 
-  it('destroy maps to the destroy lifecycle action', async () => {
+  it('destroy posts to /destroy and carries keepSnapshot on the body', async () => {
     const { fetchImpl, calls } = stub({
       'POST /api/v1/boxes/b1/destroy': { status: 200, body: { ok: true } },
     });
-    await new HubApiClient(target(fetchImpl)).destroy('b1');
+    const client = new HubApiClient(target(fetchImpl));
+    await client.destroy('b1');
     expect(calls[0]!.url).toBe('https://hub.example/api/v1/boxes/b1/destroy');
+    expect(calls[0]!.body).toEqual({});
+    await client.destroy('b1', { keepSnapshot: true });
+    expect(calls[1]!.body).toEqual({ keepSnapshot: true });
   });
 
   it('answers an approval with the answer body', async () => {

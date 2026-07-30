@@ -171,7 +171,7 @@ It prints exactly what it will delete — the VPS, its firewall, `~/.agentbox/co
 
 Two flags: `--keep-credentials` leaves `control-plane.env` in place so a later `hub deploy hetzner` needs no `hub setup`, and `--force` is required if the hub still has boxes registered.
 
-<Callout type="warn" title="Boxes outlive the hub">Cloud boxes the control box created keep running in their provider, and the hub's store is often the only record they exist. So `hub destroy` asks the hub what it owns first and refuses if the list isn't empty — destroy them with `agentbox hub boxes rm <id>` (or accept the orphans with `--force`). If the hub can't be reached it says so rather than blocking, since a broken deploy is exactly what you'd want to delete.</Callout>
+<Callout type="warn" title="Boxes outlive the hub">Cloud boxes the control box created keep running in their provider, and the hub's store is often the only record they exist. So `hub destroy` asks the hub what it owns first and refuses if the list isn't empty — destroy them with `agentbox destroy <box>` (or accept the orphans with `--force`). If the hub can't be reached it says so rather than blocking, since a broken deploy is exactly what you'd want to delete.</Callout>
 
 Teardown needs no SSH, so it works from a different network than the one that deployed the box. If a resource is already gone, it says so and still clears the local state — a half-deleted control box must never leave your config pointing at nothing.
 
@@ -455,27 +455,27 @@ the macOS tray use — over its hub API key (minted at `setup`/`deploy`). Local 
 here; they stay on your laptop.
 
 ```bash
-agentbox relay status                              # shows the configured control box + reachability
+agentbox relay status                    # shows the configured control box + reachability
 agentbox hub boxes list                  # boxes on the control box (from either side)
-agentbox hub boxes start|stop|pause|resume <box>   # drive one remotely (laptop can be off)
-agentbox hub boxes rm <box>              # destroy it (cloud resource + control-box state)
+agentbox start|stop|pause|unpause <box>  # drive one remotely (laptop can be off)
+agentbox destroy <box>                   # destroy it (cloud resource + control-box state)
 agentbox hub approvals list              # pending host-action approvals
 agentbox hub approvals answer <id> y     # answer one (also answerable in the web UI)
 agentbox hub jobs list                   # the control box's box-creation queue
 agentbox hub jobs show <jobId>
 ```
 
-`boxes rm` now performs a **real destroy** — it tears down the cloud sandbox and reaps the control
-box's state (registration, status, SSH-key custody) — including for boxes you created on this PC and
-registered against the control box. The control box drives them by reconstructing their record from
-its registry on demand (reverse-adoption), so no local record on the control box is required.
+Lifecycle runs through the control box's `/api/v1` in both modes, so the **top-level** commands are
+the hub commands — there is no separate `hub boxes start|stop|…|rm`. `agentbox start|stop|pause|unpause`
+and `agentbox destroy` drive a control-box box directly, resolving it by name (adopting it first if
+this PC has never seen it). `agentbox hub boxes list` stays as the PC's admin view of the registry.
 
-A plain `agentbox destroy <box>` reaps too: after the cloud teardown it drops the box's registration,
-its SSH-key custody, **and the control box's own record of it plus the per-box key dir on its disk**,
-so a box you destroy here doesn't linger in the web UI or the tray. (Before, only the registration
-went — the control box's local record survived and kept rendering the box as `running`, since a cloud
-row shows its last known state rather than probing.) If the control box is unreachable at that moment
-the local destroy still succeeds and tells you to run `agentbox hub boxes rm <id>` once it's back.
+`agentbox destroy <box>` performs a **real destroy** server-side — it tears down the cloud sandbox and
+reaps the control box's state (registration, status, SSH-key custody) — including for boxes you created
+on this PC and registered against the control box. The control box drives them by reconstructing their
+record from its registry on demand (reverse-adoption), so no local record on the control box is
+required. Afterwards the CLI also drops **this machine's** adopted record + ssh alias for the box, so a
+box you destroy here doesn't linger locally or in the web UI / tray.
 
 ## Approvals reach you wherever you are
 

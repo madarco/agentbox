@@ -104,11 +104,7 @@ import {
   planPush,
   type UploadItem,
 } from '../control-plane/custody-client.js';
-import {
-  HubApiClient,
-  HubApiError,
-  type HubLifecycleAction,
-} from '../control-plane/hub-api-client.js';
+import { HubApiClient, HubApiError } from '../control-plane/hub-api-client.js';
 import { hubApiTargetFrom, withHubClient } from '../control-plane/with-hub.js';
 import { loadControlPlaneEnv } from '../control-plane/env-file.js';
 import { getHubJob, listHubJobs } from '../control-plane/hub-enqueue.js';
@@ -1518,62 +1514,14 @@ const boxesListSub = new Command('list')
     });
   });
 
-const boxesRmSub = new Command('rm')
-  .description(
-    'Destroy a box via the hub (tears down the cloud resource AND reaps its registration/custody)',
-  )
-  .argument('<boxId>', 'the box id as shown by `hub boxes list`')
-  .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
-  .action(async (boxId: string, opts: { url?: string }) => {
-    await withHubClient(opts, async (client) => {
-      try {
-        // Reverse-adoption on the control box means this drives a REAL destroy even
-        // for a box created on the PC (registration-only) — not just a state reap.
-        await client.destroy(boxId);
-        log.success(`Destroyed '${boxId}' (cloud resource + hub state).`);
-      } catch (err) {
-        if (err instanceof HubApiError && err.code === 'not_found') {
-          log.info(`No box '${boxId}' on the hub.`);
-          return;
-        }
-        throw err;
-      }
-    });
-  });
-
-/** A `hub boxes <action>` lifecycle subcommand over the hub `/api/v1`. */
-function boxesLifecycleSub(action: HubLifecycleAction, verb: string, past: string): Command {
-  return new Command(action)
-    .description(`${verb} a box on the hub (via its /api/v1)`)
-    .argument('<boxId>', 'the box id as shown by `hub boxes list`')
-    .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
-    .action(async (boxId: string, opts: { url?: string }) => {
-      await withHubClient(opts, async (client) => {
-        try {
-          await client.lifecycle(boxId, action);
-          log.success(`${past} '${boxId}'.`);
-        } catch (err) {
-          if (err instanceof HubApiError && err.code === 'not_found') {
-            log.info(`No box '${boxId}' on the hub.`);
-            process.exitCode = 1;
-            return;
-          }
-          throw err;
-        }
-      });
-    });
-}
-
+// Box lifecycle (start/stop/pause/resume/destroy) is NOT a `hub boxes`
+// subcommand: the top-level `agentbox start|stop|pause|unpause|destroy` route
+// through the same hub `/api/v1` in both modes (Step 5), so a redundant
+// `hub boxes <action>` stopgap would be a second way to do the same thing.
+// `hub boxes list` stays — it's the PC's admin view of the hub's registry.
 const boxesCmd = new Command('boxes')
-  .description(
-    'List + drive boxes on the hub over its public /api/v1 (a control box, or the local hub)',
-  )
-  .addCommand(boxesListSub)
-  .addCommand(boxesLifecycleSub('start', 'Start', 'Started'))
-  .addCommand(boxesLifecycleSub('stop', 'Stop', 'Stopped'))
-  .addCommand(boxesLifecycleSub('pause', 'Pause', 'Paused'))
-  .addCommand(boxesLifecycleSub('resume', 'Resume', 'Resumed'))
-  .addCommand(boxesRmSub);
+  .description('List boxes on the hub over its public /api/v1 (a control box, or the local hub)')
+  .addCommand(boxesListSub);
 
 // --- control-plane approvals (answerable from the PC over /api/v1) ---
 

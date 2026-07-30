@@ -283,9 +283,13 @@ export class HubApiClient {
     await this.request<{ ok: true }>('POST', `/boxes/${encodeURIComponent(id)}/${action}`);
   }
 
-  /** Real destroy: tears down the cloud resource AND reaps the hub's registration/custody. */
-  destroy(id: string): Promise<void> {
-    return this.lifecycle(id, 'destroy');
+  /**
+   * Real destroy: tears down the cloud resource AND reaps the hub's
+   * registration/custody. `keepSnapshot` preserves a docker box's local snapshot
+   * dir (mirrors the CLI's `--keep-snapshot`), so it travels on the request body.
+   */
+  async destroy(id: string, opts: { keepSnapshot?: boolean } = {}): Promise<void> {
+    await this.request<{ ok: true }>('POST', `/boxes/${encodeURIComponent(id)}/destroy`, opts);
   }
 
   /** A git op against the box's branch. */

@@ -248,12 +248,13 @@ describe('lifecycle CLI surface', () => {
     expect(longs).toEqual(expect.arrayContaining(['--url', '--json']));
   });
 
-  it('hub boxes carries the box registry lifecycle subcommands', () => {
+  it('hub boxes is list-only (lifecycle moved to the top-level commands via /api/v1)', () => {
     const boxes = hubCommand.commands.find((c) => c.name() === 'boxes')!;
     const subs = boxes.commands.map((c) => c.name());
-    expect(subs).toEqual(
-      expect.arrayContaining(['list', 'start', 'stop', 'pause', 'resume', 'rm']),
-    );
+    // The `start|stop|pause|resume|rm` stopgaps were removed in Step 5: the
+    // top-level `agentbox start|stop|pause|unpause|destroy` route through the
+    // hub `/api/v1` in both modes, so a second surface would be redundant.
+    expect(subs).toEqual(['list']);
   });
 
   it('all box-arg commands now accept [box] (optional) for auto-pick', () => {
@@ -268,5 +269,10 @@ describe('lifecycle CLI surface', () => {
     for (const cmd of optionalBoxCmds) {
       expect(cmd.registeredArguments[0]!.required, `${cmd.name()}: [box]`).toBe(false);
     }
+  });
+
+  it('destroy exposes --keep-snapshot and --force (drop the record when no hub owns the box)', () => {
+    const longs = destroyCommand.options.map((o) => o.long);
+    expect(longs).toEqual(expect.arrayContaining(['--yes', '--keep-snapshot', '--force']));
   });
 });

@@ -24,6 +24,13 @@ import { HubApiClient, HubApiError, SUPPORTED_HUB_API_VERSIONS } from './hub-api
 export interface WithHubOptions {
   /** Override the hub URL (default: the configured control box, else the local hub). */
   url?: string;
+  /**
+   * Prefer the hub on THIS machine even when a remote control box is configured
+   * (the which-hub principle, Step 1). A docker box is always local-owned, so a
+   * docker op sets this to avoid hitting a remote hub that never owned it (it
+   * would answer `not_found`). Reuses Step 0's exposed-loopback-first ladder.
+   */
+  preferLocal?: boolean;
 }
 
 /** True when the hub's reported `apiVersion` is one this CLI speaks. */
@@ -111,7 +118,7 @@ export async function withHubClient<T>(
   // those already sit in (hub.ts consumes control-plane.ts's command list at
   // load time). Cheap after the first call — the module is cached.
   const { resolveHubApiTarget } = await import('../commands/control-plane.js');
-  const target = await resolveHubApiTarget(opts.url);
+  const target = await resolveHubApiTarget(opts.url, { preferLocal: opts.preferLocal });
   if (!target) {
     // resolveHubApiTarget already printed an actionable error (missing config /
     // key, or a local-hub autostart failure).
@@ -154,4 +161,123 @@ export async function withHubClient<T>(
     reportHubError(err, target.url);
     return undefined;
   }
+}
+
+/**
+ * Whether the hub that OWNS this box runs on THIS machine — the `preferLocal`
+ * answer for any box op. **The one ownership predicate**: a lifecycle/destroy op
+ * can only be served by the hub that owns the box, and getting this wrong sends
+ * the op to a hub that never registered the box (→ `not_found`). True for the
+ * provider families the LOCAL hub drives directly:
+ *   - `docker` — a container on this machine.
+ *   - `remote-docker` — a container on another machine's engine, but the box
+ *     registers with the LOCAL relay (the local hub drives the remote engine over
+ *     SSH), so its owner is still local.
+ * Cloud providers (e2b/vercel/hetzner/daytona/digitalocean) are owned by whichever
+ * hub is configured, so they are NOT local-owned. Every caller MUST use this rather
+ * than an inline `provider === 'docker'` check — five copies drift; a new provider
+ * is classified here once.
+ */
+export function boxOwningHubIsLocal(box: { provider?: string }): boolean {
+  const p = box.provider ?? 'docker';
+  return p === 'docker' || p === 'remote-docker';
+}
+
+/** The outcome of a box op routed to its owning hub (see {@link withOwningHub}). */
+export type OwningHubOutcome = 'ok' | 'not-found' | undefined;
+
+/**
+ * Run a box op against the hub that OWNS the box (local for docker/remote-docker,
+ * the configured hub for cloud — see {@link boxOwningHubIsLocal}), retrying the
+ * OTHER distinct hub on `not_found`. A box can legitimately be unknown to the
+ * first hub — e.g. a docker box whose op reached a configured remote hub that
+ * never owned it — so a single `not_found` is not proof it belongs to no hub.
+ * Returns:
+ *   - `'ok'`        — some hub performed the op.
+ *   - `'not-found'` — no hub AgentBox knows owns the box.
+ *   - `undefined`   — a hub error other than not_found (the owner-first attempt
+ *                     went through {@link withHubClient}, which already reported it
+ *                     + set the exit code).
+ */
+export async function withOwningHub(
+  box: { id: string; provider?: string },
+  op: (client: HubApiClient) => Promise<void>,
+): Promise<OwningHubOutcome> {
+  const ownerLocal = boxOwningHubIsLocal(box);
+  const primary = await withHubClient({ preferLocal: ownerLocal }, async (client) => {
+    try {
+      await op(client);
+      return 'ok' as const;
+    } catch (err) {
+      if (err instanceof HubApiError && err.code === 'not_found') return 'not-found' as const;
+      throw err;
+    }
+  });
+  if (primary === undefined) return undefined; // withHubClient reported + set the exit code
+  if (primary === 'ok') return 'ok';
+  // The owner-first hub does not know this box. Retry the OTHER distinct hub.
+  const other = await runOpOnOtherHub(box, op, !ownerLocal);
+  if (other === 'ok') return 'ok';
+  if (other === 'error') return undefined; // a real error on the retry hub — already reported
+  return 'not-found';
+}
+
+/**
+ * Run the op against the OTHER hub (the one `preferLocalOther` selects), skipped
+ * when it resolves to the same URL as the owner-first attempt (a pure-local setup
+ * has only one hub). Distinguishes three outcomes so a REAL error on the retry hub
+ * isn't misreported as "no hub owns the box":
+ *   - `'ok'`        — the retry hub performed the op.
+ *   - `'error'`     — a genuine failure (conflict / auth / provider error); it is
+ *                     REPORTED here (message + exit code) and the caller aborts.
+ *   - `'not-found'` — the retry hub doesn't own the box (`not_found`), OR it was
+ *                     unreachable / unresolvable — neither is proof of ownership,
+ *                     so the caller treats the box as owned by no known hub.
+ */
+async function runOpOnOtherHub(
+  box: { id: string; provider?: string },
+  op: (client: HubApiClient) => Promise<void>,
+  preferLocalOther: boolean,
+): Promise<'ok' | 'error' | 'not-found'> {
+  let owner: { url: string; apiKey: string } | null;
+  let other: { url: string; apiKey: string } | null;
+  try {
+    const { resolveHubApiTarget } = await import('../commands/control-plane.js');
+    [owner, other] = await Promise.all([
+      resolveHubApiTarget(undefined, { quiet: true, preferLocal: !preferLocalOther }),
+      // Non-quiet so a stopped LOCAL retry hub is auto-started (it's a candidate owner).
+      resolveHubApiTarget(undefined, { preferLocal: preferLocalOther }),
+    ]);
+  } catch {
+    return 'not-found'; // couldn't even resolve the other hub — not proof of ownership
+  }
+  if (!other) return 'not-found';
+  if (owner && owner.url === other.url) return 'not-found'; // no distinct second hub
+  try {
+    await op(new HubApiClient(other));
+    return 'ok';
+  } catch (err) {
+    if (err instanceof HubApiError) {
+      // `not_found` = legitimately not owned here; any other code (conflict, auth,
+      // backend, internal) is a REAL failure to surface, NOT "no hub owns the box".
+      if (err.code === 'not_found') return 'not-found';
+      reportHubError(err, other.url);
+      return 'error';
+    }
+    // A network/transport failure to the second hub — unreachable is not proof of
+    // ownership, so preserve the box (the caller keeps its record / refuses).
+    return 'not-found';
+  }
+}
+
+/**
+ * Report a box that no hub AgentBox knows about owns, for the lifecycle commands
+ * (start/stop/pause/unpause). Sets the `not_found` exit code (2). `destroy` does
+ * NOT use this — it keeps the local record and names `--force` instead, because
+ * dropping the record of a possibly-still-running resource is the dangerous case.
+ */
+export function reportBoxNotOnAnyHub(box: { name: string }): void {
+  log.error(`Box ${box.name} was not found on any hub AgentBox knows.`);
+  log.info('Run `agentbox ls` to see boxes AgentBox can drive.');
+  process.exitCode = 2;
 }

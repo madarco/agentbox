@@ -428,7 +428,7 @@ idempotency, no-custody), and `pullBoxSshKeys`.
 
 ---
 
-## Step 5 — Lifecycle
+## Step 5 — Lifecycle ✅ done
 
 - `start`, `stop`, `pause`, `unpause`, `destroy`, `screen` → `POST /api/v1/boxes/:id/<action>`.
   The routes exist and are exercised today only by `hub boxes <action>`.
@@ -440,9 +440,163 @@ idempotency, no-custody), and `pullBoxSshKeys`.
   sessions (CLI does, hub doesn't) and make the route the single answer.
 
 **Files:** `commands/{start,stop,pause,unpause,destroy}.ts`, `commands/control-plane.ts`,
-`control-plane/reap.ts` (delete), `apps/hub/lib/hub-backend.ts`.
+`control-plane/hub-api-client.ts`, `apps/hub/lib/hub-backend.ts`, `apps/hub/lib/boxes/backend-types.ts`,
+`apps/hub/app/(dashboard)/api/v1/boxes/[id]/[action]/route.ts`,
+`packages/sandbox-docker/src/docker-provider.ts`.
 **Verify:** full lifecycle round-trip on docker via local hub and on e2b via control box;
 `destroy` leaves no orphan registration (`agentbox hub boxes list`) and no orphan sandbox.
+
+**Landed.** The five lifecycle commands (`start`, `stop`, `pause`, `unpause`, `destroy`) now go
+through `withHubClient` → `client.lifecycle/destroy` (`POST /api/v1/boxes/:id/<action>`), so they run
+identically against a local hub and a remote control box — one server-side implementation. `unpause`
+maps to the hub's `resume` action. The `hub boxes start|stop|pause|resume|rm` group is deleted;
+`hub boxes list` stays as the PC's admin view. `destroy` drops the CLI's `reapOnControlBox` (the route
+reaps store/custody itself). **`screen` was delivered by Step 7** (it landed first and owns
+`commands/screen.ts` + the VNC URL resolution); it routes `screen`'s lifecycle through
+`client.lifecycle('start')` on the docker payload path rather than a `screen` route, and keeps the
+in-box browser prep client-side as box IO. On rebase onto Step 7 I therefore dropped my `screen`
+changes (a `client.screen()` method + a hub-side `screen` auto-online) to avoid a redundant second
+implementation — Step 7's is the single answer. **Verified end-to-end** against a **local hub** with
+hard ground truth: a docker box round-tripped pause→`paused`, unpause→`running`, stop→`exited`,
+start→`running` (each confirmed via `docker inspect`), and `destroy` removed the container, left **no**
+`hub boxes list` registration, and dropped the local record. A real **e2b cloud box** (created
+directly, driven through the same local hub) round-tripped pause→archived, unpause/stop/start
+(SDK-verified `LIVE`), and `destroy` left **no orphan sandbox** (verified via the e2b SDK's own
+`Sandbox.list()`), no registration, and no local record.
+
+### The drift reconciliation (start / session-restore)
+
+The hub backend confessed a drift: *"Unlike CLI `agentbox start` this does not restore agent tmux
+sessions (restoreAgentSessions is CLI-only)."* **Decision: the route is the single answer for the
+box's *compute* lifecycle, and restoring the agent session is NOT part of it — it is box IO.**
+`restoreAgentSessions` reads the box's per-box session pointers and relaunches a detached tmux over
+`provider.exec` — the same exec/attach plane the plan keeps client-side and explicitly out of scope.
+So the route brings the box up/down, and the CLI layers `restoreAgentSessions` on *after* the route
+returns, exactly as it layers its own-machine `autoWriteSshConfig`. The "restoreAgentSessions is
+CLI-only" comment stops being a drift confession and becomes a stated architectural boundary (updated
+in `hub-backend.ts` + `backend-types.ts`). A hub-UI/tray start therefore brings the box up and the
+agent resumes on next attach — unchanged, and now correct-by-design rather than an accident.
+
+### Notes for later steps
+
+- **The client-side IO follow-up needs no fresh record — cloud exec re-resolves from `sandboxId`.**
+  Moving `provider.start` into the route means the CLI no longer gets the refreshed `BoxRecord` that
+  `provider.start` used to return. This is fine: every cloud IO path re-resolves its connection from
+  the stable `sandboxId` at call time (hetzner `ensureLiveTarget`, e2b/vercel via the SDK), and
+  `autoWriteSshConfig` re-resolves from the provider (not the record's stored IP). So `start`/`unpause`
+  run their client-side `autoWriteSshConfig` + `restoreAgentSessions` against the pre-call record
+  safely. Steps 7+ converting other post-lifecycle IO can rely on the same property rather than
+  threading a refreshed record back through the route.
+- **`preferLocal` was NOT needed here (unlike Steps 5-note-in-Step-1 anticipated).** Step 1's note
+  said "Step 5 must reuse `preferLocal` for the `cloud.viaHub` / docker / unreachable-resource fork."
+  In practice lifecycle has no such fork: a box already exists (it was created somewhere), so the
+  right hub is simply *the hub that owns it*, which `resolveHubApiTarget` already resolves (local when
+  no control box; the control box when configured). There is no "where should this run" decision to
+  make the way `prepare`/`create` have. So the lifecycle commands use plain `withHubClient({})`. If a
+  future multi-hub topology makes "which hub owns this box" ambiguous, revisit — but today it isn't.
+- **`--keep-snapshot` travels on the destroy body (route widened, not flag dropped).** Per the plan's
+  "widen the request rather than drop a flag" rule, `destroy`'s `--keep-snapshot` now threads
+  `HubApiClient.destroy(id, { keepSnapshot })` → `POST /boxes/:id/destroy` body → `parseKeepSnapshot`
+  in the `[action]` route → `HubBackend.destroy(id, { keepSnapshot })` → `provider.destroy(box, {
+  keepSnapshot })`. **This surfaced a latent bug: `dockerProvider.destroy` ignored its `opts` entirely**
+  (`destroyBox(box.id)` with no options), so `--keep-snapshot` was silently a no-op even before this
+  step for any path routing through the provider. Fixed here (`docker-provider.ts`). The other
+  lifecycle commands take no data-carrying flags, so no other route needed widening.
+- **`reap.ts` was NOT deleted (the plan's "delete if nothing else imports it" resolved to "keep").**
+  `reapOnControlBox` is still imported by `dashboard.ts` (the IO-plane TUI, out of this step's file
+  set — Step 7/11 cleanup) and `reapSandboxesOnControlBox` by `prune.ts` (Step 9). Only `destroy.ts`'s
+  call was removed. Whoever converts `dashboard.ts` off its inline destroy+reap (Step 7/11) and
+  `prune`'s reap (Step 9) can delete `reap.ts` then.
+- **ONE ownership predicate: `boxOwningHubIsLocal(box)` (`control-plane/with-hub.ts`) — use it, never
+  a fresh `provider === 'docker'` check.** A lifecycle/destroy op can only be served by the hub that
+  OWNS the box, and getting this wrong sends the op to a hub that never registered it (→ `not_found`,
+  which the inline path never hit — so the hub-routing introduces the regression if unguarded). The
+  predicate returns local-owned for **`docker`** (a local container) **and `remote-docker`** (a
+  container on another engine, but registered with the LOCAL relay — the local hub drives it over SSH;
+  Bugbot flagged the first cut that keyed on `docker` alone and mis-routed remote-docker). Cloud is
+  owned by the configured hub. This lives in one place so a future provider is classified once and the
+  predicate can't drift across the five call sites. **Later steps / earlier converted steps:** any
+  code choosing "which hub" or "does this box have a real container" for a box op should call this
+  helper — do not write a new `provider === 'docker'`; if an earlier step has one, fold it in here.
+  (Note the SSH-config follow-up is a *different* gate — "reached over SSH", which is
+  `!== 'docker'`/self-gating in `autoWriteSshConfig` — not ownership; don't conflate them.)
+- **All five box ops route via `withOwningHub(box, op)` — uniform owner-first + other-hub retry.**
+  `WithHubOptions` gained `preferLocal` (reusing Step 0's exposed-loopback-first ladder — the same knob
+  `prepare` uses); `withOwningHub` wraps it: it runs `op` against the owning hub (via `withHubClient`,
+  so version-gated + error-mapped), and on `not_found` retries the OTHER distinct hub (`runOpOnOtherHub`).
+  `start`/`stop`/`pause`/`unpause` and `destroy` all use it, so "destroy works but stop doesn't" can't
+  happen. On `not-found` from every hub the four lifecycle commands report via `reportBoxNotOnAnyHub`
+  (exit 2); `destroy` is the exception — it keeps the record (see next).
+- **The other-hub retry surfaces REAL errors — it does NOT swallow them (Bugbot Medium — fixed).**
+  `runOpOnOtherHub` distinguishes three outcomes rather than a bare `catch → false`: `'ok'` (the retry
+  hub did it), `'not-found'` (the retry hub genuinely doesn't own the box, OR it was
+  unreachable/unresolvable — neither is proof of ownership, so the caller keeps the record / refuses),
+  and `'error'` (a real `HubApiError` — conflict / auth / backend / internal — which it **reports**
+  with the mapped exit code and the caller aborts). The first cut mapped *every* retry failure to "not
+  found on any hub", masking a genuine conflict/auth/provider error as a missing box; only `not_found`
+  and transport failures now collapse to `'not-found'`.
+- **Destroy must NEVER drop the local record on a bare `not_found` (Bugbot High — fixed).** The laptop
+  keeps an adopted `BoxRecord` + ssh alias for the direct IO plane; the route only cleans the **hub's**
+  copy. My first cut treated any `not_found` as "already reaped" and dropped the local record — but
+  `not_found` also means "this hub never owned the box", and there you have deleted the only handle to a
+  possibly-still-running container/VM (silent success + state deletion is strictly worse than a clear
+  failure). Via `withOwningHub` the record is dropped ONLY when some hub actually **reaped** the box; if
+  no hub owns it, destroy **fails** (exit 2), keeps the record, and names `agentbox destroy <box>
+  --force` as the deliberate way to drop a stale record. The pure decision `decideDestroy(outcome,
+  force)` is unit-tested (`test/destroy-decision.test.ts`) — invariant "drop iff reaped or force";
+  `boxOwningHubIsLocal` is unit-tested in `test/with-hub.test.ts`. **Reproduction gap:** the `not_found`
+  refusal needs a *remote* hub — a co-located local hub shares `state.json`, so it always finds a box
+  the CLI resolved and can't `not_found` it. Verified by the unit tests + code review; the common reap
+  paths (docker + a real e2b box, ground-truth via `docker inspect` / the e2b SDK) are e2e-green. Later
+  steps that move an *adopting/reaping* op behind the hub must reuse `withOwningHub` (or mirror its
+  owner-first + never-drop-on-not_found discipline).
+- **The hub's destroy `{ ok: true }` now means "provider teardown CONFIRMED", not "registration reaped"
+  (Bugbot High — fixed, `hub-backend.ts`).** The old backend returned `{ ok: true }` whenever it reaped
+  the Store registration, *even if `provider.destroy` failed* (no creds on the control box, provider
+  unresolvable) — so the CLI's `ok → reaped → removeBoxRecord` dropped the only record of a **live**
+  sandbox. The destroy method was restructured to three honest outcomes: box not found → reap any
+  dangling registration but return `not found` (unconfirmed teardown; the CLI retries/refuses, keeps the
+  record); `provider.destroy` **fails** → do NOT reap (keep the box visible + retryable) and return the
+  error (the CLI aborts + keeps the record); `provider.destroy` **succeeds** → reap + `{ ok: true }`
+  (the CLI drops the record). So `ok ⟺ the resource is actually gone`. **Live-validated:** with the
+  hub's `E2B_API_KEY` broken, `agentbox destroy` on a real e2b box surfaced the provider error, **kept
+  the local record, and left the sandbox running** (SDK-confirmed); restoring the key and re-running
+  destroyed the sandbox + dropped the record. A hub-UI/tray destroy of a box the control box can't
+  tear down now shows that error instead of silently orphaning the sandbox — more honest, and only the
+  abnormal no-creds path changes.
+- **The tmux-session-restore split (confirmed correct by the maintainer).** Route owns the box's
+  compute lifecycle; the CLI restores the agent session *after* (box IO, direct plane); docker
+  `unpause` needs NO restore because the cgroup thaw preserves the tmux session, while a cloud resume
+  reboots the sandbox and kills it (so cloud unpause + start do restore). Keep this reasoning.
+- **`screen` ended up entirely Step 7's, not split.** The plan listed `screen`'s lifecycle here and
+  its URL resolution in Step 7. In practice Step 7 landed first and implemented the whole command in
+  one coherent shape: the docker payload path brings the box online with `client.lifecycle('start')`
+  (via a `getBox` state check) and keeps the in-box browser prep client-side as box IO; cloud stays on
+  the provider path. There was no clean seam to insert a separate `screen` route/action without a
+  redundant second implementation, so on rebase I dropped my `screen` pieces (`client.screen()` + a
+  hub-side `screen` auto-online) and deferred to Step 7's. The generic `POST /boxes/:id/:action` route
+  still validates `screen` for the hub UI/tray's VNC-prep call (unchanged, VNC-prep-only). If that
+  UI/tray path ever wants auto-online too, add it to the hub `screen` action then.
+- **`box.container` is `cloud:<sandboxId>` for cloud boxes — don't print it as a label.** A generalized
+  `box.container ?? box.name` prints the ugly `cloud:ifrq…` for cloud rows (caught live on an e2b
+  unpause). The lifecycle commands guard the container label by `provider === 'docker'`; any later
+  command printing a box label should do the same (docker → `container`, else → `name`).
+- **`destroy` lost the docker volume/snapshot accounting output.** The old inline docker path printed
+  `✓ container removed / volumes removed / snapshot removed` from `destroyBox`'s detailed return; the
+  route returns only `{ ok }`, so destroy now prints a single `destroyed <label>` line. Acceptable per
+  the single-implementation goal; if the accounting is wanted back, the route/`ActionResult` would need
+  to carry it.
+
+**Not live-validated (documented gap, not a code gap): the `mode: 'remote'` transport via a
+`hub expose`d control box.** `hub setup --deploy local` (which mints the API key + password profile)
+requires a real GitHub token for the control box's own git credential, and this dev box only has the
+agentbox `gh` relay shim (no real token, no github.com credential helper) — the same blocker Step 6
+documented. The remote-mode client path is nonetheless exercised: it is the **identical**
+`withHubClient` → `resolveHubApiTarget` wrapper Step 6 already validated end-to-end in `mode: 'remote'`
+(controlPlaneUrl + `AGENTBOX_HUB_API_KEY` over loopback) for git ops on this same base branch. The
+only lifecycle-specific remote-mode behavior — destroy's local-record cleanup — is a plain local state
+op (`removeBoxRecord` + `syncAgentboxSshConfig`) that is a safe no-op when co-located; worth a
+confirming pass against a real Hetzner control box when one is stood up.
 
 ---
 
