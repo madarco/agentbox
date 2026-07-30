@@ -65,9 +65,22 @@ export const connectCommand = new Command('connect')
           );
           process.exit(2);
         }
+        if (!provider.enableDirectGit || !provider.buildAttach) {
+          log.error(
+            `\`connect --dangerously-git-credentials\` needs an SSH cloud box (hetzner / digitalocean) — ` +
+              `provider '${box.provider ?? 'docker'}' isn't supported here` +
+              (provider.enableDirectGit
+                ? ''
+                : ' (docker boxes bind-mount the host .git, so git direct mode is N/A)') +
+              '.',
+          );
+          process.exit(2);
+        }
         // Refuse when a control box is configured — token leasing already gives
         // the box laptop-off push without copying a credential into it (the same
-        // gate `create --dangerously-with-credentials` applies).
+        // gate `create --dangerously-with-credentials` applies). Placed AFTER the
+        // provider-capability check so an unsupported/docker box gets its own
+        // accurate message rather than the leasing one.
         const cfg = await loadEffectiveConfig(
           box.projectRoot ?? box.workspacePath ?? process.cwd(),
           {},
@@ -79,17 +92,6 @@ export const connectCommand = new Command('connect')
         if (refusal) {
           log.error(refusal);
           process.exit(1);
-        }
-        if (!provider.enableDirectGit || !provider.buildAttach) {
-          log.error(
-            `\`connect --dangerously-git-credentials\` needs an SSH cloud box (hetzner / digitalocean) — ` +
-              `provider '${box.provider ?? 'docker'}' isn't supported here` +
-              (provider.enableDirectGit
-                ? ''
-                : ' (docker boxes bind-mount the host .git, so git direct mode is N/A)') +
-              '.',
-          );
-          process.exit(2);
         }
         // Resolve the credential host-side (TTY-required token-vs-ssh prompt).
         const projectRoot = box.projectRoot ?? box.workspacePath ?? process.cwd();
