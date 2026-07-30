@@ -170,8 +170,9 @@ export async function createCloudBoxViaHubAndAdopt(
 
   // Materialize the just-created box locally. Resolve it server-side via
   // `GET /api/v1/boxes?ref=` (Step 4) rather than the admin store, then adopt.
-  const boxes = await client.resolveBox(boxId);
-  const box = boxes.find((b) => b.id === boxId) ?? boxes[0];
+  // Require the EXACT id — never fall back to the first of an ambiguous/mismatched
+  // match set, or an adopt + SSH-config could target the wrong box.
+  const box = (await client.resolveBox(boxId)).find((b) => b.id === boxId);
   if (!box) {
     throw new Error(`the control box created box ${boxId} but it is not resolvable to adopt`);
   }

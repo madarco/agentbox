@@ -2427,7 +2427,20 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     },
     async submitLoginCode(id, code) {
       const job = await readJob(id);
-      if (!job) return { ok: false, error: `job not found: ${id}` };
+      if (!job) {
+        // A control-plane create job (visible to getJob via the Store) has no
+        // in-box login-code channel — the clone-side worker seeds creds from
+        // custody rather than driving an interactive browser re-login. Say that
+        // distinctly from a genuinely-missing job rather than a bare "not found".
+        const cp = await handle.store.getCreateJob?.(id).catch(() => null);
+        if (cp) {
+          return {
+            ok: false,
+            error: `job ${id} is a control-plane create — it has no in-box login-code channel`,
+          };
+        }
+        return { ok: false, error: `job not found: ${id}` };
+      }
       // Deliver via the dedicated code file (worker reads+consumes it) — never a
       // manifest write, so it can't race the worker's `login` phase/url updates.
       await writeQueueLoginCode(id, code);

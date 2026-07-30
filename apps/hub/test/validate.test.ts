@@ -26,6 +26,11 @@ describe('parseCreateBox', () => {
     expect(parseCreateBox({ agent: 'none' }).ok).toBe(false);
   });
 
+  it('rejects sending BOTH projectId and repoUrl (ambiguous fork)', () => {
+    const r = parseCreateBox({ projectId: 'p', repoUrl: 'https://x.git', agent: 'none' });
+    expect(r.ok).toBe(false);
+  });
+
   it('carries agentArgs, startAgent and foreground', () => {
     const r = parseCreateBox({
       projectId: 'p',

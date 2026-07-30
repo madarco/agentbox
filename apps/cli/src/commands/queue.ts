@@ -55,7 +55,9 @@ const queueListCommand = new Command('list')
 /** A compact ASCII table over the unified job listing; id is the cancel/show handle. */
 function renderJobTable(jobs: HubApiJob[]): void {
   const rows = jobs.map((j) => ({
-    id: j.id.slice(0, 12),
+    // Print the FULL id — `queue show`/`cancel` resolve it against the local
+    // manifest by exact id (no prefix match), so a truncated id wouldn't resolve.
+    id: j.id,
     status: j.status,
     agent: j.agent ?? '-',
     box: j.name || j.boxId || '(auto)',

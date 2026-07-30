@@ -41,6 +41,12 @@ export function parseCreateBox(body: unknown): Parsed<CreateBoxInput> {
   if (!hasProject && !hasRepo) {
     return { ok: false, message: 'one of projectId or repoUrl is required (string)' };
   }
+  // Exactly one: the backend forks on `repoUrl` (clone) vs `projectId` (local
+  // workspace), so sending both is ambiguous — repoUrl would win and silently
+  // skip a valid local checkout.
+  if (hasProject && hasRepo) {
+    return { ok: false, message: 'send exactly one of projectId or repoUrl, not both' };
+  }
   if (projectId !== undefined && typeof projectId !== 'string') {
     return { ok: false, message: 'projectId must be a string' };
   }
