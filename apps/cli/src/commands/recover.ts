@@ -44,7 +44,7 @@ import { isKnownProvider } from '../provider/registry.js';
 import { attachToRunningAgent } from './attach.js';
 import { rehydrateFromState } from './relay.js';
 import { handleLifecycleError } from './_errors.js';
-import { resolveCustodyTarget } from './control-plane.js';
+import { resolveCustodyApiTarget } from './control-plane.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
 import { downloadBoxSshKeys } from '../control-plane/hub-pull.js';
 import { hostReachable } from '../control-plane/hub-list.js';
@@ -99,7 +99,7 @@ async function hetznerKeyMissing(box: BoxRecord): Promise<boolean> {
  */
 async function tryPullKeyFromCustody(box: BoxRecord): Promise<boolean> {
   try {
-    const target = await resolveCustodyTarget(undefined, { quiet: true });
+    const target = await resolveCustodyApiTarget(undefined, { quiet: true, remoteOnly: true });
     if (!target) return false;
     // Probe + bound exactly like the other control-box calls: an unreachable
     // host can't be cancelled mid-connect (undici holds the socket for ~10s),

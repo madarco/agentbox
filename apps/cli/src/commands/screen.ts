@@ -13,7 +13,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { withHubClient } from '../control-plane/with-hub.js';
+import { withOwningHub } from '../control-plane/with-hub.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -175,7 +175,11 @@ export const screenCommand = new Command('screen')
       // can't express, so they take the provider path. Cloud boxes have no `vnc`
       // endpoint on the payload, so they fall through and resolve a live signed URL.
       if (!opts.loopback && opts.ttl === undefined && (box.provider ?? 'docker') === 'docker') {
-        const payloadUrl = await withHubClient({}, async (client): Promise<string | null> => {
+        // Box-scoped → the box's OWNING hub (withOwningHub); a plain withHubClient
+        // would send a docker box's `getBox` to a configured remote control box that
+        // never owned it → `not_found`. Payload URL captured via closure.
+        let payloadUrl: string | null = null;
+        const r = await withOwningHub(box, async (client) => {
           let b = await client.getBox(box.id);
           if (b.state && b.state !== 'running') {
             process.stderr.write(
@@ -184,9 +188,9 @@ export const screenCommand = new Command('screen')
             await client.lifecycle(box.id, 'start');
             b = await client.getBox(box.id);
           }
-          return b.vncUrl ?? null;
+          payloadUrl = b.vncUrl ?? null;
         });
-        if (payloadUrl === undefined) return; // hub error; withHubClient set the exit code
+        if (r === undefined) return; // hub error; withOwningHub set the exit code
         if (payloadUrl) {
           // The VNC URL is authoritative, but still point the in-box browser at
           // the app so the desktop isn't blank (genuine box IO — stays direct).

@@ -19,7 +19,11 @@
 import type { EffectiveConfig } from '@agentbox/config';
 import { isHubRoutableProvider } from '@agentbox/config';
 import { DEFAULT_ENV_PATTERNS, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
-import { pushProjectSeedToCustody, readGitOriginUrl } from '@agentbox/sandbox-cloud';
+import {
+  adminCustodySink,
+  pushProjectSeedToCustody,
+  readGitOriginUrl,
+} from '@agentbox/sandbox-cloud';
 import { remoteHubConfigured } from './remote-hub.js';
 
 export interface CreateTargetInput {
@@ -125,8 +129,14 @@ export async function pushCreateSeed(args: {
   }
   try {
     const res = await pushProjectSeedToCustody({
-      controlPlaneUrl: args.custody.url,
-      adminToken: args.custody.adminToken,
+      // The create/registration path writes over the internal /admin/custody wire
+      // (it holds the admin token) — mirrors cloud-provider.ts. The CLI's client
+      // custody commands use the /api/v1 sink instead (Step 10).
+      sink: adminCustodySink({
+        controlPlaneUrl: args.custody.url,
+        adminToken: args.custody.adminToken,
+      }),
+      probeUrl: args.custody.url,
       slug,
       projectRoot: args.projectRoot,
       envPatterns: DEFAULT_ENV_PATTERNS,

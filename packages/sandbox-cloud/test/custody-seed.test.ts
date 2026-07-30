@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { afterAll, describe, expect, it } from 'vitest';
-import { applyProjectSeed, buildProjectSeed, pushProjectSeedToCustody } from '../src/custody-seed.js';
+import {
+  applyProjectSeed,
+  buildProjectSeed,
+  pushProjectSeedToCustody,
+  type SeedCustodySink,
+} from '../src/custody-seed.js';
 
 const scratch: string[] = [];
 afterAll(async () => {
@@ -71,7 +76,9 @@ describe('buildProjectSeed', () => {
     const paths = res.items.map((i) => i.relPath).sort();
     expect(paths).toContain('untracked.tar.gz');
     expect(paths).toContain('env.tar.gz');
-    expect(await tarPaths(res.items.find((i) => i.relPath === 'env.tar.gz')!.data)).toContain('.env');
+    expect(await tarPaths(res.items.find((i) => i.relPath === 'env.tar.gz')!.data)).toContain(
+      '.env',
+    );
 
     const tar = res.items.find((i) => i.relPath === 'untracked.tar.gz')!;
     const inTar = await tarPaths(tar.data);
@@ -91,7 +98,11 @@ describe('buildProjectSeed', () => {
   it('drops an oversized untracked tar but still captures env files', async () => {
     const repo = await makeRepo();
     // maxBodyBytes is the custody PUT cap; the blob ceiling is derived from it.
-    const res = await buildProjectSeed({ projectRoot: repo, envPatterns: ['.env'], maxBodyBytes: 1 });
+    const res = await buildProjectSeed({
+      projectRoot: repo,
+      envPatterns: ['.env'],
+      maxBodyBytes: 1,
+    });
     expect(res.skippedTarBytes).toBeGreaterThan(1);
     expect(res.items.map((i) => i.relPath)).toEqual(['env.tar.gz']);
     // A partial seed still beats none — and the manifest says what's in it.
@@ -137,7 +148,8 @@ describe('buildProjectSeed', () => {
     // gave an unchanged tree a fresh sha256 every run and re-uploaded the
     // largest blob in the seed on every create.
     expect(tarOf(b).equals(tarOf(a))).toBe(true);
-    const shaOf = (r: typeof a) => r.manifest.files.find((f) => f.path === 'untracked.tar.gz')!.sha256;
+    const shaOf = (r: typeof a) =>
+      r.manifest.files.find((f) => f.path === 'untracked.tar.gz')!.sha256;
     expect(shaOf(b)).toBe(shaOf(a));
   });
 
@@ -191,38 +203,34 @@ describe('applyProjectSeed', () => {
 });
 
 describe('pushProjectSeedToCustody', () => {
-  /** A fake custody surface recording puts, with a settable manifest. */
-  function fakeCustody(existing: Record<string, string> = {}) {
+  /**
+   * A fake {@link SeedCustodySink} recording puts, with a settable manifest.
+   * `refuse` throws on a matching relPath (a host that rejects an oversized blob).
+   */
+  function fakeSink(existing: Record<string, string> = {}, refuse?: (path: string) => boolean) {
     const puts: string[] = [];
-    const fetchImpl = (async (url: unknown, init?: { method?: string }) => {
-      const u = new URL(String(url));
-      if (u.pathname === '/admin/custody') {
-        return new Response(
-          JSON.stringify({
-            entries: Object.entries(existing).map(([path, sha256]) => ({ path, sha256 })),
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
-      }
-      if (init?.method === 'PUT') {
-        puts.push(decodeURIComponent(u.pathname.slice('/admin/custody/'.length)));
-        return new Response(JSON.stringify({ changed: true, sha256: 'x' }), { status: 200 });
-      }
-      return new Response(null, { status: 404 });
-    }) as unknown as typeof fetch;
-    return { fetchImpl, puts };
+    const sink: SeedCustodySink = {
+      list: () =>
+        Promise.resolve(Object.entries(existing).map(([path, sha256]) => ({ path, sha256 }))),
+      put: (path) => {
+        if (refuse?.(path)) return Promise.reject(new TypeError('fetch failed')); // socket reset
+        puts.push(path);
+        return Promise.resolve();
+      },
+    };
+    return { sink, puts };
   }
 
   it('uploads the seed under projects/<slug>/seed and writes the manifest last', async () => {
     const repo = await makeRepo();
-    const { fetchImpl, puts } = fakeCustody();
+    const { sink, puts } = fakeSink();
     const res = await pushProjectSeedToCustody({
-      controlPlaneUrl: 'http://cb.test',
-      adminToken: 'admin',
+      sink,
+      probeUrl: 'http://cb.test',
+      probe: () => Promise.resolve(true),
       slug: 'o__r',
       projectRoot: repo,
       envPatterns: ['.env'],
-      fetchImpl,
     });
     expect(puts).toContain('projects/o__r/seed/untracked.tar.gz');
     expect(puts).toContain('projects/o__r/seed/env.tar.gz');
@@ -240,14 +248,14 @@ describe('pushProjectSeedToCustody', () => {
     const existing: Record<string, string> = {};
     for (const f of built.manifest.files) existing[`projects/o__r/seed/${f.path}`] = f.sha256;
 
-    const { fetchImpl, puts } = fakeCustody(existing);
+    const { sink, puts } = fakeSink(existing);
     const res = await pushProjectSeedToCustody({
-      controlPlaneUrl: 'http://cb.test',
-      adminToken: 'admin',
+      sink,
+      probeUrl: 'http://cb.test',
+      probe: () => Promise.resolve(true),
       slug: 'o__r',
       projectRoot: repo,
       envPatterns: ['.env'],
-      fetchImpl,
     });
     expect(res.skipped).toBe(built.items.length);
     // Only the manifest (whose timestamp always differs) is re-uploaded.
@@ -261,31 +269,15 @@ describe('pushProjectSeedToCustody', () => {
     // network error, not a 413). That must degrade like the local size gate —
     // partial seed, not a failed push.
     const repo = await makeRepo();
-    const puts: string[] = [];
-    const fetchImpl = (async (url: unknown, init?: { method?: string }) => {
-      const u = new URL(String(url));
-      if (u.pathname === '/admin/custody') {
-        return new Response(JSON.stringify({ entries: [] }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      const path = decodeURIComponent(u.pathname.slice('/admin/custody/'.length));
-      if (init?.method === 'PUT') {
-        if (path.endsWith('untracked.tar.gz')) throw new TypeError('fetch failed'); // socket reset
-        puts.push(path);
-        return new Response(JSON.stringify({ changed: true, sha256: 'x' }), { status: 200 });
-      }
-      return new Response(null, { status: 404 });
-    }) as unknown as typeof fetch;
+    const { sink, puts } = fakeSink({}, (path) => path.endsWith('untracked.tar.gz'));
 
     const res = await pushProjectSeedToCustody({
-      controlPlaneUrl: 'http://cb.test',
-      adminToken: 'admin',
+      sink,
+      probeUrl: 'http://cb.test',
+      probe: () => Promise.resolve(true),
       slug: 'o__r',
       projectRoot: repo,
       envPatterns: ['.env'],
-      fetchImpl,
     });
 
     expect(res.dropped).toEqual(['untracked.tar.gz']);
@@ -299,11 +291,16 @@ describe('pushProjectSeedToCustody', () => {
 
   it('reports unreachable without tarring anything', async () => {
     const repo = await makeRepo();
-    // 203.0.113.0/24 is TEST-NET-3: routable-looking, never answers.
+    // 203.0.113.0/24 is TEST-NET-3: routable-looking, never answers. A sink that
+    // would throw if touched — the probe must short-circuit before any put.
+    const unreachableSink: SeedCustodySink = {
+      list: () => Promise.reject(new Error('should not list')),
+      put: () => Promise.reject(new Error('should not put')),
+    };
     const t0 = Date.now();
     const res = await pushProjectSeedToCustody({
-      controlPlaneUrl: 'https://203.0.113.1',
-      adminToken: 'admin',
+      sink: unreachableSink,
+      probeUrl: 'https://203.0.113.1',
       slug: 'o__r',
       projectRoot: repo,
       envPatterns: ['.env'],
@@ -327,15 +324,15 @@ describe('pushProjectSeedToCustody', () => {
     const existing: Record<string, string> = {};
     for (const f of built.manifest.files) existing[`projects/o__r/seed/${f.path}`] = f.sha256;
 
-    const { fetchImpl } = fakeCustody(existing);
+    const { sink } = fakeSink(existing);
     const res = await pushProjectSeedToCustody({
-      controlPlaneUrl: 'http://cb.test',
-      adminToken: 'admin',
+      sink,
+      probeUrl: 'http://cb.test',
+      probe: () => Promise.resolve(true),
       slug: 'o__r',
       projectRoot: repo,
       envPatterns: ['.env'],
       force: true,
-      fetchImpl,
     });
     expect(res.skipped).toBe(0);
     expect(res.uploaded).toBe(built.items.length + 1);

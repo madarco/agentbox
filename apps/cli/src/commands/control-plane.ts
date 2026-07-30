@@ -971,7 +971,10 @@ const workerSub = new Command('worker')
         // provide. Unlike the hub, this worker is not the custody host, so it
         // reads the blobs over HTTP.
         fetchSeedMaterial: async (repoUrl, dest) => {
-          const target = await resolveCustodyTarget(undefined, { quiet: true });
+          const target = await resolveCustodyApiTarget(undefined, {
+            quiet: true,
+            remoteOnly: true,
+          });
           if (!target) return null;
           const slug = projectSlugFromOriginUrl(repoUrl);
           if (!slug) return null;
@@ -1053,6 +1056,80 @@ export async function resolveCustodyTarget(
     return null;
   }
   return { url, adminToken };
+}
+
+/** The credentials a {@link CustodyClient} uses; it picks the surface from them. */
+export interface CustodyApiTarget {
+  url: string;
+  /**
+   * Hub API key (or a local hub token) — the Bearer for the `/api/v1/custody`
+   * surface. Absent → the client uses the `/admin/custody` fallback (needs
+   * `adminToken`).
+   */
+  apiKey?: string;
+  /**
+   * Admin token. On `/api/v1` the elevated credential a byte-read (`pull`) needs on
+   * a control box; the sole credential for the `/admin` fallback when no API key is
+   * available. Undefined on a plain local hub (whose hub token is the API key and
+   * gates byte-reads itself).
+   */
+  adminToken?: string;
+}
+
+/**
+ * Resolve the credentials a custody op should use. Returns whatever is available —
+ * the API key (→ `/api/v1/custody`) and/or the admin token (byte-read elevation,
+ * or the `/admin/custody` fallback) — so a custody op works with EITHER credential
+ * and never silently no-ops for lack of the other. {@link CustodyClient} picks the
+ * surface. Distinct from {@link resolveCustodyTarget} (admin-only, `/admin` shape).
+ *
+ * Failure modes are explicit, never a quiet skip:
+ *   - **no control box** and (in default mode) no local hub → `null` (a genuine
+ *     no-op: there is no custody to reach).
+ *   - **a control box IS configured but NEITHER credential is present** → a loud
+ *     error naming the missing credential, then `null`; a `quiet` caller (a
+ *     best-effort background flow) suppresses the print but still returns `null`,
+ *     and its own caller surfaces the gap (adoption flags `sshKeysMissing`).
+ *
+ * Works against a plain LOCAL hub too (default mode): the acceptance's
+ * `credentials push`/`pull` round-trip there, via the local hub token as the API
+ * key (autostarted by {@link resolveHubApiTarget}). `remoteOnly` refuses a local
+ * hub, for the automated callers whose job is a configured CONTROL BOX
+ * (agent-credential sync, the queue worker's seed fetch, SSH-key adoption).
+ */
+export async function resolveCustodyApiTarget(
+  urlFlag: string | undefined,
+  opts: { quiet?: boolean; remoteOnly?: boolean } = {},
+): Promise<CustodyApiTarget | null> {
+  const { resolveHubTarget } = await import('./hub.js');
+  const noCredentialError =
+    'A control box is configured but no custody credential is available. Set AGENTBOX_HUB_API_KEY\n' +
+    '(or AGENTBOX_RELAY_ADMIN_TOKEN), or run this from the machine that ran `agentbox hub setup`\n' +
+    '(it writes both to ~/.agentbox/control-plane) — custody / SSH-key pull needs one of them.';
+
+  // Remote control box (a configured plane, or a `hub expose`d loopback). The API
+  // key drives `/api/v1`; the admin token is the byte-read elevation there and the
+  // sole credential for the `/admin` fallback when no API key is present.
+  const target = await resolveHubTarget(urlFlag);
+  if (target.mode === 'remote') {
+    loadControlPlaneEnv();
+    const apiKey = target.token || undefined;
+    const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN || undefined;
+    if (!apiKey && !adminToken) {
+      if (!opts.quiet) log.error(noCredentialError);
+      return null;
+    }
+    return { url: target.url, apiKey, adminToken };
+  }
+
+  // No control box. `remoteOnly` callers stop here (expected no-op, silent).
+  if (opts.remoteOnly) return null;
+
+  // Default: the plain local hub (autostarted). Its hub token is the API key; no
+  // admin token exists (and none is needed — the token gates the whole surface).
+  const api = await resolveHubApiTarget(urlFlag, opts);
+  if (!api) return null;
+  return { url: api.url, apiKey: api.apiKey };
 }
 
 /**
@@ -1211,7 +1288,7 @@ const credentialsPushSub = new Command('push')
   .option('--force', 'upload even when the stored hash matches')
   .action(async (opts: { url?: string; agent?: string; force?: boolean }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
+      const target = await resolveCustodyApiTarget(opts.url);
       if (!target) {
         process.exitCode = 1;
         return;
@@ -1236,7 +1313,7 @@ const credentialsPullSub = new Command('pull')
   .option('--agent <id>', 'pull only one agent: claude | codex | opencode')
   .action(async (opts: { url?: string; agent?: string }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
+      const target = await resolveCustodyApiTarget(opts.url);
       if (!target) {
         process.exitCode = 1;
         return;
@@ -1281,7 +1358,7 @@ const secretsPushSub = new Command('push')
   .option('--force', 'upload even when the stored hash matches')
   .action(async (files: string[], opts: { url?: string; project?: string; force?: boolean }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
+      const target = await resolveCustodyApiTarget(opts.url);
       if (!target) {
         process.exitCode = 1;
         return;
@@ -1322,7 +1399,7 @@ const projectPushSub = new Command('push')
   .option('--force', 'upload even when the stored hash matches')
   .action(async (opts: { url?: string; project?: string; force?: boolean }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
+      const target = await resolveCustodyApiTarget(opts.url);
       if (!target) {
         process.exitCode = 1;
         return;
@@ -1330,9 +1407,17 @@ const projectPushSub = new Command('push')
       const root = (await findProjectRoot(process.cwd())).root;
       const slug = await projectSlug(opts.project, root);
       const cfg = await loadEffectiveConfig(root).catch(() => null);
+      const client = new CustodyClient(target);
       const res = await pushProjectSeedToCustody({
-        controlPlaneUrl: target.url,
-        adminToken: target.adminToken,
+        // Client surface: the seed rides the hub's /api/v1 custody (writes need
+        // only the API key). The create path uses the /admin sink instead.
+        sink: {
+          list: (prefix) => client.list(prefix),
+          put: async (path, data) => {
+            await client.put(path, data);
+          },
+        },
+        probeUrl: target.url,
         slug,
         projectRoot: root,
         // The default env set (same one `--with-env` uses). Unlike a create —
@@ -1391,7 +1476,7 @@ const custodyListSub = new Command('list')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .action(async (prefix: string | undefined, opts: { url?: string }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
+      const target = await resolveCustodyApiTarget(opts.url);
       if (!target) {
         process.exitCode = 1;
         return;
@@ -1417,7 +1502,7 @@ const custodyPullSub = new Command('pull')
   .option('--dest <dir>', 'destination directory (default: ./agentbox-custody)')
   .action(async (scope: string, opts: { url?: string; dest?: string }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
+      const target = await resolveCustodyApiTarget(opts.url);
       if (!target) {
         process.exitCode = 1;
         return;
@@ -1456,26 +1541,14 @@ const custodyRmSub = new Command('rm')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .action(async (path: string, opts: { url?: string }) => {
     try {
-      const target = await resolveCustodyTarget(opts.url);
+      const target = await resolveCustodyApiTarget(opts.url);
       if (!target) {
         process.exitCode = 1;
         return;
       }
-      const res = await fetch(
-        `${target.url}/admin/custody/${path.split('/').map(encodeURIComponent).join('/')}`,
-        {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${target.adminToken}` },
-        },
-      );
-      if (res.status === 204) log.success(`Deleted custody entry '${path}'.`);
-      else if (res.status === 404) log.info(`No custody entry at '${path}'.`);
-      else {
-        log.error(
-          `custody rm failed: ${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`,
-        );
-        process.exitCode = 1;
-      }
+      const deleted = await new CustodyClient(target).delete(path);
+      if (deleted) log.success(`Deleted custody entry '${path}'.`);
+      else log.info(`No custody entry at '${path}'.`);
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -2467,7 +2540,7 @@ async function syncAgentCredentials(
   opts: { announce: boolean },
 ): Promise<number> {
   try {
-    const target = await resolveCustodyTarget(url, { quiet: true });
+    const target = await resolveCustodyApiTarget(url, { quiet: true, remoteOnly: true });
     if (!target) {
       if (opts.announce) {
         log.warn(

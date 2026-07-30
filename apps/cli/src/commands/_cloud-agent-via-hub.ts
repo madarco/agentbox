@@ -175,9 +175,17 @@ export async function createCloudBoxViaHubAndAdopt(
   if (!box) {
     throw new Error(`the control box created box ${boxId} but it is not resolvable to adopt`);
   }
+  // SSH-key pull rides the hub's /api/v1 custody now (Step 10): the API key passes
+  // the proxy gate and the admin token is the elevated credential a control box's
+  // byte-read needs (#291). We hold both here, so hand both to the client; a box
+  // whose custody has no key is still adopted with `sshKeysMissing` flagged.
   const adopted = await adoptHubBox({
     box,
-    custody: new CustodyClient(custody),
+    custody: new CustodyClient({
+      url: apiTarget.url,
+      apiKey: apiTarget.apiKey,
+      adminToken: custody.adminToken,
+    }),
     controlPlaneUrl: apiTarget.url,
     log: onLog ?? ((): void => {}),
   });

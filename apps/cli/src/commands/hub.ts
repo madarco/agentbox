@@ -13,7 +13,7 @@ import { handleLifecycleError } from './_errors.js';
 import { rehydrateFromState } from './relay.js';
 import { ensurePortlessProxyQuietly, resolvePortlessEnabled } from '../portless-prompt.js';
 import {
-  resolveCustodyTarget,
+  resolveCustodyApiTarget,
   resolveHubApiTarget,
   controlPlaneSubcommands,
   probeControlPlaneStatus,
@@ -468,9 +468,11 @@ const pullSub = new Command('pull')
     try {
       const resolved = await resolveHubBox(box, opts.url);
       if (!resolved) return;
-      // SSH keys live in custody (an admin-token surface); a hub API target is
-      // not enough on its own to pull them.
-      const custodyTarget = await resolveCustodyTarget(opts.url);
+      // SSH keys live in custody, over the hub's /api/v1: the byte-read needs the
+      // admin token (elevated), so this only works from a machine that ran
+      // `hub setup`/`expose`. remoteOnly — a control-box box has no keys on a
+      // plain local hub.
+      const custodyTarget = await resolveCustodyApiTarget(opts.url, { remoteOnly: true });
       if (!custodyTarget) {
         process.exitCode = 1;
         return;
@@ -510,9 +512,13 @@ const adoptSub = new Command('adopt')
     try {
       const resolved = await resolveHubBox(box, opts.url);
       if (!resolved) return;
-      // SSH keys still come from custody (admin-token surface, best-effort): a
-      // thin client without one adopts the record and warns for SSH providers.
-      const custodyTarget = await resolveCustodyTarget(opts.url, { quiet: true });
+      // SSH keys come from custody over /api/v1 (best-effort): a thin client with
+      // no admin token adopts the record and warns for SSH providers (the byte-read
+      // is refused). remoteOnly — adoption is a control-box concern.
+      const custodyTarget = await resolveCustodyApiTarget(opts.url, {
+        quiet: true,
+        remoteOnly: true,
+      });
       const custody = custodyTarget ? new CustodyClient(custodyTarget) : undefined;
       const res = await adoptHubBox({
         box: resolved.box,
