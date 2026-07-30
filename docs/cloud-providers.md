@@ -1055,6 +1055,35 @@ General settings and the project id in the project's General settings.
 `.env`/`.env.local` are never harvested. First-time use of `--provider e2b`
 triggers the login prompt automatically.
 
+## 4b. Custody, adoption and the thin-client laptop
+
+With a control box configured, cloud-box **management** runs on the control box
+(create, lifecycle, checkpoints, prune, git leasing, approvals, status) while the
+**direct IO plane** stays on the laptop. That split is bridged by two things:
+
+- **Custody** — the control box holds, metadata-addressed, what a box needs from
+  either side: agent credentials, per-project seed material (`.env` + untracked),
+  provider bake records, and **per-box SSH private keys** (hetzner/DigitalOcean).
+  It is served under `/api/v1/custody` with a strict **two-tier** contract:
+  `list` / `PUT` / `DELETE` authorize with the hub API key and their responses are
+  **metadata only** (path/size/sha256/mode/mtime — never a value); the byte-read
+  `GET /api/v1/custody/<path>` is the **one** value-returning route and is
+  *elevated* — on a control box (password profile) it additionally requires the
+  admin token, so the widely-distributed API key alone can never read a secret. On
+  a plain localhost hub the hub token suffices but the byte-read is
+  **loopback-peer-gated** (the localhost hub binds `0.0.0.0` for docker boxes, so a
+  non-loopback byte-read is refused even with a valid token — custody bytes must not
+  cross the network). The gate is fail-closed and depends on the custom server
+  owning the socket and stripping any client-supplied copy of the trust header.
+- **Adoption** — because the IO plane is direct, the laptop materializes a local
+  `BoxRecord` for a cloud box it wants to drive, re-sourced from `GET /api/v1/boxes`
+  (the payload carries every non-secret reconstruction field; tokens are re-minted
+  host-side) and pulling the box's per-box SSH key from custody. A thin client with
+  the API key but no admin token adopts the record and works over the SDK
+  (e2b/vercel/daytona) or flags `sshKeysMissing` for an SSH provider rather than
+  failing opaquely later. This is why **`secrets.env` stays on the laptop too**: the
+  provider credential is needed for that direct SDK IO.
+
 ## 5. Known caveats
 
 - **Destroy lag in the Daytona dashboard**: `sb.delete()` returns immediately
@@ -1080,6 +1109,19 @@ triggers the login prompt automatically.
 Every command below honors `box.provider` automatically. Pass
 `--provider <name>` on `create` / `claude` / `codex` / `opencode` to
 override per invocation.
+
+> **Routing (2026-07).** For every **box/fleet** command in the table below —
+> `create`, lifecycle, `checkpoint`, `prune`, `list`, git, services, approvals —
+> the CLI no longer calls the provider inline; it goes through the hub's
+> `POST/GET /api/v1/...` and the **hub's backend** invokes the `provider.*` call
+> named in the "cloud path" column, against a local hub or a remote control box
+> alike (the thin-CLI consolidation —
+> [`hub-api-single-path-plan.md`](../docs/hub-api-single-path-plan.md)). The
+> **direct IO** commands (`shell`, `cp`/`download`, `url`, `screen`, `code`,
+> `open`, `attach`) still call the provider from the laptop — that is why a cloud
+> box the control box created is **adopted** locally (a `BoxRecord` re-sourced from
+> `GET /api/v1/boxes`, plus a per-box SSH-key pull from custody) before those work.
+> See §4b.
 
 | Command | Cloud path |
 | --- | --- |

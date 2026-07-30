@@ -18,12 +18,13 @@ It's the same `@agentbox/relay` core you already run locally — the relay daemo
   **docker** box bind-mounts your host `.git`, so it's simply offline when the laptop is — it stays
   on your laptop relay and is never sent to the control box.
 
-  Because a laptop-built docker box defeats the point of a control box, once one is configured
-  `docker` and `remote-docker` are **gated off** by default (`hub.mode=auto`): `create --provider
+Because a laptop-built docker box defeats the point of a control box, once one is configured
+`docker` and `remote-docker` are **gated off** by default (`hub.mode=auto`): `create --provider
   docker` is refused, docker drops out of the provider pickers / `doctor` / `prepare`, and any docker
-  boxes you already have show as **inactive** in `agentbox ls` (still there, so you can `destroy`
-  them by name). Set [`hub.mode=local`](/docs/configuration) to keep using docker on this machine
-  anyway.
+boxes you already have show as **inactive** in `agentbox ls` (still there, so you can `destroy`
+them by name). Set [`hub.mode=local`](/docs/configuration) to keep using docker on this machine
+anyway.
+
 </Callout>
 
 ## Two ways to get one
@@ -394,27 +395,25 @@ The box leases a 1-hour, single-repo token from the control box and pushes to Gi
 
 With a control box configured, your laptop becomes a **thin client**: the control box is the source of truth for cloud boxes, and your local state is a cache of the ones you actually drive. Boxes created either way are operable from either side.
 
-`agentbox ls` asks the control box and merges the answer with your local boxes, so a box created from the web UI shows up alongside your own:
+`agentbox ls` reads the control box's `GET /api/v1/boxes` — a single listing, no client-side merge — so a box created from the web UI shows up alongside your own with its real state:
 
 ```bash
 agentbox ls -g
 ```
 
 ```
-N  NAME          STATE    AGENT   PROVIDER  URL
-1  fix-login     running  claude  docker    …
--  from-web-ui   on hub   -       e2b       …
+N  NAME          STATE    AGENT   SHELLS  PROVIDER  URL
+1  fix-login     running  claude  1       docker    …
+-  from-web-ui   running  -       -       e2b       …
 ```
 
-A row marked `on hub` exists on the control box but hasn't been **adopted** here yet — nothing about it is local. Adoption happens automatically the first time you use it by name:
+Every row comes from the hub, whether or not you've driven that box before. The first time you use a control-box box **by name**, the CLI **adopts** it — writes a local box record and downloads its per-box SSH key from custody — so the direct IO commands (`attach`, `cp`, `download`, `url`, `screen`) can reach it from your machine:
 
 ```bash
-agentbox attach from-web-ui      # adopts it, then attaches
+agentbox attach from-web-ui      # adopts it on first use, then attaches
 ```
 
-`agentbox dashboard` lists these rows too; selecting one adopts it, then behaves like any other box.
-
-Adoption writes the local box record from the control box's registration and downloads the box's per-box SSH key from custody, so `attach`, `cp`, `download`, `url`, and `screen` then work exactly as for a box you created here. If the box's repo is also cloned on your laptop, adoption links it to that clone, so it appears in the project-scoped `agentbox ls` too, and its `git push` targets your local repo.
+`agentbox dashboard` lists these rows too; selecting one adopts it, then behaves like any other box. Adoption is what keeps the **direct IO plane** working from your laptop even though every _box/fleet_ operation goes through the hub (see [what still needs your laptop](#what-still-needs-your-laptop)). If the box's repo is also cloned on your laptop, adoption links it to that clone, so it appears in the project-scoped `agentbox ls` too, and its `git push` targets your local repo.
 
 <Callout type="warn" title="`git push --host-only` needs a host working copy">
   `agentbox git push <box> --host-only` lands the box's branch in the **host repo of the machine
@@ -439,9 +438,25 @@ agentbox hub adopt <box>
   [`url`](/docs/web-apps-and-tunnels) is a public HTTPS domain that works from anywhere regardless.
 </Callout>
 
-If a cloud box is in your local state but the control box has never heard of it, `ls` marks it `orphan` — usually it was destroyed from the web UI, and the leftover record is shown rather than silently dropped.
+When the control box is unreachable, `ls` renders its last known boxes from a local cache and says so.
 
-When the control box is unreachable, `ls` renders its last known hub boxes from a local cache and says so; your own local boxes are unaffected.
+## What still needs your laptop
+
+Every **box and fleet operation** goes through the hub's `/api/v1`: `create`, lifecycle (start/stop/pause/unpause/destroy), listing, git, approvals, services, rename, checkpoints, prune, and custody. Enabling a control box is a base-URL swap — the same client code, the same routes, against a local hub or the remote one.
+
+What deliberately stays on your machine, and why:
+
+- **The direct IO plane.** `shell`, `attach`, `cp`, `download`, `code`, `open`, `url`, and `screen` talk to the box **from your laptop**, not through the hub. Moving them behind the hub (a uniform tunnel with hub-side SSH termination) is future work, explicitly out of scope for now. So these commands need your laptop up and reachable to the box, and `cp`/`download` between host and box are meaningless with the laptop off (see the callout above).
+- **Local adoption.** Because the IO plane is direct, the CLI still materializes a local box record (and pulls per-box SSH keys) so those commands can resolve a box. Adoption is re-sourced from `/api/v1` — it is a cache of the hub's truth, not a second source.
+- **`secrets.env` on both machines.** Your laptop needs the provider credentials to do direct SDK IO for **e2b / vercel / daytona** (`cp`, `attach`, `url`). So a provider login writes `~/.agentbox/secrets.env` **and** pushes the credential to the control box. This dual copy is intentional and temporary — it goes away when the IO plane moves behind the hub.
+- **The agent launchers' local foreground create.** `agentbox claude`/`codex`/`opencode` with **no** control box (or with a project checked out here) still build the box **inline** on your machine, then attach. `agentbox create` and the launchers' `--via-hub`/control-box path already go through `POST /api/v1/boxes`; only this one create-then-attach path stays inline, because converting it means moving the create + attach boundary behind the hub — the same out-of-scope IO plane. Everything else the launchers do (queued `-i` runs, cloud creates) is on `/api/v1`.
+
+<Callout type="warn" title="A parked approval on a control box has no timeout">
+  When a box's host action parks for approval on a control box, it waits **indefinitely** — there is
+  no TTL. A `git push` (or any parked action) that nobody ever answers blocks that box silently
+  until someone answers it from the web UI, the tray, or `agentbox hub approvals answer`. Per-box
+  auto-approval (`box.autoApproveHostActions`) is the opt-in for a box you want to run unattended.
+</Callout>
 
 ## Adding a project so the control box can build it
 

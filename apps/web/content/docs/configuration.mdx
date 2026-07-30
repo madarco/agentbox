@@ -8,7 +8,8 @@ AgentBox reads layered defaults at the start of every command. The same key shap
 You rarely need to touch config — every key has a built-in default and most surfaces also expose a one-off CLI flag. Config is for making a preference stick.
 
 <Callout title="TIP">
-Don't memorize keys. `agentbox config list` prints every key with its current value and where it came from, and `agentbox config list --include-advanced` adds the advanced ones.
+  Don't memorize keys. `agentbox config list` prints every key with its current value and where it
+  came from, and `agentbox config list --include-advanced` adds the advanced ones.
 </Callout>
 
 ## Config layers
@@ -19,20 +20,24 @@ AgentBox merges four layers on top of the built-in defaults. Highest layer that 
 CLI flag > workspace defaults: > per-project > global > built-in default
 ```
 
-| Layer | Where it lives | Scope |
-| --- | --- | --- |
-| CLI flag | the command you type | this invocation only, never persists |
-| workspace | the `defaults:` block in `agentbox.yaml` | committed, shared with the team |
+| Layer       | Where it lives                            | Scope                                |
+| ----------- | ----------------------------------------- | ------------------------------------ |
+| CLI flag    | the command you type                      | this invocation only, never persists |
+| workspace   | the `defaults:` block in `agentbox.yaml`  | committed, shared with the team      |
 | per-project | `~/.agentbox/projects/<hash>/config.yaml` | per machine, per user, not committed |
-| global | `~/.agentbox/config.yaml` | every project on this machine |
-| built-in | `BUILT_IN_DEFAULTS` in the CLI | the fallback for any unset key |
+| global      | `~/.agentbox/config.yaml`                 | every project on this machine        |
+| built-in    | `BUILT_IN_DEFAULTS` in the CLI            | the fallback for any unset key       |
 
 The per-project `<hash>` is the first 16 hex chars of the SHA-1 of the project's absolute path. The workspace layer is found by walking up from the current directory to the nearest `agentbox.yaml`.
 
 `config set`/`unset`/`edit` only write the `--global` or `--project` files (project is the default). The committed `defaults:` block is hand-edited — see [agentbox.yaml](/docs/agentbox-yaml) for its full schema. `engine.kind` is the one key applied at CLI startup; every other key flows through the per-command effective-config load.
 
 {/* DIAGRAM /diagrams/configuration.png — nano-banana-pro, home-diagram style ref. Recipe + prompt in apps/web/images.md → Phase D. */}
-<Figure src="/diagrams/configuration.png" caption="Config resolution order: the highest layer that sets a key wins; unset keys fall through to the built-in default." />
+
+<Figure
+  src="/diagrams/configuration.png"
+  caption="Config resolution order: the highest layer that sets a key wins; unset keys fall through to the built-in default."
+/>
 
 ## The config command
 
@@ -87,17 +92,19 @@ box.provider:
 </Callout>
 
 <Callout type="warn" title="HEADS UP">
-`box.snapshot` was renamed to `box.hostSnapshot`. The old name now errors with a migration hint — update any config or `agentbox.yaml` still using it. AgentBox is pre-1.0, so there are no compatibility aliases.
+  `box.snapshot` was renamed to `box.hostSnapshot`. The old name now errors with a migration hint —
+  update any config or `agentbox.yaml` still using it. AgentBox is pre-1.0, so there are no
+  compatibility aliases.
 </Callout>
 
-## box.* — the box keys
+## box.\* — the box keys
 
 The largest group. A pattern runs through it: a generic key plus per-provider overrides of the form `<key><Provider>` (e.g. `box.sizeHetzner`). The provider-specific form wins over the generic one for that provider. This applies to `box.size*`, `box.image*`, and `box.defaultCheckpoint*`.
 
 ### Provider
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
+| Key            | Type                                                                            | Default  | Meaning                          |
+| -------------- | ------------------------------------------------------------------------------- | -------- | -------------------------------- |
 | `box.provider` | enum `docker`/`daytona`/`hetzner`/`vercel`/`e2b`/`digitalocean`/`remote-docker` | `docker` | backend new boxes are created on |
 
 This is what plain `agentbox claude` (or `create`, `codex`, `opencode`) uses when you don't pass `--provider`. `agentbox install` offers to set it for you at the end of the wizard, so the provider you just logged in to and prepared becomes the one new boxes go to. Set it yourself at any time:
@@ -113,37 +120,37 @@ See [local Docker](/docs/local-docker), [Remote Docker](/docs/remote-docker), [H
 
 ### Resource limits (Docker)
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `box.memory` | int (MiB) | `0` (unlimited) | hard memory ceiling; use `--memory` on create for byte/k/m/g strings |
-| `box.cpus` | int | `0` (unlimited) | whole-core cap; use `--cpus` for fractional like `1.5` |
-| `box.pidsLimit` | int | `0` (unlimited) | max PID count |
-| `box.disk` | string (advanced) | empty | best-effort writable-layer size; no-op on overlay2 / macOS engines |
+| Key             | Type              | Default         | Meaning                                                              |
+| --------------- | ----------------- | --------------- | -------------------------------------------------------------------- |
+| `box.memory`    | int (MiB)         | `0` (unlimited) | hard memory ceiling; use `--memory` on create for byte/k/m/g strings |
+| `box.cpus`      | int               | `0` (unlimited) | whole-core cap; use `--cpus` for fractional like `1.5`               |
+| `box.pidsLimit` | int               | `0` (unlimited) | max PID count                                                        |
+| `box.disk`      | string (advanced) | empty           | best-effort writable-layer size; no-op on overlay2 / macOS engines   |
 
 ### VM size (cloud)
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `box.size` | string | empty | generic cloud size, provider-interpreted: hetzner = server type (`cx33`), digitalocean = Droplet size slug (`s-4vcpu-8gb`), daytona = `cpu-memory-disk` GB (`4-8-20`), vercel = vCPU count (`1`/`2`/`4`/`8`), e2b = `cpu-memory` GB (`4-8`, baked at `prepare` time); docker ignores it |
-| `box.sizeDaytona` / `box.sizeHetzner` / `box.sizeDigitalocean` / `box.sizeVercel` / `box.sizeE2b` / `box.sizeRemoteDocker` | string (advanced) | empty | per-provider override of `box.size` |
-| `box.sizeDocker` | string (advanced) | empty | reserved — docker uses `box.memory` / `box.cpus` / `box.disk` |
-| `box.daytonaClass` | string | `linux-vm` | Daytona [sandbox class](/docs/daytona#sandbox-class): `linux-vm` gives a true pause (CPU + memory frozen, running processes survive) and a ~1 min base bake, but runs only in `us-east-1`. `container` keeps the old behavior and any region. Changing it needs `agentbox prepare --provider daytona --force`. Daytona-only |
-| `box.daytonaRegion` | string | empty | Daytona region (`us`, `eu`, `us-east-1`). Empty derives it from the class — `linux-vm` ⇒ `us-east-1` (the only region with VM runners), `container` ⇒ the account default. Daytona-only |
-| `box.daytonaTimeoutMs` | int | `1500000` (25 min) | how long a box may sit idle before it's paused; `0` disables. The host enforces this (and holds the box open while the agent is working): Daytona's own timer is an *inactivity* window that the relay's polling keeps resetting, so it only fires as a backstop when the relay isn't running. See [Daytona → idle boxes](/docs/daytona#idle-boxes-pause-themselves). Daytona-only |
-| `box.daytonaVmBaseImage` | string (advanced) | empty | registry image the `linux-vm` base is baked from. Empty uses the box image AgentBox publishes. Set it when there's no published image for your build context — a locally modified `Dockerfile.box` — or to bake from a private mirror. Must be amd64 with an explicit tag. Daytona-only |
-| `box.hetznerLocation` | string | `nbg1` | Hetzner datacenter new boxes are created in (`nbg1`, `fsn1`, `hel1`, `ash`); override per box with `--location`. Hetzner-only |
-| `box.digitaloceanRegion` | string | `nyc3` | DigitalOcean region new boxes are created in (`nyc3`, `sfo3`, `ams3`, `fra1`, …); override per box with `--location`. DigitalOcean-only |
-| `box.remoteDockerHost` | string | empty | default SSH destination whose Docker engine runs new boxes — an `~/.ssh/config` alias or `[user@]host[:port]`. Override per box with `agentbox docker:<host> …` or `--remote-host`. See [Remote Docker](/docs/remote-docker). remote-docker-only |
-| `box.digitaloceanProject` | string | empty | the [DigitalOcean Project](/docs/digitalocean#projects) new boxes are placed in — a project name or its UUID. Empty leaves them in the account's default project. Pick it at `agentbox digitalocean login`, or set it per repo in `agentbox.yaml`. DigitalOcean-only |
-| `box.inbound` | string | `locked` | inbound-access policy for the VPS per-box firewall. `locked` = SSH from your host egress IP only; `open` = SSH from anywhere (`0.0.0.0/0`, key-only — reach a box from a phone with the laptop off); a CIDR list (e.g. `203.0.113.5/32`) = host egress plus those. Override per box with `--inbound` or after create with `agentbox inbound <box>`. Hetzner/DigitalOcean-only. See [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline) |
+| Key                                                                                                                        | Type              | Default            | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `box.size`                                                                                                                 | string            | empty              | generic cloud size, provider-interpreted: hetzner = server type (`cx33`), digitalocean = Droplet size slug (`s-4vcpu-8gb`), daytona = `cpu-memory-disk` GB (`4-8-20`), vercel = vCPU count (`1`/`2`/`4`/`8`), e2b = `cpu-memory` GB (`4-8`, baked at `prepare` time); docker ignores it                                                                                                                                                                      |
+| `box.sizeDaytona` / `box.sizeHetzner` / `box.sizeDigitalocean` / `box.sizeVercel` / `box.sizeE2b` / `box.sizeRemoteDocker` | string (advanced) | empty              | per-provider override of `box.size`                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `box.sizeDocker`                                                                                                           | string (advanced) | empty              | reserved — docker uses `box.memory` / `box.cpus` / `box.disk`                                                                                                                                                                                                                                                                                                                                                                                                |
+| `box.daytonaClass`                                                                                                         | string            | `linux-vm`         | Daytona [sandbox class](/docs/daytona#sandbox-class): `linux-vm` gives a true pause (CPU + memory frozen, running processes survive) and a ~1 min base bake, but runs only in `us-east-1`. `container` keeps the old behavior and any region. Changing it needs `agentbox prepare --provider daytona --force`. Daytona-only                                                                                                                                  |
+| `box.daytonaRegion`                                                                                                        | string            | empty              | Daytona region (`us`, `eu`, `us-east-1`). Empty derives it from the class — `linux-vm` ⇒ `us-east-1` (the only region with VM runners), `container` ⇒ the account default. Daytona-only                                                                                                                                                                                                                                                                      |
+| `box.daytonaTimeoutMs`                                                                                                     | int               | `1500000` (25 min) | how long a box may sit idle before it's paused; `0` disables. The host enforces this (and holds the box open while the agent is working): Daytona's own timer is an _inactivity_ window that the relay's polling keeps resetting, so it only fires as a backstop when the relay isn't running. See [Daytona → idle boxes](/docs/daytona#idle-boxes-pause-themselves). Daytona-only                                                                           |
+| `box.daytonaVmBaseImage`                                                                                                   | string (advanced) | empty              | registry image the `linux-vm` base is baked from. Empty uses the box image AgentBox publishes. Set it when there's no published image for your build context — a locally modified `Dockerfile.box` — or to bake from a private mirror. Must be amd64 with an explicit tag. Daytona-only                                                                                                                                                                      |
+| `box.hetznerLocation`                                                                                                      | string            | `nbg1`             | Hetzner datacenter new boxes are created in (`nbg1`, `fsn1`, `hel1`, `ash`); override per box with `--location`. Hetzner-only                                                                                                                                                                                                                                                                                                                                |
+| `box.digitaloceanRegion`                                                                                                   | string            | `nyc3`             | DigitalOcean region new boxes are created in (`nyc3`, `sfo3`, `ams3`, `fra1`, …); override per box with `--location`. DigitalOcean-only                                                                                                                                                                                                                                                                                                                      |
+| `box.remoteDockerHost`                                                                                                     | string            | empty              | default SSH destination whose Docker engine runs new boxes — an `~/.ssh/config` alias or `[user@]host[:port]`. Override per box with `agentbox docker:<host> …` or `--remote-host`. See [Remote Docker](/docs/remote-docker). remote-docker-only                                                                                                                                                                                                             |
+| `box.digitaloceanProject`                                                                                                  | string            | empty              | the [DigitalOcean Project](/docs/digitalocean#projects) new boxes are placed in — a project name or its UUID. Empty leaves them in the account's default project. Pick it at `agentbox digitalocean login`, or set it per repo in `agentbox.yaml`. DigitalOcean-only                                                                                                                                                                                         |
+| `box.inbound`                                                                                                              | string            | `locked`           | inbound-access policy for the VPS per-box firewall. `locked` = SSH from your host egress IP only; `open` = SSH from anywhere (`0.0.0.0/0`, key-only — reach a box from a phone with the laptop off); a CIDR list (e.g. `203.0.113.5/32`) = host egress plus those. Override per box with `--inbound` or after create with `agentbox inbound <box>`. Hetzner/DigitalOcean-only. See [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline) |
 
 ### Box image
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `box.image` | string (advanced) | `agentbox/box:dev` | generic image ref; the default is a sentinel cloud backends read as "boot from the prepared base snapshot" |
-| `box.imageDocker` / `box.imageDaytona` / `box.imageHetzner` / `box.imageDigitalocean` / `box.imageVercel` / `box.imageRemoteDocker` | string (advanced) | empty | per-provider override; the cloud ones are written by `agentbox prepare --provider <name>`. Leave `box.imageRemoteDocker` empty — that provider derives a fingerprint-tagged ref and ensures it on the remote engine itself |
-| `box.imageRegistry` | string (advanced, docker only) | `ghcr.io/madarco/agentbox/box` | registry to pull the prebuilt base from before building locally; empty = always build |
+| Key                                                                                                                                 | Type                           | Default                        | Meaning                                                                                                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `box.image`                                                                                                                         | string (advanced)              | `agentbox/box:dev`             | generic image ref; the default is a sentinel cloud backends read as "boot from the prepared base snapshot"                                                                                                                 |
+| `box.imageDocker` / `box.imageDaytona` / `box.imageHetzner` / `box.imageDigitalocean` / `box.imageVercel` / `box.imageRemoteDocker` | string (advanced)              | empty                          | per-provider override; the cloud ones are written by `agentbox prepare --provider <name>`. Leave `box.imageRemoteDocker` empty — that provider derives a fingerprint-tagged ref and ensures it on the remote engine itself |
+| `box.imageRegistry`                                                                                                                 | string (advanced, docker only) | `ghcr.io/madarco/agentbox/box` | registry to pull the prebuilt base from before building locally; empty = always build                                                                                                                                      |
 
 <Callout type="warn" title="HEADS UP">
 Setting the generic `box.image` to a provider-native snapshot id breaks creates on other providers. Prefer the per-provider `box.image<Provider>` keys (which is what `prepare` writes). If a stale `box.image` blocks creates, clear it with `agentbox config unset box.image --project`.
@@ -151,102 +158,105 @@ Setting the generic `box.image` to a provider-native snapshot id breaks creates 
 
 ### Default checkpoint per project
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `box.defaultCheckpoint` | string | empty | checkpoint new boxes start from when `--snapshot` isn't given; set via `agentbox checkpoint set-default` |
-| `box.defaultCheckpointDocker` / `…Daytona` / `…Hetzner` / `…Digitalocean` / `…Vercel` / `…E2b` / `…RemoteDocker` | string (advanced) | empty | per-provider overrides; set via `checkpoint set-default --provider <name>` |
+| Key                                                                                                              | Type              | Default | Meaning                                                                                                  |
+| ---------------------------------------------------------------------------------------------------------------- | ----------------- | ------- | -------------------------------------------------------------------------------------------------------- |
+| `box.defaultCheckpoint`                                                                                          | string            | empty   | checkpoint new boxes start from when `--snapshot` isn't given; set via `agentbox checkpoint set-default` |
+| `box.defaultCheckpointDocker` / `…Daytona` / `…Hetzner` / `…Digitalocean` / `…Vercel` / `…E2b` / `…RemoteDocker` | string (advanced) | empty   | per-provider overrides; set via `checkpoint set-default --provider <name>`                               |
 
 See [checkpoints and pausing](/docs/checkpoints-and-pausing).
 
 ### Create-time toggles
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `box.hostSnapshot` | bool | prompt | use a frozen APFS clone of the host workspace as overlay lower (renamed from `box.snapshot`) |
-| `box.withEnv` | bool | `false` | copy host env/config files (`.env*`, `secrets.toml`, `agentbox.yaml`, …) into `/workspace`, bypassing gitignore |
-| `box.withPlaywright` | bool | `false` | install `@playwright/cli@latest` in the box at create |
-| `box.claudeInstall` | enum `native`/`npm` | `native` | how `agentbox prepare` installs Claude Code into the base image/snapshot. `npm` (`@anthropic-ai/claude-code`) is a fallback for cloud egress IPs the native installer's CDN 403s; bake-time only, so re-run `prepare` after changing it. Override per-run with `prepare --claude-install <mode>` |
-| `box.vnc` | bool | `true` | run the per-box Xvnc + noVNC stack |
-| `box.autoApproveSafeHostActions` | bool | `true` | auto-approve the **safe** subset of host actions without a prompt: opening a PR, PR/review comments, re-running CI, pushing to the box's scratch or host-sanctioned branch, checkpoints, integration writes, and file copy/download that stays inside the box project folder (non-secret). Uncontained/secret transfers, non-sanctioned-branch pushes, and PR merge/checkout still prompt. Set `false` to prompt for every host action. Each bypass is logged as a relay event. See [sync & git](/docs/sync-and-git) |
-| `box.autoApproveHostActions` | bool | `false` | auto-approve **all** host-action confirms (the superset: git push, cp, gh PR writes incl. merge/checkout, checkpoint) for this box without a prompt; for unattended orchestration of trusted boxes. Each bypass is logged as a relay event. See [orchestration](/docs/background-and-parallel) |
-| `box.resyncOnStart` | bool | `true` | on starting a session, merge the host's current branch + overlay changes (box wins on conflict, warns the agent) |
-| `box.bundleDepth` | int | adaptive | cap git-bundle history shipped to cloud sandboxes; `0` = full history; ignored for docker |
-| `box.dockerCacheShared` | bool | `false` | share the in-box docker image cache across boxes; only one box can run at a time when set |
-| `box.credentialSync` | bool | `true` | automatically sync refreshed agent credentials from boxes to the host backup and out to all other running boxes (Claude's OAuth refresh rotates the refresh token, killing every other copy). `--no-credential-sync` at create disables the in-box watcher for that box. See [run an agent](/docs/run-an-agent) |
+| Key                              | Type                | Default  | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------------------- | ------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `box.hostSnapshot`               | bool                | prompt   | use a frozen APFS clone of the host workspace as overlay lower (renamed from `box.snapshot`)                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `box.withEnv`                    | bool                | `false`  | copy host env/config files (`.env*`, `secrets.toml`, `agentbox.yaml`, …) into `/workspace`, bypassing gitignore                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `box.withPlaywright`             | bool                | `false`  | install `@playwright/cli@latest` in the box at create                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `box.claudeInstall`              | enum `native`/`npm` | `native` | how `agentbox prepare` installs Claude Code into the base image/snapshot. `npm` (`@anthropic-ai/claude-code`) is a fallback for cloud egress IPs the native installer's CDN 403s; bake-time only, so re-run `prepare` after changing it. Override per-run with `prepare --claude-install <mode>`                                                                                                                                                                                                                     |
+| `box.vnc`                        | bool                | `true`   | run the per-box Xvnc + noVNC stack                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `box.autoApproveSafeHostActions` | bool                | `true`   | auto-approve the **safe** subset of host actions without a prompt: opening a PR, PR/review comments, re-running CI, pushing to the box's scratch or host-sanctioned branch, checkpoints, integration writes, and file copy/download that stays inside the box project folder (non-secret). Uncontained/secret transfers, non-sanctioned-branch pushes, and PR merge/checkout still prompt. Set `false` to prompt for every host action. Each bypass is logged as a relay event. See [sync & git](/docs/sync-and-git) |
+| `box.autoApproveHostActions`     | bool                | `false`  | auto-approve **all** host-action confirms (the superset: git push, cp, gh PR writes incl. merge/checkout, checkpoint) for this box without a prompt; for unattended orchestration of trusted boxes. Each bypass is logged as a relay event. See [orchestration](/docs/background-and-parallel)                                                                                                                                                                                                                       |
+| `box.resyncOnStart`              | bool                | `true`   | on starting a session, merge the host's current branch + overlay changes (box wins on conflict, warns the agent)                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `box.bundleDepth`                | int                 | adaptive | cap git-bundle history shipped to cloud sandboxes; `0` = full history; ignored for docker                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `box.dockerCacheShared`          | bool                | `false`  | share the in-box docker image cache across boxes; only one box can run at a time when set                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `box.credentialSync`             | bool                | `true`   | automatically sync refreshed agent credentials from boxes to the host backup and out to all other running boxes (Claude's OAuth refresh rotates the refresh token, killing every other copy). `--no-credential-sync` at create disables the in-box watcher for that box. See [run an agent](/docs/run-an-agent)                                                                                                                                                                                                      |
 
 See [teleport a project](/docs/teleport-a-project), [environment](/docs/environment), [browser and screen](/docs/browser-and-screen), [sync and git](/docs/sync-and-git), and [Docker in Docker](/docs/docker-in-docker).
 
 ### Config-volume isolation
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
+| Key                                                                                | Type | Default | Meaning                                                            |
+| ---------------------------------------------------------------------------------- | ---- | ------- | ------------------------------------------------------------------ |
 | `box.isolateClaudeConfig` / `box.isolateCodexConfig` / `box.isolateOpencodeConfig` | bool | `false` | give the box its own agent config volume instead of the shared one |
 
 ### Vercel only
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `box.vercelTimeoutMs` | int | `2700000` (45 min) | max session length before auto-snapshot; persistent mode auto-resumes |
-| `box.vercelNetworkPolicy` | string | empty (`allow-all`) | egress lock: `allow-all`, `deny-all`, or a comma-separated domain allowlist (`github.com,*.npmjs.org`) |
-| `box.e2bTimeoutMs` | int | `2700000` (45 min) | session timeout a new `--provider e2b` box is created with before E2B auto-pauses it on inactivity; the host keepalive holds it open while the agent works (Hobby caps total session at ~1 h) |
+| Key                       | Type   | Default             | Meaning                                                                                                                                                                                       |
+| ------------------------- | ------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `box.vercelTimeoutMs`     | int    | `2700000` (45 min)  | max session length before auto-snapshot; persistent mode auto-resumes                                                                                                                         |
+| `box.vercelNetworkPolicy` | string | empty (`allow-all`) | egress lock: `allow-all`, `deny-all`, or a comma-separated domain allowlist (`github.com,*.npmjs.org`)                                                                                        |
+| `box.e2bTimeoutMs`        | int    | `2700000` (45 min)  | session timeout a new `--provider e2b` box is created with before E2B auto-pauses it on inactivity; the host keepalive holds it open while the agent works (Hobby caps total session at ~1 h) |
 
 See [Vercel](/docs/vercel).
 
-## checkpoint.*
+## checkpoint.\*
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `checkpoint.maxLayers` | int (advanced) | `3` | max stacked checkpoint layers before a new checkpoint is materialized flattened instead of layered |
+| Key                    | Type           | Default | Meaning                                                                                            |
+| ---------------------- | -------------- | ------- | -------------------------------------------------------------------------------------------------- |
+| `checkpoint.maxLayers` | int (advanced) | `3`     | max stacked checkpoint layers before a new checkpoint is materialized flattened instead of layered |
 
 See [checkpoints and pausing](/docs/checkpoints-and-pausing).
 
 ## Agent sessions — claude / codex / opencode
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `claude.sessionName` | string | `claude` | tmux session name for the claude agent |
-| `codex.sessionName` | string | `codex` | tmux session name for the codex agent |
-| `opencode.sessionName` | string | `opencode` | tmux session name for the opencode agent |
-| `claude.dangerouslySkipPermissions` | bool | `true` | launch claude with `--dangerously-skip-permissions` (auto-accept tool use) |
-| `codex.dangerouslySkipPermissions` | bool | `true` | launch codex with `--dangerously-bypass-approvals-and-sandbox` |
+| Key                                 | Type   | Default    | Meaning                                                                    |
+| ----------------------------------- | ------ | ---------- | -------------------------------------------------------------------------- |
+| `claude.sessionName`                | string | `claude`   | tmux session name for the claude agent                                     |
+| `codex.sessionName`                 | string | `codex`    | tmux session name for the codex agent                                      |
+| `opencode.sessionName`              | string | `opencode` | tmux session name for the opencode agent                                   |
+| `claude.dangerouslySkipPermissions` | bool   | `true`     | launch claude with `--dangerously-skip-permissions` (auto-accept tool use) |
+| `codex.dangerouslySkipPermissions`  | bool   | `true`     | launch codex with `--dangerously-bypass-approvals-and-sandbox`             |
 
 <Callout title="WHY">
-The permission-skip defaults are on precisely because each box is a throwaway sandbox the agent can't escape — that's the whole point of AgentBox. Turn them off per-box with `--no-dangerously-skip-permissions` if you want approval prompts. See [core concepts](/docs/core-concepts) and [run an agent](/docs/run-an-agent).
+  The permission-skip defaults are on precisely because each box is a throwaway sandbox the agent
+  can't escape — that's the whole point of AgentBox. Turn them off per-box with
+  `--no-dangerously-skip-permissions` if you want approval prompts. See [core
+  concepts](/docs/core-concepts) and [run an agent](/docs/run-an-agent).
 </Callout>
 
 ## attach
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `attach.openIn` | enum `split`/`window`/`tab`/`same` | `split` | where `agentbox claude\|codex\|opencode` opens the attached session under tmux, cmux, Herdr, or iTerm2 |
-| `attach.cmuxStatus` | bool | `true` | when attached inside cmux, reflect the box agent's activity on its cmux workspace (colour + description) |
-| `attach.herdrStatus` | bool | `true` | when attached inside Herdr, report the box agent's activity to its Herdr pane (so it looks like a normal agent) and highlight AgentBox's own approval prompts |
+| Key                  | Type                               | Default | Meaning                                                                                                                                                       |
+| -------------------- | ---------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `attach.openIn`      | enum `split`/`window`/`tab`/`same` | `split` | where `agentbox claude\|codex\|opencode` opens the attached session under tmux, cmux, Herdr, or iTerm2                                                        |
+| `attach.cmuxStatus`  | bool                               | `true`  | when attached inside cmux, reflect the box agent's activity on its cmux workspace (colour + description)                                                      |
+| `attach.herdrStatus` | bool                               | `true`  | when attached inside Herdr, report the box agent's activity to its Herdr pane (so it looks like a normal agent) and highlight AgentBox's own approval prompts |
 
 `split` uses a tmux split-window / cmux new-split / Herdr `pane.split` / iTerm2 vertical split (same workspace). `tab` opens a new tmux window / a new cmux surface (a tab in the current pane, same workspace) / a new Herdr tab / a new iTerm2 tab. `window` opens a new tmux window / a separate cmux workspace / a new Herdr workspace / a new iTerm2 window. Outside tmux/cmux/Herdr/iTerm2 every value behaves like `same`. **Under Herdr the default is a new tab** (rather than a split) — set `attach.openIn` (or pass `--attach-in`) explicitly to override. See [access your box](/docs/access-your-box).
 
-`attach.cmuxStatus` surfaces a box's agent state in the [cmux](https://cmux.com) sidebar. While you're attached inside a cmux surface, AgentBox reflects the agent's live activity on the box's cmux workspace via its colour and description — blue/"working" while the agent runs, amber/"needs input" when it asks a question or is waiting, and the tint clears when idle. The workspace's original colour and description are restored when you detach. When you open several boxes from one project as tabs in the same workspace (`--attach-in tab`), AgentBox also **flags the individual tab** whose agent needs input via a cmux notification (tab badge + reorder + a desktop notification), so you can tell which box is waiting; the flag clears when you focus that tab. (cmux only renders its status *pills* for workspaces running an agent it recognizes; a box runs the agent inside the container, so AgentBox drives the always-visible workspace colour/description and the per-tab highlight instead.) No effect outside cmux; set to `false` to disable.
+`attach.cmuxStatus` surfaces a box's agent state in the [cmux](https://cmux.com) sidebar. While you're attached inside a cmux surface, AgentBox reflects the agent's live activity on the box's cmux workspace via its colour and description — blue/"working" while the agent runs, amber/"needs input" when it asks a question or is waiting, and the tint clears when idle. The workspace's original colour and description are restored when you detach. When you open several boxes from one project as tabs in the same workspace (`--attach-in tab`), AgentBox also **flags the individual tab** whose agent needs input via a cmux notification (tab badge + reorder + a desktop notification), so you can tell which box is waiting; the flag clears when you focus that tab. (cmux only renders its status _pills_ for workspaces running an agent it recognizes; a box runs the agent inside the container, so AgentBox drives the always-visible workspace colour/description and the per-tab highlight instead.) No effect outside cmux; set to `false` to disable.
 
-`attach.herdrStatus` makes a box look like a *normal* agent inside [Herdr](https://herdr.dev). While you're attached inside a Herdr pane, AgentBox reports the box agent's live activity to that pane (working / blocked / idle), so Herdr applies its native agent treatment — **including its own needs-input handling**. The one thing Herdr can't see is AgentBox's own host-relay **approval prompts** (git push, PR, checkpoint, …), so those get an explicit Herdr notification. No effect outside Herdr; set to `false` to disable. See [Herdr integration](/docs/integrations-herdr).
+`attach.herdrStatus` makes a box look like a _normal_ agent inside [Herdr](https://herdr.dev). While you're attached inside a Herdr pane, AgentBox reports the box agent's live activity to that pane (working / blocked / idle), so Herdr applies its native agent treatment — **including its own needs-input handling**. The one thing Herdr can't see is AgentBox's own host-relay **approval prompts** (git push, PR, checkpoint, …), so those get an explicit Herdr notification. No effect outside Herdr; set to `false` to disable. See [Herdr integration](/docs/integrations-herdr).
 
 ## code / shell
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `code.ide` | enum `vscode`/`cursor`/`auto` | `auto` | which IDE `agentbox code` launches; `auto` prefers `code`, falls back to `cursor` |
-| `code.wait` | bool | `true` | block on `agentbox-ctl wait-ready` before opening the IDE |
-| `code.timeoutMs` | int | `120000` | wait-ready timeout |
-| `code.autoTerminals` | bool | `true` | generate `/workspace/.vscode/tasks.json` so the IDE auto-opens log panels |
-| `shell.user` | string | `vscode` | default in-container user for `agentbox shell` |
-| `shell.login` | bool | `true` | pass `-l` to bash (load login profile) |
-| `shell.tmux` | bool | `true` | run inside a detachable tmux session (Ctrl+a d to detach) |
+| Key                  | Type                          | Default  | Meaning                                                                           |
+| -------------------- | ----------------------------- | -------- | --------------------------------------------------------------------------------- |
+| `code.ide`           | enum `vscode`/`cursor`/`auto` | `auto`   | which IDE `agentbox code` launches; `auto` prefers `code`, falls back to `cursor` |
+| `code.wait`          | bool                          | `true`   | block on `agentbox-ctl wait-ready` before opening the IDE                         |
+| `code.timeoutMs`     | int                           | `120000` | wait-ready timeout                                                                |
+| `code.autoTerminals` | bool                          | `true`   | generate `/workspace/.vscode/tasks.json` so the IDE auto-opens log panels         |
+| `shell.user`         | string                        | `vscode` | default in-container user for `agentbox shell`                                    |
+| `shell.login`        | bool                          | `true`   | pass `-l` to bash (load login profile)                                            |
+| `shell.tmux`         | bool                          | `true`   | run inside a detachable tmux session (Ctrl+a d to detach)                         |
 
 See [access your box](/docs/access-your-box).
 
 ## ssh
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `ssh.autoConfig` | bool | `true` | auto-maintain `~/.agentbox/ssh/config` (Include'd from `~/.ssh/config`) for SSH-capable cloud boxes |
+| Key              | Type | Default | Meaning                                                                                             |
+| ---------------- | ---- | ------- | --------------------------------------------------------------------------------------------------- |
+| `ssh.autoConfig` | bool | `true`  | auto-maintain `~/.agentbox/ssh/config` (Include'd from `~/.ssh/config`) for SSH-capable cloud boxes |
 
 For providers that reach a box over plain SSH with a persistent per-box key
 (**Hetzner**, and DigitalOcean once wired), AgentBox writes one `Host <box-name>`
@@ -269,8 +279,8 @@ alias.
 
 ## browser
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
+| Key               | Type                                     | Default         | Meaning                                                                               |
+| ----------------- | ---------------------------------------- | --------------- | ------------------------------------------------------------------------------------- |
 | `browser.default` | enum `agent-browser`/`playwright`/`both` | `agent-browser` | default browser stack in the box; `playwright` or `both` implies `box.withPlaywright` |
 
 See [browser and screen](/docs/browser-and-screen).
@@ -279,9 +289,9 @@ See [browser and screen](/docs/browser-and-screen).
 
 Per-service toggles for relay-gated service integrations. Each integration is **disabled by default** — even when the host CLI is installed and authed, the box can't call out until you flip it on. The box never holds the service's token; reads pass through, writes prompt on the host. See [Notion](/docs/integrations-notion) and [Linear](/docs/integrations-linear).
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `integrations.notion.enabled` | bool | `false` | proxy `ntn` calls from the box through the host relay; reads pass, writes prompt |
+| Key                           | Type | Default | Meaning                                                                                                                                   |
+| ----------------------------- | ---- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `integrations.notion.enabled` | bool | `false` | proxy `ntn` calls from the box through the host relay; reads pass, writes prompt                                                          |
 | `integrations.linear.enabled` | bool | `false` | proxy `linear` calls (`@schpet/linear-cli`) from the box through the host relay; reads pass, writes prompt; `auth token` is hard-rejected |
 
 ```bash
@@ -295,16 +305,16 @@ agentbox config set --project integrations.linear.enabled true
 
 `queue.*` schedules background `-i` jobs; `autopause.*` pauses idle boxes.
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `queue.enabled` | bool | `true` | run `agentbox claude\|codex\|opencode -i <prompt>` jobs through the host-wide FIFO queue |
-| `queue.maxConcurrent` | int | `5` | max simultaneously-running boxes before `-i` jobs queue; override with `--max-running <n>` |
-| `queue.maxWorking` | int | `0` (off) | max agents actively working at once before `-i` jobs queue; override with `--max-working <n>` |
-| `queue.idleGraceSeconds` | int | `15` | debounce before an agent frees its working slot; only used when `maxWorking > 0` |
-| `queue.openIn` | enum `none`/`split`/`window`/`tab` | `none` | when a background `-i` job's box becomes ready, open an attached terminal onto it (a tmux/cmux/Herdr split, window, or tab); `none` opens nothing |
-| `autopause.enabled` | bool | `true` | let the relay periodically pause idle boxes when more than `maxRunningBoxes` run |
-| `autopause.maxRunningBoxes` | int | `5` | target ceiling of running boxes before idle ones get paused |
-| `autopause.idleMinutes` | int | `5` | minutes a box must be continuously idle before it's eligible for auto-pause |
+| Key                         | Type                               | Default   | Meaning                                                                                                                                           |
+| --------------------------- | ---------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queue.enabled`             | bool                               | `true`    | run `agentbox claude\|codex\|opencode -i <prompt>` jobs through the host-wide FIFO queue                                                          |
+| `queue.maxConcurrent`       | int                                | `5`       | max simultaneously-running boxes before `-i` jobs queue; override with `--max-running <n>`                                                        |
+| `queue.maxWorking`          | int                                | `0` (off) | max agents actively working at once before `-i` jobs queue; override with `--max-working <n>`                                                     |
+| `queue.idleGraceSeconds`    | int                                | `15`      | debounce before an agent frees its working slot; only used when `maxWorking > 0`                                                                  |
+| `queue.openIn`              | enum `none`/`split`/`window`/`tab` | `none`    | when a background `-i` job's box becomes ready, open an attached terminal onto it (a tmux/cmux/Herdr split, window, or tab); `none` opens nothing |
+| `autopause.enabled`         | bool                               | `true`    | let the relay periodically pause idle boxes when more than `maxRunningBoxes` run                                                                  |
+| `autopause.maxRunningBoxes` | int                                | `5`       | target ceiling of running boxes before idle ones get paused                                                                                       |
+| `autopause.idleMinutes`     | int                                | `5`       | minutes a box must be continuously idle before it's eligible for auto-pause                                                                       |
 
 ```bash
 agentbox config set queue.maxConcurrent 3 --global
@@ -315,7 +325,11 @@ agentbox config set queue.openIn split --global
 By default a background `-i` run just queues and prints its job line. Set `queue.openIn` to `split`, `window`, or `tab` and the host relay opens an attached terminal onto the box the moment its worker finishes creating it — no need to find the box and `attach` by hand. It only fires when the submitting shell is inside tmux, cmux, Herdr, or iTerm2. Under cmux, `split` splits the pane you submitted from (falling back to the parent workspace, then a new workspace), `tab` adds a tab in the parent workspace, and `window` opens a separate workspace; under Herdr, `split` splits the pane you submitted from, `tab` adds a tab in the parent workspace, and `window` opens a separate workspace; iTerm2 opens relative to the frontmost window. Unlike `attach.openIn` there is no `same` mode (the box is created asynchronously, so it is always a fresh terminal).
 
 <Callout type="warn" title="cmux: allow socket control">
-The box is opened by the relay's queue **worker**, a detached host process — not a cmux-initiated one. cmux's default `socketControlMode: cmuxOnly` only trusts processes cmux itself started, so it blocks the worker and nothing opens. To use `queue.openIn` under cmux, set `socketControlMode` to `automation` (or `password`) in `~/.config/cmux/cmux.json` and run `cmux reload-config`. tmux and iTerm2 need no such change.
+  The box is opened by the relay's queue **worker**, a detached host process — not a cmux-initiated
+  one. cmux's default `socketControlMode: cmuxOnly` only trusts processes cmux itself started, so it
+  blocks the worker and nothing opens. To use `queue.openIn` under cmux, set `socketControlMode` to
+  `automation` (or `password`) in `~/.config/cmux/cmux.json` and run `cmux reload-config`. tmux and
+  iTerm2 need no such change.
 </Callout>
 
 Auto-pause only ever targets a box whose live agent has settled to **idle** for `idleMinutes`. A box where **any** agent (Claude, Codex, or OpenCode) is working, compacting, or waiting on you is never auto-paused. If a box does get paused while you still need it, `agentbox drive …`, `agentbox shell`, and `agentbox unpause` all resume it on demand (drive auto-unpauses before it reaches the session).
@@ -326,23 +340,24 @@ See [background and parallel](/docs/background-and-parallel) and [checkpoints an
 
 The remaining infrastructure knobs — mostly advanced.
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `cloud.useCurrentBranch` | bool | `false` | on daytona/hetzner, start boxes on the host's current branch instead of forking `agentbox/<box-name>`; overridden by `--use-branch` / `--from-branch` |
-| `cloud.viaHub` | bool | `true` | when a control box is configured (`relay.controlPlaneUrl`), build **cloud** boxes on it by default (so they keep running with the laptop off) instead of on this machine; overridden per-command by `--via-hub` / `--local`. Docker and remote-docker always build locally. Cloud **base bakes** (`agentbox prepare`) follow the same routing, and this machine's hub UI mirrors the control box's provider state. See [deployed hub](/docs/deployed-hub) |
-| `engine.kind` | enum `orbstack`/`docker-desktop`/`other`/`auto` | `auto` | override docker-engine auto-detection; the one key applied at CLI startup |
-| `portless.enabled` | bool | prompt | map each box web app to `https://<box-name>.localhost` via the Portless proxy (Docker Desktop only) |
-| `portless.stateDir` | string (advanced) | empty | host Portless state dir to share into boxes |
-| `relay.port` | int (advanced) | `8787` | host relay TCP port |
-| `relay.controlPlaneUrl` | string | empty | URL of a deployed control plane; cloud boxes point at it for git-token leasing, permission state, and the registry/events so they keep working with the laptop off. Set via `agentbox hub set-url` |
-| `hub.gitAuth` | enum `gh`/`app` | `gh` | which git credential a deployed [control box](/docs/deployed-hub) uses: `gh` (the hub holds a GitHub token taken from your own `gh` login and does the git work itself, so boxes never receive a credential and nothing needs installing on GitHub) or `app` (the hub holds a GitHub App key and leases a 1-hour, single-repo token to each box — tighter, but the repo owner must install the App). Deploy intent: it selects what `agentbox hub setup` / `hub deploy` provisions and which push mode a cloud box gets; it can't reconfigure a hub that's already running |
-| `hub.mode` | enum `auto`/`thin`/`local` | `auto` | whether the local docker engine is offered on this machine. `auto` gates `docker`/`remote-docker` off once a [control box](/docs/deployed-hub) is configured (`relay.controlPlaneUrl`) — a docker box built on your laptop can't run with the laptop off, so `create --provider docker` is refused, docker rows drop out of the provider pickers / `doctor` / `prepare`, and docker boxes show as inactive in `ls`. `thin` forces that even with no control box; `local` keeps docker on regardless (the escape hatch every "docker is hidden here" message names) |
-| `relay.custodyMaxBodyBytes` | int (advanced) | `33554432` (32 MiB) | per-request body cap for custody uploads. Custody carries a project's untracked-files seed tar, which the relay's 1 MiB body cap is too small for; this applies only to custody, so every other route keeps the smaller cap. On your machine it governs how large a seed blob the client uploads; a control box enforces its own cap via `AGENTBOX_CUSTODY_MAX_BODY_BYTES`, so raise **both** to admit a bigger seed (a blob the control box refuses is dropped, and the rest of the seed still pushes) |
-| `vnc.containerPort` | int (advanced) | `6080` | container-side noVNC port |
-| `maintenance.pruneProjectConfigs` | bool | `true` | periodically delete `~/.agentbox/projects/<hash>/` dirs whose source folder is gone |
-| `maintenance.pruneProjectConfigsEvery` | int | `50` | run the orphan sweep every N successful `agentbox create` |
-| `update.check` | bool | `true` | daily background check for a newer published CLI (npm) and menu-bar app (release checksum), plus the "newer version available" nudge; at most one network probe per 24h — `false` disables both |
-| `update.channel` | enum | `auto` | release channel `self-update` and `install app` follow: `auto` follows the installed build, `nightly` opts into [pre-release builds](/docs/nightly), `stable` opts back out. Nightly installs the newest build of *either* channel, so a stable release supersedes the nightlies before it |
+| Key                                    | Type                                            | Default             | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------- | ----------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cloud.useCurrentBranch`               | bool                                            | `false`             | on daytona/hetzner, start boxes on the host's current branch instead of forking `agentbox/<box-name>`; overridden by `--use-branch` / `--from-branch`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `cloud.viaHub`                         | bool                                            | `true`              | when a control box is configured (`relay.controlPlaneUrl`), build **cloud** boxes on it by default (so they keep running with the laptop off) instead of on this machine; overridden per-command by `--via-hub` / `--local`. Docker and remote-docker always build locally. Cloud **base bakes** (`agentbox prepare`) follow the same routing, and this machine's hub UI mirrors the control box's provider state. See [deployed hub](/docs/deployed-hub)                                                                                                                                                                                                                          |
+| `engine.kind`                          | enum `orbstack`/`docker-desktop`/`other`/`auto` | `auto`              | override docker-engine auto-detection; the one key applied at CLI startup                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `portless.enabled`                     | bool                                            | prompt              | map each box web app to `https://<box-name>.localhost` via the Portless proxy (Docker Desktop only)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `portless.stateDir`                    | string (advanced)                               | empty               | host Portless state dir to share into boxes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `relay.port`                           | int (advanced)                                  | `8787`              | host relay TCP port                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `relay.controlPlaneUrl`                | string                                          | empty               | URL of a deployed control plane; cloud boxes point at it for git-token leasing, permission state, and the registry/events so they keep working with the laptop off. Set via `agentbox hub set-url`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `hub.gitAuth`                          | enum `gh`/`app`                                 | `gh`                | which git credential a deployed [control box](/docs/deployed-hub) uses: `gh` (the hub holds a GitHub token taken from your own `gh` login and does the git work itself, so boxes never receive a credential and nothing needs installing on GitHub) or `app` (the hub holds a GitHub App key and leases a 1-hour, single-repo token to each box — tighter, but the repo owner must install the App). Deploy intent: it selects what `agentbox hub setup` / `hub deploy` provisions and which push mode a cloud box gets; it can't reconfigure a hub that's already running                                                                                                         |
+| `git.pushMode`                         | enum `auto`/`relay`/`lease`/`direct`            | `auto`              | how a **cloud** box's `git push` reaches GitHub (docker always uses `relay`): `relay` (the host relay pushes with your host credentials — they never enter the box), `lease` (the relay/plane leases a short-lived GitHub-App token and the box pushes directly, so it works with the laptop off), `direct` (the box holds a **copy** of your git credentials and pushes on its own — set via `--with-credentials`), or `auto` (lease when `relay.controlPlaneUrl` is set, else relay). `direct` is **refused when a control box is configured** — use leasing (the `auto` default) instead, which does the same job without copying the credential into the box and its snapshots |
+| `hub.mode`                             | enum `auto`/`thin`/`local`                      | `auto`              | whether the local docker engine is offered on this machine. `auto` gates `docker`/`remote-docker` off once a [control box](/docs/deployed-hub) is configured (`relay.controlPlaneUrl`) — a docker box built on your laptop can't run with the laptop off, so `create --provider docker` is refused, docker rows drop out of the provider pickers / `doctor` / `prepare`, and docker boxes show as inactive in `ls`. `thin` forces that even with no control box; `local` keeps docker on regardless (the escape hatch every "docker is hidden here" message names)                                                                                                                 |
+| `relay.custodyMaxBodyBytes`            | int (advanced)                                  | `33554432` (32 MiB) | per-request body cap for custody uploads. Custody carries a project's untracked-files seed tar, which the relay's 1 MiB body cap is too small for; this applies only to custody, so every other route keeps the smaller cap. On your machine it governs how large a seed blob the client uploads; a control box enforces its own cap via `AGENTBOX_CUSTODY_MAX_BODY_BYTES`, so raise **both** to admit a bigger seed (a blob the control box refuses is dropped, and the rest of the seed still pushes)                                                                                                                                                                            |
+| `vnc.containerPort`                    | int (advanced)                                  | `6080`              | container-side noVNC port                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `maintenance.pruneProjectConfigs`      | bool                                            | `true`              | periodically delete `~/.agentbox/projects/<hash>/` dirs whose source folder is gone                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `maintenance.pruneProjectConfigsEvery` | int                                             | `50`                | run the orphan sweep every N successful `agentbox create`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `update.check`                         | bool                                            | `true`              | daily background check for a newer published CLI (npm) and menu-bar app (release checksum), plus the "newer version available" nudge; at most one network probe per 24h — `false` disables both                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `update.channel`                       | enum                                            | `auto`              | release channel `self-update` and `install app` follow: `auto` follows the installed build, `nightly` opts into [pre-release builds](/docs/nightly), `stable` opts back out. Nightly installs the newest build of _either_ channel, so a stable release supersedes the nightlies before it                                                                                                                                                                                                                                                                                                                                                                                         |
 
 See [web apps and tunnels](/docs/web-apps-and-tunnels), [local Docker](/docs/local-docker), [sync and git](/docs/sync-and-git), and [browser and screen](/docs/browser-and-screen).
 

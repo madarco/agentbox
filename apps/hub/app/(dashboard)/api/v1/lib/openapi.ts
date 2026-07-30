@@ -37,6 +37,14 @@ export function buildOpenApi(): Record<string, unknown> {
       { name: 'Approvals', description: 'Pending host-action approvals.' },
       { name: 'Jobs', description: 'Async create/bake job status and log streams.' },
       {
+        name: 'Checkpoints',
+        description: 'Durable per-project checkpoints (docker image / cloud snapshot).',
+      },
+      {
+        name: 'Fleet',
+        description: 'Fleet-wide maintenance (prune orphan boxes and resources).',
+      },
+      {
         name: 'Custody',
         description: 'What the control box holds in custody (metadata only — never values).',
       },
@@ -274,6 +282,178 @@ export function buildOpenApi(): Record<string, unknown> {
               content: {
                 'application/json': {
                   schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/boxes/{id}/rename': {
+        post: {
+          tags: ['Boxes'],
+          summary: "Set or clear a box's display label",
+          description:
+            'Cosmetic only — the container, branch and URLs are untouched. Pass an empty string to clear the label. Backs `agentbox status <box> --set-name/--clear-name`.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    displayName: {
+                      type: 'string',
+                      description: 'New label (max 60 chars); empty string clears it.',
+                    },
+                  },
+                  required: ['displayName'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Renamed',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/boxes/{id}/agent': {
+        get: {
+          tags: ['Boxes'],
+          summary: "Get the box's in-box coding-agent status snapshot",
+          description:
+            "The agent's live activity (working / idle / waiting / question / end-plan / …), plan/question payload and session title, from the persisted status store. Backs `agentbox agent state/wait-for/get-plan-question`.",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': {
+              description: 'Agent state',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/AgentState' } },
+              },
+            },
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/boxes/{id}/logs': {
+        get: {
+          tags: ['Boxes'],
+          summary: "Read (or follow) a box's service log",
+          description:
+            'One of two shapes on one route. `follow=0` (default) returns a JSON `{ output }` snapshot — a bounded `--tail` dump. `follow=1` returns an SSE stream (`open` / `log`* / `end`) the hub pipes live from the in-box `agentbox-ctl logs --follow`. Pass `service=<name>` for a declared service, or `daemon=1` for the ctl-daemon log.',
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+            {
+              name: 'service',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'A declared service name (required unless daemon=1).',
+            },
+            {
+              name: 'daemon',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['1'] },
+              description: 'Tail the ctl-daemon log instead of a service.',
+            },
+            {
+              name: 'follow',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['1'] },
+              description: 'Stream the log as SSE instead of returning a snapshot.',
+            },
+            {
+              name: 'tail',
+              in: 'query',
+              required: false,
+              schema: { type: 'integer' },
+              description: 'Lines of history (default 200).',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Log snapshot (JSON) or SSE stream (text/event-stream when follow=1)',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { output: { type: 'string' } },
+                    required: ['output'],
+                  },
+                },
+                'text/event-stream': { schema: { type: 'string' } },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/boxes/{id}/checkpoint': {
+        post: {
+          tags: ['Checkpoints'],
+          summary: 'Capture the box state as a project checkpoint',
+          description:
+            'Commits the box (docker commit / cloud snapshot) into the project checkpoint store on the hub machine, via provider.checkpoint.*. A durable project asset — it survives the box. Backs `agentbox checkpoint create`.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    name: {
+                      type: 'string',
+                      description: 'Checkpoint name (auto-generated if omitted).',
+                    },
+                    merged: {
+                      type: 'boolean',
+                      description: 'docker: flatten to a single squashed layer (FROM scratch).',
+                    },
+                    setDefault: {
+                      type: 'boolean',
+                      description: "Also pin this as the project's default checkpoint.",
+                    },
+                    replace: {
+                      type: 'boolean',
+                      description: 'Overwrite an existing checkpoint of the same name.',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Checkpoint captured',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/CheckpointCreateResult' },
                 },
               },
             },
@@ -745,6 +925,129 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/checkpoints': {
+        get: {
+          tags: ['Checkpoints'],
+          summary: "List a project's (or every project's) checkpoints",
+          description:
+            'The project checkpoint store lives on the hub machine, keyed by the absolute project root. Pass `?project=<abs root>` for one project, or `?global=1` for every project. Backs `agentbox checkpoint ls` / `ls -g`.',
+          parameters: [
+            {
+              name: 'project',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'Absolute project root (required unless global=1).',
+            },
+            {
+              name: 'global',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['1'] },
+              description: 'List checkpoints for every project.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Checkpoints',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/CheckpointListing' } },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+        delete: {
+          tags: ['Checkpoints'],
+          summary: 'Delete a checkpoint',
+          description:
+            'Removes one checkpoint from every store that had it and sweeps any dangling default-checkpoint config pointer. Backs `agentbox checkpoint rm`.',
+          parameters: [
+            {
+              name: 'project',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Absolute project root.',
+            },
+            {
+              name: 'ref',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' },
+              description: 'The checkpoint name.',
+            },
+            {
+              name: 'provider',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'Scope the delete to one provider store.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Deleted',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/CheckpointRemoveResult' },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/prune': {
+        post: {
+          tags: ['Fleet'],
+          summary: 'Prune orphan boxes and resources',
+          description:
+            'Without a provider (or provider `docker`) it reaps orphan docker records, containers, volumes, snapshot/box dirs — and, with `all`, orphan project configs. With a cloud provider it enumerates untracked sandboxes and (when not a `dryRun`) deletes them AND reaps their control-box registrations. Durable project checkpoints are always left intact. Backs `agentbox prune`.',
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    provider: {
+                      type: 'string',
+                      description:
+                        'Cloud provider to prune; omit (or `docker`) for the local docker sweep.',
+                    },
+                    all: {
+                      type: 'boolean',
+                      description: 'docker: also remove orphan per-project config dirs.',
+                    },
+                    dryRun: {
+                      type: 'boolean',
+                      description: 'Report what would be removed without removing anything.',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Prune result',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/PruneResult' } },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/approvals': {
         get: {
           tags: ['Approvals'],
@@ -827,6 +1130,32 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/jobs': {
+        get: {
+          tags: ['Jobs'],
+          summary: 'List background jobs',
+          description:
+            "The unified job listing — the local file queue's create jobs merged with, on a control box, the control-plane create queue. Backs `agentbox queue list` and `agentbox hub jobs`.",
+          responses: {
+            '200': {
+              description: 'Jobs',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      jobs: { type: 'array', items: { $ref: '#/components/schemas/JobListItem' } },
+                    },
+                    required: ['jobs'],
+                  },
+                },
+              },
+            },
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/jobs/{id}': {
         get: {
           tags: ['Jobs'],
@@ -851,6 +1180,41 @@ export function buildOpenApi(): Record<string, unknown> {
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': { description: 'SSE stream', content: { 'text/event-stream': {} } },
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/jobs/{id}/login-code': {
+        post: {
+          tags: ['Jobs'],
+          summary: 'Deliver an OAuth login code to a create job',
+          description:
+            'Feeds a pasted Claude OAuth approval code to a create job that is awaiting a re-login. The create worker consumes it and completes the in-box login. The one interactive create affordance that survives.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { code: { type: 'string', description: 'The OAuth approval code.' } },
+                  required: ['code'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Accepted',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] },
+                },
+              },
+            },
+            '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
             '503': errorResponse,
@@ -1223,6 +1587,47 @@ export function buildOpenApi(): Record<string, unknown> {
                 'working | idle | waiting | end-plan | question | compacting | error | unknown',
             },
             codexActivity: { type: 'string' },
+            shellCount: {
+              type: 'number',
+              description: 'Live shell-session count (docker only); absent → the CLI renders "-".',
+            },
+            sandboxId: {
+              type: 'string',
+              description:
+                'Provider-native sandbox id (cloud boxes). Part of the non-secret adoption block a thin client rebuilds a drivable local record from — tokens are never serialized, a fresh adoption re-mints them.',
+            },
+            originUrl: {
+              type: ['string', 'null'],
+              description:
+                "Box repo's origin remote URL. Lets project-scoped `ls` match a box to the cwd repo by identity when its projectRoot is a remote hub's path. Populated for any registered box, docker included.",
+            },
+            publicHost: {
+              type: 'string',
+              description:
+                'Public IP/host of the box VM (direct-SSH providers: hetzner/digitalocean).',
+            },
+            image: {
+              type: 'string',
+              description: 'Base image / snapshot ref the sandbox booted from.',
+            },
+            webPort: {
+              type: 'number',
+              description: 'In-box WebProxy port (cloud boxes bind a non-privileged port).',
+            },
+            previewUrls: {
+              type: 'object',
+              additionalProperties: { type: 'string' },
+              description: 'Token-authed preview URLs keyed by in-box port.',
+            },
+            lastAgent: {
+              type: 'string',
+              enum: ['claude', 'codex', 'opencode'],
+              description: 'The agent the box was created for.',
+            },
+            topology: {
+              type: 'string',
+              description: "Sync federation shape ('cloud' | 'control-plane'); absent for docker.",
+            },
           },
           required: ['id', 'projectId', 'status', 'agent'],
         },
@@ -1330,8 +1735,188 @@ export function buildOpenApi(): Record<string, unknown> {
             id: { type: 'string' },
             status: { type: 'string', enum: ['queued', 'running', 'done', 'failed', 'cancelled'] },
             boxId: { type: 'string' },
+            error: {
+              type: 'string',
+              description:
+                "A failed job's reason — so a create reports the failure, not a silent 'done'.",
+            },
+            provider: { type: 'string' },
+            name: { type: 'string' },
+            agent: { type: 'string' },
+            createdAt: { type: 'string' },
+            login: {
+              type: 'object',
+              description:
+                'Present when the create is awaiting a Claude re-login (see POST /jobs/{id}/login-code).',
+              properties: {
+                required: { type: 'boolean' },
+                phase: { type: 'string' },
+                url: { type: 'string' },
+                error: { type: 'string' },
+                lastError: { type: 'string' },
+              },
+            },
           },
           required: ['id', 'status'],
+        },
+        JobListItem: {
+          type: 'object',
+          description: 'One row of GET /jobs — the Job shape without the streamable log path.',
+          properties: {
+            id: { type: 'string' },
+            status: { type: 'string', enum: ['queued', 'running', 'done', 'failed', 'cancelled'] },
+            boxId: { type: 'string' },
+            error: { type: 'string' },
+            provider: { type: 'string' },
+            name: { type: 'string' },
+            agent: { type: 'string' },
+            createdAt: { type: 'string' },
+          },
+          required: ['id', 'status'],
+        },
+        AgentState: {
+          type: 'object',
+          description:
+            "The box's in-box coding-agent status snapshot. `claude` is the raw ctl status payload (activity, plan/question, session title); null when no snapshot exists yet.",
+          properties: {
+            claude: { description: 'Raw BoxStatusClaude payload (opaque here).' },
+          },
+          required: ['claude'],
+        },
+        CheckpointCreateResult: {
+          type: 'object',
+          properties: {
+            ok: { const: true },
+            name: { type: 'string' },
+            kind: {
+              type: 'string',
+              description:
+                "docker manifest type ('layered' | 'merged') or 'snapshot' for a cloud backend.",
+            },
+            ref: { type: 'string', description: 'The image tag / snapshot id created.' },
+            provider: { type: 'string' },
+            dir: { type: 'string', description: 'Snapshot dir (cloud backends).' },
+            setDefaultKey: {
+              type: 'string',
+              description: 'The config key written when setDefault was requested.',
+            },
+          },
+          required: ['ok', 'name', 'kind', 'ref', 'provider'],
+        },
+        CheckpointItem: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            provider: { type: 'string', description: "'docker' or the cloud backend name." },
+            kind: { type: 'string' },
+            sourceBoxName: { type: 'string' },
+            createdAt: { type: 'string' },
+            isDefault: {
+              type: 'boolean',
+              description: "Resolved server-side against the project's effective config.",
+            },
+          },
+          required: ['name', 'provider', 'kind', 'isDefault'],
+        },
+        CheckpointListing: {
+          type: 'object',
+          properties: {
+            projects: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  segment: { type: 'string', description: 'The path-hash store segment.' },
+                  projectRoot: {
+                    type: 'string',
+                    description: 'Absent for an orphan segment whose project config was GC-ed.',
+                  },
+                  label: { type: 'string' },
+                  items: { type: 'array', items: { $ref: '#/components/schemas/CheckpointItem' } },
+                },
+                required: ['segment', 'label', 'items'],
+              },
+            },
+          },
+          required: ['projects'],
+        },
+        CheckpointRemoveResult: {
+          type: 'object',
+          properties: {
+            ok: { const: true },
+            removed: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Providers the checkpoint was deleted from.',
+            },
+            clearedKeys: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Default-checkpoint config pointers cleared in the project layer.',
+            },
+            warnedKeys: {
+              type: 'array',
+              items: { type: 'string' },
+              description: "Dangling pointers in a layer we can't auto-edit (warned, not cleared).",
+            },
+          },
+          required: ['ok', 'removed', 'clearedKeys', 'warnedKeys'],
+        },
+        PruneResult: {
+          description:
+            'The prune outcome — discriminated by `kind`: `general` (docker sweep), `cloud` (untracked cloud sandboxes).',
+          oneOf: [
+            {
+              type: 'object',
+              properties: {
+                kind: { const: 'general' },
+                result: {
+                  type: 'object',
+                  properties: {
+                    removedRecords: { type: 'array', items: { type: 'string' } },
+                    removedContainers: { type: 'array', items: { type: 'string' } },
+                    removedVolumes: { type: 'array', items: { type: 'string' } },
+                    removedSnapshotDirs: { type: 'array', items: { type: 'string' } },
+                    removedBoxDirs: { type: 'array', items: { type: 'string' } },
+                    removedCheckpointImages: { type: 'array', items: { type: 'string' } },
+                    dryRun: { type: 'boolean' },
+                  },
+                  required: ['dryRun'],
+                },
+                projectConfigs: { type: 'array', items: { type: 'string' } },
+              },
+              required: ['kind', 'result', 'projectConfigs'],
+            },
+            {
+              type: 'object',
+              properties: {
+                kind: { const: 'cloud' },
+                provider: { type: 'string' },
+                dryRun: { type: 'boolean' },
+                orphans: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      sandboxId: { type: 'string' },
+                      name: { type: 'string' },
+                      state: { type: 'string' },
+                      createdAt: { type: 'string' },
+                    },
+                    required: ['sandboxId'],
+                  },
+                },
+                deleted: { type: 'number' },
+                failed: { type: 'number' },
+                reaped: {
+                  type: 'number',
+                  description:
+                    'Control-box registrations reaped for the deleted sandboxes (0 on a dry run).',
+                },
+              },
+              required: ['kind', 'provider', 'dryRun', 'orphans', 'deleted', 'failed', 'reaped'],
+            },
+          ],
         },
         CreateBox: {
           type: 'object',
