@@ -21,11 +21,7 @@ import {
   reportHerdrApprovalState,
 } from '../terminal/herdr-status.js';
 import { popTerminalTitle, pushTerminalTitle, setTerminalTitle } from '../terminal/title.js';
-import {
-  createInputRouter,
-  type InputRouter,
-  type LeaderAction,
-} from './input-router.js';
+import { createInputRouter, type InputRouter, type LeaderAction } from './input-router.js';
 import {
   ALERT_BAND_ROWS,
   CURSOR_RESTORE,
@@ -62,11 +58,13 @@ export interface WrappedAttachOptions {
    * attach connects command-less and sends the tmux command this way.
    */
   initialInput?: string;
-  /** Relay base URL — http://127.0.0.1:8787 in normal use, or the box's control
-   *  box when it registered with one (see `resolveBoxPromptSource`). */
-  relayBaseUrl: string;
-  /** Admin bearer, set only when `relayBaseUrl` is a remote control box. */
-  relayAuthToken?: string;
+  /** Hub base URL — the local hub in normal use, or the box's control box when it
+   *  registered with one (see `resolveBoxPromptSource`). The footer's prompt
+   *  stream + answers ride this hub's `/api/v1`. */
+  hubBaseUrl: string;
+  /** The hub API Bearer (local hub token, or a control box's AGENTBOX_HUB_API_KEY);
+   *  omitted only when the hub couldn't be authenticated (footer degrades silently). */
+  hubApiKey?: string;
   boxId: string;
   /** Friendly box name; rendered in the idle footer. */
   boxName: string;
@@ -236,9 +234,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   const backend = await loadPtyBackend();
   if (!backend) {
     // One-line stderr notice; preserves current behavior bit-for-bit.
-    process.stderr.write(
-      'agentbox: permission prompts disabled (node-pty backend unavailable)\n',
-    );
+    process.stderr.write('agentbox: permission prompts disabled (node-pty backend unavailable)\n');
     return runFallback(command, opts.dockerArgv, opts.env);
   }
 
@@ -633,11 +629,10 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       if (typeof cliEntry === 'string' && cliEntry.length > 0) {
         const cmd = ACTION_CMD[name];
         try {
-          spawn(
-            process.execPath,
-            [cliEntry, cmd.sub, opts.boxId, ...cmd.flags],
-            { detached: true, stdio: 'ignore' },
-          ).unref();
+          spawn(process.execPath, [cliEntry, cmd.sub, opts.boxId, ...cmd.flags], {
+            detached: true,
+            stdio: 'ignore',
+          }).unref();
         } catch (e) {
           // Best-effort — the footer flash still shows. Surface for inspection.
           logErr(`leader-action spawn (${name}) failed: ${(e as Error).message}`);
@@ -745,7 +740,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       // synthetic local confirms (e.g. Ctrl+a k) the relay never issued — skip
       // the POST so we don't 404 the relay with an unknown prompt id.
       if (!body.id.startsWith('local:')) {
-        void postAnswer({ relayBaseUrl: opts.relayBaseUrl, authToken: opts.relayAuthToken, body });
+        void postAnswer({ hubBaseUrl: opts.hubBaseUrl, hubApiKey: opts.hubApiKey, body });
       }
       capturingPrompt = null;
       applyBandChange();
@@ -814,8 +809,8 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
 
   // SSE: subscribe to the relay's prompt stream for this box.
   const stream: PromptStream = subscribePrompts({
-    relayBaseUrl: opts.relayBaseUrl,
-    authToken: opts.relayAuthToken,
+    hubBaseUrl: opts.hubBaseUrl,
+    hubApiKey: opts.hubApiKey,
     boxId: opts.boxId,
     onPrompt: (ev: PromptAskEvent) => {
       capturingPrompt = ev;

@@ -121,10 +121,11 @@ the interactive reference at `GET /docs`.
 
 ### Approvals
 
-| Method + path                 | Description                                         |
-| ----------------------------- | --------------------------------------------------- |
-| `GET /approvals`              | Pending host-action approvals.                      |
-| `POST /approvals/{id}/answer` | Answer an approval. Body: `{ answer: "y" \| "n" }`. |
+| Method + path                    | Description                                                                                                                                                                                                                                                                                  |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /approvals`                 | Pending host-action approvals.                                                                                                                                                                                                                                                               |
+| `POST /approvals/{id}/answer`    | Answer an approval. Body: `{ answer: "y" \| "n", cancelled?: boolean }`. `cancelled: true` marks a dismissal distinctly from a plain deny in the audit trail (the `agentbox agent approve --cancel` capability); both leave the action unapproved.                                           |
+| `GET /boxes/{id}/prompts/stream` | Payload-carrying SSE of a box's approval prompts (the attach footer's channel). Emits `prompt-ask` (the full pending-approval payload), `prompt-resolved` (`{ id }`), `notice-set`/`notice-clear`, and `ping`. Distinct from `/api/events`, which carries refetch signals only (`data: {}`). |
 
 ### Jobs
 

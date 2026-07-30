@@ -10,6 +10,7 @@
  */
 import type { BoxRecord } from '@agentbox/core';
 import { DEFAULT_RELAY_PORT } from '@agentbox/relay';
+import { HubApiClient } from './hub-api-client.js';
 
 /** The laptop's own relay daemon. */
 export const LOCAL_RELAY_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
@@ -64,33 +65,86 @@ export async function resolveBoxPlane(box: PlaneAddressable): Promise<BoxPlane> 
   return adminToken ? { url, adminToken } : 'no-token';
 }
 
-/** Where to read/answer this box's host-action approvals. */
+/**
+ * The hub that owns a box's approvals, resolved to its `/api/v1` target.
+ *
+ * Mirrors {@link resolveBoxPlane} but for the *client* surface: the URL comes
+ * from `cloud.controlPlaneUrl` first (survives a config change on this host),
+ * else `relay.controlPlaneUrl`, and the Bearer is the hub API key
+ * (`AGENTBOX_HUB_API_KEY`) — not the admin token. A docker box short-circuits to
+ * `none` (its approvals live on the local hub).
+ */
+type BoxHubTarget = { url: string; apiKey: string } | 'none' | 'no-token';
+
+async function resolveBoxHubTarget(box: PlaneAddressable): Promise<BoxHubTarget> {
+  if ((box.provider ?? 'docker') === 'docker') return 'none';
+  const { loadEffectiveConfig } = await import('@agentbox/config');
+  const { loadControlPlaneEnv } = await import('./env-file.js');
+  const configured = await loadEffectiveConfig(process.cwd())
+    .then((c) => c.effective.relay.controlPlaneUrl)
+    .catch(() => undefined);
+  const url = (box.cloud?.controlPlaneUrl ?? configured ?? '').replace(/\/+$/, '');
+  if (!url) return 'none';
+  loadControlPlaneEnv();
+  const apiKey = process.env['AGENTBOX_HUB_API_KEY'] ?? '';
+  return apiKey ? { url, apiKey } : 'no-token';
+}
+
+/** Where to read/answer this box's host-action approvals, over the hub `/api/v1`. */
 export interface BoxPromptSource {
+  /** For list/answer (`agent approvals`/`approve`). */
+  client: HubApiClient;
+  /** For the footer's low-level SSE prompt stream. */
   baseUrl: string;
-  /** Set only for a remote control box; the local relay's gate passes on loopback. */
-  authToken?: string;
-  /** True when `baseUrl` is a control box rather than this laptop's relay. */
+  apiKey?: string;
+  /** True when `baseUrl` is a control box rather than this laptop's hub. */
   remote: boolean;
   /**
    * Set when the box lives on a control box we couldn't authenticate to. The
-   * source falls back to the local relay (which will simply have nothing), so
+   * source falls back to the local hub (which will simply have nothing), so
    * callers can degrade quietly but still explain the silence.
    */
   unauthenticatedPlane?: string;
 }
 
 /**
- * Resolve the prompt mailbox for a box. Never throws — a resolution failure
- * degrades to the local relay, which is exactly today's behavior.
+ * Resolve the prompt mailbox for a box as a hub `/api/v1` client + SSE target.
+ *
+ * A docker box (or a cloud box with no control box) answers on the **local hub**,
+ * which is auto-started here so `/api/v1` is actually available (a bare relay
+ * can't serve it). A cloud box on a plane answers on that control box, keyed by
+ * the hub API key. A named-but-unauthenticated plane degrades to the local hub
+ * and sets `unauthenticatedPlane` so callers can explain the silence.
+ *
+ * Returns null only when even the local hub can't be resolved/started (`quiet`
+ * suppresses the autostart + error print — used by the dashboard TUI, which owns
+ * the screen and must not spawn a spinner mid-render).
  */
-export async function resolveBoxPromptSource(box: PlaneAddressable): Promise<BoxPromptSource> {
-  const plane = await resolveBoxPlane(box).catch(() => 'none' as const);
-  if (plane === 'none') return { baseUrl: LOCAL_RELAY_URL, remote: false };
-  if (plane === 'no-token') {
-    const named = box.cloud?.controlPlaneUrl ?? '(configured control box)';
-    return { baseUrl: LOCAL_RELAY_URL, remote: false, unauthenticatedPlane: named };
+export async function resolveBoxPromptSource(
+  box: PlaneAddressable,
+  opts: { quiet?: boolean } = {},
+): Promise<BoxPromptSource | null> {
+  const target = await resolveBoxHubTarget(box).catch(() => 'none' as const);
+  if (target === 'none' || target === 'no-token') {
+    const { resolveHubApiTarget } = await import('../commands/control-plane.js');
+    const local = await resolveHubApiTarget(undefined, { preferLocal: true, quiet: opts.quiet });
+    if (!local) return null;
+    return {
+      client: new HubApiClient(local),
+      baseUrl: local.url,
+      apiKey: local.apiKey,
+      remote: false,
+      ...(target === 'no-token'
+        ? { unauthenticatedPlane: box.cloud?.controlPlaneUrl ?? '(configured control box)' }
+        : {}),
+    };
   }
-  return { baseUrl: plane.url, authToken: plane.adminToken, remote: true };
+  return {
+    client: new HubApiClient(target),
+    baseUrl: target.url,
+    apiKey: target.apiKey,
+    remote: true,
+  };
 }
 
 /** Warn at most once per process — an attach may resolve this several times. */
@@ -98,23 +152,26 @@ let warnedNoToken = false;
 
 /**
  * The `runWrappedAttach` options that point the attach footer's prompt stream at
- * the right relay. Spread into the call: `...(await attachRelayOptions(box))`.
+ * the right hub. Spread into the call: `...(await attachRelayOptions(box))`.
  *
- * A box on a plane we can't authenticate to degrades to the local relay — the
+ * A box on a plane we can't authenticate to degrades to the local hub — the
  * footer then behaves exactly as it did before this existed (silent) — but says
- * so once, since a silent footer on a blocked box is otherwise unexplainable.
+ * so once, since a silent footer on a blocked box is otherwise unexplainable. A
+ * hub that can't be resolved at all yields an empty base URL, which
+ * `subscribePrompts` treats as a no-op stream — attach never breaks over it.
  */
 export async function attachRelayOptions(
   box: PlaneAddressable,
-): Promise<{ relayBaseUrl: string; relayAuthToken?: string }> {
+): Promise<{ hubBaseUrl: string; hubApiKey?: string }> {
   const source = await resolveBoxPromptSource(box);
+  if (!source) return { hubBaseUrl: '' };
   if (source.unauthenticatedPlane !== undefined && !warnedNoToken) {
     warnedNoToken = true;
     process.stderr.write(
-      `note: this box's approvals live on ${source.unauthenticatedPlane}, but no admin token is available here,\n` +
-        '      so the attach footer can\'t show them. Set AGENTBOX_RELAY_ADMIN_TOKEN, or answer them with\n' +
+      `note: this box's approvals live on ${source.unauthenticatedPlane}, but no hub API key is available here,\n` +
+        "      so the attach footer can't show them. Set AGENTBOX_HUB_API_KEY, or answer them with\n" +
         '      `agentbox hub approvals list` / `agentbox hub approvals answer`.\n',
     );
   }
-  return { relayBaseUrl: source.baseUrl, relayAuthToken: source.authToken };
+  return { hubBaseUrl: source.baseUrl, hubApiKey: source.apiKey };
 }

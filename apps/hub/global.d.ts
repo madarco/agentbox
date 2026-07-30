@@ -20,6 +20,27 @@ declare global {
   // eslint-disable-next-line no-var
   var __AGENTBOX_HUB_NOTIFIER: { subscribe(fn: () => void): () => void } | undefined;
 
+  // Payload-carrying per-box prompt fan-out for the `/api/v1` prompt stream route
+  // (the attach footer's channel). Set by the custom server from the relay handle's
+  // PromptSubscribers/PendingPrompts/BoxNotices. `subscribe` registers a callback
+  // for a box's `prompt-ask`/`prompt-resolved`/`notice-set`/`notice-clear` events
+  // and returns an unsubscribe; `backlog` is the current pending prompts + active
+  // notices, flushed to a newly-connected stream. Structural types only, so
+  // @agentbox/relay never enters Next's bundle (see __AGENTBOX_HUB_CUSTODY).
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_PROMPTS:
+    | {
+        subscribe(boxId: string, listener: (event: string, data: unknown) => void): () => void;
+        // The route only re-serializes these to SSE, so the element shape is left
+        // opaque (the concrete PromptAskEvent/BoxNoticeEvent live in @agentbox/relay,
+        // kept out of Next's bundle).
+        backlog(boxId: string): {
+          prompts: unknown[];
+          notices: unknown[];
+        };
+      }
+    | undefined;
+
   // The control box's custody store (agent creds / project seeds / bake records /
   // box SSH keys). Set by the custom server; the Custody + project-Seed routes
   // reach it through this (never values). `null` when custody is not enabled here

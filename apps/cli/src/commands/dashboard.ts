@@ -19,6 +19,7 @@ import {
   ensureBoxBrowser,
   ensureCodexInstalled,
   ensureOpencodeInstalled,
+  getHubStatus,
   listBoxes,
   pauseBox,
   rebuildPluginNativeDeps,
@@ -38,6 +39,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { hostOpenCommand, readState } from '@agentbox/sandbox-core';
 import { resolveBoxPromptSource } from '../control-plane/box-plane.js';
+import { resolveHubApiTarget } from './control-plane.js';
 import { listBoxesMerged } from '../control-plane/list-merged.js';
 import type { MergedBox } from '../control-plane/hub-merge.js';
 import { tryAutoAdopt } from '../control-plane/auto-adopt.js';
@@ -213,7 +215,7 @@ export const dashboardCommand = new Command('dashboard')
             lines: [
               '',
               `  box ${merged.name} lives on the control box and couldn't be adopted here.`,
-              '  Until it is, it can\'t be driven from this machine.',
+              "  Until it is, it can't be driven from this machine.",
               `  Retry (and see why) with: agentbox hub adopt ${merged.name}`,
             ],
           };
@@ -681,13 +683,32 @@ export const dashboardCommand = new Command('dashboard')
         await destroyBox(boxId);
       };
 
+      // Bring up the local hub (once, before the TUI owns the screen) so the
+      // per-box prompt streams have a `/api/v1` to hit. This is the default hub
+      // for boxes that answer here; a control-box row overrides it per box.
+      let localHub = await resolveHubApiTarget(undefined, { preferLocal: true }).catch(() => null);
+      // The `/api/v1` prompt stream is API-key-gated even on loopback, so a
+      // keyless fallback URL would 401 every subscription. If the resolve above
+      // hiccuped but a local hub is in fact running, read its token directly so
+      // the fallback carries a valid key rather than silently failing.
+      if (!localHub) {
+        const st = await getHubStatus().catch(() => null);
+        if (st?.running && st.token)
+          localHub = { url: `http://127.0.0.1:${String(st.port)}`, apiKey: st.token };
+      }
+
       const compositor = new Compositor(
         {
           ptySpawn,
           termCtor,
-          // Default relay for the per-box SSE subscriptions: this host's own
-          // loopback daemon, which the admin/* gate accepts on source alone.
-          relayBaseUrl: `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`,
+          // Default hub for the per-box SSE subscriptions: this host's own local
+          // hub, whose `/api/v1` gate accepts the local hub token. The key is
+          // present whenever the hub is running (resolved above, or read from
+          // getHubStatus); only a genuinely-down local hub leaves it unset, and
+          // then a LOCAL box's stream degrades visibly to "approvals unavailable"
+          // while a control-box row still resolves its own remote key per box.
+          hubBaseUrl: localHub?.url ?? `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`,
+          hubApiKey: localHub?.apiKey,
           // ...but a box created against a control box keeps its approvals
           // there, so resolve per box and fall back to the above.
           //
@@ -696,18 +717,21 @@ export const dashboardCommand = new Command('dashboard')
           // exactly the ones whose approvals are remote. Looking them up
           // locally would miss them and silently subscribe to loopback, so
           // their approval marker would never light until they were adopted.
-          relaySourceFor: async (boxId) => {
+          // Quiet: this runs while the TUI owns the screen, so it must not spawn
+          // an autostart spinner (the local hub is already up, resolved above).
+          hubSourceFor: async (boxId) => {
             const box = (await listBoxesMerged()).boxes.find((b) => b.id === boxId);
             if (!box) return null;
-            const source = await resolveBoxPromptSource(box);
+            const source = await resolveBoxPromptSource(box, { quiet: true });
+            if (!source) return null;
             return {
               baseUrl: source.baseUrl,
-              authToken: source.authToken,
+              apiKey: source.apiKey,
               // The CLI paths warn on stderr here; a TUI owns the screen, so
               // hand it to the compositor to show in the alert band instead.
               warning:
                 source.unauthenticatedPlane !== undefined
-                  ? `approvals live on ${source.unauthenticatedPlane} but no admin token is available here`
+                  ? `approvals live on ${source.unauthenticatedPlane} but no hub API key is available here`
                   : undefined,
             };
           },

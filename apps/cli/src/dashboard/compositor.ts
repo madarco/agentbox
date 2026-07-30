@@ -81,18 +81,21 @@ export type RightTarget =
 export interface CompositorDeps {
   ptySpawn: PtySpawn;
   termCtor: TerminalCtor;
-  /** Relay base URL the per-box SSE subscriptions hit. Typically
-   *  `http://127.0.0.1:8787` (built from DEFAULT_RELAY_PORT). When absent
-   *  (legacy callers) the compositor skips prompt subscriptions entirely
-   *  — the dashboard still works, just without relay-prompt overlay. */
-  relayBaseUrl?: string;
-  /** Per-box override of {@link relayBaseUrl}. A box created against a control
-   *  box keeps its approvals THERE, so one global URL would subscribe every row
-   *  to this laptop's relay and silently miss them. Returns the box's own relay
-   *  + bearer; falling back to `relayBaseUrl` when it resolves nothing. */
-  relaySourceFor?: (
+  /** Hub base URL the per-box SSE subscriptions hit (the local hub, over its
+   *  `/api/v1` prompt stream). When absent (legacy callers) the compositor skips
+   *  prompt subscriptions entirely — the dashboard still works, just without the
+   *  prompt overlay. */
+  hubBaseUrl?: string;
+  /** Fallback hub API Bearer for {@link hubBaseUrl}, used when a per-box source
+   *  resolves nothing. */
+  hubApiKey?: string;
+  /** Per-box override of {@link hubBaseUrl}. A box created against a control box
+   *  keeps its approvals THERE, so one global URL would subscribe every row to
+   *  this laptop's hub and silently miss them. Returns the box's own hub URL +
+   *  API key; falling back to `hubBaseUrl`/`hubApiKey` when it resolves nothing. */
+  hubSourceFor?: (
     boxId: string,
-  ) => Promise<{ baseUrl: string; authToken?: string; warning?: string } | null>;
+  ) => Promise<{ baseUrl: string; apiKey?: string; warning?: string } | null>;
   /** Scoped + sorted candidate boxes (same order the sidebar renders). */
   listCandidates: () => Promise<SidebarBox[]>;
   /** What the right pane should show for a box (attach argv / menu / message). */
@@ -253,7 +256,9 @@ export class Compositor {
   };
   private readonly onFatal = (err: unknown): void => {
     this.teardown();
-    process.stderr.write(`dashboard: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
+    process.stderr.write(
+      `dashboard: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`,
+    );
     process.exit(1);
   };
 
@@ -393,7 +398,7 @@ export class Compositor {
    */
   private syncPromptSubscriptions(): void {
     if (this.tornDown) return;
-    const url = this.deps.relayBaseUrl;
+    const url = this.deps.hubBaseUrl;
     if (!url) return; // legacy callers: skip the feature entirely.
     const wanted = new Set<string>();
     for (const b of this.boxes) {
@@ -434,11 +439,11 @@ export class Compositor {
     fallbackUrl: string,
     token: PromptStream,
   ): Promise<void> {
-    let source: { baseUrl: string; authToken?: string; warning?: string } | null = null;
+    let source: { baseUrl: string; apiKey?: string; warning?: string } | null = null;
     try {
-      source = (await this.deps.relaySourceFor?.(boxId)) ?? null;
+      source = (await this.deps.hubSourceFor?.(boxId)) ?? null;
     } catch {
-      /* fall back to the global relay */
+      /* fall back to the global hub */
     }
     // Only clear the slot when it is still ours — a newer attempt (or a live
     // stream it already installed) must not be evicted by this one bailing.
@@ -451,8 +456,8 @@ export class Compositor {
     // are indistinguishable from having none.
     if (source?.warning) this.noteBoxProblem(boxId, source.warning);
     const stream = subscribePrompts({
-      relayBaseUrl: source?.baseUrl ?? fallbackUrl,
-      authToken: source?.authToken,
+      hubBaseUrl: source?.baseUrl ?? fallbackUrl,
+      hubApiKey: source?.apiKey ?? this.deps.hubApiKey,
       boxId,
       onPrompt: (ev) => {
         if (this.tornDown) return;
@@ -531,9 +536,7 @@ export class Compositor {
 
   private async poll(): Promise<void> {
     const stateKey = (): string =>
-      JSON.stringify(
-        this.boxes.map((b) => [b.id, b.state, b.activity, b.sessionTitle]),
-      );
+      JSON.stringify(this.boxes.map((b) => [b.id, b.state, b.activity, b.sessionTitle]));
     const before = stateKey();
     const beforeAlertH = this.alertHeight();
     await this.refreshBoxes();
@@ -822,7 +825,7 @@ export class Compositor {
         }
         return;
       }
-      const resumeKey = m.state === 'paused' ? 0x75 /* u */ : 0x73 /* s */;
+      const resumeKey = m.state === 'paused' ? 0x75 /* u */ : 0x73; /* s */
       if (b === resumeKey) {
         void this.resumeSelected();
         return;
@@ -977,8 +980,10 @@ export class Compositor {
     const b = bytes[0];
     let answer: 'y' | 'n' | null = null;
     let cancelled = false;
-    if (b === 0x79 || b === 0x59) answer = 'y'; // 'y'/'Y'
-    else if (b === 0x6e || b === 0x4e) answer = 'n'; // 'n'/'N'
+    if (b === 0x79 || b === 0x59)
+      answer = 'y'; // 'y'/'Y'
+    else if (b === 0x6e || b === 0x4e)
+      answer = 'n'; // 'n'/'N'
     else if (b === 0x1b || b === 0x03) {
       answer = 'n';
       cancelled = true;
@@ -996,16 +1001,16 @@ export class Compositor {
     // hit a no-op (already cleared).
     this.activePrompts.delete(this.selectedId);
     this.drawChrome();
-    const url = this.deps.relayBaseUrl;
+    const url = this.deps.hubBaseUrl;
     if (url) {
-      // Answer on the relay this box actually registered with — the same one
-      // the prompt was streamed from, not necessarily this laptop's.
+      // Answer on the hub this box actually registered with — the same one the
+      // prompt was streamed from, not necessarily this laptop's.
       const boxId = this.selectedId;
       void (async () => {
-        const source = await this.deps.relaySourceFor?.(boxId).catch(() => null);
+        const source = await this.deps.hubSourceFor?.(boxId).catch(() => null);
         await postAnswer({
-          relayBaseUrl: source?.baseUrl ?? url,
-          authToken: source?.authToken,
+          hubBaseUrl: source?.baseUrl ?? url,
+          hubApiKey: source?.apiKey ?? this.deps.hubApiKey,
           body: { id: ev.id, answer, ...(cancelled ? { cancelled: true } : {}) },
         });
       })();
@@ -1075,7 +1080,13 @@ export class Compositor {
     } catch (err) {
       if (this.tornDown) return;
       const msg = err instanceof Error ? err.message : String(err);
-      this.placeholder = ['', '  Failed to create box:', `  ${msg}`, '', '  Try from a shell: agentbox create'];
+      this.placeholder = [
+        '',
+        '  Failed to create box:',
+        `  ${msg}`,
+        '',
+        '  Try from a shell: agentbox create',
+      ];
       this.prevRows = null;
       this.drawChrome();
       this.scheduleRender();
@@ -1234,9 +1245,7 @@ export class Compositor {
       ? this.boxes.map((b) => {
           const pendingPrompt = this.activePrompts.has(b.id);
           const checkpointing = this.activeNotices.has(b.id);
-          return pendingPrompt || checkpointing
-            ? { ...b, pendingPrompt, checkpointing }
-            : b;
+          return pendingPrompt || checkpointing ? { ...b, pendingPrompt, checkpointing } : b;
         })
       : this.boxes;
     const { lines, rowOwner, headerRows } = sidebarLines(
@@ -1300,7 +1309,11 @@ export class Compositor {
       } else {
         const q = this.selectedBox()?.claudeQuestion;
         if (q) {
-          bandLines = renderAlertBand({ kind: 'question', question: q }, this.layout.cols, bandRows);
+          bandLines = renderAlertBand(
+            { kind: 'question', question: q },
+            this.layout.cols,
+            bandRows,
+          );
         }
       }
       if (bandLines) {
@@ -1327,10 +1340,7 @@ export class Compositor {
       const txt = ` ${this.flashMsg} `.slice(0, w).padEnd(w);
       status = `\x1b[7m${txt}\x1b[0m`;
     } else if (this.layout.alertH === 0 && activePromptForSelected) {
-      status = renderFooter(
-        { kind: 'prompt', prompt: activePromptForSelected },
-        this.layout.cols,
-      );
+      status = renderFooter({ kind: 'prompt', prompt: activePromptForSelected }, this.layout.cols);
     } else if (this.layout.alertH === 0 && activeNoticeForSelected) {
       status = renderFooter(
         { kind: 'notice', message: activeNoticeForSelected.message, frame: this.noticeFrame },
@@ -1388,11 +1398,7 @@ export class Compositor {
    * from {@link syncAlertLayout} when the selected box's alert state flips.
    */
   private relayout(): void {
-    this.layout = computeLayout(
-      this.out.columns ?? 100,
-      this.out.rows ?? 30,
-      this.alertHeight(),
-    );
+    this.layout = computeLayout(this.out.columns ?? 100, this.out.rows ?? 30, this.alertHeight());
     this.prevRows = null;
     const r = this.layout.right;
     if (this.session && !this.layout.tooSmall) {

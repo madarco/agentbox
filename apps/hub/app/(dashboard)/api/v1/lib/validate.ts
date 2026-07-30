@@ -99,11 +99,17 @@ export function parseRenameBox(body: unknown): Parsed<{ displayName: string }> {
   return { ok: true, value: { displayName } };
 }
 
-export function parseAnswer(body: unknown): Parsed<'y' | 'n'> {
+export function parseAnswer(body: unknown): Parsed<{ answer: 'y' | 'n'; cancelled?: boolean }> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { answer } = body;
+  const { answer, cancelled } = body;
   if (answer !== 'y' && answer !== 'n') return { ok: false, message: "answer must be 'y' or 'n'" };
-  return { ok: true, value: answer };
+  // `cancelled` marks a *dismissal* distinctly from a plain deny in the audit
+  // trail (the `agent approve --cancel` capability). Optional; still resolves the
+  // parked action as not-approved, so a missing/false value is a normal deny/allow.
+  if (cancelled !== undefined && typeof cancelled !== 'boolean') {
+    return { ok: false, message: 'cancelled must be a boolean when present' };
+  }
+  return { ok: true, value: { answer, ...(cancelled === true ? { cancelled: true } : {}) } };
 }
 
 export function parseLoginCode(body: unknown): Parsed<{ code: string }> {

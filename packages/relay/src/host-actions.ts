@@ -497,7 +497,7 @@ async function runGhPrRpc(
         argv: args,
       },
     };
-    const hasSubscriber = deps.subscribers.forBox(deps.boxId).length > 0;
+    const hasSubscriber = deps.subscribers.count(deps.boxId) > 0;
     if (!hasSubscriber && process.env['AGENTBOX_PROMPT'] !== 'off') {
       const noSubMode = (process.env['AGENTBOX_GH_NO_SUB'] ?? 'deny').toLowerCase();
       if (noSubMode === 'deny') {
@@ -571,7 +571,7 @@ async function cloudWriteConfirm(
     defaultAnswer: 'n' as const,
     context: { command, cwd, argv: args },
   };
-  const hasSubscriber = deps.subscribers.forBox(deps.boxId).length > 0;
+  const hasSubscriber = deps.subscribers.count(deps.boxId) > 0;
   if (!hasSubscriber && process.env['AGENTBOX_PROMPT'] !== 'off') {
     const noSubMode = (process.env['AGENTBOX_GH_NO_SUB'] ?? 'deny').toLowerCase();
     if (noSubMode === 'deny') {
@@ -1059,7 +1059,7 @@ async function runCheckpointRpc(
     deps.autoApproveSafeHostActions === false &&
     deps.prompts &&
     deps.subscribers &&
-    deps.subscribers.forBox(deps.boxId).length > 0
+    deps.subscribers.count(deps.boxId) > 0
   ) {
     const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, {
       kind: 'confirm',
@@ -1074,7 +1074,7 @@ async function runCheckpointRpc(
   } else if (
     deps.backendName === 'vercel' &&
     deps.subscribers &&
-    deps.subscribers.forBox(deps.boxId).length > 0
+    deps.subscribers.count(deps.boxId) > 0
   ) {
     // Checkpoint is a safe subset op (the box's own snapshot); audit the
     // reboot-causing auto-approval so it's still visible in the event feed.
@@ -1410,7 +1410,7 @@ async function runGitRpc(
     // — same env knob shape as `AGENTBOX_PROMPT`. The decision is bounded
     // by `AGENTBOX_GIT_PUSH_NO_SUB`: 'deny' (default), 'allow', or 'prompt'
     // (block anyway, legacy behavior).
-    const hasSubscriber = deps.subscribers.forBox(deps.boxId).length > 0;
+    const hasSubscriber = deps.subscribers.count(deps.boxId) > 0;
     if (!hasSubscriber && process.env['AGENTBOX_PROMPT'] !== 'off') {
       const noSubMode = (process.env['AGENTBOX_GIT_PUSH_NO_SUB'] ?? 'deny').toLowerCase();
       if (noSubMode === 'deny') {
