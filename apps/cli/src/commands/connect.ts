@@ -76,18 +76,23 @@ export const connectCommand = new Command('connect')
           );
           process.exit(2);
         }
-        // Refuse when a control box is configured — token leasing already gives
-        // the box laptop-off push without copying a credential into it (the same
-        // gate `create --dangerously-with-credentials` applies). Placed AFTER the
+        // Refuse when a control box is in play — token leasing already gives the
+        // box laptop-off push without copying a credential into it (the same gate
+        // `create --dangerously-with-credentials` applies). Placed AFTER the
         // provider-capability check so an unsupported/docker box gets its own
-        // accurate message rather than the leasing one.
+        // accurate message rather than the leasing one. Unlike the create-time
+        // launchers, connect acts on an EXISTING box that already knows its own
+        // hub (`box.cloud.controlPlaneUrl`) — honor that too, so a box provisioned
+        // against a control plane is still gated after the local config is cleared
+        // or when connecting from another machine, not just when relay.controlPlaneUrl
+        // happens to be set here.
         const cfg = await loadEffectiveConfig(
           box.projectRoot ?? box.workspacePath ?? process.cwd(),
           {},
         );
         const refusal = directGitModeRefusal({
           pushMode: 'direct',
-          hubInPlay: remoteHubConfigured(cfg.effective),
+          hubInPlay: remoteHubConfigured(cfg.effective) || Boolean(box.cloud?.controlPlaneUrl),
         });
         if (refusal) {
           log.error(refusal);
