@@ -3,8 +3,8 @@ import { request as httpsRequest } from 'node:https';
 import type { BoxNoticeEvent, PromptAnswerBody, PromptAskEvent } from '@agentbox/relay';
 
 /**
- * SSE subscription back to the relay's `GET /admin/prompts/stream`. The
- * relay pushes:
+ * SSE subscription to the hub's `GET /api/v1/boxes/:id/prompts/stream`. The
+ * hub pushes:
  *   - `event: prompt-ask`      data: PromptAskEvent (with id)
  *   - `event: prompt-resolved` data: { id }
  *   - `event: notice-set`      data: BoxNoticeEvent (with id)
@@ -12,14 +12,16 @@ import type { BoxNoticeEvent, PromptAnswerBody, PromptAskEvent } from '@agentbox
  *   - `event: ping`            data: { ts }
  *
  * We reconnect with exponential backoff on any error or close — the only
- * way to know the relay is back is to keep trying.
+ * way to know the hub is back is to keep trying.
  *
- * The relay is usually the laptop's own loopback daemon (sub-ms), but a box
- * created against a control box streams from THAT plane instead — over the WAN,
- * with an admin bearer, and possibly https. Hence `authToken`: without it the
- * control box's admin gate rejects a non-loopback subscriber and the attach
- * footer stays silent on exactly the boxes that need it most. The backoff loop
- * already absorbs the flakier link; don't add tight timeouts here.
+ * The hub is usually the laptop's own local hub (sub-ms loopback), but a box
+ * created against a control box streams from THAT hub instead — over the WAN,
+ * possibly https. Either way the stream is gated exactly like the rest of
+ * `/api/v1`, so `hubApiKey` is the Bearer for both: the local hub's token, or the
+ * control box's `AGENTBOX_HUB_API_KEY`. Without it a password-profile hub rejects
+ * the subscriber and the footer stays silent on exactly the boxes that need it
+ * most. The backoff loop already absorbs the flakier link; don't add tight
+ * timeouts here.
  */
 export interface PromptStream {
   /** Stop subscribing; aborts any in-flight reconnect attempt. */
@@ -27,12 +29,13 @@ export interface PromptStream {
 }
 
 export interface SubscribeOptions {
-  relayBaseUrl: string;
+  hubBaseUrl: string;
   /**
-   * Admin bearer for a remote control box. Omitted for the local relay, whose
-   * admin gate passes on loopback alone.
+   * The hub API Bearer (local hub token, or a control box's AGENTBOX_HUB_API_KEY).
+   * Omitted only when the hub couldn't be authenticated (the footer then degrades
+   * silently, same as before).
    */
-  authToken?: string;
+  hubApiKey?: string;
   boxId: string;
   onPrompt: (ev: PromptAskEvent) => void;
   /** Server-driven: a sibling wrapper (or this one) answered; the run loop
@@ -56,7 +59,7 @@ export function subscribePrompts(opts: SubscribeOptions): PromptStream {
   let backoffMs = INITIAL_BACKOFF_MS;
   let url: URL;
   try {
-    url = new URL(opts.relayBaseUrl);
+    url = new URL(opts.hubBaseUrl);
   } catch (err) {
     if (opts.onError) opts.onError(err instanceof Error ? err : new Error(String(err)));
     return { close: () => {} };
@@ -138,17 +141,17 @@ export function subscribePrompts(opts: SubscribeOptions): PromptStream {
       host: url.hostname,
       port,
       method: 'GET',
-      path: `${url.pathname.replace(/\/$/, '')}/admin/prompts/stream?boxId=${encodeURIComponent(opts.boxId)}`,
+      path: `${url.pathname.replace(/\/$/, '')}/api/v1/boxes/${encodeURIComponent(opts.boxId)}/prompts/stream`,
       headers: {
         Accept: 'text/event-stream',
-        ...(opts.authToken ? { Authorization: `Bearer ${opts.authToken}` } : {}),
+        ...(opts.hubApiKey ? { Authorization: `Bearer ${opts.hubApiKey}` } : {}),
       },
     });
     req.on('response', (r) => {
       res = r;
       if (r.statusCode !== 200) {
-        // 400/403 — relay says "no for you"; bail without retrying since
-        // these are config errors (no boxId, not loopback) that won't fix
+        // 401/404 — the hub says "no for you"; bail without retrying since these
+        // are config errors (bad/absent API key, unknown box) that won't fix
         // themselves.
         if (opts.onError) opts.onError(new Error(`SSE stream returned ${String(r.statusCode)}`));
         r.resume();
@@ -195,15 +198,15 @@ export function subscribePrompts(opts: SubscribeOptions): PromptStream {
 }
 
 /**
- * POST a PromptAnswerBody to /admin/prompts/answer. Fire-and-(mostly)-
- * forget: we don't retry on failure because the relay's `prompts.resolve`
- * is idempotent and a double-resolve returns 404. If the relay was dead,
- * the SSE reconnect loop will repush any prompts that are still pending.
+ * POST an answer to `/api/v1/approvals/:id/answer`. Fire-and-(mostly)-forget: we
+ * don't retry on failure because the backend's resolve is idempotent and a
+ * double-resolve returns 404. If the hub was dead, the SSE reconnect loop will
+ * repush any prompts that are still pending.
  */
 export interface PostAnswerOptions {
-  relayBaseUrl: string;
-  /** Admin bearer for a remote control box; omitted for the local relay. */
-  authToken?: string;
+  hubBaseUrl: string;
+  /** The hub API Bearer (local hub token, or a control box's AGENTBOX_HUB_API_KEY). */
+  hubApiKey?: string;
   body: PromptAnswerBody;
 }
 
@@ -216,7 +219,7 @@ export function postAnswer(opts: PostAnswerOptions): Promise<PostAnswerResult> {
   return new Promise<PostAnswerResult>((resolve) => {
     let url: URL;
     try {
-      url = new URL(opts.relayBaseUrl);
+      url = new URL(opts.hubBaseUrl);
     } catch {
       resolve({ ok: false, status: 0 });
       return;
@@ -224,27 +227,33 @@ export function postAnswer(opts: PostAnswerOptions): Promise<PostAnswerResult> {
     const isHttps = url.protocol === 'https:';
     const transport = isHttps ? httpsRequest : httpRequest;
     const port = url.port.length > 0 ? Number.parseInt(url.port, 10) : isHttps ? 443 : 80;
-    const json = JSON.stringify(opts.body);
+    // The id rides the path; the v1 answer body carries answer (+ optional
+    // `cancelled`, the dismissal marker the footer never sends but the route
+    // accepts, so `agent approve --cancel` keeps its meaning through v1).
+    const json = JSON.stringify({
+      answer: opts.body.answer,
+      ...(opts.body.cancelled ? { cancelled: true } : {}),
+    });
     const req = transport(
       {
         host: url.hostname,
         port,
         method: 'POST',
-        path: `${url.pathname.replace(/\/$/, '')}/admin/prompts/answer`,
+        path: `${url.pathname.replace(/\/$/, '')}/api/v1/approvals/${encodeURIComponent(opts.body.id)}/answer`,
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(json).toString(),
-          ...(opts.authToken ? { Authorization: `Bearer ${opts.authToken}` } : {}),
+          ...(opts.hubApiKey ? { Authorization: `Bearer ${opts.hubApiKey}` } : {}),
         },
         // Generous enough for a WAN round-trip to a control box, not just the
-        // loopback relay this once only spoke to.
+        // loopback hub this once only spoke to.
         timeout: 8000,
       },
       (res) => {
         res.resume();
         const status = res.statusCode ?? 0;
-        // 204 = accepted; 404 = already answered (idempotent). Both are "done".
-        resolve({ ok: status === 204 || status === 404, status });
+        // 200 = accepted; 404 = already answered (idempotent). Both are "done".
+        resolve({ ok: status === 200 || status === 404, status });
       },
     );
     req.on('error', () => resolve({ ok: false, status: 0 }));

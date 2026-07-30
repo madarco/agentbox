@@ -418,10 +418,15 @@ export class HubApiClient {
     return (await this.request<{ approvals: HubApiApproval[] }>('GET', '/approvals')).approvals;
   }
 
-  /** Answer a pending approval by id. */
-  async answerApproval(id: string, answer: 'y' | 'n'): Promise<void> {
+  /**
+   * Answer a pending approval by id. `cancelled` marks a dismissal distinctly
+   * from a plain deny in the audit trail (the `agent approve --cancel` capability);
+   * it still resolves the parked action as not-approved.
+   */
+  async answerApproval(id: string, answer: 'y' | 'n', cancelled?: boolean): Promise<void> {
     await this.request<{ ok: true }>('POST', `/approvals/${encodeURIComponent(id)}/answer`, {
       answer,
+      ...(cancelled === true ? { cancelled: true } : {}),
     });
   }
 

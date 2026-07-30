@@ -37,15 +37,20 @@ import { cloudBackendLoader } from './lib/provider-importers';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number.parseInt(process.env.AGENTBOX_HUB_PORT ?? '8787', 10);
-const host = process.env.AGENTBOX_HUB_HOST ?? '127.0.0.1';
+// Default bind is 0.0.0.0 so docker boxes reach the embedded relay via
+// host.docker.internal (the localhost hub replaces the bare relay, which already
+// binds wide). The bind host no longer implies the profile — the localhost hub
+// binds wide yet stays the token gate — so the profile is defaulted independently.
+const host = process.env.AGENTBOX_HUB_HOST ?? '0.0.0.0';
 
-// A non-loopback bind is the hetzner profile (better-auth password); loopback is
-// localhost (lightweight token gate, set up below). Both are the same binary; the
-// env flips the profile so lib/auth-config + proxy.ts agree. Only hetzner defaults
-// AUTH=on — localhost is left unset so it can enter token mode (an explicit
-// AGENTBOX_HUB_AUTH=off still disables all protection).
-process.env.AGENTBOX_HUB_PROFILE ??= host === '127.0.0.1' ? 'localhost' : 'hetzner';
-if (host !== '127.0.0.1') process.env.AGENTBOX_HUB_AUTH ??= 'on';
+// Profile: localhost (lightweight token gate) unless explicitly set to hetzner/
+// vercel (a control box; `hub setup`/`hub expose` write AGENTBOX_HUB_PROFILE=hetzner).
+// Only the password profiles default AUTH=on — localhost is left unset so it can
+// enter token mode (an explicit AGENTBOX_HUB_AUTH=off still disables all protection).
+// `/admin/*` stays loopback-only by peer address regardless of bind host (the
+// localhost hub sets no admin token → adminGateAllows fail-closes non-loopback).
+process.env.AGENTBOX_HUB_PROFILE ??= 'localhost';
+if (process.env.AGENTBOX_HUB_PROFILE !== 'localhost') process.env.AGENTBOX_HUB_AUTH ??= 'on';
 
 /**
  * Pick the relay's persisted-state backend.
@@ -165,6 +170,23 @@ async function main(): Promise<void> {
   globalThis.__AGENTBOX_BOX_SOURCE = daemon.handle.store;
   globalThis.__AGENTBOX_HUB_BACKEND = createHubBackend(daemon.handle);
   globalThis.__AGENTBOX_HUB_NOTIFIER = daemon.handle.hubNotifier;
+  // Payload-carrying prompt fan-out for the `/api/v1` prompt-stream route (the
+  // attach footer). Reaches the relay handle's in-process subscribers/prompts/
+  // notices through this seam so @agentbox/relay stays out of Next's bundle.
+  globalThis.__AGENTBOX_HUB_PROMPTS = {
+    subscribe: (boxId, listener) => daemon.handle.subscribers.addListener(boxId, listener),
+    backlog: (boxId) => ({
+      prompts: daemon.handle.prompts.forBox(boxId),
+      notices: daemon.handle.notices.forBox(boxId),
+    }),
+  };
+  // On a control box (password profile) the always-on web UI + `/api/v1/approvals`
+  // are a durable place to answer, so declare the hub the durable subscriber: a
+  // host-action gate (git.push, cp, …) parks its confirm instead of auto-denying
+  // when no wrapper is attached — the laptop-off case that is the whole point of a
+  // control box. A plain local hub keeps floor 0 (auto-deny when nothing attached;
+  // the user is present and an unattended local box shouldn't wedge forever).
+  if (authMode() === 'password') daemon.handle.subscribers.setDurableFloor(1);
   // The custody store (agent creds / project seeds / bake records / box SSH keys),
   // for the Custody + project-Seed read-only routes. Null on a hub with no admin
   // token (localhost) — the routes then report custody-not-enabled. Shared via
@@ -260,8 +282,11 @@ async function main(): Promise<void> {
 
   process.stdout.write(`agentbox-hub: listening on ${host}:${String(port)} (dev=${String(dev)})\n`);
   if (mode === 'token') {
+    // Bound wide, but the token URL is for THIS machine — print a loopback host so
+    // it's clickable (0.0.0.0 is not a usable address in a browser).
+    const openHost = host === '0.0.0.0' ? '127.0.0.1' : host;
     process.stdout.write(
-      `agentbox-hub: open http://${host}:${String(port)}/?token=${process.env.AGENTBOX_HUB_TOKEN ?? ''}\n`,
+      `agentbox-hub: open http://${openHost}:${String(port)}/?token=${process.env.AGENTBOX_HUB_TOKEN ?? ''}\n`,
     );
   }
 

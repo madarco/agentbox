@@ -47,7 +47,17 @@ const HUB_PID_FILE = join(STATE_DIR, 'hub.pid');
 const HUB_LOG_FILE = join(STATE_DIR, 'hub.log');
 const HUB_TOKEN_FILE = join(STATE_DIR, 'hub', 'token');
 const PORT = DEFAULT_RELAY_PORT;
-const HOST = '127.0.0.1';
+// Bind wide (like the bare relay in relay.ts) so docker boxes can reach the hub's
+// embedded relay at host.docker.internal:8787 for their box-initiated RPCs (git
+// push/cp/download, and the /api/v1 prompt stream the attach footer subscribes to
+// once approvals moved off the bare relay onto the hub). The profile stays
+// `localhost` (token gate) — decoupled from the bind host in server.ts — so this
+// is not the hetzner control-box profile. `/admin/*` remains loopback-only by
+// peer address (the localhost hub sets no admin token, so adminGateAllows
+// fail-closes non-loopback callers); the LAN-reachable surface is only the
+// token-gated `/api/v1` + UI and the box-facing `/rpc` + `/events`, matching the
+// bare relay this replaces.
+const HOST = '0.0.0.0';
 
 /**
  * Portless alias for the hub itself. Unlike a box (a container that OrbStack can
@@ -97,7 +107,10 @@ const CP_DIR = join(STATE_DIR, 'control-plane');
  * Best-effort: a missing/partial record or env file → null (the plain localhost
  * hub). The hub itself fails closed on a genuinely missing secret.
  */
-async function resolveExposedSpawn(): Promise<{ env: Record<string, string>; profile: string } | null> {
+async function resolveExposedSpawn(): Promise<{
+  env: Record<string, string>;
+  profile: string;
+} | null> {
   try {
     const record = JSON.parse(
       await readFile(controlPlaneDeployPath(), 'utf8'),
@@ -424,7 +437,9 @@ async function spawnHub(
       // standalone build prunes).
       NODE_ENV: 'production',
       AGENTBOX_CLI_ENTRY: cliEntry,
-      // The hub is the localhost profile (token gate); bind loopback.
+      // The hub is the localhost profile (token gate). It binds 0.0.0.0 (see HOST)
+      // so docker boxes reach its embedded relay via host.docker.internal; the
+      // profile is set independently of the bind host in server.ts.
       AGENTBOX_HUB_HOST: HOST,
       // The hub bundle ships no staged build context of its own, so its
       // in-process freshness checks couldn't fingerprint (degrading to

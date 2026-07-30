@@ -1755,10 +1755,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     // Mirror POST /admin/prompts/answer's block branch, in-process: resolving
     // the entry fulfills the Promise the /rpc handler is awaiting (box unblocks),
     // and the broadcast clears any attached-terminal footer.
-    answerApproval(id, answer): Promise<ActionResult> {
+    answerApproval(id, answer, cancelled): Promise<ActionResult> {
       const boxId = handle.prompts.boxFor(id);
       if (!boxId) return Promise.resolve({ ok: false, error: 'no pending approval' });
-      if (!handle.prompts.resolve(id, answer)) {
+      if (!handle.prompts.resolve(id, answer, cancelled)) {
         return Promise.resolve({ ok: false, error: 'no pending approval' });
       }
       handle.subscribers.broadcast(boxId, 'prompt-resolved', { id });

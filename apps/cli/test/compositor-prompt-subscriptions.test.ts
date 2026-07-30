@@ -11,18 +11,18 @@ import { NEW_BOX_ID, type SidebarBox } from '../src/dashboard/sidebar.js';
  */
 
 const closed: string[] = [];
-const opened: Array<{ boxId: string; baseUrl: string; authToken?: string }> = [];
+const opened: Array<{ boxId: string; baseUrl: string; apiKey?: string }> = [];
 /** Boxes whose subscription should immediately fail permanently (a non-200). */
 const failWith = new Map<string, string>();
 
 vi.mock('../src/wrapped-pty/prompt-client.js', () => ({
   subscribePrompts: (opts: {
     boxId: string;
-    relayBaseUrl: string;
-    authToken?: string;
+    hubBaseUrl: string;
+    hubApiKey?: string;
     onError?: (e: Error) => void;
   }) => {
-    opened.push({ boxId: opts.boxId, baseUrl: opts.relayBaseUrl, authToken: opts.authToken });
+    opened.push({ boxId: opts.boxId, baseUrl: opts.hubBaseUrl, apiKey: opts.hubApiKey });
     const msg = failWith.get(opts.boxId);
     if (msg) queueMicrotask(() => opts.onError?.(new Error(msg)));
     return { close: () => closed.push(opts.boxId) };
@@ -40,7 +40,7 @@ function makeCompositor(over: Record<string, any> = {}): Compositor {
     termCtor: (() => {
       throw new Error('not used');
     }) as never,
-    relayBaseUrl: 'http://127.0.0.1:8787',
+    hubBaseUrl: 'http://127.0.0.1:8787',
     listCandidates: () => Promise.resolve([] as SidebarBox[]),
     resolveTarget: () => Promise.resolve({ kind: 'placeholder', lines: [] } as never),
     startClaude: () => Promise.resolve({ kind: 'placeholder', lines: [] } as never),
@@ -87,11 +87,9 @@ describe('compositor prompt subscriptions', () => {
   it('subscribes each box on the relay its own resolver returns', async () => {
     opened.length = 0;
     const c = makeCompositor({
-      relaySourceFor: (boxId: string) =>
+      hubSourceFor: (boxId: string) =>
         Promise.resolve(
-          boxId === 'hub-box'
-            ? { baseUrl: 'https://plane.example', authToken: 'tok' }
-            : null,
+          boxId === 'hub-box' ? { baseUrl: 'https://plane.example', apiKey: 'tok' } : null,
         ),
     });
     setBoxes(c, ['local-box', 'hub-box']);
@@ -101,13 +99,13 @@ describe('compositor prompt subscriptions', () => {
     expect(opened).toContainEqual({
       boxId: 'hub-box',
       baseUrl: 'https://plane.example',
-      authToken: 'tok',
+      apiKey: 'tok',
     });
-    // A resolver returning null falls back to the global relay, no bearer.
+    // A resolver returning null falls back to the global hub, no bearer.
     expect(opened).toContainEqual({
       boxId: 'local-box',
       baseUrl: 'http://127.0.0.1:8787',
-      authToken: undefined,
+      apiKey: undefined,
     });
   });
 
@@ -121,7 +119,7 @@ describe('compositor prompt subscriptions', () => {
     const c = makeCompositor({
       // First resolve hangs until released; later ones resolve immediately, so
       // two attempts for the same box are in flight at once.
-      relaySourceFor: async () => {
+      hubSourceFor: async () => {
         calls += 1;
         if (calls === 1) await gate;
         return null;
@@ -154,7 +152,7 @@ describe('compositor prompt subscriptions', () => {
     failWith.clear();
     failWith.set('bad-token', 'SSE stream returned 401');
 
-    const c = makeCompositor({ relaySourceFor: () => Promise.resolve(null) });
+    const c = makeCompositor({ hubSourceFor: () => Promise.resolve(null) });
     setBoxes(c, ['bad-token']);
     sync(c);
     await flush();
@@ -178,10 +176,10 @@ describe('compositor prompt subscriptions', () => {
     opened.length = 0;
     failWith.clear();
     const c = makeCompositor({
-      relaySourceFor: () =>
+      hubSourceFor: () =>
         Promise.resolve({
           baseUrl: 'http://127.0.0.1:8787',
-          warning: 'approvals live on https://plane.example but no admin token is available here',
+          warning: 'approvals live on https://plane.example but no hub API key is available here',
         }),
     });
     setBoxes(c, ['no-token']);
@@ -190,7 +188,7 @@ describe('compositor prompt subscriptions', () => {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const notices = (c as any).activeNotices as Map<string, { message: string }>;
-    expect(notices.get('no-token')?.message).toContain('no admin token');
+    expect(notices.get('no-token')?.message).toContain('no hub API key');
   });
 
   it('drops the slot when the box is gone by the time the resolve lands', async () => {
@@ -199,7 +197,7 @@ describe('compositor prompt subscriptions', () => {
     const gate = new Promise<void>((r) => (release = r));
 
     const c = makeCompositor({
-      relaySourceFor: async () => {
+      hubSourceFor: async () => {
         await gate;
         return null;
       },

@@ -782,7 +782,14 @@ export function buildOpenApi(): Record<string, unknown> {
               'application/json': {
                 schema: {
                   type: 'object',
-                  properties: { answer: { type: 'string', enum: ['y', 'n'] } },
+                  properties: {
+                    answer: { type: 'string', enum: ['y', 'n'] },
+                    cancelled: {
+                      type: 'boolean',
+                      description:
+                        'Mark a dismissal distinctly from a plain deny in the audit trail (the `agent approve --cancel` capability). Still leaves the action unapproved.',
+                    },
+                  },
                   required: ['answer'],
                 },
               },
@@ -801,6 +808,22 @@ export function buildOpenApi(): Record<string, unknown> {
             '401': errorResponse,
             '404': errorResponse,
             '503': errorResponse,
+          },
+        },
+      },
+      '/boxes/{id}/prompts/stream': {
+        get: {
+          tags: ['Approvals'],
+          summary: "Subscribe to a box's approval prompt stream (SSE)",
+          description:
+            "Payload-carrying Server-Sent Events for one box's host-action approvals — the attach footer's channel. Emits `prompt-ask` (the full pending-approval payload), `prompt-resolved` (`{ id }`), `notice-set`/`notice-clear`, and a `ping` heartbeat. Distinct from GET /api/events, which carries refetch signals only (`data: {}`). Degrades to open + heartbeat on a hub topology with no in-process relay.",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': {
+              description: 'SSE stream (text/event-stream)',
+              content: { 'text/event-stream': { schema: { type: 'string' } } },
+            },
+            '401': errorResponse,
           },
         },
       },

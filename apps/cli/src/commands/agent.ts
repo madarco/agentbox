@@ -1,12 +1,7 @@
 import { log } from '@clack/prompts';
 import type { BoxRecord } from '@agentbox/core';
-import {
-  BOX_STATUS_EVENT,
-  type BoxStatus,
-  type BoxStatusClaude,
-} from '@agentbox/ctl';
-import type { PromptAskEvent } from '@agentbox/relay';
-import { ensureRelay, readBoxStatus } from '@agentbox/sandbox-docker';
+import { BOX_STATUS_EVENT, type BoxStatus, type BoxStatusClaude } from '@agentbox/ctl';
+import { readBoxStatus } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import {
@@ -30,7 +25,8 @@ import { sendKey, sendLiteral } from '../lib/drive/tmux.js';
 import { providerForBox } from '../provider/registry.js';
 import { waitForEvent, WaitTimeoutError } from '../lib/wait/events.js';
 import { resolveBoxPromptSource, type BoxPromptSource } from '../control-plane/box-plane.js';
-import { resolveCustodyTarget } from './control-plane.js';
+import { resolveHubApiClient } from './control-plane.js';
+import { HubApiError } from '../control-plane/hub-api-client.js';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { handleLifecycleError } from './_errors.js';
@@ -38,7 +34,7 @@ import { handleLifecycleError } from './_errors.js';
 const DEFAULT_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 
 export const agentCommand = new Command('agent').description(
-  'Query and wait on the in-box coding agent\'s state (Claude Code plan-mode end, AskUserQuestion, idle/prompt-ready).',
+  "Query and wait on the in-box coding agent's state (Claude Code plan-mode end, AskUserQuestion, idle/prompt-ready).",
 );
 
 interface BoxRefOpts {
@@ -88,7 +84,9 @@ const agentWaitForCommand = new Command('wait-for')
       const target: AgentWaitState = state;
       const box = await resolveBoxOrExit(boxRef);
       const timeoutMs =
-        opts.timeout !== undefined ? parsePositiveInt(opts.timeout, '--timeout') : DEFAULT_WAIT_TIMEOUT_MS;
+        opts.timeout !== undefined
+          ? parsePositiveInt(opts.timeout, '--timeout')
+          : DEFAULT_WAIT_TIMEOUT_MS;
 
       // Fast path: maybe the box is already in the target state.
       const current = await readBoxStatus(box);
@@ -130,7 +128,9 @@ const agentWaitForCommand = new Command('wait-for')
   });
 
 const agentGetPlanQuestionCommand = new Command('get-plan-question')
-  .description("Print the active ExitPlanMode plan body or AskUserQuestion content (whichever is current).")
+  .description(
+    'Print the active ExitPlanMode plan body or AskUserQuestion content (whichever is current).',
+  )
   .argument('[box]', 'box ref (default: only box in this project)')
   .option('--json', 'emit the structured payload as JSON instead of a human render')
   .action(async (boxRef: string | undefined, opts: BoxRefOpts) => {
@@ -171,7 +171,7 @@ interface ApprovalsOpts {
 const agentApprovalsCommand = new Command('approvals')
   .description(
     'List everything a box is blocked on: relay host-action approvals (git push, cp host<->box, ' +
-      'gh PR writes, checkpoint) AND the agent\'s in-TUI prompts (plan approval, question, tool ' +
+      "gh PR writes, checkpoint) AND the agent's in-TUI prompts (plan approval, question, tool " +
       'permission). Each row carries an id to pass to `agent approve`.',
   )
   .argument('[box]', 'box ref (default: only box in this project)')
@@ -184,14 +184,16 @@ const agentApprovalsCommand = new Command('approvals')
     try {
       const box = await resolveBoxOrExit(boxRef);
       // A box created against a control box parks its host-action approvals
-      // THERE, not on this laptop's relay — ask the one it actually registered
-      // with, or a blocked box reads as "nothing pending".
+      // THERE, not on this laptop's hub — ask the one it actually registered
+      // with, or a blocked box reads as "nothing pending". Resolving the source
+      // brings up the local hub when the box answers here (its `/api/v1` is what
+      // this reads); a control-plane box's mailbox is the remote hub.
       const source = await resolveBoxPromptSource(box);
-      // Only a local-relay box needs the host daemon running; a control-plane
-      // box's mailbox is remote, and starting a local relay for it is pointless.
-      if (!source.remote) await ensureRelay();
-      const waitMs =
-        opts.wait !== undefined ? parsePositiveInt(opts.wait, '--wait') : undefined;
+      if (!source) {
+        log.error("Could not reach a hub to read this box's approvals.");
+        process.exit(1);
+      }
+      const waitMs = opts.wait !== undefined ? parsePositiveInt(opts.wait, '--wait') : undefined;
 
       let gathered = await gatherApprovals(source, box);
       if (waitMs !== undefined && gathered.rows.length === 0) {
@@ -208,7 +210,7 @@ const agentApprovalsCommand = new Command('approvals')
         // and put the degraded-mailbox warning on stderr.
         if (gathered.relayError !== undefined) {
           process.stderr.write(
-            `warning: could not read the ${source.remote ? 'control box' : 'relay'} approval mailbox (${gathered.relayError}); host-action rows may be missing\n`,
+            `warning: could not read the ${source.remote ? 'control box' : 'hub'} approval mailbox (${gathered.relayError}); host-action rows may be missing\n`,
           );
         }
         process.stdout.write(JSON.stringify(rows) + '\n');
@@ -220,7 +222,7 @@ const agentApprovalsCommand = new Command('approvals')
         // own status — so show them, but never let a missing mailbox read as
         // "nothing pending".
         log.warn(
-          `could not read the ${source.remote ? 'control box' : 'relay'} approval mailbox (${gathered.relayError}) — ` +
+          `could not read the ${source.remote ? 'control box' : 'hub'} approval mailbox (${gathered.relayError}) — ` +
             'host-action approvals are not shown.',
         );
         process.exitCode = 1;
@@ -230,14 +232,16 @@ const agentApprovalsCommand = new Command('approvals')
         // mailbox — an empty list is only meaningful if we got an answer.
         if (source.unauthenticatedPlane !== undefined) {
           log.warn(
-            `this box's approvals live on ${source.unauthenticatedPlane}, but no admin token is available here — ` +
-              'set AGENTBOX_RELAY_ADMIN_TOKEN (or run `agentbox hub setup`) to see them.',
+            `this box's approvals live on ${source.unauthenticatedPlane}, but no hub API key is available here — ` +
+              'set AGENTBOX_HUB_API_KEY (or run `agentbox hub setup`) to see them.',
           );
           process.exitCode = 1;
           return;
         }
         if (gathered.relayError === undefined) {
-          log.info('nothing pending for this box (no relay approvals, agent not parked on a prompt)');
+          log.info(
+            'nothing pending for this box (no host-action approvals, agent not parked on a prompt)',
+          );
         }
         return;
       }
@@ -259,7 +263,7 @@ const agentApproveCommand = new Command('approve')
   .description(
     'Answer a pending approval by id (see `agent approvals`). The id is a safety token: you answer ' +
       'the exact prompt you inspected, and if a different one has since taken its place the approve ' +
-      'is refused. Works for both relay host-action approvals and the agent\'s in-TUI prompts ' +
+      "is refused. Works for both relay host-action approvals and the agent's in-TUI prompts " +
       '(plan / question / tool permission). Approves by default; --deny rejects.',
   )
   .argument('<id>', 'approval id from `agent approvals` (relay UUID or a tui:... id)')
@@ -282,75 +286,61 @@ const agentApproveCommand = new Command('approve')
   });
 
 /**
- * Answer a relay host-action prompt by its UUID (the #60 path).
+ * Answer a host-action prompt by its UUID (the #60 path) over the hub `/api/v1`.
  *
  * Unlike `approvals`, this takes only an id — no box to resolve a plane from.
- * Prompt ids are UUIDs, so trying both mailboxes is unambiguous: the local relay
- * first (the common case, and free), then the configured control box, which is
- * where a hub box's approvals actually live. Without the fallback, answering a
- * hub box's prompt from the CLI is simply impossible.
+ * Prompt ids are UUIDs, so trying both hubs is unambiguous: the local hub first
+ * (the common case; auto-started so `/api/v1/approvals/:id/answer` is available),
+ * then the configured control box, which is where a hub box's approvals actually
+ * live. Without the fallback, answering a hub box's prompt from the CLI is
+ * simply impossible.
+ *
+ * `--cancel` marks a dismissal distinctly from a plain deny in the audit trail;
+ * it still resolves the parked action as not-approved.
  */
 async function approveRelay(id: string, opts: ApproveOpts): Promise<void> {
   const cancelled = opts.cancel === true;
   const answer: 'y' | 'n' = opts.deny === true || cancelled ? 'n' : 'y';
-  const body = JSON.stringify({ id, answer, cancelled: cancelled || undefined });
+  const label = answer === 'y' ? 'approved' : 'denied';
 
-  const post = async (base: string, token?: string): Promise<number> => {
-    const res = await fetch(new URL('/admin/prompts/answer', base), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body,
-    });
-    return res.status;
-  };
-
-  const relayUrl = (await ensureRelay()).hostUrl;
-  let status = await post(relayUrl);
-  // 204 = resolved; 404 = not here (or already answered/expired).
-  if (status === 204) {
-    log.success(`approval ${id}: ${answer === 'y' ? 'approved' : 'denied'}`);
-    return;
+  // Local hub first (auto-started — a bare relay can't serve /api/v1). `not_found`
+  // means the prompt isn't here; fall through to the configured control box.
+  const localClient = await resolveHubApiClient(undefined, { preferLocal: true });
+  if (localClient) {
+    try {
+      await localClient.answerApproval(id, answer, cancelled);
+      log.success(`approval ${id}: ${label}`);
+      return;
+    } catch (err) {
+      if (!(err instanceof HubApiError && err.code === 'not_found')) throw err;
+    }
   }
-  if (status === 404) {
-    const target = await resolveCustodyTarget(undefined, { quiet: true });
-    if (target) {
-      status = await post(target.url, target.adminToken).catch(() => 0);
-      if (status === 204) {
-        log.success(
-          `approval ${id}: ${answer === 'y' ? 'approved' : 'denied'} (on the control box)`,
-        );
-        return;
-      }
-      if (status !== 404) {
-        // `post` maps a transport failure to 0 — report that as unreachable
-        // rather than as a nonsensical "HTTP 0".
-        log.error(
-          status === 0
-            ? `could not reach the control box at ${target.url} to answer ${id}`
-            : `control box /admin/prompts/answer: HTTP ${String(status)}`,
-        );
-        process.exit(1);
-      }
-    } else {
+
+  const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
+  if (cfg && remoteHubConfigured(cfg.effective)) {
+    const remoteClient = await resolveHubApiClient(undefined, { quiet: true });
+    if (!remoteClient) {
       // A control box we can't ask is not evidence the prompt is gone — saying
       // "already resolved" here would send you looking for the wrong problem.
-      const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
-      if (cfg && remoteHubConfigured(cfg.effective)) {
-        log.error(
-          `not found on this host's relay, and the control box could not be asked (no admin token).\n` +
-            'Set AGENTBOX_RELAY_ADMIN_TOKEN (or run `agentbox hub setup`), or answer it with `agentbox hub approvals answer`.',
-        );
-        process.exit(1);
-      }
+      log.error(
+        `not found on this host's hub, and the control box could not be asked (no API key).\n` +
+          'Set AGENTBOX_HUB_API_KEY (or run `agentbox hub setup`), or answer it with `agentbox hub approvals answer`.',
+      );
+      process.exit(1);
     }
-    log.info(`approval ${id} already resolved (or expired)`);
-    return;
+    try {
+      await remoteClient.answerApproval(id, answer, cancelled);
+      log.success(`approval ${id}: ${label} (on the control box)`);
+      return;
+    } catch (err) {
+      if (err instanceof HubApiError && err.code === 'not_found') {
+        log.info(`approval ${id} already resolved (or expired)`);
+        return;
+      }
+      throw err;
+    }
   }
-  log.error(`relay /admin/prompts/answer: HTTP ${String(status)}`);
-  process.exit(1);
+  log.info(`approval ${id} already resolved (or expired)`);
 }
 
 /**
@@ -390,14 +380,18 @@ async function approveInTui(id: string, opts: ApproveOpts): Promise<void> {
       const resolved = resolveQuestionOption(claude, opts.option);
       if (resolved === null) {
         const labels = (claude.question?.questions?.[0]?.options ?? []).map((o) => o.label);
-        log.error(`--option '${opts.option}' did not match an option (have: ${labels.join(' | ')})`);
+        log.error(
+          `--option '${opts.option}' did not match an option (have: ${labels.join(' | ')})`,
+        );
         process.exit(2);
       }
       option = resolved;
     } else {
       const n = Number.parseInt(opts.option, 10);
       if (!Number.isFinite(n) || n < 1) {
-        log.error(`--option must be a 1-based number for a ${parsed.kind} prompt (got: ${opts.option})`);
+        log.error(
+          `--option must be a 1-based number for a ${parsed.kind} prompt (got: ${opts.option})`,
+        );
         process.exit(2);
       }
       option = n;
@@ -410,7 +404,12 @@ async function approveInTui(id: string, opts: ApproveOpts): Promise<void> {
   const steps = answerKeystrokes(agent, parsed.kind, { option, deny: opts.deny });
   await runAnswerSteps(provider, box, session.name, steps);
 
-  const verb = opts.deny === true ? 'denied' : option !== undefined ? `answered (option ${String(option)})` : 'approved';
+  const verb =
+    opts.deny === true
+      ? 'denied'
+      : option !== undefined
+        ? `answered (option ${String(option)})`
+        : 'approved';
   log.success(`${parsed.kind} prompt on ${box.name}: ${verb}`);
 }
 
@@ -462,13 +461,14 @@ interface GatheredApprovals {
 }
 
 /**
- * Merge relay host-action prompts with the box's current in-TUI block (if any).
+ * Merge the hub's host-action approvals with the box's current in-TUI block (if
+ * any).
  *
- * The relay half is allowed to fail without taking the command down. It used to
- * be a loopback call that only failed if the local daemon was broken; for a hub
- * box it is a WAN request to the control box, and a blip there must not hide the
- * in-TUI plan/question/permission rows, which come from the box's own status and
- * are entirely independent.
+ * The hub half is allowed to fail without taking the command down. For a local
+ * box it is a loopback `/api/v1` call; for a hub box it is a WAN request to the
+ * control box, and a blip there must not hide the in-TUI plan/question/permission
+ * rows, which come from the box's own status and are entirely independent.
+ * `listApprovals` returns every box's pending approvals; filter to this box.
  */
 async function gatherApprovals(
   source: BoxPromptSource,
@@ -478,14 +478,15 @@ async function gatherApprovals(
   let relayError: string | undefined;
 
   try {
-    const relay = await fetchRelayApprovals(source, box.id);
-    for (const ev of relay) {
+    const approvals = await source.client.listApprovals();
+    for (const ev of approvals) {
+      if (ev.boxId !== box.id) continue;
       rows.push({
         id: ev.id,
         kind: 'host-action',
-        command: ev.context?.command,
-        argv: ev.context?.argv,
-        cwd: ev.context?.cwd,
+        command: ev.command,
+        argv: ev.argv,
+        cwd: ev.cwd,
         message: ev.message,
         detail: ev.detail,
         defaultAnswer: ev.defaultAnswer,
@@ -499,7 +500,12 @@ async function gatherApprovals(
   const tui = claude ? mintTuiId(box.id, claude) : null;
   if (claude && tui) {
     if (tui.kind === 'plan') {
-      rows.push({ id: tui.id, kind: 'plan', message: 'Approve plan?', plan: claude.plan?.plan ?? '' });
+      rows.push({
+        id: tui.id,
+        kind: 'plan',
+        message: 'Approve plan?',
+        plan: claude.plan?.plan ?? '',
+      });
     } else if (tui.kind === 'question') {
       const q = claude.question?.questions?.[0];
       rows.push({
@@ -518,20 +524,6 @@ async function gatherApprovals(
     }
   }
   return { rows, relayError };
-}
-
-async function fetchRelayApprovals(
-  source: BoxPromptSource,
-  boxId: string,
-): Promise<PromptAskEvent[]> {
-  const url = new URL('/admin/prompts', source.baseUrl);
-  url.searchParams.set('boxId', boxId);
-  const res = await fetch(url, {
-    headers: source.authToken ? { Authorization: `Bearer ${source.authToken}` } : {},
-  });
-  if (!res.ok) throw new Error(`relay /admin/prompts: HTTP ${String(res.status)}`);
-  const body = (await res.json()) as { prompts?: PromptAskEvent[] };
-  return body.prompts ?? [];
 }
 
 function approvalDisplay(row: ApprovalRow): string {

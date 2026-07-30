@@ -240,7 +240,7 @@ and rejected an empty key (`invalid_request`).
 
 ---
 
-## Step 2 — Approvals
+## Step 2 — Approvals ✅ done
 
 - `agentbox agent approvals|approve` and `hub approvals` → `/api/v1/approvals` and
   `/api/v1/approvals/:id/answer` in both modes. Drop the CLI's loopback `/admin/prompts` client.
@@ -258,10 +258,86 @@ and rejected an empty key (`invalid_request`).
 - While here: `AGENTBOX_GIT_PUSH_NO_SUB` auto-denies with no SSE subscriber — confirm a
   laptop-closed approval still parks correctly with the hub as the durable subscriber.
 
-**Files:** `commands/agent.ts`, `commands/control-plane.ts` (`approvalsSub`),
-`control-plane/box-plane.ts`, `wrapped-pty/prompt-client.ts`, new v1 stream route.
-**Verify:** trigger an in-box `git push` needing approval; answer it from the attach footer, from
-`agentbox agent approvals`, and from the web UI — each answer must clear the other two.
+**Landed.** All three approval clients speak `/api/v1` now, keyed by the hub API key (or the local
+hub token) — the CLI holds **no** admin-token client for approvals. `agent approvals`/`approve` go
+through `HubApiClient.listApprovals`/`answerApproval` (`hub approvals` already did). The **attach
+footer** moved off `/admin/prompts/stream` onto a new payload-carrying `/api/v1` route,
+`GET /api/v1/boxes/:id/prompts/stream` — a Next route that reaches the relay handle's in-process
+`PromptSubscribers`/`PendingPrompts`/`BoxNotices` through a new `globalThis.__AGENTBOX_HUB_PROMPTS`
+seam (set by `server.ts`, keeping `@agentbox/relay` out of Next's bundle). It emits the same
+`prompt-ask`/`prompt-resolved`/`notice-set`/`notice-clear` events the old admin stream did, gated by
+proxy.ts exactly like the rest of `/api/v1`; `subscribePrompts`/`postAnswer` (`prompt-client.ts`)
+now hit it and `POST /api/v1/approvals/:id/answer` with the API key. `resolveBoxPromptSource`
+(`box-plane.ts`) returns a `HubApiClient` + raw `{ baseUrl, apiKey }` (the low-level SSE needs the
+latter), resolving `cloud.controlPlaneUrl` first (survives a config change) then the local hub for a
+docker/no-plane box. **Verified end-to-end** on a **pure-local docker box**: a parked host-action
+approval answered from (a) the footer's `POST /api/v1/approvals/:id/answer`, (b) `agentbox agent
+approve`, and (c) the hub web UI (real browser click) — each fired `prompt-resolved` to the footer
+stream and cleared `agent approvals`, and the box unblocked (the action landed, ground truth). The
+in-box `git push` itself reached the hub and landed (`git ls-remote`).
+
+**Notes for later steps:**
+
+- **The footer + `agent approvals` now REQUIRE the full hub** (not a bare relay): the payload stream
+  is a Next `/api/v1` route, which a bare `agentbox relay` doesn't serve. `resolveBoxPromptSource`
+  auto-starts the local hub (`ensureHub`) for a docker/local box; `attachRelayOptions` degrades to a
+  no-op footer if that fails (attach never breaks). This is the intended end-state ("the hub is the
+  target").
+- **The localhost hub now binds `0.0.0.0` (was `127.0.0.1`) — a required consequence of the above,
+  and a real security surface to keep in mind.** Because the footer now depends on the hub, a docker
+  box must reach the hub's embedded relay at `host.docker.internal:8787` for **every** box-initiated
+  RPC (git push, `cp`, the prompt stream) — the bare relay it replaces already bound `0.0.0.0` for
+  exactly this reason (`relay.ts`), so the hub had to match it or docker box→host RPC 502s. The bind
+  host is now **decoupled from the profile**: `server.ts` defaults `AGENTBOX_HUB_PROFILE` to
+  `localhost` independently of the bind (previously `host === 127.0.0.1 ? localhost : hetzner`), and
+  `hub.ts` sets `HOST = '0.0.0.0'`. **Security invariants verified (empirically, against a wide-bound
+  localhost hub):** `/admin/*` stays **loopback-only by peer address** — `adminGateAllows` fail-closes
+  a non-loopback caller when no admin token is set, and the localhost hub sets none (a request from
+  the container got `403 admin endpoints are loopback-only`, loopback got `200`); the Web UI and
+  `/api/v1` stay Bearer/token-gated with **only** `/api/v1/{health,openapi.json,docs}` public (all
+  others + `/api/events` + `/` → `401` without a token). So the net-new LAN surface vs. the bare relay
+  is the token-gated UI + `/api/v1`, not the relay wire. **Step 12 (docker-free remote hub) must keep
+  this invariant** if it ever runs the localhost hub loopback-only again.
+- **Subscriber counting + the durable floor (the "laptop-closed" answer).** The host-action no-sub
+  gate (`host-actions.ts`, for **git.push / gh.pr / vercel+hetzner checkpoint** — NOT `cp`/`download`,
+  which always park) moved from `subscribers.forBox(id).length` to `subscribers.count(id)`, which sums
+  raw SSE writers **+ callback listeners** (the footer is a callback listener now, via the seam — a
+  `forBox().length` check would no longer see it and would silently auto-**deny**) **+ a process-wide
+  durable floor**. `server.ts` calls `setDurableFloor(1)` **only on the password profile** (a control
+  box): its always-on Web UI + `/api/v1/approvals` are a durable place to answer, so a laptop-closed
+  git.push **parks** instead of auto-denying. A plain localhost hub keeps floor 0 (the user is
+  present; an unattended local box shouldn't wedge). Unit-tested in `prompts.test.ts`. A docker box
+  can't e2e this gate — its scratch-branch push auto-approves — so the floor's live proof is the unit
+  test + the password-profile gate.
+- **Parked prompts have NO TTL — the box waits INDEFINITELY (a decision worth stating, not fixed
+  here).** The normal has-subscriber/durable-subscriber `askPrompt` call sites (git.push:1449,
+  gh.pr:523/594, cp:1002, download:1064) pass **no `ttlMs`**, so the parked in-box RPC blocks until
+  someone answers — forever if nobody does. Only the `*_NO_SUB=prompt` fallbacks (516/590/1442) get a
+  5-min TTL, and the optional `browser.open` mirror offer is TTL'd. Consequence on a control box: with
+  the durable floor a git.push nobody ever answers stalls that box silently and forever. **If a later
+  step wants a bound, add a `ttlMs` to the block-mode gates** (resolving to `defaultAnswer` + a
+  `notice`), rather than relying on the no-sub fallback that the floor now bypasses.
+- **`cancelled` was widened into the v1 contract, not dropped.** `agentbox agent approve --cancel`
+  marks a dismissal distinctly from a plain deny in the audit trail. `POST /api/v1/approvals/:id/answer`
+  now accepts `{ answer, cancelled?: boolean }` (`parseAnswer` → `backend.answerApproval(id, answer,
+  cancelled)` → `prompts.resolve(id, answer, cancelled)`); `HubApiClient.answerApproval` + the footer's
+  `postAnswer` thread it. Same "widen the contract, don't delete capability" rule as Step 1.
+- **`resolveBoxPlane` (admin-token, for `reap.ts`) was kept intact** — Step 2 added a parallel
+  `resolveBoxHubTarget` (hub API key) for the prompt source rather than repurposing it, so the destroy
+  reap path is untouched.
+- **`dashboard.ts` + `compositor.ts` were touched (out of Step 2's stated set) only to follow the
+  rename** (`relayBaseUrl`/`relaySourceFor`/`authToken` → `hubBaseUrl`/`hubSourceFor`/`apiKey`) — the
+  dashboard TUI's footer rides the same `subscribePrompts`/`postAnswer`, so it migrated to `/api/v1`
+  with the attach footer. Its per-box resolve is `quiet` (no autostart spinner mid-TUI); the dashboard
+  ensures the local hub once before entering the compositor.
+
+**Files:** `commands/agent.ts`, `control-plane/box-plane.ts`, `control-plane/hub-api-client.ts`,
+`wrapped-pty/{prompt-client,run}.ts`, `commands/dashboard.ts`, `dashboard/compositor.ts`,
+new `apps/hub/app/(dashboard)/api/v1/boxes/[id]/prompts/stream/route.ts`, `apps/hub/server.ts`,
+`apps/hub/global.d.ts`, `apps/hub/lib/{hub-backend,boxes/backend-types}.ts`,
+`api/v1/{approvals/[id]/answer/route,lib/validate,lib/openapi}.ts`,
+`packages/relay/src/{prompts,host-actions}.ts`, `packages/sandbox-docker/src/hub.ts`.
+(`commands/control-plane.ts`'s `approvalsSub` was already on `/api/v1` from an earlier step — untouched.)
 
 ---
 

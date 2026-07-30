@@ -150,13 +150,25 @@ export class PendingPrompts {
   }
 }
 
+/** A callback subscriber to a box's prompt/notice broadcasts. */
+export type PromptListener = (event: string, data: unknown) => void;
+
 /**
- * Tracks the set of host-side wrappers (SSE clients) currently subscribed
- * per box. `broadcast` writes to every subscriber so the user can answer
- * from whichever attached window they happen to be in.
+ * Tracks the set of host-side wrappers currently subscribed per box. Two kinds
+ * of subscriber exist:
+ *   - raw `ServerResponse` SSE writers — the relay's own `/admin/prompts/stream`
+ *     route (in-process on the same server).
+ *   - callback `PromptListener`s — the hub's `/api/v1` prompt stream, which is a
+ *     Next route that can't hold the relay's `ServerResponse` directly and
+ *     receives the same events via a callback instead.
+ *
+ * `broadcast` writes to both so the user can answer from whichever attached
+ * window (footer or web-driven stream) they happen to be in.
  */
 export class PromptSubscribers {
   private readonly byBox = new Map<string, Set<ServerResponse>>();
+  private readonly listenersByBox = new Map<string, Set<PromptListener>>();
+  private durableFloor = 0;
 
   add(boxId: string, res: ServerResponse): void {
     let set = this.byBox.get(boxId);
@@ -174,25 +186,85 @@ export class PromptSubscribers {
     if (set.size === 0) this.byBox.delete(boxId);
   }
 
+  /**
+   * Register a callback subscriber for a box; returns an unsubscribe. Used by
+   * the hub's `/api/v1` prompt-stream route (a Next route, reached via a
+   * globalThis seam) so its stream gets the same `prompt-ask`/`prompt-resolved`/
+   * `notice-*` events the footer's admin stream does.
+   */
+  addListener(boxId: string, fn: PromptListener): () => void {
+    let set = this.listenersByBox.get(boxId);
+    if (!set) {
+      set = new Set();
+      this.listenersByBox.set(boxId, set);
+    }
+    set.add(fn);
+    return () => {
+      const s = this.listenersByBox.get(boxId);
+      if (!s) return;
+      s.delete(fn);
+      if (s.size === 0) this.listenersByBox.delete(boxId);
+    };
+  }
+
   forBox(boxId: string): ServerResponse[] {
     const set = this.byBox.get(boxId);
     return set ? Array.from(set) : [];
   }
 
   /**
-   * Fire-and-forget broadcast. SSE writes that fail (closed socket) are
-   * swallowed — the `res.on('close')` handler in the server route already
-   * deregisters the dead subscriber.
+   * Set a process-wide floor added to every box's {@link count}. This is how the
+   * always-on hub declares itself the *durable subscriber*: when the floor is 1,
+   * a pending prompt is always answerable (the web UI + `/api/v1/approvals/:id/
+   * answer` never go away), so a host-action gate (e.g. git.push) parks the
+   * prompt instead of auto-denying when no wrapper is attached. Gated to the
+   * control-box profile by the caller — a plain local hub keeps floor 0 (the
+   * user is present; an unattended local box shouldn't wedge on a blocked push).
+   */
+  setDurableFloor(n: number): void {
+    this.durableFloor = Math.max(0, n);
+  }
+
+  /**
+   * How many subscribers a box has: raw SSE writers + callback listeners + the
+   * durable floor. The host-action no-subscriber gate reads this to decide
+   * whether a confirm can be surfaced-and-answered (park) or must fall back to
+   * its `*_NO_SUB` policy (auto-deny by default). Counting listeners is
+   * load-bearing: the footer moved from a `ServerResponse` on `/admin/prompts/
+   * stream` to a callback on the `/api/v1` stream, so a `forBox().length` check
+   * would no longer see an attached footer and would silently auto-deny.
+   */
+  count(boxId: string): number {
+    const responses = this.byBox.get(boxId)?.size ?? 0;
+    const listeners = this.listenersByBox.get(boxId)?.size ?? 0;
+    return responses + listeners + this.durableFloor;
+  }
+
+  /**
+   * Fire-and-forget broadcast to both SSE writers and callback listeners. Writes
+   * that fail (closed socket) are swallowed — the route's `close` handler already
+   * deregisters the dead subscriber; a throwing listener is isolated the same way.
    */
   broadcast(boxId: string, event: string, data: unknown): void {
     const set = this.byBox.get(boxId);
-    if (!set) return;
-    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-    for (const res of set) {
-      try {
-        res.write(payload);
-      } catch {
-        /* dead socket; close handler will deregister */
+    if (set) {
+      const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+      for (const res of set) {
+        try {
+          res.write(payload);
+        } catch {
+          /* dead socket; close handler will deregister */
+        }
+      }
+    }
+    const listeners = this.listenersByBox.get(boxId);
+    if (listeners) {
+      for (const fn of listeners) {
+        try {
+          fn(event, data);
+        } catch {
+          /* an errant listener must not take the broadcast (or its peers) down */
+        }
       }
     }
   }
