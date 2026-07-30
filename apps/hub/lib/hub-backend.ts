@@ -2519,7 +2519,18 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         const dryRun = opts.dryRun === true;
         const provider = opts.provider;
         if (!provider || provider === 'docker') {
-          return await pruneGeneral(opts.all === true, dryRun);
+          const view = await pruneGeneral(opts.all === true, dryRun);
+          // Reap the Store registration of every docker record we just removed, so
+          // a pruned orphan (its container vanished — crash, manual `docker rm`,
+          // OOM) doesn't linger in the hub-store-backed `agentbox ls` as a ghost.
+          // A normal `destroy` already reaps the Store; prune must too now that the
+          // listing comes from the Store, not state.json. Idempotent + best-effort.
+          if (!dryRun && view.kind === 'general') {
+            for (const id of view.result.removedRecords) {
+              await reapStoreState(handle, id).catch(() => false);
+            }
+          }
+          return view;
         }
         const enumRes = await enumerateCloudOrphans(provider);
         if (!enumRes.ok) return { kind: 'error', error: enumRes.error };
