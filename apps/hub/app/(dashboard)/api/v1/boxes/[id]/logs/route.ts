@@ -35,7 +35,18 @@ export async function GET(
 
   if (!follow) {
     const snap = await backend.boxLogSnapshot(id, { service, tail, daemon });
-    if (!snap.ok) return failFromAction(snap.error, { exitCode: snap.exitCode });
+    if (!snap.ok) {
+      // An exec that RAN but exited non-zero (a service/log error — `exitCode`
+      // present) is operational, NOT a missing box. Return `conflict`, not
+      // `failFromAction`: its not_found heuristic would match a "no such service"
+      // stderr, and since logs is box-scoped (`withOwningHub`) a not_found makes the
+      // CLI retry the OTHER hub and report "box not found on any hub" instead of the
+      // real error. Only a box-resolution miss (no `exitCode`) is a true not_found.
+      if (snap.exitCode !== undefined) {
+        return fail('conflict', snap.error, { exitCode: snap.exitCode });
+      }
+      return failFromAction(snap.error);
+    }
     return ok({ output: snap.stdout ?? '' });
   }
 

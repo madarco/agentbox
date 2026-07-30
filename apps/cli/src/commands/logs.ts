@@ -107,9 +107,13 @@ export const logsCommand = new Command('logs')
       }
       // Hard-exit: a half-open SSE socket to the hub can keep the event loop alive
       // after the stream ends, so exit explicitly (the old docker-exec follow did
-      // the same via child.on('exit')). 'done'/'aborted' (clean end or Ctrl-C) →
-      // 0; a 'failed'/'error' in-box tail → 1 so scripts can tell them apart.
-      process.exit(status === 'failed' || status === 'error' ? 1 : 0);
+      // the same via child.on('exit')). Only a CLEAN end is 0: 'done' (the in-box
+      // tail exited 0) or 'aborted' (the hub tore the stream down on request). A
+      // 'gone' status means the SSE closed with NO terminal `end` event — a dropped
+      // connection or a tail that died — so it exits 1 alongside 'failed'/'error',
+      // letting a script tell a clean follow from a broken one. (User Ctrl-C exits
+      // 130 in onSignal above, before reaching here.)
+      process.exit(status === 'done' || status === 'aborted' ? 0 : 1);
     } catch (err) {
       handleLifecycleError(err);
     }
