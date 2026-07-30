@@ -807,7 +807,7 @@ label resolves by name. Cloud `url`/`screen` validated via the (unchanged) provi
 
 ---
 
-## Step 8 — Create, queue and jobs
+## Step 8 — Create, queue and jobs ✅ done
 
 The biggest step; it collapses two queues into one client-facing route.
 
@@ -834,6 +834,92 @@ The biggest step; it collapses two queues into one client-facing route.
 **Verify:** `agentbox create -y -n smoke` against a local hub (docker) and a control box (e2b),
 watching `~/.agentbox/logs/create.log`; confirm a `.env` present only in the working tree arrives
 in the box in **both** cases.
+
+**Landed.** Every CLI create goes through `POST /api/v1/boxes` + streams `GET /api/v1/jobs/:id/logs`
+now — no inline `provider.create()` in `create.ts`. `resolveCreateTarget`
+(`control-plane/create-target.ts`) picks WHICH HUB (reusing Step 1's `preferLocal` ladder +
+`remoteHubConfigured`/`cloud.viaHub`/`isHubRoutableProvider`/`--via-hub`/`--local`): **local** →
+send `projectId` (`hashProjectPath(root)`) → the hub's file-queue fork → `_run-queued-job`;
+**remote control box** → push the project seed to custody first, then send `repoUrl` → the
+control-plane clone queue. Both keep the `202 {jobId}` contract. The launchers' via-hub helpers
+(`_cloud-agent-via-hub.ts`) moved onto `client.createBox` + the shared streamer with **unchanged
+signatures**, so `claude.ts`/`codex.ts`/`opencode.ts` are untouched. `queue list` and `hub jobs`
+read the unified `GET /api/v1/jobs`. `hub-enqueue.ts` + `hub-jobs.ts` are deleted. **Verified
+end-to-end** on a local hub (see the notes for the acceptance run).
+
+### Notes for later steps
+
+- **`route-create.ts` was KEPT, not deleted (deferred to Step 11).** The brief said retire it, but
+  `claude.ts`/`codex.ts`/`opencode.ts` still import `resolveCreateRouting` from it for their
+  hub/local decision, and the confirmed scope for this step was "convert the via-hub HELPERS only,
+  don't edit the launcher command files." Deleting `route-create.ts` now would force a launcher edit
+  (import swap) → out of scope + a merge-conflict risk. `create.ts` no longer imports it. **Step 11
+  (or whoever converts the launchers) deletes `route-create.ts` then**, swapping the launchers onto
+  `create-target.ts`'s `resolveCreateTarget`. There is minor duplication between the two selectors in
+  the meantime — deliberate.
+- **The foreground lane is a THIRD scheduler lane (`queue.ts`), peer to the prepare lane.** An
+  interactive `agentbox create` must never sit `queued` behind background `-i` jobs, so
+  `create.ts` sends `foreground: true` on the create body → `CreateBoxInput.foreground` →
+  `enqueueQueueJob({ foreground: true })` → `QueueJob.foreground`. `selectNextRunnable` /
+  `selectNextRunnableByWorking` **skip** foreground jobs (like they skip `kind:'prepare'`), and a new
+  `selectNextRunnableForeground` + a `startQueueLoop` tick block start every queued foreground create
+  **ungated** by `queue.maxConcurrent`. Its box still counts in `countRunning()` once live (honest
+  occupancy) — it's just never *blocked*. Unit-tested (`packages/relay/test/queue.test.ts`), and the
+  `-i`/web-UI paths deliberately stay gated (they don't set the flag). Any later step adding another
+  interactive create surface should set `foreground` too.
+- **`CreateBoxInput` was widened to carry EVERY create flag (`CreateBoxOpts`), audited one-by-one.**
+  Dropping a flag to fit the queue shape is the Step-1 defect. The full set now threads
+  `create.ts` → `HubApiClient.createBox` body → `parseCreateBox` → `hub-backend.create` →
+  `QueueJobCreateOpts` → `_run-queued-job` → `provider.create`/`createBox`. New `QueueJobCreateOpts`
+  fields (were silently dropped on the file-queue path before): `build`, `imageRegistry`, `envFiles`,
+  `credentialSync`, `bundleDepth`, `useBranch`, `gitPushMode`, `size`, `location`, `inbound`,
+  `remoteHost`. `_run-queued-job`'s `runCloudJob` now **prefers `createOpts` over config** for
+  size/location/inbound (it read config-only before, dropping the CLI flags). A later step touching
+  create inputs must keep this chain complete.
+- **`agentArgs` drop FIXED end-to-end (+ regression test).** `controlPlaneCreateRequest` and the
+  `/remote/boxes` POST handler silently discarded `agentArgs`, so a hub-routed `claude -i` lost its
+  processed args (skip-permissions etc.). `ControlPlaneCreateInput`/`CreateJobRequest` now carry it;
+  `apps/hub/test/control-plane-create.test.ts` asserts the round-trip. (The `/remote/boxes` server
+  handler still drops it, but the CLI no longer uses that route — it's box→hub-internal now; Step 11
+  can prune it.)
+- **`startAgent` semantics: default-on for a named agent, `startAgent:false` = a COLD box.** The
+  web-UI "create a box" wants the agent running (`controlPlaneCreateRequest` defaults `startAgent`
+  true when `!noAgent`); the foreground `createCloudBoxViaHubAndAdopt` sends `startAgent:false` so the
+  worker builds a cold box and the PC adopts + attaches (the agent launches on attach). `agentbox
+  create` sends `agent:'none'`.
+- **`--from-branch` host-validation fix is STRUCTURAL, not a `from-branch.ts` knob.** Step 7's finding
+  (validating a ref against the host checkout is wrong under a remote hub) is fixed for `create` by
+  the early return: the remote path passes `fromBranch` straight through (the backend/clone validates
+  it), and `resolveBranchSelection` (host `git fetch`/`rev-parse`) runs **only** on the local path,
+  where the host genuinely has the repo. No `validateAgainstHost` knob was added — it would be dead
+  code (the launchers, which also validate, weren't touched). **A later step converting the launchers
+  should skip host branch-validation on their remote path the same way.**
+- **The seed push is unconditional on the create path (the `.env`/untracked fix) — reused, not moved.**
+  `pushCreateSeed` (`create-target.ts`) calls the existing `pushProjectSeedToCustody`
+  (`/admin/custody`, hash-skipped, best-effort — never fails the create) whenever a create routes to a
+  remote control box (the clone path). It is NOT gated on `--via-hub` anymore, so a default cloud
+  create and the agent-launcher hub path both push seed now (they didn't before → boxes missed
+  `.env`). The local file-queue path needs no seed push — the worker builds from the local tree, which
+  already carries untracked-not-ignored files (a gitignored `.env` needs `--with-env`, unchanged).
+  Custody stays on `/admin` here; moving it to `/api/v1/custody` is Step 10.
+- **The jobs view (`JobView`/`JobListItem`/`HubApiJob`) gained `error`/`provider`/`name`/`agent`/
+  `createdAt`.** `error` (a failed job's `reason`/`result.error`) is what lets the CLI create path
+  report a failure faithfully rather than a silent "done". `getJob` and the new `listJobs()` backend
+  method + `GET /api/v1/jobs` route surface them.
+- **`queue list` targets the LOCAL hub (`preferLocal`), `hub jobs` the configured hub.** "One queue
+  VIEW" = one route/shape (`/api/v1/jobs`), two targets — the same split as list-boxes. A laptop's
+  own background `-i` queue shows in `queue list`; a control box's create queue shows in `hub jobs`.
+  The old `queue list` merge (local table + a "control box" block) is gone. `queue
+  cancel`/`show`/`clear`/`wait-for` stay local (they manage local manifests).
+- **git-LFS was already handled (`cloneRepoWithLfs`, #249) — nothing added.** The clone-side worker
+  already clones with `GIT_LFS_SKIP_SMUDGE=1` then `git lfs pull` over the leased authed-HTTPS
+  endpoint. Verified present; the brief's "give the hub's clone its own LFS credentials" is satisfied
+  by that existing code (the leased token authenticates the LFS pull). No change.
+- **Env caveat for e2e (not a code gap):** the acceptance's `.env`-arrives check is proven on the
+  co-located paths (local hub + `hub expose`d), where files arrive via the file-queue tree seed. The
+  seed-push overlay is only load-bearing on a genuinely-remote control box + cloud provider, which
+  needs a real deploy — exercised by the logic + unit tests here, consistent with prior steps' gh-shim
+  blocker.
 
 ---
 

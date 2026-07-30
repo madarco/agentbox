@@ -104,11 +104,9 @@ import {
   planPush,
   type UploadItem,
 } from '../control-plane/custody-client.js';
-import { HubApiClient, HubApiError } from '../control-plane/hub-api-client.js';
+import { HubApiClient, HubApiError, type HubApiJob } from '../control-plane/hub-api-client.js';
 import { hubApiTargetFrom, withHubClient } from '../control-plane/with-hub.js';
 import { loadControlPlaneEnv } from '../control-plane/env-file.js';
-import { getHubJob, listHubJobs } from '../control-plane/hub-enqueue.js';
-import type { CreateJobRow } from '@agentbox/relay/control-plane';
 import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { handleLifecycleError } from './_errors.js';
 
@@ -1593,66 +1591,57 @@ const approvalsCmd = new Command('approvals')
   .addCommand(approvalsListSub)
   .addCommand(approvalsAnswerSub);
 
-// --- control-plane create queue (distinct from the PC's local `-i` queue) ---
+// --- the hub's create queue (via `/api/v1/jobs`; a control box when configured,
+//     else the local hub — one queue view, one route). ---
 
-/** `<age> <status> <provider> <name/repo>` — one job per line. */
-function jobLine(job: CreateJobRow): string {
-  const label = job.request.name ?? job.request.repoUrl;
+/** `<id> <status> <provider> <name/box/error>` — one job per line. */
+function jobLine(job: HubApiJob): string {
+  const label = job.name ?? '-';
   const boxOrError =
-    job.result?.error !== undefined
-      ? `  ${job.result.error.split('\n')[0]?.slice(0, 80) ?? ''}`
-      : job.result?.boxId
-        ? `  box ${job.result.boxId}`
+    job.error !== undefined
+      ? `  ${job.error.split('\n')[0]?.slice(0, 80) ?? ''}`
+      : job.boxId
+        ? `  box ${job.boxId}`
         : '';
-  return `${job.id.slice(0, 8)}  ${job.status.padEnd(7)}  ${job.request.provider.padEnd(9)}  ${label}${boxOrError}`;
+  return `${job.id.slice(0, 12)}  ${job.status.padEnd(7)}  ${(job.provider ?? '-').padEnd(9)}  ${label}${boxOrError}`;
 }
 
 const jobsListSub = new Command('list')
   .description(
-    'List create jobs on the control box. This is the queue that background `-i` cloud runs go to ' +
-      "when a control box is configured — distinct from this PC's local `agentbox queue`.",
+    'List create jobs on the hub. With a control box configured this is its create queue ' +
+      "(where background `-i` cloud runs go); otherwise it is the local hub's queue.",
   )
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .option('--json', 'print raw JSON')
   .action(async (opts: { url?: string; json?: boolean }) => {
-    try {
-      const target = await resolveCustodyTarget(opts.url);
-      if (!target) {
-        process.exitCode = 1;
-        return;
-      }
-      const jobs = await listHubJobs(target);
+    await withHubClient({ url: opts.url }, async (client) => {
+      const jobs = await client.listJobs();
       if (opts.json) {
         process.stdout.write(`${JSON.stringify({ jobs }, null, 2)}\n`);
         return;
       }
       if (jobs.length === 0) {
-        log.info('No create jobs on the control box.');
+        log.info('No create jobs on the hub.');
         return;
       }
       for (const job of jobs) process.stdout.write(`${jobLine(job)}\n`);
-    } catch (err) {
-      handleLifecycleError(err);
-    }
+    });
   });
 
 const jobsShowSub = new Command('show')
-  .description('Dump one control-box create job')
+  .description('Dump one hub create job')
   .argument('<jobId>', 'job id (or the short prefix `hub jobs list` prints)')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .action(async (jobId: string, opts: { url?: string }) => {
-    try {
-      const target = await resolveCustodyTarget(opts.url);
-      if (!target) {
-        process.exitCode = 1;
-        return;
-      }
-      // `jobs list` (and the `queue list` block) print an 8-char prefix, so the
-      // id you can actually copy is not the full UUID the by-id route wants.
-      // Try it verbatim first, then resolve it as a prefix.
-      let job = await getHubJob(target, jobId);
+    await withHubClient({ url: opts.url }, async (client) => {
+      // `jobs list` prints a 12-char prefix, so the id you copy may not be the full
+      // id the by-id route wants. Try it verbatim first, then resolve as a prefix.
+      let job = await client.getJob(jobId).catch((err) => {
+        if (err instanceof HubApiError && err.code === 'not_found') return null;
+        throw err;
+      });
       if (!job) {
-        const matches = (await listHubJobs(target)).filter((j) => j.id.startsWith(jobId));
+        const matches = (await client.listJobs()).filter((j) => j.id.startsWith(jobId));
         if (matches.length > 1) {
           log.error(
             `'${jobId}' matches ${String(matches.length)} jobs (${matches.map((m) => m.id.slice(0, 12)).join(', ')}) — pass more of the id.`,
@@ -1663,18 +1652,16 @@ const jobsShowSub = new Command('show')
         job = matches[0] ?? null;
       }
       if (!job) {
-        log.info(`No job '${jobId}' on the control box.`);
+        log.info(`No job '${jobId}' on the hub.`);
         process.exitCode = 1;
         return;
       }
       process.stdout.write(`${JSON.stringify(job, null, 2)}\n`);
-    } catch (err) {
-      handleLifecycleError(err);
-    }
+    });
   });
 
 const jobsCmd = new Command('jobs')
-  .description("Inspect the control box's box-create queue")
+  .description("Inspect the hub's box-create queue")
   .addCommand(jobsListSub)
   .addCommand(jobsShowSub);
 

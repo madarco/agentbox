@@ -6,7 +6,10 @@ import { fail, ok } from '../../lib/envelope';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
+export async function GET(
+  _req: Request,
+  ctx: { params: Promise<{ id: string }> },
+): Promise<Response> {
   const { id } = await ctx.params;
   const backend = backendOrNull();
   if (!backend) return fail('backend_unavailable', 'hub backend unavailable (run the hub server)');
@@ -17,5 +20,12 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     status: job.status,
     ...(job.boxId ? { boxId: job.boxId } : {}),
     ...(job.login ? { login: job.login } : {}),
+    // `error` lets the CLI create path report a failure faithfully rather than a
+    // silent "done"; provider/name/agent/createdAt round out the poll view.
+    ...(job.error ? { error: job.error } : {}),
+    ...(job.provider ? { provider: job.provider } : {}),
+    ...(job.name ? { name: job.name } : {}),
+    ...(job.agent ? { agent: job.agent } : {}),
+    ...(job.createdAt ? { createdAt: job.createdAt } : {}),
   });
 }

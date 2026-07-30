@@ -49,6 +49,7 @@ import {
   type PendingApproval,
   type QueueAgentKind,
   type QueueJob,
+  type QueueJobCreateOpts,
   type RelayServerHandle,
 } from '@agentbox/relay';
 import { mergeRemoteProviders } from './boxes/provider-origin.js';
@@ -127,6 +128,7 @@ import type {
   DirEntry,
   GitInfo,
   HubBackend,
+  JobListItem,
   OpenInApp,
   OpenTargets,
   OpenTargetsReport,
@@ -1832,16 +1834,20 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
    */
   async function createViaControlPlane(input: CreateBoxInput): Promise<CreateBoxResult> {
     if (process.env.AGENTBOX_HUB_WORKER !== 'on' || !handle.store.enqueueCreateJob) {
+      const what = input.repoUrl ?? `project ${input.projectId ?? '(none)'}`;
       return {
         ok: false,
-        error: `project ${input.projectId} has no folder on this machine, and this hub has no create worker to clone it with`,
+        error: `${what} has no folder on this machine, and this hub has no create worker to clone it with`,
       };
     }
-    const repoUrl = await projectRepoUrl(input.projectId);
+    // The CLI sends `repoUrl` directly (it holds the origin); the web UI sends a
+    // projectId whose repo the hub resolves. Prefer the explicit repoUrl.
+    const repoUrl =
+      input.repoUrl ?? (input.projectId ? await projectRepoUrl(input.projectId) : null);
     if (!repoUrl) {
       return {
         ok: false,
-        error: `project ${input.projectId} has no repo URL — a hub create clones from the origin, so the project must have one`,
+        error: `project ${input.projectId ?? '(none)'} has no repo URL — a hub create clones from the origin, so the project must have one`,
       };
     }
     const mapped = controlPlaneCreateRequest(input, repoUrl);
@@ -2100,15 +2106,14 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     },
     async create(input: CreateBoxInput): Promise<CreateBoxResult> {
       try {
+        // The canonical fork (same route, behavior differs inside): a `repoUrl`
+        // (or a projectId with no local folder — a control box's projects are
+        // repos, not folders) goes to the control-plane clone queue, the one path
+        // that leases a token, clones the repo and applies the custody seed. A
+        // resolvable local workspace goes to the file queue. Same 202 {jobId}.
         // Resolve the project by id server-side — never trust a client path.
-        // Accepts any project the dashboard shows (registry or live box root).
-        const workspace = await resolveProjectPath(input.projectId);
-        // No host checkout: the normal queue path builds a box FROM a local
-        // working copy, which a control box simply doesn't have (its projects are
-        // repos, not folders). Hand those to the control-plane create queue — the
-        // one path that leases a token, clones the repo and applies the custody
-        // seed. Same job-id contract, so the modal's log stream is unchanged.
-        if (!workspace || !existsSync(workspace)) {
+        const workspace = input.projectId ? await resolveProjectPath(input.projectId) : null;
+        if (input.repoUrl || !workspace || !existsSync(workspace)) {
           return await createViaControlPlane(input);
         }
         // Provider gate (defense-in-depth: a client could bypass the disabled UI
@@ -2175,15 +2180,56 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // stops after create, like `agentbox create`). It never attaches. The
         // worker names the box from `createOpts.name` (like the CLI's
         // pickCreateOpts), so the typed name must go there, not only on boxName.
+        // Box-shaping knobs the CLI `create` resolved (image, snapshot, limits,
+        // carry, size/location, credential-sync, ...). Threaded end-to-end so a
+        // hub-routed create builds the SAME box the old inline path did — dropping
+        // one is an invisible capability regression. Absent (web-UI create) → the
+        // worker's config defaults. `workspace`/`name`/`fromBranch` are authoritative
+        // here (resolved server-side), so they win over any opts echo.
+        const o = input.opts ?? {};
         const { job } = await enqueueQueueJob({
           agent,
           boxName: name ?? '',
           providerName: provider,
           prompt: noAgent ? '' : (input.prompt ?? ''),
-          agentArgs: [],
+          agentArgs: input.agentArgs ?? [],
           ...(noAgent ? { noAgent: true } : {}),
           ...(setupWizard ? { setupWizard: true } : {}),
-          createOpts: { workspace, name, fromBranch },
+          ...(input.foreground ? { foreground: true } : {}),
+          createOpts: {
+            workspace,
+            name,
+            fromBranch,
+            image: o.image,
+            snapshot: o.snapshot,
+            hostSnapshot: o.hostSnapshot,
+            withPlaywright: o.withPlaywright,
+            withEnv: o.withEnv,
+            envFiles: o.envFiles,
+            vnc: o.vnc,
+            resync: o.resync,
+            sharedDockerCache: o.sharedDockerCache,
+            portless: o.portless,
+            sessionName: o.sessionName,
+            dangerouslySkipPermissions: o.dangerouslySkipPermissions,
+            memory: o.memory,
+            cpus: o.cpus,
+            pidsLimit: o.pidsLimit,
+            disk: o.disk,
+            build: o.build,
+            imageRegistry: o.imageRegistry,
+            credentialSync: o.credentialSync,
+            bundleDepth: o.bundleDepth,
+            useBranch: o.useBranch,
+            gitPushMode: o.gitPushMode,
+            size: o.size,
+            location: o.location,
+            inbound: o.inbound,
+            remoteHost: o.remoteHost,
+            // ResolvedCarryEntry[] on the wire is typed unknown[] (Next-bundle
+            // hygiene); the worker reads the concrete shape.
+            carry: o.carry as QueueJobCreateOpts['carry'],
+          },
         });
         handle.pokeQueue();
         return { ok: true, jobId: job.id };
@@ -2304,9 +2350,17 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         const cp = await handle.store.getCreateJob?.(id).catch(() => null);
         if (!cp) return null;
         return {
+          id: cp.id,
           status: cp.status,
           logPath: queueLogPath(cp.id),
           boxId: cp.result?.boxId,
+          // A failed control-plane create carries its reason in result.error —
+          // surface it so the CLI create path reports the failure faithfully.
+          error: cp.result?.error,
+          provider: cp.request.provider,
+          name: cp.request.name,
+          agent: cp.request.agent,
+          createdAt: cp.createdAt,
         };
       }
       // Surface the worker-written login sub-state (the inbound code rides a
@@ -2320,7 +2374,56 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             lastError: job.login.lastError,
           }
         : undefined;
-      return { status: job.status, logPath: job.logPath, boxId: job.boxId, login };
+      return {
+        id: job.id,
+        status: job.status,
+        logPath: job.logPath,
+        boxId: job.boxId,
+        login,
+        // `reason` is the failure message the worker writes on a failed job.
+        error: job.status === 'failed' ? job.reason : undefined,
+        provider: job.providerName,
+        name: job.boxName || undefined,
+        agent: job.noAgent ? 'none' : job.agent,
+        createdAt: job.createdAt,
+      };
+    },
+    async listJobs() {
+      // The unified job view: local file-queue create jobs + (on a control box)
+      // the control-plane create queue. Prepare (bake) jobs are excluded — they
+      // produce an artifact, not a box. Newest first.
+      const [local, cp] = await Promise.all([
+        loadQueue(),
+        handle.store.listCreateJobs?.({ limit: 100 }).catch(() => []) ?? Promise.resolve([]),
+      ]);
+      const items: JobListItem[] = [];
+      for (const j of local) {
+        if (j.kind === 'prepare') continue;
+        items.push({
+          id: j.id,
+          status: j.status,
+          boxId: j.boxId,
+          error: j.status === 'failed' ? j.reason : undefined,
+          provider: j.providerName,
+          name: j.boxName || undefined,
+          agent: j.noAgent ? 'none' : j.agent,
+          createdAt: j.createdAt,
+        });
+      }
+      for (const j of cp) {
+        items.push({
+          id: j.id,
+          status: j.status,
+          boxId: j.result?.boxId,
+          error: j.result?.error,
+          provider: j.request.provider,
+          name: j.request.name,
+          agent: j.request.agent,
+          createdAt: j.createdAt,
+        });
+      }
+      items.sort((a, b) => ((a.createdAt ?? '') < (b.createdAt ?? '') ? 1 : -1));
+      return items;
     },
     async submitLoginCode(id, code) {
       const job = await readJob(id);

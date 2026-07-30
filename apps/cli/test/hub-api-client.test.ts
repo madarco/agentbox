@@ -294,4 +294,41 @@ describe('HubApiClient', () => {
       ),
     ).rejects.toMatchObject({ code: 'not_found', status: 404 });
   });
+
+  it('createBox POSTs the widened body to /boxes and returns the jobId', async () => {
+    const { fetchImpl, calls } = stub({
+      'POST /api/v1/boxes': { status: 202, body: { jobId: 'job-1' } },
+    });
+    const res = await new HubApiClient(target(fetchImpl)).createBox({
+      projectId: 'p',
+      agent: 'none',
+      foreground: true,
+      opts: { image: 'agentbox/box:dev', carry: [{ absSrc: '/x' }] },
+    });
+    expect(res.jobId).toBe('job-1');
+    expect(calls[0]!.method).toBe('POST');
+    expect(calls[0]!.url).toBe('https://hub.example/api/v1/boxes');
+    expect(calls[0]!.body).toMatchObject({ projectId: 'p', agent: 'none', foreground: true });
+  });
+
+  it('lists jobs and unwraps the envelope', async () => {
+    const { fetchImpl, calls } = stub({
+      'GET /api/v1/jobs': {
+        status: 200,
+        body: { jobs: [{ id: 'j1', status: 'running', provider: 'docker' }] },
+      },
+    });
+    const jobs = await new HubApiClient(target(fetchImpl)).listJobs();
+    expect(jobs).toEqual([{ id: 'j1', status: 'running', provider: 'docker' }]);
+    expect(calls[0]!.url).toBe('https://hub.example/api/v1/jobs');
+  });
+
+  it('submitLoginCode POSTs the pasted code to the job login-code route', async () => {
+    const { fetchImpl, calls } = stub({
+      'POST /api/v1/jobs/j1/login-code': { status: 200, body: { ok: true } },
+    });
+    await new HubApiClient(target(fetchImpl)).submitLoginCode('j1', 'ABC-123');
+    expect(calls[0]!.url).toBe('https://hub.example/api/v1/jobs/j1/login-code');
+    expect(calls[0]!.body).toEqual({ code: 'ABC-123' });
+  });
 });

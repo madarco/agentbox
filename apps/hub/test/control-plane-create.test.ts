@@ -73,4 +73,40 @@ describe('controlPlaneCreateRequest', () => {
       startAgent: true,
     });
   });
+
+  // Regression: the mapping used to DROP agentArgs entirely, so a hub-routed
+  // `claude -i` silently lost its processed args (e.g. --dangerously-skip-permissions).
+  it('carries agentArgs end-to-end (the dropped-field regression this step fixes)', () => {
+    const m = controlPlaneCreateRequest(
+      {
+        provider: 'e2b',
+        agent: 'claude',
+        prompt: 'go',
+        agentArgs: ['--dangerously-skip-permissions', '-m', 'opus'],
+      },
+      REPO,
+    );
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect(m.request.agentArgs).toEqual(['--dangerously-skip-permissions', '-m', 'opus']);
+  });
+
+  it('an empty agentArgs array is not sent', () => {
+    const m = controlPlaneCreateRequest({ provider: 'e2b', agent: 'claude', agentArgs: [] }, REPO);
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect('agentArgs' in m.request).toBe(false);
+  });
+
+  it('startAgent:false builds a COLD box (the foreground create-then-adopt path)', () => {
+    const m = controlPlaneCreateRequest(
+      { provider: 'e2b', agent: 'claude', startAgent: false },
+      REPO,
+    );
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    // agent is named (so an adopt relaunches it) but the worker does NOT start it.
+    expect(m.request).toEqual({ repoUrl: REPO, provider: 'e2b', agent: 'claude' });
+    expect('startAgent' in m.request).toBe(false);
+  });
 });

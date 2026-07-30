@@ -84,13 +84,72 @@ export interface GitInfo {
   error?: string;
 }
 
-// Input for creating a box in an existing (registered) project. The client
-// sends a projectId (never a host path); the backend resolves it to the
-// registered project's absolute path server-side. `agent` selects the coding
-// agent to start detached in the box; `prompt` is an optional seed turn (empty
-// = just start the agent, don't drive it).
+// Box-shaping knobs the CLI's `agentbox create` resolves before enqueuing, so a
+// create routed through the hub builds the SAME box the old inline path did.
+// Mirrors @agentbox/relay's QueueJobCreateOpts (kept import-free here, like
+// OpenInApp/PROVIDERS, so the heavy packages stay out of the Next bundle). Every
+// field is optional; absent → the worker's config default. The web UI sends none
+// of these (its create is a plain default box).
+export interface CreateBoxOpts {
+  image?: string;
+  /** Start from this checkpoint (`--snapshot`); else the project's default. */
+  snapshot?: string;
+  hostSnapshot?: boolean;
+  withPlaywright?: boolean;
+  withEnv?: boolean;
+  /** Gitignore-bypassing env/config files to copy in (`--with-env` / wizard picks). */
+  envFiles?: string[];
+  vnc?: boolean;
+  resync?: boolean;
+  sharedDockerCache?: boolean;
+  portless?: boolean;
+  memory?: string;
+  cpus?: string;
+  pidsLimit?: string;
+  disk?: string;
+  /** Cap commits in the cloud-seed git bundle (0 = full history). */
+  bundleDepth?: number;
+  /** VM size for cloud providers (hetzner type / daytona cpu-mem-disk / vercel vCPU). */
+  size?: string;
+  /** Datacenter / region (hetzner / digitalocean). */
+  location?: string;
+  /** VPS firewall access policy (locked | open | CIDR list). */
+  inbound?: string;
+  /** `-b`: reuse an existing branch instead of forking agentbox/<name>. */
+  useBranch?: string;
+  /** `--build`: force a local docker base build instead of pulling. */
+  build?: boolean;
+  /** `--no-credential-sync` → false. */
+  credentialSync?: boolean;
+  /** GHCR ref the base is pulled from (docker + daytona). */
+  imageRegistry?: string;
+  /** `git.pushMode` (`--dangerously-with-credentials` → 'direct'); cloud only. */
+  gitPushMode?: 'auto' | 'relay' | 'lease' | 'direct';
+  /** SSH destination whose docker engine runs a remote-docker box. */
+  remoteHost?: string;
+  /** Per-box `--no-dangerously-skip-permissions` opt-out. */
+  dangerouslySkipPermissions?: boolean;
+  sessionName?: string;
+  /**
+   * carry: entries the CLI resolved + approved on the host (`ResolvedCarryEntry[]`
+   * from @agentbox/core — typed `unknown[]` here to keep that package out of the
+   * Next bundle; the backend re-casts). Host-path metadata the worker reads at
+   * create time — only meaningful when the worker runs on the same machine as the
+   * files (the local file-queue path).
+   */
+  carry?: unknown[];
+}
+
+// Input for creating a box. The client sends EITHER a `projectId` (a registered
+// project on the hub's machine — resolved to its absolute path server-side, never
+// a client path) OR a `repoUrl` (origin URL the control-plane worker clones when
+// there is no local checkout). `agent` selects the coding agent to start detached
+// in the box; `prompt` is an optional seed turn (empty = just start the agent).
 export interface CreateBoxInput {
-  projectId: string;
+  // Exactly one of projectId / repoUrl. projectId → local workspace → file queue;
+  // repoUrl (or a projectId with no local folder) → control-plane clone queue.
+  projectId?: string;
+  repoUrl?: string;
   // 'none' = just create the box (like `agentbox create`), don't start an agent.
   agent: 'claude' | 'codex' | 'opencode' | 'none';
   // Sandbox provider to create on. Defaults to 'docker'. A bare provider name
@@ -100,14 +159,26 @@ export interface CreateBoxInput {
   provider?: string;
   name?: string;
   prompt?: string;
+  // Fully-processed agent argv (post-`--`, incl. skip-permissions) for a hub-routed
+  // `-i` run. Carried end-to-end so a hub create keeps the same args a local one
+  // does — dropping it silently broke flags like --dangerously-skip-permissions.
+  agentArgs?: string[];
+  // Start the agent in-box even without a seed prompt (the web-UI "create a box"
+  // means a box with its agent running). Inert for agent === 'none'.
+  startAgent?: boolean;
+  // A FOREGROUND create (interactive `agentbox create`) — the file-queue scheduler
+  // runs it in its own lane, ungated by queue.maxConcurrent (see QueueJob.foreground).
+  foreground?: boolean;
   // Base ref the box's per-box branch forks from (branch / tag / SHA), instead
   // of the project's current HEAD. Mirrors the CLI's `--from-branch`. The
-  // backend validates it against the host repo before enqueuing.
+  // backend validates it against the host repo before enqueuing (local path).
   fromBranch?: string;
   // Seed the agent's first turn with the setup-wizard prompt (generate
   // `agentbox.yaml`). The UI defaults this on for projects that need setup
   // (no `agentbox.yaml` + no default snapshot). Inert for agent === 'none'.
   setupWizard?: boolean;
+  // Box-shaping knobs the CLI resolved (see CreateBoxOpts). Absent for a web-UI create.
+  opts?: CreateBoxOpts;
 }
 
 // Branch listing for a project's create-box base-branch picker: the current
@@ -148,12 +219,34 @@ export interface JobLoginView {
 // Minimal job view for the log-stream route: the log file to tail, the terminal
 // status (so the SSE knows when to stop), the box id once the worker writes it
 // back, and (when a re-login is in flight) the login sub-state. Status is a plain
-// string to keep this module free of relay imports.
+// string to keep this module free of relay imports. `error` carries a failed
+// job's reason so the CLI create path can report a failure faithfully rather than
+// a silent "done"; `provider`/`name`/`agent`/`createdAt` render the queue listing.
 export interface JobView {
+  id: string;
   status: string;
   logPath: string;
   boxId?: string;
   login?: JobLoginView;
+  error?: string;
+  provider?: string;
+  name?: string;
+  agent?: string;
+  createdAt?: string;
+}
+
+// One row in the unified job listing (`GET /api/v1/jobs`). Same shape as JobView
+// minus the log path (a listing doesn't stream). Covers both the local file queue
+// and, on a control box, the control-plane create queue.
+export interface JobListItem {
+  id: string;
+  status: string;
+  boxId?: string;
+  error?: string;
+  provider?: string;
+  name?: string;
+  agent?: string;
+  createdAt?: string;
 }
 
 // ── checkpoints (durable project assets) ──
@@ -341,9 +434,13 @@ export interface HubBackend {
   // List a directory on the hub host for the folder picker. `dir` defaults to the
   // user's home; entries are the immediate subdirectories.
   browseDir(dir?: string): Promise<BrowseDirResult>;
-  // Read a background job (log path + status + login sub-state) for the per-job
-  // log SSE. null when the manifest is gone.
+  // Read a background job (log path + status + login sub-state + failure reason)
+  // for the per-job log SSE and the create-path verdict poll. null when gone.
   getJob(id: string): Promise<JobView | null>;
+  // The unified job listing (`agentbox queue list` / `hub jobs`): the local file
+  // queue's create jobs plus, on a control box, the control-plane create queue.
+  // Newest first.
+  listJobs(): Promise<JobListItem[]>;
   // Deliver a pasted OAuth code to a create job that is awaiting a Claude
   // re-login (writes it onto the manifest for the worker to consume).
   submitLoginCode(id: string, code: string): Promise<ActionResult>;

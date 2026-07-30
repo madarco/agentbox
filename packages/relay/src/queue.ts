@@ -1,13 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import {
-  mkdir,
-  readdir,
-  readFile,
-  rename,
-  unlink,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { closeSync, existsSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -15,6 +8,7 @@ import {
   BUILT_IN_DEFAULTS,
   GLOBAL_CONFIG_FILE,
   parseUserConfig,
+  type GitPushMode,
   type UserConfig,
 } from '@agentbox/config';
 import { readState, STATE_DIR, STATE_FILE } from '@agentbox/sandbox-core';
@@ -105,6 +99,16 @@ export interface QueueJob {
    * and no default snapshot. Inert when `noAgent` (no agent to run it).
    */
   setupWizard?: boolean;
+  /**
+   * A FOREGROUND create (an interactive `agentbox create` a human is watching),
+   * as opposed to a background `-i` run. The scheduler starts foreground jobs in
+   * their own lane, ungated by `queue.maxConcurrent` — that gate bounds background
+   * fan-out, and making an interactive command sit `queued` behind unrelated `-i`
+   * jobs would be a worse regression than the inline path it replaces. Its box
+   * still counts in the running total once live (honest occupancy); it is just
+   * never blocked. See {@link selectNextRunnableForeground}.
+   */
+  foreground?: boolean;
   /** Workspace + create-time options the worker reconstructs from. */
   createOpts: QueueJobCreateOpts;
   /** Per-job concurrency ceiling (--max-running override, else the global). */
@@ -226,6 +230,31 @@ export interface QueueJobCreateOpts {
    * job and applied by the worker, which reads the host files at create time.
    */
   carry?: ResolvedCarryEntry[];
+  // ── Fields the foreground `agentbox create` conversion carries so the queue
+  //    worker builds the same box the old inline path did (audit: every create
+  //    flag has a home; a dropped one is an invisible capability regression). ──
+  /** `--build` / `--no-pull`: force a local docker base build (→ allowPull:false). */
+  build?: boolean;
+  /** `box.imageRegistry`: GHCR ref the base is pulled from (docker + daytona). */
+  imageRegistry?: string;
+  /** `--with-env` / wizard picks: gitignore-bypassing env/config files to copy in. */
+  envFiles?: string[];
+  /** `--no-credential-sync` → false: the in-box refreshed-token fan-out watcher. */
+  credentialSync?: boolean;
+  /** `--bundle-depth`: cap commits in the cloud-seed git bundle (0 = full). */
+  bundleDepth?: number;
+  /** `-b`/`--use-branch`: reuse an existing branch instead of forking agentbox/<name>. */
+  useBranch?: string;
+  /** `git.pushMode` (`--dangerously-with-credentials` → 'direct'); cloud only. */
+  gitPushMode?: GitPushMode;
+  /** `--size`: VM size for cloud providers (hetzner type / daytona cpu-mem-disk / vercel vCPU). */
+  size?: string;
+  /** `--location`: datacenter/region (hetzner / digitalocean). */
+  location?: string;
+  /** `--inbound`: VPS firewall access policy (locked | open | CIDR list). */
+  inbound?: string;
+  /** `--remote-host`: SSH destination whose docker engine runs a remote-docker box. */
+  remoteHost?: string;
 }
 
 export interface QueueConfig {
@@ -288,6 +317,8 @@ export interface EnqueueQueueJobInput {
   noAgent?: boolean;
   /** Seed the setup-wizard prompt as the agent's first turn (hub create path). */
   setupWizard?: boolean;
+  /** A FOREGROUND create — starts in the ungated lane (see {@link QueueJob.foreground}). */
+  foreground?: boolean;
   /** Per-invocation override of queue.maxConcurrent. */
   maxRunningOverride?: number;
   /** Per-invocation override of queue.maxWorking. */
@@ -313,9 +344,7 @@ export interface EnqueueQueueJobResult {
  * share one manifest-builder without the hub importing `apps/cli`. The scheduler
  * (`startQueueLoop`) picks the manifest up on its next tick regardless.
  */
-export async function enqueueQueueJob(
-  input: EnqueueQueueJobInput,
-): Promise<EnqueueQueueJobResult> {
+export async function enqueueQueueJob(input: EnqueueQueueJobInput): Promise<EnqueueQueueJobResult> {
   const cfg = await loadQueueConfig();
   const ceiling =
     typeof input.maxRunningOverride === 'number' && input.maxRunningOverride > 0
@@ -337,6 +366,7 @@ export async function enqueueQueueJob(
     agentArgs: input.agentArgs,
     ...(input.noAgent ? { noAgent: true } : {}),
     ...(input.setupWizard ? { setupWizard: true } : {}),
+    ...(input.foreground ? { foreground: true } : {}),
     createOpts: input.createOpts,
     maxConcurrent: ceiling,
     ...(maxWorking !== undefined ? { maxWorking } : {}),
@@ -383,9 +413,7 @@ export interface EnqueuePrepareJobInput {
  * provider's own lane (see {@link PREPARE_MAX_CONCURRENT_PER_PROVIDER}) and never
  * surfaces as a box.
  */
-export async function enqueuePrepareJob(
-  input: EnqueuePrepareJobInput,
-): Promise<{ job: QueueJob }> {
+export async function enqueuePrepareJob(input: EnqueuePrepareJobInput): Promise<{ job: QueueJob }> {
   const id = randomBytes(9).toString('hex');
   const prepare: QueueJobPrepare = {
     ...(input.force ? { force: true } : {}),
@@ -472,7 +500,26 @@ export function selectNextRunnable(jobs: QueueJob[], runningCount: number): Queu
   for (const j of jobs) {
     if (j.status !== 'queued') continue;
     if (j.kind === 'prepare') continue; // prepare has its own lane
+    if (j.foreground) continue; // foreground has its own lane (ungated)
     if (runningCount < j.maxConcurrent) return j;
+  }
+  return null;
+}
+
+/**
+ * Pure selector for the FOREGROUND lane: the oldest queued foreground create.
+ * Ungated — a foreground create is an interactive command a human is watching
+ * (inherently one per terminal), so it must never sit `queued` behind background
+ * `-i` jobs that happen to fill `queue.maxConcurrent`. Independent of the box and
+ * working gates, exactly like {@link selectNextRunnablePrepare}. Its box counts
+ * toward the running total once live (honest occupancy) but is never blocked.
+ */
+export function selectNextRunnableForeground(jobs: QueueJob[]): QueueJob | null {
+  for (const j of jobs) {
+    if (j.status !== 'queued') continue;
+    if (j.kind === 'prepare') continue;
+    if (!j.foreground) continue;
+    return j;
   }
   return null;
 }
@@ -616,6 +663,7 @@ export function selectNextRunnableByWorking(
   for (const j of jobs) {
     if (j.status !== 'queued') continue;
     if (j.kind === 'prepare') continue; // prepare has its own lane
+    if (j.foreground) continue; // foreground has its own lane (ungated)
     const ceil =
       typeof j.maxWorking === 'number' && j.maxWorking > 0 ? j.maxWorking : globalMaxWorking;
     if (workingCount < ceil) return j;
@@ -821,6 +869,50 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
           await writeJob(failed);
           onStatusChange?.(failed);
           log(`queue: spawn for job ${updated.id} failed: ${msg}`);
+        }
+      }
+
+      // Foreground lane — an interactive `agentbox create` a human is watching.
+      // Ungated by `queue.maxConcurrent` (that gate bounds background `-i` fan-out);
+      // a foreground create must start immediately, not sit `queued` behind unrelated
+      // background jobs. Start every queued foreground create this tick — there is
+      // inherently one per terminal, and each was launched by a present human.
+      while (!stopped) {
+        const fresh = await loadQueue();
+        const next = selectNextRunnableForeground(fresh);
+        if (!next) break;
+        const current = await readJob(next.id);
+        if (!current || current.status !== 'queued') continue;
+        const updated: QueueJob = {
+          ...current,
+          status: 'running',
+          startedAt: new Date().toISOString(),
+        };
+        await writeJob(updated);
+        onStatusChange?.(updated);
+        try {
+          const pid = await spawnWorker(updated);
+          if (typeof pid === 'number') {
+            const withPid: QueueJob = { ...updated, pid };
+            await writeJob(withPid);
+            onStatusChange?.(withPid);
+            log(
+              `queue: started foreground job ${updated.id} (${updated.agent}) as pid ${String(pid)}`,
+            );
+          } else {
+            log(`queue: started foreground job ${updated.id} (${updated.agent}); pid unknown`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const failed: QueueJob = {
+            ...updated,
+            status: 'failed',
+            finishedAt: new Date().toISOString(),
+            reason: `worker-spawn-failed: ${msg}`,
+          };
+          await writeJob(failed);
+          onStatusChange?.(failed);
+          log(`queue: spawn for foreground job ${updated.id} failed: ${msg}`);
         }
       }
 

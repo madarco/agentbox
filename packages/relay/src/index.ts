@@ -239,6 +239,7 @@ export {
   countRunningPrepareJobsByProvider,
   selectNextRunnable,
   selectNextRunnableByWorking,
+  selectNextRunnableForeground,
   selectNextRunnablePrepare,
   startQueueLoop,
   STARTUP_GRACE_MS,

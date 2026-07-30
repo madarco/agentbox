@@ -1,5 +1,89 @@
 import { describe, expect, it } from 'vitest';
-import { parseCheckpointCreate, parsePrune } from '../app/(dashboard)/api/v1/lib/validate';
+import {
+  parseCheckpointCreate,
+  parseCreateBox,
+  parsePrune,
+} from '../app/(dashboard)/api/v1/lib/validate';
+
+describe('parseCreateBox', () => {
+  it('accepts a projectId (local file-queue path)', () => {
+    const r = parseCreateBox({ projectId: 'abc123', agent: 'none' });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.projectId).toBe('abc123');
+    expect(r.value.repoUrl).toBeUndefined();
+  });
+
+  it('accepts a repoUrl (control-plane clone path) with no projectId', () => {
+    const r = parseCreateBox({ repoUrl: 'https://github.com/acme/w.git', agent: 'claude' });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.repoUrl).toBe('https://github.com/acme/w.git');
+    expect(r.value.projectId).toBeUndefined();
+  });
+
+  it('requires one of projectId / repoUrl', () => {
+    expect(parseCreateBox({ agent: 'none' }).ok).toBe(false);
+  });
+
+  it('carries agentArgs, startAgent and foreground', () => {
+    const r = parseCreateBox({
+      projectId: 'p',
+      agent: 'claude',
+      agentArgs: ['--dangerously-skip-permissions'],
+      startAgent: true,
+      foreground: true,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.agentArgs).toEqual(['--dangerously-skip-permissions']);
+    expect(r.value.startAgent).toBe(true);
+    expect(r.value.foreground).toBe(true);
+  });
+
+  it('threads the create opts (image/snapshot/size/carry/gitPushMode/...) through', () => {
+    const r = parseCreateBox({
+      projectId: 'p',
+      agent: 'none',
+      opts: {
+        image: 'agentbox/box:dev',
+        snapshot: 'ckpt-1',
+        size: 'cx33',
+        bundleDepth: 50,
+        build: true,
+        gitPushMode: 'direct',
+        envFiles: ['.env', 'secrets.toml'],
+        carry: [{ absSrc: '/x' }],
+      },
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.opts).toMatchObject({
+      image: 'agentbox/box:dev',
+      snapshot: 'ckpt-1',
+      size: 'cx33',
+      bundleDepth: 50,
+      build: true,
+      gitPushMode: 'direct',
+      envFiles: ['.env', 'secrets.toml'],
+    });
+    expect(r.value.opts?.carry).toHaveLength(1);
+  });
+
+  it('rejects a wrong-typed opts field and a bad gitPushMode', () => {
+    expect(parseCreateBox({ projectId: 'p', agent: 'none', opts: { image: 5 } }).ok).toBe(false);
+    expect(
+      parseCreateBox({ projectId: 'p', agent: 'none', opts: { gitPushMode: 'nope' } }).ok,
+    ).toBe(false);
+    expect(parseCreateBox({ projectId: 'p', agent: 'none', opts: { bundleDepth: 'x' } }).ok).toBe(
+      false,
+    );
+  });
+
+  it('rejects an unknown agent', () => {
+    expect(parseCreateBox({ projectId: 'p', agent: 'gpt' }).ok).toBe(false);
+  });
+});
 
 describe('parseCheckpointCreate', () => {
   it('accepts an empty/absent body (auto-named, layered, not-default)', () => {
