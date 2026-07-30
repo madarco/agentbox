@@ -395,12 +395,20 @@ export const createCommand = new Command('create')
     );
     const remoteHost = opts.remoteHost ?? specRemoteHost;
 
-    // git.pushMode=direct (--dangerously-with-credentials) is refused when a
-    // control box is in play: token leasing already gives the box laptop-off push
-    // without copying a credential into it. Checked BEFORE routing so a
-    // control-box create can't slip into the hub path first (docker keeps its own
-    // "not applicable" guard below, so exclude it here).
-    if (providerName !== 'docker') {
+    // git.pushMode=direct (--dangerously-with-credentials) gating, in the same
+    // order every other entry point uses (agent launchers + connect): check the
+    // PROVIDER first — docker can't do direct, it bind-mounts the host .git — then
+    // refuse under a control box, where token leasing already gives the box
+    // laptop-off push without copying a credential into it. Both run BEFORE routing
+    // so a control-box create can't slip into the hub path first.
+    if (cfg.effective.git.pushMode === 'direct') {
+      if (providerName === 'docker') {
+        log.error(
+          'git.pushMode=direct / --dangerously-with-credentials is not applicable to docker boxes (they run on your host and bind-mount the host .git). Use a cloud provider (e.g. --provider hetzner|e2b|vercel|daytona).',
+        );
+        cmdLog.close();
+        process.exit(1);
+      }
       const refusal = directGitModeRefusal({
         pushMode: cfg.effective.git.pushMode,
         hubInPlay: remoteHubConfigured(cfg.effective) || Boolean(opts.viaHub),
@@ -436,16 +444,6 @@ export const createCommand = new Command('create')
       );
     }
 
-    // `direct` push mode (box holds a copy of your git credentials) is only
-    // meaningful for cloud boxes: a docker box runs on your host machine and
-    // bind-mounts the host `.git`, so it is never independent of the host.
-    if (cfg.effective.git.pushMode === 'direct' && providerName === 'docker') {
-      log.error(
-        'git.pushMode=direct / --dangerously-with-credentials is not applicable to docker boxes (they run on your host and bind-mount the host .git). Use a cloud provider (e.g. --provider hetzner|e2b|vercel|daytona).',
-      );
-      cmdLog.close();
-      process.exit(1);
-    }
     const checkpointRef = resolveCheckpointRef(
       opts,
       resolveDefaultCheckpoint(cfg.effective, providerName),
