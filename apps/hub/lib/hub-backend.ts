@@ -102,6 +102,7 @@ import {
   listCheckpoints,
   mintHostInitiatedToken,
   pruneBoxes,
+  readBoxStatus,
   registerBoxWithRelay,
   removeCheckpoint as removeDockerCheckpoint,
   setRelayNotice,
@@ -1626,7 +1627,16 @@ async function removeCheckpointEverywhere(
   for (const backend of cloudHits) {
     try {
       const cp = await cloudProviderForBackend(backend);
-      await cp?.checkpoint?.remove(projectRoot, ref);
+      // `cloudHits` means the checkpoint IS on disk for this backend, so a missing
+      // provider / checkpoint hook (e.g. a plugin backend not bundled in the hub)
+      // is a genuine can't-remove — record it as failed, NOT removed. Reporting a
+      // delete that didn't happen would leave the snapshot on disk while the CLI
+      // says it's gone.
+      if (!cp?.checkpoint) {
+        failedBackends.push(backend);
+        continue;
+      }
+      await cp.checkpoint.remove(projectRoot, ref);
       removed.push(backend);
     } catch {
       failedBackends.push(backend);
@@ -2589,10 +2599,16 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     async getAgentState(id): Promise<AgentStateResult | null> {
       const box = await findOrHydrateBox(id, hydrate).catch(() => null);
       if (!box) return null;
-      const snap = handle.statusStore.get(id);
-      const claude =
-        snap && isValidBoxStatus(snap) ? ((snap as unknown as CtlBoxStatus).claude ?? null) : null;
-      return { claude };
+      // Prefer the on-disk status.json (exactly what the CLI's readBoxStatus read):
+      // the relay writes it on every push, so it is the DURABLE snapshot and
+      // survives a hub/relay restart — unlike the in-memory statusStore, which is
+      // empty after a restart until the box pushes again. Fall back to the in-memory
+      // store for a box whose status file isn't on this machine (a registered-only /
+      // reverse-adopted box).
+      const disk = await readBoxStatus(box).catch(() => null);
+      const mem = handle.statusStore.get(id);
+      const snap = disk ?? (mem && isValidBoxStatus(mem) ? (mem as unknown as CtlBoxStatus) : null);
+      return { claude: snap?.claude ?? null };
     },
 
     // ── box service logs ──
