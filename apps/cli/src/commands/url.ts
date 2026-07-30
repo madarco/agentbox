@@ -12,7 +12,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { withHubClient } from '../control-plane/with-hub.js';
+import { withOwningHub } from '../control-plane/with-hub.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -146,10 +146,13 @@ export const urlCommand = new Command('url')
       // browser-safe SIGNED URL. `--loopback` / `--ttl` also need provider-level
       // URL computation the payload can't express, so they take the provider path.
       if (!opts.loopback && opts.ttl === undefined && (box.provider ?? 'docker') === 'docker') {
-        // Returns the payload URL, or null to fall back to the provider; the
-        // callback never returns undefined, so undefined uniquely means the hub
-        // call itself failed (withHubClient already reported it).
-        const payloadUrl = await withHubClient({}, async (client): Promise<string | null> => {
+        // Box-scoped, so it goes to the box's OWNING hub (withOwningHub); a plain
+        // withHubClient would send a docker box's `getBox` to a configured remote
+        // control box that never owned it → `not_found`. Capture the payload URL
+        // via closure (the op returns void); `null` means "no web endpoint, fall
+        // through to the provider", and a `not-found` outcome falls through too.
+        let payloadUrl: string | null = null;
+        const r = await withOwningHub(box, async (client) => {
           let b = await client.getBox(box.id);
           if (b.state && b.state !== 'running') {
             // A paused/stopped box serves nothing and a cached preview URL can be
@@ -162,14 +165,15 @@ export const urlCommand = new Command('url')
             await client.lifecycle(box.id, 'start');
             b = await client.getBox(box.id);
           }
-          return b.webUrl ?? null;
+          payloadUrl = b.webUrl ?? null;
         });
-        if (payloadUrl === undefined) return; // hub error; withHubClient set the exit code
+        if (r === undefined) return; // hub error; withOwningHub set the exit code
         if (payloadUrl) {
           emitUrl(payloadUrl, opts);
           return;
         }
-        // The payload carried no web endpoint — fall through to the provider.
+        // The payload carried no web endpoint (or no hub owns the box) — fall
+        // through to the provider path.
       }
 
       emitUrl(await resolveViaProvider(box, opts), opts);
