@@ -523,11 +523,18 @@ agent resumes on next attach — unchanged, and now correct-by-design rather tha
 - **All five box ops route via `withOwningHub(box, op)` — uniform owner-first + other-hub retry.**
   `WithHubOptions` gained `preferLocal` (reusing Step 0's exposed-loopback-first ladder — the same knob
   `prepare` uses); `withOwningHub` wraps it: it runs `op` against the owning hub (via `withHubClient`,
-  so version-gated + error-mapped), and on `not_found` retries the OTHER distinct hub (`runOpOnOtherHub`,
-  best-effort, never throws — an unreachable/erroring second hub is not proof the box belongs there).
+  so version-gated + error-mapped), and on `not_found` retries the OTHER distinct hub (`runOpOnOtherHub`).
   `start`/`stop`/`pause`/`unpause` and `destroy` all use it, so "destroy works but stop doesn't" can't
   happen. On `not-found` from every hub the four lifecycle commands report via `reportBoxNotOnAnyHub`
   (exit 2); `destroy` is the exception — it keeps the record (see next).
+- **The other-hub retry surfaces REAL errors — it does NOT swallow them (Bugbot Medium — fixed).**
+  `runOpOnOtherHub` distinguishes three outcomes rather than a bare `catch → false`: `'ok'` (the retry
+  hub did it), `'not-found'` (the retry hub genuinely doesn't own the box, OR it was
+  unreachable/unresolvable — neither is proof of ownership, so the caller keeps the record / refuses),
+  and `'error'` (a real `HubApiError` — conflict / auth / backend / internal — which it **reports**
+  with the mapped exit code and the caller aborts). The first cut mapped *every* retry failure to "not
+  found on any hub", masking a genuine conflict/auth/provider error as a missing box; only `not_found`
+  and transport failures now collapse to `'not-found'`.
 - **Destroy must NEVER drop the local record on a bare `not_found` (Bugbot High — fixed).** The laptop
   keeps an adopted `BoxRecord` + ssh alias for the direct IO plane; the route only cleans the **hub's**
   copy. My first cut treated any `not_found` as "already reaped" and dropped the local record — but
@@ -543,6 +550,20 @@ agent resumes on next attach — unchanged, and now correct-by-design rather tha
   paths (docker + a real e2b box, ground-truth via `docker inspect` / the e2b SDK) are e2e-green. Later
   steps that move an *adopting/reaping* op behind the hub must reuse `withOwningHub` (or mirror its
   owner-first + never-drop-on-not_found discipline).
+- **The hub's destroy `{ ok: true }` now means "provider teardown CONFIRMED", not "registration reaped"
+  (Bugbot High — fixed, `hub-backend.ts`).** The old backend returned `{ ok: true }` whenever it reaped
+  the Store registration, *even if `provider.destroy` failed* (no creds on the control box, provider
+  unresolvable) — so the CLI's `ok → reaped → removeBoxRecord` dropped the only record of a **live**
+  sandbox. The destroy method was restructured to three honest outcomes: box not found → reap any
+  dangling registration but return `not found` (unconfirmed teardown; the CLI retries/refuses, keeps the
+  record); `provider.destroy` **fails** → do NOT reap (keep the box visible + retryable) and return the
+  error (the CLI aborts + keeps the record); `provider.destroy` **succeeds** → reap + `{ ok: true }`
+  (the CLI drops the record). So `ok ⟺ the resource is actually gone`. **Live-validated:** with the
+  hub's `E2B_API_KEY` broken, `agentbox destroy` on a real e2b box surfaced the provider error, **kept
+  the local record, and left the sandbox running** (SDK-confirmed); restoring the key and re-running
+  destroyed the sandbox + dropped the record. A hub-UI/tray destroy of a box the control box can't
+  tear down now shows that error instead of silently orphaning the sandbox — more honest, and only the
+  abnormal no-creds path changes.
 - **The tmux-session-restore split (confirmed correct by the maintainer).** Route owns the box's
   compute lifecycle; the CLI restores the agent session *after* (box IO, direct plane); docker
   `unpause` needs NO restore because the cgroup thaw preserves the tmux session, while a cloud resume

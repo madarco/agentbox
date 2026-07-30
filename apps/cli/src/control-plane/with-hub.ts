@@ -216,34 +216,57 @@ export async function withOwningHub(
   if (primary === undefined) return undefined; // withHubClient reported + set the exit code
   if (primary === 'ok') return 'ok';
   // The owner-first hub does not know this box. Retry the OTHER distinct hub.
-  return (await runOpOnOtherHub(box, op, !ownerLocal)) ? 'ok' : 'not-found';
+  const other = await runOpOnOtherHub(box, op, !ownerLocal);
+  if (other === 'ok') return 'ok';
+  if (other === 'error') return undefined; // a real error on the retry hub — already reported
+  return 'not-found';
 }
 
 /**
- * Best-effort op against the OTHER hub (the one `preferLocalOther` selects),
- * skipped when it resolves to the same URL as the owner-first attempt (a
- * pure-local setup has only one hub). Returns true ONLY on a confirmed success;
- * never throws — an unreachable/erroring second hub can't prove ownership, so it
- * resolves to false and the caller treats the box as owned by no known hub.
+ * Run the op against the OTHER hub (the one `preferLocalOther` selects), skipped
+ * when it resolves to the same URL as the owner-first attempt (a pure-local setup
+ * has only one hub). Distinguishes three outcomes so a REAL error on the retry hub
+ * isn't misreported as "no hub owns the box":
+ *   - `'ok'`        — the retry hub performed the op.
+ *   - `'error'`     — a genuine failure (conflict / auth / provider error); it is
+ *                     REPORTED here (message + exit code) and the caller aborts.
+ *   - `'not-found'` — the retry hub doesn't own the box (`not_found`), OR it was
+ *                     unreachable / unresolvable — neither is proof of ownership,
+ *                     so the caller treats the box as owned by no known hub.
  */
 async function runOpOnOtherHub(
   box: { id: string; provider?: string },
   op: (client: HubApiClient) => Promise<void>,
   preferLocalOther: boolean,
-): Promise<boolean> {
+): Promise<'ok' | 'error' | 'not-found'> {
+  let owner: { url: string; apiKey: string } | null;
+  let other: { url: string; apiKey: string } | null;
   try {
     const { resolveHubApiTarget } = await import('../commands/control-plane.js');
-    const [owner, other] = await Promise.all([
+    [owner, other] = await Promise.all([
       resolveHubApiTarget(undefined, { quiet: true, preferLocal: !preferLocalOther }),
       // Non-quiet so a stopped LOCAL retry hub is auto-started (it's a candidate owner).
       resolveHubApiTarget(undefined, { preferLocal: preferLocalOther }),
     ]);
-    if (!other) return false;
-    if (owner && owner.url === other.url) return false; // no distinct second hub
-    await op(new HubApiClient(other));
-    return true;
   } catch {
-    return false;
+    return 'not-found'; // couldn't even resolve the other hub — not proof of ownership
+  }
+  if (!other) return 'not-found';
+  if (owner && owner.url === other.url) return 'not-found'; // no distinct second hub
+  try {
+    await op(new HubApiClient(other));
+    return 'ok';
+  } catch (err) {
+    if (err instanceof HubApiError) {
+      // `not_found` = legitimately not owned here; any other code (conflict, auth,
+      // backend, internal) is a REAL failure to surface, NOT "no hub owns the box".
+      if (err.code === 'not_found') return 'not-found';
+      reportHubError(err, other.url);
+      return 'error';
+    }
+    // A network/transport failure to the second hub — unreachable is not proof of
+    // ownership, so preserve the box (the caller keeps its record / refuses).
+    return 'not-found';
   }
 }
 

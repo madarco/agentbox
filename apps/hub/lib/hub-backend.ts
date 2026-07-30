@@ -1704,24 +1704,35 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       }
       // `hydrate` reverse-adopts a registration-only box (PC-created / worker-
       // created whose temp clone was cleaned) so `provider.destroy` tears down the
-      // REAL cloud resource — not just a state reap. Then reap the now-dead Store
-      // registration + custody regardless (idempotent; also cleans up a
-      // locally-created box's lingering registration).
-      const local = await runLifecycle(
-        id,
-        async (box, provider) => {
-          await provider.destroy(box, { keepSnapshot: opts?.keepSnapshot });
-          // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
-          await syncAgentboxSshConfig().catch(() => {});
-        },
-        hydrate,
-      );
-      const reaped = await reapStoreState(handle, id);
-      if (local.ok) return { ok: true };
-      // Real destroy couldn't run (no creds / provider unresolvable). If a
-      // registration was reaped, the box is gone from the control box's view —
-      // report success; otherwise surface the original "not found"/error.
-      return reaped ? { ok: true } : local;
+      // REAL cloud resource — not just a state reap.
+      const box = await findOrHydrateBox(id, hydrate);
+      if (!box) {
+        // Nothing under this id to tear down. Reap any dangling Store registration
+        // + custody so it stops showing, but report `not found` — we did NOT
+        // confirm a teardown, so a caller must not drop a local record on the
+        // strength of this (a box unknown here may be a docker box the caller
+        // should retry on its own local hub, or a stale record to drop only with an
+        // explicit `--force`).
+        await reapStoreState(handle, id);
+        return { ok: false, error: `box ${id} not found` };
+      }
+      try {
+        const provider = await providerForBox(box);
+        await provider.destroy(box, { keepSnapshot: opts?.keepSnapshot });
+        // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
+        await syncAgentboxSshConfig().catch(() => {});
+      } catch (err) {
+        // The provider teardown FAILED (no creds here, provider unreachable, ...).
+        // The resource may still be running, so do NOT reap the registration (keep
+        // the box visible + retryable) and report the failure — `{ ok: true }` here
+        // would let a caller drop the only record of a live sandbox, since reaping
+        // the registration alone is NOT a teardown.
+        return { ok: false, error: errMsg(err) };
+      }
+      // Confirmed teardown — now reap the now-dead Store registration + custody
+      // (idempotent; also cleans up a locally-created box's lingering registration).
+      await reapStoreState(handle, id);
+      return { ok: true };
     },
     async rename(id, displayName): Promise<ActionResult> {
       // Pure state mutation — no provider round-trip. Empty/blank clears the label.
