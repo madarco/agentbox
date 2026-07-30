@@ -13,95 +13,85 @@ import {
 } from '@agentbox/relay';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
-import { fetchHubJobs } from '../control-plane/hub-jobs.js';
+import type { HubApiJob } from '../control-plane/hub-api-client.js';
 
 interface QueueListOpts {
   all?: boolean;
 }
 
-const TERMINAL_STATUSES: ReadonlySet<QueueJobStatus> = new Set(['done', 'failed', 'cancelled']);
+const HIDDEN_LIST_STATUSES: ReadonlySet<string> = new Set(['done', 'failed', 'cancelled']);
 
-export const queueCommand = new Command('queue')
-  .description('Inspect and manage background `agentbox claude|codex|opencode -i` jobs');
+export const queueCommand = new Command('queue').description(
+  'Inspect and manage background `agentbox claude|codex|opencode -i` jobs',
+);
 
 const queueListCommand = new Command('list')
   .description('List queued, running, and (with --all) terminal background jobs')
   .option('--all', 'include done/failed/cancelled jobs (default: hide terminal)')
   .action(async (opts: QueueListOpts) => {
-    const jobs = await loadQueue();
     const cfg = await loadQueueConfig();
-    const visible = opts.all === true ? jobs : jobs.filter((j) => !TERMINAL_STATUSES.has(j.status));
+    const jobs = await listJobsForQueueView();
+    const visible =
+      opts.all === true ? jobs : jobs.filter((j) => !HIDDEN_LIST_STATUSES.has(j.status));
     if (visible.length === 0) {
-      log.info(opts.all ? 'no queued jobs.' : 'no active queued jobs (--all to see terminal).');
-      log.info(`queue.maxConcurrent = ${String(cfg.maxConcurrent)} (queue.enabled=${String(cfg.enabled)})`);
-      await reportHubJobs(opts.all === true);
-      return;
+      log.info(opts.all ? 'no jobs.' : 'no active jobs (--all to see terminal).');
+    } else {
+      renderJobTable(visible);
     }
-    // Build a compact ASCII table; one row per job. Keep columns predictable so
-    // it greps cleanly (id is the unique handle for cancel/show).
-    const rows = visible.map((j) => ({
-      id: j.id,
-      status: j.status,
-      agent: j.agent,
-      box: j.boxName || '(auto)',
-      provider: j.providerName,
-      max: String(j.maxConcurrent),
-      age: formatAge(j.createdAt),
-      prompt: truncate(j.prompt, 48),
-    }));
-    const headers = ['id', 'status', 'agent', 'box', 'provider', 'max', 'age', 'prompt'] as const;
-    const widths = headers.map((h) =>
-      Math.max(h.length, ...rows.map((r) => String(r[h as keyof typeof r]).length)),
+    log.info(
+      `queue.maxConcurrent = ${String(cfg.maxConcurrent)} (queue.enabled=${String(cfg.enabled)})`,
     );
-    const pad = (s: string, w: number): string => s + ' '.repeat(Math.max(0, w - s.length));
-    process.stdout.write(headers.map((h, i) => pad(h, widths[i]!)).join('  ') + '\n');
-    process.stdout.write(widths.map((w) => '-'.repeat(w)).join('  ') + '\n');
-    for (const r of rows) {
-      process.stdout.write(
-        headers.map((h, i) => pad(String(r[h as keyof typeof r]), widths[i]!)).join('  ') + '\n',
-      );
-    }
-    log.info(`queue.maxConcurrent = ${String(cfg.maxConcurrent)} (queue.enabled=${String(cfg.enabled)})`);
-    await reportHubJobs(opts.all === true);
   });
 
 /**
- * Append the control box's create queue, when one is configured.
- *
- * Rendered as its own block rather than merged into the table above: these are a
- * different queue with a different shape (no per-job concurrency, no local log),
- * and the local table's fixed columns are relied on for grepping. `cancel` /
- * `clear` are local-only, so say where hub jobs are managed instead of letting
- * them look actionable here.
+ * The job view for `queue list` — THIS laptop's local `-i` queue, read straight
+ * from the `~/.agentbox/queue/` manifests. Deliberately NOT the hub's merged
+ * `/api/v1/jobs`: `queue show`/`cancel` resolve an id against a local manifest
+ * (`readJob`), so listing a control-box create job here (which the merged view
+ * includes on a co-located control box) would print ids that `show`/`cancel`
+ * can't act on. A control box's create queue is `agentbox hub jobs` (the
+ * `/api/v1/jobs` view). Reading manifests also means `queue list` needs no hub.
  */
-async function reportHubJobs(all: boolean): Promise<void> {
-  const result = await fetchHubJobs();
-  if (result.kind === 'none') return;
-  if (result.kind === 'unavailable') {
-    log.warn(`control box configured but its queue is unavailable (${result.reason})`);
-    return;
-  }
-  const visible = all
-    ? result.jobs
-    : result.jobs.filter((j) => j.status === 'queued' || j.status === 'running');
-  if (visible.length === 0) {
-    log.info('control box: no active create jobs (--all to see finished).');
-    return;
-  }
-  process.stdout.write(`\ncontrol box (${String(visible.length)}):\n`);
-  for (const j of visible) {
-    const label = j.request.name ?? j.request.repoUrl;
-    const detail = j.result?.error
-      ? `  ${j.result.error.split('\n')[0]?.slice(0, 48) ?? ''}`
-      : j.result?.boxId
-        ? `  box ${j.result.boxId}`
-        : '';
+async function listJobsForQueueView(): Promise<HubApiJob[]> {
+  const local = await loadQueue();
+  return local
+    .filter((j) => j.kind !== 'prepare')
+    .map((j) => ({
+      id: j.id,
+      status: j.status,
+      boxId: j.boxId,
+      error: j.status === 'failed' ? j.reason : undefined,
+      provider: j.providerName,
+      name: j.boxName || undefined,
+      agent: j.noAgent ? 'none' : j.agent,
+      createdAt: j.createdAt,
+    }));
+}
+
+/** A compact ASCII table over the unified job listing; id is the cancel/show handle. */
+function renderJobTable(jobs: HubApiJob[]): void {
+  const rows = jobs.map((j) => ({
+    // Print the FULL id — `queue show`/`cancel` resolve it against the local
+    // manifest by exact id (no prefix match), so a truncated id wouldn't resolve.
+    id: j.id,
+    status: j.status,
+    agent: j.agent ?? '-',
+    box: j.name || j.boxId || '(auto)',
+    provider: j.provider ?? '-',
+    age: j.createdAt ? formatAge(j.createdAt) : '?',
+  }));
+  const headers = ['id', 'status', 'agent', 'box', 'provider', 'age'] as const;
+  const widths = headers.map((h) =>
+    Math.max(h.length, ...rows.map((r) => String(r[h as keyof typeof r]).length)),
+  );
+  const pad = (s: string, w: number): string => s + ' '.repeat(Math.max(0, w - s.length));
+  process.stdout.write(headers.map((h, i) => pad(h, widths[i]!)).join('  ') + '\n');
+  process.stdout.write(widths.map((w) => '-'.repeat(w)).join('  ') + '\n');
+  for (const r of rows) {
     process.stdout.write(
-      `  ${j.id.slice(0, 8)}  ${j.status.padEnd(7)}  ${(j.request.agent ?? '-').padEnd(8)}  ` +
-        `${j.request.provider.padEnd(9)}  ${formatAge(j.createdAt)}  ${label}${detail}\n`,
+      headers.map((h, i) => pad(String(r[h as keyof typeof r]), widths[i]!)).join('  ') + '\n',
     );
   }
-  log.info('manage these with `agentbox hub jobs` (cancel/clear are local-queue only).');
 }
 
 const queueShowCommand = new Command('show')
@@ -142,7 +132,9 @@ const queueCancelCommand = new Command('cancel')
     if (job.status !== 'queued') {
       log.error(
         `job ${id} is ${job.status}; cancel only flips 'queued' → 'cancelled'.` +
-          (job.status === 'running' ? ` Use 'agentbox destroy ${job.boxName || id}' to stop the box.` : ''),
+          (job.status === 'running'
+            ? ` Use 'agentbox destroy ${job.boxName || id}' to stop the box.`
+            : ''),
       );
       process.exit(1);
     }
@@ -162,24 +154,26 @@ const queueClearCommand = new Command('clear')
   .option('--failed', 'remove failed jobs')
   .option('--cancelled', 'remove cancelled jobs')
   .option('--all', 'remove every terminal-state job (done + failed + cancelled)')
-  .action(async (opts: { done?: boolean; failed?: boolean; cancelled?: boolean; all?: boolean }) => {
-    const targets = new Set<QueueJobStatus>();
-    if (opts.all === true || opts.done === true) targets.add('done');
-    if (opts.all === true || opts.failed === true) targets.add('failed');
-    if (opts.all === true || opts.cancelled === true) targets.add('cancelled');
-    if (targets.size === 0) {
-      log.error('pick at least one of: --done, --failed, --cancelled, --all');
-      process.exit(2);
-    }
-    const jobs = await loadQueue();
-    let removed = 0;
-    for (const j of jobs) {
-      if (!targets.has(j.status)) continue;
-      await deleteJob(j.id);
-      removed += 1;
-    }
-    log.success(`removed ${String(removed)} manifest${removed === 1 ? '' : 's'}`);
-  });
+  .action(
+    async (opts: { done?: boolean; failed?: boolean; cancelled?: boolean; all?: boolean }) => {
+      const targets = new Set<QueueJobStatus>();
+      if (opts.all === true || opts.done === true) targets.add('done');
+      if (opts.all === true || opts.failed === true) targets.add('failed');
+      if (opts.all === true || opts.cancelled === true) targets.add('cancelled');
+      if (targets.size === 0) {
+        log.error('pick at least one of: --done, --failed, --cancelled, --all');
+        process.exit(2);
+      }
+      const jobs = await loadQueue();
+      let removed = 0;
+      for (const j of jobs) {
+        if (!targets.has(j.status)) continue;
+        await deleteJob(j.id);
+        removed += 1;
+      }
+      log.success(`removed ${String(removed)} manifest${removed === 1 ? '' : 's'}`);
+    },
+  );
 
 const QUEUE_WAIT_EVENTS = [
   'new-box',
@@ -308,10 +302,7 @@ async function waitForQueueEvent(
   });
 }
 
-async function pollUntil<T>(
-  deadline: number,
-  probe: () => Promise<T | undefined>,
-): Promise<T> {
+async function pollUntil<T>(deadline: number, probe: () => Promise<T | undefined>): Promise<T> {
   while (Date.now() < deadline) {
     const result = await probe();
     if (result !== undefined) return result;
@@ -351,9 +342,4 @@ function formatAge(iso: string): string {
   if (h < 24) return `${String(h)}h`;
   const d = Math.floor(h / 24);
   return `${String(d)}d`;
-}
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max - 1) + '…';
 }

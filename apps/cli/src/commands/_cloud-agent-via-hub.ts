@@ -17,16 +17,15 @@
  */
 import type { BoxRecord } from '@agentbox/sandbox-docker';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
-import { normalizeRegistrationAgent, type BoxRegistration } from '@agentbox/relay';
 import {
-  resolveCustodyApiTarget,
   resolveCustodyTarget,
+  resolveHubApiTarget,
   syncAgentCredentialsIfChanged,
 } from './control-plane.js';
-import { enqueueCreateViaHub, pollHubJob } from '../control-plane/hub-enqueue.js';
 import { adoptHubBox } from '../control-plane/hub-adopt.js';
-import type { HubApiBox } from '../control-plane/hub-api-client.js';
-import { ControlPlaneAdminClient } from '../control-plane/admin-client.js';
+import { HubApiClient } from '../control-plane/hub-api-client.js';
+import { streamJobToCompletion } from '../control-plane/job-stream.js';
+import { pushCreateSeed } from '../control-plane/create-target.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
 import { makeProgressReporter } from '../lib/progress.js';
 
@@ -124,87 +123,74 @@ export async function createCloudBoxViaHubAndAdopt(
   args: CloudAgentViaHubArgs,
 ): Promise<BoxRecord | null> {
   const { providerName, projectRoot, agent, name, fromBranch, urlFlag, onStatus, onLog } = args;
-  const target = await resolveCustodyTarget(urlFlag, { quiet: true });
-  if (!target) return null;
+  // Both the `/api/v1` client (createBox) and the admin custody target (seed push
+  // + SSH-key pull) must be present — a fully-configured control box has both. If
+  // either is missing the box isn't hub-buildable from here, so fall back to local.
+  const apiTarget = await resolveHubApiTarget(urlFlag, { quiet: true });
+  const custody = await resolveCustodyTarget(urlFlag, { quiet: true });
+  if (!apiTarget || !custody) return null;
   const repoUrl = await readGitOriginUrl(projectRoot).catch(() => undefined);
   if (!repoUrl) return null;
   // Refresh custody's agent credentials FIRST. The worker seeds the box from
   // custody, and this machine holds the freshest token — without this the box
-  // comes up logged out with whatever a previous `create --via-hub` last pushed
-  // (a Claude refresh rotates the token, so a stale copy is dead, not merely
-  // expired). `create.ts` has always done this; the agent commands did not.
+  // comes up logged out with whatever was last pushed (a Claude refresh rotates
+  // the token, so a stale copy is dead, not merely expired).
   await syncAgentCredentialsIfChanged(urlFlag);
+  // Push the project seed so the clone-side worker overlays .env / untracked files
+  // a fresh clone can't provide (best-effort, hash-skipped).
+  await pushCreateSeed({ custody, repoUrl, projectRoot, onLog: onLog ?? (() => {}) });
 
-  const jobId = await enqueueCreateViaHub(target, {
+  const client = new HubApiClient(apiTarget);
+  const { jobId } = await client.createBox({
     repoUrl,
     provider: providerName,
-    branch: fromBranch?.trim() || undefined,
-    name: name?.trim() || undefined,
     agent,
+    name: name?.trim() || undefined,
+    fromBranch: fromBranch?.trim() || undefined,
+    // COLD create: the worker builds the box without starting the agent — this PC
+    // adopts it and the agent launches on attach.
+    startAgent: false,
   });
   onStatus?.('enqueued on the remote hub');
-  const job = await pollHubJob(target, jobId, {
-    onStatus: (j) => onStatus?.(`remote hub: ${j.status}`),
-    onLog: hubLogSink(onStatus, onLog),
+  const res = await streamJobToCompletion(client, jobId, {
+    onLine: hubLogSink(onStatus, onLog) ?? (() => {}),
+    onStatus: (s) => onStatus?.(`remote hub: ${s}`),
+    // A cold create runs no agent, so it can't park on a Claude re-login; surface
+    // any URL rather than block-prompting under the caller's spinner.
+    onLoginPrompt: async (url) => {
+      onStatus?.(`Claude re-login required — open ${url}`);
+      return null;
+    },
   });
-  if (job.status !== 'done') {
-    throw new Error(`create job failed: ${job.result?.error ?? 'unknown error'}`);
+  if (res.status !== 'done') {
+    throw new Error(`create job failed: ${res.detail ?? res.job?.error ?? 'unknown error'}`);
   }
-  const boxId = job.result?.boxId;
+  const boxId = res.job?.boxId;
   if (!boxId) throw new Error('the control box created the box but returned no id to adopt');
 
-  // Materialize the just-created box locally. This flow runs on the ADMIN plane
-  // (it enqueued + polled + seeds custody with the admin token this machine
-  // holds — an API key may be absent), and the box is freshly registered, so
-  // resolve it from the control box's store by exact id rather than through
-  // /api/v1. Step 8 moves this whole create path onto /api/v1; the general
-  // resolve path and `hub adopt` already go through GET /api/v1/boxes?ref=.
-  const regs = await new ControlPlaneAdminClient(target).listBoxes();
-  const reg = regs.find((r) => r.boxId === boxId);
-  if (!reg) {
-    throw new Error(`the control box created box ${boxId} but it is not registered to adopt`);
+  // Materialize the just-created box locally. Resolve it server-side via
+  // `GET /api/v1/boxes?ref=` (Step 4) rather than the admin store, then adopt.
+  // Require the EXACT id — never fall back to the first of an ambiguous/mismatched
+  // match set, or an adopt + SSH-config could target the wrong box.
+  const box = (await client.resolveBox(boxId)).find((b) => b.id === boxId);
+  if (!box) {
+    throw new Error(`the control box created box ${boxId} but it is not resolvable to adopt`);
   }
-  // SSH-key pull rides the hub's /api/v1 custody now (byte-read gated by the admin
-  // token, and the API key for the proxy gate); the enqueue/poll/listBoxes above
-  // stay on the admin plane (Step 8's). When the API key is absent (custodyApi
-  // null — a partial setup with the admin token but no key), the box is still
-  // adopted and `adoptHubBox` flags `sshKeysMissing` so an SSH provider's missing
-  // key is reported, not silently dropped.
-  const custodyApi = await resolveCustodyApiTarget(urlFlag, { quiet: true, remoteOnly: true });
-  const res = await adoptHubBox({
-    box: createdRegistrationToBox(reg),
-    custody: custodyApi ? new CustodyClient(custodyApi) : undefined,
-    controlPlaneUrl: target.url,
+  // SSH-key pull rides the hub's /api/v1 custody now (Step 10): the API key passes
+  // the proxy gate and the admin token is the elevated credential a control box's
+  // byte-read needs (#291). We hold both here, so hand both to the client; a box
+  // whose custody has no key is still adopted with `sshKeysMissing` flagged.
+  const adopted = await adoptHubBox({
+    box,
+    custody: new CustodyClient({
+      url: apiTarget.url,
+      apiKey: apiTarget.apiKey,
+      adminToken: custody.adminToken,
+    }),
+    controlPlaneUrl: apiTarget.url,
     log: onLog ?? ((): void => {}),
   });
-  return res.record;
-}
-
-/**
- * Adapt a freshly-created box's control-box registration to the resolved
- * `HubApiBox` shape `adoptHubBox` consumes. Transitional: this create path still
- * lives on the admin plane (the general resolve path goes through
- * `GET /api/v1/boxes?ref=`); Step 8 removes it when create moves onto /api/v1.
- * The relay/bridge tokens are deliberately not carried — `adoptHubBox` re-mints
- * them, which is inert for a control-plane-topology box.
- */
-function createdRegistrationToBox(reg: BoxRegistration): HubApiBox {
-  return {
-    id: reg.boxId,
-    name: reg.name,
-    task: reg.name,
-    provider: reg.backend ?? 'docker',
-    status: 'running',
-    branch: reg.worktrees?.[0]?.branch ?? '',
-    sandboxId: reg.sandboxId,
-    createdAt: Date.parse(reg.createdAt ?? reg.registeredAt) || undefined,
-    projectIndex: reg.projectIndex,
-    originUrl: reg.originUrl,
-    publicHost: reg.publicHost,
-    image: reg.image,
-    webPort: reg.webPort,
-    lastAgent: normalizeRegistrationAgent(reg.agent),
-  };
+  return adopted.record;
 }
 
 export interface AgentJobViaHubArgs extends CloudAgentViaHubArgs {
@@ -244,32 +230,46 @@ export async function enqueueAgentJobViaHub(
     onStatus,
     onLog,
   } = args;
-  const target = await resolveCustodyTarget(urlFlag, { quiet: true });
-  if (!target) return null;
+  const apiTarget = await resolveHubApiTarget(urlFlag, { quiet: true });
+  const custody = await resolveCustodyTarget(urlFlag, { quiet: true });
+  if (!apiTarget || !custody) return null;
   const repoUrl = await readGitOriginUrl(projectRoot).catch(() => undefined);
   if (!repoUrl) return null;
   // Refresh custody's agent credentials FIRST. The worker seeds the box from
   // custody, and this machine holds the freshest token — without this the box
-  // comes up logged out with whatever a previous `create --via-hub` last pushed
-  // (a Claude refresh rotates the token, so a stale copy is dead, not merely
-  // expired). `create.ts` has always done this; the agent commands did not.
+  // comes up logged out with whatever was last pushed (a Claude refresh rotates
+  // the token, so a stale copy is dead, not merely expired).
   await syncAgentCredentialsIfChanged(urlFlag);
+  await pushCreateSeed({ custody, repoUrl, projectRoot, onLog: onLog ?? (() => {}) });
 
-  const jobId = await enqueueCreateViaHub(target, {
+  const client = new HubApiClient(apiTarget);
+  const { jobId } = await client.createBox({
     repoUrl,
     provider: providerName,
-    branch: fromBranch?.trim() || undefined,
-    name: name?.trim() || undefined,
     agent,
+    name: name?.trim() || undefined,
+    fromBranch: fromBranch?.trim() || undefined,
+    // The seed prompt tells the worker to start the agent detached in-box; the
+    // processed argv (skip-permissions etc.) rides `agentArgs` end-to-end.
     prompt,
     agentArgs,
+    startAgent: true,
   });
   onStatus?.('enqueued on the remote hub');
-  const job = await pollHubJob(target, jobId, {
-    onStatus: (j) => onStatus?.(`remote hub: ${j.status}`),
-    onLog: hubLogSink(onStatus, onLog),
+  const res = await streamJobToCompletion(client, jobId, {
+    onLine: hubLogSink(onStatus, onLog) ?? (() => {}),
+    onStatus: (s) => onStatus?.(`remote hub: ${s}`),
+    // Surface a re-login URL rather than block-prompt under the caller's spinner
+    // (a background `-i` run has no one at the terminal to paste the code).
+    onLoginPrompt: async (url) => {
+      onStatus?.(`Claude re-login required — open ${url}`);
+      return null;
+    },
   });
   // A failed job with a boxId means the box was created but the agent didn't
   // start (e.g. creds rejected) — surface the error but keep the box id.
-  return { boxId: job.result?.boxId, error: job.status === 'done' ? undefined : job.result?.error };
+  return {
+    boxId: res.job?.boxId,
+    error: res.status === 'done' ? undefined : (res.detail ?? res.job?.error),
+  };
 }

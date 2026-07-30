@@ -10,6 +10,7 @@ import {
   occupiesWorkingSlot,
   selectNextRunnable,
   selectNextRunnableByWorking,
+  selectNextRunnableForeground,
   selectNextRunnablePrepare,
   startQueueLoop,
   STARTUP_GRACE_MS,
@@ -52,7 +53,7 @@ describe('selectNextRunnable', () => {
     expect(selectNextRunnable(jobs, 0)?.id).toBe('b');
   });
 
-  it('respects per-job maxConcurrent: a higher --max-running override starts when the global wouldn\'t', () => {
+  it("respects per-job maxConcurrent: a higher --max-running override starts when the global wouldn't", () => {
     const jobs = [
       // The default ceiling is 1; this job overrode to 3.
       job({ id: 'override', maxConcurrent: 3 }),
@@ -92,7 +93,12 @@ describe('startQueueLoop', () => {
     let spawned = 0;
     const handle = startQueueLoop({
       log: () => {},
-      loadConfig: async () => ({ enabled: false, maxConcurrent: 1, maxWorking: 0, idleGraceMs: 15_000 }),
+      loadConfig: async () => ({
+        enabled: false,
+        maxConcurrent: 1,
+        maxWorking: 0,
+        idleGraceMs: 15_000,
+      }),
       countRunning: async () => 0,
       spawnWorker: async () => {
         spawned += 1;
@@ -109,7 +115,12 @@ describe('startQueueLoop', () => {
     let spawned = 0;
     const handle = startQueueLoop({
       log: () => {},
-      loadConfig: async () => ({ enabled: true, maxConcurrent: 1, maxWorking: 0, idleGraceMs: 15_000 }),
+      loadConfig: async () => ({
+        enabled: true,
+        maxConcurrent: 1,
+        maxWorking: 0,
+        idleGraceMs: 15_000,
+      }),
       countRunning: async () => 5,
       spawnWorker: async () => {
         spawned += 1;
@@ -136,11 +147,15 @@ describe('occupiesWorkingSlot', () => {
   });
 
   it('frees an errored agent immediately', () => {
-    expect(occupiesWorkingSlot(entry({ agentState: 'error', sinceUpdateMs: 0 }), GRACE)).toBe(false);
+    expect(occupiesWorkingSlot(entry({ agentState: 'error', sinceUpdateMs: 0 }), GRACE)).toBe(
+      false,
+    );
   });
 
   it('holds a booting box (no snapshot / unknown) within the startup grace, frees after', () => {
-    expect(occupiesWorkingSlot(entry({ agentState: null, sinceCreateMs: 1_000 }), GRACE)).toBe(true);
+    expect(occupiesWorkingSlot(entry({ agentState: null, sinceCreateMs: 1_000 }), GRACE)).toBe(
+      true,
+    );
     expect(occupiesWorkingSlot(entry({ agentState: 'unknown', sinceCreateMs: 1_000 }), GRACE)).toBe(
       true,
     );
@@ -160,7 +175,9 @@ describe('occupiesWorkingSlot', () => {
       expect(occupiesWorkingSlot(entry({ agentState: s, sinceUpdateMs: GRACE - 1 }), GRACE)).toBe(
         true,
       );
-      expect(occupiesWorkingSlot(entry({ agentState: s, sinceUpdateMs: GRACE }), GRACE)).toBe(false);
+      expect(occupiesWorkingSlot(entry({ agentState: s, sinceUpdateMs: GRACE }), GRACE)).toBe(
+        false,
+      );
     }
   });
 
@@ -236,7 +253,11 @@ describe('defaultCountWorkingBoxes', () => {
   it('counts a registered box whose agent is working', async () => {
     const baseline = await defaultCountWorkingBoxes(new BoxRegistry(), emptyStatus, GRACE);
     const status = statusFor({
-      wb: { schema: 1, boxId: 'wb', claude: { state: 'working', updatedAt: new Date().toISOString() } },
+      wb: {
+        schema: 1,
+        boxId: 'wb',
+        claude: { state: 'working', updatedAt: new Date().toISOString() },
+      },
     });
     const count = await defaultCountWorkingBoxes(reg('wb'), status, GRACE);
     expect(count - baseline).toBe(1);
@@ -260,12 +281,18 @@ describe('defaultCountWorkingBoxes', () => {
     const prefix = `qvitest-dedup-${String(process.pid)}-`;
     const id = `${prefix}1`;
     const status = statusFor({
-      jb: { schema: 1, boxId: 'jb', claude: { state: 'working', updatedAt: new Date().toISOString() } },
+      jb: {
+        schema: 1,
+        boxId: 'jb',
+        claude: { state: 'working', updatedAt: new Date().toISOString() },
+      },
     });
     const { QUEUE_DIR } = await import('../src/queue.js');
     try {
       // boxId 'jb' IS registered → the job is counted via its box entry, not the in-flight term.
-      await writeJob(job({ id, status: 'running', startedAt: new Date().toISOString(), boxId: 'jb' }));
+      await writeJob(
+        job({ id, status: 'running', startedAt: new Date().toISOString(), boxId: 'jb' }),
+      );
       const joined = await defaultCountWorkingBoxes(reg('jb'), status, GRACE);
       // Same job but its box is NOT registered → now the in-flight term adds 1 on top.
       await writeJob(
@@ -464,6 +491,85 @@ describe('prepare (image-bake) lane', () => {
       expect(spawned).not.toContain(ids[2]);
     } finally {
       for (const id of ids) await rm(join(QUEUE_DIR, `${id}.json`), { force: true });
+    }
+  });
+});
+
+describe('foreground lane (an interactive create is never gated by queue.maxConcurrent)', () => {
+  it('selectNextRunnable skips foreground jobs (they have their own lane)', () => {
+    const jobs = [job({ id: 'fg', foreground: true }), job({ id: 'bg' })];
+    // A free slot still only picks the background job on the box gate.
+    expect(selectNextRunnable(jobs, 0)?.id).toBe('bg');
+    // A queue of only foreground jobs yields nothing on the box gate.
+    expect(selectNextRunnable([job({ id: 'fg', foreground: true })], 0)).toBeNull();
+  });
+
+  it('selectNextRunnableByWorking also skips foreground jobs', () => {
+    const jobs = [job({ id: 'fg', foreground: true }), job({ id: 'bg' })];
+    expect(selectNextRunnableByWorking(jobs, 0, 3)?.id).toBe('bg');
+    expect(selectNextRunnableByWorking([job({ id: 'fg', foreground: true })], 0, 3)).toBeNull();
+  });
+
+  it('selectNextRunnableForeground starts a foreground create even when the box gate is saturated', () => {
+    const jobs = [
+      // Box gate full (maxConcurrent 1, 1 running) — a plain create would block.
+      job({ id: 'bg', maxConcurrent: 1 }),
+      job({ id: 'fg', foreground: true, maxConcurrent: 1 }),
+    ];
+    expect(selectNextRunnable(jobs, 1)).toBeNull(); // background gate full
+    expect(selectNextRunnableForeground(jobs)?.id).toBe('fg'); // foreground unblocked
+  });
+
+  it('selectNextRunnableForeground picks the oldest queued foreground job and ignores the rest', () => {
+    const jobs = [
+      job({ id: 'old', foreground: true, createdAt: '2024-01-01T00:00:00.000Z' }),
+      job({ id: 'new', foreground: true, createdAt: '2024-01-01T00:00:01.000Z' }),
+      job({ id: 'bg' }),
+      job({ id: 'prep', kind: 'prepare', foreground: true }),
+    ];
+    expect(selectNextRunnableForeground(jobs)?.id).toBe('old');
+    // No foreground creates → nothing on this lane.
+    expect(selectNextRunnableForeground([job({ id: 'bg' })])).toBeNull();
+  });
+
+  // A disabled background queue must NOT wedge an interactive create at `queued`
+  // (create now enqueues through the hub, so the scheduler is in the path).
+  it('startQueueLoop runs a foreground create even when queue.enabled is false, but not a background job', async () => {
+    const { QUEUE_DIR } = await import('../src/queue.js');
+    const prefix = `qvitest-fg-disabled-${String(process.pid)}-`;
+    const fgId = `${prefix}fg`;
+    const bgId = `${prefix}bg`;
+    const spawned: string[] = [];
+    try {
+      await writeJob(job({ id: fgId, foreground: true, createdAt: '2000-01-01T00:00:00.000Z' }));
+      await writeJob(job({ id: bgId, createdAt: '2000-01-01T00:00:01.000Z' }));
+      const handle = startQueueLoop({
+        log: () => {},
+        loadConfig: async () => ({
+          enabled: false,
+          maxConcurrent: 5,
+          maxWorking: 0,
+          idleGraceMs: 15_000,
+        }),
+        countRunning: async () => 0,
+        spawnWorker: async (j) => {
+          spawned.push(j.id);
+          return process.pid;
+        },
+        intervalMs: 10,
+      });
+      const start = Date.now();
+      while (!spawned.includes(fgId) && Date.now() - start < 2000) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      // A few more ticks to prove the background job stays put while disabled.
+      await new Promise((r) => setTimeout(r, 60));
+      await handle.stop();
+      expect(spawned).toContain(fgId);
+      expect(spawned).not.toContain(bgId);
+    } finally {
+      await rm(join(QUEUE_DIR, `${fgId}.json`), { force: true });
+      await rm(join(QUEUE_DIR, `${bgId}.json`), { force: true });
     }
   });
 });

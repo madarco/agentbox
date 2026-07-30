@@ -64,11 +64,17 @@ export interface HubApiBox {
   topology?: string;
 }
 
-/** A create-job's status as `/api/v1/jobs/:id` returns it. */
+/** A create-job's status as `/api/v1/jobs/:id` (and each row of `/api/v1/jobs`) returns it. */
 export interface HubApiJob {
   id: string;
   status: 'queued' | 'running' | 'done' | 'failed' | string;
   boxId?: string;
+  /** A failed job's reason — surfaced so a create reports a failure, not a silent "done". */
+  error?: string;
+  provider?: string;
+  name?: string;
+  agent?: string;
+  createdAt?: string;
   login?: {
     required?: boolean;
     phase?: string;
@@ -76,6 +82,25 @@ export interface HubApiJob {
     error?: string;
     lastError?: string;
   };
+}
+
+/** Body for `POST /api/v1/boxes` — mirrors the hub's `CreateBoxInput`. */
+export interface HubApiCreateBoxInput {
+  /** Exactly one of projectId / repoUrl. */
+  projectId?: string;
+  repoUrl?: string;
+  agent: 'claude' | 'codex' | 'opencode' | 'none';
+  provider?: string;
+  name?: string;
+  prompt?: string;
+  agentArgs?: string[];
+  startAgent?: boolean;
+  /** A foreground (interactive) create — the hub runs it in the ungated lane. */
+  foreground?: boolean;
+  fromBranch?: string;
+  setupWizard?: boolean;
+  /** Box-shaping knobs (image, snapshot, limits, size/location, carry, ...). */
+  opts?: Record<string, unknown>;
 }
 
 /**
@@ -380,9 +405,34 @@ export class HubApiClient {
     return this.request<HubApiOpResult>('POST', `/boxes/${encodeURIComponent(id)}/git/${op}`, body);
   }
 
+  /**
+   * Create a box (async). Forks server-side: a `projectId` with a local workspace
+   * → the file queue; a `repoUrl` (or a projectId with no local folder) → the
+   * control-plane clone queue. Returns the background job id; progress streams
+   * over {@link streamJobLog} and the verdict comes from {@link getJob}.
+   */
+  async createBox(body: HubApiCreateBoxInput): Promise<{ jobId: string }> {
+    return this.request<{ jobId: string }>('POST', '/boxes', body);
+  }
+
   /** Create-job status (poll until done/failed). */
   getJob(id: string): Promise<HubApiJob> {
     return this.request<HubApiJob>('GET', `/jobs/${encodeURIComponent(id)}`);
+  }
+
+  /** The unified background-job listing (`queue list` / `hub jobs`). Newest first. */
+  async listJobs(): Promise<HubApiJob[]> {
+    return (await this.request<{ jobs: HubApiJob[] }>('GET', '/jobs')).jobs;
+  }
+
+  /**
+   * Deliver a pasted OAuth code to a create job awaiting a Claude re-login (the
+   * one interactive create affordance). The worker consumes it from the manifest.
+   */
+  async submitLoginCode(id: string, code: string): Promise<void> {
+    await this.request<{ ok: true }>('POST', `/jobs/${encodeURIComponent(id)}/login-code`, {
+      code,
+    });
   }
 
   /**

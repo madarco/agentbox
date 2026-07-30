@@ -1,7 +1,7 @@
 // Hand-rolled request validation for the public API boundary. The repo has no zod
 // convention (validation is typeof-guards throughout); these mirror that style and
 // return a discriminated result so routes stay a flat parse-then-act.
-import type { CreateBoxInput } from '@/lib/boxes/backend-types';
+import type { CreateBoxInput, CreateBoxOpts } from '@/lib/boxes/backend-types';
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; message: string; details?: unknown };
 
@@ -31,9 +31,27 @@ function isObject(v: unknown): v is Record<string, unknown> {
 
 export function parseCreateBox(body: unknown): Parsed<CreateBoxInput> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { projectId, agent, provider, name, prompt, fromBranch, setupWizard } = body;
-  if (typeof projectId !== 'string' || projectId.length === 0) {
-    return { ok: false, message: 'projectId is required (string)' };
+  const { projectId, repoUrl, agent, provider, name, prompt, fromBranch, setupWizard } = body;
+  const { agentArgs, startAgent, foreground, opts } = body;
+  // Exactly one of projectId / repoUrl: projectId → a registered project on the
+  // hub's machine (local file queue); repoUrl → the origin the control-plane
+  // worker clones (no local checkout).
+  const hasProject = typeof projectId === 'string' && projectId.length > 0;
+  const hasRepo = typeof repoUrl === 'string' && repoUrl.length > 0;
+  if (!hasProject && !hasRepo) {
+    return { ok: false, message: 'one of projectId or repoUrl is required (string)' };
+  }
+  // Exactly one: the backend forks on `repoUrl` (clone) vs `projectId` (local
+  // workspace), so sending both is ambiguous — repoUrl would win and silently
+  // skip a valid local checkout.
+  if (hasProject && hasRepo) {
+    return { ok: false, message: 'send exactly one of projectId or repoUrl, not both' };
+  }
+  if (projectId !== undefined && typeof projectId !== 'string') {
+    return { ok: false, message: 'projectId must be a string' };
+  }
+  if (repoUrl !== undefined && typeof repoUrl !== 'string') {
+    return { ok: false, message: 'repoUrl must be a string' };
   }
   if (typeof agent !== 'string' || !(AGENTS as readonly string[]).includes(agent)) {
     return {
@@ -67,18 +85,96 @@ export function parseCreateBox(body: unknown): Parsed<CreateBoxInput> {
   if (!fb.ok) return fb;
   const sw = optionalBool(setupWizard, 'setupWizard');
   if (!sw.ok) return sw;
+  const aa = optionalStringArray(agentArgs, 'agentArgs');
+  if (!aa.ok) return aa;
+  const sa = optionalBool(startAgent, 'startAgent');
+  if (!sa.ok) return sa;
+  const fg = optionalBool(foreground, 'foreground');
+  if (!fg.ok) return fg;
+  const po = parseCreateBoxOpts(opts);
+  if (!po.ok) return po;
   return {
     ok: true,
     value: {
-      projectId,
+      projectId: hasProject ? (projectId as string) : undefined,
+      repoUrl: hasRepo ? (repoUrl as string) : undefined,
       agent: agent as CreateBoxInput['agent'],
       provider: provider as CreateBoxInput['provider'],
       name,
       prompt,
+      agentArgs: aa.value,
+      startAgent: sa.value,
+      foreground: fg.value,
       fromBranch: fb.value,
       setupWizard: sw.value,
+      opts: po.value,
     },
   };
+}
+
+// The CLI's box-shaping create knobs (see CreateBoxOpts). Every field optional;
+// absent → the worker's config default. Kept permissive on the value types (the
+// backend + provider validate the semantics) — this only guards the wire shape.
+function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
+  if (v === undefined) return { ok: true, value: undefined };
+  if (!isObject(v)) return { ok: false, message: 'opts must be a JSON object' };
+  const out: CreateBoxOpts = {};
+  const strFields = [
+    'image',
+    'snapshot',
+    'memory',
+    'cpus',
+    'pidsLimit',
+    'disk',
+    'size',
+    'location',
+    'inbound',
+    'useBranch',
+    'imageRegistry',
+    'remoteHost',
+    'sessionName',
+  ] as const;
+  for (const f of strFields) {
+    const r = optionalString(v[f], `opts.${f}`);
+    if (!r.ok) return r;
+    if (r.value !== undefined) (out as Record<string, unknown>)[f] = r.value;
+  }
+  const boolFields = [
+    'hostSnapshot',
+    'withPlaywright',
+    'withEnv',
+    'vnc',
+    'resync',
+    'sharedDockerCache',
+    'portless',
+    'build',
+    'credentialSync',
+    'dangerouslySkipPermissions',
+  ] as const;
+  for (const f of boolFields) {
+    const r = optionalBool(v[f], `opts.${f}`);
+    if (!r.ok) return r;
+    if (r.value !== undefined) (out as Record<string, unknown>)[f] = r.value;
+  }
+  const bd = optionalNumber(v.bundleDepth, 'opts.bundleDepth');
+  if (!bd.ok) return bd;
+  if (bd.value !== undefined) out.bundleDepth = bd.value;
+  const ef = optionalStringArray(v.envFiles, 'opts.envFiles');
+  if (!ef.ok) return ef;
+  if (ef.value !== undefined) out.envFiles = ef.value;
+  if (v.gitPushMode !== undefined) {
+    const modes = ['auto', 'relay', 'lease', 'direct'];
+    if (typeof v.gitPushMode !== 'string' || !modes.includes(v.gitPushMode)) {
+      return { ok: false, message: `opts.gitPushMode must be one of ${modes.join(', ')}` };
+    }
+    out.gitPushMode = v.gitPushMode as CreateBoxOpts['gitPushMode'];
+  }
+  // carry: ResolvedCarryEntry[] (opaque host-path metadata the worker reads).
+  if (v.carry !== undefined) {
+    if (!Array.isArray(v.carry)) return { ok: false, message: 'opts.carry must be an array' };
+    out.carry = v.carry;
+  }
+  return { ok: true, value: out };
 }
 
 // Rename a box: set (or clear, with an empty string) its cosmetic display label.
@@ -271,6 +367,12 @@ function optionalString(v: unknown, field: string): Parsed<string | undefined> {
 function optionalBool(v: unknown, field: string): Parsed<boolean | undefined> {
   if (v === undefined) return { ok: true, value: undefined };
   if (typeof v !== 'boolean') return { ok: false, message: `${field} must be a boolean` };
+  return { ok: true, value: v };
+}
+function optionalNumber(v: unknown, field: string): Parsed<number | undefined> {
+  if (v === undefined) return { ok: true, value: undefined };
+  if (typeof v !== 'number' || !Number.isFinite(v))
+    return { ok: false, message: `${field} must be a number` };
   return { ok: true, value: v };
 }
 

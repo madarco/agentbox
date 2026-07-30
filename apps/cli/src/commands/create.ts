@@ -2,6 +2,7 @@ import { intro, log, outro } from '@clack/prompts';
 import {
   bumpProjectGcCounter,
   findProjectRoot,
+  hashProjectPath,
   loadEffectiveConfig,
   pruneOrphanProjectConfigs,
   registerProject,
@@ -11,19 +12,14 @@ import {
 } from '@agentbox/config';
 import { detectEngine, listBoxes, type BoxRecord } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
-import { execSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { runCarryGate } from '../lib/carry-gate.js';
 import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
-import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { makeProgressReporter } from '../lib/progress.js';
-import { autoWriteSshConfig } from '@agentbox/sandbox-core';
 import { maybePromptPortless, setupPortlessHost } from '../portless-prompt.js';
-import { providerForCreate } from '../provider/registry.js';
 import { parseProviderSpec } from '../provider/spec.js';
-import { buildResyncWarning } from '../lib/resync-warning.js';
-import { resolveLimits } from '../limits.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import {
   maybeRunSetupWizard,
@@ -36,12 +32,17 @@ import {
 import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
 import { runPrepare } from './prepare.js';
 import { claudeCommand } from './claude.js';
-import { resolveCustodyTarget, syncAgentCredentialsIfChanged } from './control-plane.js';
-import { enqueueCreateViaHub, pollHubJob } from '../control-plane/hub-enqueue.js';
-import { hubLogSink, withHubJobLine } from './_cloud-agent-via-hub.js';
-import { resolveCreateRouting } from '../control-plane/route-create.js';
+import { syncAgentCredentialsIfChanged } from './control-plane.js';
+import {
+  resolveCreateTarget,
+  pushCreateSeed,
+  type CreateTarget,
+} from '../control-plane/create-target.js';
+import { streamJobToCompletion } from '../control-plane/job-stream.js';
+import { withHubClient } from '../control-plane/with-hub.js';
 import { remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { attachRelayOptions } from '../control-plane/box-plane.js';
+import { resolveBoxOrExit } from '../box-ref.js';
 
 interface CreateOptions {
   workspace: string;
@@ -160,98 +161,83 @@ async function attachShell(record: BoxRecord): Promise<never> {
   process.exit(code);
 }
 
-/** The project's `origin` remote URL — the repo the hub worker clones VPS-side. */
-function originUrl(projectRoot: string): string | null {
-  try {
-    return (
-      execSync('git config --get remote.origin.url', { cwd: projectRoot }).toString().trim() || null
-    );
-  } catch {
-    return null;
-  }
-}
-
 /**
- * `--via-hub` path: enqueue a create job on the control box and stream its
- * progress. Never touches a local provider. Exits the process with the job's
- * outcome (0 on done, 1 on failure), mirroring how the local path exits.
+ * Remote (control-box) create: push the project seed first so `.env`/untracked
+ * files a fresh clone can't provide reach the box, then `POST /api/v1/boxes` with
+ * the origin URL and stream the job to completion. Never touches a local provider.
+ * Exits with the job's outcome (0 on done, 1 on failure), like the local path.
+ *
+ * `agentbox create` builds a plain box (no agent) — the agent-launcher via-hub
+ * path (`_cloud-agent-via-hub.ts`) is what starts an agent.
  */
-async function runCreateViaHub(
+async function runCreateViaHubApi(
+  target: Extract<CreateTarget, { where: 'remote' }>,
   opts: CreateOptions,
   providerName: string,
   projectRoot: string,
   cmdLog: ReturnType<typeof openCommandLog>,
 ): Promise<void> {
-  if (providerName === 'docker') {
-    log.error(
-      '--via-hub needs a cloud provider (a docker box runs on this machine). Try --provider hetzner|e2b|vercel|daytona.',
-    );
-    cmdLog.close();
-    process.exit(1);
-  }
-  if (providerName === 'remote-docker') {
-    // remote-docker authenticates as *you* through your own ~/.ssh/config + agent
-    // (no stored credential the control box could custody), and the SSH
-    // ControlMaster runs from the creating machine. The VPS has no access to your
-    // SSH identity, so it can't reach your remote host — run it from this machine.
-    log.error(
-      '--via-hub cannot run a remote-docker box: it connects to your remote host over your own ~/.ssh/config, which the control box has no access to. Run `agentbox docker:<host> …` from this machine instead.',
-    );
-    cmdLog.close();
-    process.exit(1);
-  }
-  const repoUrl = originUrl(projectRoot);
-  if (!repoUrl) {
-    log.error(
-      '--via-hub needs a git `origin` remote (the hub worker clones it VPS-side). None found in this project.',
-    );
-    cmdLog.close();
-    process.exit(1);
-  }
-  const target = await resolveCustodyTarget(opts.url);
-  if (!target) {
-    cmdLog.close();
-    process.exit(1);
-  }
-  // A stale login on the control box means the box it is about to build comes up
-  // signed out — so refresh custody from the host backup first, only when the
-  // credential actually changed (hash compare, silent + best-effort otherwise).
+  // A stale login on the control box means the box comes up signed out — refresh
+  // custody from the host backup first (hash-compared, silent + best-effort).
   await syncAgentCredentialsIfChanged(opts.url);
-  const request = {
-    repoUrl,
-    provider: providerName,
-    branch: opts.fromBranch?.trim() || undefined,
-    name: opts.name?.trim() || undefined,
+  // Always push seed material first (hash-skipped so an unchanged tree costs
+  // nothing). This is the fix for hub-routed creates coming up missing .env /
+  // untracked files — the clone-side worker overlays what we push to custody.
+  await pushCreateSeed({
+    custody: target.custody,
+    repoUrl: target.repoUrl,
+    projectRoot,
+    onLog: (line) => cmdLog.write(line),
+  });
+
+  // Cloud-relevant box-shaping flags the user passed. The control box applies the
+  // direct `provider.create` args (snapshot/image/env/vnc/bundle-depth/build/
+  // credential-sync) and falls back to its own config for the rest (VM sizing) —
+  // consistent with `prepare`. Docker/agent-only knobs (carry/portless/limits) are
+  // inapplicable to a control-box clone build, so they aren't sent.
+  const remoteOpts = {
+    ...(opts.snapshot ? { snapshot: opts.snapshot } : {}),
+    ...(opts.image ? { image: opts.image } : {}),
+    ...(opts.withPlaywright === true ? { withPlaywright: true } : {}),
+    ...(opts.withEnv === true ? { withEnv: true } : {}),
+    ...(opts.vnc === false ? { vnc: false } : {}),
+    ...(opts.bundleDepth !== undefined ? { bundleDepth: opts.bundleDepth } : {}),
+    ...(opts.build === true ? { build: true } : {}),
+    ...(opts.credentialSync === false ? { credentialSync: false } : {}),
   };
-  try {
-    const job = await withHubJobLine(
-      async (onStatus) => {
-        const jobId = await enqueueCreateViaHub(target, request);
-        onStatus('enqueued on the remote hub');
-        return await pollHubJob(target, jobId, {
-          onStatus: (j) => onStatus(`remote hub: ${j.status}`),
-          // The worker's own per-step lines, so a hub create shows the same
-          // progress a local one does (and lands in the command log).
-          onLog: hubLogSink(onStatus, (line) => cmdLog.write(line)),
-        });
+  const outcome = await withHubClient({ url: opts.url }, async (client) => {
+    const { jobId } = await client.createBox({
+      repoUrl: target.repoUrl,
+      provider: providerName,
+      agent: 'none',
+      name: opts.name?.trim() || undefined,
+      fromBranch: opts.fromBranch?.trim() || undefined,
+      ...(Object.keys(remoteOpts).length > 0 ? { opts: remoteOpts } : {}),
+    });
+    cmdLog.write(`enqueued on the control box: job ${jobId}`);
+    return await streamJobToCompletion(client, jobId, {
+      onLine: (line) => {
+        cmdLog.write(line);
+        if (opts.verbose) process.stderr.write(line + '\n');
       },
-      (j) =>
-        j.status === 'done' ? 'box created on the remote hub' : 'the remote hub create failed',
-      { verbose: opts.verbose === true },
-    );
-    if (job.status === 'done') {
-      outro(`box ready: ${job.result?.boxId ?? '(id pending)'}`);
-      cmdLog.close();
-      process.exit(0);
-    }
-    log.error(`create job failed: ${job.result?.error ?? 'unknown error'}`);
+      onStatus: (s) => process.stderr.write(`control box: ${s}\n`),
+    });
+  });
+
+  // withHubClient reported an unreachable/unsupported hub (or a HubApiError from
+  // createBox) and set process.exitCode; nothing more to say.
+  if (!outcome) {
     cmdLog.close();
-    process.exit(1);
-  } catch (err) {
-    log.error(err instanceof Error ? err.message : String(err));
+    process.exit(process.exitCode || 1);
+  }
+  if (outcome.status !== 'done') {
+    log.error(`create failed: ${outcome.detail ?? outcome.job?.error ?? outcome.status}`);
     cmdLog.close();
     process.exit(1);
   }
+  outro(`box ready: ${outcome.job?.boxId ?? '(id pending)'}`);
+  cmdLog.close();
+  process.exit(0);
 }
 
 export const createCommand = new Command('create')
@@ -363,7 +349,7 @@ export const createCommand = new Command('create')
   )
   .option(
     '--via-hub',
-    'force enqueuing the create on the control box (POST /remote/boxes) instead of building it on this machine; the resident hub worker provisions the box VPS-side. Cloud providers only. Needs a control plane configured (`hub set-url`) + admin token. When a control box is configured this is already the default for cloud boxes (cloud.viaHub).',
+    'force enqueuing the create on the control box instead of building it on this machine; the resident hub worker provisions the box VPS-side. Cloud providers only. Needs a control plane configured (`hub set-url`) + admin token. When a control box is configured this is already the default for cloud boxes (cloud.viaHub).',
   )
   .option(
     '--local',
@@ -420,13 +406,13 @@ export const createCommand = new Command('create')
       }
     }
 
-    // Route the create: when a control box is configured, cloud boxes default to
-    // being built ON it (the resident hub worker clones the repo VPS-side and
-    // provisions the box, so it keeps running with the laptop off). docker /
-    // remote-docker always build here; --local / cloud.viaHub=false force local;
-    // --via-hub forces the hub. A missing prerequisite on the DEFAULT path falls
-    // back to a local build with a notice (never a hard failure).
-    const routing = await resolveCreateRouting({
+    // Pick WHICH HUB the create goes to (both modes go through POST /api/v1/boxes;
+    // only the target + request shape differ). Remote (a control box clones the
+    // repo VPS-side) → push seed + repoUrl. Local/co-located (build from the local
+    // workspace) → projectId, file queue. docker / remote-docker / --local /
+    // cloud.viaHub=false stay local; --via-hub forces remote (hard-fail on a
+    // missing prereq); the DEFAULT path falls back to local with a notice.
+    const target = await resolveCreateTarget({
       providerName,
       effective: cfg.effective,
       projectRoot,
@@ -434,13 +420,18 @@ export const createCommand = new Command('create')
       forceLocal: opts.local,
       urlFlag: opts.url,
     });
-    if (routing.where === 'hub') {
-      await runCreateViaHub(opts, providerName, projectRoot, cmdLog);
+    if (target.where === 'error') {
+      log.error(target.message);
+      cmdLog.close();
+      process.exit(1);
+    }
+    if (target.where === 'remote') {
+      await runCreateViaHubApi(target, opts, providerName, projectRoot, cmdLog);
       return;
     }
-    if (routing.fellBackReason) {
+    if (target.fellBackReason) {
       log.warn(
-        `control box configured but ${routing.fellBackReason}; building ${providerName} box locally.`,
+        `control box configured but ${target.fellBackReason}; building ${providerName} box locally.`,
       );
     }
 
@@ -595,208 +586,177 @@ export const createCommand = new Command('create')
 
     const useSnapshot = resolveUseSnapshot(opts, cfg.effective.box.hostSnapshot);
 
-    // Verbose mode bypasses the spinner entirely: a cold cloud create
-    // streams ~7 minutes of Dockerfile build output that's interesting to
-    // watch and reassures the user that progress is happening. Without
-    // --verbose, the spinner shows only the latest collapsed status line
-    // (full output still lands in cmdLog) — calmer default.
+    // Branch selection is validated against the LOCAL host repo — correct here,
+    // because a local build reads from this machine's checkout. (The remote path
+    // returned above without validating, since the PC may hold no copy of the
+    // repo; the backend validates the ref there.)
+    let fromBranch: string | undefined;
+    let useBranch: string | undefined;
+    try {
+      ({ fromBranch, useBranch } = await resolveBranchSelection({
+        useBranch: opts.useBranch,
+        fromBranch: opts.fromBranch,
+        repo: opts.workspace,
+        providerName,
+        cloudUseCurrentBranch: cfg.effective.cloud.useCurrentBranch,
+        log: (m) => cmdLog.write(m),
+      }));
+    } catch (err) {
+      if (err instanceof FromBranchError || err instanceof UseBranchError) {
+        log.error(err.message);
+        cmdLog.close();
+        process.exit(2);
+      }
+      throw err;
+    }
+
+    // Verbose mode streams the worker's raw build output; the default collapses to
+    // a single self-updating status line (full output still lands in cmdLog). Both
+    // stream live, so a detached create never looks hung.
     const s = makeProgressReporter(opts.verbose === true);
     s.start('creating box');
-    try {
-      // browser.default = 'playwright' | 'both' implies installing playwright
-      // even if box.withPlaywright wasn't explicitly set in any layer.
-      const withPlaywright =
-        cfg.effective.box.withPlaywright || cfg.effective.browser.default !== 'agent-browser';
-      // --provider flag wins over box.provider config. The registry hands back
-      // a DockerProvider for 'docker' and (once Phase 5 wires it) a cloud
-      // provider for 'daytona'; everything below is provider-neutral.
-      const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });
-      let fromBranch: string | undefined;
-      let useBranch: string | undefined;
-      try {
-        ({ fromBranch, useBranch } = await resolveBranchSelection({
-          useBranch: opts.useBranch,
-          fromBranch: opts.fromBranch,
-          repo: opts.workspace,
-          providerName: provider.name,
-          cloudUseCurrentBranch: cfg.effective.cloud.useCurrentBranch,
-          log: (m) => {
-            s.message(m);
-            cmdLog.write(m);
-          },
-        }));
-      } catch (err) {
-        if (err instanceof FromBranchError || err instanceof UseBranchError) {
-          s.stop('aborting: invalid branch selection');
-          log.error(err.message);
-          cmdLog.close();
-          process.exit(2);
-        }
-        throw err;
-      }
-      const result = await provider.create({
-        workspacePath: opts.workspace,
-        name: opts.name,
-        checkpointRef: effectiveCheckpointRef,
-        image: effectiveImage,
-        allowPull: opts.build ? false : undefined,
-        imageRegistry: cfg.effective.box.imageRegistry,
-        withPlaywright,
-        withEnv: cfg.effective.box.withEnv,
-        envFilesToImport: wiz.envFilesToImport,
-        carry: carryEntries,
-        vnc: { enabled: cfg.effective.box.vnc },
-        credentialSync: cfg.effective.box.credentialSync,
-        limits: resolveLimits(cfg.effective.box, opts),
-        bundleDepth: cfg.effective.box.bundleDepth,
+    // `agentbox create` builds a PLAIN box (no agent). The worker seeds the box
+    // from the local workspace tree, so untracked/.env arrive as they always did.
+    const outcome = await withHubClient({ preferLocal: true }, async (client) => {
+      const { jobId } = await client.createBox({
+        projectId: hashProjectPath(projectRoot),
+        provider: opts.provider ?? providerName,
+        agent: 'none',
+        name: opts.name?.trim() || undefined,
+        // Interactive create — the scheduler runs it in the ungated foreground
+        // lane, so it never queues behind background `-i` jobs.
+        foreground: true,
         fromBranch,
-        useBranch,
-        resyncOnStart: opts.resync,
-        // When a control plane is configured, a cloud box's live relay IS the
-        // plane: the provider resolves control-plane topology, registers the box
-        // on the plane, and the box forwards /rpc + leases push tokens directly.
-        // Cloud-only in effect; the docker provider ignores it.
-        controlPlaneUrl: cfg.effective.relay.controlPlaneUrl,
-        gitPushMode: cfg.effective.git.pushMode,
-        hubGitAuth: cfg.effective.hub.gitAuth,
-        projectRoot,
-        onLog: (line) => {
+        opts: {
+          image: effectiveImage,
+          snapshot: effectiveCheckpointRef,
+          hostSnapshot: useSnapshot,
+          withPlaywright: opts.withPlaywright,
+          withEnv: cfg.effective.box.withEnv,
+          envFiles: wiz.envFilesToImport,
+          vnc: cfg.effective.box.vnc,
+          resync: opts.resync,
+          sharedDockerCache: cfg.effective.box.dockerCacheShared,
+          portless: portlessEnabled,
+          memory: opts.memory,
+          cpus: opts.cpus,
+          pidsLimit: opts.pidsLimit,
+          disk: opts.disk,
+          bundleDepth: cfg.effective.box.bundleDepth,
+          size: opts.size,
+          location: opts.location,
+          inbound: opts.inbound,
+          useBranch,
+          build: opts.build,
+          credentialSync: cfg.effective.box.credentialSync,
+          imageRegistry: cfg.effective.box.imageRegistry,
+          gitPushMode: cfg.effective.git.pushMode,
+          remoteHost,
+          // carry rides to the worker on THIS machine (same host), which reads the
+          // approved host files at box-create time.
+          carry: carryEntries,
+        },
+      });
+      cmdLog.write(`enqueued: job ${jobId}`);
+      return await streamJobToCompletion(client, jobId, {
+        onLine: (line) => {
           s.message(line);
           cmdLog.write(line);
         },
-        providerOptions: {
-          useSnapshot,
-          sharedCache: cfg.effective.box.dockerCacheShared,
-          portless: portlessEnabled,
-          portlessStateDir: cfg.effective.portless.stateDir || undefined,
-          // Size / location / session-lifetime overrides, resolved from the
-          // flags then the cascaded config. The cloud scaffold reads them;
-          // providers ignore the keys they don't know.
-          ...cloudSizingProviderOptions(provider.name, cfg.effective, {
-            size: opts.size,
-            location: opts.location,
-            inbound: opts.inbound,
-            remoteHost,
-          }),
-        },
+        onStatus: (st) => s.message(`box create: ${st}`),
       });
-      s.stop(`box ${result.record.container} ready`);
-      const createResyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
-      if (createResyncWarning) log.warn(createResyncWarning);
+    });
 
-      // Default-on: write the `~/.agentbox/ssh/config` entry for SSH-capable
-      // cloud boxes (Hetzner/DigitalOcean) so `ssh <box>` just works. Best-effort
-      // and gated by `ssh.autoConfig`; skips docker and token-auth providers.
-      if (!isDocker) {
-        await autoWriteSshConfig(result.record, provider, cfg.effective.ssh.autoConfig, (m) =>
-          log.warn(m),
-        );
-      }
-
-      log.info(`id:        ${result.record.id}`);
-      if (typeof result.record.projectIndex === 'number') {
-        log.info(`n:         ${String(result.record.projectIndex)}   (in ${projectRoot})`);
-      }
-      log.info(`container: ${result.record.container}`);
-      log.info(`image:     ${result.record.image}${result.imageBuilt ? ' (built just now)' : ''}`);
-      if (result.record.snapshotDir) {
-        log.info(`snapshot:  ${result.record.snapshotDir}`);
-      }
-      if (result.record.checkpointSource) {
-        log.info(
-          `checkpoint: ${result.record.checkpointSource.ref} (${result.record.checkpointSource.type}) → ${result.record.checkpointImage ?? '(missing)'}`,
-        );
-      }
-
-      const tryLines = isDocker
-        ? [
-            `  docker exec -it ${result.record.container} bash`,
-            `  docker exec ${result.record.container} ls /workspace`,
-          ]
-        : [
-            `  agentbox shell ${result.record.name}`,
-            `  agentbox attach ${result.record.name}`,
-            `  agentbox url ${result.record.name}`,
-          ];
-      log.message(
-        [
-          '',
-          'Try it:',
-          ...tryLines,
-          '',
-          'Destroy:',
-          `  agentbox destroy ${result.record.name}`,
-        ].join('\n'),
-      );
-
-      // Periodic best-effort housekeeping: every Nth create, reap per-project
-      // config dirs whose source workspace folder was deleted. Must never fail
-      // or slow down create.
-      const m = cfg.effective.maintenance;
-      if (m.pruneProjectConfigs) {
-        try {
-          const n = await bumpProjectGcCounter();
-          if (n % m.pruneProjectConfigsEvery === 0) {
-            const boxes = await listBoxes();
-            const protectedPaths = boxes
-              .map((b) => b.projectRoot)
-              .filter((p): p is string => typeof p === 'string');
-            const res = await pruneOrphanProjectConfigs({ protectedPaths });
-            if (res.removed.length > 0) {
-              log.info(
-                `cleaned ${String(res.removed.length)} orphan project config dir(s): ` +
-                  res.removed.map((r) => r.originalPath).join(', '),
-              );
-            }
-          }
-        } catch {
-          /* best-effort: project-config GC must never break create */
-        }
-      }
-
-      outro('done');
-
-      // Cloud: when the wizard offered "switch to claude" and we accepted,
-      // attach claude over SSH now that the box is provisioned. Docker takes
-      // the redispatch-to-`agentbox claude` path above (which already
-      // attaches), so this branch only fires for cloud providers.
-      if (attachClaudeAfter) {
-        const { cloudAgentAttach } = await import('./_cloud-attach.js');
-        await cloudAgentAttach({
-          box: result.record,
-          binary: 'claude',
-          sessionName: 'claude',
-          mode: 'claude',
-        });
-        return;
-      }
-
-      if (opts.attach) {
-        await attachShell(result.record);
-      }
-    } catch (err) {
+    if (!outcome) {
+      // withHubClient reported an unreachable/unsupported hub and set exitCode.
       s.stop('failed');
-      const msg = err instanceof Error ? err.message : String(err);
-      cmdLog.write(`FAIL: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
-      log.error(msg);
-      // Help the user clean up partial state.
-      try {
-        const running = execSync('docker ps --format "{{.Names}}"', {
-          stdio: ['ignore', 'pipe', 'ignore'],
-        })
-          .toString()
-          .split('\n')
-          .filter((n) => n.startsWith('agentbox-'));
-        if (running.length > 0) {
-          log.warn(`leftover containers: ${running.join(', ')}`);
-          log.warn(`remove with: docker rm -f ${running.join(' ')}`);
-        }
-      } catch {
-        /* best-effort */
-      }
+      cmdLog.close();
+      process.exit(process.exitCode || 1);
+    }
+    if (outcome.status !== 'done') {
+      s.stop('failed');
+      log.error(`create failed: ${outcome.detail ?? outcome.job?.error ?? outcome.status}`);
       cmdLog.close();
       process.exit(1);
-    } finally {
-      cmdLog.close();
     }
+
+    // Resolve the box the worker just registered (same machine → local state) so
+    // we can print its handles and, if asked, attach. Best-effort — the box is up
+    // regardless of whether we can render its record.
+    const boxId = outcome.job?.boxId;
+    const record = boxId
+      ? await resolveBoxOrExit(boxId).catch(() => null)
+      : opts.name
+        ? await resolveBoxOrExit(opts.name).catch(() => null)
+        : null;
+    s.stop(record ? `box ${record.container} ready` : 'box ready');
+
+    if (record) {
+      log.info(`id:        ${record.id}`);
+      if (typeof record.projectIndex === 'number') {
+        log.info(`n:         ${String(record.projectIndex)}   (in ${projectRoot})`);
+      }
+      if (isDocker) log.info(`container: ${record.container}`);
+      log.info(`image:     ${record.image}`);
+      const tryLines = isDocker
+        ? [
+            `  docker exec -it ${record.container} bash`,
+            `  docker exec ${record.container} ls /workspace`,
+          ]
+        : [
+            `  agentbox shell ${record.name}`,
+            `  agentbox attach ${record.name}`,
+            `  agentbox url ${record.name}`,
+          ];
+      log.message(
+        ['', 'Try it:', ...tryLines, '', 'Destroy:', `  agentbox destroy ${record.name}`].join(
+          '\n',
+        ),
+      );
+    }
+
+    // Periodic best-effort housekeeping: every Nth create, reap per-project config
+    // dirs whose source workspace folder was deleted. Must never fail create.
+    const m = cfg.effective.maintenance;
+    if (m.pruneProjectConfigs) {
+      try {
+        const n = await bumpProjectGcCounter();
+        if (n % m.pruneProjectConfigsEvery === 0) {
+          const boxes = await listBoxes();
+          const protectedPaths = boxes
+            .map((b) => b.projectRoot)
+            .filter((p): p is string => typeof p === 'string');
+          const res = await pruneOrphanProjectConfigs({ protectedPaths });
+          if (res.removed.length > 0) {
+            log.info(
+              `cleaned ${String(res.removed.length)} orphan project config dir(s): ` +
+                res.removed.map((r) => r.originalPath).join(', '),
+            );
+          }
+        }
+      } catch {
+        /* best-effort: project-config GC must never break create */
+      }
+    }
+
+    outro('done');
+
+    // Cloud + switch-to-claude: attach claude over SSH now the box is provisioned.
+    // Docker takes the redispatch-to-`agentbox claude` path above (which attaches).
+    if (attachClaudeAfter && record) {
+      const { cloudAgentAttach } = await import('./_cloud-attach.js');
+      await cloudAgentAttach({
+        box: record,
+        binary: 'claude',
+        sessionName: 'claude',
+        mode: 'claude',
+      });
+      cmdLog.close();
+      return;
+    }
+    if (opts.attach && record) {
+      cmdLog.close();
+      await attachShell(record);
+    }
+    cmdLog.close();
   });

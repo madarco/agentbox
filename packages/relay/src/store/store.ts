@@ -54,6 +54,32 @@ export interface CreateJobRequest {
    * hand back a box with a dead session.
    */
   startAgent?: boolean;
+  /**
+   * Box-shaping create flags the CLI resolved (mirrors the local file-queue
+   * path's `createOpts`), so a control-box create honors them instead of silently
+   * dropping them. Only the flags that map to direct `provider.create` args are
+   * carried here — VM sizing (`--size`/`--location`/`--inbound`) needs the CLI's
+   * provider-specific sizing helper, which isn't available worker-side, so those
+   * fall back to the control box's own config (consistent with `prepare`).
+   */
+  opts?: CreateJobRequestOpts;
+}
+
+/** Box-shaping create flags a control-box create honors (see CreateJobRequest.opts). */
+export interface CreateJobRequestOpts {
+  /** Start from this checkpoint (CLI `--snapshot`). */
+  snapshot?: string;
+  /** Box image override (`--image`). */
+  image?: string;
+  withPlaywright?: boolean;
+  withEnv?: boolean;
+  vnc?: boolean;
+  /** Cap commits in the cloud-seed git bundle (`--bundle-depth`). */
+  bundleDepth?: number;
+  /** `--build`: force a local base build instead of pulling. */
+  build?: boolean;
+  /** `--no-credential-sync` → false. */
+  credentialSync?: boolean;
 }
 
 /** A durable box-creation job (the hosted plane's create queue). */

@@ -184,8 +184,19 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/jso
 # -> 202 { "jobId": "..." }
 ```
 
+The body takes **either** a `projectId` (a registered project on the hub's
+machine — built from its local checkout) **or** a `repoUrl` (an origin the hub
+clones VPS-side when there is no local checkout, e.g. on a control box). Same
+route, same `202 { jobId }` — the hub picks the build path internally. Optional
+fields mirror the CLI's `agentbox create` flags: `agent`, `provider`, `name`,
+`prompt`, `agentArgs`, `fromBranch`, and an `opts` object for box-shaping knobs
+(`image`, `snapshot`, `size`, `location`, `envFiles`, `carry`, …).
+
 A box being built shows up in `GET /boxes` with `status: "creating"` right away,
-then flips to `running` once the container is up.
+then flips to `running` once the container is up. `GET /jobs` lists every
+create job (the unified queue view behind `agentbox queue list` / `hub jobs`);
+`GET /jobs/{id}` is one job's status (`queued`/`running`/`done`/`failed`, plus
+`boxId` and, on failure, `error`).
 
 ## Streaming logs (SSE)
 

@@ -57,7 +57,7 @@ import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { buildResyncWarning, prependResyncWarning } from '../lib/resync-warning.js';
 import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from '../lib/skip-permissions.js';
 import { providerForCreate } from '../provider/registry.js';
-import { parseProviderSpec } from '../provider/spec.js';
+import { parseProviderSpec, providerNameOf, resolveCreateProviderSpec } from '../provider/spec.js';
 import { autoWriteSshConfig } from '@agentbox/sandbox-core';
 import { cloudAgentStartDetached } from './_cloud-attach.js';
 import { spawnQueuedOpenTerminal } from '../terminal/queue-open.js';
@@ -72,7 +72,11 @@ import { buildSetupInitialPrompt } from '../wizard.js';
  * project had no `agentbox.yaml` + no default snapshot) and carried on the job.
  * A user-typed prompt still runs, after the setup guidance.
  */
-async function applySetupWizardPrompt(job: QueueJob, workspace: string, basePrompt: string): Promise<string> {
+async function applySetupWizardPrompt(
+  job: QueueJob,
+  workspace: string,
+  basePrompt: string,
+): Promise<string> {
   if (!job.setupWizard) return basePrompt;
   const hasYaml = await stat(join(workspace, 'agentbox.yaml'))
     .then(() => true)
@@ -136,7 +140,11 @@ async function ensureClaudeLoginFresh(args: {
   const enqueue = (patch: Partial<QueueJobLogin>): void => {
     chain = chain
       .then(() => patchJobLogin(id, patch))
-      .catch((err) => log.write(`login manifest write failed: ${err instanceof Error ? err.message : String(err)}`));
+      .catch((err) =>
+        log.write(
+          `login manifest write failed: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
   };
 
   // Bridge the hub's login-code file (UI → worker) to the synchronous getCode the
@@ -215,7 +223,12 @@ export const runQueuedJobCommand = new Command('_run-queued-job')
       const onBoxCreated = (boxId: string): void => {
         if (job) job = { ...job, boxId };
       };
-      if ((job.providerName || 'docker') === 'docker') {
+      // Route by the EFFECTIVE provider spec, which folds in `createOpts.remoteHost`
+      // (`--remote-host`): a bare `docker` job with a remote host is a remote-docker
+      // box and must take the provider path (runCloudJob → the remote engine), not
+      // the local `createBox` in runDockerJob.
+      const providerSpec = resolveCreateProviderSpec(job.providerName, job.createOpts.remoteHost);
+      if (providerNameOf(providerSpec) === 'docker') {
         await runDockerJob(job, log, onBoxCreated);
       } else {
         await runCloudJob(job, log, onBoxCreated);
@@ -301,7 +314,12 @@ async function runDockerJob(
   // Re-login in a browser if the box's Claude credentials are dead (surfaced on
   // the job so the hub UI can drive it), before we create the box on them.
   if (!job.noAgent && job.agent === 'claude-code') {
-    await ensureClaudeLoginFresh({ id: job.id, log, image: cfg.effective.box.image, isCloud: false });
+    await ensureClaudeLoginFresh({
+      id: job.id,
+      log,
+      image: cfg.effective.box.image,
+      isCloud: false,
+    });
   }
 
   // Background jobs (incl. hub / tray-app created boxes) can't negotiate
@@ -324,15 +342,26 @@ async function runDockerJob(
     name: opts.name && opts.name.length > 0 ? opts.name : undefined,
     // Base ref the box's per-box branch forks from (hub `--from-branch`); absent → HEAD.
     fromBranch: opts.fromBranch,
+    // `-b`/`--use-branch`: reuse an existing branch instead of forking agentbox/<name>.
+    useBranch: opts.useBranch,
     useSnapshot,
     checkpointRef,
     image: resolveBoxImage(cfg.effective, providerName),
+    // `--build` forces a local base build (allowPull:false); `imageRegistry` is
+    // the GHCR ref the base is pulled from. The foreground `create` conversion
+    // routes through this worker, so both must ride the job or a `create --build`
+    // would silently pull instead.
+    allowPull: opts.build ? false : undefined,
+    imageRegistry: opts.imageRegistry ?? cfg.effective.box.imageRegistry,
+    credentialSync: opts.credentialSync ?? cfg.effective.box.credentialSync,
     claudeConfig:
       !job.noAgent && job.agent === 'claude-code'
         ? { isolate: cfg.effective.box.isolateClaudeConfig }
         : undefined,
     codexConfig:
-      !job.noAgent && job.agent === 'codex' ? { isolate: cfg.effective.box.isolateCodexConfig } : undefined,
+      !job.noAgent && job.agent === 'codex'
+        ? { isolate: cfg.effective.box.isolateCodexConfig }
+        : undefined,
     opencodeConfig:
       !job.noAgent && job.agent === 'opencode'
         ? { isolate: cfg.effective.box.isolateOpencodeConfig }
@@ -340,6 +369,10 @@ async function runDockerJob(
     claudeEnv: resolved?.env,
     withPlaywright,
     withEnv: cfg.effective.box.withEnv,
+    // `--with-env` / wizard env picks (gitignore-bypassing). The `-i` worker used
+    // to omit these; a foreground `create --with-env` routes through here, so the
+    // picked files must travel or a gitignored .env would silently not arrive.
+    envFilesToImport: opts.envFiles,
     vnc: { enabled: cfg.effective.box.vnc },
     docker: { sharedCache: cfg.effective.box.dockerCacheShared },
     portless: portlessEnabled,
@@ -367,6 +400,12 @@ async function runDockerJob(
   const persisted = await readJob(job.id);
   await writeJob({ ...job, boxId: result.record.id, login: persisted?.login });
 
+  // On-create resync conflicts (checkpoint-restore path). Logged FIRST — before
+  // the no-agent early return — so a plain `agentbox create` (noAgent) still
+  // surfaces the warning in its streamed create log, matching the old inline path.
+  const resyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
+  if (resyncWarning) log.write(resyncWarning);
+
   // "Just create the box" (like `agentbox create`): the box is up with its ctl
   // supervisor running; skip the agent session entirely. The user attaches later
   // (agentbox shell / claude attach). No prompt, no terminal open.
@@ -375,10 +414,8 @@ async function runDockerJob(
     return;
   }
 
-  // On-create resync conflicts (checkpoint-restore path): prepend the warning to
-  // the queued prompt so the background agent opens on it.
-  const resyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
-  if (resyncWarning) log.write(resyncWarning);
+  // Prepend the resync warning to the queued prompt so the background agent
+  // opens on it.
   const seeded = await applySetupWizardPrompt(job, opts.workspace, job.prompt);
   const prompt = prependResyncWarning(resyncWarning, seeded);
   const promptedArgs = buildPromptArgs(job.agent, prompt, job.agentArgs);
@@ -485,8 +522,13 @@ async function runCloudJob(
   const projectRoot = (await findProjectRoot(opts.workspace)).root;
   // A queued job records the raw `--provider` spec, which may be host-qualified
   // (`docker:buildbox`); split it so the name keys config and the host reaches
-  // the backend.
-  const providerSpec = job.providerName || cfg.effective.box.provider || 'docker';
+  // the backend. `resolveCreateProviderSpec` also folds in `createOpts.remoteHost`
+  // (`--remote-host`), so a bare `docker` job with a remote host resolves the
+  // REMOTE engine here rather than falling back to the local one.
+  const providerSpec = resolveCreateProviderSpec(
+    job.providerName || cfg.effective.box.provider,
+    opts.remoteHost,
+  );
   const { name: providerName, remoteHost } = parseProviderSpec(providerSpec);
   const provider = await providerForCreate({ flag: providerSpec, config: cfg.effective });
 
@@ -518,10 +560,26 @@ async function runCloudJob(
     // Base ref to seed the box's branch from (hub `--from-branch`). Cloud clone
     // `--branch` accepts branch/tag names but not SHAs; absent → HEAD.
     fromBranch: opts.fromBranch,
+    // `-b`/`--use-branch`: reuse an existing branch instead of forking agentbox/<name>.
+    useBranch: opts.useBranch,
     checkpointRef,
     image: resolveBoxImage(cfg.effective, providerName),
+    // `--build` (allowPull:false) + registry, credential-sync, bundle depth, and
+    // the push mode: the foreground `create` conversion routes cloud creates
+    // through this worker, so each must ride the job to match the old inline path.
+    // gitPushMode carries `--dangerously-with-credentials` (→ 'direct'); docker
+    // rejects direct, cloud honors it. Config is the fallback for the `-i` path
+    // (which sends none of these).
+    allowPull: opts.build ? false : undefined,
+    imageRegistry: opts.imageRegistry ?? cfg.effective.box.imageRegistry,
+    credentialSync: opts.credentialSync ?? cfg.effective.box.credentialSync,
+    bundleDepth: opts.bundleDepth ?? cfg.effective.box.bundleDepth,
+    controlPlaneUrl: cfg.effective.relay.controlPlaneUrl,
+    gitPushMode: opts.gitPushMode ?? cfg.effective.git.pushMode,
+    hubGitAuth: cfg.effective.hub.gitAuth,
     withPlaywright,
     withEnv: cfg.effective.box.withEnv,
+    envFilesToImport: opts.envFiles,
     vnc: { enabled: cfg.effective.box.vnc },
     limits: resolveLimits(cfg.effective.box, opts),
     // carry: entries the submitter resolved + approved on the host; the cloud
@@ -529,9 +587,15 @@ async function runCloudJob(
     carry: opts.carry,
     projectRoot,
     onLog: (line) => log.write(line),
-    // Same size / location / session-lifetime resolution the foreground
-    // `agentbox create` does, so a queued box isn't sized differently.
-    providerOptions: cloudSizingProviderOptions(providerName, cfg.effective, { remoteHost }),
+    // Size / location / inbound: prefer the values the foreground `create`
+    // resolved (createOpts) over config, so a `create --size/--location/--inbound`
+    // routed through the queue isn't silently re-sized from config.
+    providerOptions: cloudSizingProviderOptions(providerName, cfg.effective, {
+      size: opts.size,
+      location: opts.location,
+      inbound: opts.inbound,
+      remoteHost: opts.remoteHost ?? remoteHost,
+    }),
   });
   log.write(`box created: ${result.record.id}`);
 
@@ -552,13 +616,21 @@ async function runCloudJob(
     log.write(m),
   );
 
+  // On-create resync conflicts (checkpoint-restore) — logged before the no-agent
+  // return so a plain cloud `agentbox create` surfaces it in its streamed log too.
+  const resyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
+  if (resyncWarning) log.write(resyncWarning);
+
   // "Just create the box": skip the detached agent session (see runDockerJob).
   if (job.noAgent) {
     log.write('no-agent box created; skipping agent session');
     return;
   }
 
-  const seeded = await applySetupWizardPrompt(job, opts.workspace, job.prompt);
+  const seeded = prependResyncWarning(
+    resyncWarning,
+    await applySetupWizardPrompt(job, opts.workspace, job.prompt),
+  );
   const promptedArgs = buildPromptArgs(job.agent, seeded, job.agentArgs);
 
   let binary: string;
