@@ -7,12 +7,10 @@ import {
   resolveBoxRef,
   syncAgentboxSshConfig,
 } from '@agentbox/sandbox-core';
-import type { BoxRecord } from '@agentbox/core';
 import { portlessUnalias } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { HubApiClient, HubApiError } from '../control-plane/hub-api-client.js';
-import { withHubClient } from '../control-plane/with-hub.js';
+import { boxOwningHubIsLocal, withOwningHub } from '../control-plane/with-hub.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface DestroyOptions {
@@ -37,72 +35,6 @@ export function decideDestroy(
   if (outcome === undefined) return 'aborted'; // hub error; exit code already set
   if (outcome === 'reaped') return 'reap-cleanup';
   return force ? 'force-cleanup' : 'refused';
-}
-
-/**
- * A box's destroy can only reach the hub that OWNS it. A docker box belongs to
- * the LOCAL hub; a cloud box to whichever hub is configured (a remote control
- * box, or the local hub). So a configured remote hub legitimately answers
- * `not_found` for a docker box it never owned — that is NOT proof the box is
- * gone, so we must retry the OTHER hub before concluding, and NEVER drop the
- * local record on a bare `not_found` (which-hub principle, Step 1). Try the box's
- * likely owner first (via `withHubClient`, so it is version-gated + error-mapped),
- * then the other distinct hub. Returns whether SOME hub actually reaped the box.
- */
-async function destroyOnOwningHub(
-  box: BoxRecord,
-  keepSnapshot: boolean | undefined,
-): Promise<'reaped' | 'not-found' | undefined> {
-  const isDocker = (box.provider ?? 'docker') === 'docker';
-  // Owner-first: docker -> local hub, cloud -> the configured hub.
-  const primary = await withHubClient({ preferLocal: isDocker }, async (client) => {
-    try {
-      await client.destroy(box.id, { keepSnapshot });
-      return 'reaped' as const;
-    } catch (err) {
-      if (err instanceof HubApiError && err.code === 'not_found') return 'not-found' as const;
-      throw err;
-    }
-  });
-  if (primary === undefined) return undefined; // withHubClient reported + set exit code
-  if (primary === 'reaped') return 'reaped';
-
-  // The owner-first hub does not know this box. Retry the OTHER distinct hub (a
-  // docker box mistakenly hitting a configured remote first, or a cloud box the
-  // remote already reaped but that a local hub still holds). A confirmed reap
-  // there is success; anything else (not_found / unreachable / auth) is NOT proof
-  // the box is gone, so it stays `not-found` and the caller keeps the local record.
-  const reapedOther = await destroyOnOtherHub(box, keepSnapshot, !isDocker);
-  return reapedOther ? 'reaped' : 'not-found';
-}
-
-/**
- * Best-effort destroy against the OTHER hub (the one `preferLocalOther` selects),
- * skipped when it resolves to the same URL as the owner-first attempt (a
- * pure-local setup has only one hub). Returns true ONLY on a confirmed reap;
- * never throws — an unreachable/erroring second hub can't prove the box is gone,
- * so it resolves to false and the caller preserves the local record.
- */
-async function destroyOnOtherHub(
-  box: BoxRecord,
-  keepSnapshot: boolean | undefined,
-  preferLocalOther: boolean,
-): Promise<boolean> {
-  try {
-    const { resolveHubApiTarget } = await import('./control-plane.js');
-    const [owner, other] = await Promise.all([
-      resolveHubApiTarget(undefined, { quiet: true, preferLocal: !preferLocalOther }),
-      // Non-quiet so a stopped LOCAL retry hub is auto-started (it's a candidate owner).
-      resolveHubApiTarget(undefined, { preferLocal: preferLocalOther }),
-    ]);
-    if (!other) return false;
-    if (owner && owner.url === other.url) return false; // no distinct second hub
-    await new HubApiClient(other).destroy(box.id, { keepSnapshot });
-    return true;
-  } catch {
-    // not_found / unreachable / auth on the second hub is not proof of teardown.
-    return false;
-  }
 }
 
 /**
@@ -194,10 +126,14 @@ export const destroyCommand = new Command('destroy')
       // The hub's destroy route tears down the provider resource AND reaps the
       // store/custody registration (`hub-backend.ts`), so this is one call in both
       // modes — no separate control-box reap. `keepSnapshot` travels on the body.
-      // It runs against the hub that OWNS the box (docker -> local, cloud ->
-      // configured), retrying the other distinct hub on `not_found`.
+      // `withOwningHub` runs it against the hub that OWNS the box (local for
+      // docker/remote-docker, configured for cloud) and retries the other distinct
+      // hub on `not_found` — so a bare `not_found` never drops a record no hub owns.
       const providerName = box.provider ?? 'docker';
-      const outcome = await destroyOnOwningHub(box, opts.keepSnapshot);
+      const r = await withOwningHub(box, (client) =>
+        client.destroy(box.id, { keepSnapshot: opts.keepSnapshot }),
+      );
+      const outcome = r === undefined ? undefined : r === 'ok' ? 'reaped' : 'not-found';
       const decision = decideDestroy(outcome, opts.force === true);
       if (decision === 'aborted') return; // withHubClient reported + set the exit code
 
@@ -231,7 +167,7 @@ export const destroyCommand = new Command('destroy')
       await syncAgentboxSshConfig().catch(() => {});
 
       process.stdout.write(
-        providerName === 'docker'
+        boxOwningHubIsLocal(box)
           ? `destroyed ${box.container ?? box.name}\n`
           : `destroyed ${box.name} (${providerName} sandbox ${box.cloud?.sandboxId ?? '<unknown>'})\n`,
       );

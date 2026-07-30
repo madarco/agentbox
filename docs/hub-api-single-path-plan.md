@@ -507,32 +507,42 @@ agent resumes on next attach — unchanged, and now correct-by-design rather tha
   set — Step 7/11 cleanup) and `reapSandboxesOnControlBox` by `prune.ts` (Step 9). Only `destroy.ts`'s
   call was removed. Whoever converts `dashboard.ts` off its inline destroy+reap (Step 7/11) and
   `prune`'s reap (Step 9) can delete `reap.ts` then.
-- **Lifecycle routes to the hub that OWNS the box (which-hub, Step 1) — this is load-bearing, not an
-  optimization.** A docker box is always local-owned, so with a remote control box configured a naive
-  `withHubClient({})` sends `pause`/`start`/`destroy` of a docker box to the REMOTE hub, which never
-  owned it → `not_found` → the command breaks (previously these were inline, so this is a regression
-  the hub-routing introduces if you don't guard it). Fix: `WithHubOptions` gained `preferLocal`, and
-  every lifecycle command passes `preferLocal: (provider === 'docker')` — docker → local hub, cloud →
-  the configured hub. `preferLocal` reuses Step 0's exposed-loopback-first ladder (an exposed machine
-  is `mode: 'remote'` yet co-located), so it is the same knob `prepare` uses.
-- **Destroy must NEVER drop the local record on a bare `not_found` (Bugbot High — the fix).** The
-  laptop keeps an adopted `BoxRecord` + ssh alias for the direct IO plane; the route only cleans the
-  **hub's** copy. My first cut treated any `not_found` as "already reaped" and dropped the local record
-  — but `not_found` also means "this hub never owned the box", and there you have just deleted the only
-  handle to a possibly-still-running container/VM (silent success + state deletion is strictly worse
-  than a clear failure). The fix, per which-hub: `destroyOnOwningHub` tries the box's likely owner
-  first (docker → local via `withHubClient({preferLocal:true})`, cloud → configured), and on
-  `not_found` retries the OTHER distinct hub (`destroyOnOtherHub`, best-effort, never throws — an
-  unreachable/erroring second hub is not proof of teardown). The local record is dropped ONLY when
-  some hub actually **reaped** the box; if no hub owns it, destroy **fails** (exit 2), keeps the record,
-  and names `agentbox destroy <box> --force` as the deliberate way to drop a stale record. The pure
-  decision (`decideDestroy(outcome, force)`) is unit-tested (`test/destroy-decision.test.ts`) — the
-  invariant is "drop iff reaped or force." **Reproduction gap:** the `not_found` refusal needs a
-  *remote* hub — a co-located local hub shares `state.json`, so it always finds a box the CLI resolved,
-  and can't return `not_found` for it. Verified by the unit test + code review; the common reap paths
-  (docker + a real e2b box, ground-truth via `docker inspect` / the e2b SDK) are e2e-green. Later steps
-  that move an *adopting/reaping* op behind the hub must mirror this owner-first + never-drop-on-
-  not_found discipline.
+- **ONE ownership predicate: `boxOwningHubIsLocal(box)` (`control-plane/with-hub.ts`) — use it, never
+  a fresh `provider === 'docker'` check.** A lifecycle/destroy op can only be served by the hub that
+  OWNS the box, and getting this wrong sends the op to a hub that never registered it (→ `not_found`,
+  which the inline path never hit — so the hub-routing introduces the regression if unguarded). The
+  predicate returns local-owned for **`docker`** (a local container) **and `remote-docker`** (a
+  container on another engine, but registered with the LOCAL relay — the local hub drives it over SSH;
+  Bugbot flagged the first cut that keyed on `docker` alone and mis-routed remote-docker). Cloud is
+  owned by the configured hub. This lives in one place so a future provider is classified once and the
+  predicate can't drift across the five call sites. **Later steps / earlier converted steps:** any
+  code choosing "which hub" or "does this box have a real container" for a box op should call this
+  helper — do not write a new `provider === 'docker'`; if an earlier step has one, fold it in here.
+  (Note the SSH-config follow-up is a *different* gate — "reached over SSH", which is
+  `!== 'docker'`/self-gating in `autoWriteSshConfig` — not ownership; don't conflate them.)
+- **All five box ops route via `withOwningHub(box, op)` — uniform owner-first + other-hub retry.**
+  `WithHubOptions` gained `preferLocal` (reusing Step 0's exposed-loopback-first ladder — the same knob
+  `prepare` uses); `withOwningHub` wraps it: it runs `op` against the owning hub (via `withHubClient`,
+  so version-gated + error-mapped), and on `not_found` retries the OTHER distinct hub (`runOpOnOtherHub`,
+  best-effort, never throws — an unreachable/erroring second hub is not proof the box belongs there).
+  `start`/`stop`/`pause`/`unpause` and `destroy` all use it, so "destroy works but stop doesn't" can't
+  happen. On `not-found` from every hub the four lifecycle commands report via `reportBoxNotOnAnyHub`
+  (exit 2); `destroy` is the exception — it keeps the record (see next).
+- **Destroy must NEVER drop the local record on a bare `not_found` (Bugbot High — fixed).** The laptop
+  keeps an adopted `BoxRecord` + ssh alias for the direct IO plane; the route only cleans the **hub's**
+  copy. My first cut treated any `not_found` as "already reaped" and dropped the local record — but
+  `not_found` also means "this hub never owned the box", and there you have deleted the only handle to a
+  possibly-still-running container/VM (silent success + state deletion is strictly worse than a clear
+  failure). Via `withOwningHub` the record is dropped ONLY when some hub actually **reaped** the box; if
+  no hub owns it, destroy **fails** (exit 2), keeps the record, and names `agentbox destroy <box>
+  --force` as the deliberate way to drop a stale record. The pure decision `decideDestroy(outcome,
+  force)` is unit-tested (`test/destroy-decision.test.ts`) — invariant "drop iff reaped or force";
+  `boxOwningHubIsLocal` is unit-tested in `test/with-hub.test.ts`. **Reproduction gap:** the `not_found`
+  refusal needs a *remote* hub — a co-located local hub shares `state.json`, so it always finds a box
+  the CLI resolved and can't `not_found` it. Verified by the unit tests + code review; the common reap
+  paths (docker + a real e2b box, ground-truth via `docker inspect` / the e2b SDK) are e2e-green. Later
+  steps that move an *adopting/reaping* op behind the hub must reuse `withOwningHub` (or mirror its
+  owner-first + never-drop-on-not_found discipline).
 - **The tmux-session-restore split (confirmed correct by the maintainer).** Route owns the box's
   compute lifecycle; the CLI restores the agent session *after* (box IO, direct plane); docker
   `unpause` needs NO restore because the cgroup thaw preserves the tmux session, while a cloud resume

@@ -3,7 +3,11 @@ import { autoWriteSshConfig } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { restoreAgentSessions } from '../agent-sessions.js';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { withHubClient } from '../control-plane/with-hub.js';
+import {
+  boxOwningHubIsLocal,
+  reportBoxNotOnAnyHub,
+  withOwningHub,
+} from '../control-plane/with-hub.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -19,22 +23,24 @@ export const unpauseCommand = new Command('unpause')
     try {
       const box = await resolveBoxOrExit(idOrName);
       // The hub's lifecycle action is `resume` (docker unpause, cloud re-hydrate);
-      // runs through `/api/v1` in both modes. A docker box is local-owned so it
-      // goes to the local hub (which-hub principle).
-      const isDocker = (box.provider ?? 'docker') === 'docker';
-      const ok = await withHubClient({ preferLocal: isDocker }, async (client) => {
-        await client.lifecycle(box.id, 'resume');
-        return true;
-      });
-      if (!ok) return;
-      process.stdout.write(`unpaused ${isDocker ? (box.container ?? box.name) : box.name}\n`);
+      // runs through `/api/v1`, routed to the box's owning hub (see withOwningHub).
+      const r = await withOwningHub(box, (client) => client.lifecycle(box.id, 'resume'));
+      if (r === undefined) return;
+      if (r === 'not-found') {
+        reportBoxNotOnAnyHub(box);
+        return;
+      }
+      const label = boxOwningHubIsLocal(box) ? (box.container ?? box.name) : box.name;
+      process.stdout.write(`unpaused ${label}\n`);
 
-      // Docker unpause is a cgroup thaw — the agent tmux session survives, so no
-      // restore is needed. Cloud resume reboots the sandbox, killing the agent
-      // tmux session, so restore it (mirrors `agentbox start`) or detached agents
-      // stay dead until a manual per-agent attach. Both are client-side IO,
-      // re-resolving from the stable sandbox id; best-effort, never throw.
-      if (!isDocker) {
+      // A docker/remote-docker unpause is a cgroup thaw — the agent tmux session
+      // survives, so no restore is needed. A cloud resume reboots the sandbox,
+      // killing the agent tmux session, so restore it (mirrors `agentbox start`) or
+      // detached agents stay dead until a manual per-agent attach; and re-resolve
+      // THIS machine's ssh alias (a cloud box's public IP can change on resume).
+      // Both are client-side IO, re-resolving from the stable sandbox id;
+      // best-effort, never throw.
+      if (!boxOwningHubIsLocal(box)) {
         const provider = await providerForBox(box);
         const cfg = await loadEffectiveConfig(box.workspacePath);
         await autoWriteSshConfig(box, provider, cfg.effective.ssh.autoConfig, (m) =>

@@ -1,6 +1,10 @@
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { withHubClient } from '../control-plane/with-hub.js';
+import {
+  boxOwningHubIsLocal,
+  reportBoxNotOnAnyHub,
+  withOwningHub,
+} from '../control-plane/with-hub.js';
 import { handleLifecycleError } from './_errors.js';
 
 export const pauseCommand = new Command('pause')
@@ -14,15 +18,15 @@ export const pauseCommand = new Command('pause')
   .action(async (idOrName: string | undefined) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
-      // Lifecycle runs through the hub `/api/v1` in both modes; a docker box is
-      // local-owned so it goes to the local hub (which-hub principle).
-      const isDocker = (box.provider ?? 'docker') === 'docker';
-      const ok = await withHubClient({ preferLocal: isDocker }, async (client) => {
-        await client.lifecycle(box.id, 'pause');
-        return true;
-      });
-      if (!ok) return;
-      if (isDocker) {
+      // Lifecycle runs through the hub `/api/v1` in both modes, routed to the box's
+      // owning hub (see withOwningHub / boxOwningHubIsLocal).
+      const r = await withOwningHub(box, (client) => client.lifecycle(box.id, 'pause'));
+      if (r === undefined) return;
+      if (r === 'not-found') {
+        reportBoxNotOnAnyHub(box);
+        return;
+      }
+      if (boxOwningHubIsLocal(box)) {
         process.stdout.write(`paused ${box.container ?? box.name}\n`);
       } else {
         // What "pause" costs you differs by backend, and the difference is the

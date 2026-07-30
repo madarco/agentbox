@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { HubTarget } from '../src/commands/hub.js';
 import {
+  boxOwningHubIsLocal,
   exitCodeForApiError,
   hubApiTargetFrom,
   isSupportedApiVersion,
@@ -38,6 +39,24 @@ describe('hubApiTargetFrom (target resolution, all three shapes)', () => {
   it('remote hub with no key configured → not ok, remote', () => {
     const t: HubTarget = { mode: 'remote', url: 'https://plane.example', token: '' };
     expect(hubApiTargetFrom(t)).toEqual({ ok: false, reason: 'no-token', mode: 'remote' });
+  });
+});
+
+describe('boxOwningHubIsLocal (the one ownership predicate)', () => {
+  // The LOCAL hub drives these directly: docker (a local container) and
+  // remote-docker (a container on another engine, but registered with the LOCAL
+  // relay). Getting remote-docker wrong is the Bugbot Medium — start/stop/pause/
+  // unpause would hit a configured remote hub that never owned the box.
+  it('is local-owned for docker and remote-docker', () => {
+    expect(boxOwningHubIsLocal({ provider: 'docker' })).toBe(true);
+    expect(boxOwningHubIsLocal({ provider: 'remote-docker' })).toBe(true);
+    expect(boxOwningHubIsLocal({})).toBe(true); // undefined provider defaults to docker
+  });
+
+  it('is NOT local-owned for any cloud provider', () => {
+    for (const p of ['e2b', 'vercel', 'hetzner', 'daytona', 'digitalocean']) {
+      expect(boxOwningHubIsLocal({ provider: p }), p).toBe(false);
+    }
   });
 });
 
