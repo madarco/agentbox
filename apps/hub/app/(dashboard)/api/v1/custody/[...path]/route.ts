@@ -18,13 +18,17 @@
 //     `credentials pull` / SSH-key adopt still round-trips.
 //   - token profile (a plain local hub): the hub token already gated the request in
 //     proxy.ts, and it is a machine-local secret (not distributed like the API key),
-//     so it is itself the elevated credential — no second header needed.
+//     so it is itself the elevated credential — BUT only over loopback. The localhost
+//     hub binds 0.0.0.0 (Step 2), so this route is LAN-reachable; a non-loopback
+//     byte-read is refused even with a valid token (server.ts stamps the loopback
+//     verdict onto PEER_LOOPBACK_HEADER; peer-gated like /admin/*, adminGateAllows).
 //
 // Reaches the store through globalThis (set by server.ts) so @agentbox/relay stays
 // out of Next's bundle (a runtime import of FsCustodyStore ERR_MODULE_NOT_FOUNDs on
 // execa in the standalone build — see global.d.ts).
 import { authMode } from '@/lib/auth-config';
 import { custodyByteReadAuthorized } from '@/lib/custody-auth';
+import { PEER_LOOPBACK_HEADER } from '@/lib/peer';
 import { fail, ok } from '../../lib/envelope';
 import { readJson } from '../../lib/validate';
 
@@ -86,6 +90,9 @@ function byteReadAllowed(req: Request): boolean {
     mode: authMode(),
     adminToken: process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '',
     providedToken: req.headers.get('x-agentbox-admin-token') ?? '',
+    // server.ts stamps this from the real socket peer after stripping any
+    // client-supplied copy, so a remote caller can't forge a loopback verdict.
+    isLoopback: req.headers.get(PEER_LOOPBACK_HEADER) === '1',
   });
 }
 
@@ -106,7 +113,9 @@ export async function GET(
   if (!byteReadAllowed(_req)) {
     return fail(
       'unauthorized',
-      'reading a custody value requires the admin token (send X-Agentbox-Admin-Token); the hub API key can list and write but never read a stored value',
+      authMode() === 'password'
+        ? 'reading a custody value requires the admin token (send X-Agentbox-Admin-Token); the hub API key can list and write but never read a stored value'
+        : 'reading a custody value is loopback-only on a local hub (custody holds credentials and SSH private keys); read it from the hub machine itself, not over the network',
     );
   }
   try {

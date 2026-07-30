@@ -34,6 +34,7 @@ import { createHubBackend } from './lib/hub-backend';
 import { collectHostCarried } from './lib/host-carried';
 import { configureHubGitCredentials } from './lib/git-auth';
 import { cloudBackendLoader } from './lib/provider-importers';
+import { PEER_LOOPBACK_HEADER, isLoopbackAddress } from './lib/peer';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number.parseInt(process.env.AGENTBOX_HUB_PORT ?? '8787', 10);
@@ -159,6 +160,15 @@ async function main(): Promise<void> {
     logger: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
     // Next parses req.url itself when parsedUrl is omitted.
     uiHandler: (req, res) => {
+      // Stamp the loopback verdict for the peer-gated Next routes (custody
+      // byte-read). We own the socket here, so req.socket.remoteAddress is the real
+      // peer; STRIP any client-supplied copy first so a remote caller can't forge
+      // "I'm loopback", then set it only when the peer truly is loopback. Absence
+      // (the delete) means non-loopback — fail-closed. See lib/peer.ts.
+      delete req.headers[PEER_LOOPBACK_HEADER];
+      if (isLoopbackAddress(req.socket.remoteAddress)) {
+        req.headers[PEER_LOOPBACK_HEADER] = '1';
+      }
       void handle(req, res);
     },
   });

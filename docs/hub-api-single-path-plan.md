@@ -237,6 +237,13 @@ and rejected an empty key (`invalid_request`).
   is surfaced verbatim; a failed job throws so the command's top-level handler prints it. It does not
   need Step 6's `error.details.exitCode` carry (that is for faithful box-command exit codes on git
   ops). If a later step wants `prepare` to exit with a provider-specific code, wire the carry in then.
+- **`prepare --name` was NOT actually missing** (a follow-up PR checked, base `feat/cli_api_consolidation`).
+  A prior review flagged the `-n, --name` flag as never re-added after Step 1 widened the contract, but
+  the flag is present (`commands/prepare.ts`) and threaded end-to-end (`opts.name` → `runPrepare` →
+  `runPrepareViaHub` → `bakeViaHub` → `HubApiClient.prepareProvider({name})` → request body → `QueueJobPrepare`).
+  The follow-up added `packages/relay/test/queue-prepare-name.test.ts` asserting `enqueuePrepareJob({name})`
+  lands `prepare.name` on the persisted job manifest (a Daytona bake can't run in a unit test), and
+  otherwise made no change here.
 
 ---
 
@@ -884,11 +891,18 @@ target with the API key, and `prune --provider e2b` routes to the configured hub
   round-trip. **The reap moved server-side**: `POST /prune`'s cloud path deletes the orphan sandbox
   then `reapStoreState(handle, boxId)`s its registration directly, so the CLI's
   `reapSandboxesOnControlBox` was deleted (`reapOnControlBox` stays — `dashboard.ts` uses it).
-- **KNOWN FOLLOW-UP for Step 11's routing sweep (do not fix in place — out of scope, would
-  conflict):** Step 7's `services` / `url` / `screen` (`commands/{services,status,url,screen}.ts`)
-  ship on plain `withHubClient({})`, so they carry the SAME latent `not_found` bug for a **docker box
-  under a configured remote hub** that Step 5 fixed for lifecycle. They should move onto
-  `withOwningHub` (they're all box-scoped). Left untouched here to respect Step 7's file set.
+- **~~KNOWN FOLLOW-UP for Step 11's routing sweep~~ ✅ FIXED (follow-up PR, base `feat/cli_api_consolidation`).**
+  Step 7's `services` / `services restart` / `url` / `screen` / `status --set-name` (rename)
+  (`commands/{services,status,url,screen}.ts`) shipped on plain `withHubClient({})`, carrying the SAME
+  latent `not_found` bug for a **docker box under a configured remote hub** that Step 5 fixed for
+  lifecycle. All five are box-scoped and were repointed onto `withOwningHub(box, op)` — no fresh
+  `provider === 'docker'` checks; `url`/`screen` capture the payload URL via a closure variable (the op
+  returns `void`) and fall through to the provider path on `null`/`not-found`. **Verified end-to-end**:
+  with `relay.controlPlaneUrl` pointing at a separate non-owning control box and a docker box present,
+  the pre-fix binary failed (`url`/`status --set-name` → `not_found` exit 2, `services` → unreachable
+  exit 1) and the fixed binary succeeds (routes to the local owning hub); plain local-hub mode
+  unregressed. Genuinely project/fleet-scoped calls (Step 9's `checkpoint ls`, `prune --provider`)
+  stayed on `withHubClient({})`.
 - **`checkpoint ls`/`rm`/`set-default` are PROJECT-scoped, so they use `withHubClient({ preferLocal:
   true })`, not `withOwningHub`** (there is no box). `preferLocal` is the same hub docker `create`
   writes to (its image is local) AND the only store whose path-hash matches: checkpoint stores are
@@ -973,10 +987,27 @@ return metadata only; no-auth is `401`. The CLI's remote-shaped path (`--url` + 
   `custodyByteReadAuthorized` (`apps/hub/lib/custody-auth.ts`, `test/custody-auth.test.ts`) — **any
   later step touching this route MUST keep it fail-closed** (unset admin-token env, missing header,
   and mismatched header all refuse; there is no path that degrades to API-key-only). On the **token
-  profile** (a plain local hub) the byte-read is allowed with no admin token: the hub token already
-  gated it in `proxy.ts` and is a machine-local secret, not distributed like the API key — a single
-  trusted machine. On `off` the whole API is open. `apps/web/content/docs/api.mdx` documents all of
-  this.
+  profile** (a plain local hub) the byte-read needs no admin token but is now **loopback-only** (see
+  the emergent-Step-2+10 note below): the hub token is a machine-local secret, but the localhost hub
+  binds `0.0.0.0`, so a non-loopback byte-read is refused even with a valid token. On `off` the whole
+  API is open. `apps/web/content/docs/api.mdx` documents all of this.
+- **EMERGENT Step 2 + Step 10 security fix (follow-up PR, base `feat/cli_api_consolidation`) — NOT a
+  defect in either step alone.** Step 2 made the localhost hub bind `0.0.0.0` (docker boxes must reach
+  the embedded relay at `host.docker.internal:8787`). Step 10 let the hub token alone authorize custody
+  BYTE-READS on the token profile, on the premise that a local hub is a single trusted machine — true
+  when the hub was loopback-only. Together they made custody byte-reads (agent creds, `.env`, per-box
+  **SSH private keys**) LAN-reachable to anyone who obtains the hub token once — and the hub prints its
+  URL with `?token=…`, so the token lands in scrollback/history. **Fix:** the token-profile byte-read is
+  now **peer-gated to loopback**, exactly the way `/admin/*` is (`adminGateAllows`). `custodyByteReadAuthorized`
+  gained an `isLoopback` arg (token profile returns it; password unchanged — admin token; `off`
+  unchanged). The verdict rides a **trusted header** (`PEER_LOOPBACK_HEADER`, `apps/hub/lib/peer.ts`)
+  that `server.ts`'s `uiHandler` stamps from the real socket peer **after stripping any client-supplied
+  copy** (unspoofable, since the custom server owns the socket). The manifest/list route is unaffected
+  (metadata only). Nothing legitimate breaks: the PC reads custody over loopback, docker boxes never
+  byte-read custody (only `/rpc`), and a remote PC pulling from a control box is the password-profile
+  admin-token path. Verified live: pre-fix a LAN-IP byte-read with the hub token returned the credential
+  bytes; post-fix it is `401`, loopback still works, a forged peer header is still `401`. Tests in
+  `test/custody-auth.test.ts` (kept the two-tier tests, added a non-loopback-refused case) + `test/peer.test.ts`.
 - **Custody is now wired on EVERY hub, not just a control box** (`server.ts`: `new FsCustodyStore()`
   unconditionally, exposed via `globalThis.__AGENTBOX_HUB_CUSTODY`). This is what makes
   `/api/v1/custody` serve on a plain local hub (the "same path local ⇄ remote" rule; the acceptance
@@ -1056,6 +1087,13 @@ internal-wire client call.
 
 **Verify:** with a control box configured, `create --provider docker` refuses with the named key,
 docker boxes vanish from `ls`, and `agentbox hub start` works on a machine with no docker.
+
+> **DO NOT undo the custody byte-read peer gate when revisiting hub binding here.** The localhost hub's
+> `0.0.0.0` bind (Step 2) is load-bearing for docker boxes and stays, but it is exactly what makes the
+> token-profile custody byte-read LAN-reachable — so `custodyByteReadAuthorized` peer-gates it to
+> loopback via the `server.ts` `uiHandler` peer stamp (`apps/hub/lib/peer.ts`). See the emergent-Step-2+10
+> note under Step 10. If this step narrows or changes the bind, keep the loopback gate: it is the only
+> thing standing between a leaked hub token and every SSH private key custody holds.
 
 ---
 

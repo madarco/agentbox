@@ -3,7 +3,7 @@ import { log } from '@clack/prompts';
 import { Command } from 'commander';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import type { HubApiServiceView } from '../control-plane/hub-api-client.js';
-import { withHubClient } from '../control-plane/with-hub.js';
+import { reportBoxNotOnAnyHub, withOwningHub } from '../control-plane/with-hub.js';
 import { handleLifecycleError } from './_errors.js';
 
 /**
@@ -11,8 +11,11 @@ import { handleLifecycleError } from './_errors.js';
  * `agentbox.yaml`, driven by the in-box `agentbox-ctl` supervisor.
  *
  * Both subcommands go through the hub's public `/api/v1`
- * (`GET|POST /boxes/:id/services*` via {@link withHubClient}), so they work
- * identically against a local hub and a remote control box — the hub runs the
+ * (`GET|POST /boxes/:id/services*` via {@link withOwningHub} — box-scoped, so it
+ * targets the hub that OWNS the box: the local hub for docker/remote-docker, the
+ * configured hub for cloud; a plain `withHubClient` would send a docker box's op
+ * to a configured remote control box that never owned it and get `not_found`), so
+ * they work identically against a local hub and a remote control box — the hub runs the
  * box's `provider.exec` (it holds the credentials), and returns the SAME shared
  * `boxServicesStatusRaw` / `boxRestartService` result the CLI used to compute
  * inline. Unlike the old inline path, a paused/stopped box now reports its
@@ -45,7 +48,7 @@ const listCommand = new Command('list')
   .action(async (idOrName: string | undefined, opts: { json?: boolean }) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
-      await withHubClient({}, async (client) => {
+      const r = await withOwningHub(box, async (client) => {
         const svc = await client.getServices(box.id);
         if (opts.json) {
           process.stdout.write(JSON.stringify(svc) + '\n');
@@ -64,6 +67,7 @@ const listCommand = new Command('list')
         }
         process.stdout.write(renderStatusTable(toStatusRows(svc.services)) + '\n');
       });
+      if (r === 'not-found') reportBoxNotOnAnyHub(box);
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -80,7 +84,7 @@ const restartCommand = new Command('restart')
       // the box ref stays optional the same way `list`/`status` allow omitting it.
       const { box, shifted } = await resolveBoxOrShift(idOrName);
       const serviceName = shifted ? idOrName : name;
-      await withHubClient({}, async (client) => {
+      const outcome = await withOwningHub(box, async (client) => {
         // The route restarts one service (with `name`) or every service (without),
         // reading the service list + looping server-side. A non-zero restart comes
         // back as a HubApiError that withHubClient maps to an exit code + message.
@@ -89,6 +93,7 @@ const restartCommand = new Command('restart')
         if (r.stderr) process.stderr.write(r.stderr);
         if (!serviceName && r.ok) process.stdout.write('restarted all services\n');
       });
+      if (outcome === 'not-found') reportBoxNotOnAnyHub(box);
     } catch (err) {
       handleLifecycleError(err);
     }
