@@ -19,6 +19,7 @@ import {
   ensureBoxBrowser,
   ensureCodexInstalled,
   ensureOpencodeInstalled,
+  getHubStatus,
   listBoxes,
   pauseBox,
   rebuildPluginNativeDeps,
@@ -685,16 +686,27 @@ export const dashboardCommand = new Command('dashboard')
       // Bring up the local hub (once, before the TUI owns the screen) so the
       // per-box prompt streams have a `/api/v1` to hit. This is the default hub
       // for boxes that answer here; a control-box row overrides it per box.
-      const localHub = await resolveHubApiTarget(undefined, { preferLocal: true }).catch(
-        () => null,
-      );
+      let localHub = await resolveHubApiTarget(undefined, { preferLocal: true }).catch(() => null);
+      // The `/api/v1` prompt stream is API-key-gated even on loopback, so a
+      // keyless fallback URL would 401 every subscription. If the resolve above
+      // hiccuped but a local hub is in fact running, read its token directly so
+      // the fallback carries a valid key rather than silently failing.
+      if (!localHub) {
+        const st = await getHubStatus().catch(() => null);
+        if (st?.running && st.token)
+          localHub = { url: `http://127.0.0.1:${String(st.port)}`, apiKey: st.token };
+      }
 
       const compositor = new Compositor(
         {
           ptySpawn,
           termCtor,
           // Default hub for the per-box SSE subscriptions: this host's own local
-          // hub, whose `/api/v1` gate accepts the local hub token.
+          // hub, whose `/api/v1` gate accepts the local hub token. The key is
+          // present whenever the hub is running (resolved above, or read from
+          // getHubStatus); only a genuinely-down local hub leaves it unset, and
+          // then a LOCAL box's stream degrades visibly to "approvals unavailable"
+          // while a control-box row still resolves its own remote key per box.
           hubBaseUrl: localHub?.url ?? `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`,
           hubApiKey: localHub?.apiKey,
           // ...but a box created against a control box keeps its approvals

@@ -303,10 +303,17 @@ async function approveRelay(id: string, opts: ApproveOpts): Promise<void> {
   const answer: 'y' | 'n' = opts.deny === true || cancelled ? 'n' : 'y';
   const label = answer === 'y' ? 'approved' : 'denied';
 
+  // Track whether we actually reached a hub: a `not_found` from a hub we DID
+  // reach means the prompt is genuinely gone, but never reaching one (local hub
+  // couldn't start, control box unreachable) is not evidence it's resolved —
+  // claiming so would send the operator looking for the wrong problem.
+  let reachedHub = false;
+
   // Local hub first (auto-started — a bare relay can't serve /api/v1). `not_found`
   // means the prompt isn't here; fall through to the configured control box.
   const localClient = await resolveHubApiClient(undefined, { preferLocal: true });
   if (localClient) {
+    reachedHub = true;
     try {
       await localClient.answerApproval(id, answer, cancelled);
       log.success(`approval ${id}: ${label}`);
@@ -320,14 +327,14 @@ async function approveRelay(id: string, opts: ApproveOpts): Promise<void> {
   if (cfg && remoteHubConfigured(cfg.effective)) {
     const remoteClient = await resolveHubApiClient(undefined, { quiet: true });
     if (!remoteClient) {
-      // A control box we can't ask is not evidence the prompt is gone — saying
-      // "already resolved" here would send you looking for the wrong problem.
+      // A control box we can't ask is not evidence the prompt is gone.
       log.error(
         `not found on this host's hub, and the control box could not be asked (no API key).\n` +
           'Set AGENTBOX_HUB_API_KEY (or run `agentbox hub setup`), or answer it with `agentbox hub approvals answer`.',
       );
       process.exit(1);
     }
+    reachedHub = true;
     try {
       await remoteClient.answerApproval(id, answer, cancelled);
       log.success(`approval ${id}: ${label} (on the control box)`);
@@ -339,6 +346,14 @@ async function approveRelay(id: string, opts: ApproveOpts): Promise<void> {
       }
       throw err;
     }
+  }
+  if (!reachedHub) {
+    // The local hub couldn't be started/authenticated and no control box is
+    // configured — we never asked anyone, so don't imply the prompt is gone.
+    log.error(
+      `could not reach a hub to answer approval ${id} (the local hub failed to start). Start it with \`agentbox hub\` and retry.`,
+    );
+    process.exit(1);
   }
   log.info(`approval ${id} already resolved (or expired)`);
 }

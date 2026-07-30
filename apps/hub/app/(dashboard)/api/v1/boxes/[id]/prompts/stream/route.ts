@@ -32,15 +32,20 @@ export async function GET(
         }
       };
       send('open', {});
-      // Flush the backlog first — a wrapper attaching to a box that already has a
-      // parked prompt (or an in-progress notice) must see it immediately. Prompts
-      // outrank notices, matching the relay's own /admin/prompts/stream flush.
+      // Subscribe BEFORE flushing the backlog (matching the relay's own
+      // /admin/prompts/stream): a prompt arriving in the gap between a backlog
+      // snapshot and registration would otherwise be lost. The reverse order can
+      // only duplicate a `prompt-ask` (in the backlog AND freshly broadcast),
+      // which the footer dedupes by id — a missed prompt it cannot recover.
       let unsub = (): void => {};
       if (prompts) {
+        unsub = prompts.subscribe(id, (event, data) => send(event, data));
+        // Then flush any already-parked prompt (+ in-progress notice) so a
+        // wrapper attaching to a blocked box sees it immediately. Prompts outrank
+        // notices, matching the admin stream.
         const backlog = prompts.backlog(id);
         for (const ev of backlog.prompts) send('prompt-ask', ev);
         for (const ev of backlog.notices) send('notice-set', ev);
-        unsub = prompts.subscribe(id, (event, data) => send(event, data));
       }
       const ping = setInterval(() => send('ping', { ts: new Date().toISOString() }), HEARTBEAT_MS);
       req.signal.addEventListener('abort', () => {

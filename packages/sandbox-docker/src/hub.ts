@@ -58,6 +58,10 @@ const PORT = DEFAULT_RELAY_PORT;
 // token-gated `/api/v1` + UI and the box-facing `/rpc` + `/events`, matching the
 // bare relay this replaces.
 const HOST = '0.0.0.0';
+// The address to advertise in URLs (status output, the `?token=` open URL) and to
+// health-probe — the hub binds wide (HOST) but is reached from THIS machine over
+// loopback; `0.0.0.0` is not a usable browser/client address.
+const LOOPBACK_HOST = '127.0.0.1';
 
 /**
  * Portless alias for the hub itself. Unlike a box (a container that OrbStack can
@@ -169,8 +173,9 @@ async function readToken(): Promise<string | null> {
 
 async function endpointFor(portlessUrl?: string): Promise<HubEndpoint> {
   const token = await readToken();
-  // Prefer the friendly Portless URL when one is registered; else the loopback.
-  const hostUrl = portlessUrl ?? `http://${HOST}:${String(PORT)}`;
+  // Prefer the friendly Portless URL when one is registered; else the loopback
+  // (NOT the bind host — `http://0.0.0.0` is not a usable browser/client URL).
+  const hostUrl = portlessUrl ?? `http://${LOOPBACK_HOST}:${String(PORT)}`;
   return {
     hostUrl,
     openUrl: token ? `${hostUrl}/?token=${token}` : hostUrl,
@@ -467,7 +472,7 @@ async function spawnHub(
   // Next prepare takes a beat longer than the lean relay; give it ~25s.
   for (let i = 0; i < 50; i++) {
     if (await pingHealthz(300)) {
-      log(`hub reachable on http://${HOST}:${String(PORT)}`);
+      log(`hub reachable on http://${LOOPBACK_HOST}:${String(PORT)}`);
       const purl = await syncHubPortless(portlessEnabled);
       if (purl) log(`hub also reachable on ${purl}`);
       return endpointFor(purl);
@@ -484,7 +489,7 @@ async function spawnHub(
   }
   throw new Error(
     await hubStartupError(
-      `hub did not become reachable on http://${HOST}:${String(PORT)} within ~25s`,
+      `hub did not become reachable on http://${LOOPBACK_HOST}:${String(PORT)} within ~25s`,
     ),
   );
 }

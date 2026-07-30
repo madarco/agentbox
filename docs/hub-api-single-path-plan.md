@@ -308,7 +308,12 @@ in-box `git push` itself reached the hub and landed (`git ls-remote`).
   git.push **parks** instead of auto-denying. A plain localhost hub keeps floor 0 (the user is
   present; an unattended local box shouldn't wedge). Unit-tested in `prompts.test.ts`. A docker box
   can't e2e this gate — its scratch-branch push auto-approves — so the floor's live proof is the unit
-  test + the password-profile gate.
+  test + the password-profile gate. **Interaction to know:** because the floor keeps `count() > 0`,
+  a control box always takes the has-subscriber (park) branch, so the `AGENTBOX_GIT_PUSH_NO_SUB`
+  (and `AGENTBOX_GH_NO_SUB`) `allow`/`deny` env knobs are **inert there** — parking is the point, and
+  true autonomous auto-approve is the per-box `box.autoApproveHostActions` opt-in (checked earlier in
+  `askPrompt`, before the subscriber count), not the env knob. The knobs still apply on a plain
+  localhost hub (floor 0).
 - **Parked prompts have NO TTL — the box waits INDEFINITELY (a decision worth stating, not fixed
   here).** The normal has-subscriber/durable-subscriber `askPrompt` call sites (git.push:1449,
   gh.pr:523/594, cp:1002, download:1064) pass **no `ttlMs`**, so the parked in-box RPC blocks until
