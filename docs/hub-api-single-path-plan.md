@@ -1222,14 +1222,22 @@ temporarily-reintroduced `/admin/store` call, then reverted. `hub-backend.ts`'s
   (deliberately out of scope), so `route-create.ts` survives for it."* The guard test
   (`no-internal-wire-client.test.ts`) is the true invariant to cite: the CLI holds no client for the
   `/admin`//`/remote` wire — that is a stronger, accurate claim than "no inline create".
-- **The dashboard destroy now routes cloud boxes through `/api/v1` (`client.destroy`), not inline
-  `provider.destroy` + a `/remote/boxes` reap.** `commands/dashboard.ts`'s `destroyBoxAction` cloud
-  branch resolves the owning hub (`resolveHubApiClient`, quiet — the TUI owns the screen, so no print /
-  autostart) and calls `client.destroy(id)` (provider teardown + store/custody reap server-side, one
-  implementation), then drops the local record (`removeBoxRecord`). Docker boxes still use the inline
-  `destroyBox` (a local container the local hub owns; no remote registration to reap). The dashboard's
-  other lifecycle actions (pause/stop/resume) remain inline — they are IO-plane and out of scope; only
-  destroy needed the reap and so moved.
+- **The dashboard destroy now routes cloud boxes through `withOwningHub` (Step 5's helper), NOT
+  `resolveHubApiClient(undefined)`.** `commands/dashboard.ts`'s `destroyBoxAction` cloud branch calls
+  `withOwningHub(record, (client) => client.destroy(record.id))`, then drops the local record on a
+  reap (`removeBoxRecord`). The first cut used `resolveHubApiClient(undefined, { quiet })`, which
+  resolves the hub from CURRENT CONFIG only — Bugbot (High, on this PR) caught that it re-introduces
+  the exact Step-5 defect: a box created against a control box (or driven after a local config change)
+  could hit the wrong hub, get `not_found`, and leave BOTH the cloud sandbox and its registration in
+  place. `withOwningHub` routes owner-first and retries the OTHER distinct hub on `not_found`, which is
+  what `agentbox destroy` (`commands/destroy.ts`) already does — so the dashboard and the CLI now
+  destroy through the identical owner-first path. `client.destroy(id)` does provider teardown +
+  store/custody reap server-side (one implementation, both modes), replacing the old inline
+  `provider.destroy` + `/remote/boxes` reap. Docker boxes still use the inline `destroyBox` (a local
+  container the local hub owns; no remote registration to reap). The dashboard's other lifecycle
+  actions (pause/stop/resume) remain inline — they are IO-plane and out of scope; only destroy needed
+  the reap and so moved. (`withOwningHub` prints via clack on a genuine hub error, which is rare and
+  the compositor redraws over it; on success it is silent — the common path.)
 - **`hub-list.ts` is now single-purpose** (the `/api/v1` `ls` listing); its `hub-boxes-cache.json`
   cache is the only one it writes. The separate `hub-registrations-cache.json` (Step 3's split for the
   legacy path) is no longer written — a stale file on old installs is harmless.

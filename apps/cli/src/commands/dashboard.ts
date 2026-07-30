@@ -39,10 +39,10 @@ import {
 } from '@agentbox/sandbox-docker';
 import { hostOpenCommand, readState, removeBoxRecord } from '@agentbox/sandbox-core';
 import { resolveBoxPromptSource } from '../control-plane/box-plane.js';
-import { resolveHubApiClient, resolveHubApiTarget } from './control-plane.js';
+import { resolveHubApiTarget } from './control-plane.js';
 import { listDashboardBoxes, type DashboardBox } from '../dashboard/box-list.js';
 import { tryAutoAdopt } from '../control-plane/auto-adopt.js';
-import { HubApiError } from '../control-plane/hub-api-client.js';
+import { withOwningHub } from '../control-plane/with-hub.js';
 import type { BoxRecord } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { resolveClaudeAuth } from '../auth.js';
@@ -670,26 +670,26 @@ export const dashboardCommand = new Command('dashboard')
           await destroyBox(boxId);
           return;
         }
-        // Cloud: the hub's `/api/v1` destroy tears down the sandbox AND reaps the
-        // store/custody registration server-side (one implementation, both modes),
-        // replacing the old inline `provider.destroy` + control-box reap. A cloud
-        // box is owned by whichever hub is configured (the local hub when none),
-        // which `resolveHubApiClient` resolves without `preferLocal`. Quiet: this
-        // runs while the TUI owns the screen, so it must not print or autostart.
-        const client = await resolveHubApiClient(undefined, { quiet: true });
-        if (!client) {
-          return `no hub to destroy ${record.name}; run: agentbox destroy ${record.name}`;
+        // Cloud: route through the hub that OWNS the box, not whichever the
+        // current config names. `withOwningHub` tries the owner-first hub then
+        // retries the OTHER distinct hub on `not_found` — so a box created against
+        // a control box (or driven after a local config change) is torn down AND
+        // reaped on the RIGHT hub instead of erroring `not_found` and leaving both
+        // the sandbox and its registration behind. Same fix `agentbox destroy`
+        // uses (with-hub.ts, Step 5); replaces the old inline `provider.destroy` +
+        // `/remote/boxes` reap. The route does provider teardown + store/custody
+        // reap server-side (one implementation, both modes).
+        const outcome = await withOwningHub(record, (client) => client.destroy(record.id));
+        if (outcome === undefined) {
+          // A real hub error (conflict / auth / backend) was reported already;
+          // keep the record — the sandbox may still be up.
+          return `destroy failed for ${record.name}; run: agentbox destroy ${record.name}`;
         }
-        try {
-          await client.destroy(record.id);
-        } catch (err) {
-          if (err instanceof HubApiError && err.code === 'not_found') {
-            return `${record.name} not found on the hub; run: agentbox destroy ${record.name} --force`;
-          }
-          return `destroy failed: ${err instanceof Error ? err.message : String(err)}`;
+        if (outcome === 'not-found') {
+          return `${record.name} was not found on any hub; run: agentbox destroy ${record.name} --force`;
         }
-        // The route cleaned the hub's copy of the record; drop this machine's
-        // adopted copy too (a no-op when the hub is co-located). Best-effort.
+        // Some hub reaped it; drop this machine's adopted copy too (a no-op when
+        // the hub is co-located). Best-effort.
         await removeBoxRecord(record.id).catch(() => {});
       };
 
