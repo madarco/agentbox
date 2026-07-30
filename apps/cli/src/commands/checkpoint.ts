@@ -9,8 +9,12 @@ import {
   type ProviderKind,
 } from '@agentbox/config';
 import { resolveBoxOrExit } from '../box-ref.js';
-import type { HubApiCheckpointItem, HubApiClient } from '../control-plane/hub-api-client.js';
-import { withHubClient, withOwningHub } from '../control-plane/with-hub.js';
+import type {
+  HubApiCheckpointCreate,
+  HubApiCheckpointItem,
+  HubApiClient,
+} from '../control-plane/hub-api-client.js';
+import { boxOwningHubIsLocal, withHubClient, withOwningHub } from '../control-plane/with-hub.js';
 import { handleLifecycleError } from './_errors.js';
 
 /**
@@ -89,6 +93,7 @@ const createSub = new Command('create')
         log.info(`capturing ${providerName} snapshot (this may take a few minutes)`);
       }
 
+      let created: HubApiCheckpointCreate | undefined;
       const r = await withOwningHub(box, async (client) => {
         const info = await client.createCheckpoint(box.id, {
           name: opts.name,
@@ -96,6 +101,7 @@ const createSub = new Command('create')
           setDefault: opts.setDefault === true,
           replace: opts.replace === true,
         });
+        created = info;
         log.success(
           `checkpoint ${info.name} (${info.kind})` +
             (info.dir ? ` -> ${info.dir}` : ` (${info.provider} snapshot)`) +
@@ -112,6 +118,19 @@ const createSub = new Command('create')
       if (r === 'not-found') {
         log.error(`box ${box.name} was not found on any hub AgentBox knows.`);
         process.exit(2);
+      }
+      // `--set-default` wrote the default-checkpoint config on the HUB's host. When
+      // the owning hub is REMOTE (a cloud box on a control box), mirror the pin into
+      // THIS machine's project config too — otherwise a later local `agentbox
+      // create` here resolves the stale default (the removed inline cloud path wrote
+      // it locally; standalone `set-default` still does). Skipped for a local-owned
+      // box (docker/remote-docker), whose hub IS this machine so the write already
+      // landed here. Idempotent + best-effort.
+      if (r === 'ok' && created?.setDefaultKey && !boxOwningHubIsLocal(box)) {
+        const projectRoot = box.projectRoot ?? (await findProjectRoot(box.workspacePath)).root;
+        await setConfigValue('project', created.setDefaultKey, created.ref, projectRoot).catch(
+          () => {},
+        );
       }
     } catch (err) {
       handleLifecycleError(err);
