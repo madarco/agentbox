@@ -1,0 +1,150 @@
+---
+title: Tenki
+description: Run your agents in Tenki Firecracker microVMs — a community AgentBox provider plugin with in-box Docker, public preview URLs, and free pause/resume
+---
+
+Run your agents in a [Tenki](https://tenki.cloud) sandbox — a Firecracker microVM with its own
+kernel — using the same `agentbox` commands as a local box. **tenki is a community provider** — a
+[plugin](/docs/build-a-provider) published as its own package
+(`@luxorlabs/agentbox-provider-tenki`), not bundled into the CLI. You get in-box Docker, a public
+HTTPS preview URL per port, free pause/resume, and id-addressed checkpoints, with no local Docker
+needed.
+
+Switch per box with `--provider tenki`, or pin it project-wide with `box.provider: tenki` in
+[`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See the built-ins
+[local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona),
+[vercel](/docs/vercel), and [e2b](/docs/e2b).
+
+<Callout type="info" title="Community provider">
+  Maintained outside the AgentBox core, at
+  [`LuxorLabs/agentbox-provider-tenki`](https://github.com/LuxorLabs/agentbox-provider-tenki)
+  ([npm](https://www.npmjs.com/package/@luxorlabs/agentbox-provider-tenki)). Built only on
+  [`@madarco/agentbox-provider-sdk`](https://www.npmjs.com/package/@madarco/agentbox-provider-sdk)
+  and the official [`@tenkicloud/sandbox`](https://www.npmjs.com/package/@tenkicloud/sandbox) SDK.
+  Report bugs at the [issue tracker](https://github.com/LuxorLabs/agentbox-provider-tenki/issues).
+</Callout>
+
+## Install
+
+Install the plugin, then register it so `--provider tenki` resolves:
+
+```bash
+npm i -g @luxorlabs/agentbox-provider-tenki
+agentbox plugin add @luxorlabs/agentbox-provider-tenki
+agentbox plugin list            # → tenki … (SDK v2)
+```
+
+A plugin runs in-process with full host and credential access, so `plugin add` is the trust
+boundary — see [build-a-provider](/docs/build-a-provider).
+
+## Credentials
+
+Create a workspace auth token in your [Tenki dashboard](https://tenki.cloud) and expose it as
+`TENKI_AUTH_TOKEN`. On a terminal the first `create` prompts for it and saves it for you:
+
+```bash
+export TENKI_AUTH_TOKEN=tk_...   # or add TENKI_AUTH_TOKEN=… to ~/.agentbox/secrets.env
+agentbox doctor                  # shows the `tenki:` group
+```
+
+`TENKI_API_TOKEN` is accepted as an alias. Credentials persist to `~/.agentbox/secrets.env`;
+project `.env` files are never harvested. See [environment](/docs/environment).
+
+## Base image
+
+Like every AgentBox cloud provider, a box needs the AgentBox runtime (`agentbox-ctl`, node, the
+agents) present in the image. Tenki boots from a snapshot, so the plugin bakes one:
+
+```bash
+agentbox prepare --provider tenki
+```
+
+`prepare` boots a throwaway builder sandbox from Tenki's base image, installs the runtime, tmux,
+Docker and the coding agents, snapshots it, and pins the snapshot id to
+`~/.agentbox/tenki-prepared.json`. Every `create` then boots from that snapshot, so new boxes are
+ready in seconds. A repeat `prepare` reuses the pinned snapshot unless you pass `--force`, and
+re-bakes by itself if the snapshot has been deleted from the workspace.
+
+`prepare` also bakes your host's **static** agent configuration into the image — settings, MCP
+servers, plugin registries — so boxes start with your own setup. Credentials are deliberately not
+baked; AgentBox seeds them per box at create time.
+
+## Use it
+
+```bash
+agentbox create --provider tenki
+agentbox tenki claude            # sugar for `claude --provider tenki`
+```
+
+The workspace is seeded from a host git clone plus your stash and untracked files (see
+[teleport-a-project](/docs/teleport-a-project)), checked out on branch `agentbox/<box-name>`. From
+there, [run an agent](/docs/run-an-agent) and [access your box](/docs/access-your-box) as usual.
+
+## Pause / resume
+
+Tenki pause/resume is free and native, the same model as e2b and vercel. The host keepalive pushes
+the session deadline forward while the agent is working, so a long session is not reaped at the
+create-time limit.
+
+```bash
+agentbox pause <box>
+agentbox start <box>
+```
+
+## Checkpoints
+
+Cloud checkpoints map to id-addressed Tenki snapshots (same shape as vercel and e2b). Boot from one
+with `--snapshot`, which restores `/workspace` intact and skips workspace seeding:
+
+```bash
+agentbox checkpoint create --name setup
+agentbox create --provider tenki --snapshot setup
+```
+
+Pair that with `box.defaultCheckpoint` so repeat creates boot from your project-ready snapshot.
+
+## Specs
+
+| Spec             |                                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------- |
+| Box              | One Firecracker microVM per box, with its own kernel                                  |
+| Base image       | Snapshot baked by `agentbox prepare --provider tenki`                                 |
+| Comms            | TypeScript SDK — ConnectRPC control plane + per-session data plane (`run`, file I/O)  |
+| Docker-in-Docker | Enabled — overlay2 on cgroup v2, `docker build` and `docker run` work as the box user |
+| SSH              | None for exec/files; interactive attach bridges host OpenSSH over the session channel |
+| Live snapshots   | Free pause/resume, plus id-addressed snapshots for checkpoints                        |
+| Preview URL      | Public HTTPS per exposed port; the WebProxy runs on 8080                              |
+
+## Configuration
+
+AgentBox does not add per-provider config keys for plugin providers, so tenki reads the generic
+keys plus its own environment variables:
+
+| Setting            | Where                         | Notes                                                      |
+| ------------------ | ----------------------------- | ---------------------------------------------------------- |
+| VM size            | `--size` / `box.size`         | `cpu-memory[-disk]` in GB, e.g. `4-8-20`                   |
+| Default checkpoint | `box.defaultCheckpoint`       | Generic key; there is no per-provider variant              |
+| Base image         | `AGENTBOX_TENKI_BASE_IMAGE`   | Tenki base image `prepare` layers onto (default `sandbox`) |
+| Workspace          | `AGENTBOX_TENKI_WORKSPACE_ID` | Defaults to the token's own scope                          |
+| Session lifetime   | `AGENTBOX_TENKI_TIMEOUT_MS`   | Seeds the host keepalive loop (default 45 min)             |
+
+## Caveats
+
+- **No live stats** — `agentbox top` / `dashboard` render `—` for cloud boxes, and `list` reports
+  them optimistically from the last known state.
+- **`prune` does not cover tenki** — `agentbox prune --provider <name>` accepts built-in cloud
+  providers only, so orphan sessions left by an interrupted `create` have to be cleaned up from the
+  Tenki dashboard.
+- **Privileged ports** — the WebProxy runs on 8080 (not 80), matching the other microVM providers;
+  `agentbox url` resolves the 8080 preview.
+- **Push through the relay** — use `agentbox-ctl git push` from a box; the relay holds the
+  credentials. See [sync-and-git](/docs/sync-and-git).
+
+## Related
+
+- [core-concepts](/docs/core-concepts) — what a box, branch, and worktree are.
+- [teleport-a-project](/docs/teleport-a-project) — how `/workspace` is seeded.
+- [run-an-agent](/docs/run-an-agent) · [access-your-box](/docs/access-your-box) — work in a cloud box.
+- [web-apps-and-tunnels](/docs/web-apps-and-tunnels) — preview URLs, the 8080 WebProxy, `expose:` ports.
+- [checkpoints-and-pausing](/docs/checkpoints-and-pausing) — pause/resume and checkpoints.
+- [build-a-provider](/docs/build-a-provider) — how community provider plugins work.
