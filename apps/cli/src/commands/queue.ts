@@ -44,23 +44,15 @@ const queueListCommand = new Command('list')
   });
 
 /**
- * The unified job view for `queue list`. Prefers the hub's `/api/v1/jobs`
- * (`preferLocal` — this laptop's own `-i` queue; a control box's create queue is
- * `agentbox hub jobs`). Degrades to the LOCAL `~/.agentbox/queue/` manifests when
- * the hub is stopped/unreachable, so `queue list` still works offline (the
- * pre-hub behavior). For a co-located local hub the two are the same manifests.
+ * The job view for `queue list` — THIS laptop's local `-i` queue, read straight
+ * from the `~/.agentbox/queue/` manifests. Deliberately NOT the hub's merged
+ * `/api/v1/jobs`: `queue show`/`cancel` resolve an id against a local manifest
+ * (`readJob`), so listing a control-box create job here (which the merged view
+ * includes on a co-located control box) would print ids that `show`/`cancel`
+ * can't act on. A control box's create queue is `agentbox hub jobs` (the
+ * `/api/v1/jobs` view). Reading manifests also means `queue list` needs no hub.
  */
 async function listJobsForQueueView(): Promise<HubApiJob[]> {
-  try {
-    // Quiet + no autostart: a read-only `list` must not spin up a daemon. If the
-    // hub is already running we get the API view; otherwise fall back to disk.
-    // Lazy import keeps the hub.ts <-> control-plane.ts cycle intact (Step 0).
-    const { resolveHubApiClient } = await import('../commands/control-plane.js');
-    const client = await resolveHubApiClient(undefined, { quiet: true, preferLocal: true });
-    if (client) return await client.listJobs();
-  } catch {
-    /* hub unreachable — fall through to the local manifests */
-  }
   const local = await loadQueue();
   return local
     .filter((j) => j.kind !== 'prepare')
