@@ -45,22 +45,34 @@ function totalRemovals(r: HubApiPruneResult, projectConfigs: string[]): number {
 function summary(r: HubApiPruneResult, projectConfigs: string[]): string {
   const lines: string[] = [];
   if (r.removedRecords.length > 0) {
-    lines.push(`  state records (${String(r.removedRecords.length)}): ${r.removedRecords.join(', ')}`);
+    lines.push(
+      `  state records (${String(r.removedRecords.length)}): ${r.removedRecords.join(', ')}`,
+    );
   }
   if (r.removedContainers.length > 0) {
-    lines.push(`  containers    (${String(r.removedContainers.length)}): ${r.removedContainers.join(', ')}`);
+    lines.push(
+      `  containers    (${String(r.removedContainers.length)}): ${r.removedContainers.join(', ')}`,
+    );
   }
   if (r.removedVolumes.length > 0) {
-    lines.push(`  volumes       (${String(r.removedVolumes.length)}): ${r.removedVolumes.join(', ')}`);
+    lines.push(
+      `  volumes       (${String(r.removedVolumes.length)}): ${r.removedVolumes.join(', ')}`,
+    );
   }
   if (r.removedSnapshotDirs.length > 0) {
-    lines.push(`  snapshot dirs (${String(r.removedSnapshotDirs.length)}): ${r.removedSnapshotDirs.join(', ')}`);
+    lines.push(
+      `  snapshot dirs (${String(r.removedSnapshotDirs.length)}): ${r.removedSnapshotDirs.join(', ')}`,
+    );
   }
   if (r.removedBoxDirs.length > 0) {
-    lines.push(`  box dirs      (${String(r.removedBoxDirs.length)}): ${r.removedBoxDirs.join(', ')}`);
+    lines.push(
+      `  box dirs      (${String(r.removedBoxDirs.length)}): ${r.removedBoxDirs.join(', ')}`,
+    );
   }
   if (projectConfigs.length > 0) {
-    lines.push(`  project configs (${String(projectConfigs.length)}): ${projectConfigs.join(', ')}`);
+    lines.push(
+      `  project configs (${String(projectConfigs.length)}): ${projectConfigs.join(', ')}`,
+    );
   }
   return lines.length > 0 ? lines.join('\n') : '  (nothing to remove)';
 }
@@ -95,7 +107,9 @@ export const pruneCommand = new Command('prune')
     try {
       const provider = opts.provider;
       if (provider !== undefined && provider !== 'docker' && !isCloudPruneProvider(provider)) {
-        log.error(`unknown provider '${provider}'; expected docker, daytona, hetzner, vercel, e2b, or digitalocean`);
+        log.error(
+          `unknown provider '${provider}'; expected docker, daytona, hetzner, vercel, e2b, or digitalocean`,
+        );
         process.exit(2);
       }
       // Fleet routing by provider: docker/remote-docker → local hub; a true cloud
@@ -149,7 +163,9 @@ async function runCloudPrune(
     process.stdout.write(`no ${provider} orphans found\n`);
     return;
   }
-  log.info(`found ${String(preview.orphans.length)} ${provider} sandbox(es) not in this fleet's state:`);
+  log.info(
+    `found ${String(preview.orphans.length)} ${provider} sandbox(es) not in this fleet's state:`,
+  );
   for (const sb of preview.orphans) process.stdout.write(`  ${orphanLine(sb)}\n`);
   if (dryRun) return;
 

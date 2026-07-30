@@ -181,7 +181,14 @@ describe('HubApiClient', () => {
     const { fetchImpl, calls } = stub({
       'POST /api/v1/boxes/b1/checkpoint': {
         status: 200,
-        body: { ok: true, name: 'warm', kind: 'layered', ref: 'warm', provider: 'docker', dir: '/d' },
+        body: {
+          ok: true,
+          name: 'warm',
+          kind: 'layered',
+          ref: 'warm',
+          provider: 'docker',
+          dir: '/d',
+        },
       },
     });
     const info = await new HubApiClient(target(fetchImpl)).createCheckpoint('b1', {
@@ -219,14 +226,28 @@ describe('HubApiClient', () => {
     });
     expect(res.removed).toEqual(['docker']);
     expect(calls[0]!.method).toBe('DELETE');
-    expect(calls[0]!.url).toBe('https://hub.example/api/v1/checkpoints?project=%2Fp&ref=warm&provider=docker');
+    expect(calls[0]!.url).toBe(
+      'https://hub.example/api/v1/checkpoints?project=%2Fp&ref=warm&provider=docker',
+    );
   });
 
   it('prunes: general (default) and cloud (with provider) bodies', async () => {
     const { fetchImpl, calls } = stub({
       'POST /api/v1/prune': {
         status: 200,
-        body: { kind: 'general', result: { removedRecords: [], removedContainers: [], removedVolumes: [], removedSnapshotDirs: [], removedBoxDirs: [], removedCheckpointImages: [], dryRun: true }, projectConfigs: [] },
+        body: {
+          kind: 'general',
+          result: {
+            removedRecords: [],
+            removedContainers: [],
+            removedVolumes: [],
+            removedSnapshotDirs: [],
+            removedBoxDirs: [],
+            removedCheckpointImages: [],
+            dryRun: true,
+          },
+          projectConfigs: [],
+        },
       },
     });
     const client = new HubApiClient(target(fetchImpl));
@@ -266,7 +287,11 @@ describe('HubApiClient', () => {
       },
     });
     await expect(
-      new HubApiClient(target(fetchImpl)).streamBoxLog('b1', { service: 'web', tail: 10 }, () => {}),
+      new HubApiClient(target(fetchImpl)).streamBoxLog(
+        'b1',
+        { service: 'web', tail: 10 },
+        () => {},
+      ),
     ).rejects.toMatchObject({ code: 'not_found', status: 404 });
   });
 });

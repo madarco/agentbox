@@ -1468,7 +1468,9 @@ function cloudItemView(c: CloudCheckpointInfo, backend: string, def: string): Ch
 }
 
 /** One project's checkpoint rows (docker + every cloud backend), defaults marked. */
-async function listSingleProjectCheckpointItems(projectRoot: string): Promise<CheckpointItemView[]> {
+async function listSingleProjectCheckpointItems(
+  projectRoot: string,
+): Promise<CheckpointItemView[]> {
   const cfg = await loadEffectiveConfig(projectRoot).catch(() => null);
   const items: CheckpointItemView[] = [];
   const defDocker = cfg ? resolveDefaultCheckpoint(cfg.effective, 'docker') : '';
@@ -1566,10 +1568,26 @@ async function sweepDanglingDefaults(
   const eff = cfg.effective.box;
   const defKeys = [
     ['box.defaultCheckpoint', projectBox?.defaultCheckpoint, eff.defaultCheckpoint],
-    ['box.defaultCheckpointDocker', projectBox?.defaultCheckpointDocker, eff.defaultCheckpointDocker],
-    ['box.defaultCheckpointDaytona', projectBox?.defaultCheckpointDaytona, eff.defaultCheckpointDaytona],
-    ['box.defaultCheckpointHetzner', projectBox?.defaultCheckpointHetzner, eff.defaultCheckpointHetzner],
-    ['box.defaultCheckpointVercel', projectBox?.defaultCheckpointVercel, eff.defaultCheckpointVercel],
+    [
+      'box.defaultCheckpointDocker',
+      projectBox?.defaultCheckpointDocker,
+      eff.defaultCheckpointDocker,
+    ],
+    [
+      'box.defaultCheckpointDaytona',
+      projectBox?.defaultCheckpointDaytona,
+      eff.defaultCheckpointDaytona,
+    ],
+    [
+      'box.defaultCheckpointHetzner',
+      projectBox?.defaultCheckpointHetzner,
+      eff.defaultCheckpointHetzner,
+    ],
+    [
+      'box.defaultCheckpointVercel',
+      projectBox?.defaultCheckpointVercel,
+      eff.defaultCheckpointVercel,
+    ],
     ['box.defaultCheckpointE2b', projectBox?.defaultCheckpointE2b, eff.defaultCheckpointE2b],
   ] as const;
   for (const [key, projectValue, effectiveValue] of defKeys) {
@@ -1617,7 +1635,10 @@ async function removeCheckpointEverywhere(
 
   if (removed.length === 0) {
     if (failedBackends.length > 0) {
-      return { ok: false, error: `failed to remove checkpoint ${ref} from: ${failedBackends.join(', ')}` };
+      return {
+        ok: false,
+        error: `failed to remove checkpoint ${ref} from: ${failedBackends.join(', ')}`,
+      };
     }
     return { ok: false, error: `checkpoint not found: ${ref}` };
   }
@@ -1641,7 +1662,9 @@ async function pruneGeneral(all: boolean, dryRun: boolean): Promise<PruneView> {
   const protectedPaths = all ? await liveProjectRootsForPrune() : [];
   const result = await pruneBoxes({ all, dryRun });
   const projectConfigs = all
-    ? (await pruneOrphanProjectConfigs({ dryRun, protectedPaths })).removed.map((r) => r.originalPath)
+    ? (await pruneOrphanProjectConfigs({ dryRun, protectedPaths })).removed.map(
+        (r) => r.originalPath,
+      )
     : [];
   return { kind: 'general', result, projectConfigs };
 }
@@ -1667,7 +1690,8 @@ async function enumerateCloudOrphans(
   const [remote, state] = await Promise.all([backend.list(), readState()]);
   const knownIds = new Set<string>();
   for (const b of state.boxes) {
-    if ((b.provider ?? 'docker') === provider && b.cloud?.sandboxId) knownIds.add(b.cloud.sandboxId);
+    if ((b.provider ?? 'docker') === provider && b.cloud?.sandboxId)
+      knownIds.add(b.cloud.sandboxId);
   }
   const orphans = remote.filter((sb) => !knownIds.has(sb.sandboxId) && (sb.name ?? '').length > 0);
   return { ok: true, backend, orphans };
@@ -2536,7 +2560,15 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             }
           }
         }
-        return { kind: 'cloud', provider, dryRun: false, orphans: orphanViews, deleted, failed, reaped };
+        return {
+          kind: 'cloud',
+          provider,
+          dryRun: false,
+          orphans: orphanViews,
+          deleted,
+          failed,
+          reaped,
+        };
       } catch (err) {
         return { kind: 'error', error: errMsg(err) };
       }
@@ -2584,7 +2616,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           const inner = opts.daemon
             ? ['tail', '-n', String(opts.tail), '-F', DAEMON_LOG_PATH]
             : boxLogsArgv(opts.service ?? '', { tail: opts.tail, follow: true });
-          return { ok: true, argv: ['docker', 'exec', '--user', 'vscode', box.container, ...inner] };
+          return {
+            ok: true,
+            argv: ['docker', 'exec', '--user', 'vscode', box.container, ...inner],
+          };
         }
         if (!provider.buildAttach) {
           return { ok: false, error: `provider '${provider.name}' does not support log streaming` };

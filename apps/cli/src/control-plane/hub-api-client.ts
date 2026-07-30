@@ -556,7 +556,9 @@ export class HubApiClient {
   }
 
   /** List a project's checkpoints (docker + cloud), or every project's with `global`. */
-  listCheckpoints(opts: { project?: string; global?: boolean } = {}): Promise<HubApiCheckpointListing> {
+  listCheckpoints(
+    opts: { project?: string; global?: boolean } = {},
+  ): Promise<HubApiCheckpointListing> {
     const q = new URLSearchParams();
     if (opts.global) q.set('global', '1');
     if (opts.project !== undefined) q.set('project', opts.project);

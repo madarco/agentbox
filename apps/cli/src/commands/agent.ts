@@ -581,7 +581,9 @@ const HUB_ERROR = Symbol('hub-error');
  * owns it — both surface to the caller as "no snapshot"), or {@link HUB_ERROR}
  * when the hub call failed (already reported).
  */
-async function fetchAgentClaude(box: BoxRecord): Promise<BoxStatusClaude | null | typeof HUB_ERROR> {
+async function fetchAgentClaude(
+  box: BoxRecord,
+): Promise<BoxStatusClaude | null | typeof HUB_ERROR> {
   let claude: BoxStatusClaude | null = null;
   const r = await withOwningHub(box, async (client) => {
     claude = ((await client.getAgentState(box.id)).claude ?? null) as BoxStatusClaude | null;

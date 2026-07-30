@@ -32,7 +32,12 @@ export const SSE_HEADERS: Record<string, string> = {
   'x-accel-buffering': 'no',
 };
 
-export function streamJobLog(req: Request, id: string, backend: HubBackend, logPath: string): Response {
+export function streamJobLog(
+  req: Request,
+  id: string,
+  backend: HubBackend,
+  logPath: string,
+): Response {
   const enc = new TextEncoder();
   let offset = 0;
   let residual = '';

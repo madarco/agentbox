@@ -60,7 +60,11 @@ const createSub = new Command('create')
       // The vercel/daytona snapshot stops + reboots the box (the live agent process
       // doesn't survive). Confirm here on the laptop before yanking it — a TTY
       // interaction that must stay client-side; -y skips it.
-      if ((providerName === 'vercel' || providerName === 'daytona') && !opts.yes && process.stdin.isTTY) {
+      if (
+        (providerName === 'vercel' || providerName === 'daytona') &&
+        !opts.yes &&
+        process.stdin.isTTY
+      ) {
         const ok = await confirm({
           message: `Create checkpoint? The ${providerName} box will stop and reboot.`,
           initialValue: false,
@@ -170,20 +174,27 @@ const setDefaultSub = new Command('set-default')
       const projectRoot = (await findProjectRoot(process.cwd())).root;
       const providerArg = opts.provider as ProviderKind | undefined;
       if (providerArg !== undefined && !KNOWN_PROVIDERS.includes(providerArg)) {
-        throw new Error(`unknown provider '${opts.provider ?? ''}' (known: ${KNOWN_PROVIDERS.join(', ')})`);
+        throw new Error(
+          `unknown provider '${opts.provider ?? ''}' (known: ${KNOWN_PROVIDERS.join(', ')})`,
+        );
       }
       const configKey = defaultCheckpointConfigKey(providerArg);
-      const label = providerArg ? `${providerArg} default checkpoint` : 'project default checkpoint';
+      const label = providerArg
+        ? `${providerArg} default checkpoint`
+        : 'project default checkpoint';
       if (opts.clear) {
         if (ref !== undefined) throw new Error('pass either a <ref> or --clear, not both');
         // Pure local config write — no hub round-trip needed to CLEAR a pointer.
         const rr = await unsetConfigValue('project', configKey, projectRoot);
         process.stdout.write(
-          rr.existed ? `cleared ${label}   (wrote ${rr.path})\n` : `no ${label} was set   (${rr.path})\n`,
+          rr.existed
+            ? `cleared ${label}   (wrote ${rr.path})\n`
+            : `no ${label} was set   (${rr.path})\n`,
         );
         return;
       }
-      if (ref === undefined) throw new Error('missing <ref> (or pass --clear to unset the default)');
+      if (ref === undefined)
+        throw new Error('missing <ref> (or pass --clear to unset the default)');
       // Validate the ref against the hub's listing (agrees with `ls`/`rm`), then
       // write the pointer into the LOCAL project config (there is no config route;
       // for a co-located hub the store the hub lists IS this machine's).
@@ -221,7 +232,11 @@ const rmSub = new Command('rm')
         }
       }
       await withHubClient({}, async (client) => {
-        const res = await client.deleteCheckpoint({ project: projectRoot, ref, provider: opts.provider });
+        const res = await client.deleteCheckpoint({
+          project: projectRoot,
+          ref,
+          provider: opts.provider,
+        });
         for (const p of res.removed) process.stdout.write(`removed ${p} checkpoint ${ref}\n`);
         for (const key of res.clearedKeys) log.info(`cleared project ${key} (was ${ref})`);
         for (const key of res.warnedKeys) {

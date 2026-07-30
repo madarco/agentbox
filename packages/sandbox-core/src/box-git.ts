@@ -175,7 +175,11 @@ export function boxLogsRaw(
 }
 
 /** Restart a single supervised service by name. */
-export function boxRestartService(provider: Provider, box: BoxRecord, name: string): Promise<ExecResult> {
+export function boxRestartService(
+  provider: Provider,
+  box: BoxRecord,
+  name: string,
+): Promise<ExecResult> {
   return run(provider, box, restartServiceArgv(name));
 }
 

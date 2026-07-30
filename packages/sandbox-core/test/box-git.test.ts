@@ -81,7 +81,10 @@ describe('boxGitPush', () => {
       '--force',
     ]);
     // The minted token is bound to exactly the params ctl will send.
-    expect(seen[0]).toEqual({ method: 'git.push', params: { path: '/workspace', remote: 'origin', args: ['--force'] } });
+    expect(seen[0]).toEqual({
+      method: 'git.push',
+      params: { path: '/workspace', remote: 'origin', args: ['--force'] },
+    });
   });
 
   it('works with no deps (no token) for scratch pushes', async () => {
@@ -107,7 +110,10 @@ describe('boxGitPull', () => {
       },
     );
     expect(calls[0]).toEqual(['agentbox-ctl', 'git', 'pull', '--remote', 'upstream', '--ff-only']);
-    expect(seen[0]).toEqual({ method: 'git.fetch', params: { path: '/workspace', remote: 'upstream' } });
+    expect(seen[0]).toEqual({
+      method: 'git.fetch',
+      params: { path: '/workspace', remote: 'upstream' },
+    });
   });
 });
 
@@ -115,7 +121,15 @@ describe('boxGitPushHost', () => {
   it('uses --host-only and never mints a token', async () => {
     const { provider, calls } = recorder();
     await boxGitPushHost(provider, box, { as: 'saved', force: true });
-    expect(calls[0]).toEqual(['agentbox-ctl', 'git', 'push', '--host-only', '--as', 'saved', '--force']);
+    expect(calls[0]).toEqual([
+      'agentbox-ctl',
+      'git',
+      'push',
+      '--host-only',
+      '--as',
+      'saved',
+      '--force',
+    ]);
   });
 });
 

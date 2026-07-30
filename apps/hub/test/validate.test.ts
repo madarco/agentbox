@@ -8,7 +8,12 @@ describe('parseCheckpointCreate', () => {
   });
 
   it('threads the capture options through', () => {
-    const r = parseCheckpointCreate({ name: 'warm', merged: true, setDefault: true, replace: false });
+    const r = parseCheckpointCreate({
+      name: 'warm',
+      merged: true,
+      setDefault: true,
+      replace: false,
+    });
     expect(r).toEqual({
       ok: true,
       value: { name: 'warm', merged: true, setDefault: true, replace: false },

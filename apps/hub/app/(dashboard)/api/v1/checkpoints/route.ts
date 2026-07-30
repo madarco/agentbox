@@ -18,7 +18,10 @@ export async function GET(req: Request): Promise<Response> {
   const global = url.searchParams.get('global') === '1';
   const project = url.searchParams.get('project') ?? undefined;
   if (!global && !project) {
-    return fail('invalid_request', 'project is required (an absolute project root), or pass global=1');
+    return fail(
+      'invalid_request',
+      'project is required (an absolute project root), or pass global=1',
+    );
   }
   const listing = await backend.listCheckpoints({ project, global });
   return ok(listing);
