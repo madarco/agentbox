@@ -174,4 +174,99 @@ describe('HubApiClient', () => {
     expect(h.version).toBe('0.28.0');
     expect(calls[0]!.url).toBe('https://hub.example/api/v1/health');
   });
+
+  // ── Step 9: checkpoint / prune / agent / logs ──
+
+  it('creates a checkpoint on the box route with the capture options', async () => {
+    const { fetchImpl, calls } = stub({
+      'POST /api/v1/boxes/b1/checkpoint': {
+        status: 200,
+        body: { ok: true, name: 'warm', kind: 'layered', ref: 'warm', provider: 'docker', dir: '/d' },
+      },
+    });
+    const info = await new HubApiClient(target(fetchImpl)).createCheckpoint('b1', {
+      name: 'warm',
+      setDefault: true,
+    });
+    expect(info.ref).toBe('warm');
+    expect(calls[0]!.method).toBe('POST');
+    expect(calls[0]!.url).toBe('https://hub.example/api/v1/boxes/b1/checkpoint');
+    expect(calls[0]!.body).toEqual({ name: 'warm', setDefault: true });
+  });
+
+  it('lists checkpoints scoped by project and globally', async () => {
+    const { fetchImpl, calls } = stub({
+      'GET /api/v1/checkpoints': { status: 200, body: { projects: [] } },
+    });
+    const client = new HubApiClient(target(fetchImpl));
+    await client.listCheckpoints({ project: '/home/me/app' });
+    await client.listCheckpoints({ global: true });
+    expect(calls[0]!.url).toBe('https://hub.example/api/v1/checkpoints?project=%2Fhome%2Fme%2Fapp');
+    expect(calls[1]!.url).toBe('https://hub.example/api/v1/checkpoints?global=1');
+  });
+
+  it('deletes a checkpoint via DELETE with project/ref/provider query', async () => {
+    const { fetchImpl, calls } = stub({
+      'DELETE /api/v1/checkpoints': {
+        status: 200,
+        body: { ok: true, removed: ['docker'], clearedKeys: [], warnedKeys: [] },
+      },
+    });
+    const res = await new HubApiClient(target(fetchImpl)).deleteCheckpoint({
+      project: '/p',
+      ref: 'warm',
+      provider: 'docker',
+    });
+    expect(res.removed).toEqual(['docker']);
+    expect(calls[0]!.method).toBe('DELETE');
+    expect(calls[0]!.url).toBe('https://hub.example/api/v1/checkpoints?project=%2Fp&ref=warm&provider=docker');
+  });
+
+  it('prunes: general (default) and cloud (with provider) bodies', async () => {
+    const { fetchImpl, calls } = stub({
+      'POST /api/v1/prune': {
+        status: 200,
+        body: { kind: 'general', result: { removedRecords: [], removedContainers: [], removedVolumes: [], removedSnapshotDirs: [], removedBoxDirs: [], removedCheckpointImages: [], dryRun: true }, projectConfigs: [] },
+      },
+    });
+    const client = new HubApiClient(target(fetchImpl));
+    await client.prune({ all: true, dryRun: true });
+    await client.prune({ provider: 'e2b', dryRun: true });
+    expect(calls[0]!.body).toEqual({ all: true, dryRun: true });
+    expect(calls[1]!.body).toEqual({ provider: 'e2b', dryRun: true });
+    expect(calls[0]!.url).toBe('https://hub.example/api/v1/prune');
+  });
+
+  it('reads the agent state snapshot', async () => {
+    const { fetchImpl, calls } = stub({
+      'GET /api/v1/boxes/b1/agent': { status: 200, body: { claude: { state: 'idle' } } },
+    });
+    const res = await new HubApiClient(target(fetchImpl)).getAgentState('b1');
+    expect(res.claude).toEqual({ state: 'idle' });
+    expect(calls[0]!.url).toBe('https://hub.example/api/v1/boxes/b1/agent');
+  });
+
+  it('fetches a non-follow log snapshot with tail/service/daemon query', async () => {
+    const { fetchImpl, calls } = stub({
+      'GET /api/v1/boxes/b1/logs': { status: 200, body: { output: 'line1\nline2\n' } },
+    });
+    const client = new HubApiClient(target(fetchImpl));
+    const r = await client.getBoxLogs('b1', { service: 'web', tail: 50 });
+    expect(r.output).toBe('line1\nline2\n');
+    expect(calls[0]!.url).toBe('https://hub.example/api/v1/boxes/b1/logs?tail=50&service=web');
+    await client.getBoxLogs('b1', { tail: 20, daemon: true });
+    expect(calls[1]!.url).toBe('https://hub.example/api/v1/boxes/b1/logs?tail=20&daemon=1');
+  });
+
+  it('surfaces a not_found on the log stream as a HubApiError (so withOwningHub can retry)', async () => {
+    const { fetchImpl } = stub({
+      'GET /api/v1/boxes/b1/logs': {
+        status: 404,
+        body: { error: { code: 'not_found', message: 'box not found: b1' } },
+      },
+    });
+    await expect(
+      new HubApiClient(target(fetchImpl)).streamBoxLog('b1', { service: 'web', tail: 10 }, () => {}),
+    ).rejects.toMatchObject({ code: 'not_found', status: 404 });
+  });
 });

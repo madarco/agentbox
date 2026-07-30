@@ -6,6 +6,7 @@ import {
   boxGitPull,
   boxGitPush,
   boxGitPushHost,
+  boxLogsArgv,
   boxRestartServices,
   scratchBranchName,
   servicesStatusArgv,
@@ -131,5 +132,23 @@ describe('services control', () => {
       ['agentbox-ctl', 'restart', 'db'],
     ]);
     expect(out.map((r) => r.name)).toEqual(['web', 'db']);
+  });
+
+  it('boxLogsArgv builds the ctl logs tail, adding --follow only when asked', () => {
+    expect(boxLogsArgv('web', { tail: 200 })).toEqual([
+      'agentbox-ctl',
+      'logs',
+      'web',
+      '--tail',
+      '200',
+    ]);
+    expect(boxLogsArgv('web', { tail: 50, follow: true })).toEqual([
+      'agentbox-ctl',
+      'logs',
+      'web',
+      '--tail',
+      '50',
+      '--follow',
+    ]);
   });
 });
