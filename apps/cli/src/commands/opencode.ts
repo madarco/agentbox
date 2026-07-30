@@ -66,8 +66,9 @@ import {
   withHubJobLine,
 } from './_cloud-agent-via-hub.js';
 import { resolveCreateRouting } from '../control-plane/route-create.js';
+import { remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
-import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
+import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { providerForCreate } from '../provider/registry.js';
 import { parseProviderSpec } from '../provider/spec.js';
@@ -555,6 +556,19 @@ export const opencodeCommand = new Command('opencode')
       process.exit(1);
     }
 
+    // Refuse copying a git credential into the box when a control box is in play —
+    // token leasing does the same laptop-off push without the copy. Checked before
+    // routing / the -i path so it can't slip into the hub create.
+    const directRefusal = directGitModeRefusal({
+      pushMode: cfg.effective.git.pushMode,
+      hubInPlay: remoteHubConfigured(cfg.effective) || Boolean(opts.viaHub),
+    });
+    if (directRefusal) {
+      log.error(directRefusal);
+      cmdLog.close();
+      process.exit(1);
+    }
+
     // When a control plane is configured, make sure this project's repo is
     // authorized on its GitHub App so the box can lease push tokens.
     await ensureProjectRepoOnControlPlane({
@@ -742,13 +756,9 @@ export const opencodeCommand = new Command('opencode')
         forceLocal: opts.local,
         urlFlag: opts.url,
       });
-      const hubIncompatible = cfg.effective.git.pushMode === 'direct';
-      if (routing.where === 'hub' && hubIncompatible) {
-        if (opts.viaHub)
-          log.warn(
-            '--via-hub is ignored for --dangerously-with-credentials runs (they copy host state at create time); building this box locally.',
-          );
-      } else if (routing.where === 'hub') {
+      // git.pushMode=direct is refused above whenever the hub is in play, so a
+      // hub route here always means a leasing/relay box — no direct-mode fallback.
+      if (routing.where === 'hub') {
         const adopted = await withHubJobLine(
           (onStatus) =>
             createCloudBoxViaHubAndAdopt({

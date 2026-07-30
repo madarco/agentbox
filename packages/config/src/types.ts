@@ -34,6 +34,9 @@ export type ClaudeInstallMethod = 'native' | 'npm';
  *   laptop off and needs no hub. Selected via `--with-credentials`, which copies
  *   the credentials in behind a confirmation prompt. Dangerous: the credentials
  *   live inside the box and in any snapshot/checkpoint of it. Cloud boxes only.
+ *   REFUSED when a control box is configured (`relay.controlPlaneUrl`): leasing
+ *   already gives the box laptop-off push without the credential copy, so the
+ *   copy is pure downside there. It stays available only without a control box.
  * - `auto` (default) — lease when a control plane is configured for the box
  *   (`relay.controlPlaneUrl`), else relay. Today's behavior.
  * Docker boxes ignore this (always `relay` — they bind-mount the host `.git`).
@@ -1035,14 +1038,14 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'enum',
     enumValues: ['auto', 'relay', 'lease', 'direct'] as const,
     description:
-      "How a box's `git push` reaches GitHub: `relay` (the host relay pushes with your host credentials — they never enter the box), `lease` (the relay/plane leases a short-lived GitHub-App token and the box pushes directly, so it works with the laptop off), `direct` (the box holds a COPY of your git credentials and pushes/pulls/signs entirely on its own — needs no host or hub, but the credentials live inside the box and its snapshots; set via `--with-credentials`, which copies them in behind a confirmation), or `auto` (default — lease when `relay.controlPlaneUrl` is set for the box, else relay). Only affects cloud boxes; docker boxes always use `relay`. Forcing `relay` needs a reachable host relay for the box; forcing `lease` needs a reachable relay/plane with a GitHub App; `direct` needs credentials to have been copied into the box at create time.",
+      "How a box's `git push` reaches GitHub: `relay` (the host relay pushes with your host credentials — they never enter the box), `lease` (the relay/plane leases a short-lived GitHub-App token and the box pushes directly, so it works with the laptop off), `direct` (the box holds a COPY of your git credentials and pushes/pulls/signs entirely on its own — needs no host or hub, but the credentials live inside the box and its snapshots; set via `--with-credentials`, which copies them in behind a confirmation), or `auto` (default — lease when `relay.controlPlaneUrl` is set for the box, else relay). Only affects cloud boxes; docker boxes always use `relay`. Forcing `relay` needs a reachable host relay for the box; forcing `lease` needs a reachable relay/plane with a GitHub App; `direct` needs credentials to have been copied into the box at create time, and is REFUSED when a control box is configured (`relay.controlPlaneUrl`) — use leasing (the `auto` default) instead.",
   },
   {
     key: 'hub.gitAuth',
     type: 'enum',
     enumValues: ['gh', 'app'] as const,
     description:
-      "Which git credential a deployed hub (control box) uses: `gh` (default — the hub holds a GitHub token taken from your own `gh` login and does the git work itself, so boxes never receive a credential and nothing needs installing or approving on GitHub) or `app` (the hub holds a GitHub App private key and leases a 1-hour, single-repo token to each box, which is tighter but requires the repo owner to install the App). Deploy intent: it selects what `agentbox hub setup` / `hub deploy` provisions and which push mode a cloud box gets — it cannot reconfigure a hub that is already running.",
+      'Which git credential a deployed hub (control box) uses: `gh` (default — the hub holds a GitHub token taken from your own `gh` login and does the git work itself, so boxes never receive a credential and nothing needs installing or approving on GitHub) or `app` (the hub holds a GitHub App private key and leases a 1-hour, single-repo token to each box, which is tighter but requires the repo owner to install the App). Deploy intent: it selects what `agentbox hub setup` / `hub deploy` provisions and which push mode a cloud box gets — it cannot reconfigure a hub that is already running.',
   },
   {
     key: 'vnc.containerPort',

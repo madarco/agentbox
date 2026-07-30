@@ -1,10 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { confirm, isCancel, log } from '@clack/prompts';
 import { resolveCloudSshTarget } from '@agentbox/sandbox-core';
+import { loadEffectiveConfig } from '@agentbox/config';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { restoreAgentSessions } from '../agent-sessions.js';
-import { runGitCredsGate } from '../lib/git-creds-gate.js';
+import { directGitModeRefusal, runGitCredsGate } from '../lib/git-creds-gate.js';
+import { remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -27,8 +29,8 @@ function shellSingleQuote(s: string): string {
 
 export const connectCommand = new Command('connect')
   .description(
-    'Print a VPS box\'s SSH connection details (to drive it from a phone / other SSH client with the laptop off), ' +
-      'add another device\'s key, export the box key, or copy git credentials into the box so it pushes on its own ' +
+    "Print a VPS box's SSH connection details (to drive it from a phone / other SSH client with the laptop off), " +
+      "add another device's key, export the box key, or copy git credentials into the box so it pushes on its own " +
       '(--dangerously-git-credentials). Pair with `agentbox inbound <box> open` so the box is reachable off-network. ' +
       'Hetzner / DigitalOcean only.',
   )
@@ -46,7 +48,7 @@ export const connectCommand = new Command('connect')
   )
   .option(
     '--dangerously-git-credentials',
-    "copy a git credential INTO a running box so it can push/pull on its own with your PC off (git.pushMode=direct) — the post-create equivalent of `create --dangerously-with-credentials`. An interactive prompt asks token (HTTPS, unsigned) vs SSH (signs, riskiest). DANGEROUS: the credential lives in the box + its snapshots. Requires a real terminal; cloud only. Restart the agent session afterward.",
+    'copy a git credential INTO a running box so it can push/pull on its own with your PC off (git.pushMode=direct) — the post-create equivalent of `create --dangerously-with-credentials`. An interactive prompt asks token (HTTPS, unsigned) vs SSH (signs, riskiest). DANGEROUS: the credential lives in the box + its snapshots. Requires a real terminal; cloud only. Restart the agent session afterward.',
   )
   .option('--json', 'machine-readable connection bundle')
   .option('-y, --yes', 'skip the confirmation prompt for --export-key')
@@ -58,8 +60,25 @@ export const connectCommand = new Command('connect')
       // --- git-credentials mode: make an already-running box push on its own ---
       if (opts.dangerouslyGitCredentials) {
         if (opts.addKey || opts.exportKey) {
-          log.error('--dangerously-git-credentials cannot be combined with --add-key / --export-key.');
+          log.error(
+            '--dangerously-git-credentials cannot be combined with --add-key / --export-key.',
+          );
           process.exit(2);
+        }
+        // Refuse when a control box is configured — token leasing already gives
+        // the box laptop-off push without copying a credential into it (the same
+        // gate `create --dangerously-with-credentials` applies).
+        const cfg = await loadEffectiveConfig(
+          box.projectRoot ?? box.workspacePath ?? process.cwd(),
+          {},
+        );
+        const refusal = directGitModeRefusal({
+          pushMode: 'direct',
+          hubInPlay: remoteHubConfigured(cfg.effective),
+        });
+        if (refusal) {
+          log.error(refusal);
+          process.exit(1);
         }
         if (!provider.enableDirectGit || !provider.buildAttach) {
           log.error(
@@ -137,7 +156,9 @@ export const connectCommand = new Command('connect')
         logInfo: (l) => log.step(l),
       });
       if (!conn.identityFile) {
-        log.error(`box '${box.name}' has no persistent SSH key — only hetzner / digitalocean boxes are supported.`);
+        log.error(
+          `box '${box.name}' has no persistent SSH key — only hetzner / digitalocean boxes are supported.`,
+        );
         process.exit(2);
       }
 
@@ -159,7 +180,9 @@ export const connectCommand = new Command('connect')
           `if grep -qxF ${q} ~/.ssh/authorized_keys; then echo already-present; else echo ${q} >> ~/.ssh/authorized_keys && echo added; fi`;
         const res = await provider.exec(box, ['bash', '-lc', script]);
         if (res.exitCode !== 0) {
-          log.error(`failed to add key: ${res.stderr || res.stdout || `exit ${String(res.exitCode)}`}`);
+          log.error(
+            `failed to add key: ${res.stderr || res.stdout || `exit ${String(res.exitCode)}`}`,
+          );
           process.exit(1);
         }
         const already = res.stdout.includes('already-present');

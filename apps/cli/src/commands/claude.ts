@@ -64,8 +64,9 @@ import {
   withHubJobLine,
 } from './_cloud-agent-via-hub.js';
 import { resolveCreateRouting } from '../control-plane/route-create.js';
+import { remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
-import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
+import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { providerForBox, providerForCreate } from '../provider/registry.js';
 import { parseProviderSpec } from '../provider/spec.js';
@@ -657,6 +658,19 @@ export const claudeCommand = new Command('claude')
       process.exit(1);
     }
 
+    // Refuse copying a git credential into the box when a control box is in play —
+    // token leasing does the same laptop-off push without the copy. Checked before
+    // routing / the -i path so it can't slip into the hub create.
+    const directRefusal = directGitModeRefusal({
+      pushMode: cfg.effective.git.pushMode,
+      hubInPlay: remoteHubConfigured(cfg.effective) || Boolean(opts.viaHub),
+    });
+    if (directRefusal) {
+      log.error(directRefusal);
+      cmdLog.close();
+      process.exit(1);
+    }
+
     // When a control plane is configured, make sure this project's repo is
     // authorized on its GitHub App so the box can lease push tokens.
     await ensureProjectRepoOnControlPlane({
@@ -899,8 +913,10 @@ export const claudeCommand = new Command('claude')
     // is irrelevant to it. Asking to spend minutes re-baking locally — for a box
     // that never touches the result — is pure waste, and it is exactly what a PC
     // sees whenever the control box has re-baked and the PC hasn't.
-    const hubIncompatible =
-      Boolean(resumePrepared) || Boolean(planPrepared) || cfg.effective.git.pushMode === 'direct';
+    // git.pushMode=direct is refused above whenever the hub is in play, so it is
+    // NOT a hub-incompatibility term here — only --resume / --plan (host state
+    // teleported at create time) force a local build.
+    const hubIncompatible = Boolean(resumePrepared) || Boolean(planPrepared);
     const createRouting = await resolveCreateRouting({
       providerName,
       effective: cfg.effective,
@@ -994,7 +1010,7 @@ export const claudeCommand = new Command('claude')
       if (routing.where === 'hub' && hubIncompatible) {
         if (opts.viaHub)
           log.warn(
-            '--via-hub is ignored for --resume / --plan / --dangerously-with-credentials runs (they teleport host state at create time); building this box locally.',
+            '--via-hub is ignored for --resume / --plan runs (they teleport host state at create time); building this box locally.',
           );
       } else if (routing.where === 'hub') {
         const adopted = await withHubJobLine(

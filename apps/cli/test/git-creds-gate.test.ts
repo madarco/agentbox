@@ -3,7 +3,11 @@ import { execa } from 'execa';
 import { chmod, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildCredsPlan, runGitCredsGate } from '../src/lib/git-creds-gate.js';
+import {
+  buildCredsPlan,
+  directGitModeRefusal,
+  runGitCredsGate,
+} from '../src/lib/git-creds-gate.js';
 
 // The credential detection shells out to real `git` (credential fill, config
 // reads) but never touches the network or docker: an HTTPS origin + a fake
@@ -98,6 +102,25 @@ describe('buildCredsPlan', () => {
     const plan = await buildCredsPlan(dir, 'token');
     // Deterministic in CI (no ambient github token); tolerate a host token.
     expect(plan.entries.length).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('directGitModeRefusal', () => {
+  it('refuses direct + a hub in play, and names token leasing as the replacement', () => {
+    const msg = directGitModeRefusal({ pushMode: 'direct', hubInPlay: true });
+    expect(msg).not.toBeNull();
+    expect(msg).toMatch(/leas/i); // names leasing, not a generic "unsupported"
+    expect(msg).toMatch(/relay\.controlPlaneUrl/);
+  });
+
+  it('allows direct when no hub is in play (feature stays as-is without a control box)', () => {
+    expect(directGitModeRefusal({ pushMode: 'direct', hubInPlay: false })).toBeNull();
+  });
+
+  it('never fires for a non-direct mode, even with a hub in play', () => {
+    expect(directGitModeRefusal({ pushMode: 'auto', hubInPlay: true })).toBeNull();
+    expect(directGitModeRefusal({ pushMode: 'relay', hubInPlay: true })).toBeNull();
+    expect(directGitModeRefusal({ pushMode: 'lease', hubInPlay: true })).toBeNull();
   });
 });
 

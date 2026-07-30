@@ -665,7 +665,7 @@ docker boxes vanish from `ls`, and `agentbox hub start` works on a machine with 
 
 ---
 
-## Step 13 — Gate `--dangerously-with-credentials` off under a remote hub
+## Step 13 — Gate `--dangerously-with-credentials` off under a remote hub ✅ done
 
 It exists as the alternative to a remote hub — a box holding a **copy** of your git credentials
 so it can push with the laptop off, at the cost of those credentials living inside the box and
@@ -688,6 +688,61 @@ pure downside. Without a remote hub it stays exactly as it is today.
 **Verify:** with a control box configured, `agentbox create --dangerously-with-credentials`
 refuses and names leasing; unset `relay.controlPlaneUrl` and the same command still works
 end-to-end. Check ground truth with `git ls-remote`.
+
+**Landed.** One pure, shared gate — `directGitModeRefusal({ pushMode, hubInPlay })` in
+`git-creds-gate.ts` (its existing home for the TTY + cloud-only guards) — returns a leasing-named
+refusal when `pushMode === 'direct'` **and** a hub is in play, else `null`. Every entry to
+`git.pushMode=direct` calls it: the four launchers `create` / `claude` / `codex` / `opencode` (via
+`--dangerously-with-credentials`, which sets `git.pushMode=direct`, **or** the config key set
+directly) and `connect --dangerously-git-credentials` (the post-create equivalent). `hubInPlay =
+remoteHubConfigured(effective) || opts.viaHub` for the launchers, `remoteHubConfigured(effective)`
+for `connect`. The old `--via-hub`-specific "ignored for --dangerously-with-credentials; building
+locally" fallback was **folded in** and deleted in all three agent launchers (opencode: the whole
+`hubIncompatible` term was that; claude/codex: the `|| pushMode === 'direct'` disjunct was removed,
+leaving only `--resume` / `--plan`). Existing guards are untouched: docker-not-applicable (its own
+message, kept ahead of the leasing gate so a docker box never gets the wrong message), TTY-required,
+and `-i`-incompatible. `git.pushMode` resolution (`auto` → lease) was not touched.
+
+**Verified end-to-end via the built CLI** (isolated `$HOME`, ground-truth by observed exit/behavior):
+with `relay.controlPlaneUrl` set, `create/claude/codex/opencode --provider e2b
+--dangerously-with-credentials` each refuse (exit 1) with the leasing message; the same refusal
+fires from `git.pushMode=direct` set via **config** (no flag); `--via-hub
+--dangerously-with-credentials` refuses even with `controlPlaneUrl` unset (fold-in); `docker`
++ direct still gets the "not applicable to docker" message, not the leasing one. With
+`relay.controlPlaneUrl` **unset**, the gate is a proven no-op — the create flow proceeds into the
+**unchanged** credential-copy path and reaches the real TTY-required creds gate (feature intact).
+
+### Notes for later steps
+
+- **Scope: gated all FOUR launchers, not the three the brief listed.** The brief's file set named
+  `create` / `opencode` / `connect`, but `claude.ts` and `codex.ts` accept the same
+  `--dangerously-with-credentials` flag and carried the identical docker guard + `hubIncompatible`
+  direct-term. Gating only three would have left `agentbox claude --dangerously-with-credentials`
+  copying a credential into a box under a control box — the exact exposure the gate exists to
+  prevent, with a false appearance of coverage. The maintainer authorized the widening; no parallel
+  step owns `claude.ts` / `codex.ts` (Step 5 = lifecycle, Step 2 = approvals, Step 8 = create), so
+  there is no conflict. The check lives in **one** place (`directGitModeRefusal`) so the four
+  launchers + `connect` can't drift.
+- **No other entry to `direct` exists.** Swept for every path that can reach `git.pushMode=direct`:
+  the flag (four launchers), the config key (read as `cfg.effective.git.pushMode` by those same
+  launchers), and `connect --dangerously-git-credentials` — all gated. `exec-method.ts` / `update.ts`
+  `'direct'` is an unrelated `ExecMethod`; `ensure-repo-installed.ts` only *reads* the resolved mode
+  downstream (to skip the GitHub-App repo nag) and is not an enable-point.
+- **`hubInPlay` folds in `--via-hub`, and it must stay `||`-ed with `opts.viaHub`.** A user can
+  force the hub with `--via-hub`/`--url` even when `relay.controlPlaneUrl` is unset in config; a gate
+  keyed on `controlPlaneUrl` alone would miss that and route a `direct` box to the hub worker (which
+  can't thread the credential copy). The old per-launcher `--via-hub`+direct fallback existed for
+  exactly this — folded into the one gate rather than left to drift.
+- **`connect` loads config itself** (`loadEffectiveConfig(box.projectRoot ?? box.workspacePath ??
+  process.cwd())`) since it previously read none, and gates on `relay.controlPlaneUrl` (not the box's
+  own `cloud.controlPlaneUrl`) to match the plan's stated condition and the launchers.
+- **Real cloud-push e2e (box actually pushes) was NOT re-run — deliberate.** That path
+  (`resolveGitCredsCarry` → `provider.enableDirectGit` / seed → in-box `git push`) is **unchanged**
+  by this step, and this dev box has no test repo with a pushable origin (`../agentbox-test-repo*`
+  absent) and in-box push is relay-gated. Instead the no-regression side was proven by showing the
+  gate is a clean no-op without a control box (the flow reaches the real credential gate). A later
+  step touching the copy/seed path should still smoke a real `--dangerously-with-credentials` box +
+  `git ls-remote`.
 
 ---
 
