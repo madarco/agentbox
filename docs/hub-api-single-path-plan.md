@@ -926,7 +926,7 @@ target with the API key, and `prune --provider e2b` routes to the configured hub
 
 ---
 
-## Step 10 — Custody onto `/api/v1`
+## Step 10 — Custody onto `/api/v1` ✅ done
 
 - `hub credentials push|pull`, `hub secrets push`, `hub custody list|pull|rm` and the project seed
   push move from `/admin/custody/*` to `/api/v1/custody/*` (the GET manifest already exists; add
@@ -937,6 +937,94 @@ target with the API key, and `prune --provider e2b` routes to the configured hub
 `packages/relay/src/custody/routes.ts`, new v1 route.
 **Verify:** `agentbox hub credentials push` then `pull` round-trips against a local hub and a
 control box; `hub custody list` shows hashes only.
+
+**Landed.** All the CLI's custody client calls speak `/api/v1/custody` now — the CLI holds **no**
+routine `/admin/custody` client call. `CustodyClient` (`control-plane/custody-client.ts`) was
+rewired to `/api/v1/custody` with `{ url, apiKey, adminToken? }`, gained `delete()`, and parses the
+v1 envelope into `HubApiError`. A new resolver `resolveCustodyApiTarget` (URL + hub API key via
+`resolveHubApiTarget`, plus the best-effort admin token from the setup-written env) replaces
+`resolveCustodyTarget` at every custody-client call site: `hub credentials push|pull`, `hub secrets
+push`, `hub project push`, `hub custody list|pull|rm`, `syncAgentCredentials`, the `hub worker` seed
+fetch, `credentials.ts`'s login-time push, and the SSH-key adoption pull (`hub adopt`/`hub pull`,
+`auto-adopt.ts`, `recover.ts`, `_cloud-agent-via-hub.ts`). `custody rm` now uses `CustodyClient.delete`
+(was a raw `/admin` fetch). The project seed push (`pushProjectSeedToCustody`, sandbox-cloud) was
+made transport-agnostic via an injected `SeedCustodySink`: the CLI `hub project push` injects a
+`/api/v1` sink; the **create path keeps its `/admin` sink** (`adminCustodySink`, cloud-provider.ts) —
+it is the internal registration flow that holds the admin token, and Step 11 keeps `/admin` for
+box→hub/internal traffic. **Verified end-to-end** on a local hub (token profile): `credentials push`
+→ `custody list` (metadata only, curl-confirmed **no `data` field**) → `credentials pull` +
+`custody pull --dest` round-tripped with **byte-for-byte matching** ground truth, and the store
+landed at `~/.agentbox/hub/custody/`. On a password-profile hub (spawned standalone): a byte-read
+with the API key alone is **`401` refused**, with the admin token it returns the value; list/PUT
+return metadata only; no-auth is `401`. The CLI's remote-shaped path (`--url` + `AGENTBOX_HUB_API_KEY`
++ `AGENTBOX_RELAY_ADMIN_TOKEN`) round-tripped push → list → pull → rm against that hub, and a
+**thin client** (API key, no admin token) was refused on pull.
+
+### Notes for later steps
+
+- **The custody byte-read is a TWO-TIER contract — the one route in `/api/v1` that returns a value,
+  and it FAILS CLOSED.** `list` / `PUT` / `DELETE` authorize with the hub API key (proxy gate) and
+  their responses are **metadata only** (path/size/sha256/mode/updatedAt, plus `changed` on PUT —
+  never a stored value). The byte-read `GET /api/v1/custody/<path>` returns bytes and so needs a
+  **second, non-distributed credential**: on the **password profile** (a real/exposed control box)
+  the admin token in `X-Agentbox-Admin-Token`, else `401`. This is deliberate because custody holds
+  agent creds, `.env` files and **per-box SSH private keys** — the highest-value target in the API —
+  and the hub API key travels to the tray/web/thin clients. The decision is the pure, unit-tested
+  `custodyByteReadAuthorized` (`apps/hub/lib/custody-auth.ts`, `test/custody-auth.test.ts`) — **any
+  later step touching this route MUST keep it fail-closed** (unset admin-token env, missing header,
+  and mismatched header all refuse; there is no path that degrades to API-key-only). On the **token
+  profile** (a plain local hub) the byte-read is allowed with no admin token: the hub token already
+  gated it in `proxy.ts` and is a machine-local secret, not distributed like the API key — a single
+  trusted machine. On `off` the whole API is open. `apps/web/content/docs/api.mdx` documents all of
+  this.
+- **Custody is now wired on EVERY hub, not just a control box** (`server.ts`: `new FsCustodyStore()`
+  unconditionally, exposed via `globalThis.__AGENTBOX_HUB_CUSTODY`). This is what makes
+  `/api/v1/custody` serve on a plain local hub (the "same path local ⇄ remote" rule; the acceptance
+  needs a local `credentials push`/`pull` round-trip). The relay daemon's `/admin/custody` wire is
+  **still admin-token-gated**, so a plain local hub (empty admin token) serves custody ONLY over its
+  token-gated `/api/v1`, never the admin wire. The seam type in `global.d.ts` gained `put`/`delete`.
+- **`CustodyClient` speaks EITHER surface, picked by the credential it holds — a custody op works
+  with whichever credential is available and NEVER silently no-ops (Bugbot Medium — the important
+  fix).** API key present → `/api/v1/custody` (the public surface; byte-read adds the admin-token
+  header). Only the admin token present (no API key) → the **`/admin/custody` fallback**, whose admin
+  bearer authorizes every verb incl. the byte-read. This is what lets a machine that ran `hub setup`
+  but has no API key (e.g. a via-hub-create host — `createCloudBoxViaHubAndAdopt` says so in its own
+  comment) STILL pull per-box SSH keys instead of skipping them (which would break `attach`/`cp` later
+  with a confusing missing-key error far from the cause). The constructor **throws** when NEITHER
+  credential is present — a custody op fails loudly at the source, never a quiet no-op. The two-tier
+  `/api/v1` byte-read contract + its test are unchanged; the fallback is purely client-side.
+  **Step 11 caveat:** this is a CLI→hub `/admin/custody` call, so the "no `/admin` client call in
+  `apps/cli`" guard must either allow the custody admin-fallback or Step 11 removes it once the API
+  key is guaranteed on every custody-driving machine.
+- **`resolveCustodyApiTarget(urlFlag, { quiet?, remoteOnly? })` returns whatever credential is
+  available** — `{ url, apiKey?, adminToken? }` — and `CustodyClient` picks the surface. It returns a
+  target when EITHER credential is present; it returns `null` (a) silently when there is no control
+  box (and, in default mode, no local hub) — a genuine no-op — or (b) with a LOUD error (suppressed
+  only for `quiet` best-effort callers) when a control box IS configured but neither credential is
+  present. Default mode also serves a plain local hub (its hub token is the API key; the acceptance's
+  local `credentials push`/`pull` round-trip). `remoteOnly: true` refuses a local hub, for the
+  automated control-box callers (`syncAgentCredentials`, `credentials.ts` login push, the `hub worker`
+  seed fetch, all SSH-key adoption). `resolveCustodyTarget` (the old admin-only `/admin` resolver,
+  `{ url, adminToken }`) was **kept** — still used by non-custody internal-wire callers (`hub jobs`,
+  bake-sharing/`prepared-custody`, `registerBoxWithPlane`, the create-path `adminCustodySink`). Do not
+  delete it until those move (Steps 8/9/11).
+- **Writes need only ONE credential; a byte-read on `/api/v1` needs the admin token.** A thin client
+  (API key, no admin token, no admin wire) can `push`/`list`/`rm` but not `pull` — SSH-key adoption
+  from such a client adopts the record and flags `sshKeysMissing` (the exact graceful degradation
+  Step 4 designed). A machine WITH the admin token always can `pull` (via `/api/v1` elevation when it
+  also has the API key, or the `/admin` fallback when it doesn't).
+- **`pushProjectSeedToCustody` takes a `SeedCustodySink` now, not `{ controlPlaneUrl, adminToken }`.**
+  Two sink factories: `adminCustodySink` (`/admin`, for the create path) and, inline in the CLI, an
+  `/api/v1` sink over `CustodyClient`. A `probe?: () => Promise<boolean>` arg lets the reachability
+  probe be injected (tests; defaults to `hostReachable(probeUrl)`). Step 8 (create) will want the
+  `/api/v1` sink here too once the create path itself moves onto `/api/v1` — the seam is ready.
+- **Still touching `/admin/custody` (Step 11 must account for these):** the relay dispatcher
+  `packages/relay/src/custody/routes.ts` (box→hub/internal) — unchanged; `adminCustodySink` in
+  **sandbox-cloud** (the create-path seed push); and — new in this step — `CustodyClient`'s **admin
+  fallback** when only the admin token is available (an `apps/cli` code path, though it fires only
+  without an API key). So Step 11's "no `/admin/` client call in apps/cli" guard is NOT literally true
+  for custody yet: either scope the guard to exclude the credential-gated fallback, or drop the
+  fallback once every custody-driving machine is guaranteed to hold the API key.
 
 ---
 

@@ -862,7 +862,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Custody'],
           summary: 'List the custody manifest (metadata only)',
           description:
-            'What the control box holds so a box created from either side is usable from both: agent credentials, project seeds, provider bake records, and per-box SSH keys. Returns paths, hashes, sizes and mtimes ONLY — value bytes never leave the box (same contract as `agentbox hub custody list`). `enabled` is false on a hub with no custody (e.g. a localhost hub). Optional `?prefix=` scopes the listing to a custody scope (`agents` | `projects` | `prepared` | `boxes`) or a `scope/subject`.',
+            'What the hub holds so a box created from either side is usable from both: agent credentials, project seeds, provider bake records, and per-box SSH keys. Returns paths, hashes, sizes and mtimes ONLY — value bytes never leave the box (same contract as `agentbox hub custody list`). Optional `?prefix=` scopes the listing to a custody scope (`agents` | `projects` | `prepared` | `boxes`) or a `scope/subject`.',
           parameters: [
             {
               name: 'prefix',
@@ -879,6 +879,74 @@ export function buildOpenApi(): Record<string, unknown> {
             },
             '400': errorResponse,
             '401': errorResponse,
+          },
+        },
+      },
+      '/custody/{path}': {
+        parameters: [
+          {
+            name: 'path',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description:
+              'Custody path, e.g. `agents/claude/.credentials.json` or `boxes/box-abc/ssh/id_ed25519`.',
+          },
+        ],
+        get: {
+          tags: ['Custody'],
+          summary: 'Read a stored blob (ELEVATED — admin token required on a control box)',
+          description:
+            'Returns the entry metadata AND its bytes (`data`, base64). This is the ONE byte-returning custody route, so it is gated beyond the hub API key: on a control box (password profile) it additionally requires the admin token in `X-Agentbox-Admin-Token` — a byte-read with only the API key is `401`, so a value never leaves the box to a thin client. A localhost hub (token profile) needs no admin token: its hub token is a machine-local secret that already gates the whole surface. Backs `agentbox hub credentials pull` / `custody pull` and per-box SSH-key adoption.',
+          responses: {
+            '200': {
+              description: 'The stored entry + its base64 bytes',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/CustodyValue' } },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+        put: {
+          tags: ['Custody'],
+          summary: 'Store bytes at a custody path (metadata-only response)',
+          description:
+            'Stores `data` (base64) at the path. Content-addressed: `changed` is false when the identical bytes were already there. The response is METADATA ONLY — it never echoes the stored value. Backs `agentbox hub credentials/secrets/project push`.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['data'],
+                  properties: { data: { type: 'string', description: 'base64-encoded bytes' } },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Stored (metadata only)',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/CustodyPutResult' } },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+          },
+        },
+        delete: {
+          tags: ['Custody'],
+          summary: 'Delete a custody entry',
+          description: 'Removes one entry. Backs `agentbox hub custody rm`.',
+          responses: {
+            '204': { description: 'Deleted' },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
           },
         },
       },
@@ -931,12 +999,43 @@ export function buildOpenApi(): Record<string, unknown> {
           },
           required: ['path', 'size', 'sha256', 'mode', 'updatedAt'],
         },
+        CustodyPutResult: {
+          type: 'object',
+          description: 'A store result — metadata only, never the stored value.',
+          allOf: [
+            { $ref: '#/components/schemas/CustodyEntry' },
+            {
+              type: 'object',
+              properties: {
+                changed: {
+                  type: 'boolean',
+                  description:
+                    'false when the identical bytes were already stored (content-addressed)',
+                },
+              },
+              required: ['changed'],
+            },
+          ],
+        },
+        CustodyValue: {
+          type: 'object',
+          description:
+            'A stored entry AND its bytes — only the elevated byte-read GET returns this.',
+          allOf: [
+            { $ref: '#/components/schemas/CustodyEntry' },
+            {
+              type: 'object',
+              properties: { data: { type: 'string', description: 'base64-encoded stored bytes' } },
+              required: ['data'],
+            },
+          ],
+        },
         Custody: {
           type: 'object',
           properties: {
             enabled: {
               type: 'boolean',
-              description: 'false when this hub holds no custody (no admin token)',
+              description: 'false only when this hub has no custody store wired',
             },
             entries: { type: 'array', items: { $ref: '#/components/schemas/CustodyEntry' } },
           },

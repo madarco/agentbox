@@ -64,10 +64,7 @@ import {
   registerBoxWithRelay,
   TERM_FALLBACK_SNIPPET,
 } from '@agentbox/sandbox-docker';
-import {
-  ensureAgentVolumesForCloud,
-  reconcileAgentCredentials,
-} from './sync/agent-credentials.js';
+import { ensureAgentVolumesForCloud, reconcileAgentCredentials } from './sync/agent-credentials.js';
 import {
   cloudSnapshotName,
   currentCloudBaseFingerprint,
@@ -83,7 +80,8 @@ import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './
 import { kickCloudBootstrap } from './bootstrap-launch.js';
 import { readGitOriginUrl, registerBoxWithPlane } from './plane-register.js';
 import { pushBoxSshToCustody } from './custody-ssh.js';
-import { pushProjectSeedToCustody } from './custody-seed.js';
+import { adminCustodySink, pushProjectSeedToCustody, SEED_PUSH_MS } from './custody-seed.js';
+import { deadlineFetch } from './reachability.js';
 
 /**
  * The env/secret patterns a box's custody seed should capture: exactly what
@@ -92,10 +90,7 @@ import { pushProjectSeedToCustody } from './custody-seed.js';
  * env files, so no env tar is pushed.
  */
 function seedEnvPatterns(req: CreateBoxRequest): string[] | undefined {
-  const patterns = [
-    ...(req.envFilesToImport ?? []),
-    ...(req.withEnv ? DEFAULT_ENV_PATTERNS : []),
-  ];
+  const patterns = [...(req.envFilesToImport ?? []), ...(req.withEnv ? DEFAULT_ENV_PATTERNS : [])];
   return patterns.length > 0 ? patterns : undefined;
 }
 import { bashScript, quoteShellArgv } from './shell.js';
@@ -1076,9 +1071,8 @@ export function createCloudProvider(
           : undefined;
 
         // Per-box host-action auto-approve policy (workspace > project > global).
-        const effectiveForCreate = (
-          await loadEffectiveConfig(req.projectRoot ?? req.workspacePath)
-        ).effective;
+        const effectiveForCreate = (await loadEffectiveConfig(req.projectRoot ?? req.workspacePath))
+          .effective;
         const effectiveBoxForApprove = effectiveForCreate.box;
         const autoApproveHostActions = effectiveBoxForApprove.autoApproveHostActions;
         const autoApproveSafeHostActions = effectiveBoxForApprove.autoApproveSafeHostActions;
@@ -1163,8 +1157,15 @@ export function createCloudProvider(
                 const slug = projectSlugFromOriginUrl(originUrl);
                 if (slug) {
                   const seed = await pushProjectSeedToCustody({
-                    controlPlaneUrl: req.controlPlaneUrl,
-                    adminToken,
+                    // The create/registration flow keeps the internal /admin wire
+                    // (it holds the admin token); the CLI `hub project push` command
+                    // uses a /api/v1 sink. Same store, same seed blobs.
+                    sink: adminCustodySink({
+                      controlPlaneUrl: req.controlPlaneUrl,
+                      adminToken,
+                      fetchImpl: deadlineFetch(AbortSignal.timeout(SEED_PUSH_MS)),
+                    }),
+                    probeUrl: req.controlPlaneUrl,
                     slug,
                     projectRoot: req.workspacePath,
                     // Capture exactly the env set THIS box received — the
@@ -1189,7 +1190,7 @@ export function createCloudProvider(
                   // a later web-UI create silently lacks their untracked files.
                   if (seed?.unreachable) {
                     log(
-                      'WARN: control box unreachable — this project\'s seed material (untracked files + env) was NOT stored. ' +
+                      "WARN: control box unreachable — this project's seed material (untracked files + env) was NOT stored. " +
                         'Boxes created from the hub will miss them until you run `agentbox hub project push`.',
                     );
                   }
@@ -1355,7 +1356,11 @@ export function createCloudProvider(
       return (await backend.repairReachability?.(handleFor(box))) ?? { changed: false };
     },
 
-    async setInbound(box: BoxRecord, spec: string, onLog?: (line: string) => void): Promise<InboundPolicy> {
+    async setInbound(
+      box: BoxRecord,
+      spec: string,
+      onLog?: (line: string) => void,
+    ): Promise<InboundPolicy> {
       if (!backend.setInbound) {
         throw new UserFacingError(
           `inbound access control isn't supported for provider '${providerName}' — it has no per-box firewall (only hetzner / digitalocean do).`,

@@ -115,13 +115,14 @@ async function main(): Promise<void> {
 
   const store = await resolveStore(STORE_DB_PATH);
 
-  // Custody (agent creds / project secrets / box SSH keys) is served only when
-  // an admin token is set — the hetzner control box. The dispatcher fail-closes
-  // 503 without the token, so wiring the fs store unconditionally is safe: a
-  // loginless localhost hub simply never serves the routes.
+  // Custody (agent creds / project secrets / box SSH keys). Wired unconditionally
+  // now: the `/api/v1/custody` routes reach it through globalThis and serve in
+  // BOTH modes (the plan's "same path local ⇄ remote" rule — a local hub's own
+  // `credentials push`/`pull` must round-trip). The relay daemon's `/admin/custody`
+  // wire still fail-closes 503 without an admin token, so a plain localhost hub
+  // exposes custody ONLY over its token-gated `/api/v1`, never the admin wire.
   const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '';
-  const custody: CustodyStore | undefined =
-    adminToken.length > 0 ? new FsCustodyStore() : undefined;
+  const custody: CustodyStore = new FsCustodyStore();
 
   // `hub.gitAuth=gh`: make the stored GitHub token visible to git and `gh`
   // before anything can need it — the create worker clones with it, and the
@@ -188,12 +189,12 @@ async function main(): Promise<void> {
   // the user is present and an unattended local box shouldn't wedge forever).
   if (authMode() === 'password') daemon.handle.subscribers.setDurableFloor(1);
   // The custody store (agent creds / project seeds / bake records / box SSH keys),
-  // for the Custody + project-Seed read-only routes. Null on a hub with no admin
-  // token (localhost) — the routes then report custody-not-enabled. Shared via
+  // for the Custody + project-Seed routes (list/read/write). Wired in both modes
+  // now, so a localhost hub serves its own `/api/v1/custody` too. Shared via
   // globalThis (like the backend) so @agentbox/relay stays out of Next's bundle:
   // a route that constructed `new FsCustodyStore()` itself would ERR_MODULE_NOT_FOUND
   // on execa in the standalone build.
-  globalThis.__AGENTBOX_HUB_CUSTODY = custody ?? null;
+  globalThis.__AGENTBOX_HUB_CUSTODY = custody;
 
   // System / Build facts for the /api/v1/system route, read from @agentbox/sandbox-core
   // HERE (the custom server's scope, outside Next's bundle) and handed across as plain

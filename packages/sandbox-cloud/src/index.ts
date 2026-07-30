@@ -34,10 +34,13 @@ export {
   type PullPreparedResult,
 } from './prepared-sync.js';
 export {
+  adminCustodySink,
   applyProjectSeed,
   buildProjectSeed,
   pushProjectSeedToCustody,
+  SEED_PUSH_MS,
   type ApplyProjectSeedResult,
+  type SeedCustodySink,
   type SeedSource,
   type BuildProjectSeedArgs,
   type BuildProjectSeedResult,

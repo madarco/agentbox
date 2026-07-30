@@ -117,12 +117,15 @@ export async function tryAutoAdopt(
       process.exit(2);
     }
 
-    // SSH keys still come from custody (an admin-token surface — Step 10 moves
-    // it onto /api/v1). Best-effort: no admin token → adopt the record without
-    // keys (fine for SDK providers; flagged for SSH ones).
-    const { resolveCustodyTarget } = await import('../commands/control-plane.js');
+    // SSH keys come from custody over the hub's /api/v1 (a byte-read gated by the
+    // admin token). Best-effort: no admin token → the byte-read is refused and the
+    // record is adopted without keys (fine for SDK providers; flagged for SSH ones).
+    const { resolveCustodyApiTarget } = await import('../commands/control-plane.js');
     const { CustodyClient } = await import('./custody-client.js');
-    const custodyTarget = await resolveCustodyTarget(undefined, { quiet: true });
+    const custodyTarget = await resolveCustodyApiTarget(undefined, {
+      quiet: true,
+      remoteOnly: true,
+    });
     const custody = custodyTarget
       ? new CustodyClient({ ...custodyTarget, fetchImpl: deadlineFetch(signal) })
       : undefined;
