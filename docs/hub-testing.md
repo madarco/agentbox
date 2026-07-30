@@ -19,6 +19,16 @@ you changed.**
 
 A useful rule: **1 and 2 test the hub; 3 tests the deploy; 4 tests the user's first run.**
 
+> **Why "both modes" is the whole point.** Since the thin-CLI consolidation
+> ([`hub-api-single-path-plan.md`](./hub-api-single-path-plan.md)) the CLI drives
+> every box/fleet operation through the hub's `/api/v1` — same client, same routes —
+> so a change must be exercised against a **local hub** (no control box) *and* a
+> **remote-shaped** hub (`hub expose`, environment 1). The cheapest remote-shaped
+> check is almost always `hub expose` on your own machine: it runs the real password
+> profile + `AGENTBOX_HUB_API_KEY` path in seconds. Every `/api/v1` route is
+> asserted present in the OpenAPI doc by `apps/hub/test/openapi-coverage.test.ts`, so
+> a new route can't ship undocumented.
+
 ---
 
 ## 1. Your host — `hub expose`

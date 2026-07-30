@@ -83,10 +83,14 @@ It has **no build-time coupling** to this repo — it's a Swift Package Manager 
   (which carries the raw host-side fields — `state`, `projectRoot`, endpoint URLs, session titles —
   and the synthetic `creating`/`error` boxes for in-flight/failed creates) plus the lifecycle
   (`start`/`pause`/`resume`/`stop`/`destroy`), git, rename, and services routes. Approvals use
-  `/api/v1/approvals` (+ `…/{id}/answer`), live events the SSE `/api/events` stream. **Auth split to
-  remember when changing the hub:** `/api/v1/*` uses `Authorization: Bearer <token>`, but
-  `/api/events` reads the **`agentbox_hub_token` cookie** (Bearer there 401s). Token is
-  `~/.agentbox/hub/token`. SSE events are refetch signals only (empty `data: {}`).
+  `/api/v1/approvals` (+ `…/{id}/answer`), live events the SSE `/api/events` stream. **Auth to
+  remember when changing the hub:** both `/api/v1/*` and `/api/events` go through the same gate
+  (`apps/hub/proxy.ts`) and accept `Authorization: Bearer <token>` — a headless client (the tray
+  against a remote control box) subscribes to events with the same Bearer key it uses for `/api/v1`.
+  The token cookie (`agentbox_hub_token`, or the better-auth session cookie on a password profile) is
+  an *additional* accepted credential for the hub's own same-origin browser fetches, not a
+  replacement. Token is `~/.agentbox/hub/token`. SSE events are refetch signals only (empty
+  `data: {}`).
 - **Inherently-local actions** via the installed CLI, shelled through a login shell
   (`/bin/zsh -lc 'agentbox …'`, because a GUI app has no inherited PATH): `open --in`/`open --targets`
   (terminal attach in iTerm2/cmux/Herdr), and `hub status`/`hub start` to bootstrap the hub itself.

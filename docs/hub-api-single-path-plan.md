@@ -1403,7 +1403,7 @@ fires from `git.pushMode=direct` set via **config** (no flag); `--via-hub
 
 ---
 
-## Step 14 — Docs and tray
+## Step 14 — Docs and tray ✅ done (tray = documented follow-up)
 
 - Update `apps/web/content/docs/{api,deployed-hub,configuration,cli}.mdx` and
   `docs/{architecture,cloud-providers,hub-testing,create-and-checkpoints}.md` as each step lands
@@ -1414,6 +1414,46 @@ fires from `git.pushMode=direct` set via **config** (no flag); `--via-hub
   Box payload from Step 3. Update `../agentbox-tray` and push straight to `main`.
 - Fix the stale claim in `CLAUDE.md` that `/api/events` is cookie-only — Bearer works
   (`apps/hub/proxy.ts:20,76`).
+
+**Landed (docs + OpenAPI).** OpenAPI (`api/v1/lib/openapi.ts`) now documents **every** route — the
+8 that shipped without an entry (`GET /boxes/:id/agent`, `POST /boxes/:id/checkpoint`,
+`GET /boxes/:id/logs`, `POST /boxes/:id/rename`, `GET|DELETE /checkpoints`, `POST /prune`,
+`GET /jobs`, `POST /jobs/:id/login-code`), new `Checkpoints`/`Fleet` tags + their response schemas
+(`CheckpointCreateResult`/`CheckpointListing`/`CheckpointRemoveResult`/`PruneResult`/`JobListItem`/
+`AgentState`), the enriched `Job` (error/provider/name/agent/createdAt/login), and the Step-3 `Box`
+adoption fields (`sandboxId`/`originUrl`/`publicHost`/`image`/`webPort`/`previewUrls`/`lastAgent`/
+`topology`/`shellCount`). `rename`/`open`/`open-targets`/`hosts` were already present. A **new guard
+test** `apps/hub/test/openapi-coverage.test.ts` diffs the App-Router route files against the document
+in both directions (fails on an undocumented route AND a documented path with no route file) — the
+"verification checklist" the openapi.ts header always claimed but never had. **Verified end-to-end**:
+built the standalone hub, restarted it, and the served `GET /api/v1/openapi.json` lists all **37**
+routes with a **perfect bijection** to the route files (0 missing, 0 stale), `GET /api/v1/docs`
+renders, and `pnpm --filter @agentbox/web build` is green.
+
+Public docs: `api.mdx` (all 9 endpoints + Checkpoints/Fleet groups + the accurate "one path, IO plane
+excepted" framing), `deployed-hub.mdx` (a new **"What still needs your laptop"** section — the direct
+IO plane, local adoption, `secrets.env` on both machines, the launcher-foreground-create exception,
+the no-TTL parked-approval callout — plus corrected the stale `ls` merge/`on hub`/`orphan` description
+to the single-`/api/v1/boxes` listing), `configuration.mdx` (added `git.pushMode`), `cli.mdx` (already
+accurate — no overstatement). Internal docs: `architecture.md` (a new **"End state: one path through
+`/api/v1`"** subsection with the four deliberate exceptions), `create-and-checkpoints.md` (create +
+checkpoint now route through `/api/v1`, the mechanics moved *behind* the API), `cloud-providers.md`
+(§4b custody/adoption/thin-client + a routing note on §6), `hub-testing.md` (why "both modes" is the
+point + the coverage test). `CLAUDE.md` fixed: `/api/events` accepts Bearer (same gate as `/api/v1`);
+the cookie is an *additional* same-origin credential, not a replacement (confirmed in `proxy.ts` —
+`gateApi` handles both prefixes).
+
+**Tray — NOT done, deliberate documented follow-up.** `../agentbox-tray` is a **host-side sibling
+repo** and is not reachable from inside this AgentBox (`/workspace`'s parent has no `agentbox-tray`,
+and the box has no path to it or to its `main`). Per the step brief ("if you cannot reach it, say so
+plainly and leave the tray work as a documented follow-up rather than pretending it is done"), the
+tray change is a **follow-up**. What it needs (actionable): the tray's Swift `Box` model
+(`HubAPIBoxSource`) should decode the enriched Step-3 fields now present on `GET /api/v1/boxes` —
+`sandboxId`, `originUrl`, `publicHost`, `image`, `webPort`, `previewUrls`, `lastAgent`, `topology`,
+`shellCount` (all optional; docker/synthetic rows omit them) — to reconstruct/adopt and label cloud
+boxes without a second wire. The hub API contract it already speaks is unchanged otherwise; the
+`Box` schema in the served `openapi.json` is the authoritative field list. Commit + push straight to
+`main` there (no PR flow), from a checkout that can reach the sibling repo.
 
 ---
 
