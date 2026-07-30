@@ -98,6 +98,45 @@ describe('controlPlaneCreateRequest', () => {
     expect('agentArgs' in m.request).toBe(false);
   });
 
+  it('carries the cloud-relevant box-shaping opts (snapshot/image/env/build/...)', () => {
+    const m = controlPlaneCreateRequest(
+      {
+        provider: 'e2b',
+        agent: 'none',
+        opts: {
+          snapshot: 'ckpt-1',
+          image: 'tmpl-x',
+          withEnv: true,
+          withPlaywright: false,
+          vnc: false,
+          bundleDepth: 20,
+          build: true,
+          credentialSync: false,
+        },
+      },
+      REPO,
+    );
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect(m.request.opts).toEqual({
+      snapshot: 'ckpt-1',
+      image: 'tmpl-x',
+      withEnv: true,
+      withPlaywright: false,
+      vnc: false,
+      bundleDepth: 20,
+      build: true,
+      credentialSync: false,
+    });
+  });
+
+  it('omits opts entirely when none are set', () => {
+    const m = controlPlaneCreateRequest({ provider: 'e2b', agent: 'none', opts: {} }, REPO);
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect('opts' in m.request).toBe(false);
+  });
+
   it('startAgent:false builds a COLD box (the foreground create-then-adopt path)', () => {
     const m = controlPlaneCreateRequest(
       { provider: 'e2b', agent: 'claude', startAgent: false },

@@ -190,6 +190,21 @@ async function runCreateViaHubApi(
     onLog: (line) => cmdLog.write(line),
   });
 
+  // Cloud-relevant box-shaping flags the user passed. The control box applies the
+  // direct `provider.create` args (snapshot/image/env/vnc/bundle-depth/build/
+  // credential-sync) and falls back to its own config for the rest (VM sizing) —
+  // consistent with `prepare`. Docker/agent-only knobs (carry/portless/limits) are
+  // inapplicable to a control-box clone build, so they aren't sent.
+  const remoteOpts = {
+    ...(opts.snapshot ? { snapshot: opts.snapshot } : {}),
+    ...(opts.image ? { image: opts.image } : {}),
+    ...(opts.withPlaywright === true ? { withPlaywright: true } : {}),
+    ...(opts.withEnv === true ? { withEnv: true } : {}),
+    ...(opts.vnc === false ? { vnc: false } : {}),
+    ...(opts.bundleDepth !== undefined ? { bundleDepth: opts.bundleDepth } : {}),
+    ...(opts.build === true ? { build: true } : {}),
+    ...(opts.credentialSync === false ? { credentialSync: false } : {}),
+  };
   const outcome = await withHubClient({ url: opts.url }, async (client) => {
     const { jobId } = await client.createBox({
       repoUrl: target.repoUrl,
@@ -197,6 +212,7 @@ async function runCreateViaHubApi(
       agent: 'none',
       name: opts.name?.trim() || undefined,
       fromBranch: opts.fromBranch?.trim() || undefined,
+      ...(Object.keys(remoteOpts).length > 0 ? { opts: remoteOpts } : {}),
     });
     cmdLog.write(`enqueued on the control box: job ${jobId}`);
     return await streamJobToCompletion(client, jobId, {

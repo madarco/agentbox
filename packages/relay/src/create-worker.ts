@@ -50,6 +50,8 @@ export interface CreateBoxDeps {
     agentArgs?: string[];
     /** Start the agent in-box even with no `prompt` (a hub web-UI create). */
     startAgent?: boolean;
+    /** Box-shaping flags the CLI resolved (snapshot/image/withEnv/...); see CreateJobRequestOpts. */
+    opts?: CreateJobRequest['opts'];
     onLog?: (line: string) => void;
   }): Promise<{ id: string; agentStartError?: string }>;
   /** Make a per-job temp dir path. */
@@ -121,9 +123,12 @@ export async function cloneRepoWithLfs(
   branch?: string,
   log: (line: string) => void = () => {},
 ): Promise<void> {
-  await runGit(branch ? ['clone', '--branch', branch, authedUrl, dest] : ['clone', authedUrl, dest], {
-    GIT_LFS_SKIP_SMUDGE: '1',
-  });
+  await runGit(
+    branch ? ['clone', '--branch', branch, authedUrl, dest] : ['clone', authedUrl, dest],
+    {
+      GIT_LFS_SKIP_SMUDGE: '1',
+    },
+  );
   // Fetch the real LFS bytes over the forced HTTPS endpoint (best-effort). A repo
   // with no LFS makes this a fast no-op. `-c lfs.url` overrides remote/insteadOf
   // resolution; the token is passed on the argv (ephemeral), never written to the
@@ -131,11 +136,16 @@ export async function cloneRepoWithLfs(
   try {
     await runGit(
       ['-C', dest, '-c', `lfs.url=${lfsEndpointFor(authedUrl)}`, 'lfs', 'pull'],
-      { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o StrictHostKeyChecking=no' },
+      {
+        GIT_TERMINAL_PROMPT: '0',
+        GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o StrictHostKeyChecking=no',
+      },
       120_000,
     );
   } catch (err) {
-    log(`git-lfs objects left as pointers (fetch failed): ${err instanceof Error ? err.message : String(err)}`);
+    log(
+      `git-lfs objects left as pointers (fetch failed): ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
   await runGit(['-C', dest, 'remote', 'set-url', 'origin', repoUrl]);
 }
@@ -166,7 +176,9 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
             ]
               .filter(Boolean)
               .join(', ');
-            log(`applied ${String(seed.files)} seed file(s) from custody${from ? ` (${from})` : ''}`);
+            log(
+              `applied ${String(seed.files)} seed file(s) from custody${from ? ` (${from})` : ''}`,
+            );
           }
         } catch (err) {
           // The box is still usable without the user's local files — say so and
@@ -191,6 +203,9 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
         prompt: request.prompt,
         agentArgs: request.agentArgs,
         startAgent: request.startAgent,
+        // Box-shaping flags the CLI resolved, so a control-box create isn't built
+        // with defaults where the user asked for a snapshot / image / env / etc.
+        opts: request.opts,
         onLog: log,
       });
       log(`created box ${box.id}`);

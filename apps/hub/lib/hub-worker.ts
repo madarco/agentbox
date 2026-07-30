@@ -265,6 +265,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       prompt,
       agentArgs,
       startAgent,
+      opts: createOpts,
       onLog,
     }) => {
       if (!isProviderKind(provider)) throw new Error(`unknown provider ${provider}`);
@@ -289,6 +290,24 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         // Register the box on THIS hub (control-plane topology) so the phone UI
         // sees it and approvals route back here.
         controlPlaneUrl: opts.publicUrl,
+        // Box-shaping flags the CLI resolved (`--snapshot`/`--image`/`--build`/
+        // env/vnc/bundle-depth/credential-sync). Applied so a control-box create
+        // honors them instead of silently building with defaults. VM sizing
+        // (`--size`/`--location`/`--inbound`) is not here — it needs the CLI's
+        // provider-specific sizing helper, so it falls back to this control box's
+        // own config, the same way `prepare` uses the control box's config pins.
+        ...(createOpts?.snapshot ? { checkpointRef: createOpts.snapshot } : {}),
+        ...(createOpts?.image ? { image: createOpts.image } : {}),
+        ...(createOpts?.withPlaywright !== undefined
+          ? { withPlaywright: createOpts.withPlaywright }
+          : {}),
+        ...(createOpts?.withEnv !== undefined ? { withEnv: createOpts.withEnv } : {}),
+        ...(createOpts?.vnc !== undefined ? { vnc: { enabled: createOpts.vnc } } : {}),
+        ...(createOpts?.bundleDepth !== undefined ? { bundleDepth: createOpts.bundleDepth } : {}),
+        ...(createOpts?.build ? { allowPull: false } : {}),
+        ...(createOpts?.credentialSync !== undefined
+          ? { credentialSync: createOpts.credentialSync }
+          : {}),
         ...(extraInboundCidrs ? { providerOptions: { extraInboundCidrs } } : {}),
         onLog,
       });
