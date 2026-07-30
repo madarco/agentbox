@@ -190,7 +190,12 @@ const setDefaultSub = new Command('set-default')
       await withHubClient({}, async (client) => {
         const exists = await checkpointExists(client, projectRoot, ref, providerArg);
         if (!exists) {
-          throw new Error(`checkpoint not found: ${ref} (see \`agentbox checkpoint ls\`)`);
+          // Don't throw a plain Error here — withHubClient's mapper would render it
+          // as a "can't reach the hub" transport failure. Report + set the exit
+          // code directly (the ref genuinely resolved to nothing).
+          log.error(`checkpoint not found: ${ref} (see \`agentbox checkpoint ls\`)`);
+          process.exitCode = 2;
+          return;
         }
         const rr = await setConfigValue('project', configKey, ref, projectRoot);
         process.stdout.write(`${label} = ${ref}   (wrote ${rr.path})\n`);

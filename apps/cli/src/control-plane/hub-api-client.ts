@@ -645,34 +645,42 @@ export class HubApiClient {
     const decoder = new TextDecoder();
     let buffer = '';
     let status = 'gone';
-    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-      buffer += decoder.decode(chunk, { stream: true });
-      const frames = buffer.split('\n\n');
-      buffer = frames.pop() ?? '';
-      for (const frame of frames) {
-        let event = '';
-        let data = '';
-        for (const raw of frame.split('\n')) {
-          if (raw.startsWith('event:')) event = raw.slice(6).trim();
-          else if (raw.startsWith('data:')) data = raw.slice(5).trim();
-        }
-        if (data.length === 0) continue;
-        if (event === 'log') {
-          try {
-            const line = JSON.parse(data) as unknown;
-            if (typeof line === 'string') onLine(line);
-          } catch {
-            /* a frame we can't parse is not worth aborting the stream over */
+    try {
+      for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+        buffer += decoder.decode(chunk, { stream: true });
+        const frames = buffer.split('\n\n');
+        buffer = frames.pop() ?? '';
+        for (const frame of frames) {
+          let event = '';
+          let data = '';
+          for (const raw of frame.split('\n')) {
+            if (raw.startsWith('event:')) event = raw.slice(6).trim();
+            else if (raw.startsWith('data:')) data = raw.slice(5).trim();
           }
-        } else if (event === 'end') {
-          try {
-            const parsed = JSON.parse(data) as { status?: string };
-            if (typeof parsed.status === 'string') status = parsed.status;
-          } catch {
-            /* keep the default */
+          if (data.length === 0) continue;
+          if (event === 'log') {
+            try {
+              const line = JSON.parse(data) as unknown;
+              if (typeof line === 'string') onLine(line);
+            } catch {
+              /* a frame we can't parse is not worth aborting the stream over */
+            }
+          } else if (event === 'end') {
+            try {
+              const parsed = JSON.parse(data) as { status?: string };
+              if (typeof parsed.status === 'string') status = parsed.status;
+            } catch {
+              /* keep the default */
+            }
           }
         }
       }
+    } catch (err) {
+      // A caller-requested abort (Ctrl-C on a `-f` follow) surfaces as an
+      // AbortError from the streaming read — that's a clean stop, not a failure,
+      // so don't let it bubble to withHubClient's "can't reach the hub" mapper.
+      if (signal?.aborted) return { status: 'aborted' };
+      throw err;
     }
     return { status };
   }

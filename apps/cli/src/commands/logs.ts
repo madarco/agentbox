@@ -73,11 +73,16 @@ export const logsCommand = new Command('logs')
         return;
       }
 
-      // Follow: stream SSE from the owning hub. Ctrl-C aborts the request, which
-      // tears down the hub-side spawned tail. The stream's terminal status maps to
-      // the exit code (a failed/aborted tail is not a clean 0).
+      // Follow: stream SSE from the owning hub. Ctrl-C aborts the request (so the
+      // hub sees the dropped connection and kills its spawned tail) and exits —
+      // 130 for SIGINT, the shell convention. A hard exit is deliberate: a
+      // half-open SSE read doesn't always unwind promptly on signal-abort, and
+      // follow's whole contract is "run until the user stops it".
       const controller = new AbortController();
-      const onSignal = (): void => controller.abort();
+      const onSignal = (): void => {
+        controller.abort();
+        process.exit(130);
+      };
       process.on('SIGINT', onSignal);
       process.on('SIGTERM', onSignal);
       let status = 'gone';
@@ -100,9 +105,11 @@ export const logsCommand = new Command('logs')
         process.removeListener('SIGINT', onSignal);
         process.removeListener('SIGTERM', onSignal);
       }
-      // 'done'/'aborted' (clean end or user Ctrl-C) exit 0; a 'failed'/'error'
-      // in-box tail exits 1 so scripts can tell a real failure from a clean stop.
-      if (status === 'failed' || status === 'error') process.exit(1);
+      // Hard-exit: a half-open SSE socket to the hub can keep the event loop alive
+      // after the stream ends, so exit explicitly (the old docker-exec follow did
+      // the same via child.on('exit')). 'done'/'aborted' (clean end or Ctrl-C) →
+      // 0; a 'failed'/'error' in-box tail → 1 so scripts can tell them apart.
+      process.exit(status === 'failed' || status === 'error' ? 1 : 0);
     } catch (err) {
       handleLifecycleError(err);
     }
