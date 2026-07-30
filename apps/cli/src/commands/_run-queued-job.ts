@@ -57,7 +57,7 @@ import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { buildResyncWarning, prependResyncWarning } from '../lib/resync-warning.js';
 import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from '../lib/skip-permissions.js';
 import { providerForCreate } from '../provider/registry.js';
-import { parseProviderSpec } from '../provider/spec.js';
+import { parseProviderSpec, providerNameOf, resolveCreateProviderSpec } from '../provider/spec.js';
 import { autoWriteSshConfig } from '@agentbox/sandbox-core';
 import { cloudAgentStartDetached } from './_cloud-attach.js';
 import { spawnQueuedOpenTerminal } from '../terminal/queue-open.js';
@@ -223,7 +223,12 @@ export const runQueuedJobCommand = new Command('_run-queued-job')
       const onBoxCreated = (boxId: string): void => {
         if (job) job = { ...job, boxId };
       };
-      if ((job.providerName || 'docker') === 'docker') {
+      // Route by the EFFECTIVE provider spec, which folds in `createOpts.remoteHost`
+      // (`--remote-host`): a bare `docker` job with a remote host is a remote-docker
+      // box and must take the provider path (runCloudJob → the remote engine), not
+      // the local `createBox` in runDockerJob.
+      const providerSpec = resolveCreateProviderSpec(job.providerName, job.createOpts.remoteHost);
+      if (providerNameOf(providerSpec) === 'docker') {
         await runDockerJob(job, log, onBoxCreated);
       } else {
         await runCloudJob(job, log, onBoxCreated);
@@ -517,8 +522,13 @@ async function runCloudJob(
   const projectRoot = (await findProjectRoot(opts.workspace)).root;
   // A queued job records the raw `--provider` spec, which may be host-qualified
   // (`docker:buildbox`); split it so the name keys config and the host reaches
-  // the backend.
-  const providerSpec = job.providerName || cfg.effective.box.provider || 'docker';
+  // the backend. `resolveCreateProviderSpec` also folds in `createOpts.remoteHost`
+  // (`--remote-host`), so a bare `docker` job with a remote host resolves the
+  // REMOTE engine here rather than falling back to the local one.
+  const providerSpec = resolveCreateProviderSpec(
+    job.providerName || cfg.effective.box.provider,
+    opts.remoteHost,
+  );
   const { name: providerName, remoteHost } = parseProviderSpec(providerSpec);
   const provider = await providerForCreate({ flag: providerSpec, config: cfg.effective });
 
