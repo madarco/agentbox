@@ -16,11 +16,22 @@ import { handleLifecycleError } from './_errors.js';
 /**
  * `agentbox checkpoint` — capture and manage the warm box states new boxes start
  * from. `create` / `ls` / `rm` run through the hub's public `/api/v1`
- * (`POST /boxes/:id/checkpoint`, `GET|DELETE /checkpoints`), so a checkpoint lands
- * and is managed on whichever hub owns the box — the checkpoint store + provider
- * credentials + running box all live there. `set-default` stays a local
- * project-config write (there is no `/api/v1/config` surface); it validates the
- * ref against the hub's listing so it agrees with `ls`/`rm`.
+ * (`POST /boxes/:id/checkpoint`, `GET|DELETE /checkpoints`); `set-default` stays a
+ * local project-config write (there is no `/api/v1/config` surface) but validates
+ * the ref against the hub's listing so it agrees with `ls`/`rm`.
+ *
+ * WHICH HUB: `create` is box-scoped, so it uses `withOwningHub` (docker/
+ * remote-docker → local hub, cloud → the configured hub). `ls` / `rm` /
+ * `set-default` are project-scoped and prefer the LOCAL hub (`preferLocal`), which
+ * is the same hub docker `create` writes to AND the only one whose store the
+ * project's path resolves against: checkpoint stores are keyed by a hash of the
+ * project's ABSOLUTE PATH, which only matches the local filesystem — a remote
+ * control box hashes a different path, so listing by this machine's project root
+ * there would find nothing anyway. On a co-located hub (local or `hub expose`d —
+ * both the same machine) `preferLocal` IS the one hub, so this is identical to the
+ * default there. (Cloud checkpoints created on a genuinely-remote control box are
+ * not listable from a thin laptop by path — an accepted cross-machine limitation
+ * of path-hash-keyed stores, not a routing gap.)
  */
 
 /** Docker + built-in cloud providers, for `set-default --provider` validation. */
@@ -120,7 +131,7 @@ const lsSub = new Command('ls')
   .action(async (opts: { global?: boolean }) => {
     try {
       const project = opts.global ? undefined : (await findProjectRoot(process.cwd())).root;
-      await withHubClient({}, async (client) => {
+      await withHubClient({ preferLocal: true }, async (client) => {
         const listing = await client.listCheckpoints({ project, global: opts.global });
         if (opts.global) {
           if (listing.projects.every((p) => p.items.length === 0)) {
@@ -198,7 +209,7 @@ const setDefaultSub = new Command('set-default')
       // Validate the ref against the hub's listing (agrees with `ls`/`rm`), then
       // write the pointer into the LOCAL project config (there is no config route;
       // for a co-located hub the store the hub lists IS this machine's).
-      await withHubClient({}, async (client) => {
+      await withHubClient({ preferLocal: true }, async (client) => {
         const exists = await checkpointExists(client, projectRoot, ref, providerArg);
         if (!exists) {
           // Don't throw a plain Error here — withHubClient's mapper would render it
@@ -231,7 +242,7 @@ const rmSub = new Command('rm')
           return;
         }
       }
-      await withHubClient({}, async (client) => {
+      await withHubClient({ preferLocal: true }, async (client) => {
         const res = await client.deleteCheckpoint({
           project: projectRoot,
           ref,

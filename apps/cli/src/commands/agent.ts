@@ -50,10 +50,13 @@ const agentStateCommand = new Command('state')
       const box = await resolveBoxOrExit(boxRef);
       // The status snapshot lives on whichever hub owns the box (its relay writes
       // status.json), so read it through the owning hub — a box on a control box
-      // has no snapshot on this laptop's disk. not-found → no snapshot (same as a
-      // null claude below).
+      // has no snapshot on this laptop's disk.
       const claude = await fetchAgentClaude(box);
       if (claude === HUB_ERROR) return; // withHubClient reported + set the exit code
+      if (claude === HUB_NOT_FOUND) {
+        reportAgentBoxNotFound(box, opts.json === true);
+        return;
+      }
       if (opts.json === true) {
         process.stdout.write(JSON.stringify(claude ?? null) + '\n');
         return;
@@ -144,6 +147,10 @@ const agentGetPlanQuestionCommand = new Command('get-plan-question')
       const box = await resolveBoxOrExit(boxRef);
       const claude = await fetchAgentClaude(box);
       if (claude === HUB_ERROR) return; // withHubClient reported + set the exit code
+      if (claude === HUB_NOT_FOUND) {
+        reportAgentBoxNotFound(box, opts.json === true);
+        return;
+      }
       if (opts.json === true) {
         const out = claude?.plan ?? claude?.question ?? null;
         process.stdout.write(JSON.stringify(out) + '\n');
@@ -574,22 +581,41 @@ function sleep(ms: number): Promise<void> {
 
 /** Sentinel: `withOwningHub` already reported a hub error + set the exit code. */
 const HUB_ERROR = Symbol('hub-error');
+/** Sentinel: no hub AgentBox knows owns the box (distinct from a null snapshot). */
+const HUB_NOT_FOUND = Symbol('hub-not-found');
 
 /**
- * Read the box's Claude status snapshot through the hub that owns it. Returns the
- * snapshot (or null when the box is known but has no snapshot yet, OR when no hub
- * owns it — both surface to the caller as "no snapshot"), or {@link HUB_ERROR}
- * when the hub call failed (already reported).
+ * Read the box's Claude status snapshot through the hub that owns it. Returns:
+ *   - the snapshot, or null when the box is known but has no snapshot yet,
+ *   - {@link HUB_NOT_FOUND} when no hub owns the box (a missing box is NOT the same
+ *     as a null snapshot — conflating them would hide an unreachable box behind a
+ *     misleading "no snapshot yet, exit 0", the inconsistency `wait-for` avoids),
+ *   - {@link HUB_ERROR} when the hub call itself failed (already reported).
  */
 async function fetchAgentClaude(
   box: BoxRecord,
-): Promise<BoxStatusClaude | null | typeof HUB_ERROR> {
+): Promise<BoxStatusClaude | null | typeof HUB_ERROR | typeof HUB_NOT_FOUND> {
   let claude: BoxStatusClaude | null = null;
   const r = await withOwningHub(box, async (client) => {
     claude = ((await client.getAgentState(box.id)).claude ?? null) as BoxStatusClaude | null;
   });
   if (r === undefined) return HUB_ERROR;
+  if (r === 'not-found') return HUB_NOT_FOUND;
   return claude;
+}
+
+/**
+ * Report a box no hub owns, for the snapshot readers (`state` /
+ * `get-plan-question`) — exit 2, matching `wait-for`. Distinct from a null
+ * snapshot: the box is genuinely unknown, not merely un-reported-on yet.
+ */
+function reportAgentBoxNotFound(box: BoxRecord, asJson: boolean): void {
+  if (asJson) {
+    process.stdout.write(JSON.stringify(null) + '\n');
+  } else {
+    log.error(`box ${box.name} was not found on any hub AgentBox knows.`);
+  }
+  process.exit(2);
 }
 
 function emitMatch(claude: BoxStatusClaude, asJson: boolean): void {
