@@ -1634,10 +1634,13 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       runLifecycle(
         id,
         async (box, provider) => {
-          // Mirrors the CLI dashboard's resumeBox: docker `start` rejects a paused
+          // The box's *compute* lifecycle: docker `start` rejects a paused
           // container, so probe first. No-op when already running (idempotent).
-          // Unlike CLI `agentbox start` this does not restore agent tmux sessions
-          // (restoreAgentSessions is CLI-only) — the agent restarts on next attach.
+          // Restoring the agent's tmux session is deliberately NOT done here — it
+          // is box IO (read per-box session pointers, relaunch a detached tmux
+          // over exec) that lives on the direct IO plane. The CLI layers
+          // `restoreAgentSessions` on after this returns; a hub-UI/tray start
+          // brings the box up and the agent resumes on next attach.
           const state = await provider.probeState(box);
           if (state === 'running') return;
           if (state === 'paused') await provider.resume(box);
@@ -1681,7 +1684,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         },
         hydrate,
       ),
-    async destroy(id): Promise<ActionResult> {
+    async destroy(id, opts): Promise<ActionResult> {
       // A synthetic `job:` box is a failed create with no real container — "destroy"
       // it by clearing its queue manifest (what the tray/UI Dismiss action hits).
       if (id.startsWith('job:')) {
@@ -1707,7 +1710,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       const local = await runLifecycle(
         id,
         async (box, provider) => {
-          await provider.destroy(box);
+          await provider.destroy(box, { keepSnapshot: opts?.keepSnapshot });
           // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
           await syncAgentboxSshConfig().catch(() => {});
         },

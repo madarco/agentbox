@@ -1,7 +1,6 @@
-import { stopBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { providerForBox } from '../provider/registry.js';
+import { withHubClient } from '../control-plane/with-hub.js';
 import { handleLifecycleError } from './_errors.js';
 
 export const stopCommand = new Command('stop')
@@ -15,17 +14,16 @@ export const stopCommand = new Command('stop')
   .action(async (idOrName: string | undefined) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
-      if ((box.provider ?? 'docker') === 'docker') {
-        const record = await stopBox(box.id);
-        process.stdout.write(
-          `stopped ${record.container}\nrestart with: agentbox start ${record.name}\n`,
-        );
-      } else {
-        await (await providerForBox(box)).stop(box);
-        process.stdout.write(
-          `stopped ${box.name}\nrestart with: agentbox start ${box.name}\n`,
-        );
-      }
+      // Lifecycle runs through the hub `/api/v1` in both modes (a local hub or a
+      // remote control box) — one implementation, server-side.
+      const ok = await withHubClient({}, async (client) => {
+        await client.lifecycle(box.id, 'stop');
+        return true;
+      });
+      if (!ok) return;
+      const label =
+        (box.provider ?? 'docker') === 'docker' ? (box.container ?? box.name) : box.name;
+      process.stdout.write(`stopped ${label}\nrestart with: agentbox start ${box.name}\n`);
     } catch (err) {
       handleLifecycleError(err);
     }

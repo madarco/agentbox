@@ -1,9 +1,9 @@
 import { loadEffectiveConfig } from '@agentbox/config';
-import { unpauseBox } from '@agentbox/sandbox-docker';
+import { autoWriteSshConfig } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { restoreAgentSessions } from '../agent-sessions.js';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { autoWriteSshConfig } from '@agentbox/sandbox-core';
+import { withHubClient } from '../control-plane/with-hub.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -18,20 +18,23 @@ export const unpauseCommand = new Command('unpause')
   .action(async (idOrName: string | undefined) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
-      if ((box.provider ?? 'docker') === 'docker') {
-        // Docker unpause is a cgroup thaw — the agent tmux session survives, so
-        // no restore is needed.
-        const record = await unpauseBox(box.id);
-        process.stdout.write(`unpaused ${record.container}\n`);
-      } else {
-        // Cloud resume reboots the sandbox, killing the agent tmux session — so
-        // restore it (mirrors `agentbox start`), or detached agents stay dead
-        // until a manual per-agent attach.
+      // The hub's lifecycle action is `resume` (docker unpause, cloud re-hydrate);
+      // runs through `/api/v1` in both modes.
+      const ok = await withHubClient({}, async (client) => {
+        await client.lifecycle(box.id, 'resume');
+        return true;
+      });
+      if (!ok) return;
+      const isDocker = (box.provider ?? 'docker') === 'docker';
+      process.stdout.write(`unpaused ${isDocker ? (box.container ?? box.name) : box.name}\n`);
+
+      // Docker unpause is a cgroup thaw — the agent tmux session survives, so no
+      // restore is needed. Cloud resume reboots the sandbox, killing the agent
+      // tmux session, so restore it (mirrors `agentbox start`) or detached agents
+      // stay dead until a manual per-agent attach. Both are client-side IO,
+      // re-resolving from the stable sandbox id; best-effort, never throw.
+      if (!isDocker) {
         const provider = await providerForBox(box);
-        await provider.resume(box);
-        process.stdout.write(`unpaused ${box.name}\n`);
-        // Refresh the box's `~/.agentbox/ssh/config` entry — a cloud box's public
-        // IP can change across pause/resume, so re-resolve now it's back online.
         const cfg = await loadEffectiveConfig(box.workspacePath);
         await autoWriteSshConfig(box, provider, cfg.effective.ssh.autoConfig, (m) =>
           process.stderr.write(`agentbox: ${m}\n`),

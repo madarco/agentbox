@@ -1,7 +1,6 @@
-import { pauseBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { providerForBox } from '../provider/registry.js';
+import { withHubClient } from '../control-plane/with-hub.js';
 import { handleLifecycleError } from './_errors.js';
 
 export const pauseCommand = new Command('pause')
@@ -15,15 +14,20 @@ export const pauseCommand = new Command('pause')
   .action(async (idOrName: string | undefined) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
+      // Lifecycle runs through the hub `/api/v1` in both modes.
+      const ok = await withHubClient({}, async (client) => {
+        await client.lifecycle(box.id, 'pause');
+        return true;
+      });
+      if (!ok) return;
       if ((box.provider ?? 'docker') === 'docker') {
-        const record = await pauseBox(box.id);
-        process.stdout.write(`paused ${record.container}\n`);
+        process.stdout.write(`paused ${box.container ?? box.name}\n`);
       } else {
-        await (await providerForBox(box)).pause(box);
         // What "pause" costs you differs by backend, and the difference is the
         // thing a user needs to know before walking away: a daytona linux-vm box
         // freezes CPU + memory, so running processes survive the resume; every
-        // other cloud shape is cold storage (filesystem only).
+        // other cloud shape is cold storage (filesystem only). Computed from the
+        // local record — no extra round-trip.
         const frozen = box.cloud?.sandboxClass === 'linux-vm';
         process.stdout.write(
           frozen

@@ -1,13 +1,17 @@
 import { confirm, log } from '../lib/prompt.js';
 import { execa } from 'execa';
 import { findProjectRoot } from '@agentbox/config';
-import { readState, resolveBoxRef } from '@agentbox/sandbox-core';
-import { destroyBox, portlessUnalias } from '@agentbox/sandbox-docker';
+import {
+  readState,
+  removeBoxRecord,
+  resolveBoxRef,
+  syncAgentboxSshConfig,
+} from '@agentbox/sandbox-core';
+import { portlessUnalias } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { providerForBox } from '../provider/registry.js';
-import { reapOnControlBox } from '../control-plane/reap.js';
-import { syncAgentboxSshConfig } from '@agentbox/sandbox-core';
+import { HubApiError } from '../control-plane/hub-api-client.js';
+import { withHubClient } from '../control-plane/with-hub.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface DestroyOptions {
@@ -61,7 +65,8 @@ export const destroyCommand = new Command('destroy')
       // Resolve-by-container fallback: an explicit ref that matches no state
       // record may still be a live orphan container (create died before
       // recordBox, or its record was lost). Try to clean it up directly
-      // instead of failing with "no agentbox matches".
+      // instead of failing with "no agentbox matches". This is local docker
+      // recovery — the hub can't drive a box that was never registered.
       if (idOrName !== undefined) {
         const project = await findProjectRoot(process.cwd());
         const hit = resolveBoxRef(idOrName, await readState(), project.root);
@@ -96,47 +101,37 @@ export const destroyCommand = new Command('destroy')
         }
       }
 
-      // Docker boxes still use the rich `destroyBox` path so the user sees
-      // container/volume/snapshot accounting. Cloud boxes go through the
-      // provider's `destroy`, which deletes the remote sandbox and removes
-      // the local record but has no Docker-shaped output to enumerate.
-      const providerName = box.provider ?? 'docker';
-      if (providerName === 'docker') {
-        const result = await destroyBox(box.id, { keepSnapshot: opts.keepSnapshot });
-        const out: string[] = [`destroyed ${result.record.container}`];
-        if (result.removedContainer) out.push('  ✓ container removed');
-        out.push(`  ✓ volumes removed: ${result.removedVolumes.join(', ')}`);
-        if (result.removedSnapshot) out.push(`  ✓ snapshot removed: ${result.removedSnapshot}`);
-        else if (box.snapshotDir && opts.keepSnapshot) {
-          out.push(`  · snapshot kept: ${box.snapshotDir}`);
-        }
-        process.stdout.write(out.join('\n') + '\n');
-      } else {
-        const provider = await providerForBox(box);
-        await provider.destroy(box);
-        // Best-effort: regenerate `~/.agentbox/ssh/config` now the box is gone
-        // from state, dropping its `Host` block. A file failure shouldn't block
-        // destroy.
+      // The hub's destroy route tears down the provider resource AND reaps the
+      // store/custody registration (`hub-backend.ts`), so this is one call in both
+      // modes — no separate control-box reap. `keepSnapshot` travels on the body.
+      const destroyed = await withHubClient({}, async (client) => {
         try {
-          await syncAgentboxSshConfig();
-        } catch {
-          /* best-effort */
+          await client.destroy(box.id, { keepSnapshot: opts.keepSnapshot });
+        } catch (err) {
+          // Already gone on the hub (e.g. reaped elsewhere): still fall through to
+          // the local-record cleanup below so this machine's adopted record + ssh
+          // alias don't linger. Destroy stays idempotent.
+          if (err instanceof HubApiError && err.code === 'not_found') return true;
+          throw err;
         }
-        process.stdout.write(
-          `destroyed ${box.name} (${providerName} sandbox ${box.cloud?.sandboxId ?? '<unknown>'})\n`,
-        );
-        // The cloud resource is gone, but a box created with a control box
-        // configured is also a row in its registry. Reap it, or it lingers as a
-        // ghost in `agentbox ls`, the hub UI and the tray. Never fails destroy —
-        // the teardown already happened and can't be undone.
-        const reaped = await reapOnControlBox(box);
-        if (reaped === 'reaped') process.stdout.write('  ✓ control-box registration reaped\n');
-        else if (reaped === 'unreachable') {
-          log.warn(
-            `could not reach the control box to reap this registration — run \`agentbox hub boxes rm ${box.id}\` once it is back`,
-          );
-        }
-      }
+        return true;
+      });
+      if (!destroyed) return;
+
+      // Client-side cleanup: the laptop keeps an adopted `BoxRecord` + ssh alias
+      // for the direct IO plane, and the route only cleaned the HUB's copy of the
+      // state (its own machine's, which for a remote hub is the control box). Drop
+      // this machine's copy too. A no-op when the hub is co-located (the route
+      // already removed the shared record). Best-effort — the teardown is done.
+      await removeBoxRecord(box.id).catch(() => {});
+      await syncAgentboxSshConfig().catch(() => {});
+
+      const providerName = box.provider ?? 'docker';
+      process.stdout.write(
+        providerName === 'docker'
+          ? `destroyed ${box.container ?? box.name}\n`
+          : `destroyed ${box.name} (${providerName} sandbox ${box.cloud?.sandboxId ?? '<unknown>'})\n`,
+      );
     } catch (err) {
       handleLifecycleError(err);
     }

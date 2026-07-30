@@ -276,7 +276,7 @@ Set the admin env vars inline — otherwise the deploy prompts and the run can't
 | D4 | Web UI → **Add project** (clone the test repo on the VPS) → **Create box** | box appears in the dashboard with live status, nothing ran on the VM |
 | D5 | `agentbox ls -g` | the web-created box shows as `on hub`; `agentbox attach <box>` adopts it |
 | D6 | **stop the VM's relay** (`agentbox relay stop`), then in the box: `agentbox-ctl git push` | push succeeds via the control box's `gh` token; approval (non-`agentbox/*` branch) shows in the web UI and `agentbox hub approvals list` |
-| D7 | `agentbox hub boxes list` / `… boxes stop <id>` / `… boxes rm <id>` | drive + destroy from the CLI over `/api/v1`. These take the box **id** from `boxes list` — a name gets `No box '<name>' on the control box` |
+| D7 | `agentbox hub boxes list`, then `agentbox stop <box>` / `agentbox destroy <box>` | drive + destroy from the CLI over `/api/v1` (top-level lifecycle commands route through the hub in both modes; the `hub boxes` group is list-only). Names resolve (adopting the box first if unseen); `hub boxes list` shows the ids |
 
 D6 is the whole reason the control box exists: with the laptop (here: the VM's relay) down, the
 box still pushes.
@@ -295,9 +295,9 @@ Run on `0.28.0-nightly.202607260716` (npm `nightly`), from a virgin `~/.agentbox
 
 - **Passed:** A0–A6 · B1 · C1–C3 · D1–D3, D5–D6 (including **push with the VM's own relay
   stopped** — the payoff) · `reset` back to virgin.
-- **Not run:** B2–B4, C4 (browser sign-in), D4 (web-UI create), D7 `boxes rm`.
+- **Not run:** B2–B4, C4 (browser sign-in), D4 (web-UI create), D7 `agentbox destroy`.
 - **Found:** a hub create fails fast when neither side has a base bake (D3) — bake first;
-  `agentbox url` can't open a browser on Linux (known gap); `hub boxes <action>` needs the id.
+  `agentbox url` can't open a browser on Linux (known gap).
 
 ---
 

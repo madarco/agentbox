@@ -168,13 +168,18 @@ export interface HubBackend {
   // — mirrors providers' `?freshness=1`) refreshes each cloud box's `state` with
   // an SDK probe; omitted/false serves the fast persisted state.
   getData(opts?: { live?: boolean }): Promise<Omit<HubState, 'authMode'>>;
-  // Start a fully-stopped box (resumes when paused, no-op when running). Does
-  // not restore agent tmux sessions — that's a CLI-only concern.
+  // Start a fully-stopped box (resumes when paused, no-op when running). This is
+  // the box's *compute* lifecycle only; restoring the agent's tmux session is box
+  // IO (it reads the box's per-box session pointers and relaunches a detached
+  // tmux over exec), which stays on the direct IO plane — the CLI layers it on
+  // after this returns, the way it layers its own-machine ssh-config write.
   start(id: string): Promise<ActionResult>;
   pause(id: string): Promise<ActionResult>;
   resume(id: string): Promise<ActionResult>;
   stop(id: string): Promise<ActionResult>;
-  destroy(id: string): Promise<ActionResult>;
+  // `keepSnapshot` preserves a docker box's local snapshot dir (the CLI's
+  // `--keep-snapshot`); default (false) deletes it, matching `agentbox destroy`.
+  destroy(id: string, opts?: { keepSnapshot?: boolean }): Promise<ActionResult>;
   // Set (or clear, when displayName is empty) a box's cosmetic display label.
   // Pure state — does not touch the container, git branch, or URL.
   rename(id: string, displayName: string): Promise<ActionResult>;
