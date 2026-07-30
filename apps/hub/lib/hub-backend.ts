@@ -334,8 +334,8 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): 
  * (or another host) that registered it here but whose `state.json` this VPS
  * doesn't have. Without this the hub's own web UI + `/api/v1/boxes` (and so the
  * tray) list only boxes the control box created locally, hiding every
- * PC-registered box the Store plainly holds. The mirror of the PC's
- * `mergeHubBoxes`: surface it, from the registration alone.
+ * PC-registered box the Store plainly holds. Surface it, from the registration
+ * alone.
  *
  * A live status the box pushed (via the plane's status store) is used when
  * present; otherwise it shows `running`, since a registration means the box
@@ -793,9 +793,9 @@ const freshnessCache = new Map<
 >();
 
 /**
- * Live base-image/snapshot freshness for one provider, mirroring the CLI's
- * `evaluateBaseFreshness` (apps/cli/src/checkpoint-lookup.ts) but reusing the
- * hub's own provider `IMPORTERS`. Docker gets a real check too (unlike the
+ * Live base-image/snapshot freshness for one provider, over the hub's own
+ * provider `IMPORTERS` — the one place this now runs (the CLI reads it back from
+ * `GET /api/v1/providers?freshness=1`). Docker gets a real check too (unlike the
  * CLI, which lets `ensureImage` self-heal silently): the tray/web create
  * flows use `unprepared`/`stale` to announce the upcoming bake instead of
  * hiding a multi-minute build inside the create job. Any failure to compute
@@ -1137,8 +1137,9 @@ async function materializeBoxSshFromCustody(
 /**
  * Reverse-adopt a box the control box holds only as a Store registration (created
  * on a PC / another host, never locally): rebuild a drivable `BoxRecord` via the
- * shared `registrationToBoxRecord` — the mirror of the PC's `hub adopt` — pull its
- * SSH key from local custody, and persist it to `state.json`. Returns null when
+ * shared `registrationToBoxRecord` (the same core the CLI's `hub adopt` calls),
+ * pull its SSH key from local custody, and persist it to `state.json`. Returns
+ * null when
  * there is no registration or the provider can't be resolved (unknown kind /
  * missing creds), so the caller reports "not found" or falls back to a state-only
  * reap exactly as before. Idempotent: once recorded, a second call finds it in
@@ -1491,7 +1492,7 @@ async function listSingleProjectCheckpointItems(
  * Every project's checkpoints (docker + cloud), grouped by store segment. The
  * checkpoint dirs are the source of truth (a checkpoint can outlive its project's
  * config); `listProjectsConfigured` only supplies the human root for labeling +
- * per-project default resolution. Mirrors the CLI's old `listAllProjects`.
+ * per-project default resolution.
  */
 async function buildGlobalCheckpointListing(): Promise<CheckpointProjectView[]> {
   const projects = await listProjectsConfigured();
@@ -1684,7 +1685,8 @@ async function pruneGeneral(all: boolean, dryRun: boolean): Promise<PruneView> {
 /**
  * Enumerate a cloud provider's untracked sandboxes (created by us — a friendly
  * name — but not in this fleet's state). Returns the backend so the caller can
- * delete + reap. The friendly-name filter mirrors the CLI's old `pruneCloud`.
+ * delete + reap. The filter keeps only sandboxes whose name carries our
+ * friendly-name marker, so a co-tenant's sandboxes are never touched.
  */
 async function enumerateCloudOrphans(
   provider: string,

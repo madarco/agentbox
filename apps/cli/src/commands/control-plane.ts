@@ -1221,7 +1221,7 @@ export async function resolveHubApiTarget(
 /**
  * Build a {@link HubApiClient} for the configured hub from {@link resolveHubApiTarget}
  * (URL + `/api/v1` key), or null (with an actionable error unless `quiet`) when
- * unconfigured. The client-facing counterpart to `new ControlPlaneAdminClient`.
+ * unconfigured. The one client the CLI builds for hub box/fleet operations.
  */
 export async function resolveHubApiClient(
   urlFlag: string | undefined,

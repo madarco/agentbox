@@ -26,7 +26,7 @@ export type BoxPlane = { url: string; adminToken: string } | 'none' | 'no-token'
  * The bits of a box that decide which relay it uses. Deliberately narrower than
  * `BoxRecord`: a box that exists only on the control box has no local record at
  * all, and the dashboard must still resolve its plane from the merged listing
- * row (`MergedBox`) to show its approval marker.
+ * row (`DashboardBox`) to show its approval marker.
  */
 export type PlaneAddressable = Pick<BoxRecord, 'provider' | 'cloud'>;
 

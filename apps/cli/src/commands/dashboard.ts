@@ -37,13 +37,12 @@ import {
   waitForTmuxPaneContent,
   type ListedBox,
 } from '@agentbox/sandbox-docker';
-import { hostOpenCommand, readState } from '@agentbox/sandbox-core';
+import { hostOpenCommand, readState, removeBoxRecord } from '@agentbox/sandbox-core';
 import { resolveBoxPromptSource } from '../control-plane/box-plane.js';
 import { resolveHubApiTarget } from './control-plane.js';
-import { listBoxesMerged } from '../control-plane/list-merged.js';
-import type { MergedBox } from '../control-plane/hub-merge.js';
+import { listDashboardBoxes, type DashboardBox } from '../dashboard/box-list.js';
 import { tryAutoAdopt } from '../control-plane/auto-adopt.js';
-import { reapOnControlBox } from '../control-plane/reap.js';
+import { withOwningHub } from '../control-plane/with-hub.js';
 import type { BoxRecord } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { resolveClaudeAuth } from '../auth.js';
@@ -165,7 +164,7 @@ export const dashboardCommand = new Command('dashboard')
 
       const project = await findProjectRoot(process.cwd());
       let showAll = !opts.project; // default: every box globally; -p scopes to cwd project
-      const full = (await listBoxesMerged()).boxes;
+      const full = await listDashboardBoxes();
       const scoped0 = scoped(showAll, project.root, full);
 
       let initialId: string;
@@ -183,7 +182,7 @@ export const dashboardCommand = new Command('dashboard')
       const newBoxEntry: SidebarBox = { id: NEW_BOX_ID, name: NEW_BOX_LABEL, state: 'new' };
       const listCandidates = async (): Promise<SidebarBox[]> => [
         newBoxEntry,
-        ...scoped(showAll, project.root, (await listBoxesMerged()).boxes).map(toSidebar),
+        ...scoped(showAll, project.root, await listDashboardBoxes()).map(toSidebar),
       ];
 
       /**
@@ -193,7 +192,7 @@ export const dashboardCommand = new Command('dashboard')
        * needs `state.json`. Returns null when adoption isn't possible, and the
        * caller shows a read-only placeholder instead.
        */
-      const ensureAdopted = async (box: MergedBox): Promise<ListedBox | null> => {
+      const ensureAdopted = async (box: DashboardBox): Promise<ListedBox | null> => {
         if (box.needsAdopt !== true) return box;
         const adopted = await tryAutoAdopt(box.name, process.cwd());
         if (adopted === null || adopted === 'unreachable') return null;
@@ -202,7 +201,7 @@ export const dashboardCommand = new Command('dashboard')
 
       const resolveTarget = async (boxId: string): Promise<RightTarget> => {
         if (boxId === NEW_BOX_ID) return { kind: 'create-menu', where: project.root };
-        const merged = (await listBoxesMerged()).boxes.find((b) => b.id === boxId);
+        const merged = (await listDashboardBoxes()).find((b) => b.id === boxId);
         if (!merged) return { kind: 'placeholder', lines: ['', '  box not found'] };
         const box = await ensureAdopted(merged);
         if (!box) {
@@ -667,20 +666,31 @@ export const dashboardCommand = new Command('dashboard')
 
       const destroyBoxAction = async (boxId: string): Promise<string | void> => {
         const record = await loadBoxRecord(boxId);
-        if ((record.provider ?? 'docker') !== 'docker') {
-          const provider = await providerForBox(record);
-          await provider.destroy(record);
-          // Same reap `agentbox destroy` does — destroying from the TUI must not
-          // leave the registration behind that the CLI path cleans up. Report a
-          // failed reap the way the CLI warns about it, or the box is gone
-          // locally while its hub registration silently survives.
-          const reaped = await reapOnControlBox(record);
-          if (reaped === 'unreachable') {
-            return `control box unreachable; run: agentbox hub boxes rm ${record.id}`;
-          }
+        if ((record.provider ?? 'docker') === 'docker') {
+          await destroyBox(boxId);
           return;
         }
-        await destroyBox(boxId);
+        // Cloud: route through the hub that OWNS the box, not whichever the
+        // current config names. `withOwningHub` tries the owner-first hub then
+        // retries the OTHER distinct hub on `not_found` — so a box created against
+        // a control box (or driven after a local config change) is torn down AND
+        // reaped on the RIGHT hub instead of erroring `not_found` and leaving both
+        // the sandbox and its registration behind. Same fix `agentbox destroy`
+        // uses (with-hub.ts, Step 5); replaces the old inline `provider.destroy` +
+        // `/remote/boxes` reap. The route does provider teardown + store/custody
+        // reap server-side (one implementation, both modes).
+        const outcome = await withOwningHub(record, (client) => client.destroy(record.id));
+        if (outcome === undefined) {
+          // A real hub error (conflict / auth / backend) was reported already;
+          // keep the record — the sandbox may still be up.
+          return `destroy failed for ${record.name}; run: agentbox destroy ${record.name}`;
+        }
+        if (outcome === 'not-found') {
+          return `${record.name} was not found on any hub; run: agentbox destroy ${record.name} --force`;
+        }
+        // Some hub reaped it; drop this machine's adopted copy too (a no-op when
+        // the hub is co-located). Best-effort.
+        await removeBoxRecord(record.id).catch(() => {});
       };
 
       // Bring up the local hub (once, before the TUI owns the screen) so the
@@ -720,7 +730,7 @@ export const dashboardCommand = new Command('dashboard')
           // Quiet: this runs while the TUI owns the screen, so it must not spawn
           // an autostart spinner (the local hub is already up, resolved above).
           hubSourceFor: async (boxId) => {
-            const box = (await listBoxesMerged()).boxes.find((b) => b.id === boxId);
+            const box = (await listDashboardBoxes()).find((b) => b.id === boxId);
             if (!box) return null;
             const source = await resolveBoxPromptSource(box, { quiet: true });
             if (!source) return null;
