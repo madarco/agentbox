@@ -889,6 +889,16 @@ target with the API key, and `prune --provider e2b` routes to the configured hub
   ship on plain `withHubClient({})`, so they carry the SAME latent `not_found` bug for a **docker box
   under a configured remote hub** that Step 5 fixed for lifecycle. They should move onto
   `withOwningHub` (they're all box-scoped). Left untouched here to respect Step 7's file set.
+- **`checkpoint ls`/`rm`/`set-default` are PROJECT-scoped, so they use `withHubClient({ preferLocal:
+  true })`, not `withOwningHub`** (there is no box). `preferLocal` is the same hub docker `create`
+  writes to (its image is local) AND the only store whose path-hash matches: checkpoint stores are
+  keyed by `hash(absolute project root)`, which only resolves on the local filesystem — a remote
+  control box hashes a different path, so listing by this machine's root there finds nothing anyway.
+  On a co-located hub (local or `hub expose`d) `preferLocal` IS the one hub. Cloud checkpoints created
+  on a genuinely-remote control box aren't listable from a thin laptop by path — a real cross-machine
+  limitation of path-hash-keyed stores (would need origin-keyed checkpoint stores; out of scope). This
+  was Bugbot #1 (High): `ls`/`rm` on `withHubClient({})` (configured hub) missed docker checkpoints
+  `create` had just written locally.
 - **`checkpoint set-default` stays a LOCAL project-config write** (not in this step's route list —
   it's a config mutation and there is no `/api/v1/config` surface). It validates the ref against the
   hub's `GET /checkpoints` listing (so it agrees with `ls`/`rm`) but writes `setConfigValue('project',
