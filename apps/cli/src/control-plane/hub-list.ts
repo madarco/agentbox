@@ -18,16 +18,10 @@
  *     local hub the target, not a second reader of `state.json`.
  *   - `--live` is an opt-in, expensive hub-side refresh (`?live=1`): the hub, not
  *     the laptop, now holds the provider credentials to probe cloud state.
- *
- * NOTE: {@link fetchHubListing} + the `hub-merge.ts`/`list-merged.ts` merge below
- * are the OLD `/admin/store` path, kept ONLY for `commands/dashboard.ts` (an
- * IO-plane TUI, out of this step's scope) until it is converted. `agentbox ls`
- * no longer uses them.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { BoxRegistration } from '@agentbox/relay';
 // One implementation, shared with the provider packages — see reachability.ts
 // for why a plain `fetch` can't be bounded here.
 import { deadlineFetch, hostReachable } from '@agentbox/sandbox-cloud';
@@ -173,110 +167,6 @@ async function readBoxCache(): Promise<BoxCacheFile | null> {
     const raw = await readFile(hubBoxesCachePath(), 'utf8');
     const parsed = JSON.parse(raw) as BoxCacheFile;
     if (parsed.version !== 1 || !Array.isArray(parsed.boxes)) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-// ── The legacy `/admin/store` registration listing (dashboard only) ─────────
-// Kept until `commands/dashboard.ts` is converted to `/api/v1`. Its cache is a
-// SEPARATE file so it doesn't collide with the API listing's `hub-boxes-cache.json`.
-
-/** Bound on the control-box round-trip. `list` is interactive — never stall it. */
-const HUB_LIST_REG_TIMEOUT_MS = 1500;
-
-/** In-process memo of the last registration listing. */
-let memo: { at: number; listing: HubListing } | null = null;
-
-/** Where the last successful registration listing is cached (dashboard offline path). */
-function hubRegistrationsCachePath(): string {
-  return join(homedir(), '.agentbox', 'hub-registrations-cache.json');
-}
-
-export interface HubListing {
-  registrations: BoxRegistration[];
-  /** True when these came from the cache because the control box didn't answer. */
-  stale: boolean;
-  /**
-   * Why the listing is stale, when it isn't simply unreachable. `no-token` means
-   * a control box IS configured but we have no admin bearer for it.
-   */
-  reason?: 'no-token';
-  /** ISO time the listing was fetched (the cache's write time when `stale`). */
-  fetchedAt?: string;
-}
-
-interface CacheFile {
-  version: 1;
-  fetchedAt: string;
-  registrations: BoxRegistration[];
-}
-
-/**
- * Fetch the control box's registrations, falling back to the on-disk cache.
- * Returns null when no control box is configured (the plain local path).
- *
- * @deprecated The `/admin/store` path — kept only for `commands/dashboard.ts`
- * until it is converted to `/api/v1`. `agentbox ls` uses {@link fetchBoxListing}.
- */
-export async function fetchHubListing(): Promise<HubListing | null> {
-  const { resolveCustodyTarget } = await import('../commands/control-plane.js');
-  const target = await resolveCustodyTarget(undefined, { quiet: true });
-  if (!target) {
-    const { loadEffectiveConfig } = await import('@agentbox/config');
-    const { remoteHubConfigured } = await import('./remote-hub.js');
-    const configured = await loadEffectiveConfig(process.cwd())
-      .then((c) => remoteHubConfigured(c.effective))
-      .catch(() => false);
-    return configured ? { registrations: [], stale: true, reason: 'no-token' } : null;
-  }
-
-  const memoTtl = memo?.listing.stale === true ? HUB_LIST_FAIL_MEMO_MS : HUB_LIST_MEMO_MS;
-  if (memo && Date.now() - memo.at < memoTtl) return memo.listing;
-
-  const deadline = Date.now() + HUB_LIST_REG_TIMEOUT_MS;
-  const remaining = (): number => deadline - Date.now();
-  try {
-    if ((await hostReachable(target.url, remaining())) && remaining() > 0) {
-      const { ControlPlaneAdminClient } = await import('./admin-client.js');
-      const admin = new ControlPlaneAdminClient({
-        ...target,
-        fetchImpl: deadlineFetch(AbortSignal.timeout(remaining())),
-      });
-      const registrations = await admin.listBoxes();
-      const fetchedAt = new Date().toISOString();
-      await writeCache({ version: 1, fetchedAt, registrations }).catch(() => {});
-      return rememberReg({ registrations, stale: false, fetchedAt });
-    }
-  } catch {
-    // fall through to the cache
-  }
-  const cached = await readCache();
-  if (!cached) return rememberReg({ registrations: [], stale: true });
-  return rememberReg({
-    registrations: cached.registrations,
-    stale: true,
-    fetchedAt: cached.fetchedAt,
-  });
-}
-
-function rememberReg(listing: HubListing): HubListing {
-  memo = { at: Date.now(), listing };
-  return listing;
-}
-
-async function writeCache(data: CacheFile): Promise<void> {
-  const path = hubRegistrationsCachePath();
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(data), { mode: 0o600 });
-}
-
-async function readCache(): Promise<CacheFile | null> {
-  try {
-    const raw = await readFile(hubRegistrationsCachePath(), 'utf8');
-    const parsed = JSON.parse(raw) as CacheFile;
-    if (parsed.version !== 1 || !Array.isArray(parsed.registrations)) return null;
     return parsed;
   } catch {
     return null;

@@ -4,10 +4,11 @@
  * (a control box's `AGENTBOX_HUB_API_KEY`, or a local hub's token), so a command
  * built on this client works against either by swapping the target.
  *
- * Distinct from {@link ControlPlaneAdminClient}, which speaks the INTERNAL relay
- * wire (`/admin/*` + `/remote/*`) — the box↔hub + credential plane that is not a
- * client API. Client-facing box operations (list, lifecycle, git, approvals)
- * belong here; custody / registration / RPC-lease stay on the admin client.
+ * This is the CLI's ONE client. The internal relay wire (`/admin/*` + `/remote/*`)
+ * is the box↔hub + credential plane — not a client API — and after the `/api/v1`
+ * consolidation the CLI no longer holds a client for it (a guard test enforces
+ * this; see `test/no-internal-wire-client.test.ts`). Every client-facing box and
+ * fleet operation (list, lifecycle, git, approvals, custody) goes through here.
  */
 
 /**

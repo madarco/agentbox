@@ -1145,7 +1145,7 @@ return metadata only; no-auth is `401`. The CLI's remote-shaped path (`--url` + 
 
 ---
 
-## Step 11 — Retire the second implementation and the internal client wire
+## Step 11 — Retire the second implementation and the internal client wire ✅ done
 
 The consolidation payoff.
 
@@ -1158,6 +1158,81 @@ The consolidation payoff.
 
 **Verify:** `pnpm test` + `pnpm typecheck`; the guard test fails if anyone reintroduces an
 internal-wire client call.
+
+**Landed.** The CLI holds **no client for the internal box/fleet wire** any more. Deleted:
+`admin-client.ts` (`ControlPlaneAdminClient` — `/admin/store` + `/admin/prompts` +
+`DELETE /remote/boxes`), `reap.ts` (its only consumer, `dashboard.ts`, now destroys through
+`/api/v1`), `hub-list.ts`'s **legacy `/admin/store` half** (`fetchHubListing`/`HubListing` + its
+cache; the `/api/v1` half — `fetchBoxListing`/`cacheAge`/`hostReachable` — stays, still used by
+`list.ts`/`recover.ts`), and the dead `lib/wait/events.ts` (`waitForEvent`/`/admin/events`, no
+callers). `hub-merge.ts` + `list-merged.ts` were replaced by a re-sourced dashboard-local merge
+`dashboard/box-list.ts` (`listDashboardBoxes`/`mergeApiBoxes`), sourced from the SAME
+`/api/v1/boxes` wire `ls` uses instead of the `/admin/store` registration listing. The guard test
+`apps/cli/test/no-internal-wire-client.test.ts` scans `apps/cli/src` (comment-stripped) and fails
+on any `/admin/`//`/remote/` path outside a tiny justified allowlist; proven to fail on a
+temporarily-reintroduced `/admin/store` call, then reverted. `hub-backend.ts`'s
+"mirrors the CLI's old X" second-implementation comments were swept. **`route-prepare.ts` and
+`hub-enqueue.ts` were already deleted by Steps 1 and 8.** `pnpm test` (CLI 1115, hub 120) +
+`pnpm typecheck` green.
+
+### Notes for later steps
+
+- **The custody `/admin/custody` fallback was ALLOWLISTED, not deleted (Step 10's known tension —
+  resolved deliberately).** The two options were "allowlist the one custody path" or "make the
+  `/api/v1` custody byte-read accept the admin token alone so the fallback can be deleted." I chose
+  **allowlist**, because option 2 is infeasible: `/api/v1/custody` is gated by the **hub API key** at
+  the proxy first, so a machine holding only the relay admin token (a `hub setup` host with no API
+  key — e.g. a via-hub-create host) can't reach `/api/v1` at all; that is *why* the fallback speaks
+  `/admin/custody`. Deleting it reintroduces Step 10's silent-skip bug (per-box SSH keys not pulled →
+  `attach`/`cp` break later with a confusing missing-key error). The fallback fires **only** when no
+  API key is present, and the byte-read is still fail-closed + loopback-peer-gated on the hub side
+  (`custody-auth.ts`/`peer.ts`) — untouched. The guard's allowlist is a **(file → path-prefix)** map,
+  so a *different* `/admin/...` added to `custody-client.ts` still fails; only `/admin/custody` is
+  permitted there.
+- **The guard's other two allowlist entries are NOT box/fleet client ops** (so they are legitimately
+  not the wire this step retired): `lib/queue/submit.ts` `/admin/queue/enqueue` (a poke to THIS
+  machine's local relay scheduler so a queued background `-i` job starts without waiting a tick — the
+  manifest is on local disk regardless) and `control-plane/ensure-repo-installed.ts`
+  `/admin/app/repo-installed` (a GitHub-App install probe in the git-leasing setup flow). Neither
+  drives a box or the fleet. If a later step moves the local file-queue behind `/api/v1`, the first
+  can go.
+- **`route-create.ts` was KEPT deliberately — this is the ONE remaining inline create path, and it is
+  narrow and intentional, not an oversight.** The three agent launchers — `commands/claude.ts`,
+  `commands/codex.ts`, `commands/opencode.ts` — still run an **inline local `createBox`** for their
+  **foreground** create path (both the `-i` background path and the foreground path call
+  `resolveCreateRouting` from `route-create.ts` to choose hub-vs-local, then build locally on the
+  local arm). `route-create.ts` holds **no `/admin`//`/remote` client call**, so the guard test — the
+  real acceptance of this step — passes with it retained; deleting it would only be for tidiness.
+  Finishing it is **not more plumbing**: converting the launchers' local foreground arm onto
+  `/api/v1` means converting **create-then-attach**, i.e. deciding the create+attach IO boundary — and
+  attach/IO is the plane the plan explicitly puts **out of scope** ("Explicitly out of scope"). Step 8
+  deferred the launcher conversion for exactly this reason. So `route-create.ts` and the launchers'
+  inline `createBox` survive until that boundary is designed; `commands/create.ts` itself already goes
+  through `POST /api/v1/boxes` (Step 8) and does **not** import `route-create.ts`. There is minor,
+  deliberate duplication between `route-create.ts`'s `resolveCreateRouting` and `create-target.ts`'s
+  `resolveCreateTarget` in the meantime.
+- **STEP 14 — the public docs must NOT overstate the consolidation.** Do **not** write "the CLI has
+  zero inline create paths" or "every CLI command goes through `/api/v1`" without qualification. It is
+  very close to true and the exception is narrow, but an unqualified guarantee misleads the next
+  reader. Write it like this: *"Every CLI box and fleet operation goes through the hub's `/api/v1` —
+  `create` (`agentbox create`), lifecycle, listing, git, approvals, checkpoints, prune, custody, and
+  the agent launchers' `--via-hub`/control-box path all do. The one remaining exception is the agent
+  launchers' (`claude`/`codex`/`opencode`) **local foreground create**, which still builds the box
+  inline via `createBox`; converting it is coupled to moving the create+attach IO plane behind the hub
+  (deliberately out of scope), so `route-create.ts` survives for it."* The guard test
+  (`no-internal-wire-client.test.ts`) is the true invariant to cite: the CLI holds no client for the
+  `/admin`//`/remote` wire — that is a stronger, accurate claim than "no inline create".
+- **The dashboard destroy now routes cloud boxes through `/api/v1` (`client.destroy`), not inline
+  `provider.destroy` + a `/remote/boxes` reap.** `commands/dashboard.ts`'s `destroyBoxAction` cloud
+  branch resolves the owning hub (`resolveHubApiClient`, quiet — the TUI owns the screen, so no print /
+  autostart) and calls `client.destroy(id)` (provider teardown + store/custody reap server-side, one
+  implementation), then drops the local record (`removeBoxRecord`). Docker boxes still use the inline
+  `destroyBox` (a local container the local hub owns; no remote registration to reap). The dashboard's
+  other lifecycle actions (pause/stop/resume) remain inline — they are IO-plane and out of scope; only
+  destroy needed the reap and so moved.
+- **`hub-list.ts` is now single-purpose** (the `/api/v1` `ls` listing); its `hub-boxes-cache.json`
+  cache is the only one it writes. The separate `hub-registrations-cache.json` (Step 3's split for the
+  legacy path) is no longer written — a stale file on old installs is harmless.
 
 ---
 
