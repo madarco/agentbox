@@ -14,13 +14,15 @@ export const pauseCommand = new Command('pause')
   .action(async (idOrName: string | undefined) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
-      // Lifecycle runs through the hub `/api/v1` in both modes.
-      const ok = await withHubClient({}, async (client) => {
+      // Lifecycle runs through the hub `/api/v1` in both modes; a docker box is
+      // local-owned so it goes to the local hub (which-hub principle).
+      const isDocker = (box.provider ?? 'docker') === 'docker';
+      const ok = await withHubClient({ preferLocal: isDocker }, async (client) => {
         await client.lifecycle(box.id, 'pause');
         return true;
       });
       if (!ok) return;
-      if ((box.provider ?? 'docker') === 'docker') {
+      if (isDocker) {
         process.stdout.write(`paused ${box.container ?? box.name}\n`);
       } else {
         // What "pause" costs you differs by backend, and the difference is the

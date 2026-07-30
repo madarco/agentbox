@@ -24,6 +24,13 @@ import { HubApiClient, HubApiError, SUPPORTED_HUB_API_VERSIONS } from './hub-api
 export interface WithHubOptions {
   /** Override the hub URL (default: the configured control box, else the local hub). */
   url?: string;
+  /**
+   * Prefer the hub on THIS machine even when a remote control box is configured
+   * (the which-hub principle, Step 1). A docker box is always local-owned, so a
+   * docker op sets this to avoid hitting a remote hub that never owned it (it
+   * would answer `not_found`). Reuses Step 0's exposed-loopback-first ladder.
+   */
+  preferLocal?: boolean;
 }
 
 /** True when the hub's reported `apiVersion` is one this CLI speaks. */
@@ -111,7 +118,7 @@ export async function withHubClient<T>(
   // those already sit in (hub.ts consumes control-plane.ts's command list at
   // load time). Cheap after the first call — the module is cached.
   const { resolveHubApiTarget } = await import('../commands/control-plane.js');
-  const target = await resolveHubApiTarget(opts.url);
+  const target = await resolveHubApiTarget(opts.url, { preferLocal: opts.preferLocal });
   if (!target) {
     // resolveHubApiTarget already printed an actionable error (missing config /
     // key, or a local-hub autostart failure).

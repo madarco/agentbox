@@ -15,14 +15,16 @@ export const stopCommand = new Command('stop')
     try {
       const box = await resolveBoxOrExit(idOrName);
       // Lifecycle runs through the hub `/api/v1` in both modes (a local hub or a
-      // remote control box) — one implementation, server-side.
-      const ok = await withHubClient({}, async (client) => {
+      // remote control box) — one implementation, server-side. A docker box is
+      // local-owned, so route it to the local hub (a configured remote hub never
+      // owned it and would answer `not_found`) — the which-hub principle.
+      const isDocker = (box.provider ?? 'docker') === 'docker';
+      const ok = await withHubClient({ preferLocal: isDocker }, async (client) => {
         await client.lifecycle(box.id, 'stop');
         return true;
       });
       if (!ok) return;
-      const label =
-        (box.provider ?? 'docker') === 'docker' ? (box.container ?? box.name) : box.name;
+      const label = isDocker ? (box.container ?? box.name) : box.name;
       process.stdout.write(`stopped ${label}\nrestart with: agentbox start ${box.name}\n`);
     } catch (err) {
       handleLifecycleError(err);

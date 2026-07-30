@@ -18,13 +18,14 @@ export const startCommand = new Command('start')
   .action(async (idOrName: string | undefined) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
-      // The box's compute lifecycle runs through the hub `/api/v1` in both modes.
-      const ok = await withHubClient({}, async (client) => {
+      // The box's compute lifecycle runs through the hub `/api/v1` in both modes;
+      // a docker box is local-owned so it goes to the local hub (which-hub principle).
+      const isDocker = (box.provider ?? 'docker') === 'docker';
+      const ok = await withHubClient({ preferLocal: isDocker }, async (client) => {
         await client.lifecycle(box.id, 'start');
         return true;
       });
       if (!ok) return;
-      const isDocker = (box.provider ?? 'docker') === 'docker';
       process.stdout.write(`started ${isDocker ? (box.container ?? box.name) : box.name}\n`);
 
       // Client-side IO follow-up, kept on the direct IO plane (see the plan's

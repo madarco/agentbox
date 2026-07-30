@@ -19,13 +19,14 @@ export const unpauseCommand = new Command('unpause')
     try {
       const box = await resolveBoxOrExit(idOrName);
       // The hub's lifecycle action is `resume` (docker unpause, cloud re-hydrate);
-      // runs through `/api/v1` in both modes.
-      const ok = await withHubClient({}, async (client) => {
+      // runs through `/api/v1` in both modes. A docker box is local-owned so it
+      // goes to the local hub (which-hub principle).
+      const isDocker = (box.provider ?? 'docker') === 'docker';
+      const ok = await withHubClient({ preferLocal: isDocker }, async (client) => {
         await client.lifecycle(box.id, 'resume');
         return true;
       });
       if (!ok) return;
-      const isDocker = (box.provider ?? 'docker') === 'docker';
       process.stdout.write(`unpaused ${isDocker ? (box.container ?? box.name) : box.name}\n`);
 
       // Docker unpause is a cgroup thaw — the agent tmux session survives, so no

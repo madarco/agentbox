@@ -507,15 +507,36 @@ agent resumes on next attach — unchanged, and now correct-by-design rather tha
   set — Step 7/11 cleanup) and `reapSandboxesOnControlBox` by `prune.ts` (Step 9). Only `destroy.ts`'s
   call was removed. Whoever converts `dashboard.ts` off its inline destroy+reap (Step 7/11) and
   `prune`'s reap (Step 9) can delete `reap.ts` then.
-- **Destroy does a client-side local-record cleanup after the route.** The laptop keeps an adopted
-  `BoxRecord` + ssh alias for the direct IO plane; the route only cleans the **hub's** copy of the
-  state (its own machine's — for a remote hub, the control box's disk). So `destroy.ts` runs
-  best-effort `removeBoxRecord(box.id)` + `syncAgentboxSshConfig()` after a successful route call (a
-  no-op when the hub is co-located, since the route already removed the shared record). A hub
-  `not_found` on destroy is treated as "already gone" and still runs this local cleanup, keeping
-  destroy idempotent. Later steps that move an *adopting* op behind the hub should mirror this: the
-  route owns the hub-side state, the CLI still tends this machine's IO-plane copy until the IO plane
-  itself moves (out of scope).
+- **Lifecycle routes to the hub that OWNS the box (which-hub, Step 1) — this is load-bearing, not an
+  optimization.** A docker box is always local-owned, so with a remote control box configured a naive
+  `withHubClient({})` sends `pause`/`start`/`destroy` of a docker box to the REMOTE hub, which never
+  owned it → `not_found` → the command breaks (previously these were inline, so this is a regression
+  the hub-routing introduces if you don't guard it). Fix: `WithHubOptions` gained `preferLocal`, and
+  every lifecycle command passes `preferLocal: (provider === 'docker')` — docker → local hub, cloud →
+  the configured hub. `preferLocal` reuses Step 0's exposed-loopback-first ladder (an exposed machine
+  is `mode: 'remote'` yet co-located), so it is the same knob `prepare` uses.
+- **Destroy must NEVER drop the local record on a bare `not_found` (Bugbot High — the fix).** The
+  laptop keeps an adopted `BoxRecord` + ssh alias for the direct IO plane; the route only cleans the
+  **hub's** copy. My first cut treated any `not_found` as "already reaped" and dropped the local record
+  — but `not_found` also means "this hub never owned the box", and there you have just deleted the only
+  handle to a possibly-still-running container/VM (silent success + state deletion is strictly worse
+  than a clear failure). The fix, per which-hub: `destroyOnOwningHub` tries the box's likely owner
+  first (docker → local via `withHubClient({preferLocal:true})`, cloud → configured), and on
+  `not_found` retries the OTHER distinct hub (`destroyOnOtherHub`, best-effort, never throws — an
+  unreachable/erroring second hub is not proof of teardown). The local record is dropped ONLY when
+  some hub actually **reaped** the box; if no hub owns it, destroy **fails** (exit 2), keeps the record,
+  and names `agentbox destroy <box> --force` as the deliberate way to drop a stale record. The pure
+  decision (`decideDestroy(outcome, force)`) is unit-tested (`test/destroy-decision.test.ts`) — the
+  invariant is "drop iff reaped or force." **Reproduction gap:** the `not_found` refusal needs a
+  *remote* hub — a co-located local hub shares `state.json`, so it always finds a box the CLI resolved,
+  and can't return `not_found` for it. Verified by the unit test + code review; the common reap paths
+  (docker + a real e2b box, ground-truth via `docker inspect` / the e2b SDK) are e2e-green. Later steps
+  that move an *adopting/reaping* op behind the hub must mirror this owner-first + never-drop-on-
+  not_found discipline.
+- **The tmux-session-restore split (confirmed correct by the maintainer).** Route owns the box's
+  compute lifecycle; the CLI restores the agent session *after* (box IO, direct plane); docker
+  `unpause` needs NO restore because the cgroup thaw preserves the tmux session, while a cloud resume
+  reboots the sandbox and kills it (so cloud unpause + start do restore). Keep this reasoning.
 - **`screen` ended up entirely Step 7's, not split.** The plan listed `screen`'s lifecycle here and
   its URL resolution in Step 7. In practice Step 7 landed first and implemented the whole command in
   one coherent shape: the docker payload path brings the box online with `client.lifecycle('start')`

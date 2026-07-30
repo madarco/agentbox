@@ -270,4 +270,9 @@ describe('lifecycle CLI surface', () => {
       expect(cmd.registeredArguments[0]!.required, `${cmd.name()}: [box]`).toBe(false);
     }
   });
+
+  it('destroy exposes --keep-snapshot and --force (drop the record when no hub owns the box)', () => {
+    const longs = destroyCommand.options.map((o) => o.long);
+    expect(longs).toEqual(expect.arrayContaining(['--yes', '--keep-snapshot', '--force']));
+  });
 });
