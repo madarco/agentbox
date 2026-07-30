@@ -14,13 +14,11 @@
 
 import {
   DEFAULT_BOX_IMAGE,
-  ensureHub,
   ensureRelay,
   evaluateDockerBaseFreshness,
-  getHubStatus,
-  stopHub,
   stopRelay,
 } from '@agentbox/sandbox-docker';
+import { ensureHub, getHubStatus, stopHub } from '@agentbox/sandbox-core';
 import { installHostSkills } from '../commands/install.js';
 import {
   bestTrayRelease,

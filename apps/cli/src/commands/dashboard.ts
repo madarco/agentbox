@@ -19,7 +19,6 @@ import {
   ensureBoxBrowser,
   ensureCodexInstalled,
   ensureOpencodeInstalled,
-  getHubStatus,
   listBoxes,
   pauseBox,
   rebuildPluginNativeDeps,
@@ -37,7 +36,7 @@ import {
   waitForTmuxPaneContent,
   type ListedBox,
 } from '@agentbox/sandbox-docker';
-import { hostOpenCommand, readState, removeBoxRecord } from '@agentbox/sandbox-core';
+import { getHubStatus, hostOpenCommand, readState, removeBoxRecord } from '@agentbox/sandbox-core';
 import { resolveBoxPromptSource } from '../control-plane/box-plane.js';
 import { resolveHubApiTarget } from './control-plane.js';
 import { listDashboardBoxes, type DashboardBox } from '../dashboard/box-list.js';

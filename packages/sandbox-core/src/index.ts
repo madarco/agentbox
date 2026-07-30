@@ -117,6 +117,36 @@ export {
   type CredentialPublisher,
 } from './credential-publish.js';
 export {
+  fetchHealthz,
+  killPid,
+  pingHealthz,
+  processAlive,
+  resolveCliEntry,
+  shouldReclaimForVersion,
+  HUB_RELAY_PORT,
+  type HealthzBody,
+  type RelayReuseHealth,
+} from './hub-process.js';
+export {
+  ensureHub,
+  getHubStatus,
+  stopHub,
+  resolveHubServer,
+  hubRuntimeEnv,
+  readHubToken,
+  HUB_TOKEN_FILE,
+  type EnsureHubOptions,
+  type HubEndpoint,
+  type HubStatus,
+  type StopHubResult,
+} from './hub-lifecycle.js';
+export { setHubPortlessHooks, setHubDockerContext, type HubPortlessHooks } from './hub-hooks.js';
+export {
+  runDockerCredentialRefresh,
+  setDockerCredentialRefresh,
+  type DockerCredentialRefresher,
+} from './credential-refresh.js';
+export {
   PLUGINS_FILE,
   SUPPORTED_SDK_API_VERSIONS,
   isSupportedApiVersion,

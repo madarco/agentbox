@@ -1,6 +1,6 @@
 import { log } from '@clack/prompts';
 import { execa } from 'execa';
-import { findProjectRoot } from '@agentbox/config';
+import { findProjectRoot, loadEffectiveConfig } from '@agentbox/config';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -8,6 +8,11 @@ import { boxLabel } from '../box-label.js';
 import { hyperlink } from '../hyperlink.js';
 import type { HubApiBox } from '../control-plane/hub-api-client.js';
 import { cacheAge, fetchBoxListing, type BoxListing } from '../control-plane/hub-list.js';
+import {
+  dockerProvidersHidden,
+  dockerHiddenReason,
+  isDockerProvider,
+} from '../control-plane/remote-hub.js';
 import { normalizeOriginUrl } from '../control-plane/hub-adopt.js';
 import { withWatchOptions, watchRender, type WatchableOptions } from '../watch.js';
 
@@ -312,7 +317,27 @@ function effectiveState(b: HubApiBox): string {
   return b.state ?? b.status;
 }
 
-function renderTable(boxes: HubApiBox[], stream: NodeJS.WriteStream): string {
+/**
+ * The PROVIDER cell. A `muted` box (a docker box hidden under a control box — see
+ * `dockerProvidersHidden`) is kept in the listing but tagged `(inactive)` and
+ * dimmed on a colour terminal, so a user can still read its name off `ls` and
+ * `agentbox destroy <name>` it without first flipping `hub.mode=local`. Not
+ * silently dropped: a hidden-but-running container is a resource leak with no
+ * visible handle — the same silent-skip failure class rejected earlier in this
+ * series.
+ */
+function providerCell(b: HubApiBox, muted: boolean, color: boolean): Cell {
+  if (!muted) return plain(b.provider);
+  const text = `${b.provider} (inactive)`;
+  return { text: color ? colorize(text, 'dim') : text, width: text.length };
+}
+
+function renderTable(
+  boxes: HubApiBox[],
+  stream: NodeJS.WriteStream,
+  mutedIds: ReadonlySet<string> = new Set(),
+): string {
+  const color = !!stream.isTTY && !process.env.NO_COLOR;
   const header = ['N', 'NAME', 'STATE', 'AGENT', 'SHELLS', 'PROVIDER', 'URL', 'WORKSPACE'];
   const wsCol = header.length - 1;
   const lead: Cell[][] = boxes.map((b) => [
@@ -324,7 +349,7 @@ function renderTable(boxes: HubApiBox[], stream: NodeJS.WriteStream): string {
     // Live shell-session count from the hub payload; `-` for none (or a
     // non-docker box, which carries no shell count).
     plain(b.shellCount && b.shellCount > 0 ? String(b.shellCount) : '-'),
-    plain(b.provider),
+    providerCell(b, mutedIds.has(b.id), color),
     urlCell(b, stream),
   ]);
   const leadHeader = header.slice(0, wsCol).map(plain);
@@ -449,18 +474,43 @@ function staleNote(listing: BoxListing): string {
 
 async function buildListText(all: boolean, live: boolean): Promise<string> {
   const { boxes, projectRoot, scoped, listing } = await scopedBoxes(all, live);
-  const note = staleNote(listing);
+  // Docker off under a remote hub (Step 12): mark (don't drop) docker boxes as
+  // inactive when docker is gated here, plus a footer note naming the key + reason.
+  const muted = await mutedDockerBoxes(boxes);
+  const note = staleNote(listing) + dockerHiddenNote(muted.ids.size, muted.reason);
   if (boxes.length === 0) {
     if (scoped) {
       return `no boxes in this project (${projectRoot}) — run \`agentbox create\`, or \`agentbox list --global\` to see all${note}`;
     }
     return `no boxes — run \`agentbox create\` to make one${note}`;
   }
-  const table = renderTable(boxes, process.stdout);
+  const table = renderTable(boxes, process.stdout, muted.ids);
   if (!scoped) return table + note;
   // basename of projectRoot — matches dashboard sidebar's projectLabel().
   const name = projectRoot.split('/').filter(Boolean).pop() ?? projectRoot;
   return `Project: ${name}\n${table}${note}`;
+}
+
+/**
+ * Ids of docker boxes to show as inactive (+ the reason docker is gated, for the
+ * footer): docker-provider boxes in the listing when `dockerProvidersHidden`
+ * (a control box, or `hub.mode=thin`). Empty + null reason when docker is on here,
+ * so `ls` is byte-identical to before.
+ */
+async function mutedDockerBoxes(
+  boxes: HubApiBox[],
+): Promise<{ ids: Set<string>; reason: string | null }> {
+  const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
+  if (!cfg || !dockerProvidersHidden(cfg.effective)) return { ids: new Set(), reason: null };
+  const ids = new Set(boxes.filter((b) => isDockerProvider(b.provider)).map((b) => b.id));
+  return { ids, reason: dockerHiddenReason(cfg.effective) };
+}
+
+/** Footer note when docker boxes are shown inactive, naming the reason + re-enable key. */
+function dockerHiddenNote(count: number, reason: string | null): string {
+  if (count === 0 || reason === null) return '';
+  const n = count === 1 ? '1 docker box is' : `${count} docker boxes are`;
+  return `\n${n} shown as inactive because ${reason}; set \`hub.mode=local\` (\`agentbox config set hub.mode local\`) to manage docker here.`;
 }
 
 export const listCommand = withWatchOptions(

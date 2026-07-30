@@ -2,10 +2,10 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-// `hub.ts` resolves ~/.agentbox at module load, so HOME has to be redirected
-// before the import — hence the hoisted temp dir. Without it this file would
-// read and REWRITE the real user's hub state (this suite has no HOME isolation
-// of its own).
+// `hub-lifecycle.ts` resolves ~/.agentbox at module load, so HOME has to be
+// redirected before the import — hence the hoisted temp dir. Without it this
+// file would read and REWRITE the real user's hub state (this suite has no HOME
+// isolation of its own).
 const { homeDir } = await vi.hoisted(async () => {
   const { mkdtempSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
@@ -17,7 +17,7 @@ vi.mock('node:os', async (importOriginal) => {
   return { ...actual, homedir: () => homeDir };
 });
 
-const { hubRuntimeEnv } = await import('../src/hub.js');
+const { hubRuntimeEnv } = await import('../src/hub-lifecycle.js');
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -34,7 +34,7 @@ describe('hubRuntimeEnv', () => {
   });
 
   it('omits the runtime root when there is no staged tree beside this module', () => {
-    // Workspace-dev layout (packages/sandbox-docker/src, no sibling runtime/):
+    // Workspace-dev layout (packages/sandbox-core/src, no sibling runtime/):
     // never plant a root that doesn't resolve — it is candidate 0 in the child's
     // own lookup and would shadow its correct self-resolution.
     vi.stubEnv('AGENTBOX_RUNTIME_ROOT', '');

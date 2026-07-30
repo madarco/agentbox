@@ -60,6 +60,21 @@ export type GitPushMode = 'auto' | 'relay' | 'lease' | 'direct';
  * already running — change it there and redeploy, or set the token on the hub.
  */
 export type HubGitAuthMode = 'gh' | 'app';
+/**
+ * How this machine relates to a hub, and specifically whether the local docker
+ * engine is offered here.
+ *
+ * - `auto` (default) — docker / remote-docker are available when there is no
+ *   control box, and gated OFF once one is configured (`relay.controlPlaneUrl`):
+ *   a docker box built on the laptop can't run with the laptop off, which is the
+ *   whole reason a control box exists, so the pickers, `doctor`, `prepare`,
+ *   `create` and `ls` stop offering it and route the fleet through the hub.
+ * - `thin` — force the gated behavior even without a configured control box (for
+ *   a machine driven purely as a thin `/api/v1` client, e.g. via `--url`).
+ * - `local` — keep docker on regardless of a control box. This is the escape
+ *   hatch every "docker is hidden here" message names.
+ */
+export type HubMode = 'auto' | 'thin' | 'local';
 /** Where `agentbox claude|codex|opencode` opens the attached session when the host
  *  shell is running inside tmux, cmux, Herdr, or iTerm2. `same` keeps today's inline behavior. */
 export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
@@ -225,6 +240,7 @@ export interface UserConfig {
   };
   hub?: {
     gitAuth?: HubGitAuthMode;
+    mode?: HubMode;
   };
   vnc?: {
     containerPort?: number;
@@ -396,6 +412,7 @@ export interface EffectiveConfig {
   };
   hub: {
     gitAuth: HubGitAuthMode;
+    mode: HubMode;
   };
   vnc: {
     containerPort: number;
@@ -591,6 +608,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   hub: {
     gitAuth: 'gh',
+    mode: 'auto',
   },
   vnc: {
     containerPort: 6080,
@@ -1039,6 +1057,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     enumValues: ['auto', 'relay', 'lease', 'direct'] as const,
     description:
       "How a box's `git push` reaches GitHub: `relay` (the host relay pushes with your host credentials — they never enter the box), `lease` (the relay/plane leases a short-lived GitHub-App token and the box pushes directly, so it works with the laptop off), `direct` (the box holds a COPY of your git credentials and pushes/pulls/signs entirely on its own — needs no host or hub, but the credentials live inside the box and its snapshots; set via `--with-credentials`, which copies them in behind a confirmation), or `auto` (default — lease when `relay.controlPlaneUrl` is set for the box, else relay). Only affects cloud boxes; docker boxes always use `relay`. Forcing `relay` needs a reachable host relay for the box; forcing `lease` needs a reachable relay/plane with a GitHub App; `direct` needs credentials to have been copied into the box at create time, and is REFUSED when a control box is configured (`relay.controlPlaneUrl`) — use leasing (the `auto` default) instead.",
+  },
+  {
+    key: 'hub.mode',
+    type: 'enum',
+    enumValues: ['auto', 'thin', 'local'] as const,
+    description:
+      "Whether the local docker engine is offered on this machine: `auto` (default — docker and remote-docker are available until a control box is configured (`relay.controlPlaneUrl`), then gated off since a laptop-built docker box can't run with the laptop off), `thin` (force the gated behavior even without a configured control box), or `local` (keep docker on regardless of a control box). When gated, `create --provider docker` is refused, docker rows are dropped from the provider pickers / `doctor` / `prepare`, and docker boxes are shown as inactive in `ls`; set `hub.mode=local` to use docker here anyway.",
   },
   {
     key: 'hub.gitAuth',

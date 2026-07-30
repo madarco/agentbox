@@ -40,7 +40,12 @@ import {
 } from '../control-plane/create-target.js';
 import { streamJobToCompletion } from '../control-plane/job-stream.js';
 import { withHubClient } from '../control-plane/with-hub.js';
-import { remoteHubConfigured } from '../control-plane/remote-hub.js';
+import {
+  remoteHubConfigured,
+  isDockerProvider,
+  dockerProvidersHidden,
+  dockerHiddenMessage,
+} from '../control-plane/remote-hub.js';
 import { attachRelayOptions } from '../control-plane/box-plane.js';
 import { resolveBoxOrExit } from '../box-ref.js';
 
@@ -380,6 +385,15 @@ export const createCommand = new Command('create')
       opts.provider ?? cfg.effective.box.provider ?? 'docker',
     );
     const remoteHost = opts.remoteHost ?? specRemoteHost;
+
+    // Docker off under a remote hub (Step 12): with a control box configured a
+    // docker box built here can't run with the laptop off, so it's refused unless
+    // hub.mode=local. Runs BEFORE routing so a control-box create can't slip past.
+    if (isDockerProvider(providerName) && dockerProvidersHidden(cfg.effective)) {
+      log.error(dockerHiddenMessage(cfg.effective, 'create'));
+      cmdLog.close();
+      process.exit(1);
+    }
 
     // git.pushMode=direct (--dangerously-with-credentials) gating, in the same
     // order every other entry point uses (agent launchers + connect): check the

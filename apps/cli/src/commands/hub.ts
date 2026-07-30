@@ -2,10 +2,13 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { log, spinner } from '@clack/prompts';
 import { loadEffectiveConfig } from '@agentbox/config';
-import { ensureHub, getHubStatus, stopHub, type HubStatus } from '@agentbox/sandbox-docker';
 import {
+  ensureHub,
+  getHubStatus,
+  stopHub,
   controlPlaneDeployPath,
   hostOpenCommand,
+  type HubStatus,
   type ControlPlaneDeployRecord,
 } from '@agentbox/sandbox-core';
 import { Command } from 'commander';

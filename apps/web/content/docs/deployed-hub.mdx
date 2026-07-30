@@ -8,7 +8,7 @@ The [hub](/docs/hub) normally runs on your laptop. Deploy that same hub to an al
 <Callout type="warn" title="Experimental">
   The deployed hub / control box is under active development. Its commands live under `agentbox hub`
   (setup/deploy/boxes/approvals/credentials/custody/…), self-documented via `agentbox hub --help`;
-  expect rough edges. Local docker boxes are unaffected — this is only for cloud boxes.
+  expect rough edges.
 </Callout>
 
 It's the same `@agentbox/relay` core you already run locally — the relay daemon, the web UI, and a resident create worker — deployed to a **Hetzner VPS** on **SQLite** (no database to manage), reachable over HTTPS. The control box takes over the _centralized_ concerns so a sleeping laptop no longer stops your cloud boxes; it is **not** a proxy for your boxes' traffic (more on that below).
@@ -17,6 +17,13 @@ It's the same `@agentbox/relay` core you already run locally — the relay daemo
   Only **cloud** boxes (e2b, daytona, hetzner, vercel) get the laptop-off guarantee. A local
   **docker** box bind-mounts your host `.git`, so it's simply offline when the laptop is — it stays
   on your laptop relay and is never sent to the control box.
+
+  Because a laptop-built docker box defeats the point of a control box, once one is configured
+  `docker` and `remote-docker` are **gated off** by default (`hub.mode=auto`): `create --provider
+  docker` is refused, docker drops out of the provider pickers / `doctor` / `prepare`, and any docker
+  boxes you already have show as **inactive** in `agentbox ls` (still there, so you can `destroy`
+  them by name). Set [`hub.mode=local`](/docs/configuration) to keep using docker on this machine
+  anyway.
 </Callout>
 
 ## Two ways to get one

@@ -1244,7 +1244,7 @@ temporarily-reintroduced `/admin/store` call, then reverted. `hub-backend.ts`'s
 
 ---
 
-## Step 12 — Docker off under a remote hub
+## Step 12 — Docker off under a remote hub ✅ done
 
 - When `relay.controlPlaneUrl` is set: drop `docker` / `remote-docker` from provider pickers,
   `doctor`, `prepare` and `create`; filter docker boxes out of `ls`, with one clear message
@@ -1264,9 +1264,65 @@ docker boxes vanish from `ls`, and `agentbox hub start` works on a machine with 
 > note under Step 10. If this step narrows or changes the bind, keep the loopback gate: it is the only
 > thing standing between a leaked hub token and every SSH private key custody holds.
 
----
+**Landed.** One shared predicate — `dockerProvidersHidden(effective)` in
+`control-plane/remote-hub.ts` (beside `remoteHubConfigured`) — drives every gating site:
+`local` never hides (the escape hatch), `thin` always hides, `auto` hides iff a control box is
+configured. `isDockerProvider(name)` covers **docker + remote-docker** (matching
+`boxOwningHubIsLocal`), and `dockerHiddenMessage('create'|'prepare')` is the single re-enable
+message naming `hub.mode=local`. Gated: `create` (and the `claude`/`codex`/`opencode` launchers —
+they build boxes too, same false-coverage reason Step 13 widened its gate), `prepare` (`runPrepare`),
+`doctor` (the unscoped enumeration in `runAllChecks`; a scoped `doctor -p docker` still runs so you
+can diagnose), and the `install` provider picker (filtered + `initialValue` moved off docker). The
+new `hub.mode: 'auto'|'thin'|'local'` config key lives in `KEY_REGISTRY` (`packages/config/src/types.ts`)
++ the JSON schema, defaulting to `auto`.
 
-## Step 13 — Gate `--dangerously-with-credentials` off under a remote hub ✅ done
+The hub lifecycle (`ensureHub`/`getHubStatus`/`stopHub`/`resolveHubServer`/`hubRuntimeEnv`/
+`HUB_TOKEN_FILE`) moved from `@agentbox/sandbox-docker` to `@agentbox/sandbox-core`
+(`hub-lifecycle.ts`); the shared process/`/healthz` probes moved with it into `hub-process.ts`
+(re-exported from `relay.ts` for compat). The two docker-side niceties it used directly — Portless
+and the docker build context — now come through a `hub-hooks.ts` seam the CLI fills at startup
+(`setHubPortlessHooks(dockerHubPortlessHooks)` + `setHubDockerContext(BUILD_CONTEXT_DIR)`); the docker
+Portless impl is `sandbox-docker/src/hub-portless.ts`. `refreshAgentCredentialsBackup`'s
+docker-shared-volume reach-in is severed the same way: `credential-refresh.ts` seam in core,
+`dockerCredentialRefresh` impl in sandbox-docker, registered by the CLI — `@agentbox/sandbox-cloud`
+no longer imports docker for the refresh. **The `0.0.0.0` bind (invariant 1) is carried verbatim in
+`hub-lifecycle.ts`; the custody peer gate (invariant 2) was not touched.**
+
+**Verified end-to-end** (built CLI): with `relay.controlPlaneUrl` set, `create --provider docker`
+and `prepare --provider docker` refuse naming `hub.mode=local`, and `doctor` drops the docker/
+remote-docker rows; setting `hub.mode=local` reinstates all three (create proceeds past the gate into
+the normal carry flow, doctor shows docker again). With `relay.controlPlaneUrl` **unset** (the
+regression half), `doctor` shows docker, and `create --provider docker` routes through the local hub
+queue and creates a real container exactly as before — the hub autostarted via the **moved**
+`ensureHub` and resolved its Portless URL through the new seam, and the hub binds `0.0.0.0` (invariant
+confirmed in the hub log). `hub restart`/`hub status` work off the sandbox-core lifecycle.
+
+### Notes for later steps
+
+- **`ls` keeps docker boxes LISTED but marked inactive — it does NOT drop them (deliberate, and the
+  right call for the next reader).** Filtering docker boxes out entirely is "hidden-but-alive": a user
+  who configures a control box while docker boxes are running would lose the only handle to them (they
+  keep consuming resources), the same silent-skip failure class rejected in Step 5's destroy bug. So
+  `list.ts` renders docker boxes with a dimmed `docker (inactive)` provider cell + a footer note naming
+  `hub.mode=local`, and `destroy <name>` still resolves them (it resolves locally from `state.json`,
+  never from the listing). In practice the marking only bites in the **co-located / `hub expose`** case
+  where the hub's `/api/v1/boxes` runs `docker ps` on this machine; a genuinely remote VPS hub never
+  lists local docker boxes at all (different hub), so there is nothing to mark there.
+- **The gate is a CONFIG-KEY gate, evaluated on `effective.hub.mode` + `effective.relay.controlPlaneUrl`
+  — never an env var.** Any later site that needs "is docker available here" must call
+  `dockerProvidersHidden` / `isDockerProvider` from `control-plane/remote-hub.ts`, not re-derive a
+  `provider === 'docker'` check (same discipline as `boxOwningHubIsLocal`).
+- **The hub-lifecycle move is path-safe because the CLI bundles every `@agentbox/*` package
+  (`noExternal`).** `resolveHubServer`/`resolveCliEntry` resolve candidates off `import.meta.url`, which
+  is the CLI's own `dist/` regardless of which source package authored them, so moving them to
+  sandbox-core changed nothing at runtime. Keep that property in mind before moving these to a package
+  that is NOT inlined into the CLI.
+- **`@agentbox/sandbox-core` still cannot import `@agentbox/relay`** (relay depends on core — cycle), so
+  `hub-process.ts` hardcodes `HUB_RELAY_PORT = 8787` mirroring `DEFAULT_RELAY_PORT`. If the relay port
+  ever becomes configurable, thread it rather than duplicating.
+- **Two more one-slot hooks now exist alongside `credential-publish.ts`** (`hub-hooks.ts`,
+  `credential-refresh.ts`). The CLI registers all of them in `apps/cli/src/index.ts`. A docker-free
+  build simply never registers the docker ones and the seams no-op — that is the whole point.
 
 It exists as the alternative to a remote hub — a box holding a **copy** of your git credentials
 so it can push with the laptop off, at the cost of those credentials living inside the box and

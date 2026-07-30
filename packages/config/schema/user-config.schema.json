@@ -179,7 +179,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "gitAuth": { "enum": ["gh", "app"] }
+        "gitAuth": { "enum": ["gh", "app"] },
+        "mode": { "enum": ["auto", "thin", "local"] }
       }
     },
     "cloud": {

@@ -39,6 +39,11 @@ import { getRuntimeProviderNames } from '../provider/loaders.js';
 import { parseProviderSpec } from '../provider/spec.js';
 import { deadlineFetch, hostReachable } from '@agentbox/sandbox-cloud';
 import { bakeViaHub } from '../control-plane/hub-prepare.js';
+import {
+  isDockerProvider,
+  dockerProvidersHidden,
+  dockerHiddenMessage,
+} from '../control-plane/remote-hub.js';
 import { HubApiClient } from '../control-plane/hub-api-client.js';
 import {
   localExposedLoopbackUrl,
@@ -627,6 +632,12 @@ export async function runPrepare(
 
   const cwd = opts.cwd ?? process.cwd();
   const cfg = await loadEffectiveConfig(cwd).catch(() => null);
+  // Docker off under a remote hub (Step 12): don't bake a local docker/remote-docker
+  // image when a control box owns the fleet. `local` mode (or no cfg) keeps it on.
+  if (cfg && isDockerProvider(providerName) && dockerProvidersHidden(cfg.effective)) {
+    log.error(dockerHiddenMessage(cfg.effective, 'prepare'));
+    process.exit(1);
+  }
   // Bake-time Claude install method: CLI flag wins over the config key. The
   // remaining bake INPUTS (`build` / `size` / `location` / `name`) are passed
   // through only when the user set the corresponding flag; the hub worker fills

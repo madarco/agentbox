@@ -66,7 +66,12 @@ import {
   withHubJobLine,
 } from './_cloud-agent-via-hub.js';
 import { resolveCreateRouting } from '../control-plane/route-create.js';
-import { remoteHubConfigured } from '../control-plane/remote-hub.js';
+import {
+  remoteHubConfigured,
+  isDockerProvider,
+  dockerProvidersHidden,
+  dockerHiddenMessage,
+} from '../control-plane/remote-hub.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
@@ -547,6 +552,14 @@ export const opencodeCommand = new Command('opencode')
       opts.provider ?? cfg.effective.box.provider ?? 'docker',
     );
     const isCloud = providerName !== 'docker';
+
+    // Docker off under a remote hub (Step 12): a docker box built here can't run
+    // with the laptop off, so it's refused under a control box unless hub.mode=local.
+    if (isDockerProvider(providerName) && dockerProvidersHidden(cfg.effective)) {
+      log.error(dockerHiddenMessage(cfg.effective, 'create'));
+      cmdLog.close();
+      process.exit(1);
+    }
 
     if (cfg.effective.git.pushMode === 'direct' && !isCloud) {
       log.error(

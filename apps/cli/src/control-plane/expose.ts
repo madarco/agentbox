@@ -19,10 +19,13 @@ import { networkInterfaces } from 'node:os';
 import { setConfigValue, unsetConfigValue } from '@agentbox/config';
 import {
   buildExposedHubEnv,
+  ensureHub,
+  getHubStatus,
+  stopHub,
   type ControlPlaneDeployRecord,
+  type HubEndpoint,
 } from '@agentbox/sandbox-core';
 import { detectEgressIp } from '@agentbox/sandbox-hetzner';
-import { ensureHub, getHubStatus, stopHub, type HubEndpoint } from '@agentbox/sandbox-docker';
 import { AGENTBOX_VERSION } from '../version.js';
 import { readControlPlaneEnvMap, setControlPlaneEnvKey } from './env-file.js';
 import { persistDeployRecord, purgeLocalControlPlaneState } from './deploy-hetzner.js';
@@ -60,7 +63,9 @@ export interface ExposeResult {
 }
 
 /** The first non-internal IPv4 address, or `127.0.0.1` when there is none. */
-export function detectLanIp(ifaces: ReturnType<typeof networkInterfaces> = networkInterfaces()): string {
+export function detectLanIp(
+  ifaces: ReturnType<typeof networkInterfaces> = networkInterfaces(),
+): string {
   for (const addrs of Object.values(ifaces)) {
     for (const a of addrs ?? []) {
       if (a.family === 'IPv4' && !a.internal) return a.address;
@@ -292,7 +297,10 @@ export async function runLocalDestroy(
   await removeAutostart().catch(() => {});
   await stopHub();
   log('stopped the exposed hub + tunnel');
-  await purgeLocalControlPlaneState({ dir: CP_DIR, keepCredentials: Boolean(opts.keepCredentials) });
+  await purgeLocalControlPlaneState({
+    dir: CP_DIR,
+    keepCredentials: Boolean(opts.keepCredentials),
+  });
   await unsetConfigValue('global', 'relay.controlPlaneUrl', process.cwd()).catch(() => {});
   await unsetConfigValue('project', 'relay.controlPlaneUrl', process.cwd()).catch(() => {});
 }
@@ -354,7 +362,9 @@ async function readLocalRecord(): Promise<ControlPlaneDeployRecord | null> {
   try {
     const { readFile } = await import('node:fs/promises');
     const { controlPlaneDeployPath } = await import('@agentbox/sandbox-core');
-    const rec = JSON.parse(await readFile(controlPlaneDeployPath(), 'utf8')) as ControlPlaneDeployRecord;
+    const rec = JSON.parse(
+      await readFile(controlPlaneDeployPath(), 'utf8'),
+    ) as ControlPlaneDeployRecord;
     return rec.provider === 'local' ? rec : null;
   } catch {
     return null;
