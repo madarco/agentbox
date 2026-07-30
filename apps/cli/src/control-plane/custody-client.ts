@@ -1,9 +1,29 @@
 /**
- * Client for the control box's custody surface (`/admin/custody/*`). Pushes
- * agent credentials, project secrets, and box SSH material up to the always-on
- * hub, and pulls them back down. Uploads are hash-skipped: the client fetches
- * the manifest first and only PUTs a value whose local sha256 differs from what
- * custody already holds, so an unchanged `credentials push` sends zero bytes.
+ * Client for a hub's custody surface. Pushes agent credentials, project secrets,
+ * and box SSH material up to the hub, and pulls them back down. Uploads are
+ * hash-skipped: the client fetches the manifest first and only PUTs a value whose
+ * local sha256 differs from what custody already holds, so an unchanged
+ * `credentials push` sends zero bytes.
+ *
+ * It speaks EITHER of two surfaces, chosen by which credential the caller has —
+ * so a custody op works with whichever one is available, and never silently
+ * no-ops for lack of the "wrong" one:
+ *
+ *   - **`/api/v1/custody`** (preferred) when an **API key** is present — the public
+ *     client surface the tray/web also use. list/put/delete authorize with the API
+ *     key (Bearer); a byte-read GET additionally presents the ADMIN token as
+ *     `X-Agentbox-Admin-Token`, and a control box refuses a byte-read carrying only
+ *     the API key — the two-tier contract (values never leave the box to a thin
+ *     client). A plain local hub needs no admin token (its hub token gates the
+ *     whole surface).
+ *   - **`/admin/custody`** (fallback) when only the **admin token** is present (no
+ *     API key). The admin bearer authorizes every verb incl. the byte-read, so a
+ *     machine that ran `hub setup` but has no API key (e.g. a via-hub create host)
+ *     can still pull per-box SSH keys instead of skipping them. This is the internal
+ *     relay wire; it stays until the API key is guaranteed everywhere (Step 11).
+ *
+ * The constructor throws if NEITHER credential is present — a custody op must fail
+ * loudly at the source, never resolve to a quiet no-op that breaks later.
  */
 
 import { createHash } from 'node:crypto';
@@ -13,6 +33,7 @@ import {
   readCredentialBackup,
   type AgentId,
 } from '@agentbox/sandbox-core';
+import { HubApiError } from './hub-api-client.js';
 
 export interface CustodyEntry {
   path: string;
@@ -23,10 +44,20 @@ export interface CustodyEntry {
 }
 
 export interface CustodyClientOptions {
-  /** Base control-plane URL (no trailing slash needed). */
+  /** Base hub URL (no trailing slash needed). */
   url: string;
-  /** Admin bearer (`AGENTBOX_RELAY_ADMIN_TOKEN` or the setup-written env). */
-  adminToken: string;
+  /**
+   * Hub API key — `AGENTBOX_HUB_API_KEY` for a control box, or the local hub token.
+   * Present → the `/api/v1/custody` surface. Absent → the admin fallback (needs
+   * `adminToken`).
+   */
+  apiKey?: string;
+  /**
+   * Admin token (`AGENTBOX_RELAY_ADMIN_TOKEN`). On `/api/v1` it is the elevated
+   * credential a byte-read needs on a control box; when no API key is present it is
+   * the sole credential for the `/admin/custody` fallback.
+   */
+  adminToken?: string;
   fetchImpl?: typeof fetch;
 }
 
@@ -37,56 +68,114 @@ export function sha256Hex(data: Buffer): string {
 
 export class CustodyClient {
   private readonly base: string;
-  private readonly token: string;
+  private readonly apiKey: string | undefined;
+  private readonly adminToken: string | undefined;
   private readonly fetchImpl: typeof fetch;
+  /** True → `/api/v1/custody`; false → the `/admin/custody` admin fallback. */
+  private readonly useApi: boolean;
 
   constructor(opts: CustodyClientOptions) {
+    if (!opts.apiKey && !opts.adminToken) {
+      // Fail loudly at construction: a custody client with no credential could only
+      // ever produce quiet no-ops / confusing 401s far from here.
+      throw new Error(
+        'CustodyClient needs a hub API key or an admin token (set AGENTBOX_HUB_API_KEY, or run from the machine that ran `agentbox hub setup`).',
+      );
+    }
     this.base = opts.url.replace(/\/+$/, '');
-    this.token = opts.adminToken;
+    this.apiKey = opts.apiKey || undefined;
+    this.adminToken = opts.adminToken;
     this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.useApi = Boolean(this.apiKey);
   }
 
-  private headers(): Record<string, string> {
-    return { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' };
+  /** The base path of the chosen surface (`/api/v1/custody` or `/admin/custody`). */
+  private prefix(): string {
+    return this.useApi ? `${this.base}/api/v1/custody` : `${this.base}/admin/custody`;
+  }
+
+  /** Bearer for the chosen surface: API key on `/api/v1`, admin token on `/admin`. */
+  private headers(extra: Record<string, string> = {}): Record<string, string> {
+    const bearer = this.useApi ? this.apiKey! : this.adminToken!;
+    return { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json', ...extra };
+  }
+
+  private encodePath(path: string): string {
+    return path
+      .split('/')
+      .map((s) => encodeURIComponent(s))
+      .join('/');
+  }
+
+  /** Turn a non-2xx response into a `HubApiError`, handling both surfaces' error shapes. */
+  private async errorFrom(res: Response, fallback: string): Promise<HubApiError> {
+    let code = 'internal';
+    let message = fallback;
+    try {
+      // `/api/v1` → { error: { code, message } }; `/admin` → { error: "<string>" }.
+      const body = (await res.json()) as { error?: { code?: string; message?: string } | string };
+      if (typeof body.error === 'string') {
+        message = body.error;
+      } else if (body.error) {
+        if (body.error.code) code = body.error.code;
+        if (body.error.message) message = body.error.message;
+      }
+    } catch {
+      message = `${fallback}: ${res.status} ${await safeText(res)}`;
+    }
+    return new HubApiError(message, code, res.status);
   }
 
   /** The manifest (paths + hashes, never values), optionally scoped to a prefix. */
   async list(prefix?: string): Promise<CustodyEntry[]> {
     const q = prefix ? `?prefix=${encodeURIComponent(prefix)}` : '';
-    const res = await this.fetchImpl(`${this.base}/admin/custody${q}`, { headers: this.headers() });
-    if (!res.ok) throw new Error(`custody list failed: ${res.status} ${await safeText(res)}`);
-    return ((await res.json()) as { entries: CustodyEntry[] }).entries;
+    const res = await this.fetchImpl(`${this.prefix()}${q}`, { headers: this.headers() });
+    if (!res.ok) throw await this.errorFrom(res, 'custody list failed');
+    // The `/api/v1` list route reports `enabled: false` on a hub with no custody
+    // store; treat that as an empty manifest so a push/pull degrades cleanly.
+    return ((await res.json()) as { enabled?: boolean; entries: CustodyEntry[] }).entries ?? [];
   }
 
-  /** Upload bytes; returns whether custody actually changed. */
+  /** Upload bytes; returns whether custody actually changed (metadata only, no bytes). */
   async put(path: string, data: Buffer): Promise<{ changed: boolean; sha256: string }> {
-    const res = await this.fetchImpl(`${this.base}/admin/custody/${encodePath(path)}`, {
+    const res = await this.fetchImpl(`${this.prefix()}/${this.encodePath(path)}`, {
       method: 'PUT',
       headers: this.headers(),
       body: JSON.stringify({ data: data.toString('base64') }),
     });
-    if (!res.ok) throw new Error(`custody put ${path} failed: ${res.status} ${await safeText(res)}`);
+    if (!res.ok) throw await this.errorFrom(res, `custody put ${path} failed`);
     const body = (await res.json()) as { changed: boolean; sha256: string };
     return { changed: body.changed, sha256: body.sha256 };
   }
 
-  /** Download bytes, or null when the entry is absent (404). */
+  /**
+   * Download bytes, or null when the entry is absent (404). On `/api/v1` it presents
+   * the admin token so a control box authorizes the byte-read; without it a control
+   * box answers 401 and this throws (a thin client can't read a stored value). On
+   * the `/admin` fallback the admin bearer already authorizes the read.
+   */
   async get(path: string): Promise<Buffer | null> {
-    const res = await this.fetchImpl(`${this.base}/admin/custody/${encodePath(path)}`, {
-      headers: this.headers(),
+    const extra: Record<string, string> =
+      this.useApi && this.adminToken ? { 'X-Agentbox-Admin-Token': this.adminToken } : {};
+    const res = await this.fetchImpl(`${this.prefix()}/${this.encodePath(path)}`, {
+      headers: this.headers(extra),
     });
     if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`custody get ${path} failed: ${res.status} ${await safeText(res)}`);
+    if (!res.ok) throw await this.errorFrom(res, `custody get ${path} failed`);
     const body = (await res.json()) as { data: string };
     return Buffer.from(body.data, 'base64');
   }
-}
 
-function encodePath(path: string): string {
-  return path
-    .split('/')
-    .map((s) => encodeURIComponent(s))
-    .join('/');
+  /** Delete one custody entry. Returns whether it existed (false on 404). */
+  async delete(path: string): Promise<boolean> {
+    const res = await this.fetchImpl(`${this.prefix()}/${this.encodePath(path)}`, {
+      method: 'DELETE',
+      headers: this.headers(),
+    });
+    if (res.status === 404) return false;
+    if (res.status === 204 || res.ok) return true;
+    throw await this.errorFrom(res, `custody delete ${path} failed`);
+  }
 }
 
 async function safeText(res: Response): Promise<string> {
@@ -136,9 +225,7 @@ export function planPush(
  * list. Each real backup is stored under `agents/<id>/<credential.boxRelPath>`
  * (the box-canonical name), and only real (non-placeholder) blobs are included.
  */
-export async function collectAgentCredentialUploads(
-  only?: AgentId,
-): Promise<UploadItem[]> {
+export async function collectAgentCredentialUploads(only?: AgentId): Promise<UploadItem[]> {
   const items: UploadItem[] = [];
   for (const spec of AGENT_SYNC_SPECS) {
     if (only && spec.id !== only) continue;

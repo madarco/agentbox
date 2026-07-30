@@ -32,10 +32,10 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { execa } from 'execa';
 import { scanHostEnvFiles } from '@agentbox/sandbox-core';
-import { deadlineFetch, hostReachable } from './reachability.js';
+import { hostReachable } from './reachability.js';
 
 /** Bound on the seed upload once the control box is known to be up. */
-const SEED_PUSH_MS = 120_000;
+export const SEED_PUSH_MS = 120_000;
 
 /** One captured file, as recorded in the manifest. */
 export interface SeedManifestFile {
@@ -190,9 +190,13 @@ async function gitOut(dir: string, argv: string[]): Promise<string | null> {
  * in the seed. zlib writes MTIME=0, so identical content hashes identically.
  */
 async function buildUntrackedTar(repo: string): Promise<Buffer | null> {
-  const list = await execa('git', ['-C', repo, 'ls-files', '--others', '--exclude-standard', '-z'], {
-    reject: false,
-  });
+  const list = await execa(
+    'git',
+    ['-C', repo, 'ls-files', '--others', '--exclude-standard', '-z'],
+    {
+      reject: false,
+    },
+  );
   if (list.exitCode !== 0 || list.stdout.length === 0) return null;
   return tarNulList(repo, list.stdout);
 }
@@ -224,14 +228,74 @@ async function tarNulList(dir: string, nulList: string): Promise<Buffer | null> 
   return gzipSync(raw);
 }
 
+/**
+ * The custody transport the seed push writes through — the seam that lets the SAME
+ * seed logic run over two wires: the CLI `hub project push` injects a `/api/v1`
+ * sink (the client surface, this step's move), while the create path keeps its
+ * `/admin` sink (the internal registration flow, which holds the admin token). Both
+ * write the identical `projects/<slug>/seed/*` blobs; only the wire differs.
+ */
+export interface SeedCustodySink {
+  /** Manifest (paths + hashes) for the hash-skip pass, scoped to `prefix`. */
+  list(prefix: string): Promise<{ path: string; sha256: string }[]>;
+  /** Store bytes at a custody path. Throws when the host refuses (e.g. size cap). */
+  put(path: string, data: Buffer): Promise<void>;
+}
+
 export interface PushProjectSeedArgs extends BuildProjectSeedArgs {
-  controlPlaneUrl: string;
-  adminToken: string;
+  /** Where the seed blobs are written (see {@link SeedCustodySink}). */
+  sink: SeedCustodySink;
+  /**
+   * Base URL of the host, for the pre-build reachability probe only. The push is
+   * best-effort and runs inside create, so a down host must not stall it on
+   * undici's ~10s connect timeout — probe first, and skip the whole build if down.
+   */
+  probeUrl: string;
+  /**
+   * The reachability probe itself. Defaults to `hostReachable(probeUrl)`; injected
+   * by tests (which drive the sink directly and have no real host to probe).
+   */
+  probe?: () => Promise<boolean>;
   /** Custody `projects/<slug>` key. */
   slug: string;
   /** Upload every item even when custody already holds identical bytes. */
   force?: boolean;
+}
+
+/**
+ * A {@link SeedCustodySink} over the relay's internal `/admin/custody` wire. Used
+ * by the create/registration flow (`cloud-provider.ts`), which authenticates with
+ * the admin token it already holds. The CLI's client commands use a `/api/v1` sink
+ * built from `CustodyClient` instead.
+ */
+export function adminCustodySink(opts: {
+  controlPlaneUrl: string;
+  adminToken: string;
   fetchImpl?: typeof fetch;
+}): SeedCustodySink {
+  const base = opts.controlPlaneUrl.replace(/\/+$/, '');
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${opts.adminToken}`,
+  };
+  return {
+    async list(prefix) {
+      const res = await fetchImpl(`${base}/admin/custody?prefix=${encodeURIComponent(prefix)}`, {
+        headers,
+      });
+      if (!res.ok) return [];
+      return ((await res.json()) as { entries: { path: string; sha256: string }[] }).entries;
+    },
+    async put(path, data) {
+      const res = await fetchImpl(`${base}/admin/custody/${encodeCustodyPath(path)}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ data: data.toString('base64') }),
+      });
+      if (!res.ok) throw new Error(`custody put ${path} → ${String(res.status)}`);
+    },
+  };
 }
 
 export interface PushProjectSeedResult {
@@ -265,14 +329,10 @@ export async function pushProjectSeedToCustody(
 ): Promise<PushProjectSeedResult> {
   const log = args.log ?? (() => {});
   // Probe before building anything: the push is best-effort and runs inside
-  // create, so a down control box must not stall it on undici's ~10s connect
-  // timeout (see reachability.ts). A caller-supplied fetch (tests) is used as-is.
-  const fetchImpl =
-    args.fetchImpl ??
-    ((await hostReachable(args.controlPlaneUrl))
-      ? deadlineFetch(AbortSignal.timeout(SEED_PUSH_MS))
-      : null);
-  if (!fetchImpl) {
+  // create, so a down host must not stall it on undici's ~10s connect timeout
+  // (see reachability.ts).
+  const reachable = args.probe ?? (() => hostReachable(args.probeUrl));
+  if (!(await reachable())) {
     log('seed: control box unreachable — skipping the seed push');
     // Report the repo metadata only. Calling buildProjectSeed here would tar the
     // whole untracked tree to produce a manifest nothing will ever upload —
@@ -285,23 +345,12 @@ export async function pushProjectSeedToCustody(
   }
   const built = await buildProjectSeed(args);
   const prefix = `projects/${args.slug}/seed`;
-  const base = args.controlPlaneUrl.replace(/\/+$/, '');
-  const headers = {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${args.adminToken}`,
-  };
 
   // Hash-skip against what's already stored, so an unchanged tree uploads nothing.
   const existing = new Map<string, string>();
   if (!args.force) {
     try {
-      const res = await fetchImpl(`${base}/admin/custody?prefix=${encodeURIComponent(prefix)}`, {
-        headers,
-      });
-      if (res.ok) {
-        const body = (await res.json()) as { entries: Array<{ path: string; sha256: string }> };
-        for (const e of body.entries) existing.set(e.path, e.sha256);
-      }
+      for (const e of await args.sink.list(prefix)) existing.set(e.path, e.sha256);
     } catch {
       // No manifest → treat everything as new. Re-uploading is harmless.
     }
@@ -315,14 +364,7 @@ export async function pushProjectSeedToCustody(
       skipped += 1;
       return;
     }
-    const res = await fetchImpl(`${base}/admin/custody/${encodeCustodyPath(path)}`, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify({ data: data.toString('base64') }),
-    });
-    if (!res.ok) {
-      throw new Error(`custody put ${path} → ${String(res.status)}`);
-    }
+    await args.sink.put(path, data);
     uploaded += 1;
   };
 
@@ -445,7 +487,9 @@ export async function applyProjectSeed(args: {
       // With the right flag (see keepExistingFlag) a conflict is NOT an error,
       // so reaching here means the extract genuinely failed and the box may
       // lack some seed files.
-      log(`seed: ${name} could not be applied: ${err instanceof Error ? err.message : String(err)}`);
+      log(
+        `seed: ${name} could not be applied: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       await rm(tmp, { force: true }).catch(() => {});
     }

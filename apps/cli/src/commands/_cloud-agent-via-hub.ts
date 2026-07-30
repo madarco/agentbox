@@ -18,7 +18,11 @@
 import type { BoxRecord } from '@agentbox/sandbox-docker';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
 import { normalizeRegistrationAgent, type BoxRegistration } from '@agentbox/relay';
-import { resolveCustodyTarget, syncAgentCredentialsIfChanged } from './control-plane.js';
+import {
+  resolveCustodyApiTarget,
+  resolveCustodyTarget,
+  syncAgentCredentialsIfChanged,
+} from './control-plane.js';
 import { enqueueCreateViaHub, pollHubJob } from '../control-plane/hub-enqueue.js';
 import { adoptHubBox } from '../control-plane/hub-adopt.js';
 import type { HubApiBox } from '../control-plane/hub-api-client.js';
@@ -160,9 +164,16 @@ export async function createCloudBoxViaHubAndAdopt(
   if (!reg) {
     throw new Error(`the control box created box ${boxId} but it is not registered to adopt`);
   }
+  // SSH-key pull rides the hub's /api/v1 custody now (byte-read gated by the admin
+  // token, and the API key for the proxy gate); the enqueue/poll/listBoxes above
+  // stay on the admin plane (Step 8's). When the API key is absent (custodyApi
+  // null — a partial setup with the admin token but no key), the box is still
+  // adopted and `adoptHubBox` flags `sshKeysMissing` so an SSH provider's missing
+  // key is reported, not silently dropped.
+  const custodyApi = await resolveCustodyApiTarget(urlFlag, { quiet: true, remoteOnly: true });
   const res = await adoptHubBox({
     box: createdRegistrationToBox(reg),
-    custody: new CustodyClient(target),
+    custody: custodyApi ? new CustodyClient(custodyApi) : undefined,
     controlPlaneUrl: target.url,
     log: onLog ?? ((): void => {}),
   });

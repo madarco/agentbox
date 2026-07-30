@@ -61,6 +61,22 @@ declare global {
           entry: { path: string; size: number; sha256: string; mode: number; updatedAt: string };
           data: Buffer;
         } | null>;
+        // Write verbs for the `/api/v1/custody/[...path]` route (the CLI's
+        // `credentials/secrets/custody/project push` + `rm`, and the tray/web).
+        // `put` is content-addressed (returns `changed: false` when the bytes were
+        // already there); neither ever returns the stored value of another entry.
+        put(
+          path: string,
+          data: Buffer,
+        ): Promise<{
+          path: string;
+          size: number;
+          sha256: string;
+          mode: number;
+          updatedAt: string;
+          changed: boolean;
+        }>;
+        delete(path: string): Promise<boolean>;
       }
     | null
     | undefined;

@@ -37,7 +37,7 @@ function hubBox(p: Partial<HubApiBox> & { id: string }): HubApiBox {
 function fakeCustody(custody: Record<string, string>): typeof fetch {
   return (async (url: unknown) => {
     const u = new URL(String(url));
-    if (u.pathname === '/admin/custody') {
+    if (u.pathname === '/api/v1/custody') {
       const prefix = u.searchParams.get('prefix') ?? '';
       const entries = Object.keys(custody)
         .filter((p) => !prefix || p === prefix || p.startsWith(`${prefix}/`))
@@ -48,10 +48,10 @@ function fakeCustody(custody: Record<string, string>): typeof fetch {
           mode: 0o600,
           updatedAt: '',
         }));
-      return json({ entries });
+      return json({ enabled: true, entries });
     }
-    if (u.pathname.startsWith('/admin/custody/')) {
-      const path = decodeURIComponent(u.pathname.slice('/admin/custody/'.length));
+    if (u.pathname.startsWith('/api/v1/custody/')) {
+      const path = decodeURIComponent(u.pathname.slice('/api/v1/custody/'.length));
       const data = custody[path];
       if (data === undefined) return new Response(null, { status: 404 });
       return json({ data: Buffer.from(data, 'utf8').toString('base64') });
@@ -68,7 +68,12 @@ function json(body: unknown): Response {
 }
 
 function custodyClient(fetchImpl: typeof fetch) {
-  return new CustodyClient({ url: 'http://cb.test', adminToken: 'admin', fetchImpl });
+  return new CustodyClient({
+    url: 'http://cb.test',
+    apiKey: 'key',
+    adminToken: 'admin',
+    fetchImpl,
+  });
 }
 
 describe('pullBoxSshKeys', () => {

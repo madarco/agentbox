@@ -84,7 +84,9 @@ const propagateCommand = new Command('propagate')
             { mode: 0o600 },
           );
           pushed += 1;
-          process.stdout.write(`pushed ${agent} credential to volume ${vol.volume} (${vol.boxNames.join(', ')})\n`);
+          process.stdout.write(
+            `pushed ${agent} credential to volume ${vol.volume} (${vol.boxNames.join(', ')})\n`,
+          );
         } catch (err) {
           failed += 1;
           process.stderr.write(
@@ -141,13 +143,13 @@ const propagateCommand = new Command('propagate')
  */
 async function pushCredentialToCustody(agent: AgentId, content: string): Promise<void> {
   try {
-    const { loadEffectiveConfig } = await import('@agentbox/config');
-    const cfg = await loadEffectiveConfig(process.cwd());
-    const url = (cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
-    const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '';
-    if (!url || !adminToken) return;
+    // Only when a control box is configured (remoteOnly). Pushing an agent
+    // credential is a write, so it needs the hub API key alone — no admin token.
+    const { resolveCustodyApiTarget } = await import('./control-plane.js');
+    const target = await resolveCustodyApiTarget(undefined, { quiet: true, remoteOnly: true });
+    if (!target) return;
     const { CustodyClient, planPush } = await import('../control-plane/custody-client.js');
-    const client = new CustodyClient({ url, adminToken });
+    const client = new CustodyClient(target);
     const path = `agents/${agent}/${resolveAgentSpec(agent).credential.boxRelPath}`;
     const item = { path, data: Buffer.from(content, 'utf8') };
     const manifest = await client.list('agents');
