@@ -13,7 +13,7 @@ import { detectEngine, listBoxes, type BoxRecord } from '@agentbox/sandbox-docke
 import { Command } from 'commander';
 import { execSync, spawnSync } from 'node:child_process';
 import { runCarryGate } from '../lib/carry-gate.js';
-import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
+import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { openCommandLog } from '../lib/log-file.js';
@@ -40,6 +40,7 @@ import { resolveCustodyTarget, syncAgentCredentialsIfChanged } from './control-p
 import { enqueueCreateViaHub, pollHubJob } from '../control-plane/hub-enqueue.js';
 import { hubLogSink, withHubJobLine } from './_cloud-agent-via-hub.js';
 import { resolveCreateRouting } from '../control-plane/route-create.js';
+import { remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { attachRelayOptions } from '../control-plane/box-plane.js';
 
 interface CreateOptions {
@@ -394,6 +395,31 @@ export const createCommand = new Command('create')
     );
     const remoteHost = opts.remoteHost ?? specRemoteHost;
 
+    // git.pushMode=direct (--dangerously-with-credentials) gating, in the same
+    // order every other entry point uses (agent launchers + connect): check the
+    // PROVIDER first — docker can't do direct, it bind-mounts the host .git — then
+    // refuse under a control box, where token leasing already gives the box
+    // laptop-off push without copying a credential into it. Both run BEFORE routing
+    // so a control-box create can't slip into the hub path first.
+    if (cfg.effective.git.pushMode === 'direct') {
+      if (providerName === 'docker') {
+        log.error(
+          'git.pushMode=direct / --dangerously-with-credentials is not applicable to docker boxes (they run on your host and bind-mount the host .git). Use a cloud provider (e.g. --provider hetzner|e2b|vercel|daytona).',
+        );
+        cmdLog.close();
+        process.exit(1);
+      }
+      const refusal = directGitModeRefusal({
+        pushMode: cfg.effective.git.pushMode,
+        hubInPlay: remoteHubConfigured(cfg.effective) || Boolean(opts.viaHub),
+      });
+      if (refusal) {
+        log.error(refusal);
+        cmdLog.close();
+        process.exit(1);
+      }
+    }
+
     // Route the create: when a control box is configured, cloud boxes default to
     // being built ON it (the resident hub worker clones the repo VPS-side and
     // provisions the box, so it keeps running with the laptop off). docker /
@@ -418,16 +444,6 @@ export const createCommand = new Command('create')
       );
     }
 
-    // `direct` push mode (box holds a copy of your git credentials) is only
-    // meaningful for cloud boxes: a docker box runs on your host machine and
-    // bind-mounts the host `.git`, so it is never independent of the host.
-    if (cfg.effective.git.pushMode === 'direct' && providerName === 'docker') {
-      log.error(
-        'git.pushMode=direct / --dangerously-with-credentials is not applicable to docker boxes (they run on your host and bind-mount the host .git). Use a cloud provider (e.g. --provider hetzner|e2b|vercel|daytona).',
-      );
-      cmdLog.close();
-      process.exit(1);
-    }
     const checkpointRef = resolveCheckpointRef(
       opts,
       resolveDefaultCheckpoint(cfg.effective, providerName),
