@@ -105,6 +105,59 @@ describe('HubApiClient', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('gets a box services snapshot', async () => {
+    const { fetchImpl, calls } = stub({
+      'GET /api/v1/boxes/b1/services': {
+        status: 200,
+        body: {
+          source: 'persisted',
+          services: [
+            {
+              name: 'web',
+              state: 'running',
+              pid: null,
+              restarts: 0,
+              lastExitCode: null,
+              blockedOn: [],
+              command: '',
+            },
+          ],
+          tasks: [],
+          ports: [{ port: 3000, service: 'web' }],
+        },
+      },
+    });
+    const svc = await new HubApiClient(target(fetchImpl)).getServices('b1');
+    expect(svc.source).toBe('persisted');
+    expect(svc.services[0]!.name).toBe('web');
+    expect(calls[0]!.method).toBe('GET');
+    expect(calls[0]!.url).toBe('https://hub.example/api/v1/boxes/b1/services');
+  });
+
+  it('restarts one service by name, or all with an empty body', async () => {
+    const { fetchImpl, calls } = stub({
+      'POST /api/v1/boxes/b1/services/restart': { status: 200, body: { ok: true } },
+    });
+    const client = new HubApiClient(target(fetchImpl));
+    await client.restartService('b1', 'web');
+    expect(calls[0]!.body).toEqual({ name: 'web' });
+    await client.restartService('b1');
+    expect(calls[1]!.body).toEqual({});
+    expect(calls[1]!.url).toBe('https://hub.example/api/v1/boxes/b1/services/restart');
+  });
+
+  it('renames a box (empty string clears the label)', async () => {
+    const { fetchImpl, calls } = stub({
+      'POST /api/v1/boxes/b1/rename': { status: 200, body: { ok: true } },
+    });
+    const client = new HubApiClient(target(fetchImpl));
+    await client.rename('b1', 'my box');
+    expect(calls[0]!.body).toEqual({ displayName: 'my box' });
+    expect(calls[0]!.url).toBe('https://hub.example/api/v1/boxes/b1/rename');
+    await client.rename('b1', '');
+    expect(calls[1]!.body).toEqual({ displayName: '' });
+  });
+
   it('reads the health probe (apiVersion + version)', async () => {
     const { fetchImpl, calls } = stub({
       'GET /api/v1/health': {

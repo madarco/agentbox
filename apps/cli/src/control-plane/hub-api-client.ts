@@ -125,6 +125,33 @@ export interface HubApiOpResult {
   error?: string;
 }
 
+/** One supervised service, as `GET /boxes/:id/services` returns it (mirrors the
+ * backend `ServiceView`). The persisted-snapshot source fills pid/restarts/
+ * lastExitCode/command with nulls/defaults. */
+export interface HubApiServiceView {
+  name: string;
+  state: string;
+  pid: number | null;
+  restarts: number;
+  lastExitCode: number | null;
+  blockedOn: string[];
+  command: string;
+}
+
+/**
+ * A box's agentbox.yaml task/service/port status (mirrors the backend
+ * `ServicesResult`). `source` says whether it came from a live in-box pull, the
+ * persisted snapshot (box paused/stopped), or is unavailable (box gone / never
+ * reported).
+ */
+export interface HubApiServices {
+  source: 'live' | 'persisted' | 'unavailable';
+  services: HubApiServiceView[];
+  tasks: { name: string; state: string }[];
+  ports: { port: number; service: string | null }[];
+  error?: string;
+}
+
 export type HubLifecycleAction = 'start' | 'pause' | 'resume' | 'stop' | 'destroy';
 export type HubGitOp = 'checkout' | 'branch' | 'pull' | 'push' | 'push-host';
 
@@ -391,6 +418,34 @@ export class HubApiClient {
   async answerApproval(id: string, answer: 'y' | 'n'): Promise<void> {
     await this.request<{ ok: true }>('POST', `/approvals/${encodeURIComponent(id)}/answer`, {
       answer,
+    });
+  }
+
+  /**
+   * The box's agentbox.yaml service/task/port status — a live in-box pull when the
+   * box is running, else the persisted snapshot (so a paused box still reports),
+   * matching what `agentbox status` shows.
+   */
+  getServices(id: string): Promise<HubApiServices> {
+    return this.request<HubApiServices>('GET', `/boxes/${encodeURIComponent(id)}/services`);
+  }
+
+  /** Restart one service by name, or every service when `name` is omitted. */
+  restartService(id: string, name?: string): Promise<HubApiOpResult> {
+    return this.request<HubApiOpResult>(
+      'POST',
+      `/boxes/${encodeURIComponent(id)}/services/restart`,
+      name ? { name } : {},
+    );
+  }
+
+  /**
+   * Set (or clear, with an empty string) a box's cosmetic display label. Pure
+   * state — the container / git branch / URL are untouched.
+   */
+  async rename(id: string, displayName: string): Promise<void> {
+    await this.request<{ ok: true }>('POST', `/boxes/${encodeURIComponent(id)}/rename`, {
+      displayName,
     });
   }
 }

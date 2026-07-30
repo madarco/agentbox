@@ -506,18 +506,69 @@ above (128); a docker box's artificially-absent workspace takes the docker `git 
 
 ---
 
-## Step 7 — Services, rename, branches, url
+## Step 7 — Services, rename, url/screen ✅ done
 
 - `services` / `services restart` → `GET|POST /api/v1/boxes/:id/services*`.
-- `status <box> --set-name` → `POST /api/v1/boxes/:id/rename`.
-- Branch pickers → `GET /api/v1/boxes/:id/branches` and `/projects/:id/branches`.
-- `url` reads the endpoint fields off the enriched Box payload (Step 3) instead of probing the
-  provider; `screen`'s VNC URL likewise.
+- `status <box> --set-name`/`--clear-name` → `POST /api/v1/boxes/:id/rename`.
+- `url`/`screen` read the endpoint URL off the enriched Box payload (Step 3) for **docker**
+  instead of probing the provider; cloud keeps the provider path (see the signed-URL note).
 - Shared core (`boxServicesStatusRaw`, `boxRestartService`) is untouched — caller moves only.
 
-**Files:** `commands/{services,status,url,screen}.ts`, `hub-api-client.ts`.
-**Verify:** `agentbox services <box>` matches `agentbox status <box>` for a box with a declared
-`expose:`, both paused and running.
+**Files:** `commands/{services,status,url,screen}.ts`, `control-plane/hub-api-client.ts`.
+
+**Landed.** `services list`/`services restart` and `status --set-name`/`--clear-name` now go
+through the hub's public `/api/v1` (`withHubClient` + `client.getServices`/`restartService`/
+`rename`), so they work identically against a local hub and a remote control box — the hub runs
+the box's `provider.exec` (services) and does the same `setBoxDisplayName` (rename) the CLI used to
+call inline. A **paused/stopped** box's `services` now falls back to the hub's persisted snapshot,
+so it finally agrees with `status` (the old inline path errored "could not reach the supervisor").
+`url`/`screen` resolve the box's URL off the enriched payload's `webUrl`/`vncUrl` (via `getBox`),
+starting the box first **only when it isn't running** (a one-line notice to **stderr** keeps
+`--print` pipeable) so a stale preview URL isn't served. Three new `HubApiClient` methods
+(`getServices`, `restartService`, `rename`) mirror the routes; unit-tested in
+`test/hub-api-client.test.ts`. **Verified end-to-end** on a docker box with a declared `expose:`
+service, in **both** modes (local hub, and `hub expose`d remote-shaped loopback + `AGENTBOX_HUB_API_KEY`):
+`services` agrees with `status` **running** (live) and **paused** (persisted snapshot, pushed via
+`POST /events`); `services restart <svc>`/all/`<unknown>`→exit 5; `url --print` returns the payload
+URL (curl'd **HTTP 200**) and `--loopback` the provider loopback URL; `screen --print` returns the
+payload noVNC URL + runs the in-box browser prep; `--set-name`/`--clear-name` rename and the new
+label resolves by name. Cloud `url`/`screen` validated via the (unchanged) provider path.
+
+### Notes for later steps
+
+- **Branches: nothing was added, by design.** `GET /api/v1/boxes/:id/branches` and
+  `/projects/:id/branches` are **web-UI-only** consumers (`apps/hub/.../boxes/components/git-actions.tsx`).
+  The CLI has **no branch picker** — `--from-branch` is a flag, not a picker — so there is no CLI
+  surface to convert. Adding `HubApiClient` methods with no caller would be dead code; a later step
+  (or the tray) that needs them can add them in one line then. **Do not re-add a "convert branches"
+  bullet.**
+- **For Step 8 (create): `--from-branch` host-validation is wrong under a remote hub.**
+  `apps/cli/src/lib/from-branch.ts` (`resolveFromBranch` / `resolveBranchSelection`, called from
+  `create`/`claude`/`codex`/`opencode`) validates the ref against the **host checkout** with
+  `git fetch`/`rev-parse`. Under a remote hub the PC may have **no copy of the repo**, so that
+  validation is both **redundant and incorrect** — `CreateBoxInput.fromBranch` is already documented
+  as validated by the backend before enqueuing (`apps/hub/lib/boxes/backend-types.ts`). Fold the
+  fix into Step 8 (it owns `create`); Step 7 did **not** touch it.
+- **`url`/`screen` read the payload for DOCKER only; cloud stays on the provider path — deliberately.**
+  A cloud box's payload `webUrl`/`vncUrl` is the **non-signed** `backend.previewUrl` (a header-token
+  URL for Daytona that a browser can't open from a click; cloud has no `vnc` endpoint at all), while
+  `provider.resolveUrl` mints a browser-safe **signed** URL and is the live refresh. That refresh
+  genuinely needs the provider (or a server-side mint), so — exactly as the Step-3 caveat predicted —
+  cloud keeps `resolveViaProvider`. Both commands gate the payload path on `provider === 'docker'`.
+  A future step that wants cloud `url` off the payload must add a **server-side** signed-URL field to
+  the Box payload (a hub-backend change out of Step 7's file set), not a client-side provider probe.
+- **`url`/`screen` auto-start is now conditional + stderr.** They start a non-running box (the
+  historical behavior — the command is documented as "auto-unpause/start"), but only when the payload
+  `state` is not `running`, and the "started it" notice goes to **stderr** so `--print` stdout stays
+  clean. Documented in `apps/web/content/docs/cli.mdx`. If a later step prefers `--print` to *refuse*
+  on a stopped box rather than auto-start, that is a defensible change — this step kept auto-start.
+- **`services restart` output is the route's aggregate.** Restart-all is handled server-side
+  (empty `name`); the old per-service `  svc  ok` breakdown is gone (the route returns one
+  `BoxOpResult`). Restoring per-service results would need a route/backend widening (out of this
+  step's file set). A failed restart surfaces as a `conflict` (exit 5) via the `withHubClient` mapper.
+- **`services --json` shape changed** from `StatusReply` (`{services,tasks,ports}`) to the route's
+  `ServicesResult` (`{source,services,tasks,ports}`) — a superset with a `source` discriminant; the
+  per-service fields are the compact `ServiceView` (persisted rows have `pid:null`, `restarts:0`).
 
 ---
 
