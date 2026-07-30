@@ -153,6 +153,27 @@ export function restartServiceArgv(name: string): string[] {
   return ['agentbox-ctl', 'restart', name];
 }
 
+/**
+ * `agentbox-ctl logs <service> --tail <n> [--follow]` — the in-box service-log
+ * tail. Single-sourced here so the non-follow exec (hub `boxLogSnapshot`) and the
+ * follow-mode attach argv agree on the exact command the CLI used to shell inline.
+ */
+export function boxLogsArgv(service: string, opts: { tail: number; follow?: boolean }): string[] {
+  const argv = ['agentbox-ctl', 'logs', service, '--tail', String(opts.tail)];
+  if (opts.follow) argv.push('--follow');
+  return argv;
+}
+
+/** Run a non-follow service-log tail and return the raw exec result. */
+export function boxLogsRaw(
+  provider: Provider,
+  box: BoxRecord,
+  service: string,
+  tail: number,
+): Promise<ExecResult> {
+  return run(provider, box, boxLogsArgv(service, { tail, follow: false }));
+}
+
 /** Restart a single supervised service by name. */
 export function boxRestartService(provider: Provider, box: BoxRecord, name: string): Promise<ExecResult> {
   return run(provider, box, restartServiceArgv(name));

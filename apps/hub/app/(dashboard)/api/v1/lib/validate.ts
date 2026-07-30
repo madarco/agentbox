@@ -355,6 +355,57 @@ export function parseServiceRestart(body: unknown): Parsed<{ name?: string }> {
   return { ok: true, value: { name: name.value } };
 }
 
+// ── checkpoints ──
+// Capture a box state as a project checkpoint. An empty/absent body is valid
+// (auto-named, layered, not-default). `merged` is docker-only (cloud snapshots
+// are always flattened); the backend ignores it for cloud.
+export function parseCheckpointCreate(body: unknown): Parsed<{
+  name?: string;
+  merged?: boolean;
+  setDefault?: boolean;
+  replace?: boolean;
+}> {
+  if (body === undefined || body === null) return { ok: true, value: {} };
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const name = optionalString(body.name, 'name');
+  if (!name.ok) return name;
+  const merged = optionalBool(body.merged, 'merged');
+  if (!merged.ok) return merged;
+  const setDefault = optionalBool(body.setDefault, 'setDefault');
+  if (!setDefault.ok) return setDefault;
+  const replace = optionalBool(body.replace, 'replace');
+  if (!replace.ok) return replace;
+  return {
+    ok: true,
+    value: {
+      name: name.value,
+      merged: merged.value,
+      setDefault: setDefault.value,
+      replace: replace.value,
+    },
+  };
+}
+
+// ── prune ──
+// Fleet cleanup. Without `provider` (or provider === 'docker'): remove orphan
+// docker records/resources (+ project configs with `all`). With a cloud provider
+// name: enumerate untracked sandboxes, deleting them when !dryRun.
+export function parsePrune(body: unknown): Parsed<{
+  all?: boolean;
+  dryRun?: boolean;
+  provider?: string;
+}> {
+  if (body === undefined || body === null) return { ok: true, value: {} };
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const all = optionalBool(body.all, 'all');
+  if (!all.ok) return all;
+  const dryRun = optionalBool(body.dryRun, 'dryRun');
+  if (!dryRun.ok) return dryRun;
+  const provider = optionalString(body.provider, 'provider');
+  if (!provider.ok) return provider;
+  return { ok: true, value: { all: all.value, dryRun: dryRun.value, provider: provider.value } };
+}
+
 // Read + JSON-parse a request body, tolerating an empty body as {}.
 export async function readJson(req: Request): Promise<Parsed<unknown>> {
   const text = await req.text();

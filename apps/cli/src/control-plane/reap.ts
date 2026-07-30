@@ -66,51 +66,7 @@ export async function reapOnControlBox(box: BoxRecord): Promise<ReapOutcome> {
   }
 }
 
-
-/**
- * Reap the registrations of orphan cloud sandboxes that `prune --provider <p>`
- * just deleted. Those were never in local state, so there is no `BoxRecord` and
- * no box id — only the provider's sandbox id. The registry carries `sandboxId`,
- * so map through it and reap the matching rows.
- *
- * Returns how many were reaped; 0 (never a throw) when there is no control box,
- * it can't be reached, or none of the sandboxes were registered on it.
- */
-export async function reapSandboxesOnControlBox(sandboxIds: string[]): Promise<number> {
-  if (sandboxIds.length === 0) return 0;
-  try {
-    const { resolveCustodyTarget } = await import('../commands/control-plane.js');
-    const target = await resolveCustodyTarget(undefined, { quiet: true });
-    if (!target) return 0;
-
-
-    const [{ ControlPlaneAdminClient }, { deadlineFetch, hostReachable }] = await Promise.all([
-      import('./admin-client.js'),
-      import('@agentbox/sandbox-cloud'),
-    ]);
-    if (!(await hostReachable(target.url, REACHABLE_PROBE_MS))) return 0;
-
-    // A prune can span many sandboxes, so budget per box rather than for the
-    // whole sweep — one slow reap shouldn't cancel the rest.
-    const client = new ControlPlaneAdminClient({
-      ...target,
-      fetchImpl: deadlineFetch(AbortSignal.timeout(REAP_TIMEOUT_MS)),
-    });
-    const wanted = new Set(sandboxIds);
-    const registrations = await client.listBoxes();
-    const doomed = registrations.filter((r) => r.sandboxId && wanted.has(r.sandboxId));
-
-    let reaped = 0;
-    for (const reg of doomed) {
-      const perBox = new ControlPlaneAdminClient({
-        ...target,
-        fetchImpl: deadlineFetch(AbortSignal.timeout(REAP_TIMEOUT_MS)),
-      });
-      const res = await perBox.reapBox(reg.boxId).catch(() => null);
-      if (res && (res.removed || res.custodyRemoved > 0)) reaped += 1;
-    }
-    return reaped;
-  } catch {
-    return 0;
-  }
-}
+// `reapSandboxesOnControlBox` (orphan-cloud-sandbox reaping for `prune --provider
+// <cloud>`) moved server-side into the hub's `POST /api/v1/prune` route (Step 9):
+// the hub deletes the orphan then reaps its own Store registration directly, so
+// the CLI no longer round-trips the /admin reap wire.

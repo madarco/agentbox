@@ -6,6 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import {
+  CLOUD_PROVIDER_NAMES,
+  defaultCheckpointConfigKey,
   findProjectRoot,
   hashProjectPath,
   isHubRoutableProvider,
@@ -14,6 +16,7 @@ import {
   loadEffectiveConfig,
   PROVIDER_NAMES,
   providerMeta,
+  pruneOrphanProjectConfigs,
   registerProject,
   resolveDefaultCheckpoint,
   setConfigValue,
@@ -21,7 +24,13 @@ import {
   unsetConfigValue,
   type ProviderKind,
 } from '@agentbox/config';
-import { normalizeLastAgent, type BoxRecord, type ExecResult, type Provider } from '@agentbox/core';
+import {
+  normalizeLastAgent,
+  type BoxRecord,
+  type CloudSandboxSummary,
+  type ExecResult,
+  type Provider,
+} from '@agentbox/core';
 import type { BoxStatus as CtlBoxStatus, StatusReply } from '@agentbox/ctl';
 import {
   deleteJob,
@@ -55,6 +64,7 @@ import {
   boxGitPull,
   boxGitPush,
   boxGitPushHost,
+  boxLogsArgv,
   boxRestartService,
   boxRestartServices,
   boxServicesStatusRaw,
@@ -74,22 +84,43 @@ import {
 import {
   baseFreshnessFromFingerprints,
   currentCloudBaseFingerprint,
+  listAllCloudCheckpoints,
+  listCloudBackendDirs,
+  listCloudCheckpoints,
   openWebAppOnVncScreen,
+  resolveCloudCheckpoint,
   type BaseStatus,
+  type CloudCheckpointInfo,
 } from '@agentbox/sandbox-cloud';
 import {
+  clearRelayNotice,
+  createCheckpoint,
   ensureBoxBrowserShowingApp,
   generateRelayToken,
+  listAllCheckpoints,
   listBoxes,
+  listCheckpoints,
   mintHostInitiatedToken,
+  pruneBoxes,
   registerBoxWithRelay,
+  removeCheckpoint as removeDockerCheckpoint,
+  setRelayNotice,
+  type CheckpointInfo,
   type ListedBox,
 } from '@agentbox/sandbox-docker';
 import type {
   ActionResult,
+  AgentStateResult,
+  BoxLogAttachSpec,
   BoxOpResult,
   BranchList,
   BrowseDirResult,
+  CheckpointCreateResult,
+  CheckpointItemView,
+  CheckpointListing,
+  CheckpointProjectView,
+  CheckpointRemoveResult,
+  CloudOrphanView,
   CreateBoxInput,
   CreateBoxResult,
   DirEntry,
@@ -98,6 +129,7 @@ import type {
   OpenInApp,
   OpenTargets,
   OpenTargetsReport,
+  PruneView,
   RemoteDockerHostView,
   ServicesResult,
 } from './boxes/backend-types';
@@ -1377,6 +1409,274 @@ function mapPersistedServices(s: CtlBoxStatus): ServicesResult {
   };
 }
 
+// ── fleet ops: checkpoint / prune / logs (Step 9) ──
+// These moved server-side from the CLI so they run on whichever hub owns the box
+// (its checkpoint store + provider credentials + running box live there).
+
+/** The in-box ctl daemon log (mirrors the CLI's logs.ts DAEMON_LOG_PATH). */
+const DAEMON_LOG_PATH = '/var/log/agentbox/ctl-daemon.log';
+
+/** Footer warning shown in attached sessions while a checkpoint runs. */
+const CHECKPOINT_NOTICE = 'Checkpoint in progress — the box will be unresponsive for a moment';
+/** Longer than the relay's checkpoint RPC timeout so a stale notice self-clears. */
+const CHECKPOINT_NOTICE_TTL_MS = 660_000;
+
+/**
+ * Ensure a box is running before a checkpoint capture (docker commit / cloud
+ * snapshot both need the box up). Uses the provider interface uniformly so docker
+ * and cloud share one path — the same probe/resume/start the CLI did inline.
+ */
+async function ensureBoxRunning(provider: Provider, box: BoxRecord): Promise<void> {
+  const state = await provider.probeState(box);
+  if (state === 'paused') await provider.resume(box);
+  else if (state === 'stopped') await provider.start(box);
+  else if (state === 'missing')
+    throw new Error(`box ${box.name} sandbox is missing; was it destroyed?`);
+}
+
+/** Built-in cloud backends unioned with any on-disk checkpoint-store dir. */
+async function allCloudBackends(): Promise<string[]> {
+  return [...new Set<string>([...CLOUD_PROVIDER_NAMES, ...(await listCloudBackendDirs())])];
+}
+
+/** A built-in cloud provider by backend name (plugin backends aren't bundled here). */
+async function cloudProviderForBackend(backend: string): Promise<Provider | null> {
+  if (!isProviderKind(backend)) return null;
+  return (await IMPORTERS[backend]()).providerModule.provider;
+}
+
+function dockerItemView(c: CheckpointInfo, def: string): CheckpointItemView {
+  return {
+    name: c.name,
+    provider: 'docker',
+    kind: c.manifest.type,
+    sourceBoxName: c.manifest.sourceBoxName,
+    createdAt: c.manifest.createdAt,
+    isDefault: c.name === def,
+  };
+}
+
+function cloudItemView(c: CloudCheckpointInfo, backend: string, def: string): CheckpointItemView {
+  return {
+    name: c.name,
+    provider: backend,
+    kind: 'snapshot',
+    sourceBoxName: c.manifest.sourceBoxName,
+    createdAt: c.manifest.createdAt,
+    isDefault: c.name === def,
+  };
+}
+
+/** One project's checkpoint rows (docker + every cloud backend), defaults marked. */
+async function listSingleProjectCheckpointItems(projectRoot: string): Promise<CheckpointItemView[]> {
+  const cfg = await loadEffectiveConfig(projectRoot).catch(() => null);
+  const items: CheckpointItemView[] = [];
+  const defDocker = cfg ? resolveDefaultCheckpoint(cfg.effective, 'docker') : '';
+  for (const c of await listCheckpoints(projectRoot)) items.push(dockerItemView(c, defDocker));
+  for (const backend of await allCloudBackends()) {
+    const def = cfg ? resolveDefaultCheckpoint(cfg.effective, backend as ProviderKind) : '';
+    for (const c of await listCloudCheckpoints(projectRoot, backend)) {
+      items.push(cloudItemView(c, backend, def));
+    }
+  }
+  return items;
+}
+
+/**
+ * Every project's checkpoints (docker + cloud), grouped by store segment. The
+ * checkpoint dirs are the source of truth (a checkpoint can outlive its project's
+ * config); `listProjectsConfigured` only supplies the human root for labeling +
+ * per-project default resolution. Mirrors the CLI's old `listAllProjects`.
+ */
+async function buildGlobalCheckpointListing(): Promise<CheckpointProjectView[]> {
+  const projects = await listProjectsConfigured();
+  const rootByHash = new Map(projects.map((p) => [p.hash, p.originalPath]));
+
+  const dockerGroups = await listAllCheckpoints();
+  const cloudGroups = await Promise.all(
+    (await allCloudBackends()).map(async (backend) => ({
+      backend,
+      groups: await listAllCloudCheckpoints(backend),
+    })),
+  );
+
+  interface Merged {
+    projectRoot?: string;
+    docker: CheckpointInfo[];
+    cloud: { backend: string; items: CloudCheckpointInfo[] }[];
+  }
+  const bySegment = new Map<string, Merged>();
+  const ensure = (segment: string): Merged => {
+    let m = bySegment.get(segment);
+    if (!m) {
+      m = { projectRoot: rootByHash.get(segment.slice(0, 16)), docker: [], cloud: [] };
+      bySegment.set(segment, m);
+    }
+    return m;
+  };
+  for (const g of dockerGroups) ensure(g.segment).docker = g.items;
+  for (const { backend, groups } of cloudGroups) {
+    for (const g of groups) ensure(g.segment).cloud.push({ backend, items: g.items });
+  }
+
+  const out: CheckpointProjectView[] = [];
+  for (const [segment, m] of bySegment) {
+    let defDocker = '';
+    const defCloud = new Map<string, string>();
+    if (m.projectRoot) {
+      const cfg = await loadEffectiveConfig(m.projectRoot).catch(() => null);
+      if (cfg) {
+        defDocker = resolveDefaultCheckpoint(cfg.effective, 'docker');
+        for (const { backend } of m.cloud) {
+          defCloud.set(backend, resolveDefaultCheckpoint(cfg.effective, backend as ProviderKind));
+        }
+      }
+    }
+    const items: CheckpointItemView[] = [];
+    for (const c of m.docker) items.push(dockerItemView(c, defDocker));
+    for (const { backend, items: cItems } of m.cloud) {
+      for (const c of cItems) items.push(cloudItemView(c, backend, defCloud.get(backend) ?? ''));
+    }
+    out.push({
+      segment,
+      projectRoot: m.projectRoot,
+      label: m.projectRoot ? path.basename(m.projectRoot) : segment,
+      items,
+    });
+  }
+  out.sort((a, b) => a.label.localeCompare(b.label) || a.segment.localeCompare(b.segment));
+  return out;
+}
+
+/**
+ * Clear a now-deleted checkpoint's dangling default-checkpoint config pointers.
+ * Sweeps the global + per-provider keys; clears whichever the PROJECT layer set to
+ * `ref`, and warns for one set in a layer we can't auto-edit (global / yaml). The
+ * exact sweep the CLI's `rmSub` did — moved server-side with the delete.
+ */
+async function sweepDanglingDefaults(
+  projectRoot: string,
+  ref: string,
+): Promise<{ clearedKeys: string[]; warnedKeys: string[] }> {
+  const clearedKeys: string[] = [];
+  const warnedKeys: string[] = [];
+  const cfg = await loadEffectiveConfig(projectRoot).catch(() => null);
+  if (!cfg) return { clearedKeys, warnedKeys };
+  const projectBox = cfg.layers.project.values.box;
+  const eff = cfg.effective.box;
+  const defKeys = [
+    ['box.defaultCheckpoint', projectBox?.defaultCheckpoint, eff.defaultCheckpoint],
+    ['box.defaultCheckpointDocker', projectBox?.defaultCheckpointDocker, eff.defaultCheckpointDocker],
+    ['box.defaultCheckpointDaytona', projectBox?.defaultCheckpointDaytona, eff.defaultCheckpointDaytona],
+    ['box.defaultCheckpointHetzner', projectBox?.defaultCheckpointHetzner, eff.defaultCheckpointHetzner],
+    ['box.defaultCheckpointVercel', projectBox?.defaultCheckpointVercel, eff.defaultCheckpointVercel],
+    ['box.defaultCheckpointE2b', projectBox?.defaultCheckpointE2b, eff.defaultCheckpointE2b],
+  ] as const;
+  for (const [key, projectValue, effectiveValue] of defKeys) {
+    if (projectValue === ref) {
+      await unsetConfigValue('project', key, projectRoot).catch(() => {});
+      clearedKeys.push(key);
+    } else if (effectiveValue === ref) {
+      warnedKeys.push(key);
+    }
+  }
+  return { clearedKeys, warnedKeys };
+}
+
+/**
+ * Delete a checkpoint from every store that has it (or just `provider`'s), then
+ * clear any dangling default-checkpoint pointer. Docker is always a candidate
+ * (removeDockerCheckpoint no-ops when absent); cloud backends are pre-resolved so
+ * we only act on the ones that actually have `ref`. No confirm here — the CLI owns
+ * the TTY confirm before calling.
+ */
+async function removeCheckpointEverywhere(
+  projectRoot: string,
+  ref: string,
+  provider?: string,
+): Promise<CheckpointRemoveResult> {
+  const wantDocker = !provider || provider === 'docker';
+  const cloudHits: string[] = [];
+  for (const backend of await allCloudBackends()) {
+    if (provider && provider !== backend) continue;
+    if (await resolveCloudCheckpoint(projectRoot, backend, ref)) cloudHits.push(backend);
+  }
+
+  const removed: string[] = [];
+  const failedBackends: string[] = [];
+  if (wantDocker && (await removeDockerCheckpoint(projectRoot, ref))) removed.push('docker');
+  for (const backend of cloudHits) {
+    try {
+      const cp = await cloudProviderForBackend(backend);
+      await cp?.checkpoint?.remove(projectRoot, ref);
+      removed.push(backend);
+    } catch {
+      failedBackends.push(backend);
+    }
+  }
+
+  if (removed.length === 0) {
+    if (failedBackends.length > 0) {
+      return { ok: false, error: `failed to remove checkpoint ${ref} from: ${failedBackends.join(', ')}` };
+    }
+    return { ok: false, error: `checkpoint not found: ${ref}` };
+  }
+  const { clearedKeys, warnedKeys } = await sweepDanglingDefaults(projectRoot, ref);
+  return { ok: true, removed, clearedKeys, warnedKeys };
+}
+
+/** Live project roots whose per-project config must survive `prune --all`. */
+async function liveProjectRootsForPrune(): Promise<string[]> {
+  try {
+    return (await listBoxes())
+      .map((b) => b.projectRoot)
+      .filter((p): p is string => typeof p === 'string');
+  } catch {
+    return [];
+  }
+}
+
+/** General (docker + orphan-config) prune. Dry-run changes nothing. */
+async function pruneGeneral(all: boolean, dryRun: boolean): Promise<PruneView> {
+  const protectedPaths = all ? await liveProjectRootsForPrune() : [];
+  const result = await pruneBoxes({ all, dryRun });
+  const projectConfigs = all
+    ? (await pruneOrphanProjectConfigs({ dryRun, protectedPaths })).removed.map((r) => r.originalPath)
+    : [];
+  return { kind: 'general', result, projectConfigs };
+}
+
+/**
+ * Enumerate a cloud provider's untracked sandboxes (created by us — a friendly
+ * name — but not in this fleet's state). Returns the backend so the caller can
+ * delete + reap. The friendly-name filter mirrors the CLI's old `pruneCloud`.
+ */
+async function enumerateCloudOrphans(
+  provider: string,
+): Promise<
+  | { ok: true; backend: import('@agentbox/core').CloudBackend; orphans: CloudSandboxSummary[] }
+  | { ok: false; error: string }
+> {
+  if (!isProviderKind(provider)) return { ok: false, error: `unknown provider ${provider}` };
+  const mod = (await IMPORTERS[provider]()).providerModule;
+  if (mod.ensureCredentials) await mod.ensureCredentials();
+  const backend = mod.backend;
+  if (!backend?.list) {
+    return { ok: false, error: `${provider} backend can't enumerate sandboxes for prune` };
+  }
+  const [remote, state] = await Promise.all([backend.list(), readState()]);
+  const knownIds = new Set<string>();
+  for (const b of state.boxes) {
+    if ((b.provider ?? 'docker') === provider && b.cloud?.sandboxId) knownIds.add(b.cloud.sandboxId);
+  }
+  const orphans = remote.filter((sb) => !knownIds.has(sb.sandboxId) && (sb.name ?? '').length > 0);
+  return { ok: true, backend, orphans };
+}
+
+function orphanView(sb: CloudSandboxSummary): CloudOrphanView {
+  return { sandboxId: sb.sandboxId, name: sb.name, state: sb.state, createdAt: sb.createdAt };
+}
+
 /** Parse `git status --porcelain=v2 --branch` into a live git summary. */
 function parseGitStatus(out: string): GitInfo {
   let branch: string | undefined;
@@ -2086,6 +2386,226 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         return failed.length > 0
           ? { ok: false, error: `failed to restart: ${failed.join(', ')}` }
           : { ok: true };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+
+    // ── checkpoints (durable project assets) ──
+    async createCheckpoint(id, opts): Promise<CheckpointCreateResult> {
+      try {
+        const rp = await resolveBoxProvider(id, hydrate);
+        if (!rp) return { ok: false, error: `box ${id} not found` };
+        const { box, provider } = rp;
+        const providerName = box.provider ?? 'docker';
+        await ensureBoxRunning(provider, box);
+        const projectRoot = box.projectRoot ?? (await findProjectRoot(box.workspacePath)).root;
+
+        // Warn attached sessions the box is about to freeze (docker commit / a
+        // pausing cloud snapshot). Best-effort — a null id means the relay is
+        // unreachable and there is nothing to clear.
+        const noticeId = await setRelayNotice(
+          box.id,
+          'checkpoint',
+          CHECKPOINT_NOTICE,
+          CHECKPOINT_NOTICE_TTL_MS,
+        ).catch(() => null);
+        try {
+          if (providerName === 'docker') {
+            const cfg = await loadEffectiveConfig(projectRoot);
+            const info = await createCheckpoint({
+              box,
+              projectRoot,
+              name: opts.name,
+              merged: opts.merged === true,
+              setDefault: opts.setDefault === true,
+              replace: opts.replace === true,
+              maxLayers: cfg.effective.checkpoint.maxLayers,
+              onLog: (line) => console.log(`[hub] ${line}`),
+            });
+            return {
+              ok: true,
+              name: info.name,
+              kind: info.manifest.type,
+              ref: info.name,
+              provider: 'docker',
+              dir: info.dir,
+              setDefaultKey: opts.setDefault ? 'box.defaultCheckpointDocker' : undefined,
+            };
+          }
+          if (!provider.checkpoint) {
+            return { ok: false, error: `provider '${providerName}' doesn't support checkpoints` };
+          }
+          const name = opts.name ?? `${box.name}-${String(Date.now()).slice(-6)}`;
+          // When this becomes the project default, save the box's agent login(s)
+          // back to the host BEFORE the (possibly pausing) snapshot, so the next
+          // box seeded from it inherits them. Best-effort — never blocks capture.
+          if (opts.setDefault && provider.extractAgentCredentials) {
+            await provider.extractAgentCredentials(box).catch(() => []);
+          }
+          const result = await provider.checkpoint.create(box, name);
+          let setDefaultKey: string | undefined;
+          if (opts.setDefault) {
+            setDefaultKey = defaultCheckpointConfigKey(providerName);
+            await setConfigValue('project', setDefaultKey, result.ref, projectRoot);
+          }
+          return {
+            ok: true,
+            name: result.ref,
+            kind: 'snapshot',
+            ref: result.ref,
+            provider: providerName,
+            setDefaultKey,
+          };
+        } finally {
+          if (noticeId) await clearRelayNotice(box.id, noticeId).catch(() => {});
+        }
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+    async listCheckpoints(opts): Promise<CheckpointListing> {
+      if (opts.global) return { projects: await buildGlobalCheckpointListing() };
+      // The route requires `?project=` for the scoped listing (the hub's cwd is
+      // not the user's project), so `project` is present here.
+      const projectRoot = opts.project ?? (await findProjectRoot(process.cwd())).root;
+      const items = await listSingleProjectCheckpointItems(projectRoot);
+      return {
+        projects: [
+          {
+            segment: hashProjectPath(projectRoot),
+            projectRoot,
+            label: path.basename(projectRoot),
+            items,
+          },
+        ],
+      };
+    },
+    async removeCheckpoint(opts): Promise<CheckpointRemoveResult> {
+      try {
+        return await removeCheckpointEverywhere(opts.project, opts.ref, opts.provider);
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+
+    // ── prune (fleet cleanup) ──
+    async pruneFleet(opts): Promise<PruneView> {
+      try {
+        const dryRun = opts.dryRun === true;
+        const provider = opts.provider;
+        if (!provider || provider === 'docker') {
+          return await pruneGeneral(opts.all === true, dryRun);
+        }
+        const enumRes = await enumerateCloudOrphans(provider);
+        if (!enumRes.ok) return { kind: 'error', error: enumRes.error };
+        const orphanViews = enumRes.orphans.map(orphanView);
+        if (dryRun || enumRes.orphans.length === 0) {
+          return {
+            kind: 'cloud',
+            provider,
+            dryRun: true,
+            orphans: orphanViews,
+            deleted: 0,
+            failed: 0,
+            reaped: 0,
+          };
+        }
+        let deleted = 0;
+        let failed = 0;
+        const deletedIds: string[] = [];
+        for (const sb of enumRes.orphans) {
+          try {
+            await enumRes.backend.destroy({ sandboxId: sb.sandboxId });
+            deleted++;
+            deletedIds.push(sb.sandboxId);
+          } catch {
+            failed++;
+          }
+        }
+        // Reap the control-box Store registrations of the just-deleted sandboxes
+        // (server-side, replacing the CLI's old reapSandboxesOnControlBox): map
+        // sandbox id -> box id through the store, then reap that box's state.
+        let reaped = 0;
+        if (deletedIds.length > 0) {
+          const wanted = new Set(deletedIds);
+          const regs = await handle.store.listBoxes().catch(() => []);
+          for (const reg of regs) {
+            if (reg.sandboxId && wanted.has(reg.sandboxId)) {
+              if (await reapStoreState(handle, reg.boxId)) reaped++;
+            }
+          }
+        }
+        return { kind: 'cloud', provider, dryRun: false, orphans: orphanViews, deleted, failed, reaped };
+      } catch (err) {
+        return { kind: 'error', error: errMsg(err) };
+      }
+    },
+
+    // ── agent state ──
+    async getAgentState(id): Promise<AgentStateResult | null> {
+      const box = await findOrHydrateBox(id, hydrate).catch(() => null);
+      if (!box) return null;
+      const snap = handle.statusStore.get(id);
+      const claude =
+        snap && isValidBoxStatus(snap) ? ((snap as unknown as CtlBoxStatus).claude ?? null) : null;
+      return { claude };
+    },
+
+    // ── box service logs ──
+    async boxLogSnapshot(id, opts): Promise<BoxOpResult> {
+      try {
+        const rp = await resolveBoxProvider(id, hydrate);
+        if (!rp) return { ok: false, error: `box ${id} not found` };
+        const argv = opts.daemon
+          ? ['tail', '-n', String(opts.tail), DAEMON_LOG_PATH]
+          : boxLogsArgv(opts.service ?? '', { tail: opts.tail, follow: false });
+        const r = await rp.provider.exec(rp.box, argv, { user: 'vscode' });
+        return r.exitCode === 0
+          ? { ok: true, stdout: r.stdout, stderr: r.stderr }
+          : {
+              ok: false,
+              error: (r.stderr || r.stdout || `logs exited ${String(r.exitCode)}`).trim(),
+              exitCode: r.exitCode,
+            };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+    async boxLogAttach(id, opts): Promise<BoxLogAttachSpec> {
+      try {
+        const rp = await resolveBoxProvider(id, hydrate);
+        if (!rp) return { ok: false, error: `box ${id} not found` };
+        const { box, provider } = rp;
+        // Split on the same signal logs.ts used inline: docker follows via a raw
+        // `docker exec`; every other provider builds an attach argv (SSH/SDK).
+        if ((box.provider ?? 'docker') === 'docker') {
+          if (!box.container) return { ok: false, error: `box ${box.name} has no container` };
+          const inner = opts.daemon
+            ? ['tail', '-n', String(opts.tail), '-F', DAEMON_LOG_PATH]
+            : boxLogsArgv(opts.service ?? '', { tail: opts.tail, follow: true });
+          return { ok: true, argv: ['docker', 'exec', '--user', 'vscode', box.container, ...inner] };
+        }
+        if (!provider.buildAttach) {
+          return { ok: false, error: `provider '${provider.name}' does not support log streaming` };
+        }
+        const spec = opts.daemon
+          ? await provider.buildAttach(box, 'shell', {
+              sessionName: 'daemon-logs',
+              user: 'vscode',
+              command: `tail -n ${opts.tail} -F ${DAEMON_LOG_PATH}`,
+              noTmux: true,
+            })
+          : await provider.buildAttach(box, 'logs', {
+              service: opts.service ?? '',
+              tail: opts.tail,
+              follow: true,
+              user: 'vscode',
+            });
+        if (spec.argv.length === 0) {
+          return { ok: false, error: 'provider.buildAttach returned an empty argv' };
+        }
+        return { ok: true, argv: spec.argv, env: spec.env, cleanup: spec.cleanup };
       } catch (err) {
         return { ok: false, error: errMsg(err) };
       }

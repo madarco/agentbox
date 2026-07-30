@@ -1,6 +1,6 @@
 import { log } from '@clack/prompts';
 import type { BoxRecord } from '@agentbox/core';
-import { BOX_STATUS_EVENT, type BoxStatus, type BoxStatusClaude } from '@agentbox/ctl';
+import { type BoxStatusClaude } from '@agentbox/ctl';
 import { readBoxStatus } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
@@ -23,7 +23,7 @@ import {
 import { resolveDriveSession } from '../lib/drive/session.js';
 import { sendKey, sendLiteral } from '../lib/drive/tmux.js';
 import { providerForBox } from '../provider/registry.js';
-import { waitForEvent, WaitTimeoutError } from '../lib/wait/events.js';
+import { withOwningHub } from '../control-plane/with-hub.js';
 import { resolveBoxPromptSource, type BoxPromptSource } from '../control-plane/box-plane.js';
 import { resolveHubApiClient } from './control-plane.js';
 import { HubApiError } from '../control-plane/hub-api-client.js';
@@ -48,8 +48,12 @@ const agentStateCommand = new Command('state')
   .action(async (boxRef: string | undefined, opts: BoxRefOpts) => {
     try {
       const box = await resolveBoxOrExit(boxRef);
-      const status = await readBoxStatus(box);
-      const claude = status?.claude;
+      // The status snapshot lives on whichever hub owns the box (its relay writes
+      // status.json), so read it through the owning hub — a box on a control box
+      // has no snapshot on this laptop's disk. not-found → no snapshot (same as a
+      // null claude below).
+      const claude = await fetchAgentClaude(box);
+      if (claude === HUB_ERROR) return; // withHubClient reported + set the exit code
       if (opts.json === true) {
         process.stdout.write(JSON.stringify(claude ?? null) + '\n');
         return;
@@ -88,40 +92,42 @@ const agentWaitForCommand = new Command('wait-for')
           ? parsePositiveInt(opts.timeout, '--timeout')
           : DEFAULT_WAIT_TIMEOUT_MS;
 
-      // Fast path: maybe the box is already in the target state.
-      const current = await readBoxStatus(box);
-      if (current?.claude && matchesAgentWaitState(current.claude, target)) {
-        emitMatch(current.claude, opts.json === true);
+      // Poll the box's agent snapshot through the owning hub until it reaches the
+      // target state (or the timeout elapses). Polling — not an event subscription
+      // — because `/api/v1` carries no agent-event stream; the command's own docs
+      // already sanction it, and `agent approvals --wait` polls the same way. One
+      // withOwningHub call wraps the whole loop so the owner-first + not_found
+      // retry happens once, not per poll.
+      let matched: BoxStatusClaude | undefined;
+      let elapsedMs = 0;
+      const r = await withOwningHub(box, async (client) => {
+        const start = Date.now();
+        for (;;) {
+          const claude = (await client.getAgentState(box.id)).claude as BoxStatusClaude | null;
+          if (claude && matchesAgentWaitState(claude, target)) {
+            matched = claude;
+            return;
+          }
+          elapsedMs = Date.now() - start;
+          if (elapsedMs >= timeoutMs) return;
+          await sleep(Math.min(500, timeoutMs - elapsedMs));
+        }
+      });
+      if (r === undefined) return; // hub error; withHubClient reported + set exit code
+      if (r === 'not-found') {
+        log.error(`box ${box.name} was not found on any hub AgentBox knows.`);
+        process.exit(2);
+      }
+      if (matched) {
+        emitMatch(matched, opts.json === true);
         return;
       }
-
-      // Subscribe to relay events. Filter to box-status events for this box,
-      // re-check on each push.
-      try {
-        const claude = await waitForEvent<BoxStatusClaude>(
-          (ev) => {
-            if (ev.boxId !== box.id) return undefined;
-            if (ev.type !== BOX_STATUS_EVENT) return undefined;
-            const payload = ev.payload as BoxStatus | undefined;
-            if (!payload?.claude) return undefined;
-            return matchesAgentWaitState(payload.claude, target) ? payload.claude : undefined;
-          },
-          { boxId: box.id, timeoutMs },
-        );
-        emitMatch(claude, opts.json === true);
-      } catch (err) {
-        if (err instanceof WaitTimeoutError) {
-          if (opts.json === true) {
-            process.stdout.write(
-              JSON.stringify({ matched: false, elapsedMs: err.elapsedMs }) + '\n',
-            );
-          } else {
-            log.error(`agent did not reach '${target}' within ${String(timeoutMs)}ms`);
-          }
-          process.exit(1);
-        }
-        throw err;
+      if (opts.json === true) {
+        process.stdout.write(JSON.stringify({ matched: false, elapsedMs }) + '\n');
+      } else {
+        log.error(`agent did not reach '${target}' within ${String(timeoutMs)}ms`);
       }
+      process.exit(1);
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -136,8 +142,8 @@ const agentGetPlanQuestionCommand = new Command('get-plan-question')
   .action(async (boxRef: string | undefined, opts: BoxRefOpts) => {
     try {
       const box = await resolveBoxOrExit(boxRef);
-      const status = await readBoxStatus(box);
-      const claude = status?.claude;
+      const claude = await fetchAgentClaude(box);
+      if (claude === HUB_ERROR) return; // withHubClient reported + set the exit code
       if (opts.json === true) {
         const out = claude?.plan ?? claude?.question ?? null;
         process.stdout.write(JSON.stringify(out) + '\n');
@@ -564,6 +570,24 @@ function firstLine(s: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Sentinel: `withOwningHub` already reported a hub error + set the exit code. */
+const HUB_ERROR = Symbol('hub-error');
+
+/**
+ * Read the box's Claude status snapshot through the hub that owns it. Returns the
+ * snapshot (or null when the box is known but has no snapshot yet, OR when no hub
+ * owns it — both surface to the caller as "no snapshot"), or {@link HUB_ERROR}
+ * when the hub call failed (already reported).
+ */
+async function fetchAgentClaude(box: BoxRecord): Promise<BoxStatusClaude | null | typeof HUB_ERROR> {
+  let claude: BoxStatusClaude | null = null;
+  const r = await withOwningHub(box, async (client) => {
+    claude = ((await client.getAgentState(box.id)).claude ?? null) as BoxStatusClaude | null;
+  });
+  if (r === undefined) return HUB_ERROR;
+  return claude;
 }
 
 function emitMatch(claude: BoxStatusClaude, asJson: boolean): void {

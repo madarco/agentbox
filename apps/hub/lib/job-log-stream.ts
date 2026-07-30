@@ -16,7 +16,21 @@ const TERMINAL = new Set(['done', 'failed', 'cancelled']);
 // 0, which double-counts every line into its progress bar. Comments are ignored by
 // every SSE parser (a line starting with ':'), so this costs nothing but keeps the
 // connection provably alive.
-const HEARTBEAT_MS = 15_000;
+export const HEARTBEAT_MS = 15_000;
+
+// SSE framing shared by streamJobLog and the box-service-log stream
+// (box-log-stream.ts). One place for the frame format + response headers so both
+// event streams stay wire-identical (`event: <name>\ndata: <json>\n\n`, `:ping`).
+export function sseFrame(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+export const SSE_HEADERS: Record<string, string> = {
+  'content-type': 'text/event-stream',
+  'cache-control': 'no-cache, no-transform',
+  connection: 'keep-alive',
+  'x-accel-buffering': 'no',
+};
 
 export function streamJobLog(req: Request, id: string, backend: HubBackend, logPath: string): Response {
   const enc = new TextEncoder();
@@ -37,7 +51,7 @@ export function streamJobLog(req: Request, id: string, backend: HubBackend, logP
       };
 
       const emit = (event: string, data: unknown): void => {
-        write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        write(sseFrame(event, data));
       };
 
       // Read any bytes appended since the last offset and emit whole lines.
@@ -108,12 +122,5 @@ export function streamJobLog(req: Request, id: string, backend: HubBackend, logP
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive',
-      'x-accel-buffering': 'no',
-    },
-  });
+  return new Response(stream, { headers: SSE_HEADERS });
 }

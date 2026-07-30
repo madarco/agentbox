@@ -155,6 +155,89 @@ export interface HubApiServices {
 export type HubLifecycleAction = 'start' | 'pause' | 'resume' | 'stop' | 'destroy';
 export type HubGitOp = 'checkout' | 'branch' | 'pull' | 'push' | 'push-host';
 
+/** Result of `POST /boxes/:id/checkpoint` (a captured project checkpoint). */
+export interface HubApiCheckpointCreate {
+  ok: true;
+  name: string;
+  /** docker manifest type ('layered'/'merged') or 'snapshot' for a cloud backend. */
+  kind: string;
+  ref: string;
+  provider: string;
+  dir?: string;
+  /** The default-checkpoint config key written when --set-default was requested. */
+  setDefaultKey?: string;
+}
+
+/** One checkpoint row from `GET /checkpoints` (defaults resolved server-side). */
+export interface HubApiCheckpointItem {
+  name: string;
+  provider: string;
+  kind: string;
+  sourceBoxName: string;
+  createdAt: string;
+  isDefault: boolean;
+}
+
+export interface HubApiCheckpointProject {
+  segment: string;
+  projectRoot?: string;
+  label: string;
+  items: HubApiCheckpointItem[];
+}
+
+export interface HubApiCheckpointListing {
+  projects: HubApiCheckpointProject[];
+}
+
+/** Result of `DELETE /checkpoints` (removed backends + swept default pointers). */
+export interface HubApiCheckpointRemove {
+  ok: true;
+  removed: string[];
+  clearedKeys: string[];
+  warnedKeys: string[];
+}
+
+/** The local (docker) prune tally — mirrors the backend PruneResultView. */
+export interface HubApiPruneResult {
+  removedRecords: string[];
+  removedContainers: string[];
+  removedVolumes: string[];
+  removedSnapshotDirs: string[];
+  removedBoxDirs: string[];
+  removedCheckpointImages: string[];
+  dryRun: boolean;
+}
+
+export interface HubApiPruneGeneral {
+  kind: 'general';
+  result: HubApiPruneResult;
+  projectConfigs: string[];
+}
+
+export interface HubApiCloudOrphan {
+  sandboxId: string;
+  name?: string;
+  state?: string;
+  createdAt?: string;
+}
+
+export interface HubApiPruneCloud {
+  kind: 'cloud';
+  provider: string;
+  dryRun: boolean;
+  orphans: HubApiCloudOrphan[];
+  deleted: number;
+  failed: number;
+  reaped: number;
+}
+
+export type HubApiPruneView = HubApiPruneGeneral | HubApiPruneCloud;
+
+/** `GET /boxes/:id/agent` — the raw BoxStatusClaude snapshot (null = none yet). */
+export interface HubApiAgentState {
+  claude: unknown;
+}
+
 /** The unauthenticated liveness probe (`GET /api/v1/health`). */
 export interface HubApiHealth {
   ok: boolean;
@@ -457,4 +540,155 @@ export class HubApiClient {
       displayName,
     });
   }
+
+  // ── checkpoints (durable project assets) ──
+
+  /** Capture the box state as a project checkpoint (docker commit / cloud snapshot). */
+  createCheckpoint(
+    id: string,
+    body: { name?: string; merged?: boolean; setDefault?: boolean; replace?: boolean } = {},
+  ): Promise<HubApiCheckpointCreate> {
+    return this.request<HubApiCheckpointCreate>(
+      'POST',
+      `/boxes/${encodeURIComponent(id)}/checkpoint`,
+      body,
+    );
+  }
+
+  /** List a project's checkpoints (docker + cloud), or every project's with `global`. */
+  listCheckpoints(opts: { project?: string; global?: boolean } = {}): Promise<HubApiCheckpointListing> {
+    const q = new URLSearchParams();
+    if (opts.global) q.set('global', '1');
+    if (opts.project !== undefined) q.set('project', opts.project);
+    return this.request<HubApiCheckpointListing>('GET', `/checkpoints?${q.toString()}`);
+  }
+
+  /** Delete a checkpoint from every store that has it (or just `provider`'s). */
+  deleteCheckpoint(opts: {
+    project: string;
+    ref: string;
+    provider?: string;
+  }): Promise<HubApiCheckpointRemove> {
+    const q = new URLSearchParams({ project: opts.project, ref: opts.ref });
+    if (opts.provider !== undefined) q.set('provider', opts.provider);
+    return this.request<HubApiCheckpointRemove>('DELETE', `/checkpoints?${q.toString()}`);
+  }
+
+  // ── prune (fleet cleanup) ──
+
+  /**
+   * Prune orphan fleet resources. Without `provider` (or provider === 'docker'):
+   * orphan docker records/resources + project configs. With a cloud provider:
+   * enumerate untracked sandboxes, deleting + reaping when !dryRun.
+   */
+  prune(
+    body: { all?: boolean; dryRun?: boolean; provider?: string } = {},
+  ): Promise<HubApiPruneView> {
+    return this.request<HubApiPruneView>('POST', '/prune', body);
+  }
+
+  // ── agent state ──
+
+  /** The box's in-box coding-agent status snapshot (Claude activity/plan/question). */
+  getAgentState(id: string): Promise<HubApiAgentState> {
+    return this.request<HubApiAgentState>('GET', `/boxes/${encodeURIComponent(id)}/agent`);
+  }
+
+  // ── box service logs ──
+
+  /** Non-follow tail of a service log (or the ctl-daemon log with `daemon`). */
+  async getBoxLogs(
+    id: string,
+    params: { service?: string; tail: number; daemon?: boolean },
+  ): Promise<{ output: string }> {
+    return this.request<{ output: string }>(
+      'GET',
+      `/boxes/${encodeURIComponent(id)}/logs?${logQuery(params).toString()}`,
+    );
+  }
+
+  /**
+   * Follow a service log over SSE, invoking `onLine` for each `log` event until the
+   * hub closes the stream. Resolves with the terminal status (from the `end` event,
+   * or 'gone' if the stream dropped). A non-2xx answer (e.g. box not found) throws
+   * a {@link HubApiError} so `withOwningHub` can retry the other hub — mirrors
+   * {@link streamJobLog}, which deliberately bypasses `request` for the same reason.
+   */
+  async streamBoxLog(
+    id: string,
+    params: { service?: string; tail: number; daemon?: boolean },
+    onLine: (line: string) => void,
+    signal?: AbortSignal,
+  ): Promise<{ status: string }> {
+    const res = await this.fetchImpl(
+      `${this.base}/api/v1/boxes/${encodeURIComponent(id)}/logs?${logQuery({ ...params, follow: true }).toString()}`,
+      { headers: { Authorization: `Bearer ${this.token}`, Accept: 'text/event-stream' }, signal },
+    );
+    if (!res.ok) {
+      // The route answers a bad request / missing box with the JSON error envelope,
+      // not an SSE stream — surface it as a HubApiError like `request` does.
+      const text = await res.text().catch(() => '');
+      let body: ApiErrorBody = {};
+      try {
+        body = text.length > 0 ? (JSON.parse(text) as ApiErrorBody) : {};
+      } catch {
+        /* non-JSON error body */
+      }
+      throw new HubApiError(
+        body.error?.message ?? `request failed: ${res.status}`,
+        body.error?.code ?? 'internal',
+        res.status,
+        body.error?.details,
+      );
+    }
+    if (!res.body) return { status: 'gone' };
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let status = 'gone';
+    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      buffer += decoder.decode(chunk, { stream: true });
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop() ?? '';
+      for (const frame of frames) {
+        let event = '';
+        let data = '';
+        for (const raw of frame.split('\n')) {
+          if (raw.startsWith('event:')) event = raw.slice(6).trim();
+          else if (raw.startsWith('data:')) data = raw.slice(5).trim();
+        }
+        if (data.length === 0) continue;
+        if (event === 'log') {
+          try {
+            const line = JSON.parse(data) as unknown;
+            if (typeof line === 'string') onLine(line);
+          } catch {
+            /* a frame we can't parse is not worth aborting the stream over */
+          }
+        } else if (event === 'end') {
+          try {
+            const parsed = JSON.parse(data) as { status?: string };
+            if (typeof parsed.status === 'string') status = parsed.status;
+          } catch {
+            /* keep the default */
+          }
+        }
+      }
+    }
+    return { status };
+  }
+}
+
+/** Build the shared `/boxes/:id/logs` query string (service/tail/daemon/follow). */
+function logQuery(params: {
+  service?: string;
+  tail: number;
+  daemon?: boolean;
+  follow?: boolean;
+}): URLSearchParams {
+  const q = new URLSearchParams();
+  q.set('tail', String(params.tail));
+  if (params.service !== undefined) q.set('service', params.service);
+  if (params.daemon) q.set('daemon', '1');
+  if (params.follow) q.set('follow', '1');
+  return q;
 }
