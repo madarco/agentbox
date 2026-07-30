@@ -777,7 +777,11 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
     ticking = true;
     try {
       const cfg = await loadConfig();
-      if (!cfg.enabled) return;
+      // NOTE: `cfg.enabled` gates only the BACKGROUND box/working lane below (it
+      // bounds background `-i` fan-out). The foreground lane (an interactive
+      // `agentbox create`, which now enqueues through the hub) and the prepare
+      // lane must run regardless — a disabled background queue must not wedge an
+      // interactive create at `queued`. Hygiene (sweep/recover) also runs always.
 
       // Throttled hygiene sweep of stale terminal manifests (runs regardless of
       // whether anything is queued, so a finished burst gets cleaned up).
@@ -814,8 +818,10 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
 
       // Start as many slots as we can in one tick — picking one per tick would
       // mean a 2s lag per job after a slot frees, which adds up when a burst
-      // of jobs queues against a freshly-cleared pool.
-      while (!stopped) {
+      // of jobs queues against a freshly-cleared pool. Gated by `cfg.enabled`:
+      // when the background queue is off, this lane starts nothing (the foreground
+      // + prepare lanes below still run).
+      while (!stopped && cfg.enabled) {
         let occupancy: number;
         let next: QueueJob | null;
         if (gateByWorking && countWorking) {

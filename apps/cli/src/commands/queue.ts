@@ -13,7 +13,6 @@ import {
 } from '@agentbox/relay';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
-import { withHubClient } from '../control-plane/with-hub.js';
 import type { HubApiJob } from '../control-plane/hub-api-client.js';
 
 interface QueueListOpts {
@@ -31,26 +30,51 @@ const queueListCommand = new Command('list')
   .option('--all', 'include done/failed/cancelled jobs (default: hide terminal)')
   .action(async (opts: QueueListOpts) => {
     const cfg = await loadQueueConfig();
-    // One queue view over the hub's `/api/v1/jobs`. `preferLocal` so this laptop's
-    // own background `-i` queue is what shows (a control box's create queue is
-    // seen with `agentbox hub jobs`); for a pure-local user the two coincide.
-    await withHubClient({ preferLocal: true }, async (client) => {
-      const jobs = await client.listJobs();
-      const visible =
-        opts.all === true ? jobs : jobs.filter((j) => !HIDDEN_LIST_STATUSES.has(j.status));
-      if (visible.length === 0) {
-        log.info(opts.all ? 'no jobs.' : 'no active jobs (--all to see terminal).');
-        log.info(
-          `queue.maxConcurrent = ${String(cfg.maxConcurrent)} (queue.enabled=${String(cfg.enabled)})`,
-        );
-        return;
-      }
+    const jobs = await listJobsForQueueView();
+    const visible =
+      opts.all === true ? jobs : jobs.filter((j) => !HIDDEN_LIST_STATUSES.has(j.status));
+    if (visible.length === 0) {
+      log.info(opts.all ? 'no jobs.' : 'no active jobs (--all to see terminal).');
+    } else {
       renderJobTable(visible);
-      log.info(
-        `queue.maxConcurrent = ${String(cfg.maxConcurrent)} (queue.enabled=${String(cfg.enabled)})`,
-      );
-    });
+    }
+    log.info(
+      `queue.maxConcurrent = ${String(cfg.maxConcurrent)} (queue.enabled=${String(cfg.enabled)})`,
+    );
   });
+
+/**
+ * The unified job view for `queue list`. Prefers the hub's `/api/v1/jobs`
+ * (`preferLocal` — this laptop's own `-i` queue; a control box's create queue is
+ * `agentbox hub jobs`). Degrades to the LOCAL `~/.agentbox/queue/` manifests when
+ * the hub is stopped/unreachable, so `queue list` still works offline (the
+ * pre-hub behavior). For a co-located local hub the two are the same manifests.
+ */
+async function listJobsForQueueView(): Promise<HubApiJob[]> {
+  try {
+    // Quiet + no autostart: a read-only `list` must not spin up a daemon. If the
+    // hub is already running we get the API view; otherwise fall back to disk.
+    // Lazy import keeps the hub.ts <-> control-plane.ts cycle intact (Step 0).
+    const { resolveHubApiClient } = await import('../commands/control-plane.js');
+    const client = await resolveHubApiClient(undefined, { quiet: true, preferLocal: true });
+    if (client) return await client.listJobs();
+  } catch {
+    /* hub unreachable — fall through to the local manifests */
+  }
+  const local = await loadQueue();
+  return local
+    .filter((j) => j.kind !== 'prepare')
+    .map((j) => ({
+      id: j.id,
+      status: j.status,
+      boxId: j.boxId,
+      error: j.status === 'failed' ? j.reason : undefined,
+      provider: j.providerName,
+      name: j.boxName || undefined,
+      agent: j.noAgent ? 'none' : j.agent,
+      createdAt: j.createdAt,
+    }));
+}
 
 /** A compact ASCII table over the unified job listing; id is the cancel/show handle. */
 function renderJobTable(jobs: HubApiJob[]): void {

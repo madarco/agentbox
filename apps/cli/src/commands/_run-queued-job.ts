@@ -395,6 +395,12 @@ async function runDockerJob(
   const persisted = await readJob(job.id);
   await writeJob({ ...job, boxId: result.record.id, login: persisted?.login });
 
+  // On-create resync conflicts (checkpoint-restore path). Logged FIRST — before
+  // the no-agent early return — so a plain `agentbox create` (noAgent) still
+  // surfaces the warning in its streamed create log, matching the old inline path.
+  const resyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
+  if (resyncWarning) log.write(resyncWarning);
+
   // "Just create the box" (like `agentbox create`): the box is up with its ctl
   // supervisor running; skip the agent session entirely. The user attaches later
   // (agentbox shell / claude attach). No prompt, no terminal open.
@@ -403,10 +409,8 @@ async function runDockerJob(
     return;
   }
 
-  // On-create resync conflicts (checkpoint-restore path): prepend the warning to
-  // the queued prompt so the background agent opens on it.
-  const resyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
-  if (resyncWarning) log.write(resyncWarning);
+  // Prepend the resync warning to the queued prompt so the background agent
+  // opens on it.
   const seeded = await applySetupWizardPrompt(job, opts.workspace, job.prompt);
   const prompt = prependResyncWarning(resyncWarning, seeded);
   const promptedArgs = buildPromptArgs(job.agent, prompt, job.agentArgs);
@@ -602,13 +606,21 @@ async function runCloudJob(
     log.write(m),
   );
 
+  // On-create resync conflicts (checkpoint-restore) — logged before the no-agent
+  // return so a plain cloud `agentbox create` surfaces it in its streamed log too.
+  const resyncWarning = result.resync ? buildResyncWarning(result.resync) : null;
+  if (resyncWarning) log.write(resyncWarning);
+
   // "Just create the box": skip the detached agent session (see runDockerJob).
   if (job.noAgent) {
     log.write('no-agent box created; skipping agent session');
     return;
   }
 
-  const seeded = await applySetupWizardPrompt(job, opts.workspace, job.prompt);
+  const seeded = prependResyncWarning(
+    resyncWarning,
+    await applySetupWizardPrompt(job, opts.workspace, job.prompt),
+  );
   const promptedArgs = buildPromptArgs(job.agent, seeded, job.agentArgs);
 
   let binary: string;

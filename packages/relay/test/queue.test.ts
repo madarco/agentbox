@@ -531,6 +531,47 @@ describe('foreground lane (an interactive create is never gated by queue.maxConc
     // No foreground creates → nothing on this lane.
     expect(selectNextRunnableForeground([job({ id: 'bg' })])).toBeNull();
   });
+
+  // A disabled background queue must NOT wedge an interactive create at `queued`
+  // (create now enqueues through the hub, so the scheduler is in the path).
+  it('startQueueLoop runs a foreground create even when queue.enabled is false, but not a background job', async () => {
+    const { QUEUE_DIR } = await import('../src/queue.js');
+    const prefix = `qvitest-fg-disabled-${String(process.pid)}-`;
+    const fgId = `${prefix}fg`;
+    const bgId = `${prefix}bg`;
+    const spawned: string[] = [];
+    try {
+      await writeJob(job({ id: fgId, foreground: true, createdAt: '2000-01-01T00:00:00.000Z' }));
+      await writeJob(job({ id: bgId, createdAt: '2000-01-01T00:00:01.000Z' }));
+      const handle = startQueueLoop({
+        log: () => {},
+        loadConfig: async () => ({
+          enabled: false,
+          maxConcurrent: 5,
+          maxWorking: 0,
+          idleGraceMs: 15_000,
+        }),
+        countRunning: async () => 0,
+        spawnWorker: async (j) => {
+          spawned.push(j.id);
+          return process.pid;
+        },
+        intervalMs: 10,
+      });
+      const start = Date.now();
+      while (!spawned.includes(fgId) && Date.now() - start < 2000) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      // A few more ticks to prove the background job stays put while disabled.
+      await new Promise((r) => setTimeout(r, 60));
+      await handle.stop();
+      expect(spawned).toContain(fgId);
+      expect(spawned).not.toContain(bgId);
+    } finally {
+      await rm(join(QUEUE_DIR, `${fgId}.json`), { force: true });
+      await rm(join(QUEUE_DIR, `${bgId}.json`), { force: true });
+    }
+  });
 });
 
 describe('startQueueLoop working-agent gate', () => {
