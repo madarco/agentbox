@@ -215,16 +215,13 @@ export {
   type RelayStatus,
   type StopRelayResult,
 } from './relay.js';
-export {
-  ensureHub,
-  getHubStatus,
-  resolveHubServer,
-  stopHub,
-  type EnsureHubOptions,
-  type HubEndpoint,
-  type HubStatus,
-  type StopHubResult,
-} from './hub.js';
+// The hub lifecycle (ensureHub/getHubStatus/stopHub/resolveHubServer + types)
+// moved to `@agentbox/sandbox-core` (Step 12) so a docker-free host can start /
+// probe the hub without importing docker machinery. Consumers import them from
+// there now. This package only supplies the docker-side Portless hooks the CLI
+// installs into the hub seam.
+export { dockerHubPortlessHooks } from './hub-portless.js';
+export { dockerCredentialRefresh } from './credential-refresh.js';
 // The host-config stage producers now live in the provider-neutral sync layer
 // (`@agentbox/sandbox-core`); cloud consumers import them from there. The claude
 // per-project path helpers + Stage types stay re-exported here (from core) for

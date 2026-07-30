@@ -5,28 +5,25 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_RELAY_PORT } from '@agentbox/relay';
-import {
-  buildExposedHubEnv,
-  controlPlaneDeployPath,
-  EXPOSED_HUB_PROFILE,
-  parseEnvFileBody,
-  resolveStagedRuntimeRoot,
-  RUNTIME_ROOT_ENV,
-  type ControlPlaneDeployRecord,
-} from '@agentbox/sandbox-core';
-import { detectPortless, portlessAlias, portlessGetUrl, portlessUnalias } from './portless.js';
+import { buildExposedHubEnv, EXPOSED_HUB_PROFILE, parseEnvFileBody } from './hub-expose.js';
+import { controlPlaneDeployPath, type ControlPlaneDeployRecord } from './ssh-config.js';
+import { resolveStagedRuntimeRoot, RUNTIME_ROOT_ENV } from './runtime-root.js';
 import {
   fetchHealthz,
+  HUB_RELAY_PORT,
   killPid,
   pingHealthz,
   processAlive,
   resolveCliEntry,
   shouldReclaimForVersion,
   type HealthzBody,
-} from './relay.js';
-import { detectEngine } from './sync/host-export.js';
-import { BUILD_CONTEXT_DIR } from './image.js';
+} from './hub-process.js';
+import {
+  hubDockerContext,
+  hubPortlessCurrent,
+  hubPortlessSync,
+  hubPortlessTeardown,
+} from './hub-hooks.js';
 
 /**
  * `agentbox hub` lifecycle. The hub is the embedded relay + Next UI in ONE
@@ -37,16 +34,24 @@ import { BUILD_CONTEXT_DIR } from './image.js';
  *     `ensureRelay()` reuses it (it also sets AGENTBOX_CLI_ENTRY so the capability
  *     gate is satisfied and it's never reclaimed for that reason).
  *
- * Shares the low-level probes (fetchHealthz/pingHealthz/killPid/processAlive) and
- * the version-reclaim gate with relay.ts; keeps its own pid/log files so its
- * status is independent of the lean relay's.
+ * Lives in `@agentbox/sandbox-core` (not `@agentbox/sandbox-docker`) so a
+ * docker-free host can start / probe / stop the hub without importing docker
+ * machinery. The two docker-side niceties it used to reach for directly — the
+ * Portless friendly URL and the docker build context — come through the
+ * `hub-hooks.ts` seam, which the CLI fills from the docker package at startup;
+ * an unset hook degrades to the plain loopback URL / no docker context.
+ *
+ * Shares the low-level probes (fetchHealthz/pingHealthz/killPid/processAlive)
+ * and the version-reclaim gate with `relay.ts` (both import them from
+ * `hub-process.ts`); keeps its own pid/log/token files so its status is
+ * independent of the lean relay's.
  */
 
 const STATE_DIR = join(homedir(), '.agentbox');
 const HUB_PID_FILE = join(STATE_DIR, 'hub.pid');
 const HUB_LOG_FILE = join(STATE_DIR, 'hub.log');
-const HUB_TOKEN_FILE = join(STATE_DIR, 'hub', 'token');
-const PORT = DEFAULT_RELAY_PORT;
+export const HUB_TOKEN_FILE = join(STATE_DIR, 'hub', 'token');
+const PORT = HUB_RELAY_PORT;
 // Bind wide (like the bare relay in relay.ts) so docker boxes can reach the hub's
 // embedded relay at host.docker.internal:8787 for their box-initiated RPCs (git
 // push/cp/download, and the /api/v1 prompt stream the attach footer subscribes to
@@ -56,24 +61,14 @@ const PORT = DEFAULT_RELAY_PORT;
 // peer address (the localhost hub sets no admin token, so adminGateAllows
 // fail-closes non-loopback callers); the LAN-reachable surface is only the
 // token-gated `/api/v1` + UI and the box-facing `/rpc` + `/events`, matching the
-// bare relay this replaces.
+// bare relay this replaces. INVARIANT (plan Step 12): this wide bind is what the
+// token-profile custody byte-read peer-gate (apps/hub/lib/peer.ts) protects — do
+// not narrow it back to loopback without keeping that gate.
 const HOST = '0.0.0.0';
 // The address to advertise in URLs (status output, the `?token=` open URL) and to
 // health-probe — the hub binds wide (HOST) but is reached from THIS machine over
 // loopback; `0.0.0.0` is not a usable browser/client address.
 const LOOPBACK_HOST = '127.0.0.1';
-
-/**
- * Portless alias for the hub itself. Unlike a box (a container that OrbStack can
- * reach at `<container>.orb.local`), the hub is a host loopback process, so
- * Portless is the only way to give it a friendly host URL. Fixed name → the URL
- * is always `https://agentbox.localhost` (kept static so the Next server-actions
- * origin allowlist can hard-code it). The resolved URL is cached to
- * `HUB_PORTLESS_FILE` so `getHubStatus` (read-only) knows the alias is actually
- * live — `portlessGetUrl` alone returns the deterministic fallback either way.
- */
-const HUB_PORTLESS_ALIAS = 'agentbox';
-const HUB_PORTLESS_FILE = join(STATE_DIR, 'hub', 'portless-url');
 
 /** Minimum Node for the hub server (node:sqlite in password mode + Next 16). */
 const NODE_MIN = { major: 22, minor: 5 };
@@ -171,6 +166,11 @@ async function readToken(): Promise<string | null> {
   }
 }
 
+/** The hub's token gate secret (`~/.agentbox/hub/token`), or null when unset. */
+export function readHubToken(): Promise<string | null> {
+  return readToken();
+}
+
 async function endpointFor(portlessUrl?: string): Promise<HubEndpoint> {
   const token = await readToken();
   // Prefer the friendly Portless URL when one is registered; else the loopback
@@ -182,81 +182,6 @@ async function endpointFor(portlessUrl?: string): Promise<HubEndpoint> {
     port: PORT,
     token,
   };
-}
-
-/** The Portless URL cached by a prior `syncHubPortless`, or null when unregistered. */
-async function readHubPortlessUrl(): Promise<string | null> {
-  try {
-    const u = (await readFile(HUB_PORTLESS_FILE, 'utf8')).trim();
-    return u.length > 0 ? u : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * The hub's Portless URL *right now*, or null when it wouldn't resolve.
- *
- * Deliberately not just the cached file. The cache is written once, at hub
- * start, but both of its inputs can change underneath it: the proxy can die
- * (URL resolves to nothing) and it can come back in a different mode (the
- * no-root `:1355` no-TLS proxy vs the root `:443` HTTPS one), which changes the
- * URL's scheme *and* port. Callers — `agentbox hub status`, the tray app — get a
- * URL they can actually open, or none at all.
- */
-async function currentHubPortlessUrl(): Promise<string | null> {
-  const cached = await readHubPortlessUrl();
-  if (cached === null) return null;
-  const portless = await detectPortless();
-  if (!portless.proxyRunning) return null;
-  const url = await portlessGetUrl(HUB_PORTLESS_ALIAS);
-  // Keep the cache honest for the next reader (and for anything that reads the
-  // file directly) when the proxy came back in a different mode.
-  if (url !== cached) await writeFile(HUB_PORTLESS_FILE, url, 'utf8').catch(() => {});
-  return url;
-}
-
-/**
- * Register (or tear down) the hub's `agentbox.localhost` Portless alias and
- * return its resolved URL. Best-effort and never throws — a Portless failure
- * just leaves the hub on its loopback URL, exactly like the box path.
- *
- * Registers whenever Portless is installed and the engine isn't OrbStack, unless
- * `enabled === false` (explicit opt-out). `undefined` (never prompted) still
- * registers — the hub URL is a pure host-side convenience.
- *
- * Registering the route and *advertising* the URL are two different things. The
- * route is written whenever Portless is installed, proxy or no proxy: it costs
- * nothing and makes the URL work the moment a proxy comes up. The URL is only
- * returned when a proxy is actually live — otherwise `portless get` answers
- * from the persisted registry and the hub would print an address (`agentbox
- * .localhost:1355`) that nothing is listening on, which is precisely what a
- * reboot leaves behind.
- */
-async function syncHubPortless(enabled: boolean | undefined): Promise<string | undefined> {
-  const teardown = async (): Promise<undefined> => {
-    await portlessUnalias(HUB_PORTLESS_ALIAS).catch(() => {});
-    await unlink(HUB_PORTLESS_FILE).catch(() => {});
-    return undefined;
-  };
-  try {
-    if (enabled === false) return await teardown();
-    // The hub is a host process, so OrbStack's container-only .orb.local can't
-    // reach it — and OrbStack users typically run no Portless proxy. Skip.
-    if ((await detectEngine()) === 'orbstack') return await teardown();
-    const portless = await detectPortless();
-    if (!portless.installed) return await teardown();
-    await portlessAlias(HUB_PORTLESS_ALIAS, PORT);
-    const url = await portlessGetUrl(HUB_PORTLESS_ALIAS);
-    // The file records that the hub *wants* a Portless URL (it is how a later
-    // `hub status` knows the alias is ours rather than opted out); whether that
-    // URL is usable is re-decided on every read against a live proxy.
-    await mkdir(dirname(HUB_PORTLESS_FILE), { recursive: true });
-    await writeFile(HUB_PORTLESS_FILE, url, 'utf8');
-    return portless.proxyRunning ? url : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -298,7 +223,9 @@ export function resolveHubServer(): string {
  * to the monorepo sources; an npm install has no such fallback. Handing over the
  * roots the CLI already resolved is the fix, same as the docker context below.
  *
- * The runtime root is marker-verified, and `resolveStagedRuntimeRoot` checks
+ * The docker build context is supplied through the `hub-hooks.ts` seam (the CLI
+ * installs its `BUILD_CONTEXT_DIR`); a docker-free host omits it. The runtime
+ * root is marker-verified, and `resolveStagedRuntimeRoot` checks
  * `AGENTBOX_RUNTIME_ROOT` first, so an operator override propagates. When no
  * staged root exists (a workspace-only build) the key is OMITTED rather than set
  * to a path that doesn't resolve — it would otherwise sit ahead of the child's
@@ -308,7 +235,7 @@ export function hubRuntimeEnv(
   opts: { dockerContext?: string; runtimeRoot?: string } = {},
 ): Record<string, string> {
   const env: Record<string, string> = {};
-  const dockerContext = opts.dockerContext ?? BUILD_CONTEXT_DIR;
+  const dockerContext = opts.dockerContext ?? hubDockerContext();
   if (dockerContext) env.AGENTBOX_DOCKER_CONTEXT = dockerContext;
   const runtimeRoot =
     opts.runtimeRoot ??
@@ -369,7 +296,7 @@ export async function ensureHub(opts: EnsureHubOptions = {}): Promise<HubEndpoin
   if (health !== null) {
     const profileMismatch = (health.profile ?? 'localhost') !== desiredProfile;
     if (reusable(health)) {
-      return endpointFor(await syncHubPortless(opts.portlessEnabled)); // a hub already runs here
+      return endpointFor(await hubPortlessSync(opts.portlessEnabled, PORT)); // a hub already runs here
     }
     log(
       profileMismatch
@@ -395,7 +322,7 @@ export async function ensureHub(opts: EnsureHubOptions = {}): Promise<HubEndpoin
         await delay(200);
       }
       if (late !== null && reusable(late)) {
-        return endpointFor(await syncHubPortless(opts.portlessEnabled));
+        return endpointFor(await hubPortlessSync(opts.portlessEnabled, PORT));
       }
       if (late !== null) {
         log(
@@ -473,7 +400,7 @@ async function spawnHub(
   for (let i = 0; i < 50; i++) {
     if (await pingHealthz(300)) {
       log(`hub reachable on http://${LOOPBACK_HOST}:${String(PORT)}`);
-      const purl = await syncHubPortless(portlessEnabled);
+      const purl = await hubPortlessSync(portlessEnabled, PORT);
       if (purl) log(`hub also reachable on ${purl}`);
       return endpointFor(purl);
     }
@@ -523,27 +450,21 @@ export interface StopHubResult {
   pid: number | null;
 }
 
-/** Best-effort teardown of the hub's Portless alias + its cached URL file. */
-async function unregisterHubPortless(): Promise<void> {
-  await portlessUnalias(HUB_PORTLESS_ALIAS).catch(() => {});
-  await unlink(HUB_PORTLESS_FILE).catch(() => {});
-}
-
 /** Stop the hub process + clear its pidfile. SIGTERM then SIGKILL. Idempotent. */
 export async function stopHub(): Promise<StopHubResult> {
   const pid = await readPid(HUB_PID_FILE);
   if (pid === null) {
-    await unregisterHubPortless();
+    await hubPortlessTeardown();
     return { stopped: false, pid: null };
   }
   if (!(await processAlive(pid))) {
     await unlink(HUB_PID_FILE).catch(() => {});
-    await unregisterHubPortless();
+    await hubPortlessTeardown();
     return { stopped: false, pid };
   }
   await killPid(pid);
   await unlink(HUB_PID_FILE).catch(() => {});
-  await unregisterHubPortless();
+  await hubPortlessTeardown();
   return { stopped: true, pid };
 }
 
@@ -571,7 +492,7 @@ export async function getHubStatus(): Promise<HubStatus> {
   const pid = await readPid(HUB_PID_FILE);
   const pidAlive = pid !== null && (await processAlive(pid));
   const health = await fetchHealthz(300);
-  const ep = await endpointFor((await currentHubPortlessUrl()) ?? undefined);
+  const ep = await endpointFor((await hubPortlessCurrent()) ?? undefined);
   return {
     running: health !== null,
     ui: health?.ui === true,

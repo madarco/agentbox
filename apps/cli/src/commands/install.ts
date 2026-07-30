@@ -49,6 +49,11 @@ import {
   type ProviderKind,
 } from '@agentbox/config';
 import { isRuntimeProvider, loadProviderModule } from '../provider/loaders.js';
+import {
+  dockerProvidersHidden,
+  dockerHiddenMessage,
+  isDockerProvider,
+} from '../control-plane/remote-hub.js';
 import { isFirstRun, markSetupComplete } from '../lib/first-run.js';
 import { maybePromptStar } from '../lib/star-prompt.js';
 import { readUpdateState, writeUpdateState } from '../lib/update-state.js';
@@ -575,6 +580,12 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
   }
 
   // 2) Provider picker.
+  // Docker off under a remote hub (Step 12): a control box (or hub.mode=thin) gates
+  // docker/remote-docker off, so don't offer them in the picker AND refuse an
+  // explicit `--provider docker` — otherwise the wizard would pin box.provider to a
+  // backend `create`/`prepare` then refuse. `hub.mode=local` keeps docker on.
+  const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
+  const hideDocker = cfg ? dockerProvidersHidden(cfg.effective) : false;
   let providerName: ProviderName;
   if (opts.provider) {
     const candidate = opts.provider.trim();
@@ -584,16 +595,21 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
     }
     providerName = candidate;
   } else {
+    const offered = KNOWN_PROVIDERS.filter((p) => !hideDocker || !isDockerProvider(p));
     const picked = await select<ProviderName>({
       message: 'Which provider do you want to set up?',
-      initialValue: 'docker',
-      options: KNOWN_PROVIDERS.map((p) => ({
+      initialValue: offered.includes('docker') ? 'docker' : offered[0],
+      options: offered.map((p) => ({
         value: p,
         label: providerMeta(p).label,
         hint: providerMeta(p).loginHint,
       })),
     });
     providerName = picked;
+  }
+  if (hideDocker && isDockerProvider(providerName) && cfg) {
+    log.error(dockerHiddenMessage(cfg.effective, 'setup'));
+    return false;
   }
 
   // 3) Login (skip docker).

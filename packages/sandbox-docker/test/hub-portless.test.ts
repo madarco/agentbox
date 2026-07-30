@@ -28,7 +28,12 @@ vi.mock('../src/portless.js', () => ({
   portlessUnalias: vi.fn(async () => true),
 }));
 
-const { getHubStatus } = await import('../src/hub.js');
+// The hub lifecycle moved to sandbox-core (Step 12); getHubStatus consults the
+// docker Portless integration through the hub-hooks seam. Register the docker
+// hooks so this exercises the real cache-vs-live-proxy logic end-to-end.
+const { getHubStatus, setHubPortlessHooks } = await import('@agentbox/sandbox-core');
+const { dockerHubPortlessHooks } = await import('../src/hub-portless.js');
+setHubPortlessHooks(dockerHubPortlessHooks);
 
 const PORTLESS_FILE = join(homeDir, '.agentbox', 'hub', 'portless-url');
 

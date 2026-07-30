@@ -107,7 +107,17 @@ import { urlCommand } from './commands/url.js';
 import { waitCommand } from './commands/wait.js';
 import { rewriteProviderPrefix } from './provider/argv-prefix.js';
 import { installConfigWarningSink } from './lib/config-warnings.js';
-import { setCredentialPublisher } from '@agentbox/sandbox-core';
+import {
+  setCredentialPublisher,
+  setDockerCredentialRefresh,
+  setHubDockerContext,
+  setHubPortlessHooks,
+} from '@agentbox/sandbox-core';
+import {
+  BUILD_CONTEXT_DIR,
+  dockerCredentialRefresh,
+  dockerHubPortlessHooks,
+} from '@agentbox/sandbox-docker';
 
 // Unknown config keys are non-fatal (a plugin's bundled parser may be older than
 // the CLI that wrote them) — the host CLI is the one that tells the user.
@@ -123,6 +133,19 @@ setCredentialPublisher(async (providerId, fields) => {
   const { publishProviderCredentials } = await import('./control-plane/publish-credentials.js');
   await publishProviderCredentials(providerId, fields);
 });
+
+// The hub lifecycle lives in `@agentbox/sandbox-core` (Step 12) so a docker-free
+// host can start / probe the hub without importing docker machinery. The two
+// docker-side niceties it still wants — the Portless friendly URL and the docker
+// build context — are supplied here through the hub seam. On a host without the
+// docker package these stay unset and the hub just uses its loopback URL.
+setHubPortlessHooks(dockerHubPortlessHooks);
+setHubDockerContext(BUILD_CONTEXT_DIR);
+
+// Cloud creates refresh the host agent-credential backups from the docker shared
+// volumes before seeding (Step 12): the docker `docker run` lives here, behind the
+// `@agentbox/sandbox-core` seam, so the cloud package never imports docker.
+setDockerCredentialRefresh(dockerCredentialRefresh);
 
 const program = new Command();
 

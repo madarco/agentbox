@@ -17,8 +17,8 @@ vi.mock('@agentbox/config', async (orig) => ({
     effective: { relay: { controlPlaneUrl: state.controlPlaneUrl } },
   }),
 }));
-vi.mock('@agentbox/sandbox-docker', async (orig) => ({
-  ...(await orig<typeof import('@agentbox/sandbox-docker')>()),
+vi.mock('@agentbox/sandbox-core', async (orig) => ({
+  ...(await orig<typeof import('@agentbox/sandbox-core')>()),
   getHubStatus: async () => ({ port: state.hubPort, token: state.hubToken }),
 }));
 vi.mock('../src/commands/control-plane.js', async (orig) => ({

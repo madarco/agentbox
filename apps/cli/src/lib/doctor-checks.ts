@@ -20,6 +20,7 @@ import {
 } from '@agentbox/sandbox-core';
 import { ALL_CONNECTORS, type IntegrationConnector } from '@agentbox/integrations';
 import { getRuntimeProviderNames, loadProviderModule } from '../provider/loaders.js';
+import { dockerProvidersHidden, isDockerProvider } from '../control-plane/remote-hub.js';
 import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
 
 // The per-provider health probes live in each `@agentbox/sandbox-<name>`
@@ -402,12 +403,20 @@ export async function runProviderChecks(name: ProviderName): Promise<CheckGroup>
 }
 
 export async function runAllChecks(): Promise<CheckGroup[]> {
+  // Docker off under a remote hub (Step 12): drop docker/remote-docker rows when a
+  // control box owns the fleet (hub.mode=local keeps them). A scoped `doctor -p
+  // docker` still runs — this only trims the unscoped enumeration.
+  const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
+  const hideDocker = cfg ? dockerProvidersHidden(cfg.effective) : false;
+  const providerNames = getRuntimeProviderNames().filter(
+    (n) => !hideDocker || !isDockerProvider(n),
+  );
   // The three phases are independent, so run them together: wall time is the
   // slowest phase, not their sum. (`doctor --provider X` already did this —
   // see runDoctor's Promise.all — so unscoped doctor was the slow path.)
   const [sysResults, providerGroups, integrationResults] = await Promise.all([
     runSystemChecks(),
-    Promise.all(getRuntimeProviderNames().map((n) => runProviderChecks(n))),
+    Promise.all(providerNames.map((n) => runProviderChecks(n))),
     integrationsChecks(),
   ]);
   return [

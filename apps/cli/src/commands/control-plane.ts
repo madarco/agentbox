@@ -1139,11 +1139,10 @@ export async function resolveCustodyApiTarget(
  * running yet.
  */
 async function autostartLocalHub(): Promise<boolean> {
-  // Dynamic imports keep control-plane.ts off a static edge to sandbox-docker
-  // (the eventual Step 12 moves `ensureHub` to sandbox-core so a docker-free host
-  // never pulls in docker machinery to start a hub) and mirror how `hub start`
-  // itself is wired.
-  const { ensureHub } = await import('@agentbox/sandbox-docker');
+  // Dynamic imports mirror how `hub start` itself is wired. The hub lifecycle now
+  // lives in sandbox-core (Step 12), so a docker-free host never pulls in docker
+  // machinery to start a hub.
+  const { ensureHub } = await import('@agentbox/sandbox-core');
   const { rehydrateFromState } = await import('./relay.js');
   const s = spinner();
   s.start('starting local hub');
@@ -1196,7 +1195,7 @@ export async function resolveHubApiTarget(
   // autostart is safe to trigger in both cases. Skipped under `quiet` (a probe
   // must not spawn a daemon); `getHubStatus` is local-only, so irrelevant remote.
   if (target.mode === 'local' && !opts.quiet) {
-    const { getHubStatus } = await import('@agentbox/sandbox-docker');
+    const { getHubStatus } = await import('@agentbox/sandbox-core');
     const st = await getHubStatus();
     if (!(st.running && st.ui)) {
       if (!(await autostartLocalHub())) return null;

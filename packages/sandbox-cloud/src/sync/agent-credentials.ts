@@ -24,15 +24,6 @@
  */
 
 import {
-  DEFAULT_BOX_IMAGE,
-  SHARED_CLAUDE_VOLUME,
-  SHARED_CODEX_VOLUME,
-  SHARED_OPENCODE_VOLUME,
-  extractCodexCredentials,
-  extractOpencodeCredentials,
-  syncClaudeCredentials,
-} from '@agentbox/sandbox-docker';
-import {
   AGENT_SYNC_SPECS,
   stageClaudeStaticForUpload,
   stageClaudeCredentialsForUpload,
@@ -42,10 +33,10 @@ import {
   stageOpencodeCredentialsForUpload,
   stageOpencodeStateForUpload,
   extractCredentials,
-  hostClaudeBackupExpired,
   isRealAgentCredential,
   pushCredentialToBox,
   readCredentialBackup,
+  runDockerCredentialRefresh,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
   SEED_MARKER,
@@ -301,10 +292,7 @@ export async function ensureAgentHomeDirsOwned(
   const log = opts.onLog ?? (() => {});
   const paths = AGENT_SPECS.map((s) => s.staticMountPath).join(' ');
   try {
-    await backend.exec(
-      handle,
-      `sudo -n chown -R vscode:vscode ${paths} 2>/dev/null || true`,
-    );
+    await backend.exec(handle, `sudo -n chown -R vscode:vscode ${paths} 2>/dev/null || true`);
   } catch (err) {
     log(
       `agent home-dir ownership normalize failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
@@ -317,45 +305,24 @@ export async function ensureAgentHomeDirsOwned(
  * from the live docker shared volumes BEFORE cloud creates seed from them.
  *
  * Why this exists: `agentbox create --provider <cloud>` reads the host backups
- * to seed cloud boxes, but only the docker create path keeps them current
- * (`syncClaudeCredentials` runs at `packages/sandbox-docker/src/create.ts:593`).
- * Without this refresh, cloud creates push whatever access token the docker
- * volume last extracted — often expired by the time the user actually attaches
- * → in-box `claude` says "401 Invalid authentication credentials" even though
- * the box's `.credentials.json` is present.
+ * to seed cloud boxes, but only the docker create path keeps them current. Without
+ * this refresh, cloud creates push whatever access token the docker volume last
+ * extracted — often expired by the time the user actually attaches → in-box
+ * `claude` says "401 Invalid authentication credentials" even though the box's
+ * `.credentials.json` is present.
  *
- * Best-effort: every helper already swallows its own failures (no docker on
- * the host, missing volume, etc.) and returns a noop result. We only nudge —
- * the seed still runs against whatever backup exists.
- *
- * Gated on `hostClaudeBackupExpired`: when the claude backup's `expiresAt` is
- * in the future we skip the docker round-trip entirely (`docker run` against
- * the shared volume is ~1-2s and almost always a noop on fresh tokens).
+ * The docker round-trip itself lives behind the `@agentbox/sandbox-core`
+ * `credential-refresh` seam (Step 12), so this cloud path never imports docker
+ * machinery: the CLI installs `dockerCredentialRefresh` at startup, and a
+ * docker-free host runs a no-op (the seed uses the existing backup). Best-effort
+ * throughout — the seed proceeds regardless.
  */
-export async function refreshAgentCredentialsBackup(opts: {
-  onLog?: (line: string) => void;
-} = {}): Promise<void> {
-  const log = opts.onLog ?? (() => {});
-  if (!(await hostClaudeBackupExpired())) {
-    return;
-  }
-  log('claude: host credentials backup expired — refreshing from docker shared volume');
-  const image = DEFAULT_BOX_IMAGE;
-  try {
-    const r = await syncClaudeCredentials({ volume: SHARED_CLAUDE_VOLUME }, { image, isolate: false });
-    if (r.direction === 'extracted') {
-      log('claude: refreshed host credentials backup from docker shared volume');
-    } else if (r.direction === 'noop') {
-      log('claude: no docker shared volume to refresh from (continuing with existing backup)');
-    }
-  } catch {
-    /* best-effort — syncClaudeCredentials already swallows internally */
-  }
-  // codex + opencode are extract-only (no docker bind mount of the host's real
-  // ~/.codex into the box like claude has), so always try when the docker
-  // volume exists. Both helpers return { copied: false } on any error.
-  try { await extractCodexCredentials(SHARED_CODEX_VOLUME, image); } catch { /* best-effort */ }
-  try { await extractOpencodeCredentials(SHARED_OPENCODE_VOLUME, image); } catch { /* best-effort */ }
+export async function refreshAgentCredentialsBackup(
+  opts: {
+    onLog?: (line: string) => void;
+  } = {},
+): Promise<void> {
+  await runDockerCredentialRefresh({ onLog: opts.onLog });
 }
 
 async function seedCredentialsOne(
@@ -373,10 +340,7 @@ async function seedCredentialsOne(
   const hasVolume = typeof backend.ensureVolume === 'function';
 
   if (hasVolume && !opts.force) {
-    const probe = await backend.exec(
-      handle,
-      `test -f ${spec.credentialsMountPath}/${SEED_MARKER}`,
-    );
+    const probe = await backend.exec(handle, `test -f ${spec.credentialsMountPath}/${SEED_MARKER}`);
     if (probe.exitCode === 0) {
       log(`${spec.kind}: credentials already seeded — mounting only`);
       return;
@@ -590,10 +554,7 @@ export async function reconcileAgentCredentials(
   handle: CloudHandle,
   opts: ReconcileAgentCredentialsOptions = {},
 ): Promise<void> {
-  return reconcileAgentCredentialsViaTransport(
-    createCloudSyncTransport({ backend, handle }),
-    opts,
-  );
+  return reconcileAgentCredentialsViaTransport(createCloudSyncTransport({ backend, handle }), opts);
 }
 
 export interface ReconcileAgentCredentialsOptions {
@@ -614,7 +575,8 @@ export async function reconcileAgentCredentialsViaTransport(
       const hostText = await readCredentialBackup(spec.id, { backupPath });
       const boxText = await transport.readText(spec.credential.boxAbsPath);
       const hostReal = hostText !== null && isRealAgentCredential(spec.id, hostText);
-      const boxReal = boxText !== null && boxText.length > 0 && isRealAgentCredential(spec.id, boxText);
+      const boxReal =
+        boxText !== null && boxText.length > 0 && isRealAgentCredential(spec.id, boxText);
       if (!hostReal && !boxReal) continue;
       if (!hostReal && boxReal) {
         await writeCredentialBackup(spec.id, boxText, { backupPath });
