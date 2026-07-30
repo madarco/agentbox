@@ -89,6 +89,8 @@ export {
   boxGitPull,
   boxGitPush,
   boxGitPushHost,
+  boxLogsArgv,
+  boxLogsRaw,
   boxRestartService,
   boxRestartServices,
   boxServicesStatusRaw,

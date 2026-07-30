@@ -156,6 +156,117 @@ export interface JobView {
   login?: JobLoginView;
 }
 
+// ── checkpoints (durable project assets) ──
+
+// Result of capturing a box state as a project checkpoint. `kind` is the docker
+// manifest type ('layered' / 'merged') or 'snapshot' for a cloud backend.
+// `setDefaultKey` is the config key written when --set-default was requested.
+export type CheckpointCreateResult =
+  | {
+      ok: true;
+      name: string;
+      kind: string;
+      ref: string;
+      provider: string;
+      dir?: string;
+      setDefaultKey?: string;
+    }
+  | { ok: false; error: string };
+
+// One checkpoint row for the listing (docker or a cloud backend). `provider` is
+// 'docker' or the backend name; `isDefault` is resolved server-side against the
+// project's effective config so the CLI need not re-resolve it.
+export interface CheckpointItemView {
+  name: string;
+  provider: string;
+  kind: string;
+  sourceBoxName: string;
+  createdAt: string;
+  isDefault: boolean;
+}
+
+// A project's checkpoints, grouped for the `-g` (all-projects) listing. `label`
+// is the display name (project basename, or the store segment when the project
+// config was GC'd); `projectRoot` is absent for an orphan segment.
+export interface CheckpointProjectView {
+  segment: string;
+  projectRoot?: string;
+  label: string;
+  items: CheckpointItemView[];
+}
+
+export interface CheckpointListing {
+  projects: CheckpointProjectView[];
+}
+
+// Result of deleting a checkpoint from every store that had it. `removed` lists
+// the providers it was deleted from; `clearedKeys` / `warnedKeys` are the default-
+// checkpoint config pointers this delete swept (cleared in the project layer, or
+// warned when the dangling pointer lives in a layer we can't auto-edit).
+export type CheckpointRemoveResult =
+  | { ok: true; removed: string[]; clearedKeys: string[]; warnedKeys: string[] }
+  | { ok: false; error: string };
+
+// ── prune (fleet cleanup) ──
+
+// Local (docker) prune outcome — mirrors sandbox-docker's PruneResult (duplicated
+// to keep @agentbox/* out of the Next bundle, like OPEN_IN_APPS above) plus the
+// orphan per-project config dirs the --all tier removes.
+export interface PruneResultView {
+  removedRecords: string[];
+  removedContainers: string[];
+  removedVolumes: string[];
+  removedSnapshotDirs: string[];
+  removedBoxDirs: string[];
+  removedCheckpointImages: string[];
+  dryRun: boolean;
+}
+
+export interface PruneGeneralView {
+  kind: 'general';
+  result: PruneResultView;
+  projectConfigs: string[];
+}
+
+// One untracked cloud sandbox the credentials can see but this fleet doesn't track.
+export interface CloudOrphanView {
+  sandboxId: string;
+  name?: string;
+  state?: string;
+  createdAt?: string;
+}
+
+export interface PruneCloudView {
+  kind: 'cloud';
+  provider: string;
+  dryRun: boolean;
+  orphans: CloudOrphanView[];
+  deleted: number;
+  failed: number;
+  // Control-box registrations reaped for the deleted sandboxes (0 on a dry run).
+  reaped: number;
+}
+
+export type PruneView = PruneGeneralView | PruneCloudView | { kind: 'error'; error: string };
+
+// ── agent state ──
+
+// The box's in-box coding-agent status snapshot. `claude` is the raw
+// `BoxStatusClaude` payload (typed `unknown` here so this pure-type module stays
+// free of @agentbox/ctl; the CLI re-casts it). null = no snapshot yet.
+export interface AgentStateResult {
+  claude: unknown;
+}
+
+// ── box service logs ──
+
+// A follow-mode log stream spec: the argv to spawn on the hub and pipe to SSE,
+// plus an optional cleanup (e.g. a cloud SSH token teardown). Built from
+// provider.buildAttach (cloud) or a docker exec (docker).
+export type BoxLogAttachSpec =
+  | { ok: true; argv: string[]; env?: Record<string, string>; cleanup?: () => Promise<void> }
+  | { ok: false; error: string };
+
 // The host-facing backend. Implemented in lib/hub-backend.ts (Node-only, imports
 // the sandbox/relay toolchain) and constructed by the custom server, which sets
 // it on `globalThis.__AGENTBOX_HUB_BACKEND`. Next server code (source.ts /
@@ -267,6 +378,51 @@ export interface HubBackend {
   getServices(id: string): Promise<ServicesResult>;
   // Restart one service by name, or every service when name is omitted.
   restartService(id: string, name?: string): Promise<BoxOpResult>;
+
+  // ── checkpoints (durable project assets) ──
+  // Capture a box's state as a project checkpoint (docker commit / cloud snapshot).
+  // Ensures the box is running first; --set-default writes the provider-specific
+  // default-checkpoint config key on the hub's machine.
+  createCheckpoint(
+    id: string,
+    opts: { name?: string; merged?: boolean; setDefault?: boolean; replace?: boolean },
+  ): Promise<CheckpointCreateResult>;
+  // List a project's checkpoints (docker + every cloud backend), or all projects'
+  // when `global`. `project` is an absolute project root on the hub's machine.
+  listCheckpoints(opts: { project?: string; global?: boolean }): Promise<CheckpointListing>;
+  // Delete a checkpoint from every store that has it (or just `provider`'s store),
+  // clearing any dangling default-checkpoint config pointer.
+  removeCheckpoint(opts: {
+    project: string;
+    ref: string;
+    provider?: string;
+  }): Promise<CheckpointRemoveResult>;
+
+  // ── prune (fleet cleanup) ──
+  // Without `provider` (or provider === 'docker'): remove orphan docker records/
+  // resources (`pruneBoxes`) + orphan project configs. With a cloud provider:
+  // enumerate untracked sandboxes, and (when !dryRun) delete them + reap their
+  // control-box registrations.
+  pruneFleet(opts: { all?: boolean; dryRun?: boolean; provider?: string }): Promise<PruneView>;
+
+  // ── agent state ──
+  // The box's in-box coding-agent status snapshot (from the persisted status
+  // store). null when the hub doesn't know the box; `{ claude: null }` when it
+  // knows the box but no snapshot has been reported yet.
+  getAgentState(id: string): Promise<AgentStateResult | null>;
+
+  // ── box service logs ──
+  // Non-follow tail of a service log (or the ctl-daemon log with `daemon`).
+  boxLogSnapshot(
+    id: string,
+    opts: { service?: string; tail: number; daemon?: boolean },
+  ): Promise<BoxOpResult>;
+  // Follow-mode: build the argv to spawn on the hub and stream to SSE. null-box
+  // returns { ok:false }. Returned to the route, which owns the spawn + stream.
+  boxLogAttach(
+    id: string,
+    opts: { service?: string; tail: number; daemon?: boolean },
+  ): Promise<BoxLogAttachSpec>;
 
   // ── host "open in" launchers (localhost hub on macOS only) ──
   // Which host apps are installed + provider-eligible, for the detail-page menu.

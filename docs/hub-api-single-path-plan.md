@@ -837,7 +837,7 @@ in the box in **both** cases.
 
 ---
 
-## Step 9 — Fleet gaps: checkpoint, prune, agent state, logs
+## Step 9 — Fleet gaps: checkpoint, prune, agent state, logs ✅ done
 
 The remaining operations with no route at all. These are fleet-level, not IO, so they move now.
 
@@ -852,6 +852,77 @@ The remaining operations with no route at all. These are fleet-level, not IO, so
 `commands/{checkpoint,prune,agent,logs}.ts`.
 **Verify:** create a checkpoint through the API, create a box from it, and confirm
 `agentbox prune -y` leaves the checkpoint tag intact (it is a durable project asset).
+
+**Landed.** Five routes over new `HubBackend` methods (modeled on `getServices`):
+`POST /boxes/:id/checkpoint` (`createCheckpoint`), `GET|DELETE /checkpoints` (`listCheckpoints`
+/`removeCheckpoint`), `POST /prune` (`pruneFleet`), `GET /boxes/:id/agent` (`getAgentState`),
+`GET /boxes/:id/logs` (`boxLogSnapshot` for a JSON tail, `boxLogAttach` + the new
+`box-log-stream.ts` for `-f` SSE). The CLI `checkpoint create`/`ls`/`rm`, `prune`, `agent
+state`/`wait-for`/`get-plan-question`, and `logs` are converted onto them. **Verified end-to-end**
+on a docker box: `checkpoint create` produced `agentbox-ckpt-…:warm` (ground truth
+`docker image ls`), a box booted from it, and `prune -y` + `prune --all -y` reaped an orphan
+record/volumes/box-dir while **the checkpoint image survived** (the acceptance). `checkpoint
+ls`/`ls -g`/`set-default`/`rm` (incl. the dangling-default-key sweep), `agent state`/`--json`, and
+`logs --daemon` (snapshot + `-f` with a clean SIGINT teardown) all exercised. Also validated with
+the CLI pointed at the same hub as a `mode:'remote'` target (`relay.controlPlaneUrl` +
+`AGENTBOX_HUB_API_KEY`): `checkpoint create`/`agent state`/`logs` on a **docker** box still route
+to the LOCAL owning hub via `withOwningHub` (they do NOT 404), `checkpoint ls` hits the configured
+target with the API key, and `prune --provider e2b` routes to the configured hub.
+
+### Notes for later steps
+
+- **Box-scoped ops use `withOwningHub` (Step 5's), NOT plain `withHubClient({})`.** `checkpoint
+  create`, `agent state`/`wait-for`/`get-plan-question`, and `logs` all resolve the box locally
+  (`resolveBoxOrExit`) then run through `withOwningHub(box, op)` so a **docker box under a configured
+  remote hub** hits its LOCAL owning hub (and the `not_found`-retries-the-other-hub covers the edge)
+  — exactly the Bugbot defect Step 5 fixed. Do not regress this to `withHubClient({})` for any
+  box-scoped op.
+- **`prune` is FLEET-scoped, so it routes by the provider argument, not `withOwningHub`.** It reuses
+  the same predicate: `preferLocal = boxOwningHubIsLocal({ provider: opts.provider ?? 'docker' })` —
+  docker + remote-docker → the local hub, a true cloud provider (daytona/hetzner/vercel/e2b/
+  digitalocean) → the configured hub. The confirm stays client-side via a `dryRun` preview
+  round-trip. **The reap moved server-side**: `POST /prune`'s cloud path deletes the orphan sandbox
+  then `reapStoreState(handle, boxId)`s its registration directly, so the CLI's
+  `reapSandboxesOnControlBox` was deleted (`reapOnControlBox` stays — `dashboard.ts` uses it).
+- **KNOWN FOLLOW-UP for Step 11's routing sweep (do not fix in place — out of scope, would
+  conflict):** Step 7's `services` / `url` / `screen` (`commands/{services,status,url,screen}.ts`)
+  ship on plain `withHubClient({})`, so they carry the SAME latent `not_found` bug for a **docker box
+  under a configured remote hub** that Step 5 fixed for lifecycle. They should move onto
+  `withOwningHub` (they're all box-scoped). Left untouched here to respect Step 7's file set.
+- **`checkpoint ls`/`rm`/`set-default` are PROJECT-scoped, so they use `withHubClient({ preferLocal:
+  true })`, not `withOwningHub`** (there is no box). `preferLocal` is the same hub docker `create`
+  writes to (its image is local) AND the only store whose path-hash matches: checkpoint stores are
+  keyed by `hash(absolute project root)`, which only resolves on the local filesystem — a remote
+  control box hashes a different path, so listing by this machine's root there finds nothing anyway.
+  On a co-located hub (local or `hub expose`d) `preferLocal` IS the one hub. Cloud checkpoints created
+  on a genuinely-remote control box aren't listable from a thin laptop by path — a real cross-machine
+  limitation of path-hash-keyed stores (would need origin-keyed checkpoint stores; out of scope). This
+  was Bugbot #1 (High): `ls`/`rm` on `withHubClient({})` (configured hub) missed docker checkpoints
+  `create` had just written locally.
+- **`checkpoint set-default` stays a LOCAL project-config write** (not in this step's route list —
+  it's a config mutation and there is no `/api/v1/config` surface). It validates the ref against the
+  hub's `GET /checkpoints` listing (so it agrees with `ls`/`rm`) but writes `setConfigValue('project',
+  …)` on this machine. For a **co-located** hub (local or `hub expose`d — both acceptance modes) the
+  hub's store/config IS this machine's, so it's fully correct; setting a default for a **genuinely
+  remote** project isn't reachable this way (would need a config route). Its in-callback "not found"
+  reports via `log.error` + exit code, NOT a thrown `Error` — a plain throw inside a `withHubClient`
+  callback is rendered by the mapper as a "can't reach the hub" transport failure.
+- **`logs` reuses only job-log-stream's SSE FRAMING, not its file-tail core.** Service logs come from
+  a child process the hub spawns INTO the box (a `docker exec` for docker, the provider attach argv
+  for cloud), so `streamJobLog`'s "tail a hub-local file" body doesn't apply. The shared framing
+  (`sseFrame` / `SSE_HEADERS` / `HEARTBEAT_MS`) was extracted from `job-log-stream.ts` and reused by
+  the new `box-log-stream.ts`. Non-follow is a plain JSON `{ output }`; only `-f` is SSE. On `-f`
+  Ctrl-C the CLI hard-exits (130) and `streamBoxLog` swallows the abort as a clean stop — undici does
+  not reliably end a streamed body read on signal-abort, so a hard exit is deliberate (the old
+  docker-exec follow hard-exited too).
+- **OpenAPI:** the five new routes are documented in `apps/web/content/docs/cli.mdx` but NOT yet in
+  `api/v1/lib/openapi.ts` — that's Step 14's job (it owns the OpenAPI extension). New routes to add:
+  `boxes/:id/checkpoint`, `checkpoints`, `prune`, `boxes/:id/agent`, `boxes/:id/logs`.
+- **Env caveat for e2e (not a code gap):** the genuine deployed-profile expose (`hub setup --deploy
+  local`) is blocked in-box by the `gh` shim, which won't surface a raw GitHub token for the git-lease
+  credential — so the deployed-profile auth was exercised via the `mode:'remote'` config above rather
+  than a real `hub expose`. The routing/backend code is auth-mode-agnostic (the hub proxy owns auth),
+  and `withOwningHub`/`preferLocal` is Step 5's already-tested shared code.
 
 ---
 
