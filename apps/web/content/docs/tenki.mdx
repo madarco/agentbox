@@ -6,7 +6,7 @@ description: Run your agents in Tenki Firecracker microVMs — a community Agent
 Run your agents in a [Tenki](https://tenki.cloud) sandbox — a Firecracker microVM with its own
 kernel — using the same `agentbox` commands as a local box. **tenki is a community provider** — a
 [plugin](/docs/build-a-provider) published as its own package
-(`@luxorlabs/agentbox-provider-tenki`), not bundled into the CLI. You get in-box Docker, a public
+(`@tenkicloud/agentbox-provider`), not bundled into the CLI. You get in-box Docker, a public
 HTTPS preview URL per port, free pause/resume, and id-addressed checkpoints, with no local Docker
 needed.
 
@@ -17,11 +17,11 @@ Switch per box with `--provider tenki`, or pin it project-wide with `box.provide
 
 <Callout type="info" title="Community provider">
   Maintained outside the AgentBox core, at
-  [`LuxorLabs/agentbox-provider-tenki`](https://github.com/LuxorLabs/agentbox-provider-tenki)
-  ([npm](https://www.npmjs.com/package/@luxorlabs/agentbox-provider-tenki)). Built only on
+  [`LuxorLabs/tenki-agentbox-provider`](https://github.com/LuxorLabs/tenki-agentbox-provider)
+  ([npm](https://www.npmjs.com/package/@tenkicloud/agentbox-provider)). Built only on
   [`@madarco/agentbox-provider-sdk`](https://www.npmjs.com/package/@madarco/agentbox-provider-sdk)
   and the official [`@tenkicloud/sandbox`](https://www.npmjs.com/package/@tenkicloud/sandbox) SDK.
-  Report bugs at the [issue tracker](https://github.com/LuxorLabs/agentbox-provider-tenki/issues).
+  Report bugs at the [issue tracker](https://github.com/LuxorLabs/tenki-agentbox-provider/issues).
 </Callout>
 
 ## Install
@@ -29,8 +29,8 @@ Switch per box with `--provider tenki`, or pin it project-wide with `box.provide
 Install the plugin, then register it so `--provider tenki` resolves:
 
 ```bash
-npm i -g @luxorlabs/agentbox-provider-tenki
-agentbox plugin add @luxorlabs/agentbox-provider-tenki
+npm i -g @tenkicloud/agentbox-provider
+agentbox plugin add @tenkicloud/agentbox-provider
 agentbox plugin list            # → tenki … (SDK v2)
 ```
 
