@@ -21,10 +21,17 @@ jobs:
     # issue_comment fires for plain issues as well as pull requests; without the
     # `issue.pull_request` guard the sign phrase posted on any issue would invoke the
     # action with no pull-request context.
+    #
+    # `contains`, not `==`: an exact compare silently drops real signatures. A comment
+    # of "…I hereby sign the CLA." (trailing period) skips this job entirely, so the
+    # action never runs, nothing lands in the signatures file, and the stale failing
+    # check blocks the PR forever with no feedback to the contributor. This bit PR #296.
+    # The bot's own "please sign" comment quotes the phrase, hence the author guard.
     if: >-
       github.event_name == 'pull_request_target' ||
       (github.event.issue.pull_request &&
-       github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA')
+       github.event.comment.user.login != 'github-actions[bot]' &&
+       contains(github.event.comment.body, 'I have read the CLA Document and I hereby sign the CLA'))
     steps:
       - name: Check the contributor license agreement
         uses: contributor-assistant/github-action@v2.6.1
@@ -40,5 +47,9 @@ jobs:
             Thanks for your pull request. Before it can be merged, please read our
             [Contributor License Agreement](https://github.com/madarco/agentbox/blob/main/.github/CLA.md)
             and sign it by posting the comment below. You only ever have to do this once.
-          custom-pr-sign-comment: I have read the CLA Document and I hereby sign the CLA
+          # `custom-pr-sign-comment` is deliberately unset: supplying it switches the
+          # action's own matcher from a tolerant regex (`/^.*i \s*have \s*read ….*$/`)
+          # to a strict `===` against the trimmed, lowercased body — the same trailing-
+          # period trap as above, one layer deeper. Omitting it keeps the identical
+          # default phrase and the forgiving match.
           custom-allsigned-prcomment: All contributors have signed the CLA. Thank you!
