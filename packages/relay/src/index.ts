@@ -35,6 +35,11 @@ export type {
   SetNoticeBody,
 } from './types.js';
 export { HostActionQueue } from './host-action-queue.js';
+export {
+  registerCloudBackendLoader,
+  type CloudBackendLoader,
+  type CloudCpModule,
+} from './host-actions.js';
 export { CloudBoxPoller, CloudBoxPollers, type CloudBoxPollerDeps } from './cloud-poller.js';
 export { BoxRegistry, EventBuffer } from './registry.js';
 export {

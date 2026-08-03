@@ -30,6 +30,8 @@ import {
   loadQueue,
   readJob,
   writeQueueLoginCode,
+  type CloudBackendLoader,
+  type CloudCpModule,
   type PendingApproval,
   type QueueAgentKind,
   type QueueJob,
@@ -105,6 +107,27 @@ const IMPORTERS: Record<ProviderKind, () => Promise<{ providerModule: ProviderMo
   e2b: () => import('@agentbox/sandbox-e2b'),
   digitalocean: () => import('@agentbox/sandbox-digitalocean'),
   'remote-docker': () => import('@agentbox/sandbox-remote-docker'),
+};
+
+/**
+ * Handed to the relay by server.ts before it starts serving, so its host
+ * executors — cloud `git.push`, `download.*`, the `gh pr create` head probe —
+ * resolve backends from THIS bundle. `@agentbox/relay` carries no
+ * `@agentbox/sandbox-*` code and the published hub ships no `node_modules`, so
+ * without this every cloud host action dies on
+ * `Cannot find package '@agentbox/sandbox-…'`. The literal specifiers in
+ * `IMPORTERS` above are what let esbuild inline the providers here.
+ */
+export const cloudBackendLoader: CloudBackendLoader = {
+  id: 'agentbox:hub-builtin-cloud-backends',
+  // Built-ins only: docker has no cloud backend, and returning null for anything
+  // else leaves provider PLUGINS on the relay's own registry path, which is
+  // where the SDK-version gate lives.
+  resolveBackend: async (name: string) => {
+    if (!isProviderKind(name)) return null;
+    return (await IMPORTERS[name]()).providerModule.backend ?? null;
+  },
+  loadCloudCp: (): Promise<CloudCpModule> => import('@agentbox/sandbox-cloud'),
 };
 
 // Per-provider serialization of prepare-enqueue: `prepareProvider` reads the

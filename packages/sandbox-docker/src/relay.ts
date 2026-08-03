@@ -227,6 +227,11 @@ async function spawnRelay(
       env: {
         ...process.env,
         AGENTBOX_CLI_ENTRY: cliEntry,
+        // Sibling of the CLI entry (both are tsup outputs in `dist/`, and the
+        // staged relay home copies `dist/` wholesale). The relay bin carries no
+        // `@agentbox/sandbox-*` code, so this is how cloud host actions —
+        // git.push, download.*, the gh pr head probe — get their backends.
+        AGENTBOX_CLOUD_BACKENDS: join(dirname(cliEntry), 'cloud-backends.js'),
       },
     },
   );

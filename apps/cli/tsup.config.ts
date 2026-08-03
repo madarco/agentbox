@@ -18,7 +18,11 @@ function gitShortSha(): string {
 }
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  // `cloud-backends` is a second entry, not part of the CLI graph: the spawned
+  // relay side-loads `dist/cloud-backends.js` (AGENTBOX_CLOUD_BACKENDS) to get
+  // the `@agentbox/sandbox-*` backends its own bundle can't carry. See
+  // src/relay/cloud-backends.ts.
+  entry: { index: 'src/index.ts', 'cloud-backends': 'src/relay/cloud-backends.ts' },
   format: ['esm'],
   target: 'node20',
   clean: true,

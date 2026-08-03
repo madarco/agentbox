@@ -111,40 +111,66 @@ export interface CloudActionExecutorDeps {
 }
 
 /**
- * Lazy backend resolver. Hardcoded for the providers we ship; future cloud
- * backends slot in here. Dynamic import keeps the relay process from loading
- * cloud SDKs (heavy CJS trees) until a cloud box is actually registered.
+ * How a host bundle hands the relay its cloud backends.
  *
- * ## Runtime contract (the relay→sandbox-* dependency story)
+ * The relay's own bundle carries NO `@agentbox/sandbox-*` code: those are
+ * private workspace packages, and the relay tsup configs deliberately don't
+ * depend on them (a literal import would create a
+ * `sandbox-daytona → sandbox-cloud → sandbox-docker → relay` cycle in the
+ * package.json deps). The computed-specifier `import()` below was meant to
+ * paper over that, on the false theory that esbuild constant-folds the string
+ * and inlines the package — it does not, so in any published install (which
+ * has no `@agentbox/*` in `node_modules`) it stayed a runtime lookup and
+ * failed with `Cannot find package '@agentbox/sandbox-…'`.
  *
- * The import path is a computed string on purpose — a literal would make
- * esbuild eager-resolve the package at bundle time, and the relay tsup
- * configs intentionally don't depend on the per-backend packages (to avoid
- * a `sandbox-daytona → sandbox-cloud → sandbox-docker → relay` cycle in
- * package.json deps).
+ * So each bundle that hosts a relay registers a loader built from its OWN
+ * literal-import map, which its bundler CAN resolve statically:
+ *   apps/cli → `dist/cloud-backends.js`, side-loaded by the spawned relay bin
+ *              via AGENTBOX_CLOUD_BACKENDS (set in spawnRelay).
+ *   apps/hub → registered in-process by server.ts before startRelayDaemon.
  *
- * **At runtime the parent process is responsible for making
- * `@agentbox/sandbox-daytona` (and `@agentbox/sandbox-cloud` for the cp /
- * download / browser-open executors) resolvable from `node_modules` next
- * to the relay bin.** The `@madarco/agentbox` CLI satisfies this by
- * carrying both packages in its build, bundled via `tsup` with
- * `noExternal: [/^@agentbox\//]`. The published `agent-box` npm package
- * ships them inlined; the workspace setup hits the same path via
- * pnpm-symlinked `node_modules`.
+ * Built-ins only. A loader returns null for anything else so provider PLUGINS
+ * keep flowing through the registry path below, which is where the SDK-version
+ * gate lives.
+ */
+export interface CloudBackendLoader {
+  /** Diagnostic label, surfaced in the "no host executor" error. */
+  id: string;
+  /** Resolve a built-in backend by provider name; null = not mine. */
+  resolveBackend(name: string): Promise<CloudBackend | null>;
+  /** The `@agentbox/sandbox-cloud` helpers, from the same bundle. */
+  loadCloudCp(): Promise<CloudCpModule>;
+}
+
+let cloudBackendLoader: CloudBackendLoader | undefined;
+
+/** Install the host bundle's backend loader. Call before serving traffic. */
+export function registerCloudBackendLoader(loader: CloudBackendLoader): void {
+  cloudBackendLoader = loader;
+}
+
+/**
+ * Lazy backend resolver: the registered loader first (the only path that works
+ * in a published install), then the computed-import fallback below, which still
+ * resolves in the pnpm dev tree via workspace symlinks, then plugins.
  *
- * If you embed `@agentbox/relay` standalone in a different host (no
- * agentbox CLI around), you MUST install `@agentbox/sandbox-daytona`
- * yourself for cloud executors to work — otherwise this throws a clear
- * `MODULE_NOT_FOUND` error and the in-box `/rpc` will see exit 1 with the
- * "no host executor" message above.
+ * Dynamic import throughout keeps the relay process from loading cloud SDKs
+ * (heavy CJS trees) until a cloud box actually needs one.
+ *
+ * If you embed `@agentbox/relay` standalone in a different host (no agentbox
+ * CLI around), either register a `CloudBackendLoader` or install
+ * `@agentbox/sandbox-<provider>` next to the relay — otherwise this throws the
+ * actionable error below and the in-box `/rpc` sees exit 1.
  */
 export async function resolveCloudBackend(name: string): Promise<CloudBackend> {
-  // NB: the `'@agentbox/sandbox-' + '<name>'` specifiers are written as literal
-  // concatenations (not `+ name`) on purpose — esbuild constant-folds them so
-  // the bundler can statically resolve + inline each provider package
-  // (`noExternal: [/^@agentbox\//]`, see above). A runtime variable specifier
-  // would defeat that and MODULE_NOT_FOUND in the published CLI. Only the
-  // error-handling is shared (via `loadCloudBackend`).
+  if (cloudBackendLoader) {
+    const injected = await cloudBackendLoader.resolveBackend(name);
+    if (injected) return injected;
+  }
+  // Dev-tree fallback. esbuild does NOT bundle a computed `import()` specifier,
+  // so these stay runtime `node_modules` lookups — which only ever resolve
+  // through pnpm workspace symlinks. In a published install the registered
+  // loader above is what answers; this arm just throws the actionable error.
   if (name === 'daytona') {
     const pkg = '@agentbox/sandbox-' + 'daytona';
     return loadCloudBackend(pkg, async () => ((await import(pkg)) as { daytonaBackend: CloudBackend }).daytonaBackend);
@@ -194,7 +220,17 @@ export async function resolveCloudBackend(name: string): Promise<CloudBackend> {
       return pm.backend;
     });
   }
-  throw new Error(`no host executor for cloud backend '${name}'`);
+  const via = cloudBackendLoader ? ` (loader '${cloudBackendLoader.id}' does not provide it)` : '';
+  throw new Error(`no host executor for cloud backend '${name}'${via}`);
+}
+
+/**
+ * Node's ESM resolver says "Cannot find package 'x' imported from y" — a
+ * different wording from CJS's "Cannot find module". Missing that spelling is
+ * why the raw resolver error reached users instead of the actionable one.
+ */
+function isModuleNotFound(msg: string): boolean {
+  return /cannot find module|cannot find package|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND/i.test(msg);
 }
 
 /**
@@ -210,7 +246,7 @@ async function loadCloudBackend(
     return await load();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (/cannot find module|MODULE_NOT_FOUND/i.test(msg)) {
+    if (isModuleNotFound(msg)) {
       throw new Error(
         `relay: cannot load '${pkg}' at runtime — install it alongside @agentbox/relay (the @madarco/agentbox CLI normally provides this dependency). Original: ${msg}`,
       );
@@ -813,17 +849,16 @@ export async function boxCarriedHostPaths(boxId: string): Promise<Set<string>> {
 export { resolveHostPath };
 
 /**
- * Cloud cp helpers live in `@agentbox/sandbox-cloud` — same dynamic-import
- * trick as `resolveCloudBackend` keeps the relay bundle from eagerly pulling
- * the cloud package (and its sandbox-docker transitive). Imports the helpers
- * once and caches; only loaded the first time a cloud box queues `cp.*`.
+ * Cloud cp helpers live in `@agentbox/sandbox-cloud`, kept out of the relay
+ * bundle for the same reason as the backends (dep cycle + heavy transitive
+ * graph). Imported once and cached; only loaded the first time a cloud box
+ * queues `cp.*`.
  *
- * Same runtime contract as `resolveCloudBackend`: the parent process is
- * responsible for making `@agentbox/sandbox-cloud` resolvable next to the
- * relay bin. The @madarco/agentbox CLI bundles it; standalone embedders
- * must install it themselves. See the longer note on `resolveCloudBackend`.
+ * Same runtime contract as `resolveCloudBackend`: the registered
+ * `CloudBackendLoader` supplies it in a published install; the computed import
+ * below is the dev-tree fallback.
  */
-interface CloudCpModule {
+export interface CloudCpModule {
   pullCloudDirContents(
     backend: CloudBackend,
     handle: CloudHandle,
@@ -835,7 +870,12 @@ interface CloudCpModule {
 let cloudCpModule: CloudCpModule | undefined;
 async function loadCloudCp(): Promise<CloudCpModule> {
   if (cloudCpModule) return cloudCpModule;
-  // Computed string defeats esbuild's static resolution — see resolveCloudBackend.
+  if (cloudBackendLoader) {
+    const mod = await cloudBackendLoader.loadCloudCp();
+    cloudCpModule = mod;
+    return mod;
+  }
+  // Dev-tree fallback — see resolveCloudBackend.
   const pkg = '@agentbox/sandbox-' + 'cloud';
   try {
     const mod = (await import(pkg)) as CloudCpModule;
@@ -843,7 +883,7 @@ async function loadCloudCp(): Promise<CloudCpModule> {
     return mod;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (/cannot find module|MODULE_NOT_FOUND/i.test(msg)) {
+    if (isModuleNotFound(msg)) {
       throw new Error(
         `relay: cannot load '${pkg}' at runtime — install it alongside @agentbox/relay (the @madarco/agentbox CLI normally provides this dependency). Original: ${msg}`,
       );

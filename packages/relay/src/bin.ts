@@ -1,7 +1,9 @@
 import { Command } from 'commander';
 import { request as httpRequest } from 'node:http';
+import { pathToFileURL } from 'node:url';
 import { DEFAULT_RELAY_PORT } from './types.js';
 import { startRelayDaemon } from './daemon.js';
+import { registerCloudBackendLoader, type CloudBackendLoader } from './host-actions.js';
 
 const program = new Command();
 
@@ -21,6 +23,7 @@ program
       process.stderr.write(`agentbox-relay: invalid port "${opts.port}"\n`);
       process.exit(2);
     }
+    await loadInjectedCloudBackends();
     const daemon = await startRelayDaemon({
       port,
       host: opts.host,
@@ -69,6 +72,33 @@ program
     const reply = await adminGet(`/admin/events?${params.toString()}`, opts.port);
     process.stdout.write(reply + '\n');
   });
+
+/**
+ * Side-load the spawning bundle's cloud backends (AGENTBOX_CLOUD_BACKENDS, set
+ * by the CLI's `spawnRelay`). This bin carries no `@agentbox/sandbox-*` code of
+ * its own, and a published install has none in `node_modules` — without this,
+ * every cloud `git.push` / `download.*` / `gh pr create` head probe fails with
+ * `Cannot find package '@agentbox/sandbox-…'`. Absent (or unloadable) leaves the
+ * dev-tree fallback in `resolveCloudBackend`, which is enough in a pnpm checkout.
+ */
+async function loadInjectedCloudBackends(): Promise<void> {
+  const entry = process.env['AGENTBOX_CLOUD_BACKENDS'];
+  if (!entry) return;
+  try {
+    const mod = (await import(pathToFileURL(entry).href)) as {
+      cloudBackendLoader?: CloudBackendLoader;
+      default?: CloudBackendLoader;
+    };
+    const loader = mod.cloudBackendLoader ?? mod.default;
+    if (!loader) throw new Error('module exports no cloudBackendLoader');
+    registerCloudBackendLoader(loader);
+  } catch (err) {
+    process.stderr.write(
+      `agentbox-relay: could not load cloud backends from ${entry} ` +
+        `(${err instanceof Error ? err.message : String(err)}); cloud host actions may fail\n`,
+    );
+  }
+}
 
 async function adminPost(path: string, body: unknown, portStr: string): Promise<void> {
   const port = Number.parseInt(portStr, 10);

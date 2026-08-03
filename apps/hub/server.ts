@@ -14,7 +14,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import next from 'next';
 import { startRelayDaemon } from '@agentbox/relay/daemon';
-import { createHubBackend } from './lib/hub-backend';
+import { registerCloudBackendLoader } from '@agentbox/relay';
+import { cloudBackendLoader, createHubBackend } from './lib/hub-backend';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number.parseInt(process.env.AGENTBOX_HUB_PORT ?? '8787', 10);
@@ -57,6 +58,12 @@ async function main(): Promise<void> {
   const app = next({ dev, dir, hostname: host, port });
   await app.prepare();
   const handle = app.getRequestHandler();
+
+  // Before the relay serves anything: give it the backends from THIS bundle.
+  // @agentbox/relay carries no @agentbox/sandbox-* code and the published hub
+  // ships no node_modules, so cloud git.push / download.* / gh-pr-head would
+  // otherwise fail with `Cannot find package '@agentbox/sandbox-…'`.
+  registerCloudBackendLoader(cloudBackendLoader);
 
   const daemon = await startRelayDaemon({
     port,
