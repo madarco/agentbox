@@ -9,6 +9,21 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.27.2] - 2026-08-03
+
+### Fixed
+
+- **Every host-relay git op from a cloud or remote-docker box failed** on a
+  published install with `Cannot find package '@agentbox/sandbox-<provider>'`,
+  so a finished branch could not leave the box. The relay now gets its cloud
+  backends injected by the bundle that hosts it instead of resolving them from
+  `node_modules`, which a published install doesn't have. Affects `git push` /
+  `git fetch`, `download.*`, and the `gh pr create` head probe on every cloud
+  provider. Reported, diagnosed and verified by
+  [@positonic](https://github.com/positonic) ([#298](https://github.com/madarco/agentbox/issues/298)).
+- After upgrading, run `agentbox hub restart` — a running hub keeps serving the
+  pre-fix code.
+
 ## [0.27.1] - 2026-07-25
 
 ### Fixed
