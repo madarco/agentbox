@@ -121,12 +121,18 @@ The npm publish does **not** cover it, and `agentbox install tray`,
 `AgentBox.zip.sha256` sidecar — so a stale published build silently keeps
 users on the old app. Run this check every time:
 
-1. **Any app commits since its last release?**
+1. **Any app commits since its last release?** The tray now mirrors this repo's
+   branch model: features land on its **`nightly`** branch and `main` is
+   fast-forwarded at release time, so the range must be measured against
+   `origin/nightly` — `origin/main` only moves when a release is cut, which would
+   make this check read empty forever.
    ```
    git -C ../agentbox-tray fetch origin --tags 2>/dev/null
-   anchor=$(git -C ../agentbox-tray describe --tags --abbrev=0 origin/main)
-   git -C ../agentbox-tray log "$anchor"..origin/main --oneline
+   anchor=$(git -C ../agentbox-tray describe --tags --abbrev=0 origin/nightly)
+   git -C ../agentbox-tray log "$anchor"..origin/nightly --oneline
    ```
+   The tag anchor still works because nightlies deliberately don't tag, so
+   `describe` on `nightly` resolves to the last stable release.
    Empty → the published app is current; skip the rest. Non-empty → the app
    needs a release.
 
@@ -139,29 +145,36 @@ users on the old app. Run this check every time:
 3. **Only publish with explicit consent.** A bump in `$ARGUMENTS` consents to
    the CLI release flow (section 8) — it does **not** cover the app. Ask the
    user first (e.g. via a question with the app-version proposal) and publish
-   only after they say yes. Next app version = bump the `anchor` tag (the
-   current version is in `../agentbox-tray/VERSION`):
+   only after they say yes. Next app version = bump the `anchor` tag. Do **not**
+   read `../agentbox-tray/VERSION` for it — after a nightly that file holds a
+   pre-release (`0.1.15-nightly.<stamp>`), not the published version; the last
+   `v*` tag and `tray-latest`'s `version.json` are the real anchors.
    ```
-   cd ../agentbox-tray && AGENTBOX_NOTARY_PROFILE=AGENTBOX_NOTARY ./scripts/publish-release.sh <next-app-version>
+   cd ../agentbox-tray && git switch main && git merge --ff-only nightly \
+     && AGENTBOX_NOTARY_PROFILE=AGENTBOX_NOTARY ./scripts/publish-release.sh <next-app-version>
    ```
    - `AGENTBOX_NOTARY_PROFILE` is **load-bearing**: without it `release.sh`
      builds signed-but-unnotarized and `publish-release.sh` refuses to publish.
      Notarization waits on Apple (~a few minutes) — run it in the background.
-   - The script tags the tray repo `v<version>` and replaces the `tray-latest`
-     assets (dmg + zip + `.sha256` sidecars), but leaves its `VERSION` file
-     bump uncommitted — commit it afterwards (`release: v<version>`) and push
-     straight to the tray repo's main (no PR flow there).
+   - Cut stable from the tray's **`main`** (fast-forward it from `nightly`
+     first); the script refuses off `main`. It replaces the `tray-latest` assets
+     (dmg + zip + `.sha256` sidecars + `version.json`), then commits the
+     `VERSION` bump (`release: v<version>`), tags `v<version>`, and pushes — you
+     no longer commit that by hand. No PR flow on the tray repo.
    - Verify: `gh release view tray-latest -R madarco/agentbox --json body`
      shows the new version.
    - **Nightly runs** publish to the separate `tray-nightly` release instead, so
-     `tray-latest` is untouched. Pass a pre-release version and the script derives
-     the channel from it (and skips the source git tag):
+     `tray-latest` is untouched. The tray computes its own version — don't stamp
+     one by hand:
      ```
-     cd ../agentbox-tray && AGENTBOX_NOTARY_PROFILE=AGENTBOX_NOTARY \
-       ./scripts/publish-release.sh <next-app-version>-nightly.<YYYYMMDDHHmm>
+     cd ../agentbox-tray && git switch nightly && AGENTBOX_NOTARY_PROFILE=AGENTBOX_NOTARY \
+       ./scripts/publish-release.sh nightly
      ```
-     Nightly tray publishes are optional — a nightly CLI falls back to the stable
-     tray automatically when `tray-nightly` doesn't exist or is older.
+     It derives `<next patch of the published stable>-nightly.<UTC stamp>`, skips
+     the source git tag, and commits the bump itself. `--dry-run` shows the
+     resolved version and notes without building. Nightly tray publishes are
+     optional — a nightly CLI falls back to the stable tray automatically when
+     `tray-nightly` doesn't exist or is older.
 
 ## 8. Release (only when `$ARGUMENTS` named a bump)
 
@@ -302,6 +315,7 @@ Then:
 
 7. **Skip the provider-SDK check (section 6)** — the SDK has its own semver line
    and no nightly channel. **Do run the tray check (section 7)** if the app
-   changed; its nightly command is
-   `TRAY_TAG=tray-nightly ./scripts/publish-release.sh <version>-nightly.<stamp>`
-   (the script derives the nightly channel from the version string).
+   changed; its nightly command is `./scripts/publish-release.sh nightly`, run
+   from the tray's `nightly` branch (it computes its own version, derives the
+   channel from it, and skips the source git tag). The tray's version line is
+   independent of the CLI's — don't pass it the CLI's version.

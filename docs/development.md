@@ -255,5 +255,14 @@ offered.
 
 The menu-bar app is optional here — a nightly CLI falls back to the stable tray
 when `tray-nightly` is absent or older. To publish one:
-`cd ../agentbox-tray && ./scripts/publish-release.sh <ver>-nightly.<stamp>` (the
-script derives the channel from the version).
+
+```sh
+cd ../agentbox-tray && git switch nightly && ./scripts/publish-release.sh nightly
+```
+
+The tray mirrors this repo's branch model (`nightly` integrates, `main` carries
+releases) and computes its own version — `<next patch of the published stable
+tray>-nightly.<UTC stamp>`, on its own version line, unrelated to the CLI's. It
+derives the channel from that version, skips the source git tag, and commits the
+bump itself. `--dry-run` shows the resolved version and release notes without
+building.

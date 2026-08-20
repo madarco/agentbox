@@ -182,9 +182,21 @@ Each of these is a silent failure — nothing errors, the channel just quietly m
   repo `v$VERSION`, and the release-notes tray check anchors on `git describe --tags --abbrev=0`. A
   nightly tag there makes the "any app commits since its last release?" check go permanently empty
   for stable.
-- **Both `isNewer` implementations drop the prerelease suffix** before comparing — `semver-lite.ts`
-  returns `null` for a prerelease, and the tray's Swift version strips it. Either way,
-  nightly-to-nightly comparison is a no-op and testers are never told about a newer nightly.
+- **The tray's nightly version base must come from the published release, not its `VERSION` file** —
+  the same trap as the CLI's. After a nightly, `VERSION` reads `0.1.15-nightly.<old>`, whose patch
+  bump is `0.1.16`: a version no stable release supersedes, so the nightly is offered to nobody.
+  `publish-release.sh nightly` reads `tray-latest`'s `version.json` and falls back to the git tag
+  only when that fetch fails (a stable run tags *before* it publishes, so a tag can outlive a failed
+  release).
+- **The tray's "any app commits?" check must measure against its `nightly` branch.** The tray now
+  has the same integration-branch model as this repo, so `origin/main` only moves at release time;
+  measuring there would make the check read empty forever.
+- **Both `isNewer` implementations had to learn prerelease ordering.** They originally dropped the
+  suffix before comparing, which made every nightly-to-nightly comparison a tie, so a tester was
+  never told about a newer nightly. Both sides now order prereleases properly
+  (`apps/cli/src/lib/semver-lite.ts` and the tray's `Update/UpdateChecker.swift`), giving
+  `0.1.15-nightly.6 > 0.1.15-nightly.5` and `0.1.15 > 0.1.15-nightly.6`. Don't "simplify" either
+  back into a core-only compare.
 
 ## Known caveats — documented, not solved
 
