@@ -11,6 +11,20 @@ CLI, not the raw commits.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Docker boxes are gated off when a control box is configured.** A docker box
+  built on your laptop can't run with the laptop closed — the whole point of a
+  control box — so `create`, the agent launchers and `prepare` refuse
+  `docker` / `docker:<host>` there, `doctor` and the install picker drop those
+  rows, and `ls` marks existing docker boxes inactive (they stay destroyable by
+  name). New `hub.mode` config key (`auto` | `thin` | `local`) — set `local` to
+  keep using docker anyway. With no control box configured, nothing changes.
+- **`--dangerously-with-credentials` (`git.pushMode=direct`) is refused when a
+  control box is configured.** Token leasing (`git.pushMode=auto`) already gives
+  a box laptop-off push without copying a git credential into it — and into every
+  snapshot of it. Unchanged without a control box.
+
 ### Added
 
 - `agentbox install portless` sets Portless up for good: it installs the CLI if
@@ -99,6 +113,17 @@ CLI, not the raw commits.
   git work itself, so boxes never receive a credential at all. New `hub.gitAuth`
   key; `--git-auth app` keeps the old per-repo App tokens.
 
+- **Every box command now runs through the hub's public `/api/v1`** — `ls`,
+  `create`, the queue and jobs, `start`/`stop`/`pause`/`unpause`/`destroy`,
+  `git push|pull|checkout|branch`, `services`, `rename`, `url`/`screen`,
+  `checkpoint`/`prune`/`agent`/`logs`, approvals and custody. One server-side
+  implementation, so each behaves identically against a local hub and a remote
+  control box.
+- The hub's API is documented and browsable: `/api/v1/docs` renders it and
+  `/api/v1/openapi.json` serves the spec, so the menu-bar app, the web UI and
+  your own scripts can drive a hub directly.
+- `agentbox ls --live` now probes live box state server-side.
+
 ### Changed
 
 - **A create routed to the control box now shows its real progress.** The hub's
@@ -132,6 +157,12 @@ CLI, not the raw commits.
   `agentbox hub *` group (`hub setup`/`deploy`/`boxes`/`approvals`/`credentials`/
   `custody`/…). `agentbox hub status` now reports the configured remote control
   box when one is set, else the local hub process.
+
+- An interactive `agentbox create` runs in its own scheduler lane, so it starts
+  immediately instead of queueing behind background `-i` jobs.
+- `agentbox services` on a paused or stopped box reports the hub's last known
+  snapshot instead of failing to reach the supervisor — it now agrees with
+  `status`.
 
 ### Fixed
 
@@ -283,6 +314,28 @@ CLI, not the raw commits.
   keys were missing from the published JSON schema, including `git.pushMode`,
   `cloud.viaHub`, `update.channel`, and the whole `ssh`/`git`/`cloud`/
   `integrations` branches. `box.provider` also rejected `remote-docker`.
+- **Stored credentials could be read over the network.** Once the local hub began
+  binding all interfaces so docker boxes could reach it, anything holding the hub
+  token could fetch stored bytes — agent credentials, `.env` files, per-box SSH
+  private keys. That read is now restricted to loopback (and to the admin token
+  on a control box), and fails closed.
+- A hub-routed create came up without your `.env` and other untracked files; the
+  seed push now always runs.
+- A hub-routed `claude -i` silently dropped its agent arguments
+  (`--dangerously-skip-permissions` and friends).
+- `destroy --keep-snapshot` was a silent no-op on docker.
+- A failed create now reports the failure in `queue list` / `hub jobs show`
+  instead of reading as done, and `queue list` prints the full job id so
+  `queue show` / `queue cancel` accept it.
+- Destroying a cloud box from the dashboard could hit the wrong hub and leave
+  both the sandbox and its registration in place.
+
+### Removed
+
+- `agentbox hub boxes start|stop|pause|resume|rm` — use the plain `agentbox
+  start|stop|pause|unpause|destroy`, which now drive the hub themselves.
+  `hub boxes list` stays as the hub's admin view.
+
 
 ## [0.27.1] - 2026-07-25
 
