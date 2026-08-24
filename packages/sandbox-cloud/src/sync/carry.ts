@@ -84,14 +84,16 @@ interface UploadOneArgs {
 async function uploadOneEntry(args: UploadOneArgs): Promise<void> {
   const { entry } = args;
   // Shared, byte-for-byte carry decisions (~/ expansion, file-vs-dir, exclude,
-  // uid/mode defaults, rename-needed, parent-chain-needed) — see
+  // owner/mode defaults, rename-needed, parent-chain-needed) — see
   // `@agentbox/sandbox-core`'s files concern. `~/` is expanded host-side, never
   // inside the box: the supervisor user's $HOME equals BOX_HOME, but the exec
   // shell's current user (the SDK's default) is not guaranteed to be vscode on
   // every backend, so an explicit destination path is required.
   const plan = planCarryEntry(entry);
   if (!plan) return; // missing (optional + absent on host)
-  const { boxDest, isDir, parentDir, exclude, uid, mode, fileBase, renameNeeded } = plan;
+  const { boxDest, isDir, parentDir, exclude, chownArgs, mode, fileBase, renameNeeded } = plan;
+  // Pre-joined for the command string; holds no shell metacharacters by contract.
+  const chownTarget = chownArgs.join(' ');
 
   // 1. Tar the host source on disk so backend.uploadFile (which takes a path,
   //    not a stream) has something to send.
@@ -130,12 +132,10 @@ async function uploadOneEntry(args: UploadOneArgs): Promise<void> {
       : `tar -xf ${remoteTar} -C ${shellQuote(parentDir)} --no-same-permissions --no-same-owner -m`,
   ];
   if (renameNeeded) {
-    parts.push(
-      `mv ${shellQuote(`${parentDir}/${fileBase}`)} ${shellQuote(boxDest)}`,
-    );
+    parts.push(`mv ${shellQuote(`${parentDir}/${fileBase}`)} ${shellQuote(boxDest)}`);
   }
   if (mode) parts.push(`chmod -R ${mode} ${shellQuote(boxDest)}`);
-  parts.push(`chown -R ${String(uid)}:${String(uid)} ${shellQuote(boxDest)}`);
+  parts.push(`chown -R ${chownTarget} ${shellQuote(boxDest)}`);
   // Parent-chain chown: `mkdir -p` ran as root, so any new dirs between
   // $HOME and dirname(boxDest) are root-owned. Walk back up to $HOME
   // (exclusive) and chown each. Only when dest is under $HOME — system
@@ -144,7 +144,7 @@ async function uploadOneEntry(args: UploadOneArgs): Promise<void> {
     parts.push(
       `parent=$(dirname ${shellQuote(boxDest)}); ` +
         `while [ "$parent" != "${BOX_HOME}" ] && [ "$parent" != "/" ]; do ` +
-        `chown ${String(uid)}:${String(uid)} "$parent"; ` +
+        `chown ${chownTarget} "$parent"; ` +
         `parent=$(dirname "$parent"); ` +
         `done`,
     );
@@ -152,24 +152,27 @@ async function uploadOneEntry(args: UploadOneArgs): Promise<void> {
   parts.push(`rm -f ${remoteTar}`);
   const cmd = parts.join(' && ');
 
-  // Vercel-only: force the extract to run as root. Vercel's exec wraps a
-  // non-root command in `sudo -u vscode -H bash -lc '<cmd>'`, and that extra
-  // `bash -lc` nesting mangles this command's `$(...)`/`$var`/`while` (the
-  // parent var expands empty → `dirname "."` loops forever → the exec hangs
-  // until timeout, surfacing as "Stream ended before command finished"). Its
-  // single-`bash -lc` root path doesn't re-parse, so the command runs cleanly.
-  // The command still chowns the dest to the target uid (default vscode 1000),
-  // so files end up vscode-owned and writable regardless of who runs it.
+  // Vercel + E2B: force the whole chain to run as root.
   //
-  // Scoped explicitly to Vercel rather than relying on other backends ignoring
-  // `user:` — Hetzner/Daytona keep their existing (working) carry path
-  // unchanged even if they start honoring `user` later.
-  // E2B joins the vercel carve-out: its default exec runs as `vscode` (uid
-  // 1000), which cannot `chown` files to other uids. The carry chain ends with
-  // a `chown -R 1000:1000`, so as vscode it errors with "Operation not
-  // permitted" and the parent-chain loop never reaches its terminator. Forcing
-  // root makes the chown a no-op (target uid matches existing owner) and lets
-  // the parent-chain walk complete.
+  // Vercel's reason is shell re-parsing: its exec wraps a non-root command in
+  // `sudo -u vscode -H bash -lc '<cmd>'`, and that extra `bash -lc` nesting
+  // mangles the `$(...)`/`$var`/`while` in the parent-chain walk (the parent var
+  // expands empty → `dirname "."` loops forever → the exec hangs until timeout,
+  // surfacing as "Stream ended before command finished"). Its single-`bash -lc`
+  // root path doesn't re-parse, so the command runs cleanly.
+  //
+  // E2B's reason is permissions: tar extracts with `--no-same-owner`, so every
+  // carried file is owned by whoever runs the extract. Only root can then hand
+  // it to someone else, and E2B's default exec user is `vscode` — as vscode the
+  // final `chown` fails with "Operation not permitted" and the parent-chain loop
+  // never reaches its terminator.
+  //
+  // Running as root is safe for ownership because the chown resolves the box
+  // user from `--reference=/home/vscode` (see CarryPlan.chownArgs) rather than a
+  // hardcoded number, so the files land on the real vscode uid — 1000 on
+  // docker/hetzner/digitalocean/daytona, whatever `useradd` picked on
+  // vercel/e2b. Scoped to these two backends rather than made unconditional so
+  // Hetzner/Daytona keep their existing (working, non-root) carry path.
   const wantsRoot = args.backend.name === 'vercel' || args.backend.name === 'e2b';
   const execOpts = wantsRoot ? { user: 'root' as const } : undefined;
   const res = await args.backend.exec(args.handle, cmd, execOpts);

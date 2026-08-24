@@ -56,6 +56,12 @@ export function createCloudSyncTransport(init: CloudSyncTransportInit): SyncTran
       return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
     },
 
+    // `opts` is deliberately ignored: `PushOptions.uid` is a docker-only knob,
+    // and honoring it here would be wrong. The extract runs as the backend's
+    // default exec user — `vscode` BY NAME on every cloud backend — so files
+    // already land on the box user whatever uid the provider gave it. Applying
+    // the caller's numeric uid (its one caller passes 1000) would re-own them to
+    // a stranger on vercel/e2b.
     async applyTarball(hostTarPath: string, boxDestDir: string): Promise<void> {
       const remoteTar = `/tmp/agentbox-apply-${String(tarSeq++)}.tar`;
       await backend.uploadFile(handle, hostTarPath, remoteTar);
@@ -79,7 +85,9 @@ export function createCloudSyncTransport(init: CloudSyncTransportInit): SyncTran
         packArgs.push('-cf', localTar, '.');
         const packed = await execa('tar', packArgs, { reject: false });
         if (packed.exitCode !== 0) {
-          throw new Error(`tar pack of ${hostSrcDir} failed: ${String(packed.stderr).slice(0, 300)}`);
+          throw new Error(
+            `tar pack of ${hostSrcDir} failed: ${String(packed.stderr).slice(0, 300)}`,
+          );
         }
         await transport.applyTarball(localTar, boxDestDir, opts);
       } finally {
@@ -97,13 +105,14 @@ export function createCloudSyncTransport(init: CloudSyncTransportInit): SyncTran
       }
     },
 
-    async pullTree(boxSrcDir: string, hostDestDir: string, opts?: { exclude?: string[] }): Promise<void> {
+    async pullTree(
+      boxSrcDir: string,
+      hostDestDir: string,
+      opts?: { exclude?: string[] },
+    ): Promise<void> {
       const remoteTar = `/tmp/agentbox-pull-${String(tarSeq++)}.tar`;
       const excludes = (opts?.exclude ?? []).map((e) => `--exclude=${e}`).join(' ');
-      const pack = await backend.exec(
-        handle,
-        `tar -C ${boxSrcDir} ${excludes} -cf ${remoteTar} .`,
-      );
+      const pack = await backend.exec(handle, `tar -C ${boxSrcDir} ${excludes} -cf ${remoteTar} .`);
       if (pack.exitCode !== 0) {
         throw new Error(`cloud tar of ${boxSrcDir} failed: ${pack.stderr.slice(-200)}`);
       }

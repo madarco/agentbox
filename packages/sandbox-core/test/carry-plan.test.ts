@@ -20,12 +20,28 @@ describe('planCarryEntry', () => {
     expect(planCarryEntry(entry({ kind: 'missing' }))).toBeNull();
   });
 
-  it('expands ~/ to /home/vscode host-side and defaults uid to 1000', () => {
+  it('expands ~/ to /home/vscode host-side and defaults the owner to the box user', () => {
     const p = planCarryEntry(entry({ absDest: '~/.agentbox/marker.txt' }))!;
     expect(p.boxDest).toBe('/home/vscode/.agentbox/marker.txt');
     expect(p.parentDir).toBe('/home/vscode/.agentbox');
-    expect(p.uid).toBe(1000);
+    expect(p.chownArgs).toEqual(['--reference=/home/vscode']);
     expect(p.isDir).toBe(false);
+  });
+
+  // The bug this replaced: 1000 is `vscode` on docker/hetzner/digitalocean/
+  // daytona but NOT on vercel/e2b, where `useradd` runs without `-u`. Baking
+  // any number into the default silently hands carried files to a stranger.
+  it('never bakes a numeric uid into the default owner', () => {
+    const p = planCarryEntry(entry({}))!;
+    expect(p.chownArgs.join(' ')).not.toMatch(/\d/);
+  });
+
+  it('emits chownArgs free of shell metacharacters (both apply sites join them raw)', () => {
+    for (const e of [entry({}), entry({ user: 0 }), entry({ user: 33 })]) {
+      for (const tok of planCarryEntry(e)!.chownArgs) {
+        expect(tok).not.toMatch(/[$`"'\\ ;&|<>()]/);
+      }
+    }
   });
 
   it('leaves absolute (non-~) dests untouched', () => {
@@ -35,8 +51,10 @@ describe('planCarryEntry', () => {
   });
 
   it('honors explicit user:0 (root) without turning it into the default', () => {
-    expect(planCarryEntry(entry({ user: 0 }))!.uid).toBe(0);
-    expect(planCarryEntry(entry({ user: 33 }))!.uid).toBe(33);
+    expect(planCarryEntry(entry({ user: 0 }))!.chownArgs).toEqual(['0:0']);
+    expect(planCarryEntry(entry({ user: 33 }))!.chownArgs).toEqual(['33:33']);
+    // An explicit 1000 stays a literal uid — it does NOT mean "the box user".
+    expect(planCarryEntry(entry({ user: 1000 }))!.chownArgs).toEqual(['1000:1000']);
   });
 
   it('renders mode as a zero-padded octal string (undefined when unset)', () => {
@@ -46,7 +64,9 @@ describe('planCarryEntry', () => {
   });
 
   it('flags rename when the file dest basename differs from the source', () => {
-    const same = planCarryEntry(entry({ absSrc: '/host/a/marker.txt', absDest: '~/dir/marker.txt' }))!;
+    const same = planCarryEntry(
+      entry({ absSrc: '/host/a/marker.txt', absDest: '~/dir/marker.txt' }),
+    )!;
     expect(same.renameNeeded).toBe(false);
     expect(same.fileBase).toBe('marker.txt');
     expect(same.destBase).toBe('marker.txt');
@@ -80,7 +100,9 @@ describe('planCarryEntry', () => {
   });
 
   it('needs the parent chain for a dest nested under $HOME', () => {
-    expect(planCarryEntry(entry({ absDest: '~/.agentbox/creds.json' }))!.parentChainNeeded).toBe(true);
+    expect(planCarryEntry(entry({ absDest: '~/.agentbox/creds.json' }))!.parentChainNeeded).toBe(
+      true,
+    );
     // Immediate child of $HOME → parent is $HOME itself → nothing to walk.
     expect(planCarryEntry(entry({ kind: 'dir', absDest: '~/foo' }))!.parentChainNeeded).toBe(false);
     // Outside $HOME → system parents left alone.

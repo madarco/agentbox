@@ -13,13 +13,19 @@
  *    a Vercel `$(...)`/`while` hang — see the note in that file).
  *
  * Both apply paths share the same up-front decisions (`~/`→`/home/vscode`
- * expansion, file-vs-dir, exclude, uid/mode defaults, rename-needed,
+ * expansion, file-vs-dir, exclude, owner/mode defaults, rename-needed,
  * parent-chain-needed). Those live here so the two providers can't drift.
  */
 
 import type { ResolvedCarryEntry } from '@agentbox/core';
 
-/** Hardcoded in-box home — boxes always run as the `vscode` user (uid 1000). */
+/**
+ * Hardcoded in-box home — every box runs as a user named `vscode` whose home is
+ * this path. Its *uid* is NOT fixed: docker/hetzner/digitalocean/daytona land on
+ * 1000, but vercel and e2b `useradd` without `-u` (their base images already
+ * hold 1000), so the number is whatever was free when the base was baked. Nothing
+ * here may depend on it — see {@link CarryPlan.chownArgs}.
+ */
 export const BOX_HOME = '/home/vscode';
 
 /** dirname() that always uses '/' regardless of host OS (the box is linux). */
@@ -51,8 +57,20 @@ export interface CarryPlan {
   parentDir: string;
   /** tar `--exclude` patterns (dir entries only; empty for files). */
   exclude: string[];
-  /** chown target uid:uid inside the box. Default 1000 (`vscode`); 0 = root. */
-  uid: number;
+  /**
+   * argv tokens naming the `chown` target. Default `['--reference=/home/vscode']`
+   * — the box user, whatever uid the provider assigned it (see {@link BOX_HOME}).
+   * An explicit `user:` gives `['0:0']` / `['33:33']`.
+   *
+   * `--reference` rather than a name: hetzner/digitalocean may rename an existing
+   * uid-1000 account into `vscode` and leave its primary group named `ubuntu`, and
+   * a `useradd` without `-u` does not guarantee gid == uid — so the home dir is
+   * the only thing that reliably carries both halves of the answer.
+   *
+   * Contains no shell metacharacters: splice into an argv, or `.join(' ')` into a
+   * command string, unquoted.
+   */
+  chownArgs: string[];
   /** Zero-padded octal `chmod -R` arg, or undefined when no mode is set. */
   mode?: string;
   /** Source basename inside the packed tar (file entries only; '' for dirs). */
@@ -63,8 +81,8 @@ export interface CarryPlan {
   renameNeeded: boolean;
   /**
    * Dest is under `$HOME` with a non-`$HOME` immediate parent, so the
-   * root-created parent chain must be chowned back to `uid`. System paths
-   * (`/etc/*`, …) are left untouched.
+   * root-created parent chain must be chowned back with {@link chownArgs}.
+   * System paths (`/etc/*`, …) are left untouched.
    */
   parentChainNeeded: boolean;
 }
@@ -87,8 +105,12 @@ export function planCarryEntry(entry: ResolvedCarryEntry): CarryPlan | null {
   const isDir = entry.kind === 'dir';
   const parentDir = isDir ? boxDestNoSlash : dirnameUnix(boxDestNoSlash);
   const exclude = isDir ? (entry.exclude ?? []) : [];
-  // Default uid 1000 (in-box vscode); explicit `user: 0` lands root:root.
-  const uid = entry.user ?? 1000;
+  // Default: whoever owns the box user's home, resolved in-box at chown time.
+  // An explicit `user:` stays numeric — `user: 0` lands root:root.
+  const chownArgs =
+    entry.user === undefined
+      ? [`--reference=${BOX_HOME}`]
+      : [`${String(entry.user)}:${String(entry.user)}`];
   const mode = entry.mode !== undefined ? entry.mode.toString(8).padStart(4, '0') : undefined;
 
   const fileBase = isDir ? '' : basenameUnix(entry.absSrc);
@@ -98,15 +120,14 @@ export function planCarryEntry(entry: ResolvedCarryEntry): CarryPlan | null {
   // `mkdir -p` runs as root, so any new dirs between $HOME and dirname(dest) are
   // root-owned. Only walk when the dest is under $HOME — system paths keep their
   // existing ownership.
-  const parentChainNeeded =
-    boxDest.startsWith(`${BOX_HOME}/`) && dirnameUnix(boxDest) !== BOX_HOME;
+  const parentChainNeeded = boxDest.startsWith(`${BOX_HOME}/`) && dirnameUnix(boxDest) !== BOX_HOME;
 
   return {
     boxDest,
     isDir,
     parentDir,
     exclude,
-    uid,
+    chownArgs,
     mode,
     fileBase,
     destBase,

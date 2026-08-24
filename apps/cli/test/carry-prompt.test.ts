@@ -48,15 +48,15 @@ describe('promptForCarry', () => {
   });
 
   it('-y + non-TTY + non-empty entries throws fail-loud', async () => {
-    await expect(
-      promptForCarry({ resolved: [entry()], yes: true, isTTY: false }),
-    ).rejects.toThrow(/AGENTBOX_CARRY_YES=1/);
+    await expect(promptForCarry({ resolved: [entry()], yes: true, isTTY: false })).rejects.toThrow(
+      /AGENTBOX_CARRY_YES=1/,
+    );
   });
 
   it('non-TTY without any opt-in also throws (carry never silently runs in CI)', async () => {
-    await expect(
-      promptForCarry({ resolved: [entry()], isTTY: false }),
-    ).rejects.toThrow(/AGENTBOX_CARRY_YES=1/);
+    await expect(promptForCarry({ resolved: [entry()], isTTY: false })).rejects.toThrow(
+      /AGENTBOX_CARRY_YES=1/,
+    );
   });
 
   it('-y on a TTY still falls through to the prompt', async () => {
@@ -68,14 +68,31 @@ describe('promptForCarry', () => {
 
   it('on TTY, returns the user’s selection (approve / skip / cancel)', async () => {
     select.mockResolvedValueOnce('skip-this-run');
-    expect(
-      await promptForCarry({ resolved: [entry()], isTTY: true }),
-    ).toBe('skip-this-run');
+    expect(await promptForCarry({ resolved: [entry()], isTTY: true })).toBe('skip-this-run');
 
     select.mockResolvedValueOnce('cancel');
-    expect(
-      await promptForCarry({ resolved: [entry()], isTTY: true }),
-    ).toBe('cancel');
+    expect(await promptForCarry({ resolved: [entry()], isTTY: true })).toBe('cancel');
+  });
+
+  // The default owner is "the box user", resolved in-box — so an explicit
+  // `user:` is always an override the human should see before approving,
+  // including `user: 1000`, which now pins a literal uid rather than
+  // restating the default (vscode is not 1000 on vercel/e2b).
+  it('shows a user flag whenever user: is set explicitly, and none when unset', async () => {
+    const { log } = (await import('@clack/prompts')) as unknown as {
+      log: { message: ReturnType<typeof vi.fn> };
+    };
+
+    async function render(over: Partial<ResolvedCarryEntry>): Promise<string> {
+      log.message.mockClear();
+      select.mockResolvedValueOnce('approve');
+      await promptForCarry({ resolved: [entry(over)], isTTY: true });
+      return log.message.mock.calls.map((c) => String(c[0])).join('\n');
+    }
+
+    expect(await render({ user: 1000 })).toContain('user 1000');
+    expect(await render({ user: 0 })).toContain('user 0');
+    expect(await render({})).not.toContain('user ');
   });
 
   it('Ctrl-C (isCancel) hard-exits with code 130', async () => {

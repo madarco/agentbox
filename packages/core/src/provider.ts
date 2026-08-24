@@ -42,8 +42,9 @@ export interface ResolvedCarryEntry {
   mode?: number;
   /**
    * Numeric uid that should own the carried file inside the box. When unset,
-   * the per-provider copy step defaults to 1000 (the in-box `vscode` user).
-   * Set 0 (root) to skip the chown and leave the extract owner intact.
+   * the copy step resolves the in-box `vscode` user itself — whose uid is 1000
+   * on docker/hetzner/digitalocean/daytona but provider-assigned on vercel and
+   * e2b, so do NOT set 1000 here expecting "the box user". Set 0 for root:root.
    */
   user?: number;
   optional: boolean;

@@ -222,14 +222,28 @@ export async function refreshExport(
   const excludes = excludeNodeModules ? ['--exclude=node_modules'] : [];
   const result = await execa(
     'docker',
-    ['exec', '--user', 'root', record.container, 'tar', '-cf', '-', ...excludes, '-C', '/workspace', '.'],
+    [
+      'exec',
+      '--user',
+      'root',
+      record.container,
+      'tar',
+      '-cf',
+      '-',
+      ...excludes,
+      '-C',
+      '/workspace',
+      '.',
+    ],
     { reject: false, encoding: 'buffer' },
   );
   if (result.exitCode !== 0) {
     throw new ExportError(
       `tar from /workspace failed`,
       '',
-      typeof result.stderr === 'string' ? result.stderr : (result.stderr as Buffer).toString('utf8'),
+      typeof result.stderr === 'string'
+        ? result.stderr
+        : (result.stderr as Buffer).toString('utf8'),
     );
   }
   const extract = await execa('tar', ['-xf', '-', '-C', paths.mergedExport], {
@@ -302,9 +316,7 @@ export interface CopyHostEnvOptions {
  * healthy box. Files extract as uid 1000 so they're owned by `vscode` like the
  * rest of /workspace.
  */
-export async function copyHostEnvFilesToBox(
-  opts: CopyHostEnvOptions,
-): Promise<{ copied: number }> {
+export async function copyHostEnvFilesToBox(opts: CopyHostEnvOptions): Promise<{ copied: number }> {
   // Thin wrapper over the shared env concern: same host-side find + tar pack,
   // with the docker transport's `applyTarball` reproducing the exact
   // `docker exec -i --user 1000:1000 tar -xf - -C /workspace` extract.
@@ -336,9 +348,7 @@ export interface CopyHostFilesOptions {
  * `docker exec tar -x`. Best-effort error handling — a tar/exec failure logs
  * and returns the count rather than throwing.
  */
-export async function copyHostFilesToBox(
-  opts: CopyHostFilesOptions,
-): Promise<{ copied: number }> {
+export async function copyHostFilesToBox(opts: CopyHostFilesOptions): Promise<{ copied: number }> {
   const log = opts.onLog ?? (() => {});
   // Normalise — drop any leading "./" so the in-container extract lands at the
   // right path, and drop empties so a stray trailing NUL doesn't become `tar: ''`.
@@ -478,11 +488,9 @@ export async function pullToHost(
     }
   }
   if (opts.envPatterns && opts.envPatterns.length > 0) {
-    const found = await execInBox(
-      record.container,
-      buildEnvFindArgs(opts.envPatterns),
-      { user: 'root' },
-    );
+    const found = await execInBox(record.container, buildEnvFindArgs(opts.envPatterns), {
+      user: 'root',
+    });
     if (found.exitCode !== 0) {
       throw new ExportError('find env files in box failed', found.stdout, found.stderr);
     }
@@ -490,9 +498,7 @@ export async function pullToHost(
     if (envFiles.length > 0) segments.push(envFiles);
   }
   const fileList =
-    segments.length > 0
-      ? Array.from(new Set(segments.join('\0').split('\0'))).join('\0')
-      : null;
+    segments.length > 0 ? Array.from(new Set(segments.join('\0').split('\0'))).join('\0') : null;
 
   // --checksum, not the default size+mtime quick-check: the box runs on a
   // fresh git worktree so every file's mtime differs from the user's working
@@ -620,7 +626,9 @@ export async function carrySourceHash(entry: ResolvedCarryEntry): Promise<string
   if (entry.kind === 'missing') return undefined;
   try {
     if (entry.kind === 'file') {
-      return createHash('sha256').update(await readFile(entry.absSrc)).digest('hex');
+      return createHash('sha256')
+        .update(await readFile(entry.absSrc))
+        .digest('hex');
     }
     // Hash file *content* (not mtime) so a touch with identical content doesn't
     // trigger a spurious re-copy. Skip the same paths the copy step excludes so
@@ -669,7 +677,10 @@ function carryRelExcluded(relPath: string, patterns: string[]): boolean {
       if (segs.includes(p.slice(2))) return true;
     } else {
       const re = new RegExp(
-        `^${p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`,
+        `^${p
+          .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+          .replace(/\*/g, '.*')
+          .replace(/\?/g, '.')}$`,
       );
       if (re.test(relPath)) return true;
     }
@@ -727,14 +738,22 @@ export async function copyCarryPathsToBox(opts: CopyCarryOptions): Promise<CopyC
 
 async function copyOneEntry(container: string, entry: ResolvedCarryEntry): Promise<void> {
   // Shared, byte-for-byte carry decisions (~/ expansion, file-vs-dir, exclude,
-  // uid/mode defaults, rename-needed, parent-chain-needed) — see
+  // owner/mode defaults, rename-needed, parent-chain-needed) — see
   // `@agentbox/sandbox-core`'s files concern. `~/` is expanded host-side, NOT
   // inside the box's shell, so we never depend on the executing user's $HOME
   // (which is /root when we `--user 0:0` below).
   const plan = planCarryEntry(entry);
   if (!plan) return; // missing (optional + absent on host)
-  const { boxDest, parentDir, exclude, uid, mode, fileBase, renameNeeded, parentChainNeeded } =
-    plan;
+  const {
+    boxDest,
+    parentDir,
+    exclude,
+    chownArgs,
+    mode,
+    fileBase,
+    renameNeeded,
+    parentChainNeeded,
+  } = plan;
 
   // Pre-create the dest's parent dir. Run as root so destinations outside
   // /home/vscode work; we re-chown to vscode if the dest is in $HOME.
@@ -842,12 +861,13 @@ async function copyOneEntry(container: string, entry: ResolvedCarryEntry): Promi
   }
 
   // Always chown explicitly so the result is predictable across providers.
-  // Default uid 1000 (in-box vscode); `user: 0` lands explicit root:root.
-  // (For docker cp this matters — without an explicit chown the host's
-  // macOS uid/gid leaks through into the container.)
+  // Default targets the box user via `--reference=/home/vscode` (uid 1000 here,
+  // but the plan is shared with providers where it isn't); `user: 0` lands
+  // explicit root:root. (The explicit chown matters for docker regardless —
+  // without it the host's macOS uid/gid leaks through into the container.)
   const chown = await execa(
     'docker',
-    ['exec', '--user', '0:0', container, 'chown', '-R', `${String(uid)}:${String(uid)}`, boxDest],
+    ['exec', '--user', '0:0', container, 'chown', '-R', ...chownArgs, boxDest],
     { reject: false },
   );
   if (chown.exitCode !== 0) {
@@ -864,7 +884,7 @@ async function copyOneEntry(container: string, entry: ResolvedCarryEntry): Promi
     const script =
       `set -e; parent="$(dirname '${safeDest}')"; ` +
       `while [ "$parent" != "${BOX_HOME}" ] && [ "$parent" != "/" ]; do ` +
-      `chown ${String(uid)}:${String(uid)} "$parent"; ` +
+      `chown ${chownArgs.join(' ')} "$parent"; ` +
       `parent="$(dirname "$parent")"; ` +
       `done`;
     const chownParents = await execa(

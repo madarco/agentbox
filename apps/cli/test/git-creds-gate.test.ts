@@ -51,7 +51,9 @@ describe('buildCredsPlan', () => {
     const cred = plan.entries.find((e) => e.rawDest === '~/.git-credentials');
     expect(cred).toBeDefined();
     expect(cred?.mode).toBe(0o600);
-    expect(cred?.user).toBe(1000);
+    // Left unset on purpose: carry resolves the box user itself. Pinning 1000
+    // made this 0600 file unreadable on vercel/e2b, where vscode isn't 1000.
+    expect(cred?.user).toBeUndefined();
     expect(cred?.absDest).toBe('/home/vscode/.git-credentials');
     // token mode never copies an SSH key.
     expect(plan.entries.some((e) => e.rawDest.startsWith('~/.ssh/'))).toBe(false);
@@ -73,7 +75,7 @@ describe('buildCredsPlan', () => {
     const key = plan.entries.find((e) => e.rawDest === '~/.ssh/id_ed25519');
     expect(key).toBeDefined();
     expect(key?.mode).toBe(0o600);
-    expect(key?.user).toBe(1000);
+    expect(key?.user).toBeUndefined();
   });
 
   it('ssh: copies the PRIVATE signing key, not just the .pub', async () => {

@@ -15,6 +15,11 @@ import { log, select } from './prompt.js';
  * interactive prompt, and we hand back carry entries (0600, box-user owned) that
  * ride the normal carry apply path.
  *
+ * The entries deliberately leave `user` unset so carry resolves the box user
+ * itself. Pinning it to 1000 (as this did) made the credential unreadable on
+ * vercel/e2b, where `vscode` is not uid 1000 — 0600 plus a wrong owner is a
+ * secret nobody can use.
+ *
  * This deliberately breaks AgentBox's usual "credentials never enter the box"
  * invariant, so the safety bar is deliberately high: copying a credential
  * requires a live TTY and an explicit in-prompt choice. There is intentionally
@@ -23,7 +28,6 @@ import { log, select } from './prompt.js';
  */
 
 const BOX_HOME = '/home/vscode';
-const BOX_UID = 1000;
 
 // Token mode stages the rendered `~/.git-credentials` (which holds a real
 // token) into a host mkdtemp dir so it can ride the carry upload. That dir must
@@ -171,7 +175,6 @@ async function fileEntry(absSrc: string, dest: string): Promise<ResolvedCarryEnt
     kind: 'file',
     bytes,
     mode: 0o600,
-    user: BOX_UID,
     optional: false,
   } as ResolvedCarryEntry;
 }
@@ -194,7 +197,6 @@ async function contentEntry(
     kind: 'file',
     bytes: Buffer.byteLength(content),
     mode: 0o600,
-    user: BOX_UID,
     optional: false,
   } as ResolvedCarryEntry;
 }

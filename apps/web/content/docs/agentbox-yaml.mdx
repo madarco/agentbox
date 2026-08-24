@@ -301,7 +301,7 @@ See [configuration](/docs/configuration) for the full key set and precedence. No
 | `src` | Must start with `/`, `~/`, or `./`. `~/` = host home; `./` = project root. |
 | `dest` | Must start with `/` or `~/`. `~/` expands to `/home/vscode`. |
 | `mode` | Octal — accepts `0o600`, `"0600"`, or `"600"`. |
-| `user` | Numeric uid that owns the file in-box (default `1000` = `vscode`; `0` keeps it root-owned). |
+| `user` | Numeric uid that owns the file in-box. Leave unset (the default) and AgentBox resolves the box's `vscode` user itself — its uid is `1000` on some providers and assigned at bake time on vercel/e2b, so don't write `1000` meaning "the box user". `0` keeps it root-owned. |
 | `exclude` | List of tar globs / bare dir names to drop when copying a **directory** (additive on top of the defaults below). |
 | `optional` | `true` skips a missing `src` silently instead of erroring. |
 | `replaceEnvs` | `true` substitutes `{{AGENTBOX_*}}` placeholders in the file content host-side before copying (**file entries only**). See [replacements](#replacements). |
