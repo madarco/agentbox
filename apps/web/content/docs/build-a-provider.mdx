@@ -65,9 +65,9 @@ Only `provider` and `doctorChecks` are required — `createCloudProvider` suppli
 - Name it `agentbox-provider-<name>` (or `@scope/agentbox-provider-<name>`).
 - Declare the contract version in `package.json`:
   ```json
-  { "agentbox": { "providerApiVersion": 1 } }
+  { "agentbox": { "providerApiVersion": 2 } }
   ```
-- Depend on `@madarco/agentbox-provider-sdk` (`^1`).
+- Depend on `@madarco/agentbox-provider-sdk` (`^2`).
 - Export a `providerModule` (or `providerModules` for a multi-provider package).
 
 ## Cloud overrides (optional)
