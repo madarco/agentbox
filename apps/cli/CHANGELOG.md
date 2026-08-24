@@ -166,6 +166,10 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **A control box can now build boxes from repos cloned over SSH.** A project
+  whose origin is `git@github.com:owner/repo` failed every hub-side create with
+  `Host key verification failed` — the hub authenticates git over HTTPS and has
+  no SSH key. Those repos are now cloned (and pushed to) over HTTPS.
 - **`agentbox self-update` no longer stops to ask for cloud credentials.** Its
   bake-adoption step walked every cloud provider through the first-run credential
   gate, so an update popped a "Vercel setup" (or Daytona, E2B, …) wizard for a
