@@ -166,6 +166,16 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **The attach footer shows real status for boxes a control box created.** It
+  read a status file only the local relay writes, so a hub-created box always
+  showed `(unknown)` and never the `starting N/M…` service count. Status now
+  rides the stream the footer already holds open.
+- **The footer recovers on its own after a hub restart.** Its stream gave up
+  permanently on any error response — including the ones a hub returns while it
+  restarts — so approvals stopped arriving until you detached and reattached.
+- **Boxes a control box creates are named after the repo** (`optima-a1b2c3d4`),
+  not after the throwaway clone directory it built them in. `agentbox ls` shows
+  the repo in WORKSPACE for those boxes too.
 - **A control box can now build boxes from repos cloned over SSH.** A project
   whose origin is `git@github.com:owner/repo` failed every hub-side create with
   `Host key verification failed` — the hub authenticates git over HTTPS and has
