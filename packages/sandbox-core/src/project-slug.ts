@@ -11,11 +11,10 @@
  *   git@github.com:owner/repo(.git)
  *   ssh://git@github.com/owner/repo(.git)
  */
+import { basename } from 'node:path';
 
 /** Parse `owner`/`repo` out of any common git remote URL shape, or null. */
-export function ownerRepoFromOriginUrl(
-  originUrl: string,
-): { owner: string; repo: string } | null {
+export function ownerRepoFromOriginUrl(originUrl: string): { owner: string; repo: string } | null {
   const url = originUrl.trim();
   if (url.length === 0) return null;
   let path: string | null = null;
@@ -60,4 +59,46 @@ export function projectSlugFromOriginUrl(originUrl: string): string | null {
   if (!parsed) return null;
   const clean = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, '-');
   return `${clean(parsed.owner)}__${clean(parsed.repo)}`;
+}
+
+/**
+ * Prefix of the per-job clone a control box builds every box from
+ * (`$TMPDIR/agentbox-hub-worker-<jobId>`), deleted the moment the create
+ * returns. Exported so the producer (`hub-worker.ts`'s `tmpDir`) and every
+ * consumer can't drift — a rename on one side silently resurrects the ghost
+ * project cards this is used to filter out.
+ *
+ * Lives here, in a package both `apps/hub` and `apps/cli` depend on, because
+ * both sides have to recognize the path: the hub to key a project by its repo
+ * instead of a directory that no longer exists, the CLI to avoid printing that
+ * directory in `agentbox ls`.
+ */
+export const HUB_WORKER_CLONE_PREFIX = 'agentbox-hub-worker-';
+
+/**
+ * True for a control box's throwaway per-job checkout.
+ *
+ * Deliberately a NAME test, not an existence test: during the minute a create is
+ * running the directory is still there, and a PC-created box's `hostMainRepo`
+ * legitimately doesn't exist on the control box while still being a real,
+ * durable folder on the PC that we do want to group by.
+ */
+export function isHubWorkerClone(dir: string): boolean {
+  return basename(dir).startsWith(HUB_WORKER_CLONE_PREFIX);
+}
+
+/** `owner/repo` from a clone URL, else the URL unchanged. */
+export function deriveRepoLabel(originUrl: string): string {
+  const parsed = ownerRepoFromOriginUrl(originUrl);
+  return parsed ? `${parsed.owner}/${parsed.repo}` : originUrl;
+}
+
+/**
+ * What to derive a box's default name from when its workspace path is a control
+ * box's per-job clone — the repo name, so a hub-created box reads `optima-<id>`
+ * instead of `agentbox-hub-worker-<uuid>-<id>`. Null when the URL isn't
+ * parseable, leaving the caller on its existing workspace-basename default.
+ */
+export function boxNameBasisFromOriginUrl(originUrl: string): string | null {
+  return ownerRepoFromOriginUrl(originUrl)?.repo ?? null;
 }

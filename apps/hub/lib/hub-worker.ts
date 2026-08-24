@@ -34,6 +34,7 @@ import {
 } from '@agentbox/relay/control-plane';
 import {
   AGENT_SYNC_SPECS,
+  boxNameBasisFromOriginUrl,
   boxSshDirForProvider,
   projectSlugFromOriginUrl,
   readCredentialBackup,
@@ -271,6 +272,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
     createBox: async ({
       workspacePath,
       name,
+      repoUrl,
       provider,
       agent,
       prompt,
@@ -292,9 +294,15 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         (await loadEffectiveConfig(workspacePath).catch(() => null))?.effective.box.claudeInstall ??
         'native';
       await hydratePreparedFromCustody(custody, provider, mod.provider, claudeInstall, log);
+      // `workspacePath` is the per-job clone deleted on the way out, so leaving
+      // the provider to derive a default name from it produces
+      // `agentbox-hub-worker-<uuid>-<id>` — a box named after a directory that no
+      // longer exists, telling nobody which project it is. Name it after the repo.
+      const nameBasis = boxNameBasisFromOriginUrl(repoUrl);
       const created = await mod.provider.create({
         workspacePath,
         name,
+        ...(nameBasis ? { nameBasis } : {}),
         projectRoot: workspacePath,
         // Registered on the plane so an adopting PC relaunches the right agent.
         agent: normalizeCreateAgent(agent),

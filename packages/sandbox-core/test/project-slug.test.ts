@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { ownerRepoFromOriginUrl, projectSlugFromOriginUrl } from '../src/project-slug.js';
+import {
+  boxNameBasisFromOriginUrl,
+  deriveRepoLabel,
+  isHubWorkerClone,
+  ownerRepoFromOriginUrl,
+  projectSlugFromOriginUrl,
+} from '../src/project-slug.js';
 
 /**
  * The custody `projects/<slug>` key is a contract between separate machines: the
@@ -74,5 +80,55 @@ describe('projectSlugFromOriginUrl', () => {
 
   it('returns null when the origin carries no owner/repo', () => {
     expect(projectSlugFromOriginUrl('https://github.com/onlyowner')).toBeNull();
+  });
+});
+
+/**
+ * A control box builds every box from a per-job clone under
+ * `$TMPDIR/agentbox-hub-worker-<jobId>` and deletes it the moment the create
+ * returns. Both the hub (project-card grouping) and the CLI (`agentbox ls`, box
+ * naming) have to recognize that path and substitute the repo, which is the only
+ * durable identity such a box has.
+ */
+describe('hub-worker clone recognition', () => {
+  it('matches a per-job clone path', () => {
+    expect(isHubWorkerClone('/tmp/agentbox-hub-worker-74d57005-7edf-46ea-bfad-131de5653762')).toBe(
+      true,
+    );
+  });
+
+  it('does not match a real project folder', () => {
+    expect(isHubWorkerClone('/Users/marco/Projects/Evinto/optima')).toBe(false);
+  });
+
+  it('tests the basename, not the whole path', () => {
+    // A user whose checkout happens to live under a similarly-named parent must
+    // not have their own folder mistaken for a throwaway clone.
+    expect(isHubWorkerClone('/tmp/agentbox-hub-worker-abc/nested-real-repo')).toBe(false);
+  });
+});
+
+describe('deriveRepoLabel', () => {
+  it('returns owner/repo for both URL shapes', () => {
+    expect(deriveRepoLabel('git@github.com:Evinto-Solutions/optima.git')).toBe(
+      'Evinto-Solutions/optima',
+    );
+    expect(deriveRepoLabel('https://github.com/Evinto-Solutions/optima.git')).toBe(
+      'Evinto-Solutions/optima',
+    );
+  });
+
+  it('hands back an unparseable URL unchanged rather than inventing a label', () => {
+    expect(deriveRepoLabel('not a url')).toBe('not a url');
+  });
+});
+
+describe('boxNameBasisFromOriginUrl', () => {
+  it('is the repo alone — the owner would bloat every box name', () => {
+    expect(boxNameBasisFromOriginUrl('git@github.com:Evinto-Solutions/optima.git')).toBe('optima');
+  });
+
+  it('is null when no repo can be parsed, leaving the caller on its own default', () => {
+    expect(boxNameBasisFromOriginUrl('https://github.com/onlyowner')).toBeNull();
   });
 });

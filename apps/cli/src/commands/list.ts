@@ -1,6 +1,7 @@
 import { log } from '@clack/prompts';
 import { execa } from 'execa';
 import { findProjectRoot, loadEffectiveConfig } from '@agentbox/config';
+import { deriveRepoLabel, isHubWorkerClone } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -364,7 +365,16 @@ function renderTable(
   // + the 2-space separators. Never below a usable floor.
   const term = stream.columns && stream.columns > 0 ? stream.columns : 120;
   const fixedTotal = fixedWidths.reduce((a, b) => a + b, 0) + header.length * 2;
-  const workspaceOf = (b: HubApiBox): string => b.projectRoot ?? '';
+  // A control box builds every box from a per-job clone under
+  // `/tmp/agentbox-hub-worker-<jobId>` and deletes it as soon as the create
+  // returns, so printing that path names a directory nobody can visit and says
+  // nothing about the project. The repo is the durable identity — same
+  // substitution `registrationProjectKey` makes when grouping project cards.
+  const workspaceOf = (b: HubApiBox): string => {
+    const root = b.projectRoot ?? '';
+    if (b.originUrl && root && isHubWorkerClone(root)) return deriveRepoLabel(b.originUrl);
+    return root;
+  };
   const naturalWs = Math.max(
     header[wsCol]?.length ?? 0,
     ...boxes.map((b) => workspaceOf(b).length),

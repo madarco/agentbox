@@ -189,6 +189,10 @@ async function main(): Promise<void> {
     backlog: (boxId) => ({
       prompts: daemon.handle.prompts.forBox(boxId),
       notices: daemon.handle.notices.forBox(boxId),
+      // Latest status snapshot, so an attaching footer renders the agent
+      // activity + service count immediately instead of sitting on `unknown`
+      // until the box's next heartbeat (up to 15s).
+      status: daemon.handle.statusStore.get(boxId),
     }),
   };
   // On a control box (password profile) the always-on web UI + `/api/v1/approvals`

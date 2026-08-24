@@ -267,7 +267,10 @@ async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
   });
 }
 
-async function readRawBody(req: IncomingMessage, maxBytes: number = MAX_BODY_BYTES): Promise<string> {
+async function readRawBody(
+  req: IncomingMessage,
+  maxBytes: number = MAX_BODY_BYTES,
+): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     let total = 0;
     const chunks: Buffer[] = [];
@@ -295,10 +298,7 @@ function bearerToken(req: IncomingMessage): string {
 function isLoopbackAddress(addr: string | undefined): boolean {
   if (!addr) return false;
   return (
-    addr === '127.0.0.1' ||
-    addr === '::1' ||
-    addr === '::ffff:127.0.0.1' ||
-    addr.startsWith('127.')
+    addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1' || addr.startsWith('127.')
   );
 }
 
@@ -492,7 +492,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // A box-mode relay only ever has one registered box (itself). The
         // status snapshot — if any has been pushed — belongs to that box.
         const only = (await store.listBoxes())[0];
-        const status = only ? (await store.getStatus(only.boxId)) ?? null : null;
+        const status = only ? ((await store.getStatus(only.boxId)) ?? null) : null;
         const reply: BridgePollResponse = {
           actions,
           events: newEvents,
@@ -637,6 +637,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           return;
         }
         await store.setStatus(reg.boxId, reg.name, reg.projectIndex, body.payload);
+        // Push it to attached wrappers. The durable file only serves a footer on
+        // THIS machine; a box owned by a remote hub has no such file on the
+        // user's laptop, so the stream is the only way its footer learns the
+        // agent activity and the `starting N/M…` service count.
+        subscribers.broadcast(reg.boxId, BOX_STATUS_EVENT, body.payload);
         log(`box-status box=${reg.boxId}`);
         send(res, 202, { ok: true });
         return;
@@ -805,7 +810,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             }
           }
         }
-        const result = await handleGitRpc(reg, body.method, body.params as GitRpcParams | undefined);
+        const result = await handleGitRpc(
+          reg,
+          body.method,
+          body.params as GitRpcParams | undefined,
+        );
         const status = result.exitCode === 0 ? 200 : 500;
         send(res, status, result);
         return;
@@ -861,7 +870,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // doesn't land under the relay daemon's CWD (whichever project started
         // the relay), and so the consent prompt shows the real destination.
         const workspacePath = await boxWorkspacePath(reg.boxId);
-        const { argv: cpArgs, detail, contextArgv } = buildCpArgv({
+        const {
+          argv: cpArgs,
+          detail,
+          contextArgv,
+        } = buildCpArgv({
           method: body.method,
           boxName: reg.name,
           sources: norm.sources,
@@ -887,8 +900,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           workspacePath,
           hostPaths: cpHostPaths,
           checkSecret: body.method === 'cp.fromHost',
-          carried:
-            body.method === 'cp.fromHost' ? await boxCarriedHostPaths(reg.boxId) : undefined,
+          carried: body.method === 'cp.fromHost' ? await boxCarriedHostPaths(reg.boxId) : undefined,
         });
         if (cpAuto) {
           prompts.noteAutoApprove(
@@ -899,7 +911,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
               detail: detailParts.join('\n'),
               context: { command: body.method, argv: contextArgv },
             },
-            body.method === 'cp.toHost' ? 'safe: contained copy to host' : 'safe: contained copy from host',
+            body.method === 'cp.toHost'
+              ? 'safe: contained copy to host'
+              : 'safe: contained copy from host',
           );
         } else {
           const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
@@ -1180,9 +1194,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         name: body.name,
         kind,
         backend:
-          typeof body.backend === 'string' && body.backend.length > 0
-            ? body.backend
-            : undefined,
+          typeof body.backend === 'string' && body.backend.length > 0 ? body.backend : undefined,
         sandboxId:
           typeof body.sandboxId === 'string' && body.sandboxId.length > 0
             ? body.sandboxId
@@ -1222,14 +1234,12 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           typeof body.publicHost === 'string' && body.publicHost.length > 0
             ? body.publicHost
             : undefined,
-        image:
-          typeof body.image === 'string' && body.image.length > 0 ? body.image : undefined,
+        image: typeof body.image === 'string' && body.image.length > 0 ? body.image : undefined,
         webPort:
           typeof body.webPort === 'number' && Number.isFinite(body.webPort) && body.webPort > 0
             ? Math.trunc(body.webPort)
             : undefined,
-        agent:
-          typeof body.agent === 'string' && body.agent.length > 0 ? body.agent : undefined,
+        agent: typeof body.agent === 'string' && body.agent.length > 0 ? body.agent : undefined,
         projectSlug:
           typeof body.projectSlug === 'string' && body.projectSlug.length > 0
             ? body.projectSlug
@@ -1238,7 +1248,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       await store.registerBox(reg);
       log(
         `registered ${kind} box ${reg.boxId} (${reg.name})` +
-          (worktrees && worktrees.length > 0 ? ` with ${String(worktrees.length)} worktree(s)` : ''),
+          (worktrees && worktrees.length > 0
+            ? ` with ${String(worktrees.length)} worktree(s)`
+            : ''),
       );
       // Cloud boxes get a host-side poller so the host relay can mirror their
       // status into its BoxStatusStore (and, once the executor is wired,
@@ -1273,6 +1285,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             onStatus: (status) => {
               if (isValidBoxStatus(status)) {
                 void store.setStatus(reg.boxId, reg.name, reg.projectIndex, status);
+                // Same reason as the direct-POST path above: this is the only
+                // status source an attached footer has for a cloud box.
+                subscribers.broadcast(reg.boxId, BOX_STATUS_EVENT, status);
               }
             },
             // Drained host-only RPCs (git.push, …) run on the host via the
@@ -1517,7 +1532,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           ? body.ttlMs
           : undefined;
       const token = hostInitiatedTokens.mint(body.boxId, body.method, paramsHash, ttlMs);
-      log(`host-initiated-mint box=${body.boxId} method=${body.method} paramsBound=${paramsHash !== null}`);
+      log(
+        `host-initiated-mint box=${body.boxId} method=${body.method} paramsBound=${paramsHash !== null}`,
+      );
       send(res, 200, { token });
       return;
     }
@@ -1652,7 +1669,6 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   };
 }
 
-
 function sanitizeWorktrees(input: BoxWorktree[] | undefined): BoxWorktree[] | undefined {
   if (!Array.isArray(input)) return undefined;
   const out: BoxWorktree[] = [];
@@ -1711,14 +1727,7 @@ async function handleGitSaveToHost(
     };
   }
   const refspec = landRefspec(src, dest, params?.force);
-  const result = await runHostCommand([
-    'git',
-    '-C',
-    worktree.hostMainRepo,
-    'fetch',
-    '.',
-    refspec,
-  ]);
+  const result = await runHostCommand(['git', '-C', worktree.hostMainRepo, 'fetch', '.', refspec]);
   if (result.exitCode === 0) {
     return {
       exitCode: 0,
@@ -1862,8 +1871,7 @@ async function handleGhPrRpc(
     return {
       exitCode: 10,
       stdout: '',
-      stderr:
-        'host-initiated token rejected: invalid, expired, or bound to different params\n',
+      stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
     };
   }
   // Safe subset: open-PR + PR comment auto-approve under the flag (audited);
@@ -2078,10 +2086,7 @@ async function handleIntegrationRpc(
   // for the malformed-args-to-disabled-integration edge case. Runs before
   // `assertIntegrationReady`, the prompt, and the host spawn so a disabled
   // integration is never user-visible as a permission prompt.
-  const enableRefusal = await refuseIfIntegrationDisabled(
-    parsed.service,
-    worktree.hostMainRepo,
-  );
+  const enableRefusal = await refuseIfIntegrationDisabled(parsed.service, worktree.hostMainRepo);
   if (enableRefusal) return enableRefusal;
 
   const ready = await assertIntegrationReady(connector);
@@ -2119,8 +2124,7 @@ async function handleIntegrationRpc(
         return {
           exitCode: 10,
           stdout: '',
-          stderr:
-            'host-initiated token rejected: invalid, expired, or bound to different params\n',
+          stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
         };
       }
       if (!tokenOk) {
@@ -2180,10 +2184,7 @@ async function handleCpRpc(cpArgs: string[], cwd?: string): Promise<GitRpcResult
  * merging. The relay passes `-y` so the host CLI doesn't try to prompt
  * (we already did, via the host wrapper, before reaching this handler).
  */
-async function handleDownloadRpc(
-  reg: BoxRegistration,
-  kind: DownloadKind,
-): Promise<GitRpcResult> {
+async function handleDownloadRpc(reg: BoxRegistration, kind: DownloadKind): Promise<GitRpcResult> {
   // params.hostPath is reserved in the wire shape; the v1 relay ignores it
   // and lets the host CLI use its defaults (box.workspacePath or ~/.claude).
   const entry = process.env.AGENTBOX_CLI_ENTRY;

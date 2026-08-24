@@ -62,6 +62,7 @@ export const dockerProvider: Provider = {
     const opts: CreateBoxOptions = {
       workspacePath: req.workspacePath,
       name: req.name,
+      nameBasis: req.nameBasis,
       useSnapshot: po.useSnapshot ?? false,
       checkpointRef: req.checkpointRef,
       fromBranch: req.fromBranch,

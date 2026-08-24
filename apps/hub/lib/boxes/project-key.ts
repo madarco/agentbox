@@ -10,32 +10,13 @@
 // projection of that one box, so destroying the box makes the "project"
 // disappear. The repo is the durable identity; use it.
 import { hashProjectPath } from '@agentbox/config';
+import { deriveRepoLabel, isHubWorkerClone } from '@agentbox/sandbox-core';
 import path from 'node:path';
 
-/**
- * Prefix of the per-job clone `makeHubCreateBox` builds from. Exported so the
- * producer (`hub-worker.ts`'s `tmpDir`) and these consumers can't drift — a
- * rename on one side would otherwise silently resurrect the ghost cards.
- */
-export const HUB_WORKER_CLONE_PREFIX = 'agentbox-hub-worker-';
-
-/**
- * True for a control box's throwaway per-job checkout.
- *
- * Deliberately a NAME test, not an existence test: during the minute a create
- * is running the directory is still there, and a PC-created box's
- * `hostMainRepo` legitimately doesn't exist on the control box while still
- * being a real, durable folder on the PC that we do want to group by.
- */
-export function isHubWorkerClone(dir: string): boolean {
-  return path.basename(dir).startsWith(HUB_WORKER_CLONE_PREFIX);
-}
-
-/** `owner/repo` from a clone URL, else the URL unchanged. */
-export function deriveRepoLabel(originUrl: string): string {
-  const m = /[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(originUrl);
-  return m?.[1] ?? originUrl;
-}
+// These three moved to @agentbox/sandbox-core so `apps/cli` can recognize a
+// hub-worker clone too (it must not print that dead path in `agentbox ls`).
+// Re-exported here because this module is where the hub's own callers look.
+export { HUB_WORKER_CLONE_PREFIX, deriveRepoLabel, isHubWorkerClone } from '@agentbox/sandbox-core';
 
 /** The registration fields this needs — a structural subset of `BoxRegistration`. */
 export interface ProjectKeyRegistration {

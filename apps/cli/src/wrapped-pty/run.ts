@@ -35,8 +35,9 @@ import {
   type FooterState,
 } from './footer.js';
 import { postAnswer, subscribePrompts, type PromptStream } from './prompt-client.js';
+import { isValidBoxStatus } from '@agentbox/relay';
 import type { BoxNoticeEvent, PromptAskEvent } from '@agentbox/relay';
-import type { AgentActivityState, ClaudeQuestionPayload } from '@agentbox/ctl';
+import type { AgentActivityState, BoxStatus, ClaudeQuestionPayload } from '@agentbox/ctl';
 
 export interface WrappedAttachOptions {
   /** Docker container name (only used for log lines). */
@@ -861,14 +862,34 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
         applyBandChange();
       }
     },
-    // A dead prompt stream must never look like "no approvals". The client
-    // retries transient drops itself, but bails permanently on a non-200 — and
-    // for a hub box this URL is the control box with an admin bearer, so a
-    // stale token answers 401 and the footer would sit silent for the whole
-    // session while the box is actually blocked. Surface it in the band, and
-    // pass it to the caller's log so it's diagnosable after the fact.
-    onError: (err: Error) => {
+    // The box's status snapshot. For a box owned by a remote hub this is the
+    // ONLY source — its daemon reports to that hub, so nothing ever writes the
+    // local `status.json` the poll below reads.
+    onStatus: (snapshot: unknown) => {
+      if (isValidBoxStatus(snapshot)) applyStatus(snapshot as unknown as BoxStatus);
+    },
+    // The stream came back after an outage. Whatever we were showing may have
+    // been resolved while we were disconnected (answered from the hub's web UI,
+    // say), and the backlog flush that immediately follows re-sends everything
+    // still live — so clear first and let it repopulate.
+    onReconnect: () => {
+      if (capturingPrompt) {
+        capturingPrompt = null;
+        router.abort('stream-reconnected');
+      }
+      activeNotice = null;
+      stopSpinner();
+      applyBandChange();
+    },
+    // A dead prompt stream must never look like "no approvals". A FATAL error
+    // means the client has given up — for a hub box this URL is the control box
+    // with an admin bearer, so a stale token answers 401 and the footer would
+    // sit silent for the whole session while the box is actually blocked.
+    // Transient drops (the hub restarting) are retried, so they only get a log
+    // line: banding them would fire on every `hub update`.
+    onError: (err: Error, fatal: boolean) => {
       opts.onError?.(`prompt stream: ${err.message}`);
+      if (!fatal) return;
       activeNotice = {
         id: 'prompt-stream-error',
         message: `approvals unavailable (${err.message}) — answer them with \`agentbox hub approvals\``,
@@ -886,13 +907,17 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // dashboard's sidebar entry). Best-effort — paused/stopped boxes and
   // pre-status-feature boxes return null and we just keep the previous
   // title (or no title).
-  const pollStatus = async (): Promise<void> => {
+  /**
+   * Apply one status snapshot to everything derived from it: the footer's
+   * activity + service slot, the host terminal title, the cmux workspace, the
+   * Herdr pane, and claude's question payload.
+   *
+   * Deliberately a hoisted declaration: the SSE `onStatus` callback wired above
+   * closes over this, and the wrapper reads far better with the subscription
+   * next to the rest of the stream handling.
+   */
+  function applyStatus(status: BoxStatus | null): void {
     try {
-      const status = await readBoxStatus({
-        id: opts.boxId,
-        name: opts.boxName,
-        projectIndex: opts.projectIndex,
-      });
       // Read the title/activity from the body of the agent we attached to;
       // shell mode has no agent session so it keeps the box-name title.
       const body =
@@ -962,6 +987,29 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
         recomputeFooter();
         redrawChrome();
       }
+    } catch (e) {
+      // The snapshot is best-effort input; a malformed one must never take the
+      // wrapper down.
+      logErr(`status apply failed: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * Read the durable snapshot the LOCAL relay persists. Authoritative only for a
+   * box that reports to this machine's relay; for a box owned by a remote hub
+   * the file never exists here and this is a no-op — that box's status arrives
+   * over the SSE stream instead.
+   */
+  const pollStatus = async (): Promise<void> => {
+    try {
+      const status = await readBoxStatus({
+        id: opts.boxId,
+        name: opts.boxName,
+        projectIndex: opts.projectIndex,
+      });
+      // Null means "nothing local to say", not "no status" — dropping it would
+      // wipe a fresher snapshot the stream just delivered.
+      if (status) applyStatus(status);
     } catch (e) {
       // readBoxStatus already swallows the common cases (paused/stopped/pre-feature);
       // anything reaching here is unexpected and worth a log line.

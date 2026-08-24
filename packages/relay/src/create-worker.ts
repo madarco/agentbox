@@ -37,6 +37,13 @@ export interface CreateBoxDeps {
   createBox(opts: {
     workspacePath: string;
     name: string | undefined;
+    /**
+     * The repo this checkout came from. `workspacePath` is a per-job temp clone
+     * the worker deletes on the way out, so it is the only durable identity the
+     * box has — used to name the box after the repo rather than after that
+     * directory.
+     */
+    repoUrl: string;
     provider: string;
     /**
      * Agent the box is being created for. Registered on the control plane so a
@@ -192,6 +199,7 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
       const box = await deps.createBox({
         workspacePath: dir,
         name: request.name,
+        repoUrl: request.repoUrl,
         provider: request.provider,
         // Carry the job's agent through to the box record + its plane
         // registration, so an adopting PC relaunches the right agent instead of

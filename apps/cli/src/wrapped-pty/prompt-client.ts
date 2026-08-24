@@ -3,13 +3,20 @@ import { request as httpsRequest } from 'node:https';
 import type { BoxNoticeEvent, PromptAnswerBody, PromptAskEvent } from '@agentbox/relay';
 
 /**
- * SSE subscription to the hub's `GET /api/v1/boxes/:id/prompts/stream`. The
- * hub pushes:
+ * SSE subscription to the hub's `GET /api/v1/boxes/:id/stream`. The hub pushes:
+ *   - `event: open`            data: {}                  (first frame of every connect)
  *   - `event: prompt-ask`      data: PromptAskEvent (with id)
  *   - `event: prompt-resolved` data: { id }
  *   - `event: notice-set`      data: BoxNoticeEvent (with id)
  *   - `event: notice-clear`    data: { id }
+ *   - `event: box-status`      data: BoxStatus snapshot
  *   - `event: ping`            data: { ts }
+ *
+ * `box-status` is why the footer needs no polling: the in-box daemon already
+ * pushes a snapshot on change (debounced) plus a 15s heartbeat, and this is the
+ * socket that is open anyway. It is the ONLY status source for a box owned by a
+ * remote hub — the host's `~/.agentbox/boxes/<id>/status.json` is written by the
+ * LOCAL relay, so it never exists for a box whose daemon reports elsewhere.
  *
  * We reconnect with exponential backoff on any error or close — the only
  * way to know the hub is back is to keep trying.
@@ -45,11 +52,51 @@ export interface SubscribeOptions {
   onNotice?: (ev: BoxNoticeEvent) => void;
   /** A previously-set notice was cleared (explicitly or via its TTL). */
   onNoticeCleared?: (id: string) => void;
-  onError?: (err: Error) => void;
+  /**
+   * A fresh box-status snapshot. Opaque here (the typed `BoxStatus` lives in
+   * @agentbox/ctl); the footer parses it.
+   */
+  onStatus?: (snapshot: unknown) => void;
+  /**
+   * A *re*connect completed — fired on `open` for every connect after the
+   * first. The caller must drop the prompt/notice state it is holding: anything
+   * still live is re-sent by the backlog flush that follows this event within
+   * the same stream, so whatever isn't re-sent was resolved during the outage
+   * (e.g. answered from the web UI) and would otherwise stay pinned forever.
+   */
+  onReconnect?: () => void;
+  /**
+   * `fatal` distinguishes "this will never work" (a credential the hub rejects,
+   * after which the stream is closed) from "the hub is away and we are still
+   * retrying". Only the former deserves a user-facing band — a hub restart is
+   * routine and self-healing, and reporting it the same way would cry wolf on
+   * every `hub update`.
+   */
+  onError?: (err: Error, fatal: boolean) => void;
 }
 
 const INITIAL_BACKOFF_MS = 200;
-const MAX_BACKOFF_MS = 5_000;
+/**
+ * Ceiling for the reconnect backoff. Sized for the worst real outage: a
+ * `hub update` rebuilds the control box's image in place, which is minutes of
+ * 502s from its reverse proxy. Retrying that every 5s is pointless noise.
+ */
+const MAX_BACKOFF_MS = 30_000;
+
+/**
+ * Statuses worth giving up on. Only a credential problem qualifies: no amount
+ * of retrying conjures an API key, so we surface it and stop.
+ *
+ * Everything else retries — notably 404, which is transient right after a
+ * control box restarts (the box registry rehydrates from the durable store, so
+ * a stream can briefly outrun it), and the 5xx family a reverse proxy returns
+ * while the hub container is being replaced. Treating those as fatal is what
+ * used to leave the footer permanently silent after a `hub update`, with a
+ * detach/reattach as the only cure.
+ */
+function isFatalStatus(status: number): boolean {
+  return status === 401 || status === 403;
+}
 
 export function subscribePrompts(opts: SubscribeOptions): PromptStream {
   let closed = false;
@@ -61,7 +108,7 @@ export function subscribePrompts(opts: SubscribeOptions): PromptStream {
   try {
     url = new URL(opts.hubBaseUrl);
   } catch (err) {
-    if (opts.onError) opts.onError(err instanceof Error ? err : new Error(String(err)));
+    if (opts.onError) opts.onError(err instanceof Error ? err : new Error(String(err)), true);
     return { close: () => {} };
   }
   const isHttps = url.protocol === 'https:';
@@ -70,7 +117,10 @@ export function subscribePrompts(opts: SubscribeOptions): PromptStream {
 
   function scheduleReconnect(): void {
     if (closed) return;
-    const delay = backoffMs;
+    // Jitter across the top half of the window: many wrappers attached to boxes
+    // on the same hub all lose the socket at the same instant when it restarts,
+    // and un-jittered backoff would march them back in lockstep.
+    const delay = backoffMs / 2 + Math.random() * (backoffMs / 2);
     backoffMs = Math.min(MAX_BACKOFF_MS, backoffMs * 2);
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
@@ -86,6 +136,10 @@ export function subscribePrompts(opts: SubscribeOptions): PromptStream {
    * doesn't corrupt parsing.
    */
   let buffer = '';
+  /** Set on the first `open`; distinguishes a reconnect from the initial connect. */
+  let everConnected = false;
+  /** One log line per outage, not one per retry. Cleared on a healthy connect. */
+  let reportedOutage = false;
   function consumeMessages(): void {
     let idx = buffer.indexOf('\n\n');
     while (idx !== -1) {
@@ -100,7 +154,19 @@ export function subscribePrompts(opts: SubscribeOptions): PromptStream {
         if (line.startsWith('event:')) event = line.slice('event:'.length).trim();
         else if (line.startsWith('data:')) dataLine = line.slice('data:'.length).trim();
       }
-      if (event === 'prompt-ask' && dataLine.length > 0) {
+      if (event === 'open') {
+        // First frame of every connect, and it precedes the backlog flush — the
+        // one moment at which the caller can safely discard state without
+        // racing a live prompt.
+        if (everConnected) opts.onReconnect?.();
+        everConnected = true;
+      } else if (event === 'box-status' && dataLine.length > 0) {
+        try {
+          opts.onStatus?.(JSON.parse(dataLine));
+        } catch {
+          /* malformed; ignore rather than die */
+        }
+      } else if (event === 'prompt-ask' && dataLine.length > 0) {
         try {
           const ev = JSON.parse(dataLine) as PromptAskEvent;
           if (ev && typeof ev.id === 'string') opts.onPrompt(ev);
@@ -141,7 +207,7 @@ export function subscribePrompts(opts: SubscribeOptions): PromptStream {
       host: url.hostname,
       port,
       method: 'GET',
-      path: `${url.pathname.replace(/\/$/, '')}/api/v1/boxes/${encodeURIComponent(opts.boxId)}/prompts/stream`,
+      path: `${url.pathname.replace(/\/$/, '')}/api/v1/boxes/${encodeURIComponent(opts.boxId)}/stream`,
       headers: {
         Accept: 'text/event-stream',
         ...(opts.hubApiKey ? { Authorization: `Bearer ${opts.hubApiKey}` } : {}),
@@ -149,16 +215,25 @@ export function subscribePrompts(opts: SubscribeOptions): PromptStream {
     });
     req.on('response', (r) => {
       res = r;
-      if (r.statusCode !== 200) {
-        // 401/404 — the hub says "no for you"; bail without retrying since these
-        // are config errors (bad/absent API key, unknown box) that won't fix
-        // themselves.
-        if (opts.onError) opts.onError(new Error(`SSE stream returned ${String(r.statusCode)}`));
-        r.resume();
-        close();
+      const status = r.statusCode ?? 0;
+      if (status !== 200) {
+        r.resume(); // drain, or the socket never frees
+        if (isFatalStatus(status)) {
+          if (opts.onError) opts.onError(new Error(`SSE stream returned ${String(status)}`), true);
+          close();
+          return;
+        }
+        if (!reportedOutage) {
+          reportedOutage = true;
+          if (opts.onError) {
+            opts.onError(new Error(`SSE stream returned ${String(status)}; retrying`), false);
+          }
+        }
+        scheduleReconnect();
         return;
       }
       backoffMs = INITIAL_BACKOFF_MS; // reset on a healthy connect
+      reportedOutage = false;
       r.setEncoding('utf8');
       r.on('data', (chunk: string) => {
         buffer += chunk;

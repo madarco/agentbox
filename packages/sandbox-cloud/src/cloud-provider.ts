@@ -310,12 +310,15 @@ export function createCloudProvider(
     branch: string;
   } {
     const id = generateBoxId();
-    // The workspace basename can be long (a control box builds from a per-job
-    // clone dir named `agentbox-hub-worker-<uuid>`), and the derived name flows
-    // into branch names, per-box directories and provider resource names — where
-    // Hetzner, for one, hard-caps at 63 chars. Bound the derived part; an
-    // explicit `--name` is the caller's business and passes through untouched.
-    const derived = `${basename(req.workspacePath).slice(0, DERIVED_NAME_MAX)}-${id}`;
+    // A control box builds from a per-job clone dir (`agentbox-hub-worker-<uuid>`)
+    // that it deletes on the way out, so its basename is both meaningless and
+    // long — `nameBasis` (the repo name) is what it passes instead. The derived
+    // name flows into branch names, per-box directories and provider resource
+    // names — where Hetzner, for one, hard-caps at 63 chars — so bound it either
+    // way. An explicit `--name` is the caller's business and passes through
+    // untouched.
+    const basis = req.nameBasis ?? basename(req.workspacePath);
+    const derived = `${basis.slice(0, DERIVED_NAME_MAX)}-${id}`;
     const name = req.name ?? derived;
     return {
       id,

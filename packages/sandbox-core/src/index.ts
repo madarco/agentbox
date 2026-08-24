@@ -194,4 +194,11 @@ export {
 } from './runtime-root.js';
 
 export { BOX_IMAGE_REGISTRY, registryRefForSha } from './box-registry.js';
-export { ownerRepoFromOriginUrl, projectSlugFromOriginUrl } from './project-slug.js';
+export {
+  boxNameBasisFromOriginUrl,
+  deriveRepoLabel,
+  HUB_WORKER_CLONE_PREFIX,
+  isHubWorkerClone,
+  ownerRepoFromOriginUrl,
+  projectSlugFromOriginUrl,
+} from './project-slug.js';

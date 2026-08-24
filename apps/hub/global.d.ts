@@ -37,6 +37,8 @@ declare global {
         backlog(boxId: string): {
           prompts: unknown[];
           notices: unknown[];
+          /** Latest box-status snapshot, when one has been received. */
+          status?: unknown;
         };
       }
     | undefined;

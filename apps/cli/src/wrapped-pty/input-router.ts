@@ -24,8 +24,13 @@ export interface InputRouter {
    *  capture() calls before resolution overwrite the previous prompt (the
    *  newer one wins — relay broadcast order is canonical). */
   capture(p: PromptAskEvent): Promise<PromptAnswerBody>;
-  /** Reject the in-flight capture (pty exit, sibling-wrapper answered). */
-  abort(reason: 'pty-exit' | 'resolved-elsewhere'): void;
+  /**
+   * Reject the in-flight capture (pty exit, sibling-wrapper answered, or the
+   * prompt stream reconnected — after an outage the hub's backlog is canonical,
+   * so a prompt we were still showing is dropped and re-captured only if the
+   * hub says it is still pending).
+   */
+  abort(reason: 'pty-exit' | 'resolved-elsewhere' | 'stream-reconnected'): void;
   dispose(): void;
 }
 
@@ -216,8 +221,7 @@ export function createInputRouter(opts: InputRouterOptions): InputRouter {
   let pasteInFlight = false;
   const leaderTimeoutMs = opts.leaderTimeoutMs ?? DEFAULT_LEADER_TIMEOUT_MS;
   const setTimer = opts.setTimer ?? ((ms, fn) => setTimeout(fn, ms) as unknown);
-  const clearTimer =
-    opts.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+  const clearTimer = opts.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
   let leader = false;
   let leaderTimer: unknown = null;
 
@@ -271,10 +275,7 @@ export function createInputRouter(opts: InputRouterOptions): InputRouter {
     opts.onForward(Buffer.from([b]));
   };
 
-  const settle = (
-    answer: PromptAnswerBody['answer'],
-    cancelled?: boolean,
-  ): void => {
+  const settle = (answer: PromptAnswerBody['answer'], cancelled?: boolean): void => {
     if (!active) return;
     const body: PromptAnswerBody = {
       id: active.ev.id,
@@ -510,7 +511,12 @@ export function createInputRouter(opts: InputRouterOptions): InputRouter {
       if (!active) return;
       const p = active;
       active = null;
-      const msg = reason === 'pty-exit' ? 'pty exited' : 'resolved by sibling wrapper';
+      const msg =
+        reason === 'pty-exit'
+          ? 'pty exited'
+          : reason === 'stream-reconnected'
+            ? 'prompt stream reconnected'
+            : 'resolved by sibling wrapper';
       p.reject(new Error(msg));
     },
     dispose(): void {

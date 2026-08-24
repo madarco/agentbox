@@ -23,7 +23,7 @@ function hubStub(): Promise<{
   const seen: Captured[] = [];
   const server: Server = createServer((req: IncomingMessage, res) => {
     seen.push({ url: req.url ?? '', auth: req.headers.authorization });
-    if ((req.url ?? '').includes('/prompts/stream')) {
+    if ((req.url ?? '').endsWith('/stream')) {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.write('event: open\ndata: {}\n\n');
       return; // held open, like the real SSE route
@@ -52,6 +52,27 @@ function hubStub(): Promise<{
 
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 120));
 
+/** A server that answers every request with `status`, counting the attempts. */
+async function statusServer(
+  status: number,
+  servers: Array<() => Promise<void>>,
+): Promise<{ port: number; hits: () => number }> {
+  let count = 0;
+  const server = createServer((_req, res) => {
+    count += 1;
+    res.writeHead(status).end();
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+  servers.push(
+    () =>
+      new Promise<void>((done) => {
+        server.closeAllConnections?.();
+        server.close(() => done());
+      }),
+  );
+  return { port: (server.address() as AddressInfo).port, hits: () => count };
+}
+
 describe('prompt-client auth', () => {
   const streams: Array<{ close: () => void }> = [];
   const servers: Array<() => Promise<void>> = [];
@@ -77,7 +98,7 @@ describe('prompt-client auth', () => {
     await settle();
 
     expect(hub.seen).toHaveLength(1);
-    expect(hub.seen[0]?.url).toBe('/api/v1/boxes/box-1/prompts/stream');
+    expect(hub.seen[0]?.url).toBe('/api/v1/boxes/box-1/stream');
     expect(hub.seen[0]?.auth).toBe('Bearer plane-key');
   });
 
@@ -113,25 +134,14 @@ describe('prompt-client auth', () => {
     expect(hub.seen[0]?.auth).toBe('Bearer plane-key');
   });
 
-  it('reports a non-200 SSE response instead of retrying it away', async () => {
+  it('gives up on a 401 and reports it', async () => {
     // The attach footer relies on this: the client gives up permanently on a
-    // non-200 (e.g. the hub rejecting a stale API key with 401), so if `onError`
-    // were not raised the footer would sit silent all session while the box is
-    // blocked, looking exactly like "no approvals".
-    const server = createServer((_req, res) => {
-      res.writeHead(401).end();
-    });
-    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
-    const { port } = server.address() as AddressInfo;
-    servers.push(
-      () =>
-        new Promise<void>((done) => {
-          server.closeAllConnections?.();
-          server.close(() => done());
-        }),
-    );
+    // credential rejection, so if `onError` were not raised the footer would sit
+    // silent all session while the box is blocked, looking exactly like "no
+    // approvals". `fatal` is what lets the footer band it.
+    const { port, hits } = await statusServer(401, servers);
 
-    const errors: string[] = [];
+    const errors: Array<{ message: string; fatal: boolean }> = [];
     streams.push(
       subscribePrompts({
         hubBaseUrl: `http://127.0.0.1:${String(port)}`,
@@ -139,13 +149,42 @@ describe('prompt-client auth', () => {
         boxId: 'box-401',
         onPrompt: () => {},
         onResolved: () => {},
-        onError: (e) => errors.push(e.message),
+        onError: (e, fatal) => errors.push({ message: e.message, fatal }),
       }),
     );
     await settle();
 
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toContain('401');
+    expect(errors[0]?.message).toContain('401');
+    expect(errors[0]?.fatal).toBe(true);
+    expect(hits()).toBe(1); // gave up; never retried
+  });
+
+  it('retries a 503 instead of giving up, and reports it non-fatally', async () => {
+    // A hub restart (`agentbox hub update`) makes its reverse proxy answer 5xx
+    // for as long as the container is being replaced. Treating that like a
+    // credential error left the footer permanently dead, with detach/reattach as
+    // the only cure — the regression this pins.
+    const { port, hits } = await statusServer(503, servers);
+
+    const errors: Array<{ message: string; fatal: boolean }> = [];
+    streams.push(
+      subscribePrompts({
+        hubBaseUrl: `http://127.0.0.1:${String(port)}`,
+        boxId: 'box-503',
+        onPrompt: () => {},
+        onResolved: () => {},
+        onError: (e, fatal) => errors.push({ message: e.message, fatal }),
+      }),
+    );
+    // Longer than `settle`: the first backoff is the 200ms base jittered down to
+    // 100-200ms, so a 120ms window can miss the retry entirely.
+    await new Promise((r) => setTimeout(r, 600));
+
+    expect(hits()).toBeGreaterThan(1); // kept trying
+    // Reported once for the outage, not once per attempt.
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.fatal).toBe(false);
   });
 
   it('omits the header on the answer POST without a key', async () => {

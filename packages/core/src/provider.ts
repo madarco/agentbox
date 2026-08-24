@@ -70,6 +70,17 @@ export interface ResolvedCarryEntry {
 export interface CreateBoxRequest {
   workspacePath: string;
   name?: string;
+  /**
+   * What to derive the default name from when `name` is absent and
+   * `workspacePath` is not a meaningful identity — specifically a control box's
+   * per-job clone (`/tmp/agentbox-hub-worker-<jobId>`), a directory deleted the
+   * moment the create returns. Without this every hub-created box is named after
+   * that directory, so no box name says which project it belongs to.
+   *
+   * Providers still append their own `-<id>` suffix and length clamp, so this is
+   * a basis, not a final name. An explicit `name` always wins.
+   */
+  nameBasis?: string;
   /** Project root (nearest ancestor with agentbox.yaml, else workspacePath). */
   projectRoot: string;
   /**

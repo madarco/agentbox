@@ -1,8 +1,15 @@
-// GET /api/v1/boxes/:id/prompts/stream — the payload-carrying prompt SSE channel
-// for the attach footer. Unlike /api/events (refetch signals only, `data: {}`),
-// this pushes the full `prompt-ask` / `prompt-resolved` / `notice-set` /
-// `notice-clear` payloads the footer renders. Per-box: `:id` is the box id the
-// footer attached to (prompts are keyed by exact box id, so no resolution here).
+// GET /api/v1/boxes/:id/stream — the payload-carrying per-box SSE channel for
+// the attach footer. Unlike /api/events (refetch signals only, `data: {}`), this
+// pushes the full `prompt-ask` / `prompt-resolved` / `notice-set` /
+// `notice-clear` / `box-status` payloads the footer renders. Per-box: `:id` is
+// the box id the footer attached to (prompts are keyed by exact box id, so no
+// resolution here).
+//
+// `box-status` is why the footer needs no status polling. It matters most for a
+// box this hub owns but the user's laptop does not: the durable
+// `~/.agentbox/boxes/<id>/status.json` is written by whichever relay the box
+// reports to, so a laptop attached to a control-box-created box has no such
+// file and this stream is its only source.
 //
 // Gated by proxy.ts exactly like the rest of /api/v1 (Bearer API key / hub token),
 // which is the point of this route: it retires the footer's last admin-token wire.
@@ -46,6 +53,8 @@ export async function GET(
         const backlog = prompts.backlog(id);
         for (const ev of backlog.prompts) send('prompt-ask', ev);
         for (const ev of backlog.notices) send('notice-set', ev);
+        // Last, so an attach that lands mid-approval paints the prompt first.
+        if (backlog.status !== undefined) send('box-status', backlog.status);
       }
       const ping = setInterval(() => send('ping', { ts: new Date().toISOString() }), HEARTBEAT_MS);
       req.signal.addEventListener('abort', () => {

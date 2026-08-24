@@ -1114,12 +1114,12 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
-      '/boxes/{id}/prompts/stream': {
+      '/boxes/{id}/stream': {
         get: {
           tags: ['Approvals'],
-          summary: "Subscribe to a box's approval prompt stream (SSE)",
+          summary: "Subscribe to a box's live event stream (SSE)",
           description:
-            "Payload-carrying Server-Sent Events for one box's host-action approvals — the attach footer's channel. Emits `prompt-ask` (the full pending-approval payload), `prompt-resolved` (`{ id }`), `notice-set`/`notice-clear`, and a `ping` heartbeat. Distinct from GET /api/events, which carries refetch signals only (`data: {}`). Degrades to open + heartbeat on a hub topology with no in-process relay.",
+            "Payload-carrying Server-Sent Events for one box — the attach footer's channel. Emits `open` (first frame of every connect, followed by a backlog flush of everything still live), `prompt-ask` (the full pending-approval payload), `prompt-resolved` (`{ id }`), `notice-set`/`notice-clear`, `box-status` (the in-box daemon's latest snapshot: agent activity, session titles, service/task states), and a `ping` heartbeat. `box-status` is the only status source for a box this hub owns but the client does not — the durable status file is written by whichever relay the box reports to. Distinct from GET /api/events, which carries refetch signals only (`data: {}`). Degrades to open + heartbeat on a hub topology with no in-process relay.",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': {
