@@ -15,6 +15,7 @@
  */
 
 import { execa } from 'execa';
+import { toHttpsUrl } from './git-pat.js';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1213,6 +1214,21 @@ export interface HostGitRepo {
   cleanup: () => Promise<void>;
 }
 
+/**
+ * The push URL a scratch (checkout-less) host repo should use. SSH/scp remotes
+ * are rewritten to plain HTTPS; anything already HTTPS — or any URL shape
+ * `toHttpsUrl` can't parse — is passed through untouched, so an unusual remote
+ * fails at git with its own message instead of here.
+ */
+function httpsOriginForScratchPush(origin: string): string {
+  if (/^https?:\/\//i.test(origin)) return origin;
+  try {
+    return toHttpsUrl(origin);
+  } catch {
+    return origin;
+  }
+}
+
 export async function resolveHostGitRepo(
   workspacePath: string,
   deps: CloudActionExecutorDeps,
@@ -1228,13 +1244,21 @@ export async function resolveHostGitRepo(
   }
   // No host checkout. Only the REGISTERED origin can be trusted as a push
   // target — see the `originUrl` doc on CloudActionExecutorDeps.
-  const origin = deps.originUrl?.trim() ?? '';
-  if (origin.length === 0) {
+  const rawOrigin = deps.originUrl?.trim() ?? '';
+  if (rawOrigin.length === 0) {
     throw new Error(
       `host-side git is unavailable for box ${deps.boxId}: its host repo (${workspacePath || '<unset>'}) does not exist ` +
         `and the box has no registered origin URL to push to. Adopt the box on a host with a checkout, or re-register it.`,
     );
   }
+  // A checkout-less host is a control box, which authenticates git through a
+  // credential helper (`hub.gitAuth=gh`) or an App token — never an SSH key. An
+  // scp-form `git@github.com:owner/repo` origin therefore dies at host-key
+  // verification before auth is ever consulted, so rewrite it to the HTTPS URL
+  // the helper covers. Mirrors the create worker's clone (`hub-worker.ts`),
+  // which has always done this — without it the clone side works and the push
+  // side fails for every SSH-origin project.
+  const origin = httpsOriginForScratchPush(rawOrigin);
   const dir = await mkdtemp(join(tmpdir(), 'agentbox-git-scratch-'));
   const init = await execa('git', ['-C', dir, 'init', '--quiet'], { reject: false });
   if ((init.exitCode ?? 1) !== 0) {

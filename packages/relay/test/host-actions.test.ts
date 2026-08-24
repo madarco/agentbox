@@ -115,7 +115,10 @@ describe('executeCloudAction routing', () => {
     const prev = process.env['AGENTBOX_GH_PR_CHECKOUT'];
     delete process.env['AGENTBOX_GH_PR_CHECKOUT'];
     try {
-      const result = await executeCloudAction(action('gh.pr.checkout', { args: ['1'] }), makeDeps());
+      const result = await executeCloudAction(
+        action('gh.pr.checkout', { args: ['1'] }),
+        makeDeps(),
+      );
       expect(result.exitCode).toBe(13);
       expect(result.stderr).toContain('disabled by default');
     } finally {
@@ -258,10 +261,29 @@ describe('resolveHostGitRepo', () => {
     // The push target is the URL, not the remote NAME: a scratch repo has no remotes.
     expect(repo.remote).toBe('https://github.com/o/r.git');
     expect(repo.dir).not.toBe(gone);
-    const inside = await execa('git', ['-C', repo.dir, 'rev-parse', '--git-dir'], { reject: false });
+    const inside = await execa('git', ['-C', repo.dir, 'rev-parse', '--git-dir'], {
+      reject: false,
+    });
     expect(inside.exitCode).toBe(0);
     await repo.cleanup();
     expect(existsSync(repo.dir)).toBe(false);
+  });
+
+  it('rewrites an SSH origin to HTTPS for a scratch push (a control box has no SSH key)', async () => {
+    const gone = join(tmpdir(), 'agentbox-hgr-does-not-exist-xyz');
+    const repo = await resolveHostGitRepo(gone, deps('git@github.com:o/r.git'), 'origin');
+    made.push(repo.dir);
+    expect(repo.remote).toBe('https://github.com/o/r.git');
+    const url = await resolveHostGitRepo(gone, deps('ssh://git@github.com/o/r.git'), 'origin');
+    made.push(url.dir);
+    expect(url.remote).toBe('https://github.com/o/r.git');
+  });
+
+  it('leaves an unparseable origin alone rather than failing the push early', async () => {
+    const gone = join(tmpdir(), 'agentbox-hgr-does-not-exist-xyz');
+    const repo = await resolveHostGitRepo(gone, deps('/srv/mirrors/r.git'), 'origin');
+    made.push(repo.dir);
+    expect(repo.remote).toBe('/srv/mirrors/r.git');
   });
 
   it('refuses rather than guessing when there is no checkout and no registered origin', async () => {
