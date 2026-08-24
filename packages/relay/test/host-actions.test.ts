@@ -4,7 +4,12 @@ import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { executeCloudAction, resolveHostGitRepo, resolveHostPath } from '../src/host-actions.js';
+import {
+  executeCloudAction,
+  ghRunContext,
+  resolveHostGitRepo,
+  resolveHostPath,
+} from '../src/host-actions.js';
 import type { HostAction } from '../src/types.js';
 
 /**
@@ -295,5 +300,45 @@ describe('resolveHostGitRepo', () => {
     await expect(resolveHostGitRepo(gone, deps('   '), 'origin')).rejects.toThrow(
       /no registered origin URL/,
     );
+  });
+});
+
+describe('ghRunContext', () => {
+  it('runs gh in the host checkout untouched when one exists', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agentbox-ghctx-'));
+    try {
+      expect(ghRunContext(dir, 'git@github.com:o/r.git', ['create'])).toEqual({
+        cwd: dir,
+        args: ['create'],
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to a real cwd and names the repo when the checkout is gone', () => {
+    const gone = join(tmpdir(), 'agentbox-ghctx-does-not-exist-xyz');
+    // A missing cwd makes the spawn fail as `spawn gh ENOENT` — never pass it through.
+    expect(ghRunContext(gone, 'git@github.com:o/r.git', ['create'])).toEqual({
+      cwd: tmpdir(),
+      args: ['--repo', 'o/r', 'create'],
+    });
+  });
+
+  it('does not second-guess an explicit --repo / -R, or an unusable origin', () => {
+    const gone = join(tmpdir(), 'agentbox-ghctx-does-not-exist-xyz');
+    expect(ghRunContext(gone, 'git@github.com:o/r.git', ['--repo', 'x/y', 'view'])).toEqual({
+      cwd: tmpdir(),
+      args: ['--repo', 'x/y', 'view'],
+    });
+    expect(ghRunContext(gone, 'git@github.com:o/r.git', ['-R', 'x/y', 'view'])).toEqual({
+      cwd: tmpdir(),
+      args: ['-R', 'x/y', 'view'],
+    });
+    expect(ghRunContext(gone, undefined, ['view'])).toEqual({ cwd: tmpdir(), args: ['view'] });
+    expect(ghRunContext(gone, '/srv/mirrors/r.git', ['view'])).toEqual({
+      cwd: tmpdir(),
+      args: ['view'],
+    });
   });
 });

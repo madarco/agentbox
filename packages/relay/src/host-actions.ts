@@ -15,7 +15,7 @@
  */
 
 import { execa } from 'execa';
-import { toHttpsUrl } from './git-pat.js';
+import { repoSlugFromRemote, toHttpsUrl } from './git-pat.js';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -385,6 +385,34 @@ export async function executeCloudAction(
 }
 
 /**
+ * Where to run `gh`, and whether it must be told the repo.
+ *
+ * `gh` infers the repo from its cwd's git remote, so the host checkout is the
+ * natural place to run it. A control box has no checkout: passing that path as
+ * `cwd` makes the spawn itself fail with a bare `spawn gh ENOENT` (Node reports
+ * a missing cwd exactly like a missing binary), which reads as "gh isn't
+ * installed" and sent us hunting the wrong problem. Fall back to a directory
+ * that exists and name the repo explicitly from the registered origin instead.
+ */
+export function ghRunContext(
+  workspacePath: string,
+  originUrl: string | undefined,
+  args: string[],
+): { cwd: string; args: string[] } {
+  if (workspacePath.length > 0 && existsSync(workspacePath)) {
+    return { cwd: workspacePath, args };
+  }
+  const origin = originUrl?.trim() ?? '';
+  const alreadyScoped = args.some((a) => a === '--repo' || a === '-R' || a.startsWith('--repo='));
+  if (origin.length === 0 || alreadyScoped) return { cwd: tmpdir(), args };
+  try {
+    return { cwd: tmpdir(), args: ['--repo', repoSlugFromRemote(origin), ...args] };
+  } catch {
+    return { cwd: tmpdir(), args };
+  }
+}
+
+/**
  * Cloud `gh.pr.<op>` executor. Simpler than `runGitRpc` because nothing
  * needs to round-trip into the sandbox — `gh` only needs the host repo
  * (already at the right remote in `lookup.workspacePath`).
@@ -550,7 +578,8 @@ async function runGhPrRpc(
   }
   // Never let `gh` fall back to the host repo's checked-out branch.
   if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
-  return runHostGh(['pr', op, ...finalArgs], lookup.workspacePath);
+  const prRun = ghRunContext(lookup.workspacePath, deps.originUrl, finalArgs);
+  return runHostGh(['pr', op, ...prRun.args], prRun.cwd);
 }
 
 /**
@@ -633,7 +662,8 @@ async function runGhRunRpc(
       if (denied) return denied;
     }
   }
-  return runHostGh(['run', op, ...args], lookup.workspacePath);
+  const runRun = ghRunContext(lookup.workspacePath, deps.originUrl, args);
+  return runHostGh(['run', op, ...runRun.args], runRun.cwd);
 }
 
 /**
@@ -655,7 +685,8 @@ async function runGhApiRpc(
   const ghReady = await assertGhReady();
   if (ghReady) return ghReady;
   const lookup = await lookupCloudBox(deps.boxId);
-  return runHostGh(['api', endpoint, ...args], lookup.workspacePath);
+  const apiRun = ghRunContext(lookup.workspacePath, undefined, args);
+  return runHostGh(['api', endpoint, ...apiRun.args], apiRun.cwd);
 }
 
 /**
