@@ -166,6 +166,12 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **`carry:` files are owned by the box user on every provider.** They were
+  chowned to a hardcoded uid 1000, which is `vscode` on docker/hetzner/
+  digitalocean/daytona but not on vercel/e2b — so carried files landed on a
+  stranger there, and a 0600 one (like the credentials
+  `--dangerously-with-credentials` copies) was unreadable by the agent meant to
+  use it. An explicit `user:` in `agentbox.yaml` still means a literal uid.
 - **The attach footer shows real status for boxes a control box created.** It
   read a status file only the local relay writes, so a hub-created box always
   showed `(unknown)` and never the `starting N/M…` service count. Status now
