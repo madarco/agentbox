@@ -1,0 +1,170 @@
+---
+title: Sprites
+description: Run AgentBox agents in persistent, hardware-isolated Sprites environments through a community provider plugin
+---
+
+Run your agents in a [Sprite](https://sprites.dev) — a persistent, hardware-isolated Linux
+environment that hibernates when idle — using the same AgentBox commands as a local box.
+**Sprites is a community provider** published as its own package
+(`agentbox-provider-sprites`), not bundled into the AgentBox CLI.
+
+Switch per box with `--provider sprites`, or pin it project-wide with
+`defaults.box.provider: sprites` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See
+the built-ins [local-docker](/docs/local-docker), [remote-docker](/docs/remote-docker),
+[hetzner](/docs/hetzner), [digitalocean](/docs/digitalocean), [daytona](/docs/daytona),
+[vercel](/docs/vercel), and [e2b](/docs/e2b).
+
+<Callout type="info" title="Community provider">
+  Maintained outside AgentBox core at
+  [`philippgerard/agentbox-provider-sprites`](https://github.com/philippgerard/agentbox-provider-sprites)
+  ([npm](https://www.npmjs.com/package/agentbox-provider-sprites)). Built on
+  [`@madarco/agentbox-provider-sdk`](https://www.npmjs.com/package/@madarco/agentbox-provider-sdk)
+  and the official [`sprite` CLI](https://docs.sprites.dev/cli/installation). Report provider bugs
+  at the [issue tracker](https://github.com/philippgerard/agentbox-provider-sprites/issues).
+</Callout>
+
+## Install
+
+Requirements: Node.js 20.10 or newer, an AgentBox release that supports provider SDK API v2, the
+official `sprite` CLI, and an authenticated Sprites organization.
+
+Install the plugin, then register it so `--provider sprites` resolves:
+
+```bash
+npm i -g agentbox-provider-sprites
+agentbox plugin add agentbox-provider-sprites
+agentbox plugin list            # → sprites … (SDK v2)
+```
+
+A plugin runs in-process with full host and credential access, so `plugin add` is the trust
+boundary — see [build-a-provider](/docs/build-a-provider).
+
+## Credentials
+
+Install the Sprite CLI and authenticate it with your Sprites organization:
+
+```bash
+curl -fsSL https://sprites.dev/install.sh | sh
+sprite login
+agentbox doctor                  # shows the `sprites:` group
+```
+
+The provider uses the CLI's selected organization and keychain credentials. For a headless host,
+set `SPRITE_TOKEN` in the environment or add it to `~/.agentbox/secrets.env` (mode `0600`). Project
+`.env` files are never harvested for provider credentials. See [environment](/docs/environment).
+
+## Use it
+
+Sprites does not include the AgentBox VNC/browser stack, so disable VNC when creating a box:
+
+```bash
+agentbox create --provider sprites --no-vnc
+agentbox claude --provider sprites --no-vnc
+agentbox codex --provider sprites --no-vnc
+agentbox opencode --provider sprites --no-vnc
+```
+
+The provider also forces VNC off if the flag is omitted. From there, [run an agent](/docs/run-an-agent)
+and [access your box](/docs/access-your-box) as usual:
+
+```bash
+agentbox shell <box>
+agentbox url <box>
+agentbox pause <box>
+agentbox unpause <box>
+agentbox destroy <box>
+```
+
+## Runtime setup
+
+No `agentbox prepare` step is required. Each new Sprite starts from the
+[Sprites development image](https://docs.sprites.dev/reference/base-images), which already
+provides Node.js, git, tmux, sudo, and the supported coding-agent CLIs. During create, the provider
+uploads AgentBox's shared runtime assets from the running CLI, installs `agentbox-ctl`, creates the
+`vscode` runtime user, and registers the supervisor as a Sprite service.
+
+Pulling shared assets with `resolveSharedRuntimeAsset` keeps the in-box runtime version matched to
+the AgentBox CLI that created the box; the plugin does not vendor a stale `ctl.cjs` copy.
+
+## Lifecycle and persistence
+
+As described in the [Sprites lifecycle](https://docs.sprites.dev/concepts/lifecycle), Sprites
+preserve their filesystem and stop compute billing when idle. The provider maps AgentBox lifecycle
+operations onto that model:
+
+| AgentBox            | Sprites behavior                                                    |
+| ------------------- | ------------------------------------------------------------------- |
+| `create`            | Create a labeled Sprite, install the runtime, and seed `/workspace` |
+| exec / attach       | Official Sprite WebSocket and TTY transports                        |
+| `cp`                | `sprite file push` / `sprite file pull`                             |
+| `pause` / `stop`    | Stop the AgentBox service and daemon, then let the Sprite hibernate |
+| `start` / `unpause` | Wake the Sprite, bootstrap AgentBox, and restore its service        |
+| `destroy`           | Delete the Sprite and local provider state                          |
+
+After the idle window, a running Sprite becomes **warm**: compute is suspended and memory is
+preserved. It may later become **cold**, where processes restart but the filesystem still persists.
+The AgentBox supervisor is a Sprite service, so it returns after a cold wake.
+
+Lifecycle transitions use a host-side cross-process fence. This prevents the CLI, tray, and host
+relay from racing a pause against service restoration and accidentally keeping a paused Sprite
+active.
+
+## Networking
+
+Every Sprite has one stable HTTPS URL. `agentbox url` opens that organization-authenticated
+`sprites.app` URL, routed to AgentBox's WebProxy on port 8080. Browser traffic therefore uses
+[Sprites' normal organization login](https://docs.sprites.dev/concepts/networking) rather than
+embedding a provider credential in a URL.
+
+The host relay uses a separate private localhost proxy backed by `sprite proxy --stdio`. AgentBox's
+bridge bearer already occupies the HTTP `Authorization` header, so it cannot also carry a Sprite
+organization token. The private proxy keeps that traffic off the public URL while preserving relay
+recovery across host-process restarts.
+
+## Specs
+
+| Spec             | Sprites provider                                                  |
+| ---------------- | ----------------------------------------------------------------- |
+| Isolation        | Hardware-isolated microVM                                         |
+| Compute          | 8 vCPUs; memory managed by the Sprites platform                   |
+| Storage          | 100 GB persistent ext4 filesystem                                 |
+| Base environment | Sprites development image plus per-box AgentBox runtime install   |
+| Exec and attach  | Official `sprite` CLI WebSocket / TTY transport                   |
+| File transfer    | Official Sprite file commands                                     |
+| Browser URL      | Stable, organization-authenticated HTTPS                          |
+| Pause / resume   | Automatic warm/cold hibernation with AgentBox service restoration |
+| WebProxy port    | 8080                                                              |
+
+## Configuration
+
+The provider reads AgentBox's generic provider setting:
+
+```yaml
+# agentbox.yaml
+defaults:
+  box:
+    provider: sprites
+```
+
+Sprites resources are platform-managed. AgentBox `--cpus`, `--memory`, `--disk`, `--size`, and
+`--location` options do not resize a Sprite.
+
+## Caveats
+
+- **No VNC or in-box browser stack** — use `--no-vnc`; `agentbox screen` is unavailable.
+- **No nested Docker through this provider** — image-based `agentbox.yaml` services are unavailable.
+- **No AgentBox cross-Sprite checkpoints** — a Sprites checkpoint restores the same Sprite and
+  cannot seed a different one, which does not satisfy AgentBox's checkpoint contract.
+- **Host CLI dependency** — the `sprite` executable must remain available on the host `PATH`.
+- **macOS tray discovery** — external provider plugins do not yet appear in the tray's New Box
+  picker. CLI use works; follow [madarco/agentbox#306](https://github.com/madarco/agentbox/issues/306)
+  for native-client discovery.
+
+## Related
+
+- [core-concepts](/docs/core-concepts) — boxes, branches, and worktrees.
+- [teleport-a-project](/docs/teleport-a-project) — how `/workspace` is seeded.
+- [run-an-agent](/docs/run-an-agent) · [access-your-box](/docs/access-your-box) — work in a Sprite.
+- [web-apps-and-tunnels](/docs/web-apps-and-tunnels) — AgentBox WebProxy behavior.
+- [checkpoints-and-pausing](/docs/checkpoints-and-pausing) — lifecycle semantics.
+- [build-a-provider](/docs/build-a-provider) — community provider plugin architecture.

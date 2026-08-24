@@ -1,6 +1,7 @@
 # Provider plugins — external / community providers
 
-AgentBox ships five built-in providers (docker, daytona, hetzner, vercel, e2b),
+AgentBox ships seven built-in providers (local-docker, remote-docker, hetzner,
+digitalocean, daytona, vercel, e2b),
 but the provider surface is open: anyone can publish a **provider plugin** as its
 own npm package and users can add it with `agentbox plugin add` — no changes to
 AgentBox itself. This doc is the authoring + operating guide. The user-facing
@@ -25,7 +26,7 @@ Two reference packages live under [`examples/`](../examples):
   `resolveSharedRuntimeAsset`, …) with the private internal packages inlined, so a
   plugin never touches AgentBox internals. It carries a `SDK_API_VERSION` that
   gates compatibility.
-- The published `@madarco/agentbox` CLI bundles the five built-ins. A plugin is
+- The published `@madarco/agentbox` CLI bundles the seven built-ins. A plugin is
   **not** bundled — the user installs it, then `agentbox plugin add <pkg>` records
   it in `~/.agentbox/plugins.json`, and the CLI + host relay load it at runtime via
   a plain `import()` of the recorded entry (the extension seam).
@@ -39,10 +40,10 @@ Two reference packages live under [`examples/`](../examples):
 A package named `agentbox-provider-<name>` (or `@scope/agentbox-provider-<name>`)
 that:
 
-1. Depends on `@madarco/agentbox-provider-sdk` (`^1`).
+1. Depends on `@madarco/agentbox-provider-sdk` (`^2`).
 2. Declares its contract version in `package.json`:
    ```json
-   { "agentbox": { "providerApiVersion": 1 } }
+   { "agentbox": { "providerApiVersion": 2 } }
    ```
 3. Exports a **`providerModule`** (or `providerModules` for a multi-provider
    package) — the uniform surface AgentBox loads it through:
