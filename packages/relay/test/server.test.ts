@@ -284,6 +284,55 @@ describe('relay server', () => {
       await rm(home, { recursive: true, force: true });
     }
   });
+
+  it('broadcasts box-status to subscribers, not just the durable file', async () => {
+    // The attach footer's activity + `starting N/M…` service count come from
+    // this snapshot. Persisting it is only enough when the footer runs on the
+    // SAME machine as the relay — a box created by a control box reports THERE,
+    // so the user's laptop has no status file and the stream is its only source.
+    // Without this broadcast the footer renders a literal `unknown` forever.
+    await register(handle, 'bcast-box', 'tk-bcast', 'bcast-box');
+
+    const port = (handle.server.address() as AddressInfo).port;
+    const ctrl = new AbortController();
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${String(port)}/admin/prompts/stream?boxId=bcast-box`,
+        { signal: ctrl.signal },
+      );
+      expect(res.status).toBe(200);
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+
+      const post = await fetchJson(handle, 'POST', '/events', {
+        token: 'tk-bcast',
+        body: {
+          type: 'box-status',
+          payload: {
+            schema: 1,
+            boxId: 'bcast-box',
+            services: [{ name: 'web', state: 'starting' }],
+            tasks: [],
+          },
+        },
+      });
+      expect(post.status).toBe(202);
+
+      let buf = '';
+      let sawStatus = false;
+      for (let i = 0; i < 20 && !sawStatus; i++) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value);
+        sawStatus = buf.includes('event: box-status');
+      }
+      expect(sawStatus).toBe(true);
+      // The payload rides along, not just the event name — the footer parses it.
+      expect(buf).toContain('"name":"web"');
+    } finally {
+      ctrl.abort();
+    }
+  });
 });
 
 /**
@@ -351,7 +400,12 @@ describe('relay prompt flow', () => {
         name: 'box-one',
         autoApproveSafeHostActions: false,
         worktrees: [
-          { containerPath: '/workspace', hostMainRepo: '/tmp', branch: 'agentbox/box-one', sanctionedBranch: 'main' },
+          {
+            containerPath: '/workspace',
+            hostMainRepo: '/tmp',
+            branch: 'agentbox/box-one',
+            sanctionedBranch: 'main',
+          },
         ],
       },
     });
@@ -508,9 +562,7 @@ exit 0
     gh._resetGhReadyCacheForTests();
   });
 
-  async function registerWithWorktree(
-    extra: Record<string, unknown> = {},
-  ): Promise<void> {
+  async function registerWithWorktree(extra: Record<string, unknown> = {}): Promise<void> {
     // The worktree paths don't need to exist on disk: handleGhPrRpc only uses
     // hostMainRepo as a cwd for `gh`, and our stub ignores cwd.
     const r = await fetchJson(handle, 'POST', '/admin/register-box', {
