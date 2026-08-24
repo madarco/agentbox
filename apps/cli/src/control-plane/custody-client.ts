@@ -66,6 +66,20 @@ export function sha256Hex(data: Buffer): string {
   return createHash('sha256').update(data).digest('hex');
 }
 
+/**
+ * At or above this a custody PUT takes the streaming blob surface. Well below
+ * the JSON cap on purpose — base64 costs 4/3 on the wire and several times the
+ * payload in peak memory on both ends.
+ */
+const BLOB_THRESHOLD_BYTES = 1024 * 1024;
+
+/**
+ * Largest payload the base64 JSON API can carry within the relay's default
+ * 32 MiB custody body cap (4/3 inflation plus envelope headroom). Only used to
+ * decide whether a fallback to JSON is worth attempting against an older hub.
+ */
+const MAX_JSON_PAYLOAD_BYTES = Math.floor(32 * 1024 * 1024 * 0.7);
+
 export class CustodyClient {
   private readonly base: string;
   private readonly apiKey: string | undefined;
@@ -136,8 +150,18 @@ export class CustodyClient {
     return ((await res.json()) as { enabled?: boolean; entries: CustodyEntry[] }).entries ?? [];
   }
 
-  /** Upload bytes; returns whether custody actually changed (metadata only, no bytes). */
+  /**
+   * Upload bytes; returns whether custody actually changed (metadata only, no
+   * bytes).
+   *
+   * Anything sizeable takes the streaming blob surface. The JSON API sends
+   * base64 inside an envelope, so its usable ceiling is only ~0.7x its body cap
+   * — `hub project push` gating on the (much larger) blob cap while uploading
+   * through JSON would offer a seed the wire then refuses, which is exactly the
+   * gate/transport mismatch this pair of APIs exists to end.
+   */
   async put(path: string, data: Buffer): Promise<{ changed: boolean; sha256: string }> {
+    if (data.length >= BLOB_THRESHOLD_BYTES) return this.putBlob(path, data);
     const res = await this.fetchImpl(`${this.prefix()}/${this.encodePath(path)}`, {
       method: 'PUT',
       headers: this.headers(),
@@ -146,6 +170,44 @@ export class CustodyClient {
     if (!res.ok) throw await this.errorFrom(res, `custody put ${path} failed`);
     const body = (await res.json()) as { changed: boolean; sha256: string };
     return { changed: body.changed, sha256: body.sha256 };
+  }
+
+  /** Raw octet-stream PUT, falling back to JSON on a hub that predates the route. */
+  private async putBlob(path: string, data: Buffer): Promise<{ changed: boolean; sha256: string }> {
+    const res = await this.fetchImpl(`${this.blobPrefix()}/${this.encodePath(path)}`, {
+      method: 'PUT',
+      headers: { ...this.headers(), 'Content-Type': 'application/octet-stream' },
+      body: new Uint8Array(data),
+    });
+    if (res.ok) {
+      const body = (await res.json()) as { changed: boolean; sha256: string };
+      return { changed: body.changed, sha256: body.sha256 };
+    }
+    if (res.status === 404) {
+      // Older hub: no blob surface. Retry over JSON when it can plausibly fit,
+      // else say why rather than let it fail as an opaque size error.
+      if (data.length <= MAX_JSON_PAYLOAD_BYTES) {
+        const legacy = await this.fetchImpl(`${this.prefix()}/${this.encodePath(path)}`, {
+          method: 'PUT',
+          headers: this.headers(),
+          body: JSON.stringify({ data: data.toString('base64') }),
+        });
+        if (!legacy.ok) throw await this.errorFrom(legacy, `custody put ${path} failed`);
+        const body = (await legacy.json()) as { changed: boolean; sha256: string };
+        return { changed: body.changed, sha256: body.sha256 };
+      }
+      throw new HubApiError(
+        `custody put ${path}: this hub has no streaming blob API and the payload is too large for the JSON one — run \`agentbox hub update\``,
+        'not_found',
+        404,
+      );
+    }
+    throw await this.errorFrom(res, `custody put ${path} failed`);
+  }
+
+  /** Base path of the streaming blob surface, mirroring {@link prefix}. */
+  private blobPrefix(): string {
+    return this.useApi ? `${this.base}/api/v1/custody/blob` : `${this.base}/admin/custody-blob`;
   }
 
   /**

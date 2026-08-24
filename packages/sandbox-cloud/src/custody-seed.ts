@@ -120,6 +120,29 @@ const DEFAULT_BLOB_THRESHOLD_BYTES = 1024 * 1024;
 export const CARRY_SEED_ITEMS = ['carry.tar.gz', 'carry.json'];
 
 /**
+ * A failure to move user-approved `carry:` material.
+ *
+ * A distinct type rather than a message convention: every layer between here and
+ * the create has a best-effort catch for seed material, and each one has to be
+ * able to tell "the untracked tar didn't make it" (log and continue) from "the
+ * files the user explicitly approved didn't make it" (stop). Matching on a
+ * `carry:` string prefix worked until something threw that wasn't ours — a `tar`
+ * failure, an fs error — and the box was then built without the approved files,
+ * which is the bug this all exists to prevent.
+ */
+export class CarrySeedError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'CarrySeedError';
+  }
+}
+
+/** True for a carry failure, across package/realm boundaries (name, not identity). */
+export function isCarrySeedError(err: unknown): boolean {
+  return err instanceof Error && err.name === 'CarrySeedError';
+}
+
+/**
  * Largest raw payload that still fits a `maxBodyBytes` **JSON** custody PUT. The
  * value is sent as base64 inside a JSON envelope, so it inflates by 4/3; the 0.7
  * factor is that plus headroom for the envelope itself.
@@ -177,7 +200,7 @@ export async function buildProjectSeed(
   const carry = args.carry?.length ? await buildCarrySeed(args.carry) : null;
   if (carry) {
     if (carry.tar.length > maxTarBytes) {
-      throw new Error(
+      throw new CarrySeedError(
         `carry: the approved entries pack to ${formatBytes(carry.tar.length)}, over this control box's ` +
           `${formatBytes(maxTarBytes)} custody blob cap. Raise \`relay.custodyMaxBlobBytes\` here and ` +
           'AGENTBOX_CUSTODY_MAX_BLOB_BYTES on the control box, or drop the entry from `carry:`.',
@@ -312,15 +335,13 @@ export async function buildCarrySeed(
       const name = basename(entry.absSrc) || `entry-${String(index)}`;
       const destDir = join(stage, String(index));
       await mkdir(destDir, { recursive: true });
-      // `cp -R` preserves modes and nested structure, and follows the same
-      // semantics the local carry path uses when it stages a directory.
-      const args = ['-R', entry.absSrc, join(destDir, name)];
-      const r = await execa('cp', args, { reject: false });
-      if (r.exitCode !== 0) {
-        throw new Error(
-          `carry: could not stage ${entry.rawSrc} for upload: ${(r.stderr || r.stdout || '').trim()}`,
-        );
-      }
+      // Stage through tar rather than `cp -R`, so a directory entry's `exclude`
+      // patterns are honoured exactly as the local carry path honours them
+      // (`sync/carry.ts` builds the same `--exclude=` args). A plain copy would
+      // sweep in `node_modules` and friends — inflating the upload past the
+      // custody cap and failing a create that succeeds locally, for a payload
+      // the box was never meant to receive.
+      await stageCarryPayload(entry, join(destDir, name));
       relPaths.push(`${String(index)}/${name}`);
       manifest.entries.push({
         index,
@@ -340,13 +361,56 @@ export async function buildCarrySeed(
     }
     const tar = await tarNulList(stage, relPaths.join('\0') + '\0');
     if (!tar) {
-      throw new Error(
+      throw new CarrySeedError(
         `carry: could not pack ${String(present.length)} approved entry/entries for upload`,
       );
     }
     return { tar, manifest };
   } finally {
     await rm(stage, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Copy one carry source to `dest`, applying the entry's `exclude` patterns for a
+ * directory. Tar both ways rather than `cp`: tar is what applies the excludes,
+ * and it is the same tool (and the same flags) the local carry path uses, so a
+ * hub-built box and a locally-built one receive byte-identical trees.
+ */
+async function stageCarryPayload(entry: CarrySeedSource, dest: string): Promise<void> {
+  if (entry.kind === 'file') {
+    const r = await execa('cp', ['-p', entry.absSrc, dest], { reject: false });
+    if (r.exitCode !== 0) {
+      throw new CarrySeedError(
+        `carry: could not stage ${entry.rawSrc} for upload: ${(r.stderr || r.stdout || '').trim()}`,
+      );
+    }
+    return;
+  }
+  await mkdir(dest, { recursive: true });
+  const excludeArgs = (entry.exclude ?? []).map((p) => `--exclude=${p}`);
+  // COPYFILE_DISABLE silences macOS BSD tar's `._*` resource-fork stubs, which
+  // would otherwise land beside every carried file inside the box.
+  const packed = await execa('tar', ['-C', entry.absSrc, ...excludeArgs, '-cf', '-', '.'], {
+    encoding: 'buffer',
+    reject: false,
+    env: { ...process.env, COPYFILE_DISABLE: '1' },
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  if (packed.exitCode !== 0 || !packed.stdout) {
+    throw new CarrySeedError(
+      `carry: could not stage ${entry.rawSrc} for upload: ${String(packed.stderr ?? '').trim()}`,
+    );
+  }
+  const unpacked = await execa('tar', ['-C', dest, '-xf', '-'], {
+    input: packed.stdout,
+    reject: false,
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  if (unpacked.exitCode !== 0) {
+    throw new CarrySeedError(
+      `carry: could not stage ${entry.rawSrc} for upload: ${String(unpacked.stderr ?? '').trim()}`,
+    );
   }
 }
 
@@ -582,7 +646,7 @@ export async function pushProjectSeedToCustody(
       // explicitly approved. Degrading those to a log line is how an approved
       // 25.7 MiB dump silently failed to reach a box in the first place.
       if (CARRY_SEED_ITEMS.includes(item.relPath)) {
-        throw new Error(
+        throw new CarrySeedError(
           `carry: the control box refused ${item.relPath} (${formatBytes(item.data.length)}): ` +
             `${err instanceof Error ? err.message : String(err)}. These files were approved for ` +
             'this box, so the create is stopping rather than building one without them.',
@@ -749,9 +813,10 @@ async function materializeCarrySeed(
   try {
     meta = JSON.parse(metaBlob.toString('utf8')) as CarrySeedManifest;
   } catch (err) {
-    throw new Error(
+    throw new CarrySeedError(
       `carry: the stored carry.json is unreadable (${err instanceof Error ? err.message : String(err)}); ` +
         're-run the create from the PC to refresh it',
+      { cause: err },
     );
   }
   if (!Array.isArray(meta.entries) || meta.entries.length === 0) return null;
@@ -760,17 +825,28 @@ async function materializeCarrySeed(
   if (!tarBlob) {
     // Metadata without payload means a partial push. Loud, not silent: the box
     // would otherwise come up missing files the user approved.
-    throw new Error(
+    throw new CarrySeedError(
       'carry: carry.json is stored but carry.tar.gz is missing — the seed push was incomplete. ' +
         'Re-run the create from the PC.',
     );
   }
 
-  await mkdir(stageDir, { recursive: true });
-  const tmp = join(stageDir, 'carry.tar.gz');
-  await writeFile(tmp, tarBlob);
-  await execa('tar', ['-C', stageDir, '-xzf', tmp]);
-  await rm(tmp, { force: true }).catch(() => {});
+  // Wrapped: a `tar`/fs failure here throws a generic execa error, and every
+  // caller between this and the create treats a non-carry error as best-effort
+  // seed loss — so an unwrapped throw would build the box WITHOUT the approved
+  // files and only log about it.
+  try {
+    await mkdir(stageDir, { recursive: true });
+    const tmp = join(stageDir, 'carry.tar.gz');
+    await writeFile(tmp, tarBlob);
+    await execa('tar', ['-C', stageDir, '-xzf', tmp]);
+    await rm(tmp, { force: true }).catch(() => {});
+  } catch (err) {
+    throw new CarrySeedError(
+      `carry: could not unpack the approved entries: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  }
 
   const entries = meta.entries.map((e) => ({
     rawSrc: e.rawSrc,

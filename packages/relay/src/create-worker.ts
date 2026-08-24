@@ -227,8 +227,13 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
           // user is waiting on. `carry:` is NOT in that category — those paths
           // were shown to the user and approved, so applyProjectSeed throws for
           // them and that throw must not be swallowed here.
+          // Matched by NAME, not by message prefix: a tar/fs failure while
+          // unpacking approved entries throws a generic error, and swallowing it
+          // would build the box without those files — the exact bug the loud
+          // path exists to prevent. `applyProjectSeed` wraps every carry failure
+          // in `CarrySeedError` so this test can't miss one.
+          if (err instanceof Error && err.name === 'CarrySeedError') throw err;
           const msg = err instanceof Error ? err.message : String(err);
-          if (msg.startsWith('carry:')) throw err;
           log(`seed material unavailable (continuing with a bare clone): ${msg}`);
         }
       }

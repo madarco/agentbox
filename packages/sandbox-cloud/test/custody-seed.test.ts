@@ -7,6 +7,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import {
   applyProjectSeed,
   buildProjectSeed,
+  isCarrySeedError,
   pushProjectSeedToCustody,
   type SeedCustodySink,
 } from '../src/custody-seed.js';
@@ -469,5 +470,135 @@ describe('carry seed', () => {
       projectRoot: repo,
     });
     expect(res.dropped).toContain('untracked.tar.gz');
+  });
+});
+
+/**
+ * Bugbot's review of the original fix: every layer between the pack step and the
+ * create has a best-effort catch for seed material, so "throw on a carry failure"
+ * is only true if EVERY one of those catches lets it through. These pin the
+ * failure modes that survived the first pass.
+ */
+describe('carry failures are typed, not string-matched', () => {
+  it('tags a pack failure so intermediate catches can re-throw it', async () => {
+    const repo = await makeRepo();
+    const entry = {
+      rawSrc: './ignored-build/out.js',
+      rawDest: '/workspace/out.js',
+      absSrc: join(repo, 'ignored-build/out.js'),
+      absDest: '/workspace/out.js',
+      kind: 'file' as const,
+      optional: false,
+    };
+    const err = await buildProjectSeed({
+      projectRoot: repo,
+      carry: [entry],
+      maxBodyBytes: 8,
+    }).catch((e: unknown) => e);
+    // A `carry:` message prefix is not enough — a tar/fs failure would carry no
+    // such prefix and be swallowed as ordinary seed loss.
+    expect(isCarrySeedError(err)).toBe(true);
+  });
+
+  it('tags an unpack failure too (corrupt payload, not just a refused upload)', async () => {
+    const dest = realpathSync(mkdtempSync(join(tmpdir(), 'agentbox-seed-dest-')));
+    const stage = realpathSync(mkdtempSync(join(tmpdir(), 'agentbox-seed-stage-')));
+    scratch.push(dest, stage);
+    const source = {
+      get: (rel: string) =>
+        Promise.resolve(
+          rel === 'manifest.json'
+            ? Buffer.from('{}')
+            : rel === 'carry.json'
+              ? Buffer.from(
+                  JSON.stringify({
+                    version: 1,
+                    entries: [
+                      {
+                        index: 0,
+                        rawSrc: './x',
+                        rawDest: '/w/x',
+                        absDest: '/w/x',
+                        kind: 'file',
+                        basename: 'x',
+                        optional: false,
+                      },
+                    ],
+                  }),
+                )
+              : rel === 'carry.tar.gz'
+                ? Buffer.from('this is not a tarball')
+                : null,
+        ),
+    };
+    const err = await applyProjectSeed({ source, dest, carryStageDir: stage }).catch(
+      (e: unknown) => e,
+    );
+    expect(isCarrySeedError(err)).toBe(true);
+  });
+
+  it('fails when the payload is missing but the metadata is stored', async () => {
+    const dest = realpathSync(mkdtempSync(join(tmpdir(), 'agentbox-seed-dest-')));
+    const stage = realpathSync(mkdtempSync(join(tmpdir(), 'agentbox-seed-stage-')));
+    scratch.push(dest, stage);
+    const source = {
+      get: (rel: string) =>
+        Promise.resolve(
+          rel === 'manifest.json'
+            ? Buffer.from('{}')
+            : rel === 'carry.json'
+              ? Buffer.from(
+                  JSON.stringify({
+                    version: 1,
+                    entries: [
+                      {
+                        index: 0,
+                        rawSrc: './x',
+                        rawDest: '/w/x',
+                        absDest: '/w/x',
+                        kind: 'file',
+                        basename: 'x',
+                        optional: false,
+                      },
+                    ],
+                  }),
+                )
+              : null,
+        ),
+    };
+    const err = await applyProjectSeed({ source, dest, carryStageDir: stage }).catch(
+      (e: unknown) => e,
+    );
+    expect(isCarrySeedError(err)).toBe(true);
+  });
+});
+
+describe('carry staging honours exclude patterns', () => {
+  it('leaves excluded subtrees out of the uploaded tar', async () => {
+    // Without this a `dir` entry sweeps in node_modules, inflating the upload
+    // past the custody cap and failing a create that succeeds locally.
+    const repo = await makeRepo();
+    await mkdir(join(repo, 'payload', 'node_modules', 'dep'), { recursive: true });
+    await writeFile(join(repo, 'payload', 'keep.txt'), 'keep me');
+    await writeFile(join(repo, 'payload', 'node_modules', 'dep', 'huge.js'), 'x'.repeat(1000));
+
+    const built = await buildProjectSeed({
+      projectRoot: repo,
+      carry: [
+        {
+          rawSrc: './payload',
+          rawDest: '/workspace/payload',
+          absSrc: join(repo, 'payload'),
+          absDest: '/workspace/payload',
+          kind: 'dir' as const,
+          optional: false,
+          exclude: ['node_modules'],
+        },
+      ],
+    });
+    const carryTar = built.items.find((i) => i.relPath === 'carry.tar.gz');
+    const paths = await tarPaths(carryTar!.data);
+    expect(paths.some((p) => p.includes('keep.txt'))).toBe(true);
+    expect(paths.some((p) => p.includes('node_modules'))).toBe(false);
   });
 });

@@ -38,6 +38,8 @@ export {
   applyProjectSeed,
   buildCarrySeed,
   buildProjectSeed,
+  CarrySeedError,
+  isCarrySeedError,
   pushProjectSeedToCustody,
   CARRY_SEED_ITEMS,
   DEFAULT_MAX_BLOB_BYTES,

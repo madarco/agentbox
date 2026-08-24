@@ -21,6 +21,8 @@ import { isHubRoutableProvider } from '@agentbox/config';
 import { DEFAULT_ENV_PATTERNS, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
 import {
   adminCustodySink,
+  CarrySeedError,
+  isCarrySeedError,
   pushProjectSeedToCustody,
   readGitOriginUrl,
   type CarrySeedSource,
@@ -110,9 +112,11 @@ export async function resolveCreateTarget(input: CreateTargetInput): Promise<Cre
  * Push a project's seed material (untracked files + env/secrets) to the control
  * box's custody before a remote create, so the clone-side worker can overlay what
  * a fresh `git clone` can't provide (`.env`, gitignored config, untracked files).
- * Hash-skipped, so an unchanged tree costs nothing. Best-effort — a seed-push
- * failure must never fail the create (the box still comes up, just without the
- * overlay). The slug matches what the worker reads (`projectSlugFromOriginUrl`).
+ * Hash-skipped, so an unchanged tree costs nothing. Best-effort for seed material
+ * — a failed untracked/env push must never fail the create (the box still comes
+ * up, just without the overlay) — but NOT for approved `carry:` entries, which
+ * throw: a box missing files the user was shown and said yes to is worse than no
+ * box. The slug matches what the worker reads (`projectSlugFromOriginUrl`).
  */
 export async function pushCreateSeed(args: {
   custody: { url: string; adminToken: string };
@@ -153,11 +157,24 @@ export async function pushCreateSeed(args: {
       log: args.onLog,
     });
     if (res.unreachable) {
+      // Approved `carry:` entries make this fatal. "The box may come up without
+      // your untracked files" is an acceptable degradation; "the box came up
+      // without the files you were shown and said yes to" is not.
+      if (args.carry?.length) {
+        throw new CarrySeedError(
+          `carry: the control box is unreachable, so the ${String(args.carry.length)} approved ` +
+            'entry/entries could not be stored for it. Not creating a box without them.',
+        );
+      }
       args.onLog(
         'seed: control box unreachable — the box may come up without untracked/.env files',
       );
     }
   } catch (err) {
+    // Seed material is best-effort; carry is not. This catch is why the throw
+    // inside pushProjectSeedToCustody was not enough on its own — it used to
+    // turn every failure, including an approved carry, back into a log line.
+    if (isCarrySeedError(err)) throw err;
     args.onLog(
       `seed: push failed (continuing without it): ${err instanceof Error ? err.message : String(err)}`,
     );
